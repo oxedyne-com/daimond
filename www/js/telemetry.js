@@ -52,13 +52,38 @@
  * redemption, which is not built. So today this module records nothing and
  * sends nothing, and `dev/verify_telemetry.mjs` proves that at the network.
  *
- * Nor is consent REMEMBERED here. There is no `daimond-telemetry` key and no
- * flag in any parcel: a reload starts with no recorder, exactly like a first
- * boot, and something has to hand this module a grant again. That is on
- * purpose. A remembered "yes" is a flag by another name -- it outlives the
- * account it was given for, survives a passcode being revoked, and is the one
- * piece of state a later release could inherit without meaning to. Membership
- * of the beta lives on the gateway, where it can be taken away.
+ * ── Why consent IS remembered now, having deliberately not been ────
+ *
+ * This file used to say the opposite, and the argument was sound at the time:
+ * a remembered "yes" is a flag by another name -- it outlives the account it
+ * was given for, survives a passcode being revoked, and is the one piece of
+ * state a later release could inherit without meaning to. So a reload started
+ * with no recorder and something had to hand this module a grant again.
+ *
+ * WHAT CHANGED IS THAT THE GATEWAY CAN NOW BE ASKED. The wave used to reach the
+ * browser exactly once, in the reply to a redemption, so consent could not
+ * outlive the sitting it was given in and telemetry covered a tester's FIRST
+ * session and no other. `/api/account` now answers `beta` and `wave` on every
+ * registration round, which every device makes on every unlock
+ * (`gateway/src/handlers/account.rs`, `beta_standing`). That closes each of the
+ * three objections, and the closing is what the memory below rests on:
+ *
+ *   - It cannot outlive the account. The remembered value IS the account id,
+ *     and `resume()` re-arms only when the gateway names that same account on
+ *     this boot. A second person signing in on the same laptop is a different
+ *     id and gets nothing.
+ *   - It cannot survive revocation. A passcode revoked in the console takes the
+ *     account's status with it; the next bootstrap answers `beta:false` with no
+ *     wave, and `resume()` has nothing to build a recorder from.
+ *   - It cannot be inherited by a later release. `resume()` cannot create
+ *     consent, only restore it: with nothing remembered it returns false, and
+ *     the only function that can write the memory is `consent()`, which is
+ *     still the one the person's own "yes" calls.
+ *
+ * The memory is one key, `daimond-telemetry`, holding an account id and nothing
+ * else. `withdraw()` removes it, which is what makes a withdrawal outlive the
+ * page it was made on -- and a withdrawal that a reload undid would be the
+ * cruellest bug in this file.
  *
  * Attaches a single global, `window.DaimondTelemetry`. Also exported for Node,
  * so the vocabulary can be read by a checker without a browser.
@@ -129,15 +154,40 @@
 	// means "something else". It is never sent as text, and never added to at
 	// runtime.
 
-	/// The panels of the three-zone layout, in the order they were built.
-	var PANELS = ['other', 'chat', 'files', 'diamonds', 'mail', 'terminal',
-		'web', 'graph', 'spend', 'trash', 'search', 'journal', 'viewer', 'settings'];
+	/// The panels of the three-zone layout, BY THE ID THE APP ACTUALLY USES.
+	///
+	/// Every name here is a `data-panel` attribute in `www/index.html`, and that
+	/// is not a detail: this table was first written from the panels as they are
+	/// spoken about -- chat, files, diamonds, terminal, viewer -- and the app
+	/// calls those `ai`, `work`, `rail`, `term` and `preview`. Emitting
+	/// `ordinal(PANELS, id)` against that list would have reported twelve of the
+	/// seventeen panels as 0, "something else", and the operator would have read
+	/// a table saying nobody opens anything.
+	///
+	/// Nothing was collected under the old list -- the client had never been
+	/// loaded -- so it is corrected rather than appended to. From here it is
+	/// fixed: a panel added to the app goes on the END, and a panel renamed keeps
+	/// its position, or every number already gathered changes meaning.
+	var PANELS = ['other', 'ai', 'rail', 'work', 'web', 'preview', 'doc', 'mail',
+		'msg', 'compose', 'term', 'graph', 'spend', 'trash', 'agents', 'tools',
+		'improve', 'pending'];
 
-	/// The tools a Diamond can run. Mirrors the wasm tool registry; a tool not
-	/// named here is reported as 'other'.
+	/// The tools a Diamond can run, BY THE NAME THE MODEL CALLS THEM BY.
+	///
+	/// Checked against the wasm registry rather than against memory, for the
+	/// reason `PANELS` above gives: `agent` is called `spawn_agent`, and half the
+	/// registry -- the editing, searching, showing and browsing tools, which are
+	/// most of what a coding session actually runs -- was missing, so every one
+	/// of them would have been reported as 'other'. `mail_send` and `mail_sync`
+	/// are gone because no such tool exists; mail is a panel, not a tool call.
+	///
+	/// The first eleven keep their positions, because those names were right.
+	/// From here a tool goes on the END.
 	var TOOLS = ['other', 'file_read', 'file_write', 'file_list', 'file_move',
 		'file_delete', 'dir_create', 'web_fetch', 'web_search', 'web_click',
-		'web_type', 'mail_send', 'mail_sync', 'shell', 'agent'];
+		'web_type', 'file_edit', 'file_glob', 'file_search', 'file_show',
+		'file_fetch', 'shell', 'run', 'spawn_agent', 'typst_compile',
+		'web_open', 'web_read', 'web_scroll', 'web_close', 'web_snapshot'];
 
 	/// Why something did not work. Deliberately coarse: a class of failure is
 	/// actionable and a message is not sendable.
@@ -182,10 +232,47 @@
 	/// How often a non-empty buffer is sent, in milliseconds.
 	var FLUSH_MS = 60000;
 
-	/// The largest number that may travel. Anything above it, below zero, or not
+	/// The largest COUNT that may travel. Anything above it, below zero, or not
 	/// a whole number becomes 0 -- a wrong count is a nuisance, an unbounded one
 	/// is a way to smuggle.
 	var MAX_N = 2147483647;
+
+	// ── Two fields that are not counts, and must not share a count's ceiling ──
+	//
+	// `MAX_N` guarded EVERY field, including two that are not quantities at all,
+	// and the damage was silent at both ends.
+	//
+	// `b` IS AN IDENTIFIER. `buildOrdinal` reads eight hex digits, which is a u32,
+	// and `MAX_N` is i32::MAX -- so every build id whose first hex digit is 8-f
+	// was floored to 0 by `whole()` on the last step before the wire. Measured
+	// against `verify/transparency.jsonl`, 65 of the 128 builds sealed when this
+	// was written: a coin flip on one hex digit deciding whether a batch could be
+	// attributed to a release at all. The gateway carried the SAME ceiling
+	// (`MAX_N` in `gateway/src/handlers/telemetry.rs`), so the zeroing was the only
+	// thing preventing something worse -- had the true ordinal arrived, the
+	// gateway would have refused the WHOLE BATCH, every event in it, for a field
+	// that is not an event. Widening one end alone turns silent misattribution
+	// into total loss, which is why both move together.
+	//
+	// `t` IS A CLOCK. Whole seconds since 1970 pass i32::MAX on 19 January 2038,
+	// after which every batch would carry `t: 0`. It is bounded, but bounded by a
+	// date rather than by a count's ceiling.
+	//
+	// THE RATIONALE ABOVE STILL HOLDS, and is the reason these are ceilings and
+	// not an exemption. "An unbounded number is a way to smuggle" is an argument
+	// about how much a field can carry; both of these are ONE value per batch, and
+	// each gains a single bit over what it had. A per-event count keeps `MAX_N`
+	// unchanged, which is where the capacity would actually be.
+
+	/// The ceiling on `b`, the build ordinal: eight hex digits is a u32.
+	var MAX_BUILD = 4294967295;
+
+	/// The ceiling on `t`, the send stamp: whole seconds to 2100-01-01T00:00:00Z.
+	var MAX_TIME = 4102444800;
+
+	/// The ceiling for each envelope key. `e` is not here: its rows are counts and
+	/// millisecond offsets, and they keep `MAX_N`.
+	var LIMITS = { v: MAX_N, b: MAX_BUILD, l: MAX_N, w: MAX_N, t: MAX_TIME, d: MAX_N };
 
 	// ── The recorder ────────────────────────────────────────────
 	//
@@ -202,28 +289,124 @@
 
 	var rec = null;
 
+	// ── The remembered agreement ────────────────────────────────
+	//
+	// One key, holding the id of the account that agreed. Not a boolean, because
+	// a boolean cannot tell two people sharing a device apart; not a wave,
+	// because a wave is shared by everybody in an intake. See the header for why
+	// this exists at all, having once been argued against.
+
+	/// Where the agreeing account is written down.
+	var REMEMBER = 'daimond-telemetry';
+
+	/// The account that agreed on this device, or ''.
+	function remembered() {
+		try { return localStorage.getItem(REMEMBER) || ''; }
+		catch (e) { return ''; }			// private mode: nothing is remembered.
+	}
+
+	/// Write the agreement down, or rub it out.
+	///
+	/// Both directions fail silently. Storage a browser refuses is a session
+	/// that has to be asked again, which is the safe way for this to break: the
+	/// failure that matters is the other one, and it cannot happen here because
+	/// nothing is ever read as consent that was not written by `consent()`.
+	function remember(account) {
+		try {
+			if (account) localStorage.setItem(REMEMBER, account);
+			else localStorage.removeItem(REMEMBER);
+		} catch (e) { /* private mode, or a full store */ }
+	}
+
 	/// Agree to the beta, and start recording.
 	///
-	/// Called from ONE place, once it exists: the handler for a redeemed beta
-	/// passcode, which is what turns an account into a beta account on the
-	/// gateway. Nothing else may call it, and nothing in the tree calls it
-	/// today.
+	/// THE ONE FUNCTION A PERSON'S OWN "YES" CALLS. Two callers, both in
+	/// `www/js/passcode.js` and both a button the person pressed: the card shown
+	/// when a passcode is redeemed, and the same question in the Credits drawer
+	/// for somebody who said no then and has changed their mind. Nothing else
+	/// may call it. A boot does not call it -- that is `resume()`, which cannot
+	/// create an agreement that was never given.
 	///
 	/// # Arguments
-	/// * `grant` - What redemption returned. Must carry `wave`, a whole number
-	///   above zero naming the beta intake this account was let into. There is
-	///   no default: a recorder cannot be minted from nothing, which is what
-	///   makes a forgotten `if` unable to start one.
+	/// * `grant` - Must carry `wave`, a whole number above zero naming the beta
+	///   intake this account was let into. There is no default: a recorder
+	///   cannot be minted from nothing, which is what makes a forgotten `if`
+	///   unable to start one. `account` is the gateway's id for whoever agreed,
+	///   and is what gets written down; without it the agreement holds for this
+	///   session only, because there is nothing to scope a memory to.
 	///
 	/// # Returns
 	/// True if a recorder was minted.
 	function consent(grant) {
+		var account = (grant && typeof grant.account === 'string') ? grant.account : '';
+		if (account) remember(account);
 		if (rec) return true;
 		var wave = grant && grant.wave;
 		if (typeof wave !== 'number' || !isFinite(wave) || Math.floor(wave) !== wave || wave < 1) {
 			return false;
 		}
 		rec = makeRecorder(wave);
+		return true;
+	}
+
+	/// Start again on a device where this account has already agreed.
+	///
+	/// The boot path, and it is deliberately weaker than `consent()`: it can
+	/// only restore an agreement, never make one. Three things must line up, and
+	/// each is one of the objections that kept consent unremembered until the
+	/// gateway could answer them (see the header):
+	///
+	///   1. the gateway says this account is in the beta, and names the intake;
+	///   2. the account it names is the account that agreed on this device;
+	///   3. something was written down at all.
+	///
+	/// Miss any one and this returns false and mints nothing, which is the same
+	/// state as a device that has never been asked.
+	///
+	/// # Arguments
+	/// * `grant` - `{wave, account}` as the gateway answered it this boot, NOT
+	///   as anything on the device remembers it.
+	///
+	/// # Returns
+	/// True if a recorder was restored.
+	function resume(grant) {
+		if (rec) return true;
+		var account = (grant && typeof grant.account === 'string') ? grant.account : '';
+		if (!account) return false;
+		if (remembered() !== account) return false;
+		return consent(grant);
+	}
+
+	/// Has this account agreed on this device?
+	///
+	/// For a surface that has to draw the question with the answer already in
+	/// it. It READS; like `armed()` it can never grant, and unlike `armed()` it
+	/// is true across a reload, which is what a settings control has to show.
+	function agreed(account) {
+		return !!account && remembered() === account;
+	}
+
+	/// Take the grant back. Nothing more is recorded, and nothing already
+	/// recorded is sent.
+	///
+	/// The mirror of `consent()`, and deliberately the same shape: it does not
+	/// set a flag saying stop, it DESTROYS the thing consent minted. The buffer
+	/// goes with it, which is the whole difference between a withdrawal and a
+	/// promise to stop soon -- a tester who withdraws and then watches a batch
+	/// leave has been lied to, and the batch that would have left is the one
+	/// carrying what they did in the minute before they changed their mind.
+	///
+	/// THE MEMORY GOES FIRST, and it goes whether or not anything is recording.
+	/// A withdrawal made in a session that never armed is still a withdrawal,
+	/// and a withdrawal a reload undid would be the cruellest bug in this file.
+	///
+	/// # Returns
+	/// True if there was a recorder to destroy.
+	function withdraw() {
+		remember(null);
+		if (!rec) return false;
+		rec.close();
+		rec = null;
 		return true;
 	}
 
@@ -271,6 +454,22 @@
 				if (!timer) {
 					timer = setTimeout(function () { timer = null; self.flush(); }, FLUSH_MS);
 				}
+			},
+
+			/// Stop, and take the buffer with it.
+			///
+			/// Called only by `withdraw()`. The timer is cleared and the buffer
+			/// emptied HERE rather than by the caller, because both live in this
+			/// closure and nothing outside it can reach either -- which is the
+			/// same fact that makes a withdrawal written anywhere else a lie. A
+			/// module that replaced `window.DaimondTelemetry` wholesale would
+			/// leave this timer running with this buffer in it, and the batch
+			/// would go a minute later with `armed()` reading false the whole
+			/// time. Measured, on 2026-08-14, before this existed.
+			close: function () {
+				if (timer) { clearTimeout(timer); timer = null; }
+				buf.length = 0;
+				dropped = 0;
 			},
 
 			/// Build a batch and send it. Resolves true if one went.
@@ -328,10 +527,17 @@
 	}
 
 	/// A whole number in range, or 0.
-	function whole(n) {
+	///
+	/// # Arguments
+	/// * `n` - What the caller has.
+	/// * `max` - The ceiling for THIS field, defaulting to a count's. A field
+	///   passing the wrong one here is how an identifier came to be judged as a
+	///   quantity; see the ceilings above.
+	function whole(n, max) {
+		if (typeof max !== 'number') max = MAX_N;
 		if (typeof n !== 'number' || !isFinite(n)) return 0;
 		n = Math.floor(n);
-		if (n < 0 || n > MAX_N) return 0;
+		if (n < 0 || n > max) return 0;
 		return n;
 	}
 
@@ -355,10 +561,13 @@
 		}
 		return {
 			v: PAYLOAD_VERSION,
-			b: whole(build),
+			b: whole(build, MAX_BUILD),
 			l: localeOrdinal(),
 			w: whole(wave),
-			t: Math.floor(Date.now() / 1000),
+			// Through `whole` like everything else, so the one gate on what
+			// travels has no exception in it -- and with the clock's own ceiling,
+			// not a count's.
+			t: whole(Math.floor(Date.now() / 1000), MAX_TIME),
 			d: whole(dropped),
 			e: e,
 		};
@@ -394,21 +603,26 @@
 		for (var i = 0; i < keys.length; i++) {
 			if (PAYLOAD_KEYS.indexOf(keys[i]) === -1) return false;
 		}
+		// Each envelope field against ITS OWN ceiling. A single ceiling here would
+		// re-impose the defect one step later: `pack` would build the true build
+		// ordinal and this gate would then drop the whole batch.
 		return keys.every(function (k) {
-			return k === 'e' ? rowsAreIntegers(body[k]) : isInt(body[k]);
+			return k === 'e' ? rowsAreIntegers(body[k]) : isInt(body[k], LIMITS[k]);
 		});
 	}
 
 	function rowsAreIntegers(rows) {
 		if (!Array.isArray(rows)) return false;
 		return rows.every(function (row) {
-			return Array.isArray(row) && row.length === 3 && row.every(isInt);
+			return Array.isArray(row) && row.length === 3
+				&& row.every(function (n) { return isInt(n, MAX_N); });
 		});
 	}
 
-	function isInt(x) {
+	function isInt(x, max) {
+		if (typeof max !== 'number') max = MAX_N;
 		return typeof x === 'number' && isFinite(x) && Math.floor(x) === x
-			&& x >= 0 && x <= MAX_N;
+			&& x >= 0 && x <= max;
 	}
 
 	// ── What the rest of the app sees ───────────────────────────
@@ -427,6 +641,13 @@
 		PAYLOAD_VERSION: PAYLOAD_VERSION,
 		ENDPOINT:      ENDPOINT,
 		MAX_BATCH:     MAX_BATCH,
+		// The three ceilings, exported so `dev/verify_telemetry.mjs` can hold
+		// them against the gateway's copies. Two constants that have to match are
+		// two constants that will eventually not, and when these two did not
+		// match, half of all builds lost their identity on the way out.
+		MAX_N:         MAX_N,
+		MAX_BUILD:     MAX_BUILD,
+		MAX_TIME:      MAX_TIME,
 
 		// Recording.
 		emit:          emit,
@@ -435,14 +656,20 @@
 		// Consent, and a way for a test or a settings pane to ask whether it
 		// has been given. `armed` READS; it can never grant.
 		consent:       consent,
+		resume:        resume,
+		withdraw:      withdraw,
+		agreed:        agreed,
 		armed:         function () { return !!rec; },
 		wave:          function () { return rec ? rec.wave : 0; },
 
 		// Send now. Nothing to send and nowhere to send it, until consent.
 		flush:         function () { return rec ? rec.flush() : Promise.resolve(false); },
 
-		// Exported for the checker only.
+		// Exported for the checker only. Both are pure: neither adds a path to
+		// the network, which stays inside the recorder's closure.
 		onlyIntegers:  onlyIntegers,
+		buildOrdinal:  buildOrdinal,
+		pack:          pack,
 	};
 
 	if (typeof window !== 'undefined') window.DaimondTelemetry = api;

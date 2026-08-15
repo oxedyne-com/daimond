@@ -21,6 +21,8 @@
 // Run: eval "$(bash dev/world.sh 9 --env)"; node dev/verify_focus_and_ink.mjs
 //   --quick        two palettes rather than eleven
 //   --self         run only the self-tests (the red proofs)
+//   --break=NAME   install one real fault and stop after the floor, to SEE the
+//                  floor go red: credits-view, credits-authed, graph-panel.
 
 // The pictures live in dev/shots_focus_and_ink.mjs -- this file measures and
 // says so in words; nothing here writes an image.
@@ -56,9 +58,16 @@ const check = (ok, what) => { log(`${ok ? 'PASS ' : 'FAIL '} ${what}`); if (!ok)
 /// like, which is the author's call. Recorded here so the run stays honest and
 /// green; a NEW shortfall, or one of these getting worse, still fails.
 ///
-/// These two are only re-measured when the Credits view can be reached, which
-/// needs the profile to have a gateway account; a fresh harness profile has
-/// none, and the run says UNAVAILABLE rather than pretending it looked.
+/// These two are only re-measured when the AUTO-RELOAD BLOCK is built, which
+/// needs the profile to have a signed-in gateway account; a world has no
+/// gateway, so it usually is not. That absence is declared in `EXEMPT` with the
+/// condition behind it, the run confirms the condition in the page before
+/// accepting it, and it names these two rows as unmeasured. It is NOT inferred
+/// from the block failing to appear -- see the floor.
+///
+/// The Credits VIEW is a different thing and is always reachable. This comment
+/// used to say the view needed an account, which was wrong and was the excuse
+/// under which whole scenes went unswept.
 ///
 /// A THIRD instance of the same class is not in this table because this file
 /// cannot reach it: `:root[data-skin="warm"] .top-meter { opacity: 0.6 }`
@@ -348,33 +357,31 @@ const SCENES = {
 	// The Credits view. Its own view, not part of Models -- and the reason it is
 	// listed separately is that the app's lowest-contrast text lived here and no
 	// scene reached it.
+	//
+	// ENTERED BY ID. `#astat-account` is in the served HTML, is never removed,
+	// and its handler is `openCredits('')` (www/js/daimond.js) -- so the way in
+	// does not depend on what the row happens to SAY.
+	//
+	// It used to be found by scanning `.astat-row.astat-btn` for the word
+	// "credit", and that scan is the whole of how this file came to excuse
+	// itself. The row is a MONEY row: `moneyRows` draws it with whichever pot is
+	// paying, so a profile holding a provider key -- which every harness profile
+	// does -- reads "Your own key" and the word is not there. The scan found
+	// nothing, and the scene concluded the account "never builds it", when in
+	// fact the view was one click away and simply never opened. See the floor
+	// below for what that cost.
 	credits: async () => {
 		await calm();
 		await drawerHome();
-		// The Credits row, matched on `.astat-btn` and nothing wider. A looser
-		// query over `[data-view]` picked up the boot script -- whose text
-		// happens to contain the word -- and clicked that instead, so the scene
-		// silently never opened and the check that needed it silently passed.
-		// Retried: the row is built once the account's gateway state is known,
-		// which is not always before the drawer paints. A harness profile with no
-		// gateway account never grows the row at all -- that is an account state,
-		// not a navigation failure, and it is reported as such below rather than
-		// counted as a scene that went somewhere else.
-		let hit = false;
-		for (let i = 0; i < 4 && !hit; i++) {
-			hit = await page.evaluate(() => {
-				for (const el of document.querySelectorAll('.astat-row.astat-btn')) {
-					if (/credit/i.test(el.textContent || '')) { el.click(); return true; }
-				}
-				return false;
-			}).catch(() => false);
-			if (!hit) await page.waitForTimeout(500);
-		}
-		if (!hit) unavailable.add('credits');
+		await page.click('#astat-account', { force: true }).catch(() => {});
 		await page.waitForTimeout(1000);
+		// The auto-reload block if it was built, the view's own lead if it was
+		// not, so the scene is scrolled to something real either way.
 		await page.evaluate(() => {
 			const el = document.getElementById('autoreload');
-			if (el) el.scrollIntoView({ block: 'center' });
+			const to = (el && el.getBoundingClientRect().height > 1)
+				? el : document.getElementById('credits-section');
+			if (to) to.scrollIntoView({ block: 'center' });
 		});
 		await page.waitForTimeout(350);
 	},
@@ -391,25 +398,158 @@ const SCENE_MARK = {
 	tools:   '.tools-row, .tool-row, #panel-tools',
 	graph:   '#panel-graph',
 	chat:    '#chat-input',
-	credits: '#autoreload',
+	// `#credits-section`, not `#autoreload`. The section is in the served HTML
+	// and is on screen whenever the view is up, with or without an account; the
+	// auto-reload block inside it is drawn only for one, and asking the block
+	// whether the SCENE arrived confused a missing account with a missing view.
+	// The block is declared separately, in EXEMPT below.
+	credits: '#credits-section',
 };
+/// Is anything matching `q` laid out and inside the viewport?
+const showing = async (q) => page.evaluate((sel) => {
+	for (const el of document.querySelectorAll(sel)) {
+		const r = el.getBoundingClientRect();
+		if (r.width > 1 && r.height > 1 && r.bottom > 0 && r.top < innerHeight) return true;
+	}
+	return false;
+}, q).catch(() => false);
 const arrived = async (scene) => {
 	const q = SCENE_MARK[scene];
 	if (!q) return true;
-	return page.evaluate((sel) => {
-		for (const el of document.querySelectorAll(sel)) {
-			const r = el.getBoundingClientRect();
-			if (r.width > 1 && r.height > 1 && r.bottom > 0 && r.top < innerHeight) return true;
-		}
-		return false;
-	}, q).catch(() => false);
+	return showing(q);
 };
 const missed = new Set();
-/// Scenes this account genuinely cannot show. Kept apart from `missed`: a view
-/// that does not exist for this profile is not the same fault as a view that
-/// exists and was navigated past, and conflating them would either fail every
-/// run or excuse the navigation bug.
-const unavailable = new Set();
+/// Every scene that was seen to arrive at least once. The FLOOR is counted off
+/// this: see `SCENE_FLOOR` below.
+const built = new Set();
+
+// ── The floor: this account builds N scenes, and fewer than N is a failure ──
+//
+// WHAT HAPPENED, written down so nobody removes this as noise. On the night of
+// 2026-08-14 three runs of this file were compared:
+//
+//   run A   5 probed selectors, 77/98/26 Tab stops, 3 shortfalls -> FAILED
+//   run B   4 probed selectors, 72/93/26 Tab stops, 0 shortfalls -> ALL PASS
+//   run C   5 probed selectors, 77/98/26 Tab stops, 3 shortfalls -> FAILED
+//
+// Run B was the greener run BECAUSE IT SWEPT LESS INK. Its own output said so --
+// `UNAVAILABLE credits — this account never builds it; nothing it holds was
+// measured` -- and every check still passed, because a scene that failed to
+// build was excluded from the Tab walk and from the ink sweep instead of failing
+// them. The one guard that should have caught it, "every scene that exists
+// arrived where it meant to", is exactly vacuous about a scene that never
+// existed: `missed` could only hold scenes that had turned up.
+//
+// So the count is the check. A run that measures fewer scenes than this account
+// builds is a worse run than one that measures them all and reports shortfalls,
+// and it must not be able to look better.
+//
+// UNAVAILABLE now means one thing only: DECLARED not to exist here, with the
+// condition that makes it absent stated below and CONFIRMED in the page at the
+// time. It may never mean "did not turn up". The two are told apart by asking
+// the app about the condition rather than by observing the absence -- an absence
+// is the symptom of both, which is why the old code could not tell them apart
+// and always guessed the flattering one.
+const SCENE_FLOOR = Object.keys(SCENES).length;
+
+/// Parts of a scene that this account may honestly not build, each with the
+/// condition that makes it absent, checked in the page, and the reason in words.
+///
+/// A part is declared here or it is not exemptible. There is deliberately no way
+/// for a scene to add itself to this table at runtime: the whole defect above was
+/// a scene concluding, from its own failure to find something, that the thing was
+/// never there.
+const EXEMPT = {
+	'credits/autoreload': {
+		scene: 'credits',
+		// `#autoreload .ar-field`, not `#autoreload`. The host div is in the
+		// served HTML and carries `margin-top: 18px; padding-top: 16px;
+		// border-top` (autoreload.css), so EMPTY it still measures 17px tall and
+		// answers a bounding-box test as "on screen". Asking for the host is
+		// asking whether the app has a place to put the block, which it always
+		// has; asking for a field is asking whether the block was drawn.
+		// Caught by the stale-declaration branch below on the first run of it.
+		mark:  '#autoreload .ar-field',
+		why:   'the auto-reload block is drawn only for a signed-in gateway account'
+			+ ' (www/js/autoreload.js `render`: no `authed` state, `host.innerHTML = \'\'`),'
+			+ ' and a world has no gateway (dev/world.sh)',
+		/// True when the app itself says the account this block needs is absent.
+		absent: async () => page.evaluate(() =>
+			!(window.DaimondGateway && DaimondGateway.state && DaimondGateway.state().authed))
+			.catch(() => false),
+		/// What goes unmeasured while it is absent, so the cost is stated rather
+		/// than implied by a missing line.
+		holds: ['div#autoreload > div.ar-field > label.ar-label',
+			'div#autoreload > div.ar-field > div.ar-hint'],
+	},
+};
+/// Exempt parts that were seen on screen at least once, so a declaration that has
+/// gone stale is caught rather than quietly carried.
+const partSeen = new Set();
+
+// ── Deliberate breakage, for the red proof ───────────────────────────────
+//
+// `--break=<name>` installs one real fault before the sweep. The floor is then
+// exercised through the path a genuine build failure takes -- the scene's own
+// enter function runs, the app tries to draw, the mark is not there -- rather
+// than by a check calling itself and agreeing.
+const BREAKS = {
+	// The Credits view cannot build at all: the scene must FAIL, not be excused.
+	// Under the old code this is the exact shape that reported UNAVAILABLE and
+	// passed.
+	//
+	// `#credits-section`, the view's whole content, and not `#admin-credits`
+	// around it. The drawer holds a JS reference to the view element taken at
+	// init and re-appends it whenever it opens, so removing THAT is undone by
+	// the first navigation and the "break" quietly heals -- which it did, and
+	// this run reported ALL PASS with a fault installed. `renderCredits` looks
+	// the section up by id every time and returns early when it is gone, so this
+	// one stays broken.
+	'credits-view': async () => page.evaluate(() => {
+		const v = document.getElementById('credits-section');
+		if (v) v.remove();
+	}),
+	// The gateway claims an account, so the auto-reload block's declared reason
+	// for being absent is FALSE -- and the block still does not build, because
+	// there is no gateway behind the claim. An absence with no valid reason is a
+	// failure to appear, and must be reported as one.
+	'credits-authed': async () => page.evaluate(() => {
+		const G = window.DaimondGateway;
+		if (!G || !G.state) return;
+		const real = G.state.bind(G);
+		G.state = () => Object.assign({}, real(), { authed: true });
+	}),
+	// A whole panel that fails to build, to show the floor is not about Credits.
+	'graph-panel': async () => page.evaluate(() => {
+		const p = document.getElementById('panel-graph');
+		if (p) p.remove();
+	}),
+};
+const BREAK = (process.argv.find((a) => a.startsWith('--break=')) || '').slice(8);
+if (BREAK) {
+	if (!BREAKS[BREAK]) { log(`--break=${BREAK}: no such breakage; have ${Object.keys(BREAKS).join(', ')}`); process.exit(2); }
+	log(`\n!! --break=${BREAK} — a deliberate fault is installed; this run is EXPECTED to fail`);
+	await BREAKS[BREAK]();
+	await page.waitForTimeout(200);
+}
+
+// What this run measured UNDER, said out loud. Two runs of this file are only
+// comparable if they met the same app, and one input to that is NOT part of a
+// world: the gateway binds `:9002` and is shared between agents (dev/world.sh
+// says so in as many words). On 2026-08-15 another lane's gateway answered this
+// browser's registration mid-run with a closed-beta refusal; the app did the
+// right thing and put the passcode card on screen; and the sweep found three
+// contrast shortfalls in it that the next run could not reproduce, because by
+// then the gateway was gone. Nothing was wrong with either run -- they measured
+// two different applications -- and neither said so.
+{
+	const cond = await page.evaluate(() => {
+		const g = (window.DaimondGateway && DaimondGateway.state && DaimondGateway.state()) || {};
+		return { authed: !!g.authed, offline: !!g.offline, refused: g.refused || null };
+	}).catch(() => ({ authed: null, offline: null, refused: null }));
+	log(`\n  conditions: gateway authed=${cond.authed} offline=${cond.offline}`
+		+ ` refused=${cond.refused}  (a gateway on :9002 is shared between agents, not per-world)`);
+}
 
 // Escape, and nothing else. An earlier version REMOVED `.modal` nodes from the
 // document to be sure a scene started clean, which quietly deleted the Admin
@@ -651,7 +791,13 @@ if (!SELF) {
 			for (const [name, enter] of Object.entries(SCENES)) {
 				await closeAll();
 				await enter();
-				if (!await arrived(name) && !unavailable.has(name)) missed.add(`${pal}/${sp}/${name}`);
+				if (await arrived(name)) built.add(name);
+				else missed.add(`${pal}/${sp}/${name}`);
+				// An exempt part is looked FOR every time, so a declaration that has
+				// stopped being true is caught by the thing turning up.
+				for (const [id, p] of Object.entries(EXEMPT)) {
+					if (p.scene === name && await showing(p.mark)) partSeen.add(id);
+				}
 				const found = await page.evaluate(INK);
 				for (const f of found) {
 					const key = f.sel + '§' + f.text;
@@ -677,8 +823,48 @@ if (!SELF) {
 		`no text run below its WCAG floor that is not already recorded`
 		+ ` (${rows.length} short, ${rows.length - fresh.length} recorded)`);
 	for (const m of missed) log(`  MISSED SCENE  ${m} — it never arrived, so its text was not measured`);
-	for (const u of unavailable) log(`  UNAVAILABLE   ${u} — this account never builds it; nothing it holds was measured`);
 	check(missed.size === 0, `every scene that exists arrived where it meant to (${missed.size} did not)`);
+
+	// ── The floor ────────────────────────────────────────────────────
+	//
+	// How much was measured, said as a number, so a run cannot look better by
+	// looking at less. Every scene in the table must have been seen; there is no
+	// exemption for a whole scene, and if one is ever wanted it goes in EXEMPT
+	// with a condition the page can be asked about.
+	log('');
+	const absent = Object.keys(SCENES).filter((n) => !built.has(n));
+	for (const n of absent) log(`  ABSENT SCENE  ${n} — it never built, and nothing declares that it may not`);
+	check(built.size === SCENE_FLOOR,
+		`this account builds all ${SCENE_FLOOR} scenes and all ${SCENE_FLOOR} were swept (${built.size})`);
+
+	// Each declared part: is it here, and if not, does the app itself confirm the
+	// stated reason? "Declared not to exist here, and here is why" passes;
+	// "did not turn up" fails, however alike the two look on screen.
+	for (const [id, p] of Object.entries(EXEMPT)) {
+		const here = partSeen.has(id);
+		const why  = await p.absent();
+		if (here && !why) continue;			// present, as expected: measured with everything else
+		if (here && why) {
+			check(false, `EXEMPT ${id} — declared absent, yet it was on screen; the declaration is stale`);
+			continue;
+		}
+		if (!here && !why) {
+			check(false, `ABSENT ${id} — it did not turn up, and its declared reason is not true here`);
+			continue;
+		}
+		log(`  UNAVAILABLE   ${id} — declared absent: ${p.why}`);
+		for (const h of p.holds || []) log(`                and so ${h} went unmeasured this run`);
+		check(true, `EXEMPT ${id} — absent for the reason it declares, confirmed in the page`);
+	}
+}
+
+// With a fault installed the run has done its job once the floor has spoken.
+// The sections below put the SHIPPED defects back and would be measuring a
+// deliberately broken app.
+if (BREAK) {
+	await s.close();
+	log(`\n${bad ? `${bad} FAILED` : 'ALL PASS'}`);
+	process.exit(bad ? 1 : 0);
 }
 
 // ── The proof that matters: the shipped defects, put back ────────────────
@@ -704,7 +890,7 @@ const WAS = `
 				await setLook(pal, 'sharp');
 				await closeAll();
 				await SCENES[scene]();
-				if (!await arrived(scene) && !unavailable.has(scene)) log(`   !! ${pal}/${scene} did not arrive — nothing it holds was measured`);
+				if (!await arrived(scene)) log(`   !! ${pal}/${scene} did not arrive — nothing it holds was measured`);
 				for (const f of await page.evaluate(INK)) hits.push({ ...f, pal, scene });
 			}
 		}

@@ -29,7 +29,12 @@
 // sent, not against another part of the app.
 //
 // Needs `dev/serve.mjs` (`DAIMOND_PORT`, default 8777) and `dev/mockcap.mjs`
-// (`DAIMOND_CAP_PORT`, default 9098), the latter started here if it is not up.
+// (`DAIMOND_CAP_PORT`, default 9250 + the world number), the latter started here
+// if it is not up -- and checked to BE mockcap, see the port note below.
+//
+// Every write it asks for goes into the chat's own scratch folder. A workspace-
+// ROOT path is refused by the chat fence as an ordinary tool result, which reads
+// as neither a write nor a cut: see `freshChat`.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -42,7 +47,16 @@ const HERE    = path.dirname(fileURLToPath(import.meta.url));
 // The cap mock is a world fixture like the LLM mock, so its port and log follow
 // the world's.  `dev/world.sh` numbers a world by its offset from port 8777.
 const WORLD    = Number(process.env.DAIMOND_PORT || 8777) - 8777;
-const CAP_PORT = Number(process.env.DAIMOND_CAP_PORT || 9098 + WORLD);
+// 9250, NOT 9098. `9098 + WORLD` is `9099 + (WORLD - 1)`, which is the MOCK LLM
+// PORT OF THE WORLD NEXT DOOR: in world 18 the cap mock's port was world 17's
+// mockllm. The guard below found something answering /v1/models there, so no
+// mockcap was started, and every request in this file went to another agent's
+// mock -- which ignores `max_tokens` and does not log, so all eleven checks that
+// read `lastAsk()` reported `max_tokens=null` and the two write checks measured
+// mockllm's plain reply. Measured 2026-08-14 in world 18, with world 17 live.
+// 9250 + WORLD is clear of every other fixture in this tree (compact 9188+N,
+// pickers 9160+2N, applications 9400+N).
+const CAP_PORT = Number(process.env.DAIMOND_CAP_PORT || 9250 + WORLD);
 const CAP_LOG  = process.env.DAIMOND_CAP_LOG
 	|| path.join(HERE, WORLD ? `mockcap-${WORLD}.log` : 'mockcap.log');
 const CAP_URL = `http://127.0.0.1:${CAP_PORT}/v1/chat/completions`;
@@ -75,6 +89,29 @@ if (!(await up(CAP_MODELS))) {
 	for (let i = 0; i < 20 && !(await up(CAP_MODELS)); i++) {
 		await new Promise(r => setTimeout(r, 200));
 	}
+}
+
+// WHAT ANSWERS THERE HAS TO BE MOCKCAP. "Something is listening" was the whole
+// test, and any OpenAI-compatible mock answers /v1/models -- which is how this
+// file spent a run driven by another world's mockllm (see CAP_PORT above).
+// `cap/plain` is mockcap's own model id, so asking for it by name is the cheapest
+// question that only mockcap can answer.
+const capModels = await new Promise((res) => {
+	const r = http.get(CAP_MODELS, (m) => {
+		let raw = '';
+		m.on('data', (c) => { raw += c; });
+		m.on('end', () => { try { res(JSON.parse(raw)); } catch { res(null); } });
+	});
+	r.on('error', () => res(null));
+	r.setTimeout(1500, () => { r.destroy(); res(null); });
+});
+if (!(capModels && (capModels.data || []).some((m) => m.id === MODEL))) {
+	console.log(`\nCANNOT START: :${CAP_PORT} does not answer as dev/mockcap.mjs.`);
+	console.log(`  It offers ${JSON.stringify((capModels && capModels.data || []).map((m) => m.id))},`);
+	console.log(`  and this whole file measures what a provider that HONOURS max_tokens does.`);
+	console.log('  Something else is on the port — set DAIMOND_CAP_PORT, or free it.');
+	if (spawned) spawned.kill();
+	process.exit(2);
 }
 
 const clearLog = () => { try { fs.writeFileSync(CAP_LOG, ''); } catch {} };
@@ -156,13 +193,37 @@ const clearChats = () => p.evaluate(() => new Promise((res) => {
 	req.onerror = () => res();
 }));
 
-/// Start a fresh chat so a turn is never metered against a previous one.
+/// Start a fresh chat so a turn is never metered against a previous one, and
+/// answer where that chat may write.
+///
+/// THE PATH IS NOT OPTIONAL. §2 below asked the model for `@write 400 big.js` --
+/// a workspace-ROOT path -- and since the chat fence landed on 2026-08-12
+/// (5389864) every chat is confined to `chats/<id>/work`: `Tool::guard`
+/// (src/tools.rs) refuses anything outside it BEFORE the tool runs, and the
+/// refusal comes back as an ORDINARY TOOL RESULT. Nothing throws, the turn
+/// finishes, and the transcript holds `Refused: 'big.js' is not in this chat's
+/// workspace` -- which contains neither "Wrote N bytes" nor "ran out of room",
+/// so 2a passed for the wrong reason and 2b, the only check that says the raised
+/// default FIXES a long write, had been measuring an apology. The commit that
+/// repaired six other verifiers this way (see dev/harness.mjs) missed this one.
 async function freshChat() {
 	await clearChats();
 	await p.reload({ waitUntil: 'domcontentloaded' });
 	await signInAs(s, 'replylen');
 	await p.waitForTimeout(900);
 	await newChat(s);
+	return await scratchDir();
+}
+
+/// `chats/<id>/work` for the chat in focus -- what `scopeChatTo` hands the
+/// engine, asked of the app rather than spelled out here, so a change to the
+/// fence's shape moves this with it.
+async function scratchDir() {
+	return await p.evaluate(() => {
+		const f = window.DaimondAttach && window.DaimondAttach.focus();
+		if (!f || f.kind !== 'chat') return '';
+		return window.DaimondAttach.chatScratch(f.id) || '';
+	});
 }
 
 console.log('\n── 1. The cap that reaches the provider ──');
@@ -212,12 +273,36 @@ console.log('\n── 2. What the cap does to a 400-line write ──');
 
 await setReplyLength(4096);
 clearLog();
-await freshChat();
-const cut = await chat(s, '@write 400 big.js', { timeout: 60000 });
+const cutDir = await freshChat();
+
+// A CAN'T-START CHECK, and not one of the checks.
+//
+// Everything below this line writes into the chat's scratch folder, and a path
+// outside it is refused before the tool runs -- silently, as an ordinary tool
+// result. If the app cannot say where that folder is, the fixture cannot be
+// seeded, and a run that carried on would be measuring the refusal again. It
+// exits 2 rather than failing a check, because nothing here was tested.
+if (!/^chats\/[^/]+\/work$/.test(cutDir)) {
+	console.log(`\nCANNOT START: the chat's scratch folder did not answer — got '${cutDir}'.`);
+	console.log('  §2 writes a 400-line file, and only `chats/<id>/work` will take it.');
+	await s.close();
+	if (spawned) spawned.kill();
+	process.exit(2);
+}
+/// The file §2 asks for, inside the fence. `big.js` on its own is refused.
+const BIG   = `${cutDir}/big.js`;
+const wrote = (out, file) => new RegExp('Wrote (\\d+) bytes to ' + file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).exec(out);
+
+const cut = await chat(s, `@write 400 ${BIG}`, { timeout: 60000 });
 const askCut = lastAsk();
 check('the forced 4096 setting is what is sent', askCut === 4096, `max_tokens=${askCut}`);
+// The refusal that used to satisfy this check by accident is now itself a
+// failure: it is neither a write nor a length cut, and it must not be either.
+check('the fixture reached the tool at all — it was not refused by the chat fence',
+	!/is not in this chat's workspace/i.test(cut),
+	(cut.match(/Refused:[^\n]*/) || ['no refusal'])[0]);
 check('under 4096 the write does NOT complete',
-	!/Wrote \d+ bytes to big\.js/.test(cut),
+	!wrote(cut, BIG),
 	cut.match(/Wrote \d+ bytes[^\n]*/)?.[0] || 'no write recorded');
 check('under 4096 the failure is REPORTED as a length cut, not left as bad JSON',
 	/ran out of room/i.test(cut), (cut.match(/ran out of room[^\n]*/) || ['(no notice)'])[0]);
@@ -227,13 +312,30 @@ await shot(s, 'replylen-cut');
 
 await setReplyLength(0);           // 0 = Automatic
 clearLog();
-await freshChat();
-const whole = await chat(s, '@write 400 big.js', { timeout: 60000 });
+const wholeDir = await freshChat();
+const BIG2  = `${wholeDir}/big.js`;
+const whole = await chat(s, `@write 400 ${BIG2}`, { timeout: 60000 });
 const askWhole = lastAsk();
-const wrote = (whole.match(/Wrote (\d+) bytes to big\.js/) || [])[1];
+const said = (wrote(whole, BIG2) || [])[1];
 check('Automatic sends the raised default', askWhole === AUTO_MAX, `max_tokens=${askWhole}`);
+// Said here as well as in 2a, and it is here that it bites: at 4096 the reply is
+// cut before any tool call is made, so there is nothing for the fence to refuse.
+// This is the turn that DOES reach the tool, and a refusal is what it used to
+// come back with.
+check('the write reached the tool at all — it was not refused by the chat fence',
+	!/is not in this chat's workspace/i.test(whole),
+	(whole.match(/Refused:[^\n]*/) || ['no refusal'])[0]);
 check('under the new default the same 400-line write completes',
-	!!wrote, wrote ? `${wrote} bytes written` : 'no write recorded');
+	!!said, said ? `${said} bytes written` : 'no write recorded');
+// The transcript is what the MODEL was told. The file is the thing the user
+// keeps, so it is read back through the engine's own door -- not fenced,
+// because it is not a chat -- and its size compared with what was claimed.
+const onDisk = await p.evaluate(async (f) => {
+	try { return (await (await import('/pkg/oxedyne_daimond.js')).read_file(f)).length; }
+	catch (e) { return -1; }
+}, BIG2);
+check('and the file is really there, the size it said',
+	said && onDisk === Number(said), `${onDisk} bytes at ${BIG2}`);
 check('and nothing is reported as cut', !/ran out of room/i.test(whole));
 await shot(s, 'replylen-whole');
 

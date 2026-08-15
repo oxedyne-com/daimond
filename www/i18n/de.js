@@ -38,6 +38,7 @@
 	'copy.what_device': 'Die ID von {name}',
 	'copy.what_model': 'Modell-ID {id}',
 	'copy.what_default_model': 'Die ID des Standardmodells',
+	'copy.what_handle':        'Deinen öffentlichen Namen',
 
 	// ── The top bar ────────────────────────────────────────────
 	'topbar.menu': 'Menü',
@@ -58,6 +59,7 @@
 	'about.title': 'Über Daimond',
 	'about.splash_alt': 'Eine Gestalt fliegt durch die Nacht auf einen Diamanten zu, über der Rundung eines Planeten.',
 	'about.what': 'Daimond ist ein KI-Agenten-Arbeitsplatz im Browser. Kein Konto auf einem Server, nichts herunterzuladen. Deine Chats, Schlüssel und Dateien bleiben auf diesem Gerät.',
+	'about.verify': 'Diesen Build gegen den veröffentlichten Quellcode prüfen',
 
 	// ── Panel names ────────────────────────────────────────────
 	'panel.rail': 'Diamonds',
@@ -211,6 +213,23 @@
 	'beta.done_plain':         'Dieses Gerät hat ein Daimond-Konto.',
 	'beta.done_handle':        'Andere sehen dieses Konto als {handle}.',
 	'beta.done_not_signed_in': 'Der Zugangscode wurde eingelöst und das Konto besteht, aber dieses Gerät konnte die Anmeldung gerade nicht abschließen. Es versucht es von selbst erneut.',
+
+	// ── Das Einzige, worum Testende gebeten werden ─────────────
+	// Steht wie die ganze Tabelle noch vor der muttersprachlichen Prüfung.
+	// `tel_never` ist eine Aussage über den Code, kein Versprechen über unsere
+	// Sorgfalt, und darf nicht zu „wir erheben keine personenbezogenen Daten“
+	// abgeschwächt werden.
+	'beta.tel_title':    'Nutzungszahlen senden?',
+	'beta.tel_title_on': 'Nutzungszahlen',
+	'beta.tel_lead':     'Der Test nützt uns viel mehr, wenn Daimond melden kann, wie es benutzt wird. Gesendet werden nur Zahlen: welches von zwanzig Dingen passiert ist, wie viele Millisekunden nach Sitzungsbeginn, und je ein Zählwert — wie lange ein Zug gedauert hat, welches Panel geöffnet wurde, wie viele Fehler aufgetreten sind.',
+	'beta.tel_never':    'Wörter werden nie gesendet. Keine Nachricht, kein Dateiname, kein Name eines Diamonds, kein Pfad, keine Fehlermeldung. Es gibt kein Feld dafür, und unser Server weist jede Meldung zurück, die eines enthält.',
+	'beta.tel_who':      'Es geht an Oxedyne, an das Konto, das dein Zugangscode angelegt hat — wir sehen also, welche Zahlen von dir sind, und können dich dazu ansprechen.',
+	'beta.tel_free':     'Nein zu sagen kostet dich nichts. Dein Konto, Pro und alles andere bleiben genau so, und in der App verhält sich nichts anders.',
+	'beta.tel_more':     'Was genau gesendet wird',
+	'beta.tel_yes':      'Nutzungszahlen senden',
+	'beta.tel_no':       'Nicht senden',
+	'beta.tel_on':       'Daimond sendet für dieses Konto Nutzungszahlen: nur Zahlen, nie Wörter.',
+	'beta.tel_stop':     'Keine Nutzungszahlen mehr senden',
 
 	// ── Die Eingangstür ────────────────────────────────────────
 	// Maschinell übersetzt, von keiner Muttersprachlerin gelesen.
@@ -556,6 +575,11 @@
 	// ── Cloud storage cleanup ──────────────────────────────────
 	'chunks.sweep_held': 'Aufräumen angehalten',
 	'chunks.sweep_held_reason': 'Der Cloud-Speicher hält {n} von {m} gespeicherten Teilen, auf die keine Datei dieses Kontos mehr verweist. Gelöscht wurden sie NICHT, denn eine einzelne Anfrage darf nie mehr als die Hälfte des Gespeicherten entfernen. Von deinen Daten fehlt nichts; der Platz wird beim nächsten Sync frei, der alles zuordnen kann.',
+	'chunks.upload_refused':    'Hochladen angehalten',
+	'chunks.upload_refused_title': 'Der Cloud-Speicher hat das Hochladen abgelehnt',
+	'chunks.sweep_confirm_ask': 'Jetzt löschen? Nichts, was du noch sehen kannst, wird angetastet, und der Platz wird frei.',
+	'chunks.sweep_confirm_ok':  'Die Teile löschen',
+	'chunks.sweep_confirm_title': 'Die Teile freigeben, auf die nichts mehr verweist?',
 
 	// ── Pairing a second device ────────────────────────────────
 	'pair.link_another': 'Anderes Gerät verknüpfen',
@@ -1037,6 +1061,9 @@
 	'home.account_note': 'Ein Konto ist eine Passphrase, die auf diesem Gerät bleibt. Sie verschlüsselt deinen API-Schlüssel und meldet dich für Guthaben an. Nichts verlässt den Browser.',
 	'home.fingerprint': 'Der Identitäts-Fingerabdruck deines Geräts',
 	'home.change_name': 'Namen ändern…',
+	'home.handle_help': 'Dein öffentlicher Name: der Name, den andere sehen, auf jedem Gerät dieses Kontos derselbe.',
+	'home.change_handle': 'Öffentlichen Namen ändern…',
+	'handle.rename_title': 'Öffentlichen Namen ändern',
 	'home.change_passphrase': 'Passphrase ändern…',
 	'home.add_passkey': 'Passkey hinzufügen…',
 	'home.remove_passkey': 'Passkey entfernen',
@@ -1083,6 +1110,7 @@
 	'push.err_host':     'Gib den Host an, zu dem gepusht wird, etwa github.com — oder leere das Token-Feld, um die Zugangsdaten zu entfernen.',
 	'push.err_not_held': 'Das wurde nicht angenommen, es sind also keine Push-Zugangsdaten hinterlegt. Prüfe Host und Token.',
 	'push.not_resealed': 'Deine Passphrase hat sich geändert, aber das Push-Token ließ sich damit nicht neu verschlüsseln. Pushen funktioniert bis zum Neuladen. Setze das Token erneut, um es zu behalten.',
+	'push.the_token':    'dein Push-Token',
 
 	// ── The devices that sync this account ─────────────────────
 	'devices.on_platform': '{brand} auf {platform}',
@@ -1784,6 +1812,18 @@
 	'changepass.failed_body': 'Deine jetzige Passphrase stimmte nicht. Es wurde nichts geändert.',
 	'changepass.careful': 'Vorsicht',
 	'changepass.key_not_resealed': 'Die Passphrase wurde geändert, aber dein API-Schlüssel ließ sich nicht neu verschlüsseln. Gib ihn in den Einstellungen erneut ein.',
+	'changepass.mail_not_resealed': 'Diese Postfächer ließen sich nicht unter der neuen Passphrase neu verschlüsseln und brauchen ihre Passwörter noch einmal: {list}.',
+	'changepass.mail_not_unsealed': 'Diese Postfächer ließen sich schon unter der alten Passphrase nicht lesen, ihre Passwörter müssen also weiterhin neu gesetzt werden: {list}.',
+	'changepass.models_not_resealed': 'Diese Anbieter ließen sich nicht unter der neuen Passphrase neu verschlüsseln und brauchen ihre Schlüssel noch einmal: {list}.',
+	'changepass.models_not_unsealed': 'Diese Anbieter hatten schon vor der Änderung unlesbare Schlüssel und brauchen sie weiterhin neu gesetzt: {list}.',
+	'changepass.all_of_them':      'alle davon',
+	'changepass.the_api_key':      'dein API-Schlüssel',
+	'changepass.search_not_resealed': 'Diese Suchdienste ließen sich nicht unter der neuen Passphrase neu verschlüsseln und brauchen ihre Schlüssel noch einmal: {list}.',
+	'changepass.search_not_unsealed': 'Diese Suchdienste hatten schon vor der Änderung unlesbare Schlüssel und brauchen sie weiterhin neu gesetzt: {list}.',
+	'changepass.voice_not_resealed': 'Deine Schmiede-Stimme ließ sich nicht unter der neuen Passphrase neu verschlüsseln. Setze sie erneut aus der Zeile, die die Schmiede für dich ausgegeben hat.',
+	'changepass.voice_not_unsealed': 'Deine Schmiede-Stimme ließ sich unter der alten Passphrase nicht lesen, sie muss also weiterhin erneut aus der Zeile gesetzt werden, die die Schmiede für dich ausgegeben hat.',
+	'changepass.rekey_generic':    '{who}: {list}.',
+	'changepass.rekey_failed':     'Ein Teil dessen, was hier gespeichert ist, ließ sich nicht unter der neuen Passphrase neu verschlüsseln. Prüfe deine Schlüssel und Postfach-Passwörter in den Einstellungen.',
 	'changepass.changed': 'Passphrase geändert',
 	'changepass.changed_body': 'Deine neue Passphrase ist aktiv. Dein gespeicherter API-Schlüssel wurde damit neu verschlüsselt.',
 	'changepass.passkey_stale': 'Dein Passkey ließ sich nicht aktualisieren, er wird also nach der neuen Passphrase fragen. Füge ihn in den Einstellungen neu hinzu.',
@@ -1791,6 +1831,8 @@
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable': 'Diese Backup-Datei ließ sich nicht lesen.',
 	'backup.not_a_backup': 'Das ist kein Daimond-Backup.',
+	'backup.version_title': 'Dieses Backup ist neuer als dieses Daimond',
+	'backup.version_body': 'Die Datei wurde im Backup-Format {found} geschrieben, dieser Build liest Format {known}. Es wurde nichts wiederhergestellt, und in der Datei wurde nichts geändert. Aktualisiere Daimond und öffne sie erneut.',
 	'backup.identity_title': 'Kontoidentität wiederhergestellt',
 	'backup.identity_body': 'Das Backup enthielt die Identität für „{name}“, dieser Browser ist also jetzt dieses Konto, samt dem auf dem Server gehaltenen Guthaben und der Pro-Lizenz. Entsperre mit der Passphrase dieses Kontos; das Backup enthält sie nicht, und nichts sonst öffnet das Konto.',
 	'backup.identity_kept': 'Dieser Browser hält bereits ein Konto, deshalb blieb die Identität für \u201e{name}\u201c aus dem Backup unangetastet. Alles andere wurde wiederhergestellt.',
@@ -1941,6 +1983,8 @@
 	'tile.daimon_reset_body': 'Das Gespräch dieses Daimons ({n} Nachrichten) wird verworfen, und die nächste Anweisung beginnt ein neues. Nichts geht in den Kristall — falte es vorher, wenn etwas davon erhaltenswert ist. Kristall, Dateien und Verknüpfungen bleiben unberührt.',
 	'tile.daimon_reset_ok': 'Gespräch verwerfen',
 	'tile.daimon_reset_done': 'Ein neuer Daimon. Der Kristall ist unberührt.',
+	'tile.daimon_reset_busy_title': 'Der Daimon arbeitet noch',
+	'tile.daimon_reset_busy': 'Dieser Daimon ist mitten in einem Zug. Seine Antwort landete in dem Gespräch, das du gerade verwerfen willst, und das Gespräch, das das Modell hält, ebenso — deshalb wird noch nichts verworfen. Beende den Zug zuerst: solange er läuft, heißt der Knopf am Eingabefeld Stopp.',
 	'tile.model_workers': 'Arbeiter',
 	'tile.model_vision': 'Arbeiter, Bilder',
 	'tile.model_vision_help': 'Das Modell, auf dem ein Arbeiter läuft, wenn seine Aufgabe ein Bild nennt. Daimond kann nicht prüfen, ob ein Modell sehen kann – die Wahl liegt bei dir.',
@@ -2153,6 +2197,15 @@
 	'improve.voice_forget_help': 'Die Kopie auf diesem Gerät entfernen.',
 	'improve.voice_forgotten': 'Die Kopie auf diesem Gerät ist weg.',
 	'improve.voice_ask_forget': 'Deine Stimme auf diesem Gerät vergessen? Die Schmiede hat sie einmal gezeigt und kann sie nicht noch einmal zeigen.',
+	'voice.err.empty':          'Zum Schreiben auf der Schmiede wird eine Stimme gebraucht.',
+	'voice.err.shape':          'Das sieht nicht nach einer Stimme aus. Kopiere die ganze Zeile, die die Schmiede ausgegeben hat.',
+	'voice.err.short':          'Das ist kürzer als jede Stimme, die die Schmiede ausgibt. Kopiere die ganze Zeile.',
+	'voice.err.long':           'Das ist länger, als eine Stimme sein kann.',
+	'voice.err.locked':         'Entsperre Daimond zuerst: deine Stimme wird unter deiner Passphrase verschlüsselt aufbewahrt.',
+	'voice.err.locked_send':    'Entsperre Daimond, um auf der Schmiede zu schreiben: deine Stimme ist unter deiner Passphrase verschlüsselt.',
+	'voice.err.unreadable':     'Deine Stimme lässt sich mit dieser Passphrase nicht lesen. Setze sie erneut aus der Zeile, die die Schmiede für dich ausgegeben hat.',
+	'voice.err.inurl':          'Eine Stimme gehört in einen Header, nie in eine Adresse.',
+	'voice.the_voice':          'deine Schmiede-Stimme',
 
 	// Vorschläge werden aus der Schmiede gelesen, während man hinsieht. Nichts
 	// meldet, wann einer beantwortet wurde, und kein Satz hier darf das andeuten.

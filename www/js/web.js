@@ -513,7 +513,27 @@
 		mirrorWhy = '';
 		claimPage('');           // nothing still coming may repaint this panel
 		if (hasExt() && state.driver === 'ext') { try { await ext('close'); } catch (e) { /* gone */ } }
-		els.frame.removeAttribute('src');
+		// The frame is NAVIGATED away from the closed page, not emptied.
+		//
+		// `removeAttribute('src')` DESTROYS the frame's browsing context, and
+		// `render` below then puts a new one straight back: it sees `driver ===
+		// 'none'`, and its idle branch calls `guide('index.html', true)`, which
+		// assigns `els.frame.src`. Torn down and re-created in the same task, at
+		// the same URL -- Chromium reuses the frame id for the new one and
+		// Playwright's frame manager asserts on the re-attach, killing the page.
+		// Measured 2026-08-14 in world 18: `DaimondWeb.close()` twice in a row,
+		// and `dev/verify_webwatch.mjs` had been dying at case C on the close
+		// after case A ever since it was written, for the same reason.
+		//
+		// Letting `render` navigate the frame to the guide discards the closed
+		// page's document just as thoroughly, and the frame survives it. The only
+		// case that still has to blank the frame by hand is a panel that was
+		// never built, where there is no `render` to put anything back.
+		//
+		// The disowning above is NOT what changed: an open may still be in flight,
+		// and `claimPage('')` is what stops its late answer painting a panel the
+		// user has closed.
+		if (!els.url) els.frame.removeAttribute('src');
 		state.driver = 'none';
 		state.url = '';
 		state.title = '';
@@ -538,7 +558,17 @@
 		state.mode   = 'idle';
 		note('');
 		els.frame.style.visibility = '';
-		els.frame.src = 'guide/' + (sub || 'index.html');
+		// The RESTING call does not re-navigate a frame that is already there.
+		//
+		// Re-assigning the src a frame already holds is not a no-op: the document
+		// is torn down and loaded again, so the reader's place in the guide is
+		// thrown away. `render`'s idle branch makes that call on every close, and
+		// nobody asked for it. An EXPLICIT `guide()` -- the header "?" -- still
+		// re-assigns, because asking for the guide while looking at it means
+		// reload; dev/verify_webback.mjs depends on exactly that to get a fresh
+		// document into the frame after it has taken the sandbox off.
+		var want = 'guide/' + (sub || 'index.html');
+		if (!noShow || els.frame.getAttribute('src') !== want) els.frame.src = want;
 		render();
 		// `noShow` is set when the guide is loaded as the panel's own resting
 		// content (see render), where forcing the panel open would be wrong. The

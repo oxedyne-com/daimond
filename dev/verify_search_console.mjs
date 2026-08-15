@@ -96,7 +96,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { requireFreshGateway } from './gwbin.mjs';
+import { requireFreshGateway, GWCWD } from './gwbin.mjs';
 import { signInFresh } from './session.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
@@ -641,7 +641,7 @@ let gw = null;
 async function startGateway(ownerAccount) {
 	if (gw) { try { gw.kill('SIGKILL'); } catch (e) {} await sleep(1500); }
 	gw = launch(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
-		cwd: GWDIR,
+		cwd: GWCWD,
 		env: { ...process.env, APP_MODE: 'sandbox',
 			...(ownerAccount ? { DAIMOND_OWNER_ACCOUNTS: ownerAccount } : {}) },
 		stdio: ['ignore', 'ignore', 'ignore'],

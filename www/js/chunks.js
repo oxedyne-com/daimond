@@ -41,6 +41,13 @@
    than half the account's chunks deletes NOTHING and comes back
    `sweep_held_back`/`sweep_held`/`sweep_token`. See `commit` for what
    this client does with that, and why it does not simply say yes.
+
+   AND WHAT IT LEAVES STANDING IS NOW SOMETHING A PERSON CAN ANSWER. The
+   chip in the top bar is a button: it asks, and then re-sends the parked
+   commit with its token. The parked commit is written to localStorage,
+   because only the gateway can mint that token and a reload used to throw
+   it away — leaving chunks nobody refers to in a store nobody sweeps, on
+   an account that is billed for them.
    ============================================================ */
 (function () {
 	'use strict';
@@ -143,14 +150,40 @@
 	}
 
 	/// Upload a batch of {addr, blob} pieces.
+	///
+	/// THE GATEWAY'S OWN SENTENCE IS KEPT. This threw `chunk put failed: 507` and
+	/// dropped `res.json.error` on the floor, which is the difference between a
+	/// person being told "This account has reached its cloud storage limit. Delete
+	/// something, or ask for more room." and being shown a number they cannot look
+	/// up. The gateway composes four such sentences on this one route — two 507s
+	/// (the account's ceiling and the store's), a 503 and a 413 — and each of them
+	/// names the remedy, which a status code by definition cannot. Same shape as
+	/// every other refusal in this app: `(j && j.error) || ('HTTP ' + status)`,
+	/// see gateway.js, tools.js, mail.js and web.js.
+	///
+	/// AND IT IS SAID, not merely thrown. `collectChunked` in daimond.js catches
+	/// every offload failure and discards it ("retry next sync, index unharmed"),
+	/// so an exception carrying a perfect sentence still reaches nobody. This file
+	/// already owns a chip and an event for standing facts; a refused upload is
+	/// one, and the most consequential kind, because the user's work has stopped
+	/// travelling. `standRefused` is what puts it in front of them.
 	async function putChunks(chunks) {
 		for (var i = 0; i < chunks.length; i += HAVE_BATCH) {
 			var slice = chunks.slice(i, i + HAVE_BATCH);
 			var res = await call({ op: 'put', chunks: slice });
 			if (res.status !== 200 || !res.json || !res.json.ok) {
-				throw new Error('chunk put failed: ' + res.status);
+				var msg = (res.json && (res.json.error || res.json.message))
+					|| ('HTTP ' + res.status);
+				standRefused(msg, res.status);
+				var e = new Error(msg);
+				e.status = res.status;		// for a caller that wants to branch on it.
+				throw e;
 			}
 		}
+		// A batch that landed is proof the refusal has lifted: the ceiling was
+		// raised, or something was deleted, or the store stopped being busy.
+		// Nothing else clears it, because nothing else knows.
+		clearRefused();
 	}
 
 	/// Fetch one chunk's ciphertext bytes by address, or null if the gateway no
@@ -441,17 +474,155 @@
 	// standing on the chip rather than swallowed.
 	var heldSweep = null;		// {body, n, m, token, why, at} while a deletion stands uncollected.
 	var confirmed = 0;			// Large sweeps this page has carried out, for the verifier.
+	var refusal   = null;		// {msg, status, at} while the gateway is turning uploads away.
+	var persisted = false;		// Did the standing deletion actually reach localStorage?
 
-	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+	/// What the app says, in the reader's language, falling back to English while
+	/// a key has no entry anywhere.
+	///
+	/// The twin of `tOr` in daimond.js and of `t` in legal.js: `DaimondI18n.t`
+	/// answers with the KEY when the table has no entry, which would put
+	/// `chunks.sweep_confirm_ok` on a button. The keys added with the control
+	/// below are new and the locale tables are another lane's file, so each
+	/// carries the English it means and the tables can catch up without this file
+	/// ever showing a bare key.
+	function t(k, fallback, v) {
+		var i18n = window.DaimondI18n;
+		if (i18n && i18n.has && i18n.has(k)) return i18n.t(k, v);
+		return fallback == null ? k : fallback;
+	}
 
-	/// The chip that says a deletion is standing, drawn beside sync's.
+	// ── A standing deletion outlives the page that found it ────
+	//
+	// `heldSweep` used to be a module variable and nothing else, which made the
+	// whole feature a thing you had to be looking at to use: reload, and the body
+	// and the token were gone. That matters more than losing a notice, because
+	// THIS CLIENT CANNOT MINT A TOKEN. Only the gateway does, only in answer to a
+	// commit, and only over the doomed set as it stood at that moment. So a
+	// dropped token is not re-derivable here at all; it comes back when the next
+	// commit round is held back in the same way, and on a device where sync is
+	// not running — no Pro, a safe start, an unmerged workspace — that round never
+	// comes. Meanwhile the chunks nobody refers to sit in the account's store, and
+	// the storage ceilings are computed from the committed index rather than from
+	// what is held, so they are charged to no cap and swept by nothing.
+	//
+	// WHAT IS WRITTEN. The commit body — content addresses, ciphertext sizes and a
+	// one-letter tier — plus the token and the two counts. Hashes and numbers: the
+	// same class of thing the chunk map beside it already keeps, and nothing that
+	// says what any file is or contains.
+	//
+	// WHAT IT DOES NOT PROMISE. A restored token is only as good as the account it
+	// was minted against. If another device has uploaded or committed since, the
+	// gateway's digest no longer matches and the sweep is simply held back again
+	// with a fresh token, which `standHeld` records. That is the interlock working,
+	// not a failure, and it is why a stale entry is safe to keep rather than
+	// something that has to be expired on a timer.
+	var HELD_KEY = 'daimond-chunk-held';
+	/// Roughly two thousand addresses. Above this the entry stays in memory only:
+	/// localStorage is five megabytes for the whole origin and shared with the
+	/// chunk map, the chats' spill and everything else, and evicting somebody's
+	/// work to remember a deletion would be the wrong trade. `state().persisted`
+	/// says which of the two happened rather than leaving it to be guessed.
+	var HELD_MAX_BYTES = 256 * 1024;
+
+	/// Whose deletion this is: the identity fingerprint, which is a prefix of the
+	/// public key's digest and therefore not a secret.
+	///
+	/// STORED BECAUSE THE KEY OUTLIVES THE ACCOUNT. `forgetIdentity` in daimond.js
+	/// sweeps a NAMED list of `daimond-*` keys for the primary account, and the
+	/// primary's keys are un-namespaced — so anything not on that list is
+	/// inherited whole by the next identity made in this browser. A held sweep is
+	/// a commit body for an account that no longer exists: it would paint a chip
+	/// for a stranger and, if pressed, send a token the gateway can only refuse.
+	/// Binding the record to the fingerprint answers that here rather than by
+	/// adding a line to a list in another lane's file — and it answers the same
+	/// question for a restored backup and for switching accounts.
+	function whoseFp() {
+		try { return (window.DaimondIdentity && DaimondIdentity.fingerprint()) || ''; }
+		catch (e) { return ''; }
+	}
+
+	function writeHeld() {
+		persisted = false;
+		if (!heldSweep) { try { localStorage.removeItem(HELD_KEY); } catch (e) { /* private mode */ } return; }
+		var s;
+		try { s = JSON.stringify({
+			body:  heldSweep.body,
+			n:     heldSweep.n,
+			m:     heldSweep.m,
+			token: heldSweep.token,
+			why:   heldSweep.why,
+			at:    heldSweep.at,
+			fp:    whoseFp(),
+		}); } catch (e) { return; }
+		if (s.length > HELD_MAX_BYTES) {
+			log('standing deletion too large to persist (', s.length, 'bytes ) — held in memory only');
+			try { localStorage.removeItem(HELD_KEY); } catch (e) { /* private mode */ }
+			return;
+		}
+		try { localStorage.setItem(HELD_KEY, s); persisted = true; }
+		catch (e) { /* quota or private mode: it stands for this sitting only */ }
+	}
+
+	/// The standing deletion this device last recorded, or null.
+	///
+	/// Shape-checked rather than trusted: a half-written or hand-edited entry
+	/// would otherwise become a commit body, and the one thing this file must
+	/// never do is send a deletion it cannot account for.
+	function readHeld() {
+		var raw;
+		try { raw = localStorage.getItem(HELD_KEY); } catch (e) { return null; }
+		if (!raw) return null;
+		var h;
+		try { h = JSON.parse(raw); } catch (e) { return null; }
+		if (!h || typeof h !== 'object') return null;
+		if (!h.body || h.body.op !== 'commit' || !Array.isArray(h.body.chunks)) return null;
+		if (typeof h.token !== 'string' || !h.token) return null;
+		// Somebody else's deletion, or nobody's. Dropped rather than shown: see
+		// `whoseFp`.
+		var fp = whoseFp();
+		if (!fp || h.fp !== fp) {
+			try { localStorage.removeItem(HELD_KEY); } catch (e) { /* private mode */ }
+			return null;
+		}
+		return {
+			body:  h.body,
+			n:     h.n | 0,
+			m:     h.m | 0,
+			token: h.token,
+			why:   typeof h.why === 'string' ? h.why : '',
+			at:    typeof h.at === 'number' ? h.at : 0,
+		};
+	}
+
+	/// The chip that says something is standing, drawn beside sync's.
 	///
 	/// It is sync's chip in everything but ownership: same row, same shape, same
 	/// `stalled` colour, standing rather than fading, reason on hover, and never
-	/// a dialog over the app. It is a separate element only because `setStatus`
-	/// is private to sync.js and a held-back sweep outlives the round that found
-	/// it — sync paints "Synced" the instant `commit` returns, so anything this
-	/// file wrote into that chip would live for no time at all.
+	/// a dialog over the app unasked. It is a separate element only because
+	/// `setStatus` is private to sync.js and a held-back sweep outlives the round
+	/// that found it — sync paints "Synced" the instant `commit` returns, so
+	/// anything this file wrote into that chip would live for no time at all.
+	///
+	/// A BUTTON, AND THAT IS THE FIX. It was a `role="status"` div: a permanent
+	/// amber pill saying a deletion was standing, with nothing anywhere in the app
+	/// that could carry the deletion out. `confirmHeldSweep` — the only code that
+	/// re-sends the body with its token — had no production caller at all, so the
+	/// notice was the whole feature. The chip is where the fact already lives and
+	/// the top bar is where this app already puts standing facts a person can act
+	/// on (`#update-chip` is a button in the same row), so the control goes here.
+	///
+	/// The Credits drawer was the other candidate — it is where the app answers
+	/// "what account have I got and what does it cost me", and cloud storage is
+	/// part of that answer. It is not used, for a plain reason: `drawCredits`
+	/// belongs to daimond.js, its one published extension point
+	/// (`DaimondCredits.render`) is already taken by passcode.js, and a second
+	/// surface for a fact that is already on screen is a second thing to keep in
+	/// step. One control, where the notice is.
+	///
+	/// `aria-live` rather than `role="status"`: the live region has to move to the
+	/// button, because a button containing a status region announces the region
+	/// and leaves the control unnamed.
 	var _chip = null;
 	function chip() {
 		if (_chip) return _chip;
@@ -466,14 +637,17 @@
 				// A deletion that did not happen is not an error and not a success:
 				// something is standing that the operator can act on, which is what
 				// --warn is for everywhere else in the app.
-				'color:var(--warn);white-space:nowrap}' +
+				'color:var(--warn);white-space:nowrap;cursor:pointer;font:inherit;font-size:var(--fs-xs)}' +
+				'#chunk-chip:hover,#chunk-chip:focus-visible{border-color:var(--warn)}' +
 				'#chunk-chip .cdot{width:6px;height:6px;border-radius:50%;background:currentColor}';
 			document.head.appendChild(st);
 		}
-		var c = document.createElement('div');
+		var c = document.createElement('button');
 		c.id = 'chunk-chip';
-		c.setAttribute('role', 'status');
-		c.innerHTML = '<span class="cdot"></span><span class="ctext"></span>';
+		c.type = 'button';			// never submit an enclosing form.
+		c.setAttribute('aria-live', 'polite');
+		c.innerHTML = '<span class="cdot" aria-hidden="true"></span><span class="ctext"></span>';
+		c.addEventListener('click', function () { onChipClick(); });
 		var sib = document.getElementById('sync-chip');
 		if (sib && sib.parentNode === actions) actions.insertBefore(c, sib);
 		else actions.appendChild(c);
@@ -481,23 +655,83 @@
 		return c;
 	}
 
+	/// The reason sentence for the deletion that is standing.
+	function heldReason() {
+		return t('chunks.sweep_held_reason', 'Cloud storage holds pieces that no file '
+			+ 'on this account still refers to. They have NOT been deleted, because no '
+			+ 'single request may remove more than half of what is stored.',
+			{ n: heldSweep ? heldSweep.n : 0, m: heldSweep ? heldSweep.m : 0 });
+	}
+
 	/// Show or hide the standing notice, and tell anything else that is watching.
+	///
+	/// A refused upload outranks a held-back deletion, because the two are not
+	/// equally urgent: one means the user's work has stopped travelling, the other
+	/// means some space has not been reclaimed yet. They compose rather than
+	/// compete — "delete something, or ask for more room" and a deletion waiting to
+	/// be authorised are the same conversation — so when both stand the chip says
+	/// the refusal and the dialog behind it carries both.
 	///
 	/// The event mirrors gateway.js's `daimond:credits`: one place owns the fact
 	/// and announces it, rather than every panel that wants it polling for it.
 	function draw() {
 		var c = chip();
 		if (c) {
-			if (!heldSweep) c.style.display = 'none';
+			if (!heldSweep && !refusal) c.style.display = 'none';
 			else {
-				c.querySelector('.ctext').textContent = t('chunks.sweep_held');
-				c.title = t('chunks.sweep_held_reason', { n: heldSweep.n, m: heldSweep.m });
+				var text  = refusal
+					? t('chunks.upload_refused', 'Uploads paused')
+					: t('chunks.sweep_held', 'Cleanup paused');
+				var title = refusal ? refusal.msg : heldReason();
+				c.querySelector('.ctext').textContent = text;
+				c.title = title;
+				c.setAttribute('aria-label', text + '. ' + title);
 				c.style.display = 'inline-flex';
 			}
 		}
 		try {
 			window.dispatchEvent(new CustomEvent('daimond:chunks', { detail: state() }));
 		} catch (e) { /* no window to tell */ }
+	}
+
+	/// The chip was pressed. Say what is standing, and offer the one act that
+	/// answers it.
+	///
+	/// ASKED, ALWAYS. `confirmHeldSweep` deletes on a person's word rather than on
+	/// the engine's, so the word has to be given here rather than assumed from a
+	/// tap on a pill in a top bar. With no dialog to ask through — a stripped build,
+	/// or this script running without the module — nothing is deleted: a
+	/// destructive act with no way to put the question is not carried out. It is
+	/// not escalated to `window.confirm` either, which is an OS box with the origin
+	/// in its title and is exactly what `DaimondCore.confirm` exists to replace.
+	async function onChipClick() {
+		var core = window.DaimondCore;
+		if (!core || !core.confirm) { log('no dialog available; the chip cannot ask'); return; }
+		if (!heldSweep) {
+			// A refusal on its own is a notice, not a question: there is nothing
+			// here for the user to authorise. `cancelLabel: null` drops the second
+			// button, which is how daimond.js's dialog draws one.
+			if (!refusal) return;
+			try {
+				await core.confirm(refusal.msg, t('common.close', 'Close'), {
+					title:       t('chunks.upload_refused_title', 'Cloud storage refused an upload'),
+					danger:      false,
+					cancelLabel: null,
+				});
+			} catch (e) { /* the dialog went with a redraw */ }
+			return;
+		}
+		var message = (refusal ? refusal.msg + '\n\n' : '') + heldReason() + '\n\n'
+			+ t('chunks.sweep_confirm_ask',
+				'Delete them now? Nothing you can still see is touched, and the space is freed.');
+		var yes = false;
+		try {
+			yes = await core.confirm(message,
+				t('chunks.sweep_confirm_ok', 'Delete them'),
+				{ title: t('chunks.sweep_confirm_title', 'Free the unreferenced pieces?') });
+		} catch (e) { yes = false; }		// no answer is not a yes.
+		if (!yes) return;
+		await confirmHeldSweep();
 	}
 
 	/// Note a deletion the gateway would not carry out and this client would not
@@ -509,6 +743,7 @@
 	/// so a rebuilt one would name a different deletion.
 	function standHeld(body, n, m, token, why) {
 		heldSweep = { body: body, n: n, m: m, token: token, why: why, at: Date.now() };
+		writeHeld();
 		log('sweep held back:', n, 'of', m, 'chunks not deleted —', why);
 		draw();
 	}
@@ -518,6 +753,28 @@
 	function noteCollected() {
 		if (!heldSweep) return;
 		heldSweep = null;
+		writeHeld();
+		draw();
+	}
+
+	/// The gateway turned an upload away, in its own words.
+	///
+	/// NOT PERSISTED, and the asymmetry with `heldSweep` is the point rather than
+	/// an oversight. A refusal is re-derived by the very next upload attempt: the
+	/// ceiling is still there, the store is still full, and the sentence comes back
+	/// unchanged. A sweep token is not re-derivable by this client at all. Keeping
+	/// a refusal across a reload would therefore only risk showing a ceiling that
+	/// has since been raised.
+	function standRefused(msg, status) {
+		refusal = { msg: String(msg || ''), status: status | 0, at: Date.now() };
+		log('upload refused:', status, msg);
+		draw();
+	}
+
+	/// Uploads are working again.
+	function clearRefused() {
+		if (!refusal) return;
+		refusal = null;
 		draw();
 	}
 
@@ -620,6 +877,8 @@
 	/// really has been emptied — and the only thing in this file that deletes on
 	/// a person's word rather than the engine's. It re-sends the commit exactly
 	/// as it stood, so a set that has moved since is refused by the token.
+	///
+	/// Reached from the chip, through `onChipClick`, which asks first.
 	async function confirmHeldSweep() {
 		if (!heldSweep || !heldSweep.body) return null;
 		var body = heldSweep.body;
@@ -627,7 +886,16 @@
 		var res;
 		try { res = await call(body); }
 		finally { delete body.sweep_token; }
-		if (res.status !== 200 || !res.json || !res.json.ok) return null;
+		if (res.status !== 200 || !res.json || !res.json.ok) {
+			// The person asked for this, so they are told why it did not happen —
+			// in the gateway's own words, which name the remedy. A stale
+			// `blob_version` answers 409 with "pull, merge and commit again", and
+			// returning a bare null left them pressing a chip that did nothing.
+			standRefused((res.json && (res.json.error || res.json.message))
+				|| ('HTTP ' + res.status), res.status);
+			return null;
+		}
+		clearRefused();
 		noteAllowance(res.json);
 		if (res.json.sweep_token) {
 			standHeld(body, res.json.sweep_held_back | 0, res.json.sweep_held | 0,
@@ -651,10 +919,39 @@
 			why:       heldSweep ? heldSweep.why : '',
 			since:     heldSweep ? heldSweep.at : 0,
 			standing:  !!heldSweep,
+			/// Did the standing deletion reach localStorage, so a reload keeps it?
+			/// False when nothing is standing, and false when the body was too
+			/// large to store — which is a real difference and not a detail.
+			persisted: persisted && !!heldSweep,
+			/// The gateway's own sentence for the upload it last turned away, or
+			/// ''. Its words, not a status code: it is the half that names the
+			/// remedy.
+			refused:       refusal ? refusal.msg : '',
+			refusedStatus: refusal ? refusal.status : 0,
 			/// Large sweeps this page has confirmed, for the verifier.
 			confirmed: confirmed,
 		};
 	}
+
+	// ── Boot ───────────────────────────────────────────────────
+	//
+	// Pick up a deletion an earlier sitting left standing, and paint it. Read ONCE,
+	// here: a re-read on every repaint would overwrite a sweep that is standing in
+	// memory because it was too large to store, which is the one case where the two
+	// disagree.
+	//
+	// `draw` is then registered with `DaimondI18n.onChange`, which fires when the
+	// locale table lands as well as on a language change — so the first paint may
+	// carry the English fallbacks and the second carries the reader's own words.
+	(function restore() {
+		heldSweep = readHeld();
+		if (heldSweep) {
+			persisted = true;
+			log('a deletion was left standing:', heldSweep.n, 'of', heldSweep.m, '—', heldSweep.why);
+		}
+		draw();
+		if (window.DaimondI18n && DaimondI18n.onChange) DaimondI18n.onChange(draw);
+	})();
 
 	// ── Public surface ─────────────────────────────────────────
 	window.DaimondChunks = {
@@ -664,8 +961,8 @@
 		chunkSizeFor:      chunkSizeFor,
 		commit:            commit,				// ({path: manifest}, version) -> {swept,...}|null
 		/// A deletion this client declined to confirm, carried out on a person's
-		/// word. Nothing in the app calls it yet; the operator reaches it from the
-		/// console, and a panel that offers it has somewhere to hang.
+		/// word. Reached from the chip in the top bar, which asks first; exported
+		/// as well so a verifier can drive the act without driving a dialog.
 		confirmHeldSweep:  confirmHeldSweep,
 		state:             state,
 		/// Is a re-offload owed because the passphrase changed? Read by

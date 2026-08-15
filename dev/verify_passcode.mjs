@@ -56,7 +56,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { requireFreshGateway, procLog, GWDIR, GWBIN } from './gwbin.mjs';
+import { requireFreshGateway, procLog, GWDIR, GWBIN, openBeta } from './gwbin.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -107,7 +107,11 @@ function buildWorkDir() {
 			+ 'has its shape changed?');
 		process.exit(1);
 	}
-	fs.writeFileSync(path.join(WORK, 'app.jdat'), cfg);
+	// And opened for registration. This file mints passcodes and redeems them,
+	// which means it makes fresh keypairs, and the deployed config's `beta_only`
+	// answers a fresh keypair `403 the beta is closed` -- so with it left shut
+	// the whole minting path never ran at all.
+	fs.writeFileSync(path.join(WORK, 'app.jdat'), openBeta(cfg, 'verify_passcode'));
 	return WORK;
 }
 

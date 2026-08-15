@@ -220,8 +220,11 @@
 	word-break: break-word;
 }
 
+/* Brightened to the full text colour rather than to `--accent`, which is the
+   fill token and reads a rung darker than `--accent-text` on every palette --
+   hovering a link must not dim it. */
 .crystal-fb-link:hover {
-	color: var(--accent);
+	color: var(--text-primary);
 }
 
 /* Everything nobody recognised. Boxed rather than run in with the rest, because

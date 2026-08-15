@@ -51,7 +51,34 @@
 		// null means asked and the answer was no. Switching account clears it,
 		// because it is an answer about whoever is signed in now.
 		role:     undefined,
+		// This account's standing in the closed test, as the GATEWAY sees it on
+		// this bootstrap. `beta` is membership and `wave` is which intake.
+		//
+		// Read from the server on every unlock rather than remembered here,
+		// which is the whole point of them: a passcode revoked in the console
+		// takes the account's status with it, so the next bootstrap says false
+		// and the browser has nothing to re-arm a telemetry recorder from. A
+		// membership cached on the device would be a membership that outlived
+		// its own revocation.
+		beta:     false,
+		wave:     0,
+		// Which account this device is signed in as, as the gateway names it.
+		// Carried because a consent is given by an ACCOUNT and not by a device:
+		// two people sharing a laptop must not inherit each other's answer, and
+		// the only thing that tells them apart here is this.
+		accountId: '',
 	};
+
+	/// Report one of the module's twenty events, naming an offer from its fixed
+	/// table. Never throws, never waits, never changes anything -- the same three
+	/// rules every `tel()` in daimond.js keeps, and the reason these two lines
+	/// can be read past.
+	function telemetry(name, offer) {
+		try {
+			var T = window.DaimondTelemetry;
+			if (T) T.emit(name, T.ordinal(T.OFFERS || [], offer));
+		} catch (e) { /* telemetry may never break a checkout */ }
+	}
 
 	/// The credit packs the gateway will accept. The price is server-owned; this
 	/// is only what we offer, and the gateway re-checks it against its allowlist.
@@ -422,11 +449,7 @@
 	// would be a burst of signatures for one thing that needs doing once. They all
 	// wait on the same attempt.
 	var reauthing   = null;			// the attempt in flight, if there is one.
-	// True while `bootstrap()` is running. Its own calls must never answer a 401
-	// by re-entering the renewal they are part of: the balance read at the end of
-	// a bootstrap that raced a logout would otherwise await the very promise it
-	// is running inside, and the tab would hang there for good.
-	var authing     = false;
+	var bootstrapping = null;		// the bootstrap in flight, if there is one.
 	var reauthTimer = null;			// the standing retry, while the identity is unlocked.
 	var reauthGen   = 0;			// bumped by logout, so a deliberate exit is not undone.
 	var REAUTH_MIN_MS = 5000;		// first retry after a failed renewal.
@@ -439,27 +462,35 @@
 		return path.indexOf('/api/account') === 0 || path.indexOf('/api/auth/') === 0;
 	}
 
-	/// Is this request one that a bootstrap in flight is making ITSELF?
-	///
-	/// Such a request must not answer a 401 by renewing: it would await the very
-	/// promise it is running inside, and the tab would hang there for good. The
-	/// authentication calls are one class of those; the other two are the balance
-	/// and licence reads at the end of `bootstrap()`, and only while one is
-	/// running.
-	///
-	/// Named by PATH rather than taken from the `authing` flag alone, and that
-	/// distinction is the whole point. A flag says only that a bootstrap is
-	/// happening SOMEWHERE, and refusing to renew on the strength of that breaks
-	/// the case this mechanism exists for: several panels are refused in the same
-	/// moment, one of them starts the renewal, and the rest land in the middle of
-	/// it. Those are not the bootstrap's calls and cannot deadlock on it -- they
-	/// simply wait for the attempt in flight and ask again, which is what the
-	/// single-flight `reauth()` is for.
-	function isBootstrapOwn(path) {
-		if (isAuthPath(path)) return true;
-		if (!authing) return false;
-		return path.indexOf('/api/balance') === 0 || path.indexOf('/api/licence') === 0;
-	}
+	// ── A CALL THE BOOTSTRAP IS MAKING ITSELF ──────────────────
+	//
+	// Such a call must never answer a 401 by renewing, because the renewal it
+	// would join is the one it is running inside: `reauth()` is single-flight, so
+	// the call awaits `reauthing`, `reauthing` is awaiting the bootstrap, and the
+	// bootstrap is awaiting the call. Nothing settles, ever.
+	//
+	// THE SYMPTOM THAT DEADLOCK PRODUCES, so nobody undoes this by tidying: a
+	// page that has been open an hour goes completely silent. Not slow, not
+	// erroring -- silent. No request leaves it and no timer fires, because every
+	// panel that meets the expired session joins the same parked `reauthing` and
+	// parks with it, and the standing retry in `armReauth()` is never reached to
+	// arm itself. Only a reload brings the tab back. `dev/verify_gwretry.mjs`
+	// hung on exactly this for two days and reported it as a closed browser.
+	//
+	// OWNERSHIP TRAVELS WITH THE CALL, and that is the fix. It used to be
+	// answered from an `authing` boolean plus a list of paths -- true while a
+	// bootstrap was running anywhere, and `/api/balance` and `/api/licence`
+	// treated as its own while it was. One flag cannot describe TWO bootstraps,
+	// and two is an ordinary state: `reauth()` starts one while a panel calls
+	// `DaimondGateway.bootstrap()` directly (tools.js, mail.js, passcode.js all
+	// do). The first to finish cleared the flag, and the second one's balance and
+	// licence reads -- still in flight, still its own -- were then no longer
+	// recognised as its own. They renewed, joined the promise they were inside,
+	// and the tab went silent. Measured, at four milliseconds between the two.
+	//
+	// So `bootstrap()` is single-flight (below) and every call it makes carries
+	// `own`. A flag another caller can clear is not evidence about THIS call, and
+	// no future read of one can go wrong the same way.
 
 	/// Take a session again after one was refused, once, however many callers ask.
 	///
@@ -480,14 +511,34 @@
 	/// are outside it, and localStorage throws outright where storage access is
 	/// denied. So the wedge is reachable, and it is one keystroke away from being
 	/// reachable again whatever those lines become next.
+	///
+	/// IT DOES NOT CLEAR A SESSION SOMEBODY ELSE IS TAKING. `bootstrap()` is
+	/// single-flight, so where one is already running this renewal JOINS it
+	/// rather than starting another -- and that attempt has very likely set
+	/// `state.authed` true already, because it does so the moment the verify
+	/// returns and before its balance and licence reads. Clearing the flag on
+	/// the way in would then be clearing a session that exists, on an attempt
+	/// this call cannot re-run: the joiner gets `true` back and the false stands.
+	/// Measured on a held balance read: `authed` false, `pro` null, the gateway
+	/// serving that very session 200. It is what put `verify_redeem` at "the code
+	/// was spent and the app never took the account it bought", with the whole
+	/// round green in the gateway's own log.
+	///
+	/// So the flag is cleared only where this call is the one about to go and
+	/// ask, and it is SET FROM THE ANSWER either way. A renewal that reports a
+	/// session and leaves the app saying it has none is the same lie in the other
+	/// direction, and the tail of a bootstrap is a wide enough window to hit.
 	async function reauth() {
 		if (reauthing) return await reauthing;
-		state.authed = false;			// true from here would be a lie, whatever follows.
+		// True from here would be a lie, whatever follows -- but only where there
+		// is no attempt in flight whose own answer is about to say.
+		if (!bootstrapping) state.authed = false;
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return false;
 		var gen = reauthGen;
 		reauthing = (async function () {
 			var got = await bootstrap();
 			if (gen !== reauthGen) { state.authed = false; return false; }	// logged out under us.
+			state.authed = !!got;		// the answer, not the assumption.
 			if (got) {
 				reauthWait = REAUTH_MIN_MS;
 				if (reauthTimer) { clearTimeout(reauthTimer); reauthTimer = null; }
@@ -575,7 +626,14 @@
 			&& FORGE_401.indexOf(body.error) !== -1);
 	}
 
-	async function gwFetch(path, opts) {
+	/// The one gateway request, as described above.
+	///
+	/// # Arguments
+	/// * `path` - The gateway path, query and all.
+	/// * `opts` - The `fetch` options, reused as given on the retry.
+	/// * `own`  - True when `bootstrap()` is making this call ITSELF, which is
+	///            the one case that must not renew. See the note above.
+	async function gwFetch(path, opts, own) {
 		// A paused node never reaches the network. Here as well as in the guard
 		// over `fetch`, because this is the one copy of the gateway rule and a
 		// reader looking for what a call does looks here.
@@ -584,8 +642,9 @@
 		var r = await fetch(path, opts);
 		probeVersion(r);
 		// A call the bootstrap is making itself cannot answer a 401 by
-		// bootstrapping; see isBootstrapOwn. Everything else may.
-		if (r.status !== 401 || isBootstrapOwn(path)) return r;
+		// bootstrapping, and neither can a call that IS the authentication.
+		// Everything else may.
+		if (r.status !== 401 || own || isAuthPath(path)) return r;
 		// NOT EVERY 401 IS OURS. `/api/improve` forwards a tester's VOICE to the
 		// Oregami forge, which answers 401 in its own right -- `unvoiced` for a
 		// missing credential, `unknown` for one it does not recognise. Renewing
@@ -616,13 +675,13 @@
 	/// Pro row rather than showing it unbought, and `operatorRole()` caches its
 	/// null for the rest of the unlock, so a signed-in operator's console entry
 	/// disappeared until they locked and unlocked again.
-	async function post(path, body) {
+	async function post(path, body, own) {
 		var r = await gwFetch(path, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
 			credentials: 'same-origin',
 			body: JSON.stringify(body || {}),
-		});
+		}, own);
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
 		if (!r.ok || !j || j.ok === false) {
@@ -633,11 +692,11 @@
 		return j;
 	}
 
-	async function get(path) {
+	async function get(path, own) {
 		var r = await gwFetch(path, {
 			credentials: 'same-origin',
 			headers: { 'x-daimond-api': String(CLIENT_API) },
-		});
+		}, own);
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
 		if (!r.ok || !j || j.ok === false) {
@@ -684,12 +743,21 @@
 			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
 			credentials: 'same-origin',
 			body: JSON.stringify(body),
-		});
+		}, true);				// the bootstrap's own, always
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
 		if (r.ok && j && j.ok !== false) {
 			noteBalance(j);
-			return { ok: true };
+			// The account's own facts, carried out rather than dropped. This
+			// returned a bare `{ok:true}` and the reply's other fields died
+			// here, which is why the beta wave could not reach the browser on
+			// any round except the redemption itself.
+			return {
+				ok:      true,
+				account: typeof j.account_id === 'string' ? j.account_id : '',
+				beta:    j.beta === true,
+				wave:    typeof j.wave === 'number' ? j.wave : 0,
+			};
 		}
 		return {
 			ok:     false,
@@ -730,16 +798,40 @@
 	/// Both steps are signed with the device key, so this only works while the
 	/// identity is unlocked — which is why it hangs off `afterUnlock()` and not
 	/// off boot.
+	///
+	/// SINGLE-FLIGHT, for the same reason `reauth()` is. Five callers reach this
+	/// -- daimond.js at unlock, tools.js and mail.js when a panel opens on no
+	/// session, passcode.js after a redemption, and `reauth()` itself -- and two
+	/// of them landing together used to run two whole registrations: two
+	/// signatures, two challenges, two sessions minted for one unlock, the second
+	/// quietly replacing the first. Worse, the two tails then straddled: whichever
+	/// finished first said no bootstrap was running, and the other one's own
+	/// balance and licence reads deadlocked the tab on the renewal they were part
+	/// of. See the note above `gwFetch`. They share one attempt now.
 	async function bootstrap() {
+		if (bootstrapping) return await bootstrapping;
+		bootstrapping = bootstrapOnce();
+		try { return await bootstrapping; }
+		finally { bootstrapping = null; }
+	}
+
+	/// One bootstrap, start to finish. Never called directly: `bootstrap()` is
+	/// the door, and it is the thing that keeps there being only one of these.
+	async function bootstrapOnce() {
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return false;
 		state.role = undefined;			// a new unlock is a new question
 		state.pro  = null;			// re-asked for whoever unlocked now
+		// And so is the beta standing. Cleared BEFORE the round rather than
+		// overwritten after it: a bootstrap that fails halfway must leave this
+		// device holding no membership, not the last one it heard about.
+		state.beta = false;
+		state.wave = 0;
+		state.accountId = '';
 		forgetLicenceTerm();			// and so are its dates
 		var pub = DaimondIdentity.publicKeyB64url();
 		if (!pub) return false;
 		var alg = localStorage.getItem('daimond-id-alg') || 'Ed25519';
 
-		authing = true;
 		try {
 			// Register (idempotent: an existing binding is simply re-confirmed).
 			var ts  = Math.floor(Date.now() / 1000);
@@ -770,16 +862,28 @@
 				return false;
 			}
 			forgetRefusal();
+			// This account's standing in the closed test, straight off the
+			// registration reply. Read before the session is taken, because it
+			// describes the account and not the session, and a `false` from a
+			// gateway that answered is worth having even if the round below
+			// fails.
+			state.beta = reg.beta === true;
+			state.wave = (typeof reg.wave === 'number' && isFinite(reg.wave) && reg.wave > 0)
+				? Math.floor(reg.wave) : 0;
+			state.accountId = reg.account || '';
 
 			// Prove possession of the key and take a session.
-			var ch = await post('/api/auth/challenge', { pubkey: pub, alg: alg });
+			// `own` on every one of these: they are this bootstrap's own calls,
+			// and a 401 on one of them must be handed back rather than answered
+			// by re-entering the renewal this is running inside.
+			var ch = await post('/api/auth/challenge', { pubkey: pub, alg: alg }, true);
 			var chSig = await DaimondIdentity.sign(ch.challenge);
-			await post('/api/auth/verify', { challenge_id: ch.challenge_id, sig: chSig });
+			await post('/api/auth/verify', { challenge_id: ch.challenge_id, sig: chSig }, true);
 
 			state.authed = true;
 			state.offline = false;
-			await refreshBalance();
-			await refreshLicence();
+			await refreshBalance(true);
+			await refreshLicence(true);
 			return true;
 		} catch (e) {
 			// The gateway is optional: Daimond is fully usable on a BYOK key with no
@@ -792,8 +896,6 @@
 			// passcode field against a gateway nobody has heard from.
 			forgetRefusal();
 			return false;
-		} finally {
-			authing = false;
 		}
 	}
 
@@ -912,6 +1014,10 @@
 			wave:    typeof j.wave === 'number' ? j.wave : 0,
 			handle:  j.handle || '',
 			authed:  authed,
+			// WHOSE agreement it would be, if they say yes to the question that
+			// follows this reply. An agreement is scoped to an account and not to
+			// a device, so the card that asks needs the id as much as the wave.
+			account: j.account_id || '',
 		};
 	}
 
@@ -921,10 +1027,13 @@
 	/// again here. They used to be, and the second write was not a duplicate: `j.credits_minor ||
 	/// 0` turns a reply that said nothing about money into an explicit zero balance, which is the
 	/// one reading a credit figure must never invent.
-	async function refreshBalance() {
+	///
+	/// `own` is true only where `bootstrap()` calls this as its own last-but-one
+	/// step; see the note above `gwFetch` for what that word buys.
+	async function refreshBalance(own) {
 		if (!state.authed) return null;
 		try {
-			var j = await get('/api/balance');	// `get` adopts the figure through `noteBalance`
+			var j = await get('/api/balance', own);	// `get` adopts the figure through `noteBalance`
 			state.entries = j.entries || [];
 		} catch (e) {
 			// Unknown is a change like any other, and the row that shows this says "—" for it.
@@ -947,6 +1056,10 @@
 		}
 		var j = await post('/api/checkout/credits', { pack_minor: packMinor });
 		if (!j.url) throw new Error(t('gateway.session_no_url'));
+		// Reaching for the offer, which is the signal; buying is the next one and
+		// is reported on the way back from Stripe. Which offer, as a number --
+		// never the amount, which is a fact about this person's money.
+		telemetry('buy.open', 'credits');
 		window.location = j.url;
 	}
 
@@ -1001,6 +1114,7 @@
 		// Already held is not an error to shout about: reflect it and stop.
 		if (r.status === 409) { state.pro = true; return { held: true }; }
 		if (!r.ok || !j || !j.url) throw new Error((j && j.error) || t('gateway.session_no_url'));
+		telemetry('buy.open', 'pro');
 		window.location = j.url;
 		return { held: false };
 	}
@@ -1032,10 +1146,13 @@
 	/// EXPLAINED and not merely obeyed. The gateway deliberately still returns
 	/// the record and its expiry after the term ends, so the app can say which
 	/// licence ended and when, and offer another.
-	async function refreshLicence() {
+	///
+	/// `own` as for `refreshBalance` above: set only by the bootstrap that makes
+	/// this call as part of itself.
+	async function refreshLicence(own) {
 		if (!state.authed) { state.pro = null; return null; }
 		try {
-			var j = await get('/api/licence');
+			var j = await get('/api/licence', own);
 			state.pro = !!(j && j.held);
 			state.proExpiresTs = (j && typeof j.expires_ts === 'number' && j.expires_ts > 0)
 				? j.expires_ts : null;
@@ -1125,6 +1242,24 @@
 	async function logout() {
 		state.authed = false;
 		state.role   = undefined;
+		// The beta standing belongs to whoever was signed in. It goes with them,
+		// and so does anything recording for them: a recorder left armed across
+		// a sign-out would carry the NEXT person's session under the LAST
+		// person's wave.
+		//
+		// `withdraw()` forgets the agreement as well as stopping the recorder,
+		// and that is the behaviour wanted here even though signing out is not
+		// itself a withdrawal. The alternative is a second function that stops
+		// without forgetting, and two near-identical ways to stop is how one of
+		// them ends up being the one a later release calls. The cost is that
+		// signing back in asks again; the Credits drawer carries the same
+		// question with the same words, so there is somewhere to say yes.
+		state.beta = false;
+		state.wave = 0;
+		state.accountId = '';
+		try {
+			if (window.DaimondTelemetry) DaimondTelemetry.withdraw();
+		} catch (e) { /* no telemetry client in this build */ }
 		// A refusal is an answer about the identity that was signed in. It must
 		// not follow the next one onto the screen.
 		forgetRefusal();

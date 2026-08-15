@@ -14,6 +14,31 @@
  *   - British spelling throughout the English.
  *   - Product nouns are NOT translated: Daimond, Diamond, Daimond Pro, Hands.
  *     A "Diamond" is a named object in this app, not the gemstone.
+ *
+ * DECLARATIONS THE CHECKER READS. `dev/i18ncheck.mjs` reads every `tOr`, `tf`
+ * and `tr` call site in the app and asks whether the key it names is in this
+ * table. Two shapes of call site name no key it can read, and each is DECLARED
+ * here rather than skipped there -- a checker with a skip list of its own is the
+ * next thing to go blind:
+ *
+ *   // i18n-family: <prefix> = one two three
+ *       A key built by concatenation, `tOr('<prefix>' + v, …)`. Closed: the
+ *       variants listed are exactly the keys this table holds under that
+ *       prefix, checked both ways, so a variant added to one and not the other
+ *       fails.
+ *
+ *   // i18n-family: <prefix> = open -- <why it cannot be closed>
+ *       The same, where the value comes from outside this app and no list can
+ *       be right. Reported by name on every run with its member count, never
+ *       silently.
+ *
+ *   // i18n-indirect: <file> <expression> = key key
+ *       A call site whose key is held in a variable. The keys it can name are
+ *       written out here; every one must be in this table.
+ *
+ * An undeclared call site of either shape FAILS the check. That is the point:
+ * the declaration is a decision on the record, and a missing one is a question
+ * nobody answered.
  */
 (function () {
 	'use strict';
@@ -49,6 +74,7 @@
 	'copy.what_device':        'the id of {name}',
 	'copy.what_model':         'model id {id}',
 	'copy.what_default_model': 'the default model id',
+	'copy.what_handle':        'your public handle',
 
 	// ── The top bar ────────────────────────────────────────────
 	'topbar.menu':        'Menu',
@@ -76,6 +102,9 @@
 	'about.title':     'About Daimond',
 	'about.splash_alt': 'A figure flying through the night towards a diamond, above the curve of a planet.',
 	'about.what':      'Daimond is an AI agent workspace that runs in your browser. There is no server account and nothing to download. Your chats, keys and files stay on this device.',
+	// The link out to the delivery check. Painted rather than bound to a
+	// `data-i18n` mark -- see the note at daimond.js's `about.verify` call.
+	'about.verify':    'Check this build against the published source',
 
 	// ── Panel names ────────────────────────────────────────────
 	// Short: they ride in a chip row and a phone tab bar.
@@ -173,6 +202,13 @@
 	'home.account_note':      'An account is a passphrase held on this device. It encrypts your API key and signs you in for credits. Nothing leaves the browser.',
 	'home.fingerprint':       'Your device identity fingerprint',
 	'home.change_name':       'Change name…',
+	// The account's PUBLIC name, which is a different thing from the line above:
+	// that one labels this device's keypair and is seen by nobody.
+	'home.handle_help':       'Your public handle: the name other people see, the same on every device of this account.',
+	'home.change_handle':     'Change public handle…',
+	// The dialog that opens is titled without the ellipsis: the row invites, the
+	// dialog states.
+	'handle.rename_title':    'Change public handle',
 	'home.change_passphrase': 'Change passphrase…',
 	'home.add_passkey':       'Add a passkey…',
 	'home.remove_passkey':    'Remove passkey',
@@ -543,6 +579,10 @@
 	// is "Academic" rather than "Research" -- French would otherwise have one
 	// word, Recherche, doing three jobs in one panel: the heading, the engine
 	// and the corpus.
+	// Reached through a lookup table in daimond.js rather than by name, so the
+	// three keys are written out here for the checker: it can read a literal and
+	// it can read a prefix, and it must never guess at a variable.
+	// i18n-indirect: daimond.js kind[k] = search.kind_web search.kind_news search.kind_academic
 	'search.kind_web':        'Web',
 	'search.kind_news':       'News',
 	'search.kind_academic':   'Academic',
@@ -618,6 +658,31 @@
 	'beta.done_plain':         'This device has a Daimond account.',
 	'beta.done_handle':        'Other people see this account as {handle}.',
 	'beta.done_not_signed_in': 'The passcode was spent and the account exists, but this device could not finish signing in just now. It will try again on its own.',
+
+	// ── The one thing a tester is asked to agree to ────────────
+	// Shown after the passcode is spent and the account exists, so declining
+	// cannot cost anybody anything, and again in the Credits drawer for as long
+	// as the account does -- which is what makes "you can turn it off" true.
+	//
+	// NOTHING HERE MAY OVERSTATE OR UNDERSTATE WHAT IS SENT. The whole of it is
+	// `www/js/telemetry.js`: twenty events, each one integer, and no text field
+	// anywhere in the payload. `tel_never` is the sentence that matters most and
+	// it is a claim about the code, not a promise about our care -- so it must
+	// not be softened into "we do not collect personal data" in any language.
+	// `tel_who` says it is not anonymous, because it is not: the numbers arrive
+	// on the account the passcode made, and the passcode carries the note we
+	// wrote about who it was for.
+	'beta.tel_title':    'Send usage counts?',
+	'beta.tel_title_on': 'Usage counts',
+	'beta.tel_lead':     'The test is far more useful to us if Daimond can report how it is being used. It sends numbers only: which of twenty things happened, how many milliseconds into the session, and one count each — how long a turn took, which panel was opened, how many errors were thrown.',
+	'beta.tel_never':    'It never sends words. Not a message, not a file name, not a Diamond’s name, not a path, not an error message. There is no box for them, and our server refuses a report that carries any.',
+	'beta.tel_who':      'It goes to Oxedyne on the account your passcode made, so we can see which numbers are yours and come back and ask you about them.',
+	'beta.tel_free':     'Saying no costs you nothing. Your account, Pro and everything else stay exactly as they are, and nothing in the app behaves differently.',
+	'beta.tel_more':     'What is sent, in full',
+	'beta.tel_yes':      'Send usage counts',
+	'beta.tel_no':       'Do not send',
+	'beta.tel_on':       'Daimond is sending usage counts for this account: numbers only, never words.',
+	'beta.tel_stop':     'Stop sending usage counts',
 
 	// ── The front door ─────────────────────────────────────────
 	// The strip above the passphrase form, for a browser that has never held an
@@ -857,6 +922,11 @@
 	'agents.live':             '{n} live',
 	'agents.dropped.one':      '1 older run is not kept.',
 	'agents.dropped.other':    '{n} older runs are not kept.',
+	// The state word on an agent's pill, keyed by the engine's own status token.
+	// Built by concatenation at daimond.js's `tOr('agents.status_' + run.status,
+	// run.status)`, so a status with no key here reaches the screen as the raw
+	// internal word -- which is what it used to do for all seven.
+	// i18n-family: agents.status_ = queued running paused done error stopped interrupted
 	'agents.status_queued':      'queued',
 	'agents.status_running':     'running',
 	'agents.status_paused':      'paused',
@@ -908,6 +978,11 @@
 	'mail.settings_named': 'Settings for {address}',
 	'mail.all_mailboxes': 'All mailboxes',
 	'mail.refresh_all': 'Refresh all {folders} folders in {boxes} mailboxes',
+	// How often one folder refreshes, keyed by the interval in SECONDS. Built by
+	// concatenation in mail.js, which falls through to `mail.every.secs` for an
+	// interval no key names -- so the family and the fallback key are declared
+	// together.
+	// i18n-family: mail.every. = 0 300 900 1800 3600 14400 43200 86400 secs
 	'mail.every.0': 'Manual only',
 	'mail.every.300': 'Every 5 minutes',
 	'mail.every.900': 'Every 15 minutes',
@@ -1145,6 +1220,15 @@
 	// numbers, and say plainly that nothing of theirs has gone.
 	'chunks.sweep_held':          'Cleanup paused',
 	'chunks.sweep_held_reason':   'Cloud storage holds {n} of its {m} stored pieces that no file on this account still refers to. They have NOT been deleted, because no single request may remove more than half of what is stored. Nothing of yours is missing, and the space is freed by the next sync that can account for it all.',
+	// The chip is a control, so these five carry what pressing it does. They were
+	// written as `t('key', 'English')` -- and `t`'s second argument is VARS, not a
+	// fallback, so a key that is not here is PAINTED ON THE SCREEN as itself, in
+	// every language including this one.
+	'chunks.upload_refused':       'Uploads paused',
+	'chunks.upload_refused_title': 'Cloud storage refused an upload',
+	'chunks.sweep_confirm_ask':    'Delete them now? Nothing you can still see is touched, and the space is freed.',
+	'chunks.sweep_confirm_ok':     'Delete them',
+	'chunks.sweep_confirm_title':  'Free the unreferenced pieces?',
 
 	// ── Pairing a second device ────────────────────────────────
 	// The quotation marks around a button's name are curly on purpose; keep
@@ -1960,7 +2044,17 @@
 	//
 	// {fmt} is a format's name, from the `fileview.fmt.*` lookup the viewer does
 	// per media variant; where a locale has no entry the library's own English
-	// label ("PDF document") stands. {shown}, {total}, {from} and {to} are
+	// label ("PDF document") stands.
+	//
+	// That lookup is an OPEN extension point with no members, deliberately: the
+	// variant comes from `fe2o3_stds::media`, whose set of formats grows in the
+	// Rust library and not here, so any list written in this file would be wrong
+	// by the next release. A locale that wants to name a PDF in its own language
+	// adds `fileview.fmt.<variant>` and it is picked up; adding none costs the
+	// library's English and nothing else.
+	// i18n-family: fileview.fmt. = open -- the variants are media names from fe2o3_stds::media, which this app does not own
+	//
+	// {shown}, {total}, {from} and {to} are
 	// already formatted numbers -- grouped by the reader's own locale -- so they
 	// are never re-formatted here.
 	'fileview.read_failed':      'This file could not be read: {reason}',
@@ -2096,6 +2190,10 @@
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable':      'That backup file could not be read.',
 	'backup.not_a_backup':    'That is not a Daimond backup.',
+	// A file from a NEWER Daimond. Both numbers are said because the only useful
+	// next step is to run the Daimond that wrote it; keep both placeholders.
+	'backup.version_title':   'That backup is newer than this Daimond',
+	'backup.version_body':    'The file was written in backup format {found}, and this build reads format {known}. Nothing has been restored, and nothing in the file has been changed. Update Daimond and open it again.',
 	'backup.identity_title':  'Account identity restored',
 	'backup.identity_body':   'The backup carried the identity for “{name}”, so this browser is now that account, with the credits and Pro licence held on the server for it. Unlock with that account’s passphrase; the backup does not contain it, and nothing else opens the account.',
 	'backup.identity_kept':   'This browser already holds an account, so the identity for \u201c{name}\u201d in that backup was left alone. Everything else was restored.',
@@ -2585,6 +2683,30 @@
 	'improve.voice_forget_help': 'Remove the copy on this device.',
 	'improve.voice_forgotten':   'The copy on this device is gone.',
 	'improve.voice_ask_forget':  'Forget your voice on this device? The forge showed it once and cannot show it again.',
+
+	// ── What js/voice.js says when a voice will not do ──────────
+	// The secret itself, and every refusal about it. These were in NO catalogue
+	// at all -- not even this one -- from the day voice.js was written until
+	// 2026-08-14: every one of them is reached through `tOr(key, english)`, which
+	// paints correct English and reports nothing, and both existing checks
+	// compare the seven locales AGAINST this file, so a key absent HERE was
+	// invisible to both by construction. `dev/i18ncheck.mjs` now reads the call
+	// sites as well as the tables, which is what closes that.
+	//
+	// NONE of these may quote the secret: an error message carrying a credential
+	// is a credential in a screenshot.
+	'voice.err.empty':      'A voice is needed to write on the forge.',
+	'voice.err.shape':      'That does not look like a voice. Copy the whole line the forge printed.',
+	'voice.err.short':      'That is shorter than any voice the forge issues. Copy the whole line.',
+	'voice.err.long':       'That is longer than a voice can be.',
+	'voice.err.locked':     'Unlock Daimond first: your voice is kept encrypted under your passphrase.',
+	'voice.err.locked_send': 'Unlock Daimond to write on the forge: your voice is encrypted under your passphrase.',
+	'voice.err.unreadable': 'Your voice cannot be read with this passphrase. Set it again from the line the forge printed for you.',
+	'voice.err.inurl':      'A voice goes in a header, never in an address.',
+	// What the voice is CALLED in a list of what did not survive a passphrase
+	// change. Never shown on its own; `changepass.voice_not_resealed` is the
+	// sentence a person reads.
+	'voice.the_voice':      'your forge voice',
 
 	// Proposals, read from the forge as the panel is looked at. Nothing tells a
 	// reader when one is answered, and no string here may suggest otherwise.

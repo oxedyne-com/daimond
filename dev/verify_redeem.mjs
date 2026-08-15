@@ -712,10 +712,30 @@ async function startServer() {
 			window.DaimondAdmin.credits('');
 		});
 		await page.waitForTimeout(600);
-		const after = await textOf('#credits-beta');
+		// THE SUBJECT IS THE OFFER, NOT THE CONTAINER. This read `textOf('#credits-beta')
+		// === ''` until 2026-08-15 and went red the day the telemetry consent card
+		// started drawing in that host -- which is not an offer of a passcode, and is
+		// where withdrawal deliberately lives (`passcode.js:475-483`). It was also
+		// vacuous in the other direction: `textOf` answers '' for a node that is
+		// MISSING exactly as for one that is empty, so a host that vanished would have
+		// passed it. So: assert the host EXISTS, then assert that neither thing which
+		// offers a code is inside it.
+		const after = await page.evaluate(() => {
+			const h = document.getElementById('credits-beta');
+			if (!h) return { host: false };
+			return {
+				host:  true,
+				open:  !!h.querySelector('#beta-open'),
+				field: !!h.querySelector('#beta-code-input'),
+				text:  (h.textContent || '').trim().slice(0, 120),
+			};
+		});
+		check('the Credits beta block is still on the page to be judged',
+			after.host === true, JSON.stringify(after),
+			'the host went missing, which the old emptiness test would have called a pass');
 		check('nothing offers a passcode to a device that now has an account',
-			after === '', JSON.stringify(after),
-			'a field was left on screen for a device with nothing left to redeem');
+			after.host === true && !after.open && !after.field, JSON.stringify(after),
+			'a way to enter a code was left on screen for a device with nothing left to redeem');
 
 		// Uncaught exceptions only. Console errors are not the signal here: a
 		// closed gateway refuses several routes on purpose and the modules that

@@ -1608,6 +1608,7 @@
 			ask.addEventListener('click', async function () {
 				ask.disabled = true;
 				ask.textContent = t('models.asking');
+				note('');                          // this ask answers for itself
 				var got = null;
 				try { got = await fetchCredit(p.id); } catch (e) { got = null; }
 				if (!got) note(t('models.credit_probe_failed', { provider: p.name }));
@@ -1634,7 +1635,12 @@
 		set.textContent = t(c && c.mode === 'manual' ? 'models.credit_base_update' : 'models.credit_base_set');
 		var commit = function () {
 			var v = parseFloat(String(input.value || '').replace(/[^0-9.]/g, ''));
+			// The refusal, said out loud. This used to be a bare early return: the field simply
+			// did not take, with no message, and the user was left to guess what was wrong with
+			// what they had typed. `note()` survives the `render()` below, so the success path
+			// clears it rather than relying on the redraw to do it.
 			if (!isFinite(v) || v < 0) { note(t('models.credit_base_bad')); return; }
+			note('');
 			setCreditBase(p.id, v);
 			render();
 		};
@@ -1881,6 +1887,10 @@
 					refetch.addEventListener('click', async function () {
 						refetch.disabled = true;
 						refetch.textContent = t('models.asking');
+						note('');                  // this ask answers for itself
+						// The provider's own words. A key that has been revoked, a base URL
+						// with a typo in it and a rate limit all fail differently, and only
+						// the provider knows which.
 						try { await fetchModels(p.id); }
 						catch (e) { note(e && e.message ? e.message : String(e)); }
 						render();
@@ -1958,9 +1968,25 @@
 		el.appendChild(foot);
 	}
 
+	/// The panel's one message line.
+	///
+	/// THE TRAP: this lookup was the ONLY line in the whole tree that mentioned `models-note`. No
+	/// markup, no JS that built one, not even a CSS rule -- so it returned null every time and
+	/// `if (n)` read like a correct guard. A user could type `abc` into the credit field, press
+	/// Set, and get an early return with nothing on screen at all. An element that does not exist
+	/// reports itself to a browser automation locator as HIDDEN, which is indistinguishable from a
+	/// guard doing its job, so no check that asserted "no error is shown" would have caught it.
+	/// Every check over this line asserts the element EXISTS and says what it holds.
+	///
+	/// The element lives in `index.html` beside `#models-list` and NOT inside it, because
+	/// `render()` rewrites that list wholesale: a message written just before a redraw would go
+	/// with it. The price of that is that it does not expire by itself -- each action that can
+	/// produce a message clears it first, rather than `render()` clearing it, so that a background
+	/// redraw (a sync pull, a change of language) cannot take a refusal off the screen unasked.
 	function note(msg) {
 		var n = document.getElementById('models-note');
-		if (n) n.textContent = msg || '';
+		if (!n) return;
+		n.textContent = msg || '';
 	}
 
 	// ── The picker ──────────────────────────────────────────────────

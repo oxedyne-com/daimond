@@ -19,7 +19,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { signInFresh } from './session.mjs';
-import { requireFreshGateway, procLog } from './gwbin.mjs';
+import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
@@ -155,7 +155,7 @@ async function adminRaw() {
 	// Pinned as an owner by account id, which is not known until an account
 	// exists -- so this suite starts the gateway twice, as verify_releases does.
 	let gw = launch(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
-		cwd: GWDIR,
+		cwd: GWCWD,
 		env: { ...process.env, APP_MODE: 'sandbox' },
 		stdio: GW_LOG.stdio,
 	});
@@ -217,7 +217,7 @@ async function adminRaw() {
 					catch (e) { return true; }
 				}, 15000));
 			gw = launch(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
-				cwd: GWDIR,
+				cwd: GWCWD,
 				env: { ...process.env, APP_MODE: 'sandbox', DAIMOND_OWNER_ACCOUNTS: owner },
 				stdio: GW_LOG.stdio,
 			});

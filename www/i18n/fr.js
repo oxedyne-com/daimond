@@ -36,6 +36,7 @@
 	'copy.what_device': 'l’identifiant de {name}',
 	'copy.what_model': 'l’identifiant du modèle {id}',
 	'copy.what_default_model': 'l’identifiant du modèle par défaut',
+	'copy.what_handle':        'votre nom public',
 
 	// ── The top bar ────────────────────────────────────────────
 	'topbar.menu': 'Menu',
@@ -55,6 +56,7 @@
 	'about.title': 'À propos de Daimond',
 	'about.splash_alt': 'Une silhouette vole dans la nuit vers un diamant, au-dessus de la courbe d’une planète.',
 	'about.what': 'Daimond est un espace de travail à agents IA qui tourne dans votre navigateur. Aucun compte sur un serveur, rien à télécharger. Vos chats, vos clés et vos fichiers restent sur cet appareil.',
+	'about.verify': 'Vérifier ce build par rapport au code source publié',
 
 	// ── Panel names ────────────────────────────────────────────
 	'panel.rail': 'Diamonds',
@@ -211,6 +213,23 @@
 	'beta.done_plain':         'Cet appareil a un compte Daimond.',
 	'beta.done_handle':        'Les autres voient ce compte sous le nom {handle}.',
 	'beta.done_not_signed_in': 'Le code a été consommé et le compte existe, mais cet appareil n’a pas pu terminer la connexion à l’instant. Il réessaiera de lui-même.',
+
+	// ── La seule chose que l’on demande d’accepter ─────────────
+	// En attente de relecture par une personne native, comme toute la table.
+	// `tel_never` est une affirmation sur le code, pas une promesse sur notre
+	// vigilance : ne pas l’adoucir en « nous ne collectons pas de données
+	// personnelles ».
+	'beta.tel_title':    'Envoyer des compteurs d’usage ?',
+	'beta.tel_title_on': 'Compteurs d’usage',
+	'beta.tel_lead':     'Le test nous sert beaucoup plus si Daimond peut signaler comment il est utilisé. Il n’envoie que des nombres : laquelle de vingt choses s’est produite, combien de millisecondes après le début de la session, et un compteur pour chacune — la durée d’un tour, le panneau ouvert, le nombre d’erreurs survenues.',
+	'beta.tel_never':    'Il n’envoie jamais de mots. Ni un message, ni un nom de fichier, ni le nom d’un Diamond, ni un chemin, ni un message d’erreur. Il n’existe aucun champ pour cela, et notre serveur refuse tout rapport qui en contient.',
+	'beta.tel_who':      'Cela va à Oxedyne, sur le compte créé par votre code : nous voyons donc quels nombres sont les vôtres et pouvons revenir vous en parler.',
+	'beta.tel_free':     'Dire non ne vous coûte rien. Votre compte, Pro et tout le reste restent identiques, et rien dans l’application ne se comporte autrement.',
+	'beta.tel_more':     'Ce qui est envoyé, en détail',
+	'beta.tel_yes':      'Envoyer les compteurs',
+	'beta.tel_no':       'Ne pas envoyer',
+	'beta.tel_on':       'Daimond envoie des compteurs d’usage pour ce compte : des nombres seulement, jamais de mots.',
+	'beta.tel_stop':     'Arrêter d’envoyer les compteurs',
 
 	// ── La porte d’entrée ──────────────────────────────────────
 	// Traduction automatique, non relue par un locuteur natif.
@@ -557,6 +576,11 @@
 	// ── Cloud storage cleanup ──────────────────────────────────
 	'chunks.sweep_held': 'Nettoyage en pause',
 	'chunks.sweep_held_reason': 'Le stockage cloud conserve {n} de ses {m} fragments enregistrés auxquels plus aucun fichier de ce compte ne renvoie. Ils n’ont PAS été supprimés : aucune requête ne peut retirer plus de la moitié de ce qui est stocké. Rien ne vous manque, et l’espace est libéré à la prochaine synchronisation capable de tout justifier.',
+	'chunks.upload_refused':    'Téléversements en pause',
+	'chunks.upload_refused_title': 'Le stockage cloud a refusé un téléversement',
+	'chunks.sweep_confirm_ask': 'Les supprimer maintenant ? Rien de ce que vous pouvez encore voir n’est touché, et l’espace est libéré.',
+	'chunks.sweep_confirm_ok':  'Supprimer les fragments',
+	'chunks.sweep_confirm_title': 'Libérer les fragments auxquels plus rien ne renvoie ?',
 
 	// ── Pairing a second device ────────────────────────────────
 	'pair.link_another': 'Associer un autre appareil',
@@ -1039,6 +1063,9 @@
 	'home.account_note': 'Un compte est une phrase secrète gardée sur cet appareil. Elle chiffre votre clé d’API et vous identifie pour les crédits. Rien ne quitte le navigateur.',
 	'home.fingerprint': 'L’empreinte d’identité de votre appareil',
 	'home.change_name': 'Changer de nom…',
+	'home.handle_help': 'Votre nom public : le nom que les autres voient, le même sur chaque appareil de ce compte.',
+	'home.change_handle': 'Changer de nom public…',
+	'handle.rename_title': 'Changer de nom public',
 	'home.change_passphrase': 'Changer de phrase secrète…',
 	'home.add_passkey': 'Ajouter une clé d’accès…',
 	'home.remove_passkey': 'Retirer la clé d’accès',
@@ -1088,6 +1115,7 @@
 	'push.err_host':     'Indiquez l’hôte visé par le push, comme github.com, ou videz le champ du jeton pour retirer les identifiants.',
 	'push.err_not_held': 'Cela n’a pas été accepté : aucun identifiant de push n’est conservé. Vérifiez l’hôte et le jeton.',
 	'push.not_resealed': 'Votre phrase secrète a changé, mais le jeton de push n’a pas pu être rechiffré avec elle. Le push fonctionne jusqu’au rechargement. Redonnez le jeton pour le conserver.',
+	'push.the_token':    'votre jeton de push',
 
 	// ── The devices that sync this account ─────────────────────
 	'devices.on_platform': '{brand} sur {platform}',
@@ -1791,6 +1819,18 @@
 	'changepass.failed_body': 'Votre phrase secrète actuelle ne correspondait pas. Rien n’a été changé.',
 	'changepass.careful': 'Attention',
 	'changepass.key_not_resealed': 'La phrase secrète a changé, mais votre clé d’API n’a pas pu être rechiffrée. Ressaisissez-la dans les Réglages.',
+	'changepass.mail_not_resealed': 'Ces boîtes mail n’ont pas pu être rechiffrées sous la nouvelle phrase secrète et redemandent leur mot de passe : {list}.',
+	'changepass.mail_not_unsealed': 'Ces boîtes mail n’ont pas pu être lues sous l’ancienne phrase secrète, leur mot de passe reste donc à redonner : {list}.',
+	'changepass.models_not_resealed': 'Ces fournisseurs n’ont pas pu être rechiffrés sous la nouvelle phrase secrète et redemandent leur clé : {list}.',
+	'changepass.models_not_unsealed': 'Ces fournisseurs avaient déjà des clés illisibles avant le changement, et leur clé reste à redonner : {list}.',
+	'changepass.all_of_them':      'tous',
+	'changepass.the_api_key':      'votre clé d’API',
+	'changepass.search_not_resealed': 'Ces services de recherche n’ont pas pu être rechiffrés sous la nouvelle phrase secrète et redemandent leur clé : {list}.',
+	'changepass.search_not_unsealed': 'Ces services de recherche avaient déjà des clés illisibles avant le changement, et leur clé reste à redonner : {list}.',
+	'changepass.voice_not_resealed': 'Votre voix de la forge n’a pas pu être rechiffrée sous la nouvelle phrase secrète. Redonnez-la à partir de la ligne que la forge a imprimée pour vous.',
+	'changepass.voice_not_unsealed': 'Votre voix de la forge n’a pas pu être lue sous l’ancienne phrase secrète, elle reste donc à redonner à partir de la ligne que la forge a imprimée pour vous.',
+	'changepass.rekey_generic':    '{who} : {list}.',
+	'changepass.rekey_failed':     'Une partie de ce qui est gardé ici n’a pas pu être rechiffrée sous la nouvelle phrase secrète. Vérifiez vos clés et les mots de passe de vos boîtes mail dans les Réglages.',
 	'changepass.changed': 'Phrase secrète changée',
 	'changepass.changed_body': 'Votre nouvelle phrase secrète est active. Votre clé d’API enregistrée a été rechiffrée avec elle.',
 	'changepass.passkey_stale': 'Votre clé d’accès n’a pas pu être mise à jour : elle demandera la nouvelle phrase secrète. Rajoutez-la depuis les Réglages.',
@@ -1798,6 +1838,8 @@
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable': 'Ce fichier de sauvegarde n’a pas pu être lu.',
 	'backup.not_a_backup': 'Ce n’est pas une sauvegarde Daimond.',
+	'backup.version_title': 'Cette sauvegarde est plus récente que ce Daimond',
+	'backup.version_body': 'Le fichier a été écrit au format de sauvegarde {found}, et ce build lit le format {known}. Rien n’a été restauré, et rien dans le fichier n’a été modifié. Mettez Daimond à jour, puis rouvrez-le.',
 	'backup.identity_title': 'Identité du compte restaurée',
 	'backup.identity_body': 'La sauvegarde contenait l’identité de « {name} » : ce navigateur est désormais ce compte, avec les crédits et la licence Pro conservés pour lui sur le serveur. Déverrouillez avec la phrase secrète de ce compte ; la sauvegarde ne la contient pas, et rien d’autre n’ouvre le compte.',
 	'backup.identity_kept': 'Ce navigateur détient déjà un compte\u202f: l\u2019identité de \u00ab\u202f{name}\u202f\u00bb contenue dans la sauvegarde a été laissée telle quelle. Tout le reste a été restauré.',
@@ -1948,6 +1990,8 @@
 	'tile.daimon_reset_body': 'La conversation de ce daimon ({n} messages) est abandonnée, et la prochaine instruction en commence une autre. Rien ne passe dans le cristal — repliez-la d’abord si quelque chose mérite d’être gardé. Le cristal, les fichiers et les liens restent intacts.',
 	'tile.daimon_reset_ok': 'Abandonner la conversation',
 	'tile.daimon_reset_done': 'Un nouveau daimon. Le cristal est intact.',
+	'tile.daimon_reset_busy_title': 'Le daimon travaille encore',
+	'tile.daimon_reset_busy': 'Ce daimon est au milieu d’un tour. Sa réponse arriverait dans la conversation que vous êtes sur le point de jeter, et la conversation que le modèle tient aussi — rien n’est donc jeté pour l’instant. Arrêtez le tour d’abord : tant qu’il tourne, le bouton à côté de la zone de saisie s’appelle Arrêter.',
 	'tile.model_workers': 'Ouvriers',
 	'tile.model_vision': 'Ouvriers, images',
 	'tile.model_vision_help': 'Le modèle sur lequel tourne un ouvrier quand sa tâche nomme une image. Daimond ne peut pas vérifier qu’un modèle voit : le choix vous revient.',
@@ -2160,6 +2204,15 @@
 	'improve.voice_forget_help': 'Retirer la copie de cet appareil.',
 	'improve.voice_forgotten': 'La copie sur cet appareil n’est plus là.',
 	'improve.voice_ask_forget': 'Oublier votre voix sur cet appareil ? La forge l’a montrée une fois et ne peut pas la montrer à nouveau.',
+	'voice.err.empty':          'Il faut une voix pour écrire sur la forge.',
+	'voice.err.shape':          'Cela ne ressemble pas à une voix. Copiez la ligne entière que la forge a imprimée.',
+	'voice.err.short':          'C’est plus court que toute voix délivrée par la forge. Copiez la ligne entière.',
+	'voice.err.long':           'C’est plus long qu’une voix ne peut l’être.',
+	'voice.err.locked':         'Déverrouillez Daimond d’abord : votre voix est gardée chiffrée sous votre phrase secrète.',
+	'voice.err.locked_send':    'Déverrouillez Daimond pour écrire sur la forge : votre voix est chiffrée sous votre phrase secrète.',
+	'voice.err.unreadable':     'Votre voix ne peut pas être lue avec cette phrase secrète. Redonnez-la à partir de la ligne que la forge a imprimée pour vous.',
+	'voice.err.inurl':          'Une voix va dans un en-tête, jamais dans une adresse.',
+	'voice.the_voice':          'votre voix de la forge',
 
 	// Les propositions sont lues depuis la forge pendant qu’on les regarde. Rien
 	// n’annonce qu’une proposition a reçu une réponse, et aucune phrase ici ne

@@ -147,9 +147,16 @@ const BREAKS = {
 	},
 	// A tile that cannot be opened stops saying why, and is back to reading as
 	// an empty folder -- what §7 and §9 both exist to prevent.
+	// The anchor is the CHAT footer's line, which is the one 7b is about. It said
+	// `dws.not_here` until `daa66bf` (2026-08-12) moved the chat footer to its own
+	// wording, and after that the line it named appeared ZERO times in the tree, so
+	// this file exited 2 with "a break whose anchor does not match" -- carried for
+	// days as a red that was about a rename and not about the app. The surviving
+	// `dws.not_here` line is the CRYSTAL footer (a Diamond, its daimon), a
+	// different claim in a different place: do not point this at it.
 	silentaway: {
 		file: 'js/daimond.js',
-		find: `				reason: away ? t('dws.not_here', { where: refWhere(a.ref) }) : '',`,
+		find: `				reason: away ? t('attach.not_here', { where: refWhere(a.ref) }) : '',`,
 		with: `				reason: '',`,
 	},
 	// The picker asks the Workspace panel's CACHE what is attached instead of
@@ -553,7 +560,15 @@ const shutTile = await page.$$eval('#chat-attachments .arte-row', rows => rows.m
 	// press that cannot work is the distrust §4 warns about.
 	openable: !!r.querySelector('button.arte-open'),
 }))).then(rows => rows.find(r => /nope/.test(r.text)));
-const notHere = await T('dws.not_here', { where: await T('dws.in_machine', { name: 'elsewhere' }) });
+// `attach.not_here`, and NOT `dws.not_here`. The app moved this footer to its own
+// wording in `daa66bf` (2026-08-12), with the reason in the code beside it:
+// `dws.not_here` says "kept with this Diamond" and "its daimon", which names the
+// wrong thing entirely on a surface where there is no Diamond and no daimon. Both
+// keys are alive and both are right where they are used -- the crystal footer
+// still says the Diamond's words -- so this is the app being careful, not a
+// rename to follow blindly. Comparing the chat footer against the Diamond wording
+// failed this check every run since that commit.
+const notHere = await T('attach.not_here', { where: await T('dws.in_machine', { name: 'elsewhere' }) });
 check('THE SHUT TILE SAYS WHY IN WORDS ON THE TILE, not only on hover',
 	!!shutTile && shutTile.why === notHere, JSON.stringify(shutTile && shutTile.why));
 check('and offers no way to open what cannot be opened',
@@ -800,9 +815,21 @@ await page.waitForTimeout(1500);
 check('THE VIEW SURVIVES A RELOAD',
 	await page.evaluate(() => window.DaimondAttach.view()) === 'icons',
 	await page.evaluate(() => window.DaimondAttach.view()));
-await newChat(s);
+// A NEW chat, asserted to be one.
+//
+// The app restores the chat that was open when it comes back, so `newChat`
+// found a composer on screen and returned without making anything: `reborn` WAS
+// the pre-reload chat, which already holds notes/spec.md. `chatToggle` is a
+// toggle, so the line below then took the attachment OFF and the check read zero
+// rows -- `{"icons":0,"rows":0,"name":""}`, reported for five gates as a footer
+// that would not draw, with the app innocent throughout. The harness now makes a
+// new chat or throws (see dev/harness.mjs); this says so out loud as well,
+// because the id is what the rest of this section rests on.
+const reborn = await newChat(s);
 await page.waitForTimeout(600);
-const reborn = await page.evaluate(() => window.DaimondAttach.focus().id);
+check('the reload is followed by a chat of its OWN, which holds nothing yet',
+	!!reborn && reborn !== chatId,
+	`before ${chatId}, after ${reborn}`);
 await page.evaluate((id) => window.DaimondAttach.chatToggle(id, 'file:[browser]notes/spec.md', false, 'notes/spec.md'), reborn);
 await page.waitForTimeout(500);
 const drawnAfterReload = await page.evaluate(() => ({

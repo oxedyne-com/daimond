@@ -28,6 +28,12 @@
 //   E. The SALE and not merely the gate: with the price standing in `gateway/app.jdat` the page
 //      reads it, the engine locks the tool and the compile is refused; with the price taken out of
 //      that same string nothing is on sale, nothing locks, and the very same call compiles.
+//   F. SOLD IS NOT LOCKED. An EMPTY catalogue must lock the pack, not give it away -- and the
+//      control for it is the defect itself, reproduced in the same run: a listing assembled only
+//      from the catalogue, for that same empty string, unlocks the tool and compiles a PDF. That
+//      is the state the production gateway was in while a priced pack ran free on every device,
+//      and it is why E above is not enough on its own -- E only ever pushes the catalogue towards
+//      HAVING a price, and every failure that mattered was the catalogue losing one.
 //
 //   node dev/verify_typstpack.mjs
 //
@@ -103,6 +109,27 @@ function parseCatalogue(str) {
 
 const catalogueKeys = () => parseCatalogue(catalogueString()).map(t => t.tool);
 
+/// Every pack key the GATEWAY gates, read out of `gateway/src/catalogue.rs`.
+///
+/// A third source, and it has to be third: the catalogue says what is on SALE and the build says
+/// what a sale unlocks, and neither of those is what the gateway locks. That register is compiled
+/// into the gateway precisely so that a catalogue edit cannot empty it -- which means it can now
+/// disagree with the build, and a gateway gating `drop02` against a build gating `drop01` fails
+/// open exactly as an empty catalogue used to. So all three are read here and compared.
+///
+/// The scan is on the `key` arms rather than on the enum, because the arms are the mapping and the
+/// enum is only its spelling.
+function gatedKeys() {
+	const src  = fs.readFileSync(path.join(HERE, '..', 'gateway', 'src', 'catalogue.rs'), 'utf8');
+	const body = /pub const fn key\(self\)[\s\S]*?match self \{([\s\S]*?)\n\s*\}/.exec(src);
+	if (!body) return [];
+	const out = [];
+	const re  = /Self::\w+\s*=>\s*"([^"]+)"/g;
+	let m;
+	while ((m = re.exec(body[1])) !== null) out.push(m[1]);
+	return out;
+}
+
 const s = await open({ name: 'typstpack', connect: false });
 const p = s.page;
 await p.waitForTimeout(1500);
@@ -175,11 +202,17 @@ const beltEarly = await p.evaluate(async () => {
 const beltEntry = beltEarly.find(t => t.tool === 'typst_compile');
 const PACK  = beltEntry && beltEntry.pack ? beltEntry.pack : '';
 const SELLS = catalogueKeys();
+const GATES = gatedKeys();
 check('the build locks on the pack key the gateway\'s catalogue actually sells',
 	!!PACK && SELLS.indexOf(PACK) >= 0,
 	`the build locks on "${PACK || '(nothing)'}", the catalogue sells ${
 		SELLS.length ? SELLS.map(k => '"' + k + '"').join(', ') : '(nothing)'
 	} — a build older than the catalogue fails OPEN, so rebuild the wasm before switching the price on`);
+check('and the gateway GATES that same key, whatever the catalogue is doing',
+	!!PACK && GATES.indexOf(PACK) >= 0,
+	`the gateway's register gates ${
+		GATES.length ? GATES.map(k => '"' + k + '"').join(', ') : '(nothing)'
+	} — a register that does not name "${PACK}" reports the pack to nobody, so nothing locks it`);
 if (!PACK) {
 	console.log('\nthe build sells nothing, so there is no gate below to measure');
 	await s.close();
@@ -400,13 +433,9 @@ check('bought: and so does the model\'s tool',
 // something anyone is locked out of. A gate that refused either way would be a gate on the tool
 // rather than on the sale.
 
-/// Serve `/api/tools` from a catalogue string, as the gateway would for an account holding
-/// nothing, and let the panel push what it makes of it into the engine.
-async function serveCatalogue(str) {
-	const tools = parseCatalogue(str).map(t => ({
-		tool: t.tool, name: t.name, blurb: t.blurb, price_minor: t.price_minor,
-		unlocked: false, currency: 'usd',
-	}));
+/// Serve `/api/tools` with exactly this listing and let the panel push what it makes of it into
+/// the engine. The low half of `serveCatalogue`, separated so the OLD rule can be served too.
+async function serveListing(tools) {
 	await p.unroute('**/api/tools').catch(() => {});
 	await p.route('**/api/tools', r => r.fulfill({
 		status: 200, contentType: 'application/json',
@@ -418,6 +447,33 @@ async function serveCatalogue(str) {
 		const mod = await import('../pkg/oxedyne_daimond.js');
 		return { locked: mod.locked_packs(), tool: mod.tool_locked('typst_compile') };
 	});
+}
+
+/// The listing the gateway builds from a catalogue string, for an account holding nothing.
+///
+/// A UNION of two sets and not a walk over one, mirroring `catalogue::listing`: everything the
+/// catalogue sells, then every gated pack nothing sells. The mirror is deliberately dumb -- the
+/// gateway's own tests cover the rule -- and what it is here for is to put the shape the gateway
+/// now emits in front of the real page and the real engine.
+function listingFor(str) {
+	const sold = parseCatalogue(str).map(t => ({
+		tool: t.tool, name: t.name, blurb: t.blurb, price_minor: t.price_minor,
+		unlocked: false, purchasable: true, gated: GATES.indexOf(t.tool) >= 0, currency: 'usd',
+	}));
+	GATES.forEach((k) => {
+		if (sold.some(t => t.tool.toLowerCase() === k.toLowerCase())) return;
+		sold.push({
+			tool: k, name: '', blurb: '', price_minor: 0,
+			unlocked: false, purchasable: false, gated: true, currency: 'usd',
+		});
+	});
+	return sold;
+}
+
+/// Serve `/api/tools` from a catalogue string, as the gateway would for an account holding
+/// nothing, and let the panel push what it makes of it into the engine.
+async function serveCatalogue(str) {
+	return serveListing(listingFor(str));
 }
 
 const SHIPPED = catalogueString();
@@ -452,6 +508,64 @@ if (SELLS.indexOf(PACK) < 0) {
 	await p.unroute('**/api/tools').catch(() => {});
 	await setLocked('');
 }
+
+// ── F. Sold is not locked ────────────────────────────────────────────
+//
+// Phase E moves the catalogue towards HAVING a price. Every failure that has actually happened
+// moved it the other way: the running gateway's catalogue was the empty string, so nothing was on
+// sale, so nothing was locked, so a $15 pack compiled documents for free on every device and no
+// log line said so. This phase therefore runs OUTSIDE the guard above -- a shipped catalogue that
+// has lost its price is exactly the state it is here to measure, and skipping it then would skip
+// it precisely when it matters.
+//
+// The control is run FIRST and is the defect itself, so the phase cannot pass by refusing
+// everything: the same empty catalogue, listed the old way -- one line per entry, which for an
+// empty catalogue is no lines at all -- unlocks the tool and writes a PDF.
+
+await setLocked('');
+const engOldRule = await serveListing([]);
+check('THE DEFECT, reproduced: a listing built only from the catalogue unlocks the pack',
+	engOldRule.tool === false && engOldRule.locked === '',
+	`empty listing → ${JSON.stringify(engOldRule)}`);
+await remove(PDF);
+const gaveItAway = await runTool('typst_compile', { path: SRC });
+check('and the tool compiles for an account that bought nothing — this is what was live',
+	(await exists(PDF)) === true, gaveItAway.slice(0, 140));
+
+// And now the same empty catalogue through the rule that separates the two.
+const engEmpty = await serveCatalogue('');
+check('EMPTY catalogue: the pack is still gated, so the engine still locks the tool',
+	engEmpty.tool === true && engEmpty.locked.split(',').indexOf(PACK) >= 0,
+	`empty catalogue → ${JSON.stringify(engEmpty)}`);
+await remove(PDF);
+const emptyRefusal = await runTool('typst_compile', { path: SRC });
+check('EMPTY catalogue: the compile is refused and no PDF is written',
+	(await exists(PDF)) === false && emptyRefusal.includes(PACK),
+	emptyRefusal.slice(0, 140));
+
+// A catalogue nobody can parse an entry out of is the same case wearing a different hat: a
+// mistyped price is not a price, so nothing is on sale -- and nothing being on sale must not be
+// what decides whether the tool runs.
+const engJunk = await serveCatalogue(PACK + ':free:Publishing,,:1500:Nameless');
+check('UNPARSEABLE catalogue: the pack is locked rather than released',
+	engJunk.tool === true && engJunk.locked.split(',').indexOf(PACK) >= 0,
+	`junk catalogue → ${JSON.stringify(engJunk)}`);
+await remove(PDF);
+const junkRefusal = await runTool('typst_compile', { path: SRC });
+check('UNPARSEABLE catalogue: the compile is refused and no PDF is written',
+	(await exists(PDF)) === false && junkRefusal.includes(PACK),
+	junkRefusal.slice(0, 140));
+
+// NOT checked here, and deliberately: what the PANEL draws for a pack it cannot sell. The gateway
+// now says `purchasable: false` and quotes no price, and `www/js/tools.js` does not read that
+// field yet -- it draws a Buy button from `unlocked` alone, so in this state it offers the pack at
+// $0.00 and the checkout refuses the click. That is a cosmetic fault in a state that only exists
+// when the catalogue is broken, it belongs to the panel's own lane, and a red line here would
+// block a release on it. `dev/verify_toolspanel.mjs` is where it should land once the panel
+// honours the field.
+
+await p.unroute('**/api/tools').catch(() => {});
+await setLocked('');
 
 // ── The panel no longer calls it free ────────────────────────────────
 //

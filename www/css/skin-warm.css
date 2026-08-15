@@ -228,11 +228,6 @@
 	font-weight: 800;
 	letter-spacing: -0.01em;
 }
-:root[data-skin="warm"] .empty-state .empty-logo {
-	width: 64px;
-	height: 64px;
-	opacity: 1;
-}
 :root[data-skin="warm"] .empty-new-session {
 	font-size: var(--fs-lg);
 	padding: calc(11px * var(--space-scale)) calc(24px * var(--space-scale));

@@ -282,12 +282,25 @@
 		if (r && !r.authed) {
 			box.appendChild(el('p', 'beta-note', t('beta.done_not_signed_in')));
 		}
-		var row = el('div', 'beta-row');
-		var ok = el('button', 'beta-btn', t('common.close'));
-		ok.type = 'button';
-		ok.addEventListener('click', close);
-		row.appendChild(ok);
-		box.appendChild(row);
+
+		// ── And the one question we ask them ───────────────────
+		//
+		// HERE, AND NOT A LINE EARLIER. The code is spent, the account exists and
+		// the Pro licence is granted before this is drawn, so nothing about
+		// saying no can cost them anything -- which is the difference between
+		// asking and extracting. A consent collected while somebody is still
+		// waiting to find out whether their passcode worked is not freely given.
+		var ask = canAsk(r);
+		if (ask) {
+			box.appendChild(consentBlock(ask, close));
+		} else {
+			var row = el('div', 'beta-row');
+			var ok = el('button', 'beta-btn', t('common.close'));
+			ok.type = 'button';
+			ok.addEventListener('click', close);
+			row.appendChild(ok);
+			box.appendChild(row);
+		}
 		if (window.DaimondCloser) {
 			var h3 = box.querySelector('h3');
 			box.insertBefore(
@@ -295,6 +308,100 @@
 				box.firstChild);
 		}
 		try { ok.focus(); } catch (e) { /* not focusable */ }
+	}
+
+	// ── The one question, and the only place it is asked ───────
+	//
+	// WHAT THIS IS. A beta tester may agree to send counts of how they use
+	// Daimond -- numbers, never words. `www/js/telemetry.js` is the whole of what
+	// would be sent and says so in prose a tester can read; the Privacy Policy
+	// says it again at `#beta-telemetry`, which the link below opens IN THE APP
+	// (a PWA tab draws itself, and a consent line pointing at another origin is a
+	// consent line with nowhere to point).
+	//
+	// FOUR THINGS THIS CARD HAS TO BE, and each is a line of code below rather
+	// than an intention:
+	//
+	//   1. A REAL CHOICE. Two buttons of the same weight, neither pre-pressed,
+	//      neither dressed as the way out. Nothing is ticked, because there is no
+	//      tick: consent here is a function call that only a press can make.
+	//   2. DECLINING AS EASY AS AGREEING, and the DEFAULT. Closing the card,
+	//      pressing Escape, clicking the scrim, walking away -- every one of them
+	//      leaves `consent()` uncalled, so silence is a no. There is no path
+	//      through this file that agrees on somebody's behalf.
+	//   3. HONEST ABOUT THE COST. It says what is sent, what is never sent, that
+	//      it is not anonymous, and that saying no costs nothing -- because it
+	//      does not: the account, Pro and everything else are already granted by
+	//      the time this is drawn.
+	//   4. WITHDRAWABLE, AND IT SAYS WHERE. The same question lives in the
+	//      Credits drawer for as long as the account does, so "you can turn it
+	//      off in Credits" names a control that is really there. See `render`.
+
+	/// Can this reply be turned into a question worth asking?
+	///
+	/// All four, or the card stays quiet: a client to record with, an intake to
+	/// record under, an account to scope the agreement to, and a session -- a
+	/// redemption that could not sign in has nothing to send under, and asking
+	/// then would be collecting an answer we could not honour.
+	function canAsk(r) {
+		if (!window.DaimondTelemetry) return null;
+		if (!r || !r.authed) return null;
+		var wave = r.wave, account = r.account;
+		if (typeof wave !== 'number' || wave < 1 || !account) return null;
+		return { wave: wave, account: account };
+	}
+
+	/// Say yes, for this account. The one call in this file that starts a
+	/// recorder, and it is reachable only from a button.
+	function grant(ask) {
+		try { DaimondTelemetry.consent({ wave: ask.wave, account: ask.account }); }
+		catch (e) { /* a build without the client; the question was not drawn */ }
+	}
+
+	/// Say no, or take it back. Also the only call that stops one.
+	function revoke() {
+		try { DaimondTelemetry.withdraw(); }
+		catch (e) { /* nothing to withdraw from */ }
+	}
+
+	/// The words, the link and the two buttons.
+	///
+	/// `after` is what to do once either button is pressed -- close the card, or
+	/// redraw the drawer. It is called for BOTH answers and with no argument
+	/// saying which, so nothing downstream can behave differently for a person
+	/// who declined.
+	function consentBlock(ask, after) {
+		var wrap = el('div', 'beta-consent');
+		wrap.appendChild(el('div', 'beta-head', t('beta.tel_title')));
+		wrap.appendChild(el('p', null, t('beta.tel_lead')));
+		wrap.appendChild(el('p', null, t('beta.tel_never')));
+		wrap.appendChild(el('p', null, t('beta.tel_who')));
+		wrap.appendChild(el('p', 'beta-note', t('beta.tel_free')));
+
+		// The policy, in the panel, at the section that describes this exactly.
+		// `DaimondLegal.link` was written for this caller and no other.
+		if (window.DaimondLegal && DaimondLegal.link) {
+			var p = el('p', 'beta-ask');
+			p.appendChild(DaimondLegal.link('privacy', t('beta.tel_more'), 'beta-telemetry'));
+			wrap.appendChild(p);
+		}
+
+		var row = el('div', 'beta-row');
+		// NO FIRST. Not because the order decides anything on its own, but
+		// because the eye lands left and the button that costs the reader nothing
+		// should be the one it lands on. Both carry `beta-btn`: same size, same
+		// weight, same colour.
+		var no = el('button', 'beta-btn', t('beta.tel_no'));
+		no.type = 'button';
+		no.addEventListener('click', function () { revoke(); if (after) after(); });
+		row.appendChild(no);
+
+		var yes = el('button', 'beta-btn', t('beta.tel_yes'));
+		yes.type = 'button';
+		yes.addEventListener('click', function () { grant(ask); if (after) after(); });
+		row.appendChild(yes);
+		wrap.appendChild(row);
+		return wrap;
 	}
 
 	// ── The block in the Credits drawer ────────────────────────
@@ -312,6 +419,44 @@
 
 	function host() { return document.getElementById('credits-beta'); }
 
+	/// Usage counts, on or off, for an account that is in the test.
+	///
+	/// TWO STATES AND ONE SET OF WORDS. Off, it draws the same question the
+	/// redemption card drew -- same sentences, same link, same two buttons -- so
+	/// somebody who said no at the door and has since changed their mind is asked
+	/// exactly what they were asked before, rather than being offered a shorter
+	/// version that leaves the cost out. On, it says so and offers the way out.
+	///
+	/// The way out is the reason this exists. Consent that cannot be withdrawn is
+	/// not consent, and until this block existed the only honest thing to do with
+	/// the whole feature was to leave it unbuilt.
+	function telemetryBlock(s) {
+		var wrap = el('div', 'beta-tel');
+		var on = false;
+		try { on = DaimondTelemetry.agreed(s.accountId); } catch (e) { on = false; }
+		if (!on) {
+			wrap.appendChild(consentBlock({ wave: s.wave, account: s.accountId }, refresh));
+			return wrap;
+		}
+		wrap.appendChild(el('div', 'beta-head', t('beta.tel_title_on')));
+		wrap.appendChild(el('p', 'beta-lead', t('beta.tel_on')));
+		if (window.DaimondLegal && DaimondLegal.link) {
+			var p = el('p', 'beta-ask');
+			p.appendChild(DaimondLegal.link('privacy', t('beta.tel_more'), 'beta-telemetry'));
+			wrap.appendChild(p);
+		}
+		var stop = el('button', 'beta-btn', t('beta.tel_stop'));
+		stop.type = 'button';
+		stop.addEventListener('click', function () {
+			revoke();
+			// Redrawn from the module's own answer rather than from what this
+			// button believes it just did, so what is on screen is what is true.
+			refresh();
+		});
+		wrap.appendChild(stop);
+		return wrap;
+	}
+
 	/// Draw the block, or empty it where there is nothing honest to put in it.
 	///
 	/// Called by `DaimondCredits.render` -- which daimond.js invokes every time
@@ -326,7 +471,22 @@
 		// An account already exists: there is nothing here to redeem for, and a
 		// passcode field on a signed-in account would be a control looking for a
 		// problem.
-		if (s.authed) return;
+		//
+		// BUT A BETA ACCOUNT HAS ONE THING TO SAY HERE, and this is where the
+		// consent given at redemption is taken back. It is in the Credits view
+		// because that is where this app already answers "what account have I
+		// got"; it is in THIS file because this file asked the question, and one
+		// question with two surfaces must not become two sets of words.
+		//
+		// Drawn only for an account the gateway still names in the beta on this
+		// boot, which is the same standing `rearm()` reads: a revoked passcode
+		// leaves nothing here, because there is nothing left to withdraw.
+		if (s.authed) {
+			if (window.DaimondTelemetry && s.beta === true && s.wave && s.accountId) {
+				h.appendChild(telemetryBlock(s));
+			}
+			return;
+		}
 		// Nothing to sign with. The view's own "Create an account" path is the
 		// step before this one, and it is already on screen below.
 		if (!canSign()) return;
@@ -428,11 +588,34 @@
 		setTimeout(function () { show({ reason: reason }); }, 600);
 	}
 
+	// ── Recording again, for somebody who already said yes ─────
+	//
+	// The boot half of consent. A tester agrees once, at redemption; every
+	// session after that has to start recording again on its own, and this is
+	// the only thing that does it. It is `resume()` and never `consent()`: the
+	// difference is that this cannot create an agreement, only restore one that
+	// the person made and that the gateway still stands behind on THIS boot.
+	//
+	// Three facts must line up, and all three come off the gateway's own answer
+	// rather than off anything remembered here -- see `beta_standing` in
+	// gateway/src/handlers/account.rs. A revoked passcode takes the account's
+	// status with it, so the next boot names no wave and this quietly does
+	// nothing.
+
+	/// Restore a recorder for an account that has already agreed.
+	function rearm() {
+		if (!window.DaimondTelemetry) return;			// a build without the client.
+		var s = acct();
+		if (!s.authed || s.beta !== true || !s.wave || !s.accountId) return;
+		try { DaimondTelemetry.resume({ wave: s.wave, account: s.accountId }); }
+		catch (e) { /* telemetry may never break the app it reports on */ }
+	}
+
 	function start() {
 		window.addEventListener('daimond:refused', onRefused);
 		// The account moved -- signed in, balance read, logged out. Whatever of
 		// ours is on screen is about to be wrong.
-		window.addEventListener('daimond:authed',  refresh);
+		window.addEventListener('daimond:authed',  function () { rearm(); refresh(); });
 		window.addEventListener('daimond:credits', function () {
 			// AFTER daimond.js's own listener, which redraws the Credits view
 			// from scratch when the drawer is open. Ours is registered first --
@@ -441,6 +624,10 @@
 			// past. A task boundary puts it back on the correct side.
 			setTimeout(refresh, 0);
 		});
+		// A tab that was already signed in when this file loaded raises no
+		// `daimond:authed` for us to hear, and that is the ordinary case on a
+		// reload. Without this line consent survived a reload in name only.
+		rearm();
 		refresh();
 	}
 

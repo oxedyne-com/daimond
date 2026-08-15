@@ -164,7 +164,7 @@
 /* ◈ on a row: put this folder in the open Diamond's workspace, or take it out.
    Like the pin, the LIT state is standing information and must not hide until
    the pointer finds it. */
-.files-res.files-hold.on { visibility: visible; color: var(--accent); }
+.files-res.files-hold.on { visibility: visible; color: var(--accent-text); }
 /* The hint under an empty Diamond workspace, which sits below real rows rather
    than replacing them. */
 .files-dws-hint { text-align: left; font-size: var(--fs-2xs); line-height: 1.5; }
@@ -181,8 +181,8 @@
 	cursor: pointer; padding: 0 3px; visibility: hidden; font-size: var(--fs-sm);
 }
 .files-row:hover .attach-btn { visibility: visible; }
-.attach-btn:hover { color: var(--accent); }
-.attach-btn.on { visibility: visible; color: var(--accent); }
+.attach-btn:hover { color: var(--accent-text); }
+.attach-btn.on { visibility: visible; color: var(--accent-text); }
 .attach-btn.away { visibility: visible; color: var(--text-muted); }
 
 /* Touch. The scope chips take the same 24px floor as the mode row's, and the ◈
@@ -237,7 +237,7 @@
 .files-pin { font-size: var(--fs-sm); }
 .files-row:hover .files-res,
 .files-row:hover .files-pin { visibility: visible; }
-.files-res:hover, .files-pin:hover { color: var(--accent); }
+.files-res:hover, .files-pin:hover { color: var(--accent-text); }
 .files-pin.on { visibility: visible; opacity: 0.9; }
 /* A cloud row is the user's file, safe, and simply not here at the moment --
    so it is quieter than a held file, never struck through or greyed to junk. */
@@ -253,7 +253,22 @@
 }
 .files-row:hover { background: var(--bg-hover); }
 .files-name { flex: 1; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.files-row.dir .files-name { color: var(--accent); }
+/* A folder is named in the accent, and the accent has TWO tokens because it does
+   two jobs. `--accent` is the FILL and the EDGE -- a button's ground, a border,
+   a focus ring -- and SC 1.4.11 asks 3.0 of it. `--accent-text` is the accent as
+   INK, which SC 1.4.3 asks 4.5 of, and every palette carries it a rung further
+   from its own surfaces for exactly that reason.
+   This rule, and the three above it, reached for `--accent`. On the four dark
+   palettes that is a mid-toned accent on a near-black panel: Midnight measured
+   4.19:1 for a folder name on `--bg-secondary` and Amber 4.35, both under the
+   floor for 13px. Nothing about the token's VALUE was wrong -- 4.19 is a
+   perfectly good ring -- so lifting `--accent` would have paled every accent
+   fill in the app to fix four lines of text in one panel. The wrong token was
+   named, and naming the right one moves nothing outside these four rules.
+   Against all four surfaces of its own palette -- primary, secondary, tertiary
+   and hover -- `--accent-text` reads 6.04-10.56 across the dark band and
+   4.98-9.38 across the light. */
+.files-row.dir .files-name { color: var(--accent-text); }
 .files-size { color: var(--text-secondary); font-size: var(--fs-2xs); font-family: var(--font-mono); }
 .files-del {
 	background: transparent; border: none; color: var(--text-secondary);

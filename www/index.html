@@ -362,6 +362,15 @@
 						<div class="settings-section">
 							<p class="cfg-lead" data-i18n="models.lead">A key for each provider you use. New chats and Diamonds start on the default model; any model can be picked for a single chat.</p>
 							<div id="models-list" class="models-list"></div>
+							<!-- The panel's message line: a provider that would not say what is left,
+							     a credit figure that is not a number, a models list that would not
+							     load. It looked itself up in `models.js` for a month and NOTHING
+							     anywhere created it, so every one of those messages was swallowed.
+							     OUTSIDE `models-list`, because `render()` rewrites that list
+							     wholesale and would carry the message off with it. Same
+							     `login-error` line as `byok-note` below rather than a fourth
+							     notice mechanism. -->
+							<div id="models-note" class="login-error" role="status" aria-live="polite"></div>
 							<button type="button" id="models-add" class="models-add" data-i18n="models.add">+ Add provider</button>
 
 							<!-- Adding one: the same three questions, whoever the provider is. -->
@@ -1335,6 +1344,23 @@
      recover the passphrase behind a WebAuthn PRF credential. -->
 <script src="js/passkey.js"></script>
 <script src="js/gateway.js"></script>
+<!-- telemetry.js: what a beta tester who agreed sends, and the whole of it —
+     twenty events, three integers each, and no text field anywhere in the
+     payload. Read the top of the file; it is written to be read.
+
+     LOADED HERE, BEFORE passcode.js, which is the only thing that can start it:
+     the consent card shown when a passcode is redeemed, and the same question in
+     the Credits drawer, where it is also turned off again. Loading it does not
+     arm it — there is no flag to forget to check, only a recorder that does not
+     exist until somebody presses a button — and dev/verify_telemetry.mjs proves
+     that at the network, in a session that does real work and sends nothing.
+
+     It stayed OUT of this list until three things were true, and each is now a
+     check in that verifier: consent can be taken back and taking it back stops a
+     batch already queued; something actually emits, so the question is not
+     asking permission to send nothing; and the Privacy Policy describes what is
+     sent, at #beta-telemetry, which the consent card links to. -->
+<script src="js/telemetry.js"></script>
 <!-- passcode.js AFTER gateway.js: the refusal it draws is raised by
      gateway.js, and the redemption behind its one button is
      DaimondGateway.redeemPasscode. Classic, before the module, so

@@ -89,6 +89,7 @@
 				<li>Payment metadata from Stripe.</li>
 				<li>The mail addresses you have bound, in plain text.</li>
 				<li>Sealed sync data we cannot open, and minimal operational logs.</li>
+				<li>For beta testers who agreed: counts of how the app is used, and no words.</li>
 			</ul>
 		</div>
 	</div>
@@ -120,6 +121,7 @@
 			<li><a href="#children">Children</a></li>
 			<li><a href="#regional">Regional information</a></li>
 			<li><a href="#changes">Changes to this policy</a></li>
+			<li><a href="#beta-telemetry">The closed beta, and the counts it sends</a></li>
 			<li><a href="#contact">Contact</a></li>
 		</ol>
 	</nav>
@@ -149,6 +151,7 @@
 		<li><strong>Saved-card details for display.</strong> If you save a card, we hold Stripe's customer and payment-method references, the card brand and its last four digits. Never the card number.</li>
 		<li><strong>Sealed identity material you have asked us to hold.</strong> If you set up a passkey, the gateway holds a copy of your identity sealed by that passkey so a new device can adopt your account; the key that opens it exists only inside your authenticator. If you pair a device, it holds the exported identity bundle, encrypted under your passphrase, under a single-use code for a few minutes. Neither is readable by us.</li>
 		<li><strong>Inference-key records.</strong> When you run a model on credits, we hold a reference to the spend-capped key issued for you and what it has spent, so it can be reconciled and revoked. Not the key itself, and never your prompts.</li>
+		<li><strong>Beta usage counts, if you agreed to them.</strong> If you are in the closed test and said yes when asked, a small report of how the app is being used: whole numbers only, with no text of any kind in it. Set out in full in <a href="#beta-telemetry">section 18</a>, which is where to look before deciding.</li>
 		<li><strong>Minimal operational logs.</strong> Basic logs needed to run and protect the service, which may include IP addresses, timestamps and request metadata for the metered actions that pass through the gateway. <span class="tbc">[TO CONFIRM: exactly what the logs contain, and whether IP addresses are retained]</span></li>
 	</ul>
 		<p>
@@ -290,6 +293,12 @@
 					<td>Passkey bundle: until you remove it. Pairing bundle: minutes, then gone once redeemed</td>
 				</tr>
 				<tr>
+					<td>Beta usage counts (whole numbers, no text), only if you agreed</td>
+					<td>To see whether the app works, and where it fails, during the closed test</td>
+					<td>No</td>
+					<td>180 days, or until the test ends, or until you ask us to delete them <span class="tbc">[TO CONFIRM: the sweep is not built yet]</span></td>
+				</tr>
+				<tr>
 					<td>Operational logs, which may include IP address, timestamps and request metadata</td>
 					<td>To run, secure and debug the metered gateway actions and prevent abuse</td>
 					<td>No</td>
@@ -303,7 +312,7 @@
 		There is no account with us to sign into and no delete button in the app, because there is no
 		account of that kind: what the gateway holds is keyed to a public key your device made. Ask us and
 		we will delete what we hold, apart from records the law makes us keep. Section 14 covers this,
-		and section 18 says where to write.
+		and section 19 says where to write.
 	</p>
 	<p>
 		We do not collect sensitive personal information for the purpose of inferring characteristics about you.
@@ -352,10 +361,12 @@
 			</p>
 	<p>
 		The gateway sets a single same-origin session cookie so that a signed-in session works. It is
-		strictly necessary, not a tracker. We use <strong>no</strong> analytics, advertising or cross-site
-		tracking cookies. Because we set only strictly-necessary on-device storage and one session cookie, no
-		cookie-consent banner is required. If we ever added analytics or any non-essential tracker, we would
-		update this policy and seek consent where the law requires it.
+		strictly necessary, not a tracker. We use <strong>no</strong> advertising or cross-site tracking
+		cookies, and no third-party analytics of any kind. Because we set only strictly-necessary on-device
+		storage and one session cookie, no cookie-consent banner is required. The one thing we count is
+		described in <a href="#beta-telemetry">section 18</a>: a numbers-only report from beta testers who
+		asked to be in the test and then agreed to it, which is off unless you said yes, sets no cookie, and
+		reads none.
 		<span class="tbc">[TO CONFIRM: exact session-cookie name and lifetime]</span>
 	</p>
 
@@ -389,6 +400,7 @@
 		<li><strong>Sealed sync data and encrypted file data.</strong> This is <strong>stored, not relayed</strong>. Your sync blob is kept until a device replaces it, you reset your sync, or you delete the account. The encrypted file data behind it is kept while your devices still refer to it: when a device tells the gateway which pieces are still live, the pieces no longer referred to are deleted.</li>
 		<li id="storage-lapse"><strong>Stored file data when credits run out.</strong> Storage above the free allowance is metered over time. If your balance will not cover it, the metering pauses and a grace period begins; you can still read everything you have stored, and nothing is back-charged. If the grace period passes without the balance being restored, the stored data above the free allowance <strong>is deleted</strong>. You will be told in the app before that happens, while there is still time to top up or to bring those files down onto your own device. <span class="tbc">[TO CONFIRM: grace period length, and how far ahead of deletion the notice appears]</span></li>
 		<li><strong>Credit ledger, licence and payment metadata.</strong> Kept for as long as the account is active and thereafter for the period tax and accounting law requires. <span class="tbc">[TO CONFIRM: period]</span></li>
+		<li><strong>Beta usage counts.</strong> Deleted 180 days after they arrive, and the whole set is deleted when the closed test ends. Turning the counts off stops new ones; it does not delete the ones already sent, which the expiry does. <span class="tbc">[TO CONFIRM: the sweep that enforces the 180 days is not yet built; until it is, deletion is by hand.]</span></li>
 		<li><strong>Operational logs, including any IP addresses.</strong> Kept for a short period, then deleted. We recommend keeping this short and truncating IP addresses. <span class="tbc">[TO CONFIRM: exact period and whether IPs are truncated]</span></li>
 	</ul>
 
@@ -520,8 +532,9 @@
 		<p>
 			Our lawful bases are: performance of a contract (running your account, credits and licence);
 			legitimate interests (securing the service and preventing abuse, through minimal logs); consent
-			(the optional country, which you enter or leave blank, and which you may clear at any time); and
-			legal obligation (keeping tax and accounting records).
+			(the optional country, which you enter or leave blank, and which you may clear at any time, and
+			the beta usage counts in section 18, which you are asked for once and may withdraw at any time in
+			the app); and legal obligation (keeping tax and accounting records).
 			<span class="tbc">[TO CONFIRM: the lawful basis for the mail addresses held in plain text, which is the open question in section 2]</span>
 			International transfers rely on the SCCs and the UK
 			IDTA/Addendum, plus encryption, as set out in section 10. Our Article 27 representatives are named in
@@ -584,7 +597,76 @@
 		<span class="tbc">[TO CONFIRM: notice method for material changes]</span>
 	</p>
 
-	<h2 id="contact">18. Contact</h2>
+	<h2 id="beta-telemetry">18. The closed beta, and the counts it sends</h2>
+	<p>
+		If you are testing Daimond on a beta passcode, and <strong>only if you said yes when we asked</strong>,
+		Daimond sends us a small report of how the app is being used. It is off unless you agreed to it, we
+		ask once and do not ask again, and you can turn it off at any time in the app under Credits. Turning
+		it off stops it at once, including anything not yet sent, and it stays off when you reopen the app.
+	</p>
+	<p>
+		<strong>What it sends is numbers.</strong> Each report is a list of lines, and each line is three whole
+		numbers: which of twenty things happened, how many milliseconds into the session it happened, and one
+		count. Around them travel five more numbers: which version of this format, which build of Daimond,
+		which of the eight languages you are reading it in, which intake of the test you were let into, and
+		the moment the report was sent. There is nothing else in it.
+	</p>
+	<p>The twenty things are:</p>
+	<ul>
+		<li>The app opening, and how many milliseconds it took to become usable; the session ending, and how many seconds it lasted.</li>
+		<li>How far into first-run setup you got.</li>
+		<li>A panel being opened, and which one.</li>
+		<li>A Diamond being made, and how many you have; a chat being made, and how many you have.</li>
+		<li>A turn being sent, and which turn of that chat it is; a turn finishing, and how many seconds it took; a turn stopped by you, and how many seconds in; a turn failing, and which of nine classes of failure it was.</li>
+		<li>A chat being left, and how many turns it had.</li>
+		<li>A tool being run, and which tool; a tool failing, and which tool.</li>
+		<li>An uncaught error, and how many there have been this session.</li>
+		<li>A sync finishing or failing, and how long it took or which class of failure it was.</li>
+		<li>The storage warning appearing, and how many megabytes were held.</li>
+		<li>An offer being opened, and which one; an offer being bought, and which one.</li>
+		<li>A new build being taken up, and how many seconds after it was offered.</li>
+	</ul>
+	<p>
+		<strong>What it never sends is words.</strong> Not a message, not a prompt, not a model's reply, not a
+		file name, not a path, not a Diamond's name, not a search, not a web address, not an error message,
+		not a stack trace. There is no free-text field of any kind and no "what were you doing" box. This is
+		not a promise about careful scrubbing: the report has no place to put text, and our server refuses an
+		entire report that contains any. Both halves are published, in
+		<code>www/js/telemetry.js</code> and <code>gateway/src/handlers/telemetry.rs</code>, and a test in the
+		open-source client drives a real session and checks the wire.
+	</p>
+	<p>
+		<strong>The cost of that, stated plainly.</strong> When Daimond breaks for you we learn that it broke
+		and how many times, never why. What stands in for a stack trace is the order: a report carries its
+		lines in sequence with the milliseconds between them, so we can see that a panel was opened, two file
+		tools ran, and then something threw &mdash; without a character of your work.
+	</p>
+	<p>
+		<strong>It is not anonymous, and we will not pretend otherwise.</strong> The report arrives on the
+		account your passcode created, so we can tell which reports are yours, and the passcode itself carries
+		a note we wrote when we issued it, which is often your name and where we met you. That is deliberate:
+		twenty accounts of anonymous numbers would tell us nothing worth having, and being able to come back
+		and ask you is the point of a closed test. Like every other request to the gateway, it reaches us with
+		your IP address in the ordinary server logs described in sections 2 and 9.
+	</p>
+	<p>
+		<strong>How long we keep it.</strong> Reports are deleted 180 days after they arrive, and the whole
+		set is deleted when the closed test ends.
+		<span class="tbc">[TO CONFIRM: the sweep that enforces the 180 days is not yet built. Until it is,
+		deletion happens by hand, and this sentence states what we do rather than what runs.]</span>
+		You can also ask us to delete the reports we hold from you; we do not yet publish an address to ask
+		at, because the contact point for this policy is still being settled (section 19), and until we do,
+		the expiry above is what limits how long they exist.
+	</p>
+	<p>
+		<strong>Saying no costs you nothing.</strong> Declining does not affect your account, your Pro licence,
+		your credits, or anything else your passcode gave you, and nothing about the app behaves differently.
+		In the EEA and the UK our lawful basis for these counts is your consent, which you may withdraw at any
+		time without affecting anything else and without affecting what was collected before you did
+		(section 16).
+	</p>
+
+	<h2 id="contact">19. Contact</h2>
 	<p>
 		Privacy questions, and requests to exercise your rights, can be sent to
 		<span class="tbc">[TO CONFIRM: contact / privacy email]</span>. Users in the EEA and the UK may also

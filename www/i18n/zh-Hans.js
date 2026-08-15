@@ -40,6 +40,7 @@
 	'copy.what_device':        '设备 {name} 的 ID',
 	'copy.what_model':         '模型 ID {id}',
 	'copy.what_default_model': '默认模型 ID',
+	'copy.what_handle':        '你的公开名称',
 
 	// ── 顶栏 ───────────────────────────────────────────────────
 	'topbar.menu':        '菜单',
@@ -59,6 +60,7 @@
 	'about.title':      '关于 Daimond',
 	'about.splash_alt': '一个身影在夜空中飞向一颗钻石，下方是行星的弧线。',
 	'about.what':       'Daimond 是一个在你浏览器里运行的 AI 智能体工作区。没有服务器账户，也没有东西要下载。你的聊天、密钥和文件都留在这台设备上。',
+	'about.verify':     '用公开源码核对这个构建',
 
 	// ── 面板名称 ───────────────────────────────────────────────
 	// 要短：它们排在一行标签里，也排在手机的底部标签栏里。
@@ -289,6 +291,21 @@
 	'beta.done_plain':         '这台设备有了 Daimond 账户。',
 	'beta.done_handle':        '别人看到这个账户是 {handle}。',
 	'beta.done_not_signed_in': '通行码已被使用，账户也已存在，但这台设备刚才没能完成登录。它会自行再试。',
+
+	// ── 只请测试者同意这一件事 ──────────────────────────
+	// 与本表其余部分一样，尚待母语者校对。`tel_never` 说的是代码的事实，不是我们
+	// 用心与否的承诺，不可弱化为「我们不收集个人数据」。
+	'beta.tel_title':    '发送使用计数吗？',
+	'beta.tel_title_on': '使用计数',
+	'beta.tel_lead':     '如果 Daimond 能报告它被怎样使用，这次测试对我们的帮助会大得多。它只发送数字：二十件事里发生了哪一件、距离本次会话开始多少毫秒，以及各自的一个计数 — 一轮用了多久、打开了哪个面板、出现了多少次错误。',
+	'beta.tel_never':    '它从不发送文字。不发消息、不发文件名、不发 Diamond 的名字、不发路径、不发错误信息。根本没有放这些的字段，我们的服务器也会拒收任何带文字的报告。',
+	'beta.tel_who':      '它发给 Oxedyne，记在你的通行码创建的账户上，所以我们看得出哪些数字是你的，也能回头就此问你。',
+	'beta.tel_free':     '说不不会让你失去任何东西。你的账户、Pro 以及其他一切都原封不动，应用里也没有任何地方会因此不同。',
+	'beta.tel_more':     '完整的发送内容',
+	'beta.tel_yes':      '发送使用计数',
+	'beta.tel_no':       '不发送',
+	'beta.tel_on':       'Daimond 正在发送这个账户的使用计数：只有数字，从不含文字。',
+	'beta.tel_stop':     '停止发送使用计数',
 
 	// ── 入口 ───────────────────────────────────────────────────
 	// 机器翻译，未经母语者校对。
@@ -706,6 +723,11 @@
 	// ── 云端存储清理 ───────────────────────────────────────────
 	'chunks.sweep_held':          '清理已暂停',
 	'chunks.sweep_held_reason':   '云端存储里的 {m} 个片段中，有 {n} 个已经没有本账户的任何文件再引用。它们并没有被删除，因为一次请求最多只能删掉已存内容的一半。你的东西一件都没少，等到下一次同步能把它们全部对上，空间就会释放。',
+	'chunks.upload_refused':      '上传已暂停',
+	'chunks.upload_refused_title': '云端存储拒绝了一次上传',
+	'chunks.sweep_confirm_ask':   '现在就删除？你还能看到的东西一件都不会动，空间会腾出来。',
+	'chunks.sweep_confirm_ok':    '删除这些片段',
+	'chunks.sweep_confirm_title': '释放没有被引用的片段？',
 
 	// ── 关联第二台设备 ─────────────────────────────────────────
 	// 按钮名称外面的引号用中文的“”。
@@ -1070,6 +1092,9 @@
 	'home.account_note':      '账户就是留在这台设备上的一句密码短语。它给你的 API 密钥加密，也用来登录取用额度。什么都不会离开浏览器。',
 	'home.fingerprint':       '你这台设备的身份指纹',
 	'home.change_name':       '改名…',
+	'home.handle_help':       '你的公开名称：别人看到的名字，这个账户的每台设备上都一样。',
+	'home.change_handle':     '改公开名称…',
+	'handle.rename_title':    '改公开名称',
 	'home.change_passphrase': '更改密码短语…',
 	'home.add_passkey':       '添加通行密钥…',
 	'home.remove_passkey':    '移除通行密钥',
@@ -1118,6 +1143,7 @@
 	'push.err_host':     '填上推送要去的主机，比如 github.com；要删除凭据就把令牌那一栏清空。',
 	'push.err_not_held': '没有被接受，所以现在没有推送凭据。检查一下主机和令牌。',
 	'push.not_resealed': '密码短语已经改了，但推送令牌没能用新的重新加密。重新加载之前推送还能用。想留住它就再设置一次令牌。',
+	'push.the_token':    '你的推送令牌',
 
 	// ── 同步这个账户的设备 ─────────────────────────────────────
 	'devices.on_platform': '{platform} 上的 {brand}',
@@ -1792,6 +1818,18 @@
 	'changepass.failed_body':     '你现在的密码短语对不上。什么都没有改动。',
 	'changepass.careful':         '小心',
 	'changepass.key_not_resealed': '密码短语换掉了，但你的 API 密钥没能重新加密。请到设置里重新输入一次。',
+	'changepass.mail_not_resealed': '这些邮箱没能用新的密码短语重新加密，需要重新输入密码：{list}。',
+	'changepass.mail_not_unsealed': '这些邮箱用旧的密码短语也读不出来，所以密码仍然要重新设置：{list}。',
+	'changepass.models_not_resealed': '这些提供商没能用新的密码短语重新加密，需要重新输入密钥：{list}。',
+	'changepass.models_not_unsealed': '这些提供商在这次更改之前，密钥就已经读不出来了，仍然要重新设置密钥：{list}。',
+	'changepass.all_of_them':      '全部',
+	'changepass.the_api_key':      '你的 API 密钥',
+	'changepass.search_not_resealed': '这些搜索服务没能用新的密码短语重新加密，需要重新输入密钥：{list}。',
+	'changepass.search_not_unsealed': '这些搜索服务在这次更改之前，密钥就已经读不出来了，仍然要重新设置密钥：{list}。',
+	'changepass.voice_not_resealed': '你的锻造台声音没能用新的密码短语重新加密。请用锻造台为你打印的那一行重新设置一次。',
+	'changepass.voice_not_unsealed': '你的锻造台声音用旧的密码短语读不出来，所以仍然要用锻造台为你打印的那一行重新设置一次。',
+	'changepass.rekey_generic':    '{who}：{list}。',
+	'changepass.rekey_failed':     '这里存着的东西，有一部分没能用新的密码短语重新加密。请到设置里检查你的密钥和邮箱密码。',
 	'changepass.changed':         '密码短语已更改',
 	'changepass.changed_body':    '你的新密码短语已经生效。保存的 API 密钥也用它重新加密了。',
 	'changepass.passkey_stale':   '你的通行密钥没能更新，所以它会要你输入新的密码短语。请到设置里重新添加。',
@@ -1799,6 +1837,8 @@
 	// ── 备份 ───────────────────────────────────────────────────
 	'backup.unreadable':      '那个备份文件读不出来。',
 	'backup.not_a_backup':    '那不是一份 Daimond 备份。',
+	'backup.version_title':   '这个备份比这个 Daimond 新',
+	'backup.version_body':    '这个文件是用备份格式 {found} 写的，而这个构建读的是格式 {known}。什么都没有恢复，文件里的内容也没有改动。请更新 Daimond，然后重新打开它。',
 	'backup.identity_title':  '已恢复账户身份',
 	'backup.identity_body':   '备份带来了“{name}”的身份，这个浏览器现在就是那个账户，服务器上为它保存的额度和 Pro 许可也一并归它。请用该账户的口令解锁；备份里没有口令，别的东西也打不开这个账户。',
 	'backup.identity_kept':   '这个浏览器已经有账户，所以备份中“{name}”的身份保持不动。其余内容都已恢复。',
@@ -1971,6 +2011,8 @@
 	'tile.daimon_reset_body': '这个代蒙的对话（{n} 条）会被丢弃，下一条指令开始新的对话。什么都不会进入晶体 — 如果有值得留下的，请先折进去。晶体、文件和链接都不受影响。',
 	'tile.daimon_reset_ok': '丢弃对话',
 	'tile.daimon_reset_done': '新的代蒙。晶体不受影响。',
+	'tile.daimon_reset_busy_title': '代蒙还在工作',
+	'tile.daimon_reset_busy': '这个代蒙正在一轮对话中间。它的回答会落进你正要丢掉的那段对话里，模型手上握着的对话也一样，所以现在还什么都没丢。先把这一轮停下来：它在跑的时候，输入框旁边的按钮是停止。',
 	'tile.model_workers': '工人',
 	'tile.model_vision': '工人（图像）',
 	'tile.model_vision_help': '当任务里提到图像时工人所用的模型。Daimond 无法检查一个模型能否看图，所以这个选择由你来定。',
@@ -2179,6 +2221,15 @@
 	'improve.voice_forget_help': '删掉这台设备上的副本。',
 	'improve.voice_forgotten': '这台设备上的副本没有了。',
 	'improve.voice_ask_forget': '忘掉这台设备上的声音？锻造台只显示过一次，无法再显示第二次。',
+	'voice.err.empty':          '要在锻造台上写东西，得先有一个声音。',
+	'voice.err.shape':          '这看起来不像一个声音。请把锻造台打印出的那一行整个复制过来。',
+	'voice.err.short':          '这比锻造台发出的任何一个声音都短。请把整行复制过来。',
+	'voice.err.long':           '这比一个声音能有的长度还长。',
+	'voice.err.locked':         '请先解锁 Daimond：你的声音是用你的密码短语加密保存的。',
+	'voice.err.locked_send':    '要在锻造台上写东西，请先解锁 Daimond：你的声音是用你的密码短语加密的。',
+	'voice.err.unreadable':     '用这个密码短语读不出你的声音。请用锻造台为你打印的那一行重新设置一次。',
+	'voice.err.inurl':          '声音放在请求头里，绝不放进地址。',
+	'voice.the_voice':          '你的锻造台声音',
 
 	// 提案是在你查看时从锻造台读来的。没有任何东西会告诉你提案何时有了回应，
 	// 这里的任何一句都不能让人以为有。

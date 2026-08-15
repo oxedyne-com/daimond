@@ -43,24 +43,65 @@ COMPOSE_PROFILE=$SCRATCH/compose-profile
 IMAP_FIXTURE=${IMAP_FIXTURE:-$HOME/usr/code/rust/fe2o3/target/debug/examples/imap_test_server}
 SMTPD=${SMTPD:-dev/smtpd.mjs}
 
-# The verifiers that need a gateway ALREADY up (group C). Pairing and the two
-# passkey ones talk to gateway endpoints directly (a pairing code, the sealed
-# passkey blob at pkblob:<handle>); delivery and sync read what the gateway
-# holds. Without one they fail on 502s that say nothing about the product.
-# One line, and matched with a space either side: a newline in this list would
-# make the last name on a line never match, and that test would run in the wrong
-# phase without saying so.
-# verify_gwretry belongs here for a reason worth writing down: it ENDS a live
-# gateway session with a raw POST to /api/auth/logout and asserts that four
-# panels each re-authenticate and retry. There is no session to end without a
-# gateway, so with :9002 clear it prints its own SKIP and exits 0 -- a green
-# line, on a suite summary, for a 401-recovery path nobody exercised.
-# verify_sessionrenew is here for the same reason and was missing for longer: it
-# too exits 0 with a SKIP line when :9002 is clear, which phase 1 guarantees, so
-# the session-renewal path had never run under this suite and had been reported
-# as passing every time.
-NEEDS_GATEWAY="verify_autoreload verify_qr verify_spend verify_sync verify_mailsync verify_compose verify_mailfolders verify_pairing verify_passkey_adopt verify_passkey_blob verify_gwretry verify_sessionrenew verify_pausesync"
+# Which verifiers need a gateway ALREADY up (group C) -- ASKED OF THE FILES.
+#
+# This was a hand-kept list of thirteen names, and a hand-kept list is the thing
+# that goes stale: `verify_look` and `verify_wakerearm` each STATE the
+# requirement in their own header ("Needs dev/serve.mjs (DAIMOND_PORT) AND the
+# gateway on :9002") and neither was ever added to it. Both landed on 2026-08-12
+# and both have failed identically in every gate since -- `webhook 0, pro=false`,
+# which is a fetch that never connected -- while every browser-only check in
+# verify_look passed. Two days of red that said nothing about the app. The same
+# accident had already cost verify_gwretry and verify_sessionrenew, which exit 0
+# with a SKIP line when :9002 is clear and so were reported as PASSING for every
+# run in which they refused to do anything at all.
+#
+# So it is derived, on the same reasoning `wants_gateway` already applies below:
+# ask the verifier, not a list somebody has to remember to edit. What is asked is
+# the header comment, because that is where every one of these declares itself,
+# and the answer is checked in two directions:
+#
+#   IT MUST ASK FOR ONE. A sentence in the header naming the gateway together
+#   with the thing that has to be there -- :9002, or the `dev_insecure` mail
+#   config phase 2 generates. A mention is not a requirement: "No gateway on
+#   :9002" and "It does NOT need ... the gateway on :9002" are NINE other files
+#   saying the opposite, and are excluded by the words that make them opposite.
+#
+#   AND IT MUST NOT BRING ITS OWN. Group B spawns a gateway and REFUSES to run
+#   with one already up, so it belongs in phase 1. `procLog` is gwbin's "I am
+#   about to spawn a server and need somewhere to log it" helper, and importing
+#   it is what tells the two groups apart -- verify_passkey_blob talks to a live
+#   gateway and imports SUITE_GW_LOG instead, saying in its own comment that it
+#   "starts no gateway of its own".
+#
+# Checked against the list it replaces (2026-08-14): it reproduces all thirteen
+# names exactly, and adds exactly verify_look and verify_wakerearm. The phase
+# lines this script prints are the audit -- every run says which verifiers it put
+# in which phase, which is what a list in a file never did.
+needs_live_gateway() {          # name -> 0 if it needs a gateway ALREADY up
+	local f="dev/$1.mjs"
+	[ -f "$f" ] || return 1
+	grep -q 'procLog(' "$f" && return 1           # it starts one of its own
+	awk '
+		/^[[:space:]]*\/\// { sub(/^[[:space:]]*\/\/[[:space:]]?/, ""); h = h " " $0; next }
+		/^[[:space:]]*$/    { next }
+		{ exit }                                  # the header ends at the first code
+		END {
+			n = split(h, s, /\. /)
+			for (i = 1; i <= n; i++) {
+				t = tolower(s[i])
+				if (t !~ /gateway/)             continue
+				if (t !~ /:9002|dev_insecure/)  continue
+				if (t ~ /no gateway|not need|free :9002|starts its own|start its own|spawns/) continue
+				exit 0
+			}
+			exit 1
+		}
+	' "$f"
+}
 # Of those, the two that also need an entitled account (and, for compose, mail).
+# Still a list: an entitlement is not something a header declares, and these two
+# are named again by the provisioning block below in any case.
 NEEDS_GRANT="verify_compose verify_mailfolders"
 
 # Verifiers that need something this suite cannot invent, and that say so by
@@ -145,6 +186,32 @@ slow_for() {
 		# twice the measurement, on the same reasoning as verify_reversible, and
 		# those 10s waits are exactly what stretches when the box is busy.
 		verify_raildialogs)               echo 480 ;;
+		# Eleven palettes, each opened, focused through and measured for ink. Killed
+		# by the 180s default and reported as exit 124 -- it dies part way through
+		# the fifth palette, which reads on a summary as the app's focus ring being
+		# broken. MEASURED three times to completion in a world: 326s and ~330s
+		# (2026-08-13, the second ALL PASS) and 379s (2026-08-14, world 18, which
+		# found one real ink shortfall in the dark palettes). So 600, near twice the
+		# measurement, on the same reasoning as verify_reversible and
+		# verify_raildialogs -- and the spread across those three is why not 400.
+		verify_focus_and_ink)             echo 600 ;;
+		# Two devices, an account look pushed each way, and a THIRD sign-in on the
+		# second device to prove the migration case. It has no measurement to be
+		# sized by -- it has never once been run to completion, because it was left
+		# out of the gateway group above and so has spent every gate failing on
+		# fetches that never connected, then being killed at 180s. Sized by its own
+		# declared waits instead, which are what it spends when the answer does not
+		# come: four 25s pushes, a 30s and two 20s settles, four 20s readiness waits
+		# and two browser launches -- a little over 300s if every one of them runs
+		# long. 600 is twice that, and the first run under a real gateway is the
+		# measurement this should be replaced by.
+		verify_look)                      echo 600 ;;
+		# Parks a request at the gateway for three quarters of a minute, twice, and
+		# the whole point is that the second park is HELD OPEN. Its own waits come to
+		# about 170s before two browser launches, so the 180s default would kill it
+		# the first time it ever reaches a gateway (see verify_look above: it has
+		# never run either). Unmeasured, for the same reason.
+		verify_wakerearm)                 echo 420 ;;
 		*)                                echo 180 ;;
 	esac
 }
@@ -277,10 +344,7 @@ stop_gateway() {
 if [ $# -gt 0 ]; then ALL="$*"; else ALL=$(cd dev && ls verify_*.mjs | sed 's/\.mjs$//'); fi
 PHASE1=""; PHASE2=""
 for name in $ALL; do
-	case " $NEEDS_GATEWAY " in
-		*" $name "*) PHASE2="$PHASE2 $name" ;;
-		*)           PHASE1="$PHASE1 $name" ;;
-	esac
+	if needs_live_gateway "$name"; then PHASE2="$PHASE2 $name"; else PHASE1="$PHASE1 $name"; fi
 done
 
 # ── The gateway binary, built once for the whole run ────────────────────

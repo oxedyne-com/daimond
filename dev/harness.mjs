@@ -374,8 +374,31 @@ export async function steerDiamond(s, text) {
 	await p.click('#chat-send', { force: true });
 }
 
-export async function newChat(s) {
+/// Start a NEW chat, and answer with its id.
+///
+/// `{ reuse: true }` asks only that SOME chat be in focus, and is what `chat()`
+/// wants: a message per chat is not what any test means by "say this".
+///
+/// THE DEFAULT REALLY MAKES ONE, and says so if it cannot. This used to return
+/// early whenever a chat was already on screen, which is the same request read as
+/// the weaker one -- and after a reload it is a different chat entirely, because
+/// the app restores the one that was open. dev/verify_attachfocus.mjs asked for a
+/// fresh chat after a reload, was handed back the PRE-RELOAD chat, and then
+/// called `chatToggle` on an attachment that chat already held: a toggle, so the
+/// check REMOVED the attachment and read zero rows. It reported
+/// `{"icons":0,"rows":0,"name":""}` for five gates as a footer that would not
+/// draw. A silent no-op is what let that stand; a caller that asks for a new chat
+/// and is handed an old one now gets a throw with both ids in it.
+export async function newChat(s, { reuse = false } = {}) {
 	const { page } = s;
+	/// The chat in focus, or '' when the focus is a Diamond or nothing.
+	const focusId = () => page.evaluate(() => {
+		try {
+			const f = window.DaimondAttach && window.DaimondAttach.focus();
+			return (f && f.kind === 'chat') ? String(f.id) : '';
+		} catch (e) { return ''; }
+	});
+	const before = await focusId();
 	// "A composer is on screen" is NOT "we are in a chat", and the difference
 	// arrived when a Diamond's crystal face gained the shared composer. Before
 	// that, a visible `#chat-input` could only mean a chat; now it also means a
@@ -391,7 +414,7 @@ export async function newChat(s) {
 		const sw = document.getElementById('diamond-view');
 		return vis(ci) && !vis(sw);
 	});
-	if (inChat) return;
+	if (inChat && reuse) return before;
 	// The Admin drawer opens over the rail on a not-connected profile
 	// ("Connect a model"), and since the rail gained its Diamonds/Chats
 	// divider the + button sits under it. A force-click dispatches at the
@@ -417,6 +440,14 @@ export async function newChat(s) {
 	}
 	await page.waitForSelector('#chat-input', { state: 'visible', timeout: 10000 });
 	await page.waitForTimeout(300);
+	const after = await focusId();
+	// Only when both ids are readable: with no `DaimondAttach` there is nothing to
+	// compare, and a harness that threw on that would be inventing a failure.
+	if (!reuse && before && after && before === after) {
+		throw new Error(`newChat: still in chat ${after} — no new chat was made. `
+			+ 'Pass { reuse: true } if any chat will do.');
+	}
+	return after;
 }
 
 /// Point the app at the mock provider through the real Settings form.
@@ -518,7 +549,9 @@ export function spend(s) {
 /// only signal the UI itself trusts.
 export async function chat(s, text, { timeout = 30000 } = {}) {
 	const { page } = s;
-	await newChat(s);
+	// `reuse`: a conversation is several messages in ONE chat. Only a caller who
+	// asks for `newChat` itself is asking for a new one.
+	await newChat(s, { reuse: true });
 	await page.fill('#chat-input', text);
 	await page.click('#chat-send', { force: true });
 	await page.waitForTimeout(300);

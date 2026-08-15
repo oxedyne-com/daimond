@@ -66,6 +66,18 @@
 		};
 	}
 
+	/// The panel's one message line: a confirmation, or the gateway's own refusal, said as it came.
+	///
+	/// THE TRAP, and it held for a month. The element is made in `render()` by `el('div', 'ar-note',
+	/// '')`, and `el`'s SECOND ARGUMENT IS A CLASS NAME. So `ar-note` was a class and never an id,
+	/// this lookup returned null every single time, and `if (!n) return` read exactly like a correct
+	/// guard -- four call sites about money went quiet and nothing said so. The id is now set as its
+	/// own statement where the div is built, the way `ar-save` already was eight lines further down.
+	/// Do not fold it back into the `el()` call.
+	///
+	/// An element that does not exist also reports itself to a browser automation locator as HIDDEN,
+	/// which is what a working guard looks like, so no check that asserted "no error is shown" could
+	/// ever have caught this. Every check over this line asserts the element EXISTS and says what.
 	function note(msg, bad) {
 		var n = document.getElementById('ar-note');
 		if (!n) return;
@@ -107,10 +119,16 @@
 			cardRow.appendChild(replace);
 		} else {
 			cardRow.appendChild(el('span', 'ar-card-none', t('autoreload.no_card')));
-			var save = el('button', 'ar-card-btn accent', t('autoreload.save_card'));
-			save.title = t('autoreload.save_card_help');
-			save.addEventListener('click', startCard);
-			cardRow.appendChild(save);
+			// `addCard`, and NOT `save`. `var` is function-scoped, so a local `save` here
+			// shadowed the module's `save()` for the WHOLE of `render()` -- including
+			// `saveBtn.addEventListener('click', save)` sixty lines below, which was then handed
+			// a DOM element (or, on the card-saved branch, `undefined`) instead of the handler.
+			// Neither is an error to `addEventListener`, so the panel's Save button silently did
+			// NOTHING, on both branches, and no console message said so. Do not rename it back.
+			var addCard = el('button', 'ar-card-btn accent', t('autoreload.save_card'));
+			addCard.title = t('autoreload.save_card_help');
+			addCard.addEventListener('click', startCard);
+			cardRow.appendChild(addCard);
 		}
 		host.appendChild(cardRow);
 
@@ -174,10 +192,24 @@
 		var actions = el('div', 'ar-actions');
 		var saveBtn = el('button', 'ar-save accent', t('common.save'));
 		saveBtn.id = 'ar-save';
+		// `save` MUST resolve to the module's handler. See the `addCard` comment above: a
+		// function-scoped `var save` anywhere in this function binds this listener to the wrong
+		// thing, and `addEventListener` accepts the wrong thing without a word.
 		saveBtn.addEventListener('click', save);
 		actions.appendChild(saveBtn);
 		host.appendChild(actions);
-		host.appendChild(el('div', 'ar-note', ''));
+
+		// The message line. The id is set as its own statement because `el`'s second argument is a
+		// CLASS NAME, and passing 'ar-note' there is what silenced `note()` for a month -- see the
+		// comment on `note()` before changing this back.
+		//
+		// Announced as well as drawn: a refusal about a standing instruction to charge a card is
+		// not something to leave for the user to notice in the corner they were not looking at.
+		var noteEl = el('div', 'ar-note', '');
+		noteEl.id = 'ar-note';
+		noteEl.setAttribute('role', 'status');
+		noteEl.setAttribute('aria-live', 'polite');
+		host.appendChild(noteEl);
 
 		paintFields();
 	}
@@ -228,8 +260,18 @@
 		try {
 			var next = await DaimondGateway.setAutoReload(readForm());
 			cur = next;
-			note(next.enabled ? t('autoreload.on_note') : t('autoreload.off_note'));
+			// AFTER the redraw, and this order is the whole fix. `render()` blanks the host and
+			// re-appends an EMPTY note line, so a confirmation written before it was destroyed in
+			// the same tick -- a second bug sitting on top of the id one, and fixing either alone
+			// proves nothing.
+			//
+			// Written after rather than carried through the redraw because this sentence answers an
+			// ACTION. A redraw for any other reason -- Credits opened again, a change of language,
+			// the card poll after a Stripe return -- should show what the gateway says NOW, not a
+			// sentence about something the user did earlier. The refusal below needs no such care:
+			// nothing redraws the panel on a save that failed, so it stays until the next action.
 			await render();
+			note(next.enabled ? t('autoreload.on_note') : t('autoreload.off_note'));
 		} catch (e) {
 			// The gateway's refusals are written for a person to read -- "the monthly budget is
 			// smaller than one top-up, so auto-reload could never buy anything" -- so they are

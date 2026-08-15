@@ -218,22 +218,33 @@ if (folded) {
 	// to trust it -- so it has to name every file that WAS written and no file that
 	// was not. One direction alone is satisfiable by a ledger that lists every
 	// attempt (naming the refused one too) or by one that lists nothing at all.
-	const namesAlpha = /alpha\.txt/.test(note.content);
-	const namesBeta  = /beta\.txt/.test(note.content);
-	check(alphaThere === namesAlpha && namesAlpha,
-		'the fold names the file that WAS written',
-		note.content.replace(/\n/g, ' | ').slice(0, 200));
-	check(betaThere === namesBeta && !namesBeta,
-		'and does NOT name the write the fence refused — nothing was created, so nothing may be claimed',
-		note.content.replace(/\n/g, ' | ').slice(0, 240));
-	if (namesBeta) {
-		log('  NOTE  that last red is the browser half of a defect being repaired in');
-		log('        src/compact.rs: `record` books a call by its OUTCOME (`call_outcome`,');
-		log('        src/tools.rs) rather than by the fact that it was made. The Rust is in');
-		log('        the tree; www/pkg/ is the build the browser runs, and it is older. This');
-		log('        check is written to be true once that build lands, and is left red');
-		log('        rather than weakened until it does.');
-	}
+	// READ THE COLUMN, NOT THE WHOLE NOTICE. This was a blanket substring test
+	// over the entire notice, which forbade `beta.txt` appearing anywhere in it --
+	// and the fix it was written for names refusals in a column of their own
+	// (`REFUSED, so nothing was touched:`, src/compact.rs) precisely so the model
+	// is told the door was shut rather than left to infer it from silence. So the
+	// check forbade the very output its own fix produces.
+	//
+	// What the ledger has to get right is which COLUMN a name lands in, and both
+	// directions of that are asserted: a refused file absent from "Files written"
+	// but present on the refusal line, and the written file present on "Files
+	// written". One direction alone is satisfiable by a ledger that lists nothing.
+	// Each ledger line arrives as a bullet under "## What was touched" (`notice`,
+	// src/compact.rs), so the leading "- " comes off before the label is read.
+	const line = label => (String(note.content).split('\n')
+		.map(l => l.trim().replace(/^-\s*/, ''))
+		.find(l => l.startsWith(label + ':')) || '');
+	const wroteLine   = line('Files written');
+	const refusedLine = line('REFUSED, so nothing was touched');
+	check(alphaThere && /alpha\.txt/.test(wroteLine),
+		'the fold names the file that WAS written on "Files written"',
+		wroteLine.trim().slice(0, 200) || '(no "Files written" line)');
+	check(!/beta\.txt/.test(wroteLine),
+		'and does NOT claim the refused write there — nothing was created, so nothing may be claimed',
+		wroteLine.trim().slice(0, 240) || '(no "Files written" line)');
+	check(betaThere === false && /beta\.txt/.test(refusedLine),
+		'the refused write is named on the REFUSED line, so the model is told the door was shut',
+		refusedLine.trim().slice(0, 240) || '(no REFUSED line)');
 	check(/SUMMARY-FROM-MODEL/.test(note.content),
 		'the summarising call\'s answer is in the notice');
 }

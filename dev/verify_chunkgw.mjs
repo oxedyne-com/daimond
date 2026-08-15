@@ -36,7 +36,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { requireFreshGateway, GWBIN, procLog } from './gwbin.mjs';
+import { requireFreshGateway, GWBIN, procLog, GWCWD } from './gwbin.mjs';
 import { open } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 
@@ -88,7 +88,7 @@ const alreadyUp = await waitFor(async () => (await fetch(`${GW_URL}/api/health`)
 if (alreadyUp) {
 	console.log('  ok   using the gateway already on :9002');
 } else {
-	gw = spawn(GWBIN, [], { cwd: GWDIR, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: GW_LOG.stdio });
+	gw = spawn(GWBIN, [], { cwd: GWCWD, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: GW_LOG.stdio });
 	check('gateway starts', await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok), GWBIN);
 }
 
@@ -440,6 +440,7 @@ try {
 			held: (await window.__held(window.__c.map(c => c.addr))).length,
 			chip: chip ? {
 				shown: getComputedStyle(chip).display !== 'none',
+				tag:   chip.tagName,
 				text:  (chip.textContent || '').trim(),
 				title: chip.title || '',
 			} : null,
@@ -461,17 +462,36 @@ try {
 	check('and its hover carries both numbers, so the size of it is knowable',
 		!!nil.chip && nil.chip.title.indexOf('4') !== -1 && nil.chip.title.length > 40,
 		nil.chip && nil.chip.title.slice(0, 70));
+	// It was a `role="status"` div until 2026-08-14, and `confirmHeldSweep` had no
+	// production caller anywhere -- so this chip told people a deletion was
+	// standing and gave them nothing that could carry it out. What the button DOES
+	// is proved in dev/verify_chunks.mjs, which can drive a click without a
+	// gateway; what is asserted here is that it has not been demoted back to a
+	// notice, because that is the change this file would otherwise not notice.
+	check('and the chip is a control, not a pill nobody can press',
+		!!nil.chip && nil.chip.tag === 'BUTTON', nil.chip && nil.chip.tag);
+	// A deletion left standing is written down, so a reload does not abandon it:
+	// only the gateway can mint that token, and this client cannot re-derive one.
+	const kept = await page.evaluate(() => localStorage.getItem('daimond-chunk-held'));
+	check('and the standing deletion is written down, so a reload keeps it',
+		!!kept && nil.st.persisted === true, kept ? (kept.length + ' bytes') : 'nothing written');
 
 	// (B5) The operator's escape hatch really carries that deletion out.
 	const forced = await page.evaluate(async () => {
 		const j = await DaimondChunks.confirmHeldSweep();
-		return { j, st: DaimondChunks.state(), held: (await window.__held(window.__c.map(c => c.addr))).length };
+		return {
+			j, st: DaimondChunks.state(),
+			held:  (await window.__held(window.__c.map(c => c.addr))).length,
+			saved: localStorage.getItem('daimond-chunk-held'),
+		};
 	});
 	check('a person confirming it deletes what the client would not on its own',
 		forced.j && forced.j.swept === 4 && forced.held === 0,
 		JSON.stringify({ swept: forced.j && forced.j.swept, held: forced.held }));
 	check('and the standing notice clears with it',
 		forced.st.standing === false, JSON.stringify(forced.st));
+	check('and what was written down goes too, so it cannot rise again next boot',
+		forced.saved === null, String(forced.saved));
 
 	// (B6) A device that may not declare a live set does not confirm one either.
 	// sync gates the FIRST commit on this; the client re-asserts it immediately

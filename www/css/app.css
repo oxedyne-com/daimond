@@ -91,7 +91,7 @@ svg { display: block; }
 .login-card button { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 10px 16px; font-size: var(--fs-lg); }
 .login-card button:hover { background: var(--accent-hover); }
 .login-error { color: var(--danger); font-size: var(--fs-sm); margin-top: 8px; min-height: 18px; }
-.login-card a { display: block; text-align: center; margin-top: 16px; color: var(--accent); text-decoration: none; font-size: var(--fs-base); }
+.login-card a { display: block; text-align: center; margin-top: 16px; color: var(--accent-text); text-decoration: none; font-size: var(--fs-base); }
 
 /* Said to a screen reader and to nothing else. The app's own name is drawn as a
    wordmark, which is an image and cannot be a heading, so the document had no
@@ -387,7 +387,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 }
 /* The Pro row reads its value as a link when there is an upgrade to take, so
    "Upgrade to Pro" invites a click the way a bare status figure would not. */
-.astat-row.astat-pro-upgrade .astat-val { color: var(--accent); text-decoration: underline; }
+.astat-row.astat-pro-upgrade .astat-val { color: var(--accent-text); text-decoration: underline; }
 .astat-row.astat-pro-upgrade:hover .astat-val { filter: brightness(1.1); }
 .astat-row.astat-pulse { animation: astat-pulse 2.2s ease-in-out infinite; }
 .astat-row.astat-pulse .astat-val { color: var(--text-primary); font-weight: 600; }
@@ -1013,7 +1013,7 @@ button.tag-pool { cursor: pointer; }
 .arte-open { flex: 1; min-width: 0; text-align: left; background: none; border: none;
 	color: var(--text-primary); font-size: var(--fs-xs-sm); font-family: var(--font-mono);
 	padding: 2px 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-button.arte-open:hover { color: var(--accent); }
+button.arte-open:hover { color: var(--accent-text); }
 /* A tile for something that cannot be opened. Not a button, because there is
    nothing to press -- and the reason is TEXT, not a hover title, because a
    tooltip is unavailable to a touch and an item that is silently inert on a
@@ -1189,7 +1189,7 @@ span.arte-open { cursor: default; }
 	padding: 0; color: var(--text-primary); font-size: var(--fs-xs-sm);
 	font-family: var(--font-mono); cursor: pointer;
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.attach-pick-name.dir:hover { color: var(--accent); }
+.attach-pick-name.dir:hover { color: var(--accent-text); }
 
 /* Links: how this Diamond stands to the other Diamonds. The artefact strip
    above holds the links pointing at a file, a page or a chat; these are the
@@ -1222,7 +1222,7 @@ span.arte-open { cursor: default; }
 .link-other { background: none; border: none; padding: 2px 0; cursor: pointer;
 	color: var(--text-primary); font-size: var(--fs-xs-sm); text-align: left;
 	max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.link-other:hover { color: var(--accent); }
+.link-other:hover { color: var(--accent-text); }
 .link-acts { flex: none; display: flex; gap: 2px; }
 .link-note-btn, .link-drop { background: none; border: none; cursor: pointer;
 	color: var(--text-muted); font-size: var(--fs-sm); line-height: 1; padding: 2px 5px;
@@ -1315,7 +1315,7 @@ span.arte-open { cursor: default; }
 /* A fold proposed on a Diamond that is not the one on screen. It sits with the
    Diamond's other plain facts in the rail, and is the only thing that says there
    is a proposal waiting to be accepted or rejected. */
-.diamond-pending { font-size: var(--fs-2xs); color: var(--accent); font-weight: 600; }
+.diamond-pending { font-size: var(--fs-2xs); color: var(--accent-text); font-weight: 600; }
 
 /* Fold diff — added / removed lines, all text escaped. */
 .diff-head { font-size: var(--fs-xs); color: var(--text-secondary); margin-bottom: 10px; }
@@ -1345,7 +1345,6 @@ span.arte-open { cursor: default; }
 
 /* Empty state */
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; color: var(--text-secondary); gap: 10px; padding: 24px; }
-.empty-state .empty-logo { width: 56px; height: 56px; opacity: 0.9; margin-bottom: 4px; }
 .empty-state h2 { margin: 0; color: var(--text-primary); font-size: var(--fs-3xl); }
 .empty-state p { margin: 0; max-width: 360px; }
 /* The empty chat opens straight on its one action, with the welcome copy removed. */
@@ -1379,7 +1378,7 @@ span.arte-open { cursor: default; }
 
 /* Inline tool-call blocks */
 .tool-block { margin: 8px 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); overflow: hidden; font-size: var(--fs-sm); }
-.tool-head { padding: 7px 12px; cursor: pointer; font-weight: 600; color: var(--accent); user-select: none; display: flex; align-items: center; gap: 6px; }
+.tool-head { padding: 7px 12px; cursor: pointer; font-weight: 600; color: var(--accent-text); user-select: none; display: flex; align-items: center; gap: 6px; }
 .tool-head::before { content: '▾'; font-size: var(--fs-3xs); color: var(--text-muted); transition: transform 0.15s; }
 .tool-block.collapsed .tool-head::before { transform: rotate(-90deg); }
 .tool-head:hover { background: var(--bg-hover); }
@@ -1808,8 +1807,6 @@ span.arte-open { cursor: default; }
 .chead.selecting #steps-toggle-btn,
 .chead.selecting .chat-model-select { display: none; }
 
-/* Full-lockup logo in the welcome/empty state. */
-.empty-state .empty-logo.full { width: auto; height: 76px; opacity: 0.95; margin-bottom: 6px; }
 .pending-centre h2 { color: var(--text-primary); }
 
 /* The Agents panel used to hide itself until a Diamond dispatched its first

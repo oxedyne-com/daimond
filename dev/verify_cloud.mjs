@@ -15,7 +15,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { requireFreshGateway, procLog } from './gwbin.mjs';
+import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
 import { open } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 
@@ -58,7 +58,7 @@ if (alreadyUp) {
 	console.log('  ok   using the gateway already on :9002');
 } else {
 	gw = spawn(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
-		cwd: GWDIR, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: GW_LOG.stdio,
+		cwd: GWCWD, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: GW_LOG.stdio,
 	});
 	check('gateway starts', await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok));
 }

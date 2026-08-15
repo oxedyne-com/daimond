@@ -74,6 +74,14 @@
 	margin: 0 0 12px;
 }
 
+/* The hint inside the empty box is the only instruction for what to type, so it
+   is held to the text floor: a named token at full strength, not the browser's
+   own washed-out default, which measured 3.92:1. */
+.beta-input::placeholder {
+	color: var(--text-muted);
+	opacity: 1;
+}
+
 .beta-err {
 	color: var(--danger);
 	font-size: var(--fs-sm);
@@ -93,14 +101,26 @@
    and opacity applies to the whole subtree: a link inside it cannot come back
    to full strength, and a way out of a dead end must not be the faintest thing
    on the card. Dimmed here on the TEXT colour instead, so the link is exempt. */
-.beta-ask {
+/* `.beta-box p` (0,1,1) outranks a bare `.beta-ask` (0,1,0), so the plain class
+   lost its own font size and inherited the card's `opacity: .85` -- dimming the
+   sentence a second time on top of `--text-muted`, and dimming the link with it.
+   Answered by matching the same element more specifically rather than with
+   `!important`: this rule is the one that should win, so it is written to. */
+.beta-box p.beta-ask {
 	font-size: var(--fs-xs);
 	line-height: 1.45;
 	color: var(--text-muted);
+	opacity: 1;
 	margin: 12px 0 0;
 }
+/* TWO ACCENT TOKENS, AND THEY ARE NOT INTERCHANGEABLE. `--accent` is the accent
+   as a FILL or an EDGE -- a button's ground, a border, a focus ring -- and WCAG
+   SC 1.4.11 holds it to 3.0 only. `--accent-text` is the accent as INK, held to
+   4.5, and every palette sets it a rung further from its own surfaces for that
+   reason. This is a sentence, so it takes the ink token; painted with `--accent`
+   it measured 4.14:1 and failed. Do not "tidy" the two back into one. */
 .beta-apply {
-	color: var(--accent);
+	color: var(--accent-text);
 	text-decoration: underline;
 	/* A link in a card answered on a phone: it needs a line of its own to be
 	   pressed at, which `inline-block` plus the padding gives it without

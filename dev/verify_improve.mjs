@@ -1460,10 +1460,60 @@ try {
 	// any moment. `textContent` rather than `innerText`: a hidden view has no
 	// rendered text, and what is being checked is the WORDS the panel is built
 	// from, not what happens to be painted this second.
-	const panelWords = await page.evaluate(() => {
+	const words = () => page.evaluate(() => {
 		const p = document.getElementById('panel-improve');
 		return p ? p.textContent.replace(/\s+/g, ' ') : '';
 	});
+
+	// SAMPLED IN EACH STATE, AND UNIONED, because three of the guide's labels
+	// are MUTUALLY EXCLUSIVE with any one state the panel can be in:
+	//
+	//   `Set a voice`     drawn only while NO voice is held. By this point one
+	//                     is, and the panel correctly says `Replace the voice`.
+	//   `Save the voice`  drawn only while the paste field is open.
+	//   `Say it`          drawn only inside an expanded proposal, and only with
+	//                     a voice -- the forge refuses an unvoiced comment.
+	//
+	// One snapshot was asked for three states' worth of labels and reported all
+	// three missing from the panel. They were in the panel; the check was in one
+	// state. Deleting them from the list was the other way out of that, and it
+	// would have gutted the check: this exists so the guide cannot describe a
+	// control that is not there, and a list narrowed to whatever one state
+	// happens to show is exactly the guide-drifts-from-app fault going unseen.
+	const sampled = [];
+	sampled.push(await words());			// as it stands: voiced, nothing expanded
+
+	// A proposal opened. `Say it` and its box live inside one and nowhere else.
+	await page.evaluate(() => window.DaimondImprove.show('proposals'));
+	await page.waitForTimeout(400);
+	const anyRow = page.locator('#improve-props .imp-prop .imp-prop-row').first();
+	if (await anyRow.count()) { await anyRow.click(); await page.waitForTimeout(900); }
+	sampled.push(await words());
+
+	// The paste field open. `Save the voice` is the button beside it.
+	await page.evaluate(() => window.DaimondImprove.show('notes'));
+	await page.waitForTimeout(400);
+	await page.click('[data-act="improve-voice-open"]');
+	await page.waitForTimeout(300);
+	sampled.push(await words());
+	await page.click('[data-act="improve-voice-cancel"]');
+	await page.waitForTimeout(200);
+
+	// And with no voice at all, which is what a first-time reader of the guide
+	// has. Set through `DaimondVoice` rather than through the panel: the panel's
+	// own Forget asks first, and a dialog answered here would be a second thing
+	// this check was silently proving.
+	await page.evaluate(() => { window.DaimondVoice.clear(); window.DaimondImprove.render(); });
+	await page.waitForTimeout(400);
+	sampled.push(await words());
+	// Put it back before anything downstream reads the panel: everything after
+	// this point assumes the voiced panel the checks above left behind.
+	await page.evaluate(async (sec) => {
+		await window.DaimondVoice.set(sec); window.DaimondImprove.render();
+	}, SECRET);
+	await page.waitForTimeout(400);
+
+	const panelWords = sampled.join(' ');
 	const missing = GUIDE_LABELS.filter(w => panelWords.indexOf(w) === -1);
 	check(`every label the guide names is in the panel (${GUIDE_LABELS.length} checked)`,
 		missing.length === 0, missing.map(m => JSON.stringify(m)).join(', '));

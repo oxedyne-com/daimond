@@ -46,9 +46,62 @@ import * as Wasm from '../pkg/oxedyne_daimond.js';
 ///
 /// Use `run_tool('file_read')` ONLY to ask a model-shaped question — chiefly "does
 /// this file exist", where the answer is the error prefix and not the content.
-function readBytes(path) {
-	return Wasm.read_file(path);
+async function readBytes(path) {
+	try { return await Wasm.read_file(path); }
+	catch (e) { noteFolderLost(e); throw e; }
 }
+
+// ── A withdrawn folder grant, on the paths the tool registry never sees ──
+//
+// The browser can take a real folder away at any moment, and every call that
+// touches it then fails while the app goes on naming the folder. `src/tools.rs`
+// catches that at `ToolRegistry::dispatch`, which is the single door EVERY tool
+// result passes through, and raises `daimond:folder-lost`; the Workspace panel
+// listens for it (`handlePermissionLoss`) and drops to the sandbox.
+//
+// The panel's own reads do not go through that door. `Wasm.read_file`,
+// `Wasm.read_bytes` and the viewer's probes are called straight from here, so a
+// revoked grant broke the panel's own operations and raised nothing at all: the
+// alarm went off only if an AGENT happened to run a file tool afterwards.
+//
+// So the same test is applied where those calls fail, and the SAME EVENT is
+// raised -- not a second copy of the handler, which stays the one place that
+// decides what to do about it.
+//
+// THE PROPER FIX IS IN `src/wasm/entry.rs`, where `read_file` and its siblings
+// could raise the event themselves and this pair would not need to exist. Until
+// then the predicate lives in two languages and can drift; `dev/verify_joinedup.mjs`
+// compares them to the character so that it cannot drift quietly.
+
+/// Whether a failed direct file call failed BECAUSE the open folder was taken away.
+///
+/// The mirror of `is_folder_lost` in `src/wasm/opfs.rs`: the workspace root is a
+/// real folder, and the browser reported the failure as a `NotAllowedError`. A
+/// missing file, or a path outside the jail, is an ordinary error and must not
+/// cost the user their folder.
+///
+/// # Arguments
+/// * `e` - Whatever the rejected call threw. `to_js_err` rejects with a string,
+///   so both a string and an `Error` carrying one have to read the same.
+function folderWasLost(e) {
+	try { if (Wasm.workspace_mode() !== 'folder') return false; }
+	catch (err) { return false; }			// an engine too old to say is not a loss
+	var text = (e && typeof e === 'object' && e.message) ? String(e.message) : String(e);
+	return text.indexOf('NotAllowed') >= 0;
+}
+
+/// Raise `daimond:folder-lost` when `e` says the grant is gone. True if it did.
+///
+/// Idempotent by construction: `handlePermissionLoss` returns at once once the
+/// folder has been let go, so several calls failing on the one withdrawal say it
+/// once between them.
+function noteFolderLost(e) {
+	if (!folderWasLost(e)) return false;
+	try { window.dispatchEvent(new CustomEvent('daimond:folder-lost')); }
+	catch (err) { /* a window that cannot dispatch has nothing listening either */ }
+	return true;
+}
+
 import init, {
 	DaimondApp,
 	builtin_tools,
@@ -1709,7 +1762,7 @@ import init, {
 	function downloadChatsNow() {
 		var out = {
 			format:   'daimond-backup',
-			version:  1,
+			version:  BACKUP_VERSION,	// see the constant beside `doExport`
 			exported: new Date().toISOString(),
 			partial:  true,        // chats only; no workspace files, no Diamonds
 			chats:    chats.map(slimChat),
@@ -3681,8 +3734,11 @@ import init, {
 		if (brandLogo && brandLogo.dataset.dark) {
 			brandLogo.src = lightBg ? brandLogo.dataset.light : brandLogo.dataset.dark;
 		}
-		var el = chatOutput && chatOutput.querySelector('.empty-logo.full');
-		if (el) el.src = lightBg ? 'assets/daimond_word_dark.svg' : 'assets/daimond_word.svg';
+		// The empty chat's own wordmark was swapped here too. `renderEmptyState`
+		// stopped drawing one when the welcome copy went -- the panel opens straight
+		// on its one action -- and nothing has produced `.empty-logo` since, so this
+		// was a query that could never match and three CSS rules nothing could
+		// select. Gone with them.
 	}
 	// The theme used to be a pulldown of its own in the header. It is now one
 	// setting among several in the appearance menu, so it is published as a
@@ -3896,6 +3952,88 @@ import init, {
 		DaimondI18n.surface(document.getElementById('pending-list'),   function () { Pending.render(); });
 	}
 
+	// ── Telemetry, if a beta tester agreed to it ───────────────
+	//
+	// Every `tel()` in this file is one of the twenty events in `js/telemetry.js`,
+	// and the whole of what this app reports. THREE RULES, and they are the
+	// reason these calls can be read past rather than reasoned about:
+	//
+	//   1. NOTHING CHANGES BEHAVIOUR. A `tel()` is a statement, never a
+	//      condition, never in a return path, never awaited. Delete every one of
+	//      them and this file does exactly what it did.
+	//   2. NOTHING THROWS. The module drops an event when nobody has consented,
+	//      but a build that has not loaded it at all leaves `DaimondTelemetry`
+	//      undefined -- so the guard is here rather than assumed, and a failure
+	//      inside it is swallowed. Telemetry may never break the app it reports
+	//      on.
+	//   3. NOTHING IS FETCHED TO FEED IT. Every number below is already in the
+	//      caller's hand at the line it is taken from. Where an event would have
+	//      needed a lookup, a field or a counter of its own, it is NOT EMITTED --
+	//      see `dev/verify_telemetry.mjs` and the report that came with these,
+	//      which name the four that are missing and why. A telemetry pass that
+	//      goes looking for its numbers is a data-collection pass wearing a
+	//      different hat.
+
+	/// Report one event. Never throws, never waits, never changes anything.
+	function tel(name, n) {
+		try { if (window.DaimondTelemetry) DaimondTelemetry.emit(name, n); }
+		catch (e) { /* rule 2 */ }
+	}
+
+	/// The position of `name` in one of the module's fixed tables, or 0 for
+	/// "something else". The tables are the discipline that keeps a NAME off the
+	/// wire: a panel or tool this build has that the table has not becomes 0.
+	function telOrd(table, name) {
+		try {
+			var T = window.DaimondTelemetry;
+			return T ? T.ordinal(T[table] || [], name) : 0;
+		} catch (e) { return 0; }
+	}
+
+	/// How long this page took to become a usable app, and whether that has been
+	/// reported yet.
+	///
+	/// MEASURED AT BOOT AND SENT LATER, because there is no recorder at boot: a
+	/// returning tester's consent is restored from the gateway's answer, which
+	/// needs a session, which needs the passphrase. So the number is kept until
+	/// the moment a session exists and sent there if a recorder was restored --
+	/// and in a FIRST session, where the recorder is minted by a consent card
+	/// that has not been answered yet, it is simply dropped. Consent is not
+	/// retroactive and this is the one event that could have made it look so.
+	var openMs = 0, openSaid = false;
+
+	/// How many turns a chat has had, for the one event that reports it on the
+	/// way out. Counted rather than tracked: a counter kept for telemetry's sake
+	/// would be a field this app does not otherwise need.
+	function turnsIn(chat) {
+		if (!chat || !chat.messages) return 0;
+		var n = 0;
+		for (var i = 0; i < chat.messages.length; i++) {
+			if (chat.messages[i].role === 'user') n++;
+		}
+		return n;
+	}
+
+	/// Which class of failure an error is, from the module's `FAILURES` table.
+	///
+	/// A SECOND READING of the same evidence `friendlyError` reads, not a copy of
+	/// it: that one turns an error into a sentence for a person, and this one
+	/// turns it into one of nine numbers. They agree on the order they test in --
+	/// transport first, because a connection that never opened is not a provider
+	/// response -- and they must keep agreeing, so a change to one is a look at
+	/// the other.
+	function failureClass(raw) {
+		var s = String(raw == null ? '' : (raw && raw.message ? raw.message : raw));
+		if (/Failed to fetch|NetworkError|ERR_CONNECTION|ENOTFOUND|ECONNREFUSED|dns/i.test(s)) return 'offline';
+		if (/\btimed? ?out\b|ETIMEDOUT|AbortError/i.test(s))  return 'timed_out';
+		if (/\b(401|403)\b/.test(s))                          return 'refused';
+		if (/\b429\b/.test(s))                                return 'rate_limited';
+		if (/\b409\b/.test(s))                                return 'conflict';
+		if (/\b413\b/.test(s))                                return 'too_large';
+		if (/\b5\d\d\b/.test(s))                              return 'server_error';
+		return 'other';
+	}
+
 	// ── Durability: lifecycle hooks ────────────────────────────
 	// These are INSURANCE, not the mechanism. The journal is kept current as work happens, so
 	// nothing here is load-bearing — but a tab about to be hidden or frozen is a tab that might be
@@ -3911,7 +4049,17 @@ import init, {
 	// Once the page is on its way out, a request that dies is an INTERRUPTION, not a failure: the
 	// turn's own catch checks this so it does not write a spurious "network error" over what
 	// recovery will show, correctly, as an interrupted turn.
-	window.addEventListener('pagehide', function () { _unloading = true; if (window.DaimondJournal) DaimondJournal.flush(); });
+	window.addEventListener('pagehide', function () {
+		_unloading = true;
+		if (window.DaimondJournal) DaimondJournal.flush();
+		// How long the sitting lasted, and the last chance to send anything at
+		// all: the module's own timer is a minute, and this page has moments. The
+		// flush is not awaited (nothing here may wait) -- `keepalive` on the
+		// request is what carries it past the page, and a batch that does not
+		// make it is a batch lost, which is the right way for this to fail.
+		tel('app.close', Math.round(performance.now() / 1000));
+		try { if (window.DaimondTelemetry) DaimondTelemetry.flush(); } catch (e) { /* going */ }
+	});
 	window.addEventListener('beforeunload', function (e) {
 		_unloading = true;
 		if (window.DaimondJournal) DaimondJournal.flush();
@@ -3933,10 +4081,15 @@ import init, {
 	// Not a substitute for handling a failure where it happens -- a caller that
 	// knows what failed can say something better, and should -- but a floor under
 	// the whole class.
+	var _thrown = 0;                            // uncaught rejections this sitting
 	window.addEventListener('unhandledrejection', function (e) {
 		if (_unloading) return;                 // the page is going; its dead requests are not news
 		var why = e && (e.reason !== undefined ? e.reason : e);
 		try { toast(friendlyError(why), true); } catch (e2) { /* nothing left to tell them with */ }
+		// The count, and never the error. What stands in for the message is the
+		// ORDER: the events before this one in the same batch say roughly where
+		// it happened, which is the trade this whole design makes.
+		tel('error.thrown', ++_thrown);
 	});
 
 	// ── The balance, when it moves ──────────────────────────────
@@ -5118,6 +5271,11 @@ import init, {
 			// real browser window was the whole of what the user saw. A panel with no seat is not
 			// open, whatever the flag says.
 			if (open[id] && seated(id)) { if (isMobile()) mshow(id); return; }
+			// PAST THE ALREADY-OPEN SHORTCUT, so this counts a panel being opened
+			// rather than a panel being asked for again by a redraw. Which panel,
+			// as a number from the module's table; a panel this build has that the
+			// table does not becomes 0.
+			tel('panel.open', telOrd('PANELS', id));
 			var zone = zoneOf(id);
 			if (zone === 'stage') {
 				// THE OLDEST GUEST GOES, and this is the one place the dock's rule does
@@ -7565,7 +7723,37 @@ import init, {
 					'your account fingerprint'), fp));
 				homeView.appendChild(f);
 			}
+			// The account's PUBLIC name, beside the fingerprint because those are the
+			// two things about this account that a stranger can be shown. Drawn only
+			// when there is one: the gateway mints it, and a browser that has never
+			// reached a gateway has nothing to name.
+			var hdl = accountHandle();
+			if (hdl) {
+				var hrow = el('div', 'account-fp');
+				hrow.id = 'account-handle';
+				hrow.title = tOr('home.handle_help',
+					'Your public handle: the name other people see, the same on every '
+						+ 'device of this account.');
+				hrow.appendChild(el('span', 'account-fp-val', hdl));
+				hrow.appendChild(idCopyBtn(tOr('copy.what_handle', 'your public handle'), hdl));
+				homeView.appendChild(hrow);
+			}
 			item(t('home.change_name'),       doRename);
+			// Beside "Change name…" because a user meets the two as one question --
+			// what am I called -- and the answers differ: the line above labels THIS
+			// DEVICE's keypair and is seen by nobody, while this is the account's public
+			// name. `DaimondSync.claimHandle` was written, and its four refusals
+			// translated into eight languages, with no caller anywhere: an account was
+			// minted `bright-finch-5m5m` and kept it for ever.
+			//
+			// Offered whether or not a name has arrived yet. A control that appears only
+			// once the gateway has answered is a control the user cannot find at the
+			// moment they want it, and the refusal for an unreachable gateway is one of
+			// the four sentences already written.
+			if (window.DaimondSync && DaimondSync.claimHandle) {
+				var hb = item(tOr('home.change_handle', 'Change public handle…'), doChangeHandle);
+				hb.id = 'admin-change-handle';
+			}
 			item(t('home.change_passphrase'), doChangePassphrase);
 			// A passkey unlocks this device without the passphrase. Offer to add one
 			// only where the platform supports it; offer to remove one once enrolled.
@@ -8929,6 +9117,10 @@ import init, {
 		};
 		touchChat(chat);
 		chats.unshift(chat);
+		// AFTER the unshift, so the number is how many exist now rather than how
+		// many existed a line ago. Before `selectChat`, which reports leaving the
+		// chat this one is replacing: the two read in the order they happened.
+		tel('chat.new', chats.length);
 		persistChats();
 		selectChat(chat);
 		renderSessionList();
@@ -9581,6 +9773,10 @@ import init, {
 	}
 
 	function selectChat(chat) {
+		// The chat being LEFT, counted before `current` moves. Abandoned after one
+		// turn and finished after twenty are different stories, and this is the
+		// only moment both the chat and the fact of leaving it are in hand.
+		if (current && current !== chat) tel('chat.leave', turnsIn(current));
 		current = chat;
 		currentDiamond = null;                       // a chat is not a Diamond
 		signalDiamondChanged();
@@ -11545,6 +11741,35 @@ import init, {
 				.catch(function () { /* an unstamped dev tree has no build id to show */ });
 		}
 
+		// ── Check that this build is the published one.
+		//
+		// `verify.html` hashes what this origin actually served and compares it with
+		// the sealed manifest of the open-source release, and it prints the commands
+		// for doing the same thing from the public source with nothing of ours in the
+		// loop. It is the one page that makes the transparency claim TESTABLE by the
+		// person relying on it -- and nothing in the app linked it. Not About, not the
+		// legal pages, not the guide; only the separate landing site did. So the only
+		// people who could reach it were the ones who already knew it was there, who
+		// are precisely the people who need it least.
+		//
+		// Directly under the build id, because that id is what it checks.
+		//
+		// A NEW TOP-LEVEL DOCUMENT rather than a panel: a page vouching for the bytes
+		// this origin served should not be drawn by the scripts it is vouching for.
+		// `noopener noreferrer` as on every other outbound link in this dialog.
+		var check = document.createElement('a');
+		// The drawer's "it leads somewhere, it does not do anything" row: the app's
+		// one style for exactly that, so this needs no rule of its own.
+		check.className = 'admin-console-link about-verify';
+		check.href   = 'verify.html';
+		check.target = '_blank';
+		check.rel    = 'noopener noreferrer';
+		// Written, not bound. A `data-i18n` mark naming a key the catalogue does not
+		// hold paints the KEY over these words at the next language change, which is
+		// worse than an untranslated sentence.
+		check.textContent = tOr('about.verify', 'Check this build against the published source');
+		body.appendChild(check);
+
 		// ── The small print: who made it, and how. A quiet row along the foot,
 		// under a rule, because it is a signature and not a feature.
 		var foot = document.createElement('div');
@@ -13150,6 +13375,13 @@ import init, {
 		var dispatched = [], rejectedSpawns = 0;
 		appendUserMessage(text);
 		chat.messages.push({ role: 'user', content: text, mid: umid, ts: Date.now() });
+		// AFTER the push, so the count includes this turn: "which turn of that
+		// chat this is, counting from one". How deep a conversation goes before
+		// it is left is the question. `telT0` is the turn's own clock and is the
+		// only variable in this function that exists for telemetry; every other
+		// number reported below was already being kept.
+		var telT0 = Date.now();
+		tel('turn.send', turnsIn(chat));
 		// The composer stays live: what is typed while this runs is queued, not lost.
 		chat._aborted = false;
 
@@ -13176,6 +13408,7 @@ import init, {
 		var step = 0;
 		var writing = false;   // prose is arriving, so the caption has said so once
 		var sawError = false, threw = false;
+		var telErr = null;                       // what threw, for the one number that says which class
 		var turnText = '';
 		// A minted credits key is capped at the balance behind it, so it can be refused
 		// part-way through a session for a reason the user did not cause and cannot check.
@@ -13237,11 +13470,21 @@ import init, {
 				// chat left running in the background is found on the right step.
 				step += 1;
 				writing = false;
+				// Which tool, as a number from the module's table. The ARGUMENTS
+				// are right here and are never touched: they carry the path, the
+				// query and the content, which is the whole of what this design
+				// exists to keep off the wire.
+				tel('tool.run', telOrd('TOOLS', ev.name || ''));
 				busySay(chat, tOr('chat.busy_tool', 'Running {tool}, step {n}…',
 					{ tool: ev.name || '?', n: step }));
 				if (!owns()) return;
 				renderToolCall(ev.name || '', ev.args || '');
 			} else if (ev.type === 'tool_result') {
+				// Which capability broke in the field, on a machine we do not
+				// have. `toolFailed` is the app's own reading of the result and is
+				// already computed twice below; the tool's OUTPUT is not read
+				// here and never leaves.
+				if (toolFailed(ev.content || '')) tel('tool.fail', telOrd('TOOLS', ev.name || ''));
 				if (pendingTool) { pendingTool.content = ev.content || ''; pendingTool = null; }
 				if (J) J.toolDone(umid, chat.id, pendingCallId, ev.content || '', toolFailed(ev.content || ''));
 				// Which tools this turn used, and whether they refused. Kept on the
@@ -13414,6 +13657,7 @@ import init, {
 				if (J) J.turnClose(umid, chat.id, pCum, cCum);
 			} catch (e) {
 				threw = true;
+				telErr = e;			// classified in the `finally`, where the ending is known.
 				finalizeAssistant();
 				if (_unloading) {
 					// The page is going away and took the request with it. That is not a failure to
@@ -13433,6 +13677,22 @@ import init, {
 			} finally {
 				chat._generating = false;
 				chat._capTry = 0;            // the backoff belonged to this turn only
+				// HOW THE TURN ENDED, reported here because this is the one place
+				// every ending arrives -- and BEFORE `drainQueue` below, which
+				// reads `_aborted` and then clears it. Giving up early means it
+				// was going wrong and giving up late means it was too slow, which
+				// are two different fixes, so a Stop is not folded into a failure.
+				var telSecs = Math.round((Date.now() - telT0) / 1000);
+				if (chat._aborted) {
+					tel('turn.stop', telSecs);
+				} else if (threw || sawError) {
+					// `capFail` is the app's own word for a provider refusing the
+					// reply length; anything else is read off the error itself.
+					tel('turn.fail', telOrd('FAILURES',
+						capFail ? 'too_long' : failureClass(telErr)));
+				} else {
+					tel('turn.done', telSecs);
+				}
 				// EVERY WAY OUT OF A TURN COMES THROUGH HERE -- the answer, an error,
 				// the Stop button, a provider refusal, a turn that said nothing, a
 				// chat deleted mid-flight -- which is why the indicator is taken down
@@ -15751,6 +16011,14 @@ import init, {
 		// like everything else that hangs off the gateway.
 		try { window.dispatchEvent(new Event('daimond:authed')); } catch (e) { /* best effort */ }
 		grew('authed dispatch');
+		// IMMEDIATELY AFTER THE DISPATCH, and that is the whole reason it is
+		// here. `passcode.js` listens for the same event and restores a recorder
+		// for an account that has already agreed; its listener has run by the
+		// time this line does, so this is the first moment in the session at
+		// which there can be one. In a FIRST session -- where the consent card
+		// has not been answered yet -- there is none, and the number is dropped
+		// rather than kept for later. Consent is not retroactive.
+		if (!openSaid && openMs) { openSaid = true; tel('app.open', openMs); }
 	}
 
 	// A Diamond DaimondApp's counters are cumulative across every steer and fold IT has run, so a
@@ -17746,7 +18014,7 @@ import init, {
 					a.href = URL.createObjectURL(new Blob(parts, { type: info.mime }));
 					a.download = path.split('/').pop() || 'file';
 					a.click(); URL.revokeObjectURL(a.href);
-				} catch (e) { fileMsg(friendlyError(e), true, pvEl); }
+				} catch (e) { noteFolderLost(e); fileMsg(friendlyError(e), true, pvEl); }
 			});
 			await wireHold(path, pvEl.querySelector('[data-act="attach"]'));
 			await DaimondViewer.show(
@@ -17755,7 +18023,9 @@ import init, {
 					store:   pvStore,
 					t:       t,
 					wasm:    Wasm,
-					onError: function (e) { fileMsg(friendlyError(e), true, pvEl); },
+					// The viewer reads bytes through the module handed to it above, so its
+					// failures are the panel's own direct calls by another name.
+					onError: function (e) { noteFolderLost(e); fileMsg(friendlyError(e), true, pvEl); },
 				});
 		}
 
@@ -18270,7 +18540,13 @@ import init, {
 		var pvStore = false;
 
 		async function readRaw(path) {
-			return storeFile ? await Wasm.store_read(path) : await Wasm.read_file(path);
+			// A read straight at the wasm, so a withdrawn grant fails here and is seen
+			// nowhere else -- `noteFolderLost` is what carries it to the one handler.
+			// The store door is left out on purpose: OPFS is not a grant and cannot be
+			// revoked, so a failure there says something else entirely.
+			if (storeFile) return await Wasm.store_read(path);
+			try { return await Wasm.read_file(path); }
+			catch (e) { noteFolderLost(e); throw e; }
 		}
 
 		/// Write the file the Doc panel has open, through whichever door it came from.
@@ -21579,6 +21855,15 @@ import init, {
 		// create having done nothing -- so the rail is cleared to show it.
 		clearDiamondFilters();
 		await loadDiamonds();
+		// How many exist now, read off the list that has just been reloaded --
+		// which is why it is here and not beside the `create_diamond` above,
+		// where the count would have had to be gone and asked for.
+		//
+		// THIS PATH ONLY, which is the dialog a person filled in. The other
+		// callers of `create_diamond` are seeds on a first run and restores from
+		// a backup, and counting those would answer "do people build a workspace
+		// of their own" with the app's own furniture.
+		tel('diamond.new', diamonds.length);
 		var f = diamonds.find(function (x) { return x.id === id; });
 		if (f) { selectDiamond(f); }
 		else {
@@ -24253,7 +24538,7 @@ import init, {
 		for (var i = 0; i < want.length; i++) {
 			var body = null;
 			try { body = await Wasm.read_file(want[i].path); }
-			catch (e) { body = null; }
+			catch (e) { noteFolderLost(e); body = null; }
 			if (typeof body !== 'string') continue;
 			var cut = body.length > ATTACH_READ_MAX;
 			out += '\n' + t('attach.read_block', { path: want[i].path }) + '\n'
@@ -26955,6 +27240,12 @@ import init, {
 	/// rather than at the thing the user had just been let through to.
 	function hideIdentity() {
 		document.getElementById('identity-modal').style.display = 'none';
+		// The gate is down: whoever this is got past it, by making a passphrase
+		// or by typing one. Where new testers stop is the one number a beta most
+		// needs, and this is the step that can be seen from here -- the steps
+		// either side of it live in files this pass did not touch, and are
+		// reported as missing rather than guessed at from a distance.
+		tel('onboard.step', telOrd('STEPS', 'unlocked'));
 		// After the redraw, not before it. Getting past the gate is followed
 		// immediately by renderAll(), which rebuilds the rail and the stage -- so a
 		// control focused here is a control that no longer exists a moment later,
@@ -27569,6 +27860,62 @@ import init, {
 		updateUserRow();
 	}
 
+	/// The account's public handle, or '' when nothing has minted one yet.
+	///
+	/// Wrapped because `DaimondSync` is a separate script and may not have loaded,
+	/// and because two places ask -- the row that shows the name and the dialog that
+	/// changes it -- and they must not be able to disagree about where it comes from.
+	function accountHandle() {
+		try { return (window.DaimondSync && DaimondSync.handle()) || ''; }
+		catch (e) { return ''; }
+	}
+
+	/// Change the ACCOUNT's public handle.
+	///
+	/// The same shape as `doRename` above, deliberately: one `promptDialog`
+	/// pre-filled with what the thing is called now, and the panel redrawn after.
+	/// The difference is what is being named. `doRename` labels this device's
+	/// keypair and is seen by nobody; this is the name a shared Diamond will be
+	/// shared with and a rating attributed to, and it is the same on every device.
+	///
+	/// THE REFUSAL SENTENCE COMES BACK FROM `claimHandle` and is shown as it
+	/// stands. A name somebody else holds, a name that is not a name, and a name
+	/// the operator keeps are three different things to be told, and the mapping
+	/// from the gateway's reason token to the user's language already exists in
+	/// `sync.js` -- reading `reason` here and choosing a key from it would be a
+	/// second copy of that mapping, free to drift from the first.
+	async function doChangeHandle() {
+		// The button carries the ellipsis that says it opens something; the dialog it
+		// opened must not, which is why `doRename` above has `rename.title` beside
+		// `home.change_name` rather than reusing the one string for both.
+		var title  = tOr('handle.rename_title', 'Change public handle');
+		var now    = accountHandle();
+		var wanted = await promptDialog(title, {
+			message:  tOr('home.handle_help',
+				'Your public handle: the name other people see, the same on every '
+					+ 'device of this account.'),
+			value:    now,
+			okLabel:  t('common.save'),
+			// Only emptiness is caught here. Every other rule about what a handle may
+			// be belongs to the gateway, which owns the namespace, and a second copy of
+			// it in the browser would refuse names the server would have taken.
+			validate: function (v) { return String(v || '').trim() ? '' : t('handle.invalid'); },
+		});
+		if (!wanted) return;
+		if (String(wanted).trim().toLowerCase() === now) return;	// nothing was asked for
+		var r = null;
+		try { r = await DaimondSync.claimHandle(wanted); }
+		catch (e) { r = null; }
+		if (!r || !r.ok) {
+			await noticeDialog(title, (r && r.message) || t('handle.failed'));
+			return;
+		}
+		// The row above names the account, and the name has just moved. `homeContent`
+		// rather than `home`: the drawer is already standing open, and summoning it
+		// again is what makes a redraw look like a second dialog.
+		try { DaimondAdmin.homeContent(); } catch (e) { /* the panel is not up */ }
+	}
+
 	/// Change the passphrase, and re-encrypt the stored API key under it — the
 	/// key is sealed with the passphrase-derived wrapping key, so forgetting to
 	/// re-seal it would leave the user unable to decrypt their own key.
@@ -28090,10 +28437,30 @@ import init, {
 	/// the salt, the public key and the WRAPPED private key -- so the file is no
 	/// easier to open than this browser's storage is, and neither can be opened
 	/// without the account's passphrase.
+	/// The backup format this build writes, and the highest it will read.
+	///
+	/// BUMP THIS IN THE SAME COMMIT AS THE CHANGE THAT EARNS IT, exactly as
+	/// `DEFAULTS_KEY` above is bumped with the seed condition it guards -- a number
+	/// raised on its own, or a format changed without raising it, is worse than
+	/// having no number at all.
+	///
+	/// It is written and, from this build on, READ. It was written by both
+	/// exporters and read by nothing, which is the shape that has already cost this
+	/// project once: the Life log capp carried a version field nothing looked at,
+	/// so an instance in the field could never be handed a fix. A number nobody
+	/// reads is not a version, it is a decoration.
+	///
+	/// `doImport` refuses anything higher rather than guessing. Every merge branch
+	/// below guards with `data.workspace || []` and friends, so a format-2 file
+	/// would import today WITHOUT COMPLAINT and silently drop whatever format 2
+	/// added -- the user would be told their backup had been restored, and it would
+	/// be a lie about their own data.
+	var BACKUP_VERSION = 1;
+
 	async function doExport() {
 		var out = {
 			format: 'daimond-backup',
-			version: 1,
+			version: BACKUP_VERSION,
 			exported: new Date().toISOString(),
 			name: DaimondIdentity.displayName(),
 			// Null when there is no identity to carry; the restore then leaves this
@@ -28168,6 +28535,29 @@ import init, {
 			catch (e) { toast(t('backup.unreadable'), true); return; }
 			if (data.format !== 'daimond-backup') {
 				toast(t('backup.not_a_backup'), true); return;
+			}
+			// THE VERSION, before a single field is read out of it.
+			//
+			// An absent `version` is treated as 1: every build that has ever written
+			// this format wrote 1, so a file without one either predates the field or
+			// was not written by Daimond -- and `format` above has already screened for
+			// the second. Anything HIGHER, or anything that is not a number at all, is
+			// a file this build cannot honestly claim to have restored.
+			//
+			// Refused out loud, in a dialog, and not as a toast: a toast is the app
+			// mentioning something in passing, and this is the app declining to touch
+			// the user's data. It says both numbers, because the only useful next step
+			// is to run the Daimond that wrote it.
+			var ver = data.version === undefined ? BACKUP_VERSION : data.version;
+			if (typeof ver !== 'number' || !isFinite(ver) || ver > BACKUP_VERSION) {
+				await noticeDialog(
+					tOr('backup.version_title', 'That backup is newer than this Daimond'),
+					tOr('backup.version_body',
+						'The file was written in backup format {found}, and this build reads '
+							+ 'format {known}. Nothing has been restored, and nothing in the file '
+							+ 'has been changed. Update Daimond and open it again.',
+						{ found: String(data.version), known: String(BACKUP_VERSION) }));
+				return;
 			}
 			// The identity, first and out loud.
 			//
@@ -29501,10 +29891,17 @@ import init, {
 	// the header's own guide button, because this is where the app's routes into
 	// the guide are kept; js/improve.js owns what the panel DOES and this button
 	// does nothing to a note.
+	//
+	// `improve.html`, which is the page about THIS panel: what a note is, what
+	// happens when one is sent, and what a vote does. It pointed at
+	// `interface.html` -- the tour of the whole frame, which mentions the panel in
+	// passing -- so the one control a reader presses when they want to know what
+	// the Improve panel is put them somewhere else, and the page written for the
+	// question was reachable only from the guide's own navigation.
 	var impInfo = document.getElementById('improve-info');
 	if (impInfo) impInfo.addEventListener('click', function () {
-		if (window.DaimondWeb && DaimondWeb.guide) DaimondWeb.guide('interface.html');
-		else window.open('guide/interface.html', '_blank');
+		if (window.DaimondWeb && DaimondWeb.guide) DaimondWeb.guide('improve.html');
+		else window.open('guide/improve.html', '_blank');
 	});
 
 	// About: what this is, which build you are running, and who made it. It sits
@@ -29875,7 +30272,10 @@ import init, {
 				// `parseHeaders` saw `1\tFrom: …` and matched nothing, so every message
 				// in the panel read "(unknown) / (no subject)". Same fault as the Doc
 				// panel's, in a second place. See `readRaw` at :11835.
-				readText:     function (path) { return Wasm.read_file(path); },
+				// `readBytes`, not `Wasm.read_file` direct: it is the same call with the
+				// withdrawn-grant alarm on it, and Mail reads the user's folder like
+				// anything else here.
+				readText:     readBytes,
 				openFile:     Files.open,
 				// The workspace tree, and the Pending panel with it. Mail calls this
 				// at every moment a draft file can appear or vanish -- saving one,
@@ -30051,10 +30451,17 @@ import init, {
 			try { DaimondTrail.note('lock screen', 'boot found a stored identity'); } catch (e) {}
 			showIdentity('unlock');
 			window.__DAIMOND_READY = true;
+			// The app is on screen, asking for a passphrase. That is where the
+			// machine's part of starting up ends and the person's begins, so it
+			// is what "how long did it make me wait" means. Recorded, not sent:
+			// see `openMs`.
+			if (!openMs) openMs = Math.round(performance.now());
 			return;
 		}
 
 		renderAll();
+		// The other way boot ends: no stored identity, so the app itself is drawn.
+		if (!openMs) openMs = Math.round(performance.now());
 		fillSettings();          // the pane is on screen; it shows what is configured
 		if (identityAvailable() && !cfgReady(cfg) && !cfg.apiKey) {
 			showIdentity('create');
@@ -30070,6 +30477,10 @@ import init, {
 		if (!window.DaimondGateway) return;
 		var buy = DaimondGateway.consumeReturn();
 		if (!buy) return;
+		// Checkout finished and Stripe sent them back. The gap between this and
+		// `buy.open` is where money is lost, and a cancel is on the other side of
+		// that gap -- so only a completed purchase is reported, and which one.
+		if (buy === 'credits' || buy === 'pro') tel('buy.done', telOrd('OFFERS', buy));
 		if (buy === 'cancel' || buy === 'card:cancel') {
 			noticeDialog(t('checkout.cancelled'), t('checkout.cancelled_body'));
 			return;

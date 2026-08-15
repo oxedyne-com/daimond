@@ -13,12 +13,31 @@
 // say what it is told. A client that guesses is a client that will one day guess differently from
 // the till.
 //
+// AND THE PANEL HAS TO SAY WHAT IT WAS TOLD. Everything above was asserted at the API for a
+// month while the panel's own message line could not print a word: `note()` looked up an ID
+// `ar-note` that was only ever a CLASS, so `getElementById` returned null, the guard swallowed
+// every message, and four call sites about money -- a card that would not save, a gateway that
+// refused the settings -- went quiet. Nothing caught it, because an element that does not exist
+// reports itself to a browser locator as HIDDEN, which is exactly what a working guard produces.
+// So the checks here assert the line EXISTS and says the gateway's own sentence; never that no
+// error is showing.
+//
 // AND THE PANEL HAS TO BE THERE AT ALL. The last section drives a session whose gateway
 // bootstrap is still in flight when Credits is opened, which is the state a loaded machine
 // produces by itself. Proved red first:
 //
-//   node dev/verify_autoreload.mjs --break latefill   # the late fill is caught
-//   node dev/verify_autoreload.mjs                    # and then, clean
+// AND THE SAVE BUTTON HAS TO BE WIRED TO ANYTHING AT ALL. Driving the panel through the button
+// rather than the API found a third fault under the first two: `render()` held a local
+// `var save` for the card button, `var` is function-scoped, and so the module's `save()` was
+// shadowed where the Save button binds to it. `addEventListener` was handed a DOM element on one
+// branch and `undefined` on the other, accepted both without a word, and the button did NOTHING.
+// Every check that spoke to the API passed throughout.
+//
+//   node dev/verify_autoreload.mjs --break latefill    # the late fill is caught
+//   node dev/verify_autoreload.mjs --break noteid      # the class-for-an-id trap is caught
+//   node dev/verify_autoreload.mjs --break noteorder   # the note eaten by its own redraw
+//   node dev/verify_autoreload.mjs --break deadsave    # the Save button wired to nothing
+//   node dev/verify_autoreload.mjs                     # and then, clean
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,7 +51,57 @@ const BREAK = (() => {
 	return i > 0 ? String(process.argv[i + 1] || '') : '';
 })();
 const die = (why) => { console.error('ABORT: ' + why); process.exit(2); };
-if (BREAK && BREAK !== 'latefill') die(`no break called "${BREAK}"`);
+
+// ── The patches that prove the message-line checks can fail ────────────
+//
+// Each is [anchor, replacement] against the shipped `www/js/autoreload.js`, applied to the file
+// the browser fetches. An anchor that no longer appears is a broken proof and not a passing one,
+// so it is checked against the file on disk before a browser is opened.
+//
+//   noteid     the exact defect that shipped: the id put back to being only a class, so
+//              `getElementById('ar-note')` is null and every message is swallowed by the guard.
+//   noteorder  the SECOND defect on the same path: the confirmation written before `render()`
+//              rather than after, so the redraw destroys it in the same tick. Fixing either one
+//              alone leaves the panel silent, which is why both are proved separately.
+const BREAKS = {
+	noteid: {
+		what:  'the note div given a class where an id was wanted, exactly as it shipped',
+		patch: ["\t\tnoteEl.id = 'ar-note';\n", ''],
+	},
+	deadsave: {
+		what:  'the card button named `save` again, shadowing the handler the Save button binds to',
+		patch: [
+			"var addCard = el('button', 'ar-card-btn accent', t('autoreload.save_card'));\n"
+				+ "\t\t\taddCard.title = t('autoreload.save_card_help');\n"
+				+ "\t\t\taddCard.addEventListener('click', startCard);\n"
+				+ "\t\t\tcardRow.appendChild(addCard);",
+			"var save = el('button', 'ar-card-btn accent', t('autoreload.save_card'));\n"
+				+ "\t\t\tsave.title = t('autoreload.save_card_help');\n"
+				+ "\t\t\tsave.addEventListener('click', startCard);\n"
+				+ "\t\t\tcardRow.appendChild(save);",
+		],
+	},
+	noteorder: {
+		what:  'the confirmation written before the redraw that wipes it',
+		patch: [
+			"\t\t\tawait render();\n"
+				+ "\t\t\tnote(next.enabled ? t('autoreload.on_note') : t('autoreload.off_note'));\n",
+			"\t\t\tnote(next.enabled ? t('autoreload.on_note') : t('autoreload.off_note'));\n"
+				+ "\t\t\tawait render();\n",
+		],
+	},
+};
+if (BREAK && BREAK !== 'latefill' && !BREAKS[BREAK]) die(`no break called "${BREAK}"`);
+
+/// The damaged `autoreload.js`, or null when nothing is being broken here.
+const hurtSrc = (() => {
+	if (!BREAKS[BREAK]) return null;
+	const src = fs.readFileSync(AR_JS, 'utf8');
+	const [from, to] = BREAKS[BREAK].patch;
+	if (!src.includes(from)) die(`the "${BREAK}" break no longer matches autoreload.js`);
+	return src.split(from).join(to);
+})();
+if (hurtSrc) console.log(`BREAK ${BREAK}: ${BREAKS[BREAK].what}\n`);
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -40,7 +109,13 @@ const check = (name, pass, detail) => {
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
 };
 
-const s = await open({ name: 'autoreload', connect: false });
+const s = await open({
+	name: 'autoreload', connect: false,
+	route: hurtSrc ? async (pg) => {
+		await pg.route('**/js/autoreload.js', (r) =>
+			r.fulfill({ status: 200, contentType: 'text/javascript', body: hurtSrc }));
+	} : null,
+});
 const p = s.page;
 await p.waitForTimeout(2000);
 
@@ -223,6 +298,102 @@ const shown = await p.evaluate(() => {
 check('the panel shows the saved numbers, in whole units',
 	shown.th === '7.5' && shown.tu === '25' && shown.bu === '150',
 	`${shown.th} / ${shown.tu} / ${shown.bu}`);
+
+// ── The panel SAYS what the gateway said ───────────────────────────────
+//
+// Everything above this point is measured at the API. That is where the RULES live, and it is
+// also how this file could report a healthy panel for a month while the panel could not print a
+// word: `note()` asked for an element by an id that was only ever a class name, so it found
+// null every time and returned quietly. A user saving nonsense was shown nothing whatever.
+//
+// The first check here is therefore about EXISTENCE, and it is the one that matters. An element
+// that is missing and an element that is correctly empty look identical to a locator -- both
+// hidden -- so a check written as "no error is showing" passes on a panel that has been struck
+// dumb. Presence first, then content, and never absence alone.
+
+const line = await p.evaluate(() => {
+	const n = document.getElementById('ar-note');
+	const h = document.getElementById('autoreload');
+	return {
+		there:   !!n,
+		tag:     n ? n.tagName.toLowerCase() : '',
+		inPanel: !!(n && h && h.contains(n)),
+		live:    n ? n.getAttribute('aria-live') : '',
+	};
+});
+check('the panel HAS a message line, under the id the code looks it up by',
+	line.there && line.inPanel,
+	line.there ? `<${line.tag}> inside #autoreload, aria-live="${line.live}"`
+		: 'NO #ar-note — every message this panel can make is swallowed by its own guard');
+
+// A save the gateway ACCEPTS. Its confirmation has to survive the redraw the save itself sets
+// off: `render()` blanks the host and re-appends an EMPTY note line, so a message written
+// before it is destroyed in the same tick and the user is told nothing at all.
+const okSave = await p.evaluate(() => {
+	const want = window.DaimondI18n ? DaimondI18n.t('autoreload.off_note') : '';
+	const box  = document.getElementById('ar-on');
+	if (box) box.checked = false;                 // off is saved without argument
+	const btn = document.getElementById('ar-save');
+	if (btn) btn.click();
+	return { want, clicked: !!btn };
+});
+check('there is a Save button to drive', okSave.clicked === true);
+const settled = await p.waitForFunction(() => {
+	const b = document.getElementById('ar-save');
+	const n = document.getElementById('ar-note');
+	return !!b && !b.disabled && !!n && n.textContent.trim().length > 0;
+}, null, { timeout: 8000 }).then(() => true).catch(() => false);
+await p.waitForTimeout(800);                      // and then the panel is left alone a moment
+const said = await p.evaluate(() => {
+	const n = document.getElementById('ar-note');
+	return {
+		there: !!n,
+		text:  n ? n.textContent.trim() : '',
+		bad:   !!(n && n.classList.contains('bad')),
+	};
+});
+check('a save the gateway accepts is confirmed, and the confirmation outlives its own redraw',
+	settled && said.there && said.text.length > 0 && said.text === okSave.want && !said.bad,
+	said.there ? `“${said.text || '(empty — the redraw ate the confirmation)'}”`
+		: 'there is no message line at all');
+
+// And a save the gateway REFUSES. The switch is disabled without a card, so the refusal is
+// reached the way a client that ignored the disabled attribute would reach it — which is the
+// case the panel was silent about: a 422 carrying a sentence written for a person to read,
+// thrown away by a guard that looked like it was working.
+const refusal = (() => {
+	try { return String(JSON.parse(noCard.body).error || ''); } catch (e) { return ''; }
+})();
+check('the gateway’s refusal is a sentence a person can act on, not a code',
+	refusal.length > 20 && /card/i.test(refusal), `“${refusal}”`);
+
+await p.evaluate(() => {
+	const box = document.getElementById('ar-on');
+	if (box) box.checked = true;                  // there is no card; the gateway will refuse
+	const btn = document.getElementById('ar-save');
+	if (btn) btn.click();
+});
+const heard = await p.waitForFunction((want) => {
+	const n = document.getElementById('ar-note');
+	return !!n && n.textContent.trim() === want;
+}, refusal, { timeout: 8000 }).then(() => true).catch(() => false);
+await p.waitForTimeout(900);                      // the panel settles; the refusal must remain
+const after = await p.evaluate(() => {
+	const n = document.getElementById('ar-note');
+	return {
+		there: !!n,
+		text:  n ? n.textContent.trim() : '',
+		bad:   !!(n && n.classList.contains('bad')),
+		seen:  !!(n && n.offsetParent !== null),
+	};
+});
+check('the gateway’s refusal is SHOWN, in the gateway’s own words',
+	heard && after.there && after.text === refusal,
+	after.there ? `“${after.text || '(the panel said nothing)'}”` : 'there is no message line at all');
+check('and it reads as a failure, and is still on screen once the panel has settled',
+	after.bad && after.seen && after.text === refusal,
+	`bad=${after.bad} on-screen=${after.seen}`);
+await shot(s, 'autoreload-note');
 
 // The 422s are the refusals this test went looking for, so they are not faults — the browser logs
 // every non-2xx fetch as a console error.

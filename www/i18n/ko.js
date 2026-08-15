@@ -42,6 +42,7 @@
 	'copy.what_device':        '{name}의 ID',
 	'copy.what_model':         '모델 ID {id}',
 	'copy.what_default_model': '기본 모델 ID',
+	'copy.what_handle':        '공개 이름',
 
 	// ── 상단 바 ────────────────────────────────────────────────
 	'topbar.menu':        '메뉴',
@@ -61,6 +62,7 @@
 	'about.title':      'Daimond 정보',
 	'about.splash_alt': '행성의 곡선 위 밤하늘을 날아 다이아몬드로 향하는 사람의 모습.',
 	'about.what':       'Daimond은 브라우저에서 도는 AI 에이전트 작업 공간이에요. 서버 계정도 없고 내려받을 것도 없어요. 채팅과 키와 파일은 이 기기에만 있어요.',
+	'about.verify':     '이 빌드를 공개된 소스와 대조해 보기',
 
 	// ── 패널 이름 ──────────────────────────────────────────────
 	// 짧게. 칩 줄과 휴대폰 탭 바에 들어가요.
@@ -292,6 +294,22 @@
 	'beta.done_plain':         '이 기기에 Daimond 계정이 생겼어요.',
 	'beta.done_handle':        '다른 사람에게는 이 계정이 {handle}로 보여요.',
 	'beta.done_not_signed_in': '패스코드는 사용됐고 계정도 있지만, 이 기기가 방금 로그인을 끝내지 못했어요. 알아서 다시 시도할 거예요.',
+
+	// ── 테스터에게 동의를 구하는 단 하나 ───────────────────
+	// 이 표의 나머지와 마찬가지로 원어민 검토 전입니다. `tel_never`는 코드에 대한
+	// 사실이지 우리의 조심성에 대한 약속이 아니므로, "개인정보를 수집하지 않습니다"
+	// 같은 표현으로 완화하면 안 됩니다.
+	'beta.tel_title':    '사용 횟수를 보낼까요?',
+	'beta.tel_title_on': '사용 횟수',
+	'beta.tel_lead':     'Daimond가 어떻게 쓰이는지 알려줄 수 있으면 이번 테스트가 훨씬 도움이 돼요. 보내는 건 숫자뿐입니다. 스무 가지 중 무엇이 일어났는지, 세션 시작 후 몇 밀리초인지, 그리고 각각의 수치 하나 — 한 차례에 걸린 시간, 연 패널, 발생한 오류 수예요.',
+	'beta.tel_never':    '글자는 절대 보내지 않아요. 메시지도, 파일 이름도, Diamond 이름도, 경로도, 오류 메시지도요. 그걸 담을 칸 자체가 없고, 글자가 든 보고서는 서버가 통째로 거부합니다.',
+	'beta.tel_who':      'Oxedyne으로 가고, 패스코드로 만든 계정에 붙습니다. 그래서 어떤 숫자가 당신 것인지 알 수 있고, 그에 대해 다시 여쭐 수도 있어요.',
+	'beta.tel_free':     '거절해도 잃는 건 없어요. 계정도 Pro도 나머지 전부 그대로고, 앱이 다르게 동작하지도 않습니다.',
+	'beta.tel_more':     '보내는 내용 전체',
+	'beta.tel_yes':      '사용 횟수 보내기',
+	'beta.tel_no':       '보내지 않기',
+	'beta.tel_on':       'Daimond가 이 계정의 사용 횟수를 보내고 있어요. 숫자뿐이고 글자는 없습니다.',
+	'beta.tel_stop':     '사용 횟수 보내기 중단',
 
 	// ── 현관 ───────────────────────────────────────────────────
 	// 기계 번역이며 원어민이 검토하지 않았습니다.
@@ -710,6 +728,11 @@
 	// ── 클라우드 저장소 정리 ───────────────────────────────────
 	'chunks.sweep_held':          '정리 일시 중지',
 	'chunks.sweep_held_reason':   '클라우드 저장소에 있는 조각 {m}개 가운데 {n}개는 이 계정의 어떤 파일도 더는 참조하지 않습니다. 삭제하지 않았습니다. 한 번의 요청으로 저장된 것의 절반을 넘게 지울 수 없기 때문입니다. 사용자의 것은 하나도 사라지지 않았고, 전부를 설명할 수 있는 다음 동기화에서 공간이 확보됩니다.',
+	'chunks.upload_refused':      '올리기 일시 중지',
+	'chunks.upload_refused_title': '클라우드 저장소가 올리기를 거부했습니다',
+	'chunks.sweep_confirm_ask':   '지금 삭제하시겠습니까? 아직 보이는 것은 하나도 건드리지 않으며, 공간이 확보됩니다.',
+	'chunks.sweep_confirm_ok':    '조각 삭제',
+	'chunks.sweep_confirm_title': '어디서도 참조하지 않는 조각을 정리하시겠습니까?',
 
 	// ── 두 번째 기기 연결 ──────────────────────────────────────
 	// 버튼 이름을 감싸는 따옴표는 한국어 관례대로 “ ”를 써요.
@@ -1074,6 +1097,9 @@
 	'home.account_note':      '계정은 이 기기에 두는 암호문구예요. API 키를 암호화하고, 크레딧을 쓸 때 서명이 돼요. 브라우저 밖으로 나가는 것은 없어요.',
 	'home.fingerprint':       '이 기기의 신원 지문',
 	'home.change_name':       '이름 바꾸기…',
+	'home.handle_help':       '당신의 공개 이름이에요. 다른 사람에게 보이는 이름이고, 이 계정의 모든 기기에서 같아요.',
+	'home.change_handle':     '공개 이름 바꾸기…',
+	'handle.rename_title':    '공개 이름 바꾸기',
 	'home.change_passphrase': '암호문구 바꾸기…',
 	'home.add_passkey':       '패스키 추가하기…',
 	'home.remove_passkey':    '패스키 지우기',
@@ -1121,6 +1147,7 @@
 	'push.err_host':     '푸시가 갈 호스트를 github.com처럼 적어 주세요. 자격 증명을 지우려면 토큰 칸을 비우면 돼요.',
 	'push.err_not_held': '받아들여지지 않아서 푸시 자격 증명이 없어요. 호스트와 토큰을 확인해 주세요.',
 	'push.not_resealed': '암호문구는 바뀌었지만 푸시 토큰을 새 암호문구로 다시 암호화하지 못했어요. 새로 고치기 전까지는 푸시가 돼요. 계속 쓰려면 토큰을 다시 설정해 주세요.',
+	'push.the_token':    '푸시 토큰',
 
 	// ── 이 계정을 동기화하는 기기 ──────────────────────────────
 	'devices.on_platform': '{platform}의 {brand}',
@@ -1797,6 +1824,18 @@
 	'changepass.failed_body':     '지금 암호문구가 맞지 않았어요. 아무것도 바뀌지 않았어요.',
 	'changepass.careful':         '조심하세요',
 	'changepass.key_not_resealed': '암호문구는 바뀌었지만 API 키를 다시 암호화하지 못했어요. 설정에서 다시 넣어 주세요.',
+	'changepass.mail_not_resealed': '다음 메일함은 새 암호문구로 다시 암호화하지 못했어요. 비밀번호를 다시 넣어 주세요: {list}.',
+	'changepass.mail_not_unsealed': '다음 메일함은 예전 암호문구로도 읽지 못했어요. 그래서 비밀번호는 여전히 다시 설정해야 해요: {list}.',
+	'changepass.models_not_resealed': '다음 제공자는 새 암호문구로 다시 암호화하지 못했어요. 키를 다시 넣어 주세요: {list}.',
+	'changepass.models_not_unsealed': '다음 제공자는 바꾸기 전부터 키를 읽을 수 없었어요. 그래서 키는 여전히 다시 설정해야 해요: {list}.',
+	'changepass.all_of_them':      '전부',
+	'changepass.the_api_key':      'API 키',
+	'changepass.search_not_resealed': '다음 검색 서비스는 새 암호문구로 다시 암호화하지 못했어요. 키를 다시 넣어 주세요: {list}.',
+	'changepass.search_not_unsealed': '다음 검색 서비스는 바꾸기 전부터 키를 읽을 수 없었어요. 그래서 키는 여전히 다시 설정해야 해요: {list}.',
+	'changepass.voice_not_resealed': '포지 목소리를 새 암호문구로 다시 암호화하지 못했어요. 포지가 찍어 준 줄에서 다시 설정해 주세요.',
+	'changepass.voice_not_unsealed': '포지 목소리를 예전 암호문구로도 읽지 못했어요. 그래서 포지가 찍어 준 줄에서 다시 설정해야 해요.',
+	'changepass.rekey_generic':    '{who}: {list}.',
+	'changepass.rekey_failed':     '여기 보관된 것 가운데 일부를 새 암호문구로 다시 암호화하지 못했어요. 설정에서 키와 메일함 비밀번호를 확인해 주세요.',
 	'changepass.changed':         '암호문구를 바꿨어요',
 	'changepass.changed_body':    '새 암호문구가 켜졌어요. 저장해 둔 API 키도 그것으로 다시 암호화했어요.',
 	'changepass.passkey_stale':   '패스키를 갱신하지 못해서 새 암호문구를 물어봐요. 설정에서 다시 추가해 주세요.',
@@ -1804,6 +1843,8 @@
 	// ── 백업 ───────────────────────────────────────────────────
 	'backup.unreadable':      '그 백업 파일을 읽을 수 없었어요.',
 	'backup.not_a_backup':    '그건 Daimond 백업이 아니에요.',
+	'backup.version_title':   '이 백업은 이 Daimond보다 새로워요',
+	'backup.version_body':    '이 파일은 백업 형식 {found}으로 쓰였고, 이 빌드가 읽는 것은 형식 {known}이에요. 아무것도 복원하지 않았고, 파일 안의 것도 바꾸지 않았어요. Daimond을 업데이트한 뒤에 다시 열어 주세요.',
 	'backup.identity_title':  '계정 신원을 복원했어요',
 	'backup.identity_body':   '백업에 “{name}”의 신원이 들어 있어서, 이 브라우저는 이제 그 계정이에요. 서버에 보관된 크레딧과 Pro 라이선스도 함께요. 그 계정의 암호 문구로 잠금을 푸세요. 백업에는 그 문구가 없고, 다른 것으로는 계정을 열 수 없어요.',
 	'backup.identity_kept':   '이 브라우저에는 이미 계정이 있어서, 백업 안의 “{name}” 신원은 그대로 두었어요. 나머지는 모두 복원했어요.',
@@ -1976,6 +2017,8 @@
 	'tile.daimon_reset_body': '이 다이몬의 대화({n}개 메시지)는 버려지고, 다음 지시부터 새 대화가 시작됩니다. 결정체에는 아무것도 들어가지 않아요 — 남길 것이 있다면 먼저 접어 넣으세요. 결정체와 파일과 링크는 그대로입니다.',
 	'tile.daimon_reset_ok': '대화 버리기',
 	'tile.daimon_reset_done': '새 다이몬입니다. 결정체는 그대로예요.',
+	'tile.daimon_reset_busy_title': '다이몬이 아직 일하고 있어요',
+	'tile.daimon_reset_busy': '이 다이몬은 턴 중간이에요. 그 답은 지금 버리려는 대화에 들어가고, 모델이 들고 있는 대화도 마찬가지예요. 그래서 아직 아무것도 버리지 않았어요. 먼저 턴을 멈춰 주세요. 도는 동안에는 입력창 옆 버튼이 멈추기로 바뀌어 있어요.',
 	'tile.model_workers': '작업자',
 	'tile.model_vision': '작업자, 이미지',
 	'tile.model_vision_help': '작업 내용에 이미지가 언급될 때 작업자가 쓰는 모델입니다. Daimond 는 모델이 볼 수 있는지 확인할 수 없으므로 선택은 당신 몫입니다.',
@@ -2187,6 +2230,15 @@
 	'improve.voice_forget_help': '이 기기의 사본을 지워요.',
 	'improve.voice_forgotten': '이 기기의 사본은 사라졌어요.',
 	'improve.voice_ask_forget': '이 기기의 목소리를 잊을까요? 포지는 한 번만 보여 줬고 다시 보여 줄 수 없어요.',
+	'voice.err.empty':          '포지에 쓰려면 목소리가 있어야 해요.',
+	'voice.err.shape':          '이건 목소리처럼 보이지 않아요. 포지가 찍어 준 줄을 통째로 복사해 주세요.',
+	'voice.err.short':          '이건 포지가 내주는 어떤 목소리보다도 짧아요. 줄을 통째로 복사해 주세요.',
+	'voice.err.long':           '이건 목소리가 될 수 있는 길이보다 길어요.',
+	'voice.err.locked':         'Daimond의 잠금을 먼저 풀어 주세요. 목소리는 당신의 암호문구로 암호화해 보관해요.',
+	'voice.err.locked_send':    '포지에 쓰려면 Daimond의 잠금을 풀어 주세요. 목소리는 당신의 암호문구로 암호화되어 있어요.',
+	'voice.err.unreadable':     '이 암호문구로는 목소리를 읽을 수 없어요. 포지가 찍어 준 줄에서 다시 설정해 주세요.',
+	'voice.err.inurl':          '목소리는 헤더에 넣어요. 주소에는 절대 넣지 않아요.',
+	'voice.the_voice':          '포지 목소리',
 
 	// 제안은 보는 그때 포지에서 읽어 와요. 답이 달렸는지 알려 주는 것은 없으니,
 	// 여기 어떤 문장도 알려 준다고 비치면 안 돼요.
