@@ -279,6 +279,45 @@
 	}
 	#msheet .panel > .railhead button:active { background: var(--accent-soft); }
 	#msheet .panel > .railhead > span:first-child { display: none; }
+	/* THE LIFT IS FOR A HEAD HOLDING ONE OR TWO ICON BUTTONS, and the comment
+	   above it named Spending as the only panel raised with one. That stopped
+	   being true when the Improve panel became Social: its head carries FOUR
+	   labelled chips, an information mark and a closer. The strip is out of flow
+	   with no left bound, so on a 390px screen it ran off the left edge, and the
+	   rule above squared every chip to a 40px icon box — "Messages" and "People"
+	   drawn one on top of the other, each clipped, and not one of them showing
+	   which view was on. Screenshot: dev/shots/social-phone.png, 2026-08-17.
+
+	   So this head stays IN FLOW and takes a row of its own, which is where four
+	   chips fit and where a fifth would wrap rather than disappear. */
+	#msheet #panel-social > .railhead {
+		position: static;
+		padding: 4px 6px;
+		justify-content: flex-start;
+		flex-wrap: wrap;
+		row-gap: 3px;
+	}
+	/* And a chip keeps its own shape: a word, and a pill saying whether its view
+	   is the one showing. The thumb floor is taken as a HEIGHT, which is the half
+	   of the rule above that was ever about a finger. */
+	/* The chips carry `margin-left: auto` so they sit right of a heading. The
+	   heading is hidden in the sheet, so that auto margin only pushed them into
+	   the corner and left the row lopsided. */
+	#msheet #panel-social > .railhead .imp-chips { margin-left: 0; }
+	#msheet #panel-social > .railhead .imp-chip {
+		width: auto;
+		height: auto;
+		min-height: 30px;
+		padding: 0 10px;
+		background: none;
+		border: 1px solid var(--border-strong);
+		color: var(--text-secondary);
+	}
+	#msheet #panel-social > .railhead .imp-chip.on {
+		background: var(--accent-soft);
+		border-color: var(--accent);
+		color: var(--accent-text);
+	}
 	/* The lifted strip is out of flow, so the title's box still runs the full
 	   width and a long panel name would ellipsise UNDER the buttons. Give the
 	   title back the room the strip is standing in. */

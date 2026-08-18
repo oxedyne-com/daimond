@@ -216,6 +216,89 @@
 }
 .fv-table tr:nth-child(even) td { background: var(--bg-secondary); }
 
+/* ── What a reader may DO to the document ─────────────────────
+   `fv-bar` holds the controls, `fv-editrow` the fields one of them
+   opens. Both are rows of the panel and neither floats over the
+   document: the whole point of a reading view is that it stays
+   readable while somebody works on it, and a sheet over the top is
+   the same as taking it away. The typst live view above says this
+   about a rebuild and it is just as true of an edit.
+
+   The buttons wear `.fv-btn`, which the hex bar already defined, so
+   a control added here looks like a control already in the panel
+   rather than like a control from somewhere else. */
+.fv-bar {
+	flex: none;
+	display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+	padding: 6px 12px;
+	border-bottom: 1px solid var(--border);
+}
+
+.fv-editrow {
+	flex: none;
+	display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+	padding: 6px 12px;
+	border-bottom: 1px solid var(--border);
+	background: var(--bg-secondary);
+	font-size: var(--fs-xs);
+}
+.fv-editrow[hidden] { display: none; }
+.fv-editrow label {
+	display: flex; align-items: center; gap: 5px;
+	color: var(--text-secondary);
+}
+/* The fields are TOOLBAR-SIZED, and the SELECTOR is the whole of how, which is a
+   bug fixed rather than a style.
+
+   `skin-warm.css` gives every `input[type="text"]` room to type --
+   `:root[data-skin="warm"] input[type="text"]`, padding of 12.6px and 18.2px at
+   that skin's scale. It is loaded AFTER this file and its specificity is (0,3,1),
+   so `.fileview .fv-editrow input` at (0,2,1) lost: measured, the boxes came out
+   43px tall in a row of 22px buttons. That is the same rule that left `.tl-page`
+   above a tall empty pill with its digit clipped out, one step short of doing it
+   again -- a `width: 5ch` box under 18.2px of side padding has NO content width
+   at all.
+
+   Naming the type here is not enough on its own: `[type="text"]` counts on BOTH
+   sides, so `.fileview .fv-editrow input[type="text"]` is also (0,3,1) and a tie
+   goes to whichever file loads last, which is the skin. `.fv-body` is the third
+   class -- the row is always inside the panel's body -- and (0,4,1) wins
+   outright rather than on load order. Measured under both skins at 640px and
+   380px: 22px boxes in a row of 22px buttons.
+
+   The skin's rule is right for a form and wrong for a toolbar; this says which
+   this is. */
+.fileview .fv-body .fv-editrow input[type="text"],
+.fileview .fv-body .fv-editrow input[type="number"],
+.fileview .fv-body .fv-editrow select,
+.fileview .fv-body .fv-bar select {
+	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	color: var(--text-primary); border-radius: var(--radius-sm);
+	padding: 2px 6px; height: auto; min-height: 0;
+	font-size: var(--fs-xs); line-height: 1.3;
+}
+.fileview .fv-body .fv-editrow input[type="text"]   { width: 14ch; }
+.fileview .fv-body .fv-editrow input[type="number"] { width: 5ch; text-align: right; }
+.fv-editrow input:focus-visible,
+.fv-editrow select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The row's own sentence takes the whole width under the fields, since it is a
+   sentence and not a field. It keeps `fv-note`'s colour and loses its border, so
+   the row reads as one thing. */
+.fv-editrow .fv-note {
+	flex: 1 0 100%;
+	padding: 2px 0 0 0;
+	border-bottom: 0;
+}
+
+/* On a phone the fields stack rather than shrink: a 14ch box squeezed into a
+   380px row is a box nobody can read what they typed in. */
+@media (max-width: 380px) {
+	.fv-bar     { padding: 6px 10px; }
+	.fv-editrow { padding: 6px 10px; }
+	.fv-editrow label { flex: 1 0 100%; }
+	.fileview .fv-body .fv-editrow input[type="text"] { flex: 1 1 auto; width: auto; }
+}
+
 /* ── Tier 3: the honest floor ────────────────────────────────── */
 
 .fv-hexbar {

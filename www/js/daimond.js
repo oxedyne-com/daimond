@@ -116,6 +116,26 @@ import init, {
 	default_prompt,
 	safety_clause,
 } from '../pkg/oxedyne_daimond.js';
+// The identity format's entry points, taken as a NAMESPACE rather than by name.
+//
+// DO NOT "TIDY" THIS INTO THE NAMED IMPORT ABOVE. A named import of something
+// the built module does not export is a module-resolution error, and it takes
+// this whole file with it -- a blank app, not a missing feature.
+//
+// The case it guards is a `www/pkg` that is PRESENT BUT STALE: built before the
+// Rust grew these names. That is not a rare state, it is the ordinary one after
+// anybody pulls Rust changes and has not rebuilt, because `www/pkg` is a
+// gitignored build artefact and nothing makes it keep step. It is exactly the
+// state this tree was in when the bridge was written.
+//
+// (It does NOT guard a `www/pkg` that is missing altogether: the import on the
+// line above already names fifteen things from the same module, so no wasm at
+// all is a blank app whatever this line says. The stale case is the one in
+// hand.)
+//
+// The cost is that a name RENAMED in Rust would go quiet instead of loud, so
+// the check below says so on the console and in the durable trail.
+import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 (function () {
 	'use strict';
@@ -139,6 +159,68 @@ import init, {
 			catch (e) { return new Uint8Array(0); }
 		},
 	};
+
+	// The same arrangement for the identity format. `identity.js` is a classic
+	// script and cannot import the module, and there must be exactly ONE
+	// rendering of a fingerprint and ONE canonical encoding of a card -- a second
+	// written in JS is how two devices come to draw the same key differently. So
+	// nothing here computes: each line hands the question to the crate that owns
+	// it. Nothing throws on this side either; `identity.js` treats a missing
+	// bridge as "not answerable yet" and shows nothing rather than a second
+	// answer, which is only honest if this surface never invents one.
+	//
+	// Only safe to call after init(), which every caller is: the fingerprint is
+	// recomputed at unlock and a card is minted from an unlocked identity.
+	//
+	// Defined only when the module really carries them. A wrapper that existed
+	// and threw would pass `identity.js`'s `typeof b.cardEncode === 'function'`
+	// check and be reported as an encoding failure, which is a different fault
+	// from the one that happened; absent, it is reported as the missing bridge it
+	// is.
+	// EVERY name is checked, not the first: a partial rename would otherwise
+	// leave a bridge that exists and throws halfway through minting a card.
+	//
+	// `PostDraft` is a CLASS rather than a free function, and it is here for the
+	// same reason as the rest: `typeof` a wasm-bindgen class is 'function', so it
+	// is checked the same way, and without it `DaimondPost.ready()` is false and
+	// nothing can be composed at all -- silently, since a missing bridge is by
+	// design something that cannot stop the app.
+	// `typeof` a wasm-bindgen class is 'function', so `PostDraft` and `ShareDraft`
+	// are checked by exactly the same test as the free functions beside them.
+	var sbjWant = ['identity_fingerprint', 'identity_safety_number', 'card_encode',
+		'sbj_signing_input', 'sbj_assemble', 'sbj_address', 'sbj_read', 'PostDraft',
+		'ShareDraft', 'share_read'];
+	var sbjMissing = sbjWant.filter(function (n) { return typeof Sbj[n] !== 'function'; });
+	if (!sbjMissing.length) {
+		window.DaimondCrypto = {
+			fingerprint:  function (b) { return Sbj.identity_fingerprint(b); },
+			safetyNumber: function (a, b) { return Sbj.identity_safety_number(a, b); },
+			cardEncode:   function (label, enc, prev) { return Sbj.card_encode(label, enc, prev); },
+			signingInput: function (p, s, a, t) { return Sbj.sbj_signing_input(p, s, a, t); },
+			assemble:     function (p, s, a, t, sig) { return Sbj.sbj_assemble(p, s, a, t, sig); },
+			address:      function (p) { return Sbj.sbj_address(p); },
+			read:         function (b) { return Sbj.sbj_read(b); },
+			/// A message being written, held on the wasm side while it is built.
+			postDraft:    function (body, to, nonce) { return new Sbj.PostDraft(body, to, nonce); },
+			/// A Diamond being shared, and the reading of one that arrives. Same
+			/// seam as the message above: the crate encodes and says what to sign,
+			/// this file signs with a key that never crosses the boundary.
+			shareDraft:   function (name, to, nonce) { return new Sbj.ShareDraft(name, to, nonce); },
+			shareRead:    function (b) { return Sbj.share_read(b); },
+		};
+	} else {
+		// SAID OUT LOUD, because the whole point of reading these off a namespace
+		// is that their absence cannot stop the app -- and something that cannot
+		// stop the app is something nobody notices. A stale `www/pkg` is the
+		// ordinary cause and the fix is to rebuild it; a name missing from a
+		// FRESH build is a rename, and this is the line that says which.
+		try {
+			console.warn('Daimond: the wasm module is missing ' + sbjMissing.join(', ')
+				+ ' — identity fingerprints and cards are unavailable. Rebuild www/pkg '
+				+ '(dev/build-wasm.sh); if a fresh build still lacks them, they were renamed.');
+		} catch (e) { /* no console */ }
+		trail('sbj bridge absent', sbjMissing.join(','));
+	}
 
 	// The prompt each kind of agent runs under is the user's, held as a file in
 	// their workspace (prompts/<role>.md) and read by `Prompts` below. The text
@@ -761,6 +843,22 @@ import init, {
 	// for chats.
 	var DIAMOND_TOMBS_KEY = 'daimond-diamond-tombs';
 	var MSG_TOMBS_KEY = 'daimond-msgs-deleted';   // individual messages removed (a continued interrupted turn)
+	// WHICH CHAT WAS ON SCREEN, so a reload comes back to it.
+	//
+	// `renderAll` opened `chats.find(c => !c.diamondId)` — the first record the
+	// store enumerated, which IndexedDB hands back in key order, which is the
+	// OLDEST chat. The rail is sorted newest-first, so a phone waking up put the
+	// bottom of the rail on screen while the tile the reader wanted sat at the
+	// top. From the reader's seat their transcript had vanished, and tapping the
+	// tile brought it back — which is exactly what was reported, with the record
+	// never having left the disk.
+	//
+	// localStorage rather than sessionStorage, because the case this is for is a
+	// phone whose app was KILLED and relaunched, and sessionStorage does not
+	// survive that. The cost is that two windows of one account share the mark
+	// and each reload lands on whichever selected last; opening the wrong chat of
+	// two you have open is a smaller fault than losing the one you were reading.
+	var OPEN_CHAT_KEY = 'daimond-open-chat';
 
 	/// A message id minted by the scheme that named a message by its POSITION ALONE.
 	///
@@ -1387,6 +1485,15 @@ import init, {
 	var CHATS_STORE   = 'chats';
 	var CHATS_REV     = 'daimond-chats-rev';       // the cross-tab nonce
 	var CHATS_LEGACY  = 'daimond-chats-legacy';    // what localStorage held before the move
+	// HOW MANY RECORDS THE LAST GOOD WRITE LEFT ON DISK.
+	//
+	// `boot()` could not tell "the store is empty" from "the store was not read":
+	// both come back as no rows, and only the second raises the alarm. An empty
+	// read therefore installed an empty mirror, `applyChats` adopted every chat in
+	// the next parcel wholesale, and the short records went over the long ones.
+	// This is the one fact that separates the two — a device that has stored
+	// fourteen chats and reads none has been lied to.
+	var CHATS_COUNT   = 'daimond-chats-count';
 
 	var ChatStore = (function () {
 		var db      = null;      // the open connection, or null when there is none
@@ -1396,6 +1503,17 @@ import init, {
 		var writing = null;      // the write in flight, so two saves queue rather than race
 		var queued  = null;      // the next list to write, replacing any earlier one
 		var usable  = false;     // the store opened and was read at least once
+		var vouched = false;     // and what it read can be believed -- see CHATS_COUNT
+
+		/// How many records this account had at the last write that landed.
+		function watermark() {
+			var n = parseInt(readJson(CHATS_COUNT, 0), 10);
+			return isFinite(n) && n > 0 ? n : 0;
+		}
+		function setWatermark(n) {
+			try { localStorage.setItem(CHATS_COUNT, JSON.stringify(n)); }
+			catch (e) { /* private mode: the mirror is all there is anyway */ }
+		}
 
 		function dbName() {
 			var ns = (window.DaimondAccounts && DaimondAccounts.opfsNs()) || '';
@@ -1471,6 +1589,21 @@ import init, {
 				+ ':' + JSON.stringify(c.holds || []);
 		}
 
+		/// Can the rows a read just handed back be believed?
+		///
+		/// No row is indistinguishable from no read, and only the second raises the
+		/// alarm — so an empty read is judged against the count the last good write
+		/// left. A device that has stored chats and reads none has been lied to, and
+		/// the alarm goes up for the same reason a throw raises it: from here on
+		/// anything merged against this mirror is merged against nothing.
+		function judge(rows) {
+			if ((rows || []).length || !watermark()) return true;
+			storageAlarm(tOr('store.empty_read',
+				'this browser returned none of the {n} conversations it is holding',
+				{ n: watermark() }));
+			return false;
+		}
+
 		async function write(list) {
 			try {
 				// Only when there is no usable connection. This is the difference
@@ -1502,9 +1635,46 @@ import init, {
 					// attaching a folder and marking it into the workspace is.
 					var stamp = stampOf(c);
 					put[c.id] = stamp;
-					// Only what has moved. A `put` of every chat on every turn rewrites the
-					// whole store for one appended message.
-					if (disk[c.id] !== stamp) t.store.put(c);
+					// A PUT MUST NEVER SHORTEN A TRANSCRIPT.
+					//
+					// This is the same rule the tombstone paragraph below keeps for a
+					// whole chat, kept for its transcript: a record we cannot account
+					// for may be added to and may not be cut down. It is needed because
+					// the store's account of the disk (`disk`) can be empty while the
+					// disk is not -- an empty boot read installs an empty mirror,
+					// `applyChats` then adopts the other device's shorter record
+					// wholesale, and this put lands on top of the longer one. Nothing
+					// throws, nothing is tombstoned, and the conversation is gone.
+					//
+					// Only for an id with no stamp, so the ordinary turn-by-turn write
+					// is untouched: it stays one synchronous `put` queued in the same
+					// tick as `save()`, which is what the paragraph above is protecting.
+					// The put is issued from the get's own success handler, inside this
+					// same transaction, so the read and the write cannot be separated.
+					if (disk[c.id] === undefined) {
+						(function (rec, id) {
+							var g = t.store.get(id);
+							g.onsuccess = function () {
+								var old = g.result;
+								if (old && (old.messages || []).length) {
+									// `mergeMessages` honours the message tombstones, so a
+									// deliberate removal still removes -- what cannot happen
+									// is a removal nobody asked for.
+									rec = slimChat(rec);
+									rec.messages = slimMessages(
+										mergeMessages(old.messages, rec.messages, id));
+									// The stamp of what is ACTUALLY going to disk, or the next
+									// save would find the record unchanged and skip it.
+									put[id] = stampOf(rec);
+								}
+								t.store.put(rec);
+							};
+						})(c, c.id);
+					} else if (disk[c.id] !== stamp) {
+						// Only what has moved. A `put` of every chat on every turn rewrites
+						// the whole store for one appended message.
+						t.store.put(c);
+					}
 				});
 				// A DELETION IS A TOMBSTONE, NOT AN ABSENCE.
 				//
@@ -1545,6 +1715,10 @@ import init, {
 				Object.keys(kept).forEach(function (id) { if (!next[id]) next[id] = kept[id]; });
 				disk = next;
 				usable = true;
+				// A write that landed is a read we could have trusted, and it settles
+				// the count an empty read is judged against.
+				vouched = true;
+				setWatermark(Object.keys(disk).length);
 				storageAlarmClear();          // a save landed: whatever it said is over
 				return true;
 			} catch (e) {
@@ -1601,9 +1775,11 @@ import init, {
 					mirror = await readAll();
 					mirror.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
 					usable = true;
-					storageAlarmClear();
+					vouched = judge(mirror);
+					if (vouched) storageAlarmClear();
 				} catch (e) {
 					usable = false;
+					vouched = false;
 					mirror = legacy();
 					storageAlarm(storeReason(e));
 					return mirror.slice();
@@ -1646,7 +1822,8 @@ import init, {
 					disk = {};
 					mirror.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
 					usable = true;
-				} catch (e) { storageAlarm(storeReason(e)); }
+					vouched = judge(mirror);
+				} catch (e) { vouched = false; storageAlarm(storeReason(e)); }
 				return mirror.slice();
 			},
 			/// Store `list`, which is already the merged truth. Returns at once; the
@@ -1661,9 +1838,28 @@ import init, {
 			/// Is the real store working? False means this session is running on the
 			/// fallback and the alarm is up.
 			usable: function () { return usable; },
+			/// Can the mirror be MERGED AGAINST? False means the store has not been
+			/// read, or read something this device knows to be wrong — so anything
+			/// absent from the mirror is unknown rather than gone, and a merge that
+			/// treats absence as "the other device's copy is the only one" would
+			/// write the short record over the long one. `applyChats` refuses on it.
+			vouched: function () { return vouched; },
+			/// Resolves when everything queued at this moment has reached the
+			/// database. For a caller that must not clear its own record of a change
+			/// until the change is durable. Bounded, exactly as `refresh` is, so a tab
+			/// saving continuously cannot hold it off for ever.
+			settled: async function () {
+				for (var i = 0; i < 8 && (writing || queued); i++) {
+					try { await writing; } catch (e) { break; }
+				}
+			},
 			/// Forget everything — an account being forgotten takes its chats with it.
 			wipe: async function () {
 				mirror = []; disk = {};
+				// The watermark goes with them, or the next boot would read the empty
+				// store it was just asked to make and call it a fault.
+				setWatermark(0);
+				vouched = true;
 				try { await conn(); var t = tx('readwrite'); t.store.clear(); await t.done; }
 				catch (e) { /* nothing to clear */ }
 			},
@@ -3168,11 +3364,30 @@ import init, {
 	/// uses; then the in-memory array and the UI are reconciled without
 	/// disturbing a turn in flight.
 	function applyChats(remote) {
+		// REFUSE RATHER THAN GUESS.
+		//
+		// The merge below reads "this device has no record under that id" as "the
+		// other device's copy is the only one there is", and adopts it wholesale.
+		// That is right when the mirror is the truth and catastrophic when it is
+		// not: an unread store looks exactly like an empty one, so a device that
+		// had every transcript and read none would take the other device's shorter
+		// copy of each. Thrown rather than skipped, so `applySync` records `chats`
+		// as a failed section and sync.js declines to push this device's state over
+		// the parcel it could not merge.
+		if (!ChatStore.vouched()) {
+			throw new Error('the chat store has not been read; not merging against it');
+		}
 		var tombs = mergeTombMap(TOMBS_KEY, remote.tombs);
 		mergeTombMap(MSG_TOMBS_KEY, remote.msgTombs);
 		var byId = {};
 		var stored = ChatStore.stored();
-		(Array.isArray(stored) ? stored : []).forEach(function (c) { if (c && c.id) byId[c.id] = c; });
+		// What each chat held before the parcel, so a merge that shortened one says so.
+		var was = {};
+		(Array.isArray(stored) ? stored : []).forEach(function (c) {
+			if (!c || !c.id) return;
+			byId[c.id] = c;
+			was[c.id] = (c.messages || []).length;
+		});
 		(Array.isArray(remote.chats) ? remote.chats : []).forEach(function (r) {
 			if (!r || !r.id) return;
 			var st = byId[r.id];
@@ -3185,7 +3400,19 @@ import init, {
 			byId[r.id] = merged;
 		});
 		Object.keys(tombs).forEach(function (id) { delete byId[id]; });
-		ChatStore.save(Object.keys(byId).map(function (id) { return byId[id]; }));
+		var out = Object.keys(byId).map(function (id) { return byId[id]; });
+		// A MERGE THAT SHORTENED A TRANSCRIPT, in the durable trail.
+		//
+		// The union cannot do this and the tombstones can, so a line here is either
+		// a deletion travelling as it should or a defect -- and until this was
+		// recorded there was no way to tell which had happened on a device a day
+		// later. Nothing in the trail named the chat or either count.
+		out.forEach(function (c) {
+			if (!c || !c.id || was[c.id] === undefined) return;
+			var n = (c.messages || []).length;
+			if (n < was[c.id]) trail('sync chats SHORTER', c.id + ': ' + was[c.id] + ' -> ' + n);
+		});
+		ChatStore.save(out);
 		onChatsChangedElsewhere();
 	}
 
@@ -4163,8 +4390,9 @@ import init, {
 		// them to be side by side, which is the only thing the split gave.
 		preview: 1,
 		// A panel about reporting faults that a phone cannot reach leaves out
-		// every reader most likely to meet one.
-		improve: 1,
+		// every reader most likely to meet one. It carries the messages and the
+		// people as well now, and it is called Social.
+		social: 1,
 	};
 	function mshow(name) {
 		// A phone showing something other than the conversation is a phone that is
@@ -4196,14 +4424,193 @@ import init, {
 		// a page whose sheet script did not load, and are woken anyway: a panel
 		// shown without its onOpen is a panel that draws nothing.
 		if (name === 'work') Files.onOpen();
-		if (name === 'mail' && window.DaimondMail) DaimondMail.onOpen();
+		if (name === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); Badge.seen('mail'); }
 		if (name === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
 		if (name === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 		if (name === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
-		if (name === 'improve' && window.DaimondImprove) DaimondImprove.onOpen();
+		if (name === 'social' && window.DaimondSocial) { DaimondSocial.onOpen(); postBadge(); }
 	}
 	document.querySelectorAll('#mnav button').forEach(function (b) {
 		b.addEventListener('click', function () { mshow(b.dataset.mp); });
+	});
+
+	// ── The dock count badge ───────────────────────────────────
+	//
+	// ONE NUMBER ON A PANEL'S CHIP, and with Web Push declined this is the whole
+	// of what this app does to say that something arrived while you were looking
+	// somewhere else. It is drawn in three places at once, because a chip is not
+	// always on screen:
+	//
+	//   the top bar's chip   `#panel-tags .ptag[data-panel]`, on a desktop
+	//   the phone's bar      `#mnav button[data-mp]`, on a phone
+	//   the document title   `(3) Daimond`, when the tab is not the one in front
+	//
+	// and `navigator.setAppBadge`, which an installed app shows on its icon and
+	// which needs no push subscription and no permission prompt. Where it is not
+	// implemented the call simply does not exist and nothing else changes.
+	//
+	// THE COUNT IS NEVER A ZERO ON SCREEN. `#pending-count`, `#agents-count` and
+	// `#trash-count` all write `n ? String(n) : ''` for the same reason: a badge
+	// reading 0 is a mark that has to be READ before it can be ignored, which is
+	// the opposite of what a badge is for.
+	//
+	// AND IT DOES NOT COUNT WHAT YOU ARE LOOKING AT. A panel that is open and on
+	// screen when its thing arrives has already told you; a badge over it would
+	// be asking you to go and see what is in front of you.
+	//
+	// WIRED TO MAIL, WHICH ALREADY HAS A CALLER. `mail.js` dispatches
+	// `daimond:mail-arrived` with a count on every fetch that brought something
+	// new, and has since the mail triggers were built. Messages become the second
+	// caller in Phase 3 and need not one line here.
+	//
+	// WHAT THIS IS NOT, said plainly: it counts ARRIVALS SINCE YOU LAST LOOKED,
+	// held in memory, and not the number of messages carrying no `\Seen` flag.
+	// Those two are the same number until a message is read on another device or
+	// this tab is reloaded. `mail.js` has the honest tally within reach — every
+	// row it draws already knows its own `seen` (`mail.js:1624`, drawn at
+	// `mail.js:2114`) — but it exposes only per-folder TOTALS (`counts()`), and
+	// mail.js is another lane's file. When it offers an unseen tally, `set()`
+	// below takes it and this comment goes.
+	var Badge = (function () {
+		var counts = {};                 // panel id -> what has arrived unseen
+		var BASE = document.title;
+
+		function total() {
+			var n = 0;
+			Object.keys(counts).forEach(function (k) { n += counts[k] | 0; });
+			return n;
+		}
+
+		/// Is that panel in front of the user right now? Open is not enough on a
+		/// phone, where only the panel in the sheet or on the floor is visible.
+		function visible(id) {
+			try {
+				if (!DaimondPanels.isOpen(id)) return false;
+				if (!isMobile()) return true;
+				if (document.body.dataset.mpanel === id) return true;
+				return !!(window.DaimondSheet && DaimondSheet.guest && DaimondSheet.guest() === id);
+			} catch (e) { return false; }
+		}
+
+		/// Put the count on one host element, adding the mark only if there is
+		/// something to say and taking it away again when there is not.
+		function mark(host, n) {
+			if (!host) return;
+			var b = host.querySelector('.dock-count');
+			if (!b) {
+				if (!n) return;
+				b = document.createElement('span');
+				b.className = 'dock-count';
+				b.setAttribute('role', 'status');
+				host.appendChild(b);
+			}
+			b.textContent = n ? String(n) : '';
+			b.hidden = !n;
+			b.title = n ? tn('dock.unseen', n, { n: n }) : '';
+			if (n) host.dataset.unseen = String(n); else delete host.dataset.unseen;
+		}
+
+		/// Draw every count where it belongs. Called whenever a number changes and
+		/// again after the chip row is rebuilt, since that throws the chips away.
+		function paint() {
+			var ids = Object.keys(counts);
+			// Chips that no longer carry a count still have to be cleaned, so the
+			// sweep is over what is ON SCREEN and not over what is counted.
+			document.querySelectorAll('#panel-tags .ptag[data-panel]').forEach(function (c) {
+				mark(c, counts[c.dataset.panel] | 0);
+			});
+			document.querySelectorAll('#mnav button[data-mp]').forEach(function (b) {
+				mark(b, counts[b.dataset.mp] | 0);
+			});
+			ids.forEach(function (id) {
+				// A panel's own head, where one has been given a place for it.
+				mark(document.querySelector('#panel-' + id + ' .rail-count-host'), counts[id] | 0);
+			});
+			var n = total();
+			document.title = n ? '(' + n + ') ' + BASE : BASE;
+			try {
+				if (n && navigator.setAppBadge) navigator.setAppBadge(n);
+				else if (navigator.clearAppBadge) navigator.clearAppBadge();
+			} catch (e) { /* the platform does not draw one */ }
+		}
+
+		return {
+			/// Set the count for a panel outright. What an honest tally calls.
+			set: function (id, n) {
+				n = Math.max(0, n | 0);
+				if ((counts[id] | 0) === n) return;
+				counts[id] = n;
+				paint();
+			},
+			/// Something arrived. Ignored while that panel is in front of the user.
+			bump: function (id, n) {
+				n = Math.max(0, n | 0);
+				if (!n || visible(id)) return;
+				counts[id] = (counts[id] | 0) + n;
+				paint();
+			},
+			/// The user is looking at it now, so there is nothing left to say.
+			seen: function (id) {
+				if (!(counts[id] | 0)) return;
+				counts[id] = 0;
+				paint();
+			},
+			/// What it would draw, for a verifier that wants the record as well as
+			/// the pixels.
+			count: function (id) { return counts[id] | 0; },
+			total: total,
+			paint: paint,
+		};
+	})();
+	window.DaimondBadge = Badge;
+
+	// Mail is the caller that already exists. `count` is what came in above the
+	// mark this fetch started from — mail.js's own definition of an arrival, with
+	// backfills and uid-validity rebuilds already fenced out of it.
+	window.addEventListener('daimond:mail-arrived', function (ev) {
+		var d = (ev && ev.detail) || {};
+		Badge.bump('mail', d.count);
+	});
+
+	/// The Social panel's own count: how many messages have not been read.
+	///
+	/// `set` rather than `bump`, and NOT cleared by looking at the panel, because
+	/// this is an honest tally rather than a memory of arrivals — `post.js` knows
+	/// which messages carry no `read` mark, and a message you have not opened is
+	/// still unread while you are staring at the list of them. Mail's badge is
+	/// the weaker of the two and says so where it is wired.
+	///
+	/// NO TIMER OF ITS OWN. It is recomputed on the five occasions the number can
+	/// have changed: the minute clock this file already runs, the panel opening,
+	/// anything pressed inside the panel, another tab writing the store, and a
+	/// sync parcel arriving (js/sync.js, which calls back through
+	/// `DaimondBadge.post`).
+	function postBadge() {
+		try {
+			if (!window.DaimondPost || !DaimondPost.unread) return;
+			// BELT AND BRACES over identity.js's `daimond:unlock`. The store is read
+			// lazily and answers 0 unread while it is unread, so a badge that only
+			// counted would be a badge that could never light: its whole job is to
+			// say "open the panel", and the panel opening was the only thing that
+			// read the store. Asking here means a listener that never fired costs a
+			// minute rather than the session.
+			if (DaimondPost.read && DaimondPost.state && !DaimondPost.state().read) {
+				DaimondPost.read().then(function () {
+					Badge.set('social', DaimondPost.unread());
+				}, function () { /* locked: there is nothing to count yet */ });
+			}
+			Badge.set('social', DaimondPost.unread());
+		} catch (e) { /* no messages in this build */ }
+	}
+	window.DaimondBadge.post = postBadge;
+	document.addEventListener('click', function (e) {
+		if (!e.target || !e.target.closest || !e.target.closest('#panel-social')) return;
+		// After the press has been handled: `post.js` marks a message read on the
+		// way through, and a count taken in the same tick is the count before it.
+		setTimeout(postBadge, 0);
+	});
+	window.addEventListener('storage', function (e) {
+		if (e && e.key && e.key.indexOf('daimond-post') !== -1) postBadge();
 	});
 
 	// ── Layout: three zones ────────────────────────────────────
@@ -5229,6 +5636,10 @@ import init, {
 			if (!tagsEl) return;
 			if (window.DaimondWorkspace && DaimondWorkspace.renderTags) {
 				DaimondWorkspace.renderTags(tagModel());
+				// The chips were thrown away and rebuilt, and the counts on them
+				// with them. Repainted HERE rather than inside the renderer, so the
+				// badge has one owner and workspace.js need not know it exists.
+				Badge.paint();
 				return;
 			}
 			tagsEl.innerHTML = '';
@@ -5242,6 +5653,7 @@ import init, {
 				b.addEventListener('click', function () { activate(p.id); });
 				tagsEl.appendChild(b);
 			});
+			Badge.paint();
 		}
 
 		/// Open a panel in its own zone. A stage panel takes a free seat, or evicts
@@ -5306,14 +5718,14 @@ import init, {
 			markUsed(id);
 			apply();
 			if (id === 'work') Files.onOpen();
-			if (id === 'mail' && window.DaimondMail) DaimondMail.onOpen();
+			if (id === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); Badge.seen('mail'); }
 			if (id === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
 			// The terminal is built on the first open and started there: a pty is a
 			// real program on the user's machine, so it begins when a person asks
 			// for one and not when the app loads.
 			if (id === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 			if (id === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
-			if (id === 'improve' && window.DaimondImprove) DaimondImprove.onOpen();
+			if (id === 'social' && window.DaimondSocial) { DaimondSocial.onOpen(); postBadge(); }
 			if (isMobile()) mshow(id);
 		}
 
@@ -5721,7 +6133,178 @@ import init, {
 		/// outside "what will this Diamond actually be allowed to see". Read-only:
 		/// a grant is made by attaching, not by calling this.
 		bounds: function (id) { return Files.bounds(id); },
+		/// Every file of a Diamond, as `[{ path, body: Uint8Array }]`, with paths
+		/// relative to `diamonds/<id>/`.
+		///
+		/// BYTES, NOT TEXT, and that is the whole reason this is a walk here rather
+		/// than one call to `export_diamond`. That function reads every file
+		/// through `String::from_utf8_lossy` (src/wasm/diamond.rs:1783), so a
+		/// Diamond carrying an image comes back with every non-UTF-8 byte replaced
+		/// by U+FFFD -- silently, and the corruption is not visible until somebody
+		/// opens the picture at the other end. `store_list` reports each file's
+		/// size and `store_read_bytes` reads it whole, so nothing here decodes
+		/// anything and a PNG survives the trip.
+		///
+		/// Nothing is filtered: what may travel is the sharing format's rule and
+		/// js/share.js applies it. A walk that quietly dropped files would put a
+		/// second, weaker copy of that rule in the module that does not own it.
+		files: function (id) { return diamondFiles(String(id || '')); },
+		/// A Diamond of THIS device's own, made from files that arrived in a
+		/// share. Answers its id.
+		///
+		/// A new Diamond with a new identity, not a copy of the sender's: the name
+		/// is advisory and the store settles a clash, because two people may
+		/// choose one name and neither is wrong.
+		land: function (name, files) { return landDiamond(name, files); },
 	};
+
+	/// The walk behind `DaimondDiamond.files`.
+	async function diamondFiles(id) {
+		if (!id) return [];
+		var root = 'diamonds/' + id;
+		var out = [], todo = [''];
+		while (todo.length) {
+			var rel = todo.pop();
+			var dir = rel ? (root + '/' + rel) : root;
+			var raw = '';
+			try { raw = String(await Wasm.store_list(dir) || ''); }
+			catch (e) { continue; }			// a directory that has gone carries nothing
+			var lines = raw.split('\n');
+			for (var i = 0; i < lines.length; i++) {
+				if (!lines[i]) continue;
+				// `name<TAB>dir|file<TAB>bytes`, this app's own door. NOT the model's
+				// `file_list`, which answers "name (n bytes)" -- reading one with the
+				// other's parser finds nothing and reports an empty Diamond.
+				var bits = lines[i].split('\t');
+				var name = String(bits[0] || '').trim();
+				if (!name) continue;
+				var child = rel ? (rel + '/' + name) : name;
+				if (String(bits[1] || '').trim() === 'dir') { todo.push(child); continue; }
+				var size = parseInt(bits[2], 10);
+				if (!(size >= 0)) size = 0;
+				var body;
+				try { body = await Wasm.store_read_bytes(root + '/' + child, 0, size); }
+				catch (e) { continue; }		// one unreadable file must not lose the Diamond
+				out.push({ path: child, body: body instanceof Uint8Array ? body : new Uint8Array(body) });
+			}
+		}
+		out.sort(function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0); });
+		return out;
+	}
+
+	/// The making behind `DaimondDiamond.land`.
+	///
+	/// DELIBERATELY NO `writeCappRecord`. A capp that arrives from a stranger must
+	/// take the "an instance with no record is ASKED about" path, which is why the
+	/// share format refuses to carry a `capp.json` at all. Writing the record here
+	/// would mark a stranger's page as delivered-by-us and skip the one question
+	/// the whole consent design exists to ask.
+	async function landDiamond(name, files) {
+		var id = await diamondApp().create_diamond(String(name || '').trim()
+			|| tOr('share.landed_name', 'A shared Diamond'));
+		var refused = [];
+		// Whether anything came through the BYTES door, which is the one that most
+		// needs the stamp below: the files it carries are the large ones a user
+		// would most notice losing.
+		var wroteBytes = false;
+		for (var i = 0; i < (files || []).length; i++) {
+			var f = files[i];
+			var path = String((f && f.path) || '');
+			if (!path) continue;
+			var text = null, binary = false;
+			try { text = asText(f.body); }
+			catch (e) { binary = true; }
+			try {
+				// A PICTURE NOW LANDS. This used to be the refusal path: `store_write`
+				// takes a `String` and `DaimondApp.write_bytes` writes to the WORKSPACE
+				// root rather than the store a Diamond lives in, so a share carrying a
+				// PNG had nowhere to put it -- the wire was sound and the landing was
+				// not. `store_write_bytes` is the counterpart of `store_read_bytes`,
+				// which had existed all along, so the gap was one-sided rather than a
+				// decision.
+				//
+				// A build without that door still refuses BY NAME rather than writing
+				// replacement characters. Mojibake is the one outcome worse than a
+				// refusal, because nothing notices it until somebody opens the picture.
+				if (binary) {
+					if (typeof Wasm.store_write_bytes !== 'function') {
+						refused.push(path);
+						continue;
+					}
+					await Wasm.store_write_bytes('diamonds/' + id + '/' + path,
+						f.body instanceof Uint8Array ? f.body : new Uint8Array(f.body || []));
+					wroteBytes = true;
+				}
+				// The two that are not ordinary files: the crystal's page and its
+				// data each go through the Diamond's own door, which is what makes
+				// the crystal face mount at all. Neither is ever binary -- a page is
+				// HTML and its data is JSON -- so both stay on the text path.
+				else if (path === 'crystal.html') await diamondApp().write_crystal_page(id, text);
+				else if (path === 'crystal.json') await diamondApp().write_crystal_data(id, text);
+				else await Wasm.store_write('diamonds/' + id + '/' + path, text);
+			} catch (e) {
+				// `trail`, NOT `log`. There is no `log` in this module and never was:
+				// this line read `log(...)` and sat in a catch nothing had reached, so
+				// the one path that exists to refuse a single file BY NAME would have
+				// thrown a ReferenceError and taken the whole landing with it. A share
+				// with one unwritable file would have failed entirely rather than
+				// arriving minus that file.
+				trail('share land failed', path + ': ' + ((e && (e.message || e)) || '?'));
+				refused.push(path);
+			}
+		}
+		// `store_write` and `store_write_bytes` are both raw OPFS writes and move
+		// NOTHING, so a Diamond landed with either is strictly staler than every
+		// other device's copy: `applyDiamonds` replaces it wholesale from the
+		// fresher side, taking the share with it. That is the tag-loss failure of
+		// 2026-08-11 arriving through a new door, and `touch_diamond` is the export
+		// that exists to stop it.
+		//
+		// THE BYTES DOOR RAISES THE STAKES RATHER THAN CHANGING THE RULE. What comes
+		// through it is a picture or a recording -- the largest thing in the share
+		// and the one whose loss a person would actually see -- so the stamp is not
+		// conditional on `wroteBytes`, it is unconditional and `wroteBytes` only
+		// says so in the log. A stamp that ran for some writes and not others is a
+		// stamp somebody has to reason about at the call site.
+		try { await Wasm.touch_diamond(id); }
+		catch (e) {
+			// A landing that could not be stamped is a landing the next sync may
+			// undo, and it is worth a line even in a quiet build: silence here is
+			// what made the August failure take a fortnight to find.
+			trail('share land unstamped', id + ': a sync may replace it — '
+				+ ((e && (e.message || e)) || '?'));
+		}
+		if (wroteBytes) trail('share land bytes', id + ' stamped after store_write_bytes');
+		// Every other path that makes a Diamond says so out loud: `bumpDiamonds`
+		// writes the cross-tab nonce and nudges the push. Without it a landed
+		// Diamond exists on this tab alone until something unrelated schedules a
+		// sync.
+		bumpDiamonds();
+		clearDiamondFilters();
+		await loadDiamonds();
+		// NOT AWAITED. The Diamond is landed either way and this is information,
+		// not a gate: awaiting it made `land()` hang until somebody clicked, and
+		// share.js awaits `land()` inside a `try` whose `finally` frees the wasm
+		// reading -- so a share carrying one image held a wasm object open for as
+		// long as the dialog stood, and any caller that was not a person sitting in
+		// front of the screen never returned at all.
+		if (refused.length) {
+			noticeDialog(tOr('share.landed_title', 'Shared Diamond added'),
+				tOr('share.landed_partial',
+					'These files could not be written into the Diamond: {list}. Everything '
+					+ 'else in the share is there.',
+					{ list: refused.join(', ') }));
+		}
+		return id;
+	}
+
+	/// A file body as the store's write door wants it. Throws on bytes that are
+	/// not UTF-8, so the caller can refuse the file rather than corrupt it.
+	function asText(body) {
+		if (typeof body === 'string') return body;
+		var u8 = body instanceof Uint8Array ? body : new Uint8Array(body || []);
+		return new TextDecoder('utf-8', { fatal: true }).decode(u8);
+	}
 
 	// The panel is reachable from the dock whether or not anything is running, but
 	// the first Diamond-dispatched agent still OPENS it: that is the one moment
@@ -6641,6 +7224,33 @@ import init, {
 	// the one moment it means something.
 	var _egressOk = Object.create(null);		// hosts approved for READING, this session.
 	var _egressAct = Object.create(null);	// hosts approved for ACTING on, this session.
+	// Search consent, for the turn. Keyed on the DaimondApp instance itself, which
+	// is not a convenience: the engine keeps its turn state on the `ToolContext`
+	// built in `DaimondApp::new` and never reset, so THE APP OBJECT IS THE TURN,
+	// on both sides of the boundary. A chat whose app is rebuilt — a fresh chat, a
+	// continued interrupted turn — is a fresh turn to the engine and is a fresh
+	// turn here, with no second rule to keep in step. Weak, so an answer cannot
+	// outlive the app it belongs to.
+	var _searchTurn = new WeakMap();
+
+	/// The app whose turn is asking, or null when that cannot be told.
+	///
+	/// The gate is one global function and the payload names no chat (see
+	/// `egress_ask_js` in src/wasm/web.rs: it carries tool, url, detail and alone,
+	/// and nothing that identifies the caller). So the asking app is inferred from
+	/// which chat is generating, and when that is not exactly one — none, several
+	/// at once, or a dispatched worker, which has a context of its own and must
+	/// never share an answer — this says so and the caller asks again.
+	///
+	/// FAILS TOWARDS THE DIALOG. Not knowing whose turn it is costs a question
+	/// that was already going to be asked; guessing would spend somebody else's
+	/// consent. The proper repair is for the engine to carry a turn id in the
+	/// payload, at which point this becomes a lookup and the ambiguity goes.
+	function askingTurn(req) {
+		if (!req || req.alone) return null;
+		var live = chats.filter(function (c) { return c && c._generating && c.app; });
+		return live.length === 1 ? live[0].app : null;
+	}
 
 	function egressHost(url) {
 		try { return new URL(String(url), location.href).host || ''; }
@@ -7028,6 +7638,44 @@ import init, {
 				{ title: t('permmode.run_title'), danger: false });
 			return okRun ? 'allow' : 'deny';    // never remembered: every time means every time.
 		}
+		// MAY THIS TURN REACH THE NETWORK AT ALL — a different question from "may
+		// this command run", and asked once per turn rather than every time.
+		//
+		// A turn that has read outside content used to lose the network in
+		// silence, so the second command of every ordinary build session (`cargo
+		// fetch` then `cargo build`) failed with an offline error the model had no
+		// way to attribute. The engine now asks instead; this is the half that can
+		// answer. See hand/REVIEW.md §1.13.
+		//
+		// A YES IS THE WORD `allow-net` AND NOTHING ELSE, and that is a boundary,
+		// not a spelling. `egressHost` resolves its argument against
+		// `location.href`, and a command line has no scheme — so it resolves as a
+		// RELATIVE url whose host is our own, and the same-origin shortcut below
+		// answers `allow` outright. A question that reached that shortcut would
+		// hand every tainted turn the network with nobody asked, which is exactly
+		// how §7's egress guarantee was voided once already, for `web_search`. So
+		// the engine takes a yes only in a word no other path through this
+		// function can say: an old bundle, a missing branch and the shortcut all
+		// say `allow` or `deny`, and all three correctly mean no here.
+		//
+		// WHICH IS WHY THIS SITS ABOVE THAT SHORTCUT and not below it. Moving it
+		// down would not fail loudly — it would silently start granting.
+		//
+		// Not remembered across chats, and a dispatched worker never arrives here:
+		// the engine does not ask when there is nobody to ask, and keeps the fence
+		// it had.
+		if (req.tool === 'run_net') {
+			var ncmd = String(req.url || '');
+			if (!ncmd.trim()) return 'deny';
+			// Cut to the same 300 characters as every other body here, with an
+			// ellipsis rather than a silent trim: see the `run` branch above.
+			var shownNet = ncmd.length > 300 ? (ncmd.slice(0, 300) + '…') : ncmd;
+			var okNet = await confirmDialog(
+				t('permmode.net_body', { cmd: shownNet, cwd: String(req.detail || '').slice(0, 300) }),
+				t('permmode.net_ok'),
+				{ title: t('permmode.net_title'), danger: true });
+			return okNet ? 'allow-net' : 'deny';
+		}
 		// A search is a destination this door cannot see. The wasm posts
 		// `/api/web/search`, which is OUR path and resolves same-origin — and the
 		// same-origin shortcut below waves our own pages through, so the search
@@ -7042,13 +7690,42 @@ import init, {
 		// Showing the URL instead is precisely what made this morning's prompt
 		// unreadable: a wall of percent-encoding where a question should have been.
 		//
-		// Never remembered. `web_type` is not remembered because the text is the
-		// payload and each one is a different thing to send; a query is the same
-		// kind of thing, and "you allowed a search once" is not consent to the next
-		// one.
+		// REMEMBERED FOR THE TURN, since 2026-08-16, and this replaces an argument
+		// rather than forgetting it.
+		//
+		// What stood here: never remembered, because `web_type` is not remembered —
+		// the text is the payload and each one is a different thing to send — and a
+		// query is the same kind of thing, so "you allowed a search once" is not
+		// consent to the next one. That reasoning is sound and it is why the rule
+		// was written.
+		//
+		// What overturned it is the count. One ordinary question on a phone fanned
+		// out to EIGHT searches and therefore eight dialogs, which is not a person
+		// consenting eight times — it is a person tapping through a wall of prompts
+		// to get their answer back, and a gate answered that way protects nobody.
+		// The owner ruled on 2026-08-16 that one answer covers the turn, matching
+		// what the network question beside it does.
+		//
+		// WHAT IS GIVEN UP, plainly: if the first search returns a page that steers
+		// what the second one looks for, the user is no longer asked at the moment
+		// that happens. The queries are all still in the transcript, so it is
+		// visible after the fact rather than before it — that is the trade, and it
+		// is a real one. Anybody minded to restore the old rule should restore the
+		// count with it: eight dialogs is what it cost.
+		//
+		// A REFUSAL IS REMEMBERED AS A REFUSAL. Otherwise the second search asks
+		// again and a no is merely the slow way to be worn down into a yes.
+		//
+		// This memory is the search's alone and never touches the network
+		// question's `allow-net`: two questions, two answers, and one may not
+		// stand in for the other.
 		if (req.tool === 'web_search') {
 			var q = String(req.detail || '').trim();
 			if (!q) return 'deny';				// nothing to authorise, and nothing to show.
+			var searchTurn = askingTurn(req);
+			if (searchTurn && _searchTurn.has(searchTurn)) {
+				return _searchTurn.get(searchTurn) ? 'allow' : 'deny';
+			}
 			// Cut to the same 300 characters every other body here is cut to, with
 			// an ellipsis rather than a silent trim: a reader has to be able to see
 			// that there is more, and "the rest is not on screen" is itself a reason
@@ -7071,7 +7748,9 @@ import init, {
 					{ query: shownQ, engine: eng }),
 				tOr('egress.search_ok', 'Run this search'),
 				{ title: tOr('egress.search_title', 'Search the web?'), danger: true });
-			return okSearch ? 'allow' : 'deny';		// never remembered.
+			// Either way. A no that is not remembered is a no that gets asked again.
+			if (searchTurn) _searchTurn.set(searchTurn, !!okSearch);
+			return okSearch ? 'allow' : 'deny';
 		}
 		var url  = String(req.url || '');
 		// An empty address must not be read as "here". `new URL('', href)` resolves
@@ -7817,6 +8496,11 @@ import init, {
 			// Where a push goes, and the token it goes with.
 			pushSection();
 
+			// What this account may send on your behalf while you are not looking.
+			// Above Syncing rather than below it, because syncing moves your own
+			// work between your own devices and this puts mail in somebody's inbox.
+			doorbellSection();
+
 			// ── Syncing, and the app's own trail ──────────────────
 			//
 			// HERE, in the panel a person actually opens, and not only in the
@@ -7902,6 +8586,122 @@ import init, {
 				b.addEventListener('click', fn);
 				homeView.appendChild(b);
 				return b;
+			}
+
+			/// The email doorbell: one email a day, at most, saying something is
+			/// waiting.
+			///
+			/// HERE, on the panel the cog opens, and for exactly the reason written
+			/// over the sync switch above: a control behind the settings form is a
+			/// control nobody finds. This one has a stronger claim still — it is ON
+			/// BY DEFAULT for a beta account (decision 11,
+			/// gateway/src/doorbell.rs:333), the privacy page says "You can turn it
+			/// off in the app", and the doorbell email's own body says "under
+			/// Settings". Until this section landed all three were untrue: the
+			/// gateway had answered `?view=doorbell` and `?op=doorbell` from the
+			/// start and nothing in www/ ever called either.
+			///
+			/// TWO ANSWERS, NEVER ONE. The button says what the account has CHOSEN;
+			/// the line under it says whether a bell could actually ring. An account
+			/// with no address on file has the first and not the second, and a
+			/// screen showing only the switch would be lying to the one person who
+			/// could fix it — which is why the gateway sends the reach beside the
+			/// state rather than folding them together.
+			function doorbellSection() {
+				if (!Doorbell.live()) return;
+				homeView.appendChild(el('div', 'admin-sec', tOr('doorbell.title', 'Email doorbell')));
+				var btn  = item('', function () { press(); });
+				var note = el('div', 'admin-note', '');
+				var why  = el('div', 'admin-note', '');
+				// Named, because three surfaces promise this control exists and a
+				// verifier has to be able to say whether it does. `dev/verify_doorbell.mjs`
+				// reads exactly these three.
+				btn.id  = 'doorbell-btn';
+				note.id = 'doorbell-note';
+				why.id  = 'doorbell-reach';
+				homeView.appendChild(note);
+				homeView.appendChild(why);
+				// Painted from the last answer FIRST, so reopening the drawer does not
+				// flash "Checking…" over a state already in hand -- and then asked
+				// again, every time, because the answer can change without this device
+				// doing anything: an address added on another device, a mailbox
+				// configured on the gateway, a bell that has rung and gone quiet. A row
+				// that only read once would go on saying "nothing can be sent" to
+				// somebody who had just fixed exactly that.
+				draw();
+				Doorbell.load(draw);
+
+				/// Say what the switch is, to the state the SERVER last reported.
+				function draw() {
+					var st = Doorbell.st;
+					// Not asked yet, and said so rather than drawn as off: a switch
+					// showing "off" while the answer is unknown tells somebody no mail
+					// is being sent when it may be.
+					if (!st) {
+						btn.textContent = tOr('doorbell.asking', 'Checking…');
+						btn.disabled = true;
+						note.textContent = '';
+						why.textContent  = '';
+						return;
+					}
+					btn.disabled = Doorbell.busy;
+					btn.textContent = Doorbell.busy
+						? tOr('doorbell.saving', 'Saving…')
+						: (st.on ? tOr('doorbell.turn_off', 'Turn the email doorbell off')
+							: tOr('doorbell.turn_on', 'Turn the email doorbell on'));
+					note.textContent = st.on
+						? tOr('doorbell.on_note',
+							'When a message arrives and you have no Daimond open, we may send '
+							+ 'one email to the address on your account saying something is '
+							+ 'waiting. No sender, no subject, no count, and at most one in any '
+							+ '24 hours. Turning it off also stops any that is already waiting '
+							+ 'to go.')
+						: tOr('doorbell.off_note',
+							'No email will be sent. You will see a message when you next open '
+							+ 'Daimond, and nowhere else.');
+					// A default is drawn AS a default. The gateway sends `set:false`
+					// while nobody has chosen, precisely so this can be said.
+					if (!st.set) {
+						note.textContent += ' ' + tOr('doorbell.default_note',
+							'This is the default for a beta account; you have not changed it.');
+					}
+					if (Doorbell.failed) {
+						Doorbell.failed = false;
+						note.textContent = tOr('doorbell.err_save',
+							'That did not save. The setting is unchanged; try again.');
+					}
+					// The reach, and only where it says something the switch does not:
+					// an account that is on and can ring needs no second line saying so
+					// twice.
+					var r = String(st.reach || '');
+					why.textContent = (r === 'no_address')
+						? tOr('doorbell.no_address',
+							'There is no email address on your account, so nothing can be sent '
+							+ 'whatever this is set to.')
+						: (r === 'unconfigured')
+							? tOr('doorbell.unconfigured',
+								'This gateway cannot send email, so nothing will be sent '
+								+ 'whatever this is set to.')
+							: '';
+				}
+
+				/// Flip it, and draw what the SERVER then said rather than what was
+				/// asked for. A switch that painted the request would show "Off" for a
+				/// write that never landed.
+				function press() {
+					if (Doorbell.busy || !Doorbell.st) return;
+					Doorbell.busy = true;
+					draw();
+					DaimondPost.setDoorbell(!Doorbell.st.on).then(function (r) {
+						Doorbell.busy = false;
+						if (r && r.ok) Doorbell.st = r; else Doorbell.failed = true;
+						draw();
+					}, function () {
+						Doorbell.busy = false;
+						Doorbell.failed = true;
+						draw();
+					});
+				}
 			}
 
 			/// The way through to the push credential, with the host it currently
@@ -8840,6 +9640,14 @@ import init, {
 	/// again. A Web Lock (in runTurn) stops two tabs continuing the same turn at once.
 	function continueTurn(chat, iturn, text) {
 		if (!chat || !text || chat._generating) return;
+		// WITHOUT A TURN ID THERE IS NO TURN TO CONTINUE. The filter below is
+		// `x.iturn === iturn`, and an ordinary message has no `iturn` at all -- so
+		// an undefined one matches EVERY message in the chat, and the two lines
+		// after it would tombstone and drop the entire transcript, beyond any
+		// recovery. `iturn` and `interrupted: true` are written in the same place,
+		// so no record can carry the badge without the id and this cannot fire
+		// today. One field away from that is not a margin worth keeping.
+		if (!iturn) return;
 		// Idempotent across tabs: if this interrupted turn is already gone (another tab continued or
 		// dismissed it, tombstoning its messages), do nothing rather than run and bill it twice.
 		var mine = (chat.messages || []).filter(function (x) { return x.iturn === iturn; });
@@ -8873,6 +9681,9 @@ import init, {
 		catch (e) { _recovering = false; return; }
 
 		var touchedCurrent = false, touchedAny = false;
+		// The turns folded back in here, cleared from the journal only once the
+		// store says they are on disk. See the clear below.
+		var recovered = [];
 		var tombs = loadMsgTombs();
 		(rec.turns || []).forEach(function (t) {
 			var cid = t.chatId, iturn = t.turnId;
@@ -8908,7 +9719,14 @@ import init, {
 				interrupted: true, iturn: iturn, itext: t.userText || '', ts: nowTs() });
 
 			stampMessages(chat.messages, chat.id);
-			DaimondJournal.clearTurn(iturn);      // now durable in the snapshot
+			// A RECOVERY IS A TOUCH. Without this the chat's stamp can come out
+			// unchanged -- `stampOf` is `updatedAt : messages.length :
+			// session.msgs.length : holds`, so a recovery whose net message count
+			// does not move produces the same string, `write` finds the record
+			// unchanged and NEVER PUTS IT. The mirror then carries a turn the disk
+			// has never seen, and the next reload reads it back without.
+			touchChat(chat);
+			recovered.push(iturn);
 			touchedAny = true;
 			if (current && current.id === cid) touchedCurrent = true;
 		});
@@ -8926,6 +9744,20 @@ import init, {
 		if (touchedAny) { persistChats(); renderSessionList(); }
 		if (touchedCurrent && current) renderHistory(current.messages);
 		if (rec.agents && rec.agents.length) { try { Workers.persist(); Workers.render(); } catch (e) { /* panel not up */ } }
+		// THE JOURNAL IS CLEARED LAST, behind the write it is waiting on.
+		//
+		// This used to run inside the loop above, one line after the messages were
+		// pushed, under the comment "now durable in the snapshot" -- and it was
+		// not: `persistChats` is several lines further down and its IndexedDB write
+		// is asynchronous. A tab that went away in that gap had thrown the journal
+		// entry away and never written what it held, so the turn was lost by the
+		// one mechanism whose whole purpose is not to lose it.
+		if (recovered.length) {
+			try { await ChatStore.settled(); } catch (e) { /* the alarm is up */ }
+			recovered.forEach(function (id) {
+				try { DaimondJournal.clearTurn(id); } catch (e) { /* gone already */ }
+			});
+		}
 		_recovering = false;
 	}
 	function nowTs() { try { return Date.now(); } catch (e) { return 0; } }
@@ -9778,6 +10610,9 @@ import init, {
 		// only moment both the chat and the fact of leaving it are in hand.
 		if (current && current !== chat) tel('chat.leave', turnsIn(current));
 		current = chat;
+		// Remembered so the next boot comes back here. See OPEN_CHAT_KEY.
+		try { localStorage.setItem(OPEN_CHAT_KEY, chat && chat.id ? chat.id : ''); }
+		catch (e) { /* private mode: the boot falls back to the newest chat */ }
 		currentDiamond = null;                       // a chat is not a Diamond
 		signalDiamondChanged();
 		// The streaming refs point into the outgoing chat's DOM, which is about
@@ -12102,6 +12937,22 @@ import init, {
 
 	var _tileRowSeq = 0;		// so each tile's labelled control gets its own id
 
+	/// Is this empty tile waiting for a transcript that lives somewhere else?
+	///
+	/// Only ever a "may be": this device cannot see the other one's record. What
+	/// it can see is that the chat holds nothing, that it was not made a moment
+	/// ago on this device, and that the account has a second device to have made
+	/// it — which together are the case a reader would otherwise read as a
+	/// conversation that had lost its contents. A pending chat is excluded: it
+	/// has not started, and the tile already says so.
+	function waitingOnSync(s) {
+		if (!s || (s.messages || []).length) return false;
+		if ((s.status || 'active') === 'pending') return false;
+		var mine = deviceId();
+		var reg = loadDevices();
+		return Object.keys(reg).some(function (id) { return id !== mine; });
+	}
+
 	function sessionBox(s) {
 		var status = s.status || 'active';
 		var box = document.createElement('div');
@@ -12195,6 +13046,18 @@ import init, {
 				prev.textContent = opening;
 				prev.title = opening;
 				box.appendChild(prev);
+			} else if (waitingOnSync(s)) {
+				// A TILE WITH NOTHING BEHIND IT IS TWO DIFFERENT THINGS, and until
+				// this line the rail drew them identically: a chat somebody started
+				// and never said anything in, and a chat whose transcript is on the
+				// other device and has not arrived. The second is the one a reader
+				// mistakes for lost work, so it says which it is.
+				var wait = document.createElement('div');
+				wait.className = 'tile-preview tile-waiting';
+				wait.textContent = tOr('rail.not_synced', 'not synced yet');
+				wait.title = tOr('rail.not_synced_help',
+					'This conversation is on another of your devices and has not arrived here yet.');
+				box.appendChild(wait);
 			}
 		}
 
@@ -15333,9 +16196,22 @@ import init, {
 	// is a promise. `load` marks those expired and the tile says so instead of
 	// offering a tick that would do nothing.
 	//
-	// `kind` is therefore one of three: `consent` (a turn is waiting on it),
-	// `draft` (a message to open and send) and `note` (nothing to run, and
-	// approving it is acknowledging it).
+	// `kind` is `consent`, and it is the only kind. There were three. `draft` (a
+	// message to open and send) and `note` (nothing to run, and approving it is
+	// acknowledging it) were written for producers nobody ever wrote, and went on
+	// 2026-08-15 with the `files` icon row and the `sweep` that served them. The
+	// producer `draft` was waiting for arrived somewhere else, as the paragraph
+	// above says: outgoing mail is approved from the Drafts list at the top of the
+	// Email panel. `add` refuses any other kind at the door rather than leaving
+	// the branches standing, because an unreachable branch is a promise the next
+	// caller believes -- and this panel has already broken three of those.
+	//
+	// The `kind === 'consent'` tests that remain are NOT dead branch selectors, so
+	// please do not report them as such: `items` is read back out of localStorage,
+	// which no build owns, so a record this one did not write can arrive at `tile`,
+	// `discuss` and `load`, and each answers it without claiming a turn is waiting.
+	// `execute` needs no such test because it has a better one -- `settleConsent`
+	// asks the register whether anything is actually parked.
 	var PENDING_KEY = 'daimond-pending';
 	var PRIORITIES  = ['high', 'normal', 'low'];
 
@@ -15361,20 +16237,21 @@ import init, {
 			nudgeSync();
 		},
 
-		/// Raise one item. `kind` is what doing it would DO, and it is the only
-		/// field this module interprets: everything else is the daimon's words.
+		/// Raise one item. Everything but the kind is the daimon's own words.
+		///
+		/// A kind this panel cannot act on is refused rather than drawn. Drawn, it
+		/// would carry the consent tile's "still waiting" line over a turn that was
+		/// never parked, and its tick would report a permission granted to nobody.
 		add: function (item) {
 			if (!item || !item.headline) return null;
+			if (item.kind && item.kind !== 'consent') return null;
 			var rec = {
 				id:        'p' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
 				diamondId: item.diamondId || '',
 				diamondName: item.diamondName || '',
 				headline:  String(item.headline),
 				detail:    String(item.detail || ''),
-				kind:      item.kind || 'note',
-				// Resources the tile shows as a row of icons: files the action would
-				// touch, so what it acts ON is visible without expanding it.
-				files:     Array.isArray(item.files) ? item.files.slice(0, 8) : [],
+				kind:      'consent',
 				priority:  PRIORITIES.indexOf(item.priority) >= 0 ? item.priority : 'normal',
 				at:        Date.now(),
 			};
@@ -15489,17 +16366,6 @@ import init, {
 			box.appendChild(line);
 			box.appendChild(body);
 
-			// A draft whose composer has already been opened says so. Without it the
-			// tick reads as a button that did nothing: the window it opened is on top
-			// of this panel, and coming back to a tile that looks untouched is what
-			// makes somebody press it twice.
-			if (it.opened) {
-				var seen = document.createElement('div');
-				seen.className = 'rail-note pend-opened';
-				seen.textContent = t('pending.opened');
-				box.appendChild(seen);
-			}
-
 			// A parked consent request says whether anything is still on the other
 			// end of it. The two states look the same on a tile and mean opposite
 			// things — one is a turn held open waiting for this answer, the other
@@ -15511,21 +16377,6 @@ import init, {
 				held.textContent = it.expired
 					? t('pending.consent.expired') : t('pending.consent.waiting');
 				box.appendChild(held);
-			}
-
-			if (it.files && it.files.length) {
-				var files = document.createElement('div');
-				files.className = 'pend-files';
-				it.files.forEach(function (path) {
-					var b = document.createElement('button');
-					b.type = 'button';
-					b.className = 'pend-file';
-					b.textContent = '📄 ' + String(path).split('/').pop();
-					b.title = path;
-					b.addEventListener('click', function () { Files.open(path); });
-					files.appendChild(b);
-				});
-				box.appendChild(files);
 			}
 
 			var acts = document.createElement('div');
@@ -15566,94 +16417,33 @@ import init, {
 			return box;
 		},
 
-		/// Do it. What that means depends on the kind, and there is exactly one
-		/// kind today: a draft the daimon wrote, which the mail panel sends.
+		/// Do it. The tick IS the yes the worker parked on this tile is waiting on,
+		/// and pressing it resumes the tool call where it stopped.
 		///
-		/// OPENING A COMPOSER IS NOT DOING IT, so a draft tile stays. It used to be
-		/// dropped the instant the window opened, which lost the action outright
-		/// when the composer was closed without sending: nothing had happened, and
-		/// there was no longer anything on the list to say so. The tile leaves when
-		/// the draft file has gone -- sending discards it, see `sweep` -- or when
-		/// the user drops it by hand.
-		execute: async function (it) {
-			// A parked consent request: the tick IS the yes the worker is waiting
-			// on, and pressing it resumes the tool call where it stopped.
-			//
-			// `settleConsent` reports whether anything was still waiting, and that
-			// answer is not decoration: a tile that outlived its turn must say so
-			// rather than report a permission it granted to nobody. The tile is
-			// marked expired at load, so this is the second line of the same
-			// defence and covers the case where the turn ended while the tile was
-			// on screen.
-			if (it.kind === 'consent') {
-				if (!settleConsent(it.id, 'allow')) {
-					toast(t('pending.consent.gone'), true);
-					this.drop(it.id);
-					return;
-				}
-				toast(t('pending.consent.allowed'));
+		/// `settleConsent` reports whether anything was still waiting, and that
+		/// answer is not decoration: a tile that outlived its turn must say so
+		/// rather than report a permission it granted to nobody. The tile is marked
+		/// expired at load, so this is the second line of the same defence and
+		/// covers the case where the turn ended while the tile was on screen. It is
+		/// also what answers a record left over from a build that had other kinds:
+		/// nothing is waiting on one, so it is dropped with a word rather than
+		/// silently.
+		execute: function (it) {
+			if (!settleConsent(it.id, 'allow')) {
+				toast(t('pending.consent.gone'), true);
 				this.drop(it.id);
 				return;
 			}
-			if (it.kind === 'draft' && it.files && it.files[0] && window.DaimondMail) {
-				try { await DaimondMail.openDraft(it.files[0]); }
-				catch (e) { toast(friendlyError(e), true); return; }
-				it.opened = Date.now();
-				this.save();
-				return;
-			}
-			// A note has nothing to run: approving it is acknowledging it, and
-			// saying so is better than a tick that quietly means nothing.
-			toast(t('pending.noted'));
+			toast(t('pending.consent.allowed'));
 			this.drop(it.id);
 		},
 
-		/// Drop the tiles whose action has already happened somewhere else.
-		///
-		/// A draft that has been sent is discarded from `drafts/` by the mail panel,
-		/// so the file being gone is the one honest signal that the tile is finished.
-		/// That is what lets `execute` leave the tile up without turning the list
-		/// into something the user has to tidy: it tidies itself, on the fact rather
-		/// than on the click. Called wherever mail touches the workspace, which is
-		/// every moment a draft can appear or vanish.
-		sweep: async function () {
-			if (!this.items.length) return;
-			var live = [];
-			for (var i = 0; i < this.items.length; i++) {
-				var it = this.items[i];
-				// Only a draft that has been opened: an unopened one is still an
-				// invitation, and a `note` has no file to have lost.
-				if (it.kind !== 'draft' || !it.opened || !it.files || !it.files[0]) {
-					live.push(it);
-					continue;
-				}
-				// A DROP IS DESTRUCTIVE, so only a door that ANSWERED may cause one --
-				// and `read_file` throws the same way for a file that is gone and for
-				// a store that is not up (measured: both come back as an OPFS error,
-				// with nothing in either to tell them apart). Taking the two alike
-				// would empty this list the first time the workspace was unavailable.
-				//
-				// So the question is asked of the FOLDER instead, through the file
-				// tool, which never throws: a missing folder comes back as text
-				// beginning "Error", and a listing that arrives is proof the door is
-				// up. Matched on the bare name rather than parsed, because the only
-				// way that can be wrong is by finding a name that is there -- which
-				// keeps the tile, and keeping a tile too long is the safe mistake.
-				var path = it.files[0];
-				var cut  = path.lastIndexOf('/');
-				var name = cut >= 0 ? path.slice(cut + 1) : path;
-				var listing = null;
-				try {
-					listing = await tools().run_tool('file_list',
-						JSON.stringify({ path: cut >= 0 ? path.slice(0, cut) : '' }));
-				} catch (e) { listing = null; }
-				var answered = (typeof listing === 'string') && !/^\s*Error\b/i.test(listing);
-				if (!answered || listing.indexOf(name) !== -1) live.push(it);
-			}
-			if (live.length === this.items.length) return;
-			this.items = live;
-			this.save();
-		},
+		// There was a `sweep` here, which took off the tiles whose action had
+		// already happened elsewhere. Everything it could remove was a `draft`
+		// whose file had gone; with that kind deleted its first test kept every
+		// item, so it walked the list and could not change it. Gone with the kind
+		// it served, along with its callers at boot and in the mail deps. A consent
+		// tile is not swept: it is answered, dropped, or marked expired by `load`.
 
 		/// Discuss it: back to the daimon that raised it, with the details already
 		/// sent. Phase E is what gave this somewhere to land -- before it there was
@@ -15694,13 +16484,11 @@ import init, {
 	// the verifiers and for anything later that wants to raise or read a tile
 	// from outside. It is not in the sync parcel, and no daimon tool writes to it.
 	window.DaimondPendingView = {
+		/// One kind reaches the panel, so `add` takes `kind: 'consent'` or no kind
+		/// at all and returns null for anything else. See the header.
 		add:   function (item) { return Pending.add(item); },
 		items: function () { return Pending.items.slice(); },
 		drop:  function (id) { return Pending.drop(id); },
-		/// Take off whatever has already happened elsewhere. Published because the
-		/// signal is a FILE, and the module that moves the file is the mail panel:
-		/// it is called from the mail deps (`refreshFiles`) and at boot.
-		sweep: function () { return Pending.sweep(); },
 	};
 	// The two layers of standing instructions, for the same reason: what reaches
 	// every agent should be askable from outside the one function that composes it.
@@ -15999,7 +16787,7 @@ import init, {
 		// been fetched at boot -- the identity was still locked. Ask now that
 		// there is a session, or a returning user is told the account service is
 		// unreachable when it is fine.
-		if (window.DaimondMail && DaimondPanels.isOpen('mail')) DaimondMail.onOpen();
+		if (window.DaimondMail && DaimondPanels.isOpen('mail')) { DaimondMail.onOpen(); Badge.seen('mail'); }
 		grew('mail.onOpen');
 		// And what this account has unlocked, for the same reason: at boot there was no
 		// session to ask under, so the rail could count what Daimond is born with and
@@ -20062,6 +20850,8 @@ import init, {
 		/// an hour of wall clock to reach the case it is checking.
 		async function triggerTick() {
 			DaimondTriggers.tickActivity(TRIGGER_TICK_MS);
+			// The Social panel's unread count, on an occasion that already exists.
+			postBadge();
 			// Every TA is measured against ITS OWN stopwatch, so the reading goes in
 			// as a lookup: `due` stays pure and asks the occasion, and the occasion
 			// asks the clock. There is no early return on "less than a minute" any
@@ -22592,7 +23382,10 @@ import init, {
 	var CAPP_TEMPLATES = {
 		lifelog: {
 			dir:  'capps/lifelog/',
-			name: 'Life log',
+			// THE DISPLAY NAME ONLY. The key, the directory and every path below
+			// stay `lifelog`: the key is the capp's identity, and `manifest.json`
+			// is a sealed artefact whose hashes gate the reproducibility check.
+			name: 'Log Life',
 			// Without the page there is nothing to deliver.
 			need: ['crystal.html'],
 			// What the template may carry besides its page. A file this build does
@@ -22622,7 +23415,7 @@ import init, {
 			// the first turn, and it is the first thing the user reads if the page
 			// ever falls back.
 			seed: {
-				title:   'Life log',
+				title:   'Log Life',
 				summary: 'What I eat, what I do and how I feel, kept by the page on this '
 					+ 'Diamond. Tap a tile to record something; the entries are files in '
 					+ 'this Diamond, on this device.',
@@ -26586,8 +27379,28 @@ import init, {
 		step('Instructions.refresh', function () { return Instructions.refresh(); });
 		step('Prompts.refresh', function () { return Prompts.refresh(); });
 		renderSessionList();
-		var firstChat = chats.find(function (c) { return !c.diamondId; });
-		if (firstChat) { selectChat(firstChat); } else { renderEmptyState(); }
+		// THE CHAT THE READER WAS IN, not the first one the store enumerated.
+		//
+		// This was `chats.find(c => !c.diamondId)`, and `chats` comes back from
+		// IndexedDB in key order — so a boot opened the OLDEST chat while the rail,
+		// sorted newest-first, showed a different one at the top. On a phone, where
+		// resuming the app is a boot, that reads as the transcript you were reading
+		// having vanished; tapping its tile brings it straight back, because
+		// nothing was ever lost. A daimon's record is skipped in both halves: it has
+		// no tile, so opening one would put a conversation on screen that the rail
+		// says does not exist.
+		var want = '';
+		try { want = localStorage.getItem(OPEN_CHAT_KEY) || ''; } catch (e) { /* private mode */ }
+		var openChat = chats.find(function (c) { return !c.diamondId && c.id === want; });
+		// Failing that, the newest — which is the tile at the top of the rail, and
+		// so the one somebody looking at the rail would expect to be reading.
+		if (!openChat) {
+			chats.forEach(function (c) {
+				if (c.diamondId) return;
+				if (!openChat || (c.updatedAt || 0) > (openChat.updatedAt || 0)) openChat = c;
+			});
+		}
+		if (openChat) { selectChat(openChat); } else { renderEmptyState(); }
 		// The two defaults are offered only after the rail's own Diamonds are read
 		// and any older root has been merged -- `list_diamonds` is what runs
 		// `migrate_root` -- so the "only into an empty rail" rule is answered from
@@ -26595,12 +27408,10 @@ import init, {
 		step('loadDiamonds', function () {
 			return loadDiamonds().then(function () { return seedDefaultDiamonds(); });
 		});
+		// `load` marks every parked consent expired, because what a tile holds is a
+		// promise and a promise does not survive the reload that just happened.
 		step('Pending.load', function () {
 			Pending.load(); Pending.render();
-			// Anything answered on another device, or in a session that ended before
-			// the panel could notice, is taken off here rather than greeting the
-			// user as work still owed.
-			Pending.sweep();
 		});
 		step('triggerClock', function () { startTriggerClock(); });
 		step('expiryClock', function () { startExpiryClock(); });
@@ -26610,12 +27421,12 @@ import init, {
 		// A panel that was already open when the app booted is never `show`n,
 		// so it would otherwise never ask the gateway what this account holds
 		// and would sit there reporting the account service unreachable.
-		if (window.DaimondMail && DaimondPanels.isOpen('mail')) DaimondMail.onOpen();
+		if (window.DaimondMail && DaimondPanels.isOpen('mail')) { DaimondMail.onOpen(); Badge.seen('mail'); }
 		// And the Terminal, for the same reason: a panel left open in the saved
 		// layout is never `show`n, so nothing would ever build the terminal into it.
 		if (window.DaimondTerm && DaimondPanels.isOpen('term')) DaimondTerm.onOpen();
 		if (window.DaimondTrashPanel && DaimondPanels.isOpen('trash')) DaimondTrashPanel.onOpen();
-		if (window.DaimondImprove && DaimondPanels.isOpen('improve')) DaimondImprove.onOpen();
+		if (window.DaimondSocial && DaimondPanels.isOpen('social')) { DaimondSocial.onOpen(); postBadge(); }
 		// Expiry and retention, on every boot. A device that has been off for six
 		// weeks comes back to a trash whose whole contents are due, and works
 		// that out from the stamps it already holds rather than from a message
@@ -29445,6 +30256,104 @@ import init, {
 		},
 	};
 
+	/// What the gateway last said about this account's doorbell, shared between
+	/// the admin drawer's section and the one-time notice.
+	///
+	/// Held out here because `renderHome` rebuilds its whole view on every paint,
+	/// so a state kept inside it would go back to the network on every open and
+	/// would flicker "Checking…" over an answer already in hand.
+	var Doorbell = {
+		st: null,		// the last answer, or null while nobody has asked
+		busy: false,	// a write in flight, so a double press cannot send two
+		failed: false,	// the last write did not land, and the row must say so
+		loading: false,
+
+		/// Whether there is a doorbell to talk about at all. Without an account
+		/// there is no address, no consent record, and nothing to write to.
+		live: function () {
+			try {
+				return !!(window.DaimondPost && DaimondPost.doorbell
+					&& window.DaimondGateway && DaimondGateway.state().authed);
+			} catch (e) { return false; }
+		},
+
+		/// Ask the gateway, and call back when there is an answer. One read in
+		/// flight at a time, so reopening the drawer twice quickly does not queue
+		/// two.
+		load: function (then) {
+			if (this.loading) return;
+			this.loading = true;
+			DaimondPost.doorbell().then(function (r) {
+				Doorbell.loading = false;
+				if (r && r.ok) Doorbell.st = r;
+				if (then) { try { then(); } catch (e) { /* the drawer closed */ } }
+			}, function () { Doorbell.loading = false; });
+		},
+	};
+
+	// ── The one-time doorbell notice ───────────────────────────
+	//
+	// Decision 11 turns the doorbell ON by default for a beta account. A default
+	// that sends mail on somebody's behalf has to be TOLD to them, and told
+	// before the first one goes -- otherwise the first they know of it is the
+	// email itself, which is the thing the notice exists to pre-empt.
+	//
+	// It is a NOTICE and not a consent gate, and the difference is deliberate: a
+	// gate would make dismissing it a decision, and a person who taps past a
+	// modal has not decided anything. This says what will happen, names where the
+	// switch is, and changes nothing whichever way it is dismissed.
+	//
+	// It can only be shown once there is a session, so it hangs off
+	// `daimond:authed` rather than a boot. In practice that IS before the first
+	// ring: a doorbell is armed by a message arriving, a message needs a
+	// correspondent, and a correspondent needs this app to have been opened.
+
+	/// Where the one showing is remembered. Per device, deliberately: the notice
+	/// is about mail leaving on this account's behalf, and a person who has read
+	/// it on their laptop does not need it again on their phone -- but a device
+	/// that cannot read the account's sync is still owed it.
+	var DOORBELL_TOLD = 'daimond-doorbell-told';
+
+	/// Tell them once, if the doorbell is on and they never chose it.
+	///
+	/// SILENT IN EVERY OTHER CASE. Somebody who turned it on themselves has been
+	/// told by the act of turning it on; somebody it cannot reach is told by the
+	/// settings row, which is where they can do something about it.
+	async function doorbellNotice() {
+		try {
+			if (localStorage.getItem(DOORBELL_TOLD)) return;
+		} catch (e) { return; }			// private mode: no memory, so no repeat notice
+		if (!window.DaimondPost || !DaimondPost.doorbell) return;
+		var st = null;
+		try { st = await DaimondPost.doorbell(); } catch (e) { return; }
+		// `set` is the whole test. On-and-chosen needs no notice, and off needs
+		// none either -- this is only ever about a default that sends.
+		if (!st || !st.ok || !st.on || st.set) return;
+		// And nothing that cannot ring. Telling somebody with no address on file
+		// that we may email them would be a notice about something that will not
+		// happen, which is its own kind of untrue.
+		if (st.reach !== 'ready' && st.reach !== 'quiet') return;
+		try { localStorage.setItem(DOORBELL_TOLD, '1'); }
+		catch (e) { /* it will be shown again, which is the safe way to fail */ }
+		await noticeDialog(
+			tOr('doorbell.notice_title', 'One email, at most once a day'),
+			tOr('doorbell.notice_body',
+				'When somebody sends you a private message and you have no Daimond open, '
+				+ 'we may send one email to the address on your account saying that '
+				+ 'something is waiting. It carries no sender, no subject, no count and no '
+				+ 'link to any message — and at most one in any 24 hours.\n\n'
+				+ 'You can turn it off whenever you like: open Settings from the cog beside '
+				+ 'your name, and it is the row called “Email doorbell”. Turning it off also '
+				+ 'stops any that is already waiting to go.'));
+		// The row may be on screen behind the notice, and its state is now stale.
+		// The cached answer is stale now, so the next time the drawer is opened it
+		// is read again. NOT `DaimondAdmin.home()`: that OPENS the drawer, and a
+		// panel that springs open behind a notice somebody has just dismissed is
+		// the app taking over the screen to show a control nobody asked for.
+		Doorbell.st = null;
+	}
+	window.addEventListener('daimond:authed', function () { doorbellNotice(); });
+
 	var CrystalCap = {
 		/// The ladder offered, in kilobytes. The user's own figure is added when it is off the
 		/// ladder, so opening the panel never silently changes their setting.
@@ -29886,22 +30795,22 @@ import init, {
 		else window.open('guide/', '_blank');       // no web module: the guide still stands alone
 	});
 
-	// The Improve panel's circled "i", on the same route and with the same
+	// The Social panel's circled "i", on the same route and with the same
 	// fallback -- one page of the guide rather than its front. Wired here, beside
 	// the header's own guide button, because this is where the app's routes into
 	// the guide are kept; js/improve.js owns what the panel DOES and this button
 	// does nothing to a note.
 	//
-	// `improve.html`, which is the page about THIS panel: what a note is, what
+	// `social.html`, which is the page about THIS panel: what a note is, what
 	// happens when one is sent, and what a vote does. It pointed at
 	// `interface.html` -- the tour of the whole frame, which mentions the panel in
 	// passing -- so the one control a reader presses when they want to know what
-	// the Improve panel is put them somewhere else, and the page written for the
+	// the Social panel is put them somewhere else, and the page written for the
 	// question was reachable only from the guide's own navigation.
-	var impInfo = document.getElementById('improve-info');
+	var impInfo = document.getElementById('social-info');
 	if (impInfo) impInfo.addEventListener('click', function () {
-		if (window.DaimondWeb && DaimondWeb.guide) DaimondWeb.guide('improve.html');
-		else window.open('guide/improve.html', '_blank');
+		if (window.DaimondWeb && DaimondWeb.guide) DaimondWeb.guide('social.html');
+		else window.open('guide/social.html', '_blank');
 	});
 
 	// About: what this is, which build you are running, and who made it. It sits
@@ -30277,11 +31186,12 @@ import init, {
 				// anything else here.
 				readText:     readBytes,
 				openFile:     Files.open,
-				// The workspace tree, and the Pending panel with it. Mail calls this
-				// at every moment a draft file can appear or vanish -- saving one,
-				// discarding one, sending one -- which is exactly when a tile waiting
-				// on that draft has stopped being owed.
-				refreshFiles: function () { Files.refresh(); Pending.sweep(); },
+				// The workspace tree. Mail calls this at every moment a draft file can
+				// appear or vanish -- saving one, discarding one, sending one -- so the
+				// tree shows the folder as it now is. It used to sweep the Pending panel
+				// too, back when a tile could be waiting on that draft; no kind of tile
+				// waits on a file any more.
+				refreshFiles: function () { Files.refresh(); },
 				runTool:      function (name, args) {
 					return tools().run_tool(name, JSON.stringify(args || {}));
 				},

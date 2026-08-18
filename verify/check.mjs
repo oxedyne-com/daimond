@@ -52,6 +52,44 @@ const green  = (s) => `\x1b[32m${s}\x1b[0m`;
 const red    = (s) => `\x1b[31m${s}\x1b[0m`;
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`;
 
+/// Print a failure's problems, GROUPED, so no category can be crowded out by another.
+///
+/// This printed `problems.slice(0, 40)` off one flat list until 2026-08-17, and the list
+/// was built changed-then-missing-then-unexpected. So a bundle with more than forty
+/// changed files printed forty changed files and NOTHING ELSE: on that date `--dir www`
+/// reported "111 problem(s)", showed forty of them, and never mentioned the one file the
+/// manifest named that had been renamed away, or the SEVEN served files the manifest did
+/// not cover -- which were the whole social client. The reader saw "lots of files have
+/// changed", which is the ordinary state of a tree between deploys, and could not see
+/// that some of the code being served was outside the seal altogether.
+///
+/// `unexpected` goes FIRST and is never trimmed. A changed file is a file the seal has an
+/// opinion about and disagrees with; an unexpected one is code the seal says nothing
+/// whatever about, which is the more serious of the two and the one a delivery check
+/// exists to surface.
+///
+/// # Arguments
+/// * `structural` - Problems that are not about one file: the chain, the bundle, `--expect`.
+/// * `diff` - `diffFiles`'s three lists.
+/// * `unexpectedAs` - What an uncovered file is called here ("manifest" or "seal").
+function printProblems(structural, diff, unexpectedAs) {
+	const total = structural.length + diff.changed.length + diff.missing.length
+		+ diff.unexpected.length;
+	console.log(red(`\n  FAILED — ${total} problem(s):`));
+	for (const p of structural) console.log(red(`    · ${p}`));
+	const groups = [
+		[diff.unexpected, `served but NOT IN THE ${unexpectedAs.toUpperCase()} — unattested code`, Infinity],
+		[diff.missing,    `in the ${unexpectedAs} and not there`, 20],
+		[diff.changed,    `changed`, 20],
+	];
+	for (const [list, what, cap] of groups) {
+		if (!list.length) continue;
+		console.log(red(`    ${list.length} ${what}:`));
+		for (const f of list.slice(0, cap)) console.log(red(`      · ${f}`));
+		if (list.length > cap) console.log(red(`      … and ${list.length - cap} more`));
+	}
+}
+
 /// Read and chain-verify the local transparency log. A broken chain is fatal on
 /// its own: if the history is not self-consistent, nothing it contains can be
 /// trusted to say what was shipped.
@@ -87,7 +125,11 @@ async function fromUrl(origin) {
 	return { manifest, actual };
 }
 
-function report(where, manifest, actual, chain, entries) {
+/// `remote` says the bundle was fetched rather than read off disk, and is passed rather
+/// than read from the module's `url`: a function that reaches forward to a `const`
+/// declared below it works only while nobody calls it earlier, and that exact shape had
+/// `dev/verify_conformance.mjs` crashing on the one path that had something to report.
+function report(where, manifest, actual, chain, entries, remote) {
 	const problems = [];
 	const warnings = [];
 
@@ -102,9 +144,7 @@ function report(where, manifest, actual, chain, entries) {
 	//    manifest's bundle -- the single figure the chain is keyed on -- so it is
 	//    established here rather than recomputed separately.
 	const diff = diffFiles(manifest.files, actual);
-	for (const f of diff.changed)    problems.push(`changed: ${f}`);
-	for (const f of diff.missing)    problems.push(`missing: ${f}`);
-	for (const f of diff.unexpected) problems.push(`unexpected (not in manifest): ${f}`);
+	const fileProblems = diff.changed.length + diff.missing.length + diff.unexpected.length;
 
 	// 3. That bundle must be a sealed entry in an unbroken chain.
 	const sealedAt = chain.ok ? entries.findIndex(e => e.bundle === manifest.bundle) : -1;
@@ -134,12 +174,18 @@ function report(where, manifest, actual, chain, entries) {
 	console.log(`  chain       ${chain.ok ? green(entries.length + ' entries, intact') : red(chain.error)}`);
 	if (EXPECT) console.log(`  expect      ${EXPECT === manifest.bundle ? green('matches') : red('MISMATCH')}`);
 	for (const w of warnings) console.log(yellow(`  warning     ${w}`));
-	if (problems.length === 0) {
+	if (problems.length === 0 && fileProblems === 0) {
 		console.log(green(`\n  OK — this build is the published source, and it was sealed.\n`));
 		return true;
 	}
-	console.log(red(`\n  FAILED — ${problems.length} problem(s):`));
-	for (const p of problems.slice(0, 40)) console.log(red(`    · ${p}`));
+	printProblems(problems, diff, 'manifest');
+	// A remote origin cannot be enumerated, so `unexpected` is always empty over `--url`
+	// and its absence there means nothing. Said out loud, because "0 served but not in the
+	// manifest" would otherwise read as a check that was made.
+	if (remote) {
+		console.log(yellow(`    (over --url only the manifest's own files can be fetched, so a file`));
+		console.log(yellow(`     smuggled onto the server is invisible here. Use --dir on a local copy.)`));
+	}
 	console.log('');
 	return false;
 }
@@ -171,16 +217,14 @@ async function checkHand(dir) {
 		problems.push(`the seal's source hash does not match its own file list`);
 	}
 	const diff = diffFiles(sealed.files, actual);
-	for (const f of diff.changed)    problems.push(`changed: ${f}`);
-	for (const f of diff.missing)    problems.push(`missing: ${f}`);
-	for (const f of diff.unexpected) problems.push(`unexpected (not in the seal): ${f}`);
+	const fileProblems = diff.changed.length + diff.missing.length + diff.unexpected.length;
 
 	console.log(`\nDaimond machine-hand source check — ${root}`);
 	console.log(`  source      ${sealed.source}`);
 	console.log(`  files       ${Object.keys(sealed.files).length} covered`);
 	console.log(`  toolchain   ${sealed.toolchain || '(none pinned)'}`);
 	console.log(`  build       ${sealed.build}`);
-	if (problems.length === 0) {
+	if (problems.length === 0 && fileProblems === 0) {
 		console.log(green(`\n  OK — this is the sealed source of the hand.`));
 		console.log(`  Proved: the files here are the ones this release sealed, and the command above`);
 		console.log(`  is how they become ${sealed.binary}.`);
@@ -189,8 +233,7 @@ async function checkHand(dir) {
 		console.log(`  versions, so there is no published binary hash to compare against.\n`);
 		return true;
 	}
-	console.log(red(`\n  FAILED — ${problems.length} problem(s):`));
-	for (const p of problems.slice(0, 40)) console.log(red(`    · ${p}`));
+	printProblems(problems, diff, 'seal');
 	// The one honest failure, so it is not mistaken for a real one. `Cargo.toml` and `Cargo.lock`
 	// differ between the development tree and the mirror BY DESIGN -- path dependencies here, a
 	// git pin there -- so this check belongs in a clone of the public repository, which is where a
@@ -222,5 +265,5 @@ try {
 	process.exit(2);
 }
 
-const ok = report(url || dir, src.manifest, src.actual, chain, entries);
+const ok = report(url || dir, src.manifest, src.actual, chain, entries, !!url);
 process.exit(ok ? 0 : 1);

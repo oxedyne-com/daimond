@@ -707,6 +707,15 @@
 				if (look) state.look = look;
 			}
 		} catch (e) { log('look snapshot failed', e); }
+		// Private messages, and WHY THE NULL MATTERS: `snapshot()` answers null while
+		// the identity is locked, and a section left off is a section the other device
+		// keeps. An empty record here would read to the merge as a deletion.
+		try {
+			if (window.DaimondPost) {
+				var pst = DaimondPost.snapshot();
+				if (pst) state.post = pst;
+			}
+		} catch (e) { log('post snapshot failed', e); }
 		return state;
 	}
 
@@ -746,6 +755,15 @@
 		if (window.DaimondTrash) {
 			try { DaimondTrash.adopt(state && state.trash); }
 			catch (e) { log('trash adopt failed', e); failed.push('trash'); }
+		}
+		if (window.DaimondPost) {
+			try { DaimondPost.adopt(state && state.post); }
+			catch (e) { log('post adopt failed', e); failed.push('post'); }
+			// A parcel is the fifth occasion the unread count can have changed,
+			// and the only one that is not a press: messages read on another
+			// device arrive here already read.
+			try { if (window.DaimondBadge && DaimondBadge.post) DaimondBadge.post(); }
+			catch (e) { /* no badge in this build */ }
 		}
 		// The account's public handle, under the same rule as everything above
 		// it: `adoptHandle` takes the larger record and writes it VERBATIM, so a

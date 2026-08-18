@@ -27,8 +27,14 @@
 //! - [`doc`] — the document panel's edge: bindings to `window.DaimondDoc`
 //!   behind `file_show`, which is how a model puts a file in front of the
 //!   user rather than reading its bytes.
+//! - [`office`] — the Office document edge: a `.docx` read into the prose the
+//!   Doc panel draws and `file_read` returns, and Markdown written back out as
+//!   one.  The model never emits document XML; the conversion is code.
 //! - [`typst`] — the Typst compiler edge: bindings to the `window.DaimondTypst`
 //!   driver behind `typst_compile`, which exchanges bytes only.
+//! - [`mailtls`] — the browser end of the blind mail tunnel: a TLS client that runs
+//!   in the page, so the gateway relays ciphertext and holds no keys.  Sans-io —
+//!   JavaScript owns the socket and pumps bytes through it.
 //!
 //! The synchronous single-writer OPFS path (`createSyncAccessHandle` in
 //! a dedicated Worker, needed for the append-only `.daimond` log) is
@@ -41,6 +47,8 @@ pub mod doc;
 pub mod entry;
 pub mod hand;
 pub mod diamond;
+pub mod mailtls;
+pub mod office;
 pub mod opfs;
 pub mod pty;
 pub mod typst;

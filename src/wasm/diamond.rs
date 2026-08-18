@@ -1743,8 +1743,11 @@ pub async fn export_size(id: &str) -> Outcome<u64> {
                 todo.push(child);
             } else {
                 // The path travels in the envelope too, and a Diamond with many
-                // version files carries a lot of path.
-                total = total.saturating_add(size).saturating_add(child.len() as u64);
+                // version files carries a lot of path.  A binary file travels as base64, which is
+                // four bytes for every three, so the allowance is made for every file: it keeps this
+                // an over-estimate without a second directory walk to find out which are which.
+                let weight = size.saturating_mul(4) / 3;
+                total = total.saturating_add(weight).saturating_add(child.len() as u64);
             }
         }
     }
@@ -1758,7 +1761,9 @@ pub async fn export_diamond(id: &str) -> Outcome<String> {
     }
     // Recursion is spelled out with an explicit stack: an `async fn` cannot
     // recurse without boxing its future (as `opfs::copy_dir` does the same).
-    let mut files: Vec<(String, String)> = Vec::new();
+    // Bytes, not text. What each file IS, is decided by `protocol::pack_diamond`, which is the one
+    // place that knows the pack's shape and the one place a test can reach.
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut todo: Vec<String> = vec![String::new()];
     while let Some(rel) = todo.pop() {
         let dir = if rel.is_empty() { root.clone() } else { fmt!("{}/{}", root, rel) };
@@ -1780,20 +1785,13 @@ pub async fn export_diamond(id: &str) -> Outcome<String> {
                     continue;
                 }
             };
-            files.push((child, String::from_utf8_lossy(&bytes).to_string()));
+            files.push((child, bytes));
         }
     }
-    files.sort_by(|a, b| a.0.cmp(&b.0));
-    let items: Vec<String> = files.iter()
-        .map(|(p, c)| fmt!("\"{}\":\"{}\"", json_escape(p), json_escape(c)))
-        .collect();
     // A Diamond with no readable metadata still exports; it simply carries no
     // stamp, and a carrier falls back to whatever the pack itself says.
     let touched = read_meta(id).await.map(|m| m.touched).unwrap_or(0);
-    Ok(fmt!(
-        "{{\"id\":\"{}\",\"touched\":{},\"files\":{{{}}}}}",
-        json_escape(id), touched, items.join(","),
-    ))
+    Ok(crate::protocol::pack_diamond(id, touched, &files))
 }
 
 /// Recreate a Diamond from an [`export_diamond`] JSON, REPLACING whatever this
@@ -1835,7 +1833,7 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
     let files: js_sys::Object = res!(files_val.dyn_into()
         .map_err(|_| err!("A Diamond export's files were not an object."; Invalid, Input)));
 
-    let mut writes: Vec<(String, String)> = Vec::new();
+    let mut writes: Vec<(String, Vec<u8>)> = Vec::new();
     for pair in js_sys::Object::entries(&files).iter() {
         let pair: js_sys::Array = match pair.dyn_into() {
             Ok(a)  => a,
@@ -1847,13 +1845,43 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
         };
         let body = match pair.get(1).as_string() {
             Some(c) => c,
-            None    => continue,        // not text; nothing a Diamond stores is
+            None    => continue,        // not a string; `files` carries only text
         };
         if !is_safe_rel(&rel) {
             return Err(err!("A Diamond export names '{}', which is not a path inside it.", rel;
                 Invalid, Input, Path));
         }
-        writes.push((rel, body));
+        writes.push((rel, body.into_bytes()));
+    }
+    // The pictures, the fonts, the compiled PDFs -- everything that is not text. A pack from a build
+    // that predates them simply has no `binary`, and lands as it always did.
+    if let Ok(blobs) = js_sys::Reflect::get(&val, &JsValue::from_str(crate::protocol::PACK_BINARY)) {
+        if let Ok(blobs) = blobs.dyn_into::<js_sys::Object>() {
+            for pair in js_sys::Object::entries(&blobs).iter() {
+                let pair: js_sys::Array = match pair.dyn_into() {
+                    Ok(a)  => a,
+                    Err(_) => continue,
+                };
+                let rel = match pair.get(0).as_string() {
+                    Some(p) => p,
+                    None    => continue,
+                };
+                let body = match pair.get(1).as_string() {
+                    Some(c) => c,
+                    None    => continue,
+                };
+                if !is_safe_rel(&rel) {
+                    return Err(err!(
+                        "A Diamond export names '{}', which is not a path inside it.", rel;
+                        Invalid, Input, Path));
+                }
+                // A file whose base64 is damaged is REFUSED rather than written as whatever decoded.
+                // Half a picture written over a good one is the corruption this whole change exists
+                // to remove, and it would arrive looking like a successful sync.
+                let bytes = res!(crate::protocol::unpack_binary(&rel, &body));
+                writes.push((rel, bytes));
+            }
+        }
     }
     // An export with nothing in it would otherwise delete the Diamond it claims
     // to be, which is a deletion nobody asked for.
@@ -1897,8 +1925,9 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
         // Meta means the parse did not find what it was looking for, and the
         // right answer to that is to keep the bytes and let `read_meta` deal with
         // them, not to overwrite them with blanks.
-        let text = if rel == meta_rel && body.len() > META_MAX as usize {
-            let rebuilt = Meta::from_json(&body);
+        let bytes = if rel == meta_rel && body.len() > META_MAX as usize {
+            let text = String::from_utf8_lossy(&body).to_string();
+            let rebuilt = Meta::from_json(&text);
             if rebuilt.name.trim().is_empty() {
                 crate::wasm::entry::trail("META KEPT",
                     &fmt!("{} is {}KB but its name did not parse — left as it came",
@@ -1907,12 +1936,12 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
             } else {
                 crate::wasm::entry::trail("META REBUILT",
                     &fmt!("{} {}KB -> {}B", id, body.len() / 1024, rebuilt.to_json().len()));
-                rebuilt.to_json()
+                rebuilt.to_json().into_bytes()
             }
         } else {
             body
         };
-        res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), text.as_bytes()).await);
+        res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), &bytes).await);
     }
     Ok(())
 }

@@ -110,8 +110,12 @@ function fixture(name, port, engine) {
 	fs.mkdirSync(out, { recursive: true });
 	// The keys are the real sandbox keys: `app.jdat` reads several of them with
 	// `{file:…}` and the config will not load without them. Symlinked, never
-	// copied. The STORE is this fixture's own — the real one is exclusive, and
-	// a gateway on :9002 is very likely holding it.
+	// copied. The STORE is this fixture's own, and not because the real one is
+	// locked — o3db excludes nobody, and a second process opening it is refused
+	// nothing. It is worse than that: it would get an index of its own built at
+	// open, so neither process would see the other's writes, and a garbage
+	// collector of its own over the same files. A fixture that shared the store
+	// would measure a picture nothing else holds.
 	const keys = path.join(out, 'keys');
 	if (!fs.existsSync(keys)) fs.symlinkSync(path.join(GWDIR, 'keys'), keys);
 

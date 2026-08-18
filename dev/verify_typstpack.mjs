@@ -27,7 +27,8 @@
 //      catalogue fails open -- the page pushes a lock nothing recognises and the pack runs free.
 //   E. The SALE and not merely the gate: with the price standing in `gateway/app.jdat` the page
 //      reads it, the engine locks the tool and the compile is refused; with the price taken out of
-//      that same string nothing is on sale, nothing locks, and the very same call compiles.
+//      that same string the pack is no longer on sale AND IS STILL LOCKED, because what a build
+//      gates is decided by the build. The price buys a way out of the lock; it does not set it.
 //   F. SOLD IS NOT LOCKED. An EMPTY catalogue must lock the pack, not give it away -- and the
 //      control for it is the defect itself, reproduced in the same run: a listing assembled only
 //      from the catalogue, for that same empty string, unlocks the tool and compiles a PDF. That
@@ -428,10 +429,18 @@ check('bought: and so does the model\'s tool',
 // the price and the refusal is simulated except the gateway's own parse, which its Rust tests
 // cover.
 //
-// And the control is the one that matters commercially: TAKE THE PRICE OUT and the same run
-// compiles, because an entry with no price is not something anyone can buy and so is not
-// something anyone is locked out of. A gate that refused either way would be a gate on the tool
-// rather than on the sale.
+// And then the control, which CHANGED when the gate did. Taking the price out used to make the
+// same run compile: the listing was built from the catalogue alone, so an entry nobody could buy
+// was an entry nobody was locked out of. That was the defect, not the design -- phase F below
+// reproduces it deliberately -- and the fix put the gated register in the BUILD, where a catalogue
+// edit cannot empty it. So a pack with no price is still a gated pack, and what the price decides
+// now is whether it can be BOUGHT. The two checks below assert exactly that, which is the property
+// the sale rests on: the lock does not move with the price. Revert the fix and they go red, because
+// the pack would fall out of the listing with its price.
+//
+// The anti-vacuity control for the whole phase is therefore not here but in phase A above, which
+// compiles through all three doors unlocked, and in phase F's first pair, which reaches the same
+// engine through the same listing route and DOES unlock it.
 
 /// Serve `/api/tools` with exactly this listing and let the panel push what it makes of it into
 /// the engine. The low half of `serveCatalogue`, separated so the OLD rule can be served too.
@@ -493,17 +502,21 @@ if (SELLS.indexOf(PACK) < 0) {
 		(await exists(PDF)) === false && soldRefusal.includes(PACK),
 		soldRefusal.slice(0, 140));
 
-	// The control: the same catalogue with the price taken out sells nothing, so nothing locks.
+	// The control: the same catalogue with the price taken out. The entry is dropped from the
+	// sale -- a tool with no price is a tool nobody can buy -- and the pack is then reported by
+	// the BUILD's register instead, unbought and so still locked.
 	const unpriced = SHIPPED.replace(/^([^:,]+):\d+:/, '$1::');
 	const engFree = await serveCatalogue(unpriced);
-	check('price removed: the same catalogue locks nothing',
-		engFree.tool === false && engFree.locked === '',
-		`catalogue "${unpriced.slice(0, 60)}…" → ${JSON.stringify(engFree)}`);
+	check('price removed: the pack drops out of the sale and STAYS locked',
+		engFree.tool === true && engFree.locked.split(',').indexOf(PACK) >= 0,
+		`catalogue "${unpriced.slice(0, 60)}…" → ${JSON.stringify(engFree)}`
+			+ ' — a listing built from the catalogue alone reports nothing here and gives the pack away');
 
 	await remove(PDF);
-	const freeAgain = await runTool('typst_compile', { path: SRC });
-	check('price removed: the very same call compiles the document',
-		(await exists(PDF)) === true, freeAgain.slice(0, 140));
+	const stillRefused = await runTool('typst_compile', { path: SRC });
+	check('price removed: the very same call is still refused, and no PDF is written',
+		(await exists(PDF)) === false && stillRefused.includes(PACK),
+		stillRefused.slice(0, 140));
 
 	await p.unroute('**/api/tools').catch(() => {});
 	await setLocked('');

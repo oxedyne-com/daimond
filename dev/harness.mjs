@@ -34,6 +34,11 @@
 // instead: `(await import('/pkg/oxedyne_daimond.js')).write_file(path, body)`, which
 // is not fenced because it is not a chat (see dev/verify_backup.mjs).
 //
+// A FAILED REQUEST NAMES ITS SERVER. `errors(s)` pairs every "Failed to load
+// resource" with the URL behind it, and drops the ones from hosts outside this
+// world after printing them.  See `open()`'s response hook and `errors()` below
+// for the gate that made this necessary.
+//
 // Headless by default.  Pass { headed: true } for the extension flows, which
 // need real rendering — and run those under xvfb, never on the user's display.
 
@@ -85,6 +90,61 @@ export function scratch(...parts) {
 	const p = path.join(SCRATCH, ...parts);
 	fs.mkdirSync(path.dirname(p), { recursive: true });
 	return p;
+}
+
+/// The mock answering this world's port must be THIS world's mock.
+///
+/// `mockLog()` below is how eighteen or more verifiers ask what the model was
+/// shown, and every one of them asks it by READING A FILE. So a mock that answers
+/// the port while appending somewhere else does not break anything visibly: the
+/// turns happen, the page behaves, and the assertions read an empty file and
+/// report that the provider was never reached.
+///
+/// That is not a hypothetical. The gate of 2026-08-17 found world 9's ports
+/// already held by a gate started three hours earlier, left them alone -- which is
+/// `world.sh --up`'s deliberate and correct behaviour when a person is sharing a
+/// world -- and ran for two hours against that mock, which was appending 2.6 MB
+/// into a worktree of commit b536d60 while the log this run read stayed at zero
+/// bytes. `verify_concise` reported "the mock provider was reached: no";
+/// `verify_toolmemory` reported "two turns really reached the model — 0
+/// request(s)"; `verify_triggers` reported that the daimon was never sent the
+/// user's message. All three were false, and each was a claim about a feature made
+/// by a check that had not been able to look.
+///
+/// So it is asked ONCE per process, here, rather than in eighteen copies: the mock
+/// is made to name the file it writes, and a mock that names another one -- or
+/// that cannot answer the question, which is what an older mockllm from another
+/// tree does -- stops the run before a single check has been made.
+let mockIdentity = null;
+async function requireOwnMock() {
+	if (mockIdentity) return mockIdentity;
+	const url = new URL('/__world', MOCK).href;
+	let said;
+	try {
+		const r = await fetch(url, { cache: 'no-store' });
+		said = r.ok ? await r.json() : { log: null, status: r.status };
+	} catch (e) {
+		// Nothing is listening. The verifier's own checks will say what it could
+		// not do, and this says why -- but it is not made fatal here, because a
+		// session opened with `connect: true` that never speaks to a model is a
+		// legitimate thing and was working before this check existed.
+		console.log(`  note  no mock provider answering ${MOCK} — anything below that reads`
+			+ ' mockLog() is reading a file nothing is writing');
+		mockIdentity = { log: null };
+		return mockIdentity;
+	}
+	if (said.log !== MOCK_LOG) {
+		throw new Error(
+			`the provider on ${MOCK} is not this world's.\n`
+			+ `  it logs to: ${said.log || `(no /__world answer — status ${said.status}; an older `
+				+ 'mockllm.mjs from another tree, or not mockllm.mjs at all)'}\n`
+			+ `  this run reads: ${MOCK_LOG}\n`
+			+ '  Every check that asks what the model was sent reads THAT file, so this run\n'
+			+ '  would report turns as never having happened. Free the port, or pick another\n'
+			+ '  world (dev/world.sh N --status now says who holds one).');
+	}
+	mockIdentity = said;
+	return mockIdentity;
 }
 
 /// Everything the model was sent, since `clearMockLog()` was last called.
@@ -145,7 +205,16 @@ export async function open(opts = {}) {
 		// a damaged file through `page.route`. It has to run BEFORE `goto`, which
 		// is the whole reason it cannot be done by the caller afterwards.
 		route     = null,
+		// Let the transparency log be fetched from its real, foreign origin. See
+		// the route below for why the default is not to. Almost nothing wants this:
+		// what it buys is a dependency on GitHub's rate limiter.
+		publicLog = false,
 	} = opts;
+
+	// Before a browser is even launched: is the mock this run will read the mock
+	// this run will talk to? See `requireOwnMock` for the gate that made this
+	// necessary. Only when the session is going to be pointed at one.
+	if (connect) await requireOwnMock();
 
 	const args = ['--no-sandbox', '--disable-dev-shm-usage'];
 	if (extension) {
@@ -188,6 +257,27 @@ export async function open(opts = {}) {
 	const page = browser.pages()[0] || await browser.newPage();
 	const errs   = [];
 	const logs   = [];
+	// Every answer of 400 or worse, and every request that got no answer at all,
+	// WITH ITS URL.
+	//
+	// Chrome's console line for a failed subresource is `Failed to load resource:
+	// the server responded with a status of 429 ()` -- a status, no URL, no host.
+	// Twenty-three verifiers failed the 2026-08-17 gate on exactly that line and
+	// not one of them could say which server had answered it. A day went into
+	// attributing it to the gateway rate-limiting its own test suite; it was
+	// raw.githubusercontent.com refusing an unauthenticated scrape, which
+	// `verify_releases` -- the one file in the tree that happened to record URLs
+	// beside statuses -- had been printing in full the whole time. So the URL is
+	// kept here, once, for everybody, and `errors()` below puts the two back
+	// together.
+	const net = [];
+	page.on('response', (r) => {
+		if (r.status() >= 400) net.push({ status: r.status(), url: r.url() });
+	});
+	page.on('requestfailed', (r) => {
+		const f = r.failure();
+		net.push({ status: 0, url: r.url(), why: (f && f.errorText) || 'no answer' });
+	});
 	page.on('console', m => {
 		logs.push(`${m.type()}: ${m.text()}`);
 		if (m.type() === 'error') errs.push(m.text());
@@ -218,10 +308,43 @@ export async function open(opts = {}) {
 		catch (e) { /* private mode: the shipped window stands */ }
 	});
 
+	// THE TRANSPARENCY LOG IS ON SOMEBODY ELSE'S SERVER, and that is the point of
+	// it: `js/verify.js` and `js/release.js` both read the published chain from
+	// raw.githubusercontent.com, an origin this project does not control, because a
+	// page that verified itself against a file it also served would prove nothing.
+	//
+	// A suite is a different matter. Two hundred and fifty verifiers, several page
+	// loads each, is a few hundred unauthenticated fetches of one file inside two
+	// hours, and GitHub answers that with 429 and a link to its scraping terms.
+	// That is what reddened twenty-three verifiers on 2026-08-17: not the app, not
+	// the gateway, a third party quite correctly declining to be scraped.
+	//
+	// So the log is served from the repo's own copy -- the same bytes GitHub would
+	// return for this commit, since that file is what gets pushed. Pass
+	// `{ publicLog: true }` for a run that genuinely means to ask the real origin.
+	// A verifier registering its own route after `open()` still wins: Playwright
+	// matches handlers in reverse order of registration, which is how
+	// dev/verify_delivery.mjs has served its own chain here since it was written.
+	if (!publicLog) {
+		const chain = path.join(HERE, '..', 'verify/transparency.jsonl');
+		// Missing (a worktree between seals, a fork): let the real origin answer and
+		// let `errors()` name it, rather than inventing an empty log for the page to
+		// draw conclusions from.
+		if (fs.existsSync(chain)) {
+			const body = fs.readFileSync(chain, 'utf8');
+			await page.route('https://raw.githubusercontent.com/**', r => r.fulfill({
+				status:      200,
+				contentType: 'text/plain',
+				headers:     { 'access-control-allow-origin': '*' },
+				body,
+			}));
+		}
+	}
+
 	if (route) await route(page);
 	await page.goto(APP, { waitUntil: 'domcontentloaded' });
 
-	const s = { browser, page, errs, logs, name };
+	const s = { browser, page, errs, logs, net, name, foreign: [] };
 
 	if (signIn) await signInAs(s, name);
 	if (signIn && !defaults) await clearDiamonds(s);
@@ -588,8 +711,64 @@ export async function shot(s, label) {
 	return p;
 }
 
+/// Is this URL somewhere outside the world under test?
+///
+/// A world is the dev server, the mock provider, the gateway and anything else
+/// answering on loopback. Everything on any other host is a third party, and a
+/// third party's refusal is a fact about the internet, not about the product.
+function foreign(url) {
+	if (!url) return false;
+	let h;
+	try { h = new URL(url).hostname; } catch (e) { return false; }
+	return !(h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]');
+}
+
+/// Put a console error back together with the URL that caused it.
+///
+/// Chrome prints the status and drops the URL, so the pairing has to be made from
+/// the response log kept in `open()`. Matched by status and CONSUMED: two 429s in
+/// one run are two different requests, and blaming both on the first would put a
+/// name to something that was never asked.
+///
+/// Anything else -- a `net::ERR_*`, a `pageerror` -- already carries its own URL
+/// where it has one, so it is only read for the origin.
+function attribute(msg, pending) {
+	const m = /status of (\d{3})/.exec(msg);
+	if (m) {
+		const i = pending.findIndex(n => n.status === Number(m[1]));
+		if (i < 0) return { text: msg, url: '' };
+		const n = pending.splice(i, 1)[0];
+		return { text: `${msg} ${n.url}`, url: n.url };
+	}
+	const u = /(https?:\/\/[^\s'"]+)/.exec(msg);
+	return { text: msg, url: u ? u[1] : '' };
+}
+
 /// Console errors seen so far, minus the noise a dev server always makes.
+///
+/// TWO THINGS HAPPEN HERE that did not before the 2026-08-17 gate.
+///
+/// Each "Failed to load resource" is given the URL that caused it, so a red is
+/// actionable on sight. Twenty-three verifiers reported `a status of 429 ()` that
+/// day and no reader of any of those logs could say which server had answered.
+///
+/// And a failure from a host OUTSIDE THIS WORLD is not returned, because every
+/// caller of this function is asking "did the product throw" and a third party
+/// declining to serve us is not the product. It is not swallowed: it goes to
+/// `s.foreign` and is PRINTED, once each, so a run can never be quietly excused by
+/// a filter. A verifier that means to assert on one reads `s.foreign` itself.
 export function errors(s) {
 	const skip = [/favicon/i, /net::ERR_ABORTED.*hot/i];
-	return s.errs.filter(e => !skip.some(r => r.test(e)));
+	const pending = (s.net || []).slice();
+	if (!s.foreign) s.foreign = [];		// a session this module did not build
+	const out = [];
+	for (const e of s.errs) {
+		if (skip.some(r => r.test(e))) continue;
+		const a = attribute(e, pending);
+		if (!foreign(a.url)) { out.push(a.text); continue; }
+		if (s.foreign.indexOf(a.text) >= 0) continue;
+		s.foreign.push(a.text);
+		console.log(`  note  outside this world, so not counted as the app throwing: ${a.text}`);
+	}
+	return out;
 }

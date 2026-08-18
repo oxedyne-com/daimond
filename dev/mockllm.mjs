@@ -317,6 +317,22 @@ const stream = async (res, model, p) => {
 const server = http.createServer((req, res) => {
 	if (req.method === 'OPTIONS') { cors(res); res.writeHead(204); return res.end(); }
 
+	// WHICH LOG THIS MOCK WRITES TO, so a caller can identify the process holding
+	// the port instead of trusting that it is the one it started.
+	//
+	// The log path is the whole of a world's mock identity: a verifier asserts on
+	// what the model was sent by READING THE FILE, so a mock answering this port
+	// while appending somewhere else makes every such assertion read an empty
+	// file. That is not hypothetical. On 2026-08-17 a gate found :9108 already
+	// held by an earlier gate's mock, left it alone, and set DAIMOND_MOCK_LOG to
+	// its own worktree's copy -- which stayed 0 bytes for two hours. Eighteen or
+	// more verifiers then reported "the provider was reached: no", "0 requests",
+	// "nothing in the mock log", about turns that had in fact been answered
+	// perfectly well by a mock writing to a path nobody was reading.
+	if (req.method === 'GET' && req.url.startsWith('/__world')) {
+		return sendJson(res, { log: LOG, port: PORT, pid: process.pid });
+	}
+
 	if (req.method === 'GET' && req.url.startsWith('/v1/models')) {
 		// A test can drive the rejected-key path with the sentinel key "reject".
 		const auth = req.headers.authorization || '';

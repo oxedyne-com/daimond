@@ -1,12 +1,26 @@
 /* ============================================================
-   Daimond — the Improve panel (improve.js)
+   Daimond — the Social panel (improve.js)
    ------------------------------------------------------------
    Where a note is written, and where the proposals made from
    notes are read and voted on. `dev/IMPROVE_CONTRACT.md` is the
-   contract; `www/guide/improve.html` is the public promise this
+   contract; `www/guide/social.html` is the public promise this
    panel has to keep, and every part of this screen is called what
-   that page already calls it: a head, two chips, a closer, rows,
+   that page already calls it: a head, chips, a closer, rows,
    and the note box.
+
+   THE PANEL IS SOCIAL AND THIS FILE IS TWO OF ITS FOUR CHIPS.
+   Decision 13 renamed the `improve` dock panel to `social` and gave
+   it Messages, People, Notes and Proposals. Notes and Proposals are
+   this file's, whole. Messages and People are empty containers with
+   an honest line in each, rendered into by other modules — so this
+   file also owns the SHELL: the chips, the view switch, and the
+   `window.DaimondSocial` those modules talk to. It is one file
+   rather than two because the shell has no life of its own: the
+   chips, the head and the i18n surface are the same head Notes and
+   Proposals already hang on.
+
+   The `/api/improve` ROUTE is unchanged. The panel was renamed, not
+   the door the forge is behind.
 
    ── A NOTE IS A PROPOSAL NOW ────────────────────────────────
 
@@ -96,7 +110,8 @@
    starts answering `votes`, the control appears on its own with no
    edit here.
 
-   Attaches one global, `window.DaimondImprove`.
+   Attaches two globals, `window.DaimondSocial` (the panel
+   shell) and `window.DaimondImprove` (notes and proposals).
    ============================================================ */
 (function () {
 	'use strict';
@@ -109,7 +124,7 @@
 	///
 	/// `t` answers with the KEY when the table has no entry, so a panel built
 	/// against keys the locale files have not been given yet would read
-	/// "improve.send" on screen. Every string this panel adds is new, and they
+	/// "social.send" on screen. Every string this panel adds is new, and they
 	/// are routed to the catalogue separately from this file, so all of them go
 	/// through here: the English shows until the tables catch up, and not one
 	/// moment longer. trash.js keeps the same discipline for the same reason.
@@ -271,7 +286,7 @@
 	/// travel. Built here and shown verbatim; nothing is added on the way out.
 	function context() {
 		var bits = [];
-		if (_build) bits.push(tOr('improve.ctx_build', 'Build {id}', { id: _build }));
+		if (_build) bits.push(tOr('social.ctx_build', 'Build {id}', { id: _build }));
 		try {
 			var loc = window.DaimondI18n ? DaimondI18n.locale() : '';
 			if (loc) bits.push(loc);
@@ -280,16 +295,16 @@
 		try {
 			var coarse = window.matchMedia && window.matchMedia('(any-pointer: coarse)').matches;
 			bits.push(coarse
-				? tOr('improve.ctx_touch', 'touch')
-				: tOr('improve.ctx_pointer', 'pointer'));
+				? tOr('social.ctx_touch', 'touch')
+				: tOr('social.ctx_pointer', 'pointer'));
 		} catch (e) { /* no matchMedia */ }
 		try {
 			var theme = localStorage.getItem('daimond-theme');
 			var skin  = localStorage.getItem('daimond-skin');
-			if (theme) bits.push(tOr('improve.ctx_palette', 'palette {name}', { name: theme + (skin ? ' ' + skin : '') }));
+			if (theme) bits.push(tOr('social.ctx_palette', 'palette {name}', { name: theme + (skin ? ' ' + skin : '') }));
 		} catch (e) { /* private mode */ }
 		var panels = openPanels();
-		if (panels.length) bits.push(tOr('improve.ctx_panels', 'panels open: {list}', { list: panels.join(', ') }));
+		if (panels.length) bits.push(tOr('social.ctx_panels', 'panels open: {list}', { list: panels.join(', ') }));
 		return bits.join(' · ');
 	}
 
@@ -377,7 +392,7 @@
 	/// Built here rather than in the markup because the markup is another lane's
 	/// file and every part of it is drawn from this one anyway.
 	function drawVoice() {
-		var write = document.querySelector('#panel-improve .imp-write');
+		var write = document.querySelector('#panel-social .imp-write');
 		var say   = el('improve-say');
 		if (!write) return;
 		var host = el('improve-voice');
@@ -401,19 +416,19 @@
 		line.className = 'imp-as';
 		line.id = 'improve-voice-say';
 		line.textContent = hasVoice()
-			? tOr('improve.voice_held', 'A voice is held on this device, encrypted under your passphrase.')
-			: tOr('improve.voice_none', 'No voice is held here, so a note can only be kept.');
+			? tOr('social.voice_held', 'A voice is held on this device, encrypted under your passphrase.')
+			: tOr('social.voice_none', 'No voice is held here, so a note can only be kept.');
 		host.appendChild(line);
 
 		if (!_voiceOpen) {
 			host.appendChild(button('imp-note-copy', 'improve-voice-open',
-				hasVoice() ? tOr('improve.voice_replace', 'Replace the voice')
-					: tOr('improve.voice_set', 'Set a voice'),
-				tOr('improve.voice_help', 'The line the forge printed for you. It is kept encrypted here and never put in an address.')));
+				hasVoice() ? tOr('social.voice_replace', 'Replace the voice')
+					: tOr('social.voice_set', 'Set a voice'),
+				tOr('social.voice_help', 'The line the forge printed for you. It is kept encrypted here and never put in an address.')));
 			if (hasVoice()) {
 				host.appendChild(button('imp-note-copy', 'improve-voice-forget',
-					tOr('improve.voice_forget', 'Forget it'),
-					tOr('improve.voice_forget_help', 'Remove the copy on this device.')));
+					tOr('social.voice_forget', 'Forget it'),
+					tOr('social.voice_forget_help', 'Remove the copy on this device.')));
 			}
 			return;
 		}
@@ -424,10 +439,10 @@
 		input.id = 'improve-voice-in';
 		input.autocomplete = 'off';
 		input.spellcheck = false;
-		input.placeholder = tOr('improve.voice_ph', 'Paste the line the forge printed for you');
-		input.setAttribute('aria-label', tOr('improve.voice_ph', 'Paste the line the forge printed for you'));
+		input.placeholder = tOr('social.voice_ph', 'Paste the line the forge printed for you');
+		input.setAttribute('aria-label', tOr('social.voice_ph', 'Paste the line the forge printed for you'));
 		host.appendChild(input);
-		host.appendChild(button('imp-send', 'improve-voice-save', tOr('improve.voice_save', 'Save the voice')));
+		host.appendChild(button('imp-send', 'improve-voice-save', tOr('social.voice_save', 'Save the voice')));
 		host.appendChild(button('imp-keep', 'improve-voice-cancel', t('common.cancel')));
 	}
 
@@ -445,9 +460,9 @@
 		try { why = v.check(raw); } catch (e) { why = ''; }
 		if (why) { flash(why); return false; }
 		try { await v.set(raw); }
-		catch (e) { flash(e && e.message ? String(e.message) : tOr('improve.voice_failed', 'That voice could not be stored.')); return false; }
+		catch (e) { flash(e && e.message ? String(e.message) : tOr('social.voice_failed', 'That voice could not be stored.')); return false; }
 		_voiceOpen = false;
-		flash(tOr('improve.voice_saved', 'Your voice is held here, encrypted.'));
+		flash(tOr('social.voice_saved', 'Your voice is held here, encrypted.'));
 		render();
 		return true;
 	}
@@ -461,15 +476,15 @@
 		try {
 			if (window.DaimondCore && DaimondCore.confirm) {
 				ok = await DaimondCore.confirm(
-					tOr('improve.voice_ask_forget',
+					tOr('social.voice_ask_forget',
 						'Forget your voice on this device? The forge showed it once and cannot show it again.'),
-					tOr('improve.voice_forget', 'Forget it'),
-					{ title: tOr('improve.voice_forget', 'Forget it') });
+					tOr('social.voice_forget', 'Forget it'),
+					{ title: tOr('social.voice_forget', 'Forget it') });
 			}
 		} catch (e) { ok = true; }
 		if (!ok) return false;
 		try { v.clear(); } catch (e) { /* nothing was stored */ }
-		flash(tOr('improve.voice_forgotten', 'The copy on this device is gone.'));
+		flash(tOr('social.voice_forgotten', 'The copy on this device is gone.'));
 		render();
 		return true;
 	}
@@ -487,7 +502,7 @@
 	/// is offered, and whether the sentence saying what Send does is on the screen.
 	/// Two copies of a locator are two things to get separately wrong.
 	function sendBtn() {
-		return document.querySelector('#panel-improve #improve-acts .imp-send');
+		return document.querySelector('#panel-social #improve-acts .imp-send');
 	}
 
 	/// Where the forge this panel writes to is read, in public.
@@ -517,7 +532,7 @@
 		if (as) {
 			as.hidden = hasVoice();
 			as.textContent = hasVoice() ? ''
-				: tOr('improve.as_novoice', 'You have no voice, so a note can only be kept here.');
+				: tOr('social.as_novoice', 'You have no voice, so a note can only be kept here.');
 		}
 		// Without a voice there is nothing to send AS, and the forge would refuse
 		// it. The button is hidden rather than shown-and-inert: a control that
@@ -548,7 +563,7 @@
 	/// and it is keyed off the BUTTON rather than off `hasVoice()` read a second
 	/// time, so the sentence cannot drift away from the control it describes.
 	function drawPublic(send) {
-		var write = document.querySelector('#panel-improve .imp-write');
+		var write = document.querySelector('#panel-social .imp-write');
 		var acts  = el('improve-acts');
 		if (!write || !acts) return;
 		var line = el('improve-public');
@@ -560,7 +575,7 @@
 		}
 		// The host rides as a placeholder so that eight translations carry the
 		// address without any of them retyping it.
-		line.textContent = tOr('improve.public_note',
+		line.textContent = tOr('social.public_note',
 			'Sending publishes this note at {host}, with your voice name on it. '
 			+ 'Anyone can read it there without an account. '
 			+ 'A note you keep stays on this device.',
@@ -581,7 +596,7 @@
 			hint.id = 'improve-hint';
 			acts.appendChild(hint);
 		}
-		hint.textContent = tOr('improve.title_hint',
+		hint.textContent = tOr('social.title_hint',
 			'The first line is the title of the proposal. What happened goes underneath it.');
 	}
 
@@ -615,7 +630,7 @@
 	/// the network only if somebody presses Send on it afterwards.
 	function keep() {
 		var text = outgoing();
-		if (!text) { flash(tOr('improve.nothing', 'Write something first.')); return null; }
+		if (!text) { flash(tOr('social.nothing', 'Write something first.')); return null; }
 		var rec = store(text, 0);
 		clearBox();
 		render();
@@ -646,19 +661,19 @@
 	/// What a refusal leaves on the screen after a Send: why it did not go, and
 	/// that the note is still here.
 	function keptAfter(a) {
-		return saying(a) + ' ' + tOr('improve.kept_here',
+		return saying(a) + ' ' + tOr('social.kept_here',
 			'Your note is kept here and nothing tried again.');
 	}
 
 	async function send() {
 		var text = outgoing();
-		if (!text) { flash(tOr('improve.nothing', 'Write something first.')); return null; }
+		if (!text) { flash(tOr('social.nothing', 'Write something first.')); return null; }
 		var parts = split(text);
 		if (!parts) {
-			flash(tOr('improve.no_title', 'The first line is the title. Write one, then what happened underneath.'));
+			flash(tOr('social.no_title', 'The first line is the title. Write one, then what happened underneath.'));
 			return null;
 		}
-		if (!hasVoice()) { flash(tOr('improve.as_novoice', 'You have no voice, so a note can only be kept here.')); return null; }
+		if (!hasVoice()) { flash(tOr('social.as_novoice', 'You have no voice, so a note can only be kept here.')); return null; }
 		var rec = store(text, 0);
 		clearBox();
 		render();
@@ -681,8 +696,8 @@
 		var rec = s.notes.find(function (n) { return n.id === id; });
 		if (!rec || rec.sent) return false;
 		var parts = split(rec.text);
-		if (!parts) { flash(tOr('improve.no_title', 'The first line is the title. Write one, then what happened underneath.')); return false; }
-		if (!hasVoice()) { flash(tOr('improve.as_novoice', 'You have no voice, so a note can only be kept here.')); return false; }
+		if (!parts) { flash(tOr('social.no_title', 'The first line is the title. Write one, then what happened underneath.')); return false; }
+		if (!hasVoice()) { flash(tOr('social.as_novoice', 'You have no voice, so a note can only be kept here.')); return false; }
 		var a = await post(parts);
 		if (a.ok) {
 			rec.sent = Date.now();
@@ -704,9 +719,9 @@
 		try {
 			if (window.DaimondCore && DaimondCore.confirm) {
 				ok = await DaimondCore.confirm(
-					tOr('improve.drop_ask', 'Delete this note? It is only on this device, so there is no other copy.'),
-					tOr('improve.drop_ok', 'Delete'),
-					{ title: tOr('improve.drop', 'Delete this note') });
+					tOr('social.drop_ask', 'Delete this note? It is only on this device, so there is no other copy.'),
+					tOr('social.drop_ok', 'Delete'),
+					{ title: tOr('social.drop', 'Delete this note') });
 			}
 		} catch (e) { ok = true; }
 		if (!ok) return false;
@@ -724,7 +739,7 @@
 		if (!rec) return false;
 		try { await navigator.clipboard.writeText(rec.text); }
 		catch (e) { flash(t('copy.failed')); return false; }
-		flash(tOr('improve.copied', 'Copied.'));
+		flash(tOr('social.copied', 'Copied.'));
 		return true;
 	}
 
@@ -826,42 +841,42 @@
 	/// draw on different budgets -- so a sentence about "submissions" shown to
 	/// somebody who tapped a vote button twice is wrong as well as leaky.
 	function saying(a) {
-		if (!a) return tOr('improve.err_offline', 'Nothing could be sent just now.');
+		if (!a) return tOr('social.err_offline', 'Nothing could be sent just now.');
 		switch (a.why) {
 		case 'absent':
-			return tOr('improve.err_absent', 'This repository is not available to you.');
+			return tOr('social.err_absent', 'This repository is not available to you.');
 		case 'unvoiced':
-			return tOr('improve.err_unvoiced', 'The forge was given no voice, so it refused.');
+			return tOr('social.err_unvoiced', 'The forge was given no voice, so it refused.');
 		case 'unknown':
-			return tOr('improve.err_unknown', 'The forge does not recognise your voice. Set it again from the line the forge printed for you.');
+			return tOr('social.err_unknown', 'The forge does not recognise your voice. Set it again from the line the forge printed for you.');
 		case 'unpermitted':
-			return tOr('improve.err_unpermitted', 'Your voice may not do that here.');
+			return tOr('social.err_unpermitted', 'Your voice may not do that here.');
 		case 'throttled':
 			if (a.because === 'address') {
-				return tOr('improve.err_throttled_address', 'Too many requests from this address just now. Wait a little, then try again.');
+				return tOr('social.err_throttled_address', 'Too many requests from this address just now. Wait a little, then try again.');
 			}
 			if (a.because === 'failing') {
-				return tOr('improve.err_throttled_failing', 'Too many failing requests just now. Wait a little, then try again.');
+				return tOr('social.err_throttled_failing', 'Too many failing requests just now. Wait a little, then try again.');
 			}
-			return tOr('improve.err_throttled', 'Too many requests just now. Wait a little, then try again.');
+			return tOr('social.err_throttled', 'Too many requests just now. Wait a little, then try again.');
 		case 'malformed':
-			return tOr('improve.err_malformed', 'The forge could not read what Daimond asked it. That is a fault in Daimond, not in what you wrote.');
+			return tOr('social.err_malformed', 'The forge could not read what Daimond asked it. That is a fault in Daimond, not in what you wrote.');
 		case 'no_proposal':
-			return tOr('improve.err_no_proposal', 'There is no such proposal here.');
+			return tOr('social.err_no_proposal', 'There is no such proposal here.');
 		case 'unsupported':
-			return tOr('improve.err_unsupported', 'The forge does not answer that.');
+			return tOr('social.err_unsupported', 'The forge does not answer that.');
 		case 'internal':
-			return tOr('improve.err_internal', 'Something went wrong at the forge. This is not your fault.');
+			return tOr('social.err_internal', 'Something went wrong at the forge. This is not your fault.');
 		case 'gateway':
 			if (a.status === 401) {
-				return tOr('improve.err_session', 'Daimond is not signed in just now, so it could not reach the forge.');
+				return tOr('social.err_session', 'Daimond is not signed in just now, so it could not reach the forge.');
 			}
 			if (a.status === 413) {
-				return tOr('improve.err_toolong', 'That is longer than the forge accepts. Shorten it, or send it in two.');
+				return tOr('social.err_toolong', 'That is longer than the forge accepts. Shorten it, or send it in two.');
 			}
-			return tOr('improve.err_gateway', 'Daimond could not reach the forge just now.');
+			return tOr('social.err_gateway', 'Daimond could not reach the forge just now.');
 		default:
-			return a.said || tOr('improve.err_offline', 'Nothing could be sent just now.');
+			return a.said || tOr('social.err_offline', 'Nothing could be sent just now.');
 		}
 	}
 
@@ -1093,7 +1108,7 @@
 		var box = document.querySelector('.imp-prop[data-prop="' + n + '"] .imp-reply');
 		if (!box) return false;
 		var text = String(box.value || '').trim();
-		if (!text) { _list.err = null; flash(tOr('improve.nothing', 'Write something first.')); return false; }
+		if (!text) { _list.err = null; flash(tOr('social.nothing', 'Write something first.')); return false; }
 		if (!hasVoice()) { _list.err = { why: 'unvoiced' }; drawProps(); return false; }
 		var f = new URLSearchParams();
 		f.set('said', text);
@@ -1144,7 +1159,7 @@
 		if (!notes.length) {
 			var none = document.createElement('div');
 			none.className = 'rail-note';
-			none.textContent = tOr('improve.no_notes', 'No notes yet.');
+			none.textContent = tOr('social.no_notes', 'No notes yet.');
 			list.appendChild(none);
 			return;
 		}
@@ -1166,26 +1181,26 @@
 			state.dataset.state = n.sent ? 'sent' : 'kept';
 			state.textContent = n.sent
 				? (n.n
-					? tOr('improve.state_sent_n', 'Sent {date}, and is proposal {n}', { date: fmtDate(n.sent), n: n.n })
-					: tOr('improve.state_sent', 'Sent {date}', { date: fmtDate(n.sent) }))
-				: tOr('improve.state_kept', 'Kept here');
+					? tOr('social.state_sent_n', 'Sent {date}, and is proposal {n}', { date: fmtDate(n.sent), n: n.n })
+					: tOr('social.state_sent', 'Sent {date}', { date: fmtDate(n.sent) }))
+				: tOr('social.state_kept', 'Kept here');
 			foot.appendChild(state);
 
 			if (!n.sent && hasVoice()) {
 				foot.appendChild(button('imp-note-send', 'improve-resend',
-					tOr('improve.send', 'Send'),
-					tOr('improve.send_help', 'Send exactly what is above to Oxedyne. Nothing else goes with it.')));
+					tOr('social.send', 'Send'),
+					tOr('social.send_help', 'Send exactly what is above to Oxedyne. Nothing else goes with it.')));
 			}
 			foot.appendChild(button('imp-note-copy', 'improve-copy', t('common.copy'), t('common.copy')));
 
 			try {
 				foot.appendChild(DaimondCloser.make({
-					name: tOr('improve.drop', 'Delete this note'),
+					name: tOr('social.drop', 'Delete this note'),
 					cls:  'imp-note-drop',
 					onClose: function () { drop(n.id); },
 				}));
 			} catch (e) {
-				foot.appendChild(button('imp-note-drop', 'improve-drop', '×', tOr('improve.drop', 'Delete this note')));
+				foot.appendChild(button('imp-note-drop', 'improve-drop', '×', tOr('social.drop', 'Delete this note')));
 			}
 
 			row.appendChild(foot);
@@ -1197,15 +1212,15 @@
 	/// open/accepted/declined/done; the guide's words are Open, Being done, Done
 	/// and Declined, and those are what a reader has been promised.
 	///
-	/// `accepted` reads through `improve.state_taken`, which is the key those
+	/// `accepted` reads through `social.state_taken`, which is the key those
 	/// eight locales already hold "Being done" in. The key's name is older than
 	/// the forge's word and renaming it would throw eight translations away to
 	/// tidy a string nobody sees.
 	function stateWord(s) {
-		if (s === 'accepted') return tOr('improve.state_taken', 'Being done');
-		if (s === 'done')     return tOr('improve.state_done', 'Done');
-		if (s === 'declined') return tOr('improve.state_declined', 'Declined');
-		return tOr('improve.state_open', 'Open');
+		if (s === 'accepted') return tOr('social.state_taken', 'Being done');
+		if (s === 'done')     return tOr('social.state_done', 'Done');
+		if (s === 'declined') return tOr('social.state_declined', 'Declined');
+		return tOr('social.state_open', 'Open');
 	}
 
 	/// The vote control, which draws ONLY when the answer carried a tally.
@@ -1234,26 +1249,26 @@
 
 		var tally = document.createElement('span');
 		tally.className = 'imp-prop-tally';
-		tally.textContent = tOr('improve.tally', '{yes} for, {no} against',
+		tally.textContent = tOr('social.tally', '{yes} for, {no} against',
 			{ yes: p.votes.for, no: p.votes.against });
 		box.appendChild(tally);
 
 		if (!p.asked) {
 			var line = document.createElement('span');
 			line.className = 'imp-as';
-			line.textContent = tOr('improve.vote_novoice', 'Set a voice to vote on this.');
+			line.textContent = tOr('social.vote_novoice', 'Set a voice to vote on this.');
 			box.appendChild(line);
 			into.appendChild(box);
 			return;
 		}
-		[['do', 1, tOr('improve.do', 'Do this')], ['not', -1, tOr('improve.not', 'Not this')]]
+		[['do', 1, tOr('social.do', 'Do this')], ['not', -1, tOr('social.not', 'Not this')]]
 			.forEach(function (pair) {
 				var b = button('imp-vote', 'improve-vote', pair[2], pair[2]);
 				b.dataset.dir = pair[0];
 				if (p.mine === pair[1]) {
 					b.classList.add('on');
 					b.setAttribute('aria-pressed', 'true');
-					b.title = tOr('improve.vote_off', 'Press again to take your vote back off.');
+					b.title = tOr('social.vote_off', 'Press again to take your vote back off.');
 				} else {
 					b.setAttribute('aria-pressed', 'false');
 				}
@@ -1284,7 +1299,7 @@
 			// TOLD their proposal was answered -- they find out by looking. A panel
 			// that implied otherwise, with a badge or an unread count it cannot
 			// honour, would be promising something nothing behind it can deliver.
-			asAt.textContent = tOr('improve.live_note',
+			asAt.textContent = tOr('social.live_note',
 				'These are read from the forge as you look at them. Nothing tells you when a proposal is answered; look again to find out.');
 		}
 
@@ -1300,14 +1315,14 @@
 			var none = document.createElement('div');
 			none.className = 'rail-note';
 			none.textContent = _list.loading
-				? tOr('improve.loading', 'Reading the proposals…')
-				// NOT `improve.no_props`, whose English in the catalogue says
+				? tOr('social.loading', 'Reading the proposals…')
+				// NOT `social.no_props`, whose English in the catalogue says
 				// proposals "arrive with a new build". They do not any more: they
 				// arrive when somebody opens one, and a translated sentence that is
 				// now false is worse than an English one that is true.
 				: (_list.err
-					? tOr('improve.none_shown', 'Nothing could be read just now.')
-					: tOr('improve.none_yet', 'No proposals here yet. Yours would be the first.'));
+					? tOr('social.none_shown', 'Nothing could be read just now.')
+					: tOr('social.none_yet', 'No proposals here yet. Yours would be the first.'));
 			list.appendChild(none);
 			return;
 		}
@@ -1342,7 +1357,7 @@
 				var tally = document.createElement('span');
 				tally.className = 'imp-prop-tally';
 				tally.textContent = String(p.votes.for);
-				tally.title = tOr('improve.tally', '{yes} for, {no} against',
+				tally.title = tOr('social.tally', '{yes} for, {no} against',
 					{ yes: p.votes.for, no: p.votes.against });
 				head.appendChild(tally);
 			}
@@ -1361,17 +1376,17 @@
 			says.className = 'imp-prop-says';
 			says.textContent = p.detail
 				? p.body
-				: tOr('improve.reading', 'Reading it…');
+				: tOr('social.reading', 'Reading it…');
 			body.appendChild(says);
 
 			var facts = document.createElement('div');
 			facts.className = 'imp-prop-facts';
 			var parts = [stateWord(p.state)];
-			if (p.author) parts.push(tOr('improve.by', 'from {who}', { who: p.author }));
+			if (p.author) parts.push(tOr('social.by', 'from {who}', { who: p.author }));
 			if (p.opened) parts.push(fmtWhen(p.opened));
-			parts.push(tnOr('improve.said_n', p.comments, '{n} reply', '{n} replies', { n: p.comments }));
-			if (p.build) parts.push(tOr('improve.built_on', 'written on build {build}', { build: p.build }));
-			if (p.mark)  parts.push(tOr('improve.closed_by', 'closed by mark {mark}', { mark: p.mark }));
+			parts.push(tnOr('social.said_n', p.comments, '{n} reply', '{n} replies', { n: p.comments }));
+			if (p.build) parts.push(tOr('social.built_on', 'written on build {build}', { build: p.build }));
+			if (p.mark)  parts.push(tOr('social.closed_by', 'closed by mark {mark}', { mark: p.mark }));
 			facts.textContent = parts.join(' · ');
 			body.appendChild(facts);
 
@@ -1381,7 +1396,7 @@
 			if (p.mark) {
 				var floor = document.createElement('p');
 				floor.className = 'imp-prop-says imp-floor';
-				floor.textContent = tOr('improve.move_floor',
+				floor.textContent = tOr('social.move_floor',
 					'A note follows its content across a file boundary only when the change is recognised as a move, '
 					+ 'and the floor for that is 64 bytes. Cut less than that from one file into another and the '
 					+ 'history holds a deletion and an insertion, so a note anchored there honestly reports its '
@@ -1417,15 +1432,15 @@
 				var reply = document.createElement('textarea');
 				reply.className = 'imp-box imp-reply';
 				reply.rows = 2;
-				reply.placeholder = tOr('improve.reply_ph', 'Say something about this proposal.');
-				reply.setAttribute('aria-label', tOr('improve.reply_ph', 'Say something about this proposal.'));
+				reply.placeholder = tOr('social.reply_ph', 'Say something about this proposal.');
+				reply.setAttribute('aria-label', tOr('social.reply_ph', 'Say something about this proposal.'));
 				if (typed[String(p.n)]) reply.value = typed[String(p.n)];
 				body.appendChild(reply);
 				var acts = document.createElement('div');
 				acts.className = 'imp-acts';
 				acts.appendChild(button('imp-send', 'improve-comment',
-					tOr('improve.reply', 'Say it'),
-					tOr('improve.reply_help', 'Send exactly what is in this box. Nothing else goes with it.')));
+					tOr('social.reply', 'Say it'),
+					tOr('social.reply_help', 'Send exactly what is in this box. Nothing else goes with it.')));
 				body.appendChild(acts);
 			}
 
@@ -1438,12 +1453,12 @@
 		foot.className = 'rail-note imp-foot';
 		var count = document.createElement('span');
 		count.id = 'improve-count';
-		count.textContent = tnOr('improve.count', _list.total,
+		count.textContent = tnOr('social.count', _list.total,
 			'{n} proposal', '{n} proposals', { n: _list.total });
 		foot.appendChild(count);
 		if (!_list.done) {
 			foot.appendChild(button('imp-note-copy', 'improve-more',
-				_list.loading ? tOr('improve.loading', 'Reading the proposals…') : tOr('improve.more', 'Show older')));
+				_list.loading ? tOr('social.loading', 'Reading the proposals…') : tOr('social.more', 'Show older')));
 		}
 		list.appendChild(foot);
 	}
@@ -1456,22 +1471,339 @@
 		drawProps();
 	}
 
-	// ── The two chips on the head ──────────────────────────────
+	// ── A REFERENCE, DRAWN AS A CHIP ───────────────────────────
+	//
+	// Four things a message may point at — a proposal, a build, a panel, a guide
+	// page — and the five rules the code has to keep. They are written out here
+	// because every one of them is a rule somebody would otherwise "simplify"
+	// away, and four of the five look like extra work until the thing they
+	// prevent happens.
+	//
+	//   R1  RESOLVED BY THE READER, NEVER RENDERED BY THE SENDER. What travels
+	//       is `{ kind, id, fallback_label }`. The title on screen is read from
+	//       the forge, this build's own stamp, this build's own panel table or
+	//       this build's own guide — by the reader, now. A title supplied by the
+	//       sender is a lie waiting to happen, because proposals get renamed and
+	//       closed, AND it is an injection surface: arbitrary text drawn as
+	//       though it were a forge record. `fallback_label` is drawn ONLY when
+	//       the resolution fails, as plain text, and framed as the sender's own
+	//       description rather than as the name of anything.
+	//   R2  NEVER DISCLOSE THE EXISTENCE OF WHAT THE READER CANNOT SEE. The nine
+	//       refusal wordings are `saying()`'s, unchanged and not re-worded here:
+	//       `absent` covers both "no such repository" and "it is private", which
+	//       is exactly why it must not be sharpened. A signed-out reader is
+	//       refused by the gateway before the forge is asked, so they are told to
+	//       sign in and NEVER that a thing was not found.
+	//   R3  A REFERENCE IS NOT A URL. There is no `href` in this file. Every chip
+	//       is a `<button>` that calls into this app.
+	//   R4  AT MOST FOUR PER MESSAGE. Enforced here as well as in the payload, so
+	//       a sender that got past the seal still cannot draw a fifth.
+	//   R5  RESOLUTION IS LAZY AND CACHED. Nothing is fetched until somebody
+	//       presses the chip open, and an answer is kept. `improve.rs` meters per
+	//       tester: ten proposal chips resolved eagerly on an inbox opening is
+	//       ten metered requests against that reader's OWN Improve allowance,
+	//       which could throttle them out of the Improve half of this panel
+	//       entirely. That is the whole reason R5 exists.
+
+	/// The four kinds. An enum, not a string test: a fifth arrives by being
+	/// added here and nowhere else, and a `kind` this build does not know draws
+	/// the sender's description and no control at all.
+	// i18n-family: ref.kind_ = proposal build panel guide
+	var REFS = { proposal: 'Proposal', build: 'Build', panel: 'Panel', guide: 'Guide' };
+
+	/// Resolutions already paid for, by `kind + ':' + id`. R5's cache. Kept for
+	/// the life of the tab: a proposal's title moving under a reader who is
+	/// looking at a chip costs nothing, and a second metered request does.
+	var _refs = {};
+
+	/// The one place a reference off the wire is read. Everything else in this
+	/// section takes the result of this and never the raw thing.
+	///
+	/// A reference is three fields and there is no fourth. Anything else on the
+	/// object is dropped here rather than ignored later, which is the difference
+	/// between a field that cannot be smuggled and one that merely is not read.
+	function cleanRef(r) {
+		if (!r || typeof r !== 'object') return null;
+		var kind = (typeof r.kind === 'string') ? r.kind : '';
+		if (!REFS[kind]) return null;
+		var id = (r.id == null) ? '' : String(r.id);
+		if (!id || id.length > 128) return null;
+		var said = (typeof r.fallback_label === 'string') ? r.fallback_label.slice(0, 200) : '';
+		return { kind: kind, id: id, said: said };
+	}
+
+	/// The references a message carries, cleaned and capped. R4.
+	function cleanRefs(list) {
+		if (!Array.isArray(list)) return [];
+		var out = [];
+		for (var i = 0; i < list.length && out.length < 4; i++) {
+			var r = cleanRef(list[i]);
+			if (r) out.push(r);
+		}
+		return out;
+	}
+
+	/// Whether this reader has a session at all. Without one `improve.rs` refuses
+	/// before the forge is asked, so a proposal chip must say "sign in" rather
+	/// than anything about whether the proposal is there.
+	function signedIn() {
+		try {
+			if (window.DaimondGateway && DaimondGateway.hasSession) return !!DaimondGateway.hasSession();
+			if (window.DaimondIdentity && DaimondIdentity.unlocked) return !!DaimondIdentity.unlocked();
+		} catch (e) { /* neither module in this build */ }
+		return true;			// not knowable here: let the refusal say it instead
+	}
+
+	/// Resolve one reference. Answers `{ ok, title, note, act }` or
+	/// `{ ok: false, why }` with `why` already a SENTENCE from `saying()`.
+	async function resolve(ref) {
+		var key = ref.kind + ':' + ref.id;
+		if (_refs[key]) return _refs[key];
+		var out;
+		if (ref.kind === 'proposal') {
+			var n = parseInt(ref.id, 10);
+			if (!(n > 0)) out = { ok: false, why: tOr('ref.unopenable', 'There is no opening this here.') };
+			else if (!signedIn()) out = { ok: false, why: tOr('ref.signin', 'Sign in to open this.') };
+			else {
+				var a = await ask(route('n=' + n), { method: 'GET' });
+				if (!a.ok) out = { ok: false, why: saying(a) };
+				else {
+					var p = cleanProp(a.data);
+					out = p
+						? {
+							ok:    true,
+							title: p.title,
+							note:  tnOr('ref.said_n', p.comments, '{n} comment, public',
+								'{n} comments, public', { n: p.comments }),
+							act:   tOr('ref.open_proposal', 'Open the proposal'),
+							go:    function () { absorb(p); show('proposals'); openProp(p.n); },
+						}
+						: { ok: false, why: saying(null) };
+				}
+			}
+		} else if (ref.kind === 'build') {
+			// Not a request: this build's own stamp is already in hand, and the
+			// reader's own is the only other half of the answer.
+			var here = (_build && _build === ref.id);
+			out = {
+				ok:    true,
+				title: tOr('ref.build', 'Build {id}', { id: ref.id }),
+				note:  here
+					? tOr('ref.build_here', 'This is the build you are on.')
+					: tOr('ref.build_other', 'You are on build {id}.', { id: _build || '?' }),
+				act:   here ? '' : tOr('ref.build_update', 'Update to it'),
+				go:    here ? null : function () {
+					try { if (window.DaimondUpdater) DaimondUpdater.check(); } catch (e) { /* no updater */ }
+				},
+			};
+		} else if (ref.kind === 'panel') {
+			// A surface, not an object. It discloses nothing and needs no
+			// resolution machinery -- but a panel this build does not have is
+			// still a chip that would always fail, so it is asked for by name.
+			var host = /^[a-z0-9_-]+$/i.test(ref.id)
+				? document.querySelector('[data-panel="' + ref.id + '"]')
+				: null;
+			out = host
+				? {
+					ok:    true,
+					title: tOr('ref.panel', 'The {name} panel',
+						{ name: host.dataset.label || ref.id }),
+					note:  '',
+					act:   tOr('ref.open_panel', 'Open it'),
+					go:    function () { try { DaimondPanels.show(ref.id); } catch (e) { /* no engine */ } },
+				}
+				: { ok: false, why: tOr('ref.unopenable', 'There is no opening this here.') };
+		} else {
+			var page = /^[a-z0-9-]+\.html(#[a-z0-9-]+)?$/i.test(ref.id) ? ref.id : '';
+			out = page
+				? {
+					ok:    true,
+					title: tOr('ref.guide', 'Guide: {page}', { page: page.replace(/\.html.*$/, '') }),
+					note:  '',
+					act:   tOr('ref.open_guide', 'Open the page'),
+					// The guide renders IN the app. "Never link out" honoured
+					// rather than dodged: this is the same route the header's own
+					// guide button takes.
+					go:    function () {
+						try { if (window.DaimondWeb && DaimondWeb.guide) DaimondWeb.guide(page); }
+						catch (e) { /* no web panel in this build */ }
+					},
+				}
+				: { ok: false, why: tOr('ref.unopenable', 'There is no opening this here.') };
+		}
+		_refs[key] = out;
+		return out;
+	}
+
+	/// Open a proposal in the Proposals view, as pressing its row does.
+	function openProp(n) {
+		_open[String(n)] = 1;
+		drawProps();
+		var row = document.querySelector('.imp-prop[data-prop="' + n + '"]');
+		if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+	}
+
+	/// What a chip is called before anything has been read.
+	///
+	/// The id is this app's own words only where it is SHAPED like an id of that
+	/// kind: a proposal number, a build stamp, a panel this build has, a guide
+	/// page. Anything else and the name is EMPTY -- the kind label beside it
+	/// already says what sort of thing this is, and repeating it there says
+	/// nothing twice. Because an id is the one field a sender fills in, and a
+	/// hundred and twenty-eight characters of their choosing sitting where a name
+	/// goes is R1 defeated by the back door.
+	function refName(ref) {
+		if (ref.kind === 'proposal') {
+			return /^[0-9]{1,9}$/.test(ref.id)
+				? tOr('ref.proposal', 'Proposal #{n}', { n: ref.id }) : '';
+		}
+		if (ref.kind === 'build') {
+			return /^[0-9a-f]{6,64}$/i.test(ref.id)
+				? tOr('ref.build', 'Build {id}', { id: ref.id }) : '';
+		}
+		if (ref.kind === 'panel') {
+			var p = /^[a-z0-9_-]+$/i.test(ref.id)
+				? document.querySelector('[data-panel="' + ref.id + '"]') : null;
+			return p ? tOr('ref.panel', 'The {name} panel', { name: p.dataset.label || ref.id }) : '';
+		}
+		return /^[a-z0-9-]+\.html(#[a-z0-9-]+)?$/i.test(ref.id)
+			? tOr('ref.guide', 'Guide: {page}', { page: ref.id.replace(/\.html.*$/, '') }) : '';
+	}
+
+	/// One chip, SHUT until somebody opens it. The shape is `attachTile`'s: a
+	/// kind, a name, a reason and a note, with `shut` meaning "there is no
+	/// opening this" -- the same thing an unresolvable reference is.
+	function refChip(ref) {
+		var box = document.createElement('div');
+		box.className = 'ref-chip';
+		box.dataset.kind = ref.kind;
+		box.dataset.ref  = ref.id;
+
+		var kind = document.createElement('span');
+		kind.className = 'ref-kind';
+		kind.textContent = tOr('ref.kind_' + ref.kind, REFS[ref.kind]);
+		box.appendChild(kind);
+
+		// What it is called BEFORE anything has been read: the kind and the id.
+		// Never the sender's words -- and never a raw id either unless it is
+		// SHAPED like an id of that kind. An id is the one field a sender fills
+		// in, so an unrecognisable one is drawn as nothing at all rather than as
+		// 128 characters of their choosing sitting where a name goes.
+		var name = document.createElement('span');
+		name.className = 'ref-name';
+		name.textContent = refName(ref);
+		box.appendChild(name);
+
+		var note = document.createElement('span');
+		note.className = 'ref-note';
+		box.appendChild(note);
+
+		var act = document.createElement('button');
+		act.type = 'button';
+		act.className = 'ref-act';
+		act.textContent = tOr('ref.expand', 'Show what this is');
+		box.appendChild(act);
+
+		var done = false;
+		act.addEventListener('click', async function () {
+			if (done) return;
+			done = true;
+			act.disabled = true;
+			note.textContent = tOr('ref.reading', 'Reading it…');
+			var r = await resolve(ref);
+			if (!r.ok) {
+				box.classList.add('shut');
+				note.textContent = r.why;
+				// R1: the sender's description, drawn only now, as plain text and
+				// said to be theirs. `textContent` and not markup, which is the
+				// other half of why a sender-supplied title is refused.
+				if (ref.said) {
+					var said = document.createElement('span');
+					said.className = 'ref-said';
+					said.textContent = tOr('ref.said', 'Described as: {text}', { text: ref.said });
+					box.appendChild(said);
+				}
+				act.remove();
+				return;
+			}
+			if (r.title) name.textContent = r.title;
+			note.textContent = r.note || '';
+			if (r.act && r.go) {
+				act.disabled = false;
+				act.textContent = r.act;
+				act.onclick = r.go;
+			} else act.remove();
+		});
+		return box;
+	}
+
+	/// Draw a message's references into `host`. What a message renderer calls.
+	function drawRefs(host, list) {
+		if (!host) return 0;
+		host.innerHTML = '';
+		var refs = cleanRefs(list);
+		refs.forEach(function (r) { host.appendChild(refChip(r)); });
+		return refs.length;
+	}
+
+	// ── The chips on the head ──────────────────────────────────
+	//
+	// Decision 13: the panel is Social. It held four things — Messages, People,
+	// Notes, Proposals — and now holds five, Share being the fifth. Two of them
+	// are this file's; the other three are containers other modules render into,
+	// and this file only shows and hides them. It defaults to Notes, which is the
+	// one that works in every build.
+	//
+	// The count is deliberately no longer in the heading. A heading that names a
+	// number is a heading that goes stale the next time somebody adds a chip, and
+	// the table below is the only honest count.
+	//
+	// The views are looked up by NAME rather than listed twice: a chip is a
+	// `data-view` on the head and an element id in the table below, and a fifth
+	// chip is one line here.
+
+	var VIEWS = {
+		messages:  'social-messages',
+		people:    'social-people',
+		// The fifth, and it cost the one line this table was built to cost.
+		// js/share.js renders into `#social-share-list` the way post.js renders
+		// into the messages list; this file shows and hides it and nothing more.
+		share:     'social-share',
+		notes:     'improve-notes',
+		proposals: 'improve-props-view',
+	};
 
 	var _view = 'notes';
 
+	/// Callbacks a lane registers to be told its own view was opened, so it can
+	/// read what it needs LAZILY. Ten chips resolved on panel open is ten
+	/// requests nobody asked for.
+	var _watch = [];
+
 	function show(view) {
-		_view = (view === 'proposals') ? 'proposals' : 'notes';
-		var n = el('improve-notes'), p = el('improve-props-view');
-		if (n) n.hidden = (_view !== 'notes');
-		if (p) p.hidden = (_view !== 'proposals');
-		document.querySelectorAll('#panel-improve .imp-chip').forEach(function (c) {
+		_view = VIEWS[view] ? view : 'notes';
+		Object.keys(VIEWS).forEach(function (v) {
+			var e = el(VIEWS[v]);
+			if (e) e.hidden = (v !== _view);
+		});
+		document.querySelectorAll('#panel-social .imp-chip').forEach(function (c) {
 			var on = c.dataset.view === _view;
 			c.classList.toggle('on', on);
 			c.setAttribute('aria-pressed', on ? 'true' : 'false');
 		});
-		if (_view === 'proposals' && !_list.read && !_list.loading) loadList(false);
-		else drawProps();
+		if (_view === 'proposals') {
+			if (!_list.read && !_list.loading) loadList(false);
+			else drawProps();
+		} else drawProps();
+		_watch.forEach(function (f) { try { f(_view); } catch (e) { /* one lane's fault is its own */ } });
+	}
+
+	/// A lane says how many rows it drew in its own view. The honest line under
+	/// the chip goes away exactly when there is something else to read there, and
+	/// comes back when there is not — so an emptied list never leaves a blank.
+	function filled(view, n) {
+		var off = el('social-' + view + '-off');
+		if (off) off.hidden = !!(n | 0);
 	}
 
 	// ── Wiring ─────────────────────────────────────────────────
@@ -1481,10 +1813,11 @@
 	function onOpen() {
 		render();
 		if (_view === 'proposals') loadList(false);
+		_watch.forEach(function (f) { try { f(_view); } catch (e) { /* as above */ } });
 	}
 
 	document.addEventListener('click', function (e) {
-		var host = e.target && e.target.closest ? e.target.closest('#panel-improve') : null;
+		var host = e.target && e.target.closest ? e.target.closest('#panel-social') : null;
 		if (!host) return;
 		var chip = e.target.closest('.imp-chip');
 		if (chip) { e.preventDefault(); show(chip.dataset.view); return; }
@@ -1552,18 +1885,66 @@
 	// built here rather than marked up, so a language change reaches none of them
 	// unless this surface is registered.
 	try {
-		DaimondI18n.surface(function () { return document.getElementById('panel-improve'); },
+		DaimondI18n.surface(function () { return document.getElementById('panel-social'); },
 			function () { render(); });
 	} catch (e) { /* no i18n in this build */ }
 
 	function start() {
-		if (!el('panel-improve')) return;		// this build has no Improve panel
+		if (!el('panel-social')) return;		// this build has no Improve panel
 		readBuild().then(function () { render(); }, function () { render(); });
 		show('notes');
 		render();
 	}
 	if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
 	else start();
+
+	/// The panel SHELL, which is what the app and the other lanes talk to.
+	///
+	/// Separate from `DaimondImprove` below on purpose: the Social panel holds
+	/// four things and this file owns two of them. A lane rendering into
+	/// `#social-messages-list` or `#social-people-list` needs the chips, the
+	/// view switch and the empty line, and has no business with a note or a
+	/// proposal.
+	window.DaimondSocial = {
+		/// The panel was shown. Every view is told, so a lane can read lazily.
+		onOpen: onOpen,
+		/// Switch to one of `messages`, `people`, `notes`, `proposals`.
+		show:   show,
+		/// Show the panel AND switch to a view. What a reference chip presses.
+		open:   function (view) {
+			try { if (window.DaimondPanels) DaimondPanels.show('social'); } catch (e) { /* no engine */ }
+			show(view);
+		},
+		/// Which view is showing.
+		view:   function () { return _view; },
+		/// A lane drew `n` rows in `view`; the honest empty line follows.
+		filled: filled,
+		/// Be told when a view is opened, by name. Called on every switch and on
+		/// every panel open, so a lane refreshes when somebody looks.
+		watch:  function (fn) { if (typeof fn === 'function') _watch.push(fn); },
+	};
+
+	/// References, for whatever renders a message. Kept here rather than in the
+	/// module that draws messages, because a proposal reference resolves through
+	/// THIS file's `route()`, `ask()` and `saying()` — the nine refusal wordings
+	/// exist once, and a second copy of them is a second copy to get wrong.
+	window.DaimondRefs = {
+		/// Draw the references a message carries into `host`; answers how many
+		/// were drawn, which is at most four.
+		draw:  drawRefs,
+		/// One chip, for a caller placing them itself.
+		chip:  refChip,
+		/// What a wire reference reduces to, for a verifier and for a sender
+		/// that wants to know what will survive. Everything else is dropped.
+		clean: cleanRefs,
+		/// Resolve one, for a verifier. Cached exactly as the chip's own press is.
+		resolve: function (r) {
+			var c = cleanRef(r);
+			return c ? resolve(c) : Promise.resolve({ ok: false, why: '' });
+		},
+		/// Forget what has been resolved, for a test that wants a cold cache.
+		forget: function () { _refs = {}; },
+	};
 
 	window.DaimondImprove = {
 		onOpen:   onOpen,

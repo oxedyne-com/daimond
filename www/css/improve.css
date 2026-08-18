@@ -1,4 +1,8 @@
-/* improve.css — the Improve panel.
+/* improve.css — the Social panel.
+
+   Named for the file that draws most of it. The panel is `social` and holds
+   four chips; Notes and Proposals are everything below the "Writing a note"
+   heading, and Messages and People are the two shells at the top.
 
    Everything here is stated in the palette's own variables, never in a fixed
    colour, so the panel is legible on all eleven palettes and follows a reader
@@ -39,8 +43,206 @@
    `.ic` either way. */
 .imp-info { width: 22px; height: 22px; padding: 0; flex: none; }
 
+/* THE HEAD WRAPS, AND NO CHIP SHRINKS. Four chips beside a heading, an
+   information mark and a closer do not fit a 390px dock, and `.railhead` is a
+   flex ROW whose heading takes `flex: 1` — so the chips were squeezed below
+   their own labels and "Messages" and "People" were drawn one on top of the
+   other, each clipped, on a phone. Screenshot: dev/shots/social-phone.png,
+   2026-08-17.
+
+   Scoped to this panel, because every other head in the app carries one control
+   or two and none of them needs a second line. The heading keeps `flex: 1` so
+   it still pushes the chips right when there IS room, but may not shrink; the
+   chips take a line of their own when there is not. */
+#panel-social .railhead { flex-wrap: wrap; row-gap: 2px; }
+#panel-social .railhead > span:first-child { flex: 1 0 auto; }
+.imp-chips { flex-wrap: wrap; row-gap: 3px; min-width: 0; }
+/* A chip is its label. Below that width it is not a shorter chip, it is an
+   unreadable one — the same rule this file keeps for the line under the note
+   box, one level down. */
+.imp-chip { flex: none; white-space: nowrap; }
+
 .imp-view { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .imp-view[hidden] { display: none; }
+
+/* ── Messages and People ────────────────────────────────────── */
+
+/* What each of the two shells says while it is a shell. `.rail-note` is the
+   app's own "there is nothing here" paragraph, used unchanged so this reads as
+   the same kind of sentence as "No chats yet." It is HIDDEN by the lane that
+   fills the list, not removed, so an emptied list gets its sentence back. */
+.imp-off { padding: 12px 10px; }
+.imp-off[hidden] { display: none; }
+
+.imp-list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0 8px; }
+
+/* ── A private message ──────────────────────────────────────── */
+
+/* js/post.js draws this and owns no stylesheet, so it is dressed here, beside
+   the panel it lives in. Everything is in the palette's own variables, as the
+   top of this file requires.
+
+   THE ONE RULE THAT IS NOT DECORATION: a message carries NO OFFICIAL SHAPE.
+   There is no seal, no badge, no accent-coloured frame and no icon on any row,
+   because the only thing that could earn one is a verified signature and this
+   panel draws every message the same. A stranger's first message and the
+   operator's fifth look alike, and that is deliberate -- an app that dresses
+   one of them up is an app somebody can dress themselves up in. */
+
+.post-tray, .post-list, .post-notices { padding: 2px 10px; }
+.post-tray h3 {
+	margin: 8px 0 4px; font-size: var(--fs-3xs); letter-spacing: 0.05em;
+	text-transform: uppercase; color: var(--text-muted); font-weight: 600;
+}
+
+.post-msg, .post-req, .post-notice {
+	padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.post-msg:last-child, .post-req:last-child { border-bottom: 0; }
+
+/* Your own words, set apart by INDENT rather than by colour: a sent message and
+   a received one are the same kind of thing and colour would rank them. */
+.post-out { padding-left: 14px; border-left: 2px solid var(--border-strong); }
+
+.post-who { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.post-name { font-size: var(--fs-xs); color: var(--text-primary); overflow-wrap: anywhere; }
+/* The fingerprint, which is the part that cannot be chosen. Monospaced so two
+   of them can be compared by eye, and quiet so it does not read as a title. */
+.post-fp {
+	font-family: var(--font-mono); font-size: var(--fs-3xs);
+	color: var(--text-muted); overflow-wrap: anywhere;
+}
+
+/* What somebody wrote, whole, with their own line breaks. Not clipped: this is
+   the message, and a message shortened to fit a column is a message the reader
+   has to go somewhere else to finish. */
+.post-body {
+	margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere;
+	font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5;
+}
+.post-body:empty { display: none; }
+
+/* It arrived and it will not open. Said, rather than left as a gap -- and the
+   reason underneath it, because "something went wrong" that names nothing is
+   what sends somebody to the console. */
+.post-bad { margin: 4px 0 0; font-size: var(--fs-xs); color: var(--warn); }
+.post-bad-why {
+	margin: 2px 0 0; font-size: var(--fs-3xs-2xs); color: var(--text-muted);
+	overflow-wrap: anywhere;
+}
+
+.post-refs { margin-top: 4px; }
+
+.post-acts { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.post-btn {
+	background: none; border: 1px solid var(--border-strong); border-radius: 999px;
+	color: var(--text-secondary); cursor: pointer;
+	font-size: var(--fs-3xs-2xs); line-height: 1.7; padding: 0 10px;
+}
+.post-btn:hover { border-color: var(--accent); color: var(--accent-text); }
+.post-btn:disabled { opacity: 0.5; cursor: default; }
+.post-btn:disabled:hover { border-color: var(--border-strong); color: var(--text-secondary); }
+
+/* The relay's own row: no author, no reply control, its own section. It is not
+   in the message stream and must not read as though it were, so it is set in
+   the muted colour every other piece of app furniture uses. */
+.post-notice p {
+	margin: 0; font-size: var(--fs-3xs-2xs); color: var(--text-muted);
+	line-height: 1.45;
+}
+
+/* ── The box, and what it says about who can read it ────────── */
+
+.post-write {
+	display: flex; flex-direction: column; gap: 6px;
+	padding: 9px 10px; border-top: 1px solid var(--border);
+	background: var(--bg-secondary);
+}
+.post-to {
+	background: var(--bg-tertiary); color: var(--text-primary);
+	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+	padding: 4px 6px; font: inherit; font-size: var(--fs-xs);
+}
+/* WHO CAN READ THIS, above the button, where the hand passes on its way to it
+   -- the same placement and the same reasoning as `.imp-public` above. It wraps
+   and is read in full at any dock width, because by this file's own rule a fact
+   the user is meant to act on may not be ellipsised. */
+.post-audience {
+	margin: 0; font-size: var(--fs-3xs-2xs); color: var(--text-secondary);
+	line-height: 1.45; overflow-wrap: anywhere;
+}
+.post-text {
+	width: 100%; box-sizing: border-box; min-height: 72px; resize: vertical;
+	background: var(--bg-tertiary); color: var(--text-primary);
+	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+	padding: 7px 8px; font: inherit; font-size: var(--fs-sm); line-height: 1.45;
+}
+.post-text:focus { outline: none; border-color: var(--accent); }
+.post-text::placeholder { color: var(--text-muted); }
+/* Named again on the button. A control labelled plain "Send" in two places that
+   do opposite things is the defect the wording exists to prevent, so this one
+   is no louder than the public one beside it and says which channel it is. */
+.post-send { align-self: flex-start; font-size: var(--fs-2xs-xs); line-height: 1.8; padding: 0 11px; }
+.post-note { margin: 0; min-height: 1.2em; font-size: var(--fs-3xs-2xs); color: var(--accent-text); }
+.post-note:empty { min-height: 0; }
+
+/* Nothing here yet, and nobody to write to. Two different sentences: the first
+   is an empty list, the second is a stage a new account is in and says what to
+   do next rather than disabling a control with no explanation. */
+.post-empty, .post-nobody {
+	margin: 12px 0; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.5;
+}
+.post-nobody { margin: 0; }
+
+/* ── A reference, drawn as a chip ───────────────────────────── */
+
+/* NOT a link, and drawn so that it does not look like one: no underline, no
+   link colour, a bordered box with a button in it. A reference is navigation
+   inside this app, and a chip that looked like a URL would be a chip somebody
+   tries to copy out.
+
+   It arrives SHUT. Nothing is read until the button is pressed -- ten proposal
+   chips resolved on opening an inbox is ten metered requests against the
+   reader's own allowance -- so the first state is a kind, an id and one
+   control. */
+.ref-chip {
+	display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 7px;
+	margin: 5px 0; padding: 6px 8px;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	font-size: var(--fs-3xs-2xs);
+}
+.ref-kind {
+	flex: none; font-size: var(--fs-3xs); letter-spacing: 0.05em;
+	text-transform: uppercase; color: var(--text-muted);
+}
+.ref-name { flex: 1; min-width: 0; color: var(--text-primary); overflow-wrap: anywhere; }
+.ref-note { flex-basis: 100%; color: var(--text-muted); overflow-wrap: anywhere; }
+.ref-act {
+	flex: none;
+	background: none; border: 1px solid var(--border-strong); border-radius: 999px;
+	color: var(--text-secondary); cursor: pointer;
+	font-size: var(--fs-3xs-2xs); line-height: 1.6; padding: 0 8px;
+}
+.ref-act:hover { border-color: var(--accent); color: var(--accent-text); }
+.ref-act:disabled { opacity: 0.5; cursor: default; }
+.ref-act:disabled:hover { border-color: var(--border-strong); color: var(--text-secondary); }
+
+/* There is no opening this. The same word `attachTile` uses for an attachment
+   that cannot be reached and for a trashed Diamond, so the three read alike.
+   The reason is TEXT and not only a tooltip: a tooltip is unavailable to a
+   touch, and a chip that is silently inert on a phone is the failure this whole
+   state exists to end. */
+.ref-chip.shut { opacity: 0.75; border-style: dashed; }
+.ref-chip.shut .ref-name { color: var(--text-muted); }
+/* The sender's own description, drawn only where the resolution failed and said
+   to be theirs. It is the one thing on this chip that did not come from this
+   device, so it is set apart and never styled as a title. */
+.ref-said {
+	flex-basis: 100%; color: var(--text-secondary); font-style: italic;
+	overflow-wrap: anywhere;
+}
 
 /* ── Writing a note ─────────────────────────────────────────── */
 
@@ -188,3 +390,72 @@
    a build and this vote is not in it — and a control that looked counted when
    it was not would be the panel telling a lie it could easily avoid. */
 .imp-vote.held { border-style: dashed; }
+
+/* ============================================================
+   The Share view — www/js/share.js
+   ------------------------------------------------------------
+   Two blocks in the order a person meets them: taking a share in
+   needs nothing but the file, and sending one needs a Diamond and
+   somebody to send it to. Its own `shr-` prefix rather than
+   borrowing the `post-` furniture above, because these belong to
+   a different module and a reader tracing a class should land in
+   the file that draws it.
+   ============================================================ */
+
+.shr-block {
+	padding: 9px 10px;
+	border-bottom: 1px solid var(--border);
+}
+.shr-block:last-child { border-bottom: 0; }
+
+.shr-head {
+	margin: 0 0 4px;
+	font-size: var(--fs-xs); font-weight: 600;
+	color: var(--text-primary);
+}
+
+/* What the control is for, and what it will not do without asking. Quiet, and
+   never trimmed: the sentence about a page being somebody else's program is the
+   whole of the consent design being legible before anybody presses anything. */
+.shr-note {
+	margin: 0 0 7px;
+	font-size: var(--fs-3xs-2xs); line-height: 1.45;
+	color: var(--text-muted);
+}
+
+.shr-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* The pill the whole social panel wears, spent from the same tokens as
+   `.post-btn` so a control here reads as a control there. */
+.shr-btn {
+	background: none; border: 1px solid var(--border-strong); border-radius: 999px;
+	color: var(--text-secondary); cursor: pointer;
+	font-size: var(--fs-3xs-2xs); line-height: 1.7; padding: 0 10px;
+}
+.shr-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-text); }
+.shr-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.shr-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* Who it goes to. The skin gives a form input room to type and this is a
+   toolbar; the same collision that made the file viewer's edit boxes 43px tall
+   in a row of 22px buttons, so the height is stated here too. */
+.imp-list .shr-who {
+	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	color: var(--text-primary); border-radius: var(--radius-sm);
+	padding: 1px 6px; height: auto; min-height: 0;
+	font-size: var(--fs-3xs-2xs); line-height: 1.7;
+	max-width: 60%;
+}
+.imp-list .shr-who:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* What happened. Never clipped and never a spinner: a sentence saying a file
+   was saved and must now be given to somebody is an instruction, and half of
+   one is no use. */
+.shr-say {
+	margin: 7px 0 0;
+	font-size: var(--fs-3xs-2xs); line-height: 1.5;
+	color: var(--text-secondary);
+	white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.shr-say[hidden] { display: none; }
+.shr-warn { color: var(--warn); }

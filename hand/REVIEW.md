@@ -985,19 +985,88 @@ at fence-build time, no ordering hole — but treating a command's own output as
 tainting input makes the network rule fire on the second command of every
 ordinary build session. A design decision, not a slip, and it needs revisiting.
 
-**OPEN — a recommendation, for the user to decide.** The change lives
-entirely in `src/tools.rs`, which the agent that examined this does not own, and
-it narrows or widens a security boundary either way, so nothing was altered.
+**CLOSED in the engine, and it needs one patch to `www/js/daimond.js` before a
+user sees any of it.** Remedies 1 and 2 are built; remedy 3 was explicitly NOT
+authorised and has not been touched. What was OPEN here is now decided: the user
+authorised remedy 2 as well as remedy 1, and the paragraph below that said
+remedy 1 "is the only one being done" was true when it was written and is not
+true now.
 
-*Exactly what happens now.* `Tool::run` builds the fence with
+*What is done.* The network is no longer taken away in silence. A turn that has
+read outside content is ASKED, once, naming the command; the answer holds for
+the rest of that turn, whichever way it went; and a command that ends up without
+the network is TOLD so, outside the untrusted envelope, in words that say the
+project is not at fault. Nothing was loosened: no answer, no network. A
+dispatched worker is not asked at all -- there is nobody to ask -- and keeps
+exactly the fence it had.
+
+*What is NOT done, and must be said plainly.* The question is put through
+`window.__daimondEgressAllowed`, which lives in `www/js/daimond.js`, and that
+file belongs to another lane. Its gate switches on `req.tool`, and it does not
+yet know the name `run_net`. It therefore falls through to the URL work below,
+where the answer it gives is `allow` -- a command line resolves against the page
+as a same-origin URL, and same-origin is waved through -- so the engine does not
+take `allow` for an answer to this question at all. It takes `allow-net`, which
+only the branch written for this question can say, and everything else means no.
+Today that means the network is withheld exactly as it always was, plus the
+sentence explaining it, and **no user is asked anything: remedy 2 is built and
+unreachable until the branch lands.** The patch is about fifteen lines and the
+three strings it needs (`permmode.net_title`, `permmode.net_body`,
+`permmode.net_ok`) are already in all eight locale files.
+
+*Where it lives.* `NetStep`, `net_step`, `net_needs_consent`, `net_verdict` and
+`RUN_NET_TOOL` in `src/tools.rs`; the answer on `TurnState::net_consent`, read
+and written through `ToolContext::net_consent` / `set_net_consent`;
+`Tool::run` composing the four lines that ask and record; `NO_NET_NOTE` and
+`push_no_net_refusal` saying what happened; and `prompts::machine_note` telling
+the model which of the four states its turn is in.
+
+*What "for the turn" means, exactly.* The answer is kept on `TurnState`, which
+is the same object the taint is kept on, so it lasts precisely as long as the
+condition that provoked the question. In the browser a chat's `ToolContext` is
+built once per chat and never reset, so for the user's own chat "the turn" is
+the life of that chat's app instance -- the same scope `tainted` already has. A
+dispatched worker gets a fresh context, so a worker's turn really is one turn. A
+yes therefore covers more than one message in a chat, and that is the same
+breadth as the taint it answers; it is written down here because "for the turn"
+would otherwise be read as "for one message".
+
+*Where the question sits in the order of checks.* Everything that refuses a
+command for what it is comes first -- no hand, no root, a hand that cannot fence,
+a `cwd` out of the workspace or in browser storage, and bounds that describe
+nowhere to run, which is settled off a fence built with the network withheld
+because the roots do not depend on it. The question comes after all of those and
+BEFORE `git_step`, which is the one place the "ask last" rule is given up on
+purpose: a push refused for having no network is this defect in its most acute
+form, so the question has to precede it. The cost is that a `--force` push, which
+`git_guard` was going to refuse anyway, can cost one dialog -- and not a wasted
+one, since the answer covers every later command in the turn.
+
+*What this does NOT cover.* `wasm::pty` builds its own fence for an interactive
+terminal, out of the same taint and the same rung, and it still withdraws the
+network without asking. That is deliberate and not an oversight: the person
+typing into a terminal is present by definition, sees the failure in front of
+them, and can open a fresh session -- which is the same argument `pty.rs`
+already makes for not putting `Mode::Ask`'s question to a terminal. If it ever
+should ask, it is the same three parts and one more call.
+
+*A wart, recorded rather than hidden.* On the Ask rung a tainted turn's first
+command puts two dialogs in a row: the network question, then "Run this
+command?". They are different questions and both are needed, and the first is
+asked once per turn while the second is asked every time, so it settles after
+one command. Folding them into one dialog needs the page half and was not done.
+
+*Exactly what used to happen* (line numbers as they were when this was found).
+`Tool::run` built the fence with
 `fence_spec(&ctx.no_write, &machine, ctx.is_tainted())` (`tools.rs:2766`) and
 `fence_spec` sets `net: !tainted` (`:904`). Every `run` ends by returning
 `ctx.wrap_untrusted(&origin, &s)` (`:2915`), and `ToolContext::wrap_untrusted`
 sets `tainted = true` (`:1507`). The flag is one-way within a turn. So the first
-command that *runs* costs the turn its network, whatever it was and whether or
-not it printed anything; a command that is *refused* returns before the wrap and
+command that *ran* cost the turn its network, whatever it was and whether or not
+it printed anything; a command that is *refused* returns before the wrap and
 does not. The same flag also arms `egress_check`, so `web_fetch` and `web_open`
-start asking for consent from that point on.
+start asking for consent from that point on -- which is untouched by any of this
+and is still true.
 
 *What it costs.* `cargo fetch` then `cargo build`; `npm install` then `npm test`;
 `git fetch` then `git pull` — in each pair the second command runs with no
@@ -1013,53 +1082,97 @@ an argv like any other. Marking it untrusted is the same judgement `shell`
 already makes and should not be undone. The defect is not the mark — it is what
 the mark is wired to, and that it is silent.
 
-*Recommendation, in the order it should be done.*
+*The three remedies, in the order they were to be done, and what became of each.*
 
-1. **Say it.** ACCEPTED, and it is the only one being done. This loosens nothing,
-   and it turns an unattributable build failure into a fact the model can report.
-   The exact change follows, since `src/tools.rs` is not this agent's to edit.
+1. **Say it.** DONE. It loosens nothing, and it turns an unattributable build
+   failure into a fact the model can report.
 
-   *Where.* `Tool::run`'s `wasm32` arm already reads the flag that decides the
-   fence:
-
-   ```rust
-   let fence = fence_spec(&ctx.no_write, &machine, ctx.is_tainted());
-   ```
-
-   Capture it there — `let no_net = ctx.is_tainted();` on the line above — and
-   pass it to `run_result`, which composes the text the model reads. Reading
-   `ctx.is_tainted()` inside `run_result` happens to give the same answer today,
-   because nothing between the two calls taints the turn and `run_result`'s own
-   `wrap_untrusted` is its last statement — but that is an accident of ordering
-   and the next edit to that function breaks it silently. Pass the value.
+   *Where.* The flag is captured in `Tool::run` beside the fence -- `let no_net =
+   !fence.net;` -- and passed to `run_result` rather than read again there.
+   Asking the context a second time gives the same answer today only because
+   nothing between the two calls taints the turn, which is an accident of
+   ordering that the next edit breaks silently. It is now read off the fence
+   itself, so what the model is told is what the command actually ran with.
 
    *What.* One more arm on the `tail` that already carries `[exit code: 0]` and
    `[timed out; the command was killed]`, appended after it, outside the
    untrusted envelope because this is the app speaking and not the command:
-
-   ```rust
-   if no_net {
-       s.push_str(
-           "\n[no network: this turn has already read content from outside your \
-           workspace, so every command in it runs with the network refused. A \
-           fetch, install or clone fails for that reason and not because the \
-           project is broken — say so rather than retrying, and ask in a new \
-           message for anything that needs to reach out.]");
-   }
-   ```
+   `NO_NET_NOTE` in `src/tools.rs`. It now names the reason a turn has no network
+   -- the user declined, or there was nobody to ask -- because after remedy 2
+   "every command in it runs with the network refused" is no longer the whole
+   truth. `push_no_net_refusal` says the same thing for the one command whose
+   whole purpose is the network.
 
    *Why unconditionally rather than only on failure.* Deciding which failures are
    network failures means matching prose from `cargo`, `npm`, `git` and every
    other toolchain, which is the guessing this is meant to end. The cost is one
    line of noise on a command that did not need the network; the benefit is that
    the one that did needs no guessing at all.
-2. **Ask rather than withdraw.** Put the `run` case through the consent path
-   `egress_check` already has: on a tainted turn, a command that would have had
-   the network prompts once, naming the command, and the answer holds for the
-   turn. The review's own text says the gate is sound; it is the silence that is
-   wrong, and a user watching `cargo build` will say yes while a user watching an
-   unexplained `curl` will not.
-3. **Grade the taint** — only with the user's explicit agreement. Split
+
+   *Proved by* `test_the_no_network_note_is_true_when_said_and_outside_the_
+   envelope` (the note is outside the envelope, after the exit code, and absent
+   from a networked run) and `test_a_refused_command_is_not_also_told_about_the_
+   network`.
+2. **Ask rather than withdraw.** DONE in the engine, and waiting on the page
+   half (see above). The `run` case goes through the door `egress_check` already
+   uses -- the same `Verdict`, the same global, the same three parts -- and not a
+   second consent mechanism beside it. On a tainted turn a command that would
+   have had the network prompts once, naming the command and the folder, and the
+   answer holds for the turn. The review's own text says the gate is sound; it is
+   the silence that is wrong, and a user watching `cargo build` will say yes
+   while a user watching an unexplained `curl` will not.
+
+   *What is proved, and how.* The call site is `Tool::run`'s wasm arm, which no
+   test can reach, so it was reduced to four lines over pure functions and those
+   are held by native tests in `tools.rs`: `net_step` decides, `net_verdict`
+   turns silence into a no, and `ToolContext` remembers. Each test was seen
+   failing first, against a `net_step` that behaved as the code it replaced.
+   Three of them are the ones that matter. **Holds for the turn**: commands two
+   and three of the same turn are handed a closure that would say NO, and still
+   come back with the network the user restored -- so it cannot pass by nobody
+   being consulted. **A new turn asks again**: a fresh context has no answer and
+   is asked. **A no is a no**: a declined turn runs its command inside the same
+   fence with `net:false`, is not asked again, and gets the note; and a worker
+   with a consent forged into its state is still refused, because the reason is
+   the actor and not the answer. `test_a_yes_moves_nothing_but_the_network`
+   holds the user's answer to the same clause a rung is held to: the whole wire
+   fence differs in one field and no other.
+
+   *The patch the page half needs*, for whoever owns `www/js/daimond.js`. It goes
+   in `egressAllowed`, beside the `req.tool === 'run'` branch and for the same
+   reason that one is there: the "url" is a command line, which the URL work
+   further down cannot read as an address. It remembers nothing -- the engine
+   remembers, on the turn's own state, which is what makes one answer cover the
+   turn and a new turn ask again.
+
+   ```js
+   if (req.tool === 'run_net') {
+       var ncmd = String(req.url || '');
+       if (!ncmd.trim()) return 'deny';
+       var shownNet = ncmd.length > 300 ? (ncmd.slice(0, 300) + '…') : ncmd;
+       var okNet = await confirmDialog(
+           t('permmode.net_body', { cmd: shownNet, cwd: String(req.detail || '').slice(0, 300) }),
+           t('permmode.net_ok'),
+           { title: t('permmode.net_title'), danger: true });
+       // 'allow-net', NOT 'allow' — see below. Never remembered here.
+       return okNet ? 'allow-net' : 'deny';
+   }
+   ```
+
+   **A yes to this question is the word `allow-net` and nothing else**, and that
+   is not fussiness. `egressHost` resolves its argument against `location.href`,
+   so a command line -- which has no scheme -- resolves as a RELATIVE URL whose
+   host is our own host, and the same-origin shortcut a few lines down answers
+   `allow` outright. A `run_net` question reaching that shortcut, because the
+   branch is missing or sits below it, would therefore hand every tainted turn
+   the network with nobody asked. That is exactly how §7's egress guarantee was
+   voided once already, by the same shortcut, for `web_search`. So the engine's
+   edge (`wasm::web::egress_allowed_net`) takes a yes only in a word no other
+   path through that function can say: an old bundle, a missing branch and the
+   shortcut all say `allow` or `deny`, and all three mean no here.
+
+3. **Grade the taint** — NOT DONE, and deliberately: the user did not
+   authorise it, and it is theirs to authorise. Split
    `TurnState::tainted` into *outside content* (a fetched page, a message, an
    attachment) and *machine output* (a command's own stdout), and let
    `fence_spec` read the first while the envelope and `egress_check` continue to

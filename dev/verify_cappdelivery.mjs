@@ -6,7 +6,7 @@
 // a furnished Diamond, and this drives that. What is asserted:
 //
 //   * the ask is answered with a dialog in APP chrome, not silently obeyed;
-//   * saying yes leaves a Diamond called "Life log" with the template's page in
+//   * saying yes leaves a Diamond called "Log Life" with the template's page in
 //     it, and opens it;
 //   * asking twice does not make a second one -- the entries are in the first;
 //   * a message from anywhere but the guide frame is ignored;
@@ -281,14 +281,14 @@ try {
 	await pressInGuide(p);
 	const said = await answer(p, false);
 	console.log('  dialog: ' + said);
-	check(/Life log/.test(said), 'the ask is answered with a dialog naming what it will make');
-	check(!(await diamonds(p)).some(d => d.name === 'Life log'), 'saying no makes nothing');
+	check(/Log Life/.test(said), 'the ask is answered with a dialog naming what it will make');
+	check(!(await diamonds(p)).some(d => d.name === 'Log Life'), 'saying no makes nothing');
 
 	// ── Accepted.
 	await pressInGuide(p);
 	await answer(p, true);
-	const made = (await diamonds(p)).filter(d => d.name === 'Life log');
-	check(made.length === 1, 'saying yes makes exactly one Life log', made.length + ' found');
+	const made = (await diamonds(p)).filter(d => d.name === 'Log Life');
+	check(made.length === 1, 'saying yes makes exactly one Log Life', made.length + ' found');
 
 	const id = made.length ? made[0].id : '';
 	if (id) {
@@ -312,7 +312,7 @@ try {
 		frame: !!document.querySelector('#crystal-frame-wrap'),
 	}));
 	console.log('  showing: ' + JSON.stringify(showing));
-	check(/Life log/.test(showing.name), 'and it is the Diamond on screen');
+	check(/Log Life/.test(showing.name), 'and it is the Diamond on screen');
 	check(showing.frame, 'with its page mounted');
 	await p.waitForTimeout(1200);
 	await p.screenshot({ path: scratch('capp-made.png') });
@@ -324,7 +324,7 @@ try {
 	const again = await answer(p, true);
 	console.log('  second dialog: ' + again);
 	check(/already have/i.test(again), 'the second ask offers to OPEN the one that exists');
-	check((await diamonds(p)).filter(d => d.name === 'Life log').length === 1,
+	check((await diamonds(p)).filter(d => d.name === 'Log Life').length === 1,
 		'and there is still exactly one');
 
 	// ══ 4. The delivery left a record of exactly what went in ══════════
@@ -413,7 +413,7 @@ try {
 
 	// ══ 7. An instance with NO record is not silently rewritten ════════
 	//
-	// The owner's own Life log is this case: made before capps carried a version,
+	// The owner's own Log Life is this case: made before capps carried a version,
 	// so nothing is known about what was delivered and no file can be shown to be
 	// ours. The only honest move is to ask.
 	const LEGACY = real('crystal.html') + '\n<!-- the user\'s own page -->\n';

@@ -127,6 +127,23 @@ needs_input() {                 # name -> prints why it cannot run, or nothing
 				return
 			}
 			[ -f "$DAIMOND_BACKUP" ] || echo "DAIMOND_BACKUP=$DAIMOND_BACKUP is not a file" ;;
+		# ASKED OF THE VERIFIER, not answered here. `verify_conformance` measures a
+		# LIVE Oregami forge, and where that forge is meant to be is resolved from
+		# ORE_FORGE or gateway/app.jdat by the same lines that will do the asking.
+		# Deriving the address a second time in this file is the staleness this
+		# script's header spends four paragraphs arguing against, so `--why-not`
+		# answers instead: silence if it can run, one sentence if it cannot.
+		#
+		# It was a FAIL on the 2026-08-17 gate -- one line among fifty-six reds,
+		# indistinguishable from a forge that had answered wrongly, when no forge was
+		# running at all. Pointing it at `dev/mock_forge.mjs` was the other way out
+		# and is wrong: the mock was written FROM the contract, so a conformance run
+		# against it proves the contract agrees with itself. That file's own header
+		# names this -- "31 passed" was a true sentence about the wrong repository --
+		# and a suite that answered it with a second wrong repository would have
+		# learned nothing from the day that produced the file.
+		verify_conformance)
+			node dev/verify_conformance.mjs --why-not 2>/dev/null ;;
 	esac
 }
 
@@ -239,7 +256,54 @@ can_fail() {                    # name -> 0 if it can express a failure
 	grep -qE 'process\.exit|process\.exitCode|throw new |\bassert[.(]' "dev/$1.mjs" 2>/dev/null
 }
 
-pass=0; fail=0; skip=0; failed=""; skipped=""
+pass=0; fail=0; skip=0; flight=0; failed=""; skipped=""; inflight=""
+
+# ── Verifiers whose failures are KNOWN, ASSIGNED and IN FLIGHT ──────────
+#
+# One entry per line: the verifier, HOW MANY of its checks are expected to fail,
+# and who owns the fixes. Nothing else may be in here, and nothing goes in without
+# a name attached to the work.
+#
+# THE COUNT IS WHAT RETIRES THE ENTRY, and it is the only reason this list is
+# allowed to exist at all. This file's own header argues against hand-kept lists
+# because they go stale silently -- and every mechanism above it therefore asks the
+# verifier instead. This one cannot: whether a red is known work in flight or a
+# regression is a fact about a decision somebody made this week, not a property a
+# verifier can declare about itself, and a marker living inside the verifier would
+# be one an author could quietly widen to keep their own suite green.
+#
+# So the staleness is closed from the other end. A declared verifier whose failing
+# count does not EXACTLY match is a hard FAIL, in both directions:
+#
+#   MORE failing than declared -> a new defect has landed behind the known ones,
+#                                 and the entry must not absorb it;
+#   FEWER failing than declared -> fixes have landed, so the entry is now hiding
+#                                 nothing and must shrink or go.
+#
+# That makes an entry self-retiring: the gate goes red the moment the work it
+# describes is done, which is the correct pressure and the opposite of the usual
+# failure mode. An entry can only stay quiet while it is telling the exact truth.
+#
+# It is NOT a pass. It is counted apart, printed apart, and named in the summary,
+# because a suite in which a known red and a green look the same has given up the
+# only thing it was for.
+IN_FLIGHT="
+"
+
+# How many failures are declared in flight for a verifier, or '' if none are.
+declared_flight() {             # name -> prints the count, or nothing
+	echo "$IN_FLIGHT" | awk -v n="$1" '$1 == n { print $2; exit }'
+}
+
+# The failing count a verifier reported about ITSELF, from its own summary line.
+#
+# Read from the verifier's output rather than from its exit code, because an exit
+# code is one bit and the whole point here is the number. A verifier that prints no
+# such line cannot be declared in flight, and `run_one` fails it rather than
+# guessing -- an unparseable declaration is an unchecked one.
+reported_failures() {           # log file -> prints the count, or nothing
+	grep -oE '[0-9]+ failed' "$1" | tail -1 | grep -oE '^[0-9]+'
+}
 : > "$LOG"
 # Truncated ONCE here, appended to thereafter: phase 2 stops and restarts the
 # gateway to take the store lock for a grant, and what the first process said on
@@ -302,11 +366,52 @@ run_one() {
 		say "      whatever it prints, so its green line means only that it ran. Last line was: $tail"
 		say "      full output: $SCRATCH/out/$name.log"
 	elif [ $code -eq 0 ]; then
-		pass=$((pass+1)); say "PASS  $name  — $tail"
+		# A verifier declared in flight that has gone GREEN is an entry to delete,
+		# and it is said here rather than at the end: the work is done and the
+		# declaration is now a lie about the tree in the quiet direction.
+		local want_ok; want_ok=$(declared_flight "$name")
+		if [ -n "$want_ok" ]; then
+			fail=$((fail+1)); failed="$failed $name"
+			say "FAIL  $name  — IN_FLIGHT declares $want_ok failing and it now passes CLEAN."
+			say "      The fixes have landed. Delete its line from IN_FLIGHT in dev/run_all.sh;"
+			say "      until then this red is the entry, not the verifier."
+		else
+			pass=$((pass+1)); say "PASS  $name  — $tail"
+		fi
 	else
-		fail=$((fail+1)); failed="$failed $name"
-		say "FAIL  $name (exit $code)  — $tail"
-		say "      full output: $SCRATCH/out/$name.log"
+		local want; want=$(declared_flight "$name")
+		local got;  got=$(reported_failures "$SCRATCH/out/$name.log")
+		if [ -z "$want" ]; then
+			fail=$((fail+1)); failed="$failed $name"
+			say "FAIL  $name (exit $code)  — $tail"
+			say "      full output: $SCRATCH/out/$name.log"
+		elif [ -z "$got" ]; then
+			# Declared, and the declaration cannot be checked. That is worse than an
+			# undeclared red, because it is a red somebody has arranged to be quiet
+			# about on the strength of a number nobody can read.
+			fail=$((fail+1)); failed="$failed $name"
+			say "FAIL  $name (exit $code)  — declared in flight with $want failing, but it printed"
+			say "      no '<n> failed' line, so the declaration cannot be checked. A red that is"
+			say "      excused by an unreadable number is not excused."
+			say "      full output: $SCRATCH/out/$name.log"
+		elif [ "$got" != "$want" ]; then
+			fail=$((fail+1)); failed="$failed $name"
+			if [ "$got" -gt "$want" ]; then
+				say "FAIL  $name (exit $code)  — $got failing, but only $want are declared in flight."
+				say "      $((got - want)) more than the known work. A new defect has landed behind it,"
+				say "      and the IN_FLIGHT entry must not absorb it."
+			else
+				say "FAIL  $name (exit $code)  — $got failing, and $want are declared in flight."
+				say "      $((want - got)) of them are fixed. Shrink the IN_FLIGHT entry in"
+				say "      dev/run_all.sh to $got, or delete it."
+			fi
+			say "      full output: $SCRATCH/out/$name.log"
+		else
+			flight=$((flight+1)); inflight="$inflight $name"
+			say "FLIGHT $name  — $got failing, exactly the $want declared in flight. NOT A PASS."
+			say "      $(echo "$IN_FLIGHT" | awk -v n="$name" '$1 == n { $1=""; $2=""; sub(/^  /, ""); print }')"
+			say "      full output: $SCRATCH/out/$name.log"
+		fi
 	fi
 }
 
@@ -414,9 +519,21 @@ static_one() {                  # name, command…
 		say "      full output: $SCRATCH/out/$name.log"
 	fi
 }
+# `--frozen`, because a suite ASSERTS and does not write. Without it `i18ncheck`
+# rewrites `dev/results/i18n-coverage.json` as it runs, and under `dev/gate.sh`
+# it would rewrite the copy in the gate's own worktree -- a file nobody reads,
+# leaving the committed map exactly as stale as it was while the run went green.
+# The map is what tells a runtime reporter a by-design hole from a real one, so a
+# stale one retires findings. Frozen, it fails and says which half moved.
+#
+# THE COST, so nobody meets it as a surprise: any edit that adds or removes a
+# `t()` call site moves a count in the map, and the gate then goes red until
+# `node dev/i18ncheck.mjs` is run in the main tree and the map committed. That is
+# one command, it is named in the failure, and it is the price of the map being
+# true rather than merely present.
 if [ $# -eq 0 ]; then
 	say "── Phase 0 (static, no browser)"
-	static_one i18ncheck    node dev/i18ncheck.mjs
+	static_one i18ncheck    node dev/i18ncheck.mjs --frozen
 	static_one i18nfallback node dev/i18nfallback.mjs --quiet
 fi
 
@@ -469,8 +586,24 @@ if [ -n "$PHASE2" ]; then
 			: > "$PROV_LOG"
 			ACCT=$(node dev/provision.mjs "$COMPOSE_PROFILE" compose 2>>"$PROV_LOG" | tail -1)
 			if [ -n "$ACCT" ]; then
-				# daimond_ctl takes the store's exclusive lock, so the gateway
-				# stands down for the grant and comes back after it.
+				# The gateway stands down for the grant, and NOT because of a
+				# lock: there is no cross-process locking in o3db. One was added
+				# to fe2o3 on 2026-08-16 and reverted three hours later, the
+				# diagnosis behind it having been wrong -- data files are opened
+				# for append and a live file number is now claimed with
+				# `create_new`, so two processes writing one store is the design
+				# rather than a hazard.
+				#
+				# The real reason is VISIBILITY. o3db holds its key index in
+				# memory, per process, built when the store is opened, and a
+				# lookup that misses it answers "not found" without going to disk
+				# (`bot_cache.rs::read`). So an entitlement `daimond_ctl` appends
+				# underneath a running gateway is in the files and in nobody's
+				# index: every `has_entitlement` in the live process would answer
+				# no, exactly as though the grant had failed, and the entitled
+				# verifiers would go red for a reason that is not theirs.
+				# Restarting is what rebuilds the index, so it is how the grant
+				# reaches the gateway.
 				stop_gateway
 				GRANT_OK=yes
 				( cd "$GW_CWD" && "$ROOT/$CTL_BIN" grant "$ACCT" email ) >>"$PROV_LOG" 2>&1 || GRANT_OK=no
@@ -530,7 +663,21 @@ if [ -n "$PHASE2" ]; then
 fi
 
 say ""
-say "SUITE: $pass passed, $fail failed, $skip skipped."
-[ -n "$failed" ]  && say "  failed: $failed"
-[ -n "$skipped" ] && say "  skipped:$skipped"
+# In flight is named on the SUITE line itself, not tucked underneath it. A reader
+# who takes in one line has to see that some of this run was red on purpose;
+# putting the figure only in a detail line below is how "42 passed" comes to stand
+# for a suite that never went green.
+if [ $flight -gt 0 ]; then
+	say "SUITE: $pass passed, $fail failed, $skip skipped, $flight IN FLIGHT (red, known, assigned)."
+else
+	say "SUITE: $pass passed, $fail failed, $skip skipped."
+fi
+[ -n "$failed" ]   && say "  failed: $failed"
+[ -n "$skipped" ]  && say "  skipped:$skipped"
+[ -n "$inflight" ] && {
+	say "  in flight:$inflight"
+	say "  These are NOT passes. Each is red by declaration in dev/run_all.sh's IN_FLIGHT,"
+	say "  with the exact count of its failures; the entry fails the suite the moment that"
+	say "  count changes in either direction, so none of them can outlive its defects."
+}
 [ $fail -eq 0 ]

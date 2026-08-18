@@ -2290,18 +2290,21 @@
 
 		// The other half of the link UI says when a link changed.
 		document.addEventListener('daimond-links-changed', refreshIfVisible);
-		// A Diamond's own colours are chosen elsewhere in the app, and neither of
-		// these signals is only about colour -- so both go through the compare in
-		// [refreshColours] rather than straight to a redraw.
+		// TWO names, and both are live -- please do not fold them into one. A
+		// Diamond changing is a broad signal that merely MIGHT have moved a colour
+		// (dispatched at `daimond.js:25139`); the colour picker knows perfectly well
+		// that it did (`daimond.js:10427`). Neither is only about colour, so both go
+		// through the compare in [refreshColours] rather than straight to a redraw,
+		// and a picture that repaints only when something else happens to redraw it
+		// is the kind of fault nobody notices until they are demonstrating.
 		document.addEventListener('daimond-diamond-changed', refreshColours);
-		document.addEventListener('daimond-tile-prefs-changed', refreshColours);
-		// The one the colour pickers actually fire. It is named separately because
-		// the dialog knows it changed a COLOUR, where the two above are broader
-		// signals that merely might have. Both names are listened for rather than
-		// one renamed to the other: this pair was written in two places at once,
-		// and a picture that only repaints when something else happens to redraw it
-		// is exactly the kind of fault nobody notices until they are demonstrating.
 		document.addEventListener('daimond-tile-colour-changed', refreshColours);
+		// A THIRD name, `daimond-tile-prefs-changed`, was listened for here and was
+		// dispatched by nothing in `www/`, `src/`, `ext/` or `dev/`. It went on
+		// 2026-08-15. It defended nothing -- an event nobody fires cannot repaint a
+		// picture -- and it read as though a producer existed, which two reachability
+		// passes duly reported as a route. Whoever writes that producer should add
+		// the line back in the same commit, where it costs one line and is true.
 		// Another tab's Diamond mutation. OPFS fires nothing across tabs; this
 		// nonce in localStorage is the only signal there is.
 		window.addEventListener('storage', function (e) {

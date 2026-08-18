@@ -1,8 +1,11 @@
 // probe_readmiss.mjs — what the file door says when a path is not there.
 //
-// `Pending.sweep` may only drop a tile when the answer is "that file is gone",
-// never when it is "the door did not answer" — so it has to be able to tell the
-// two apart. This asks the door directly.
+// It was written for `Pending.sweep`, which might only drop a tile when the
+// answer was "that file is gone" and never when it was "the door did not
+// answer". THAT SWEEP IS GONE, deleted 2026-08-15 with the draft kind it served.
+// The probe stands because the distinction does: anything that deletes on a read
+// has to tell an absence from a refusal, and this asks the door directly what it
+// says for each.
 import { open } from './harness.mjs';
 
 const s = await open({ name: 'readmiss', connect: false, defaults: false });

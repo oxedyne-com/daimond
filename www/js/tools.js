@@ -107,11 +107,25 @@
 	// the registry does not report contributes nothing, which is how `dispatch` and
 	// `graph` sit here ready for the day `builtin_tools()` reports them (today it reads
 	// `Tool::browser()`, which holds neither) without this file claiming they are present.
+	//
+	// THE OFFICE TRIO IS IN `files` AND NOT IN A ROW OF ITS OWN. `sheet_read`, `doc_edit`
+	// and `sheet_write` are the file tools said in the only vocabulary those formats leave:
+	// a .docx is a compressed archive, so `file_edit` has no bytes to match a phrase
+	// against and `doc_edit` is what does, and a workbook's useful unit is a rectangle of
+	// cells rather than the file. The REACH is identical — the same workspace, the same
+	// paths, and `write_targets` in src/tools.rs puts them through `file_write`'s own door,
+	// so the bounds, a skill's allow-list and the absolute-path refusal all apply unchanged.
+	// A row of their own would offer the reader a thing to grant or withhold separately
+	// when there is none: whoever has `files` can already overwrite that same .docx whole
+	// and delete it. Every other row here differs from `files` in what it REACHES — your
+	// cloud, your screen, your machine, the web, a worker, the graph — and none of them
+	// splits on a file's format, which is the only thing these three do.
 
 	var CAPS = [
 		{ id: 'files',    fns: ['file_read', 'file_write', 'file_edit', 'file_list',
 		                        'file_search', 'file_glob', 'file_delete', 'file_move',
-		                        'dir_create'] },
+		                        'dir_create',
+		                        'sheet_read', 'doc_edit', 'sheet_write'] },
 		{ id: 'cloud',    fns: ['file_fetch'] },
 		{ id: 'work',     fns: ['artefact_add'] },
 		{ id: 'show',     fns: ['file_show'] },

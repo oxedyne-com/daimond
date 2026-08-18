@@ -423,7 +423,7 @@ dependencies = [
 [[package]]
 name = "dat_map"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "oxedyne_fe2o3_core",
  "proc-macro2",
@@ -490,6 +490,7 @@ checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
+ "merlin",
  "rand_core 0.6.4",
  "serde",
  "sha2",
@@ -844,6 +845,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "merlin"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58c38e2799fc0978b65dfff8023ec7843e2330bb462f19198840b34b6582397d"
+dependencies = [
+ "byteorder",
+ "keccak",
+ "rand_core 0.6.4",
+ "zeroize",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -882,7 +895,7 @@ dependencies = [
 [[package]]
 name = "new"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -974,6 +987,7 @@ dependencies = [
  "getrandom 0.2.17",
  "js-sys",
  "oxedyne_fe2o3_core",
+ "oxedyne_fe2o3_file",
  "oxedyne_fe2o3_graphics",
  "oxedyne_fe2o3_hash",
  "oxedyne_fe2o3_iop_crypto",
@@ -982,22 +996,26 @@ dependencies = [
  "oxedyne_fe2o3_jdat",
  "oxedyne_fe2o3_net",
  "oxedyne_fe2o3_o3db_sync",
+ "oxedyne_fe2o3_sbj",
  "oxedyne_fe2o3_stds",
  "oxedyne_fe2o3_syntax",
  "oxedyne_fe2o3_text",
+ "ring",
  "rustls",
  "rustls-pemfile",
+ "rustls-pki-types",
  "tokio",
  "tokio-rustls",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webpki-roots",
 ]
 
 [[package]]
 name = "oxedyne_fe2o3_bot"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_jdat",
@@ -1006,7 +1024,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_core"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "base64 0.13.1",
  "flate2",
@@ -1026,7 +1044,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_crypto"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "aes-gcm",
  "arrayref",
@@ -1060,7 +1078,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_data"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_jdat",
@@ -1068,9 +1086,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxedyne_fe2o3_file"
+version = "0.5.0"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
+dependencies = [
+ "flate2",
+ "oxedyne_fe2o3_core",
+ "oxedyne_fe2o3_data",
+ "oxedyne_fe2o3_text",
+]
+
+[[package]]
 name = "oxedyne_fe2o3_geom"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "oxedyne_fe2o3_core",
 ]
@@ -1078,7 +1107,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_graphics"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "flate2",
  "oxedyne_fe2o3_core",
@@ -1087,7 +1116,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_hash"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "base64 0.13.1",
  "crc32fast",
@@ -1104,7 +1133,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_iop_crypto"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_namex",
@@ -1113,7 +1142,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_iop_db"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_crypto",
@@ -1128,7 +1157,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_iop_hash"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_namex",
@@ -1137,7 +1166,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_jdat"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "bigdecimal",
  "dat_map",
@@ -1152,7 +1181,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_namex"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "base64 0.13.1",
  "num-derive",
@@ -1167,7 +1196,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_net"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "base64 0.13.1",
  "chrono",
@@ -1196,7 +1225,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_num"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "bigdecimal",
  "num-bigint",
@@ -1206,7 +1235,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_o3db_sync"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "crossbeam-utils",
  "hostname",
@@ -1237,9 +1266,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxedyne_fe2o3_sbj"
+version = "0.5.0"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
+dependencies = [
+ "oxedyne_fe2o3_core",
+ "oxedyne_fe2o3_crypto",
+ "oxedyne_fe2o3_hash",
+ "oxedyne_fe2o3_iop_crypto",
+ "oxedyne_fe2o3_iop_hash",
+ "oxedyne_fe2o3_jdat",
+ "oxedyne_fe2o3_text",
+]
+
+[[package]]
 name = "oxedyne_fe2o3_stds"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "oxedyne_fe2o3_core",
  "strum 0.25.0",
@@ -1248,7 +1291,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_syntax"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "levenshtein",
  "oxedyne_fe2o3_core",
@@ -1262,7 +1305,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_test"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "oxedyne_fe2o3_core",
  "rand 0.8.7",
@@ -1271,7 +1314,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_text"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_geom",
@@ -1281,7 +1324,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_units"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b0599ca871c68d696b2ad8f845ac94444dbf0b15#b0599ca871c68d696b2ad8f845ac94444dbf0b15"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=c9c98ab442339547507f5e6e526d8dfd4d423695#c9c98ab442339547507f5e6e526d8dfd4d423695"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_num",
@@ -1662,9 +1705,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.42"
+version = "0.23.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c54fcab019b409d04215d3a17cb438fd7fbf192ee61461f20f4fe18704bc138"
+checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -1691,6 +1734,7 @@ version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96"
 dependencies = [
+ "web-time",
  "zeroize",
 ]
 
@@ -2147,6 +2191,25 @@ checksum = "8622dcb61c0bcc9fffa6938bed81210af2da9a7e4a1a834b2e37a59b6dfb6141"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "web-time"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]

@@ -345,6 +345,52 @@ async function allowHand(ms = 20000) {
 	return null;
 }
 
+// ── The turn's network question ─────────────────────────────────────
+//
+// A chat that has read a command's output is TAINTED from that moment, so the
+// engine asks before the NEXT command may reach the network (`hand/REVIEW.md`
+// §1.13, `Tool::run`'s `NetStep::Ask`) and holds the turn on a modal until
+// somebody answers. Nothing in this file answered it. So from the second
+// command on, every turn stopped on that dialog until `chat`'s own 60-second
+// timeout expired, `chat` returned with the turn still running, and the check
+// below read the tool result of THE COMMAND BEFORE — one whole command out of
+// step. That is the whole of what "a non-zero exit reaches the model as itself"
+// was reporting on 2026-08-17: not an exit code carried wrongly, but the exit
+// code of the previous run, read a minute too early. The turn after it lost its
+// user message as well, to a click that landed on the modal's backdrop, so the
+// gap case measured `make`'s output under `patchy`'s configuration.
+//
+// The answer is NO, which is the fence every run below has always been measured
+// against: they carry the engine's "no network" note, and a yes would silently
+// change what each of them ran with.
+const NET_TITLE = 'Let this turn reach the network?';   // permmode.net_title
+let netAsked = 0;
+let netStop  = false;
+let netWatch = null;
+
+/// Say no to the network question for as long as this run lasts, and count how
+/// often it was put.
+async function answerNet(page) {
+	while (!netStop) {
+		const asked = await page.evaluate((title) => {
+			for (const card of document.querySelectorAll('.dlg-card')) {
+				const h = card.querySelector('h2');
+				if (h && h.textContent.indexOf(title) >= 0) return true;
+			}
+			return false;
+		}, NET_TITLE).catch(() => false);
+		// PRESSED, rather than resolved from inside the page: the button is what
+		// a user has, and a question answered by reaching past it proves nothing
+		// about the one they are actually shown.
+		if (asked) {
+			const said = await page.click('.dlg-card .dlg-cancel', { timeout: 2000 })
+				.then(() => true, () => false);
+			if (said) netAsked++;
+		}
+		await sleep(200);
+	}
+}
+
 try {
 	await sleep(500);
 
@@ -365,6 +411,7 @@ try {
 	}
 
 	await waits({ grace: 4000, slack: 2000, hello: 15000 });
+	netWatch = answerNet(page);
 
 	// The chat every turn below is sent to, and therefore the chat whose workspace
 	// decides where its commands may run. Opened before anything is asked of it,
@@ -482,6 +529,8 @@ try {
 	register({ chunks: 1, exit: 3 });
 	clearMockLog();
 	await chat(s, '@tool run {"argv":["make"],"timeout_ms":20000}', { timeout: 60000 });
+	check('a turn that has read a command\'s output is asked before the next one may reach the network',
+		netAsked >= 1, 'the question was put ' + netAsked + ' time(s)');
 	r = toolResult();
 	check('a non-zero exit reaches the model as itself',
 		/\[exit code: 3\]/.test(r) && !/exit code: 0/.test(r), r.slice(-160));
@@ -642,6 +691,8 @@ try {
 	const noise = s.errs.filter((e) => !/favicon|ERR_ABORTED|502|Bad Gateway/i.test(e));
 	check('the page threw nothing along the way', noise.length === 0, noise.slice(0, 3).join(' | '));
 } finally {
+	netStop = true;
+	if (netWatch) await netWatch.catch(() => {});
 	await b.close().catch(() => {});
 	for (const p of started) { try { p.kill(); } catch (e) { /* already gone */ } }
 	try { fs.rmSync(CFG); } catch (e) { /* never written */ }

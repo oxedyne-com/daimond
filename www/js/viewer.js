@@ -53,6 +53,25 @@
 // file is. This machine has been driven out of memory three times; a viewer
 // that reads a 900 MB video into wasm memory would be the fourth.
 //
+// AND THERE ARE TWO DOORS OUT OF IT, added because the app could already write
+// and edit an Office document and no part of the browser could ask it to.
+// `office_write_docx` and `office_write_left` had been exported from the wasm
+// with no caller in `www/js/` at all, so a capability shipped and nobody could
+// reach it -- a failure this project has had three times.
+//
+//   * `fv-save` hands the bytes over as a file, on the app's own <a download>
+//     route. It is the bytes CURRENTLY HELD, so it means the same thing before
+//     and after an edit, and nothing it does touches the file on disk.
+//   * `fv-edit` opens `fv-editrow` and applies a SURGICAL edit -- find and
+//     replace in a text document, one cell in a spreadsheet -- through
+//     `office_edit_doc` / `office_edit_sheet`, which rewrite the runs they were
+//     asked to and copy every other part of the archive across byte for byte.
+//     Round-tripping a stranger's document through Markdown to change one word
+//     is data loss with a friendly face.
+//
+// A DECK GETS NEITHER, and the Markdown tier gets the write. Both of those are
+// in `EDIT_DOOR` and `WRITE_AS`, with the reasons beside them.
+//
 //     window.DaimondViewer = { probe, verdict, show, close, at, opener,
 //                              editable, KIND_HANDLERS }
 //     window.DaimondDoc    = { show }          // what the DAIMON calls
@@ -103,6 +122,12 @@
 	var CAP_TEXT  = 2 * 1024 * 1024;
 	/// How much reaches the JS heap at once on the way to the blob store.
 	var CHUNK     = 4 * 1024 * 1024;
+	/// The most of an Office document that is ever unpacked. It is a ZIP, so its
+	/// parts inflate several times over and the ceiling that matters is on what
+	/// comes out; this is the ceiling on what goes in, and it matches
+	/// `OFFICE_READ_MAX` in `src/tools.rs` so the panel and the model agree about
+	/// which documents can be read.
+	var CAP_OFFICE = 20 * 1024 * 1024;
 	/// One page of the hex dump. Nothing more than this is ever held.
 	var PAGE      = 4096;
 	/// Rows of a table, and nodes of a JSON tree, before it is cut and said.
@@ -130,6 +155,32 @@
 		Mp4: 'video',	Webm: 'video',	Matroska: 'video',	Avi: 'video',
 		QuickTime: 'video',
 		Pdf: 'doc',	Html: 'frame',
+		// 1b — the browser cannot decode it and we can. A Word document is a ZIP
+		// of XML, and `Media` has named it `Docx` correctly all along while this
+		// table had no entry for it -- so somebody's CV opened as a PAGED HEX
+		// DUMP under a header saying "Word document". That was a defect and not a
+		// missing feature, which is why it is fixed ahead of the rest.
+		//
+		// `Xlsx` and `Pptx` are deliberately NOT here yet. A handler that opened
+		// and then apologised would be worse than the dump, which at least lets a
+		// person see the bytes; they arrive when they can be read.
+		Docx: 'office',
+		// A spreadsheet, once it could genuinely be read. It was deliberately
+		// absent while it could not: a handler that opens and then apologises is
+		// worse than the dump, which at least lets a person see the bytes and
+		// know that nothing was interpreted for them.
+		Xlsx: 'sheet',
+		// The OpenDocument pair, which reach the SAME two tiers: what a reader
+		// wants out of a text document is the same thing whichever vocabulary it
+		// was written in, and that is the whole point of the neutral models
+		// underneath. `Media` tells them apart from their own opening bytes, so a
+		// file somebody renamed still lands on the right one.
+		//
+		// `Odp` and `Pptx` are deliberately absent. Both can be READ, but a deck
+		// wants a tier that draws slides rather than paragraphs, and that tier
+		// needs wording no translation file has yet. A handler that opened and
+		// then apologised would be worse than the dump.
+		Odt: 'office',	Ods: 'sheet',
 		// 2 — text-shaped structure.
 		Json: 'json',	Csv: 'table',	Tsv: 'table',	Markdown: 'markdown',
 		Text: 'text',
@@ -149,7 +200,8 @@
 	/// tells the model what will happen -- so it is written once. The two saying
 	/// different things would have the model promise a video over a hex dump.
 	function wholeFile(h) {
-		return h === 'image' || h === 'audio' || h === 'video' || h === 'frame' || h === 'doc';
+		return h === 'image' || h === 'audio' || h === 'video' || h === 'frame'
+			|| h === 'doc' || h === 'office' || h === 'sheet';
 	}
 
 	/// Which handler `info` resolves to.
@@ -567,6 +619,8 @@
 			case 'json':	return await json(body, path, info, opts, tOr, mine);
 			case 'table':	return await table(body, path, info, opts, tOr, mine);
 			case 'markdown':	return await markdown(body, path, info, opts, tOr, mine);
+			case 'office':	return await office(body, path, info, opts, tOr, mine, resume);
+			case 'sheet':	return await sheet(body, path, info, opts, tOr, mine, resume);
 			case 'text':	return await plain(body, path, info, opts, tOr, mine);
 			default:	return await hex(body, path, info, opts, tOr, mine, resume);
 		}
@@ -679,16 +733,730 @@
 	/// button svg` whole. That is correct and is not loosened here: the file being
 	/// rendered may have been written by an agent, and this panel is inside our
 	/// origin.
+	/// AND IT IS WHERE MARKDOWN BECOMES A REAL DOCUMENT. `office_write` turns this
+	/// text into the bytes of a `.docx` or a `.odt`, which is the one thing a
+	/// person cannot do for themselves and the app could already do for them: the
+	/// writer had no caller in `www/js/` at all, so the capability existed and
+	/// nobody could ask for it.
+	///
+	/// The model does not emit document XML and there is no tool that lets it. It
+	/// writes Markdown, which it does well, and the conversion from there is
+	/// deterministic code -- which removes the failure class rather than mitigating
+	/// it. The same is true of a person: this is the door for both.
 	async function markdown(body, path, info, opts, tOr, mine) {
 		var got = await headText(path, info.size, opts);
 		if (mine !== epoch) return;
+		var m = await mod(opts);
+		if (mine !== epoch) return;
 		if (got.capped) body.appendChild(cappedLine(info.size, CAP_TEXT, tOr));
+		// A CAPPED READ IS NOT WRITTEN OUT. The first two megabytes of a file are
+		// readable text and are NOT a shorter document: what would land in
+		// somebody's downloads is a document missing its end, with nothing about it
+		// to say so. So the controls are absent and the reason is said.
+		if (got.capped) {
+			body.appendChild(el('p', 'fv-note', tOr('fileview.save_capped',
+				'Only the start of this file is on screen, so it is not written out as a '
+				+ 'document: what came back would be a document missing its end.')));
+		} else {
+			saveAsRow(body, m, got.text, path, tOr);
+		}
 		// `md-body` is render.css's own hook for a block of rendered markdown; it
 		// carries the link colours, so a document's links look like the app's.
 		var box = el('div', 'fv-md md-body');
 		if (window.DaimondRender && DaimondRender.md) box.innerHTML = DaimondRender.md(got.text);
 		else box.appendChild(el('pre', 'fv-plain', got.text));
 		body.appendChild(box);
+	}
+
+	/// One button per format Markdown may be written out as.
+	///
+	/// It SAYS WHAT THE DOCUMENT DOES NOT CARRY, beside the file it just handed
+	/// over. `office_write_left` is asked before the write and the answer is shown
+	/// after it, which is a deliberate order and not the one this comment first
+	/// claimed: it said "before it writes one", and the code has always written the
+	/// file and then said. A picture referenced by a Markdown file does not travel
+	/// into the document, and the person asked for a document, so they get one and
+	/// are told what is missing from it -- rather than being stopped by a question
+	/// about a picture they may not care about. If that trade is ever reconsidered,
+	/// the note moves above the `handOver` and this paragraph changes with it.
+	function saveAsRow(body, m, md, path, tOr) {
+		var row = el('div', 'fv-bar');
+		var say = el('p', 'fv-warn');
+		say.hidden = true;
+
+		// ONE CONTROL AND A LIST, not one button per format. Six buttons is about
+		// 1400px of chrome standing above a document that is 380px wide on a phone,
+		// and it would have wanted six labels in eight languages. A picker wants
+		// none: every option is named through `fileview.fmt.<variant>`, the open
+		// family the panel's header already reads, so a locale that has translated
+		// "Word document" once has translated it here too.
+		var pick = el('select');
+		pick.setAttribute('data-media-pick', '1');
+		var drew = 0;
+		for (var i = 0; i < WRITE_AS.length; i++) {
+			var as = WRITE_AS[i];
+			if (!canWrite(m, as.media)) continue;
+			drew++;
+			var o = el('option', null, tOr('fileview.fmt.' + as.media, as.en));
+			o.value = as.media;
+			pick.appendChild(o);
+		}
+		// Nothing to offer: no picker, no button, no apology. A build whose writer
+		// is absent says nothing rather than drawing a control that cannot work.
+		if (!drew) return;
+
+		var save = el('button', 'fv-btn fv-save', tOr('fileview.save_as', 'Save as a document'));
+		save.type = 'button';
+		save.title = tOr('fileview.save_as_help',
+			'Write this text out as a real document and save it to your own device. '
+			+ 'The file here is not changed.');
+		save.addEventListener('click', function () {
+			var media = pick.value;
+			var as = null;
+			for (var j = 0; j < WRITE_AS.length; j++) {
+				if (WRITE_AS[j].media === media) { as = WRITE_AS[j]; break; }
+			}
+			if (!as) return;
+			// Asked BEFORE the write, answered AFTER it. See the note on `markdown`
+			// above for why that order is deliberate.
+			var left = leftLine(m, md, as.media, tOr);
+			try {
+				var out = writeAs(m, md, as.media);
+				if (!out || !out.length) {
+					throw new Error(tOr('fileview.edit_nothing',
+						'the editor returned no document'));
+				}
+				// `application/octet-stream`, and the SUFFIX is what names it. A type
+				// per format would be a second table of media types to keep in step
+				// with `Media`, and the download's name is what the operating system
+				// opens a document by anyway.
+				handOver(out, 'application/octet-stream', stemOf(baseName(path)) + as.ext);
+				say.className = 'fv-note';
+				say.textContent = left;
+				say.hidden = !left;
+			} catch (e) {
+				// A FORMAT THAT REFUSED IS NAMED. `office_write` takes six and a
+				// person may pick one whose writer objects to this particular prose --
+				// a spreadsheet out of text holding no table, say. "This could not be
+				// saved" alone would leave them pressing the same button again.
+				say.className = 'fv-warn';
+				say.textContent = tOr('fileview.save_as_failed',
+					'This could not be saved as {fmt}: {why}',
+					{ fmt: tOr('fileview.fmt.' + as.media, as.en),
+					  why: (e && e.message) ? e.message : String(e) });
+				say.hidden = false;
+			}
+		});
+
+		// The button carries the words and the picker carries the same words as its
+		// accessible name, rather than a visible label repeating the button beside
+		// it. One phrase, one key, and nothing on screen said twice.
+		pick.setAttribute('aria-label', tOr('fileview.save_as', 'Save as a document'));
+		row.appendChild(pick);
+		row.appendChild(save);
+		body.appendChild(row);
+		body.appendChild(say);
+	}
+
+	/// The whole of a file as one `Uint8Array`, assembled a chunk at a time.
+	///
+	/// Unlike `wholeBlob`, this has to end up contiguous, because what it feeds
+	/// is a wasm function that takes a slice. It is therefore only ever used
+	/// where a hard ceiling is already in force -- see `CAP_OFFICE`.
+	async function wholeBytes(path, size, opts) {
+		var out = new Uint8Array(size), off = 0;
+		while (off < size) {
+			var u8 = await readBytes(path, off, Math.min(CHUNK, size - off), opts);
+			if (!u8.length) break;              // the file shrank under us; stop rather than spin
+			out.set(u8, off);
+			off += u8.length;
+		}
+		return off === size ? out : out.subarray(0, off);
+	}
+
+	/// What a reading view did not draw, as a sentence in the reader's language.
+	///
+	/// The wasm hands over a kind and a count for each -- `[{kind:'chart',n:1}]` --
+	/// and never a finished phrase, because a phrase built in Rust is English a
+	/// translation pass cannot reach, and this file holds none of that.
+	///
+	/// The number and the kind are BOTH the information. "4 things are not drawn:
+	/// 3 text boxes, 1 chart" tells a reader whether to go and open the file
+	/// properly; "some content is not shown" tells them only that this viewer
+	/// cannot be trusted.
+	function undrawnLine(undrawn, tOr) {
+		if (!undrawn || !undrawn.length) return '';
+		var total = 0, parts = [];
+		for (var i = 0; i < undrawn.length; i++) {
+			var it = undrawn[i];
+			total += it.n;
+			// One key per kind, and the count is the key's own argument, so a
+			// language that pluralises differently does it in the translation file
+			// rather than here.
+			parts.push(tOr('fileview.undrawn_' + it.kind, DEFAULT_UNDRAWN[it.kind]
+				|| '{n} of something', { n: it.n }));
+		}
+		return tOr('fileview.office_undrawn',
+			'{total} things are not drawn: {parts}.',
+			{ total: total, parts: parts.join(', ') });
+	}
+
+	/// What a document written from this Markdown will NOT carry, as a sentence in
+	/// the reader's language, or '' when it carries everything.
+	///
+	/// THE SAME ARRANGEMENT AS `undrawnLine`, AND THAT IS THE POINT. It used to be
+	/// a finished English sentence built in Rust and printed verbatim -- the one
+	/// piece of English in this panel a translation pass could not reach, in a file
+	/// whose own header says it holds none. `office_write_left` now hands back
+	/// `[{kind, n, names}]` and the wording is composed here, per locale, exactly
+	/// as the reading view's does.
+	///
+	/// `names` is the one thing `undrawn` has no equivalent for: a document being
+	/// READ has no source names for what it could not draw, and Markdown does --
+	/// they are paths the author wrote. So an image can be named rather than
+	/// counted, which is the difference between "1 image is not carried" and
+	/// knowing it was the one picture that mattered.
+	///
+	/// `media` matters because the answer differs by format: a spreadsheet written
+	/// from prose has nothing to say, and a deck can leave speaker's notes behind,
+	/// which the old English never mentioned at all.
+	function leftLine(m, md, media, tOr) {
+		if (typeof m.office_write_left !== 'function') return '';
+		var left = null;
+		try {
+			left = m.office_write_left(md, media);
+		} catch (e) {
+			// A writer that cannot say what it would leave out is not a reason to
+			// refuse the write; it is a reason to say nothing about the loss.
+			return '';
+		}
+		if (!left || !left.length) return '';
+		var parts = [];
+		for (var i = 0; i < left.length; i++) {
+			var it = left[i] || {};
+			var names = (it.names && it.names.length) ? it.names.join(', ') : '';
+			parts.push(names
+				? tOr('fileview.left_' + it.kind + '_named',
+					DEFAULT_LEFT_NAMED[it.kind] || '{n} of something: {names}',
+					{ n: it.n, names: names })
+				: tOr('fileview.left_' + it.kind, DEFAULT_LEFT[it.kind]
+					|| '{n} of something', { n: it.n }));
+		}
+		return tOr('fileview.write_left',
+			'Not everything in this text reaches the document: {parts}.',
+			{ parts: parts.join(', ') });
+	}
+
+	/// The English each kind of loss falls back to. Two forms per kind, because a
+	/// count with the sources named is a different sentence from a bare count and
+	/// not the same one with a list bolted on.
+	var DEFAULT_LEFT = {
+		image:	'{n} image(s)',
+		notes:	'{n} slide(s) of speaker\u2019s notes',
+	};
+	var DEFAULT_LEFT_NAMED = {
+		image:	'{n} image(s): {names}',
+		notes:	'{n} slide(s) of speaker\u2019s notes: {names}',
+	};
+
+	/// The English each kind falls back to, which is what ships until the
+	/// translation files carry the keys above.
+	var DEFAULT_UNDRAWN = {
+		image:	'{n} image(s)',
+		chart:	'{n} chart(s)',
+		diagram:	'{n} diagram(s)',
+		textbox:	'{n} text box(es)',
+		object:	'{n} embedded object(s)',
+		equation:	'{n} equation(s)',
+		footnote:	'{n} footnote(s)',
+		endnote:	'{n} endnote(s)',
+		comment:	'{n} comment(s)',
+	};
+
+	// ── Handing a document back to the user ─────────────────────────
+	//
+	// THE ROUTE IS THE APP'S OWN AND IS NOT INVENTED HERE. Every other place
+	// Daimond gives somebody a file -- the preview panel's ⤓, the document
+	// panel's, the chat backup -- builds one `Blob`, mints an object URL, clicks a
+	// synthetic `<a download>` and revokes the URL straight after. This is the
+	// same three lines, so there is one handover in the app to change rather than
+	// two to keep in step.
+	//
+	// It deliberately does NOT go through `mint`. Those URLs are revoked by
+	// `close`, and `show` calls `close` before it draws, so a download holding a
+	// minted URL would be cancelled by the next file somebody opened -- silently,
+	// with a file of zero bytes in their downloads folder.
+
+	function baseName(path) { return String(path).split('/').pop() || 'file'; }
+
+	/// A file name with its extension taken off.
+	function stemOf(name) { return String(name).replace(/\.[^./]+$/, '') || String(name); }
+
+	/// Give `bytes` to the user as a file called `name`.
+	function handOver(bytes, mime, name) {
+		var a = document.createElement('a');
+		a.href = URL.createObjectURL(
+			new Blob([bytes], { type: mime || 'application/octet-stream' }));
+		a.download = name;
+		a.rel = 'noopener';
+		a.click();
+		URL.revokeObjectURL(a.href);
+	}
+
+	/// Which formats may be edited, and which wasm door does it.
+	///
+	/// NEITHER PRESENTATION FORMAT IS HERE, and that is the contract's decision
+	/// rather than an omission: a slide is a position on a canvas, so an edit that
+	/// changes the words without knowing the geometry puts text over other text.
+	/// Nothing below asks about `Pptx` or `Odp` by name -- absence from this table
+	/// is the whole of how the control fails to appear.
+	var EDIT_DOOR = {
+		Docx:	'office_edit_doc',	Odt:	'office_edit_doc',
+		Xlsx:	'office_edit_sheet',	Ods:	'office_edit_sheet',
+	};
+
+	/// The formats a Markdown file may be written out AS, and the library's own
+	/// English for each.
+	///
+	/// This is where the writer in `src/wasm/office.rs` reaches a person. It had
+	/// no caller in `www/js/` at all: the app could turn Markdown into a real
+	/// document and nobody could ask it to.
+	///
+	/// ALL SIX, because the writer writes all six and a person who wants an `.odp`
+	/// should not be told to go and convert one somewhere else. What each format
+	/// makes of the same prose differs and the difference is not a loss: the text
+	/// documents take the whole thing, the decks split it at its headings into
+	/// slides, and the spreadsheets take its TABLES, one sheet each.
+	///
+	/// THE NAMES COME FROM THE `fileview.fmt.` FAMILY, which is the same open
+	/// extension point the panel's own header reads and which needs no new key in
+	/// any locale: a translation that wants to name a PowerPoint in the reader's
+	/// language adds `fileview.fmt.Pptx` and it is picked up here too. The English
+	/// beside each is `Media::label`'s own, copied from
+	/// `fe2o3_stds::media` so the picker and the header say one thing.
+	var WRITE_AS = [
+		{ media: 'Docx',	ext: '.docx',	en: 'Word document' },
+		{ media: 'Odt',	ext: '.odt',	en: 'OpenDocument text' },
+		{ media: 'Xlsx',	ext: '.xlsx',	en: 'Excel spreadsheet' },
+		{ media: 'Ods',	ext: '.ods',	en: 'OpenDocument spreadsheet' },
+		{ media: 'Pptx',	ext: '.pptx',	en: 'PowerPoint presentation' },
+		{ media: 'Odp',	ext: '.odp',	en: 'OpenDocument presentation' },
+	];
+
+	/// Write `md` out as the bytes of `media`, or nothing where this build cannot.
+	///
+	/// `office_write(md, media)` is the one door. `office_write_docx(md)` is the
+	/// older single-format one and is still exported, so it stands in where the
+	/// general one is not in the bundle yet -- a Word document being the case that
+	/// existed before either name did.
+	function writeAs(m, md, media) {
+		if (typeof m.office_write === 'function') return m.office_write(md, media);
+		if (media === 'Docx' && typeof m.office_write_docx === 'function') {
+			return m.office_write_docx(md);
+		}
+		return null;
+	}
+
+	/// Whether this build can write `media` from Markdown at all.
+	function canWrite(m, media) {
+		return typeof m.office_write === 'function'
+			|| (media === 'Docx' && typeof m.office_write_docx === 'function');
+	}
+
+	/// The controls a reader gets over the document in front of them, and the row
+	/// of fields one of them opens. Answers the LAST node of the block, which is
+	/// what a caller redrawing the content below it walks from.
+	///
+	/// `fv-save` hands over the bytes CURRENTLY HELD -- the file as it arrived, or
+	/// the file with an edit spliced into it -- so "save a copy" means the same
+	/// thing before and after an edit, and the copy is the only thing that ever
+	/// changes. Nothing here writes to the workspace: the file a person is looking
+	/// at is left exactly as it was, which is what makes the control safe to press
+	/// without a question first.
+	///
+	/// `fv-edit` opens `fv-editrow`. Apply hands the whole archive to the wasm and
+	/// takes a whole new archive back, because the edit is SURGICAL there: every
+	/// part of the ZIP the editor does not understand is copied across byte for
+	/// byte. Round-tripping the document through Markdown would be data loss with
+	/// a friendly face, and this panel is usually looking at a stranger's file.
+	function actions(body, m, st, path, info, tOr, onEdited) {
+		var row  = el('div', 'fv-bar');
+		var fields = el('div', 'fv-editrow');
+		var say  = el('p', 'fv-warn');
+		fields.hidden = true;
+		say.hidden    = true;
+		body.appendChild(row);
+		body.appendChild(fields);
+		body.appendChild(say);
+
+		function tell(text, bad) {
+			say.className = bad ? 'fv-warn' : 'fv-note';
+			say.textContent = text;
+			say.hidden = !text;
+		}
+
+		var save = el('button', 'fv-btn fv-save', tOr('fileview.save', 'Save a copy'));
+		save.type = 'button';
+		save.title = tOr('fileview.save_help',
+			'Save a copy of this to your own device. The file here is not changed.');
+		save.addEventListener('click', function () {
+			try {
+				handOver(st.bytes, info.mime, baseName(path));
+				tell('');
+			} catch (e) {
+				tell(tOr('fileview.save_failed', 'This could not be saved: {why}',
+					{ why: (e && e.message) ? e.message : String(e) }), true);
+			}
+		});
+		row.appendChild(save);
+
+		var door = EDIT_DOOR[st.media];
+		// A control that throws when it is pressed is worse than no control, so the
+		// Edit button exists only where the wasm door behind it does.
+		if (!door || typeof m[door] !== 'function') return say;
+
+		var edit = el('button', 'fv-btn fv-edit', tOr('fileview.edit', 'Make an edit'));
+		edit.type = 'button';
+		edit.setAttribute('aria-expanded', 'false');
+		edit.addEventListener('click', function () {
+			fields.hidden = !fields.hidden;
+			edit.setAttribute('aria-expanded', fields.hidden ? 'false' : 'true');
+			if (!fields.hidden) {
+				var first = fields.querySelector('input, select');
+				if (first) first.focus();
+			}
+		});
+		row.appendChild(edit);
+
+		/// One labelled field. The label is the accessible name as well, so nothing
+		/// here needs an `aria-label` saying the same words twice.
+		function field(key, english, kind, name) {
+			var lab = el('label');
+			lab.appendChild(el('span', null, tOr(key, english)));
+			var input = el('input');
+			input.type = kind;
+			input.setAttribute('data-edit', name);
+			if (kind === 'number') { input.min = '1'; input.step = '1'; }
+			lab.appendChild(input);
+			fields.appendChild(lab);
+			return input;
+		}
+
+		var apply = el('button', 'fv-btn', tOr('fileview.edit_apply', 'Apply'));
+		apply.type = 'button';
+		apply.setAttribute('data-edit', 'apply');
+		apply.disabled = true;
+
+		var edits = null;		// answers the JSON the wasm takes, or '' when it cannot yet
+
+		if (door === 'office_edit_doc') {
+			var find = field('fileview.edit_find', 'Find', 'text', 'find');
+			var repl = field('fileview.edit_replace', 'Replace with', 'text', 'replace');
+			var nth  = field('fileview.edit_nth', 'Which one', 'number', 'nth');
+			edits = function () {
+				var f = find.value;
+				if (!f) return '';
+				var one = { find: f, replace: repl.value };
+				// Absent means every occurrence, which is the format's own rule; a 0
+				// or a blank box must therefore send no `nth` at all rather than one.
+				var n = Math.floor(Number(nth.value) || 0);
+				if (n > 0) one.nth = n;
+				return JSON.stringify([one]);
+			};
+			find.addEventListener('input', function () { apply.disabled = !find.value; });
+			fields.appendChild(apply);
+			fields.appendChild(el('p', 'fv-note', tOr('fileview.edit_note',
+				'Leave “{which}” blank to change every one. Everything else in the file is '
+				+ 'left byte for byte as it was.',
+				{ which: tOr('fileview.edit_nth', 'Which one') })));
+		} else {
+			var pick = el('select');
+			pick.setAttribute('data-edit', 'sheet');
+			for (var i = 0; i < (st.sheets || []).length; i++) {
+				var o = el('option', null, st.sheets[i]);
+				o.value = st.sheets[i];
+				pick.appendChild(o);
+			}
+			var wrap = el('label');
+			wrap.appendChild(el('span', null, tOr('fileview.edit_sheet', 'Sheet')));
+			wrap.appendChild(pick);
+			fields.appendChild(wrap);
+			var ref = field('fileview.edit_cell', 'Cell', 'text', 'ref');
+			var val = field('fileview.edit_value', 'Value', 'text', 'value');
+			edits = function () {
+				var r = ref.value.trim();
+				if (!r) return '';
+				var one = { sheet: pick.value, ref: r.toUpperCase() };
+				// The convention every spreadsheet already taught this person: a
+				// leading `=` is a formula and anything else is a value. It needs no
+				// control of its own, and a control would be a second way to say the
+				// same thing.
+				if (/^=/.test(val.value)) one.formula = val.value;
+				else one.value = val.value;
+				return JSON.stringify([one]);
+			};
+			ref.addEventListener('input', function () { apply.disabled = !ref.value.trim(); });
+			fields.appendChild(apply);
+			fields.appendChild(el('p', 'fv-note', tOr('fileview.edit_cell_note',
+				'A value beginning with “=” is stored as a formula. Nothing is '
+				+ 'recalculated, here or in the file.')));
+		}
+
+		apply.addEventListener('click', async function () {
+			var json = edits();
+			if (!json) return;
+			var out = null;
+			try {
+				// `await` on a value that is not a promise costs nothing, and it is
+				// what keeps the EDITOR'S OWN REASON on screen either way. The exports
+				// are synchronous today and throw; were one ever to reject instead, a
+				// bare call would put a pending promise in `out` and the reader would
+				// be told "the editor returned no document" in place of the sentence
+				// naming the string that did not match. A user told the wrong reason
+				// for a refusal is barely better than one told nothing.
+				out = await m[door](st.bytes, st.media, json);
+			} catch (e) {
+				// An unmatched `find` is an error naming the string, not a silent
+				// no-op, and the bytes are left alone: a failed edit that had already
+				// replaced them would leave the reader looking at a document nobody
+				// asked for.
+				tell(tOr('fileview.edit_failed', 'That edit was not made: {why}',
+					{ why: (e && e.message) ? e.message : String(e) }), true);
+				return;
+			}
+			if (!out || !out.length) {
+				tell(tOr('fileview.edit_failed', 'That edit was not made: {why}',
+					{ why: tOr('fileview.edit_nothing', 'the editor returned no document') }), true);
+				return;
+			}
+			st.bytes = out instanceof Uint8Array ? out : new Uint8Array(out);
+			st.edits++;
+			tell('');
+			onEdited();
+		});
+		return say;
+	}
+
+	/// The line that says the document on screen is not the document on disk.
+	///
+	/// Never omitted once an edit has been applied. The panel is showing prose
+	/// nothing else in the app can see, and a reader who closed it thinking the
+	/// file had changed would have lost the edit without being told.
+	function editedLine(st, tOr) {
+		return el('p', 'fv-warn', tOr('fileview.edited',
+			'Edited here, {n} time(s). The file itself has not changed — save a copy to '
+			+ 'keep this.', { n: st.edits }));
+	}
+
+	/// A Word document, read into the prose it holds.
+	///
+	/// TWO THINGS HERE ARE DELIBERATE AND NEITHER IS A PREFERENCE.
+	///
+	/// It renders MARKDOWN through `DaimondRender.md`, not HTML through a frame.
+	/// The document is a STRANGER'S -- it arrived by mail, or a share, or a drag
+	/// -- and `DaimondRender.md` is the sanitiser this app already trusts for
+	/// prose it did not write, dropping `script style iframe form input button
+	/// svg` whole. Handing a stranger's markup to a frame would mean getting the
+	/// sandbox exactly right for a second time, and the first time is what the
+	/// note at the top of this file is about.
+	///
+	/// And it SAYS WHAT IT DID NOT DRAW, by name and by count. A reading view
+	/// that quietly dropped a chart would be lying by omission. "4 things are not
+	/// drawn: 3 text boxes, 1 chart" tells a reader whether to go and open the
+	/// file properly; "some content is not shown" tells them only that this
+	/// viewer cannot be trusted.
+	async function office(body, path, info, opts, tOr, mine, resume) {
+		if (info.size > CAP_OFFICE) {
+			body.appendChild(el('p', 'fv-note', tOr('fileview.office_too_large',
+				'A {fmt} of {size} is too large to unpack here. Its bytes follow.',
+				{ fmt: fmtName(info.media, info.label, tOr), size: fmtBytes(info.size) })));
+			await hex(body, path, info, opts, tOr, mine, resume);
+			return;
+		}
+		var m = await mod(opts);
+		if (mine !== epoch) return;
+		var u8 = await wholeBytes(path, info.size, opts);
+		if (mine !== epoch) return;
+		var st = { bytes: u8, media: info.media, edits: 0, sheets: [] };
+		var got = null, why = '';
+		try {
+			got = m.office_read_doc(st.bytes, st.media);
+		} catch (e) {
+			why = (e && e.message) || String(e);
+		}
+		// A document that cannot be read is NAMED and its bytes are shown, which
+		// is the same floor every other format falls to. An encrypted document
+		// arrives here, and the reason it gives says so.
+		if (!got) {
+			body.appendChild(el('p', 'fv-warn', tOr('fileview.office_failed',
+				'This document could not be read: {why}', { why: why })));
+			await hex(body, path, info, opts, tOr, mine, resume);
+			return;
+		}
+		// THE EDIT IS READ BACK RATHER THAN ASSUMED. Every redraw parses the bytes
+		// the editor produced, through the same reader that drew the file when it
+		// arrived, so what the reader now sees is what a reader of the saved copy
+		// will see. Painting the replacement into the old markdown would show an
+		// edit that the archive might not carry.
+		var anchor = null;
+		function redraw() {
+			while (anchor.nextSibling) body.removeChild(anchor.nextSibling);
+			var g = null, w = '';
+			try { g = m.office_read_doc(st.bytes, st.media); }
+			catch (e) { w = (e && e.message) || String(e); }
+			if (!g) {
+				// THE EDITED BANNER FIRST, EVEN HERE -- especially here. `editedLine`
+				// claims never to be omitted once an edit has been applied, and this
+				// path omitted it: an edit that made the document unreadable drew the
+				// failure alone, so the one reader who most needs to know the file
+				// itself is untouched was the one reader not told.
+				if (st.edits) body.appendChild(editedLine(st, tOr));
+				body.appendChild(el('p', 'fv-warn', tOr('fileview.office_failed',
+					'This document could not be read: {why}', { why: w })));
+				return;
+			}
+			drawDoc(body, g, st, tOr);
+		}
+		anchor = actions(body, m, st, path, info, tOr, redraw);
+		drawDoc(body, got, st, tOr);
+	}
+
+	/// One reading of a text document, on screen.
+	function drawDoc(body, got, st, tOr) {
+		if (st.edits) body.appendChild(editedLine(st, tOr));
+		// `fv-note` and `fv-warn` and nothing new: the stylesheet is another lane's
+		// file, and a band that needed a class nobody had written would render as
+		// unstyled text on top of the document. These two are what every other
+		// tier here already says its caveats in.
+		body.appendChild(el('p', 'fv-note', tOr('fileview.office_reading',
+			'Reading view. This is what the document says, not how it prints.')));
+		var missing = undrawnLine(got.undrawn, tOr);
+		if (missing) body.appendChild(el('p', 'fv-note', missing));
+		if (got.tracked) {
+			body.appendChild(el('p', 'fv-note', tOr('fileview.office_tracked',
+				'{n} tracked insertion(s) are shown as accepted; deletions are not shown.',
+				{ n: got.tracked })));
+		}
+		if (got.macros) {
+			body.appendChild(el('p', 'fv-warn', tOr('fileview.office_macros',
+				'This file contains macros. They are not run and not read.')));
+		}
+		var box = el('div', 'fv-md md-body');
+		if (window.DaimondRender && DaimondRender.md) box.innerHTML = DaimondRender.md(got.markdown);
+		else box.appendChild(el('pre', 'fv-plain', got.markdown));
+		body.appendChild(box);
+	}
+
+	/// A spreadsheet, drawn as the grid it is.
+	///
+	/// THE VALUE SHOWN IS THE ONE STORED IN THE FILE. Both formats keep each
+	/// cell's last computed value beside its formula, and that is the number the
+	/// person who wrote the file SAW. Recalculating would also make a file differ
+	/// from itself the moment it held `NOW`, `TODAY` or `RAND`, so a document
+	/// opened and saved untouched would show as changed -- and the check that
+	/// exists to catch a damaging edit would fire on a healthy file instead.
+	///
+	/// Every sheet is drawn, each under its own tab name, because a workbook whose
+	/// second sheet is silently absent is a workbook a person makes a decision on
+	/// without knowing what they missed. Each is CUT to a rectangle and the cut is
+	/// SAID -- a silent truncation reads as a corrupt file.
+	async function sheet(body, path, info, opts, tOr, mine, resume) {
+		if (info.size > CAP_OFFICE) {
+			body.appendChild(el('p', 'fv-note', tOr('fileview.office_too_large',
+				'A {fmt} of {size} is too large to unpack here. Its bytes follow.',
+				{ fmt: fmtName(info.media, info.label, tOr), size: fmtBytes(info.size) })));
+			await hex(body, path, info, opts, tOr, mine, resume);
+			return;
+		}
+		var m = await mod(opts);
+		if (mine !== epoch) return;
+		var u8 = await wholeBytes(path, info.size, opts);
+		if (mine !== epoch) return;
+		var st = { bytes: u8, media: info.media, edits: 0, sheets: [] };
+		var got = null, why = '';
+		try {
+			got = m.office_read_sheet(st.bytes, st.media, MAX_ROWS, MAX_COLS);
+		} catch (e) {
+			why = (e && e.message) || String(e);
+		}
+		if (!got) {
+			body.appendChild(el('p', 'fv-warn', tOr('fileview.sheet_failed',
+				'This spreadsheet could not be read: {why}', { why: why })));
+			await hex(body, path, info, opts, tOr, mine, resume);
+			return;
+		}
+		// The tab names, so a cell can be named the way the workbook names it. Read
+		// off the file rather than typed by the user: a sheet name is the one part
+		// of a cell reference nobody can guess.
+		for (var n = 0; n < got.sheets.length; n++) st.sheets.push(got.sheets[n].name);
+		var anchor = null;
+		function redraw() {
+			while (anchor.nextSibling) body.removeChild(anchor.nextSibling);
+			var g = null, w = '';
+			try { g = m.office_read_sheet(st.bytes, st.media, MAX_ROWS, MAX_COLS); }
+			catch (e) { w = (e && e.message) || String(e); }
+			if (!g) {
+				if (st.edits) body.appendChild(editedLine(st, tOr));
+				body.appendChild(el('p', 'fv-warn', tOr('fileview.sheet_failed',
+					'This spreadsheet could not be read: {why}', { why: w })));
+				return;
+			}
+			drawSheet(body, g, st, tOr);
+		}
+		anchor = actions(body, m, st, path, info, tOr, redraw);
+		drawSheet(body, got, st, tOr);
+	}
+
+	/// One reading of a workbook, on screen.
+	function drawSheet(body, got, st, tOr) {
+		if (st.edits) body.appendChild(editedLine(st, tOr));
+		body.appendChild(el('p', 'fv-note', tOr('fileview.sheet_stored',
+			'Values are as stored in the file. Formulas are not recalculated.')));
+		if (got.macros) {
+			body.appendChild(el('p', 'fv-warn', tOr('fileview.office_macros',
+				'This file contains macros. They are not run and not read.')));
+		}
+		for (var i = 0; i < got.sheets.length; i++) {
+			var s = got.sheets[i];
+			body.appendChild(el('h3', 'fv-sheetname', s.name));
+			var wrap = el('div', 'fv-tablewrap');
+			var tbl  = el('table', 'fv-table');
+			// The column letters and the row numbers are drawn, because they are how
+			// a person names a cell to somebody else and how `sheet_read` takes a
+			// range. A bare grid leaves them counting columns.
+			var head = el('tr');
+			head.appendChild(el('th', 'fv-rownum', ''));
+			for (var h = 0; h < s.heads.length; h++) {
+				head.appendChild(el('th', null, s.heads[h]));
+			}
+			tbl.appendChild(head);
+			for (var r = 0; r < s.cells.length; r++) {
+				var tr = el('tr');
+				tr.appendChild(el('th', 'fv-rownum', String(r + 1)));
+				for (var c = 0; c < s.cells[r].length; c++) {
+					tr.appendChild(el('td', null, s.cells[r][c]));
+				}
+				tbl.appendChild(tr);
+			}
+			wrap.appendChild(tbl);
+			body.appendChild(wrap);
+			if (s.cut) {
+				body.appendChild(el('p', 'fv-note', tOr('fileview.sheet_capped',
+					'Showing {shown} of {rows} rows and {cols} columns of this sheet.',
+					{ shown: fmtExact(s.cells.length), rows: fmtExact(s.rows),
+					  cols: fmtExact(s.cols) })));
+			}
+			if (s.formulas) {
+				body.appendChild(el('p', 'fv-note', tOr('fileview.sheet_formulas',
+					'{n} cell(s) here carry a formula; the value shown is the stored one.',
+					{ n: s.formulas })));
+			}
+		}
+		if (got.missing && got.missing.length) {
+			body.appendChild(el('p', 'fv-warn', tOr('fileview.sheet_missing',
+				'{n} sheet(s) are named by this workbook and could not be read: {names}.',
+				{ n: got.missing.length, names: got.missing.join(', ') })));
+		}
 	}
 
 	/// JSON as a tree that opens and closes.
@@ -974,5 +1742,11 @@
 		// caller -- one caller restating it is what put a PDF in a <pre>.
 		editable:      editable,
 		KIND_HANDLERS: Object.freeze(KIND_HANDLERS),
+		// The second lock, published for the same reason the first one is: a test
+		// can then see that no deck has an editor WITHOUT rendering one, and a
+		// deck added here goes red on its own rather than only when somebody also
+		// routes it to a reading tier. Two locks that can only be checked together
+		// are one lock.
+		EDIT_DOOR:     Object.freeze(EDIT_DOOR),
 	};
 })();

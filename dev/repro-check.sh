@@ -53,6 +53,37 @@ cd "$WORK/a/deeper/nested/clone"
 
 # The sealed manifest names the pkg files, so the clone must carry the manifest
 # of the release being checked. It is committed, so a clone already has it.
+#
+# WHICH RELEASE IS BEING CHECKED, THOUGH. `git clone` takes the mirror's
+# COMMITTED state, and `dev/publish.mjs` says in its own header that it neither
+# commits nor pushes. So a carve that has not been committed leaves this script
+# cloning the PREVIOUS release, rebuilding it faithfully, comparing it against
+# its own manifest and reporting OK -- a true statement about a release nobody
+# asked about, arriving in the words of the one about to ship. Seq 115 was nearly
+# sealed on a check of seq 114 that way, and seq 114 itself very likely on 113.
+#
+# The build id is what tells them apart, so it is compared rather than trusted.
+# This is a MECHANISM where the release runbook had only an ordering: get the
+# order wrong and the run stops, instead of congratulating you.
+HERE_BUILD=$(node -e 'process.stdout.write(require("'"$DEV"'/www/manifest.json").build||"")' 2>/dev/null || true)
+CLONE_BUILD=$(node -e 'process.stdout.write(require("./www/manifest.json").build||"")' 2>/dev/null || true)
+if [ -z "$HERE_BUILD" ] || [ -z "$CLONE_BUILD" ]; then
+	echo "FAILED — could not read a build id from both manifests:"
+	echo "   working tree: ${HERE_BUILD:-<none>}   clone: ${CLONE_BUILD:-<none>}"
+	echo "   A repro-check that cannot name the release it checked proves nothing."
+	exit 1
+fi
+if [ "$HERE_BUILD" != "$CLONE_BUILD" ]; then
+	echo "FAILED — this would have checked the WRONG RELEASE."
+	echo "   the working tree is sealed as:  $HERE_BUILD"
+	echo "   the mirror's clone carries:     $CLONE_BUILD"
+	echo
+	echo "   The carve has not been committed in $MIRROR, so a clone still holds the"
+	echo "   previous release. Commit and push the mirror, THEN run this. Nothing is"
+	echo "   wrong with the build; the check was about to be aimed at the wrong one."
+	exit 1
+fi
+echo "   both manifests name build $HERE_BUILD"
 echo "── building as an outsider would"
 rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
 bash dev/build-wasm.sh >"$WORK/build.log" 2>&1 || {

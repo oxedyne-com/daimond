@@ -56,6 +56,10 @@ async function sealedFixture() {
 }
 
 const run = (args) => spawnSync(process.execPath, [CHECK, ...args], { encoding: 'utf8' });
+/// `check.mjs` colours its output, so a test that matches a whole line has to take the
+/// escapes off first. Without this every line-anchored assertion below passes or fails on
+/// the presence of a colour code rather than on what was printed.
+const plain = (s) => String(s).replace(/\u001b\[[0-9;]*m/g, '');
 
 // ── The happy path ─────────────────────────────────────────────────
 {
@@ -71,7 +75,49 @@ const run = (args) => spawnSync(process.execPath, [CHECK, ...args], { encoding: 
 	await writeFile(join(dir, 'js', 'app.js'), 'console.log("TAMPERED");');
 	const r = run(['--dir', dir, '--log', log]);
 	check('a single changed byte fails the check', r.status === 1);
-	check('the changed file is named', /changed: js\/app\.js/.test(r.stdout), 'output did not name js/app.js');
+	check('the changed file is named', /^\s+· js\/app\.js$/m.test(plain(r.stdout)), 'output did not name js/app.js');
+	await rm(base, { recursive: true, force: true });
+}
+
+// ── A file the manifest does not cover is named even when a hundred others changed ──
+//
+// The failure this is written from: on 2026-08-17 `--dir www` reported 111 problems and
+// printed forty, off ONE flat list ordered changed-then-missing-then-unexpected. The
+// hundred-odd changed files used up the forty, so the file the manifest named and no
+// longer had, and the seven served files it did not cover — the whole social client —
+// were counted and never shown. The reader saw a wall of "changed", which is the normal
+// state of a tree between deploys.
+//
+// So the assertion is not "something was printed". It is that the two categories a wall
+// of changed files can bury are BOTH named, with more changed files than the old cap.
+{
+	const { base, dir, log } = await sealedFixture();
+	for (let i = 0; i < 60; i++) {
+		await writeFile(join(dir, 'js', `bulk${i}.js`), `// ${i}\n`);
+	}
+	// Seal THAT, so the sixty are covered and can then be changed rather than unexpected.
+	const files  = await hashTree(dir);
+	const bundle = bundleHash(files);
+	await writeFile(join(dir, 'manifest.json'),
+		JSON.stringify({ algo: 'sha-256', build: 'abc123def456', bundle, files }));
+	await writeFile(log,
+		JSON.stringify(nextEntry([], { ts: '2026-07-18T00:00:00Z', build: 'abc123def456', bundle }))
+		+ '\n');
+	for (let i = 0; i < 60; i++) {
+		await writeFile(join(dir, 'js', `bulk${i}.js`), `// ${i} TAMPERED\n`);
+	}
+	await writeFile(join(dir, 'js', 'smuggled.js'), 'console.log("not in the manifest");');
+	await rm(join(dir, 'index.html'));
+
+	const r = run(['--dir', dir, '--log', log]);
+	check('sixty changed files, one smuggled and one removed: it fails', r.status === 1);
+	check('the smuggled file is named, not buried under the changed ones',
+		/^\s+· js\/smuggled\.js$/m.test(plain(r.stdout)), 'output did not name js/smuggled.js');
+	check('the file the manifest names and no longer has is named too',
+		/^\s+· index\.html$/m.test(plain(r.stdout)), 'output did not name index.html');
+	check('and the changed files are counted rather than all listed',
+		/60 changed:/.test(plain(r.stdout)) && /… and 40 more/.test(plain(r.stdout)),
+		'the changed group was not counted and trimmed');
 	await rm(base, { recursive: true, force: true });
 }
 

@@ -42,15 +42,20 @@ const BREAK = (() => {
 // Each break is a real edit to a real file, served in place of it through
 // `page.route`, and is how that piece behaved before the fix.
 const BREAKS = {
-	// `MOBILE_GUESTS` as it was: the two panels added after the rule was written
-	// are not in it, so neither has anywhere to go on a phone.
+	// `MOBILE_GUESTS` as it was: the panels added after the rule was written are
+	// not in it, so none of them has anywhere to go on a phone.
+	//
+	// MATCHED BY SHAPE AND NOT BY THE TABLE'S LITERAL TEXT, which is the state
+	// this break was found in on 2026-08-17: it pinned the four lines the table
+	// held when it was written, three panels had been added to it since, the
+	// anchor matched ZERO times, and `--break noguest` hard-exited 2 instead of
+	// going red. A break nobody can run is a check nobody has proved. The table
+	// is edited every time a panel is added, so the anchor must be the thing that
+	// does not change -- its opening line and its closing brace.
 	noguest: [{
 		file: 'js/daimond.js',
-		find: '\tvar MOBILE_GUESTS = {\n'
-			+ '\t\tweb: 1, doc: 1, msg: 1, compose: 1, tools: 1, spend: 1, term: 1, trash: 1,\n'
-			+ '\t\tgraph: 1, pending: 1,\n'
-			+ '\t};',
-		with: '\tvar MOBILE_GUESTS = { web: 1, doc: 1, msg: 1, compose: 1, tools: 1, '
+		re:   /var MOBILE_GUESTS = \{[\s\S]*?\n\t\};/,
+		with: 'var MOBILE_GUESTS = { web: 1, doc: 1, msg: 1, compose: 1, tools: 1, '
 			+ 'spend: 1, term: 1, trash: 1 };',
 	}],
 };
@@ -62,7 +67,21 @@ if (BREAK && !BREAKS[BREAK]) {
 
 /// The damaged source, or a hard stop. A break whose anchor is not there exactly
 /// once broke nothing, and the run below would prove nothing.
+///
+/// A spec anchors by `find` (literal) or by `re` (shape). The shape form is for
+/// anchors inside something that is edited often -- a table of panels, say --
+/// where pinning the literal text makes the break go stale the next time
+/// somebody adds a line to it, and stale means it aborts rather than fails.
 function damaged(src, spec) {
+	if (spec.re) {
+		const n = (src.match(new RegExp(spec.re.source, spec.re.flags.includes('g')
+			? spec.re.flags : spec.re.flags + 'g')) || []).length;
+		if (n !== 1) {
+			console.error(`break '${BREAK}': the shape ${spec.re} matches ${n} time(s) in ${spec.file}.`);
+			process.exit(2);
+		}
+		return src.replace(spec.re, spec.with);
+	}
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}.`);

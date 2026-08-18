@@ -720,7 +720,7 @@
 
 			<!-- One mail message, where there is room to read it — and, now that
 			     the stage seats two, with the chat still beside it. -->
-			<aside class="panel msg" id="panel-msg" data-panel="msg" data-zone="stage" data-label="Message" data-i18n-label="panel.msg">
+			<aside class="panel msg" id="panel-msg" data-panel="msg" data-zone="stage" data-label="Email message" data-i18n-label="panel.msg">
 				<div class="chead">
 					<span class="ctitle" id="msg-title" role="heading" aria-level="2">Message</span>
 					<div class="chead-right">
@@ -1041,16 +1041,35 @@
 			<div class="trash-list arte-list" id="trash-list"></div>
 		</aside>
 
-		<!-- Improve: where a note about Daimond is written, and where the
-		     proposals made from notes are read and voted on. A note stays on
-		     this device until somebody presses Send on that one note, and what
-		     leaves is exactly the characters on the screen. See js/improve.js
-		     and dev/IMPROVE_CONTRACT.md. -->
-		<aside class="panel improve" id="panel-improve" data-panel="improve" data-zone="dock" data-label="Improve" data-i18n-label="panel.improve">
-			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.improve">Improve</span>
+		<!-- Social: where a note about Daimond is written, where the proposals
+		     made from notes are read and voted on, and where messages and the
+		     people they come from will live. A note stays on this device until
+		     somebody presses Send on that one note, and what leaves is exactly
+		     the characters on the screen. See js/improve.js and
+		     dev/IMPROVE_CONTRACT.md.
+
+		     FIVE CHIPS, and two of them lead somewhere that is not built yet --
+		     which those two views SAY, rather than drawing an empty list. An
+		     empty list is the sentence "nothing has arrived", and that is a
+		     different claim from "this is not switched on". `#social-messages`
+		     and `#social-people` are the containers the messaging and people
+		     lanes render into; each carries its own empty line, which those
+		     lanes hide once they have drawn a row. -->
+		<aside class="panel social" id="panel-social" data-panel="social" data-zone="dock" data-label="Social" data-i18n-label="panel.social">
+			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.social">Social</span>
 				<span class="imp-chips">
-					<button type="button" class="imp-chip on" data-view="notes" aria-pressed="true" data-i18n="improve.notes">Notes</button>
-					<button type="button" class="imp-chip" data-view="proposals" aria-pressed="false" data-i18n="improve.proposals">Proposals</button>
+					<button type="button" class="imp-chip" data-view="messages" aria-pressed="false" data-i18n="social.messages">Messages</button>
+					<button type="button" class="imp-chip" data-view="people" aria-pressed="false" data-i18n="social.people">People</button>
+					<!-- SHARE, and it is here because the module behind it was complete
+					     and unreachable. js/share.js could compose a Diamond, seal it to
+					     one person, choose a carrier, write a .dshare out and read one
+					     back in — and no button in the app called any of it. That is
+					     this project's signature failure and it had shipped three times
+					     before this one. Beside People because a share goes TO somebody,
+					     and the same projection names them in both. -->
+					<button type="button" class="imp-chip" data-view="share" aria-pressed="false" data-i18n="social.share">Share</button>
+					<button type="button" class="imp-chip on" data-view="notes" aria-pressed="true" data-i18n="social.notes">Notes</button>
+					<button type="button" class="imp-chip" data-view="proposals" aria-pressed="false" data-i18n="social.proposals">Proposals</button>
 					<!-- What this panel is, in the guide. The one circled "i" this app
 					     draws -- the same path as the top bar's About button, because
 					     two information marks drawn differently are two marks the
@@ -1066,40 +1085,70 @@
 					     and read side by side against the top bar's own mark. The mark
 					     brings its own circle, so it is given no second one, which is
 					     exactly how About and the guide "?" are drawn. -->
-					<button type="button" class="icon-btn imp-info" id="improve-info"
-						title="What this panel is, in the guide" data-i18n-title="improve.info"
-						aria-label="What this panel is, in the guide" data-i18n-aria-label="improve.info">
+					<button type="button" class="icon-btn imp-info" id="social-info"
+						title="What this panel is, in the guide" data-i18n-title="social.info"
+						aria-label="What this panel is, in the guide" data-i18n-aria-label="social.info">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="7.4" r="1.2" fill="currentColor" stroke="none"/><path d="M12 11.6v5"/></svg>
 					</button>
-					<button class="addbtn panel-close" data-close="improve" title="Close panel" data-i18n-title="common.close_panel">
+					<button class="addbtn panel-close" data-close="social" title="Close panel" data-i18n-title="common.close_panel">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 					</button>
 				</span>
+			</div>
+
+			<!-- Messages, and the people they come from. Empty shells with an
+			     honest line in each: js/post.js fills the first, js/trust.js the
+			     second, and both hide the line by calling
+			     `DaimondSocial.filled(view, n)` once they have drawn a row.
+
+			     EACH LIST IS THAT LANE'S OWN REGION and is cleared wholesale on
+			     every redraw, so nothing belonging to anything else may be parked
+			     inside one. The head, the chips and the empty line above are this
+			     panel's; everything below the line is theirs. -->
+			<div class="imp-view" id="social-messages" hidden>
+				<div class="rail-note imp-off" id="social-messages-off" data-i18n="social.messages_off">Messages are not switched on in this build.</div>
+				<!-- js/post.js OWNS the inside of this list and clears it on every
+				     redraw, so nothing else may keep a node in here. -->
+				<div class="imp-list" id="social-messages-list"></div>
+			</div>
+
+			<div class="imp-view" id="social-people" hidden>
+				<div class="rail-note imp-off" id="social-people-off" data-i18n="social.people_off">Nobody yet. Show your code to somebody in the room, or read theirs.</div>
+				<div class="imp-list" id="social-people-list"></div>
+			</div>
+
+			<!-- js/share.js OWNS the inside of this list and clears it on every
+			     redraw, exactly as post.js owns the messages list above. The head,
+			     the chip and the empty line are the panel's; everything below the
+			     line is share.js's. -->
+			<div class="imp-view" id="social-share" hidden>
+				<div class="rail-note imp-off" id="social-share-off" data-i18n="social.share_off">Sharing is not available in this build.</div>
+				<div class="imp-list" id="social-share-list"></div>
 			</div>
 
 			<div class="imp-view" id="improve-notes">
 				<div class="imp-write">
 					<textarea class="imp-box" id="improve-box" rows="4"
 						placeholder="Where it is, what you expected, and what happened instead."
-						data-i18n-placeholder="improve.box_ph"
-						aria-label="Write a note about Daimond" data-i18n-aria-label="improve.box_label"></textarea>
+						data-i18n-placeholder="social.box_ph"
+						aria-label="Write a note about Daimond" data-i18n-aria-label="social.box_label"></textarea>
 					<!-- What goes with the note, in the exact characters that will
 					     travel, in a row with a closer on it. Closing it takes the
 					     line off the wire as well as off the screen. -->
 					<div class="imp-with" id="improve-with" hidden>
 						<div class="imp-with-body">
-							<span class="imp-with-label" data-i18n="improve.with">What goes with it</span>
+							<span class="imp-with-label" data-i18n="social.with">What goes with it</span>
 							<div class="imp-with-text" id="improve-with-text"></div>
 						</div>
 						<button type="button" class="ui-close imp-with-off" data-act="improve-with-off"
 							title="Close" data-i18n-title="common.close"
-							aria-label="Take the details off this note" data-i18n-aria-label="improve.with_off"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+							aria-label="Take the details off this note" data-i18n-aria-label="social.with_off"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 					</div>
 					<div class="imp-acts" id="improve-acts">
-						<button type="button" class="imp-keep" data-act="improve-keep" data-i18n="improve.keep"
-							title="Store this note on this device. Nothing is sent." data-i18n-title="improve.keep_help">Keep</button>
-						<button type="button" class="imp-send" data-act="improve-send" data-i18n="improve.send"
-							title="Send exactly what is above to Oxedyne. Nothing else goes with it." data-i18n-title="improve.send_help">Send</button>
+						<button type="button" class="imp-keep" data-act="improve-keep" data-i18n="social.keep"
+							title="Store this note on this device. Nothing is sent." data-i18n-title="social.keep_help">Keep</button>
+						<button type="button" class="imp-send" data-act="improve-send" data-i18n="social.send"
+							title="Send exactly what is above to Oxedyne. Nothing else goes with it." data-i18n-title="social.send_help">Send</button>
 						<span class="imp-as" id="improve-as"></span>
 					</div>
 					<div class="imp-say" id="improve-say" role="status" aria-live="polite"></div>
@@ -1371,6 +1420,25 @@
 <script src="js/cloud.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/pairing.js"></script>
+<!-- trust.js AFTER pairing.js, whose dialog frame and QR drawer it borrows, and
+     after identity.js (the keys), improve.js (the Social panel it renders the
+     People list into) and gateway.js. It loads js/qrscan.js itself, on demand,
+     when somebody opens the scanner — a camera decoder is not something to
+     fetch on every boot for the readers who never scan anything. -->
+<script src="js/trust.js"></script>
+<!-- post.js AFTER trust.js, which holds the keys it seals to and the People
+     list it names, and after sync.js, whose parcel carries its store. -->
+<script src="js/post.js"></script>
+<!-- group.js AFTER post.js, which owns the store its rosters live in, the seal
+     they travel under and the region it draws into. It holds no storage of its
+     own and no seal of its own. -->
+<script src="js/group.js"></script>
+<!-- report.js and share.js AFTER post.js, which holds the messages the one
+     reports on and the seal the other borrows. Both couple to post.js through
+     one delegated listener each and touch none of its DOM, so the order is
+     about what is on the page when they attach and nothing more. -->
+<script src="js/report.js"></script>
+<script src="js/share.js"></script>
 <script src="js/mail.js"></script>
 <script src="js/tools.js"></script>
 <script src="js/models.js"></script>

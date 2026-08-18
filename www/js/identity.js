@@ -36,6 +36,14 @@
 	/// What the app says.
 	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 
+	/// A string from the table, or the English written here where the table has no
+	/// entry for it yet. The same device voice.js and search.js use, so a sentence
+	/// added before its translation reads as a sentence and not as a key.
+	function tOr(key, fallback, vars) {
+		var s = t(key, vars);
+		return (s !== key) ? s : fallback;
+	}
+
 	// ── Parameters ─────────────────────────────────────────────
 	// PBKDF2 work factor. High by design so an offline guess against
 	// the stored ciphertexts is expensive. Exposed as a constant so
@@ -54,14 +62,21 @@
 	var K_PUB  = 'daimond-id-pub';		// base64 raw public key (device identity).
 	var K_PRIV = 'daimond-id-priv';		// base64 wrapped (encrypted) pkcs8 private key.
 	var K_ALG  = 'daimond-id-alg';		// 'Ed25519' | 'ECDSA-P256'.
-	var K_FP   = 'daimond-id-fp';		// public-key fingerprint, for display.
+	var K_FP   = 'daimond-id-fp';		// CACHED fingerprint rendering. See fingerprint().
 	var K_NAME = 'daimond-id-name';		// the user's chosen display name.
 	var K_HDL  = 'daimond-id-handle';	// the ACCOUNT's public handle: {h, t}. See below.
+	// The sealing subkey: a SECOND keypair, for receiving sealed messages. Separate
+	// from the signing pair on purpose — see the note above `ensureSealingKey`.
+	var K_SEALP = 'daimond-id-sealpub';	// base64 raw public sealing key (32 bytes).
+	var K_SEALK = 'daimond-id-seal';	// base64 wrapped (encrypted) pkcs8 sealing key.
+	var K_SEALA = 'daimond-id-sealalg';	// 'X25519'. The only one a card can carry.
+	var K_CARD  = 'daimond-id-card';	// base64 of this identity's signed card. See mintCard().
 
 	// ── In-memory state (present only while unlocked) ──────────
-	// Both are dropped by lock(); neither is ever persisted.
+	// All three are dropped by lock(); none is ever persisted.
 	var _wrapKey = null;	// AES-GCM CryptoKey deriving from the passphrase.
 	var _signKey = null;	// Device private signing key (non-extractable).
+	var _sealKey = null;	// Device private SEALING key (non-extractable). See ensureSealingKey.
 
 	// ── Encoding helpers ───────────────────────────────────────
 
@@ -91,16 +106,6 @@
 		var out = new Uint8Array(bin.length);
 		for (var i = 0; i < bin.length; i++) {
 			out[i] = bin.charCodeAt(i);
-		}
-		return out;
-	}
-
-	/// Lower-case hex of raw bytes.
-	function hex(buf) {
-		var bytes = (buf instanceof Uint8Array) ? buf : new Uint8Array(buf);
-		var out = '';
-		for (var i = 0; i < bytes.length; i++) {
-			out += ('0' + bytes[i].toString(16)).slice(-2);
 		}
 		return out;
 	}
@@ -216,12 +221,180 @@
 			: { name: 'ECDSA', hash: 'SHA-256' };
 	}
 
-	/// Compute the display fingerprint of a raw public key: SHA-256,
-	/// first 8 bytes, hex, grouped in fours for readability.
-	async function fingerprintOf(pubBytes) {
-		var digest = await crypto.subtle.digest('SHA-256', pubBytes);
-		var short  = hex(new Uint8Array(digest).slice(0, 8));	// 16 hex chars.
-		return short.replace(/(.{4})(?=.)/g, '$1 ').trim();		// "a1b2 c3d4 e5f6 0718".
+	// ── The sealing subkey ─────────────────────────────────────
+	//
+	// A SECOND keypair, X25519, for receiving sealed messages. It is not the
+	// signing key and it must not be, for a reason that is about lifetimes rather
+	// than tidiness: a signature is checked once and thrown away, so a signing
+	// scheme may be replaced whenever a better one arrives, while anything sealed
+	// to an encryption key must stay openable for as long as the message matters.
+	// One key doing both jobs cannot be retired for the first without abandoning
+	// the second.
+	//
+	// X25519 AND NOTHING ELSE. The signing pair falls back to ECDSA P-256 on an
+	// engine without Ed25519, and this one deliberately does not fall back at all.
+	// An identity card fixes the sealing key at EXACTLY 32 bytes; a raw P-256
+	// public key is 65. A fallback key would therefore be a key that works until
+	// the moment somebody tries to put it in a card, which is worse than not
+	// having one: this way `sealingKeyRaw()` answers null and the reason can be
+	// said out loud.
+	//
+	// It is generated LAZILY, by `ensureSealingKey`, and not only at creation.
+	// Every identity that already exists on a device was made before this key did,
+	// so a routine that only ran at `create()` would leave every existing user
+	// without one for ever.
+
+	/// True when this engine implements X25519 in WebCrypto.
+	///
+	/// Probed by generating a key rather than by reading a version, since the
+	/// question is whether the call works and nothing else answers that.
+	async function sealingAvailable() {
+		try {
+			await crypto.subtle.generateKey({ name: 'X25519' }, true, ['deriveBits']);
+			return true;
+		} catch (e) {
+			return false;
+		}
+	}
+
+	/// The raw public sealing key (32 bytes), or null when there is none.
+	/// Public, so this works whether locked or not.
+	function sealingKeyRaw() {
+		var raw = localStorage.getItem(K_SEALP);
+		return raw ? b64dec(raw) : null;
+	}
+
+	/// Generate and store a sealing keypair if this identity has none.
+	///
+	/// Unlocked only, because the private half is wrapped under the SAME
+	/// passphrase-derived key that wraps the signing key and the API key. Not a
+	/// second scheme: a second way of encrypting a secret at rest is how one of
+	/// the two stops being reviewed.
+	///
+	/// Answers `{ ok, made }` — whether there is a sealing key now, and whether
+	/// this call is what made it. `{ ok:false }` on an engine without X25519, and
+	/// on a failure to store, both of which leave the identity exactly as it was.
+	async function ensureSealingKey() {
+		requireUnlocked();
+		if (localStorage.getItem(K_SEALK) && localStorage.getItem(K_SEALP)) {
+			return { ok: true, made: false };
+		}
+		var pair;
+		try {
+			pair = await crypto.subtle.generateKey({ name: 'X25519' }, true, ['deriveBits']);
+		} catch (e) {
+			return { ok: false, made: false };		// no X25519 on this engine
+		}
+		try {
+			var pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey));
+			var pub   = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+			var wrapped = await seal(_wrapKey, pkcs8);
+			localStorage.setItem(K_SEALP, b64enc(pub));
+			localStorage.setItem(K_SEALK, wrapped);
+			localStorage.setItem(K_SEALA, 'X25519');
+			// Re-imported non-extractable, so what stays in memory cannot be read
+			// back out even by this file. The extractable one above existed only
+			// long enough to be wrapped.
+			_sealKey = await crypto.subtle.importKey(
+				'pkcs8', pkcs8, { name: 'X25519' }, false, ['deriveBits']);
+		} catch (e) {
+			return { ok: false, made: false };
+		}
+		return { ok: true, made: true };
+	}
+
+	/// Load the sealing key into memory from what is stored, under the wrapping
+	/// key already derived. Silent when there is none: an identity without a
+	/// sealing key is not broken, it is one that has not made one yet.
+	async function loadSealingKey(wrapKey) {
+		_sealKey = null;
+		var wrapped = localStorage.getItem(K_SEALK);
+		if (!wrapped) return;
+		try {
+			var pkcs8 = await open(wrapKey, wrapped);
+			_sealKey = await crypto.subtle.importKey(
+				'pkcs8', pkcs8, { name: 'X25519' }, false, ['deriveBits']);
+		} catch (e) {
+			_sealKey = null;		// wrong key, tampered store, or an engine without X25519
+		}
+	}
+
+	/// The shared secret with another party's sealing key, as raw bytes.
+	///
+	/// ECDH over X25519, which answers 32 bytes. It is the INPUT to a key
+	/// derivation and never a key itself: raw ECDH output is not uniformly
+	/// distributed and using it directly as an AES key is the classic way to
+	/// spend a good primitive badly. Unlocked only.
+	async function sharedSecret(theirPubBytes) {
+		requireUnlocked();
+		if (!_sealKey) {
+			throw new Error(tOr('identity.err_no_sealing_key',
+				'This device has no sealing key, so it cannot open a sealed message. '
+				+ 'Unlock the identity once and one will be made.'));
+		}
+		var theirs = await crypto.subtle.importKey(
+			'raw', theirPubBytes, { name: 'X25519' }, false, []);
+		var bits = await crypto.subtle.deriveBits(
+			{ name: 'X25519', public: theirs }, _sealKey, 256);
+		return new Uint8Array(bits);
+	}
+
+	// ── The fingerprint, and the one place it is computed ──────
+	//
+	// A fingerprint is a SHORT RENDERING OF A KEY FOR A PERSON'S EYE, AND IT
+	// DECIDES NOTHING. Equality is always the full public key, everywhere,
+	// without exception: eighty bits is well within reach of somebody who wants
+	// two keys to look alike in a list, so anything that COMPARED fingerprints
+	// to decide whether two keys are the same would be a defect.
+	//
+	// It is computed in ONE place, `card::fingerprint` in the format's own crate,
+	// reached from here through the wasm bridge. This file used to render its
+	// own — the first eight bytes of SHA-256, in hex — and the format's crate
+	// rendered another, and the gateway rendered a third. Three renderings of one
+	// key is three chances for a user to be shown something that reads as their
+	// correspondent's key having CHANGED when nothing changed but which function
+	// drew it. So there is one, and this is not it: this asks for it.
+	//
+	// THE BRIDGE. `identity.js` is a classic script and cannot `import` the wasm
+	// module; `daimond.js` is the ES module that can, and surfaces what classic
+	// scripts need on globals (`window.DaimondQR` is the same arrangement). The
+	// contract is one function:
+	//
+	//     window.DaimondCrypto.fingerprint(Uint8Array) -> String
+	//
+	// A rendering is NOT computed when the bridge is absent. Falling back to a
+	// second implementation written here is exactly the thing this comment is
+	// about, and showing nothing is honest where showing a different rendering is
+	// not.
+
+	/// The wasm bridge, or null before it is up.
+	function bridge() {
+		return (typeof window !== 'undefined' && window.DaimondCrypto) || null;
+	}
+
+	/// The fingerprint of a raw public key, or null when the bridge is not up.
+	function fingerprintOf(pubBytes) {
+		var b = bridge();
+		if (!b || typeof b.fingerprint !== 'function' || !pubBytes) return null;
+		try { return b.fingerprint(pubBytes) || null; }
+		catch (e) { return null; }
+	}
+
+	/// Recompute the cached rendering from the stored public key, and return it.
+	///
+	/// `K_FP` is a CACHE, not a fact: the fact is the public key, and the rendering
+	/// is a function of it. Cached because `fingerprint()` below is called
+	/// synchronously all over the app and the bridge is not up at the first paint;
+	/// recomputed here at every unlock so a stale rendering — one written by an
+	/// older build under a rendering that has since been retired — is replaced the
+	/// first time this build runs.
+	function refreshFingerprint() {
+		var raw = localStorage.getItem(K_PUB);
+		if (!raw) return null;
+		var fp = fingerprintOf(b64dec(raw));
+		if (!fp) return localStorage.getItem(K_FP) || null;
+		if (fp !== localStorage.getItem(K_FP)) localStorage.setItem(K_FP, fp);
+		return fp;
 	}
 
 	// ── Lifecycle ──────────────────────────────────────────────
@@ -236,8 +409,32 @@
 		return !!_wrapKey && !!_signKey;
 	}
 
-	/// The stored public-key fingerprint for display, or null. Works
-	/// whether or not the identity is unlocked, since it is public.
+	/// Announce that `isUnlocked()` has changed answer.
+	///
+	/// EVERY MODULE THAT KEEPS AN ENCRYPTED STORE READS IT LAZILY, and the lazy
+	/// read is written against a boot in which the identity is already unlocked.
+	/// It is not: the page loads, the modules attach at `DOMContentLoaded`, and
+	/// the passphrase is typed afterwards -- so a store read on attach is read
+	/// while locked, gets nothing, and is never asked again for the whole
+	/// session. post.js sat unread that way for every session in which the
+	/// Messages panel was not opened by hand: its record was left off the sync
+	/// parcel, an arriving one was dropped, and the badge whose only job is to
+	/// say "open the panel" could not count until the panel had been opened.
+	///
+	/// So the boundary says so, in both directions, and a store that wants to be
+	/// live listens rather than guessing. `daimond:handle` above is the same
+	/// pattern; nothing here knows who is listening.
+	function announce(what) {
+		try { window.dispatchEvent(new Event('daimond:' + what)); }
+		catch (e) { /* no window */ }
+	}
+
+	/// The public-key fingerprint for display, or null. Works whether or not the
+	/// identity is unlocked, since it is public.
+	///
+	/// Synchronous, and so served from the cache `refreshFingerprint` writes. A
+	/// build that has never had the bridge up shows nothing rather than a
+	/// rendering nobody else draws.
 	function fingerprint() {
 		return localStorage.getItem(K_FP) || null;
 	}
@@ -274,20 +471,34 @@
 		var pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', gen.pair.privateKey));
 		var wrapped = await seal(wrapKey, pkcs8);
 		var pubBytes = new Uint8Array(await crypto.subtle.exportKey('raw', gen.pair.publicKey));
-		var fp = await fingerprintOf(pubBytes);
 
 		// Persist. No secret and no derived key is ever written.
 		localStorage.setItem(K_SALT, b64enc(salt));
 		localStorage.setItem(K_PUB,  b64enc(pubBytes));
 		localStorage.setItem(K_PRIV, wrapped);
 		localStorage.setItem(K_ALG,  alg);
-		localStorage.setItem(K_FP,   fp);
 		localStorage.setItem(K_NAME, String(name || '').trim());
+		// A fresh identity carries no sealing key and no card yet, and this may be
+		// overwriting one that did. Left-over keys of a DIFFERENT identity are worse
+		// than none: a card would name a sealing key nobody holds the other half of.
+		localStorage.removeItem(K_SEALP);
+		localStorage.removeItem(K_SEALK);
+		localStorage.removeItem(K_SEALA);
+		localStorage.removeItem(K_CARD);
+		localStorage.removeItem(K_FP);
 
 		// Leave unlocked: keep the wrapping key and the signing key.
 		_wrapKey = wrapKey;
 		_signKey = gen.pair.privateKey;
+		announce('unlock');
 
+		// The sealing key is made here so a new identity can be messaged from the
+		// moment it exists. A failure is not fatal to creating an identity — an
+		// engine without X25519 still signs, still syncs, still holds an API key —
+		// so it is not raised; `ensureSealingKey` will try again at every unlock.
+		await ensureSealingKey();
+
+		var fp = refreshFingerprint();
 		return { fingerprint: fp, name: displayName() };
 	}
 
@@ -448,6 +659,29 @@
 			return { ok: false };
 		}
 
+		// THE SEALING KEY COMES ACROSS TOO, and it is read out HERE, under the old
+		// key, because after the three lines below there is no old key to read it
+		// with. A passphrase change that carried the signing key and left this one
+		// behind would not fail, would not warn, and would orphan every message
+		// ever sealed to this identity — permanently, since a sealing key is the
+		// one key that cannot simply be replaced (see `ensureSealingKey`).
+		//
+		// It is done here rather than through `DaimondRekey` for the same reason
+		// the signing key is: the registry runs AROUND this function, and this key
+		// is wrapped by this file with the key this function is in the middle of
+		// swapping. A participant outside could not read it at the one moment it
+		// is readable.
+		//
+		// A key that is present but will not open is already orphaned, and was
+		// before this call. It is dropped rather than carried, so `unlock` mints a
+		// fresh one instead of the app holding a sealing key nobody can use.
+		var sealWrapped = localStorage.getItem(K_SEALK);
+		var sealPkcs8 = null;
+		if (sealWrapped) {
+			try { sealPkcs8 = await open(oldKey, sealWrapped); }
+			catch (e) { sealPkcs8 = null; }
+		}
+
 		// A new passphrase gets a new salt, so the old derived key is useless
 		// even against a copy of the old ciphertext.
 		var salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
@@ -461,10 +695,37 @@
 			return { ok: false };
 		}
 
+		// Re-sealed BEFORE anything is written, so a failure here leaves the whole
+		// identity on the old passphrase rather than half on each.
+		var sealWrappedNew = null;
+		if (sealPkcs8) {
+			try { sealWrappedNew = await seal(newKey, sealPkcs8); }
+			catch (e) { return { ok: false }; }
+		}
+
 		localStorage.setItem(K_SALT, b64enc(salt));
 		localStorage.setItem(K_PRIV, wrapped);
+		if (sealWrappedNew) {
+			localStorage.setItem(K_SEALK, sealWrappedNew);
+		} else {
+			// Either there was none, or it was already unreadable. Drop the public
+			// half and the card with it: a card naming a sealing key whose private
+			// half is gone tells a correspondent to seal something nobody can open.
+			localStorage.removeItem(K_SEALP);
+			localStorage.removeItem(K_SEALK);
+			localStorage.removeItem(K_SEALA);
+			localStorage.removeItem(K_CARD);
+		}
+
+		// NO `announce` HERE. `isUnlocked()` answered true before this call and
+		// answers true after it, so nothing has changed for a listener -- and a
+		// re-read fired at this point would read stores still wrapped under the
+		// OLD passphrase. Re-wrapping is `DaimondRekey`'s job, and it is a
+		// registry precisely so that this function names nobody.
 		_wrapKey = newKey;
 		_signKey = signKey;
+		await loadSealingKey(newKey);
+		try { await ensureSealingKey(); } catch (e) { /* a rekey is not a failure for this */ }
 		return { ok: true };
 	}
 
@@ -512,6 +773,17 @@
 
 		_wrapKey = wrapKey;
 		_signKey = signKey;
+		announce('unlock');
+
+		// Both of these run at every unlock, and both are why an identity made by
+		// an earlier build catches up without the user doing anything: the one
+		// makes a sealing key for an identity that has none, and the other
+		// replaces a fingerprint rendering that an earlier build wrote under a
+		// rendering this one no longer draws.
+		await loadSealingKey(wrapKey);
+		try { await ensureSealingKey(); } catch (e) { /* an unlock is not a failure for this */ }
+		refreshFingerprint();
+
 		return { ok: true, fingerprint: fingerprint(), name: displayName() };
 	}
 
@@ -533,8 +805,11 @@
 	/// Drop all in-memory key material. After this the identity is
 	/// locked and wrap/unwrap/sign no longer work until unlock().
 	function lock() {
+		var was = isUnlocked();
 		_wrapKey = null;
 		_signKey = null;
+		_sealKey = null;
+		if (was) announce('lock');		// so a decrypted store can drop what it holds.
 	}
 
 	/// Forget-me: wipe every identity localStorage key and lock. The
@@ -549,6 +824,10 @@
 		localStorage.removeItem(K_FP);
 		localStorage.removeItem(K_NAME);
 		localStorage.removeItem(K_HDL);
+		localStorage.removeItem(K_SEALP);
+		localStorage.removeItem(K_SEALK);
+		localStorage.removeItem(K_SEALA);
+		localStorage.removeItem(K_CARD);
 	}
 
 	// ── Signing / public key (for future Oxegen binding) ───────
@@ -629,6 +908,69 @@
 		return new Uint8Array(pt);
 	}
 
+	// ── The identity card ──────────────────────────────────────
+	//
+	// What a QR code carries and what a paste carries. A bare public key is not
+	// enough: it says nothing about which key seals and which signs, carries no
+	// label, and gives a reader no way to tell a first key from one that replaced
+	// another. A card says all three, signed by the key it names.
+	//
+	// SELF-SIGNED MEANS EXACTLY WHAT IT SAYS. A card verifies under the key it
+	// carries, so it proves the holder of that key composed it, and it proves
+	// nothing whatever about WHO that holder is. A card fetched from a server is
+	// Unverified however well it verifies — an intermediary that substituted its
+	// own key would produce one that verifies perfectly. Only an out-of-band act
+	// raises it: a QR read in person, or a safety number compared aloud. That act
+	// is the user's, never the software's.
+	//
+	// The label is advisory display text. Equality is always the full 32-byte key.
+
+	/// This identity's signed card, base64, or null when there is none.
+	function card() {
+		return localStorage.getItem(K_CARD) || null;
+	}
+
+	/// Compose and sign this identity's card, storing it. Unlocked only.
+	///
+	/// Answers `{ ok:false, why }` rather than throwing on the two conditions that
+	/// are about this device rather than about the caller: no sealing key, and a
+	/// signing key that is not Ed25519. The second is not a limitation to route
+	/// around — an SBJ envelope names the signature scheme it was signed under,
+	/// and there is exactly one in v0. A P-256 signature written into a field that
+	/// says Ed25519 is a card every reader rejects, which is worse than no card.
+	async function mintCard() {
+		requireUnlocked();
+		var b = bridge();
+		if (!b || typeof b.cardEncode !== 'function') return { ok: false, why: 'bridge' };
+		var enc = sealingKeyRaw();
+		if (!enc) return { ok: false, why: 'no_sealing_key' };
+		var alg = localStorage.getItem(K_ALG) || 'Ed25519';
+		if (alg !== 'Ed25519') return { ok: false, why: 'not_ed25519' };
+		var pub = localStorage.getItem(K_PUB);
+		if (!pub) return { ok: false, why: 'no_identity' };
+
+		try {
+			// The payload, canonically encoded by the format's own crate. Its hash
+			// is the card's address, so this must not be encoded anywhere else.
+			var payload = b.cardEncode(displayName(), enc, new Uint8Array(0));
+			var author  = b64dec(pub);
+			var when    = Date.now();
+			// The seam: wasm says what to sign, this signs it, wasm takes the
+			// signature back. The signing key is a non-extractable CryptoKey and
+			// never crosses into wasm in either direction.
+			var input = b.signingInput(payload, 'daimond/card/0', author, when);
+			// `sign` answers STANDARD base64, not base64url. The envelope wants the
+			// raw 64 bytes, so it is decoded rather than passed on as text — the two
+			// encodings differ and mixing them up fails verification silently.
+			var sig = b64dec(await sign(input));
+			var artefact = b.assemble(payload, 'daimond/card/0', author, when, sig);
+			localStorage.setItem(K_CARD, b64enc(artefact));
+		} catch (e) {
+			return { ok: false, why: 'encode' };
+		}
+		return { ok: true };
+	}
+
 	// ── Moving an identity to another device ───────────────────
 
 	/// Export the identity as a portable bundle, for carrying it to a second
@@ -656,6 +998,22 @@
 			alg:  localStorage.getItem(K_ALG) || 'Ed25519',
 			fp:   localStorage.getItem(K_FP)  || '',
 			name: localStorage.getItem(K_NAME) || '',
+			// The sealing keypair travels with the signing pair, and it has to:
+			// the second device is becoming the SAME account, and an account whose
+			// two devices held different sealing keys would be one that could be
+			// messaged at only one of them. The private half travels still WRAPPED,
+			// under the salt above, so this adds no plaintext to the bundle and
+			// lowers no bar — the passphrase gates it exactly as on the first
+			// device.
+			sealp: localStorage.getItem(K_SEALP) || '',
+			sealk: localStorage.getItem(K_SEALK) || '',
+			seala: localStorage.getItem(K_SEALA) || '',
+			// The signed card travels rather than being minted again on arrival,
+			// so one account has ONE card at ONE address. A second device that
+			// composed its own would produce a second card for the same keys with
+			// a different time in it, and a correspondent shown both would have no
+			// way to know they were the same person.
+			card: localStorage.getItem(K_CARD) || '',
 			// The account's public handle travels too, so the second device
 			// shows the account's name from the moment it is adopted rather than
 			// waiting for its first gateway round -- which on a phone paired in a
@@ -678,8 +1036,34 @@
 		localStorage.setItem(K_PUB,  b.pub);
 		localStorage.setItem(K_PRIV, b.priv);
 		localStorage.setItem(K_ALG,  b.alg || 'Ed25519');
-		localStorage.setItem(K_FP,   b.fp || '');
 		localStorage.setItem(K_NAME, b.name || '');
+		// The fingerprint is a RENDERING of `pub`, so it is recomputed here rather
+		// than copied: a bundle written by an older build carries a rendering this
+		// one does not draw, and copying it would put a fingerprint on the new
+		// device that no other device agrees with. Recomputed at the first unlock
+		// if the bridge is not up yet, which is where `b.fp` would have been wrong
+		// anyway.
+		localStorage.removeItem(K_FP);
+		refreshFingerprint();
+		// The sealing keypair and the card. Written TOGETHER or not at all: a
+		// public sealing key without its wrapped private half tells correspondents
+		// to seal messages this device can never open, and a card names the sealing
+		// key, so the three are one fact.
+		if (b.sealp && b.sealk) {
+			localStorage.setItem(K_SEALP, b.sealp);
+			localStorage.setItem(K_SEALK, b.sealk);
+			localStorage.setItem(K_SEALA, b.seala || 'X25519');
+			if (b.card) localStorage.setItem(K_CARD, b.card);
+			else        localStorage.removeItem(K_CARD);
+		} else {
+			// A bundle from a device that had none. `unlock` makes one, and the two
+			// devices then differ — which is why the export carries them and this is
+			// the fallback rather than the path.
+			localStorage.removeItem(K_SEALP);
+			localStorage.removeItem(K_SEALK);
+			localStorage.removeItem(K_SEALA);
+			localStorage.removeItem(K_CARD);
+		}
 		// REPLACED, not merged. This device is becoming a different account, so
 		// the handle it held belongs to somebody else now; the merge rule would
 		// keep whichever record had the later stamp and leave this device
@@ -699,7 +1083,25 @@
 		unlock:       unlock,
 		lock:         lock,
 		isUnlocked:   isUnlocked,
+		/// The rendering of this device's public key that a person reads. It
+		/// decides nothing; equality is always the full key. See the note above
+		/// `fingerprintOf` for why there is exactly one implementation of it.
 		fingerprint:  fingerprint,
+		/// Redraw it from the stored key, for a caller that has just brought the
+		/// wasm bridge up. Idempotent, and cheap.
+		refreshFingerprint: refreshFingerprint,
+		/// The sealing subkey: a SECOND keypair, for receiving sealed messages.
+		/// See the note above `ensureSealingKey` for why it is not the signing one.
+		sealingAvailable: sealingAvailable,
+		sealingKeyRaw:    sealingKeyRaw,
+		ensureSealingKey: ensureSealingKey,
+		/// ECDH with a correspondent's sealing key. The INPUT to a key derivation,
+		/// never a key itself.
+		sharedSecret:     sharedSecret,
+		/// This identity's self-signed card: what a QR code carries. Self-signed
+		/// proves the holder composed it and NOTHING about who the holder is.
+		card:         card,
+		mintCard:     mintCard,
 		/// This DEVICE's label for its own keypair. Local, private, and not the
 		/// account's public name -- see `handle` below.
 		displayName:  displayName,

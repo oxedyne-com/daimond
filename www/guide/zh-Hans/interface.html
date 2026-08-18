@@ -12,7 +12,7 @@
    its labels at five pixels, which is a diagram that says nothing to the reader
    who most needs it. It keeps a floor on its width and scrolls sideways inside
    its own box instead: the page still never scrolls sideways, and the words can
-   still be read. The same treatment the widget map on improve.html has, and the
+   still be read. The same treatment the widget map on social.html has, and the
    floor is set from the same measurement -- 720px puts this map's smallest label
    at the eleven rendered pixels that one's smallest label already gets, because
    this map's smallest type is 9 units against that one's 10. */
@@ -43,7 +43,7 @@
 			<a href="sync.html">跨设备同步</a>
 			<a href="spending.html">支出</a>
 			<a href="../machine-operations.html">在本机运行命令</a>
-			<a href="../improve.html">改进 Daimond</a>
+			<a href="../social.html">社交</a>
 		</nav>
 	</div>
 </header>
@@ -55,7 +55,7 @@
 	<figure class="diagram scrolls">
 		<svg class="regionmap" viewBox="0 0 760 470" role="img" aria-labelledby="rm-title rm-desc" preserveAspectRatio="xMidYMid meet">
 			<title id="rm-title">Daimond 窗口的各个区域</title>
-			<desc id="rm-desc">窗口的示意图。最上面横着一条顶栏。它下面并排三个区域：左边是侧栏（分隔线上方是你正在做的东西，下方是管理面板），中间是舞台（对话），右边是停靠区（邮件、工作区和智能体）。</desc>
+			<desc id="rm-desc">A schematic of the window. Across the top is the top bar. Below it, three zones side by side: the rail on the left (what you work on above a divider, the admin panel below it), the stage in the centre, holding the conversation and, beside it, from one to three more panels according to how wide the stage is, and the dock on the right (Email, Workspace and Agents).</desc>
 			<style>
 				.regionmap text { font-family: var(--font); }
 				.rm-win  { fill: var(--bg-primary);   stroke: var(--border-2); stroke-width: 1; }
@@ -137,7 +137,7 @@
 			<text class="rm-sub"  x="330" y="93" font-size="11">中</text>
 			<line class="rm-rule" x1="244" y1="100" x2="290" y2="100"/>
 			<text class="rm-title" x="244" y="119" font-size="10.5">聊天 —— 你的对话</text>
-			<text class="rm-sub"   x="244" y="133" font-size="9.5">台上一个，或者两个并排</text>
+			<text class="rm-sub"   x="244" y="133" font-size="9.5">two to four seats, by width</text>
 			<rect class="rm-cell" x="244" y="146" width="196" height="30" rx="8"/>
 			<rect class="rm-skel" x="254" y="153" width="176" height="6" rx="3"/>
 			<rect class="rm-skel" x="254" y="164" width="120" height="6" rx="3"/>
@@ -185,7 +185,7 @@
 			<rect class="rm-cell" x="570" y="410" width="52" height="13" rx="6"/>
 			<rect class="rm-cell" x="628" y="410" width="40" height="13" rx="6"/>
 		</svg>
-		<figcaption>各个区域的名字。 <strong>顶栏</strong> 横在最上面；它下面是三个区域： <strong>侧栏</strong> （左）—— 分隔线上方是你正在做的东西，下方是管理面板； <strong>舞台</strong> （中）用来放对话；还有 <strong>停靠区</strong> （右）装着邮件、工作区和智能体。</figcaption>
+		<figcaption>各个区域的名字。 <strong>顶栏</strong> 横在最上面；它下面是三个区域： <strong>侧栏</strong> （左）—— 分隔线上方是你正在做的东西，下方是管理面板； <strong>舞台</strong> (centre) for the conversation and whatever you have opened beside it, two seats on a laptop and up to four on a wide screen; and the <strong>停靠区</strong> （右）装着邮件、工作区和智能体。</figcaption>
 	</figure>
 
 	<h2 id="s1">侧栏 —— 左</h2>
@@ -233,7 +233,11 @@
 	<p>回到旧构建的路是没有的。钉住一个旧构建，会撞上网关自己那条“不跟太旧的客户端说话”的规矩；它可能带着一个已经修好的安全缺陷，而这个应用装着你的提供商密钥、你的身份和你的通行密钥；它碰上更新的本地数据，还有读错的风险。不喜欢某个改动，要在那个改动本身上回应，办法是把改了什么讲清楚 —— 这些说明就是干这个用的。</p>
 
 	<h2 id="s6">舞台 —— 中</h2>
-	<p>舞台是中间那个区域。台上的客人要么自己占着整个台子，要么两个并排，绝不会靠到右边去。两个座位的意思是：你永远不必离开对话去做一件事 —— 读那封信、看那个页面、读那份文档，daimon 就在旁边，随时可以问。</p>
+	<p>The stage is the middle zone. Its occupants sit side by side and never dock at the right, so you never leave the conversation to do a thing: read the message, watch the page, read the document beside the pages it was typeset into, with the daimon still there to be asked about any of it.</p>
+
+	<p>How many seats there are is decided by <strong>how wide the stage is</strong>, not by a fixed number: two at the narrowest, four at the widest, and one more for roughly every 380 pixels, which is where a line of prose still holds about 45 characters. Four of them want around 1550 pixels of stage, so they are for a large monitor; a laptop usually gets two or three. Two is the floor whatever the width, because the whole point of the stage is that whatever you are attending to opens <em>紧挨着</em> the conversation rather than over it.</p>
+
+	<p>Narrow the window and the rightmost seat closes, the one you opened most recently first. The conversation is never the one to go. Widening again does not bring the panel back: a panel that reappeared because a window grew would be one you never asked for, with no way to tell it not to, and getting it back is one click on its chip. Ask for a panel when every seat is taken and the guest that has been on the stage longest leaves instead, because you have just said which one you want.</p>
 
 	<div class="cards">
 		<div class="card">
@@ -246,81 +250,85 @@
 		</div>
 		<div class="card">
 			<h3 id="s9">文档</h3>
-			<p>一个文件，留出地方来读：一份文档、一个编译好的 PDF、一张图片。它的头部带着回形针，把你正在读的东西附加到你正在做的事情上。</p>
+			<p>A file as its characters, given room to read it and to edit it. Its header carries the paperclip that attaches what you are reading to what you are working on.</p>
 		</div>
 		<div class="card">
-			<h3 id="s10">消息</h3>
+			<h3 id="s10">Preview</h3>
+			<p>What a file looks like, as against what it says: a compiled PDF, a picture, or the typeset pages of a document as you write it. It is a panel of its own so that a source and its pages can be on screen at once, which is why the stage grew past two seats.</p>
+		</div>
+		<div class="card">
+			<h3 id="s11">消息</h3>
 			<p>单独一封邮件，从邮件面板打开，在聊天旁边读。</p>
 		</div>
 		<div class="card">
-			<h3 id="s11">工具</h3>
+			<h3 id="s12">工具</h3>
 			<p>Daimond 能做什么，其余的要花多少钱。从 <span class="ui">工具</span> 行打开。</p>
 		</div>
 		<div class="card">
-			<h3 id="s12">撰写</h3>
+			<h3 id="s13">撰写</h3>
 			<p>写一封邮件。这里什么都不会自己发出去：只有 <span class="ui">发送</span> 按钮才把邮件送上线路，而且只有你能按它。</p>
 		</div>
 		<div class="card">
-			<h3 id="s13">图谱</h3>
+			<h3 id="s14">图谱</h3>
 			<p>你的 Diamonds，以及它们之间的连线，画出来。从 Diamonds 标题栏上的图谱按钮打开，在那里也可以重新排布，或者画一条新的连线。</p>
 		</div>
 		<div class="card">
-			<h3 id="s14">终端</h3>
+			<h3 id="s15">终端</h3>
 			<p>你自己机器上的一个真正的终端，就在命令运行的那个隔间里。见 <a href="../machine-operations.html">在本机运行命令</a>.</p>
 		</div>
 	</div>
 
 	<p>舞台上的每位客人都有一个带关闭按钮的头部。关掉的面板不会消失：它的标签留在顶栏里，不填色，点这个标签它就回来。</p>
 
-	<h2 id="s15">停靠区 —— 右</h2>
+	<h2 id="s16">停靠区 —— 右</h2>
 	<p>停靠区装着你要取用的来源。关掉一个，它的标签留在顶栏里；点那个标签，它又停回来。停靠区怎么分格，以及因此一次能装几个面板，由你在外观菜单里的 <strong>停靠区分格</strong> 里设定，下面会讲。</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3 id="s16">邮件</h3>
+			<h3 id="s17">邮件</h3>
 			<p>你的邮箱和邮箱里的东西。添加邮箱、同步，把一封邮件打开到舞台上。</p>
 		</div>
 		<div class="card">
-			<h3 id="s17">工作区</h3>
+			<h3 id="s18">工作区</h3>
 			<p>你的文件，一棵普通的树。智能体的文件工具就在这里读和写。</p>
 		</div>
 		<div class="card">
-			<h3 id="s18">智能体</h3>
+			<h3 id="s19">智能体</h3>
 			<p>正在跑的智能体，实时呈现，并数出有多少个在干活。</p>
 		</div>
 		<div class="card">
-			<h3 id="s19">支出</h3>
+			<h3 id="s20">支出</h3>
 			<p>你花了多少，花在什么上。完整的说明见 <a href="spending.html">支出</a>.</p>
 		</div>
 		<div class="card">
-			<h3 id="s20">待办</h3>
+			<h3 id="s21">待办</h3>
 			<p>daimon 提出的、正等着你答复的事。每一行都可以按优先级或按时长排序，答复可以是 <span class="ui">去做</span>, <span class="ui">先讨论</span> 或 <span class="ui">放弃</span>.</p>
 		</div>
 		<div class="card">
-			<h3 id="s21">回收站</h3>
+			<h3 id="s22">回收站</h3>
 			<p>删掉的聊天和 Diamonds，保留三十天，在你的任何一台设备上都能还原。见 <a href="chats-and-diamonds.html">聊天与 Diamonds</a>.</p>
 		</div>
 	</div>
 
-	<h2 id="s22">顶栏</h2>
+	<h2 id="s23">顶栏</h2>
 	<p>最上面一排是文字标、一行 <strong>面板标签</strong>，最右边是一个按钮，用来 <strong>关联另一台设备</strong>，一个 <strong>关于</strong> 对话框，这份 <strong>指南</strong>，以及 <strong>外观与布局</strong> 菜单。有新构建发布时，旁边会出现一个标签。</p>
 
-	<h3 id="s23">那一行标签</h3>
+	<h3 id="s24">那一行标签</h3>
 	<p>每个面板都有一个标签，开着关着都有；点一个，就切换那个面板。开着的面板，它的标签是填色的，所以这一行读起来就是屏幕上有什么的一张地图。要是只有关着的面板才有标签，应用最空的时候这一行反而最长，而且每用一次，每个标签都要横着挪一格；位置不动的标签，你才记得住它在哪。（智能体是 <em>每一个</em>的例外：在第一个智能体跑起来之前，它一直不来碍事。）</p>
 	<p>这些标签按区域分组 —— 先侧栏，再舞台，然后停靠区 —— 组与组之间有一条细分隔线，顺序和这几个区域在屏幕上的顺序一样。于是一个标签待的那一侧，就是它打开的面板将要出现的那一侧。有两种记号是有含义的：</p>
 	<ul>
-		<li>一个关着的舞台标签，如果它的面板会 <strong>顶掉此刻在聊天旁边的那位客人</strong> 则画成虚线框。舞台只坐两位，而聊天保留它的座位，所以第三位客人一来，另一位就得走。它只警告，不拒绝；用框而不是加一个记号，是为了让标签保持原来的宽度，邻居不必挪位。</li>
+		<li>一个关着的舞台标签，如果它的面板会 <strong>displace a guest already on the stage</strong> is drawn with a dashed outline. It appears only when every seat is taken, which depends on the width, so the same chip is plain on a wide screen and dashed on a narrow one. The chat keeps its seat and the guest that has been there longest leaves. It warns without refusing, and it is an outline and not an added mark so the chip keeps its width and its neighbours stay put.</li>
 		<li>一个关着的停靠区标签， <strong>停靠区满了的时候会变灰</strong>。它的提示指向解法：在外观菜单里选一个更大的分格，或者关掉一个停靠区面板。</li>
 	</ul>
 
-	<h3 id="s24">固定的面板，以及面板总览</h3>
+	<h3 id="s25">固定的面板，以及面板总览</h3>
 	<p>哪些标签待在顶栏，由你决定。任何面板都可以 <strong>固定</strong> 或者取消固定；没固定的那些住在这一行末尾的一个 <span class="ui">⋯</span> 标签后面，并带一个数字，说明后面藏了几个。点它，就打开 <strong>面板总览</strong>：所有的面板都在里面，可以按名字搜索，按区域分组，每一行都带一个固定控制项，并说明那个面板是否开着。点一行，就像点标签一样打开或关掉那个面板。</p>
 	<p>这一行之所以可以不完整，只因为面板总览是完整的。也没有什么按你用得多不多来排序：一行会自己重排的标签，会毁掉固定位置本来要建立的肌肉记忆。</p>
 
-	<h3 id="s25">命令面板</h3>
+	<h3 id="s26">命令面板</h3>
 	<p><kbd>Ctrl</kbd> <kbd>K</kbd>, <kbd>Cmd</kbd> <kbd>K</kbd> （在 Mac 上）—— 打开一个搜索框，打字就能到达任何面板或任何设置。方向键在结果里移动， <span class="ui">Enter</span> 运行高亮的那一个， <span class="ui">Esc</span> 关闭它。里面列出面板、配色、四档字号、停靠区分格、语言、货币，以及权限模式。要去一个你看得见其标签的面板，这从来不是最快的路；但无论有多少面板，这条路都是齐全的。</p>
 
-	<h3 id="s26">用键盘，用耳朵</h3>
+	<h3 id="s27">用键盘，用耳朵</h3>
 	<p>不用鼠标也能操作 Daimond。 <span class="ui">Tab</span> 按控制项画出来的顺序在它们之间移动， <span class="ui">Enter</span> 或 <span class="ui">Space</span> 操作你当前所在的那一个， <span class="ui">Esc</span> 关掉当前打开的东西。每一个对话框、菜单和浮层，角上都还有一个叉：同一个控制项，同一种做法，尺寸按手机上的拇指来定。</p>
 	<p>你在哪里，是画在控制项 <em>外面</em> 的，是一个离开它边缘一点的圆环。像从前那样把它画成控制项自身边框的变化，这个环只有在静止边框几乎看不见时才读得出来 —— 于是把边框做得可见，就会一次性拿掉所有配色下的焦点环。而衬在它背后的表面上，这个环在整个范围里都站得住：十一种配色全测过，最弱的那个环仍有标准所要求对比度的四倍半。</p>
 	<p>有两处尤其如此：</p>
@@ -331,7 +339,7 @@
 	<p>用屏幕阅读器时，一条回答只在 <strong>到齐的那一刻播报一次</strong> （“Daimond 回答了，120 个词”）而不是一边写一边播。实时区域每变一次就念一次，所以一条流式的回答，只要模型还在打字，就会被一片一片地念给你听。人们会把它关掉，而一个播报被关掉的应用，看着像能用，其实不能。一轮一句话是少了，但它能用。</p>
 	<p>整个窗口都有命名的区域和真正的标题，所以屏幕阅读器自己的地标列表，就是这个应用一份能用的目录。任何你走不到、听不到的地方都是缺陷，不是限制；请说出来。</p>
 
-	<h3 id="s27">外观与布局</h3>
+	<h3 id="s28">外观与布局</h3>
 	<p>右上角那个按钮打开一个菜单，里面装着关于 Daimond 长什么样、怎么摆的选择 —— 而不是它做什么：</p>
 	<ul>
 		<li><strong>视图</strong>: <span class="ui">简洁</span> 或 <span class="ui">全量</span>。简洁只给出每样东西的名字和它是不是在跑，其余的都在一按之外；全量把模型、花费和上下文摆在旁边，于是两个东西不用打开就能比。它同时定下界面的形状，因为最高密度配上疏朗的形状，是没人想要的组合。某张卡片自己的齿轮，仍然可以为那张卡片覆盖它。</li>
@@ -341,10 +349,10 @@
 		<li><strong>语言</strong> 和 <strong>货币</strong>：Daimond 说什么话，数字用什么币显示。还没有译文表的语言仍显示英文；不论数字以什么货币显示，结算一律用美元。</li>
 	</ul>
 
-	<h3 id="s28">把一套布置留给某个 Diamond</h3>
+	<h3 id="s29">把一套布置留给某个 Diamond</h3>
 	<p>选中一个 Diamond 时，外观菜单会提出把当前的面板布置留给它，也可以更新或忘掉已经保存的那一套。再打开那个 Diamond，布置就回来，于是回到一件工作，不必再动手把面板一个个摆好。它只在你开口时才保存，从不推测，也从不在后台进行 —— 因为一次悄悄关掉面板的切换，读起来就像工作丢了。</p>
 
-	<h2 id="s29">在窄屏幕上</h2>
+	<h2 id="s30">在窄屏幕上</h2>
 	<p>低于手机宽度时，标签行和面板总览让位给手机外壳，它用更小的地方回答同一个问题：聊天是地板，面板像一张可以拖动的纸从它上面升起来，侧栏变成左上角按钮打开的抽屉。底部一行（<span class="ui">聊天</span>, <span class="ui">邮件</span>, <span class="ui">文件</span>, <span class="ui">智能体</span>）在它们之间切换，管理面板则从抽屉里往下走就能到。什么都没丢；还是那些面板，只是一次显示一个。</p>
 	<p>装到主屏幕上之后，Daimond 在自己的窗口里运行，没有浏览器的边框零件，并且自动避开刘海和主屏指示条。它还是同一个页面、同一份存下来的工作，所以不需要把任何东西搬进去。</p>
 
@@ -367,7 +375,7 @@
 		<a href="sync.html">跨设备同步</a>
 		<a href="spending.html">支出</a>
 		<a href="../machine-operations.html">在本机运行命令</a>
-		<a href="../improve.html">改进 Daimond</a>
+		<a href="../social.html">社交</a>
 	</nav>
 </footer>
 </body>

@@ -40,10 +40,10 @@
 	// Guests with nothing to "ask about" hide the ask pill. The trash is one:
 	// asking the daimon about a list of things you have deleted would offer to
 	// spend money on the one surface whose whole subject is undoing a mistake.
-	// Improve is another, for the opposite reason: it is ALREADY a box you write
+	// Social is another, for the opposite reason: it is ALREADY a box you write
 	// in, and a second box under it that sends what you write to a model is two
 	// boxes with opposite meanings.
-	var NO_ASK       = { compose: 1, tools: 1, trash: 1, improve: 1 };
+	var NO_ASK       = { compose: 1, tools: 1, trash: 1, social: 1 };
 
 	var sheetEl, bodyEl, grabEl, titleEl, askWrap, askInput, askSend;
 	var guest = null;			// the panel id currently in the sheet, or null

@@ -10,6 +10,9 @@
 //! helpers used by the LLM client — no `serde`.
 
 use oxedyne_fe2o3_core::prelude::*;
+// `Media` names a file's format from its extension, which is how `file_read` tells a Word document
+// from any other ZIP: every Office format IS a ZIP and the bytes alone cannot separate them.
+use oxedyne_fe2o3_stds::media::Media;
 use oxedyne_fe2o3_text::base64;
 use oxedyne_fe2o3_text::glob::Glob;
 use oxedyne_fe2o3_text::regex::{self, Regex};
@@ -65,6 +68,18 @@ pub struct TurnState {
     /// identifier.  The hand's journal and its `Signal` both key on that identifier, so two runs
     /// sharing one is a cancel that reaches the wrong process.
     pub runs: u64,
+    /// What the user said, once, about this turn's commands reaching the network (see
+    /// [`net_step`]).
+    ///
+    /// `None` until the question has been put.  It is remembered whichever way it went: asking
+    /// again after a yes is the prompt storm the question exists to avoid, and asking again after a
+    /// no is how a person is worn down into a yes.
+    ///
+    /// It is scoped to exactly the state that provokes the question.  [`TurnState::tainted`] is
+    /// one-way for the life of this context, so an answer that outlived the taint would be an
+    /// answer to a question nobody had asked -- and a context that starts clean starts with no
+    /// answer, because it has nothing to answer for yet.
+    pub net_consent: Option<Verdict>,
 }
 
 /// A per-agent record of what this agent has read and where it came from.
@@ -114,6 +129,590 @@ fn binary_refusal(path: &str, len: usize) -> Error<ErrTag> {
         "file_read: '{}' is a binary file, {} bytes. The file tools handle text; open or \
         download a binary file from the workspace panel instead.", path, len;
         Invalid, Input, Binary)
+}
+
+/// The most an Office document may be before `file_read` declines to unpack it.
+///
+/// A `.docx` is a ZIP of XML and its parts inflate several times over, so the ceiling is on what
+/// comes OUT rather than on what is on disk. Twenty megabytes of compressed document is far past any
+/// prose anybody writes and the reader's own per-part ceiling sits above this.
+pub const OFFICE_READ_MAX: usize = 20_000_000;
+
+/// Whether a path names an Office document this can read, by what the *name* says it is.
+///
+/// The name and not the bytes, because every one of these formats is a ZIP and the bytes alone
+/// cannot tell a `.docx` from a `.jar`. A file whose name lies is caught a moment later, by the
+/// reader, which refuses it in terms that say what it actually found.
+fn office_kind(path: &str) -> Option<Media> {
+    match Media::from_name(path) {
+        m @ (Media::Docx | Media::Xlsx | Media::Pptx
+            | Media::Odt | Media::Ods | Media::Odp) => Some(m),
+        _ => None,
+    }
+}
+
+/// An Office document as the prose it holds, and a trailing note about what did not come with it.
+///
+/// `None` where the path names no Office document at all, so the caller falls through to what it
+/// did before. `Some(Err(..))` where it names one that could not be read -- which is a REFUSAL and
+/// not a fall-through, because handing a model the raw bytes of a document it asked to read is how
+/// it concludes the file is corrupt.
+///
+/// The prose is Markdown, which is what the model reads best and what the Doc panel draws through
+/// the same renderer the chat uses. See `crate::wasm::office` for why not HTML.
+fn office_view(path: &str, bytes: &[u8]) -> Option<Outcome<(String, String)>> {
+    let media = office_kind(path)?;
+    if bytes.len() > OFFICE_READ_MAX {
+        return Some(Err(err!(
+            "file_read: '{}' is {} bytes, over the {} byte limit for unpacking an Office \
+            document. These formats are compressed archives and a large one inflates to many times \
+            its size on disk.", path, bytes.len(), OFFICE_READ_MAX; Invalid, Input, Size)));
+    }
+    // A workbook answers with its SHAPE and not its cells. Its useful unit is a rectangle and
+    // `sheet_read` is what fetches one; dumping every cell of every sheet would spend the whole
+    // output budget on a file the model has not yet decided it wants.
+    if media == Media::Xlsx || media == Media::Ods {
+        return Some(sheet_shape(path, bytes, media).map(|s| (s, String::new())));
+    }
+    Some(office_prose_view(path, bytes, media))
+}
+
+/// A document as Markdown, with the note that says what a reading of it left out.
+///
+/// One function for the four prose formats, because what a reader wants out of each is the same
+/// thing. What differs is the vocabulary the bytes are written in, and that difference is the whole
+/// of what `fe2o3_file::office` is for.
+fn office_prose_view(path: &str, bytes: &[u8], media: Media) -> Outcome<(String, String)> {
+    use oxedyne_fe2o3_file::office::{docx, odf, pptx};
+
+    // Each reader gives the prose and its own account of what did not come with it, and the two are
+    // brought to the same shape here.
+    let (doc, said, macros, tracked): (_, Vec<String>, bool, usize) = match media {
+        Media::Docx => {
+            let r = res!(docx::read(bytes).map_err(|e| err!(e,
+                "file_read: '{}' could not be read as a Word document.", path; Invalid, Input)));
+            let said = r.say_undrawn().into_iter().collect();
+            (r.doc, said, r.macros, r.tracked)
+        }
+        Media::Odt => {
+            let r = res!(odf::text::read(bytes).map_err(|e| err!(e,
+                "file_read: '{}' could not be read as an OpenDocument text document.", path;
+                Invalid, Input)));
+            let said = match r.images {
+                0 => Vec::new(),
+                n => vec![fmt!("{} image(s) are not drawn", n)],
+            };
+            (r.doc, said, r.macros, 0)
+        }
+        // A deck's prose is its slides, one heading and its bullets each, which is the same tree the
+        // deck was built FROM. A model reading it gets the words in the order a viewer shows them.
+        Media::Pptx | Media::Odp => {
+            let (deck, macros, extra) = match media {
+                Media::Pptx => {
+                    let r = res!(pptx::read(bytes).map_err(|e| err!(e,
+                        "file_read: '{}' could not be read as a PowerPoint presentation.", path;
+                        Invalid, Input)));
+                    (r.deck, r.macros, r.shapes)
+                }
+                _ => {
+                    let r = res!(odf::slides::read(bytes).map_err(|e| err!(e,
+                        "file_read: '{}' could not be read as an OpenDocument presentation.", path;
+                        Invalid, Input)));
+                    (r.deck, r.macros, r.images)
+                }
+            };
+            let said = match extra {
+                0 => Vec::new(),
+                n => vec![fmt!("{} shape(s) hold no text and are not read", n)],
+            };
+            (deck_doc(&deck), said, macros, 0)
+        }
+        other => return Err(err!(
+            "file_read: '{}' is a {}, which is not a format this reads.", path, other.label();
+            Invalid, Input, Unimplemented)),
+    };
+    let md = oxedyne_fe2o3_text::doc::markdown::write::render(&doc);
+    // Everything the reading left behind, said after the text rather than before it, so the line
+    // numbers above belong to the document and not to this.
+    let mut note = String::new();
+    note.push_str(&fmt!(
+        "\n[file_read] '{}' is a {}, read as Markdown. The formatting is what the document SAYS, \
+        not how it prints.\n", path, media.label()));
+    for s in &said {
+        note.push_str(&fmt!("[file_read] {}.\n", s));
+    }
+    if tracked > 0 {
+        note.push_str(&fmt!(
+            "[file_read] the document carries tracked changes; {} insertion(s) are shown as \
+            accepted and deletions are not shown.\n", tracked));
+    }
+    if macros {
+        note.push_str(
+            "[file_read] THE FILE CONTAINS MACROS. They are not run and not read, and they are \
+            still in the file.\n");
+    }
+    Ok((md, note))
+}
+
+/// The most an Office document may be before it is edited rather than rewritten.
+///
+/// The same ceiling as reading one, and for the same reason: an edit unpacks the archive, and the
+/// parts inflate several times over. A document over this is refused by name and by size rather than
+/// half-written.
+pub const OFFICE_EDIT_MAX: usize = OFFICE_READ_MAX;
+
+/// An Office document written from Markdown, and the note that says what the conversion decided.
+///
+/// **The model writes Markdown and never document XML**, which is the same bargain
+/// `crate::wasm::office::office_write` is built on: every design where the model emits the format puts
+/// it in the position of getting a file format right, which it will sometimes not.
+///
+/// What each format makes of the same prose differs and the note says so, because a model that wrote a
+/// document's worth of paragraphs into a `.xlsx` and was told only "wrote 4,102 bytes" would report a
+/// spreadsheet it had not made.
+fn office_written(path: &str, media: Media, md: &str) -> Outcome<(Vec<u8>, String)> {
+    use oxedyne_fe2o3_file::office::deck::Deck;
+    use oxedyne_fe2o3_file::office::{docx, odf, pptx, xlsx};
+    use oxedyne_fe2o3_file::office::sheet::Book;
+
+    let doc = res!(oxedyne_fe2o3_text::doc::markdown::parse(md).map_err(|e| err!(e,
+        "file_write: the content for '{}' could not be read as Markdown.", path; Invalid, Input)));
+    let (bytes, what, said) = match media {
+        Media::Docx => (res!(docx::write(&doc)).0, "a Word document", String::new()),
+        Media::Odt  => (res!(odf::text::write(&doc)).0, "an OpenDocument text document", String::new()),
+        // A deck splits the prose at its headings: each heading is a slide's title and what follows
+        // is its bullets, which is the convention every Markdown-to-slides tool uses.
+        Media::Pptx | Media::Odp => {
+            let deck = Deck::from_doc(&doc);
+            let said = fmt!(
+                "[file_write] a presentation is split at the HEADINGS: each heading titles a slide \
+                and what follows it becomes the bullets. This one has {} slide(s).\n",
+                deck.slides.len());
+            match media {
+                Media::Pptx => (res!(pptx::write(&deck)).0, "a PowerPoint presentation", said),
+                _           => (res!(odf::slides::write(&deck)).0,
+                    "an OpenDocument presentation", said),
+            }
+        }
+        // A spreadsheet takes the TABLES and nothing else. Prose has no cells.
+        Media::Xlsx | Media::Ods => {
+            let book = Book::from_doc(&doc);
+            let said = fmt!(
+                "[file_write] a spreadsheet is built from the TABLES in the Markdown, one sheet \
+                each, and nothing else in it is carried. This one has {} sheet(s). A cell beginning \
+                '=' is a formula, and text that is exactly how a number prints becomes that number \
+                -- so '007' stays text.\n", book.sheets.len());
+            match media {
+                Media::Xlsx => (res!(xlsx::write(&book)), "a spreadsheet", said),
+                _           => (res!(odf::sheet::write(&book)), "an OpenDocument spreadsheet", said),
+            }
+        }
+        other => return Err(err!(
+            "file_write: '{}' is a {}, which is not a format this writes.", path, other.label();
+            Invalid, Input, Unimplemented)),
+    };
+    let note = fmt!(
+        "\n[file_write] '{}' was written as {} from the Markdown you gave. THE FORMATTING IS WHAT THE \
+        DOCUMENT SAYS, not how it prints: headings, lists, tables, bold and links are carried as \
+        structure, and the reader lays them out when it opens the file.\n{}", path, what, said);
+    Ok((bytes, note))
+}
+
+/// A document with the text a `doc_edit` call named replaced, and the note that says what moved.
+///
+/// **Surgical, and that is the point of the tool rather than a detail of it.** The document being
+/// edited is the user's, and reading it to Markdown, editing the Markdown and writing a fresh file
+/// would silently drop the comments, the bookmarks, the tracked changes, the content controls, the
+/// theme and the headers. `fe2o3_file::office` splices the runs that changed and copies every other
+/// byte of the archive; what arrives differs from what left in exactly the runs that were edited.
+fn doc_edited(path: &str, media: Media, bytes: &[u8], args: &str) -> Outcome<(Vec<u8>, String)> {
+    use oxedyne_fe2o3_file::office::edit::Find;
+    use oxedyne_fe2o3_file::office::{docx, odf};
+
+    if bytes.len() > OFFICE_EDIT_MAX {
+        return Err(err!(
+            "doc_edit: '{}' is {} bytes, over the {} byte limit for unpacking a document. These \
+            formats are compressed archives and a large one inflates to many times its size on disk.",
+            path, bytes.len(), OFFICE_EDIT_MAX; Invalid, Input, Size));
+    }
+    let asks = res!(crate::llm::extract_json_objects(args, "edits").ok_or_else(|| err!(
+        "doc_edit: 'edits' is missing, or is not a list. It is a JSON array of objects, each with a \
+        'find' and a 'replace': [{{\"find\":\"Q1\",\"replace\":\"Q2\"}}]."; Invalid, Input)));
+    let mut edits = Vec::new();
+    for one in &asks {
+        let find = extract_json_string(one, "find").unwrap_or_default();
+        if find.is_empty() {
+            return Err(err!(
+                "doc_edit: an edit carries no 'find', so there is nothing to look for. Nothing has \
+                been changed in '{}'.", path; Invalid, Input, Missing));
+        }
+        edits.push(Find {
+            find,
+            replace: extract_json_string(one, "replace").unwrap_or_default(),
+            // A zero is left as a zero. `fe2o3_file` refuses it and says occurrences are counted from
+            // one, which is the thing the model needs told; turning it into "every" here would make
+            // one edit do something nobody asked for.
+            nth:     crate::llm::extract_json_number(one, "nth").map(|n| n as usize),
+        });
+    }
+    if edits.is_empty() {
+        return Err(err!(
+            "doc_edit: 'edits' is empty, so there is nothing to do."; Invalid, Input));
+    }
+    // An unmatched `find` comes back as an error naming the string, from `fe2o3_file`, and nothing is
+    // written. That is the whole contract of this tool: a caller told the document was edited has no
+    // way to discover that one of its four replacements did nothing.
+    let (out, runs) = match media {
+        Media::Docx => {
+            let e = res!(docx::edit::edit(bytes, &edits).map_err(|e| err!(e,
+                "doc_edit: '{}' could not be edited.", path; Invalid, Input)));
+            (e.bytes, e.runs)
+        }
+        Media::Odt => {
+            let e = res!(odf::text::edit(bytes, &edits).map_err(|e| err!(e,
+                "doc_edit: '{}' could not be edited.", path; Invalid, Input)));
+            (e.bytes, e.runs)
+        }
+        // A deck is deliberately absent, and the refusal says why rather than saying "unsupported":
+        // a model told a thing is impossible stops asking, and a model told nothing tries again.
+        Media::Pptx | Media::Odp => return Err(err!(
+            "doc_edit: '{}' is a presentation, and a presentation's text is not edited in place. A \
+            slide is a position on a canvas, so replacing words without knowing the geometry puts \
+            text over other text. Read it, then write a new one with file_write if it has to change.",
+            path; Invalid, Input, Unimplemented)),
+        other => return Err(err!(
+            "doc_edit: '{}' is a {}, which has no document text to edit. A spreadsheet's cells are \
+            written with sheet_write.", path, other.label(); Invalid, Input, Unimplemented)),
+    };
+    let note = fmt!(
+        "\n[doc_edit] {} edit(s) applied to '{}', rewriting {} run(s) of text. EVERY OTHER BYTE OF \
+        THE FILE IS THE ONE THAT ARRIVED: the comments, tracked changes, styles, headers and \
+        anything else it carries are untouched.\n", edits.len(), path, runs);
+    Ok((out, note))
+}
+
+/// A spreadsheet with the cells a `sheet_write` call named written, and the note that says what landed.
+fn sheet_written(path: &str, media: Media, bytes: &[u8], args: &str) -> Outcome<(Vec<u8>, String)> {
+    use oxedyne_fe2o3_file::office::sheet::Ref;
+    use oxedyne_fe2o3_file::office::{odf, xlsx};
+
+    if bytes.len() > OFFICE_EDIT_MAX {
+        return Err(err!(
+            "sheet_write: '{}' is {} bytes, over the {} byte limit for unpacking a spreadsheet.",
+            path, bytes.len(), OFFICE_EDIT_MAX; Invalid, Input, Size));
+    }
+    let asks = res!(crate::llm::extract_json_objects(args, "edits").ok_or_else(|| err!(
+        "sheet_write: 'edits' is missing, or is not a list. It is a JSON array of objects, each \
+        naming a cell: [{{\"sheet\":\"Sheet1\",\"ref\":\"B2\",\"value\":\"3.5\"}}]."; Invalid, Input)));
+    let mut sets = Vec::new();
+    for one in &asks {
+        let named = extract_json_string(one, "ref").unwrap_or_default();
+        // A reference outside the sheet is not an error -- the sheet grows -- but one that is not a
+        // reference at all is, and the refusal shows the form rather than restating the rule.
+        let at = res!(Ref::parse(&named).map_err(|e| err!(e,
+            "sheet_write: '{}' is not a cell reference. One looks like 'B2' or 'AC14'. Nothing has \
+            been written to '{}'.", named, path; Invalid, Input)));
+        let value = extract_json_string(one, "value");
+        let formula = extract_json_string(one, "formula");
+        if value.is_none() && formula.is_none() {
+            return Err(err!(
+                "sheet_write: the write to {} carries neither a 'value' nor a 'formula', so it says \
+                nothing. To empty a cell give it a value of \"\". Nothing has been written to '{}'.",
+                at.name(), path; Invalid, Input, Missing));
+        }
+        sets.push((extract_json_string(one, "sheet").filter(|s| !s.trim().is_empty()),
+            at, value, formula));
+    }
+    if sets.is_empty() {
+        return Err(err!(
+            "sheet_write: 'edits' is empty, so there is nothing to write."; Invalid, Input));
+    }
+    let (out, cells, sheets) = match media {
+        Media::Ods => {
+            let sets: Vec<odf::sheet::Set> = sets.into_iter()
+                .map(|(sheet, at, value, formula)| odf::sheet::Set { sheet, at, value, formula })
+                .collect();
+            let e = res!(odf::sheet::edit(bytes, &sets).map_err(|e| err!(e,
+                "sheet_write: '{}' could not be written to.", path; Invalid, Input)));
+            (e.bytes, e.cells, e.sheets)
+        }
+        Media::Xlsx => {
+            let sets: Vec<xlsx::edit::Set> = sets.into_iter()
+                .map(|(sheet, at, value, formula)| xlsx::edit::Set { sheet, at, value, formula })
+                .collect();
+            let e = res!(xlsx::edit::edit(bytes, &sets).map_err(|e| err!(e,
+                "sheet_write: '{}' could not be written to.", path; Invalid, Input)));
+            (e.bytes, e.cells, e.sheets)
+        }
+        other => return Err(err!(
+            "sheet_write: '{}' is a {}, which has no cells. Text in a Word or OpenDocument document \
+            is changed with doc_edit.", path, other.label(); Invalid, Input, Unimplemented)),
+    };
+    let note = fmt!(
+        "\n[sheet_write] {} cell(s) written to '{}', in sheet(s) {}. NOTHING WAS RECALCULATED: a \
+        formula you wrote goes in without a value beside it and the reader works it out when it \
+        opens the file, and every formula already in the workbook keeps the value it had.\n",
+        cells, path, sheets.join(", "));
+    Ok((out, note))
+}
+
+/// A deck as a document: each slide a heading and its bullets.
+///
+/// The same shape `Deck::from_doc` was given, so a deck read and written back keeps its slides. It
+/// is also what a person would write if asked to put a presentation into prose.
+fn deck_doc(deck: &oxedyne_fe2o3_file::office::deck::Deck) -> oxedyne_fe2o3_text::doc::Doc {
+    use oxedyne_fe2o3_text::doc::{Block, Doc};
+
+    let mut blocks = Vec::new();
+    for slide in &deck.slides {
+        if let Some(title) = &slide.title {
+            blocks.push(Block::Heading { level: 2, content: title.clone() });
+        }
+        // The bullets of one slide are one list, nested by the level each carries. A flat list would
+        // lose the structure a reader can see on the slide.
+        let mut items: Vec<Vec<Block>> = Vec::new();
+        for b in &slide.bullets {
+            let para = Block::Para(b.content.clone());
+            match b.level {
+                0 => items.push(vec![para]),
+                _ => match items.last_mut() {
+                    Some(last) => last.push(Block::List { ordered: false, items: vec![vec![para]] }),
+                    None       => items.push(vec![para]),
+                },
+            }
+        }
+        if !items.is_empty() {
+            blocks.push(Block::List { ordered: false, items });
+        }
+        if let Some(notes) = &slide.notes {
+            blocks.push(Block::Quote(vec![Block::Para(vec![
+                oxedyne_fe2o3_text::doc::Inline::Text(fmt!("Notes: {}", notes)),
+            ])]));
+        }
+    }
+    Doc { blocks }
+}
+
+/// The most cells one `sheet_read` returns.
+///
+/// A rectangle and not a file is the unit here, so the ceiling is on the rectangle. Five thousand
+/// cells is about forty columns by a hundred and twenty rows, which is more of a spreadsheet than
+/// anyone reads at once and comfortably inside the output budget once each cell carries its text.
+const SHEET_CELLS_MAX: u64 = 5_000;
+
+/// How many rows `sheet_read` returns when the call names no range.
+const SHEET_ROWS_DEFAULT: u32 = 100;
+
+/// What a spreadsheet holds, whichever of the two formats it is written in.
+///
+/// The two readers answer with their own types, which carry the same four things; this is where they
+/// meet, so nothing above here has to know which format it was handed.
+struct Book {
+    /// The sheets and their cells.
+    book:     oxedyne_fe2o3_file::office::sheet::Book,
+    /// Whether the file carries a macro project.
+    macros:   bool,
+    /// How many cells carry a formula.
+    formulas: usize,
+    /// Sheets named by the file and not readable.
+    missing:  Vec<String>,
+}
+
+/// Reads a workbook out of whichever spreadsheet format it is.
+fn read_book(path: &str, bytes: &[u8], media: Media) -> Outcome<Book> {
+    match media {
+        Media::Ods => {
+            let r = res!(oxedyne_fe2o3_file::office::odf::sheet::read(bytes).map_err(|e| err!(e,
+                "file_read: '{}' could not be read as an OpenDocument spreadsheet.", path;
+                Invalid, Input)));
+            Ok(Book { book: r.book, macros: r.macros, formulas: r.formulas, missing: Vec::new() })
+        }
+        _ => {
+            let r = res!(oxedyne_fe2o3_file::office::xlsx::read(bytes).map_err(|e| err!(e,
+                "file_read: '{}' could not be read as a spreadsheet.", path; Invalid, Input)));
+            Ok(Book { book: r.book, macros: r.macros, formulas: r.formulas, missing: r.missing })
+        }
+    }
+}
+
+/// A rectangle of a spreadsheet, as a table the model can address cells in.
+///
+/// The column letters and the row numbers are IN the output, because the whole point of a range
+/// tool is that the next call names a range: a grid of bare values leaves the model counting
+/// columns, and it counts them wrong at the first gap.
+fn sheet_view(path: &str, bytes: &[u8], args: &str) -> Outcome<String> {
+    use oxedyne_fe2o3_file::office::sheet::{Range, Ref, col_name};
+
+    if bytes.len() > OFFICE_READ_MAX {
+        return Err(err!(
+            "sheet_read: '{}' is {} bytes, over the {} byte limit for unpacking a spreadsheet.",
+            path, bytes.len(), OFFICE_READ_MAX; Invalid, Input, Size));
+    }
+    // Either spreadsheet format: the tool takes a range, and which vocabulary the file is written
+    // in is not something the model should have to know or say.
+    let media = match Media::from_name(path) {
+        Media::Ods => Media::Ods,
+        _          => Media::Xlsx,
+    };
+    let r = res!(read_book(path, bytes, media));
+    let names: Vec<String> = r.book.names().iter().map(|s| s.to_string()).collect();
+    if names.is_empty() {
+        return Err(err!(
+            "sheet_read: '{}' holds no sheets.", path; Invalid, Input, Missing));
+    }
+    // A sheet by name, or the first. Named-and-absent is an error that LISTS what is there, because
+    // the next call the model makes is the one that gets it right.
+    // Optional: a workbook with one sheet is read without naming it.
+    let want = extract_json_string(args, "sheet").filter(|s| !s.trim().is_empty());
+    let sheet = match &want {
+        None => &r.book.sheets[0],
+        Some(n) => match r.book.sheet(n) {
+            Some(s) => s,
+            None => return Err(err!(
+                "sheet_read: '{}' has no sheet named '{}'. It has: {}.",
+                path, n, names.join(", "); Invalid, Input, Missing)),
+        },
+    };
+    let extent = match sheet.extent() {
+        Some(e) => e,
+        None => return Ok(fmt!(
+            "[sheet_read] {} — sheet '{}' is empty. The workbook's sheets are: {}.\n",
+            path, sheet.name, names.join(", "))),
+    };
+    // The range asked for, clipped to what the sheet holds; or its first rows.
+    let asked = extract_json_string(args, "range").filter(|s| !s.trim().is_empty());
+    let mut want = match &asked {
+        Some(spec) => res!(Range::parse(spec)
+            .map_err(|e| err!(e, "sheet_read: '{}' is not a range. One looks like 'A1:D20'.", spec;
+                Invalid, Input))),
+        None => Range {
+            from: extent.from,
+            to: Ref {
+                col: extent.to.col,
+                row: extent.to.row.min(SHEET_ROWS_DEFAULT.saturating_sub(1)),
+            },
+        },
+    };
+    // Clipped rather than refused: a person asking for A1:Z1000 of a small sheet wants the sheet.
+    want.to.col = want.to.col.min(extent.to.col);
+    want.to.row = want.to.row.min(extent.to.row);
+    if want.from.col > want.to.col || want.from.row > want.to.row {
+        return Ok(fmt!(
+            "[sheet_read] {} — sheet '{}' holds {}; the range asked for is outside it.\n",
+            path, sheet.name, extent.name()));
+    }
+    // Cut to the ceiling by ROWS, so the columns asked for all arrive: half a row of a table is
+    // worse than fewer rows of it.
+    let width = (want.to.col - want.from.col + 1) as u64;
+    let max_rows = (SHEET_CELLS_MAX / width.max(1)).max(1);
+    let full = Range { ..want };
+    let mut cut = false;
+    if (want.to.row - want.from.row + 1) as u64 > max_rows {
+        want.to.row = want.from.row + max_rows as u32 - 1;
+        cut = true;
+    }
+    let cells = sheet.window(&want);
+
+    let mut out = String::new();
+    out.push_str(&fmt!(
+        "[sheet_read] {} — sheet '{}', {} of {} ({} sheet(s) in the workbook: {}).\n",
+        path, sheet.name, want.name(), extent.name(), names.len(), names.join(", ")));
+    out.push_str(
+        "[sheet_read] the value shown is the one STORED in the file, which is what the author saw. \
+        Formulas are not recalculated; those present are listed after the table.\n\n");
+    // The header: a blank corner, then the column letters.
+    out.push('|');
+    out.push_str(" |");
+    for c in want.from.col..=want.to.col {
+        out.push_str(&fmt!(" {} |", col_name(c)));
+    }
+    out.push('\n');
+    out.push_str("| --- |");
+    for _ in want.from.col..=want.to.col {
+        out.push_str(" --- |");
+    }
+    out.push('\n');
+    let mut formulas: Vec<String> = Vec::new();
+    for (i, row) in cells.iter().enumerate() {
+        out.push_str(&fmt!("| {} |", want.from.row as usize + i + 1));
+        for (k, cell) in row.iter().enumerate() {
+            // A pipe inside a cell would end it, and a newline would end the row.
+            let shown = cell.value.show().replace('|', "\\|").replace('\n', " ");
+            out.push_str(&fmt!(" {} |", shown));
+            if let Some(f) = &cell.formula {
+                let at = Ref { col: want.from.col + k as u32, row: want.from.row + i as u32 };
+                formulas.push(fmt!("{} = {}", at.name(), f));
+            }
+        }
+        out.push('\n');
+    }
+    if !formulas.is_empty() {
+        out.push_str(&fmt!("\n[sheet_read] {} formula(s) in this range:\n", formulas.len()));
+        for f in formulas.iter().take(200) {
+            out.push_str(&fmt!("  {}\n", f));
+        }
+        if formulas.len() > 200 {
+            out.push_str(&fmt!("  ... and {} more.\n", formulas.len() - 200));
+        }
+    }
+    if cut {
+        out.push_str(&fmt!(
+            "\n[sheet_read] cut at row {} of {}; continue with \
+            {{\"path\":\"{}\",\"sheet\":\"{}\",\"range\":\"{}{}:{}{}\"}}\n",
+            want.to.row + 1, full.to.row + 1, path, sheet.name,
+            col_name(full.from.col), want.to.row + 2,
+            col_name(full.to.col), full.to.row + 1));
+    }
+    if r.macros {
+        out.push_str(
+            "[sheet_read] THE FILE CONTAINS MACROS. They are not run and not read, and they are \
+            still in the file.\n");
+    }
+    if !r.missing.is_empty() {
+        out.push_str(&fmt!(
+            "[sheet_read] {} sheet(s) are named by the workbook and could not be read: {}.\n",
+            r.missing.len(), r.missing.join(", ")));
+    }
+    Ok(out)
+}
+
+/// The shape of a spreadsheet: what sheets it has and how big each is.
+///
+/// What `file_read` answers with for a workbook, rather than the cells. A spreadsheet's useful unit
+/// is a rectangle and `sheet_read` is what fetches one; dumping every cell of every sheet would
+/// spend the whole output budget on a file the model has not decided it wants yet.
+fn sheet_shape(path: &str, bytes: &[u8], media: Media) -> Outcome<String> {
+    let r = res!(read_book(path, bytes, media));
+    let mut out = fmt!(
+        "[file_read] {} is a {} with {} sheet(s). Its cells are read with sheet_read, \
+        which takes a range.\n",
+        path, media.label(), r.book.sheets.len());
+    for s in &r.book.sheets {
+        let (rows, cols) = s.size();
+        match s.extent() {
+            Some(e) => out.push_str(&fmt!(
+                "  '{}' — {} rows x {} columns, {}\n", s.name, rows, cols, e.name())),
+            None => out.push_str(&fmt!("  '{}' — empty\n", s.name)),
+        }
+    }
+    if r.formulas > 0 {
+        out.push_str(&fmt!(
+            "[file_read] {} cell(s) carry a formula. The value stored beside each is what the \
+            author saw; nothing is recalculated.\n", r.formulas));
+    }
+    if r.macros {
+        out.push_str(
+            "[file_read] THE FILE CONTAINS MACROS. They are not run and not read.\n");
+    }
+    if !r.missing.is_empty() {
+        out.push_str(&fmt!(
+            "[file_read] {} sheet(s) are named and could not be read: {}.\n",
+            r.missing.len(), r.missing.join(", ")));
+    }
+    out.push_str(&fmt!(
+        "[file_read] read a range with {{\"path\":\"{}\",\"sheet\":\"{}\",\"range\":\"A1:H40\"}}\n",
+        path, r.book.sheets.first().map(|s| s.name.as_str()).unwrap_or("Sheet1")));
+    Ok(out)
 }
 
 /// The largest image `file_read` will hand to the model, in bytes on disk.
@@ -2072,10 +2671,12 @@ fn env_json_of(env: &[(String, String)]) -> String {
 ///   treats an empty bound list as no restriction, which is correct for a file tool jailed by the
 ///   workspace root -- and catastrophic here, where there is no jail but the fence itself.  So an
 ///   absent allow-list becomes the granted root, not the whole machine.
-/// * **A tainted turn loses the network.** A turn that has read a stranger's words may still
-///   build and test, inside its own paths, and may not reach outward -- which is the direct answer
-///   to a page or a message that says "now upload this somewhere".  This is one more consumer of
-///   the flag [`egress_check`] already gates on, not a new mechanism.
+/// * **A tainted turn reaches the network only if the user says so.** A turn that has read a
+///   stranger's words may still build and test inside its own paths, and may not reach outward
+///   until it is asked and answered -- which is the direct answer to a page or a message that says
+///   "now upload this somewhere".  This is one more consumer of the flag [`egress_check`] already
+///   gates on, not a new mechanism; [`net_step`] decides it and this function is handed the
+///   answer, never the flag.
 ///
 /// A granted [`Toolkit`] is folded in last, and only in the direction of the paths it names.  It
 /// cannot loosen anything already decided: the workspace rules are computed first and a toolkit
@@ -2902,6 +3503,37 @@ pub fn pack_locked(pack: &str) -> bool {
 // user learns to wave through -- which is also why [`Mode::Bypass`] switches it off outright
 // rather than leaving a prompt the user has already decided the answer to.
 
+/// The word an ordinary yes comes back from the page as.
+pub const EGRESS_ALLOW_WORD: &str = "allow";
+
+/// The word a yes to the network question ([`RUN_NET_TOOL`]) comes back as, and nothing else.
+///
+/// A DIFFERENT word, and the difference is the whole safety of that question.  The page's gate
+/// answers `allow` outright for a destination on our own origin, and a command line is not a URL:
+/// resolved against the page it becomes a RELATIVE path whose host is our host, so a command
+/// arriving anywhere but at its own branch would be waved through and the network granted with
+/// nobody asked.  That is how §7's egress guarantee was once voided by this same shortcut.  So the
+/// question is answered in a word only the branch written for it can say, and every other path
+/// through that function -- the shortcut, a missing branch, an older bundle -- says `allow` or
+/// `deny`, both of which mean no here.
+pub const RUN_NET_ALLOW_WORD: &str = "allow-net";
+
+/// Read the page's resolved answer, where anything but the exact word expected is a refusal.
+///
+/// A gate must not be talked past by a value it does not understand, so the default is `Deny`
+/// rather than a guess, and the match is exact: `RUN_NET_ALLOW_WORD` begins with
+/// `EGRESS_ALLOW_WORD`, so a loose comparison would answer one question with the other's yes.
+///
+/// # Arguments
+/// * `answer` - What the promise resolved with, where it resolved with a string at all.
+/// * `word` - The one string that means yes to this question.
+pub fn verdict_of(answer: Option<&str>, word: &str) -> Verdict {
+    match answer {
+        Some(s) if s == word => Verdict::Allow,
+        _                    => Verdict::Deny,
+    }
+}
+
 /// The user's answer to a request to reach a destination, as the JavaScript half reports it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Verdict {
@@ -3205,6 +3837,126 @@ pub fn run_decision(mode: Mode, argv: &[String], answer: Option<Verdict>) -> Egr
         Some(Verdict::Deny)  => Egress::Refuse(run_refusal(argv, "The user was asked, and said no.")),
         None                 => Egress::Refuse(run_refusal(argv,
             "The user could not be asked, and an unanswered request is not consent.")),
+    }
+}
+
+
+// ── Asking rather than withdrawing the network ──────────────────────
+//
+// `hand/REVIEW.md` §1.13, remedy 2.  The rule itself is right and is not touched here: a command's
+// own output is not the user's words, so a turn that has read any is a turn whose commands could be
+// reaching a destination something outside chose.  What was wrong is that the network was taken
+// away in SILENCE, on the second command of every ordinary build session -- `cargo fetch` then
+// `cargo build`, `npm install` then `npm test`, `git fetch` then `git pull` -- and the model was
+// left holding a toolchain error it had no way to attribute.
+//
+// So the question is put instead, and it goes through the door [`egress_check`] already uses rather
+// than a second consent mechanism beside it: the same three parts (a pure decision, an edge that
+// asks, a context that remembers), the same `Verdict`, the same page-side gate.
+//
+// TWO PROPERTIES CARRY THE WHOLE THING, and neither is optional.
+//
+// * **The answer holds for the turn.**  One question, not one per command.  A gate that asked
+//   before every `cargo` invocation would be answered without being read inside a minute, which is
+//   worse than no gate.
+// * **It loosens nothing.**  No answer, no network.  A turn that cannot be asked -- a dispatched
+//   worker, a browser that cannot put the question -- is exactly where it was, and a user who says
+//   no leaves the command running inside the same fence with the same network it had before, which
+//   is none.
+
+/// The name the network question travels under, which is what the page's gate switches on.
+///
+/// Deliberately NOT `Tool::Run`'s own name.  The page already answers `run`, and that is a
+/// different question -- *may this command run at all*, which is the [`Mode::Ask`] rung -- put in
+/// different words and answered with a different meaning.  A yes to one is not a yes to the other,
+/// so they must not arrive under one name.
+///
+/// The answer to this one comes back in a word of its own as well, which is what keeps a page that
+/// has never heard of the question from accidentally granting it: see
+/// [`crate::wasm::web::egress_allowed_net`].
+pub const RUN_NET_TOOL: &str = "run_net";
+
+/// What [`Tool::run`] must do about the network for one command.
+///
+/// Four states and not two, because the two that mean "the command has the network" are told apart
+/// by whether anything is owed to the user: a clean turn was never at risk, and a restored one was
+/// put to them and came back yes.  The briefing the model reads says different things about the two
+/// (see [`crate::prompts::machine_note`]), and a briefing that promised a clean turn's withdrawal
+/// to a turn that had already been through it would be wrong in the one way a model can catch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetStep {
+    /// Give it, and ask nobody: a clean turn, or [`Mode::Bypass`].
+    Give,
+    /// Give it because the user already said so, this turn.
+    Restored,
+    /// Put the question, then record the answer with [`ToolContext::set_net_consent`].
+    Ask,
+    /// Withhold it, and ask nobody: there is nobody to ask, or they were asked and said no.
+    Withhold,
+}
+
+impl NetStep {
+
+    /// Whether the command runs with the network.
+    pub fn gives_net(&self) -> bool {
+        matches!(self, Self::Give | Self::Restored)
+    }
+}
+
+/// Whether the network being withheld from a command is a question for the user rather than a
+/// verdict on them.
+///
+/// `alone` is what makes it a verdict.  A dispatched worker has nobody reading its transcript and
+/// no way to put a question, so the alternative to withholding is a process reaching wherever it
+/// likes with nobody in the loop -- which is the whole of why [`TurnState::unsupervised`] exists.
+///
+/// # Arguments
+/// * `mode` - Which rung the user is in.
+/// * `net_risk` - Whether this turn must reach the network through a closed door.
+/// * `alone` - Whether the agent asking has nobody watching it.
+pub fn net_needs_consent(mode: Mode, net_risk: bool, alone: bool) -> bool {
+    mode.withholds_net(net_risk) && !alone
+}
+
+/// What to do about one command's network, given what the turn already knows.
+///
+/// Pure, and therefore the whole of the decision: the three lines in [`Tool::run`] are an `await`
+/// and a record, and everything that could be got wrong is here where a test can reach it.
+///
+/// # Arguments
+/// * `mode` - Which rung the user is in.
+/// * `net_risk` - Whether this turn must reach the network through a closed door.
+/// * `alone` - Whether the agent asking has nobody watching it.
+/// * `remembered` - What the user said earlier in this turn, if they have been asked.
+pub fn net_step(mode: Mode, net_risk: bool, alone: bool, remembered: Option<Verdict>) -> NetStep {
+    // Nothing has taken it away: a clean turn, or the rung that withholds nothing.  Asked FIRST,
+    // so a remembered answer can never be read as anything but an answer to a question that was
+    // actually put.
+    if !mode.withholds_net(net_risk) {
+        return NetStep::Give;
+    }
+    if !net_needs_consent(mode, net_risk, alone) {
+        return NetStep::Withhold;
+    }
+    match remembered {
+        Some(Verdict::Allow) => NetStep::Restored,
+        Some(Verdict::Deny)  => NetStep::Withhold,
+        None                 => NetStep::Ask,
+    }
+}
+
+/// What the turn records when the question comes back.
+///
+/// `None` is the browser unable to put the question at all -- a missing global, a page mid-reload,
+/// a dialog nobody answered -- and it records a no, for the same reason [`run_decision`] refuses
+/// one: an unanswered request is not permission.
+///
+/// # Arguments
+/// * `answer` - What came back from the page, if anything did.
+pub fn net_verdict(answer: Option<Verdict>) -> Verdict {
+    match answer {
+        Some(v) => v,
+        None    => Verdict::Deny,
     }
 }
 
@@ -3858,10 +4610,11 @@ pub fn push_unconfigured_refusal() -> String {
 /// and the cause is a rule this turn is under rather than anything about the repository.
 pub fn push_no_net_refusal() -> String {
     fmt!(
-        "Refused: this turn has read something from outside the user's own files, so every \
-        command in it runs with the network refused -- and a push has nowhere to go without it. \
-        This is not a fault in the repository and no retry will change it. Say what is ready to \
-        push, and it can go out on a fresh message.")
+        "Refused: this turn has read something from outside the user's own files, so a command in \
+        it reaches the network only if the user says it may -- and this turn did not get that, so \
+        the push has nowhere to go. Either they were asked and declined, or there was nobody to \
+        ask. This is not a fault in the repository and no retry will change it. Say what is ready \
+        to push, and it can go out on a fresh message.")
 }
 
 /// The one sentence a daimon is told about pushing, or nothing where no credential is held.
@@ -4327,6 +5080,27 @@ impl ToolContext {
     /// gave an unattended worker the whole network on a clean turn.
     pub fn net_risk(&self) -> bool {
         self.is_tainted() || self.is_unsupervised()
+    }
+
+    /// What the user has already said about this turn's commands reaching the network, or `None`
+    /// where they have not been asked (see [`TurnState::net_consent`]).
+    pub fn net_consent(&self) -> Option<Verdict> {
+        lock_cache(&self.read_seen).net_consent
+    }
+
+    /// Record the answer, for the rest of this turn.
+    ///
+    /// Written once and never overwritten: the first answer is the turn's answer, so a second
+    /// question -- from a race, or from a later edit that forgot the memory -- cannot turn a no
+    /// into a yes.
+    ///
+    /// # Arguments
+    /// * `v` - What the user said.
+    pub fn set_net_consent(&self, v: Verdict) {
+        let mut c = lock_cache(&self.read_seen);
+        if c.net_consent.is_none() {
+            c.net_consent = Some(v);
+        }
     }
 }
 
@@ -5160,6 +5934,39 @@ pub enum Tool {
     /// recompile to land; a view that names a file reads it again each time it is drawn, which is
     /// what lets the same document be shown again after it changes.
     FileShow,
+    /// Read a rectangle of a spreadsheet.
+    ///
+    /// **The one tool this whole Office effort adds, and the reason it earns its place is the
+    /// unit.**  Every other format here is read by `file_read`, because a document's useful unit
+    /// IS the file.  A spreadsheet's is not: a `.xlsx` unzips to megabytes of XML, a single sheet
+    /// may be a hundred thousand rows, and what a reader wants is forty cells of it.  A tool whose
+    /// argument is a range is the difference between answering a question and spending a context
+    /// window on the parts of the file nobody asked about.
+    ///
+    /// It never recalculates.  See `oxedyne_fe2o3_file::office::sheet` for why that is the correct
+    /// answer rather than a missing feature.
+    SheetRead,
+    /// Replace text in a Word or OpenDocument document, in place.
+    ///
+    /// **Not `file_edit` on a document, and it could not be.**  A `.docx` is a ZIP of XML, so the
+    /// bytes `file_edit` would match against are compressed, and the text a person reads is spread
+    /// across as many `<w:t>` runs as the writer's formatting made -- a bold word in the middle of a
+    /// sentence splits it into three.  This finds the phrase in the paragraph's text and rewrites the
+    /// runs that held it.
+    ///
+    /// It is SURGICAL, and that is the reason it exists rather than a nicety of it.  Reading the
+    /// document to Markdown, changing the Markdown and writing a fresh file would produce something
+    /// that opens, looks about right, and has silently lost the comments, the bookmarks, the tracked
+    /// changes, the content controls, the theme and the headers -- and the person who finds out is
+    /// not the user, it is the colleague they sent it to.
+    DocEdit,
+    /// Write cells into a spreadsheet that already exists.
+    ///
+    /// The counterpart of [`Tool::SheetRead`] and it takes the same vocabulary: a sheet by the name
+    /// on its tab, and a cell by the reference a person types.  Nothing is recalculated, here or
+    /// anywhere else in this crate -- a formula goes in without a value beside it and the reader
+    /// works it out on open.
+    SheetWrite,
     Shell,
     /// Run one command on the user's machine through the hand, fenced.
     ///
@@ -5270,6 +6077,7 @@ impl Tool {
             Tool::FileSearch,
             Tool::FileGlob,
             Tool::FileDelete,
+            Tool::SheetRead,
             Tool::Shell,
         ]
     }
@@ -5288,6 +6096,9 @@ impl Tool {
             Tool::FileList,
             Tool::FileSearch,
             Tool::FileGlob,
+            Tool::SheetRead,
+            Tool::DocEdit,
+            Tool::SheetWrite,
             Tool::FileDelete,
             Tool::FileMove,
             Tool::DirCreate,
@@ -5356,8 +6167,11 @@ impl Tool {
         Ok(match tool {
             // `file_fetch` counts as a write: it puts bytes at a path, and a bounded turn that
             // could materialise a file inside Daimond's own directory has written one.
+            // `doc_edit` and `sheet_write` change a file at a path exactly as `file_edit` does, so
+            // they go through the same door: the workspace bounds, the skill declaration's fence and
+            // the absolute-path refusal all apply, and none of them had to be written twice.
             Tool::FileWrite | Tool::FileEdit | Tool::FileDelete | Tool::DirCreate
-            | Tool::FileFetch =>
+            | Tool::FileFetch | Tool::DocEdit | Tool::SheetWrite =>
                 vec![res!(Self::arg(args_json, "path"))],
             // The PDF it writes is a write, and naming it here is what puts it in
             // front of `guard`.  A compile whose `out` was invisible to the guard
@@ -5479,6 +6293,11 @@ impl Tool {
     fn read_target(tool: &Tool, args_json: &str) -> Outcome<Option<String>> {
         Ok(match tool {
             Tool::FileRead =>
+                Some(res!(Self::arg(args_json, "path"))),
+            // Reading a RANGE is reading the FILE. A tool whose argument happens to be a rectangle
+            // is not thereby outside the fence, and a bound that covered `file_read` and not this
+            // would be a bound with a spreadsheet-shaped hole in it.
+            Tool::SheetRead =>
                 Some(res!(Self::arg(args_json, "path"))),
             // **SHOWING A FILE IS READING IT, and it is the more consequential of the two.**  A
             // read puts a file's bytes into the model's context, where the user may never look;
@@ -5618,6 +6437,9 @@ impl Tool {
             Tool::ArtefactAdd => "artefact_add",
             Tool::FileFetch   => "file_fetch",
             Tool::FileShow    => "file_show",
+            Tool::SheetRead   => "sheet_read",
+            Tool::DocEdit     => "doc_edit",
+            Tool::SheetWrite  => "sheet_write",
             Tool::Shell       => "shell",
             Tool::Run         => "run",
             Tool::SpawnAgent  => "spawn_agent",
@@ -5673,6 +6495,9 @@ impl Tool {
             "artefact_add" => Some(Tool::ArtefactAdd),
             "file_fetch"   => Some(Tool::FileFetch),
             "file_show"    => Some(Tool::FileShow),
+            "sheet_read"   => Some(Tool::SheetRead),
+            "doc_edit"     => Some(Tool::DocEdit),
+            "sheet_write"  => Some(Tool::SheetWrite),
             "shell"        => Some(Tool::Shell),
             "run"          => Some(Tool::Run),
             "spawn_agent"  => Some(Tool::SpawnAgent),
@@ -5707,6 +6532,9 @@ impl Tool {
             Tool::DirCreate   => "Create a directory in the workspace, and any parent directories it needs.",
             Tool::ArtefactAdd => "Record that a file already in the workspace is an artefact of this Diamond, so it is listed with the work rather than only sitting in the folder. Use it for files the user put there, or found, or wrote themselves -- anything this Diamond produced is recorded without being asked. Recording a file does not read it: read it as well if what it says belongs in the crystal.",
             Tool::FileShow    => "Put a workspace file on the user's screen, in Daimond's document panel beside the chat. THIS IS HOW YOU SHOW SOMEBODY SOMETHING. The other file tools hand you bytes or text, which is for you; this is for them. A PDF is drawn page by page by the browser's own document viewer, so the user reads the typeset document rather than its source — say 'it is on screen now', not 'I cannot display a PDF'. Pictures (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF, SVG) are decoded and drawn; sound and video get a player; HTML is rendered; JSON becomes a tree, CSV and TSV a table, Markdown is rendered, and anything the panel treats as source opens in its editor where the user can change it. A format with no viewer of its own is still shown — as a paged hex dump naming the format — so this tool does not fail on an unusual file, and you must never conclude from one such file that Daimond cannot display things. It takes a PATH, not content: the panel reads the file, so after you rewrite or recompile that file, call this again with the same path to put the new version in front of them. 'page' opens a PDF at a particular page (the top otherwise). Show a file when the user asked to see one, when you have just produced a document for them, or when the thing you are discussing is easier looked at than described — and say what you have put on screen, since the panel may be behind whatever they are reading.",
+            Tool::SheetRead   => "Read a rectangle of an Excel spreadsheet (.xlsx) as a table. Give a 'path', optionally a 'sheet' by the name on its tab (the first sheet otherwise) and optionally a 'range' like 'A1:H40' (the first 100 rows otherwise). The result carries the column letters and the row numbers, so your next call can name exactly the range you now want. THE VALUE SHOWN IS THE ONE STORED IN THE FILE -- the number the person who wrote it saw. Formulas are NOT recalculated; the formulas inside the range are listed after the table, so you can see what produced a figure without being handed a different figure. Call file_read on a .xlsx first to learn what sheets it has and how big they are, then this to read the cells. A workbook is a compressed archive of XML and one sheet can be a hundred thousand rows, which is why this takes a range and file_read does not hand you the whole thing.",
+            Tool::DocEdit     => "Change the words in a Word (.docx) or OpenDocument (.odt) document that already exists, leaving everything else in it exactly as it was. Give a 'path' and 'edits': a list of {\"find\",\"replace\"} pairs, optionally with 'nth' to pick one occurrence (1-based, counted through the whole document) instead of replacing all of them. THIS IS NOT file_edit AND file_edit WILL NOT WORK ON A DOCUMENT: these formats are compressed archives, so there is no text in the file for file_edit to match against. Read the document with file_read first and quote a phrase it actually holds — and note that a writer's formatting splits a sentence into runs, so a phrase interrupted by a footnote mark or a field may not be findable as one string, while an ordinary sentence with a bold word in the middle of it is. A 'find' that matches nothing is an ERROR NAMING THE STRING and nothing at all is written; that refusal is the answer, so read the document again rather than retrying the same string. Only the body is searched: a phrase in a header, a footer or a footnote reports as absent rather than being changed in one of two places. This does NOT work on a presentation: a slide is a position on a canvas, and changing words without knowing the geometry puts text over other text — read it and write a new one instead. For a spreadsheet, use sheet_write.",
+            Tool::SheetWrite  => "Write cells into an Excel (.xlsx) or OpenDocument (.ods) spreadsheet that already exists. Give a 'path' and 'edits': a list of cells, each with a 'ref' like 'B2' and either a 'value' or a 'formula'. Name the 'sheet' by the tab it is on, or leave it out for the first sheet — a sheet name that is not in the workbook is refused and the refusal lists the ones that are. A 'value' is typed the way a person typing into a cell would have it typed: '3.5' becomes the number 3.5, 'true' becomes a boolean, and text that is not exactly how a number prints stays text, so a part number like '007' is not renumbered. An empty value empties the cell. A 'formula' is written in the ordinary A1 form ('=B2*C2', '=SUM(D2:D10)') and is converted to whatever the file's own format needs. NOTHING IS RECALCULATED: a formula you write goes in without a value beside it and the reader works it out when the file is opened, and every formula already in the workbook keeps the number it had. A 'ref' beyond the end of the sheet is written and the sheet grows; only a bad reference is refused. Read the sheet with sheet_read first, so you write to the cell you mean.",
             Tool::FileFetch   => "Download one file from cloud storage onto this device, so the other file tools can reach it. The workspace is one set of files and this device holds as much of it as it can; file_list marks the rest 'in cloud storage', and file_read refuses them and says how big they are. This is the only thing that moves those bytes, and it may transfer a great deal of data at the user's expense — so fetch a file when you actually need its contents, one at a time, and never speculatively or in bulk. Once it has arrived, read it as you would any other file.",
             Tool::Shell       => "Run a shell command in the workspace and return its stdout/stderr and exit code.",
             Tool::Run         => "Run one command on the user's machine and return its output and exit code. This is how you build, test, run a linter, or use any command-line tool. Give 'argv' as an ARRAY -- the program, then each argument separately: [\"cargo\",\"test\",\"--lib\"]. It is NOT a shell command line and there is no shell: a semicolon, a pipe, a redirection, a backtick, a '$(...)' or a '&&' is passed to the program as a literal argument and will not do what it does in a terminal, and '~' is not expanded either, so '~/x' asks for a directory actually named '~' and the command reports the path missing -- write every path in 'argv' out in full from '/'. 'cwd' is the one that goes the other way: it is workspace-relative, as the file tools' paths are, and an absolute one is refused rather than joined onto the workspace root. To feed a command some input use 'stdin'; to chain two commands, call this tool twice and decide between them yourself, which is better anyway because you see the first result before choosing. It needs a companion program -- Daimond's machine hand -- that the user installs and approves once: a browser cannot start a process on its own. Where there is no hand, or where the hand says it cannot contain a command on that computer, this REFUSES and says which; believe the refusal, tell the user what you wanted to run, and carry on with the file tools. Where there is one, the command runs inside the folder they granted and not the rest of the machine. Whether it may reach the network, and whether the user is asked before it runs at all, is the permission mode they chose: the note about this computer says which, so read that rather than assuming either way. A command that fails is usually telling you something true: read its stderr before running it again.",
@@ -5746,6 +6574,9 @@ impl Tool {
             Tool::ArtefactAdd => "Count an existing file as this Diamond's.",
             Tool::FileFetch   => "Bring a file down from cloud storage onto this device.",
             Tool::FileShow    => "Put one of your files on the screen beside the chat.",
+            Tool::SheetRead   => "Read part of a spreadsheet.",
+            Tool::DocEdit     => "Change the words in a Word or OpenDocument document, keeping everything else in it.",
+            Tool::SheetWrite  => "Write cells into a spreadsheet you already have.",
             Tool::Shell       => "Run a command. Only where Daimond has a machine to run it on.",
             Tool::Run         => "Run a command on your computer, in the folder you granted. Needs Daimond's machine hand installed; refused where it is not, and where it cannot contain the command.",
             Tool::SpawnAgent  => "Send a worker off to do one task on its own, several at once.",
@@ -5780,6 +6611,9 @@ impl Tool {
             Tool::ArtefactAdd => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file to record as this Diamond's artefact"},"note":{"type":"string","description":"Optional: why it belongs to this Diamond, in a few words"}},"required":["path"]}"#,
             Tool::FileFetch => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to bring down from cloud storage"}},"required":["path"]}"#,
             Tool::FileShow => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to put on screen, e.g. 'notes/report.pdf'; never absolute"},"page":{"type":"integer","description":"Which page to open a PDF at, 1-based. Omit for the start of the document."}},"required":["path"]}"#,
+            Tool::SheetRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .xlsx, e.g. 'books/ledger.xlsx'; never absolute"},"sheet":{"type":"string","description":"Which sheet, by the name on its tab. Omit for the first sheet; file_read on the workbook lists the names."},"range":{"type":"string","description":"Which cells, like 'A1:H40'. Omit for the first 100 rows. A range larger than the sheet is clipped to it rather than refused."}},"required":["path"]}"#,
+            Tool::DocEdit => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .docx or .odt, e.g. 'notes/report.docx'; never absolute"},"edits":{"type":"array","description":"The replacements to make, in order. Each is applied to the document as the one before it left it.","items":{"type":"object","properties":{"find":{"type":"string","description":"The exact text to look for, as the document holds it"},"replace":{"type":"string","description":"What to put in its place. Empty removes the text."},"nth":{"type":"integer","description":"Which occurrence to change, counted from 1 through the whole document. Omit to change every one."}},"required":["find","replace"]}}},"required":["path","edits"]}"#,
+            Tool::SheetWrite => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .xlsx or .ods, e.g. 'books/ledger.xlsx'; never absolute"},"edits":{"type":"array","description":"The cells to write.","items":{"type":"object","properties":{"sheet":{"type":"string","description":"Which sheet, by the name on its tab. Omit for the first sheet."},"ref":{"type":"string","description":"Which cell, like 'B2' or 'AC14'"},"value":{"type":"string","description":"What to put in the cell, as a person would type it. '' empties it."},"formula":{"type":"string","description":"A formula in the ordinary A1 form, e.g. '=B2*C2'. Give this or 'value', not both unless you know the cached value is right."}},"required":["ref"]}}},"required":["path","edits"]}"#,
             Tool::Shell => r#"{"type":"object","properties":{"command":{"type":"string","description":"Shell command to run"}},"required":["command"]}"#,
             Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program and each argument as a separate element, e.g. [\"cargo\",\"test\"]. Never a shell command line. A path in an argument is the machine's own: absolute, with no '~'."},"cwd":{"type":"string","description":"Workspace-relative directory to run in, e.g. 'src/api' (default: this Diamond's own directory). Never absolute."},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit in milliseconds (default 120000, maximum 900000)"}},"required":["argv"]}"#,
             Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string","description":"Short label for the agent, e.g. 'research-opfs'"},"task":{"type":"string","description":"The complete, self-contained instruction for the agent. It cannot see this conversation, so say everything it needs."}},"required":["name","task"]}"#,
@@ -5826,6 +6660,9 @@ impl Tool {
         }
         let text = res!(match self {
             Tool::FileRead   => return Self::file_read(args_json, ctx),
+            Tool::SheetRead  => Self::sheet_read(args_json, ctx),
+            Tool::DocEdit    => Self::doc_edit(args_json, ctx),
+            Tool::SheetWrite => Self::sheet_write(args_json, ctx),
             Tool::FileWrite  => Self::file_write(args_json, ctx),
             Tool::FileEdit   => Self::file_edit(args_json, ctx),
             Tool::FileList   => Self::file_list(args_json, ctx),
@@ -6006,10 +6843,56 @@ impl Tool {
                         return Err(err!("file_write: {}", msg; Invalid, Input, Size));
                     }
                 }
+                // A path naming an Office document means the content is MARKDOWN and the file is a
+                // real document. The name decides, not the bytes: `.docx` is what the user will
+                // double-click, and it is the same rule `file_read` uses to decide to unpack one.
+                if let Some(media) = office_kind(&path) {
+                    let (bytes, note) = res!(office_written(&path, media, &content));
+                    res!(crate::wasm::opfs::write_file(ctx.root, &path, &bytes).await);
+                    let mut st = lock_cache(&ctx.read_seen);
+                    st.seen.insert(path.clone(), content_hash(&bytes));
+                    return Ok(MessageContent::text(
+                        fmt!("Wrote {} bytes to {}.{}", bytes.len(), path, note)));
+                }
                 res!(crate::wasm::opfs::write_file(ctx.root, &path, content.as_bytes()).await);
                 let mut st = lock_cache(&ctx.read_seen);
                 st.seen.insert(path.clone(), content_hash(content.as_bytes()));
                 Ok(fmt!("Wrote {} bytes to {}.", content.len(), path))
+            }
+            Tool::DocEdit => {
+                let raw = res!(Self::arg(args_json, "path"));
+                let path = res!(Self::scoped(ctx, &raw));
+                let media = res!(office_kind(&raw).ok_or_else(|| err!(
+                    "doc_edit: '{}' does not name a document. It edits .docx and .odt; ordinary \
+                    text files are edited with file_edit.", raw; Invalid, Input)));
+                let bytes = res!(crate::wasm::opfs::read_file(ctx.root, &path).await);
+                let (out, note) = res!(doc_edited(&raw, media, &bytes, args_json));
+                res!(crate::wasm::opfs::write_file(ctx.root, &path, &out).await);
+                // The file on disk is now this, so a later `file_write` is anchored to what the
+                // edit left rather than to what the agent last read.
+                let mut st = lock_cache(&ctx.read_seen);
+                st.seen.insert(path.clone(), content_hash(&out));
+                Ok(fmt!("Edited {}, now {} bytes.{}", raw, out.len(), note))
+            }
+            Tool::SheetWrite => {
+                let raw = res!(Self::arg(args_json, "path"));
+                let path = res!(Self::scoped(ctx, &raw));
+                let media = res!(office_kind(&raw).ok_or_else(|| err!(
+                    "sheet_write: '{}' does not name a spreadsheet. It writes .xlsx and .ods.", raw;
+                    Invalid, Input)));
+                let bytes = res!(crate::wasm::opfs::read_file(ctx.root, &path).await);
+                let (out, note) = res!(sheet_written(&raw, media, &bytes, args_json));
+                res!(crate::wasm::opfs::write_file(ctx.root, &path, &out).await);
+                let mut st = lock_cache(&ctx.read_seen);
+                st.seen.insert(path.clone(), content_hash(&out));
+                Ok(fmt!("Wrote to {}, now {} bytes.{}", raw, out.len(), note))
+            }
+            Tool::SheetRead => {
+                let raw = res!(Self::arg(args_json, "path"));
+                let path = res!(Self::scoped(ctx, &raw));
+                let bytes = res!(crate::wasm::opfs::read_file(ctx.root, &path).await);
+                let view = res!(sheet_view(&raw, &bytes, args_json));
+                Ok(Self::mark_if_untrusted(ctx, &raw, view))
             }
             Tool::FileRead => {
                 let raw = res!(Self::arg(args_json, "path"));
@@ -6062,6 +6945,16 @@ impl Tool {
                 }
                 if let Some(media) = ImageMedia::sniff(&bytes) {
                     return image_result(ctx, &raw, media, bytes, want);
+                }
+                // Before the binary refusal, because an Office document IS binary and refusing it
+                // was the whole complaint: `Media` has named these formats correctly all along and
+                // nothing could read one. Most people's documents are in them.
+                // An early return leaves this function rather than the match, so it carries the
+                // content type the function answers with rather than the string the match yields.
+                if let Some(got) = office_view(&raw, &bytes) {
+                    let (md, note) = res!(got);
+                    return Ok(MessageContent::text(Self::mark_if_untrusted(
+                        ctx, &raw, fmt!("{}{}", Self::read_view(args_json, &raw, &md), note))));
                 }
                 // Checked after the cloud case, which has no bytes to test.
                 if is_binary(&bytes) {
@@ -7018,6 +7911,12 @@ impl Tool {
         if let Some(media) = ImageMedia::sniff(&data) {
             return image_result(ctx, &path, media, data, want);
         }
+        // Before the binary refusal: see the same branch on the browser path.
+        if let Some(got) = office_view(&path, &data) {
+            let (md, note) = res!(got);
+            return Ok(MessageContent::text(Self::mark_if_untrusted(
+                ctx, &path, fmt!("{}{}", Self::read_view(args, &path, &md), note))));
+        }
         if is_binary(&data) {
             if let Want::Base64 = want {
                 return base64_result(ctx, &path, "application/octet-stream", data);
@@ -7029,6 +7928,17 @@ impl Tool {
             Self::mark_if_untrusted(ctx, &path, Self::read_view(args, &path, &s))))
     }
 
+    /// Read a rectangle of a spreadsheet, on the native build.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn sheet_read(args: &str, ctx: &ToolContext) -> Outcome<String> {
+        let path = res!(Self::arg(args, "path"));
+        let abs = res!(ctx.workspace.resolve(&path));
+        let data = res!(std::fs::read(&abs)
+            .map_err(|e| err!(e, "sheet_read: cannot read '{}'.", path; IO, File, Read)));
+        let view = res!(sheet_view(&path, &data, args));
+        Ok(Self::mark_if_untrusted(ctx, &path, view))
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn file_write(args: &str, ctx: &ToolContext) -> Outcome<String> {
         let path = res!(Self::arg(args, "path"));
@@ -7038,9 +7948,48 @@ impl Tool {
             res!(std::fs::create_dir_all(parent)
                 .map_err(|e| err!(e, "file_write: cannot create parent dirs for '{}'.", path; IO, File)));
         }
+        // A path naming an Office document means the content is MARKDOWN and the file is a document.
+        // The name decides, not the bytes: `.docx` is what the user will double-click.
+        if let Some(media) = office_kind(&path) {
+            let (bytes, note) = res!(office_written(&path, media, &content));
+            res!(std::fs::write(&abs, &bytes)
+                .map_err(|e| err!(e, "file_write: cannot write '{}'.", path; IO, File, Write)));
+            return Ok(fmt!("Wrote {} bytes to {}.{}", bytes.len(), path, note));
+        }
         res!(std::fs::write(&abs, content.as_bytes())
             .map_err(|e| err!(e, "file_write: cannot write '{}'.", path; IO, File, Write)));
         Ok(fmt!("Wrote {} bytes to {}.", content.len(), path))
+    }
+
+    /// Replaces text in a document, on the native transport.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn doc_edit(args: &str, ctx: &ToolContext) -> Outcome<String> {
+        let path = res!(Self::arg(args, "path"));
+        let media = res!(office_kind(&path).ok_or_else(|| err!(
+            "doc_edit: '{}' does not name a document. It edits .docx and .odt; ordinary text files             are edited with file_edit.", path; Invalid, Input)));
+        let abs = res!(ctx.workspace.resolve(&path));
+        let bytes = res!(std::fs::read(&abs)
+            .map_err(|e| err!(e, "doc_edit: cannot read '{}'.", path; IO, File, Read)));
+        let (out, note) = res!(doc_edited(&path, media, &bytes, args));
+        res!(std::fs::write(&abs, &out)
+            .map_err(|e| err!(e, "doc_edit: cannot write '{}'.", path; IO, File, Write)));
+        Ok(fmt!("Edited {}, now {} bytes.{}", path, out.len(), note))
+    }
+
+    /// Writes cells into a spreadsheet, on the native transport.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn sheet_write(args: &str, ctx: &ToolContext) -> Outcome<String> {
+        let path = res!(Self::arg(args, "path"));
+        let media = res!(office_kind(&path).ok_or_else(|| err!(
+            "sheet_write: '{}' does not name a spreadsheet. It writes .xlsx and .ods.", path;
+            Invalid, Input)));
+        let abs = res!(ctx.workspace.resolve(&path));
+        let bytes = res!(std::fs::read(&abs)
+            .map_err(|e| err!(e, "sheet_write: cannot read '{}'.", path; IO, File, Read)));
+        let (out, note) = res!(sheet_written(&path, media, &bytes, args));
+        res!(std::fs::write(&abs, &out)
+            .map_err(|e| err!(e, "sheet_write: cannot write '{}'.", path; IO, File, Write)));
+        Ok(fmt!("Wrote to {}, now {} bytes.{}", path, out.len(), note))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -7544,9 +8493,11 @@ impl Tool {
     ///    The one thing that sentence still rests on is that the folder the hand granted IS the
     ///    workspace the file tools resolve against. See `hand/REVIEW.md` §1.14: the hand now
     ///    publishes a folder-identity token, and the page's comparison is what settles it.
-    /// 4. **A tainted turn loses the network**, which is [`egress_check`]'s rule applied to a
-    ///    process rather than a URL. The turn is told, because a command that fails to resolve a
-    ///    host with no explanation is a debugging session nobody needed.
+    /// 4. **A tainted turn does not reach the network without the user's say-so**, which is
+    ///    [`egress_check`]'s rule applied to a process rather than a URL. The question is put once
+    ///    and the answer holds for the turn (see [`net_step`]); where it cannot be put, or comes
+    ///    back no, the command runs with the network refused and is TOLD so, because a command that
+    ///    fails to resolve a host with no explanation is a debugging session nobody needed.
     ///
     /// # Arguments
     /// * `args` - The raw tool arguments.
@@ -7686,25 +8637,74 @@ impl Tool {
         // and the sentence the model reads afterwards -- is describing one decision rather than
         // three reads that a setting changed between could disagree about.
         let mode = mode();
-        // `net_risk`, not the raw taint: an unattended worker loses the network on a clean turn
-        // too. A worker cannot be asked about a destination, so the alternative to withholding it
-        // is a process reaching anywhere it likes with nobody in the loop.
-        let fence = fence_spec(&ctx.no_write, &machine, mode.withholds_net(ctx.net_risk()));
+        let cwd_abs = if normalise(&cwd_rel).is_empty() {
+            root.clone()
+        } else {
+            fmt!("{}/{}", root.trim_end_matches('/'), normalise(&cwd_rel))
+        };
+        // Is there anywhere to run at all? The answer cannot depend on the network -- `fence_spec`
+        // reads the roots off the bounds alone -- so it is settled BEFORE anybody is asked
+        // anything, and nobody is put a question about a command that was going to be refused.
+        let bare = fence_spec(&ctx.no_write, &machine, true);
+        if bare.rw.is_empty() && bare.ro.is_empty() {
+            return Ok(fmt!(
+                "Refused: this turn's bounds do not describe any folder the command could run in, \
+                so there is no fence to run it inside. Nothing was run."));
+        }
+        // The network, asked about rather than taken away in silence (`hand/REVIEW.md` §1.13).
+        //
+        // `net_risk`, not the raw taint: an unattended worker is at risk on a clean turn too, and
+        // it is the one case with nobody to ask -- so `net_step` answers it `Withhold` and nothing
+        // below can turn that into a question.
+        //
+        // These four lines are mirrored by `test_one_answer_covers_the_whole_turn_and_a_new_turn_
+        // asks_again`, which is the only way the browser-only path here can be checked at all.
+        // Keep them the same shape.
+        let cmd = argv.join(" ");
+        let step = net_step(mode, ctx.net_risk(), ctx.is_unsupervised(), ctx.net_consent());
+        let step = match step {
+            NetStep::Ask => {
+                // Its own edge, not `egress_allowed_detail`, and for one reason: the page's gate
+                // answers `allow` outright for our own origin, and a command line resolved against
+                // the page IS our own origin, so this question asked through that door would be
+                // waved through by a shortcut meant for a URL. `egress_allowed_net` takes a yes
+                // only in a word the branch written for this question can say.
+                let answer = crate::wasm::web::egress_allowed_net(&cmd, &cwd_abs).await;
+                let v = net_verdict(answer);
+                ctx.set_net_consent(v);
+                // Read back rather than derived, so the turn's memory is what the fence is built
+                // from: two answers to one question is how a race gets the network.
+                net_step(mode, ctx.net_risk(), ctx.is_unsupervised(), ctx.net_consent())
+            },
+            other => other,
+        };
+        // Built from the answer, by the one function that builds a fence, out of the one argument a
+        // rung -- or a user -- may move. The withheld fence is the one already in hand, so the
+        // second call happens only where the user gave the network back, and everything but that
+        // field comes from the turn's bounds and nothing else --
+        // `test_a_yes_moves_nothing_but_the_network` holds it to exactly that.
+        let fence = if step.gives_net() {
+            fence_spec(&ctx.no_write, &machine, false)
+        } else {
+            bare
+        };
         // Captured HERE, beside the fence, and passed down rather than read again in
         // `run_result`. Asking the context a second time gives the same answer today only because
         // nothing between the two calls taints the turn -- an accident of ordering that the next
         // edit to either function breaks silently (`hand/REVIEW.md` §1.13). This is the flag the
         // command actually ran with.
         let no_net = !fence.net;
-        if fence.rw.is_empty() && fence.ro.is_empty() {
-            return Ok(fmt!(
-                "Refused: this turn's bounds do not describe any folder the command could run in, \
-                so there is no fence to run it inside. Nothing was run."));
-        }
         // What to do about a `git` command, decided ONCE and in one place. A refusal returns here,
-        // above the consent question, so the user is never asked to approve a push that was going
-        // to be refused; and the credential is attached below out of the same decision, so an
-        // `argv` that did not pass this cannot be authenticated by any later step.
+        // above the rung's own "may this run" question, so the user is never asked to approve a
+        // push that was going to be refused; and the credential is attached below out of the same
+        // decision, so an `argv` that did not pass this cannot be authenticated by any later step.
+        //
+        // BELOW the network question deliberately, and it is the one place the "ask last" rule
+        // above is given up. A push refused for having no network is §1.13 in its most acute form:
+        // the command whose entire purpose is the network, refused for the want of a question
+        // nobody had put. So the question is put first, and a `--force` that was going to be
+        // refused anyway costs one dialog -- which is not wasted, since the answer covers every
+        // later command in the turn.
         let push_env = match git_step(&argv, &root, no_net) {
             GitStep::Refuse(why) => return Ok(why),
             GitStep::WithEnv(e)  => e,
@@ -7719,17 +8719,11 @@ impl Tool {
             Some(s) => fmt!("\"{}\"", json_escape(&s)),
             None    => "null".to_string(),
         };
-        let cwd_abs = if normalise(&cwd_rel).is_empty() {
-            root.clone()
-        } else {
-            fmt!("{}/{}", root.trim_end_matches('/'), normalise(&cwd_rel))
-        };
         // The question, on the rung that asks it -- and put LAST of the checks, so the user is
         // only ever asked about a command that would otherwise have run. Being asked to approve
         // something that was going to be refused anyway is the fastest way to teach a person to
         // approve without reading.
         if run_needs_consent(mode) {
-            let cmd = argv.join(" ");
             let answer = crate::wasm::web::egress_allowed_detail(
                 Self::Run.name(), &cmd, &cwd_abs).await;
             if let Egress::Refuse(reason) = run_decision(mode, &argv, answer) {
@@ -7950,10 +8944,11 @@ const DENIED_DIR_NOTE: &str =
 /// reports as a broken project (`hand/REVIEW.md` §1.13).
 #[cfg(any(target_arch = "wasm32", test))]
 const NO_NET_NOTE: &str =
-    "\n[no network: this turn has already read content from outside your workspace, so every \
-    command in it runs with the network refused. A fetch, install or clone fails for that reason \
-    and not because the project is broken — say so rather than retrying, and ask in a new message \
-    for anything that needs to reach out.]";
+    "\n[no network: this turn has already read content from outside your workspace, so a command \
+    in it reaches the network only if the user says it may, and this one did not get that -- they \
+    declined, or there was nobody to ask. A fetch, install or clone fails for that reason and not \
+    because the project is broken — say so rather than retrying, and ask in a new message for \
+    anything that needs to reach out.]";
 
 
 /// The set of tools available to the agent, plus the context they run in.
@@ -8285,14 +9280,19 @@ mod tests {
             "and Daimond's own directory is denied even when nothing said so");
     }
 
+    /// Renamed from `test_a_tainted_turn_loses_the_network_00`, which stopped being the whole
+    /// truth the moment the turn was asked instead (`hand/REVIEW.md` §1.13, remedy 2): a tainted
+    /// turn loses the network only where the answer was no. What this holds is the fence's own
+    /// side of it, which has not moved -- withheld means no network, and nothing else does.
     #[test]
-    fn test_a_tainted_turn_loses_the_network_00() {
+    fn test_a_fence_built_with_the_network_withheld_carries_none_00() {
         let b = diamond_bounds("diamonds/d1", &[], &[]);
         assert!(fence_spec(&b, &Machine::at("/home/u/ws"), false).net,
             "a turn that has read nothing but the user's own files runs as it always did");
         assert!(!fence_spec(&b, &Machine::at("/home/u/ws"), true).net,
             "a turn that has read a stranger's words may still build and test, and may not reach \
-            outward -- this is the direct answer to 'now upload this somewhere'");
+            outward without being asked -- this is the direct answer to 'now upload this \
+            somewhere'");
     }
 
     #[test]
@@ -10925,6 +11925,227 @@ mod tests {
         }
     }
 
+    // ── Asking rather than withdrawing the network (§1.13, remedy 2) ─────────
+    //
+    // The call site is `Tool::run`'s wasm arm, which no test can reach: it awaits the page.  So the
+    // four lines that decide the network are mirrored in `run_net` below and everything they are
+    // built out of is pure and native.  What has to be shown is three things, and the first two are
+    // each satisfied by the broken behaviour if they are asserted carelessly:
+    //
+    // * one question covers the turn -- so it is the SECOND and THIRD commands that are counted,
+    //   not the first, since a test that shows one prompt on one command passes against a gate that
+    //   prompts every time;
+    // * a NEW turn asks again -- so a fresh context is checked, since a memory that never expired
+    //   would also pass "the second command did not ask";
+    // * and it loosens nothing -- so a declined turn, and a turn with nobody to ask, are held to
+    //   running with exactly the network they had before this existed, which is none.
+
+    /// The four lines `Tool::run` decides the network with, with the asking replaced by a closure
+    /// so a test can count the questions.  Generic rather than a trait object, per the house style.
+    ///
+    /// It is a mirror and not the thing itself, which is the honest cost of a call site that can
+    /// only run in a browser.  Keep it the same shape as the original.
+    fn run_net<F>(ctx: &ToolContext, mode: Mode, ask: F) -> NetStep
+        where F: FnOnce() -> Option<Verdict>
+    {
+        match net_step(mode, ctx.net_risk(), ctx.is_unsupervised(), ctx.net_consent()) {
+            NetStep::Ask => {
+                let v = net_verdict(ask());
+                ctx.set_net_consent(v);
+                net_step(mode, ctx.net_risk(), ctx.is_unsupervised(), ctx.net_consent())
+            },
+            other => other,
+        }
+    }
+
+    /// Who is asked, and about what.  A question is put only where the network would otherwise
+    /// have been taken away AND there is somebody to put it to.
+    #[test]
+    fn test_the_network_question_is_put_only_where_it_can_change_something() {
+        for rung in Mode::all() {
+            // A clean turn is not asked anything, on any rung: nothing has been read, so there is
+            // no question to put and no prompt to teach the user to wave through.
+            assert_eq!(NetStep::Give, net_step(rung, false, false, None),
+                "the {} rung questioned a clean turn", rung.name());
+            assert!(!net_needs_consent(rung, false, false),
+                "the {} rung would ask about a clean turn", rung.name());
+            // And a rung that withholds nothing asks nothing, whatever the turn has read.
+            if rung == Mode::Bypass {
+                assert_eq!(NetStep::Give, net_step(rung, true, false, None),
+                    "bypass questioned a turn it withholds nothing from");
+                continue;
+            }
+            assert_eq!(NetStep::Ask, net_step(rung, true, false, None),
+                "the {} rung took the network without asking", rung.name());
+            assert!(net_needs_consent(rung, true, false),
+                "the {} rung would not ask", rung.name());
+        }
+    }
+
+    /// **One question covers the turn.**  The property the whole remedy rests on, and the one a
+    /// careless test passes against the behaviour it replaced: it is commands two and three that
+    /// prove it, and a fresh turn that proves the memory has a bottom.
+    #[test]
+    fn test_one_answer_covers_the_whole_turn_and_a_new_turn_asks_again() {
+        let c = ctx();
+        c.set_tainted();
+        let asked = std::cell::Cell::new(0u32);
+        let once = |answer: Option<Verdict>| -> NetStep {
+            run_net(&c, Mode::Guarded, || { asked.set(asked.get() + 1); answer })
+        };
+        // `cargo fetch`, then `cargo build`, then `cargo test` -- the session §1.13 is about.
+        assert_eq!(NetStep::Restored, once(Some(Verdict::Allow)), "the first command was refused");
+        assert_eq!(1, asked.get(), "the first command did not put the question");
+        assert_eq!(NetStep::Restored, once(Some(Verdict::Deny)),
+            "the second command lost the network the user had just restored");
+        assert_eq!(NetStep::Restored, once(Some(Verdict::Deny)),
+            "the third command lost the network the user had just restored");
+        assert_eq!(1, asked.get(), "the answer did not hold for the turn: {} questions", asked.get());
+        // A closure that would have said no was passed to commands two and three deliberately: if
+        // the memory were being ignored they would have taken that answer and the step would have
+        // been `Withhold`, so this cannot pass by nobody being consulted.
+
+        // A NEW turn is a new question. The memory lives on the turn's own state, so a fresh
+        // context has none -- which is what stops one yes covering a whole session.
+        let fresh = ctx();
+        fresh.set_tainted();
+        assert_eq!(None, fresh.net_consent(), "a new turn started with an answer nobody gave");
+        let asked2 = std::cell::Cell::new(0u32);
+        let step = run_net(&fresh, Mode::Guarded,
+            || { asked2.set(asked2.get() + 1); Some(Verdict::Allow) });
+        assert_eq!(1, asked2.get(), "a new turn was not asked");
+        assert_eq!(NetStep::Restored, step);
+    }
+
+    /// **It loosens nothing.**  A user who says no leaves the command exactly where it was: it
+    /// runs, inside the same fence, with no network -- and it is told so.
+    #[test]
+    fn test_a_declined_turn_runs_with_no_network_and_is_not_asked_again() {
+        let c = ctx();
+        c.set_tainted();
+        let asked = std::cell::Cell::new(0u32);
+        let once = |answer: Option<Verdict>| -> NetStep {
+            run_net(&c, Mode::Guarded, || { asked.set(asked.get() + 1); answer })
+        };
+        assert_eq!(NetStep::Withhold, once(Some(Verdict::Deny)), "a declined command got the network");
+        // Later commands are not asked again -- being asked repeatedly after a no is how a person
+        // is worn down into a yes -- and they get no network either, whatever they would have said.
+        assert_eq!(NetStep::Withhold, once(Some(Verdict::Allow)),
+            "a no was overturned by a later command's own answer");
+        assert_eq!(NetStep::Withhold, once(Some(Verdict::Allow)));
+        assert_eq!(1, asked.get(), "a declined turn was asked {} times", asked.get());
+        // The fence the command actually runs under, built the way `Tool::run` builds it.
+        let m = rung_machine();
+        let b = diamond_bounds("diamonds/d1", &[], &[]);
+        let f = fence_spec(&b, &m, !NetStep::Withhold.gives_net());
+        assert!(!f.net, "a declined command reached the network");
+        // And the model is told, in the words that stop it reporting the project as broken.
+        let out = Tool::run_result(&[fmt!("cargo"), fmt!("build")],
+            r#"{"stdout":"error: failed to fetch","exit":101}"#, &c, !f.net);
+        assert!(out.contains("[no network:"), "a declined command was not told why: {}", out);
+        assert!(out.contains("not because the project is broken"), "{}", out);
+    }
+
+    /// Silence is not consent.  A browser that cannot put the question -- a missing global, a page
+    /// mid-reload, a dialog nobody answered -- withholds, and does not ask again.
+    #[test]
+    fn test_a_question_nobody_answered_is_not_a_yes() {
+        assert_eq!(Verdict::Deny, net_verdict(None));
+        assert_eq!(Verdict::Allow, net_verdict(Some(Verdict::Allow)));
+        let c = ctx();
+        c.set_tainted();
+        assert_eq!(NetStep::Withhold, run_net(&c, Mode::Guarded, || None),
+            "an unanswered question gave the command the network");
+        assert_eq!(Some(Verdict::Deny), c.net_consent(), "silence was not recorded as a no");
+    }
+
+    /// A dispatched worker has nobody to ask, so it is not asked and does not get the network --
+    /// exactly as before this existed.  Held even against a consent forged into its state, because
+    /// the reason is the actor and not the answer.
+    #[test]
+    fn test_a_worker_alone_is_never_asked_and_never_gets_the_network() {
+        for remembered in [None, Some(Verdict::Allow), Some(Verdict::Deny)] {
+            for risk in [false, true] {
+                let step = net_step(Mode::Guarded, risk, true, remembered);
+                assert_ne!(NetStep::Ask, step,
+                    "a worker with nobody watching it was asked, remembered={:?}", remembered);
+                // A clean turn keeps the network for everybody else; a worker is at risk by being
+                // alone, so `net_risk` is what `Tool::run` passes and it is true either way.
+                assert_eq!(risk, !step.gives_net(),
+                    "a worker's network moved on remembered={:?}, risk={}", remembered, risk);
+            }
+        }
+        let c = ctx();
+        c.set_unsupervised();
+        c.set_net_consent(Verdict::Allow);
+        let asked = std::cell::Cell::new(0u32);
+        let step = run_net(&c, Mode::Guarded,
+            || { asked.set(asked.get() + 1); Some(Verdict::Allow) });
+        assert_eq!(0, asked.get(), "a worker was put a question nobody could answer");
+        assert_eq!(NetStep::Withhold, step, "a worker reached the network");
+    }
+
+    /// **A yes meant for a URL cannot grant a command the network.**
+    ///
+    /// The page's gate answers `allow` outright for our own origin, and a command line resolved
+    /// against the page IS our own origin -- so a `run_net` question reaching that shortcut, from a
+    /// bundle without the branch or with it below the shortcut, would hand every tainted turn the
+    /// network with nobody asked. It is the same shortcut that once let `web_search` out unasked.
+    /// The two questions therefore have two words, and the match is exact.
+    #[test]
+    fn test_a_yes_meant_for_a_url_cannot_grant_a_command_the_network() {
+        assert_ne!(EGRESS_ALLOW_WORD, RUN_NET_ALLOW_WORD, "one word answers both questions");
+        assert_eq!(Verdict::Allow, verdict_of(Some(EGRESS_ALLOW_WORD), EGRESS_ALLOW_WORD));
+        assert_eq!(Verdict::Allow, verdict_of(Some(RUN_NET_ALLOW_WORD), RUN_NET_ALLOW_WORD));
+        assert_eq!(Verdict::Deny, verdict_of(Some(EGRESS_ALLOW_WORD), RUN_NET_ALLOW_WORD),
+            "a page that has never heard of the network question granted it anyway");
+        assert_eq!(Verdict::Deny, verdict_of(Some(RUN_NET_ALLOW_WORD), EGRESS_ALLOW_WORD),
+            "a word meant for one question answered another");
+        // `allow-net` begins with `allow`, so a comparison that was not exact would answer one
+        // question with the other's yes in one direction and nothing would look wrong.
+        assert!(RUN_NET_ALLOW_WORD.starts_with(EGRESS_ALLOW_WORD),
+            "the trap this guards against has gone, and so may the exactness");
+        for junk in [None, Some(""), Some("yes"), Some("ALLOW"), Some("allow-net "),
+            Some("allow-network"), Some("deny")]
+        {
+            assert_eq!(Verdict::Deny, verdict_of(junk, RUN_NET_ALLOW_WORD),
+                "{:?} was read as consent to the network", junk);
+            assert_eq!(Verdict::Deny, verdict_of(junk, EGRESS_ALLOW_WORD),
+                "{:?} was read as consent to reach out", junk);
+        }
+    }
+
+    /// The first answer is the turn's answer.  A second question -- from a race, or from a later
+    /// edit that forgot the memory -- cannot turn a no into a yes.
+    #[test]
+    fn test_the_first_answer_is_the_one_the_turn_keeps() {
+        let c = ctx();
+        c.set_net_consent(Verdict::Deny);
+        c.set_net_consent(Verdict::Allow);
+        assert_eq!(Some(Verdict::Deny), c.net_consent(), "a second answer overwrote the first");
+    }
+
+    /// A yes moves the network and nothing else.  The same clause `test_a_rung_moves_nothing_but_
+    /// the_network` holds a rung to, applied to the user's own answer: consent must not widen a
+    /// fence by one path.
+    #[test]
+    fn test_a_yes_moves_nothing_but_the_network() {
+        let m = rung_machine();
+        let mut b = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[fmt!("refs")]);
+        b.push(Toolkit::Rust.bound());
+        let no  = fence_spec(&b, &m, !NetStep::Withhold.gives_net());
+        let yes = fence_spec(&b, &m, !NetStep::Restored.gives_net());
+        assert!(!no.rw.is_empty() && !no.ro.is_empty() && !no.deny.is_empty(),
+            "the reference fence is empty, so this test would pass against anything");
+        assert_eq!(no.rw, yes.rw, "a yes moved a writable root");
+        assert_eq!(no.ro, yes.ro, "a yes moved a read-only root");
+        assert_eq!(no.deny, yes.deny, "a yes moved a denial");
+        assert!(!no.net && yes.net, "the one field the answer decides did not move");
+        assert_eq!(no.to_json().replace(r#""net":false"#, r#""net":true"#), yes.to_json(),
+            "a yes changed something other than the network:\n{}\n{}",
+            no.to_json(), yes.to_json());
+    }
+
     /// **Why a build failed, said rather than guessed at** (`hand/REVIEW.md` §1.13).
     ///
     /// Three properties, and each of them was a real defect in the drafted change: the note must
@@ -13047,7 +14268,11 @@ mod tests {
         // The network is next, and it is said before the credential is looked for -- otherwise a
         // user with no token set is told to set one for a push that could not have gone out.
         match git_step(&good, "/home/u/work", true) {
-            GitStep::Refuse(s) => assert!(s.contains("network refused"), "{}", s),
+            // By what it MEANS rather than by one phrase of it: the push is refused for the want
+            // of a network and not for the want of a credential, which is the order under test.
+            GitStep::Refuse(s) => assert!(
+                s.contains("nowhere to go") && !s.contains("no push credential"),
+                "the wrong refusal came back for a push with no network: {}", s),
             other              => panic!("a push went out on a turn with no network: {:?}", other),
         }
         // Then the credential.
@@ -13646,6 +14871,368 @@ mod tests {
         assert!(!quiet.contains("NAME says"), "a file that agrees with itself got the note: {}", quiet);
     }
 
+    /// **A Word document reaches the model as prose, and says what it left out.**
+    ///
+    /// The tool that reads it is `file_read`, unchanged and unextended in its vocabulary: a
+    /// `.docx` returns text the way a `.md` does, so `file_glob("**/*.docx")` + `file_read` +
+    /// `spawn_agent` already works over a whole folder with no change to the agent loop.  That is
+    /// the differentiator, and it costs no new tool at all.
+    ///
+    /// Before this, the same call hit `binary_refusal` and told the model to open the file from
+    /// the workspace panel -- advice a model cannot take.
+    #[test]
+    fn test_a_word_document_reaches_the_model_as_prose() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../../rust/fe2o3/fe2o3_file/tests/data/rich.docx"))
+            .expect("the shared fixture");
+        // The old behaviour, stated so the change is visible: these bytes ARE binary, and the
+        // refusal is what every other binary still gets.
+        assert!(is_binary(&bytes), "a .docx is binary, which is why it was refused");
+        let (md, note) = match office_view("report.docx", &bytes) {
+            Some(Ok(got)) => got,
+            Some(Err(e))  => panic!("the document was refused: {}", e),
+            None          => panic!("a .docx was not recognised as an Office document"),
+        };
+        assert!(md.contains("# Quarterly Review"), "the title is a heading: {}", md);
+        assert!(md.contains("## Findings"), "and so is the second level: {}", md);
+        assert!(md.contains("- First finding"), "the list is a list: {}", md);
+        assert!(md.contains("[a link](https://example.org/detail)"), "the link keeps its target: {}", md);
+        // The note says what a reading of it IS, so the model does not report the formatting as
+        // the document's own.
+        assert!(note.contains("read as Markdown"), "{}", note);
+        assert!(note.contains("not how it prints"), "{}", note);
+        // Nothing in this document is undrawable, so the note invents nothing.
+        assert!(!note.contains("not drawn"), "{}", note);
+    }
+
+    /// **A path that names no Office document falls through, and one that names an unreadable one
+    /// is refused rather than dumped.**
+    #[test]
+    fn test_the_office_branch_declines_what_is_not_its_business() {
+        // Not an Office document at all: the caller carries on to what it did before.
+        assert!(office_view("notes.txt", b"plain text").is_none());
+        assert!(office_view("archive.zip", b"PK\x03\x04").is_none());
+        // A format named and not yet readable is SAID. A model told "presentations are not read
+        // yet" asks for something else; one handed a hex dump reports that the app is broken.
+        //
+        // This arm named the SPREADSHEET until spreadsheets could be read, and the assertion went
+        // red the moment they could -- which is what it is for. A check whose subject has since
+        // been implemented is a check that keeps printing a claim that has stopped being true.
+        match office_view("deck.pptx", b"PK\x03\x04") {
+            Some(Err(e)) => {
+                let s = fmt!("{}", e);
+                assert!(s.contains("PowerPoint presentation"), "{}", s);
+            }
+            other => panic!("a presentation should be named, got {:?}", other.is_none()),
+        }
+        // And a `.xlsx` that is not a workbook is refused in terms that say what was found, rather
+        // than coming back as an empty spreadsheet.
+        match office_view("book.xlsx", b"PK\x03\x04") {
+            Some(Err(_)) => {}
+            other        => panic!("a broken workbook should be refused, got {:?}", other.is_none()),
+        }
+        // And a `.docx` that is not one is refused in terms that say what was actually found.
+        match office_view("lies.docx", b"not a document at all") {
+            Some(Err(_)) => {}
+            other        => panic!("a lying name should be refused, got {:?}", other.is_none()),
+        }
+    }
+
+    /// **A spreadsheet is read a RECTANGLE at a time, and the value shown is the stored one.**
+    ///
+    /// The one tool this whole Office effort adds.  Everything else goes through `file_read`,
+    /// because a document's useful unit IS the file; a spreadsheet's is not.
+    #[test]
+    fn test_a_spreadsheet_is_read_a_rectangle_at_a_time() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../../rust/fe2o3/fe2o3_file/tests/data/foreign.xlsx"))
+            .expect("the shared fixture");
+        // No range: the first sheet, from its top left.
+        let out = sheet_view("ledger.xlsx", &bytes, r#"{"path":"ledger.xlsx"}"#).expect("view");
+        assert!(out.contains("sheet 'Sales'"), "{}", out);
+        // The column letters and the row numbers are IN the output, because the whole point of a
+        // range tool is that the NEXT call names a range.
+        assert!(out.contains("| A | B | C |"), "{}", out);
+        assert!(out.contains("| 1 | Region | Units | Price |"), "{}", out);
+        assert!(out.contains("| 2 | North | 120 | 3.4 |"), "{}", out);
+        // THE STORED VALUE, and the formula listed beside it rather than in place of it. A reader
+        // shown `=B2*C2` where the number should be has been given the recipe and not the dish.
+        assert!(out.contains("| 408 |"), "the stored value is shown: {}", out);
+        assert!(out.contains("D2 = B2*C2"), "and the formula is named after the table: {}", out);
+        assert!(out.contains("D5 = SUM(D2:D3)"), "{}", out);
+        assert!(!out.contains("| B2*C2 |"), "a formula never stands in for its value: {}", out);
+        // A date is a date and not a five-digit number.
+        assert!(out.contains("2026-03-14"), "{}", out);
+        // And the sheet is named by name.
+        let notes = sheet_view("ledger.xlsx", &bytes,
+            r#"{"path":"ledger.xlsx","sheet":"Notes"}"#).expect("view");
+        assert!(notes.contains("a < b & c"), "{}", notes);
+        // A range is honoured, and one larger than the sheet is CLIPPED rather than refused: a
+        // person asking for A1:Z1000 of a small sheet wants the small sheet.
+        let win = sheet_view("ledger.xlsx", &bytes,
+            r#"{"path":"ledger.xlsx","range":"A1:B2"}"#).expect("view");
+        assert!(win.contains("| 1 | Region | Units |"), "{}", win);
+        assert!(!win.contains("Price"), "the range was honoured: {}", win);
+        let big = sheet_view("ledger.xlsx", &bytes,
+            r#"{"path":"ledger.xlsx","range":"A1:Z1000"}"#).expect("view");
+        assert!(big.contains("sheet 'Sales'"), "{}", big);
+        // A sheet that is not there says what IS, because the next call is the one that gets it
+        // right and a bare refusal leaves the model guessing at names.
+        let e = sheet_view("ledger.xlsx", &bytes, r#"{"path":"ledger.xlsx","sheet":"Nope"}"#);
+        match e {
+            Err(e) => {
+                let s = fmt!("{}", e);
+                assert!(s.contains("Sales") && s.contains("Notes"), "{}", s);
+            }
+            Ok(_) => panic!("an absent sheet was read"),
+        }
+        // And a range that is not one is refused by name rather than guessed at.
+        assert!(sheet_view("ledger.xlsx", &bytes,
+            r#"{"path":"ledger.xlsx","range":"not a range"}"#).is_err());
+    }
+
+    /// **`file_read` on a workbook answers with its SHAPE, and names the tool that reads cells.**
+    ///
+    /// Dumping every cell of every sheet would spend the whole output budget on a file the model
+    /// has not decided it wants yet -- and a model that is not told `sheet_read` exists will report
+    /// that Daimond cannot read spreadsheets, which is this project's recorded failure mode.
+    #[test]
+    fn test_file_read_on_a_workbook_gives_its_shape_and_names_the_range_tool() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../../rust/fe2o3/fe2o3_file/tests/data/foreign.xlsx"))
+            .expect("the shared fixture");
+        let (text, note) = match office_view("ledger.xlsx", &bytes) {
+            Some(Ok(got)) => got,
+            Some(Err(e))  => panic!("the workbook was refused: {}", e),
+            None          => panic!("a .xlsx was not recognised as an Office document"),
+        };
+        assert!(note.is_empty(), "a workbook's answer is all one piece: {:?}", note);
+        assert!(text.contains("spreadsheet with 2 sheet(s)"), "{}", text);
+        assert!(text.contains("'Sales'") && text.contains("'Notes'"), "{}", text);
+        assert!(text.contains("sheet_read"), "the tool that reads cells is NAMED: {}", text);
+        assert!(text.contains("nothing is recalculated"), "{}", text);
+        // It is the shape and not the cells: the numbers in the sheet are not in this answer.
+        assert!(!text.contains("North"), "file_read handed over the cells: {}", text);
+    }
+
+    /// **A presentation is still named rather than dumped.**
+    #[test]
+    fn test_a_presentation_is_named_and_not_yet_read() {
+        match office_view("deck.pptx", b"PK\x03\x04") {
+            Some(Err(e)) => {
+                let s = fmt!("{}", e);
+                assert!(s.contains("PowerPoint presentation"), "{}", s);
+            }
+            other => panic!("a presentation should be named, got {:?}", other.is_none()),
+        }
+    }
+
+    /// **All six formats reach the model, and each says what it is.**
+    ///
+    /// The four prose formats go through one function and the two spreadsheets through another,
+    /// because what a reader wants out of each pair is the same thing.  What differs is the
+    /// vocabulary the bytes are written in, and confining that difference to `fe2o3_file::office` is
+    /// the whole point of the neutral models under it.
+    #[test]
+    fn test_every_office_format_reaches_the_model() {
+        let data = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../rust/fe2o3/fe2o3_file/tests/data");
+        // The four that carry prose.
+        for (file, name, want) in [
+            ("rich.docx",   "report.docx", "Quarterly Review"),
+            ("foreign.odt", "report.odt",  "A Report On Something"),
+            ("foreign.pptx", "deck.pptx",  "Quarterly Review"),
+            ("foreign.odp", "deck.odp",    "A Report On Something"),
+        ] {
+            let bytes = std::fs::read(fmt!("{}/{}", data, file)).expect("fixture");
+            let (md, note) = match office_view(name, &bytes) {
+                Some(Ok(got)) => got,
+                Some(Err(e))  => panic!("{} was refused: {}", file, e),
+                None          => panic!("{} was not recognised", file),
+            };
+            assert!(md.contains(want), "{} lost {:?}:\n{}", file, want, md);
+            // Each names the format it actually read, so a model never has to guess.
+            assert!(note.contains("read as Markdown"), "{}: {}", file, note);
+            assert!(note.contains("not how it prints"), "{}: {}", file, note);
+        }
+        // And the two that carry a grid answer with their SHAPE, not their cells.
+        for (file, name) in [("foreign.xlsx", "book.xlsx"), ("foreign.ods", "book.ods")] {
+            let bytes = std::fs::read(fmt!("{}/{}", data, file)).expect("fixture");
+            let (text, _) = match office_view(name, &bytes) {
+                Some(Ok(got)) => got,
+                Some(Err(e))  => panic!("{} was refused: {}", file, e),
+                None          => panic!("{} was not recognised", file),
+            };
+            assert!(text.contains("sheet_read"), "{} does not name the range tool: {}", file, text);
+            assert!(text.contains("nothing is recalculated"), "{}: {}", file, text);
+            assert!(!text.contains("North"), "{} handed over the cells: {}", file, text);
+            // The range tool reads either format without being told which.
+            let view = sheet_view(name, &bytes, &fmt!(r#"{{"path":"{}"}}"#, name)).expect("view");
+            assert!(view.contains("| 408 |"), "{}: the STORED value: {}", file, view);
+            assert!(!view.contains("| B2*C2 |"), "{}: a formula stood in for a value", file);
+        }
+    }
+
+    /// **Markdown in, a real document out, and the note says what the conversion decided.**
+    ///
+    /// Written back through this crate's own reader, which proves the two agree; what proves the
+    /// file is a FILE is LibreOffice, and that check lives in `fe2o3_file`'s own tests and in
+    /// `fe2o3_file/dev`. A self-consistent round trip alone would say nothing about whether anybody
+    /// else can open it.
+    #[test]
+    fn test_file_write_turns_markdown_into_each_document() {
+        let md = "# Sales\n\nA paragraph.\n\n| Region | Units |\n| :--- | ---: |\n| North | 120 |\n";
+        for (name, media, want) in [
+            ("report.docx", Media::Docx, "a Word document"),
+            ("report.odt",  Media::Odt,  "an OpenDocument text document"),
+            ("deck.pptx",   Media::Pptx, "a PowerPoint presentation"),
+            ("deck.odp",    Media::Odp,  "an OpenDocument presentation"),
+            ("book.xlsx",   Media::Xlsx, "a spreadsheet"),
+            ("book.ods",    Media::Ods,  "an OpenDocument spreadsheet"),
+        ] {
+            let (bytes, note) = office_written(name, media, md).expect(name);
+            assert!(bytes.starts_with(b"PK"), "{} is not an archive", name);
+            assert!(note.contains(want), "{} does not say what it wrote: {}", name, note);
+            assert!(note.contains("WHAT THE DOCUMENT SAYS"),
+                "{} does not say the formatting is structure and not layout: {}", name, note);
+            // And it reads back as the document it claims to be, by the ordinary read path.
+            match office_view(name, &bytes) {
+                Some(Ok(_)) => {}
+                Some(Err(e)) => panic!("{} was written and could not be read back: {}", name, e),
+                None => panic!("{} was not recognised", name),
+            }
+        }
+        // A spreadsheet is built from the TABLES and says so, because a model that wrote prose into
+        // one and was told only "wrote 4,102 bytes" would report a spreadsheet it had not made.
+        let (_, note) = office_written("book.xlsx", Media::Xlsx, md).expect("xlsx");
+        assert!(note.contains("TABLES in the Markdown"), "{}", note);
+        assert!(note.contains("1 sheet(s)"), "the note does not say how many sheets: {}", note);
+        let (_, note) = office_written("deck.pptx", Media::Pptx, md).expect("pptx");
+        assert!(note.contains("HEADINGS"), "{}", note);
+    }
+
+    /// **An edit changes the runs it names and nothing else, and says so.**
+    #[test]
+    fn test_doc_edit_replaces_text_and_leaves_the_rest() {
+        let data = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../rust/fe2o3/fe2o3_file/tests/data");
+        for (file, name, media, find) in [
+            ("rich.docx",   "report.docx", Media::Docx, "Quarterly Review"),
+            ("foreign.odt", "report.odt",  Media::Odt,  "A Report On Something"),
+        ] {
+            let bytes = std::fs::read(fmt!("{}/{}", data, file)).expect("fixture");
+            let args = fmt!(
+                r#"{{"path":"{}","edits":[{{"find":"{}","replace":"A NEW TITLE"}}]}}"#, name, find);
+            let (out, note) = doc_edited(name, media, &bytes, &args).expect(file);
+            let (md, _) = match office_view(name, &out) {
+                Some(Ok(got)) => got,
+                other => panic!("{} was not readable after the edit: {}", file, other.is_none()),
+            };
+            assert!(md.contains("A NEW TITLE"), "{} did not take the edit:\n{}", file, md);
+            assert!(!md.contains(find), "{} still holds the old text:\n{}", file, md);
+            assert!(note.contains("EVERY OTHER BYTE OF THE FILE IS THE ONE THAT ARRIVED"),
+                "{} does not say what it preserved: {}", file, note);
+        }
+    }
+
+    /// **An unmatched `find` names the string and writes NOTHING.**
+    ///
+    /// The failure this guards is the silent one. A caller told "the document was edited" has no way
+    /// to discover that one of its four replacements did nothing, and will report the document as
+    /// changed to a user who then sends it.
+    #[test]
+    fn test_doc_edit_refuses_a_phrase_the_document_does_not_hold() {
+        let data = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../rust/fe2o3/fe2o3_file/tests/data");
+        let bytes = std::fs::read(fmt!("{}/rich.docx", data)).expect("fixture");
+        let args = r#"{"path":"report.docx","edits":[{"find":"a phrase nobody wrote","replace":"x"}]}"#;
+        let msg = match doc_edited("report.docx", Media::Docx, &bytes, args) {
+            Ok(_)  => panic!("an unmatched find was accepted"),
+            Err(e) => fmt!("{}", e),
+        };
+        assert!(msg.contains("a phrase nobody wrote"), "the refusal does not name the string: {}", msg);
+        // A list whose LAST edit matches nothing refuses the whole list, so a partial edit is never
+        // written: the first replacement is not left on disk with the second reported as failed.
+        let args = r#"{"path":"report.docx","edits":[{"find":"Findings","replace":"Results"},
+            {"find":"nowhere at all","replace":"x"}]}"#;
+        assert!(doc_edited("report.docx", Media::Docx, &bytes, args).is_err(),
+            "a list whose second edit matched nothing was applied anyway");
+        // And a deck refuses with the REASON, because a model told a thing is impossible stops
+        // asking and a model told nothing tries again.
+        let deck = std::fs::read(fmt!("{}/foreign.pptx", data)).expect("fixture");
+        let msg = match doc_edited("deck.pptx", Media::Pptx, &deck,
+            r#"{"path":"deck.pptx","edits":[{"find":"x","replace":"y"}]}"#) {
+            Ok(_)  => panic!("a deck was edited"),
+            Err(e) => fmt!("{}", e),
+        };
+        assert!(msg.contains("position on a canvas"), "the refusal gives no reason: {}", msg);
+    }
+
+    /// **A written cell lands in the column it names, in either format.**
+    #[test]
+    fn test_sheet_write_puts_a_cell_where_it_was_told() {
+        let data = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../rust/fe2o3/fe2o3_file/tests/data");
+        for (file, name, media) in [
+            ("foreign.xlsx", "book.xlsx", Media::Xlsx),
+            ("foreign.ods",  "book.ods",  Media::Ods),
+        ] {
+            let bytes = std::fs::read(fmt!("{}/{}", data, file)).expect("fixture");
+            let args = fmt!(concat!(
+                r#"{{"path":"{}","edits":["#,
+                r#"{{"sheet":"Sales","ref":"C4","value":"7.5"}},"#,
+                r#"{{"ref":"D6","formula":"=B2*C2"}}]}}"#), name);
+            let (out, note) = sheet_written(name, media, &bytes, &args).expect(file);
+            assert!(note.contains("NOTHING WAS RECALCULATED"),
+                "{} does not say the values are the stored ones: {}", file, note);
+            assert!(note.contains("Sales"), "{} does not name the sheet it wrote to: {}", file, note);
+            let view = sheet_view(name, &out, &fmt!(r#"{{"path":"{}"}}"#, name)).expect("view");
+            assert!(view.contains("| 7.5 |"), "{}: the cell is not there:\n{}", file, view);
+            // The value that was already in the file is still the one the file says. A formula is
+            // never recalculated, here or on the way in.
+            assert!(view.contains("| 408 |"), "{}: an existing stored value moved:\n{}", file, view);
+        }
+    }
+
+    /// **A sheet the workbook has not got is named, and so are the ones it has.**
+    #[test]
+    fn test_sheet_write_refuses_a_sheet_that_is_not_there() {
+        let data = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../rust/fe2o3/fe2o3_file/tests/data");
+        let bytes = std::fs::read(fmt!("{}/foreign.xlsx", data)).expect("fixture");
+        let args = r#"{"path":"book.xlsx","edits":[{"sheet":"Nowhere","ref":"A1","value":"x"}]}"#;
+        let msg = match sheet_written("book.xlsx", Media::Xlsx, &bytes, args) {
+            Ok(_)  => panic!("a write to a sheet that does not exist was accepted"),
+            Err(e) => fmt!("{}", e),
+        };
+        assert!(msg.contains("Nowhere"), "the refusal does not name the sheet asked for: {}", msg);
+        assert!(msg.contains("Sales"), "the refusal does not say what sheets there are: {}", msg);
+        // A cell reference that is not one is refused; a cell OUTSIDE the sheet is not, because the
+        // sheet grows.
+        let args = r#"{"path":"book.xlsx","edits":[{"ref":"not a cell","value":"x"}]}"#;
+        assert!(sheet_written("book.xlsx", Media::Xlsx, &bytes, args).is_err(),
+            "a reference that is not a reference was accepted");
+        let args = r#"{"path":"book.xlsx","edits":[{"ref":"H40","value":"far"}]}"#;
+        assert!(sheet_written("book.xlsx", Media::Xlsx, &bytes, args).is_ok(),
+            "a cell past the end of the sheet was refused; the sheet should grow");
+    }
+
+    /// **Both new tools go through `file_write`'s own fence, rather than a second copy of it.**
+    #[test]
+    fn test_the_new_office_tools_are_fenced_like_a_write() {
+        let c = ctx();
+        for tool in [Tool::DocEdit, Tool::SheetWrite] {
+            let args = r#"{"path":"secrets/keys.docx","edits":[]}"#;
+            let targets = Tool::write_targets(&tool, args, &c).expect("targets");
+            assert_eq!(targets, vec!["secrets/keys.docx".to_string()],
+                "{} does not declare the path it changes, so the guard never sees it", tool.name());
+        }
+        // And both are in the belt the panel shows and the model is given, which is one list.
+        assert!(Tool::browser().contains(&Tool::DocEdit));
+        assert!(Tool::browser().contains(&Tool::SheetWrite));
+        // The wire names are the ones the contract fixed.
+        assert_eq!(Tool::from_name("doc_edit"), Some(Tool::DocEdit));
+        assert_eq!(Tool::from_name("sheet_write"), Some(Tool::SheetWrite));
+    }
+
     /// **A tier this build has not heard of is not described.**
     ///
     /// `viewer.js` owns the table, so it can grow a tier this build does not know.  Guessing at
@@ -13697,6 +15284,9 @@ impl Tool {
             Tool::FileDelete => Self::file_delete(args, ctx),
             Tool::FileMove   => Self::file_move(args, ctx),
             Tool::DirCreate  => Self::dir_create(args, ctx),
+            Tool::SheetRead  => Self::sheet_read(args, ctx),
+            Tool::DocEdit    => Self::doc_edit(args, ctx),
+            Tool::SheetWrite => Self::sheet_write(args, ctx),
             Tool::ArtefactAdd => Err(err!("use execute() for artefact_add"; Invalid)),
             Tool::FileFetch  => Self::cloud_unavailable(),
             // There is no panel in a test process and no user in front of one.  What IS testable

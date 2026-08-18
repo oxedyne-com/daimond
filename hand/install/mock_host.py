@@ -126,6 +126,18 @@ def run(req, c):
         send({'t': 'chunk', 'id': rid, 'stream': 'out', 'seq': 1, 'data': 'x' * 1_200_000})
         return
 
+    # Counted as it is sent, not declared.  These two totals are the app's ONLY
+    # measure of whether output went missing between here and the model, so a
+    # hardcoded pair is an oracle that lies: they used to be 64 and 26 whatever
+    # was actually emitted, and three chunks of "line N of cargo test\n" is 63
+    # bytes against a claimed 64, so every ordinary run in verify_handrun was
+    # handed "[some output did not arrive: 63 of 64 bytes on stdout, 27 of 26 on
+    # stderr]".  The app was reporting this file's figure faithfully -- 27 of 26
+    # is more than was asked for, which no byte counter can say about itself --
+    # and the note cost a lane an hour on 2026-08-18.
+    out_bytes = 0
+    err_bytes = 0
+
     seq = 0
     for i in range(c['chunks']):
         seq += 1
@@ -133,14 +145,17 @@ def run(req, c):
         # transcript that merely looks complete.
         if c['gap'] and i == 1:
             seq += 1
-        send({'t': 'chunk', 'id': rid, 'stream': 'out', 'seq': seq,
-              'data': 'line %d of %s\n' % (i + 1, ' '.join(req.get('argv', [])))})
+        data = 'line %d of %s\n' % (i + 1, ' '.join(req.get('argv', [])))
+        out_bytes += len(data.encode('utf-8'))
+        send({'t': 'chunk', 'id': rid, 'stream': 'out', 'seq': seq, 'data': data})
         if c['delay_ms']:
             time.sleep(c['delay_ms'] / 1000.0)
 
-    send({'t': 'chunk', 'id': rid, 'stream': 'err', 'seq': 1, 'data': 'a word from standard error\n'})
+    err = 'a word from standard error\n'
+    err_bytes += len(err.encode('utf-8'))
+    send({'t': 'chunk', 'id': rid, 'stream': 'err', 'seq': 1, 'data': err})
     send({'t': 'ended', 'id': rid, 'exit': c['exit'], 'timed_out': False, 'killed': False,
-          'out_bytes': 64, 'err_bytes': 26})
+          'out_bytes': out_bytes, 'err_bytes': err_bytes})
 
 
 def main():

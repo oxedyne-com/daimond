@@ -1,1 +1,1 @@
-{"build":"f9f68b75c73b","note":"The subject is the offer, not the container it sits in"}
+{"build":"5f3cf8a491b0","note":"A repro-check that clones an uncommitted carve checks the release before it"}

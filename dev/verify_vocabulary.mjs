@@ -1,5 +1,5 @@
-// verify_vocabulary.mjs — the guide's Improving Daimond page says true things,
-// in words the app itself uses, and lands where a deep link points it.
+// verify_vocabulary.mjs — the guide's Social page says true things, in words the
+// app itself uses, and lands where a deep link points it.
 //
 // The page exists so that a user reporting a fault and a person reading the
 // report use the same word for the same thing. That only works if the words are
@@ -8,7 +8,12 @@
 // itself and disagrees with the interface is worse than none: it teaches a
 // vocabulary that will not be understood.
 //
-// Six properties:
+// Ten properties:
+//
+//   0. THE PAGE DOES NOT SCROLL SIDEWAYS ON A PHONE. A guide page a phone
+//      reader has to drag left and right is a guide page they fight. Measured
+//      as the document's own overflow at 360px, which is what the reader's
+//      thumb feels, and not as any one element's width.
 //
 //   1. EVERY TERM IS THE APP'S OWN WORD. Each glossary entry names a piece of
 //      evidence — a string in `www/i18n/en.js`, or a sentence already in another
@@ -53,6 +58,18 @@
 //      as a font-size in the stylesheet, which says nothing once an SVG has
 //      been scaled to fit.
 //
+//   8. THE LANGUAGE SWITCHER OFFERS ONLY PAGES THAT EXIST. `data-guide-locales`
+//      is what frame.js reads to decide whether a change of language means
+//      going anywhere, so a locale named there and not on disk is a 404 the
+//      reader is walked into. It is checked both ways: nothing promised that is
+//      missing, and nothing on disk that is not offered.
+//
+//   9. AND NO TRANSLATION SCROLLS SIDEWAYS EITHER. Property 0 measures the
+//      English page, and the English page is the shortest. The same quoted
+//      sentence runs 211 pixels past the edge in French, and every translated
+//      copy spills on BOTH quotations where English spills on one, so a fix
+//      proved against English alone is a fix proved against the easy case.
+//
 // EACH CHECK IS PROVED AGAINST A BROKEN PAGE FIRST. `--break <name>` damages a
 // copy of a file and serves it to the real browser through `page.route`, or
 // damages the input a static check reads, and the run is expected to FAIL. A
@@ -66,6 +83,10 @@
 //   node dev/verify_vocabulary.mjs --break dash       # 6 fails
 //   node dev/verify_vocabulary.mjs --break tinylabels # 7 fails
 //   node dev/verify_vocabulary.mjs --break nolanding  # 4 fails, at 360px only
+//   node dev/verify_vocabulary.mjs --break sideways   # 0 fails
+//   node dev/verify_vocabulary.mjs --break promise    # 8 fails, on the half
+//   node dev/verify_vocabulary.mjs --break unlisted   # 8 fails, on the other
+//   node dev/verify_vocabulary.mjs --break sideloc    # 9 fails, and 0 does not
 //   node dev/verify_vocabulary.mjs                    # and then, clean
 //
 //   eval "$(bash dev/world.sh 6 --up)"
@@ -81,7 +102,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const WWW   = path.join(HERE, '..', 'www');
 const GUIDE = path.join(WWW, 'guide');
-const PAGE  = path.join(GUIDE, 'improve.html');
+const PAGE  = path.join(GUIDE, 'social.html');
 const SHOTS = path.join(HERE, 'shots');
 const APP   = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 const PW    = process.env.DAIMOND_PW
@@ -145,7 +166,7 @@ async function unlazy(pg) {
 
 /// The sections a deep link may name. These are a published interface: the
 /// Improve panel's own button opens the guide at one of them.
-const ANCHORS = ['writing-a-note', 'regions', 'glossary', 'two-words', 'improve-panel'];
+const ANCHORS = ['writing-a-note', 'regions', 'glossary', 'two-words', 'social-panel'];
 
 // ── The breaks ───────────────────────────────────────────────────────
 //
@@ -153,9 +174,22 @@ const ANCHORS = ['writing-a-note', 'regions', 'glossary', 'two-words', 'improve-
 // a static check reads. Nothing on disk is touched.
 let pageBytes = fs.readFileSync(PAGE, 'utf8');
 let en        = fs.readFileSync(path.join(WWW, 'i18n', 'en.js'), 'utf8');
-let guideText = fs.readdirSync(GUIDE).filter((f) => f.endsWith('.html') && f !== 'improve.html')
+let guideText = fs.readdirSync(GUIDE).filter((f) => f.endsWith('.html') && f !== 'social.html')
 	.map((f) => fs.readFileSync(path.join(GUIDE, f), 'utf8')).join('\n');
 let blankCrop = null;      // a crop name to replace with a flat rectangle
+
+/// The locale folders that actually hold a Social page. A folder is a locale,
+/// not `legal/` or `img/`, on the same shape guide-index.mjs uses.
+const onDiskLocales = fs.readdirSync(GUIDE, { withFileTypes: true })
+	.filter((e) => e.isDirectory() && /^[a-z]{2}(-[A-Za-z]+)?$/.test(e.name))
+	.map((e) => e.name)
+	.filter((l) => fs.existsSync(path.join(GUIDE, l, 'social.html')))
+	.sort();
+
+/// Each translated page's bytes, by locale, so a break can damage them in
+/// flight the way it damages the English page.
+const localeBytes = {};
+for (const l of onDiskLocales) localeBytes[l] = fs.readFileSync(path.join(GUIDE, l, 'social.html'), 'utf8');
 
 const applied = [];
 switch (BREAK) {
@@ -212,10 +246,58 @@ switch (BREAK) {
 	}
 	case 'dash': {
 		const before = pageBytes;
-		pageBytes = pageBytes.replace('<h1>Improving Daimond</h1>',
-			'<h1>Improving Daimond — the vocabulary</h1>');
+		pageBytes = pageBytes.replace('<h1>Social</h1>', '<h1>Social — the vocabulary</h1>');
 		if (pageBytes === before) die('the dash break did not apply');
 		applied.push('put an em dash in the heading');
+		break;
+	}
+	case 'sideways': {
+		// The rule that lets a quoted sentence wrap. Without it the pill in
+		// guide.css keeps `white-space: nowrap`, the longest quotation runs off
+		// the right edge, and the page goes sideways under the reader's thumb.
+		const before = pageBytes;
+		pageBytes = pageBytes.replace('.ui.quoted { white-space: normal; }', '');
+		if (pageBytes === before) die('the sideways break did not apply');
+		applied.push('took the wrapping rule off the quoted app sentences');
+		break;
+	}
+	case 'promise': {
+		// A locale offered that was never written: the language switcher walks
+		// the reader into a 404, which is what an eight-locale declaration over
+		// five pages did.
+		const before = pageBytes;
+		pageBytes = pageBytes.replace(/data-guide-locales="([^"]*)"/, (m, list) => {
+			const gone = ['ja', 'ko', 'zh-Hans'].find((l) => !list.split(' ').includes(l));
+			if (!gone) die('the promise break found every locale already declared');
+			return `data-guide-locales="${list} ${gone}"`;
+		});
+		if (pageBytes === before) die('the promise break did not apply');
+		applied.push('promised a translation that is not on disk');
+		break;
+	}
+	case 'unlisted': {
+		// The other half: a page that exists and is never offered, so a reader
+		// in that language is left on English with no way across.
+		if (!onDiskLocales.length) die('the unlisted break has no translation to hide');
+		const hide = onDiskLocales[onDiskLocales.length - 1];
+		const before = pageBytes;
+		pageBytes = pageBytes.replace(/data-guide-locales="([^"]*)"/,
+			(m, list) => `data-guide-locales="${list.split(' ').filter((l) => l !== hide).join(' ')}"`);
+		if (pageBytes === before) die('the unlisted break did not apply');
+		applied.push(`stopped offering ${hide}, which is on disk`);
+		break;
+	}
+	case 'sideloc': {
+		// The wrapping rule taken off the TRANSLATIONS and left on the English
+		// page, so property 0 stays green and only property 9 goes red.
+		let hit = 0;
+		for (const l of onDiskLocales) {
+			const before = localeBytes[l];
+			localeBytes[l] = before.replace('.ui.quoted { white-space: normal; }', '');
+			if (localeBytes[l] !== before) hit++;
+		}
+		if (!hit) die('the sideloc break reached no translated page');
+		applied.push(`took the wrapping rule off ${hit} translated page(s)`);
 		break;
 	}
 	default: die(`no break called "${BREAK}"`);
@@ -282,6 +364,22 @@ function nolanding(src) {
 		: 'the index has never been built over this page');
 }
 
+// ── 8. The switcher offers only pages that exist ─────────────────────
+{
+	// Read from `pageBytes`, so `--break promise` and `--break unlisted` are
+	// seen; the disk side is read from the disk, because that is the fact the
+	// declaration is being held against.
+	const promised = ((pageBytes.match(/data-guide-locales="([^"]*)"/) || [, ''])[1])
+		.split(' ').filter((l) => l && l !== 'en');
+	const missing = promised.filter((l) => !fs.existsSync(path.join(GUIDE, l, 'social.html')));
+	const unlisted = onDiskLocales.filter((l) => !promised.includes(l));
+	const why = [];
+	if (missing.length)  why.push(`offered with no page: ${missing.join(', ')}`);
+	if (unlisted.length) why.push(`on disk and never offered: ${unlisted.join(', ')}`);
+	check('the language switcher offers exactly the translations that exist',
+		why.length === 0, why.join('; ') || `${promised.length} translation(s)`);
+}
+
 // ── The browser ──────────────────────────────────────────────────────
 const { chromium } = await import(pathToFileURL(PW).href);
 const profile = path.join(SCRATCH, 'pw', 'vocabulary' + (BREAK ? '-' + BREAK : ''));
@@ -306,9 +404,14 @@ const errs = [];
 page.on('pageerror', (e) => errs.push(String(e.message)));
 page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
 
-await page.route('**/guide/improve.html*', (route) => {
+await page.route('**/guide/social.html*', (route) => {
 	route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: pageBytes });
 });
+for (const l of onDiskLocales) {
+	await page.route(`**/guide/${l}/social.html*`, (route) => {
+		route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: localeBytes[l] });
+	});
+}
 if (blankCrop) {
 	// A one-colour PNG, which is what a crop of an invisible element looks like.
 	const flat = Buffer.from(
@@ -330,7 +433,7 @@ if (BREAK === 'nomargin' || BREAK === 'nolanding') {
 	});
 }
 
-const URL = `${APP}/guide/improve.html`;
+const URL = `${APP}/guide/social.html`;
 await page.goto(URL, { waitUntil: 'load' });
 await page.waitForTimeout(600);
 
@@ -509,6 +612,25 @@ await page.waitForTimeout(600);
 	check('the diagram\'s labels are still legible at 360px',
 		!!ink && ink.min >= FLOOR_PX,
 		ink ? `smallest label renders ${ink.min.toFixed(1)}px tall` : 'no labels found');
+}
+
+// ── 9. And no translation scrolls sideways either ────────────────────
+{
+	// Still at 360px from the block above. Each translated copy is loaded in
+	// turn and measured the same way, because the sentence that spilled is a
+	// QUOTATION OF THE APP and every language quotes a different one: the French
+	// `post.audience` is 110 characters where the English is 66.
+	const wide = [];
+	for (const l of onDiskLocales) {
+		await page.goto('about:blank');
+		await page.goto(`${APP}/guide/${l}/social.html`, { waitUntil: 'load' });
+		await page.waitForTimeout(400);
+		const over = await page.evaluate(() =>
+			document.documentElement.scrollWidth - document.documentElement.clientWidth);
+		if (over > 1) wide.push(`${l}: ${over}px`);
+	}
+	check('no translation of the page scrolls sideways at 360px either',
+		wide.length === 0, wide.join(', ') || `${onDiskLocales.length} translation(s) measured`);
 }
 
 check('the page threw nothing', errs.length === 0, errs.slice(0, 3).join(' | '));

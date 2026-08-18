@@ -741,7 +741,18 @@
 	/// `versions/` is the crystal's own history and `.daimond/` holds the rules about what agents
 	/// may do — neither is a page's business either. Everything else under the Diamond is fair
 	/// game, which is the whole point: a capp keeps its data beside itself.
-	var PAGE_NEVER_WRITES = /^(crystal\.(json|html|md)$|versions\/|\.daimond\/)/;
+	///
+	/// `capp.json` is here as of sharing. It is the DELIVERY RECORD: it says which bytes were
+	/// delivered and at what template version, and it decides which of a capp's files a future
+	/// template fix may replace. A page that could rewrite it could pin itself against every
+	/// update, or claim a file it had edited and have the next version overwrite the user's own
+	/// work. While a capp could only ever have come from this build that was a hazard and not a
+	/// hole — nothing escaped the Diamond and nothing reached anybody else's. **A capp can now
+	/// arrive from another person**, so the page that would be doing the pinning is one the
+	/// receiver did not write, on a machine whose owner never chose it. The share format refuses
+	/// to carry a delivery record at all (fe2o3_sbj `share.rs`), and this is the other half:
+	/// having refused to carry one, it must also refuse to let a page mint one.
+	var PAGE_NEVER_WRITES = /^(crystal\.(json|html|md)$|versions\/|\.daimond\/|capp\.json$)/;
 
 	/// The most a page may write in one call.
 	///

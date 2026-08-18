@@ -1,4 +1,4 @@
-// verify_improve.mjs — the Improve panel keeps its one promise, against a real forge.
+// verify_improve.mjs — the Social panel's Notes and Proposals keep their one promise, against a real forge.
 //
 // `dev/IMPROVE_CONTRACT.md` §4 states it in a sentence:
 //
@@ -111,18 +111,19 @@
 //      `from=0` is never sent — and against a forge that reads `from` the wrong
 //      way round the walk still ENDS rather than offering to show more for ever.
 //
-//   9. THE PANEL'S WORDS ARE THE GUIDE'S WORDS. `www/guide/improve.html` is
+//   9. THE PANEL'S WORDS ARE THE GUIDE'S WORDS. `www/guide/social.html` is
 //      the only contract this panel was handed, so it is checked mechanically:
-//      every `<span class="ui">` label in its §"The Improve panel" must be
+//      every `<span class="ui">` label in its §"The Social panel" must be
 //      visible text in the running panel, and every part-noun that section
 //      sets in bold must be one of the terms the glossary above it defines.
 //
 //  10. AND IT EXISTS ON A PHONE.
 //
-// THE SEAM IS APPLIED BY THIS FILE. The panel's markup lives in
-// `www/index.html`, which the lane that built this does not own, so the exact
-// edit it asked for is served through `page.route` here. Once the edit is in the
-// file on disk, this file notices and serves it unchanged.
+// THE SEAM IS ASSERTED BY THIS FILE, not applied by it. The panel's markup and
+// its four hand-wired seams live in files this lane does not own; they are all
+// landed, so `requireSeams()` checks each is present and hard-stops naming the
+// missing one. It used to paste them in through `page.route`, which would have
+// hidden a rename rather than reported it.
 //
 // EACH CHECK IS PROVED AGAINST BROKEN CODE FIRST. `--break <name>` serves a
 // deliberately damaged copy of a source file and the run is expected to FAIL.
@@ -312,104 +313,56 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 
 // ── The seam ─────────────────────────────────────────────────────────
 //
-// The edits `www/index.html`, `www/i18n/en.js`, `www/js/daimond.js` and
-// `www/js/mobile.js` need, written out so that the lanes that own them can paste
-// them and so that this run proves them. Each carries a `want` naming the ONE
-// thing it is there to ensure, so a panel later dressed differently does not make
-// the seam fire against a file that already has it — which once served the page
-// with TWO `#panel-improve` elements and turned every check red for a reason that
-// had nothing to do with this panel.
-
-const PANEL_MARKUP = `
-		<!-- Improve: where a note about Daimond is written, and where the
-		     proposals made from notes are read and voted on. A note stays on
-		     this device until somebody presses Send on that one note, and what
-		     leaves is exactly the characters on the screen. See js/improve.js
-		     and dev/IMPROVE_CONTRACT.md. -->
-		<aside class="panel improve" id="panel-improve" data-panel="improve" data-zone="dock" data-label="Improve" data-i18n-label="panel.improve">
-			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.improve">Improve</span>
-				<span class="imp-chips">
-					<button type="button" class="imp-chip on" data-view="notes" aria-pressed="true" data-i18n="improve.notes">Notes</button>
-					<button type="button" class="imp-chip" data-view="proposals" aria-pressed="false" data-i18n="improve.proposals">Proposals</button>
-					<button class="addbtn panel-close" data-close="improve" title="Close panel" data-i18n-title="common.close_panel">
-						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-					</button>
-				</span>
-			</div>
-
-			<div class="imp-view" id="improve-notes">
-				<div class="imp-write">
-					<textarea class="imp-box" id="improve-box" rows="4"
-						placeholder="Where it is, what you expected, and what happened instead."
-						data-i18n-placeholder="improve.box_ph"
-						aria-label="Write a note about Daimond" data-i18n-aria-label="improve.box_label"></textarea>
-					<div class="imp-with" id="improve-with" hidden>
-						<div class="imp-with-body">
-							<span class="imp-with-label" data-i18n="improve.with">What goes with it</span>
-							<div class="imp-with-text" id="improve-with-text"></div>
-						</div>
-						<button type="button" class="ui-close imp-with-off" data-act="improve-with-off"
-							title="Close" data-i18n-title="common.close"
-							aria-label="Take the details off this note" data-i18n-aria-label="improve.with_off"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-					</div>
-					<div class="imp-acts" id="improve-acts">
-						<button type="button" class="imp-keep" data-act="improve-keep" data-i18n="improve.keep"
-							title="Store this note on this device. Nothing is sent." data-i18n-title="improve.keep_help">Keep</button>
-						<button type="button" class="imp-send" data-act="improve-send" data-i18n="improve.send"
-							title="Send exactly what is above to Oxedyne. Nothing else goes with it." data-i18n-title="improve.send_help">Send</button>
-						<span class="imp-as" id="improve-as"></span>
-					</div>
-					<div class="imp-say" id="improve-say" role="status" aria-live="polite"></div>
-				</div>
-				<div class="imp-notes" id="improve-list"></div>
-			</div>
-
-			<div class="imp-view" id="improve-props-view" hidden>
-				<div class="imp-asat" id="improve-asat"></div>
-				<div class="imp-props" id="improve-props"></div>
-			</div>
-		</aside>
-`;
+// The panel's markup and its four hand-wired seams live in files this lane did
+// not write. They used to be PASTED IN HERE through `page.route`, so that the
+// checks below could run before the owning lanes had landed them.
+//
+// THEY ARE LANDED. So the paste is gone and what is left is an ASSERTION: each
+// seam must be in the file on disk, and a missing one is a hard stop naming it
+// rather than a quiet repair. The paste form outlived its purpose the day the
+// edits went in, and an injector that silently re-adds what a rename has just
+// taken away is how a verifier goes green against a panel nobody can reach --
+// it would have re-added `improve: 1,` to `MOBILE_GUESTS` on top of the
+// `social: 1,` that replaced it, and proved the phone case against a panel id
+// the app no longer has.
 
 const SEAM = [
 	// On a phone a dock panel is only reachable if it is a GUEST — something
-	// that rises over the chat as a sheet. Matched by SHAPE rather than by its
-	// exact text: that table is edited often, and an anchor on the literal line
-	// would make this verifier fail for a reason with nothing to do with the
-	// panel.
-	{
-		file: 'js/daimond.js',
-		re:   /(var MOBILE_GUESTS = \{[\s\S]*?)(\n\t\};)/,
-		with: '$1\n\t\timprove: 1,$2',
-		want: 'improve: 1,',
-	},
+	// that rises over the chat as a sheet. Asked for by SHAPE and not by the
+	// table's literal text: that table is edited every time a panel is added.
+	{ file: 'js/daimond.js', want: /var MOBILE_GUESTS = \{[\s\S]*?\n\t\tsocial: 1,/,
+	  why: '`social` is not in MOBILE_GUESTS, so the panel is a blank screen on a phone' },
 	// And the sheet's "ask about this" pill is not offered on it. The panel is
 	// already the place you write in; a second box under it, which sends what
 	// you write to a model, is two boxes with opposite meanings.
-	{
-		file: 'js/mobile.js',
-		find: "\tvar NO_ASK       = { compose: 1, tools: 1, trash: 1 };",
-		with: "\tvar NO_ASK       = { compose: 1, tools: 1, trash: 1, improve: 1 };",
-	},
-	{
-		file: 'index.html',
-		find: '<link rel="stylesheet" href="css/trash.css">',
-		with: '<link rel="stylesheet" href="css/trash.css">\n<link rel="stylesheet" href="css/improve.css">',
-		want: 'href="css/improve.css"',
-	},
-	{
-		file: 'index.html',
-		find: '<script src="js/trash.js"></script>',
-		with: '<script src="js/trash.js"></script>\n<script src="js/improve.js"></script>',
-		want: '<script src="js/improve.js"></script>',
-	},
-	{
-		file: 'index.html',
-		find: '\t\t\t<div class="trash-list arte-list" id="trash-list"></div>\n\t\t</aside>\n',
-		with: '\t\t\t<div class="trash-list arte-list" id="trash-list"></div>\n\t\t</aside>\n' + PANEL_MARKUP,
-		want: 'id="panel-improve"',
-	},
+	{ file: 'js/mobile.js', want: /var NO_ASK\s*=\s*\{[^}]*\bsocial: 1\b/,
+	  why: '`social` is not in NO_ASK, so the sheet offers an ask pill over the note box' },
+	{ file: 'index.html', want: 'href="css/improve.css"',
+	  why: 'the panel\'s stylesheet is not linked' },
+	{ file: 'index.html', want: '<script src="js/improve.js"></script>',
+	  why: 'the panel\'s script is not loaded' },
+	{ file: 'index.html', want: 'id="panel-social"',
+	  why: 'the panel is not in the markup' },
+	{ file: 'index.html', want: 'data-panel="social"',
+	  why: 'the panel does not declare itself to the layout engine as `social`' },
 ];
+
+/// Every seam, or a hard stop naming the one that is missing. Run before a
+/// browser is started: a run against a half-wired app proves nothing and takes
+/// four minutes to say so.
+function requireSeams() {
+	const bad = [];
+	for (const s of SEAM) {
+		const src = fs.readFileSync(path.join(WWW, s.file), 'utf8');
+		const ok = (s.want instanceof RegExp) ? s.want.test(src) : src.includes(s.want);
+		if (!ok) bad.push(`  ${s.file}: ${s.why}`);
+	}
+	if (bad.length) {
+		console.error('the panel is not wired up, so this run would prove nothing:');
+		for (const b of bad) console.error(b);
+		process.exit(2);
+	}
+}
 
 // ── The breaks ───────────────────────────────────────────────────────
 // Each is a real edit to a real file, served in place of it. `find` must appear
@@ -427,8 +380,8 @@ const BREAKS = {
 	// it stay green and only the one about the WORDS moves.
 	nopublic: [{
 		file: 'js/improve.js',
-		find: "\t\tline.textContent = tOr('improve.public_note',",
-		with: "\t\tline.textContent = '';\n\t\tif (0) line.textContent = tOr('improve.public_note',",
+		find: "\t\tline.textContent = tOr('social.public_note',",
+		with: "\t\tline.textContent = '';\n\t\tif (0) line.textContent = tOr('social.public_note',",
 	}],
 	// Said to somebody who cannot send it. A tester with no voice is told their
 	// notes will be published, which is false — and a sentence that is false in
@@ -453,7 +406,7 @@ const BREAKS = {
 	// turn this break into a false abort.
 	i18ngap: [{
 		file: 'i18n/de.js',
-		re:   /\n\t'improve\.public_note': '[^']*',/,
+		re:   /\n\t'social\.public_note': '[^']*',/,
 		with: '',
 	}],
 	// One of the capp strings in seven catalogues and not the eighth. English
@@ -579,7 +532,7 @@ const BREAKS = {
 	// them all would redden nine checks and prove one.
 	saidnothing: [{
 		file: 'js/improve.js',
-		find: '\t\t\treturn tOr(\'improve.err_internal\', \'Something went wrong at the forge. This is not your fault.\');',
+		find: '\t\t\treturn tOr(\'social.err_internal\', \'Something went wrong at the forge. This is not your fault.\');',
 		with: '\t\t\treturn \'\';',
 	}],
 	// A sentence that is false when the repository is private. `absent` covers
@@ -587,8 +540,8 @@ const BREAKS = {
 	// privacy rule, undone by a kindness.
 	absentleak: [{
 		file: 'js/improve.js',
-		find: '\t\t\treturn tOr(\'improve.err_absent\', \'This repository is not available to you.\');',
-		with: '\t\t\treturn tOr(\'improve.err_absent_broken\', \'There is no such repository.\');',
+		find: '\t\t\treturn tOr(\'social.err_absent\', \'This repository is not available to you.\');',
+		with: '\t\t\treturn tOr(\'social.err_absent_broken\', \'There is no such repository.\');',
 	}],
 	// Every throttle said the same way, so a tester refused for the address is
 	// told it was their own voice. The token is still branched on, so the
@@ -628,7 +581,7 @@ const BREAKS = {
 	// panel a tester waits at.
 	nolive: [{
 		file: 'js/improve.js',
-		find: '\t\t\tasAt.textContent = tOr(\'improve.live_note\',\n'
+		find: '\t\t\tasAt.textContent = tOr(\'social.live_note\',\n'
 			+ '\t\t\t\t\'These are read from the forge as you look at them. Nothing tells you when a proposal is answered; look again to find out.\');',
 		with: '\t\t\tasAt.textContent = \'\';',
 	}],
@@ -637,8 +590,8 @@ const BREAKS = {
 	// fallback: `data-i18n` paints the table's word over it on the first apply.
 	renamechip: [{
 		file: 'i18n/en.js',
-		find: "\t'improve.notes':        'Notes',",
-		with: "\t'improve.notes':        'Feedback',",
+		find: "\t'social.notes':        'Notes',",
+		with: "\t'social.notes':        'Feedback',",
 	}],
 };
 
@@ -669,18 +622,11 @@ function edit(src, spec, what) {
 	return src.replace(spec.find, spec.with);
 }
 
-/// The file as it should be served: the seam applied if it is not already in
-/// the file on disk, then this run's break on top of it.
+/// The file as it should be served: this run's break on top of what is on disk.
 const FILES = new Map();		// path under www/ -> the text to serve
 
 function build() {
-	for (const spec of SEAM) {
-		const p = spec.file;
-		const src = FILES.get(p) ?? fs.readFileSync(path.join(WWW, p), 'utf8');
-		const already = spec.want || (spec.re ? null : spec.with);
-		if (already && src.includes(already)) { FILES.set(p, src); continue; }
-		FILES.set(p, edit(src, spec, 'seam'));
-	}
+	requireSeams();
 	if (!BREAK) return;
 	for (const spec of BREAKS[BREAK]) {
 		const p = spec.file;
@@ -826,13 +772,13 @@ async function stub(page) {
 
 // ── The guide, read as the contract it is ────────────────────────────
 
-const GUIDE = fs.readFileSync(path.join(WWW, 'guide', 'improve.html'), 'utf8');
+const GUIDE = fs.readFileSync(path.join(WWW, 'guide', 'social.html'), 'utf8');
 
 function guideSection() {
-	const i = GUIDE.indexOf('<section id="improve-panel">');
+	const i = GUIDE.indexOf('<section id="social-panel">');
 	const j = GUIDE.indexOf('</section>', i);
 	if (i === -1 || j === -1) {
-		console.error('the guide has no §"The Improve panel"; check 9 would prove nothing.');
+		console.error('the guide has no §"The Social panel"; check 9 would prove nothing.');
 		process.exit(2);
 	}
 	return GUIDE.slice(i, j);
@@ -906,12 +852,12 @@ const fields = (raw) => {
 
 try {
 	await page.evaluate(() => {
-		window.DaimondPanels.show('improve');
+		window.DaimondPanels.show('social');
 		if (window.DaimondImprove) window.DaimondImprove.onOpen();
 	});
 	await page.waitForTimeout(600);
 
-	const panel = page.locator('#panel-improve');
+	const panel = page.locator('#panel-social');
 	const panels = await panel.count();
 	check('the panel is on screen, exactly once', panels === 1, `${panels} found`);
 
@@ -977,14 +923,14 @@ try {
 	// merely quiet.
 	const disclosed = await page.evaluate(() => {
 		const p    = document.getElementById('improve-public');
-		const send = document.querySelector('#panel-improve #improve-acts .imp-send');
+		const send = document.querySelector('#panel-social #improve-acts .imp-send');
 		const box  = document.getElementById('improve-box');
 		if (!p || !send || !box) return null;
 		const a = p.getBoundingClientRect(), b = send.getBoundingClientRect(),
 			c = box.getBoundingClientRect();
 		return {
 			text:      (p.textContent || '').replace(/\s+/g, ' ').trim(),
-			inBox:     !!p.closest('#panel-improve .imp-write'),
+			inBox:     !!p.closest('#panel-social .imp-write'),
 			aboveSend: a.bottom <= b.top,
 			belowNote: a.top >= c.bottom,
 		};
@@ -1304,14 +1250,34 @@ try {
 		/\d/.test(unvoicedVotes), JSON.stringify(unvoicedVotes));
 
 	// ── 7c. DARK: a forge that answers no tally at all ───────────
+	//
+	// Both claims here are ABSENCES, and an absence is the one thing a panel that
+	// drew nothing at all agrees with. Measured on 2026-08-16: with
+	// `#improve-props` emptied by hand at this point in the run, and again with
+	// the id renamed, BOTH `count() === 0` assertions stayed true. They passed on
+	// a blank screen, twice. So each is paired with the drawing that has to have
+	// happened for the absence to mean anything -- the rows themselves, and their
+	// titles -- exactly as 7a above pairs its own `count() === 0` with a line the
+	// panel had to have painted. The rows drew for the same reason: this is a
+	// listing the forge answered, only without a tally on it.
 	forge = FORGE.dark;
 	await page.evaluate(() => { window.DaimondImprove.reset(); return window.DaimondImprove.load(false); });
 	await page.waitForTimeout(1200);
-	check('against a forge whose listing carries no tally, NO vote control is drawn',
-		await page.locator('#improve-props .imp-votes').count() === 0,
-		`${await page.locator('#improve-props .imp-votes').count()} drawn`);
+	const darkRows = await page.locator('#improve-props .imp-prop').count();
+	const darkTitles = await page.evaluate(() =>
+		[...document.querySelectorAll('#improve-props .imp-prop-title')]
+			.map(n => (n.textContent || '').trim()).filter(Boolean).length);
+	check('against a forge whose listing carries no tally, the rows still draw',
+		darkRows > 0 && darkTitles === darkRows,
+		`${darkRows} row(s), ${darkTitles} of them titled`);
+	check('and NO vote control is drawn on any of them',
+		darkRows > 0 && await page.locator('#improve-props .imp-votes').count() === 0,
+		`${await page.locator('#improve-props .imp-votes').count()} drawn across ${darkRows} row(s)`);
 	check('and the rows carry no tally value either, rather than a zero nothing counted',
-		await page.locator('#improve-props .imp-prop-row .imp-prop-tally').count() === 0);
+		darkRows > 0
+			&& await page.locator('#improve-props .imp-prop-row .imp-prop-tally').count() === 0,
+		`${await page.locator('#improve-props .imp-prop-row .imp-prop-tally').count()} tallies `
+			+ `across ${darkRows} row(s)`);
 	forge = FORGE.main;
 
 	// Put the voice back for what follows.
@@ -1436,7 +1402,7 @@ try {
 	await page.waitForTimeout(1000);
 
 	const chipState = async () => page.evaluate(() => {
-		const q = (v) => document.querySelector(`#panel-improve .imp-chip[data-view="${v}"]`);
+		const q = (v) => document.querySelector(`#panel-social .imp-chip[data-view="${v}"]`);
 		const n = q('notes'), p = q('proposals');
 		const vis = (id) => { const e = document.getElementById(id); return !!(e && !e.hidden); };
 		return {
@@ -1461,7 +1427,7 @@ try {
 	// rendered text, and what is being checked is the WORDS the panel is built
 	// from, not what happens to be painted this second.
 	const words = () => page.evaluate(() => {
-		const p = document.getElementById('panel-improve');
+		const p = document.getElementById('panel-social');
 		return p ? p.textContent.replace(/\s+/g, ' ') : '';
 	});
 
@@ -1567,7 +1533,7 @@ try {
 	// and a whole `voice.*` family is in no table at all, both found by reading
 	// rather than by any check.
 	const CATALOGUE = [
-		['improve.public_note',      '{host}'],
+		['social.public_note',      '{host}'],
 		['capp.legacy_body',         '{name}'],
 		['capp.legacy_ok',           ''],
 		['capp.update_kept',         '{files}'],
@@ -1596,7 +1562,7 @@ try {
 	// ── 10. And it exists on a phone ─────────────────────────────
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.waitForTimeout(600);
-	await page.evaluate(() => { if (window.DaimondSheet) window.DaimondSheet.open('improve'); });
+	await page.evaluate(() => { if (window.DaimondSheet) window.DaimondSheet.open('social'); });
 	await page.waitForTimeout(900);
 	const phone = await page.evaluate(() => {
 		const box  = document.getElementById('improve-box');

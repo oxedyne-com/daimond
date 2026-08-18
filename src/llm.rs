@@ -2266,6 +2266,18 @@ pub(crate) fn extract_json_string_array(json: &str, key: &str) -> Option<Vec<Str
     Some(parse_json_string_array(&arr))
 }
 
+/// Extract an array of objects for a key from a JSON string, each as its own text.
+///
+/// The sibling of [`extract_json_string_array`] for the shape a tool argument takes when one call
+/// carries several of a thing -- `"edits":[{...},{...}]`. Each element comes back whole, for
+/// [`extract_json_string`] and its siblings to read the fields out of.
+///
+/// `None` when the key is absent or its value is not an array, which is what lets a caller tell a
+/// field that was never written from one written empty.
+pub(crate) fn extract_json_objects(json: &str, key: &str) -> Option<Vec<String>> {
+    find_json_array(json, key).map(|arr| split_top_level_objects(&arr))
+}
+
 /// Parse a JSON array's text into its string elements, ignoring any element
 /// that is not a string.
 ///

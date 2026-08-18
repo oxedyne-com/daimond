@@ -351,18 +351,14 @@ pub async fn close() -> Outcome<String> {
 /// half that answers it owns the user's standing decisions rather than the browser driver.
 const EGRESS_GLOBAL: &str = "__daimondEgressAllowed";
 
-/// Read a resolved answer, where anything but the exact string `allow` is a refusal.
-///
-/// A gate must not be talked past by a value it does not understand, so the default is `Deny`
-/// rather than a guess.
+/// Read a resolved answer, deferring to [`crate::tools::verdict_of`] so the rule that decides it
+/// is pure, native and tested -- this half only reaches into the `JsValue` for the string.
 ///
 /// # Arguments
 /// * `v` - What the promise resolved with.
-fn verdict(v: &JsValue) -> Verdict {
-    match v.as_string().as_deref() {
-        Some("allow") => Verdict::Allow,
-        _             => Verdict::Deny,
-    }
+/// * `word` - The one string that means yes to this question.
+fn verdict(v: &JsValue, word: &str) -> Verdict {
+    crate::tools::verdict_of(v.as_string().as_deref(), word)
 }
 
 /// Ask the JavaScript half whether this turn may reach `url`, returning `None` when it cannot be
@@ -405,6 +401,34 @@ pub async fn egress_allowed_detail(tool: &str, url: &str, detail: &str) -> Optio
 pub async fn egress_allowed_act(tool: &str, url: &str, detail: &str, alone: bool)
     -> Option<Verdict>
 {
+    egress_ask_js(tool, url, detail, alone, crate::tools::EGRESS_ALLOW_WORD).await
+}
+
+/// Ask whether a command on a turn that has read outside content may reach the network.
+///
+/// The same door, the same payload and the same dialog machinery as every other question here --
+/// what differs is the word a yes comes back as (see [`crate::tools::RUN_NET_ALLOW_WORD`]),
+/// because a command line resolves as a same-origin URL and the page's gate waves those through.
+///
+/// # Arguments
+/// * `cmd` - The command line, which is what the user is being asked about.
+/// * `cwd` - The folder it would run in.
+pub async fn egress_allowed_net(cmd: &str, cwd: &str) -> Option<Verdict> {
+    egress_ask_js(crate::tools::RUN_NET_TOOL, cmd, cwd, false,
+        crate::tools::RUN_NET_ALLOW_WORD).await
+}
+
+/// Put one question to the page's gate and read its answer.
+///
+/// # Arguments
+/// * `tool` - The wire name of the tool asking.
+/// * `url` - The destination it wants, or the command it wants to run.
+/// * `detail` - What is being sent, when the tool sends something other than the address.
+/// * `alone` - Whether the agent asking has nobody watching it.
+/// * `word` - The one string that means yes to this question.
+async fn egress_ask_js(tool: &str, url: &str, detail: &str, alone: bool, word: &str)
+    -> Option<Verdict>
+{
     let win = match web_sys::window() {
         Some(w) => w,
         None    => return None,
@@ -428,10 +452,10 @@ pub async fn egress_allowed_act(tool: &str, url: &str, detail: &str, alone: bool
     // on a technicality, since it is still an answer.
     let promise = match ret.dyn_into::<js_sys::Promise>() {
         Ok(p)  => p,
-        Err(v) => return Some(verdict(&v)),
+        Err(v) => return Some(verdict(&v, word)),
     };
     match JsFuture::from(promise).await {
-        Ok(v)  => Some(verdict(&v)),
+        Ok(v)  => Some(verdict(&v, word)),
         Err(_) => None,
     }
 }

@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="de" data-guide-locale="de" data-guide-locales="en de es fr pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Soziales — Daimond-Handbuch</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+<style>
+/* This page's own layout, kept here rather than in guide.css because nothing
+   else in the guide is a glossary. Everything is stated in the app's own
+   palette variables, so it follows the reader's theme like the rest. */
+
+/* A pair of sentences the reader is meant to compare. */
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+.pair > div { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.8rem 0.9rem; background: var(--bg-secondary); }
+.pair .lead-in { display: block; font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.35rem; }
+.pair .costly { border-color: var(--border-2); }
+.pair .useful { border-color: var(--accent); }
+.pair p { margin: 0; color: var(--text-secondary); }
+
+/* A whole sentence the app puts on screen, quoted as it stands. The pill in
+   guide.css is `white-space: nowrap`, which is right for a button label and
+   wrong for a sentence: at 360px the longest of these ran 133 pixels past the
+   right edge and took the whole page sideways with it. A quotation wraps. */
+.ui.quoted { white-space: normal; }
+
+/* The glossary. Two columns where there is room, one where there is not; the
+   crops are between 300 and 440 pixels wide, so a column of about 350 shows
+   most of them at close to their own size and none of them at twice it. */
+.terms { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin: 1.25rem 0 2rem; align-items: start; }
+.term {
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 0.85rem 0.9rem 0.95rem;
+}
+.term h3 { margin: 0 0 0.55rem; font-size: 1.02rem; }
+.term img {
+	display: block;
+	max-width: 100%;
+	max-height: 200px;
+	width: auto;
+	height: auto;
+	margin: 0 0 0.6rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--bg-tertiary);
+}
+/* The chip row is 800 pixels of real screen. Squeezed into half the column it
+   is a smear, so it takes the whole width and is read at close to its own size.
+   Legibility is the only reason any of these pictures is here. */
+.term.wide { grid-column: 1 / -1; }
+
+/* A phone shot, a dialog and the two boxes that cover the screen are portraits.
+   Shrunk to the height of a landscape crop their own lettering stops being
+   readable, which defeats the entry, so they take the full width and the prose
+   sits beside them. */
+.term.tall { grid-column: 1 / -1; }
+.term.tall::after { content: ""; display: block; clear: both; }
+.term.tall img { float: left; max-height: 620px; margin: 0 1.1rem 0.6rem 0; }
+.term p { margin: 0.35rem 0 0; font-size: 0.93rem; color: var(--text-secondary); }
+.term p.say { color: var(--text-muted); font-size: 0.88rem; margin-top: 0.5rem; }
+
+/* The widget map. Drawn in the palette's own variables, never in a fixed
+   colour, so it is legible on all eleven palettes and follows a reader who
+   changes theirs while it is on screen.
+
+   On a phone the whole schematic scaled to the column width put its labels at
+   five pixels, which is a diagram that says nothing to the reader who most
+   needs it. It keeps a floor on its width and scrolls sideways inside its own
+   box instead: the page still never scrolls sideways, and the words can still
+   be read. */
+.diagram.scrolls { overflow-x: auto; }
+.diagram.scrolls svg { min-width: 640px; }
+.widgetmap text { font-family: var(--font); }
+.wm-win  { fill: var(--bg-primary);   stroke: var(--border-2); stroke-width: 1; }
+.wm-bar  { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
+.wm-pan  { fill: var(--bg-secondary); stroke: var(--border);   stroke-width: 1; }
+.wm-cell { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
+.wm-soft { fill: var(--accent-soft);  stroke: var(--accent);   stroke-width: 1; }
+.wm-fill { fill: var(--accent); }
+.wm-skel { fill: var(--text-muted); opacity: 0.32; }
+.wm-zone { fill: var(--text-muted); letter-spacing: 1.2px; }
+.wm-lab  { fill: var(--accent-text); font-weight: 700; }
+.wm-lead { stroke: var(--accent); stroke-width: 1.2; opacity: 0.75; }
+.wm-ink  { stroke: var(--text-muted); stroke-width: 1.4; fill: none; opacity: 0.55; }
+</style>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond-Handbuch, Startseite">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">Handbuch</span>
+		</a>
+		<nav class="site-nav" aria-label="Handbuchseiten">
+			<a href="index.html">Erste Schritte</a>
+			<a href="interface.html">Die Oberfläche</a>
+			<a href="models.html">Modelle &amp; Guthaben</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="../capps.html">Capps</a>
+			<a href="email-web-files.html">E-Mail, Web &amp; Dateien</a>
+			<a href="accounts.html">Konten</a>
+			<a href="sync.html">Geräteübergreifende Synchronisierung</a>
+			<a href="spending.html">Ausgaben</a>
+			<a href="../machine-operations.html">Befehle auf dem Rechner</a>
+			<a href="social.html" aria-current="page">Soziales</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Soziales</h1>
+	<p class="lede">Daimond verändert sich durch das, was seine Nutzer berichten. Im Feld Soziales wird das geschrieben, gelesen und abgestimmt, und dort sitzen auch Nachrichten, die Personen, von denen sie kommen, Gruppen und Freigaben. Diese Seite handelt davon, wie eine Notiz ankommt: wie man sagt, was passiert ist, und wie die Teile des Bildschirms heißen, damit jeder Leser sofort weiß, welches Ding gemeint ist.</p>
+
+	<p>Eine Notiz, die sagt, das Ding oben links sei kaputt, kostet jemanden eine Suche und findet manchmal das Falsche. Eine Notiz, die den Chip <strong>Diamonds</strong> in der oberen Leiste nennt, tut das nicht. Keine der beiden ist mehr Arbeit. Der Unterschied ist nur, zu wissen, wie die Teile heißen — und dafür ist der Rest dieser Seite da.</p>
+
+	<section id="writing-a-note">
+		<h2 id="s1">Eine Notiz schreiben, mit der man etwas tun kann</h2>
+
+		<p>Drei Dinge, und das erste wird am häufigsten weggelassen.</p>
+
+		<ol class="steps">
+			<li>
+				<h3 id="s2">Wo es ist</h3>
+				<p>Nennen Sie das Teil und den Bereich, in dem es sitzt. Der Bildschirm hat vier Bereiche und etwa zwanzig Arten von Teilen, und beides zu nennen macht fast alles eindeutig: Kreuze gibt es überall in Daimond, aber nur einen Schließer in der Zeile <span class="ui">Alles</span> .</p>
+			</li>
+			<li>
+				<h3 id="s3">Was Sie erwartet haben</h3>
+				<p>Sagen Sie, was Sie gedacht haben, das passieren würde. Das ist die Hälfte, die ein Leser nicht erraten kann, und oft ist es der ganze Bericht: ein Bedienelement, das genau das tut, wofür es gebaut wurde, und Leute trotzdem überrascht, ist ein Fehler im Bedienelement und nicht in den Leuten.</p>
+			</li>
+			<li>
+				<h3 id="s4">Was stattdessen passiert ist</h3>
+				<p>Was Sie gesehen haben, in der Reihenfolge, in der Sie es gesehen haben. Nicht, was Sie für die Ursache halten. Eine geratene Ursache verengt die Suche, und eine falsch geratene verengt sie weg vom Fehler.</p>
+			</li>
+		</ol>
+
+		<div class="pair">
+			<div class="costly">
+				<span class="lead-in">Kostet eine Rückfrage</span>
+				<p>Das X oben links ist kaputt.</p>
+			</div>
+			<div class="useful">
+				<span class="lead-in">Damit kann man etwas tun</span>
+				<p>Der Schließer in der Zeile <span class="ui">Alles</span> hat die ganze Leiste weggeräumt. Ich hatte erwartet, dass er diese Zeile schließt.</p>
+			</div>
+		</div>
+
+		<p>Noch ein paar Dinge, die eine Rückfrage ersparen.</p>
+
+		<ul>
+			<li><strong>Eine Notiz, eine Sache.</strong> Zwei Fehler in einer Notiz werden ein Vorschlag, der nicht fertig werden kann, weil die eine Hälfte behoben ist und die andere nicht.</li>
+			<li><strong>Sagen Sie, welcher Build.</strong> Die <span class="ui">Version</span> Zeile im Verwaltungsfeld nennt ihn, und beim Darüberfahren erscheint die Build-Kennung. Ein längst behobener Fehler liest sich genau wie einer, den niemand nachstellen kann.</li>
+			<li><strong>Sagen Sie, was Sie gerade getan haben.</strong> Schon eine kurze Spur hilft: welches Feld offen war, ob Sie am Telefon waren, welche Palette Sie trugen. Ein Fehler kann auf einer Palette oder bei einer Bildschirmbreite da sein und sonst nirgends.</li>
+			<li><strong>Schreiben Sie sie trotzdem.</strong> Wenn Sie das Teil nicht benennen können, beschreiben Sie es und sagen Sie, wo es auf dem Bildschirm war. Eine ungefähre Notiz ist weit mehr wert als eine Notiz, die niemand schreibt.</li>
+		</ul>
+	</section>
+
+	<section id="regions">
+		<h2 id="s5">Sagen, wo: die vier Bereiche</h2>
+
+		<p>Daimond hat eine <strong>obere Leiste</strong> über die ganze Breite und darunter drei Bereiche nebeneinander: die <strong>Leiste</strong> links, die <strong>Bühne</strong> in der Mitte und das <strong>Dock</strong> rechts. Fast jede Notiz kann damit beginnen, einen dieser vier zu nennen. <a href="interface.html">Die Oberfläche</a> führt durch sie und sagt, wofür jedes Feld da ist; diese Seite handelt von den kleineren Teilen darin.</p>
+
+		<figure class="diagram scrolls">
+			<svg class="widgetmap" viewBox="0 0 760 470" role="img" aria-labelledby="wm-title wm-desc" preserveAspectRatio="xMidYMid meet">
+				<title id="wm-title">Wo die benannten Teile des Bildschirms sitzen</title>
+				<desc id="wm-desc">Ein Schema des Daimond-Fensters. Oben quer die obere Leiste mit der Chip-Reihe. Darunter drei Bereiche: links die Leiste, mit einem Licht und einem Schließer in ihrer obersten Zeile, einem Kopf über jeder Liste, Kacheln in den Listen, einem Trenner dazwischen und darunter Zeilen im Verwaltungsfeld; in der Mitte die Bühne, mit einem Kopf oben und dem Verfasser unten; und rechts das Dock, das Felder hält.</desc>
+
+				<!-- ── The window and the top bar ─────────────────────── -->
+				<rect class="wm-win" x="10" y="10" width="740" height="450" rx="16"/>
+				<path class="wm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
+				<rect class="wm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
+				<rect class="wm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
+
+				<!-- The chip row, with two chips filled to show an open panel. -->
+				<rect class="wm-soft" x="170" y="24" width="46" height="18" rx="9"/>
+				<rect class="wm-cell" x="224" y="24" width="30" height="18" rx="9"/>
+				<rect class="wm-soft" x="262" y="24" width="36" height="18" rx="9"/>
+				<rect class="wm-cell" x="306" y="24" width="40" height="18" rx="9"/>
+				<rect class="wm-cell" x="354" y="24" width="44" height="18" rx="9"/>
+				<line class="wm-ink" x1="408" y1="24" x2="408" y2="42"/>
+				<rect class="wm-cell" x="418" y="24" width="44" height="18" rx="9"/>
+				<rect class="wm-cell" x="470" y="24" width="40" height="18" rx="9"/>
+				<rect class="wm-cell" x="518" y="24" width="42" height="18" rx="9"/>
+				<circle class="wm-ink" cx="660" cy="33" r="9"/>
+				<circle class="wm-ink" cx="690" cy="33" r="9"/>
+				<circle class="wm-ink" cx="720" cy="33" r="9"/>
+				<text class="wm-lab" x="365" y="53" text-anchor="middle" font-size="12">Chip-Reihe</text>
+				<text class="wm-zone" x="600" y="37" text-anchor="middle" font-size="10">OBERE LEISTE</text>
+
+				<!-- ── The rail ───────────────────────────────────────── -->
+				<text class="wm-zone" x="22" y="80" font-size="10">LEISTE</text>
+				<rect class="wm-pan" x="22" y="88" width="196" height="360" rx="10"/>
+
+				<!-- Its top row: play, pause, the light, and the rail's own closer. -->
+				<path class="wm-ink" d="M32,105 L40,110 L32,115 z"/>
+				<line class="wm-ink" x1="47" y1="105" x2="47" y2="115"/>
+				<line class="wm-ink" x1="52" y1="105" x2="52" y2="115"/>
+				<circle class="wm-fill" cx="64" cy="110" r="5"/>
+				<rect class="wm-skel" x="76" y="107" width="48" height="7" rx="3.5"/>
+				<path class="wm-ink" d="M196,105 L206,115 M206,105 L196,115"/>
+				<line class="wm-lead" x1="64" y1="118" x2="64" y2="127"/>
+				<text class="wm-lab" x="64" y="138" text-anchor="middle" font-size="12">Licht</text>
+				<line class="wm-lead" x1="201" y1="118" x2="201" y2="127"/>
+				<text class="wm-lab" x="208" y="138" text-anchor="end" font-size="12">Schließer</text>
+
+				<!-- A head over the list, with the buttons that act on the list. -->
+				<rect class="wm-skel" x="32" y="156" width="50" height="8" rx="4"/>
+				<circle class="wm-cell" cx="188" cy="160" r="7"/>
+				<circle class="wm-cell" cx="206" cy="160" r="7"/>
+				<text class="wm-lab" x="128" y="164" text-anchor="middle" font-size="12">Kopf</text>
+
+				<!-- A tile, with its tags and its cog. -->
+				<rect class="wm-cell" x="32" y="178" width="176" height="38" rx="6"/>
+				<rect class="wm-skel" x="40" y="186" width="72" height="6" rx="3"/>
+				<rect class="wm-soft" x="40" y="199" width="26" height="9" rx="4.5"/>
+				<rect class="wm-soft" x="70" y="199" width="22" height="9" rx="4.5"/>
+				<circle class="wm-ink" cx="196" cy="189" r="5"/>
+				<text class="wm-lab" x="146" y="193" text-anchor="middle" font-size="12">Kachel</text>
+
+				<!-- The divider between the two lists. -->
+				<line class="wm-lead" x1="30" y1="228" x2="210" y2="228" stroke-width="2"/>
+				<rect class="wm-fill" x="112" y="225.5" width="16" height="5" rx="2.5"/>
+				<line class="wm-lead" x1="120" y1="232" x2="120" y2="240"/>
+				<text class="wm-lab" x="120" y="251" text-anchor="middle" font-size="12">Trenner</text>
+
+				<!-- The second list, and a tile in it. -->
+				<rect class="wm-skel" x="32" y="266" width="34" height="8" rx="4"/>
+				<circle class="wm-cell" cx="188" cy="270" r="7"/>
+				<circle class="wm-cell" cx="206" cy="270" r="7"/>
+				<rect class="wm-cell" x="32" y="288" width="176" height="30" rx="6"/>
+				<rect class="wm-skel" x="40" y="296" width="90" height="6" rx="3"/>
+				<rect class="wm-skel" x="40" y="307" width="60" height="5" rx="2.5"/>
+
+				<!-- The admin panel: one row per question. -->
+				<line class="wm-ink" x1="26" y1="334" x2="214" y2="334"/>
+				<circle class="wm-fill" cx="40" cy="349" r="3" opacity="0.6"/>
+				<rect class="wm-skel" x="50" y="346" width="64" height="6" rx="3"/>
+				<rect class="wm-skel" x="172" y="346" width="32" height="6" rx="3"/>
+				<circle class="wm-fill" cx="40" cy="367" r="3" opacity="0.6"/>
+				<rect class="wm-skel" x="50" y="364" width="52" height="6" rx="3"/>
+				<rect class="wm-skel" x="172" y="364" width="32" height="6" rx="3"/>
+				<circle class="wm-fill" cx="40" cy="385" r="3" opacity="0.6"/>
+				<rect class="wm-skel" x="50" y="382" width="70" height="6" rx="3"/>
+				<rect class="wm-skel" x="172" y="382" width="32" height="6" rx="3"/>
+				<circle class="wm-fill" cx="40" cy="403" r="3" opacity="0.6"/>
+				<rect class="wm-skel" x="50" y="400" width="58" height="6" rx="3"/>
+				<rect class="wm-skel" x="172" y="400" width="32" height="6" rx="3"/>
+				<text class="wm-lab" x="140" y="371" text-anchor="middle" font-size="12">Zeile</text>
+
+				<!-- The spend row, at the foot of the rail. -->
+				<line class="wm-ink" x1="26" y1="422" x2="214" y2="422"/>
+				<rect class="wm-skel" x="40" y="432" width="28" height="5" rx="2.5"/>
+				<rect class="wm-skel" x="104" y="432" width="28" height="5" rx="2.5"/>
+				<rect class="wm-skel" x="168" y="432" width="28" height="5" rx="2.5"/>
+
+				<!-- ── The stage ──────────────────────────────────────── -->
+				<text class="wm-zone" x="228" y="80" font-size="10">BÜHNE</text>
+				<rect class="wm-pan" x="228" y="88" width="300" height="360" rx="10"/>
+				<rect class="wm-skel" x="240" y="106" width="86" height="8" rx="4"/>
+				<rect class="wm-cell" x="396" y="101" width="44" height="16" rx="8"/>
+				<rect class="wm-cell" x="448" y="101" width="36" height="16" rx="8"/>
+				<rect class="wm-cell" x="492" y="101" width="28" height="16" rx="8"/>
+				<text class="wm-lab" x="352" y="114" text-anchor="middle" font-size="12">Kopf</text>
+
+				<rect class="wm-soft" x="340" y="142" width="168" height="26" rx="8"/>
+				<rect class="wm-skel" x="350" y="152" width="148" height="6" rx="3"/>
+				<rect class="wm-cell" x="240" y="180" width="212" height="34" rx="8"/>
+				<rect class="wm-skel" x="250" y="188" width="192" height="6" rx="3"/>
+				<rect class="wm-skel" x="250" y="200" width="150" height="6" rx="3"/>
+				<rect class="wm-cell" x="240" y="226" width="180" height="26" rx="8"/>
+				<rect class="wm-skel" x="250" y="236" width="160" height="6" rx="3"/>
+
+				<text class="wm-lab" x="330" y="392" text-anchor="middle" font-size="12">Verfasser</text>
+				<line class="wm-lead" x1="330" y1="396" x2="330" y2="404"/>
+				<rect class="wm-cell" x="240" y="404" width="268" height="32" rx="8"/>
+				<rect class="wm-skel" x="252" y="417" width="140" height="6" rx="3"/>
+				<circle class="wm-fill" cx="490" cy="420" r="10"/>
+
+				<!-- ── The dock ───────────────────────────────────────── -->
+				<text class="wm-zone" x="538" y="80" font-size="10">DOCK</text>
+				<rect class="wm-pan" x="538" y="88" width="200" height="360" rx="10"/>
+				<rect class="wm-cell" x="550" y="98" width="176" height="104" rx="8"/>
+				<rect class="wm-skel" x="562" y="110" width="52" height="8" rx="4"/>
+				<rect class="wm-skel" x="562" y="130" width="150" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="144" width="120" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="158" width="136" height="6" rx="3"/>
+				<text class="wm-lab" x="638" y="185" text-anchor="middle" font-size="12">Feld</text>
+				<rect class="wm-cell" x="550" y="212" width="176" height="104" rx="8"/>
+				<rect class="wm-skel" x="562" y="224" width="64" height="8" rx="4"/>
+				<rect class="wm-skel" x="562" y="244" width="118" height="6" rx="3"/>
+				<rect class="wm-skel" x="574" y="258" width="126" height="6" rx="3"/>
+				<rect class="wm-skel" x="574" y="272" width="98" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="286" width="88" height="6" rx="3"/>
+				<rect class="wm-cell" x="550" y="326" width="176" height="110" rx="8"/>
+				<rect class="wm-skel" x="562" y="338" width="48" height="8" rx="4"/>
+				<rect class="wm-skel" x="562" y="358" width="140" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="372" width="104" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="386" width="128" height="6" rx="3"/>
+			</svg>
+			<figcaption>Wo die benannten Teile sitzen. Die farbigen Wörter sind die, die man in einer Notiz benutzt; die vier Bereiche stehen in Kapitälchen. Nichts hier ist maßstabsgetreu, und ein Feld kann geschlossen, verschoben oder weggeräumt sein — die Bereiche sind das, was bleibt.</figcaption>
+		</figure>
+
+		<div class="note">
+			<strong>Zwei Wörter für die Mitte.</strong> Dieses Handbuch nennt sie die Bühne. Die Feldergalerie gruppiert dieselben Felder unter <span class="ui">Neben dem Chat</span>, und das ist der einzige Name, den die App selbst für diesen Bereich auf den Bildschirm schreibt. Beide werden verstanden; und wenn Sie keines von beiden nehmen und in Ihren eigenen Worten „neben dem Chat“ sagen, wird das auch verstanden.
+		</div>
+	</section>
+
+	<section id="glossary">
+		<h2 id="s6">Die Teile, nach Namen</h2>
+
+		<p>Jedes Wort unten benutzt Daimond schon selbst, in seiner Oberfläche oder in diesem Handbuch. Jeder Eintrag zeigt das echte Ding, aus einem laufenden Daimond ausgeschnitten, damit Sie das, was vor Ihnen ist, gegen das Bild halten und das Wort mit Sicherheit benutzen können.</p>
+
+		<p>Die Bilder wurden auf einer der dunklen Paletten aufgenommen. Auf Ihrer sind die Farben andere, und am Telefon wandern einige dieser Teile; die Namen nicht.</p>
+
+		<!--
+		  A translator's note, and an auditor's.
+
+		  Each term here is the word the ENGLISH interface uses. It is a common
+		  noun, not a product name, so it is translated: a reader whose Daimond
+		  says "Kachel" is looking for a glossary that says "Kachel", and one
+		  that says "tile" instead defeats the whole purpose of the page.
+
+		  The word to use in a given language is the one that language's own
+		  catalogue already uses, in www/i18n/[locale].js. The key to copy it
+		  from is named after each term, so nothing has to be invented:
+
+		    chip        chip.show, and chat.concise_failed
+		    tile        tile.settings
+		    head        no key of its own. The guide's word; the markup says
+		                railhead and chead
+		    closer      common.close_named. js/closer.js is the whole control
+		    cog         tile.settings, on the button that opens it
+		    light       pause.state_play, pause.state_pause, pause.state_mixed
+		    divider     layout.handle
+		    row         astat.tools_of and the rest of astat
+		    spend row   spend.session_short, spend.period_week, spend.period_month
+		    composer    chat.input_ph, chat.send
+		    face        crystal.view_switch
+		    tag         tag.add, tag.pool_toggle
+		    dialog      dlg.are_you_sure
+		    gallery     gallery.title
+		    Go to box   pal.title, pal.close
+		    sheet       sheet.close
+		    drawer      no key of its own. The button that opens it is
+		                topbar.open_menu
+		    paperclip   attach.to_focus
+		    forge       improve.as_voice, improve.voice_help. Nothing to
+		                photograph: it is a website, not a part of this app
+		    voice       improve.voice_held, improve.voice_ph, and the whole
+		                voice.* family. Nothing to photograph either, and
+		                nothing that may be: it is a secret
+
+		  The product nouns are NOT translated, here or anywhere: Daimond,
+		  Diamond, Daimond Pro, Hands. See the head of www/i18n/en.js.
+		-->
+
+		<div class="terms">
+
+			<div class="term wide" id="term-chip">
+				<h3 id="s7">Chip</h3>
+				<img src="../shots/vocab-chips.png" alt="Eine Reihe kleiner runder Schaltflächen quer über die obere Leiste, jede nach einem Feld benannt. Drei sind ausgefüllt, die übrigen umrandet." loading="lazy">
+				<p>Eine kleine runde Schaltfläche, die eine Sache ein- oder ausschaltet. Die Reihe von ihnen quer über die obere Leiste ist die <strong>Chip-Reihe</strong>, ein Chip je Feld, ausgefüllt, solange dieses Feld offen ist.</p>
+				<img src="../shots/vocab-chead.png" alt="Der Kopf des Chat-Felds: sein Name links, dann drei kleine runde Schaltflächen mit Bewacht, Knapp und Schritte." loading="lazy">
+				<p>Chips gibt es auch anderswo: auf einem Kopf, wie oben, auf einer Kachel, und in der Leiste als Tags. Sagen Sie, welcher, und ein Chip ist eindeutig.</p>
+				<p class="say">Sagen Sie: der Chip <strong>Arbeitsbereich</strong> in der Chip-Reihe.</p>
+			</div>
+
+			<div class="term" id="term-tile">
+				<h3 id="s8">Kachel</h3>
+				<img src="../shots/vocab-tile-chat.png" alt="Ein Chat in der Leiste, gezeichnet als umrandete Karte mit einer Zeit, der ersten Nachricht, einem Zahnrad, einem Schließer und zwei kleinen Schaltflächen." loading="lazy">
+				<p>Ein Diamond oder ein Chat, wie er in der Leiste erscheint. Eine Kachel trägt ihren eigenen Namen, ihr Zahnrad, ihren Schließer und alles andere, was zu diesem einen Stück Arbeit gehört.</p>
+				<p class="say">Sagen Sie: das Zahnrad auf einer Chat-Kachel.</p>
+			</div>
+
+			<div class="term" id="term-head">
+				<h3 id="s9">Kopf</h3>
+				<img src="../shots/vocab-head.png" alt="Das Wort Diamonds links in einem schmalen Streifen, mit einer Plus-Schaltfläche und einer Graph-Schaltfläche rechts." loading="lazy">
+				<p>Der Streifen, der eine Liste oder ein Feld benennt und die Schaltflächen trägt, die auf das Ganze wirken. Jede Liste in der Leiste hat einen, und jedes Feld auch.</p>
+				<p class="say">Sagen Sie: das Plus auf dem Kopf <span class="ui">Chats</span> .</p>
+			</div>
+
+			<div class="term" id="term-closer">
+				<h3 id="s10">Schließer</h3>
+				<img src="../shots/vocab-closer.png" alt="Ein kleines gezeichnetes Kreuz." loading="lazy">
+				<p>Das Kreuz, das etwas schließt. Daimond hat einen Schließer, auf eine Art gezeichnet, auf jedem Feld, jeder Kachel, jedem Dialog, Menü, jeder Schublade und jedem Blatt.</p>
+				<p>Er schließt immer das eine Ding, auf dem er sitzt, und nie etwas Größeres — also benennt das, worauf er sitzt, den Schließer genau.</p>
+				<p class="say">Sagen Sie: der Schließer in der Zeile <span class="ui">Alles</span> .</p>
+			</div>
+
+			<div class="term" id="term-cog">
+				<h3 id="s11">Zahnrad</h3>
+				<img src="../shots/vocab-cog.png" alt="Ein kleines gezeichnetes Zahnrad." loading="lazy">
+				<p>Die Einstellungs-Schaltfläche. Wo ein Ding eigene Einstellungen hat, liegen sie hinter einem Zahnrad auf diesem Ding: auf einer Kachel, auf der Identitätszeile, auf einem Postfach.</p>
+				<p class="say">Sagen Sie: das Zahnrad auf der Diamond-Kachel.</p>
+			</div>
+
+			<div class="term" id="term-light">
+				<h3 id="s12">Licht</h3>
+				<img src="../shots/vocab-everything.png" alt="Eine Zeile mit Alles, davor ein Abspielpfeil, ein Pausenzeichen und ein rundes bernsteinfarbenes Licht, und ganz rechts ein Schließer." loading="lazy">
+				<p>Das runde Licht neben einem Abspielen und einer Pause, das sagt, ob dieser Teil von Daimond läuft. Grün für läuft, rot für angehalten, bernstein für teilweise angehalten, in dieser Reihenfolge, wie eine Verkehrsampel.</p>
+				<p>Jedes Licht in der App hängt an dem in der Zeile <span class="ui">Alles</span> , das für alle spricht.</p>
+				<p class="say">Sagen Sie: das Licht in der Zeile <span class="ui">Alles</span> ist bernsteinfarben.</p>
+			</div>
+
+			<div class="term" id="term-divider">
+				<h3 id="s13">Trenner</h3>
+				<img src="../shots/vocab-divider.png" alt="Eine dünne farbige Linie quer über die Leiste unter dem Zeiger, darunter der Kopf Chats." loading="lazy">
+				<p>Eine Linie, die Sie ziehen können, um einer Liste oder einem Feld mehr Platz zu geben, und mit Doppelklick dorthin zurücksetzen, wo sie war. Es gibt zwei in der Leiste: eine zwischen den Diamonds und den Chats, eine über dem Verwaltungsfeld.</p>
+				<p class="say">Sagen Sie: der Trenner über dem Verwaltungsfeld.</p>
+			</div>
+
+			<div class="term" id="term-row">
+				<h3 id="s14">Zeile</h3>
+				<img src="../shots/vocab-rows.png" alt="Das Verwaltungsfeld: oben ein Name mit einem Zahnrad, dann ein Stapel einzelner Zeilen, jede mit einem farbigen Punkt, einer Bezeichnung und einem Wert." loading="lazy">
+				<p>Eine Zeile in einem Stapel davon, die eine Frage beantwortet. Das Verwaltungsfeld besteht aus Zeilen; die Postfächer, die Ordner, die Geräte und die Dateien auch.</p>
+				<p>Eine Zeile, mit der man etwas tun kann, ist eine Schaltfläche, und sie öffnet das, was sie benennt.</p>
+				<p class="say">Sagen Sie: der Chip <span class="ui">Version</span> Zeile im Verwaltungsfeld.</p>
+			</div>
+
+			<div class="term" id="term-spend-row">
+				<h3 id="s15">Ausgabenzeile</h3>
+				<img src="../shots/vocab-spendrow.png" alt="Drei Zellen am Fuß der Leiste, beschriftet mit Sitzung, Woche und Monat, jede mit einer kleinen Zahl darunter." loading="lazy">
+				<p>Die drei Zahlen am Fuß der Leiste: diese Sitzung, diese Woche, dieser Monat. Sie versteckt sich, solange nichts ausgegeben wurde.</p>
+				<p class="say">Sagen Sie: die Wochenzelle der Ausgabenzeile.</p>
+			</div>
+
+			<div class="term" id="term-composer">
+				<h3 id="s16">Verfasser</h3>
+				<img src="../shots/vocab-composer.png" alt="Ein breites rundes Feld mit Nachricht schreiben, daneben eine runde Senden-Schaltfläche und zwei kleine runde Schaltflächen." loading="lazy">
+				<p>Das Feld, in das Sie tippen, mit der Senden-Schaltfläche daneben. Es gibt eines, am Fuß der Bühne, und es spricht mit dem, was auf der Bühne ist: einem Chat oder dem Daimon eines Diamonds.</p>
+				<p class="say">Sagen Sie: die Senden-Schaltfläche am Verfasser.</p>
+			</div>
+
+			<div class="term" id="term-face">
+				<h3 id="s17">Seite</h3>
+				<img src="../shots/vocab-face.png" alt="Ein kleines Paar verbundener Schaltflächen mit Kristall und Chat, wobei Kristall gewählt ist." loading="lazy">
+				<p>Ein Diamond hat zwei davon, und dieser Schalter wählt, welche Sie ansehen: den <span class="ui">Kristall</span>, also das, was der Diamond weiß, und den <span class="ui">Chat</span>, also wie er dazu gekommen ist.</p>
+				<p class="say">Sagen Sie: auf der Kristallseite eines Diamonds.</p>
+			</div>
+
+			<div class="term" id="term-tag">
+				<h3 id="s18">Tag</h3>
+				<img src="../shots/vocab-tile-diamond.png" alt="Eine Diamond-Kachel mit zwei kleinen farbigen Etiketten, Projekt und dringend, und rechts einem Zahnrad." loading="lazy">
+				<p>Ein Wort, unter dem Sie einen Diamond ablegen. Tags sitzen als kleine Chips auf der Kachel, und die Zeile <span class="ui">Nach Tag filtern</span> über der Liste engt sie auf die ein, die Sie wählen.</p>
+				<img src="../shots/vocab-tagfilter.png" alt="Eine schmale Zeile über der Diamonds-Liste mit Nach Tag filtern und einer Anzahl daneben." loading="lazy">
+				<p>Tags gehören Ihnen allein: sie gehen nie an ein Modell und kommen nie in einen Kristall.</p>
+				<p class="say">Sagen Sie: die Tag-Chips unter <span class="ui">Nach Tag filtern</span>.</p>
+			</div>
+
+			<div class="term tall" id="term-dialog">
+				<h3 id="s19">Dialog</h3>
+				<img src="../shots/vocab-dialog.png" alt="Eine Karte, mittig über der App, mit einem Titel, einem Schließer daneben, mehreren benannten Einstellungen und einer Löschen-Schaltfläche am Fuß." loading="lazy">
+				<p>Eine Karte, die sich über die App öffnet und auf eine Antwort wartet. Ihr Titel steht in derselben Zeile wie ihr Schließer, und Escape tut, was der Schließer tut.</p>
+				<p class="say">Sagen Sie: der Chip <span class="ui">Löschen</span> Schaltfläche im Dialog einer Chat-Kachel.</p>
+			</div>
+
+			<div class="term tall" id="term-gallery">
+				<h3 id="s20">Galerie</h3>
+				<img src="../shots/vocab-gallery.png" alt="Eine hohe Karte mit dem Titel Panels, einem Suchfeld und allen Feldern in drei Gruppen, jede Zeile mit einem Stern." loading="lazy">
+				<p>Jedes Feld, das es gibt, durchsuchbar, nach Bereich gruppiert, jede Zeile sagt, ob dieses Feld offen ist, und trägt die Nadel, die entscheidet, ob sein Chip in der oberen Leiste sitzt. Sie öffnet sich über den Chip <span class="ui">⋯</span> am Ende der Chip-Reihe.</p>
+				<p class="say">Sagen Sie: die Nadel in der Zeile <span class="ui">Papierkorb</span> der Galerie.</p>
+			</div>
+
+			<div class="term tall" id="term-goto">
+				<h3 id="s21">Gehe-zu-Feld</h3>
+				<img src="../shots/vocab-goto.png" alt="Ein großes Feld über der App mit einem Suchfeld und einer Liste von Ergebnissen, jedes mit der Art des Dings versehen." loading="lazy">
+				<p>Der Weg der Tastatur zu allem: <kbd>Strg</kbd> <kbd>K</kbd>, oder <kbd>Cmd</kbd> <kbd>K</kbd> auf einem Mac. Es erreicht jedes Feld und jede Einstellung durch Tippen, auch die, die kein Chip zeigt.</p>
+				<p class="say">Sagen Sie: einen Palettennamen in das Gehe-zu-Feld tippen.</p>
+			</div>
+
+			<div class="term tall" id="term-sheet">
+				<h3 id="s22">Blatt</h3>
+				<img src="../shots/vocab-sheet.png" alt="Ein Telefonbildschirm, auf dem ein Feld von der unteren Kante über den Chat gehoben ist, mit einem Griffbalken oben und einem Fragefeld am Fuß." loading="lazy">
+				<p>Am Telefon steigt ein Feld als Blatt über den Chat, das Sie hoch- und herunterziehen können. Es hat oben einen Griffbalken, daneben einen Schließer, und das eine Feld, in dem Sie danach fragen.</p>
+				<p class="say">Sagen Sie: der Griffbalken am Blatt Arbeitsbereich.</p>
+			</div>
+
+			<div class="term tall" id="term-drawer">
+				<h3 id="s23">Schublade</h3>
+				<img src="../shots/vocab-drawer.png" alt="Ein Telefonbildschirm, auf dem die Leiste von links über die abgedunkelte App geschoben ist und die Diamonds, die Chats und das Verwaltungsfeld hält." loading="lazy">
+				<p>Am Telefon schiebt sich die Leiste von links als Schublade herein. Es ist die ganze Leiste, alles darin behält also seinen Namen. Die Schaltfläche, die sie öffnet, sind die drei Striche oben links.</p>
+				<p class="say">Sagen Sie: das Verwaltungsfeld, unten in der Schublade.</p>
+			</div>
+
+			<div class="term" id="term-paperclip">
+				<h3 id="s24">Büroklammer</h3>
+				<img src="../shots/vocab-paperclip.png" alt="Eine Zeile im Feld Arbeitsbereich, die einen Ordner nennt, mit einem Link, einer Büroklammer und einem Schließer rechts." loading="lazy">
+				<p>Hängt das, was Sie lesen, an das, woran Sie arbeiten. Sie sitzt auf jeder Zeile des Felds Arbeitsbereich und auf dem Kopf eines Dokuments, und sie wird nur gezeichnet, solange es etwas zum Anhängen gibt.</p>
+				<p class="say">Sagen Sie: die Büroklammer auf einer Ordnerzeile.</p>
+			</div>
+
+		</div>
+
+		<p>Ein paar weitere Wörter, die das übrige Handbuch benutzt und zu denen es nichts zu fotografieren gibt: ein <strong>Feld</strong> ist eines der Dinge, die ein Bereich hält, jedes mit eigenem Namen, von <span class="ui">KI</span> bis <span class="ui">Papierkorb</span>; ein <strong>Kristall</strong> ist das, was ein Diamond weiß, als Dokument gehalten; ein <strong>Daimon</strong> ist der Agent, der für einen Diamond denkt; ein <strong>Arbeiter</strong> ist ein Agent, den ein Daimon für eine Aufgabe losschickt. <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> erklärt alle vier.</p>
+
+		<p>Zwei weitere gehören zum Feld Soziales, und keines von beiden lässt sich fotografieren. Die <strong id="term-forge">Schmiede</strong> ist der Ort, an dem die Arbeit an Daimond verfolgt wird: ein öffentliches Repository, außerhalb dieses Geräts, in dem eine gesendete Notiz als Vorschlag ankommt. Ihre <strong id="term-voice">Stimme</strong> ist die Textzeile, die die Schmiede einmal für Sie ausgibt: ein Geheimnis, das einer Person gehört und unter dem die Schmiede Sie nachschlägt, verschlüsselt auf diesem Gerät gehalten und Ihnen nie wieder gezeigt. <a href="#social-panel">Das Feld Soziales</a> weiter unten ist der Ort, an dem beide benutzt werden, und die einzige Stelle in Daimond, an der eines der beiden Wörter vorkommt.</p>
+	</section>
+
+	<section id="two-words">
+		<h2 id="s25">Wo es zwei Wörter gibt</h2>
+
+		<p>Ein paar Dinge in Daimond hören wirklich auf mehr als einen Namen, meist weil die App das eine und dieses Handbuch das andere sagt. Sie stehen hier, damit niemand einen Satz damit verschwendet, sich für das falsche zu entschuldigen. Beide werden verstanden, und eine Notiz, die eines von beiden benutzt, ist eine gute Notiz.</p>
+
+		<ul>
+			<li>Der mittlere Bereich ist <strong>die Bühne</strong> in diesem Handbuch und <span class="ui">Neben dem Chat</span> in der Feldergalerie.</li>
+			<li>Das Feld unter dem unteren Trenner der Leiste ist <strong>das Verwaltungsfeld</strong> überall, wo ein Leser hinsieht, und sein eigener Kopf liest <span class="ui">Verwaltung</span>.</li>
+			<li>Die <kbd>Strg</kbd> <kbd>K</kbd> Feld nennt sich selbst <strong>Gehe zu</strong>, und dieses Handbuch hat es auch Palette genannt. Palette ist aber auch das Wort für die elf Farbschemata, also ist <strong>Gehe-zu-Feld</strong> das, was vorzuziehen ist.</li>
+			<li>Die Schaltfläche, die am Telefon die Schublade öffnet, sagt <span class="ui">Menü</span>, und was sie öffnet, ist die Leiste.</li>
+		</ul>
+
+		<p>Wenn Sie noch eines finden, ist das eine eigene Notiz wert. Zwei Namen für eine Sache sind ein kleiner Fehler in der App, nicht in der Person, die es berichtet.</p>
+	</section>
+
+	<section id="social-panel">
+		<h2 id="s26">Das Feld Soziales</h2>
+
+		<p>Eine Notiz wird im Feld <span class="ui">Soziales</span> geschrieben, das im Dock sitzt, neben Ihrer Arbeit, damit eine Notiz über das, was auf dem Bildschirm ist, geschrieben werden kann, ohne ihn zu verlassen. Sein <strong>Kopf</strong> trägt fünf <strong>Chips</strong>, und einer ist ausgefüllt, solange Sie ihn ansehen: <span class="ui">Nachrichten</span>, <span class="ui">Personen</span>, <span class="ui">Teilen</span>, <span class="ui">Notizen</span> und <span class="ui">Vorschläge</span>. Es öffnet auf <span class="ui">Notizen</span>.</p>
+
+		<p>Der Rest dieses Abschnitts ist <span class="ui">Notizen</span> und <span class="ui">Vorschläge</span>, und die handeln von Daimond selbst. Die anderen drei handeln von anderen Menschen, und jeder hat weiter unten einen eigenen Abschnitt: <a href="#people">Personen</a> zuerst, denn niemandem kann etwas gesendet werden, bevor ein Code ausgetauscht wurde.</p>
+
+		<p>Eine Notiz, die Sie senden, endet nicht bei Oxedyne. Sie geht an die <strong>Schmiede</strong>, den Ort, an dem die Arbeit an Daimond verfolgt wird, und kommt dort als Vorschlag an, den jeder mit diesem Repository lesen kann. Der Chip <span class="ui">Vorschläge</span> ist dieselbe Schmiede, zurückgelesen.</p>
+
+		<h3 id="s27">Ihre Stimme</h3>
+
+		<p>Alles, was dieses Gerät verlässt, geht unter einer <strong>Stimme</strong>. Eine Stimme ist eine Textzeile, die die Schmiede einmal für Sie ausgibt: ein Geheimnis, das einer Person gehört und unter dem die Schmiede Sie nachschlägt. Sie ist Ihre ganze Identität dort. Kein Name, kein Handle und keine Adresse reist mit dem, was Sie schreiben, und diesem Browser wird nie gesagt, wie Ihre Stimme heißt.</p>
+
+		<p>Sie setzen sie im Feld. Drücken Sie <span class="ui">Eine Stimme setzen</span>, fügen Sie die Zeile ein und drücken Sie <span class="ui">Stimme speichern</span>. Daimond hält sie auf diesem Gerät, verschlüsselt unter Ihrer Passphrase, und das Gateway, durch das sie hinausgeht, speichert nichts. <span class="ui">Vergessen</span> entfernt die Kopie auf diesem Gerät; die Schmiede hat diese Zeile einmal gezeigt und kann sie nicht wieder zeigen — bewahren Sie sie also dort, wo Sie sie finden.</p>
+
+		<p>Ohne Stimme gibt es nur <span class="ui">Behalten</span> : das Feld bietet kein <span class="ui">Senden</span>— und es bietet auch kein Abstimmen und keine Antwort an.</p>
+
+		<h3 id="s28">Eine schreiben</h3>
+
+		<p>Unter dem Chip <span class="ui">Notizen</span> ist das <strong>Notizfeld</strong>. Schreiben Sie die drei Dinge vom Anfang dieser Seite hinein: wo es ist, was Sie erwartet haben, was stattdessen passiert ist. <strong>Die erste Zeile ist der Titel</strong> und der Rest ist, was passiert ist; der Satz neben den Schaltflächen sagt das.</p>
+
+		<p>Unter dem Feld ist eine <strong>Zeile</strong> mit der Überschrift <span class="ui">Was mitgeht</span>. Sie hält eine Zeile: den Build, die Sprache, die Größe des Fensters, ob Sie am Telefon sind, die Palette, die Sie tragen, und welche Felder offen sind. Das ist der vierte Rat von oben, für Sie gesammelt statt von Ihnen verlangt, und er wird in genau den Zeichen gezeigt, in denen er reisen wird. Die Zeile hat einen <strong>Schließer</strong>, und ihn zu schließen nimmt die Zeile von der Notiz und nicht nur vom Bildschirm.</p>
+
+		<p>Dann zwei Schaltflächen, und der Unterschied zwischen ihnen ist alles, was dieses Feld verspricht.</p>
+
+		<ul>
+			<li><span class="ui">Behalten</span> legt die Notiz auf diesem Gerät ab. Nichts wird gesendet, jetzt nicht und später nicht.</li>
+			<li><span class="ui">Senden</span> legt sie ab und sendet sie, und gesendet werden genau die Zeichen im Feld und in dieser Zeile. Auf dem Weg hinaus wird nichts hinzugefügt, und nichts weiter über Sie geht mit. Sie geht unter Ihrer Stimme, und sie geht an einen öffentlichen Ort: jeder, der das Repository lesen kann, kann lesen, was Sie geschrieben haben. Der Satz neben der Schaltfläche sagt das, damit Sie es vor dem Drücken wissen und nicht danach.</li>
+		</ul>
+
+		<div class="note">
+			<strong>Eine Notiz wird nie von selbst gesendet.</strong> Nichts hier wird in eine Warteschlange gelegt, gebündelt, wiederholt oder synchronisiert. Zum Senden muss die Schmiede erreichbar sein; ist sie es nicht, weil Sie offline sind oder keine Stimme haben, wird die Notiz behalten, die <strong>Zeile</strong> unter dem Feld sagt <span class="ui">Nur hier</span>, und nichts versucht es hinter Ihrem Rücken noch einmal. <span class="ui">Kopieren</span> steht auf jeder Notiz, Sie können Ihre eigenen Worte also immer selbst hinaustragen.
+		</div>
+
+		<p>Ihre eigenen Notizen stehen unter dem Feld, die neuesten zuerst, jede als <strong>Zeile</strong> , die sagt, was Sie geschrieben haben und ob sie gegangen ist. Eine behaltene Notiz kann gesendet, kopiert oder gelöscht werden; eine Notiz liegt nur auf diesem Gerät, das Löschen fragt also vorher. Eine Notiz, die gegangen ist, sagt, welcher Vorschlag sie geworden ist.</p>
+
+		<h3 id="s29">Die Vorschläge lesen und abstimmen</h3>
+
+		<p>Ein <strong>Vorschlag</strong> ist eine Änderung an Daimond, so formuliert, dass man ihr zustimmen oder widersprechen kann und dass sie fertig werden kann. Eine gesendete Notiz eröffnet einen: ihre erste Zeile wird der Titel, der Rest der Text. Deshalb sagt der Rat am Anfang dieser Seite: eine Notiz, eine Sache. Zwei Fehler in einer Notiz werden ein Vorschlag, der nicht fertig werden kann.</p>
+
+		<p>Unter dem Chip <span class="ui">Vorschläge</span> Chip ist jeder einzelne eine <strong>Zeile</strong> von derselben Form wie eine Zeile im Verwaltungsfeld: ein farbiger Punkt für den Zustand, der Titel, und, wo es Zählungen gibt, wie viele darum gebeten haben. Die Zeile zu drücken öffnet sie, und darin stehen der Vorschlag im Ganzen, wer ihn geschrieben hat und wann, wie viele Antworten er hat, der Build, auf dem er geschrieben wurde, und die Marke, die ihn geschlossen hat, wenn eine ihn geschlossen hat.</p>
+
+		<p>Darunter ist ein Feld, um etwas zurückzusagen. Schreiben Sie hinein und drücken Sie <span class="ui">Sagen</span>, und gesendet wird genau das, was in diesem Feld steht — dasselbe Versprechen, das das Notizfeld hält. Was schon gesagt wurde, sitzt darüber.</p>
+
+		<p>Wo die Schmiede Zählungen führt, sitzen zwei Schaltflächen dabei: <span class="ui">Machen</span> und <span class="ui">Nicht machen</span>. Die zu drücken, die Sie schon gewählt haben, nimmt Ihre Stimme wieder zurück.</p>
+
+		<p>Es gibt vier Zustände. <span class="ui">Offen</span> und <span class="ui">Wird gemacht</span> sagen, wie es steht, <span class="ui">Erledigt</span> sagt, es ist erledigt, und <span class="ui">Abgelehnt</span> sagt, es wird nicht gemacht. Ein Vorschlag, der einfach verschwindet, würde Leuten beibringen, keine Notizen zu schreiben — keiner von ihnen tut das also.</p>
+
+		<p><strong>Nichts sagt Ihnen, wenn Ihr Vorschlag beantwortet ist.</strong> Es gibt keinen Feed, kein Abzeichen und keine Nachricht: Sie finden es heraus, indem Sie das Feld öffnen und lesen. Die Zeile über der Liste sagt das, damit ein Schweigen nie für eine Antwort genommen wird.</p>
+
+		<div class="note">
+			<strong>Die Zählungen sind live, und nichts wird zurückgehalten.</strong> Alles unter <span class="ui">Vorschläge</span> wird von der Schmiede gelesen, während Sie hinsehen, eine Zählung ist also die von diesem Augenblick und nicht die eines Builds. Hinter den zwei Schaltflächen ist auch keine Warteschlange: <strong>eine Stimme, die Sie offline abgeben, ist nicht abgegeben</strong>, und nichts gibt sie später für Sie ab. Drücken Sie sie noch einmal, wenn Sie wieder da sind.
+		</div>
+	</section>
+
+	<section id="people">
+		<h2 id="s30">Personen, und der erste Austausch</h2>
+
+		<p>Alles Weitere auf dieser Seite ruht auf einem Akt: dass zwei Menschen die echten Schlüssel des anderen halten. Für jemanden, von dem Daimond keinen Schlüssel hat, kann nichts versiegelt werden — solange also kein Code ausgetauscht wurde, sagt die Liste <span class="ui">Personen</span> genau das, und das Nachrichtenfeld sagt, dass es niemanden zum Schreiben gibt.</p>
+
+		<p>Über der Liste sitzen zwei Schaltflächen. <span class="ui">Meinen Code zeigen</span> bringt Ihren eigenen <strong>Code</strong> auf den Bildschirm: eine kleine signierte Karte mit Ihrem Schlüssel, dem gesonderten Schlüssel, mit dem eine Nachricht an Sie versiegelt wird, und dem Namen, den Sie sich gegeben haben. Er wird als Symbol für die Kamera des anderen gezeichnet und darunter als Textzeile wiederholt, die mit <code translate="no">DMND-ID1.</code> beginnt, für den Fall, dass es keine Kamera gibt. <span class="ui">Jemanden hinzufügen</span> ist die andere Hälfte desselben Akts: die Kamera dieses Geräts, und ein Feld, in das ein Code eingefügt wird.</p>
+
+		<h3 id="s31">Im Raum lesen, oder eine Nummer vorlesen</h3>
+
+		<p>Beide Wege halten den Code fest. Nur zwei Dinge heben einen Schlüssel auf <strong>abgeglichen</strong>— welches von beiden angeboten wird, hängt daran, wie der Code angekommen ist, und nicht daran, was er sagt.</p>
+
+		<ul>
+			<li><strong>Die Kamera dieses Geräts, in Person.</strong> Sie haben ihn vom Bildschirm des anderen gelesen, es gab also keinen Kanal, in den sich jemand hätte setzen können, und die Zeile bietet <span class="ui">Jetzt als abgeglichen markieren</span>.</li>
+			<li><strong>Alles andere</strong> — ein Einfügen, ein Link, ein Code, den jemand geschickt hat — bleibt ein neuer Schlüssel, und der Dialog sagt das schon beim Ankommen. Was ihn übergeben hat, hätte einen eigenen Schlüssel einsetzen und das Ergebnis einwandfrei signieren können; eine Karte, die aufgeht, beweist also, dass der Halter dieses Schlüssels sie verfasst hat, und nichts darüber, wer der Halter ist.</li>
+		</ul>
+
+		<p>Der Weg von dort nach oben ist <span class="ui">Sicherheitsnummern vergleichen</span>: sechzig Ziffern in zwölf Gruppen von fünf, auf beiden Seiten dieselben, die Sie sich am Telefon oder in Person vorlesen. <span class="ui">Die Nummern stimmen überein</span> hält es fest. <span class="ui">Sie sind verschieden</span> sagt, dass jemand zwischen Ihnen sitzt und dass dieser Schlüssel nicht zu benutzen ist. Die Ziffern in einer Nachricht zu lesen beweist nichts, denn was die Schlüssel tauschen könnte, könnte auch die Nachricht tauschen.</p>
+
+		<h3 id="s32">Was eine Zeile sagt</h3>
+
+		<p>Jede Person ist eine <strong>Zeile</strong>: ein Name, eine Zeile unter dem Namen und ein Fingerabdruck. Solange der Schlüssel nicht abgeglichen ist, wird der Name als die Behauptung gezeichnet, die er ist — <em>nennt sich „Ada“</em> —, denn ein Name ist etwas, das sein Halter getippt hat. Ist er abgeglichen, ist die Person am anderen Ende bekannt und der Name darf ihr Name sein.</p>
+
+		<p>Die Zeile unter dem Namen ist die einzige Stelle in Daimond, an der der Stand eines Schlüssels gezeichnet wird, und sie ist eine Zeile und kein Abzeichen, damit sie nicht in einem Blick mit etwas anderem gelesen werden kann. Sie sagt eines von fünf Dingen: dass dies ein neuer Schlüssel ist, den Sie nicht abgeglichen haben; dass er in Person abgeglichen wurde, mit dem Datum; dass er per Sicherheitsnummer abgeglichen wurde, mit dem Datum; dass er ein <em>anderer</em> Schlüssel ist als der, den Sie abgeglichen haben; oder dass er gesperrt ist.</p>
+
+		<div class="note"><strong>Ein Schlüssel, der sich ändert, trägt nichts hinüber.</strong> Eine Karte kann den Schlüssel nennen, den sie ersetzt, was die zwei verbindet, und sie nimmt einen Abgleich nicht mit: der häufigste Grund, warum ein Schlüssel wechselt, ist, dass der alte abgeflossen ist, und wer den alten Schlüssel genommen hat, kann dieselbe Behauptung ebenso signieren. Die Zeile sagt also, dass der Schlüssel ein anderer ist, und Nachrichten von ihm warten, bis Sie entscheiden. Ein Name, der auf einen Namen fällt, den Sie schon abgeglichen haben, wird auf der Zeile ebenfalls benannt — Namen sind keine Identitäten, und der Schlüssel ist das, was man prüft.</div>
+
+		<p><span class="ui">Sperren</span> auf einer Zeile hält diesen Schlüssel am Relais auf: nichts weiter von ihm wird getragen, und ihm wird davon nichts gesagt. <span class="ui">Entsperren</span> hebt es auf. Nichts in dieser Liste wird bearbeitet oder gelöscht: jede Karte, jeder Abgleich und jede Sperre wird an einen Datensatz auf diesem Gerät angehängt, und die Liste wird jedes Mal, wenn sie gezeichnet wird, aus diesem Datensatz neu aufgebaut, wobei jede Signatur wieder geprüft wird.</p>
+	</section>
+
+	<section id="messages">
+		<h2 id="s33">Private Nachrichten</h2>
+
+		<p>Eine Nachricht wird auf diesem Gerät auf einen Schlüssel versiegelt, den die andere Person hält, und auf ihrem geöffnet. Nichts dazwischen kann sie lesen, und das schließt uns ein: das Relais trägt Geheimtext und kann damit nichts anderes tun. Was es sieht, ist, was das Zustellen braucht — welches Konto, wann und wie viele Bytes —, und das ist es wert, gesagt zu werden, statt es zu überspielen.</p>
+
+		<p>Am Fuß der Ansicht <span class="ui">Nachrichten</span> ist das Feld, in das Sie schreiben. Darüber nennt eine Auswahl, an wen es geht: die Personen, deren Versiegelungsschlüssel dieses Gerät hält, und die Gruppen, denen Sie beigetreten sind. Unter der Auswahl sagt eine Zeile, wer lesen kann, was Sie gleich tippen, und sie ändert sich mit der Wahl, denn <span class="ui quoted">Privat. Nur du und die Person, der du schreibst, könnt das lesen.</span> wäre über einer Gruppe von zwölf falsch. <span class="ui">Privat senden</span> sendet sie. Ein Text von mehr als 8.192 Zeichen wird abgewiesen und nicht gekürzt, aus dem Grund, dass eine halbe Nachricht keine kürzere Nachricht ist.</p>
+
+		<h3 id="s34">Ankommen</h3>
+
+		<p>Solange die Ansicht <span class="ui">Nachrichten</span> offen ist, hält Daimond eine Anfrage beim Relais offen, eine Nachricht, die eintrifft, wird also gezeichnet, ohne dass Sie etwas drücken. Bei geschlossenem Feld finden Sie sie, wenn Sie es das nächste Mal öffnen — und an der Zählung.</p>
+
+		<p>Die <span class="ui">Soziales</span> Chip in der Chip-Reihe trägt eine Zahl, und die Summe über die ganze App geht in den Titel des Browser-Tabs und auf das Symbol der App, wo die Plattform eines zeichnet. Es ist eine Zählung dessen, was angekommen ist, und keine Erinnerung daran, was Sie angesehen haben, und dieser Build hat nichts, was eine Nachricht als gelesen markiert — die Zahl bleibt also stehen.</p>
+
+		<p>Eine erste Nachricht von jemandem, den Sie nicht angenommen haben, kommt nicht in die Liste. Sie wartet darüber, unter <span class="ui">Wartet auf deine Antwort</span>, mit dem Fingerabdruck und dem, was geschrieben wurde, und drei Schaltflächen:</p>
+
+		<ul>
+			<li><span class="ui">Annehmen</span> nimmt sie in die Liste, und spätere Nachrichten von dort gehen direkt dorthin.</li>
+			<li><span class="ui">Ignorieren</span> nimmt die Zeile weg. Es schreibt nichts, und es sagt der anderen Seite nichts — das ist alles, damit ein Absender ein Ignorieren nie von einem Schweigen unterscheiden kann.</li>
+			<li><span class="ui">Sperren</span> hält sie am Relais auf, wie die Zeile in <span class="ui">Personen</span> es tut.</li>
+		</ul>
+
+		<div class="note"><strong>Eine E-Mail am Tag, höchstens.</strong> Wenn auf Ihrem Konto eine Adresse liegt, kann Daimond eine E-Mail senden, die sagt, dass etwas wartet: kein Absender, kein Betreff, keine Anzahl, und nicht mehr als eine in vierundzwanzig Stunden. Der Schalter ist im Verwaltungsfeld unter <span class="ui">E-Mail-Türklingel</span>, und für ein Beta-Konto beginnt er eingeschaltet, denn bei geschlossenem Tab und ohne Push ist er das Einzige, was überhaupt jemand hört.</div>
+
+		<h3 id="s35">Was gesagt wird, und was nicht versprochen wird</h3>
+
+		<ul>
+			<li><strong>Gesendet, nie zugestellt.</strong> Das Relais antwortet auf eine gesperrte Zustellung genau so wie auf eine, die es genommen hat, und zwar absichtlich, damit Sperren nicht von Ignorieren zu unterscheiden ist. Ein Senden an eine Gruppe sagt also, an wie viele Personen sie <em>gesendet</em> wurde, und benennt jeden, für den das Relais sie nicht genommen hat.</li>
+			<li><strong>Ein volles Postfach wird gesagt.</strong> Ein Postfach hält fünfhundert nicht abgeholte Nachrichten; darüber kommt eine Nachricht nicht an, und dem Absender wird das gesagt, statt ihm zu sagen, sie sei gegangen.</li>
+			<li><strong>Dreißig Tage, dann lässt das Relais los.</strong> Eine Nachricht, die niemand abholt, wird nach dreißig Tagen fallen gelassen, und der Absender bekommt dafür eine Mitteilung, in einem eigenen Abschnitt unter der Liste. Eine verfallene Nachricht lässt diese Mitteilung zurück statt einer Lücke, damit ein Schweigen nie damit verwechselt wird, dass nichts gesendet wurde.</li>
+			<li><strong>Nichts wird in eine Warteschlange gelegt.</strong> Eine Nachricht, die nicht gesendet werden konnte, ist nicht gesendet, und nichts versucht es hinter Ihrem Rücken noch einmal. Dieselbe Regel, die das Notizfeld hält.</li>
+			<li><strong>Ihre eigenen Geräte sehen sie.</strong> Nachrichten, und eine Kopie dessen, was Sie senden, reisen mit dem verschlüsselten Paket, das <a href="sync.html">Synchronisierung</a> zwischen Ihren Geräten trägt. Auf diesem Gerät liegen sie verschlüsselt unter Ihrer Passphrase, solange Daimond gesperrt ist, sagt die Liste das also, statt eine leere zu zeigen.</li>
+		</ul>
+
+		<div class="note"><strong>Eine Nachricht melden.</strong> Weil der Betreiber eine Nachricht nicht lesen kann, ist die einzige Person, die eine beleidigende hervorbringen kann, die, an die sie gesendet wurde. <span class="ui">Melden</span> auf einer Nachricht zeigt die genauen Worte, die gehen werden, und sendet sie mit der Signatur des Absenders und dem einen Schlüssel, der diesen einen Umschlag öffnet. Nichts weiter geht: nicht der Rest des Austauschs, nicht ihre anderen Nachrichten, nicht Ihre anderen Gespräche.</div>
+	</section>
+
+	<section id="groups">
+		<h2 id="s36">Gruppen</h2>
+
+		<p>Eine Gruppe ist ein Gruppenchat, und sie sitzt am Fuß der Ansicht <span class="ui">Nachrichten</span> und nicht hinter einem eigenen Chip. Es gibt keinen gemeinsamen Schlüssel: eine Nachricht an eine Gruppe wird für jedes Mitglied einmal versiegelt, ein Schloss je Person im selben Umschlag. Drei Dinge folgen daraus, und jedes steht auf dem Bildschirm, wo es zählt, vor dem Drücken und nicht danach.</p>
+
+		<ul>
+			<li><strong>Beitreten zeigt nichts von vorher.</strong> Die Nachrichten, die vor Ihrem Beitritt gesendet wurden, waren nie auf Ihren Schlüssel versiegelt, kein Gerät kann sie für Sie öffnen.</li>
+			<li><strong>Jemanden herauszunehmen nimmt nichts zurück.</strong> Sie behalten jede Nachricht, die ihnen schon gesendet wurde, und bekommen von da an nichts mehr — deshalb liest das Bedienelement <span class="ui">Nichts mehr senden an</span> und nie <em>entfernen</em>.</li>
+			<li><strong>Schließen ist endgültig, und es zerstört nichts.</strong> Alle behalten jede Nachricht; niemand kann ihr wieder schreiben. Daimond fragt einmal, bevor es passiert, und das Schließen hat weiter unten eine eigene Überschrift.</li>
+		</ul>
+
+		<p>Um eine zu machen, geben Sie ihr einen Namen und wählen aus den Personen, für die Sie eine Karte halten; <span class="ui">Diese Gruppe machen</span> sagt es ihnen und sagt, wie vielen es gesagt wurde. Wer keine Karte hat, kann nicht hinzugefügt werden, weil es nichts gäbe, worauf man für ihn versiegeln könnte. Eine Gruppe hält höchstens 255 Personen, und eine Nachricht an eine Gruppe ist eine eigene Zustellung für jedes Mitglied — eine große Gruppe ist also langsam und füllt Postfächer, lange bevor diese Grenze zählt.</p>
+
+		<p>Eine Einladung erscheint unter <span class="ui">Gruppeneinladungen</span>, mit <span class="ui">Beitreten</span> und <span class="ui">Jetzt nicht</span>. Nachrichten, die an die Gruppe gehen, solange Sie nicht geantwortet haben, warten bei der Einladung: einer Gruppe beizutreten ist das, was die Personen darin annimmt.</p>
+
+		<p>Nur die Person, die eine Gruppe gemacht hat, kann ändern, wer darin ist, oder sie beenden, denn der Name, den eine Gruppe für sich selbst hat, wird aus ihrem Schlüssel abgeleitet, und niemand sonst kann eine Mitgliederliste dafür schreiben. Alle anderen sehen die Liste ohne Schaltflächen darüber. Ein Mitglied hat <span class="ui">Diese Gruppe verlassen</span>, was lokal ist, nichts wegnimmt und niemandem etwas sagt; die Person, die die Gruppe gemacht hat, kann sie nicht verlassen, weil die nächste Liste, die sie schreibt, sie wieder nennen würde.</p>
+
+		<h3 id="s37">Eine Gruppe schließen</h3>
+
+		<p>Schließen ist der eine Akt der Erschafferin, der sich nicht zurücknehmen lässt. Die Schaltfläche liest <span class="ui">Diese Gruppe schließen</span> — nicht <em>auflösen</em>, und nicht <em>löschen</em>, denn dabei wird nichts zerstört.</p>
+
+		<p>Ein Dialog fragt einmal, mit der Überschrift <span class="ui">Diese Gruppe für alle schließen?</span>, und er sagt: „Eine Gruppe zu schließen schließt sie für alle. Niemand kann ihr wieder schreiben, du eingeschlossen; jede schon gesendete Nachricht bleibt, wo sie ist. Es lässt sich nicht zurücknehmen.“ Darunter nennt er die Gruppe, und die Schaltfläche, die es tut, liest <span class="ui">Für alle schließen</span>. Verwerfen Sie den Dialog, und die Gruppe ist genau, wie sie war.</p>
+
+		<p>Was das Drücken tut, ist eine Mitgliederliste zu schreiben, die niemanden nennt, und sie allen zu übergeben, die darin waren. Jeder Leser gehorcht ihr, an diese Gruppe kann also von niemandem mehr etwas gesendet werden, die Person eingeschlossen, die sie geschlossen hat, und keine spätere Liste kann sie wieder öffnen. Nirgends wird etwas gelöscht: jedes Mitglied behält jede Nachricht, die es schon hat.</p>
+
+		<div class="note"><strong>Eine geschlossene Gruppe behält ihren Platz in der Liste.</strong> Sie sitzt bei den Gruppen, in denen Sie sind, mit ihrem Namen und ihren Nachrichten und ganz ohne Bedienelemente, und sagt, dass sie von der Person geschlossen wurde, die sie gemacht hat. Das ist kein liegengebliebenes Aufräumen: der Name der Gruppe wird über jede ihrer Nachrichten aus diesem einen Datensatz gezeichnet — nimmt man den Datensatz weg, stünde das Protokoll, dessen Erhalt das Schließen bezweckt, unter nichts als acht Zeichen einer Kennung.</div>
+
+		<div class="note"><strong>Das Relais weiß nichts von Gruppen.</strong> Es gibt auf keinem Server einen Gruppendatensatz, keinen Gruppennamen und keine Mitgliederliste: die Liste lebt in den Clients und reist als gewöhnliche versiegelte Nachricht wie jede andere. Was das Relais dennoch sehen kann, ist, was das Zustellen ihm zeigt — eine Adresse, die in einem Augenblick in mehreren Postfächern landet —, es kann also folgern, dass eine Menge von Konten zusammen angeschrieben wurde, und nie, wer sie einander sind.</div>
+	</section>
+
+	<section id="sharing">
+		<h2 id="s38">Einen Diamond teilen</h2>
+
+		<p>Unter dem Chip <span class="ui">Teilen</span> Chip sind zwei Hälften, in der Reihenfolge, in der Sie ihnen begegnen: <span class="ui">Eine Freigabe öffnen</span> oben, weil das Hereinnehmen von Ihnen nichts als die Datei braucht, und <span class="ui">Einen Diamond senden</span> darunter.</p>
+
+		<p><strong>Eine Freigabe ist eine Kopie, die der Empfängerin gehört.</strong> Sie wird auf ihren Schlüssel neu versiegelt, landet in ihrem Arbeitsbereich als eigener Diamond, und sie darf sie ändern. Sie sehen ihre Änderungen nie und sie sieht Ihre nie. Es ist kein lebender Blick auf Ihren Diamond: es gibt nichts zurückzunehmen, und nichts liest weiter, was Sie behalten.</p>
+
+		<p>Eine Freigabe trägt die Dateien eines Diamonds, es muss also einer offen sein, und das Feld nennt ihn und sagt in derselben Zeile, was sie ist: <span class="ui quoted">eine Kopie, die dieser Person gehört, nicht ein Blick auf Ihre.</span> Wählen Sie aus den Personen, deren Versiegelungsschlüssel dieses Gerät hält, wer sie bekommt, und drücken Sie <span class="ui">Teilen</span>. Höchstens vierundsechzig Dateien und zwei Megabyte davon; über beides hinaus wird sie abgewiesen und nicht beschnitten, denn eine Kopie, der eine Datei fehlt, ist keine kleinere Kopie. Drei Dinge reisen nie mit, was Sie auch tun: die Versionsgeschichte des Diamonds selbst, das Protokoll des Agenten und das Manifest einer Capp.</p>
+
+		<h3 id="s39">Zwei Träger, durch Messen gewählt</h3>
+
+		<p>Das Relais trägt einen versiegelten Umschlag von höchstens 64 KB, der Träger wird also nach der Größe entschieden und nicht von Ihnen erfragt, und das Feld sagt, was passiert ist und wie groß die Freigabe war.</p>
+
+		<p>Über dieser Größe schreibt Daimond die Freigabe als Datei mit der Endung <code translate="no">.dshare</code> hinaus — immer diese Endung —, benennt sie nach der Freigabe und ihrer Adresse und sagt Ihnen, wie sie heißt. Geben Sie ihr diese Datei. Eine Capp-Seite ist allein schon etwa 64 KB groß, eine Freigabe, die eine Capp trägt, reist also immer so; ebenso eine, die auf einen Stick geht, oder eine an jemanden, der hier kein Konto hat. Eine <code translate="no">.dshare</code> ist nicht vertrauenswürdiger als eine Nachricht, weil sie eine Datei war: die Bytes sind derselbe versiegelte Umschlag, auf diese eine Person versiegelt, und das Öffnen stellt dieselbe Frage.</p>
+
+		<div class="note"><strong>Die Datei ist der Weg, der ankommt.</strong> Eine Freigabe, die klein genug für das Relais ist, wird durch es gesendet, und dem Absender wird gesagt, dass sie gegangen ist. Die Empfangsseite dieses Weges ist nicht fertig: es gibt kein Bedienelement, das sie öffnet, und sie taucht unter <span class="ui">Nachrichten</span> der Empfängerin auf, als Nachricht, die ihr Gerät nicht lesen konnte. Bis das erledigt ist, speichern Sie die Datei und geben Sie sie weiter — und das kann eine Freigabe jeder Größe.</div>
+
+		<h3 id="s40">Eine Freigabe, die Code trägt</h3>
+
+		<p>Daten reisen frei; Code reist nur mit Zustimmung. Ein Diamond, der eine Capp-Seite trägt, trägt ein Programm, das jemand anderes geschrieben hat, und Daimond führt die Seite aus, sobald der Diamond geöffnet wird, der sie hält — die Frage wird also gestellt, bevor etwas geschrieben wird, und nicht beim Öffnen, was zu spät wäre.</p>
+
+		<p>Der Dialog hat die Überschrift <span class="ui">Diese Freigabe enthält Code</span>. Er nennt die Freigabe, sagt, von wessen Schlüssel sie kommt, und listet die Dateien, die hinzukämen, denn „irgendwo ist Code drin“ genügt nicht, um zu antworten. Die Schaltfläche, die sie annimmt, liest <span class="ui">Die Seite annehmen</span>.</p>
+
+		<p>Sagen Sie nein, kommt der Rest trotzdem an: die Datendateien werden geschrieben, und das Feld nennt die Seiten, die weggelassen wurden, damit nichts fehlt, ohne gesagt zu werden. Wo die ganze Freigabe eine Seite war, wird gar nichts hinzugefügt und das Feld sagt stattdessen das.</p>
+
+		<p>Um eine hereinzunehmen, fragt <span class="ui">Freigabedatei öffnen …</span> nach der Datei, und was ankommt, wird als eigener Diamond hinzugefügt, mit der Anzahl der Dateien, die gelandet sind. Der Name darauf ist der des Absenders und ist beratend: zwei Menschen dürfen einen Namen wählen und keiner von beiden liegt falsch.</p>
+	</section>
+
+	<div class="next">
+		<a href="../machine-operations.html">← Befehle auf dem Rechner</a>
+		<a href="index.html">Zurück zu Erste Schritte →</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond läuft in Ihrem Browser. Nichts davon wird an uns gesendet.</span>
+	<nav aria-label="Handbuchseiten">
+		<a href="index.html">Erste Schritte</a>
+		<a href="interface.html">Oberfläche</a>
+		<a href="models.html">Modelle</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="../capps.html">Capps</a>
+		<a href="email-web-files.html">E-Mail, Web &amp; Dateien</a>
+		<a href="accounts.html">Konten</a>
+		<a href="sync.html">Geräteübergreifende Synchronisierung</a>
+		<a href="spending.html">Ausgaben</a>
+		<a href="../machine-operations.html">Befehle auf dem Rechner</a>
+		<a href="social.html">Soziales</a>
+	</nav>
+</footer>
+</body>
+</html>

@@ -27,10 +27,10 @@
 	/// because it is the reader's language that decides the wording and this page
 	/// is the thing they are looking at.
 	var SAID = {
-		made:      'Made. Your Life log is open in the Diamonds rail.',
+		made:      'Made. Log Life is open in the Diamonds rail.',
 		opened:    'You already had one. It is open in the Diamonds rail.',
 		cancelled: 'Nothing was made.',
-		missing:   'This build of Daimond does not carry the Life log template, so nothing was made.',
+		missing:   'This build of Daimond does not carry the Log Life template, so nothing was made.',
 		failed:    'Daimond could not finish making it. It said so on screen.',
 	};
 

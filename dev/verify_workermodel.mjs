@@ -22,15 +22,28 @@
 //   node dev/verify_workermodel.mjs
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
-// (DAIMOND_MOCK_PORT, default 9099). Starts its own second provider on :9097 and stops
+// (DAIMOND_MOCK_PORT, default 9099). Starts its own second provider on :9300 and stops
 // it at the end.
 
 import http from 'node:http';
-import { open, clearMockLog, mockLog, shot, errors } from './harness.mjs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { open, clearMockLog, mockLog, shot, errors, MOCK } from './harness.mjs';
+
+// Only so the preflight below can NAME the file it reads. Derived exactly as
+// `harness.mjs` derives it, since it does not export the path itself.
+const MOCK_LOG_PATH = process.env.DAIMOND_MOCK_LOG
+	|| path.join(path.dirname(fileURLToPath(import.meta.url)), 'mockllm.log');
 
 // Offset by the world, so two worlds do not fight over one second provider.
+//
+// IN ITS OWN BAND, not adjacent to the world's. The base was 9097, two below the
+// mock base of 9099, so world N's second provider was world N-2's MOCK: world 4
+// bound 9101 and took world 2's provider out from under whoever was driving it,
+// and the gate's world 9 sits on world 7's. `dev/world.sh` hands out 8777+N and
+// 9099+N; 9300+N meets neither for any world worth numbering.
 const PORT2  = Number(process.env.DAIMOND_MOCK2_PORT
-	|| 9097 + (Number(process.env.DAIMOND_PORT || 8777) - 8777));
+	|| 9300 + (Number(process.env.DAIMOND_PORT || 8777) - 8777));
 const URL2   = `http://127.0.0.1:${PORT2}/v1/chat/completions`;
 const KEY2   = 'key-two-only-mock2-holds-this';
 const MODEL2 = 'mock2/worker';
@@ -96,6 +109,50 @@ const mock2 = http.createServer((req, res) => {
 });
 await new Promise((r) => mock2.listen(PORT2, '127.0.0.1', r));
 console.log(`second provider on ${URL2}`);
+
+// ── The shared mock must write the log this file reads ──────────────
+//
+// Half of what follows is asserted on the SHARED mock's log, and an empty log
+// reads exactly like a model that was never called. So the two are proved to be
+// one pair before anything is measured: a probe request goes to the mock this
+// run drives, and the log this run reads has to grow by it.
+//
+// The 99c838e gate failed here and it was read as a product defect for a day.
+// `dev/world.sh N --up` reuses a world that is already listening, so world 9 was
+// still the mock an EARLIER gate had started in ITS worktree -- appending to
+// `.wt/gate-b536d60/dev/mockllm-9.log` while every verifier in the newer
+// worktree read its own, permanently empty, copy. `mockLog()` returned nothing,
+// and the two checks that ask what the daimon ran on said the daimon ran on
+// nothing. This refuses instead, and names the two paths, because a suite that
+// measures a log nobody writes cannot say anything about the app at all.
+const PROBE = 'workermodel-preflight-probe';
+let live = '';
+try {
+	const before = mockLog().length;
+	const r = await fetch(MOCK, {
+		method:  'POST',
+		headers: { 'content-type': 'application/json' },
+		body:    JSON.stringify({ model: 'mock/fast', stream: false,
+			messages: [{ role: 'user', content: PROBE }] }),
+	});
+	if (!r.ok) live = `the mock answered ${r.status}`;
+	else {
+		await r.text();
+		if (mockLog().length <= before) live = 'the probe was not written to the log';
+	}
+} catch (e) {
+	live = 'the mock could not be reached: ' + e.message;
+}
+if (live) {
+	console.log('  REFUSED ' + live);
+	console.log(`  driving:  ${MOCK}`);
+	console.log(`  reading:  ${MOCK_LOG_PATH}`);
+	console.log('  These are not one world. Everything below would measure an empty');
+	console.log('  log and blame the app. `bash dev/world.sh N --down` then --up.');
+	mock2.close();
+	process.exit(2);
+}
+clearMockLog();
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

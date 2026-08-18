@@ -168,9 +168,13 @@
 	/// loaded -- so it is corrected rather than appended to. From here it is
 	/// fixed: a panel added to the app goes on the END, and a panel renamed keeps
 	/// its position, or every number already gathered changes meaning.
+	//
+	// `social` sits at 16 because that is where `improve` sat: decision 13
+	// renamed the panel, and a rename that MOVED it would silently change the
+	// meaning of every number already gathered under 16.
 	var PANELS = ['other', 'ai', 'rail', 'work', 'web', 'preview', 'doc', 'mail',
 		'msg', 'compose', 'term', 'graph', 'spend', 'trash', 'agents', 'tools',
-		'improve', 'pending'];
+		'social', 'pending'];
 
 	/// The tools a Diamond can run, BY THE NAME THE MODEL CALLS THEM BY.
 	///

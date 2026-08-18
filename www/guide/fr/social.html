@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="fr" data-guide-locale="fr" data-guide-locales="en de es fr pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Social — Guide de Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+<style>
+/* This page's own layout, kept here rather than in guide.css because nothing
+   else in the guide is a glossary. Everything is stated in the app's own
+   palette variables, so it follows the reader's theme like the rest. */
+
+/* A pair of sentences the reader is meant to compare. */
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+.pair > div { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.8rem 0.9rem; background: var(--bg-secondary); }
+.pair .lead-in { display: block; font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.35rem; }
+.pair .costly { border-color: var(--border-2); }
+.pair .useful { border-color: var(--accent); }
+.pair p { margin: 0; color: var(--text-secondary); }
+
+/* A whole sentence the app puts on screen, quoted as it stands. The pill in
+   guide.css is `white-space: nowrap`, which is right for a button label and
+   wrong for a sentence: at 360px the longest of these ran 133 pixels past the
+   right edge and took the whole page sideways with it. A quotation wraps. */
+.ui.quoted { white-space: normal; }
+
+/* The glossary. Two columns where there is room, one where there is not; the
+   crops are between 300 and 440 pixels wide, so a column of about 350 shows
+   most of them at close to their own size and none of them at twice it. */
+.terms { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin: 1.25rem 0 2rem; align-items: start; }
+.term {
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 0.85rem 0.9rem 0.95rem;
+}
+.term h3 { margin: 0 0 0.55rem; font-size: 1.02rem; }
+.term img {
+	display: block;
+	max-width: 100%;
+	max-height: 200px;
+	width: auto;
+	height: auto;
+	margin: 0 0 0.6rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--bg-tertiary);
+}
+/* The chip row is 800 pixels of real screen. Squeezed into half the column it
+   is a smear, so it takes the whole width and is read at close to its own size.
+   Legibility is the only reason any of these pictures is here. */
+.term.wide { grid-column: 1 / -1; }
+
+/* A phone shot, a dialog and the two boxes that cover the screen are portraits.
+   Shrunk to the height of a landscape crop their own lettering stops being
+   readable, which defeats the entry, so they take the full width and the prose
+   sits beside them. */
+.term.tall { grid-column: 1 / -1; }
+.term.tall::after { content: ""; display: block; clear: both; }
+.term.tall img { float: left; max-height: 620px; margin: 0 1.1rem 0.6rem 0; }
+.term p { margin: 0.35rem 0 0; font-size: 0.93rem; color: var(--text-secondary); }
+.term p.say { color: var(--text-muted); font-size: 0.88rem; margin-top: 0.5rem; }
+
+/* The widget map. Drawn in the palette's own variables, never in a fixed
+   colour, so it is legible on all eleven palettes and follows a reader who
+   changes theirs while it is on screen.
+
+   On a phone the whole schematic scaled to the column width put its labels at
+   five pixels, which is a diagram that says nothing to the reader who most
+   needs it. It keeps a floor on its width and scrolls sideways inside its own
+   box instead: the page still never scrolls sideways, and the words can still
+   be read. */
+.diagram.scrolls { overflow-x: auto; }
+.diagram.scrolls svg { min-width: 640px; }
+.widgetmap text { font-family: var(--font); }
+.wm-win  { fill: var(--bg-primary);   stroke: var(--border-2); stroke-width: 1; }
+.wm-bar  { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
+.wm-pan  { fill: var(--bg-secondary); stroke: var(--border);   stroke-width: 1; }
+.wm-cell { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
+.wm-soft { fill: var(--accent-soft);  stroke: var(--accent);   stroke-width: 1; }
+.wm-fill { fill: var(--accent); }
+.wm-skel { fill: var(--text-muted); opacity: 0.32; }
+.wm-zone { fill: var(--text-muted); letter-spacing: 1.2px; }
+.wm-lab  { fill: var(--accent-text); font-weight: 700; }
+.wm-lead { stroke: var(--accent); stroke-width: 1.2; opacity: 0.75; }
+.wm-ink  { stroke: var(--text-muted); stroke-width: 1.4; fill: none; opacity: 0.55; }
+</style>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guide Daimond, accueil">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Pages du guide">
+			<a href="index.html">Premiers pas</a>
+			<a href="interface.html">L’interface</a>
+			<a href="models.html">Modèles &amp; crédits</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="../capps.html">Capps</a>
+			<a href="email-web-files.html">E-mail, Web &amp; fichiers</a>
+			<a href="accounts.html">Comptes</a>
+			<a href="sync.html">Synchronisation entre appareils</a>
+			<a href="spending.html">Dépenses</a>
+			<a href="../machine-operations.html">Commandes sur la machine</a>
+			<a href="social.html" aria-current="page">Social</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Social</h1>
+	<p class="lede">Daimond change selon ce que rapportent ceux qui s’en servent. Le panneau Social est l’endroit où cela s’écrit, se relit et se vote, et où se trouvent les messages, les personnes dont ils viennent, les groupes et les partages. Cette page traite de la façon de faire arriver une note : comment dire ce qui s’est passé, et comment s’appellent les parties de l’écran, pour que celui qui la lit sache aussitôt de quelle chose vous parlez.</p>
+
+	<p>Une note qui dit que le truc en haut à gauche est cassé coûte une recherche à quelqu’un, et tombe parfois sur la mauvaise. Une note qui dit la puce <strong>Diamonds</strong> de la barre du haut, non. Aucune des deux ne demande plus de travail. La différence, c’est seulement de savoir comment s’appellent les parties, et c’est à quoi sert le reste de cette page.</p>
+
+	<section id="writing-a-note">
+		<h2 id="s1">Écrire une note sur laquelle on peut agir</h2>
+
+		<p>Trois choses, et la première est celle qu’on oublie le plus souvent.</p>
+
+		<ol class="steps">
+			<li>
+				<h3 id="s2">Où c’est</h3>
+				<p>Nommez la partie, et la région où elle se trouve. L’écran a quatre régions et une vingtaine de sortes de parties, et nommer les deux rend presque tout unique : il y a des croix partout dans Daimond, mais une seule croix sur la ligne <span class="ui">Tout</span> .</p>
+			</li>
+			<li>
+				<h3 id="s3">Ce que vous attendiez</h3>
+				<p>Dites ce que vous pensiez qu’il allait se passer. C’est la moitié qu’un lecteur ne peut pas deviner, et c’est souvent tout le rapport : un contrôle qui fait exactement ce pour quoi il a été bâti, et qui surprend les gens quand même, est un défaut du contrôle et non des gens.</p>
+			</li>
+			<li>
+				<h3 id="s4">Ce qui s’est passé à la place</h3>
+				<p>Ce que vous avez vu, dans l’ordre où vous l’avez vu. Pas ce que vous croyez en être la cause. Une cause devinée resserre la recherche, et une cause mal devinée la resserre loin du défaut.</p>
+			</li>
+		</ol>
+
+		<div class="pair">
+			<div class="costly">
+				<span class="lead-in">Coûte un aller-retour</span>
+				<p>La croix en haut à gauche est cassée.</p>
+			</div>
+			<div class="useful">
+				<span class="lead-in">On peut agir dessus</span>
+				<p>La croix sur la ligne <span class="ui">Tout</span> a rangé toute la barre latérale. Je m’attendais à ce qu’elle ferme cette ligne.</p>
+			</div>
+		</div>
+
+		<p>Encore quelques choses qui épargnent une réponse.</p>
+
+		<ul>
+			<li><strong>Une note, une chose.</strong> Deux défauts dans une note deviennent une proposition qui ne peut pas être achevée, parce que la moitié est corrigée et l’autre non.</li>
+			<li><strong>Dites quelle version.</strong> La <span class="ui">Version</span> ligne du panneau d’administration la nomme, et le survol donne l’identifiant de la version. Un défaut déjà corrigé se lit exactement comme un défaut que personne ne peut reproduire.</li>
+			<li><strong>Dites ce que vous étiez en train de faire.</strong> Même une trace courte aide : quel panneau était ouvert, si vous étiez au téléphone, quelle palette vous portiez. Un défaut peut être là sur une palette, ou à une largeur d’écran, et nulle part ailleurs.</li>
+			<li><strong>Écrivez-la quand même.</strong> Si vous ne pouvez pas nommer la partie, décrivez-la et dites où elle était à l’écran. Une note approximative vaut bien plus qu’une note que personne n’écrit.</li>
+		</ul>
+	</section>
+
+	<section id="regions">
+		<h2 id="s5">Dire où : les quatre régions</h2>
+
+		<p>Daimond a une <strong>barre du haut</strong> sur toute la largeur, et sous elle trois régions côte à côte : la <strong>barre latérale</strong> à gauche, la <strong>scène</strong> au centre et le <strong>dock</strong> à droite. Presque toute note peut commencer par nommer l’une de ces quatre. <a href="interface.html">L’interface</a> les parcourt et dit à quoi sert chaque panneau ; cette page traite des parties plus petites qui s’y trouvent.</p>
+
+		<figure class="diagram scrolls">
+			<svg class="widgetmap" viewBox="0 0 760 470" role="img" aria-labelledby="wm-title wm-desc" preserveAspectRatio="xMidYMid meet">
+				<title id="wm-title">Où se trouvent les parties nommées de l’écran</title>
+				<desc id="wm-desc">Un schéma de la fenêtre de Daimond. En haut, sur toute la largeur, la barre du haut, qui porte la rangée de puces. Dessous, trois régions : la barre latérale à gauche, avec un voyant et une croix sur sa ligne du haut, une en-tête au-dessus de chaque liste, des tuiles dans les listes, un séparateur entre elles et des lignes du panneau d’administration en dessous ; la scène au centre, avec une en-tête en haut et le compositeur en bas ; et le dock à droite, qui porte des panneaux.</desc>
+
+				<!-- ── The window and the top bar ─────────────────────── -->
+				<rect class="wm-win" x="10" y="10" width="740" height="450" rx="16"/>
+				<path class="wm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
+				<rect class="wm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
+				<rect class="wm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
+
+				<!-- The chip row, with two chips filled to show an open panel. -->
+				<rect class="wm-soft" x="170" y="24" width="46" height="18" rx="9"/>
+				<rect class="wm-cell" x="224" y="24" width="30" height="18" rx="9"/>
+				<rect class="wm-soft" x="262" y="24" width="36" height="18" rx="9"/>
+				<rect class="wm-cell" x="306" y="24" width="40" height="18" rx="9"/>
+				<rect class="wm-cell" x="354" y="24" width="44" height="18" rx="9"/>
+				<line class="wm-ink" x1="408" y1="24" x2="408" y2="42"/>
+				<rect class="wm-cell" x="418" y="24" width="44" height="18" rx="9"/>
+				<rect class="wm-cell" x="470" y="24" width="40" height="18" rx="9"/>
+				<rect class="wm-cell" x="518" y="24" width="42" height="18" rx="9"/>
+				<circle class="wm-ink" cx="660" cy="33" r="9"/>
+				<circle class="wm-ink" cx="690" cy="33" r="9"/>
+				<circle class="wm-ink" cx="720" cy="33" r="9"/>
+				<text class="wm-lab" x="365" y="53" text-anchor="middle" font-size="12">rangée de puces</text>
+				<text class="wm-zone" x="600" y="37" text-anchor="middle" font-size="10">BARRE DU HAUT</text>
+
+				<!-- ── The rail ───────────────────────────────────────── -->
+				<text class="wm-zone" x="22" y="80" font-size="10">BARRE LATÉRALE</text>
+				<rect class="wm-pan" x="22" y="88" width="196" height="360" rx="10"/>
+
+				<!-- Its top row: play, pause, the light, and the rail's own closer. -->
+				<path class="wm-ink" d="M32,105 L40,110 L32,115 z"/>
+				<line class="wm-ink" x1="47" y1="105" x2="47" y2="115"/>
+				<line class="wm-ink" x1="52" y1="105" x2="52" y2="115"/>
+				<circle class="wm-fill" cx="64" cy="110" r="5"/>
+				<rect class="wm-skel" x="76" y="107" width="48" height="7" rx="3.5"/>
+				<path class="wm-ink" d="M196,105 L206,115 M206,105 L196,115"/>
+				<line class="wm-lead" x1="64" y1="118" x2="64" y2="127"/>
+				<text class="wm-lab" x="64" y="138" text-anchor="middle" font-size="12">voyant</text>
+				<line class="wm-lead" x1="201" y1="118" x2="201" y2="127"/>
+				<text class="wm-lab" x="208" y="138" text-anchor="end" font-size="12">croix</text>
+
+				<!-- A head over the list, with the buttons that act on the list. -->
+				<rect class="wm-skel" x="32" y="156" width="50" height="8" rx="4"/>
+				<circle class="wm-cell" cx="188" cy="160" r="7"/>
+				<circle class="wm-cell" cx="206" cy="160" r="7"/>
+				<text class="wm-lab" x="128" y="164" text-anchor="middle" font-size="12">en-tête</text>
+
+				<!-- A tile, with its tags and its cog. -->
+				<rect class="wm-cell" x="32" y="178" width="176" height="38" rx="6"/>
+				<rect class="wm-skel" x="40" y="186" width="72" height="6" rx="3"/>
+				<rect class="wm-soft" x="40" y="199" width="26" height="9" rx="4.5"/>
+				<rect class="wm-soft" x="70" y="199" width="22" height="9" rx="4.5"/>
+				<circle class="wm-ink" cx="196" cy="189" r="5"/>
+				<text class="wm-lab" x="146" y="193" text-anchor="middle" font-size="12">tuile</text>
+
+				<!-- The divider between the two lists. -->
+				<line class="wm-lead" x1="30" y1="228" x2="210" y2="228" stroke-width="2"/>
+				<rect class="wm-fill" x="112" y="225.5" width="16" height="5" rx="2.5"/>
+				<line class="wm-lead" x1="120" y1="232" x2="120" y2="240"/>
+				<text class="wm-lab" x="120" y="251" text-anchor="middle" font-size="12">séparateur</text>
+
+				<!-- The second list, and a tile in it. -->
+				<rect class="wm-skel" x="32" y="266" width="34" height="8" rx="4"/>
+				<circle class="wm-cell" cx="188" cy="270" r="7"/>
+				<circle class="wm-cell" cx="206" cy="270" r="7"/>
+				<rect class="wm-cell" x="32" y="288" width="176" height="30" rx="6"/>
+				<rect class="wm-skel" x="40" y="296" width="90" height="6" rx="3"/>
+				<rect class="wm-skel" x="40" y="307" width="60" height="5" rx="2.5"/>
+
+				<!-- The admin panel: one row per question. -->
+				<line class="wm-ink" x1="26" y1="334" x2="214" y2="334"/>
+				<circle class="wm-fill" cx="40" cy="349" r="3" opacity="0.6"/>
+				<rect class="wm-skel" x="50" y="346" width="64" height="6" rx="3"/>
+				<rect class="wm-skel" x="172" y="346" width="32" height="6" rx="3"/>
+				<circle class="wm-fill" cx="40" cy="367" r="3" opacity="0.6"/>
+				<rect class="wm-skel" x="50" y="364" width="52" height="6" rx="3"/>
+				<rect class="wm-skel" x="172" y="364" width="32" height="6" rx="3"/>
+				<circle class="wm-fill" cx="40" cy="385" r="3" opacity="0.6"/>
+				<rect class="wm-skel" x="50" y="382" width="70" height="6" rx="3"/>
+				<rect class="wm-skel" x="172" y="382" width="32" height="6" rx="3"/>
+				<circle class="wm-fill" cx="40" cy="403" r="3" opacity="0.6"/>
+				<rect class="wm-skel" x="50" y="400" width="58" height="6" rx="3"/>
+				<rect class="wm-skel" x="172" y="400" width="32" height="6" rx="3"/>
+				<text class="wm-lab" x="140" y="371" text-anchor="middle" font-size="12">ligne</text>
+
+				<!-- The spend row, at the foot of the rail. -->
+				<line class="wm-ink" x1="26" y1="422" x2="214" y2="422"/>
+				<rect class="wm-skel" x="40" y="432" width="28" height="5" rx="2.5"/>
+				<rect class="wm-skel" x="104" y="432" width="28" height="5" rx="2.5"/>
+				<rect class="wm-skel" x="168" y="432" width="28" height="5" rx="2.5"/>
+
+				<!-- ── The stage ──────────────────────────────────────── -->
+				<text class="wm-zone" x="228" y="80" font-size="10">SCÈNE</text>
+				<rect class="wm-pan" x="228" y="88" width="300" height="360" rx="10"/>
+				<rect class="wm-skel" x="240" y="106" width="86" height="8" rx="4"/>
+				<rect class="wm-cell" x="396" y="101" width="44" height="16" rx="8"/>
+				<rect class="wm-cell" x="448" y="101" width="36" height="16" rx="8"/>
+				<rect class="wm-cell" x="492" y="101" width="28" height="16" rx="8"/>
+				<text class="wm-lab" x="352" y="114" text-anchor="middle" font-size="12">en-tête</text>
+
+				<rect class="wm-soft" x="340" y="142" width="168" height="26" rx="8"/>
+				<rect class="wm-skel" x="350" y="152" width="148" height="6" rx="3"/>
+				<rect class="wm-cell" x="240" y="180" width="212" height="34" rx="8"/>
+				<rect class="wm-skel" x="250" y="188" width="192" height="6" rx="3"/>
+				<rect class="wm-skel" x="250" y="200" width="150" height="6" rx="3"/>
+				<rect class="wm-cell" x="240" y="226" width="180" height="26" rx="8"/>
+				<rect class="wm-skel" x="250" y="236" width="160" height="6" rx="3"/>
+
+				<text class="wm-lab" x="330" y="392" text-anchor="middle" font-size="12">compositeur</text>
+				<line class="wm-lead" x1="330" y1="396" x2="330" y2="404"/>
+				<rect class="wm-cell" x="240" y="404" width="268" height="32" rx="8"/>
+				<rect class="wm-skel" x="252" y="417" width="140" height="6" rx="3"/>
+				<circle class="wm-fill" cx="490" cy="420" r="10"/>
+
+				<!-- ── The dock ───────────────────────────────────────── -->
+				<text class="wm-zone" x="538" y="80" font-size="10">DOCK</text>
+				<rect class="wm-pan" x="538" y="88" width="200" height="360" rx="10"/>
+				<rect class="wm-cell" x="550" y="98" width="176" height="104" rx="8"/>
+				<rect class="wm-skel" x="562" y="110" width="52" height="8" rx="4"/>
+				<rect class="wm-skel" x="562" y="130" width="150" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="144" width="120" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="158" width="136" height="6" rx="3"/>
+				<text class="wm-lab" x="638" y="185" text-anchor="middle" font-size="12">panneau</text>
+				<rect class="wm-cell" x="550" y="212" width="176" height="104" rx="8"/>
+				<rect class="wm-skel" x="562" y="224" width="64" height="8" rx="4"/>
+				<rect class="wm-skel" x="562" y="244" width="118" height="6" rx="3"/>
+				<rect class="wm-skel" x="574" y="258" width="126" height="6" rx="3"/>
+				<rect class="wm-skel" x="574" y="272" width="98" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="286" width="88" height="6" rx="3"/>
+				<rect class="wm-cell" x="550" y="326" width="176" height="110" rx="8"/>
+				<rect class="wm-skel" x="562" y="338" width="48" height="8" rx="4"/>
+				<rect class="wm-skel" x="562" y="358" width="140" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="372" width="104" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="386" width="128" height="6" rx="3"/>
+			</svg>
+			<figcaption>Où se trouvent les parties nommées. Les mots en couleur sont ceux à employer dans une note ; les quatre régions sont en petites capitales. Rien ici n’est à l’échelle, et un panneau peut être fermé, déplacé ou rangé — les régions sont ce qui ne bouge pas.</figcaption>
+		</figure>
+
+		<div class="note">
+			<strong>Deux mots pour le centre.</strong> Ce guide l’appelle la scène. La galerie de panneaux regroupe ces mêmes panneaux sous <span class="ui">À côté du chat</span>, qui est le seul nom que l’application elle-même met à l’écran pour cette région. Les deux se comprennent ; et si vous n’employez ni l’un ni l’autre et dites « à côté du chat » avec vos mots, cela se comprend aussi.
+		</div>
+	</section>
+
+	<section id="glossary">
+		<h2 id="s6">Les parties, par leur nom</h2>
+
+		<p>Chaque mot ci-dessous est un mot que Daimond emploie déjà, dans son interface ou dans ce guide. Chaque entrée montre la chose réelle, découpée dans un Daimond en marche, pour que vous puissiez comparer ce que vous avez sous les yeux à l’image et employer le mot avec assurance.</p>
+
+		<p>Les images ont été prises sur l’une des palettes sombres. Sur la vôtre les couleurs seront autres, et au téléphone certaines de ces parties se déplacent ; les noms, non.</p>
+
+		<!--
+		  A translator's note, and an auditor's.
+
+		  Each term here is the word the ENGLISH interface uses. It is a common
+		  noun, not a product name, so it is translated: a reader whose Daimond
+		  says "Kachel" is looking for a glossary that says "Kachel", and one
+		  that says "tile" instead defeats the whole purpose of the page.
+
+		  The word to use in a given language is the one that language's own
+		  catalogue already uses, in www/i18n/[locale].js. The key to copy it
+		  from is named after each term, so nothing has to be invented:
+
+		    chip        chip.show, and chat.concise_failed
+		    tile        tile.settings
+		    head        no key of its own. The guide's word; the markup says
+		                railhead and chead
+		    closer      common.close_named. js/closer.js is the whole control
+		    cog         tile.settings, on the button that opens it
+		    light       pause.state_play, pause.state_pause, pause.state_mixed
+		    divider     layout.handle
+		    row         astat.tools_of and the rest of astat
+		    spend row   spend.session_short, spend.period_week, spend.period_month
+		    composer    chat.input_ph, chat.send
+		    face        crystal.view_switch
+		    tag         tag.add, tag.pool_toggle
+		    dialog      dlg.are_you_sure
+		    gallery     gallery.title
+		    Go to box   pal.title, pal.close
+		    sheet       sheet.close
+		    drawer      no key of its own. The button that opens it is
+		                topbar.open_menu
+		    paperclip   attach.to_focus
+		    forge       improve.as_voice, improve.voice_help. Nothing to
+		                photograph: it is a website, not a part of this app
+		    voice       improve.voice_held, improve.voice_ph, and the whole
+		                voice.* family. Nothing to photograph either, and
+		                nothing that may be: it is a secret
+
+		  The product nouns are NOT translated, here or anywhere: Daimond,
+		  Diamond, Daimond Pro, Hands. See the head of www/i18n/en.js.
+		-->
+
+		<div class="terms">
+
+			<div class="term wide" id="term-chip">
+				<h3 id="s7">puce</h3>
+				<img src="../shots/vocab-chips.png" alt="Une rangée de petits boutons arrondis sur toute la barre du haut, chacun portant le nom d’un panneau. Trois sont remplis et les autres seulement contournés." loading="lazy">
+				<p>Un petit bouton arrondi qui allume ou éteint une chose. La rangée de ceux-là sur toute la barre du haut est la <strong>rangée de puces</strong>, une puce par panneau, remplie tant que ce panneau est ouvert.</p>
+				<img src="../shots/vocab-chead.png" alt="L’en-tête du panneau de chat : son nom à gauche, puis trois petits boutons arrondis portant Gardé, Concis et Étapes." loading="lazy">
+				<p>Les puces servent aussi ailleurs : sur une en-tête, comme ci-dessus, sur une tuile, et dans la barre latérale comme étiquettes. Dites laquelle, et une puce est sans ambiguïté.</p>
+				<p class="say">Dites : la puce <strong>Espace</strong> de la rangée de puces.</p>
+			</div>
+
+			<div class="term" id="term-tile">
+				<h3 id="s8">tuile</h3>
+				<img src="../shots/vocab-tile-chat.png" alt="Un chat dans la barre latérale, dessiné comme une carte bordée avec une heure, le premier message, une roue dentée, une croix et deux petits boutons." loading="lazy">
+				<p>Un Diamond ou un chat, tel qu’il apparaît dans la barre latérale. Une tuile porte son propre nom, sa roue dentée, sa croix, et tout ce qui appartient à ce travail-là.</p>
+				<p class="say">Dites : la roue dentée d’une tuile de chat.</p>
+			</div>
+
+			<div class="term" id="term-head">
+				<h3 id="s9">en-tête</h3>
+				<img src="../shots/vocab-head.png" alt="Le mot Diamonds à gauche d’une bande étroite, avec un bouton plus et un bouton graphe à sa droite." loading="lazy">
+				<p>La bande qui nomme une liste ou un panneau et porte les boutons qui agissent sur l’ensemble. Chaque liste de la barre latérale en a une, et chaque panneau aussi.</p>
+				<p class="say">Dites : le plus sur l’en-tête <span class="ui">Chats</span> .</p>
+			</div>
+
+			<div class="term" id="term-closer">
+				<h3 id="s10">croix</h3>
+				<img src="../shots/vocab-closer.png" alt="Une petite croix dessinée." loading="lazy">
+				<p>La croix qui ferme quelque chose. Daimond a une croix, dessinée d’une seule façon, sur chaque panneau, tuile, dialogue, menu, tiroir et feuille.</p>
+				<p>Elle ferme toujours la seule chose sur laquelle elle se trouve et jamais rien de plus grand : nommer ce sur quoi elle se trouve nomme donc la croix exactement.</p>
+				<p class="say">Dites : la croix sur la ligne <span class="ui">Tout</span> .</p>
+			</div>
+
+			<div class="term" id="term-cog">
+				<h3 id="s11">roue dentée</h3>
+				<img src="../shots/vocab-cog.png" alt="Une petite roue dentée dessinée." loading="lazy">
+				<p>Le bouton des réglages. Là où une chose a des réglages propres, ils sont derrière une roue dentée sur cette chose : sur une tuile, sur la ligne d’identité, sur une boîte mail.</p>
+				<p class="say">Dites : la roue dentée de la tuile du Diamond.</p>
+			</div>
+
+			<div class="term" id="term-light">
+				<h3 id="s12">voyant</h3>
+				<img src="../shots/vocab-everything.png" alt="Une ligne portant Tout, avec une flèche de lecture, un symbole de pause et un voyant ambre rond devant, et une croix à l’extrême droite." loading="lazy">
+				<p>Le voyant rond à côté d’une lecture et d’une pause, qui dit si cette partie de Daimond tourne. Vert pour en cours, rouge pour en pause, ambre pour partiellement en pause, dans cet ordre, comme un feu de circulation.</p>
+				<p>Chaque voyant de l’application dépend de celui de la ligne <span class="ui">Tout</span> , qui parle pour tous.</p>
+				<p class="say">Dites : le voyant de la ligne <span class="ui">Tout</span> est ambre.</p>
+			</div>
+
+			<div class="term" id="term-divider">
+				<h3 id="s13">séparateur</h3>
+				<img src="../shots/vocab-divider.png" alt="Un fin trait coloré en travers de la barre latérale sous le pointeur, avec l’en-tête Chats en dessous." loading="lazy">
+				<p>Un trait que vous pouvez faire glisser pour donner plus de place à une liste ou à un panneau, et remettre où il était d’un double clic. Il y en a deux dans la barre latérale : un entre les Diamonds et les chats, un au-dessus du panneau d’administration.</p>
+				<p class="say">Dites : le séparateur au-dessus du panneau d’administration.</p>
+			</div>
+
+			<div class="term" id="term-row">
+				<h3 id="s14">ligne</h3>
+				<img src="../shots/vocab-rows.png" alt="Le panneau d’administration : un nom en haut avec une roue dentée, puis une pile de lignes simples, chacune avec un point coloré, une étiquette et une valeur." loading="lazy">
+				<p>Une ligne dans une pile de lignes, qui répond à une question. Le panneau d’administration est fait de lignes ; les boîtes mail, les dossiers, les appareils et les fichiers aussi.</p>
+				<p>Une ligne sur laquelle on peut agir est un bouton, et elle ouvre ce qu’elle nomme.</p>
+				<p class="say">Dites : la puce <span class="ui">Version</span> ligne du panneau d’administration.</p>
+			</div>
+
+			<div class="term" id="term-spend-row">
+				<h3 id="s15">ligne de dépenses</h3>
+				<img src="../shots/vocab-spendrow.png" alt="Trois cellules au pied de la barre latérale, portant Session, Semaine et Mois, chacune avec un petit chiffre en dessous." loading="lazy">
+				<p>Les trois chiffres au pied de la barre latérale : cette session, cette semaine, ce mois. Elle se cache tant que rien n’a été dépensé.</p>
+				<p class="say">Dites : la cellule de la semaine de la ligne de dépenses.</p>
+			</div>
+
+			<div class="term" id="term-composer">
+				<h3 id="s16">compositeur</h3>
+				<img src="../shots/vocab-composer.png" alt="Une large boîte arrondie portant Écrivez un message, avec un bouton d’envoi rond et deux petits boutons ronds à côté." loading="lazy">
+				<p>La boîte dans laquelle vous tapez, avec le bouton d’envoi à côté. Il y en a une, au pied de la scène, et elle parle à ce qui est sur la scène : un chat, ou le daimon d’un Diamond.</p>
+				<p class="say">Dites : le bouton d’envoi du compositeur.</p>
+			</div>
+
+			<div class="term" id="term-face">
+				<h3 id="s17">face</h3>
+				<img src="../shots/vocab-face.png" alt="Une petite paire de boutons joints portant Cristal et Chat, avec Cristal sélectionné." loading="lazy">
+				<p>Un Diamond en a deux, et cet interrupteur choisit celle que vous regardez : le <span class="ui">Cristal</span>, qui est ce que le Diamond sait, et le <span class="ui">Chat</span>, qui est comment il l’a appris.</p>
+				<p class="say">Dites : sur la face cristal d’un Diamond.</p>
+			</div>
+
+			<div class="term" id="term-tag">
+				<h3 id="s18">étiquette</h3>
+				<img src="../shots/vocab-tile-diamond.png" alt="Une tuile de Diamond portant deux petites étiquettes colorées, projet et urgent, avec une roue dentée à sa droite." loading="lazy">
+				<p>Un mot sous lequel vous classez un Diamond. Les étiquettes sont sur la tuile comme de petites puces, et la ligne <span class="ui">Filtrer par étiquette</span> au-dessus de la liste la resserre sur celles que vous choisissez.</p>
+				<img src="../shots/vocab-tagfilter.png" alt="Une ligne étroite au-dessus de la liste des Diamonds portant Filtrer par étiquette, avec un compte à côté." loading="lazy">
+				<p>Les étiquettes n’appartiennent qu’à vous : elles ne vont jamais à un modèle, et n’entrent jamais dans un cristal.</p>
+				<p class="say">Dites : les puces d’étiquette sous <span class="ui">Filtrer par étiquette</span>.</p>
+			</div>
+
+			<div class="term tall" id="term-dialog">
+				<h3 id="s19">dialogue</h3>
+				<img src="../shots/vocab-dialog.png" alt="Une carte centrée sur l’application, avec un titre, une croix à côté, plusieurs réglages étiquetés et un bouton Supprimer au pied." loading="lazy">
+				<p>Une carte qui s’ouvre par-dessus l’application et attend une réponse. Son titre est sur la même ligne que sa croix, et Échap fait ce que fait la croix.</p>
+				<p class="say">Dites : la puce <span class="ui">Supprimer</span> bouton du dialogue d’une tuile de chat.</p>
+			</div>
+
+			<div class="term tall" id="term-gallery">
+				<h3 id="s20">galerie</h3>
+				<img src="../shots/vocab-gallery.png" alt="Une carte haute intitulée Panneaux, avec une boîte de recherche et tous les panneaux listés en trois groupes, chaque ligne portant une étoile." loading="lazy">
+				<p>Tous les panneaux qui existent, cherchables, groupés par région, chaque ligne disant si ce panneau est ouvert et portant l’épingle qui décide si sa puce siège dans la barre du haut. Elle s’ouvre depuis la puce <span class="ui">⋯</span> au bout de la rangée de puces.</p>
+				<p class="say">Dites : l’épingle sur la ligne <span class="ui">Corbeille</span> de la galerie.</p>
+			</div>
+
+			<div class="term tall" id="term-goto">
+				<h3 id="s21">boîte Aller à</h3>
+				<img src="../shots/vocab-goto.png" alt="Une grande boîte par-dessus l’application avec un champ de recherche et une liste de résultats, chacun marqué de la sorte de chose qu’il est." loading="lazy">
+				<p>Le chemin du clavier vers tout : <kbd>Ctrl</kbd> <kbd>K</kbd>, ou <kbd>Cmd</kbd> <kbd>K</kbd> sur un Mac. Elle atteint chaque panneau et chaque réglage en tapant, y compris ceux qu’aucune puce ne montre.</p>
+				<p class="say">Dites : taper le nom d’une palette dans la boîte Aller à.</p>
+			</div>
+
+			<div class="term tall" id="term-sheet">
+				<h3 id="s22">feuille</h3>
+				<img src="../shots/vocab-sheet.png" alt="Un écran de téléphone avec un panneau levé par-dessus le chat depuis le bord du bas, une barre de prise en haut et une boîte pour demander au pied." loading="lazy">
+				<p>Au téléphone, un panneau se lève par-dessus le chat comme une feuille que vous pouvez faire glisser de haut en bas. Elle a une barre de prise en haut, une croix à côté, et la seule boîte dans laquelle vous posez vos questions à son sujet.</p>
+				<p class="say">Dites : la barre de prise de la feuille Espace.</p>
+			</div>
+
+			<div class="term tall" id="term-drawer">
+				<h3 id="s23">tiroir</h3>
+				<img src="../shots/vocab-drawer.png" alt="Un écran de téléphone avec la barre latérale glissée depuis la gauche par-dessus l’application assombrie, portant les Diamonds, les chats et le panneau d’administration." loading="lazy">
+				<p>Au téléphone, la barre latérale glisse depuis la gauche comme un tiroir. C’est toute la barre latérale, donc tout ce qu’elle contient garde son nom. Le bouton qui l’ouvre, ce sont les trois traits en haut à gauche.</p>
+				<p class="say">Dites : le panneau d’administration, au fond du tiroir.</p>
+			</div>
+
+			<div class="term" id="term-paperclip">
+				<h3 id="s24">trombone</h3>
+				<img src="../shots/vocab-paperclip.png" alt="Une ligne du panneau Espace nommant un dossier, avec un lien, un trombone et une croix à sa droite." loading="lazy">
+				<p>Joint ce que vous lisez à ce sur quoi vous travaillez. Il est sur chaque ligne du panneau Espace et sur l’en-tête d’un document, et il n’est dessiné que tant qu’il y a quelque chose à quoi joindre.</p>
+				<p class="say">Dites : le trombone sur une ligne de dossier.</p>
+			</div>
+
+		</div>
+
+		<p>Encore quelques mots que le reste du guide emploie, sans rien à photographier : un <strong>panneau</strong> est l’une des choses qu’une région porte, chacune avec un nom propre, de <span class="ui">IA</span> à <span class="ui">Corbeille</span> ; un <strong>cristal</strong> est ce qu’un Diamond sait, gardé comme document ; un <strong>daimon</strong> est l’agent qui pense pour un Diamond ; un <strong>ouvrier</strong> est un agent qu’un daimon envoie faire un travail. <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> explique les quatre.</p>
+
+		<p>Deux autres appartiennent au panneau Social, et ni l’un ni l’autre ne peut être photographié. La <strong id="term-forge">forge</strong> est l’endroit où le travail sur Daimond est suivi : un dépôt public, hors de cet appareil, où une note que vous envoyez arrive comme proposition. Votre <strong id="term-voice">voix</strong> est la ligne de texte que la forge imprime une fois pour vous : un secret qui appartient à une personne et par lequel la forge vous retrouve, gardé chiffré sur cet appareil et jamais montré à nouveau. <a href="#social-panel">Le panneau Social</a> plus bas est l’endroit où les deux servent, et le seul endroit de Daimond où l’un ou l’autre mot apparaît.</p>
+	</section>
+
+	<section id="two-words">
+		<h2 id="s25">Là où il y a deux mots</h2>
+
+		<p>Quelques choses dans Daimond répondent vraiment à plus d’un nom, d’ordinaire parce que l’application dit l’un et ce guide l’autre. Elles sont listées ici pour que personne ne gaspille une phrase à s’excuser d’avoir employé le mauvais. Les deux se comprennent, et une note qui emploie l’un ou l’autre est une bonne note.</p>
+
+		<ul>
+			<li>La région du centre est <strong>la scène</strong> dans ce guide et <span class="ui">À côté du chat</span> dans la galerie de panneaux.</li>
+			<li>Le panneau sous le séparateur du bas de la barre latérale est <strong>le panneau d’administration</strong> partout où un lecteur peut le voir, et sa propre en-tête porte <span class="ui">Administration</span>.</li>
+			<li>La <kbd>Ctrl</kbd> <kbd>K</kbd> s’appelle elle-même <strong>Aller à</strong>, et ce guide l’a aussi appelée la palette. Palette est aussi le mot pour les onze jeux de couleurs, donc <strong>boîte Aller à</strong> est celui qu’il vaut mieux préférer.</li>
+			<li>Le bouton qui ouvre le tiroir au téléphone porte <span class="ui">Menu</span>, et ce qu’il ouvre est la barre latérale.</li>
+		</ul>
+
+		<p>Si vous en trouvez un autre, cela mérite une note à part. Deux noms pour une chose sont un petit défaut de l’application, pas de la personne qui le signale.</p>
+	</section>
+
+	<section id="social-panel">
+		<h2 id="s26">Le panneau Social</h2>
+
+		<p>Une note s’écrit dans le panneau <span class="ui">Social</span> , qui siège dans le dock, à côté de votre travail, pour qu’une note sur ce qui est à l’écran puisse s’écrire sans le quitter. Son <strong>en-tête</strong> porte cinq <strong>puces</strong>, et l’une est remplie tant que vous la regardez : <span class="ui">Messages</span>, <span class="ui">Personnes</span>, <span class="ui">Partager</span>, <span class="ui">Notes</span> et <span class="ui">Propositions</span>. Il s’ouvre sur <span class="ui">Notes</span>.</p>
+
+		<p>Le reste de cette section, c’est <span class="ui">Notes</span> et <span class="ui">Propositions</span>, qui portent sur Daimond lui-même. Les trois autres portent sur d’autres personnes, et chacune a sa propre section plus bas : <a href="#people">Personnes</a> d’abord, parce que rien ne peut être envoyé à personne avant qu’un code ait été échangé.</p>
+
+		<p>Une note que vous envoyez ne s’arrête pas chez Oxedyne. Elle va à la <strong>forge</strong>, l’endroit où le travail sur Daimond est suivi, et elle y arrive comme une proposition que peut lire quiconque a ce dépôt. La puce <span class="ui">Propositions</span> est cette même forge, relue.</p>
+
+		<h3 id="s27">Votre voix</h3>
+
+		<p>Tout ce qui quitte cet appareil part sous une <strong>voix</strong>. Une voix est une ligne de texte que la forge imprime une fois pour vous : un secret qui appartient à une personne et par lequel la forge vous retrouve. C’est toute votre identité là-bas. Aucun nom, aucun pseudonyme et aucune adresse ne voyagent avec ce que vous écrivez, et ce navigateur n’apprend jamais comment s’appelle votre voix.</p>
+
+		<p>Vous la posez dans le panneau. Appuyez sur <span class="ui">Définir une voix</span>, collez la ligne, et appuyez sur <span class="ui">Enregistrer la voix</span>. Daimond la garde sur cet appareil, chiffrée sous votre phrase de passe, et la passerelle par laquelle elle sort n’enregistre rien. <span class="ui">L’oublier</span> retire la copie de cet appareil ; la forge a montré cette ligne une fois et ne peut pas la remontrer, gardez-la donc là où vous saurez la retrouver.</p>
+
+		<p>Sans voix, il n’y a que <span class="ui">Garder</span>  : le panneau ne propose pas <span class="ui">Envoyer</span>, et il ne propose pas non plus de voter ni de répondre.</p>
+
+		<h3 id="s28">En écrire une</h3>
+
+		<p>Sous la puce <span class="ui">Notes</span> se trouve la <strong>boîte à notes</strong>. Écrivez-y les trois choses du haut de cette page : où c’est, ce que vous attendiez, ce qui s’est passé à la place. <strong>La première ligne est le titre</strong> et le reste est ce qui s’est passé ; la phrase à côté des boutons le dit.</p>
+
+		<p>Sous la boîte, il y a une <strong>ligne</strong> intitulée <span class="ui">Ce qui part avec</span>. Elle contient une ligne : la version, la langue, la taille de la fenêtre, si vous êtes au téléphone, la palette que vous portez et quels panneaux sont ouverts. C’est le quatrième conseil ci-dessus, réuni pour vous plutôt que demandé de vous, et il est montré dans les caractères exacts avec lesquels il voyagera. La ligne a une <strong>croix</strong>, et la fermer retire la ligne de la note en plus de l’écran.</p>
+
+		<p>Puis deux boutons, et la différence entre eux est tout ce que ce panneau promet.</p>
+
+		<ul>
+			<li><span class="ui">Garder</span> garde la note sur cet appareil. Rien n’est envoyé, ni alors ni plus tard.</li>
+			<li><span class="ui">Envoyer</span> la garde et l’envoie, et ce qui est envoyé, ce sont exactement les caractères de la boîte et de cette ligne. Rien n’est ajouté en sortant, et rien d’autre à votre sujet ne part avec. Elle part sous votre voix, et elle part dans un endroit public : quiconque peut lire le dépôt peut lire ce que vous avez écrit. La phrase à côté du bouton le dit, pour que vous le sachiez avant d’appuyer et non après.</li>
+		</ul>
+
+		<div class="note">
+			<strong>Une note n’est jamais envoyée d’elle-même.</strong> Rien ici n’est mis en file, groupé, réessayé ni synchronisé. Envoyer demande que la forge soit joignable ; quand elle ne l’est pas, parce que vous êtes hors ligne ou sans voix, la note est gardée, la <strong>ligne</strong> sous la boîte porte <span class="ui">Ici seulement</span>, et rien ne réessaie dans votre dos. <span class="ui">Copier</span> est sur chaque note, vous pouvez donc toujours emporter vos propres mots à la main.
+		</div>
+
+		<p>Vos propres notes sont listées sous la boîte, les plus récentes d’abord, chacune une <strong>ligne</strong> disant ce que vous avez écrit et si elle est partie. Une note gardée peut être envoyée, copiée ou supprimée ; une note n’est que sur cet appareil, la supprimer demande donc d’abord. Une note qui est partie dit quelle proposition elle est devenue.</p>
+
+		<h3 id="s29">Lire les propositions, et voter</h3>
+
+		<p>Une <strong>proposition</strong> est un changement à Daimond, énoncé de façon qu’on puisse être d’accord ou non avec lui et qu’il puisse être achevé. Envoyer une note en ouvre une : sa première ligne devient le titre et le reste devient le corps. C’est pourquoi le conseil du haut de cette page dit une note, une chose : deux défauts dans une note deviennent une proposition qui ne peut pas être achevée.</p>
+
+		<p>Sous la puce <span class="ui">Propositions</span> chacune est une <strong>ligne</strong> de la même forme qu’une ligne du panneau d’administration : un point coloré pour l’état où elle est, son titre, et, là où il y a des comptes, combien l’ont demandée. Appuyer sur la ligne l’ouvre, et à l’intérieur se trouvent la proposition en entier, qui l’a écrite et quand, combien de réponses elle a, la version sur laquelle elle a été écrite, et la marque qui l’a close si l’une l’a close.</p>
+
+		<p>En dessous, une boîte pour dire quelque chose en retour. Écrivez-y et appuyez sur <span class="ui">Le dire</span>, et ce qui est envoyé est exactement ce qui est dans cette boîte, la même promesse que garde la boîte à notes. Ce qui a déjà été dit siège au-dessus.</p>
+
+		<p>Là où la forge tient des comptes, deux boutons siègent avec eux : <span class="ui">Faire ceci</span> et <span class="ui">Pas ceci</span>. Appuyer sur celui que vous avez déjà choisi retire votre vote.</p>
+
+		<p>Il y a quatre états. <span class="ui">Ouverte</span> et <span class="ui">En cours</span> disent où elle en est, <span class="ui">Faite</span> dit qu’elle est achevée, et <span class="ui">Refusée</span> dit qu’elle ne sera pas faite. Une proposition qui disparaîtrait tout simplement apprendrait aux gens à ne pas écrire de notes : aucune ne le fait donc.</p>
+
+		<p><strong>Rien ne vous dit quand votre proposition reçoit une réponse.</strong> Il n’y a ni fil, ni badge, ni message : vous l’apprenez en ouvrant le panneau et en lisant. La ligne au-dessus de la liste le dit, pour qu’un silence ne soit jamais pris pour une réponse.</p>
+
+		<div class="note">
+			<strong>Les comptes sont en direct, et rien n’est retenu.</strong> Tout ce qui est sous <span class="ui">Propositions</span> est lu depuis la forge pendant que vous regardez : un compte est donc celui de cet instant et non celui d’une version. Il n’y a pas non plus de file derrière les deux boutons : <strong>un vote appuyé hors ligne n’est pas exprimé</strong>, et rien ne l’exprime pour vous ensuite. Appuyez-y de nouveau quand vous êtes revenu.
+		</div>
+	</section>
+
+	<section id="people">
+		<h2 id="s30">Personnes, et le premier échange</h2>
+
+		<p>Tout le reste de cette page repose sur un acte : que deux personnes en viennent à détenir la vraie clé de l’autre. Rien ne peut être scellé pour quelqu’un dont Daimond n’a pas de clé ; tant qu’un code n’a pas été échangé, la liste <span class="ui">Personnes</span> dit exactement cela, et la boîte des messages dit qu’il n’y a personne à qui écrire.</p>
+
+		<p>Deux boutons siègent au-dessus de la liste. <span class="ui">Montrer mon code</span> met à l’écran votre propre <strong>code</strong>  : une petite carte signée qui porte votre clé, la clé distincte avec laquelle un message pour vous est scellé, et le nom que vous vous êtes donné. Il est dessiné comme un symbole pour la caméra de l’autre, et répété en dessous comme une ligne de texte commençant par <code translate="no">DMND-ID1.</code> pour quand il n’y a pas de caméra. <span class="ui">Ajouter quelqu’un</span> est l’autre moitié du même acte : la caméra de cet appareil, et une boîte où coller un code.</p>
+
+		<h3 id="s31">Lire dans la pièce, ou lire un numéro à voix haute</h3>
+
+		<p>Les deux chemins consignent le code. Deux choses seulement peuvent élever une clé au rang de <strong>comparée</strong>, et laquelle des deux est proposée dépend de la façon dont le code est arrivé et non de ce qu’il dit.</p>
+
+		<ul>
+			<li><strong>La caméra de cet appareil, en personne.</strong> Vous l’avez lu sur leur écran : il n’y avait donc pas de canal où quelqu’un puisse se glisser entre vous, et la ligne propose <span class="ui">Marquer comme comparée</span>.</li>
+			<li><strong>Tout le reste</strong> — un collage, un lien, un code que quelqu’un vous a envoyé — reste une nouvelle clé, et le dialogue le dit dès l’arrivée. Ce qui l’a transmise a pu y substituer une clé à elle et signer le résultat impeccablement : une carte qui tient prouve donc que le détenteur de cette clé l’a composée, et rien sur qui ce détenteur est.</li>
+		</ul>
+
+		<p>Le chemin vers le haut depuis là est <span class="ui">Comparer les numéros de sécurité</span> : soixante chiffres en douze groupes de cinq, les mêmes des deux côtés, que vous vous lisez lors d’un appel ou en personne. <span class="ui">Les numéros correspondent</span> le consigne. <span class="ui">Ils sont différents</span> dit que quelqu’un se trouve entre vous et que cette clé ne doit pas servir. Lire les chiffres dans un message ne prouve rien, car ce qui pourrait échanger les clés pourrait échanger le message.</p>
+
+		<h3 id="s32">Ce que dit une ligne</h3>
+
+		<p>Chaque personne est une <strong>ligne</strong> : un nom, une ligne sous le nom, et une empreinte. Tant que la clé n’est pas comparée, le nom est dessiné comme l’affirmation qu’il est — <em>se fait appeler « Ada »</em> —, parce qu’un nom est une chose que son détenteur a tapée. Une fois la clé comparée, la personne à l’autre bout est connue et le nom peut être son nom.</p>
+
+		<p>La ligne sous le nom est le seul endroit de Daimond où l’état d’une clé est dessiné, et c’est une ligne et non un badge, pour qu’elle ne puisse pas se lire d’un seul coup d’œil avec autre chose. Elle dit l’une de cinq choses : que c’est une nouvelle clé que vous n’avez pas comparée ; qu’elle a été comparée en personne, avec la date ; qu’elle a été comparée par numéro de sécurité, avec la date ; qu’elle est une clé <em>différente</em> de celle que vous avez comparée ; ou qu’elle est bloquée.</p>
+
+		<div class="note"><strong>Une clé qui change n’est pas une clé qui reporte l’acquis.</strong> Une carte peut nommer la clé qu’elle remplace, ce qui relie les deux, et cela ne reporte pas une comparaison : la raison la plus courante pour qu’une clé change est que l’ancienne a fui, et celui qui a pris l’ancienne peut signer cette même affirmation. La ligne dit donc que la clé est différente, et les messages venant d’elle attendent votre décision. Un nom qui se confond avec un nom que vous avez déjà comparé est également signalé sur la ligne — les noms ne sont pas des identités, et c’est la clé qu’il faut vérifier.</div>
+
+		<p><span class="ui">Bloquer</span> sur n’importe quelle ligne arrête cette clé au relais : plus rien d’elle n’est porté, et rien ne lui en est dit. <span class="ui">Débloquer</span> le lève. Rien dans cette liste n’est modifié ni supprimé : chaque carte, chaque comparaison et chaque blocage sont ajoutés à un registre sur cet appareil, et la liste est rebâtie depuis ce registre, chaque signature revérifiée, à chaque fois qu’elle est dessinée.</p>
+	</section>
+
+	<section id="messages">
+		<h2 id="s33">Messages privés</h2>
+
+		<p>Un message est scellé sur cet appareil pour une clé que l’autre personne détient, et ouvert sur le sien. Rien de ce qui se trouve entre les deux ne peut le lire, et cela nous inclut : le relais porte du chiffré et ne peut rien en faire d’autre. Ce qu’il voit, c’est ce qu’exige l’acheminement — quel compte, quand, et combien d’octets — et cela vaut d’être dit plutôt que passé sous silence.</p>
+
+		<p>Au pied de la vue <span class="ui">Messages</span> se trouve la boîte dans laquelle vous écrivez. Au-dessus, un sélecteur nomme à qui cela part : les personnes dont cet appareil détient la clé de scellement, et les groupes que vous avez rejoints. Sous le sélecteur, une ligne dit qui peut lire ce que vous êtes sur le point de taper, et elle change avec le choix, car <span class="ui quoted">Privé. Vous et la personne à qui vous écrivez êtes les seuls à pouvoir lire ceci.</span> serait faux au-dessus d’un groupe de douze. <span class="ui">Envoyer en privé</span> l’envoie. Un texte de plus de 8 192 caractères est refusé plutôt que coupé, au motif que la moitié d’un message n’est pas un message plus court.</p>
+
+		<h3 id="s34">Quand un message arrive</h3>
+
+		<p>Tant que la vue <span class="ui">Messages</span> est ouverte, Daimond tient une requête ouverte au relais : un message qui se pose est donc dessiné sans que vous appuyiez sur rien. Panneau fermé, vous le trouvez la prochaine fois que vous l’ouvrez — et par le compteur.</p>
+
+		<p>La <span class="ui">Social</span> de la rangée de puces porte un nombre, et le total pour toute l’application va dans le titre de l’onglet du navigateur et sur l’icône de l’application là où la plateforme en dessine une. C’est un décompte de ce qui est arrivé et non une mémoire de ce que vous avez regardé, et cette version n’a rien qui marque un message comme lu : le nombre reste donc.</p>
+
+		<p>Un premier message venant de quelqu’un que vous n’avez pas accepté n’entre pas dans la liste. Il attend au-dessus, sous <span class="ui">En attente de votre réponse</span>, avec son empreinte et ce qu’il a écrit, et trois boutons :</p>
+
+		<ul>
+			<li><span class="ui">Accepter</span> le fait entrer dans la liste, et ses messages suivants y vont directement.</li>
+			<li><span class="ui">Ignorer</span> retire la ligne. Cela n’écrit rien, et ne lui dit rien — c’est tout, afin qu’un expéditeur ne puisse jamais distinguer un ignoré d’un silence.</li>
+			<li><span class="ui">Bloquer</span> l’arrête au relais, comme le fait la ligne dans <span class="ui">Personnes</span> .</li>
+		</ul>
+
+		<div class="note"><strong>Un courriel par jour, au plus.</strong> Là où votre compte porte une adresse, Daimond peut envoyer un courriel disant que quelque chose attend : pas d’expéditeur, pas d’objet, pas de nombre, et pas plus d’un toutes les vingt-quatre heures. L’interrupteur est dans le panneau d’administration, sous <span class="ui">Sonnette par courriel</span>, et pour un compte bêta il commence allumé, car avec un onglet fermé et sans notification c’est la seule chose que l’on entende.</div>
+
+		<h3 id="s35">Ce qui est dit, et ce qui n’est pas promis</h3>
+
+		<ul>
+			<li><strong>Envoyé, jamais délivré.</strong> Le relais répond à une remise bloquée exactement comme à une qu’il a prise, délibérément, pour que Bloquer ne se distingue pas d’Ignorer. Un envoi à un groupe dit donc à combien de personnes il a été <em>envoyé</em> , et nomme tous ceux pour qui le relais ne l’a pas pris.</li>
+			<li><strong>Une boîte pleine est dite.</strong> Une boîte garde cinq cents messages non relevés ; au-delà, un message n’arrive pas, et on le dit à l’expéditeur au lieu de lui dire qu’il est parti.</li>
+			<li><strong>Trente jours, puis le relais lâche.</strong> Un message que personne ne relève est abandonné au bout de trente jours et son expéditeur en reçoit un avis, dans sa propre section sous la liste. Un message expiré laisse cet avis derrière lui plutôt qu’un trou, pour qu’un silence ne soit jamais pris pour un envoi qui n’a pas eu lieu.</li>
+			<li><strong>Rien n’est mis en file.</strong> Un message qui n’a pas pu être envoyé n’est pas envoyé, et rien ne réessaie dans votre dos. La même règle que garde la boîte à notes.</li>
+			<li><strong>Vos propres appareils les voient.</strong> Les messages, et une copie de ce que vous envoyez, voyagent avec le paquet chiffré que la <a href="sync.html">synchronisation</a> porte entre vos appareils. Sur cet appareil ils sont gardés chiffrés sous votre phrase de passe : tant que Daimond est verrouillé, la liste le dit au lieu d’en montrer une vide.</li>
+		</ul>
+
+		<div class="note"><strong>Signaler un message.</strong> Parce que l’exploitant ne peut pas lire un message, la seule personne qui peut produire un message abusif est celle à qui il a été envoyé. <span class="ui">Signaler</span> sur un message montre les mots exacts qui partiront, et les envoie avec la signature de l’expéditeur et la seule clé qui ouvre cette seule enveloppe. Rien d’autre ne part : ni le reste de l’échange, ni ses autres messages, ni vos autres conversations.</div>
+	</section>
+
+	<section id="groups">
+		<h2 id="s36">Groupes</h2>
+
+		<p>Un groupe est un chat de groupe, et il siège au pied de la vue <span class="ui">Messages</span> plutôt que derrière une puce à lui. Il n’y a pas de clé partagée : un message à un groupe est scellé une fois pour chaque membre, un cadenas par personne dans la même enveloppe. Trois choses en découlent, et chacune est à l’écran là où elle compte, avant l’appui et non après.</p>
+
+		<ul>
+			<li><strong>Rejoindre ne montre rien d’antérieur.</strong> Les messages envoyés avant que vous rejoigniez n’ont jamais été scellés pour votre clé : aucun appareil ne peut les ouvrir pour vous.</li>
+			<li><strong>Retirer quelqu’un ne reprend rien.</strong> Il garde tous les messages qui lui ont déjà été envoyés et ne reçoit plus rien ensuite, et c’est pourquoi le contrôle porte <span class="ui">Ne plus envoyer à</span> et jamais <em>retirer</em>.</li>
+			<li><strong>Fermer est définitif, et cela ne détruit rien.</strong> Tout le monde garde tous les messages ; personne ne peut plus lui écrire. Daimond demande une fois avant que cela arrive, et fermer a son propre titre plus bas.</li>
+		</ul>
+
+		<p>Pour en créer un, nommez-le et choisissez parmi les personnes dont vous détenez une carte ; <span class="ui">Créer ce groupe</span> le leur dit, et dit à combien il a été dit. Quelqu’un sans carte ne peut pas être ajouté, parce qu’il n’y aurait rien avec quoi sceller pour lui. Un groupe tient au plus 255 personnes, et un message à un groupe est une remise distincte pour chaque membre : un grand groupe est donc lent et remplit les boîtes bien avant que ce plafond compte.</p>
+
+		<p>Une invitation apparaît sous <span class="ui">Invitations à des groupes</span>, avec <span class="ui">Rejoindre</span> et <span class="ui">Pas maintenant</span>. Les messages envoyés au groupe tant que vous n’avez pas répondu attendent avec l’invitation : rejoindre un groupe, c’est ce qui accepte les personnes qui y sont.</p>
+
+		<p>Seule la personne qui a créé un groupe peut changer qui y est ou y mettre fin, car le nom qu’un groupe a pour lui-même se dérive de sa clé et personne d’autre ne peut écrire une liste de membres pour lui. Tous les autres voient la liste sans boutons au-dessus. Un membre a <span class="ui">Quitter ce groupe</span>, qui est local, ne retire rien et ne le dit à personne ; la personne qui a créé le groupe ne peut pas le quitter, puisque la prochaine liste qu’elle écrira la nommerait de nouveau.</p>
+
+		<h3 id="s37">Fermer un groupe</h3>
+
+		<p>Fermer est le seul acte de celui qui a créé le groupe qui ne peut pas être défait. Le bouton porte <span class="ui">Fermer ce groupe</span> — non <em>dissoudre</em>, et non <em>supprimer</em> —, car rien n’est détruit par là.</p>
+
+		<p>Un dialogue demande une fois, intitulé <span class="ui">Fermer ce groupe pour tout le monde ?</span>, et il dit : « Fermer un groupe le ferme pour tout le monde. Personne ne pourra plus lui écrire, vous non plus ; tous les messages déjà envoyés restent où ils sont. C’est irréversible. » En dessous il nomme le groupe, et le bouton qui le fait porte <span class="ui">Le fermer pour tout le monde</span>. Écartez le dialogue et le groupe est exactement comme il était.</p>
+
+		<p>Ce que l’appui fait, c’est écrire une liste de membres qui ne nomme personne, et la remettre à tous ceux qui y étaient. Tout lecteur lui obéit : plus rien ne peut donc être envoyé à ce groupe par quiconque, y compris par la personne qui l’a fermé, et aucune liste ultérieure ne peut le réouvrir. Rien n’est supprimé nulle part : chaque membre garde chaque message qu’il détient déjà.</p>
+
+		<div class="note"><strong>Un groupe fermé garde sa place dans la liste.</strong> Il siège avec les groupes où vous êtes, avec son nom et ses messages et sans aucun contrôle, en disant qu’il a été fermé par la personne qui l’a créé. Ce n’est pas un rangement laissé en suspens : le nom du groupe est dessiné au-dessus de chacun de ses messages depuis ce seul registre, donc retirer le registre laisserait la transcription que la fermeture existe pour préserver sous rien de plus que huit caractères d’un identifiant.</div>
+
+		<div class="note"><strong>Le relais ne sait rien des groupes.</strong> Il n’y a pas d’enregistrement de groupe, pas de nom de groupe et pas de liste de membres sur un serveur : la liste vit dans les clients, et elle voyage comme un message scellé ordinaire, comme n’importe quel autre. Ce que le relais peut encore voir, c’est ce que l’acheminement lui montre — une adresse se posant dans plusieurs boîtes au même instant — il peut donc en déduire qu’un certain ensemble de comptes a été écrit ensemble, et jamais qui ils sont l’un pour l’autre.</div>
+	</section>
+
+	<section id="sharing">
+		<h2 id="s38">Partager un Diamond</h2>
+
+		<p>Sous la puce <span class="ui">Partager</span> il y a deux moitiés, dans l’ordre où vous les rencontrez : <span class="ui">Ouvrir un partage</span> en haut, puisqu’en accueillir un ne demande de vous que le fichier, et <span class="ui">Envoyer un Diamond</span> en dessous.</p>
+
+		<p><strong>Un partage est une copie qui appartient à celui qui la reçoit.</strong> Elle est rescellée pour sa clé, elle se pose dans son espace comme un Diamond à lui, et il peut la modifier. Vous ne voyez jamais ses modifications et il ne voit jamais les vôtres. Ce n’est pas une vue en direct de votre Diamond : il n’y a rien à révoquer ensuite, et rien qui continue à lire ce que vous gardez.</p>
+
+		<p>Un partage porte les fichiers d’un seul Diamond : il faut donc qu’il y en ait un d’ouvert, et le panneau le nomme et dit sur la même ligne ce que c’est : <span class="ui quoted">une copie qui sera la leur, pas une vue de la vôtre.</span> Choisissez à qui cela part parmi les personnes dont cet appareil détient la clé de scellement, et appuyez sur <span class="ui">Partager</span>. Au plus soixante-quatre fichiers et deux mégaoctets de ceux-là ; au-delà de l’un ou de l’autre, c’est refusé plutôt que rogné, parce qu’une copie à laquelle il manque un fichier n’est pas une copie plus petite. Trois choses ne voyagent jamais, quoi que vous fassiez : l’historique des versions du Diamond lui-même, le journal de l’agent, et le manifeste d’une capp.</p>
+
+		<h3 id="s39">Deux porteurs, choisis en mesurant</h3>
+
+		<p>Le relais porte une enveloppe scellée de 64 Ko au plus : le porteur est donc décidé par la taille et non demandé de vous, et le panneau dit lequel a servi et quelle taille avait le partage.</p>
+
+		<p>Au-delà de cette taille, Daimond écrit le partage comme un fichier portant l’extension <code translate="no">.dshare</code> — toujours cette extension —, le nomme d’après le partage et son adresse, et vous dit comment il s’appelle. Donnez-lui ce fichier. Une page de capp fait environ 64 Ko à elle seule : un partage qui porte une capp voyage donc toujours ainsi ; de même un partage qui part sur une clé USB, ou vers quelqu’un qui n’a pas de compte ici. Un <code translate="no">.dshare</code> n’est pas plus digne de confiance qu’un message pour avoir été un fichier : les octets sont la même enveloppe scellée, scellée pour cette seule personne, et l’ouvrir pose la même question.</p>
+
+		<div class="note"><strong>Le fichier est le chemin qui aboutit.</strong> Un partage assez petit pour le relais est envoyé par lui, et on dit à l’expéditeur qu’il est parti. Le côté réception de ce chemin n’est pas achevé : aucun contrôle ne l’ouvre, et il apparaît sous ses <span class="ui">Messages</span> comme un message que son appareil n’a pas pu lire. En attendant que cela soit fait, enregistrez le fichier et remettez-le — ce qu’un partage de n’importe quelle taille peut faire.</div>
+
+		<h3 id="s40">Un partage qui porte du code</h3>
+
+		<p>Les données voyagent librement ; le code ne voyage qu’avec consentement. Un Diamond qui porte une page de capp porte un programme écrit par quelqu’un d’autre, et Daimond exécute la page quand le Diamond qui la contient est ouvert — la question est donc posée avant que rien ne soit écrit, et non à l’ouverture, ce qui serait trop tard.</p>
+
+		<p>Le dialogue est intitulé <span class="ui">Ce partage contient du code</span>. Il nomme le partage, dit de quelle clé il vient, et liste les fichiers qui seraient ajoutés, car « il contient du code quelque part » ne suffit pas pour répondre. Le bouton qui l’accepte porte <span class="ui">Accepter la page</span>.</p>
+
+		<p>Dites non et le reste aboutit quand même : les fichiers de données sont écrits, et le panneau nomme les pages laissées de côté, pour que rien ne manque sans être dit. Là où tout le partage était une page, rien n’est ajouté et le panneau le dit à la place.</p>
+
+		<p>Pour en accueillir un, <span class="ui">Ouvrir un fichier de partage…</span> demande le fichier, et ce qui arrive est ajouté comme un Diamond à vous, avec le nombre de fichiers qui se sont posés. Le nom qu’il porte est celui de l’expéditeur et il est indicatif : deux personnes peuvent choisir un même nom et ni l’une ni l’autre n’a tort.</p>
+	</section>
+
+	<div class="next">
+		<a href="../machine-operations.html">← Commandes sur la machine</a>
+		<a href="index.html">Retour à Premiers pas →</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond fonctionne dans votre navigateur. Rien de ce qui s’y trouve ne nous est envoyé.</span>
+	<nav aria-label="Pages du guide">
+		<a href="index.html">Premiers pas</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Modèles</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="../capps.html">Capps</a>
+		<a href="email-web-files.html">E-mail, Web &amp; fichiers</a>
+		<a href="accounts.html">Comptes</a>
+		<a href="sync.html">Synchronisation entre appareils</a>
+		<a href="spending.html">Dépenses</a>
+		<a href="../machine-operations.html">Commandes sur la machine</a>
+		<a href="social.html">Social</a>
+	</nav>
+</footer>
+</body>
+</html>

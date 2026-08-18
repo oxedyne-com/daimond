@@ -23,7 +23,18 @@
 //   * a send that FAILED is visible as a failure rather than as silence, with
 //     the mail server's own words and a way to try again;
 //   * a resend sends the SAME code and mints no second one;
-//   * declining, and putting a row back to pending, send nothing at all.
+//   * declining, and putting a row back to pending, send nothing at all;
+//   * an approval mints the TIER the panel was asked for: free with the control
+//     left alone, Pro with Pro chosen — measured on the passcode record and on
+//     the account that redeems it, not on the pulldown;
+//   * an invited row SAYS which tier its code grants, in the words the Beta
+//     panel uses, agreeing with the passcode record rather than with the
+//     pulldown — and a row showing no code says nothing, because 'free' about a
+//     credential nobody holds is a claim and not a default;
+//   * the sentence after a decision names a tier ONLY where that press minted
+//     one. A re-invite hands back the code already on the row and grants
+//     nothing, so a press on a row that already holds one has no tier to
+//     report, and it is the gateway that says which kind of press this was.
 //
 // Every one of those is measured against the gateway this repository builds:
 // applications are filed through `/api/beta/apply`, decisions are read back
@@ -60,6 +71,16 @@
 //	node dev/verify_applications.mjs --break declinesends # declining sends the applicant a code
 //	node dev/verify_applications.mjs --break nocode      # the message goes out without the code
 //	node dev/verify_applications.mjs --break bland       # the message never says it is single-use
+//	node dev/verify_applications.mjs --break tierhidden  # the tier control is withheld from an owner
+//	node dev/verify_applications.mjs --break tierfree    # the panel ignores the tier that was chosen
+//	node dev/verify_applications.mjs --break tierpro     # every approval gifts Pro, chosen or not
+//	node dev/verify_applications.mjs --break tierwords   # the two panels word one decision differently
+//	node dev/verify_applications.mjs --break tiermute    # a row never says which tier its code grants
+//	node dev/verify_applications.mjs --break tierswap    # a row says the opposite of what was minted
+//	node dev/verify_applications.mjs --break tierguess   # a tier is drawn on a row showing no code
+//	node dev/verify_applications.mjs --break tiersay     # the sentence names a tier on a resend,
+//	                                                       which minted nothing
+//	node dev/verify_applications.mjs --break tiermum     # the sentence never names the tier it minted
 //	node dev/verify_applications.mjs --stale-ok          # measure a binary older than some
 //	                                                       source anyway; the staleness is
 //	                                                       still counted as a failure
@@ -501,6 +522,10 @@ async function panel(page) {
 				moves:  Array.from(r.querySelectorAll('[data-move]')).map(b => b.dataset.move),
 				code:   Array.from(r.querySelectorAll('.admin-ap-code .admin-op-id'))
 					.map(e => e.textContent),
+				// What the row says that code GRANTS. An array, so a row saying
+				// two things is as visible as a row saying nothing.
+				tier:   Array.from(r.querySelectorAll('.admin-ap-tier-pill'))
+					.map(e => (e.textContent || '').trim()),
 				// What the row says became of the message carrying that code,
 				// and whether it offers to try again. `data-resend` and not
 				// `data-move` because a resend moves nothing: the row is
@@ -514,6 +539,118 @@ async function panel(page) {
 
 /// The row for an address, or null.
 const rowFor = (p, email) => p.rows.find(r => r.text.includes(email)) || null;
+
+/// The tier control, MEASURED rather than merely found.
+///
+/// `querySelector` says a control is in the document, which is the one thing
+/// nobody doubts about a control written into the HTML. A pulldown put in a pane
+/// that is not showing measures 0x0 and cannot be seen or pressed, and the
+/// console's own `.admin-rel-add select { appearance: none }` has already turned
+/// one into a box with nothing in it -- so the box, the computed paint and the
+/// words all come back from here.
+///
+/// The passcodes panel's own control comes back with it: the two are the same
+/// decision, and the only way to hold them to one vocabulary is to read both.
+async function tierControl(page, words) {
+	return await page.evaluate(w => {
+		const s = document.getElementById('admin-ap-tier');
+		const lbl = document.getElementById('admin-ap-tier-lbl');
+		const beta = document.getElementById('admin-beta-tier');
+		const say = e => e ? Array.from(e.options).map(o => o.value + ': ' + o.textContent) : null;
+		// A break of the CAPTURE, not of the console: it rewords the applications
+		// pulldown in the page before it is read, which proves the comparison
+		// below is reading the two controls rather than a constant.
+		if (w && s) {
+			Array.from(s.options).forEach(o => {
+				o.textContent = o.value === 'pro' ? 'Pro' : 'Free';
+			});
+		}
+		if (!s) return { there: false, beta: say(beta) };
+		const r = s.getBoundingClientRect();
+		const cs = getComputedStyle(s);
+		return {
+			there:  true,
+			tag:    s.tagName,
+			value:  s.value,
+			hidden: !!(lbl && lbl.hidden),
+			w:      Math.round(r.width),
+			h:      Math.round(r.height),
+			right:  Math.round(r.right),
+			win:    window.innerWidth,
+			// What it would look like to somebody: a control can be the right
+			// size and still be invisible.
+			//
+			// `offsetParent` and not only `visibility`, because the first draft of
+			// this went GREEN on a control inside a `hidden` label: `display: none`
+			// on an ancestor leaves the computed visibility 'visible' and the
+			// opacity 1, so a check named "it is actually visible" was reading the
+			// paint of something nobody could see. Only the 0x0 box caught it.
+			shown:  !!s.offsetParent,
+			vis:    cs.visibility,
+			op:     cs.opacity,
+			ink:    cs.color,
+			bg:     cs.backgroundColor,
+			fs:     cs.fontSize,
+			label:  lbl ? (lbl.textContent || '').trim().split('\n')[0].trim() : '',
+			opts:   say(s),
+			beta:   say(beta),
+		};
+	}, !!words);
+}
+
+/// The tier pill on one row, MEASURED rather than merely found.
+///
+/// The same care [`tierControl`] takes, and for the reason recorded there: the
+/// first draft of that check went GREEN on a control inside a `hidden` ancestor,
+/// because `display: none` up the tree leaves the computed visibility 'visible'
+/// and the opacity 1. So the box and `offsetParent` decide it here and the
+/// computed paint is corroboration beside them.
+///
+/// Opacity is REPORTED and not required to be 1: `.admin-pill.muted` dims the
+/// free pill to 0.65 on purpose, in both panels, and a check demanding 1 would
+/// be asking the console to shout the cheap answer.
+///
+/// `beside` is whether the pill sits in the row's code line. A tier drawn
+/// anywhere else is a claim about the applicant rather than about the credential
+/// in front of the operator.
+async function tierPill(page, email) {
+	return await page.evaluate(a => {
+		const rows = Array.from(document.querySelectorAll('#admin-ap-list .admin-rel-row'));
+		const row = rows.find(r => r.textContent.includes(a.email));
+		if (!row) return { row: false, there: false, n: 0 };
+		const pills = Array.from(row.querySelectorAll('.admin-ap-tier-pill'));
+		const codeShown = !!row.querySelector('.admin-ap-code .admin-op-id');
+		if (!pills.length) return { row: true, there: false, n: 0, codeShown };
+		const p  = pills[0];
+		const r  = p.getBoundingClientRect();
+		const cs = getComputedStyle(p);
+		return {
+			row:    true,
+			there:  true,
+			n:      pills.length,
+			text:   (p.textContent || '').trim(),
+			w:      Math.round(r.width),
+			h:      Math.round(r.height),
+			right:  Math.round(r.right),
+			win:    window.innerWidth,
+			shown:  !!p.offsetParent,
+			vis:    cs.visibility,
+			op:     cs.opacity,
+			ink:    cs.color,
+			bg:     cs.backgroundColor,
+			fs:     cs.fontSize,
+			beside: !!p.closest('.admin-ap-code'),
+			codeShown,
+		};
+	}, { email });
+}
+
+/// The bodies the console has POSTed to the applications view, newest last.
+async function apPosts(page) {
+	return await page.evaluate(() => (window.__apPosts || []).map(b => {
+		try { return JSON.parse(b); } catch (e) { return { unparsed: String(b).slice(0, 80) }; }
+	}));
+}
 
 /// Press one decision on one row, and wait for the panel to settle.
 async function pressMove(page, email, move) {
@@ -587,6 +724,23 @@ async function openConsole(browser) {
 				}));
 			}
 			return j;
+		};
+		// And what the console SENT. A decision's tier is nowhere in the reply --
+		// it lands on the passcode the decision minted -- so the request is read
+		// here as well as the passcode at the gateway: one says the panel asked
+		// for the tier, the other says the gateway acted on it, and neither on its
+		// own tells the operator's story.
+		window.__apPosts = [];
+		const sent = window.fetch;
+		window.fetch = function (u, o) {
+			try {
+				const url = typeof u === 'string' ? u : ((u && u.url) || '');
+				if (/view=applications/.test(url) && o && o.method === 'POST'
+					&& typeof o.body === 'string') {
+					window.__apPosts.push(o.body);
+				}
+			} catch (e) {}
+			return sent.apply(this, arguments);
 		};
 	});
 	if (BREAK) await page.addInitScript(m => { window.__appBreak = m; }, BREAK);
@@ -815,10 +969,84 @@ async function enterConsole(page) {
 			check('and it reads the ones that carry the decision',
 				['email', 'status', 'note', 'intent', 'id'].every(k => p.read.includes(k)),
 				p.read.join(','));
+			// The tier, on the ROW and not only on the passcode record. An operator
+			// working the queue chooses it here, so a row has to be able to say what
+			// was chosen for it -- and it has to be the GATEWAY saying it, which is
+			// what the check above enforces: the console reads `pro` off every row it
+			// draws, so a gateway that did not send it reddens that line rather than
+			// this one.
+			check('the gateway sends the tier on every row, not only the invited ones',
+				(s.applications || []).length === 3
+					&& (s.applications || []).every(a2 => typeof a2.pro === 'boolean'),
+				(s.applications || []).map(a2 => a2.email + '=' + JSON.stringify(a2.pro))
+					.join(' · '));
+			check('and the console reads it, so what a row shows is the gateway\'s answer',
+				p.read.includes('pro'), p.read.join(','));
+			// And a row says NOTHING where it is showing no code. A pill reading
+			// 'free' beside a row nobody has decided is a claim about a grant that
+			// has not been made, and the pending rows are the ones an operator spends
+			// the most time looking at.
+			// verifier: `--break tierguess` draws it on every row without a code.
+			const idle = [];
+			for (const e of [SAM, RILEY, JO]) idle.push(await tierPill(boss.page, e));
+			check('a row showing no code says nothing about a tier',
+				idle.every(t => t.row === true && t.there === false),
+				idle.map((t, i) => [SAM, RILEY, JO][i] + '='
+					+ (t.there ? t.n + '×' + t.text : 'none')).join(' · '));
 
 			check('the panel counts what the gateway counted',
 				/3 applications/.test(p.hint) && /3 still waiting/.test(p.hint),
 				JSON.stringify(p.hint));
+		}
+
+		// ── The tier control, before anything is decided ────────
+		//
+		// An approval from this queue mints a passcode, and until now it always
+		// minted a FREE one: the tier could only be chosen in the passcodes panel,
+		// so a tester who was promised Pro needed a second code minted there and
+		// handed over some other way. The control that closes that is a pulldown
+		// beside the wave field, and the questions worth asking of it are the ones
+		// a screenshot answers and `querySelector` does not: is it there, can it be
+		// seen, and does it say what the other panel says.
+		{
+			// The passcodes panel's own control has to be in the document for the
+			// comparison to mean anything -- `refreshAll` fetches eleven views and
+			// this one is not the queue.
+			await waitFor(async () => await boss.page.evaluate(
+				() => !!document.getElementById('admin-beta-tier')), 20000, 250);
+			const t = await tierControl(boss.page, BREAK === 'tierwords');
+			// verifier: `--break tierhidden` withholds it from an owner.
+			check('the applications panel offers a tier control at all',
+				t.there === true && t.hidden === false && t.tag === 'SELECT',
+				t.there ? `${t.tag} hidden=${t.hidden}` : 'no #admin-ap-tier in the page');
+			// The 0x0 case, which is what a control in the wrong pane measures and
+			// what `querySelector` calls present. A press needs a target.
+			check('and it is drawn at a size an operator can hit',
+				t.there === true && t.w >= 90 && t.h >= 16,
+				t.there ? `${t.w}x${t.h}px at font-size ${t.fs}` : 'not measured');
+			check('and it is actually visible, in ink that is not its own background',
+				t.there === true && t.shown === true && t.vis === 'visible'
+					&& Number(t.op) === 1 && t.ink !== t.bg,
+				t.there ? `shown=${t.shown} · ${t.vis} · opacity ${t.op} · ${t.ink} on ${t.bg}`
+					: 'not measured');
+			check('it is inside the window rather than off the side of it',
+				t.there === true && t.right <= t.win + 1,
+				t.there ? `ends at ${t.right} of ${t.win}px` : 'not measured');
+			// Decision 4: free unless somebody asks for Pro. A default that gifts
+			// Pro is how the free surface goes on having no testers.
+			check('and it opens on the free tier',
+				t.value === 'free', JSON.stringify(t.value));
+			check('and it says which codes it governs',
+				/tier/i.test(t.label) && /minted/i.test(t.label), JSON.stringify(t.label));
+			// One decision, one vocabulary. An operator who minted a Pro code in
+			// the passcodes panel this morning must not have to work out whether
+			// "Pro" here is the same offer.
+			// verifier: `--break tierwords` rewords this panel's options in the
+			// page before they are read.
+			check('and it words the two tiers exactly as the passcodes panel does',
+				!!t.opts && !!t.beta && t.opts.join(' | ') === t.beta.join(' | '),
+				!t.beta ? 'the passcodes panel drew no tier control to compare with'
+					: JSON.stringify(t.opts) + ' vs ' + JSON.stringify(t.beta));
 		}
 
 		// ── A legal decision ────────────────────────────────────
@@ -882,6 +1110,23 @@ async function enterConsole(page) {
 				.find(pc => (pc.label || '').includes(SAM));
 			check('the code is labelled with the applicant it was minted for',
 				!!mine, mine ? mine.label : 'no passcode carries the address');
+			// THE DEFAULT. Nothing touched the tier control before this press, so
+			// what it minted is what an operator gets by working the queue and
+			// reading nothing: the free tier. Read off the passcode record, which
+			// is where the field lives -- the application row never carries it.
+			check('a decision taken with the tier control untouched mints a FREE code',
+				!!mine && mine.pro === false,
+				mine ? 'pro=' + JSON.stringify(mine.pro) : 'no passcode to read');
+			// And the console asked for it in those words. The request, because the
+			// check above would also pass on a gateway that ignored the field and
+			// defaulted to free on its own.
+			// verifier: `--break tierfree` sends false whatever is chosen, which
+			// leaves this green and reddens the Pro press below -- as it should.
+			const asked = await apPosts(boss.page);
+			const last = asked[asked.length - 1] || {};
+			check('and the console sent that tier with the decision',
+				last.pro === false && last.status === 'invited',
+				JSON.stringify(last));
 
 			const p = await panel(boss.page);
 			const row = rowFor(p, SAM);
@@ -893,6 +1138,45 @@ async function enterConsole(page) {
 			// A credential must not be repeated into a second place on the page.
 			check('the status line does not repeat the code',
 				!!row && !p.status.includes(row.code[0]), JSON.stringify(p.status));
+
+			// WHAT THAT CODE GRANTS, on the row. Until now the row carried a code
+			// and said nothing about its tier, which is the half of the decision
+			// this panel took over and the half an operator can get wrong in the
+			// expensive direction. Measured rather than found, for the reason
+			// `tierPill` records.
+			// verifier: `--break tiermute` draws no pill at all, which is the row
+			// exactly as it was.
+			const tp = await tierPill(boss.page, SAM);
+			check('an invited row says which tier its code grants',
+				tp.there === true && tp.n === 1,
+				tp.row ? (tp.there ? tp.n + '× ' + JSON.stringify(tp.text)
+					: 'no .admin-ap-tier-pill on the row') : 'no row for ' + SAM);
+			check('and it is a pill an operator can actually read',
+				tp.there === true && tp.shown === true && tp.w >= 24 && tp.h >= 12
+					&& tp.vis === 'visible' && Number(tp.op) >= 0.5 && tp.ink !== tp.bg
+					&& tp.right <= tp.win + 1,
+				tp.there ? `${tp.w}x${tp.h}px · shown=${tp.shown} · ${tp.vis} · opacity ${tp.op}`
+					+ ` · ${tp.ink} on ${tp.bg} at ${tp.fs} · ends at ${tp.right} of ${tp.win}`
+					: 'not measured');
+			// The oracle is the passcode record, not the pulldown: the pulldown says
+			// what the NEXT mint would be, and an operator who has moved it since is
+			// exactly the person this pill is for.
+			// verifier: `--break tierswap` draws the opposite of what was minted.
+			check('and it says what the gateway minted, not what the pulldown shows',
+				!!mine && mine.pro === false && tp.text === 'free',
+				(mine ? 'the record says pro=' + JSON.stringify(mine.pro) : 'no record')
+					+ ' · the row says ' + JSON.stringify(tp.text));
+			check('and it is drawn beside the code it describes',
+				tp.beside === true && tp.codeShown === true,
+				`beside the code=${tp.beside} · a code is shown=${tp.codeShown}`);
+			// And the sentence says it too, because the operator's eyes are on the
+			// status line at the moment the press comes back and may never reach the
+			// row. It may only say it BECAUSE this press minted -- see the resend
+			// section, which is the other half of that rule.
+			// verifier: `--break tiermum` never names a tier.
+			check('the status line names the tier that press minted',
+				/a free passcode/.test(p.status) && !/\bPro\b/.test(p.status),
+				JSON.stringify(p.status.slice(0, 110)));
 			code = (row && row.code[0]) || '';
 		}
 
@@ -1026,6 +1310,28 @@ async function enterConsole(page) {
 				codesAfter.length === codesBefore.length,
 				`the cohort went from ${codesBefore.length} to ${codesAfter.length}`);
 
+			// THE SENTENCE THAT MUST NOT BE SAID. A resend hands back the code
+			// already on the row and mints nothing, so there is no grant to report
+			// and naming a tier here would describe a decision taken minutes ago as
+			// though it had just been made. The panel's own status line, read at the
+			// moment the press comes back.
+			// verifier: `--break tiersay` names one whatever happened.
+			const rp0 = await panel(boss.page);
+			check('a resend mints nothing, so its sentence claims no tier',
+				!/passcode/.test(rp0.status) && !/\bPro\b/.test(rp0.status)
+					&& !/\bfree\b/.test(rp0.status),
+				JSON.stringify(rp0.status.slice(0, 110)));
+			// Not vacuous: the line said something, and what it said was about this
+			// send. A blank status line would satisfy the check above.
+			check('and it does say the code went again',
+				/again/.test(rp0.status) && rp0.status.includes(SAM),
+				JSON.stringify(rp0.status.slice(0, 90)));
+			// The row goes on saying it, though: the code is still live and the tier
+			// is still the operator's business. Nothing minted, nothing changed.
+			const tr = await tierPill(boss.page, SAM);
+			check('while the row still says which tier that code grants',
+				tr.there === true && tr.text === 'free', tr.there ? tr.text : 'no pill');
+
 			const s = await served();
 			const rec = (s.applications || []).find(a => a.email === SAM);
 			check('the row counts the attempts, so a chased applicant is visible',
@@ -1042,10 +1348,59 @@ async function enterConsole(page) {
 		// that looks dealt with: the applicant is still waiting, the code exists,
 		// and nobody but the store knows.
 		{
+			// Pro, chosen the way an operator chooses it: on the control, by a
+			// press, before the row is decided. Riley's is also the send the mail
+			// server refuses, which makes it the harder case for the tier too --
+			// the code is minted, nobody receives it, and what it grants still has
+			// to be right when it is read off the row and sent by hand.
+			//
+			// `selectOption` and not a scripted `value =`: a control that cannot be
+			// pressed is the failure being ruled out here, and this is caught
+			// rather than thrown so a withheld control reddens this line instead of
+			// ending the run.
+			let took = 'set';
+			try {
+				await boss.page.selectOption('#admin-ap-tier', 'pro', { timeout: 5000 });
+			} catch (e) { took = (e.message || 'could not be set').split('\n')[0]; }
+			const chose = await boss.page.evaluate(() => {
+				const s = document.getElementById('admin-ap-tier');
+				return s ? s.value : 'no control';
+			});
+			// verifier: `--break tierhidden` withholds the control, so there is
+			// nothing to press.
+			check('the tier control can be set to Pro by a press', chose === 'pro',
+				took + ' · reads ' + chose);
+
 			const before = posted();
 			const pressed = await pressMove(boss.page, RILEY, 'invited');
 			check('a pending row can be invited even where the send will fail',
 				pressed === 'clicked', pressed);
+
+			// What that press asked for, and what the gateway minted for it.
+			// verifier: `--break tierfree` sends free whatever was chosen.
+			const askedPro = await apPosts(boss.page);
+			const lastPro = askedPro[askedPro.length - 1] || {};
+			check('approving with Pro chosen sends pro=true',
+				lastPro.pro === true && lastPro.status === 'invited',
+				JSON.stringify(lastPro));
+			const cohort = ((await call(jar, 'GET', '/api/admin?view=passcodes')).j
+				|| {}).passcodes || [];
+			const rp = cohort.find(pc => (pc.label || '').includes(RILEY));
+			check('and the code the gateway minted for that row IS a Pro one',
+				!!rp && rp.pro === true,
+				rp ? 'pro=' + JSON.stringify(rp.pro) : 'no passcode carries the address');
+			// Not vacuous, and the guard against a check that reddens the wrong
+			// thing: the free code minted a moment ago is still free. A tier that
+			// leaked across rows would be worse than one that never worked.
+			const sp = cohort.find(pc => (pc.label || '').includes(SAM));
+			check('and the free code minted before it is untouched by that choice',
+				!!sp && sp.pro === false,
+				sp ? 'pro=' + JSON.stringify(sp.pro) : 'no passcode for the first applicant');
+			// Put back, so nothing after this section inherits a tier it did not
+			// ask for -- and so the panel is photographed as an operator finds it.
+			try {
+				await boss.page.selectOption('#admin-ap-tier', 'free', { timeout: 5000 });
+			} catch (e) {}
 			check('the mail server refused it, so nothing was accepted',
 				posted() === before, `${posted() - before} message(s) were taken`);
 			// Read before anything else touches the page: this is what the
@@ -1053,6 +1408,15 @@ async function enterConsole(page) {
 			// the one place they will see it if they never scroll to the row.
 			check('the status line says the code did NOT go out',
 				/did NOT go out/.test((await panel(boss.page)).status),
+				JSON.stringify((await panel(boss.page)).status.slice(0, 130)));
+			// And WHICH code did not go out. This is the expensive row: a five-year
+			// Pro licence minted, nobody holding it, and the only way it reaches
+			// anybody now is an operator reading it off the row and writing by hand
+			// -- so the sentence has to say what they are carrying.
+			// verifier: `--break tiermum` names no tier; `--break tierfree` mints the
+			// wrong one, which reddens this line and the two below it, correctly.
+			check('and it names Pro, because Pro is what that press minted',
+				/a Pro passcode/.test((await panel(boss.page)).status),
 				JSON.stringify((await panel(boss.page)).status.slice(0, 130)));
 
 			const s = await served();
@@ -1088,6 +1452,26 @@ async function enterConsole(page) {
 			// with no way to try it again.
 			check('and Resend is offered on the failed row',
 				!!row && row.resend === true, row ? String(row.resend) : 'no row');
+			// The Pro pill, against the passcode record read at the top of this
+			// block. The two tiers have to be told apart on sight, so this is
+			// checked against the OTHER row as well: a panel drawing one pill
+			// everywhere would satisfy either row alone.
+			// verifier: `--break tierswap` swaps both; `--break tiermute` draws
+			// neither.
+			const tpro = await tierPill(boss.page, RILEY);
+			const tfree = await tierPill(boss.page, SAM);
+			check('a Pro row says Pro, and the free row beside it still says free',
+				!!rp && rp.pro === true && tpro.text === 'Pro' && tfree.text === 'free',
+				`the record says pro=${JSON.stringify(rp && rp.pro)} · `
+					+ `${RILEY} shows ${JSON.stringify(tpro.text)} · `
+					+ `${SAM} shows ${JSON.stringify(tfree.text)}`);
+			check('and the Pro pill is one an operator can read',
+				tpro.there === true && tpro.shown === true && tpro.w >= 24 && tpro.h >= 12
+					&& tpro.vis === 'visible' && Number(tpro.op) >= 0.5
+					&& tpro.ink !== tpro.bg && tpro.right <= tpro.win + 1,
+				tpro.there ? `${tpro.w}x${tpro.h}px · shown=${tpro.shown} · ${tpro.vis}`
+					+ ` · opacity ${tpro.op} · ${tpro.ink} on ${tpro.bg} at ${tpro.fs}`
+					: 'not measured');
 			void p;
 		}
 
@@ -1099,6 +1483,14 @@ async function enterConsole(page) {
 			check('the code minted from this panel actually opens the door',
 				r.status === 200 && !!r.j && r.j.ok === true,
 				'status ' + r.status + ' · pro=' + (r.j && r.j.pro));
+			// The end of the free chain, and the reply's `pro` is whether a LICENCE
+			// is now held rather than what the code was for -- so this is the
+			// account, not the record: the default press let somebody in on the free
+			// tier and gifted nothing. The gateway has a licence signing key in this
+			// run (`buildWorkDir` symlinks it), so a false here is a decision and not
+			// a missing key.
+			check('and the account it opened holds no Pro licence, because the code was free',
+				!!r.j && r.j.pro === false, 'pro=' + JSON.stringify(r.j && r.j.pro));
 
 			const s = await served();
 			const rec = (s.applications || []).find(a => a.email === SAM);
@@ -1119,6 +1511,19 @@ async function enterConsole(page) {
 			check('and the row says why it is gone',
 				!!row && /has been used/.test(row.text),
 				JSON.stringify((row && row.text.slice(-80)) || ''));
+			// The tier goes with the code. A pill on a row holding nothing describes
+			// a credential that cannot be handed to anybody, and the gateway still
+			// sends the field for this row -- so the silence is the console's
+			// decision and worth holding it to.
+			// verifier: `--break tierguess` draws it on every row without a code,
+			// this one included.
+			const tspent = await tierPill(boss.page, SAM);
+			check('a spent code takes its tier off the row with it',
+				tspent.row === true && tspent.there === false,
+				tspent.there ? tspent.n + '× ' + JSON.stringify(tspent.text) : 'no pill drawn');
+			check('though the gateway still says what it granted, for whoever asks next',
+				!!rec && typeof rec.pro === 'boolean',
+				rec ? 'pro=' + JSON.stringify(rec.pro) : 'no row');
 		}
 
 		// ── The one decision the gateway refuses ────────────────
@@ -1282,6 +1687,13 @@ async function enterConsole(page) {
 				p.rows.map(r => r.moves.join('/')).join(' · '));
 			check('and is told why the controls are not there',
 				/owner/.test(p.note), JSON.stringify(p.note.slice(0, 80)));
+			// The tier goes with the decisions it describes. An operator cannot
+			// mint, so a pulldown asking what to mint is a control that does
+			// nothing, and the gateway answers this session 403 besides.
+			const ot = await tierControl(hand.page, false);
+			check('an operator is offered no tier control either',
+				ot.there === false || ot.hidden === true,
+				ot.there ? `hidden=${ot.hidden} · ${ot.w}x${ot.h}px` : 'not in the page');
 
 			// The oracle again: the post those controls would have made, from
 			// this account's own session.
@@ -1311,6 +1723,37 @@ async function enterConsole(page) {
 			await sleep(2500);
 			const vp = await panel(hand.page);
 			check('a viewer is given no Applications tab at all', !vp.tab);
+		}
+
+		// ── What the Pro code actually grants ───────────────────
+		//
+		// The far end of the chain the pulldown starts. Everything above proves
+		// the panel asked for Pro and the gateway wrote `pro` on the passcode;
+		// none of it proves the person holding that code gets anything. Riley's
+		// code is the one minted with Pro chosen, and it is still live -- the mail
+		// server refused the message, so nobody has used it.
+		//
+		// Last, deliberately: redeeming it spends the code and takes it off the
+		// row, and the sections above are about a row that still carries one.
+		{
+			const cohort = ((await call(jar, 'GET', '/api/admin?view=passcodes')).j
+				|| {}).passcodes || [];
+			const rp = cohort.find(pc => (pc.label || '').includes(RILEY));
+			check('the Pro code minted from the queue is still live to be used',
+				!!rp && typeof rp.code === 'string' && rp.code.length > 0,
+				rp ? (rp.code ? 'a live code' : 'no code on the record') : 'no passcode');
+			const nia = device();
+			const r = await call(null, 'POST', '/api/passcode/redeem',
+				Object.assign({ code: (rp && rp.code) || '' }, binding(nia)), '203.0.113.91');
+			check('it opens the door', r.status === 200 && !!r.j && r.j.ok === true,
+				'status ' + r.status);
+			// `pro` in this reply is whether a licence is NOW HELD, so this is the
+			// grant and not the intention: the tier chosen on a pulldown in the
+			// applications panel reached an account.
+			// verifier: `--break tierfree` mints free here, and this is the line
+			// that says what that costs the person on the row.
+			check('and the account it opened HOLDS Pro, because the tier was chosen on the queue',
+				!!r.j && r.j.pro === true, 'pro=' + JSON.stringify(r.j && r.j.pro));
 		}
 
 		// ── The choice knob, repaired on the way past ───────────
@@ -1426,6 +1869,52 @@ async function enterConsole(page) {
 						+ ' · wanted ' + other);
 				void route;
 			}
+		}
+
+		// ── `minted`, the field the honest sentence rests on ────
+		//
+		// Everything above reads it through the console's sentence. This reads the
+		// field itself, over the wire, on the two presses that differ: the one that
+		// mints and the one that finds a code already on the row. Without it the
+		// console cannot tell an invitation from a resend, and a panel that named a
+		// tier on both would be reporting a grant that a resend never makes.
+		//
+		// LAST, deliberately: it files a fourth application, and every count above
+		// is about three.
+		{
+			const KIT = 'kit@example.dev';
+			const filed = await apply(KIT, 'Kit Alder',
+				'I would test the Pro surface on a slow connection.', 'test');
+			check('a fourth application can be filed now the ceiling is back',
+				filed.status === 200, 'status ' + filed.status
+					+ ' · ' + JSON.stringify(filed.j));
+			const s4 = await served();
+			const kit = (s4.applications || []).find(a => a.email === KIT);
+			check('and the gateway holds it', !!kit, 'total ' + (s4 && s4.total));
+
+			const mint = await call(jar, 'POST', '/api/admin?view=applications',
+				{ id: kit && kit.id, status: 'invited', wave: 1, pro: true });
+			check('a press that mints says so, and the row it hands back says what it granted',
+				mint.status === 200 && !!mint.j && mint.j.minted === true
+					&& !!mint.j.application && mint.j.application.pro === true,
+				'status ' + mint.status
+					+ ' · minted=' + JSON.stringify(mint.j && mint.j.minted)
+					+ ' · pro=' + JSON.stringify(mint.j && mint.j.application
+						&& mint.j.application.pro));
+			// The same post again, which is exactly what Resend makes: the live code
+			// is found and handed back, nothing is granted, and the reply says so.
+			// It asks for the FREE tier this time, which is the sharper half -- a
+			// resend cannot quietly downgrade a code somebody is already holding,
+			// because it never reaches the mint.
+			const resent = await call(jar, 'POST', '/api/admin?view=applications',
+				{ id: kit && kit.id, status: 'invited', wave: 1, pro: false });
+			check('a press that mints nothing says THAT, and leaves the tier it found alone',
+				resent.status === 200 && !!resent.j && resent.j.minted === false
+					&& !!resent.j.application && resent.j.application.pro === true,
+				'status ' + resent.status
+					+ ' · minted=' + JSON.stringify(resent.j && resent.j.minted)
+					+ ' · pro=' + JSON.stringify(resent.j && resent.j.application
+						&& resent.j.application.pro));
 		}
 	} catch (e) {
 		check('the run completed', false, e && e.message);

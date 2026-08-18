@@ -858,8 +858,24 @@
 	// `look` is the half sync.js drives: `record()` is what the parcel carries,
 	// `adopt()` is what a parcel brings, and `dressed()` says whether this device
 	// already has a look of its own -- the fact the once-only rule turns on.
+	//
+	// `ui` is the dialog frame and the QR drawer, published because trust.js
+	// needs both and neither should exist twice. The frame is a scrim, a card, a
+	// focus trap and an Escape key, and a second copy of it in another file is a
+	// second copy that will forget the Tab handling -- which is what this one had
+	// to be taught. THE QR DRAWER ESPECIALLY: it is the one caller of the wasm
+	// encoder, dark on white whatever the theme because a camera needs that
+	// contrast, and a rival drawer in a theme-aware colour would produce symbols
+	// that look right and do not scan. Neither is really about PAIRING, and both
+	// belong in a small shared surface of the app's own; they are here because
+	// this is where they were first needed.
 	window.DaimondPairing = { create: create, redeem: redeem, showLink: showLink, showRedeem: showRedeem,
 		stashName: stashName,
+		ui: {
+			overlay:      overlay,
+			qrCanvas:     qrCanvas,
+			injectStyles: injectStyles,
+		},
 		look: {
 			record:  lookRecord,
 			adopt:   lookAdopt,

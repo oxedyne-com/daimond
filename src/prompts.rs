@@ -35,6 +35,7 @@ use crate::tools::{
 	Kit,
 	Machine,
 	Mode,
+	NetStep,
 	Toolkit,
 	toolkits,
 };
@@ -427,19 +428,20 @@ pub const DEFAULT_WORKER: &str =
 /// # Arguments
 /// * `m` - The machine the hand described.
 /// * `bounds` - The turn's bounds, which decide the fence and carry any granted toolkit.
-/// * `tainted` - Whether this turn has ingested content from outside the user.
-/// * `mode` - Which permission rung the user is in, which decides what the network sentence says
-///   and whether a command is put to them before it runs.
-pub fn machine_note(m: &Machine, bounds: &[Bound], tainted: bool, mode: Mode) -> String {
+/// * `step` - What this turn's next command does about the network, as [`crate::tools::net_step`]
+///   decides it and `Tool::run` acts on it.
+/// * `mode` - Which permission rung the user is in, which decides whether a command is put to the
+///   user before it runs.
+pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) -> String {
 	// One guard, and it is the fence's own answer rather than a second opinion about the machine:
 	// `fence_spec` yields a spec with no roots for every case in which a command would be refused
 	// -- no hand, a root that is not a path, bounds that describe nowhere -- so asking it is both
 	// shorter and incapable of disagreeing with what actually happens.
 	//
-	// The taint is passed through the RUNG, exactly as `Tool::run` passes it, so the fence
-	// described here is the fence built there. Passing the raw flag would have described a network
-	// the user's own setting had put back.
-	let fence = fence_spec(bounds, m, mode.withholds_net(tainted));
+	// The network arrives as the STEP and not as the taint, exactly as `Tool::run` builds it, so
+	// the fence described here is the fence built there. Deriving it from the flag would have
+	// described a network the rung -- or the user's own answer -- had put back.
+	let fence = fence_spec(bounds, m, !step.gives_net());
 	if fence.rw.is_empty() && fence.ro.is_empty() {
 		return String::new();
 	}
@@ -508,20 +510,29 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], tainted: bool, mode: Mode) ->
 	// this is the only place a daimon learns that pushing works at all, that it is fast-forward
 	// only, and that a push runs no hooks.
 	s.push_str(&crate::tools::push_note());
-	// The network, in the terms the RUNG makes true. Three sentences and not two, because the
-	// guarded sentence -- "reading anything from outside ends that for the rest of this turn" --
-	// is a promise about the future that is simply false in bypass, and a briefing the model can
-	// catch being wrong about one thing is a briefing it has reason to doubt about the fence.
-	match (fence.net, mode) {
-		(true, Mode::Bypass) => s.push_str(
+	// The network, in the terms the STEP makes true. Four sentences and not two, because each of
+	// the other three is a promise about the future that one of the cases makes false -- bypass
+	// never withdraws it, a turn that has been asked and answered will not be asked again, and a
+	// turn nobody could ask is not waiting on anybody. A briefing the model can catch being wrong
+	// about one thing is a briefing it has reason to doubt about the fence.
+	match (step, mode) {
+		(NetStep::Give, Mode::Bypass) => s.push_str(
 			"\nNetwork: available to a command, and it stays available for the whole turn, \
 			whatever this turn reads."),
-		(true, _) => s.push_str(
+		(NetStep::Give, _) => s.push_str(
 			"\nNetwork: available to a command. Reading anything from outside the workspace -- a \
-			command's own output included -- ends that for the rest of this turn."),
-		(false, _) => s.push_str(
-			"\nNetwork: none. This turn has read something from outside the user, so a command \
-			cannot reach it."),
+			command's own output included -- ends that until the user says otherwise: they are \
+			asked once, and their answer holds for the rest of this turn."),
+		(NetStep::Restored, _) => s.push_str(
+			"\nNetwork: available to a command. This turn has read something from outside the \
+			user, and they were asked and said yes; that holds for the rest of this turn."),
+		(NetStep::Ask, _) => s.push_str(
+			"\nNetwork: not until the user says so. This turn has read something from outside \
+			them, so the first command to run puts the question, once, and their answer holds for \
+			the rest of this turn."),
+		(NetStep::Withhold, _) => s.push_str(
+			"\nNetwork: none. This turn has read something from outside the user and cannot reach \
+			it: they were asked and declined, or there was nobody to ask."),
 	}
 	// And the rung itself, where it says something the sentences above have not. Silent for the
 	// default, which the network sentences already describe completely -- the briefing is paid for
@@ -591,16 +602,21 @@ fn covers(grant: &str, path: &str) -> bool {
 /// nothing for a caller to know about it.
 ///
 /// # Arguments
-/// * `bounds` - The turn's bounds, which decide the fence and carry any granted toolkit.
-/// * `tainted` - Whether this turn has ingested content from outside the user.
+/// * `ctx` - The turn, which carries the bounds, whether it is at risk, whether anybody is
+///   watching it, and what the user has already said about its network.
 #[cfg(target_arch = "wasm32")]
-pub async fn machine_briefing(bounds: &[Bound], tainted: bool) -> String {
+pub async fn machine_briefing(ctx: &crate::tools::ToolContext) -> String {
 	let st = match crate::wasm::hand::status().await {
 		Ok(s)  => s,
 		Err(_) => return String::new(),
 	};
+	// Composed from the context by the same function `Tool::run` composes it with, so the model
+	// cannot be briefed about one network and then handed another.
+	let mode = crate::tools::mode();
+	let step = crate::tools::net_step(
+		mode, ctx.net_risk(), ctx.is_unsupervised(), ctx.net_consent());
 	match Machine::paired(&st) {
-		Some(m) => machine_note(&m, bounds, tainted, crate::tools::mode()),
+		Some(m) => machine_note(&m, &ctx.no_write, step, mode),
 		None    => String::new(),
 	}
 }
@@ -684,7 +700,7 @@ pub const DEFAULT_COMPACTOR: &str =
 mod tests {
 	use super::*;
 
-	use crate::tools::{diamond_bounds, set_push_cred, PushCred};
+	use crate::tools::{diamond_bounds, set_push_cred, PushCred, Verdict};
 
 	#[test]
 	fn test_every_role_round_trips_through_its_name() {
@@ -850,32 +866,32 @@ mod tests {
 	fn test_no_hand_means_not_one_word_about_a_machine() {
 		// Every token here is paid on every request of every turn, so an absent capability is not
 		// described at all.
-		assert_eq!(machine_note(&Machine::default(), &[], false, Mode::default()), "");
+		assert_eq!(machine_note(&Machine::default(), &[], NetStep::Give, Mode::default()), "");
 		for bad in ["", "relative/path", "./ws", "C:\\ws"] {
-			assert_eq!(machine_note(&Machine::at(bad), &[], false, Mode::default()), "",
+			assert_eq!(machine_note(&Machine::at(bad), &[], NetStep::Give, Mode::default()), "",
 				"root {:?} describes no machine a command could run on", bad);
 		}
 		// A granted toolkit does not put a briefing back either: there is still nowhere to run it.
-		assert_eq!(machine_note(&Machine::default(), &[Toolkit::Rust.bound()], false, Mode::default()), "");
+		assert_eq!(machine_note(&Machine::default(), &[Toolkit::Rust.bound()], NetStep::Give, Mode::default()), "");
 		// A HAND, and a turn with nothing on the machine to reach: a Diamond with no attachment,
 		// and a chat whose user has marked no folder in. Both hold their own working folder, and
 		// that folder is in the browser's storage -- so the fence grants nothing and the briefing
 		// is silence rather than a list of paths the hand would refuse to resolve. The briefing
 		// used to name them, which told a daimon it had somewhere to work when it had not.
-		assert_eq!(machine_note(&machine(), &diamond_bounds("diamonds/d1", &[], &[]), false,
-			Mode::default()), "");
+		assert_eq!(machine_note(&machine(), &diamond_bounds("diamonds/d1", &[], &[]),
+			NetStep::Give, Mode::default()), "");
 		assert_eq!(machine_note(&machine(), &crate::tools::chat_bounds("chats/c1/work", &[], &[]),
-			false, Mode::default()), "");
+			NetStep::Give, Mode::default()), "");
 		// And the contrast, or the two lines above would pass on a briefing that never says
 		// anything: mark one folder in and the machine is described.
 		assert!(machine_note(&machine(), &crate::tools::chat_bounds("chats/c1/work",
-			&[fmt!("books")], &[]), false, Mode::default()).contains("/home/u/ws/books"));
+			&[fmt!("books")], &[]), NetStep::Give, Mode::default()).contains("/home/u/ws/books"));
 	}
 
 	#[test]
 	fn test_the_briefing_names_the_folders_the_fence_actually_grants() {
 		let b = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[fmt!("refs")]);
-		let s = machine_note(&machine(), &b, false, Mode::default());
+		let s = machine_note(&machine(), &b, NetStep::Give, Mode::default());
 		assert!(s.contains("linux"), "{}", s);
 		// NOT the Diamond's own directory. It is in the browser's storage whatever folder is open,
 		// so the fence does not grant it (see `tools::fence_spec`) and a briefing that named it
@@ -902,7 +918,7 @@ mod tests {
 		// A turn with NO bounds -- the user's own chat -- is fenced to the whole granted folder,
 		// which is the same reach its file tools have. A briefing that said "your own files" here
 		// would be describing a guarantee nothing keeps, whatever a scoped turn's briefing says.
-		let s = machine_note(&machine(), &[], false, Mode::default());
+		let s = machine_note(&machine(), &[], NetStep::Give, Mode::default());
 		assert!(s.contains("/home/u/ws"), "{}", s);
 		for claim in ["your own files", "only the files of this Diamond", "only your Diamond",
 			"this Diamond's own files", "cannot see any other file"] {
@@ -915,37 +931,58 @@ mod tests {
 	}
 
 	#[test]
-	fn test_a_tainted_turn_is_told_the_network_is_gone_and_why() {
+	fn test_a_tainted_turn_is_told_what_becomes_of_its_network_and_why() {
 		let b = diamond();
-		let clean = machine_note(&machine(), &b, false, Mode::default());
+		let clean = machine_note(&machine(), &b, NetStep::Give, Mode::default());
 		assert!(clean.contains("Network: available"), "{}", clean);
-		let tainted = machine_note(&machine(), &b, true, Mode::default());
-		assert!(tainted.contains("Network: none"), "{}", tainted);
-		assert!(tainted.contains("read something from outside the user"),
+		// The step is derived rather than picked, so this reads the same decision `Tool::run`
+		// makes: a tainted turn nobody has asked yet is a turn about to be asked.
+		let step = crate::tools::net_step(Mode::default(), true, false, None);
+		assert_eq!(NetStep::Ask, step);
+		let tainted = machine_note(&machine(), &b, step, Mode::default());
+		assert!(!tainted.contains("Network: available"),
+			"a turn that has not been asked yet was promised the network: {}", tainted);
+		assert!(tainted.contains("read something from outside"),
 			"a rule with no reason attached is a rule the model argues with: {}", tainted);
-		assert!(!tainted.contains("Network: available"), "{}", tainted);
+		assert!(tainted.contains("puts the question"),
+			"the turn is not told the question is coming, which is the whole of remedy 2: {}",
+			tainted);
+		// And a turn that was asked and declined is told it is gone, in those words, because that
+		// one really is gone.
+		let no = machine_note(&machine(), &b,
+			crate::tools::net_step(Mode::default(), true, false, Some(Verdict::Deny)),
+			Mode::default());
+		assert!(no.contains("Network: none"), "{}", no);
+		assert!(no.contains("declined"), "a declined turn is not told who decided: {}", no);
+		// A turn the user said yes to has it, and is not promised a withdrawal that has already
+		// happened and been undone.
+		let yes = machine_note(&machine(), &b,
+			crate::tools::net_step(Mode::default(), true, false, Some(Verdict::Allow)),
+			Mode::default());
+		assert!(yes.contains("Network: available"), "a restored network was not reported: {}", yes);
+		assert!(!yes.contains("ends that"), "a restored turn was promised a withdrawal: {}", yes);
 	}
 
 	#[test]
 	fn test_a_granted_toolkit_is_named_and_an_ungranted_one_is_not() {
 		let b = diamond();
-		let bare = machine_note(&machine(), &b, false, Mode::default());
+		let bare = machine_note(&machine(), &b, NetStep::Give, Mode::default());
 		assert!(!bare.contains("cargo"), "nothing was granted: {}", bare);
 		let mut r = b.clone();
 		r.push(Toolkit::Rust.bound());
-		let s = machine_note(&machine(), &r, false, Mode::default());
+		let s = machine_note(&machine(), &r, NetStep::Give, Mode::default());
 		assert!(s.contains("Rust toolkit: cargo, rustc and rustup are on PATH."), "{}", s);
 		assert!(s.contains("/home/u/.cargo/bin"), "and the folder it lives in: {}", s);
 		// A toolkit whose binaries sit at a path this page cannot know does not claim a PATH.
 		let mut n = b.clone();
 		n.push(Toolkit::Node.bound());
-		let s = machine_note(&machine(), &n, false, Mode::default());
+		let s = machine_note(&machine(), &n, NetStep::Give, Mode::default());
 		assert!(s.contains("name the binary in full"), "{}", s);
 		assert!(!s.contains("node and npm are on PATH"), "{}", s);
 		// Granted, and the hand did not say where home is: say so rather than promise cargo.
 		let mut silent = machine();
 		silent.home = None;
-		let s = machine_note(&silent, &r, false, Mode::default());
+		let s = machine_note(&silent, &r, NetStep::Give, Mode::default());
 		assert!(s.contains("did not say where the home directory is"), "{}", s);
 		assert!(!s.contains("on PATH"), "{}", s);
 	}
@@ -958,7 +995,7 @@ mod tests {
 		// daimon hunting for a git it already has.
 		let mut b = diamond();
 		b.push(Toolkit::Git.bound());
-		let s = machine_note(&machine(), &b, false, Mode::default());
+		let s = machine_note(&machine(), &b, NetStep::Give, Mode::default());
 		assert!(s.contains("Git toolkit:"), "{}", s);
 		assert!(!s.contains("name the binary in full"),
 			"git was described as a binary the grant made reachable: {}", s);
@@ -969,19 +1006,19 @@ mod tests {
 		// And the toolkit the sentence was written for still gets it.
 		let mut n = diamond();
 		n.push(Toolkit::Node.bound());
-		let s = machine_note(&machine(), &n, false, Mode::default());
+		let s = machine_note(&machine(), &n, NetStep::Give, Mode::default());
 		assert!(s.contains("name the binary in full"), "{}", s);
 	}
 
 	#[test]
 	fn test_a_push_credential_is_briefed_and_its_absence_costs_nothing() {
 		let b = diamond();
-		let bare = machine_note(&machine(), &b, false, Mode::default());
+		let bare = machine_note(&machine(), &b, NetStep::Give, Mode::default());
 		assert!(!bare.contains("git push"),
 			"a push was described to a turn that has no credential to make one: {}", bare);
 		let cred = PushCred::new("github.com", "", "ghp_TESTTOKEN0123456789").expect("cred");
 		assert!(set_push_cred(Some(cred)));
-		let s = machine_note(&machine(), &b, false, Mode::default());
+		let s = machine_note(&machine(), &b, NetStep::Give, Mode::default());
 		assert!(s.contains("git push"), "{}", s);
 		assert!(s.contains("github.com"), "the daimon is not told where a push would go: {}", s);
 		assert!(s.contains("fast-forward"), "{}", s);
@@ -997,7 +1034,7 @@ mod tests {
 		assert!(push < net, "the push note follows the network sentence: {}", s);
 		// Cleared, and the briefing goes back to costing nothing.
 		assert!(!set_push_cred(None));
-		assert!(!machine_note(&machine(), &b, false, Mode::default()).contains("git push"));
+		assert!(!machine_note(&machine(), &b, NetStep::Give, Mode::default()).contains("git push"));
 	}
 
 	#[test]
@@ -1006,7 +1043,7 @@ mod tests {
 		// exists so that a later addition has to be argued for rather than merely appended.
 		let mut b = diamond();
 		b.push(Toolkit::Rust.bound());
-		let s = machine_note(&machine(), &b, false, Mode::default());
+		let s = machine_note(&machine(), &b, NetStep::Give, Mode::default());
 		assert!(s.len() < 700, "the machine briefing is {} bytes:\n{}", s.len(), s);
 	}
 
@@ -1023,37 +1060,55 @@ mod tests {
 		// Clean. The guarded sentence promises the network will end the moment anything is read;
 		// under bypass that is simply false, and a briefing the model can catch being wrong about
 		// one thing is a briefing it has reason to doubt about the fence.
-		let s = machine_note(&machine(), &b, false, Mode::Bypass);
+		let s = machine_note(&machine(), &b,
+			crate::tools::net_step(Mode::Bypass, false, false, None), Mode::Bypass);
 		assert!(s.contains("Network: available"), "{}", s);
 		assert!(s.contains("stays available for the whole turn"), "{}", s);
-		assert!(!s.contains("ends that for the rest of this turn"),
+		assert!(!s.contains("ends that"),
 			"bypass was promised a withdrawal that will not happen: {}", s);
 		// Tainted, which is the case that used to lose the network. It keeps it, and says so in
 		// the same words -- so the sentence does not change under the model's feet mid-turn.
-		let t = machine_note(&machine(), &b, true, Mode::Bypass);
+		let t = machine_note(&machine(), &b,
+			crate::tools::net_step(Mode::Bypass, true, false, None), Mode::Bypass);
+		assert_eq!(s, t, "bypass said something different about a turn that had read something");
 		assert!(t.contains("Network: available"), "bypass lost the network to a taint: {}", t);
 		assert!(!t.contains("Network: none"), "{}", t);
+		// And nobody is asked anything, which is what the rung is for.
+		assert_ne!(NetStep::Ask, crate::tools::net_step(Mode::Bypass, true, false, None),
+			"bypass put a question to the user");
 	}
 
 	#[test]
-	fn test_a_guarded_turn_is_told_why_it_has_no_network_and_an_ask_turn_too() {
+	fn test_a_guarded_turn_is_told_who_decides_its_network_and_an_ask_turn_too() {
 		let b = diamond();
 		for rung in [Mode::Guarded, Mode::Ask] {
-			let s = machine_note(&machine(), &b, true, rung);
-			assert!(s.contains("Network: none"), "the {} rung kept the network: {}",
-				rung.name(), s);
-			assert!(s.contains("read something from outside the user"),
+			// Not yet asked: the model is told the question is coming rather than told it has no
+			// network, because "none" would send it to report the project as broken instead of
+			// running the command that puts the question.
+			let s = machine_note(&machine(), &b,
+				crate::tools::net_step(rung, true, false, None), rung);
+			assert!(!s.contains("Network: available"), "the {} rung promised a network nobody has \
+				agreed to yet: {}", rung.name(), s);
+			assert!(s.contains("puts the question"),
+				"the {} rung did not say the user will be asked: {}", rung.name(), s);
+			assert!(s.contains("read something from outside"),
 				"a rule with no reason attached is a rule the model argues with: {}", s);
-			let clean = machine_note(&machine(), &b, false, rung);
+			// Asked and declined. This one has no network and is told so in those words.
+			let no = machine_note(&machine(), &b,
+				crate::tools::net_step(rung, true, false, Some(Verdict::Deny)), rung);
+			assert!(no.contains("Network: none"), "the {} rung kept the network after a no: {}",
+				rung.name(), no);
+			let clean = machine_note(&machine(), &b,
+				crate::tools::net_step(rung, false, false, None), rung);
 			assert!(clean.contains("Network: available"), "{}", clean);
-			assert!(clean.contains("ends that for the rest of this turn"), "{}", clean);
+			assert!(clean.contains("ends that until the user says otherwise"), "{}", clean);
 		}
 	}
 
 	#[test]
 	fn test_the_ask_rung_is_named_and_the_default_costs_nothing_to_name() {
 		let b = diamond();
-		let ask = machine_note(&machine(), &b, false, Mode::Ask);
+		let ask = machine_note(&machine(), &b, NetStep::Give, Mode::Ask);
 		assert!(ask.contains("put to the user before it runs"),
 			"the ask rung is invisible to the model it constrains: {}", ask);
 		assert!(ask.contains("not a fault to work around"),
@@ -1061,10 +1116,10 @@ mod tests {
 		// The default is described completely by the network sentences, so naming it as well would
 		// be tokens spent on every request of every turn to say nothing new -- and the default is
 		// the rung that pays that bill most often.
-		let guarded = machine_note(&machine(), &b, false, Mode::Guarded);
+		let guarded = machine_note(&machine(), &b, NetStep::Give, Mode::Guarded);
 		assert_eq!("", Mode::Guarded.briefing());
 		assert!(!guarded.contains("permission mode"), "the default names itself: {}", guarded);
-		assert_eq!(machine_note(&machine(), &b, false, Mode::default()).len(), guarded.len(),
+		assert_eq!(machine_note(&machine(), &b, NetStep::Give, Mode::default()).len(), guarded.len(),
 			"the default rung changed what the briefing costs");
 	}
 
@@ -1075,21 +1130,27 @@ mod tests {
 		// be a promise made to the model about a fence it does not have.
 		let mut b = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[fmt!("refs")]);
 		b.push(Toolkit::Rust.bound());
+		// Every combination the app can actually be in: the rung, whether the turn is at risk, and
+		// what the user has already said about it. The answer is a third axis now, and a briefing
+		// that ignored it would promise "none" to a turn the user had just given the network back.
 		for rung in Mode::all() {
-			for tainted in [false, true] {
-				let s = machine_note(&machine(), &b, tainted, rung);
-				let real = fence_spec(&b, &machine(), rung.withholds_net(tainted));
-				for p in real.rw.iter().chain(real.ro.iter()) {
-					assert!(s.contains(p.as_str()),
-						"the {} rung's fence grants {} and the briefing does not say so",
-						rung.name(), p);
+			for risk in [false, true] {
+				for said in [None, Some(Verdict::Allow), Some(Verdict::Deny)] {
+					let step = crate::tools::net_step(rung, risk, false, said);
+					let s = machine_note(&machine(), &b, step, rung);
+					let real = fence_spec(&b, &machine(), !step.gives_net());
+					for p in real.rw.iter().chain(real.ro.iter()) {
+						assert!(s.contains(p.as_str()),
+							"the {} rung's fence grants {} and the briefing does not say so",
+							rung.name(), p);
+					}
+					assert_eq!(real.net, s.contains("Network: available"),
+						"the {} rung's briefing and fence disagree about the network, risk={} \
+						said={:?}:\n{}", rung.name(), risk, said, s);
+					// It stays affordable on every rung, not merely on the default.
+					assert!(s.len() < 900, "the {} rung's briefing is {} bytes:\n{}",
+						rung.name(), s.len(), s);
 				}
-				assert_eq!(real.net, s.contains("Network: available"),
-					"the {} rung's briefing and fence disagree about the network, tainted={}:\n{}",
-					rung.name(), tainted, s);
-				// It stays affordable on every rung, not merely on the default.
-				assert!(s.len() < 900, "the {} rung's briefing is {} bytes:\n{}",
-					rung.name(), s.len(), s);
 			}
 		}
 	}

@@ -98,6 +98,24 @@ const server = http.createServer(async (req, res) => {
 	const url = decodeURIComponent((req.url || '/').split('?')[0]);
 	if (url.startsWith('/api/') || url.startsWith('/webhook/')) return proxy(req, res);
 
+	// WHICH TREE THIS SERVES, so a caller can identify the process holding the
+	// port instead of trusting that it is the one it started.
+	//
+	// `dev/world.sh --up` leaves an already-bound port alone, which is right when
+	// a person is sharing a world and was ruinous on 2026-08-17: a gate of
+	// 99c838e found world 9 still held by an interrupted gate of b536d60, said
+	// "already serving, left alone", and spent two hours driving a browser at
+	// ANOTHER COMMIT'S FILES while reporting the result against 99c838e. Nothing
+	// in the run could have noticed, because nothing could ask. Now it can.
+	//
+	// `__` so it can never collide with a served file, and dev-only: this server
+	// is not what runs in production.
+	if (url === '/__world') {
+		const body = JSON.stringify({ root: ROOT, port: PORT, gateway: GATEWAY.port, pid: process.pid });
+		res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+		return res.end(body);
+	}
+
 	let path = normalize(join(ROOT, url === '/' ? '/index.html' : url));
 	if (!path.startsWith(ROOT)) { res.writeHead(403); return res.end('no'); }
 	try {

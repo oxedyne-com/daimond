@@ -15,36 +15,67 @@
  *   - Product nouns are NOT translated: Daimond, Diamond, Daimond Pro, Hands.
  *     A "Diamond" is a named object in this app, not the gemstone.
  *
- * DECLARATIONS THE CHECKER READS. `dev/i18ncheck.mjs` reads every `tOr`, `tf`
- * and `tr` call site in the app and asks whether the key it names is in this
- * table. Two shapes of call site name no key it can read, and each is DECLARED
- * here rather than skipped there -- a checker with a skip list of its own is the
- * next thing to go blind:
+ * DECLARATIONS THE CHECKER READS. `dev/i18ncheck.mjs` reads every `t`, `tOr`,
+ * `tf` and `tr` call site in the app and asks whether the key it names is in
+ * this table. Two shapes of call site name no key it can read, and each is
+ * DECLARED here rather than skipped there -- a checker with a skip list of its
+ * own is the next thing to go blind:
  *
  *   // i18n-family: <prefix> = one two three
  *       A key built by concatenation, `tOr('<prefix>' + v, …)`. Closed: the
  *       variants listed are exactly the keys this table holds under that
  *       prefix, checked both ways, so a variant added to one and not the other
- *       fails.
+ *       fails. A prefix may be declared over several lines and the variants add
+ *       up; a family of twenty-two reads as groups, not as one long line.
  *
  *   // i18n-family: <prefix> = open -- <why it cannot be closed>
  *       The same, where the value comes from outside this app and no list can
  *       be right. Reported by name on every run with its member count, never
  *       silently.
  *
+ *   // i18n-family: <prefix> = one-way one two -- <why the prefix is a namespace>
+ *       The same, where the prefix is a NAMESPACE and not a set: other keys
+ *       live under it that are not variants at all. Only the forward sweep runs
+ *       -- every variant named must be in this table -- and the reverse sweep,
+ *       which would demand those other keys be declared variants too, is given
+ *       up. That is a weakening, so it is reported by name on every run beside
+ *       the open families, and it is decided per family: `permmode.` needs it
+ *       and the other eleven do not.
+ *
  *   // i18n-indirect: <file> <expression> = key key
  *       A call site whose key is held in a variable. The keys it can name are
  *       written out here; every one must be in this table.
  *
+ *   // i18n-indirect: <file> <expression> = open -- <why no list can be right>
+ *       The same, where the expression forms names on purpose that this table
+ *       does not hold -- a probe using `t`'s own loudness as its test -- or
+ *       where the key arrives from the markup. Reported on every run.
+ *
  * An undeclared call site of either shape FAILS the check. That is the point:
  * the declaration is a decision on the record, and a missing one is a question
- * nobody answered.
+ * nobody answered. Two shapes need no declaration because the key is in plain
+ * sight: a conditional of literals, `t(read ? 'attach.read' : 'attach.note')`,
+ * which is read for both keys, and a `t(k)` inside a `tOr`/`tf`/`tr` definition
+ * naming that helper's own key parameter, which is the `tOr(…)` call above it
+ * and is read there.
  */
 (function () {
 	'use strict';
 	if (!window.DaimondI18n) return;
 
 	window.DaimondI18n.register('en', {
+
+	// ── Where `t` itself resolves a key ────────────────────────
+	// Five calls in js/i18n.js are the lookup layer doing its own work rather
+	// than call sites naming a key: the plural helper appending a form, the
+	// applier reading a key out of the markup, and `pick` recovering the key or
+	// keys behind a string a widget was handed. Every one of them is handed a
+	// name from somewhere else, so no list here could be right.
+	// i18n-indirect: i18n.js key + (n === 1 ? '.one' : '.other') = open -- `tn` appends the plural form to the key its own caller named
+	// i18n-indirect: i18n.js n.getAttribute('data-i18n-label') = open -- the key is in the markup, where check 4 of dev/i18ncheck.mjs reads it
+	// i18n-indirect: i18n.js spec = open -- a `data-i18n` mark, which is one key or several joined by `|`
+	// i18n-indirect: i18n.js ks[0] = open -- one of the keys behind such a mark
+	// i18n-indirect: i18n.js ks[i] = open -- the rest of them
 
 	// ── Shared words ───────────────────────────────────────────
 	'common.close':        'Close',
@@ -113,7 +144,9 @@
 	'panel.web':     'Web',
 	'panel.doc':     'Doc',
 	'panel.preview': 'Preview',
-	'panel.msg':     'Message',
+	// "Email message" and not "Message": the Social panel holds messages of its
+	// own, and two things called Message is the collision decision 17 removes.
+	'panel.msg':     'Email message',
 	'panel.tools':   'Tools',
 	'panel.compose': 'Compose',
 	'panel.graph':   'Graph',
@@ -628,10 +661,21 @@
 	// And nothing here may soften WHICH refusal a code met — "never issued",
 	// "already used" and "run out of time" send a person to three different
 	// places, which is the whole reason the gateway tells them apart.
+	//
+	// NOR MAY IT PROMISE WHAT A FREE ACCOUNT DOES NOT GIVE. Since 2026-08-17 a
+	// beta code grants the FREE tier unless the operator asks for Pro, and Pro
+	// bundles exactly two things — `ProBundled::ALL` in
+	// `gateway/src/handlers/common.rs` names sync and Email, and cloud upload
+	// rides the sync unlock. So a free account keeps the app, its credits, the
+	// inference bought with them and the telemetry it consented to, and has no
+	// sync, no cloud storage and no Daimond Email. The four-item list these
+	// strings used to carry ("credits, sync between devices, mail, and inference
+	// bought for you") promised two things a free code does not deliver, to
+	// every applicant who reached the door.
 	'beta.title':              'Closed beta',
 	'beta.title_unavailable':  'No account was made',
 	'beta.title_plain':        'Beta passcode',
-	'beta.lead_beta_only':     'Daimond is not opening new accounts on this server yet. Only the account is closed, not the app: Daimond is free, runs in your browser, and works with no account at all on a provider key of your own. An account adds what the server does — credits, sync between devices, mail, and inference bought for you.',
+	'beta.lead_beta_only':     'Daimond is not opening new accounts on this server yet. Only the account is closed, not the app: Daimond is free, runs in your browser, and works with no account at all on a provider key of your own. An account adds credits and inference bought for you, so you need no key of your own. Sync between devices and Daimond Email come with Pro, which is bought separately.',
 	'beta.lead_unavailable':   'This server could not say whether it is open to new accounts, so it made none. Nothing is wrong with your device, and Daimond works on your own provider key meanwhile. Try again in a moment.',
 	'beta.lead_no_reason':     'This device has no Daimond account yet.',
 	'beta.have_code':          'If Oxedyne sent you a beta passcode, put it in here. It works once, on this device.',
@@ -655,7 +699,7 @@
 	'beta.err_unreachable':  'The Daimond account service could not be reached, so the passcode was not used. Try again shortly.',
 	'beta.done_title':         'You are in',
 	'beta.done_pro':           'This device has a Daimond account, and Pro is on it: sync between devices, cloud storage and Email.',
-	'beta.done_plain':         'This device has a Daimond account.',
+	'beta.done_plain':         'This device has a Daimond account. Everything in the app works, and credits buy inference for you, so you need no provider key of your own. Sync between devices, cloud storage and Email are what Pro adds — buy it whenever you want them.',
 	'beta.done_handle':        'Other people see this account as {handle}.',
 	'beta.done_not_signed_in': 'The passcode was spent and the account exists, but this device could not finish signing in just now. It will try again on its own.',
 
@@ -677,7 +721,7 @@
 	'beta.tel_lead':     'The test is far more useful to us if Daimond can report how it is being used. It sends numbers only: which of twenty things happened, how many milliseconds into the session, and one count each — how long a turn took, which panel was opened, how many errors were thrown.',
 	'beta.tel_never':    'It never sends words. Not a message, not a file name, not a Diamond’s name, not a path, not an error message. There is no box for them, and our server refuses a report that carries any.',
 	'beta.tel_who':      'It goes to Oxedyne on the account your passcode made, so we can see which numbers are yours and come back and ask you about them.',
-	'beta.tel_free':     'Saying no costs you nothing. Your account, Pro and everything else stay exactly as they are, and nothing in the app behaves differently.',
+	'beta.tel_free':     'Saying no costs you nothing. Your account, your credits and everything else stay exactly as they are, and nothing in the app behaves differently.',
 	'beta.tel_more':     'What is sent, in full',
 	'beta.tel_yes':      'Send usage counts',
 	'beta.tel_no':       'Do not send',
@@ -876,6 +920,7 @@
 	'pending.by_newest':    'Newest first',
 	'pending.by_oldest':    'Oldest first',
 	'pending.priority':     'Priority',
+	// i18n-family: pending.prio_ = high normal low
 	'pending.prio_high':    'High',
 	'pending.prio_normal':  'Normal',
 	'pending.prio_low':     'Low',
@@ -997,6 +1042,11 @@
 	'mail.cfg.self': 'Holds every folder below.',
 	'mail.cfg.title': 'Settings for {address}',
 	'mail.folders_err':     'The folder list could not be fetched: {reason}',
+	// The role comes from the mail server, but the name is only built where the
+	// role is one of ours: `mail.js:1754` fences it on `ROLE_ORDER`, and a role
+	// outside that list keeps the server's own spelling instead. So the set is
+	// this app's after all, and closed.
+	// i18n-family: mail.folder. = inbox sent drafts trash junk archive flagged all
 	'mail.folder.inbox':    'Inbox',
 	'mail.folder.sent':     'Sent',
 	'mail.folder.drafts':   'Drafts',
@@ -1077,6 +1127,8 @@
 	// Provider guidance, shown under the address as soon as the domain is
 	// recognised. These carry markup. "App Password" is the provider's own name
 	// for the thing, so keep whatever the provider calls it in that language.
+	// i18n-indirect: daimond.js p.note = mail.preset.gmail mail.preset.gmail_short mail.preset.outlook mail.preset.yahoo mail.preset.icloud mail.preset.fastmail
+	// i18n-indirect: daimond.js unreachable[dom] = mail.unreachable.proton mail.unreachable.tuta
 	'mail.preset.gmail':       'Gmail needs an <b>App Password</b> (Google Account → Security → 2-Step Verification → App passwords), not your Google password.',
 	'mail.preset.gmail_short': 'Gmail needs an <b>App Password</b>, not your Google password.',
 	'mail.preset.outlook':     'Outlook needs an <b>app password</b> if two-step verification is on.',
@@ -1098,6 +1150,37 @@
 	'mail.err.service_unreachable': 'Could not reach the Daimond account service. Try again shortly.',
 	'mail.err.cap.one':            'This unlock covers {n} mailbox. Remove one to add another.',
 	'mail.err.cap.other':          'This unlock covers {n} mailboxes. Remove one to add another.',
+
+	'mail.err.protocol_pending':   'Daimond cannot fetch mail yet: the private tunnel is finished and the mail protocol is not wired to it. Nothing was sent, and your password never left this device.',
+
+	// ── The tunnel ─────────────────────────────────────────────
+	// TLS terminates in the browser, so these are the only words anybody gets about
+	// a connection the gateway cannot see into. Each names the repair, because a
+	// refusal a reader cannot act on is a refusal they will simply retry.
+	'mail.tunnel.close.auth':        'Daimond signed this device out, so the mail connection was refused. Unlock Daimond and fetch again.',
+	'mail.tunnel.close.pro':         'Email is part of Pro, and this account has not unlocked it. Buy Pro under Credits and mail opens.',
+	'mail.tunnel.close.host':        'Daimond will only reach a mail server this account has bound, and {host} is not one of them. Add the mailbox again — Daimond binds its servers as it does so — then fetch.',
+	'mail.tunnel.close.port':        'Mail connects on ports 993, 143, 465 and 587, and {port} is none of them. Correct the port in the mailbox’s settings.',
+	'mail.tunnel.close.credits':     'Your credits ran out part way through. Top up under Credits and fetch again; whatever already came down is on this device.',
+	'mail.tunnel.close.concurrent':  'This account already holds four mail connections. Let another mailbox finish, or close another Daimond tab, then fetch again.',
+	'mail.tunnel.close.unresolved':  '{host} does not resolve to an address Daimond may dial. Check the server name in the mailbox’s settings — a typo reads exactly like this — or whether this network’s DNS can see it.',
+	'mail.tunnel.close.toobig':      'The mail connection sent more at once than the gateway carries, so it was closed. Fetch again.',
+	'mail.tunnel.close.done':        'The mail server ended the connection before the fetch had finished. Fetch again; whatever came down is on this device.',
+	'mail.tunnel.close.unreachable': '{host} could not be reached. Check the server name in the mailbox’s settings, or try again shortly.',
+	'mail.tunnel.close.no_socket':   'The mail connection could not be opened at all. Check that you are online, then fetch again.',
+	'mail.tunnel.close.idle':        'The mail server stopped answering, so the connection was closed. Fetch again to carry on.',
+	'mail.tunnel.close.expired':     'That was taking too long, so the mail connection was closed. Fetch again and it carries on from where it stopped.',
+	'mail.tunnel.close.other':       'The mail connection closed unexpectedly (code {code}). Fetch again.',
+	'mail.tunnel.err.no_server':     'That mailbox has no server or port set. Open its settings and fill them in.',
+	'mail.tunnel.err.no_client':     'Daimond could not start an encrypted mail connection — {reason}',
+	'mail.tunnel.err.slow':          '{host} did not finish an encrypted handshake within {secs} seconds. Try again shortly.',
+	'mail.tunnel.err.no_reply':      '{host} did not answer the {what} step within {secs} seconds. Fetch again.',
+	'mail.tunnel.err.cert':          'Daimond could not verify {host}’s certificate ({fault}), so it sent nothing. Your password stays on this device until the server can prove who it is.',
+	'mail.tunnel.err.cert_name':     '{host} offered a certificate issued for a different server ({fault}), so Daimond sent nothing. Check the server name in the mailbox’s settings.',
+	'mail.tunnel.err.cert_expired':  '{host} offered an expired certificate ({fault}), so Daimond sent nothing. If this machine’s clock is wrong, correct it and fetch again.',
+	'mail.tunnel.err.cert_issuer':   '{host} offered a certificate from an issuer Daimond does not trust ({fault}), so it sent nothing. A self-signed certificate looks like this, and so does an intercepted connection.',
+	'mail.tunnel.err.starttls':      'The encrypted channel to {host} could not be started — {reason}',
+	'mail.tunnel.err.starttls_early': '{host} sent something before the encrypted channel was up, so Daimond dropped the connection rather than trust it. Nothing was sent.',
 
 	// ── Workspace files ────────────────────────────────────────
 	'work.new_file':   'New file',
@@ -1268,6 +1351,10 @@
 	'pair.look_carried': 'Your theme, language and panel layout came across too. Each device keeps its own from now on, so changing one leaves the other alone.',
 
 	// ── The appearance menu ────────────────────────────────────
+	// `menu.view_note` is prose about the choice rather than a view, and it is
+	// still declared: a variant is a key this table holds under the prefix, not
+	// a promise that something in the app is called that.
+	// i18n-family: menu.view_ = simple max simple_help max_help note
 	'menu.view':            'View',
 	'menu.view_simple':     'Simple',
 	'menu.view_max':        'Max',
@@ -1275,6 +1362,14 @@
 	'menu.view_max_help':   'Models, cost and context beside each thing, so you can compare them without opening anything.',
 	'menu.view_note':       'Sets the shape of every tile too. Use a tile’s cog to set that tile differently.',
 	'menu.theme':         'Theme',
+	// The bands and the palettes, both from `DaimondTheme` in daimond.js, which
+	// this app owns. `_help` is optional and only Amber has one: `workspace.js`
+	// forms the name and asks `t` for it, and the key coming back unchanged is
+	// how it learns there is no note.
+	// i18n-family: menu.tone_ = light mid dark
+	// i18n-family: menu.theme_ = light mist linen lollypop sage dusk dark amber midnight forest plum
+	// i18n-family: menu.theme_ = amber_help
+	// i18n-indirect: workspace.js help = open -- the probe above: `menu.theme_<name>_help` is formed for all eleven palettes and ten of them are absent on purpose
 	'menu.tone_light':    'Light',
 	'menu.tone_mid':      'Intermediate',
 	'menu.tone_dark':     'Dark',
@@ -1311,12 +1406,14 @@
 	'menu.arrangement_note':   'Opening this Diamond again restores the panels it was worked in. Nothing is remembered until you ask.',
 
 	// ── Text-size steps ────────────────────────────────────────
+	// i18n-indirect: workspace.js STEP_KEYS[i] = size.small size.normal size.large size.larger
 	'size.small':  'Small',
 	'size.normal': 'Normal',
 	'size.large':  'Large',
 	'size.larger': 'Larger',
 
 	// ── Dock grids ─────────────────────────────────────────────
+	// i18n-indirect: workspace.js GRID_KEYS[k] || 'dock.automatic' = dock.one_column dock.2x2 dock.2x3 dock.3x2 dock.automatic
 	'dock.one_column': 'One column',
 	'dock.2x2':        '2 by 2',
 	'dock.2x3':        '2 by 3',
@@ -1326,6 +1423,7 @@
 	// ── The panel gallery rows ─────────────────────────────────
 	'gallery.search_ph':        'Search panels',
 	'gallery.no_match':         'No panel by that name.',
+	// i18n-family: gallery.zone_ = rail stage dock
 	'gallery.zone_rail':        'The rail',
 	'gallery.zone_stage':       'Beside the chat',
 	'gallery.zone_dock':        'The dock',
@@ -1352,6 +1450,7 @@
 	'spend.tok':             'tok',
 	// The three cells of the rail's spend row. Short: they sit under a figure.
 	'spend.session_short':   'Session',
+	// i18n-family: spend.period_ = week month
 	'spend.period_week':     'Week',
 	'spend.period_month':    'Month',
 	'spend.no_turns':        'No turns in this window yet.',
@@ -1398,6 +1497,15 @@
 	// one screen and the qualifier is the whole difference between them. It also
 	// leads with the word that matters, because the dock is narrow enough to
 	// truncate a label to its first two words.
+	//
+	// The category comes from the gateway, and the name is only built where the
+	// category is one this build knows: `spend.js:103` fences it on `CATS`, and
+	// anything else falls to `cat_unlisted` below. So the set is closed, and
+	// `dev/verify_spendcats.mjs` is what keeps `CATS` itself in step with the
+	// Rust. `fallback` and `unlisted` are named outright rather than built, and
+	// are declared here because a variant is a key under the prefix.
+	// i18n-family: spend.cat_ = web search mail sync storage infer other
+	// i18n-family: spend.cat_ = topup refund grant adjust fallback unlisted
 	'spend.cat_web':     'Web pages',
 	'spend.cat_search':  'Web searches',
 	'spend.cat_mail':    'Mail',
@@ -1438,8 +1546,17 @@
 		'tools.expand':         'What it does ({n})',
 		'tools.collapse':       'Hide what it does',
 		'tools.fn_pack':        'in the {pack} pack',
+		// The ten capabilities of `CAPS` in tools.js, plus the `other` that
+		// `capOf` returns for a function nobody has placed. A pack landing with a
+		// new capability lands here or the panel names it `tools.cap.x.name`.
+		// i18n-family: tools.cap. = files.name files.blurb cloud.name cloud.blurb
+		// i18n-family: tools.cap. = work.name work.blurb show.name show.blurb
+		// i18n-family: tools.cap. = machine.name machine.blurb reading.name reading.blurb
+		// i18n-family: tools.cap. = browsing.name browsing.blurb typeset.name typeset.blurb
+		// i18n-family: tools.cap. = dispatch.name dispatch.blurb graph.name graph.blurb
+		// i18n-family: tools.cap. = other.name other.blurb
 		'tools.cap.files.name':      'Your files',
-		'tools.cap.files.blurb':     'Daimond reads, writes and edits the files in your workspace, finds things across all of them at once, and tidies up after itself.',
+		'tools.cap.files.blurb':     'Daimond reads, writes and edits the files in your workspace — a spreadsheet’s cells and a document’s words included — finds things across all of them at once, and tidies up after itself.',
 		'tools.cap.cloud.name':      'Files kept in the cloud',
 		'tools.cap.cloud.blurb':     'A file this device is not holding is brought down from your cloud storage at the moment Daimond needs to read it, rather than everything being kept everywhere.',
 		'tools.cap.work.name':       'Keeping the work together',
@@ -1466,6 +1583,11 @@
 	'rail.no_diamonds':      'No Diamonds yet.',
 	'rail.no_match':         'No Diamonds match.',
 	'rail.no_chats':         'No chats yet.',
+	// A chat tile with nothing behind it is two different things: one nobody
+	// said anything in, and one whose transcript is on another device. The
+	// second is the one a reader mistakes for lost work, so it says which.
+	'rail.not_synced':       'not synced yet',
+	'rail.not_synced_help':  'This conversation is on another of your devices and has not arrived here yet.',
 	// Shown under the search box when nothing is tagged, so that an empty
 	// filing system cannot be read as a missing one.
 	'rail.tag_hint':         'No tags yet. Tag a Diamond and filter chips appear here.',
@@ -1537,6 +1659,9 @@
 	// site that knows which kind of name it is holding could.
 	'pause.act_pause':       'Pause {name}',
 	'pause.act_play':        'Resume {name}',
+	// The three answers `pause.js:138` can give for a node: no leaf paused, every
+	// leaf paused, or some of them.
+	// i18n-family: pause.state_ = play pause mixed
 	'pause.state_play':      'running',
 	'pause.state_pause':     'paused',
 	'pause.state_mixed':     'partly paused',
@@ -1555,6 +1680,9 @@
 	// all four name it, in every language.
 	'pause.web':              'Web',
 	'pause.refused_title':    'Paused',
+	// `pauseWords` in gateway.js is handed the key by its two callers, which name
+	// it outright; the helper itself is not one this check reads.
+	// i18n-indirect: gateway.js key = pause.refused.mail pause.refused.web
 	'pause.refused.turn':     '{node} is paused. No turn started, nothing spent. Press play on it to resume.',
 	'pause.refused.dispatch': '{node} is paused. No agents dispatched, nothing spent. Press play on it to resume.',
 	'pause.refused.web':      '{node} is paused. The page was not fetched and nothing was spent. Press play on it to resume.',
@@ -1580,6 +1708,8 @@
 	'tag.exclude_next':  'Showing Diamonds tagged "{tag}". Click again to hide them.',
 	'tag.clear_exclude': 'Stop hiding Diamonds tagged "{tag}"',
 	'tag.not_tagged':    'Not tagged "{tag}"',
+	// i18n-indirect: daimond.js m[1] = tag.mode_all tag.mode_any
+	// i18n-indirect: daimond.js m[2] = tag.mode_all_help tag.mode_any_help
 	'tag.mode_all':      'All',
 	'tag.mode_any':      'Any',
 	'tag.mode_all_help': 'Show only Diamonds carrying every one of these tags',
@@ -1881,6 +2011,10 @@
 	'sys.up':    'Up one folder',
 
 	// ── What each kind of agent is told ────────────────────────
+	// The five roles of `Prompts.roles` in daimond.js, each carrying the key for
+	// its own name and note.
+	// i18n-indirect: daimond.js r.label = role.chat role.daimon role.worker role.reducer role.compactor
+	// i18n-indirect: daimond.js r.blurb = role.chat_help role.daimon_help role.worker_help role.reducer_help role.compactor_help
 	'role.chat':            'Chat',
 	'role.chat_help':       'The agent you talk to.',
 	'role.daimon':         'Diamond daimon',
@@ -1908,6 +2042,12 @@
 	'trig.remove_body':     'Remove “{what}”? This Diamond will stop acting on it.',
 	'trig.add':             'Add an action',
 	'trig.add_kind':        'What sets it off',
+	// The trigger editor builds its rows from helpers handed a key: `field`,
+	// `longText` and the tile dialog's `row`, whose callers name these outright.
+	// i18n-indirect: daimond.js pair[1] = trig.kind_activity trig.kind_mail
+	// i18n-indirect: daimond.js labelKey = trig.minutes trig.mailbox trig.folder trig.instruction trig.context tile.model_daimon tile.model_workers tile.model_vision
+	// i18n-indirect: daimond.js phKey = trig.instruction_ph trig.context_ph
+	// i18n-indirect: daimond.js helpKey = tile.model_daimon_help tile.worker_model_help tile.model_vision_help
 	'trig.kind_activity':   'Minutes of my activity',
 	'trig.kind_mail':       'Mail arriving',
 	'trig.note':            'These live in {path}, where you and this Diamond can both read them.',
@@ -2075,6 +2215,104 @@
 	'fileview.hex_next':         'Later bytes',
 	'fileview.hex_at':           'Bytes {from} to {to} of {total}',
 
+	// A Word document or a spreadsheet, unpacked into what it SAYS rather than
+	// drawn as it prints. Every line here is about the gap between those two,
+	// so none of them may be shortened into reassurance: "reading view" is the
+	// whole warning, and a file whose macros are not run has to say so before a
+	// reader assumes this opened it the way their office suite would.
+	//
+	// {why} is a reason from the reader library and arrives in English. {n},
+	// {shown}, {rows} and {cols} are already formatted numbers. The English
+	// writes "(s)" rather than a plural pair because the count is the key's own
+	// argument; a language that pluralises properly does so in its own file.
+	'fileview.office_too_large': 'A {fmt} of {size} is too large to unpack here. Its bytes follow.',
+	'fileview.office_failed':    'This document could not be read: {why}',
+	'fileview.office_reading':   'Reading view. This is what the document says, not how it prints.',
+	'fileview.office_tracked':   '{n} tracked insertion(s) are shown as accepted; deletions are not shown.',
+	'fileview.office_macros':    'This file contains macros. They are not run and not read.',
+	'fileview.office_undrawn':   '{total} things are not drawn: {parts}.',
+	'fileview.sheet_failed':     'This spreadsheet could not be read: {why}',
+	'fileview.sheet_stored':     'Values are as stored in the file. Formulas are not recalculated.',
+	'fileview.sheet_capped':     'Showing {shown} of {rows} rows and {cols} columns of this sheet.',
+	'fileview.sheet_formulas':   '{n} cell(s) here carry a formula; the value shown is the stored one.',
+	'fileview.sheet_missing':    '{n} sheet(s) are named by this workbook and could not be read: {names}.',
+
+	// Saving a copy, and making an edit. Two sentences here are load-bearing and
+	// neither is reassurance.
+	//
+	// `fileview.save_help` says the file itself does not change, because that is
+	// the question a person asks before pressing a button on somebody's document
+	// and the answer is what makes it safe to press. `fileview.edited` says the
+	// same thing from the other side: once an edit has been applied the panel is
+	// showing prose nothing else in the app can see, and a reader who closed it
+	// believing the file had changed would have lost the edit without being told.
+	//
+	// {why} is a reason from the editor and arrives in English. {names} are paths
+	// out of the user's own Markdown, so they arrive in no language at all -- the
+	// phrase around them is composed below rather than handed over finished.
+	// {which} is `fileview.edit_nth` in this locale's own words, so the sentence
+	// quotes the label the reader can actually see.
+	// Two of these are reached through a variable and both are CLOSED lists: the
+	// save-as buttons come from one table in viewer.js and the edit row's fields
+	// from one helper, so a key added to either without a line here goes red.
+	// i18n-indirect: viewer.js key = fileview.edit_find fileview.edit_replace fileview.edit_nth fileview.edit_cell fileview.edit_value
+	'fileview.save':             'Save a copy',
+	'fileview.save_help':        'Save a copy of this to your own device. The file here is not changed.',
+	'fileview.save_failed':      'This could not be saved: {why}',
+	'fileview.save_capped':      'Only the start of this file is on screen, so it is not written out as a document: what came back would be a document missing its end.',
+	'fileview.save_as':          'Save as a document',
+	'fileview.save_as_help':     'Write this text out as a real document and save it to your own device. The file here is not changed.',
+	'fileview.save_as_failed':   'This could not be saved as {fmt}: {why}',
+	// What a document written from this text will NOT carry. Composed here from a
+	// kind, a count and the source names, exactly as `fileview.undrawn_*` is --
+	// `office_write_left` used to hand back a finished English sentence, which was
+	// the one string in that panel a translation pass could not reach.
+	//
+	// Two forms per kind: a bare count, and the same count with the sources named.
+	// A named form is a different sentence and not the first with a list bolted
+	// on, which is why both are keys rather than one plus a separator.
+	// i18n-family: fileview.left_ = image notes image_named notes_named
+	'fileview.write_left':       'Not everything in this text reaches the document: {parts}.',
+	'fileview.left_image':       '{n} image(s)',
+	'fileview.left_notes':       '{n} slide(s) of speaker’s notes',
+	'fileview.left_image_named': '{n} image(s): {names}',
+	'fileview.left_notes_named': '{n} slide(s) of speaker’s notes: {names}',
+	'fileview.edit':             'Make an edit',
+	'fileview.edit_find':        'Find',
+	'fileview.edit_replace':     'Replace with',
+	'fileview.edit_nth':         'Which one',
+	'fileview.edit_note':        'Leave “{which}” blank to change every one. Everything else in the file is left byte for byte as it was.',
+	'fileview.edit_apply':       'Apply',
+	'fileview.edit_failed':      'That edit was not made: {why}',
+	'fileview.edit_nothing':     'the editor returned no document',
+	'fileview.edited':           'Edited here, {n} time(s). The file itself has not changed — save a copy to keep this.',
+	'fileview.edit_sheet':       'Sheet',
+	'fileview.edit_cell':        'Cell',
+	'fileview.edit_value':       'Value',
+	'fileview.edit_cell_note':   'A value beginning with “=” is stored as a formula. Nothing is recalculated, here or in the file.',
+
+	// What the reading view did not draw, by kind and by count, joined into
+	// `fileview.office_undrawn` above. The number and the kind are BOTH the
+	// information: "3 text boxes, 1 chart" tells a reader whether to go and
+	// open the file properly, where "some content is not shown" tells them only
+	// that this viewer cannot be trusted.
+	//
+	// CLOSED, and it can be, because the kinds are the nine variants of
+	// `Undrawable` in fe2o3_file's docx reader rather than anything this file
+	// invents. A tenth added there fails this check, which is the point: the
+	// alternative is a raw key painted on the screen in every language.
+	// i18n-family: fileview.undrawn_ = image chart diagram textbox object
+	// i18n-family: fileview.undrawn_ = equation footnote endnote comment
+	'fileview.undrawn_image':    '{n} image(s)',
+	'fileview.undrawn_chart':    '{n} chart(s)',
+	'fileview.undrawn_diagram':  '{n} diagram(s)',
+	'fileview.undrawn_textbox':  '{n} text box(es)',
+	'fileview.undrawn_object':   '{n} embedded object(s)',
+	'fileview.undrawn_equation': '{n} equation(s)',
+	'fileview.undrawn_footnote': '{n} footnote(s)',
+	'fileview.undrawn_endnote':  '{n} endnote(s)',
+	'fileview.undrawn_comment':  '{n} comment(s)',
+
 	// ── One message, read ──────────────────────────────────────
 	'msg.unknown_sender':    '(unknown sender)',
 	'msg.reply_to':          'Reply-to',
@@ -2167,6 +2405,11 @@
 	'changepass.key_not_resealed': 'The passphrase changed, but your API key could not be re-encrypted. Re-enter it in Settings.',
 	'changepass.mail_not_resealed': 'These mailboxes could not be re-encrypted under the new passphrase and need their passwords again: {list}.',
 	'changepass.mail_not_unsealed': 'These mailboxes could not be read under the old passphrase, so they still need their passwords set again: {list}.',
+	// The message store, which is sealed under the passphrase like everything
+	// else and so has to be carried across a change of it. It names no list: a
+	// person has one message store, not a set of them.
+	'changepass.post_not_resealed': 'Your private messages could not be re-encrypted under the new passphrase.',
+	'changepass.post_not_unsealed': 'Your private messages could not be read under your old passphrase, so they have been left as they were.',
 	'changepass.models_not_resealed': 'These providers could not be re-encrypted under the new passphrase and need their keys again: {list}.',
 	'changepass.models_not_unsealed': 'These providers already had unreadable keys before the change, and still need their keys set again: {list}.',
 	'changepass.all_of_them': 'all of them',
@@ -2325,10 +2568,19 @@
 	'permmode.never':        'No mode changes the fence a command runs inside, the folders a Diamond can reach, or the journal that records what ran.',
 	'permmode.failed':       'That permission mode could not be set, so nothing changed.',
 
+	// The three rungs of the ladder, each with a name and a note, built by
+	// `handmode.js:44-45` from `MODES`. Declared ONE-WAY because `permmode.` is a
+	// namespace before it is a set: sixteen keys above and below these six live
+	// under the same prefix and are not rungs at all. The reverse sweep would
+	// demand every one of them be declared a rung, which is a worse falsehood
+	// than the one it catches, so it is given up HERE and nowhere else -- the
+	// eleven other families keep it. What that costs: a seventh key under
+	// `permmode.` that nobody declares is not reported.
+	// i18n-family: permmode. = one-way ask ask_blurb guarded guarded_blurb bypass bypass_blurb -- the prefix is a namespace, not a set: twenty-five keys sit under it and six are rungs
 	'permmode.ask':          'Ask every time',
 	'permmode.ask_blurb':    'Every command is put to you before it runs, and Daimond asks before it fetches any page.',
 	'permmode.guarded':      'Guarded',
-	'permmode.guarded_blurb': 'Commands run without asking. Once a turn has read a page, an email or a build log, it loses the network and Daimond asks before reaching anywhere new.',
+	'permmode.guarded_blurb': 'Commands run without asking. Once a turn has read a page, an email or a build log, Daimond asks before reaching out: once for that turn’s commands, and again for each new site it fetches.',
 	'permmode.bypass':       'Bypass',
 	'permmode.bypass_blurb': 'Nothing is asked. Commands run and pages are fetched, whatever the turn has read.',
 
@@ -2339,6 +2591,15 @@
 	'permmode.run_title':    'Run this command?',
 	'permmode.run_body':     'Daimond wants to run a command on your machine.\n\n{cmd}\n\nin {cwd}\n\nThe “ask every time” permission mode puts every command to you first.',
 	'permmode.run_ok':       'Run it',
+
+	// The network question a tainted turn's first command puts (`hand/REVIEW.md` §1.13,
+	// remedy 2). Not the same question as `run_body` above and it must not read like it:
+	// that one asks whether a command may RUN, this one asks whether it may REACH OUT,
+	// and a no here still runs the command. Both halves of the answer are said, because
+	// a person deciding needs to know what a yes covers and what a no costs.
+	'permmode.net_title':    'Let this turn reach the network?',
+	'permmode.net_body':     'This turn has already read something from outside your workspace — a page, an email, or a command’s own output. Daimond wants to run a command that can reach the network.\n\n{cmd}\n\nin {cwd}\n\nWhatever it read could have chosen where that command goes. Yes covers every command for the rest of this turn. No runs the command anyway, with no network — and that is also what happens if you say nothing.',
+	'permmode.net_ok':       'Allow the network',
 
 	// A dispatched worker asking to act on a page. Nobody is reading its
 	// transcript, so the app puts the question for it — and every clause here is
@@ -2357,6 +2618,9 @@
 	'store.alarm_download': 'Download a copy',
 	'store.alarm_retry':    'Try again',
 	'store.full':           'there is no room left in this browser’s storage for this site',
+	// A read that returned nothing where the last good write left {n}. The
+	// number is the count, so keep the placeholder.
+	'store.empty_read':     'this browser returned none of the {n} conversations it is holding',
 
 	// ── The delivery check ─────────────────────────────────────
 	// A page checking itself. The check NAMES are what a reader scans down, so
@@ -2570,6 +2834,8 @@
 	'term.dismiss_notice':   'Dismiss this notice',
 	'term.gaps_count.one':   'Output is missing in {n} place.',
 	'term.gaps_count.other': 'Output is missing in {n} places.',
+	// The Start button says which of the two things it would do.
+	// i18n-indirect: daimond.js k = term.start term.restart
 	'term.start':            'Start a terminal',
 	'term.restart':          'Restart the terminal',
 	'term.stop':             'Stop the program',
@@ -2614,31 +2880,458 @@
 	'settings.trail_copy':  'Copy the app’s own trail',
 	'settings.trail_note':  'What Daimond last did: event names and a clock, no keys, no message text, nothing from your files. Safe to paste into a bug report.',
 	'settings.trail_empty': 'Nothing recorded yet.',
+
+	// ── The email doorbell ─────────────────────────────────────
+	// One email, at most once a day, saying something is waiting. On by default
+	// for a beta account, which is why the switch and the notice both exist: a
+	// default that sends mail has to be reachable and has to be announced.
+	// The switch says what was CHOSEN; `no_address` and `unconfigured` say
+	// whether a bell could ring at all, which is a different fact.
+	'doorbell.title':        'Email doorbell',
+	'doorbell.asking':       'Checking…',
+	'doorbell.saving':       'Saving…',
+	'doorbell.turn_off':     'Turn the email doorbell off',
+	'doorbell.turn_on':      'Turn the email doorbell on',
+	'doorbell.on_note':      'When a message arrives and you have no Daimond open, we may send one email to the address on your account saying something is waiting. No sender, no subject, no count, and at most one in any 24 hours. Turning it off also stops any that is already waiting to go.',
+	'doorbell.off_note':     'No email will be sent. You will see a message when you next open Daimond, and nowhere else.',
+	'doorbell.default_note': 'This is the default for a beta account; you have not changed it.',
+	'doorbell.no_address':   'There is no email address on your account, so nothing can be sent whatever this is set to.',
+	'doorbell.unconfigured': 'This gateway cannot send email, so nothing will be sent whatever this is set to.',
+	'doorbell.err_save':     'That did not save. The setting is unchanged; try again.',
+	'doorbell.notice_title': 'One email, at most once a day',
+	'doorbell.notice_body':  'When somebody sends you a private message and you have no Daimond open, we may send one email to the address on your account saying that something is waiting. It carries no sender, no subject, no count and no link to any message — and at most one in any 24 hours.\n\nYou can turn it off whenever you like: open Settings from the cog beside your name, and it is the row called “Email doorbell”. Turning it off also stops any that is already waiting to go.',
+
+	// ── Reporting a message ────────────────────────────────────
+	// One message, with the sender's signature and the one key that opens it,
+	// and nothing else from the conversation. The operator reads the words out
+	// of the SIGNED artefact, so a reporter cannot file words that differ from
+	// the words that were signed -- which is why the sheet's rule sentence is a
+	// promise the design keeps rather than a reassurance.
+	//
+	// The five reasons are the gateway's closed list (gateway/src/schema.rs:1226)
+	// and are FETCHED, not compiled in, so the picker and the endpoint cannot
+	// drift. The keys here are the reader's words for them.
+	// i18n-family: report.reason_ = harassment threat spam impersonation other
+	'post.report':              'Report',
+	'report.title':             'Report this message',
+	'report.rule':              'These exact words go to the operator, with the sender’s signature and the one key that opens this message. Nothing else from this conversation goes: not the rest of the thread, not their other messages, not your other conversations.',
+	'report.signed_by':         'Signed by {fp}',
+	'report.why':               'Why are you reporting it?',
+	'report.reason_harassment':    'Abuse aimed at me',
+	'report.reason_threat':        'A threat of harm',
+	'report.reason_spam':          'Unwanted bulk messages',
+	'report.reason_impersonation': 'Pretending to be somebody else',
+	'report.reason_other':         'Something else',
+	'report.send':              'Send this report',
+	'report.cancel':            'Cancel',
+	'report.sending':           'Sending…',
+	'report.sent':              'Reported. The operator can now read this one message.',
+	'report.already':           'You have already reported this message. Nothing new was sent.',
+	'report.done':              'Close',
+	'report.err_no_message':    'That message is not one this device holds.',
+	'report.err_no_artefact':   'This build did not keep the signed form of that message, so there is nothing to prove who sent it. A report without it would be an accusation, so nothing was sent.',
+	'report.err_no_envelope':   'This build did not keep the sealed form of that message, so the report could not be checked against what the relay carried. Nothing was sent.',
+	'report.err_no_bridge':     'This build cannot read the message it is about to send, so it will not send it.',
+	'report.err_not_a_post':    'That is not a message; it is a {kind}.',
+	'report.err_no_reasons':    'Reporting is not available just now.',
+	'report.err_failed':        'That report was not filed. Nothing was sent.',
+
+	// ── Sharing a Diamond ──────────────────────────────────────
+	// A Diamond, sealed to one person's key and carried by the message relay.
+	// Every refusal here names what was NOT sent, because a share that half
+	// happened is worse than one that did not: a copy missing a file is not a
+	// smaller copy, and the sentences say so rather than trimming.
+	'share.err_no_bridge':      'This build cannot share a Diamond: its share format is not loaded.',
+	'share.err_no_seal':        'This build cannot share a Diamond: the seal it would be sent under is not loaded.',
+	'share.err_no_store':       'This build can read a share but has nowhere to put one.',
+	'share.err_locked':         'Unlock Daimond to share: a share is signed with your own key.',
+	'share.err_empty':          'There is nothing in that Diamond to send yet.',
+	'share.err_nothing':        'There is nothing to share: name a Diamond or the files to send.',
+	'share.err_no_name':        'A share needs a name for what is in it.',
+	'share.err_note_long':      'That note is longer than {n} characters and was not sent. A share carries a line about what it is; a letter is a message.',
+	'share.err_too_many_files': 'That Diamond holds {n} files, and a share carries at most {max}.',
+	'share.err_too_big':        'That Diamond is {mb} MB, and a share carries at most {max} MB. It is refused rather than trimmed: a copy missing a file is not a smaller copy.',
+	'share.err_bad_key':        'That person has no usable key, so nothing was sent.',
+	'share.err_no_card':        'There is no sealing key for that person yet, so nothing can be sealed to them. Scan their code, or ask them to send you theirs.',
+	'share.err_not_addressed':  'That share is addressed to a different key from this one.',
+	'share.err_addr_mismatch':  'The share you were told about is not the share that arrived.',
+	'share.err_all_code':       'Everything in that share is a page, and the page was not accepted, so nothing has been added.',
+	// The one question a share asks. A page is a program somebody else wrote and
+	// Daimond will run it, so it is named as code and attributed before it lands.
+	'share.code_title':         'This share contains code',
+	'share.code_body':          '“{name}” includes a page: a program written by somebody else, which Daimond will run when you open it. It came from {who}. Accept it only if you meant to receive a page from them.\n\nWhat would be added: {files}',
+	'share.code_ok':            'Accept the page',
+	'share.landed_name':        'A shared Diamond',
+	'share.landed_title':       'Shared Diamond added',
+	'share.landed_partial':     'These files could not be written into the Diamond: {list}. Everything else in the share is there.',
+	// A SHARE THAT LANDED SHORT SAYS SO. `accept` answered `ok: true` beside a
+	// count of the files it had left out and nothing anywhere read the count, so a
+	// share of five files of which two were pages landed three and reported plain
+	// success. `share.err_all_code` covered only the total case — nothing landing
+	// at all — which is the one case a person cannot fail to notice.
+	'share.left_page':          'it is a page you did not accept',
+	'share.landed_ok':          'Added as a Diamond of your own. {n} file(s) arrived.',
+	// The Share view of the Social panel. Both halves of the feature: taking one
+	// in needs nothing but the file, and sending one needs a Diamond and somebody
+	// to send it to. Every refusal names what to do instead, because a person told
+	// only that the relay declined has been told nothing they can act on.
+	'share.panel_take_head':    'Open a share',
+	'share.panel_take_help':    'Take a {ext} somebody gave you. A page inside it is a program they wrote, and it is never written into your workspace without asking you first.',
+	'share.panel_take':         'Open a share file…',
+	'share.panel_send_head':    'Send a Diamond',
+	'share.panel_no_diamond':   'Open a Diamond to share it. A share carries the files of one Diamond, so there has to be one in front of you.',
+	'share.panel_no_people':    'Nobody here has a sealing key yet, so there is nobody a share can be sealed to. Show somebody your code, or read theirs.',
+	'share.panel_this':         'Sharing “{name}” — a copy they will own, not a view of yours.',
+	'share.panel_who':          'Who it goes to',
+	'share.panel_send':         'Share',
+	'share.panel_sealing':      'Sealing…',
+	'share.panel_sent':         'Sent to {who}.',
+	'share.panel_refused':      'The relay would not take it: {why} It is saved as a file instead — give them that.',
+	// Which carrier, and the file route. The relay refuses a sealed envelope over
+	// 64 KiB and a capp page is about that on its own, so the file is not a
+	// fallback for an awkward case: it is the only way a capp can travel. The
+	// sentences carry the SIZE, because the sender is the only person who can do
+	// anything about it and the number says whether taking one file out is enough.
+	'share.by_relay':           'This share is {size} and goes straight to them through the relay.',
+	'share.by_file':            'This share is {size} and the relay carries at most {max}, so it travels as a file: save it and give them the file. It is sealed to them either way.',
+	'share.saved_as':           'Saved as {name}. Give them that file: it is sealed to them and to nobody else.',
+	'share.err_not_share':      'That file is not a Daimond share.',
+	'share.err_no_file':        'No file was chosen, so nothing was opened.',
+	'share.err_file_huge':      'That file is {size}, which is larger than any share can be, so it was not opened.',
 	// ── The Trash ──────────────────────────────────────────────
 	// Deleting a chat or a Diamond moves it here and asks nothing. The two
 	// questions that cannot be taken back are both in this panel.
 	'panel.trash': 'Trash',
 
-	// ── The Improve panel ──────────────────────────────────────
-	// Where a note about Daimond is written, and where the proposals made from
-	// notes are read and voted on. Both halves now go through the Oregami forge.
-	// See js/improve.js and dev/IMPROVE_CONTRACT.md.
-	'panel.improve':        'Improve',
-	'improve.notes':        'Notes',
-	'improve.proposals':    'Proposals',
-	'improve.info':         'What this panel is, in the guide',
-	'improve.box_label':    'Write a note about Daimond',
-	'improve.box_ph':       'Where it is, what you expected, and what happened instead.',
-	'improve.with':         'What goes with it',
-	'improve.with_off':     'Take the details off this note',
-	'improve.keep':         'Keep',
-	'improve.keep_help':    'Store this note on this device. Nothing is sent.',
-	'improve.send':         'Send',
-	'improve.send_help':    'Send exactly what is above to Oxedyne. Nothing else goes with it.',
+	// ── The Social panel ───────────────────────────────────────
+	// Where a note about Daimond is written, where the proposals made from notes
+	// are read and voted on, and where messages and the people they come from
+	// will live. Both halves of the note/proposal pair go through the Oregami
+	// forge. See js/improve.js and dev/IMPROVE_CONTRACT.md.
+	//
+	// TRANSLATORS — `panel.social` names a whole panel and rides in a chip row
+	// and a phone tab bar, so keep it to one short word.
+	'panel.social':        'Social',
+	'social.messages':     'Messages',
+	'social.people':       'People',
+	'social.notes':        'Notes',
+	'social.proposals':    'Proposals',
+	// What each chip's list says while it is empty, and the two are NOT the same
+	// sentence. Messages is not switched on in this build, so it says that -- an
+	// empty list there would be claiming "nothing has arrived", which is a
+	// different claim and is not true. People IS switched on, so its line is an
+	// ordinary empty state and tells you how to end it.
+	'social.messages_off': 'Messages are not switched on in this build.',
+	'social.people_off':   'Nobody yet. Show your code to somebody in the room, or read theirs.',
+	// The fifth chip. Its module was complete and unreachable before it existed.
+	'social.share':             'Share',
+	'social.share_off':         'Sharing is not available in this build.',
+	// ── A private message ──────────────────────────────────────
+	//
+	// The Social panel's Messages chip. Written from the English at the call
+	// sites in js/post.js, VERBATIM: a second wording here would be a second
+	// wording on the screen, and nobody would find out which one a reader saw.
+	//
+	// TRANSLATORS — "private" here is a claim about who can read the words, and
+	// it is exact: the message is sealed on this device to the recipient's key,
+	// and the relay that carries it holds ciphertext it cannot open. Do not
+	// soften it to "confidential" or strengthen it to anything about the
+	// recipient's identity, which is a different claim and lives under trust.*.
+	// "relay" is the post box in the middle; it is not a server that holds an
+	// account, and a word suggesting a mailbox provider would be wrong.
+
+	'post.err_no_bridge':        'This build cannot compose a message: its message format is not loaded.',
+	'post.err_no_draft':         'This build cannot compose a message: its message encoder is not loaded.',
+	'post.err_no_recipient':     'A sealed message needs at least one recipient key.',
+	'post.err_too_many':         'A message can be sealed to at most {n} people at once.',
+	'post.err_bad_key':          'One of the recipients has no usable key, so nothing was sent.',
+	'post.err_short':            'That message is too short to be one.',
+	'post.err_not_sealed':       'That is not a sealed Daimond message.',
+	'post.err_no_sealing_key':   'This device has no sealing key, so it cannot open a sealed message. Unlock Daimond once and one will be made.',
+	'post.err_not_for_you':      'This message was not sealed to any key this device holds.',
+	'post.err_locked':           'Unlock Daimond to send a message: it is signed with your own key.',
+	'post.err_empty':            'There is nothing to send.',
+	'post.err_long':             'That message is longer than {n} characters of text and was not sent. It is refused rather than cut: half a message is not a shorter message.',
+	'post.err_no_card':          'There is no sealing key for that person yet, so nothing can be sealed to them. Scan their code, or ask them to send you theirs.',
+	// Sending to a group rather than to one person. `post.err_no_groups` is the
+	// build saying it has no group module at all, which is not the same as a
+	// group being empty; `post.err_group_none` is a real group the message
+	// reached nobody in.
+	'post.err_no_groups':        'This build cannot send to a group.',
+	'post.err_group_none':       'The message reached nobody in that group, so nothing was sent.',
+	// The one line a person may not write, because group.js reads it as a
+	// membership list. Refused rather than escaped, and the refusal has to say
+	// what to do about it.
+	'post.err_reserved_line':    'A message cannot begin with that line: Daimond uses it to carry a group\'s membership list. Put something before it.',
+	'post.err_bad_ref':          'That is not a kind of reference a message can carry.',
+	'post.err_not_a_post':       'That is not a message; it is a {kind}.',
+	'post.err_not_addressed':    'That message is addressed to a different key from this one.',
+	'post.err_addr_mismatch':    'The message the relay named is not the message it carried.',
+	'post.err_offline':          'Daimond could not reach the relay, so the message has not been sent.',
+	'post.err_box_full':         'That mailbox is full, so the message did not arrive. They have to collect what is already in it before another will fit.',
+	'post.err_no_account':       'No account holds that key, so the message has not been sent.',
+	'post.err_too_big':          'That message is too large for the relay to carry.',
+	'post.err_refused':          'The relay would not take that message, so it has not been sent.',
+	'post.locked':               'Unlock Daimond to read your messages: they are kept encrypted on this device.',
+	'post.tray_head':            'Waiting for your answer',
+	'post.none':                 'No messages yet.',
+	'post.you':                  'You',
+	'post.someone':              'Someone new',
+	'post.unreadable':           'A message arrived that this device could not open.',
+	'post.accept':               'Accept',
+	'post.ignore':               'Ignore',
+	'post.block':                'Block',
+	'post.expired':              'A message you sent was never collected and the relay has let it go.',
+	// The same, for several copies of one group message. {n} is the SENDER'S
+	// own count of copies the relay let go, and it is not a read receipt and
+	// cannot become one: it is a fact about the relay letting go, never about
+	// anybody opening anything. Do not translate it into "{n} people did not
+	// read it".
+	'post.expired_group':        'A message you sent to a group was never collected by {n} of the people it went to, and the relay has let those copies go.',
+	'post.notice':               'The relay left a notice here.',
+	'post.nobody':               'There is nobody to write to yet. Exchange codes with somebody in People, and they will be here.',
+	'post.to_label':             'Who this goes to',
+	'post.audience':             'Private. Only you and the person you are writing to can read this.',
+	// WHO CAN READ THIS, when the answer is a group, and it is a different
+	// sentence with a different set of people behind it. Both halves of the
+	// second clause are load-bearing and neither may be dropped for brevity: a
+	// later joiner CANNOT read this, and somebody taken out afterwards KEEPS
+	// it. That is what having no shared key means, and it is the opposite of
+	// what a reader assumes a group chat does.
+	'post.audience_group':       'Sealed once for each of the {n} people in this group. There is no shared key: anybody who joins later cannot read this, and anybody taken out afterwards keeps it.',
+	// How many people a group in the picker holds.
+	'post.group_count':          '{n} people',
+	'post.box_label':            'Write a private message',
+	'post.box_ph':               'What you want to say, and to whom.',
+	'post.send':                 'Send privately',
+	'post.err_no_to':            'Choose who this is going to first.',
+	'post.sending':              'Sending…',
+	'post.sent':                 'Sent.',
+	// SENT TO, never DELIVERED TO. The relay answers a blocked delivery exactly
+	// as it answers an accepted one, so {n} is the number this device wrote to
+	// and nothing more. A translation saying "delivered to {n} people" would
+	// make a claim the transport was built not to be able to make.
+	'post.sent_group':           'Sent to {n} people.',
+	// Who a group message was NOT sealed to, appended to the line above. Never
+	// a log line: the sender believes the message went to the whole group, and
+	// their own screen at the moment they press is the only place that can be
+	// corrected. TWO SENTENCES, because the two lists are fixable by different
+	// people -- `group.refused` is what this device would not seal, and this one
+	// is what the relay would not take. `post.group_skipped` used to be the first
+	// of them and was retired on 2026-08-17: `group.refused` says it, and the only
+	// caller left naming the old key was a second copy of the sentence in
+	// `js/share.js`.
+	'post.refused_offline':    'the relay could not be reached',
+	'post.refused_full':       'their mailbox is full',
+	'post.refused_no_account': 'no account holds their key',
+	'post.refused_too_big':    'too large for the relay to carry',
+	'post.refused_other':      'the relay refused it',
+	'post.group_refused':      'The relay would not take it for: {who}.',
+	// ── A group, and who is in it ──────────────────────────────
+	//
+	// A group is a LIST OF PEOPLE a message is sealed to one by one. There is no
+	// shared key, no key agreement and nothing kept on the relay, and that one
+	// fact decides every sentence in this section: what a new member cannot be
+	// shown, what somebody taken out keeps, and why a count is always people
+	// WRITTEN TO rather than people who received anything.
+	//
+	// Written from the English at the call sites in js/group.js, VERBATIM, for
+	// the reason the private message block above gives: a second wording here
+	// would be a second wording on the screen and nobody would find out which
+	// one a reader saw.
+	//
+	// TRANSLATORS — "group" here is not a group chat. Nothing is shared between
+	// members except the roster, so a word carrying "room", "channel" or
+	// "shared conversation" would promise the architecture. Prefer your
+	// language's plain word for a list of people. "roster" is that list;
+	// "relay" is the post box in the middle, the same word post.* uses.
+
+	'group.err_unknown':               'This device does not know that group.',
+	'group.err_left':                  'You are no longer in this group, so nothing can be sent to it. The messages already here stay where they are.',
+	// NOT `err_left`, AND THE DIFFERENCE IS THE POINT. Closing leaves everybody
+	// including the creator out of the group, so the record says "left" -- but
+	// telling somebody they are no longer in a group they closed themselves reads
+	// as something done to them. This one is about the group; that one is about
+	// them.
+	'group.err_closed':                'This group has been closed, so nothing more can be sent to it. Every message already here stays where it is.',
+	'group.err_close_not_creator':     'Only the person who made a group can close it.',
+	'group.err_not_joined':            'Join this group before writing to it.',
+	'group.err_nobody':                'There is nobody in this group this device can seal to.',
+	'group.err_locked':                'Unlock Daimond to make a group: its roster is signed with your own key.',
+	'group.err_no_id':                 'This device could not name a group.',
+	'group.err_not_creator':           'Only the person who made a group can change who is in it.',
+	'group.err_no_sealing_key':        'This device has no sealing key yet, so it cannot make a group.',
+	'group.err_too_many':              'A group can hold at most {n} people.',
+	// TWO SENTENCES AND NOT ONE, because a mis-typed key and somebody whose code
+	// has not been scanned take different repairs and a roster can hit both at
+	// once. `err_no_card`'s {n} counts the SECOND kind only: it counted both, and
+	// one typing mistake plus one uncarded person read as "no sealing key for 2 of
+	// the people chosen", which sent the reader to scan a code for a typo.
+	//
+	// TRANSLATORS — `err_bad_keys` is PLURAL and its {who} is a comma-joined list
+	// of the spellings the caller gave, one or several. It replaced a singular key
+	// with one {k}, which could not describe the two-entry case it was written
+	// for. Keep it in the register of post.group_refused, which carries a list the
+	// same way. It names SPELLINGS, because a spelling is what can be corrected.
+	'group.err_no_card':               'There is no sealing key for {n} of the people chosen, so they cannot be added. Scan their code first.',
+	'group.err_bad_keys':              'These are not keys: {who}.',
+	'group.err_pick':                  'Choose at least one person.',
+
+	// Why a member was left out of a send, each one a phrase that finishes
+	// `group.refused`, so they are lower case and carry no full stop.
+	// `skip_changed` says MATCHED, the same word trust.key_* uses, because it
+	// is the same act being named -- see the note on that family below.
+	'group.skip_blocked':              'you blocked this key',
+	'group.refused':                   'Not sealed to: {who}.',
+	'group.skip_changed':              'their key changed and you have not matched the new one',
+	'group.skip_disagree':             'the group\'s key for them is not the one you hold',
+
+	// THE THREE SENTENCES, and they are the reason this section reads the way it
+	// does. Each says what a group CANNOT do, on the screen before the press
+	// rather than after it, where it would be an excuse instead of a fact.
+	//
+	// TRANSLATORS — translate the LIMIT, not the reassurance. `joining` says
+	// the earlier messages cannot be shown to a new member BY ANY DEVICE,
+	// because they were never sealed to that key: it is not a policy and not
+	// a setting, and "you will not see older messages" loses exactly that.
+	// `removing` says nothing is taken back, and both halves are needed --
+	// what they keep, and what stops. `close_note` says the same about a whole
+	// group and adds the one thing no other sentence here has to: it cannot be
+	// undone. If a qualification will not sit naturally in your language, keep
+	// the sentence long rather than lose it.
+	'group.joining_shows_nothing':     'Joining shows you nothing that was sent before you join. Those messages were never sealed to your key, so no device can open them for you.',
+	'group.removing_retracts_nothing': 'Taking somebody out takes nothing back. They keep every message already sent to them; they will not receive anything sent from now on.',
+	'group.close_note':                'Closing a group closes it for everybody. Nobody can write to it again, you included; every message already sent stays where it is. It cannot be undone.',
+
+	// A group's name is the CREATOR'S claim, so it is drawn beside the first
+	// eight characters of the id, which nobody chose.
+	'group.unnamed':                   'A group',
+	'group.invites_head':              'Group invitations',
+	'group.head':                      'Groups',
+
+	// Two empty states rather than one, because "no groups yet" printed over a
+	// pending invitation is a screen arguing with the row above it. The second
+	// says what a group IS, and "no shared key" is the whole of it.
+	'group.none_joined':               'None joined yet. Answer the invitation above, or make one below.',
+	'group.none':                      'No groups yet. A group is a list of people a message is sealed to one by one — there is no shared key, and nothing is kept on the relay.',
+
+	'group.invited_by':                '{n} people, invited by the person who made it.',
+	'group.join':                      'Join',
+	'group.decline':                   'Not now',
+	'group.count':                     '{n} people',
+
+	// STOP SENDING TO, never "remove". "Remove" reads as though something is
+	// taken back, and nothing is; the sentence above this control says so.
+	'group.stop_sending':              'Stop sending to {who}',
+	'group.leave':                     'Leave this group',
+
+	// A group this device has left keeps its place on the list, with its
+	// messages. That IS the second sentence: leaving and being taken out both
+	// retract exactly nothing.
+	'group.gone':                      'You are no longer in this group. Nothing has been taken away: every message already here stays, and nothing new will arrive.',
+
+	// CLOSING ONE. The creator's act and the only one in this feature that cannot
+	// be undone, so it is the only one behind a confirmation dialogue.
+	//
+	// TRANSLATORS — the control says CLOSE and never "delete", "disband" or
+	// "remove". Nothing is destroyed by it: every member keeps every message they
+	// hold, and the group stays on their list saying it is closed. A word carrying
+	// "delete" would promise something this design does not do, in the same way
+	// `stop_sending` refuses the word "remove". `close_ask` names the group, so
+	// {name} is the creator's own label for it and the quotation marks belong to
+	// your language.
+	'group.close':                     'Close this group',
+	'group.close_title':               'Close this group for everybody?',
+	'group.close_ask':                 'This closes “{name}” for everybody in it.',
+	'group.close_ok':                  'Close it for everybody',
+	'group.closed_said':               'Closed, and {n} people have been told.',
+	'group.closed':                    'This group has been closed by the person who made it. Nothing has been taken away: every message already here stays, and nobody can write to it again.',
+
+	// Making one. A member with no sealing key is a member nothing can be
+	// sealed to, so People is where this sends somebody, in the same words
+	// `post.nobody` uses.
+	'group.nobody':                    'There is nobody to put in a group yet. Exchange codes with somebody in People, and they will be here.',
+	'group.name_ph':                   'What to call this group',
+	'group.name_label':                'The group\'s name',
+	'group.members_label':             'Who is in this group',
+	'group.make':                      'Make this group',
+
+	// The status line while a roster goes out. `group.made` counts people TOLD,
+	// which is what this device wrote to, and never people who received it.
+	'group.sending_roster':            'Telling everybody…',
+	'group.roster_sent':               'Done.',
+	'group.making':                    'Making the group…',
+	'group.made':                      'Made, and {n} people have been told.',
+
+	// ── People: a key, and whether it is the one you matched ────
+	//
+	// TRANSLATORS — THE ONE RULE HERE IS NOT A STYLE PREFERENCE, and it is worth
+	// the paragraph. Daimond makes TWO different claims about somebody and must
+	// never let them read as one:
+	//
+	//   what a key IS      matched, or new. Matched means the reader compared
+	//                      this key themselves, in person or by reading the
+	//                      safety number aloud. New means they have not.
+	//   who somebody IS    the name they gave. Daimond knows nothing about it
+	//                      and says nothing about it.
+	//
+	// So a `trust.key_*` string may NEVER carry this language's word for
+	// "verified" or "trusted". Those words say the second thing while claiming to
+	// say the first, and a reader who believes a key was "verified" believes
+	// somebody checked WHO the person is. Nobody did. Use the ordinary word your
+	// language has for two things being compared and found the same.
+	//
+	// This is enforced twice -- `dev/verify_trust.mjs` reads all eight files and
+	// fails on the forbidden words, and the drawing code refuses a table that
+	// hands it one and draws the built-in English instead -- but a translator who
+	// knows why will write a better sentence than a guard that only says no.
+	//
+	// The key state is drawn as a line UNDER the name, never as a badge beside
+	// it, so keep these as sentences rather than as labels.
+
+	'trust.key_blocked':           'Blocked key',
+	'trust.key_matched_qr':        'Key matched in person, {when}',
+	'trust.key_matched_number':    'Key matched by safety number, {when}',
+	'trust.key_changed':           'Different key — the one you matched was last seen {when}',
+	'trust.key_new':               'New key — you have not matched this one',
+	'trust.no_name':               '(no name given)',
+	'trust.calls_themselves':      'calls themselves “{name}”',
+	'trust.lookalike':             'This name looks like one you have already matched ({fp}). Names are not identities — check the key.',
+	'trust.held':                  'Messages from this key are held until you decide.',
+	'trust.compare_numbers':       'Compare safety numbers',
+	'trust.unblock':               'Unblock',
+	'trust.block':                 'Block',
+	'trust.show_mine':             'Show my code',
+	'trust.show_lead':             'Let them point their camera at this. Reading it in person is the only way either of you can mark the other matched without a phone call.',
+	'trust.no_card':               'This device has no card yet. Unlock it and try again.',
+	'trust.paste_lead':            'No camera? Send them this instead. A code that arrives this way is a new key and stays one until you compare numbers.',
+	'trust.add':                   'Add somebody',
+	'trust.add_lead':              'Point this device at their code, or paste what they sent you.',
+	'trust.read_paste':            'Read this',
+	'trust.bad_card':              'That is not a Daimond code, or it did not verify.',
+	'trust.arrived':               'A code arrived',
+	'trust.qr_lead':               'You read this off their screen, so there was no channel for anybody to get between you. Mark it matched only if that is what happened.',
+	'trust.mark_matched':          'Mark matched now',
+	'trust.async_lead':            'This came through something in the middle, so it stays a new key. Read the safety number aloud on a call to change that.',
+	'trust.numbers':               'Safety numbers',
+	'trust.numbers_lead':          'Read these sixty digits to each other on a call, or in person. Both of you must see the same twelve groups. Reading them in a message proves nothing — whatever could swap the keys could swap the message.',
+	'trust.numbers_differ':        'They are different',
+	'trust.numbers_match':         'The numbers match',
+	'trust.no_number':             'This device cannot compute the number yet.',
+	'trust.numbers_differ_note':   'Then somebody is between you. Do not use this key. Meet, or start again from a code you read in person.',
+	'social.info':         'What this panel is, in the guide',
+	'social.box_label':    'Write a note about Daimond',
+	'social.box_ph':       'Where it is, what you expected, and what happened instead.',
+	'social.with':         'What goes with it',
+	'social.with_off':     'Take the details off this note',
+	'social.keep':         'Keep',
+	'social.keep_help':    'Store this note on this device. Nothing is sent.',
+	'social.send':         'Send',
+	'social.send_help':    'Send exactly what is above to Oxedyne. Nothing else goes with it.',
 	// A note goes under the writer's VOICE. No handle and no name travels with
 	// it, so nothing here may name the writer.
-	'improve.as_voice':     'Goes to the forge under your voice, where anyone with the repository can read it.',
-	'improve.as_novoice':   'You have no voice, so a note can only be kept here.',
+	'social.as_voice':     'Goes to the forge under your voice, where anyone with the repository can read it.',
+	'social.as_novoice':   'You have no voice, so a note can only be kept here.',
 	// Above Send, and on the screen exactly when Send is. The repository this
 	// panel reads is public — the forge draws no other kind — so a note that is
 	// sent is readable by ANYBODY, with NO account, under the name of the voice
@@ -2646,43 +3339,43 @@
 	// `{host}` is the forge's address, filled in by js/improve.js: keep it as it
 	// is rather than typing the address out, and do not name the repository,
 	// which is a constant in the code and would strand eight files if it moved.
-	'improve.public_note':  'Sending publishes this note at {host}, with your voice name on it. Anyone can read it there without an account. A note you keep stays on this device.',
-	'improve.title_hint':   'The first line is the title of the proposal. What happened goes underneath it.',
-	'improve.no_title':     'The first line is the title. Write one, then what happened underneath.',
-	'improve.nothing':      'Write something first.',
+	'social.public_note':  'Sending publishes this note at {host}, with your voice name on it. Anyone can read it there without an account. A note you keep stays on this device.',
+	'social.title_hint':   'The first line is the title of the proposal. What happened goes underneath it.',
+	'social.no_title':     'The first line is the title. Write one, then what happened underneath.',
+	'social.nothing':      'Write something first.',
 	// Said after a refusal. Nothing is queued and nothing is tried again, so a
 	// translation must not promise a retry.
-	'improve.kept_here':    'Your note is kept here and nothing tried again.',
-	'improve.copied':       'Copied.',
-	'improve.state_kept':   'Kept here',
-	'improve.state_sent':   'Sent {date}',
-	'improve.state_sent_n': 'Sent {date}, and is proposal {n}',
-	'improve.drop':         'Delete this note',
-	'improve.drop_ask':     'Delete this note? It is only on this device, so there is no other copy.',
-	'improve.drop_ok':      'Delete',
-	'improve.no_notes':     'No notes yet.',
+	'social.kept_here':    'Your note is kept here and nothing tried again.',
+	'social.copied':       'Copied.',
+	'social.state_kept':   'Kept here',
+	'social.state_sent':   'Sent {date}',
+	'social.state_sent_n': 'Sent {date}, and is proposal {n}',
+	'social.drop':         'Delete this note',
+	'social.drop_ask':     'Delete this note? It is only on this device, so there is no other copy.',
+	'social.drop_ok':      'Delete',
+	'social.no_notes':     'No notes yet.',
 	// The one line that goes with a note, in the characters it travels as.
-	'improve.ctx_build':    'Build {id}',
-	'improve.ctx_touch':    'touch',
-	'improve.ctx_pointer':  'pointer',
-	'improve.ctx_palette':  'palette {name}',
-	'improve.ctx_panels':   'panels open: {list}',
+	'social.ctx_build':    'Build {id}',
+	'social.ctx_touch':    'touch',
+	'social.ctx_pointer':  'pointer',
+	'social.ctx_palette':  'palette {name}',
+	'social.ctx_panels':   'panels open: {list}',
 
 	// The voice: a per-person secret the forge looks the writer up by. It is
 	// held here encrypted under the passphrase, and it never goes in an address.
-	'improve.voice_held':        'A voice is held on this device, encrypted under your passphrase.',
-	'improve.voice_none':        'No voice is held here, so a note can only be kept.',
-	'improve.voice_set':         'Set a voice',
-	'improve.voice_replace':     'Replace the voice',
-	'improve.voice_help':        'The line the forge printed for you. It is kept encrypted here and never put in an address.',
-	'improve.voice_ph':          'Paste the line the forge printed for you',
-	'improve.voice_save':        'Save the voice',
-	'improve.voice_saved':       'Your voice is held here, encrypted.',
-	'improve.voice_failed':      'That voice could not be stored.',
-	'improve.voice_forget':      'Forget it',
-	'improve.voice_forget_help': 'Remove the copy on this device.',
-	'improve.voice_forgotten':   'The copy on this device is gone.',
-	'improve.voice_ask_forget':  'Forget your voice on this device? The forge showed it once and cannot show it again.',
+	'social.voice_held':        'A voice is held on this device, encrypted under your passphrase.',
+	'social.voice_none':        'No voice is held here, so a note can only be kept.',
+	'social.voice_set':         'Set a voice',
+	'social.voice_replace':     'Replace the voice',
+	'social.voice_help':        'The line the forge printed for you. It is kept encrypted here and never put in an address.',
+	'social.voice_ph':          'Paste the line the forge printed for you',
+	'social.voice_save':        'Save the voice',
+	'social.voice_saved':       'Your voice is held here, encrypted.',
+	'social.voice_failed':      'That voice could not be stored.',
+	'social.voice_forget':      'Forget it',
+	'social.voice_forget_help': 'Remove the copy on this device.',
+	'social.voice_forgotten':   'The copy on this device is gone.',
+	'social.voice_ask_forget':  'Forget your voice on this device? The forge showed it once and cannot show it again.',
 
 	// ── What js/voice.js says when a voice will not do ──────────
 	// The secret itself, and every refusal about it. These were in NO catalogue
@@ -2710,40 +3403,40 @@
 
 	// Proposals, read from the forge as the panel is looked at. Nothing tells a
 	// reader when one is answered, and no string here may suggest otherwise.
-	'improve.live_note':    'These are read from the forge as you look at them. Nothing tells you when a proposal is answered; look again to find out.',
-	'improve.loading':      'Reading the proposals…',
-	'improve.none_shown':   'Nothing could be read just now.',
-	'improve.none_yet':     'No proposals here yet. Yours would be the first.',
-	'improve.reading':      'Reading it…',
-	'improve.more':         'Show older',
-	'improve.count.one':    '{n} proposal',
-	'improve.count.other':  '{n} proposals',
-	'improve.by':           'from {who}',
-	'improve.said_n.one':   '{n} reply',
-	'improve.said_n.other': '{n} replies',
-	'improve.built_on':     'written on build {build}',
-	'improve.closed_by':    'closed by mark {mark}',
-	'improve.move_floor':   'A note follows its content across a file boundary only when the change is recognised as a move, and the floor for that is 64 bytes. Cut less than that from one file into another and the history holds a deletion and an insertion, so a note anchored there honestly reports its content deleted. The note is right and the history is right.',
-	'improve.state_open':   'Open',
+	'social.live_note':    'These are read from the forge as you look at them. Nothing tells you when a proposal is answered; look again to find out.',
+	'social.loading':      'Reading the proposals…',
+	'social.none_shown':   'Nothing could be read just now.',
+	'social.none_yet':     'No proposals here yet. Yours would be the first.',
+	'social.reading':      'Reading it…',
+	'social.more':         'Show older',
+	'social.count.one':    '{n} proposal',
+	'social.count.other':  '{n} proposals',
+	'social.by':           'from {who}',
+	'social.said_n.one':   '{n} reply',
+	'social.said_n.other': '{n} replies',
+	'social.built_on':     'written on build {build}',
+	'social.closed_by':    'closed by mark {mark}',
+	'social.move_floor':   'A note follows its content across a file boundary only when the change is recognised as a move, and the floor for that is 64 bytes. Cut less than that from one file into another and the history holds a deletion and an insertion, so a note anchored there honestly reports its content deleted. The note is right and the history is right.',
+	'social.state_open':   'Open',
 	// The forge calls this state `accepted`; the panel has always called it
 	// Being done, and the eight locales already hold that phrase.
-	'improve.state_taken':  'Being done',
-	'improve.state_done':   'Done',
-	'improve.state_declined': 'Declined',
-	'improve.tally':        '{yes} for, {no} against',
-	'improve.do':           'Do this',
-	'improve.not':          'Not this',
-	'improve.vote_novoice': 'Set a voice to vote on this.',
-	'improve.vote_off':     'Press again to take your vote back off.',
-	'improve.reply':        'Say it',
-	'improve.reply_ph':     'Say something about this proposal.',
-	'improve.reply_help':   'Send exactly what is in this box. Nothing else goes with it.',
+	'social.state_taken':  'Being done',
+	'social.state_done':   'Done',
+	'social.state_declined': 'Declined',
+	'social.tally':        '{yes} for, {no} against',
+	'social.do':           'Do this',
+	'social.not':          'Not this',
+	'social.vote_novoice': 'Set a voice to vote on this.',
+	'social.vote_off':     'Press again to take your vote back off.',
+	'social.reply':        'Say it',
+	'social.reply_ph':     'Say something about this proposal.',
+	'social.reply_help':   'Send exactly what is in this box. Nothing else goes with it.',
 
 	// What the forge refused, said in words. None of them names which allowance
 	// ran out: a limit that reports its own state is one somebody can pace
 	// against, and a vote and a proposal draw on different budgets.
 	//
-	// TRANSLATORS — `improve.err_absent` is a privacy rule, not a wording
+	// TRANSLATORS — `social.err_absent` is a privacy rule, not a wording
 	// preference. The forge answers `absent` for BOTH "no such repository" and
 	// "this repository is private", deliberately and permanently, because any
 	// token, status or timing that separated them would republish exactly what a
@@ -2751,21 +3444,71 @@
 	// both cases: "there is no such repository" is false when it is private, and
 	// "this repository is private" leaks. Say only that it is not available to
 	// you. See dev/IMPROVE_CONTRACT.md §7 (and the forge contract §3.1).
-	'improve.err_absent':    'This repository is not available to you.',
-	'improve.err_unvoiced':  'The forge was given no voice, so it refused.',
-	'improve.err_unknown':   'The forge does not recognise your voice. Set it again from the line the forge printed for you.',
-	'improve.err_unpermitted': 'Your voice may not do that here.',
-	'improve.err_throttled': 'Too many requests just now. Wait a little, then try again.',
-	'improve.err_throttled_address': 'Too many requests from this address just now. Wait a little, then try again.',
-	'improve.err_throttled_failing': 'Too many failing requests just now. Wait a little, then try again.',
-	'improve.err_malformed': 'The forge could not read what Daimond asked it. That is a fault in Daimond, not in what you wrote.',
-	'improve.err_no_proposal': 'There is no such proposal here.',
-	'improve.err_unsupported': 'The forge does not answer that.',
-	'improve.err_internal':  'Something went wrong at the forge. This is not your fault.',
-	'improve.err_gateway':   'Daimond could not reach the forge just now.',
-	'improve.err_session':   'Daimond is not signed in just now, so it could not reach the forge.',
-	'improve.err_toolong':   'That is longer than the forge accepts. Shorten it, or send it in two.',
-	'improve.err_offline':   'Nothing could be sent just now.',
+	'social.err_absent':    'This repository is not available to you.',
+	'social.err_unvoiced':  'The forge was given no voice, so it refused.',
+	'social.err_unknown':   'The forge does not recognise your voice. Set it again from the line the forge printed for you.',
+	'social.err_unpermitted': 'Your voice may not do that here.',
+	'social.err_throttled': 'Too many requests just now. Wait a little, then try again.',
+	'social.err_throttled_address': 'Too many requests from this address just now. Wait a little, then try again.',
+	'social.err_throttled_failing': 'Too many failing requests just now. Wait a little, then try again.',
+	'social.err_malformed': 'The forge could not read what Daimond asked it. That is a fault in Daimond, not in what you wrote.',
+	'social.err_no_proposal': 'There is no such proposal here.',
+	'social.err_unsupported': 'The forge does not answer that.',
+	'social.err_internal':  'Something went wrong at the forge. This is not your fault.',
+	'social.err_gateway':   'Daimond could not reach the forge just now.',
+	'social.err_session':   'Daimond is not signed in just now, so it could not reach the forge.',
+	'social.err_toolong':   'That is longer than the forge accepts. Shorten it, or send it in two.',
+	'social.err_offline':   'Nothing could be sent just now.',
+
+	// ── A reference, drawn as a chip ───────────────────────────
+	//
+	// Four things a message may point at: a proposal, a build, a panel and a
+	// guide page. THE READER RESOLVES IT. What travels is a kind, an id and the
+	// sender's own description, and that description is drawn only when the
+	// resolution fails -- as plain text, said to be the sender's words. A title
+	// taken from the sender and drawn as though it were a forge record is a lie
+	// waiting to happen and a place to inject markup.
+	//
+	// i18n-family: ref.kind_ = proposal build panel guide
+	'ref.kind_proposal': 'Proposal',
+	'ref.kind_build':    'Build',
+	'ref.kind_panel':    'Panel',
+	'ref.kind_guide':    'Guide',
+	'ref.proposal':      'Proposal #{n}',
+	'ref.build':         'Build {id}',
+	'ref.panel':         'The {name} panel',
+	'ref.guide':         'Guide: {page}',
+	'ref.open_proposal': 'Open the proposal',
+	'ref.open_build':    'Open the release note',
+	'ref.open_panel':    'Open it',
+	'ref.open_guide':    'Open the page',
+	'ref.expand':        'Show what this is',
+	'ref.reading':       'Reading it…',
+	// Not "not found". A signed-out reader is refused before the forge is asked,
+	// so nothing is known about whether the thing exists -- and saying it does
+	// not would be the panel inventing an answer it was never given.
+	'ref.signin':        'Sign in to open this.',
+	// The sender's own words, said to be the sender's own words.
+	'ref.said':          'Described as: {text}',
+	'ref.unopenable':    'There is no opening this here.',
+	'ref.said_n.one':    '{n} comment, public',
+	'ref.said_n.other':  '{n} comments, public',
+	'ref.build_here':    'This is the build you are on.',
+	'ref.build_other':   'You are on build {id}.',
+	'ref.build_update':  'Update to it',
+
+	// ── The dock count badge ───────────────────────────────────
+	// One number on a dock chip, and the whole of what this app does to say
+	// something arrived while you were elsewhere. Never a zero: a badge showing
+	// 0 is a mark that has to be read before it can be ignored.
+	'dock.unseen.one':   '{n} unread',
+	'dock.unseen.other': '{n} unread',
+
+	// ── The sealing key, and the identity that holds it ────────
+	// js/identity.js has named this key since the sealing key landed and this
+	// table never had it, so every reader in every language got the English by
+	// fallback and nothing said so.
+	'identity.err_no_sealing_key': 'This device has no sealing key, so it cannot open a sealed message. Unlock the identity once and one will be made.',
 
 	'trash.nothing': 'Nothing has been deleted.',
 	'trash.kept_days': 'Kept for {days} days, then destroyed.',
@@ -2805,6 +3548,7 @@
 	// ── The Terms and the Privacy Policy, in the app ───────────
 	// js/legal.js puts both documents in Daimond's own Web panel rather than
 	// handing the reader to another website. See www/guide/legal/.
+	// i18n-indirect: legal.js d.key = legal.terms legal.privacy
 	'legal.terms':      'Terms of Service',
 	'legal.privacy':    'Privacy Policy',
 	'legal.draft_note': 'In force from 13 August 2026. Points marked [TO CONFIRM] are still being settled.',

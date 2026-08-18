@@ -214,6 +214,38 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 .spend-actions { display: flex; align-items: center; gap: 6px; }
 .railhead > span:first-child { flex: 1; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; }
 .rail-count { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; }
+
+/* ── The dock count badge ───────────────────────────────────────────
+   How many things arrived at a panel while you were looking somewhere else.
+   `.rail-count` above says what a panel HOLDS, quietly, while you are already
+   reading it; this says something is WAITING, on the chip that opens it, and
+   has to be seen from across the row. So it is filled rather than muted.
+
+   `--accent-text` on `--accent-soft` and not `--accent` on it: this is 10px
+   text, small text needs 4.5, and the plain accent manages 3.6 on seven of the
+   eleven palettes. The same pairing the phone bar's own selected tab uses, and
+   for the same measurement.
+
+   It is never drawn holding a zero: the count that owns it writes an empty
+   string instead, and hides the element as well, so a count that has gone back
+   to nothing leaves no mark and no gap. */
+.dock-count {
+	display: inline-block;
+	min-width: 1.15em;
+	padding: 0 4px;
+	border-radius: 999px;
+	background: var(--accent-soft);
+	color: var(--accent-text);
+	border: 1px solid var(--accent);
+	font-family: var(--font-mono);
+	font-size: var(--fs-3xs);
+	line-height: 1.4;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+.dock-count[hidden] { display: none; }
+/* On a top-bar chip it follows the label on the same line. */
+.ptag .dock-count { margin-left: 5px; }
 .addbtn { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1; }
 .addbtn:hover { color: var(--text-primary); }
 .addbtn:disabled { opacity: 0.4; cursor: default; }
@@ -1625,6 +1657,14 @@ span.arte-open { cursor: default; }
    the whole line is on the `title` for anyone who wants it. */
 .tile-preview { margin-top: 3px; font-size: var(--fs-2xs); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-box.active .tile-preview { color: inherit; opacity: 0.7; }
+/* NOT a preview: a chat whose transcript is on another device and has not
+   arrived. It sits in the preview's place and inherited the preview's paint, so
+   the one tile a reader most needs told apart from an empty chat was drawn
+   exactly like the first line of a full one. Italic and one notch quieter, and
+   the app's own "waiting" colour rather than a fourth grey — it is a state, not
+   a quotation, and nothing about it is the user's words. */
+.tile-waiting { font-style: italic; opacity: 0.85; }
+.session-box.active .tile-waiting { color: inherit; opacity: 0.6; }
 /* The day heading above a run of tiles. Furniture, not a control: it is the
    coarse half of a chat's identity, so it is set small and quiet and the tile
    underneath carries the part that varies. */

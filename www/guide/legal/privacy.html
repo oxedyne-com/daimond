@@ -293,10 +293,28 @@
 					<td>Passkey bundle: until you remove it. Pairing bundle: minutes, then gone once redeemed</td>
 				</tr>
 				<tr>
+					<td>Message ciphertext (sealed; we cannot open it)</td>
+					<td>To hold a message until one of the recipient's devices has collected it</td>
+					<td>No</td>
+					<td>Until it is collected, or 30 days, whichever is first</td>
+				</tr>
+				<tr>
+					<td>Message metadata: who wrote to whom, when, and how large. <strong>Readable by us.</strong></td>
+					<td>To route the message, to enforce a block, and to tell a sender that a message of theirs was never collected</td>
+					<td>No</td>
+					<td>90 days, and then only a counter per account survives</td>
+				</tr>
+				<tr>
+					<td>The email doorbell: we tell your mail provider, at most once a day, that something is waiting. No sender, no subject, no content.</td>
+					<td>To let you know a message arrived while Daimond was closed, since we send no push notifications at all</td>
+					<td>No</td>
+					<td>Not retained beyond the record of whether the last one was sent</td>
+				</tr>
+				<tr>
 					<td>Beta usage counts (whole numbers, no text), only if you agreed</td>
 					<td>To see whether the app works, and where it fails, during the closed test</td>
 					<td>No</td>
-					<td>180 days, or until the test ends, or until you ask us to delete them <span class="tbc">[TO CONFIRM: the sweep is not built yet]</span></td>
+					<td>180 days, or until the test ends, or until you ask us to delete them</td>
 				</tr>
 				<tr>
 					<td>Operational logs, which may include IP address, timestamps and request metadata</td>
@@ -400,7 +418,11 @@
 		<li><strong>Sealed sync data and encrypted file data.</strong> This is <strong>stored, not relayed</strong>. Your sync blob is kept until a device replaces it, you reset your sync, or you delete the account. The encrypted file data behind it is kept while your devices still refer to it: when a device tells the gateway which pieces are still live, the pieces no longer referred to are deleted.</li>
 		<li id="storage-lapse"><strong>Stored file data when credits run out.</strong> Storage above the free allowance is metered over time. If your balance will not cover it, the metering pauses and a grace period begins; you can still read everything you have stored, and nothing is back-charged. If the grace period passes without the balance being restored, the stored data above the free allowance <strong>is deleted</strong>. You will be told in the app before that happens, while there is still time to top up or to bring those files down onto your own device. <span class="tbc">[TO CONFIRM: grace period length, and how far ahead of deletion the notice appears]</span></li>
 		<li><strong>Credit ledger, licence and payment metadata.</strong> Kept for as long as the account is active and thereafter for the period tax and accounting law requires. <span class="tbc">[TO CONFIRM: period]</span></li>
-		<li><strong>Beta usage counts.</strong> Deleted 180 days after they arrive, and the whole set is deleted when the closed test ends. Turning the counts off stops new ones; it does not delete the ones already sent, which the expiry does. <span class="tbc">[TO CONFIRM: the sweep that enforces the 180 days is not yet built; until it is, deletion is by hand.]</span></li>
+		<li><strong>Messages.</strong> A message is sealed on the sending device and we cannot open it. We hold it until one of the recipient's devices has collected it and folded it into that account's own sealed data, and if nobody collects it we drop it after 30 days. <strong>What is left behind then is a marker, not the message</strong>: enough for a returning device to say "four messages expired before this device collected them" and not enough to read a word of them. The sender is told, once, that a message of theirs was never collected. <strong>We never tell anybody that a message was read</strong> &mdash; that is a fact about the recipient, and it is not ours to send.</li>
+		<li><strong>Message metadata.</strong> Who wrote to whom, when, and how large, which we can read because we route it. Kept for 90 days and then compacted away, leaving one number per account: enough to tell a device that has been away longer than that "anything sent to you before this date is gone", and not enough to say how much or from whom.</li>
+		<li><strong>The email doorbell.</strong> If a message arrives while you have no Daimond open, we may send one email to the address on your account saying that something is waiting. It carries no sender, no subject, no count and no link to any particular message. At most one in any 24 hours, so what your mail provider learns is about one bit a day: that a day was one on which something arrived. The first message of each such day is the one whose timing is visible, and that is the residual we cannot remove without making the doorbell slower than a support channel should be. <strong>It is on by default while the closed test runs</strong> &mdash; those accounts applied by email and were invited by email, and with browser notifications declined it is the only thing a closed tab hears. Daimond tells you so once, the first time you open it, and you can turn it off at any time: the cog beside your name, then the row called &ldquo;Email doorbell&rdquo;. Turning it off also stops one that is already waiting to go. That notice cannot cover one case: if somebody writes to you before you have ever opened Daimond, the email reaches you before the notice does.</li>
+		<li><strong>What we cannot do about a message, in either direction.</strong> We cannot read one, and we cannot recover one. If you lose your passphrase, the messages in your own sealed data go with everything else wrapped under it, and we have no copy to give you. If a device of yours was linked before it was given your message key, it will list messages it cannot open and tell you to unlock on a device that has it or to link that one again &mdash; <strong>those messages are not lost</strong>. And a message sealed to a key your account no longer holds cannot be opened by us or by you; the sender can send it again. <strong>This protects you against a leak of what we store and against a demand for it. It is not a protection against a malicious build of the app itself</strong> &mdash; what makes that claim checkable is the sealed build and its published record, at <code>verify/transparency.jsonl</code>.</li>
+		<li><strong>Beta usage counts.</strong> Deleted 180 days after they arrive, and the whole set is deleted when the closed test ends. Turning the counts off stops new ones; it does not delete the ones already sent, which the expiry does. The sweep that enforces the 180 days runs on the gateway's own schedule and reports what it removed.</li>
 		<li><strong>Operational logs, including any IP addresses.</strong> Kept for a short period, then deleted. We recommend keeping this short and truncating IP addresses. <span class="tbc">[TO CONFIRM: exact period and whether IPs are truncated]</span></li>
 	</ul>
 

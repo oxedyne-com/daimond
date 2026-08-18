@@ -973,6 +973,71 @@ pub fn generate_session_id() -> String {
 
 
 // ┌───────────────────────────────────────────────────────────────┐
+// │ The Diamond pack                                               │
+// └───────────────────────────────────────────────────────────────┘
+
+/// The JSON a whole Diamond travels in, between two devices and inside a share.
+///
+/// # A file that is not text used to be destroyed on the way out
+///
+/// Every file went through `String::from_utf8_lossy`, which is not a lenient decoding but a
+/// REPLACEMENT: each byte sequence that is not valid UTF-8 becomes U+FFFD and the original bytes are
+/// gone.  A PNG came out the far end as a PNG-shaped ruin of about the right size, so a share could
+/// not carry a picture in either direction and neither end reported a fault.  That is why the
+/// encoding lives here, target-agnostic, where a test can put real bytes in and compare what comes
+/// out -- `wasm::diamond` is compiled only for the browser and nothing native could reach it.
+///
+/// # Two maps, because of what an older build does with a pack it does not understand
+///
+/// `import_diamond` reads `files` and ignores what it does not know, so a device that has not been
+/// updated lays every text file down exactly as before and simply does not receive the pictures --
+/// which is what it does today, minus the corruption.  A scheme that tagged entries inside `files`
+/// would have had the old importer write the base64 TEXT into the file.
+///
+/// # Arguments
+/// * `id` - The Diamond's id, which becomes a directory name on arrival.
+/// * `touched` - When anything under it last changed, repeated at the top level so a carrier can
+///   tell two copies apart without opening a file inside the pack.
+/// * `files` - Every file under the Diamond's directory, by its path relative to it.
+pub fn pack_diamond(id: &str, touched: u64, files: &[(String, Vec<u8>)]) -> String {
+    // Sorted, so two packs of an unchanged Diamond are the same bytes and a caller comparing states
+    // sees no change where there is none.
+    let mut sorted: Vec<&(String, Vec<u8>)> = files.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut text = Vec::new();
+    let mut binary = Vec::new();
+    for (path, bytes) in sorted {
+        match std::str::from_utf8(bytes) {
+            // Valid UTF-8 round-trips through JSON exactly, so it goes as itself and a pack stays
+            // readable by a person.
+            Ok(s)  => text.push(fmt!("\"{}\":\"{}\"",
+                crate::llm::json_escape(path), crate::llm::json_escape(s))),
+            Err(_) => binary.push(fmt!("\"{}\":\"{}\"",
+                crate::llm::json_escape(path), oxedyne_fe2o3_text::base64::encode(bytes))),
+        }
+    }
+    fmt!(
+        "{{\"id\":\"{}\",\"touched\":{},\"files\":{{{}}},\"{}\":{{{}}}}}",
+        crate::llm::json_escape(id), touched, text.join(","), PACK_BINARY, binary.join(","),
+    )
+}
+
+/// The key the files that are not text travel under.
+pub const PACK_BINARY: &str = "binary";
+
+/// The bytes of one file from a pack's `binary` map.
+///
+/// One function, so the browser's importer and the test that proves a picture survives are decoding
+/// by the same rule.  A value that is not base64 is refused rather than written as whatever decoded:
+/// half a picture over a good one is the corruption this exists to remove, and it would arrive
+/// looking like a successful sync.
+pub fn unpack_binary(path: &str, body: &str) -> Outcome<Vec<u8>> {
+    Ok(res!(oxedyne_fe2o3_text::base64::decode(body).map_err(|e| err!(e,
+        "The file '{}' in a Diamond export is not valid base64, so its bytes cannot be recovered.",
+        path; Invalid, Input, Decode))))
+}
+
+// ┌───────────────────────────────────────────────────────────────┐
 // │ Tests                                                          │
 // └───────────────────────────────────────────────────────────────┘
 
@@ -989,6 +1054,69 @@ mod content_tests {
         oxedyne_fe2o3_text::base64::decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLv\
              AAAAAElFTkSuQmCC").expect("the documented base64 must decode")
+    }
+
+    /// A picture put into a Diamond pack comes out of it BYTE FOR BYTE.
+    ///
+    /// This is the test the corruption escaped for want of. `export_diamond` ran every file through
+    /// `String::from_utf8_lossy`, which replaces each byte sequence that is not valid UTF-8 with
+    /// U+FFFD -- so a PNG arrived at the far end at roughly the right size, shaped like a PNG, and
+    /// would not open. Neither end reported a fault, because as far as either could see the file had
+    /// travelled. Run against that code this fails on the very first assertion: the pack's `files`
+    /// map holds the picture's path and its bytes are not the picture's.
+    #[test]
+    fn test_a_picture_survives_a_diamond_pack() {
+        let png = doc_png();
+        assert!(std::str::from_utf8(&png).is_err(), "the fixture has to be bytes that are not text");
+        let files = vec![
+            // No braces in it: the files map is found below by brace matching, and a `}` inside a
+            // string value would cut the search short and make the check that follows vacuous.
+            ("notes.txt".to_string(), b"a \"quoted\" word\nand a \\ backslash\n".to_vec()),
+            ("img/one.png".to_string(), png.clone()),
+        ];
+        let pack = pack_diamond("d1", 42, &files);
+
+        // The picture is NOT in `files`, because `files` is the text map and an older importer
+        // would write whatever is there straight to disk. Located by brace matching rather than by
+        // `extract_json_string`, which reads a STRING value and would answer nothing for an object
+        // -- and a check that can only pass is not a check.
+        let at = pack.find("\"files\":{").expect("the pack has no files map");
+        let end = pack[at..].find('}').expect("the files map does not close") + at;
+        let text_map = &pack[at..end];
+        assert!(text_map.contains("notes.txt"),
+            "the text file is not in the text map, so this test is looking in the wrong place: {}",
+            text_map);
+        assert!(!text_map.contains("img/one.png"),
+            "a binary file was put in the text map, where an older build would write it as text");
+        assert!(pack.contains(&fmt!("\"{}\":{{\"img/one.png\"", PACK_BINARY)),
+            "the picture is not in the binary map: {}", pack);
+
+        // And it IS recoverable, exactly.
+        let body = crate::llm::extract_json_string(&pack, "img/one.png")
+            .expect("the pack does not carry the picture at all");
+        let back = unpack_binary("img/one.png", &body).expect("the picture's base64 must decode");
+        assert_eq!(back, png, "the picture did not survive the round trip");
+
+        // The text file still travels as text, and its escaping survives.
+        let note = crate::llm::extract_json_string(&pack, "notes.txt")
+            .expect("the pack does not carry the text file");
+        assert_eq!(note.as_bytes(), files[0].1.as_slice(),
+            "a text file's own quotes did not survive the pack");
+    }
+
+    /// The pack is the same bytes twice over, so a carrier comparing states sees no change where
+    /// there is none.
+    #[test]
+    fn test_a_pack_of_an_unchanged_diamond_is_the_same_bytes() {
+        let files = vec![
+            ("b.txt".to_string(), b"second".to_vec()),
+            ("a.png".to_string(), vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00]),
+        ];
+        let one = pack_diamond("d1", 7, &files);
+        let mut other = files.clone();
+        other.reverse();
+        assert_eq!(one, pack_diamond("d1", 7, &other),
+            "the order the directory walk happened to return changed the pack");
     }
 
     /// Each format is recognised from its own header, and a RIFF container that is not a WebP is

@@ -5,9 +5,16 @@
 // variable and never reaches it — so every one of these presses the control the
 // way a hand does and then asks what changed on the page.
 //
-//   §1 Pending      the tick on a draft tile opened the composer and dropped the
-//                   tile in the same breath, so a composer closed without sending
-//                   lost the action with nothing left to say it was ever owed.
+//   §1 Pending      REWRITTEN 2026-08-16. It used to drive the draft tile: the
+//                   tick opened the composer and dropped the tile in the same
+//                   breath, so a composer closed without sending lost the action.
+//                   That whole kind was DELETED on 2026-08-15 for having no
+//                   producer -- see `dev/REACHABILITY.md` Finding 1 -- and nine
+//                   checks here drove it. Keeping a branch alive because a
+//                   verifier drives it is the same error as calling a panel done
+//                   because a verifier called it, only inverted. So §1 now drives
+//                   what is left: the one kind that has a producer, and the door
+//                   that refuses the rest.
 //   §2 Agents       a run dispatched from a chat carries a chip whose comment says
 //                   it filters. The listener was `if (run.diamondId)`, which a chat
 //                   run does not have, so every chat chip was inert.
@@ -25,21 +32,19 @@
 //
 //   bash dev/world.sh 3 --up && eval "$(bash dev/world.sh 3 --env)"
 //   LANE4_RED=1 node dev/verify_lane4.mjs      # every fixed check must FAIL
-//   LANE4_NAIVE=1 node dev/verify_lane4.mjs    # §1's LAST check, and only that one
 //   node dev/verify_lane4.mjs                  # and all of them pass here
+//
+// `LANE4_NAIVE` went with §1's rewrite. It served a `Pending.sweep` cut down to
+// decide on `read_file` alone, and there is no `sweep` any more: with the draft
+// kind gone its first test kept every item, so it walked the list and could not
+// change it. A mode that reproduces a defect in deleted code cannot go red for
+// the right reason, and a red nobody can trigger is a red nobody will see.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { open, shot, errors } from './harness.mjs';
 
 const RED = !!process.env.LANE4_RED;
-// A second broken build, and a much narrower one: the sweep as it was first
-// written, deciding on `read_file` alone. Every §1 check but ONE passes against
-// it, and the one that fails is the check that says a store which cannot answer
-// must not be read as "everything is done". Without this the safe direction was
-// only ever proved against code that had no sweep at all — which is a check
-// passing for the wrong reason, and there have been six of those here.
-const NAIVE = !!process.env.LANE4_NAIVE;
 const OLD = process.env.LANE4_OLD
 	|| path.join(os.homedir(), '.cache/daimond/lane4-head');
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -51,35 +56,9 @@ const check = (name, pass, detail) => {
 };
 const head = (n) => console.log('\n── ' + n + ' ' + '─'.repeat(Math.max(0, 60 - n.length)));
 
-/// The shipped `Pending.sweep`, rewritten to decide on `read_file` alone.
-///
-/// Cut from the live file at run time rather than kept as a copy, so it cannot
-/// drift into being a test of something nobody ships.
-const naiveBuild = () => {
-	const src = fs.readFileSync(path.join(HERE, '..', 'www/js/daimond.js'), 'utf8');
-	const from = '\t\t\t\tvar path = it.files[0];';
-	const to   = 'if (!answered || listing.indexOf(name) !== -1) live.push(it);';
-	const a = src.indexOf(from), b = src.indexOf(to);
-	if (a < 0 || b < 0) throw new Error('the sweep no longer looks like this; fix naiveBuild');
-	return src.slice(0, a) + [
-		'\t\t\t\tvar gone = false;',
-		'\t\t\t\ttry {',
-		'\t\t\t\t\tvar raw = await Wasm.read_file(it.files[0]);',
-		'\t\t\t\t\tgone = (typeof raw !== \'string\') || /^\\s*Error\\b/i.test(raw);',
-		'\t\t\t\t} catch (e) { gone = true; }',
-		'\t\t\t\tif (!gone) live.push(it);',
-	].join('\n') + src.slice(b + to.length);
-};
-
 // A broken build, served in place of the fixed one. Only for a red run: a green
 // run touches nothing, and neither writes to the tree.
 const serveOld = async (page) => {
-	if (NAIVE) {
-		const body = naiveBuild();
-		await page.route('**/js/daimond.js', (route) =>
-			route.fulfill({ status: 200, contentType: 'application/javascript', body }));
-		return;
-	}
 	if (!RED) return;
 	for (const f of ['daimond.js', 'graph.js']) {
 		const body = fs.readFileSync(path.join(OLD, f), 'utf8');
@@ -122,38 +101,26 @@ const app = (fn, args = []) => p.evaluate(async ({ fn, args }) => {
 	return await a[fn](...args);
 }, { fn, args });
 
-// ══ §1 Pending: an abandoned composer must not lose the action ═════════════
+// ══ §1 Pending: one kind has a producer, and the door refuses the rest ═════
+//
+// The panel's `draft` and `note` kinds went on 2026-08-15 for never having had a
+// producer, and with them the nine checks that used to stand here. What is left
+// is `consent`, raised by `parkConsent` when a dispatched worker asks a question
+// nobody is in front of the tab to answer, and a door that refuses any other
+// kind rather than drawing a tile whose tick would grant a permission to nobody.
+//
+// Every refusal below is paired with a tile that DID draw, in the same list, in
+// the same breath. Alone, "no tile appeared" passes on a panel that renders
+// nothing at all, on a renamed `#pending-list`, and on a build where `add`
+// refuses everything -- three ways of being right for the wrong reason.
 await section('§1 Pending', async () => {
 
-// A mailbox, so the composer the tick opens is the real one rather than a
-// silent refusal. Written where mail.js reads it and re-read through the
-// module's own loader, so nothing here reaches past the panel's front door.
-const ADDR = 'ada@example.test';
-const DRAFT = `mail/${ADDR}/drafts/quote-to-ada.eml`;
-await p.evaluate((addr) => {
-	localStorage.setItem('daimond-mail', JSON.stringify({
-		accounts: [{
-			address: addr, host: 'imap.example.test', port: 993,
-			smtpHost: 'smtp.example.test', smtpPort: 587,
-			user: addr, pass: '', folder: 'INBOX', lastSync: 0, touched: Date.now(),
-		}],
-		sel: addr,
-	}));
-	window.DaimondMail.reload();
-}, ADDR);
-
-await p.evaluate(async ({ path, addr }) => {
-	const m = await import('/pkg/oxedyne_daimond.js');
-	await m.write_file(path,
-		`From: ${addr}\r\nTo: ada@buyer.test\r\nSubject: The quote you asked for\r\n`
-		+ `Date: Tue, 12 Aug 2026 09:00:00 +0000\r\n\r\nHere is the quote.\r\n`);
-}, { path: DRAFT, addr: ADDR });
-
-const HEADLINE = 'Send the quote to Ada';
-await p.evaluate(({ headline, file }) => window.DaimondPendingView.add({
-	headline, detail: 'It is drafted and waiting on you.',
-	kind: 'draft', files: [file], priority: 'high', diamondName: 'Pricing',
-}), { headline: HEADLINE, file: DRAFT });
+await p.evaluate(() => {
+	try { localStorage.removeItem('daimond-pending'); } catch (e) { /* nothing stored */ }
+	if (window.DaimondPendingView) window.DaimondPendingView.items()
+		.forEach((it) => window.DaimondPendingView.drop(it.id));
+});
+await p.evaluate(() => window.DaimondPanels.show('pending'));
 await p.waitForTimeout(500);
 
 /// The Pending tile carrying one headline, as the page has it now.
@@ -161,95 +128,82 @@ const pendTile = (headline) => p.evaluate((h) => {
 	const card = [...document.querySelectorAll('#pending-list .pend-card')]
 		.find((c) => ((c.querySelector('.pend-line') || {}).textContent || '').trim() === h);
 	if (!card) return null;
+	const go = card.querySelector('.pend-go');
 	return {
-		id:     card.dataset.id,
-		opened: !!card.querySelector('.pend-opened'),
-		note:   (card.querySelector('.pend-opened') || {}).textContent || '',
+		id:      card.dataset.id,
+		note:    (card.querySelector('.pend-consent') || {}).textContent || '',
+		goLive:  !!go && !go.disabled,
+		goTitle: go ? (go.title || '') : '',
 	};
 }, headline);
 
-check('the tile for the draft is on the panel, named by what it would do',
-	!!(await pendTile(HEADLINE)), JSON.stringify(await pendTile(HEADLINE)));
+const cards = () => p.evaluate(() =>
+	[...document.querySelectorAll('#pending-list .pend-card')].length);
+const said = (key) => p.evaluate((k) =>
+	window.DaimondI18n ? window.DaimondI18n.t(k) : '', key);
 
-// The tick, pressed the way a hand presses it.
-await p.evaluate((h) => {
-	const card = [...document.querySelectorAll('#pending-list .pend-card')]
-		.find((c) => ((c.querySelector('.pend-line') || {}).textContent || '').trim() === h);
-	card.querySelector('.pend-go').scrollIntoView({ block: 'center' });
-}, HEADLINE);
-const goSel = '#pending-list .pend-card .pend-go';
-await p.click(goSel);
-await p.waitForTimeout(900);
+// ── A tile that IS raised, which everything below is measured against ──
+const ASK = 'An agent wants to click Accept on example.test';
+const rawId = await p.evaluate((h) => window.DaimondPendingView.add({
+	headline: h, detail: 'It asked while you were looking at something else.',
+	priority: 'high', diamondName: 'Pricing',
+}), ASK);
+await p.waitForTimeout(400);
+let tile = await pendTile(ASK);
+check('a consent tile is raised, drawn, and named by the words it was given',
+	!!rawId && !!tile && (await cards()) === 1, JSON.stringify(tile));
+check('and it says a turn is still waiting on the answer, in the catalogue\'s words',
+	!!tile && tile.note.trim() === (await said('pending.consent.waiting')).trim(),
+	tile ? tile.note : 'no tile');
+await shot(s, 'lane4-1-consent-tile');
 
-const composed = await p.evaluate(() => ({
-	shown:   !!document.getElementById('panel-compose')
-		&& getComputedStyle(document.getElementById('panel-compose')).display !== 'none',
-	subject: (document.getElementById('compose-subject') || {}).value || '',
-	to:      (document.getElementById('compose-to') || {}).value || '',
-}));
-check('the tick opens the real composer, holding THAT draft',
-	composed.shown && composed.subject === 'The quote you asked for'
-	&& composed.to === 'ada@buyer.test', JSON.stringify(composed));
-await shot(s, 'lane4-1-composer-open');
+// ── The door: a kind this panel cannot act on is refused, not drawn ──
+//
+// `draft` and `note` are the two that were deleted; `whatever` stands for the
+// next one somebody invents. A tile for any of them would carry the consent
+// tile's "still waiting" line over a turn that was never parked.
+const refused = await p.evaluate(() => ['draft', 'note', 'whatever'].map((k) => ({
+	kind: k,
+	id:   window.DaimondPendingView.add({ headline: 'Raised as ' + k, kind: k, detail: '' }),
+})));
+await p.waitForTimeout(400);
+const drewOne = await p.evaluate(() =>
+	[...document.querySelectorAll('#pending-list .pend-line')]
+		.map((n) => n.textContent.trim()).filter((x) => /^Raised as /.test(x)));
+check('a kind the panel cannot act on is refused at the door, and nothing is drawn for it',
+	refused.every((r) => r.id === null) && drewOne.length === 0 && (await cards()) === 1,
+	JSON.stringify(refused) + ' drew ' + JSON.stringify(drewOne));
 
-let tile = await pendTile(HEADLINE);
-check('and the tile is still owed, because opening a window is not sending mail',
-	!!tile, tile ? 'still listed' : 'the tile was dropped the moment the window opened');
-check('the tile says the composer has been opened, so the tick does not read as inert',
-	!!tile && tile.opened && /\S/.test(tile.note), tile ? tile.note : 'no tile');
+// ── The tick answers honestly when nothing is parked on the tile ──
+//
+// Raised from outside, so no worker is holding a turn open on it. The tick must
+// say that rather than report a permission it granted to nobody -- and it must
+// still clear the tile, because there is nothing left to answer.
+await p.click('#pending-list .pend-card .pend-go');
+await p.waitForTimeout(500);
+const toldThem = await p.evaluate(() =>
+	[...document.querySelectorAll('.daimond-toast')].map((n) => n.textContent.trim()));
+check('the tick on a tile nothing is parked on says so, rather than reporting an allow',
+	toldThem.includes((await said('pending.consent.gone')).trim())
+		&& !toldThem.includes((await said('pending.consent.allowed')).trim()),
+	JSON.stringify(toldThem));
+check('and the tile goes, because there is nothing left to answer',
+	!(await pendTile(ASK)) && (await cards()) === 0, String(await cards()));
 
-// Abandon it: the corner cross on the compose panel, which is what a hand
-// reaches for to leave a form alone.
-await p.click('#panel-compose .panel-close');
-await p.waitForTimeout(600);
-tile = await pendTile(HEADLINE);
-check('closing the composer without sending leaves the action on the list',
-	!!tile, tile ? 'still listed' : 'the action was lost with the window');
-const stillThere = await p.evaluate(async (f) => {
-	const m = await import('/pkg/oxedyne_daimond.js');
-	try { const r = await m.read_file(f); return typeof r === 'string' && !/^\s*Error\b/i.test(r); }
-	catch (e) { return false; }
-}, DRAFT);
-check('and the draft itself is untouched, so there is something left to do',
-	stillThere === true, String(stillThere));
-await shot(s, 'lane4-1-tile-survives');
+// ── A promise does not survive a reload, and the tile says which state it is in ──
+//
+// The tile is kept: "an agent asked and got no answer" is worth keeping. What
+// must not survive is the offer to say yes, because the turn it would resume
+// went with the page.
+const LATER = 'An agent wants to reach example.test';
+await p.evaluate((h) => window.DaimondPendingView.add({
+	headline: h, detail: 'Asked before the reload.', priority: 'normal',
+}), LATER);
+await p.waitForTimeout(400);
+tile = await pendTile(LATER);
+check('a second tile is raised, and its tick is live while the turn is',
+	!!tile && tile.goLive === true, JSON.stringify(tile));
 
-// Now the other half: the tile must not need tidying by hand once the draft is
-// really gone. Driven through the composer's own Discard, which is the mail
-// panel deleting the file and telling the app it did.
-await p.click(goSel);
-await p.waitForTimeout(700);
-const beforeDiscard = await pendTile(HEADLINE);
-check('a second visit finds the same tile rather than a duplicate',
-	!!beforeDiscard && beforeDiscard.id === tile.id, JSON.stringify(beforeDiscard));
-await p.click('#compose-discard');
-await p.waitForSelector('.dlg-ok', { timeout: 8000 });
-await p.click('.dlg-ok');
-await p.waitForTimeout(1200);
-const goneFile = await p.evaluate(async (f) => {
-	const m = await import('/pkg/oxedyne_daimond.js');
-	try { const r = await m.read_file(f); return !(typeof r === 'string' && !/^\s*Error\b/i.test(r)); }
-	catch (e) { return true; }
-}, DRAFT);
-check('discarding the draft removes the file', goneFile === true, String(goneFile));
-check('and the tile goes with it, unasked — the list tidies itself on the fact',
-	!(await pendTile(HEADLINE)), JSON.stringify(await pendTile(HEADLINE)));
-await shot(s, 'lane4-1-tile-cleared');
-
-// The safe direction, which is the half a check on the outcome alone would
-// miss: a store that cannot answer must not be read as "everything is done".
-// Same sweep, same hook, a path whose folder is not there at all.
-const LOST = 'Chase the invoice';
-await p.evaluate((h) => {
-	const id = window.DaimondPendingView.add({
-		headline: h, detail: '', kind: 'draft',
-		files: ['mail/nobody@nowhere.test/drafts/invoice.eml'],
-	});
-	// As though the composer had been opened on it in an earlier session.
-	const items = JSON.parse(localStorage.getItem('daimond-pending') || '[]');
-	items.forEach((x) => { if (x.id === id) x.opened = Date.now(); });
-	localStorage.setItem('daimond-pending', JSON.stringify(items));
-}, LOST);
 await p.reload({ waitUntil: 'domcontentloaded' });
 await p.waitForTimeout(1200);
 const { signInAs } = await import('./harness.mjs');
@@ -257,14 +211,28 @@ await signInAs(s, 'lane4');
 await p.waitForTimeout(2500);
 await p.evaluate(() => window.DaimondPanels.show('pending'));
 await p.waitForTimeout(1200);
-check('a draft the store cannot be asked about is KEPT, not quietly cleared',
-	!!(await pendTile(LOST)), JSON.stringify(await pendTile(LOST)));
+tile = await pendTile(LATER);
+check('the tile survives the reload, because a question that went unanswered is worth keeping',
+	!!tile, JSON.stringify(tile));
+check('but it says the agent has gone, and no longer offers a yes that could not be honoured',
+	!!tile && tile.goLive === false
+		&& tile.note.trim() === (await said('pending.consent.expired')).trim()
+		&& tile.goTitle.trim() === (await said('pending.consent.expired')).trim(),
+	tile ? `live: ${tile.goLive}, said: ${tile.note.slice(0, 60)}` : 'no tile');
+await shot(s, 'lane4-1-expired-after-reload');
+
+// ── And the ✕, which is the answer that always works ──
 await p.evaluate((h) => {
 	const card = [...document.querySelectorAll('#pending-list .pend-card')]
 		.find((c) => ((c.querySelector('.pend-line') || {}).textContent || '').trim() === h);
 	if (card) card.querySelector('.pend-no').click();
-}, LOST);
+}, LATER);
 await p.waitForTimeout(400);
+const emptied = await p.evaluate(() =>
+	(document.getElementById('pending-list') || {}).textContent || '');
+check('dropping the last tile empties the list, and the panel says so in words',
+	(await cards()) === 0 && emptied.trim() === (await said('pending.empty')).trim(),
+	emptied.trim().slice(0, 80));
 });
 
 // ══ §2 Agents: the chat chip filters ═══════════════════════════════════════
@@ -524,7 +492,7 @@ await p.click('#link-cancel');
 });
 
 const errs = errors ? errors(s) : (s.errs || []);
-console.log('\n' + (RED ? 'RED RUN (HEAD code) ' : NAIVE ? 'NAIVE-SWEEP RUN ' : 'GREEN RUN ')
+console.log('\n' + (RED ? 'RED RUN (HEAD code) ' : 'GREEN RUN ')
 	+ ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) console.log('failed:\n  ' + bad.join('\n  '));
 if (errs && errs.length) console.log('console errors:\n  ' + errs.slice(0, 8).join('\n  '));

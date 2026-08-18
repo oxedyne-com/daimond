@@ -1,9 +1,9 @@
 // verify_passcode.mjs — the beta passcode, proved at the network rather than in
 // the source.
 //
-// What this file is defending is a one-time credential that gifts a five-year
-// Pro licence -- the same term a bought one runs for -- and opens the only
-// endpoint on this gateway that receives anything about how a user behaves.
+// What this file is defending is a one-time credential that opens the only
+// endpoint on this gateway that receives anything about how a user behaves, and
+// that MAY gift a five-year Pro licence -- the same term a bought one runs for.
 // Every one of those words is a property somebody could get wrong quietly:
 //
 //   * "one-time"  — a code that redeems twice gives the beta away.
@@ -13,6 +13,10 @@
 //     nobody consented to.
 //   * "capped"     — this is the first unauthenticated write on a box holding a
 //     live Stripe key, and there is no other rate limiting in the gateway.
+//   * "may gift"   — since 2026-08-17 a code grants the FREE tier unless the
+//     operator asks for Pro. Both tiers are minted and redeemed in this run,
+//     because a file that only ever minted one of them would pass whichever way
+//     the flag was wired, and the flag had no caller at all for half a day.
 //
 // ── How each check is shown red ─────────────────────────────────────
 //
@@ -63,11 +67,18 @@ const ROOT = path.join(HERE, '..');
 
 // ── A gateway of its own, on a port of its own ──────────────────────
 //
-// Six lanes are building this app at once and the gateway takes a single
-// exclusive hold on `:9002` and on `gateway/o3db`. A verifier that insisted on
-// both would be a verifier that can only run when nobody else is working, and
-// the last time that was the arrangement the answer was to kill whatever held
-// the port — which is somebody else's half-finished run.
+// Six lanes are building this app at once, and one gateway at a time may hold
+// `:9002` — a port is exclusive and that part is real. `gateway/o3db` is NOT:
+// there is no cross-process locking in o3db, data files are opened for append
+// and a live file number is claimed with `create_new`, so a second process
+// opening the same store is refused nothing. What it would get is its own
+// in-memory index and its own garbage collector over the same files, which is a
+// worse arrangement than a refusal because nothing announces it.
+//
+// Either way a verifier that insisted on the shared port and the shared store
+// would be a verifier that can only run when nobody else is working, and the
+// last time that was the arrangement the answer was to kill whatever held the
+// port — which is somebody else's half-finished run.
 //
 // So this builds a working directory of its own: the deployed `app.jdat` with
 // one number changed, the real signing keys symlinked in (a gifted Pro licence
@@ -310,9 +321,15 @@ async function waitFor(fn, ms = 20000, gap = 250) {
 		JSON.stringify(who.j));
 
 	/// Mint a passcode from the console, as the operator does.
-	async function mint(label, wave) {
+	///
+	/// `pro` is the tier, and it is passed exactly as the panel's own pulldown
+	/// passes it: omitted or false mints the free tier, true asks for Pro. A code
+	/// minted here with no third argument is therefore the ORDINARY code an
+	/// operator hands out, which is what makes the free checks below worth
+	/// anything.
+	async function mint(label, wave, pro) {
 		const r = await call(boss.jar, 'POST', '/api/admin?view=passcodes',
-			{ label, wave: wave || 1 });
+			{ label, wave: wave || 1, pro: pro === true });
 		return r;
 	}
 	/// Set one of the gateway's own knobs, which is how the cap is driven.
@@ -361,7 +378,11 @@ async function waitFor(fn, ms = 20000, gap = 250) {
 	check('a passcode with nothing to say whose it is refused',
 		noLabel.status === 400, 'status ' + noLabel.status);
 
-	const minted = await mint('Sam, Perth meetup', 2);
+	// Sam's code is a PRO one, asked for in words, because everything below it
+	// tests what a gifted licence does. The free tier -- what an operator gets
+	// when they say nothing -- is minted and redeemed in its own section further
+	// down, against a device of its own.
+	const minted = await mint('Sam, Perth meetup', 2, true);
 	const code = minted.j && minted.j.passcode && minted.j.passcode.code;
 	check('an owner mints a labelled passcode',
 		minted.status === 200 && !!code, 'status ' + minted.status + ' · ' + code);
@@ -370,6 +391,12 @@ async function waitFor(fn, ms = 20000, gap = 250) {
 	check('the label the operator typed is what comes back',
 		!!minted.j && minted.j.passcode.label === 'Sam, Perth meetup',
 		JSON.stringify(minted.j && minted.j.passcode));
+	// The tier the console asked for is the tier on the record. Without this the
+	// mint route could ignore the flag entirely and every Pro check below would
+	// still pass, because a grandfathered record reads `pro` true.
+	check('a code minted as Pro says so on the row',
+		!!minted.j && minted.j.passcode.pro === true,
+		JSON.stringify(minted.j && minted.j.passcode && minted.j.passcode.pro));
 
 	// The cap must not be the thing that decides any functional check below, so
 	// it is opened wide first and closed deliberately at the end.
@@ -404,6 +431,65 @@ async function waitFor(fn, ms = 20000, gap = 250) {
 			&& !!lic.j.licence && typeof lic.j.licence.sig === 'string'
 			&& lic.j.licence.sig.length > 40,
 		'status ' + lic.status + ' · held ' + (lic.j && lic.j.held));
+
+	// ── The tier, from both sides, in one run ───────────────────
+	//
+	// A beta code grants the FREE tier unless the operator asks for Pro, which is
+	// the whole point of the change: every code ever issued gifted Pro, so the
+	// free surface had never had a tester. What that surface actually is gets
+	// measured here rather than described -- an account that redeemed an ordinary
+	// code keeps the beta and the telemetry it consented to, and is refused the
+	// two things Pro bundles.
+	//
+	// Both sides in one run, for the reason the telemetry pair below gives: a
+	// gateway with no licence key configured would answer "no Pro" to everybody
+	// and pass the free checks on their own, and Sam above proves it does not.
+
+	await sleep(PHASE_GAP);
+	const freeMint = await mint('Sam, free cohort', 1);
+	const freeCode = freeMint.j && freeMint.j.passcode && freeMint.j.passcode.code;
+	check('an operator who says nothing about the tier mints a free code',
+		freeMint.status === 200 && !!freeCode && freeMint.j.passcode.pro === false,
+		'status ' + freeMint.status + ' · pro '
+			+ JSON.stringify(freeMint.j && freeMint.j.passcode && freeMint.j.passcode.pro));
+
+	const tester = device();
+	const freeRedeem = await redeem(tester, freeCode);
+	check('a fresh device redeems the free code',
+		freeRedeem.status === 200 && !!freeRedeem.j && freeRedeem.j.ok === true,
+		'status ' + freeRedeem.status + ' · ' + JSON.stringify(freeRedeem.j));
+	check('and is told plainly that it has no Pro',
+		!!freeRedeem.j && freeRedeem.j.pro === false,
+		JSON.stringify(freeRedeem.j && freeRedeem.j.pro));
+
+	const freeJar = {};
+	await session(freeJar, tester);
+	const freeLic = await call(freeJar, 'GET', '/api/licence');
+	check('no licence was written for it either',
+		freeLic.status === 200 && !!freeLic.j && freeLic.j.held === false,
+		'status ' + freeLic.status + ' · held ' + (freeLic.j && freeLic.j.held));
+
+	// What the free tier KEEPS. The account is in the beta, so the telemetry it
+	// was asked about still goes -- which is the half of the free tier the copy
+	// at the door has to be able to promise.
+	const freeTel = await call(freeJar, 'POST', '/api/telemetry', batch(1));
+	check('a free tester is in the beta and its telemetry is taken',
+		freeTel.status === 200 && !!freeTel.j && freeTel.j.stored === 1,
+		'status ' + freeTel.status + ' · ' + JSON.stringify(freeTel.j));
+
+	// What it LOSES. Cloud storage rides the sync unlock (`chunk.rs`, `"sync"`),
+	// and the gate is checked before the batch is read -- so an empty put reaches
+	// the gate and nothing else. The Pro account gets past it and is refused for
+	// the body instead, which is what tells the two apart: a 402 for everybody
+	// would pass the first line on its own, and so would an endpoint that is
+	// simply broken.
+	const freePut = await call(freeJar, 'POST', '/api/chunk', { op: 'put' });
+	check('cloud upload is refused to a free tester',
+		freePut.status === 402 && !!freePut.j && freePut.j.tool === 'pro',
+		'status ' + freePut.status + ' · ' + JSON.stringify(freePut.j));
+	const proPut = await call(samJar, 'POST', '/api/chunk', { op: 'put' });
+	check('and opened to the Pro one, so the licence is what decides it',
+		proPut.status === 400, 'status ' + proPut.status + ' · ' + JSON.stringify(proPut.j));
 
 	// ── Telemetry: the gate, from both sides, in one run ────────
 

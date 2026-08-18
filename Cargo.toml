@@ -25,33 +25,52 @@ crate-type = ["cdylib", "rlib"]
 # what happened between 2026-07-21 and 2026-07-27, when a hand-carve from the
 # development tree overwrote this block.  The revision below is the fe2o3 commit
 # these sources were built and sealed against.
+# Certificate verification cannot be switched off in a shipped build: the accept-anything
+# verifier and the extra-trust-root hook exist only under this feature, which is OFF, so
+# the types that could weaken the tunnel are not in the released wasm at all.
+[features]
+insecure_testing = []
+
 [dependencies]
-oxedyne_fe2o3_core		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b0599ca871c68d696b2ad8f845ac94444dbf0b15" }
-oxedyne_fe2o3_jdat		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b0599ca871c68d696b2ad8f845ac94444dbf0b15" }
-oxedyne_fe2o3_iop_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b0599ca871c68d696b2ad8f845ac94444dbf0b15" }
-oxedyne_fe2o3_iop_db		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b0599ca871c68d696b2ad8f845ac94444dbf0b15" }
-oxedyne_fe2o3_iop_crypto	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b0599ca871c68d696b2ad8f845ac94444dbf0b15" }
-oxedyne_fe2o3_syntax		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b0599ca871c68d696b2ad8f845ac94444dbf0b15" }
-oxedyne_fe2o3_graphics		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b0599ca871c68d696b2ad8f845ac94444dbf0b15" }
+oxedyne_fe2o3_core		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
+oxedyne_fe2o3_jdat		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
+oxedyne_fe2o3_iop_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
+oxedyne_fe2o3_iop_db		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
+oxedyne_fe2o3_iop_crypto	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
+oxedyne_fe2o3_syntax		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
+oxedyne_fe2o3_graphics		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
 # The regex engine and the glob matcher the file tools search with (`fe2o3_text::regex`,
 # `fe2o3_text::glob`).  Portable, so the browser build searches by the same rules the native
 # build does -- two matchers would eventually disagree about what a pattern means.
-oxedyne_fe2o3_text		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b0599ca871c68d696b2ad8f845ac94444dbf0b15" }
+oxedyne_fe2o3_text		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
 # `fe2o3_stds::media` -- what a file IS, from its own bytes, so the viewer offers a
 # picture a picture and a document a document.  PORTABLE, and it was native-only
 # below until the browser began asking the same question: the wasm build then would
 # not compile at all, which the reproducible build caught and the development tree
 # could not, since a path dependency there is portable by default.
-oxedyne_fe2o3_stds		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b0599ca871c68d696b2ad8f845ac94444dbf0b15" }
+oxedyne_fe2o3_stds		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
+# `fe2o3_file::office`, which reads and writes the Microsoft Office formats, over
+# `fe2o3_file::zip`.  Portable: the crate reaches no filesystem at all, so a `.docx`
+# dragged into the browser is read by the same code the native build reads one with.
+oxedyne_fe2o3_file		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
+# SHA3-256, the SBJ address function, which WebCrypto does not implement at all, and
+# the SHA-256 behind an identity fingerprint.  Pure Rust, so it compiles to wasm32 as
+# it stands; it was native-only only while nothing but the native half hashed anything.
+oxedyne_fe2o3_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
+# SBJ, the signed container a message and an identity card travel in.  It is here and
+# not behind the gateway because the point of a signature is that the RECIPIENT checks
+# it: a server that verified and handed over a tidy result would have proved only that
+# the server says so.  `default-features = false` drops the post-quantum schemes that
+# rest on C, leaving the pure-Rust subset -- Ed25519, SHA3 -- a browser can compile.
+oxedyne_fe2o3_sbj		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695", default-features = false }
 
 # Native-only dependencies.  The Steel WebSocket handler, the O3db
 # session backend, and the hand-rolled TLS transport are all native
 # concerns; none of these crates target wasm32.  Target-gated so Cargo
 # feature unification never touches the wasm build (F6).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-oxedyne_fe2o3_net		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b0599ca871c68d696b2ad8f845ac94444dbf0b15" }
-oxedyne_fe2o3_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b0599ca871c68d696b2ad8f845ac94444dbf0b15" }
-oxedyne_fe2o3_o3db_sync		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b0599ca871c68d696b2ad8f845ac94444dbf0b15" }
+oxedyne_fe2o3_net		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
+oxedyne_fe2o3_o3db_sync		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "c9c98ab442339547507f5e6e526d8dfd4d423695" }
 
 tokio = { version = "1.35", features = ["full"] }
 tokio-rustls = "0.26"
@@ -67,6 +86,25 @@ wasm-bindgen		= "0.2"
 wasm-bindgen-futures	= "0.4"
 js-sys			= "0.3"
 getrandom		= { version = "0.2", features = ["js"] }
+
+# The blind mail tunnel terminates TLS IN THE BROWSER, so the gateway relays
+# ciphertext and holds none of the keys.  This is the one place where writing our own
+# would be strictly worse than depending: a subtly wrong certificate verifier means
+# the gateway CAN intercept while the user has been told it cannot.
+#
+# `default-features = false` is load bearing rather than tidy.  rustls 0.23's default
+# set reaches `aws-lc-sys`, which is C and does not cross-compile to wasm32; left on,
+# the build dies in a build script a long way from the line that caused it.
+rustls = { version = "0.23.43", default-features = false, features = ["std", "ring", "tls12", "logging"] }
+# The `web` feature is what makes rustls compile for this target at all.  pki-types
+# deliberately removes `UnixTime::now()` on wasm32 because `SystemTime::now()` panics
+# there, while rustls calls it unconditionally under `std` from `ticketer.rs`,
+# `client/handy.rs` and `time_provider.rs` -- call sites a caller never touches, so
+# supplying a `TimeProvider` does not save you.  `web` restores it over `web-time`.
+rustls-pki-types = { version = "1.15.1", features = ["web"] }
+# The bundled Mozilla root store, 121 anchors.  A browser cannot reach the platform's
+# own trust store from wasm, so the anchors travel in the bundle.
+webpki-roots = "1.0.9"
 web-sys = { version = "0.3", features = [
 	"AbortController",
 	"AbortSignal",
@@ -99,6 +137,14 @@ web-sys = { version = "0.3", features = [
 	"CustomEventInit",
 	"EventTarget",
 ] }
+
+# ring arrives anyway through rustls's `ring` feature, but the feature that gives it a
+# random source on this target does not, and rustls cannot enable it.  Without
+# `wasm32_unknown_unknown_js` ring has no `SecureRandom` impl for wasm32-unknown-unknown
+# at all and the build fails to compile.
+[target.'cfg(target_arch = "wasm32")'.dependencies.ring]
+version		= "0.17.14"
+features	= ["wasm32_unknown_unknown_js"]
 
 [dev-dependencies]
 tokio = { version = "1.35", features = ["full", "test-util"] }

@@ -31,7 +31,7 @@
 //      drifting quietly.
 //
 //   3. THE IMPROVE PANEL'S "i" OPENS THE PAGE ABOUT THE IMPROVE PANEL.
-//      `guide/improve.html` documents it and was reachable only from the guide's
+//      `guide/social.html` documents it and was reachable only from the guide's
 //      own navigation; the button went to the tour of the whole frame.
 //
 //   4. A BACKUP'S VERSION IS READ. Both writers stamped `version: 1` and nothing
@@ -101,8 +101,8 @@ const HANDLE_BTN =
 	+ "\t\t\t\thb.id = 'admin-change-handle';\n"
 	+ '\t\t\t}\n';
 const REFUSAL   = "\t\t\tawait noticeDialog(title, (r && r.message) || t('handle.failed'));";
-const IMP_INFO  = "\t\tif (window.DaimondWeb && DaimondWeb.guide) DaimondWeb.guide('improve.html');\n"
-	+ "\t\telse window.open('guide/improve.html', '_blank');";
+const IMP_INFO  = "\t\tif (window.DaimondWeb && DaimondWeb.guide) DaimondWeb.guide('social.html');\n"
+	+ "\t\telse window.open('guide/social.html', '_blank');";
 const VERIFY_IN = '\t\tbody.appendChild(check);\n';
 const VER_GUARD = "\t\t\tvar ver = data.version === undefined ? BACKUP_VERSION : data.version;\n"
 	+ "\t\t\tif (typeof ver !== 'number' || !isFinite(ver) || ver > BACKUP_VERSION) {";
@@ -524,24 +524,24 @@ await p.waitForTimeout(300);
 
 // ── 3. The Improve panel's "i" opens the page about the panel ────────
 
-await p.evaluate(() => window.DaimondPanels.show('improve'));
+await p.evaluate(() => window.DaimondPanels.show('social'));
 await p.waitForTimeout(500);
-const info = p.locator('#improve-info');
+const info = p.locator('#social-info');
 check('the Improve panel HAS its circled i', await info.count() === 1,
 	`${await info.count()} matching element(s)`);
 check('and it is on screen, not merely in the document',
 	await info.count() === 1 && await info.first().isVisible());
-await p.evaluate(() => document.getElementById('improve-info').click());
+await p.evaluate(() => document.getElementById('social-info').click());
 await p.waitForTimeout(800);
 const framed = await p.evaluate(() => {
 	const f = document.getElementById('web-frame');
 	return f ? (f.getAttribute('src') || '') : '(no frame)';
 });
 check('and pressing it opens the guide page about THIS panel',
-	/guide\/improve\.html$/.test(framed), framed);
+	/guide\/social\.html$/.test(framed), framed);
 const guidePage = await p.evaluate(async () => {
 	try {
-		const r = await fetch('guide/improve.html', { cache: 'no-store' });
+		const r = await fetch('guide/social.html', { cache: 'no-store' });
 		return { status: r.status, len: (await r.text()).length };
 	} catch (e) { return { status: 0, len: 0 }; }
 });

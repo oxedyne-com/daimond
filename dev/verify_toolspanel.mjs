@@ -48,7 +48,8 @@
 // that was never broken is not proved at all.
 //
 //   node dev/verify_toolspanel.mjs --break manifest   # 1 fails: functions on show, no lid
-//   node dev/verify_toolspanel.mjs --break drop       # 2 fails: a function placed nowhere
+//   node dev/verify_toolspanel.mjs --break drop       # 2 fails: a function reaches no card
+//   node dev/verify_toolspanel.mjs --break unplaced   # 2 fails: the unplaced bucket fills
 //   node dev/verify_toolspanel.mjs --break presume    # 3 fails: locked on the pack key alone
 //   node dev/verify_toolspanel.mjs --break nowhy      # 4 fails: locked with no reason given
 //   node dev/verify_toolspanel.mjs --break misbuy     # 5 fails: the button buys the wrong pack
@@ -127,6 +128,18 @@ const BREAKS = {
 		file: 'js/tools.js',
 		find: '\t\t\tvar id = capOf(fn.tool);\n',
 		with: '\t\t\tvar id = capOf(fn.tool);\n\t\t\tif (fn.tool === \'web_click\') return;\n',
+	}],
+	// A function the MAP does not place, which is a DIFFERENT failure from `drop` above and
+	// the one check 2 names in its second half. Nothing is lost here: `capOf` answers
+	// `other`, the panel draws the bucket, and the row reads "Not yet described" — so the
+	// first half of check 2 still passes and only the bucket assertion goes red. It is
+	// here because `drop` never filled the bucket, so the line that requires it to be
+	// EMPTY had never once been seen to fail: three tools shipped unplaced on 2026-08-17
+	// and the gate caught them, with nothing to say the catching had ever been proved.
+	unplaced: [{
+		file: 'js/tools.js',
+		find: '\'sheet_read\', \'doc_edit\', \'sheet_write\'',
+		with: '\'doc_edit\', \'sheet_write\'',
 	}],
 	// Locked on the pack key the build carries, without asking the gateway whether the
 	// pack is on sale. This is the exact way a free capability gets drawn as buyable:

@@ -17,7 +17,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { requireFreshGateway, procLog } from './gwbin.mjs';
+import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
@@ -128,8 +128,13 @@ async function refundPro(accountId) {
 
 (async () => {
 	requireFreshGateway();
+	// Spawned in `GWCWD` and not in `gateway/`: the deployed `app.jdat` is closed
+	// for registration, so a gateway started beside it answers every fresh keypair
+	// below with "the beta is closed" and this file reports a shut door as a
+	// broken product. `GWCWD` is the same config with the dev flags flipped, built
+	// by `requireFreshGateway` above -- see `dev/gwbin.mjs`.
 	const gw = spawn(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
-		cwd: GWDIR, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: GW_LOG.stdio,
+		cwd: GWCWD, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: GW_LOG.stdio,
 	});
 	procs.push(gw);
 	check('gateway comes up', await waitFor(async () => (await fetch(`${GW}/api/health`)).ok));

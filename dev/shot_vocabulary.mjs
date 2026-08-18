@@ -1,6 +1,6 @@
 // shot_vocabulary.mjs — the cropped screenshots for the guide's visual glossary.
 //
-// One crop per term on `guide/improve.html`, taken from the running app rather
+// One crop per term on `guide/social.html`, taken from the running app rather
 // than drawn, because the whole point of that page is that a reader can see the
 // thing and recognise it again. A drawing of a chip proves nothing about what a
 // chip looks like.

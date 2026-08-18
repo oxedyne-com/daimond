@@ -24,6 +24,27 @@ use oxedyne_fe2o3_graphics::qr::{
     encode,
     QrEcc,
 };
+use oxedyne_fe2o3_sbj::{
+    card::{
+        self,
+        Card,
+        Role,
+    },
+    doc::{
+        self,
+        Payload,
+    },
+    envelope,
+    post::{
+        Post,
+        Reference,
+        Target,
+    },
+    share::{
+        self,
+        Share,
+    },
+};
 use oxedyne_fe2o3_stds::media;
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -436,6 +457,25 @@ pub async fn store_write(path: String, content: String) -> Result<(), JsValue> {
     opfs::write_file(FileRoot::Opfs, &path, content.as_bytes()).await.map_err(to_js_err)
 }
 
+/// Write BYTES into Daimond's own store, for a file that is not text.
+///
+/// The counterpart of [`store_read_bytes`], which has existed all along -- so the store could be read
+/// byte for byte and not written that way, and the gap was one-sided rather than a decision.
+///
+/// **This is the door a picture needs to land in a Diamond.** `store_write` takes a `String`, and
+/// `DaimondApp::write_bytes` writes bytes to the WORKSPACE root, which is a real folder on the user's
+/// machine whenever they have one open. So a share carrying a PNG had nowhere to put it inside the
+/// Diamond: the wire was sound and the landing was not.
+///
+/// Everything [`store_write`] says about stamping applies here and applies more, because the files that
+/// come this way are the large ones: a raw OPFS write moves nothing, and a Diamond written into without
+/// being stamped is a Diamond the next sync silently replaces from the other device. Call
+/// [`stamp_diamond`] after.
+#[wasm_bindgen]
+pub async fn store_write_bytes(path: String, bytes: Vec<u8>) -> Result<(), JsValue> {
+    opfs::write_file(FileRoot::Opfs, &path, &bytes).await.map_err(to_js_err)
+}
+
 /// Stamp a Diamond as changed, so what was written inside it travels to the other devices.
 ///
 /// **A crystal page writing its own log is a mutation like any other, and `touched` is what
@@ -714,4 +754,577 @@ pub fn tool_locked(name: String) -> bool {
         Some(pack) => crate::tools::pack_locked(pack),
         None       => false,
     }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIGNED ARTEFACTS: MESSAGES AND IDENTITY CARDS
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// A message and an identity card travel as SBJ artefacts: a signed envelope around a canonical
+// payload, whose hash IS the artefact's address.  Everything below is the byte work -- canonical
+// encoding, the SHA3-256 address, the envelope, the signing input, the assembled file -- and NONE
+// of it is the signing.
+//
+// THE SEAM, AND WHY IT IS HERE.  The device signing key is a non-extractable WebCrypto `CryptoKey`
+// held by `identity.js`.  It cannot be exported, so it cannot be handed to wasm, and that is a
+// property worth keeping rather than a limitation to work around: a key that never crosses a
+// module boundary cannot be leaked by anything on the other side of it.  So wasm hands out a
+// SIGNING INPUT and takes a SIGNATURE back, and never sees a secret in either direction.
+//
+// The work is here rather than in JavaScript because the address function is SHA3-256, which
+// WebCrypto does not implement, and because a canonical encoding written twice is a canonical
+// encoding that will eventually disagree with itself -- and two encodings of one message are two
+// addresses.
+
+/// A message being composed, before it is encoded and signed.
+///
+/// A struct rather than one call with a dozen parameters, because a message may carry up to four
+/// references and each of the four kinds is named differently.  Nothing here is signed or sealed;
+/// this is a draft, and [`PostDraft::encode`] is where it becomes bytes.
+#[wasm_bindgen]
+pub struct PostDraft {
+    /// The message under construction.
+    inner: Post,
+}
+
+#[wasm_bindgen]
+impl PostDraft {
+
+    /// Start a message: its text, the recipient's public key, and this message's nonce.
+    ///
+    /// The nonce is the caller's, from `crypto.getRandomValues`, and it is signed: two identical
+    /// messages to one recipient are two addresses rather than one message that appears to have
+    /// been sent once.
+    ///
+    /// # Arguments
+    /// * `body` - The message text.
+    /// * `to` - The recipient's 32-byte public key.
+    /// * `nonce` - 16 random bytes.
+    #[wasm_bindgen(constructor)]
+    pub fn new(body: String, to: Vec<u8>, nonce: Vec<u8>) -> PostDraft {
+        PostDraft {
+            inner: Post {
+                body,
+                to,
+                nonce,
+                reply_to: None,
+                refs:     Vec::new(),
+            },
+        }
+    }
+
+    /// Say which message this one answers, by that message's address.
+    #[wasm_bindgen(js_name = replyTo)]
+    pub fn reply_to(&mut self, addr: Vec<u8>) {
+        self.inner.reply_to = Some(addr);
+    }
+
+    /// Point at a proposal on a forge repository.
+    #[wasm_bindgen(js_name = addProposal)]
+    pub fn add_proposal(&mut self, account: String, repo: String, number: u32, fallback: String) {
+        self.inner.refs.push(Reference {
+            target: Target::Proposal { account, repo, number },
+            fallback,
+        });
+    }
+
+    /// Point at a release build.
+    #[wasm_bindgen(js_name = addBuild)]
+    pub fn add_build(&mut self, id: String, fallback: String) {
+        self.inner.refs.push(Reference {
+            target: Target::Build { id },
+            fallback,
+        });
+    }
+
+    /// Point at a panel in the reader's own client.
+    #[wasm_bindgen(js_name = addPanel)]
+    pub fn add_panel(&mut self, name: String, fallback: String) {
+        self.inner.refs.push(Reference {
+            target: Target::Panel { name },
+            fallback,
+        });
+    }
+
+    /// Point at a page of the in-app guide, optionally at an anchor within it.
+    ///
+    /// An empty anchor is an ABSENT anchor, not an empty one: an optional field encoded as present
+    /// and empty would be a second encoding of the same message, and so a second address.
+    #[wasm_bindgen(js_name = addGuide)]
+    pub fn add_guide(&mut self, page: String, anchor: String, fallback: String) {
+        self.inner.refs.push(Reference {
+            target: Target::Guide {
+                page,
+                anchor: if anchor.is_empty() { None } else { Some(anchor) },
+            },
+            fallback,
+        });
+    }
+
+    /// The canonical bytes of this message, which are what the address is taken over.
+    ///
+    /// Every rule the schema declares is enforced here, so a message that no reader would accept
+    /// is never given a signature: an over-long body, a nonce of the wrong width, a fifth
+    /// reference, a recipient key that is not 32 bytes.  The refusal names what was wrong.
+    pub fn encode(&self) -> Result<Vec<u8>, JsValue> {
+        self.inner.encode().map_err(to_js_err)
+    }
+}
+
+/// A share being composed, before it is encoded and signed.
+///
+/// A struct rather than one call, because a share carries a list of files and each is handed over
+/// with its own bytes.  Nothing here is signed or sealed; this is a draft, and
+/// [`ShareDraft::encode`] is where it becomes bytes.
+///
+/// **A share is a COPY the receiver comes to own.**  It is re-sealed to their key by the caller,
+/// it lands in their workspace as theirs, and neither side sees the other's changes to it
+/// afterwards.  There is no live view here to keep in step and nothing to revoke.
+#[wasm_bindgen]
+pub struct ShareDraft {
+    /// The display name of the thing being shared.
+    name:  String,
+    /// The recipient's 32-byte public key.
+    to:    Vec<u8>,
+    /// This share's 16 random bytes.
+    nonce: Vec<u8>,
+    /// The sender's covering sentence, if they wrote one.
+    note:  Option<String>,
+    /// The files, in whatever order the caller added them.  `encode` puts them in path order.
+    files: Vec<share::File>,
+}
+
+#[wasm_bindgen]
+impl ShareDraft {
+
+    /// Start a share: the display name, the recipient's public key, and this share's nonce.
+    ///
+    /// # Arguments
+    /// * `name` - The display name of the thing being shared.  Advisory, and never an identity.
+    /// * `to` - The recipient's 32-byte public key.
+    /// * `nonce` - 16 random bytes, from `crypto.getRandomValues`.
+    #[wasm_bindgen(constructor)]
+    pub fn new(name: String, to: Vec<u8>, nonce: Vec<u8>) -> ShareDraft {
+        ShareDraft { name, to, nonce, note: None, files: Vec::new() }
+    }
+
+    /// Say a covering sentence.  An empty one is an ABSENT one, never an empty field.
+    pub fn note(&mut self, text: String) {
+        self.note = if text.is_empty() { None } else { Some(text) };
+    }
+
+    /// Add one file: where it goes in the receiver's copy, and what is in it.
+    ///
+    /// The path is checked when the share is encoded, not here, so that a caller adding a folder
+    /// of files is told once what is wrong with it rather than having to catch each addition.
+    #[wasm_bindgen(js_name = addFile)]
+    pub fn add_file(&mut self, path: String, body: Vec<u8>) {
+        self.files.push(share::File { path, body });
+    }
+
+    /// Whether what has been added so far carries a program.
+    ///
+    /// For the sender's own screen, so that "this includes a page they will be asked to accept"
+    /// can be said BEFORE anything is signed.  It is the same rule the payload's `code` bit is
+    /// computed from, asked of the same crate, so the sentence a sender reads and the claim their
+    /// signature carries cannot disagree.
+    #[wasm_bindgen(js_name = carriesCode)]
+    pub fn carries_code(&self) -> bool {
+        share::code_file(&self.files).is_some()
+    }
+
+    /// The canonical bytes of this share, which are what the address is taken over.
+    ///
+    /// Every rule the schema declares is enforced here, so a share no reader would accept is never
+    /// given a signature: a path that walks out of the Diamond, a path under the sender's own
+    /// `.daimond/` record, a capp delivery record, a duplicate path, too many files, too many
+    /// bytes.  The refusal names what was wrong.
+    pub fn encode(&self) -> Result<Vec<u8>, JsValue> {
+        // `plain` rather than `to_js_err`, for the reason [`sbj_read`] gives: `Display` carries
+        // ANSI colour, which is rubbish on a screen rather than colour on it, and names a file and
+        // a line nobody being told why their share was refused wants to read.
+        Share::new(
+            self.name.clone(),
+            self.to.clone(),
+            self.nonce.clone(),
+            self.note.clone(),
+            self.files.clone(),
+        ).encode().map_err(|e| JsValue::from_str(&e.plain()))
+    }
+}
+
+/// A share that has been verified, so that its files can be taken out one at a time.
+///
+/// [`sbj_read`] says what an artefact IS, in JSON, and a share's file bodies have no business in a
+/// JSON string: they are bytes, they may be a megabyte of them, and hexadecimal would double that
+/// on the way through.  So the generic reader names a share and lists its paths, and a caller that
+/// means to open one asks here and takes the bodies as bytes.
+///
+/// Holding one *is* holding an artefact whose header, envelope, hash, signature, canonical
+/// encoding and schema all checked out: [`share_read`] is the only way to obtain one.
+#[wasm_bindgen]
+pub struct ShareRead {
+    /// The verified payload.
+    inner:  Share,
+    /// The author of the artefact, which is the SENDER's signing key.
+    author: Vec<u8>,
+    /// The artefact's address.
+    addr:   Vec<u8>,
+    /// The envelope's time, in Unix milliseconds.
+    time:   u64,
+}
+
+#[wasm_bindgen]
+impl ShareRead {
+
+    /// The display name the sender gave what they sent.  Advisory.
+    pub fn name(&self) -> String {
+        self.inner.name.clone()
+    }
+
+    /// Whether the sender marked this share as carrying a program.
+    ///
+    /// **The claim is the sender's and the signature covers it.**  A relay carrying this artefact
+    /// cannot set it, clear it, or reach it at all without the signature ceasing to verify, which
+    /// is the only reason it is worth showing a person.
+    pub fn code(&self) -> bool {
+        self.inner.code
+    }
+
+    /// The sender's covering sentence, or an empty string where they wrote none.
+    pub fn note(&self) -> String {
+        self.inner.note.clone().unwrap_or_default()
+    }
+
+    /// The key this share was addressed to, which the caller must check is their own.
+    pub fn to(&self) -> Vec<u8> {
+        self.inner.to.clone()
+    }
+
+    /// The sender's signing key.
+    pub fn author(&self) -> Vec<u8> {
+        self.author.clone()
+    }
+
+    /// The artefact's address, as lowercase hexadecimal.
+    pub fn address(&self) -> String {
+        to_hex(&self.addr)
+    }
+
+    /// When the sender says they signed it, in Unix milliseconds.  Advisory: it is a clock nobody
+    /// else can check.
+    pub fn time(&self) -> f64 {
+        self.time as f64
+    }
+
+    /// How many files the share carries.
+    pub fn count(&self) -> usize {
+        self.inner.files.len()
+    }
+
+    /// The path of file `i`, or an empty string where there is no such file.
+    pub fn path(&self, i: usize) -> String {
+        self.inner.files.get(i).map(|f| f.path.clone()).unwrap_or_default()
+    }
+
+    /// The bytes of file `i`, or nothing where there is no such file.
+    pub fn body(&self, i: usize) -> Vec<u8> {
+        self.inner.files.get(i).map(|f| f.body.clone()).unwrap_or_default()
+    }
+
+    /// Whether file `i` is one this build considers code.
+    ///
+    /// Asked per file so that the receiving side can name what it is asking them to accept, rather
+    /// than saying "this contains code somewhere".
+    #[wasm_bindgen(js_name = isCode)]
+    pub fn is_code(&self, i: usize) -> bool {
+        self.inner.files.get(i).map(|f| share::is_code_path(&f.path)).unwrap_or(false)
+    }
+}
+
+/// Verify an artefact and take it apart as a share.
+///
+/// Everything [`sbj_read`] does, and then the payload as bytes rather than as JSON.  An artefact
+/// that is not a share is refused by name rather than read as the nearest thing: a caller that
+/// asked to open a share and was handed a message must be told so.
+#[wasm_bindgen]
+pub fn share_read(bytes: &[u8]) -> Result<ShareRead, JsValue> {
+    let art = match doc::read_artefact(bytes) {
+        Ok(a)  => a,
+        Err(e) => return Err(JsValue::from_str(&e.plain())),
+    };
+    let (env, payload) = art.into_parts();
+    match payload {
+        Payload::Share(s) => Ok(ShareRead {
+            inner:  s,
+            author: env.author,
+            addr:   env.hash,
+            time:   env.time,
+        }),
+        other => Err(JsValue::from_str(&fmt!(
+            "That is not a share; it declares the schema '{}'.", other.schema()))),
+    }
+}
+
+/// The canonical bytes of an identity card: what a QR code and a paste carry.
+///
+/// A bare public key says nothing about which key seals and which signs, carries no label, and
+/// gives a reader no way to tell a first key from one that replaced another.  This says all three.
+/// The signing key is not a field here: it is the envelope's `author`, so a card has exactly one
+/// place that says which key composed it.
+///
+/// # Arguments
+/// * `label` - The display name the holder chose.  Advisory, and never an identity.
+/// * `enc` - The holder's 32-byte encryption subkey, which is not the signing key.
+/// * `prev` - The 32-byte key this one supersedes, or empty for a first card.
+#[wasm_bindgen]
+pub fn card_encode(label: String, enc: Vec<u8>, prev: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+    let card = Card {
+        label,
+        enc,
+        // The only role v0 admits.  A second one would be a versioned act rather than a new string
+        // appearing on the wire, which is why this is not a parameter.
+        role: Role::Root,
+        prev: if prev.is_empty() { None } else { Some(prev) },
+    };
+    card.encode().map_err(to_js_err)
+}
+
+/// The address of a payload: the SHA3-256 digest its envelope will declare.
+///
+/// Here rather than in JavaScript because WebCrypto offers SHA-1, SHA-256, SHA-384 and SHA-512 and
+/// no SHA-3 at all.  A caller may show an address before anything is signed, since the address is
+/// a property of the payload alone.
+#[wasm_bindgen]
+pub fn sbj_address(payload: &[u8]) -> Result<Vec<u8>, JsValue> {
+    doc::hash_tree(envelope::HASH_SCHEME_SHA3_256, payload).map_err(to_js_err)
+}
+
+/// The bytes the device key must sign for this payload to become an artefact.
+///
+/// Half of the seam: the envelope is built here, its signing input handed out, and the secret that
+/// signs it stays where it is.  The envelope is a pure function of these four arguments, which is
+/// what makes the seam safe to cross -- [`sbj_assemble`] rebuilds the same envelope from the same
+/// arguments, so a caller cannot sign one envelope and assemble a different one.
+///
+/// # Arguments
+/// * `payload` - The canonical payload bytes.
+/// * `schema` - The payload's schema, e.g. `daimond/post/0`.
+/// * `author` - The signer's 32-byte Ed25519 public key.
+/// * `time` - Unix milliseconds, as `Date.now()` gives them.  A `f64` rather than a `u64` because
+///   a `u64` crosses to JavaScript as a `BigInt`, which every caller would then have to build.
+#[wasm_bindgen]
+pub fn sbj_signing_input(
+    payload: &[u8],
+    schema:  String,
+    author:  &[u8],
+    time:    f64,
+)
+    -> Result<Vec<u8>, JsValue>
+{
+    let env = match doc::envelope_for(payload, &schema, author, time as u64) {
+        Ok(e)  => e,
+        Err(e) => return Err(to_js_err(e)),
+    };
+    Ok(env.signing_input())
+}
+
+/// The finished artefact: header, envelope, payload, with the signature the caller brings back.
+///
+/// The other half of the seam.  The signature is not checked here, because what makes an artefact
+/// sound is that a reader accepts it and nothing else; a signature that does not verify produces a
+/// file that every reader refuses, including this one.
+///
+/// # Arguments
+/// * `payload` - The same bytes handed to [`sbj_signing_input`].
+/// * `schema` - The same schema.
+/// * `author` - The same public key.
+/// * `time` - The same time.  A different one gives a different envelope and a signature over
+///   nothing.
+/// * `sig` - The 64-byte Ed25519 signature over the signing input.
+#[wasm_bindgen]
+pub fn sbj_assemble(
+    payload: &[u8],
+    schema:  String,
+    author:  &[u8],
+    time:    f64,
+    sig:     Vec<u8>,
+)
+    -> Result<Vec<u8>, JsValue>
+{
+    let mut env = match doc::envelope_for(payload, &schema, author, time as u64) {
+        Ok(e)  => e,
+        Err(e) => return Err(to_js_err(e)),
+    };
+    env.sig = sig;
+    doc::assemble(&env, payload).map_err(to_js_err)
+}
+
+/// A short rendering of a key, for a person's eye.  **It decides nothing.**
+///
+/// Eighty bits of `SHA-256(domain ‖ key)` in Crockford base 32, in four groups of four.  Equality
+/// is always the full 32-byte key, everywhere, without exception: eighty bits is well within reach
+/// of somebody who wants two keys to look alike in a list, and anything that COMPARED fingerprints
+/// to decide whether two keys are the same would be a defect.
+///
+/// One implementation, in the format's own crate, called from here.  Two renderings of one key
+/// would eventually differ on a key nobody had tested, and a user would read that as their
+/// correspondent's key having changed.
+#[wasm_bindgen]
+pub fn identity_fingerprint(key: &[u8]) -> String {
+    card::fingerprint(key)
+}
+
+/// The number two people read to each other to check they hold each other's real keys.
+///
+/// Sixty decimal digits in twelve groups of five, over both keys sorted, so both parties compute
+/// the same number without having to agree who is first.
+///
+/// It is read over a channel an attacker cannot silently rewrite -- a voice call, or in person.
+/// Read over the same channel the keys arrived on it proves nothing, since whatever substituted
+/// the keys can substitute the number.
+#[wasm_bindgen]
+pub fn identity_safety_number(a: &[u8], b: &[u8]) -> String {
+    card::safety_number(a, b)
+}
+
+/// Verify an artefact and say what it turned out to be, as JSON.
+///
+/// THE READER CHECKS, AND NOBODY ELSE.  A signature exists so that the person receiving a message
+/// can check who wrote it; if a server checked it and handed over a tidy result, the recipient
+/// would have learned only that the server says so, and the signature might as well not be there.
+/// So the whole verification runs here, on the recipient's own device: magic, envelope, tree
+/// length, address, signature, and only then is a byte of the payload decoded.
+///
+/// What crosses back has passed every one of those.  A failure crosses as the words of the error
+/// and nothing else -- not the file and line, which is the developer's business and not the
+/// reader's.
+///
+/// JSON rather than markup, and read into the DOM with `textContent` rather than `innerHTML`: a
+/// format whose whole claim is that a message cannot carry code must not have its own reader
+/// building HTML by string concatenation.
+///
+/// # Arguments
+/// * `bytes` - The whole artefact, header included.
+#[wasm_bindgen]
+pub fn sbj_read(bytes: &[u8]) -> Result<String, JsValue> {
+    let art = match doc::read_artefact(bytes) {
+        Ok(a)  => a,
+        // `plain` is the words of the error. `Display` carries ANSI colour, which is rubbish on a
+        // screen rather than colour on it, and `Debug` names a file and a line nobody reading a
+        // message wants.
+        Err(e) => return Err(JsValue::from_str(&e.plain())),
+    };
+    let (env, payload) = art.into_parts();
+    let mut out = String::with_capacity(512);
+    out.push('{');
+    out.push_str(&fmt!("\"schema\":{},", json_str(&env.schema)));
+    out.push_str(&fmt!("\"author\":{},", json_str(&to_hex(&env.author))));
+    out.push_str(&fmt!("\"address\":{},", json_str(&to_hex(&env.hash))));
+    // A `f64` because the time crosses to JavaScript, where every number is one, and a `u64`
+    // written into JSON as an integer past 2^53 would be read back changed. A Unix millisecond is
+    // nowhere near that, so this is exact.
+    out.push_str(&fmt!("\"time\":{},", env.time as f64));
+    out.push_str(&fmt!("\"fingerprint\":{},", json_str(&card::fingerprint(&env.author))));
+    match payload {
+        Payload::Card(c) => {
+            out.push_str("\"kind\":\"card\",\"card\":{");
+            out.push_str(&fmt!("\"label\":{},", json_str(&c.label)));
+            out.push_str(&fmt!("\"enc\":{},", json_str(&to_hex(&c.enc))));
+            out.push_str(&fmt!("\"role\":{}", json_str(c.role.as_str())));
+            match &c.prev {
+                Some(p) => out.push_str(&fmt!(",\"prev\":{}", json_str(&to_hex(p)))),
+                None    => {},
+            }
+            out.push('}');
+        },
+        Payload::Post(p) => {
+            out.push_str("\"kind\":\"post\",\"post\":{");
+            out.push_str(&fmt!("\"body\":{},", json_str(&p.body)));
+            out.push_str(&fmt!("\"to\":{},", json_str(&to_hex(&p.to))));
+            out.push_str(&fmt!("\"nonce\":{}", json_str(&to_hex(&p.nonce))));
+            match &p.reply_to {
+                Some(a) => out.push_str(&fmt!(",\"replyTo\":{}", json_str(&to_hex(a)))),
+                None    => {},
+            }
+            if !p.refs.is_empty() {
+                out.push_str(",\"refs\":[");
+                for (i, r) in p.refs.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&fmt!("{{\"kind\":{},\"fallback\":{}}}",
+                        json_str(r.target.key()), json_str(&r.fallback)));
+                }
+                out.push(']');
+            }
+            out.push('}');
+        },
+        Payload::Share(s) => {
+            // The file BODIES are deliberately absent: they are bytes, there may be a great many
+            // of them, and hexadecimal through a JSON string would double that on the way. This
+            // says what the artefact is and what it would write; `share_read` hands over the
+            // bytes.
+            out.push_str("\"kind\":\"share\",\"share\":{");
+            out.push_str(&fmt!("\"name\":{},", json_str(&s.name)));
+            out.push_str(&fmt!("\"to\":{},", json_str(&to_hex(&s.to))));
+            out.push_str(&fmt!("\"nonce\":{},", json_str(&to_hex(&s.nonce))));
+            // The sender's signed claim about whether any of this is a program. It is reported
+            // whether it is true or false, because a receiver being told nothing and a receiver
+            // being told "no code" must not look the same on this side either.
+            out.push_str(&fmt!("\"code\":{},", s.code));
+            if let Some(n) = &s.note {
+                out.push_str(&fmt!("\"note\":{},", json_str(n)));
+            }
+            out.push_str("\"files\":[");
+            for (i, f) in s.files.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&fmt!("{{\"path\":{},\"bytes\":{},\"code\":{}}}",
+                    json_str(&f.path), f.body.len(), share::is_code_path(&f.path)));
+            }
+            out.push_str("]}");
+        },
+        // A node tree is an oxeweb document, which this app has no renderer for. Named rather than
+        // guessed at: a reader that quietly returned nothing would look like a verification
+        // failure, which this is not.
+        Payload::Tree { .. } => out.push_str("\"kind\":\"tree\""),
+    }
+    out.push('}');
+    Ok(out)
+}
+
+/// Bytes as lowercase hexadecimal, which is how they cross to JavaScript: JSON has no byte string.
+fn to_hex(b: &[u8]) -> String {
+    let mut s = String::with_capacity(b.len() * 2);
+    for byte in b {
+        s.push_str(&fmt!("{:02x}", byte));
+    }
+    s
+}
+
+/// A string as a JSON string literal, with everything JSON requires escaped.
+///
+/// The reader builds its DOM with `textContent`, so an escape missed here could not become a
+/// script. This is the belt; that is the braces.
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"'  => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0C}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => out.push_str(&fmt!("\\u{:04x}", c as u32)),
+            c    => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }

@@ -483,6 +483,50 @@ async function allowHand(ms = 30000) {
 	return null;
 }
 
+// ── The turn's network question ─────────────────────────────────────
+//
+// A chat that has read a command's output is TAINTED from that moment, so the
+// engine asks before the NEXT command may reach the network (`hand/REVIEW.md`
+// §1.13, `Tool::run`'s `NetStep::Ask`) and holds the turn on a modal until
+// somebody answers. Nothing in this file answered it, so every command after
+// the first stopped on that dialog until `chat`'s own timeout expired, `chat`
+// returned with the turn still running, and `run` below returned THE PREVIOUS
+// COMMAND'S tool result. That is the whole of what "a real non-zero exit
+// reaches the model as itself" and "a command that fails hands the model its
+// real stderr" were reporting on 2026-08-17: `/bin/false`'s check was reading
+// `/bin/cat inside.txt`'s result, and the `cat` of a missing file was reading
+// `/bin/false`'s.
+//
+// The answer is NO, which is the fence every command below has always been
+// measured against; a yes would silently change what each of them ran with.
+const NET_TITLE = 'Let this turn reach the network?';   // permmode.net_title
+let netAsked = 0;
+let netStop  = false;
+let netWatch = null;
+
+/// Say no to the network question for as long as this run lasts, and count how
+/// often it was put.
+async function answerNet(page) {
+	while (!netStop) {
+		const asked = await page.evaluate((title) => {
+			for (const card of document.querySelectorAll('.dlg-card')) {
+				const h = card.querySelector('h2');
+				if (h && h.textContent.indexOf(title) >= 0) return true;
+			}
+			return false;
+		}, NET_TITLE).catch(() => false);
+		// PRESSED, rather than resolved from inside the page: the button is what
+		// a user has, and a question answered by reaching past it proves nothing
+		// about the one they are actually shown.
+		if (asked) {
+			const said = await page.click('.dlg-card .dlg-cancel', { timeout: 2000 })
+				.then(() => true, () => false);
+			if (said) netAsked++;
+		}
+		await sleep(200);
+	}
+}
+
 let handPid = '';
 try {
 	await sleep(500);
@@ -497,6 +541,7 @@ try {
 	await page.evaluate(() => window.DaimondHand._setWaitsForTest({
 		grace: 60000, slack: 180000, hello: 30000,
 	}));
+	netWatch = answerNet(page);
 
 	// The chat every turn below is sent to, and therefore the chat whose workspace
 	// decides where its commands may run. Opened before anything is asked of it,
@@ -669,6 +714,8 @@ try {
 	// means "no status" failed to parse and defaulted to ZERO, and a crashed
 	// build was handed to the model as a green one.
 	let r = await run(s, { argv: ['/bin/false'], timeout_ms: 30000 });
+	check('a turn that has read a command\'s output is asked before the next one may reach the network',
+		netAsked >= 1, 'the question was put ' + netAsked + ' time(s)');
 	check('a real non-zero exit reaches the model as itself',
 		/\[exit code: 1\]/.test(r) && !/exit code: 0/.test(r), r.slice(-200));
 
@@ -786,6 +833,8 @@ try {
 	const noise = s.errs.filter((e) => !/favicon|ERR_ABORTED|502|Bad Gateway/i.test(e));
 	check('the page threw nothing along the way', noise.length === 0, noise.slice(0, 3).join(' | '));
 } finally {
+	netStop = true;
+	if (netWatch) await netWatch.catch(() => {});
 	await b.close().catch(() => {});
 	for (const p of started) { try { p.kill(); } catch (e) { /* already gone */ } }
 	// Chrome kills the host when the port dies; say so if one is still standing.

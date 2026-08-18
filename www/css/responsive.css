@@ -105,6 +105,11 @@
 	}
 	.mnav button {
 		flex: 1;
+		/* The count badge is placed over the icon rather than added to the
+		   column: this button is a two-row stack of icon and label, and a third
+		   row would grow the bar for every reader whether or not anything is
+		   waiting. */
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -123,6 +128,17 @@
 	   eleven palettes -- making the destination you are ON the least legible
 	   label on the bar. */
 	.mnav button.on { color: var(--accent-text); background: var(--accent-soft); }
+	/* Over the icon's top-right corner, where a badge is looked for. It hangs
+	   past the icon so it does not sit on the glyph it is about. The colours are
+	   app.css's and are NOT restated here: `--accent-text` on `--accent-soft` is
+	   the one small-text pairing measured across all eleven palettes, and the
+	   phone bar is where the type is smallest. */
+	.mnav button .dock-count {
+		position: absolute;
+		top: 2px;
+		left: 50%;
+		margin-left: 5px;
+	}
 
 	/* Comfortable chat input row. */
 	.chat-output { padding: 12px 14px; }

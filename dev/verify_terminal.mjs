@@ -35,7 +35,14 @@ const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const SHOTS = path.join(os.homedir(), '.cache/daimond/term-shots');
 fs.mkdirSync(SHOTS, { recursive: true });
 
-const PORT = Number(process.env.TERMDEMO_PORT || 8779);
+// DERIVED FROM THE WORLD, because 8779 IS world 2's app port (8777 + 2). This file
+// starts a server of its own, so a fixed default meant this verifier and another
+// agent's world could not both exist -- and on 2026-08-18 the gate died here,
+// EADDRINUSE, because world 2 was up in the main tree. The verifier was blameless
+// and the number was the bug. Add a row to the port register in dev/world.sh
+// before deriving any port.
+const WORLD = Number(process.env.DAIMOND_PORT || 8777) - 8777;
+const PORT  = Number(process.env.TERMDEMO_PORT || (8940 + WORLD));
 
 let bad = 0, n = 0;
 const out = [];

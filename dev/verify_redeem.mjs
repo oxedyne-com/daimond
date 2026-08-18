@@ -454,16 +454,26 @@ async function startServer() {
 		'the beta is configured closed and a stranger was still registered');
 
 	/// Mint a passcode from the console, as the operator does.
-	async function mint(label) {
-		const r = await call(boss.jar, 'POST', '/api/admin?view=passcodes', { label, wave: 1 });
+	///
+	/// `pro` is the tier the panel's own pulldown sends. Since 2026-08-17 a code
+	/// grants the FREE tier unless somebody asks for Pro, so the author's code
+	/// below asks for it deliberately: the decisive check further down is about
+	/// the GATE and the sign-in, and a free code would have turned it red for a
+	/// reason that has nothing to do with either. The free tier gets a device and
+	/// a phase of its own at the end.
+	async function mint(label, pro) {
+		const r = await call(boss.jar, 'POST', '/api/admin?view=passcodes',
+			{ label, wave: 1, pro: pro === true });
 		return (r.j && r.j.passcode && r.j.passcode.code) || '';
 	}
 
 	const spentCode = await mint('Spent before the browser saw it');
-	const goodCode  = await mint('The author, on a fresh device');
-	check('two passcodes minted from the console',
-		!!spentCode && !!goodCode, spentCode + ' / ' + goodCode);
-	if (!spentCode || !goodCode) { LOG.report(); cleanup(); process.exit(1); }
+	const goodCode  = await mint('The author, on a fresh device', true);
+	const freeCode  = await mint('A free tester, on a fresh device');
+	check('three passcodes minted from the console',
+		!!spentCode && !!goodCode && !!freeCode,
+		spentCode + ' / ' + goodCode + ' / ' + freeCode);
+	if (!spentCode || !goodCode || !freeCode) { LOG.report(); cleanup(); process.exit(1); }
 
 	// One of them is spent by somebody else, from an address of its own, so the
 	// browser meets a code that is genuinely gone rather than one this file
@@ -745,6 +755,93 @@ async function startServer() {
 		check('nothing on the page threw', errs.length === 0, errs.slice(0, 3).join(' | '));
 	} finally {
 		await s.close().catch(() => {});
+	}
+
+	// ── The free tier, on a device of its own ───────────────────
+	//
+	// The most-read screen in the beta, and until 2026-08-17 nobody had ever seen
+	// it: every code gifted Pro, so `beta.done_plain` was drawn in the source and
+	// unreachable in fact. A free code now reaches it, which makes what it SAYS a
+	// property worth holding -- so this redeems one and reads the screen.
+	//
+	// A second browser, after the first has closed, because the redemption is
+	// bound to a device key and the device above has spent its code. Sequential
+	// rather than side by side: two Chromiums at once on this box is memory
+	// nobody needs to spend on a phase this short.
+	const FREEPROF = path.join(SCRATCH, 'pw', 'redeemfree' + (BREAK ? '-' + BREAK : ''));
+	fs.rmSync(FREEPROF, { recursive: true, force: true });
+	const f = await open({
+		name:     'redeemfree',
+		profile:  FREEPROF,
+		signIn:   false,
+		connect:  false,
+		defaults: false,
+	});
+	try {
+		const fpage = f.page;
+		const fsays = (key) => fpage.evaluate(k => window.DaimondI18n.t(k), key);
+		const ftext = (sel) => fpage.evaluate((q) => {
+			const n = document.querySelector(q);
+			return n ? (n.textContent || '').trim() : '';
+		}, sel);
+		await signInAs(f, 'redeemfree');
+		await fpage.waitForTimeout(3000);		// the bootstrap, and the refusal behind it
+		const gate = await fpage.$('.beta-scrim');
+		check('the free device meets the same closed door', !!gate);
+
+		await fpage.evaluate((c) => {
+			const i = document.getElementById('beta-code-input');
+			if (i) i.value = c;
+			const b = [].slice.call(document.querySelectorAll('.beta-box .beta-btn'));
+			const go = b.filter(x => !x.classList.contains('ghost')).pop();
+			if (go) go.click();
+		}, freeCode);
+		const settled = await waitFor(async () => await fpage.evaluate(() => {
+			const box = document.querySelector('.beta-box');
+			if (!box) return true;
+			const err = box.querySelector('.beta-err');
+			if (err && err.textContent.trim()) return true;
+			return !err;
+		}), 30000, 200);
+		check('a free code is accepted', settled && (await ftext('.beta-err')) === '',
+			JSON.stringify(await ftext('.beta-err')));
+		await fpage.waitForTimeout(2500);
+
+		const fst = await fpage.evaluate(() => {
+			try { return window.DaimondGateway.state(); } catch (e) { return {}; }
+		});
+		check('THE FREE APP IS SIGNED IN TOO', fst.authed === true,
+			'authed ' + fst.authed + ' · offline ' + fst.offline,
+			'a free code spent itself and the app never took the account it made');
+		check('and holds no Pro, which is what free means',
+			fst.pro === false, 'pro ' + JSON.stringify(fst.pro),
+			'a free code granted the licence anyway, so the free tier has no testers again');
+
+		// The SENTENCE, asserted by meaning: the screen must be the plain one and
+		// must not be the Pro one. Both halves, because a panel that drew neither
+		// would pass the first on its own -- and `done_plain` said almost nothing
+		// until today, which is the defect this half exists to keep fixed.
+		const box   = await ftext('.beta-box');
+		const plain = await fsays('beta.done_plain');
+		const proly = await fsays('beta.done_pro');
+		check('the confirmation is the free sentence, not the Pro one',
+			box.indexOf(plain) >= 0 && box.indexOf(proly) < 0,
+			JSON.stringify(box.slice(0, 160)));
+		// And that the sentence is worth reading. A free tester has to be told
+		// which tier they are on and what the other one adds, so the sentence must
+		// NAME Pro -- the one word every locale keeps untranslated, which is why
+		// this holds in all eight rather than only in English. Asserted on the
+		// catalogue and not on the screen for the same reason.
+		check('and it names the tier the reader has not got, rather than stopping at "you have an account"',
+			plain.indexOf('Pro') >= 0, JSON.stringify(plain.slice(0, 120)),
+			'the free confirmation says only that an account exists, which is the '
+			+ 'screen nobody had ever seen and tells a tester nothing about what they hold');
+		await shot(f, 'redeem-done-free');
+
+		const ferrs = errors(f).filter(e => /^pageerror:/.test(e));
+		check('nothing on the free page threw', ferrs.length === 0, ferrs.slice(0, 3).join(' | '));
+	} finally {
+		await f.close().catch(() => {});
 	}
 
 	if (bad.length) { LOG.report(); SRV.report(); }

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en" data-guide-locale="en" data-guide-locales="en">
+<html lang="en" data-guide-locale="en" data-guide-locales="en de es fr pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Improving Daimond — Daimond guide</title>
+<title>Social — Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../css/variables.css">
 <link rel="stylesheet" href="../css/guide.css">
@@ -22,6 +22,12 @@
 .pair .costly { border-color: var(--border-2); }
 .pair .useful { border-color: var(--accent); }
 .pair p { margin: 0; color: var(--text-secondary); }
+
+/* A whole sentence the app puts on screen, quoted as it stands. The pill in
+   guide.css is `white-space: nowrap`, which is right for a button label and
+   wrong for a sentence: at 360px the longest of these ran 133 pixels past the
+   right edge and took the whole page sideways with it. A quotation wraps. */
+.ui.quoted { white-space: normal; }
 
 /* The glossary. Two columns where there is room, one where there is not; the
    crops are between 300 and 440 pixels wide, so a column of about 350 shows
@@ -105,14 +111,14 @@
 			<a href="sync.html">Cross-device sync</a>
 			<a href="spending.html">Spending</a>
 			<a href="machine-operations.html">Machine Operations</a>
-			<a href="improve.html" aria-current="page">Improving Daimond</a>
+			<a href="social.html" aria-current="page">Social</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>Improving Daimond</h1>
-	<p class="lede">Daimond is changed by what its users report. This page is about making a note land: how to say what happened, and the names for the parts of the screen, so that whoever reads it knows at once which thing you mean.</p>
+	<h1>Social</h1>
+	<p class="lede">Daimond is changed by what its users report. The Social panel is where that is written, read back and voted on, and where messages, the people they come from, groups and shares sit. This page is about making a note land: how to say what happened, and the names for the parts of the screen, so that whoever reads it knows at once which thing you mean.</p>
 
 	<p>A note that says the thing at the top left is broken costs somebody a search, and sometimes finds the wrong thing. A note that says the <strong>Diamonds</strong> chip in the top bar does not. Neither note is more work to write. The difference is only knowing what the parts are called, which is what the rest of this page is for.</p>
 
@@ -495,7 +501,7 @@
 
 		<p>A few more words the rest of the guide uses, with nothing to photograph: a <strong>panel</strong> is one of the things a region holds, each with a name of its own, from <span class="ui">AI</span> to <span class="ui">Trash</span>; a <strong>crystal</strong> is what a Diamond knows, kept as a document; a <strong>daimon</strong> is the agent that thinks for a Diamond; a <strong>worker</strong> is an agent a daimon sends off to do one job. <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> explains all four.</p>
 
-		<p>Two more belong to the Improve panel, and neither can be photographed either. The <strong id="term-forge">forge</strong> is where the work on Daimond is tracked: a public repository, off this device, that a note you send arrives in as a proposal. Your <strong id="term-voice">voice</strong> is the line of text the forge prints for you once -- a secret belonging to one person, which the forge looks you up by, held encrypted on this device and never shown to you again. <a href="#improve-panel">The Improve panel</a> below is where both are used, and it is the only place in Daimond either word appears.</p>
+		<p>Two more belong to the Social panel, and neither can be photographed either. The <strong id="term-forge">forge</strong> is where the work on Daimond is tracked: a public repository, off this device, that a note you send arrives in as a proposal. Your <strong id="term-voice">voice</strong> is the line of text the forge prints for you once: a secret belonging to one person, which the forge looks you up by, held encrypted on this device and never shown to you again. <a href="#social-panel">The Social panel</a> below is where both are used, and it is the only place in Daimond either word appears.</p>
 	</section>
 
 	<section id="two-words">
@@ -513,10 +519,12 @@
 		<p>If you find another, that is worth a note of its own. Two names for one thing is a small fault in the app, not in the person reporting it.</p>
 	</section>
 
-	<section id="improve-panel">
-		<h2 id="s26">The Improve panel</h2>
+	<section id="social-panel">
+		<h2 id="s26">The Social panel</h2>
 
-		<p>A note is written in the <span class="ui">Improve</span> panel, which sits in the dock, beside your work, so that a note about what is on screen can be written without leaving it. Its <strong>head</strong> carries two <strong>chips</strong>, <span class="ui">Notes</span> and <span class="ui">Proposals</span>, and one is filled while you are looking at it.</p>
+		<p>A note is written in the <span class="ui">Social</span> panel, which sits in the dock, beside your work, so that a note about what is on screen can be written without leaving it. Its <strong>head</strong> carries five <strong>chips</strong>, and one is filled while you are looking at it: <span class="ui">Messages</span>, <span class="ui">People</span>, <span class="ui">Share</span>, <span class="ui">Notes</span> and <span class="ui">Proposals</span>. It opens on <span class="ui">Notes</span>.</p>
+
+		<p>The rest of this section is <span class="ui">Notes</span> and <span class="ui">Proposals</span>, which are about Daimond itself. The other three are about other people, and each has a section of its own below: <a href="#people">People</a> first, because nothing can be sent to anybody until a code has been exchanged.</p>
 
 		<p>A note you send does not stop at Oxedyne. It goes to the <strong>forge</strong>, the place where the work on Daimond is tracked, and it arrives there as a proposal anyone with that repository can read. The <span class="ui">Proposals</span> chip is that same forge, read back.</p>
 
@@ -566,6 +574,129 @@
 		</div>
 	</section>
 
+	<section id="people">
+		<h2 id="s30">People, and the first exchange</h2>
+
+		<p>Everything else on this page rests on one act: two people coming to hold each other's real keys. Nothing can be sealed to somebody Daimond has no key for, so until a code has been exchanged the <span class="ui">People</span> list says exactly that, and the message box says there is nobody to write to.</p>
+
+		<p>Two buttons sit above the list. <span class="ui">Show my code</span> puts your own <strong>code</strong> on screen: a small signed card carrying your key, the separate key a message to you is sealed with, and whatever name you have given yourself. It is drawn as a symbol for somebody else's camera, and repeated underneath as a line of text beginning <code translate="no">DMND-ID1.</code> for when there is no camera. <span class="ui">Add somebody</span> is the other half of the same act: this device's camera, and a box to paste a code into.</p>
+
+		<h3 id="s31">Read in the room, or read a number aloud</h3>
+
+		<p>Both routes record the code. Only two things can raise a key to <strong>matched</strong>, and which of them is offered depends on how the code arrived rather than on what it says.</p>
+
+		<ul>
+			<li><strong>This device's camera, in person.</strong> You read it off their screen, so there was no channel for anybody to get between you, and the row offers <span class="ui">Mark matched now</span>.</li>
+			<li><strong>Anything else</strong> &mdash; a paste, a link, a code somebody sent you &mdash; stays a new key, and the dialog says so as it arrives. Whatever handed it over could have substituted a key of its own and signed the result perfectly, so a card that checks out proves that the holder of that key composed it and nothing about who the holder is.</li>
+		</ul>
+
+		<p>The way up from there is <span class="ui">Compare safety numbers</span>: sixty digits in twelve groups of five, the same on both sides, read to each other on a call or in person. <span class="ui">The numbers match</span> records it. <span class="ui">They are different</span> says that somebody is between you and that the key is not to be used. Reading the digits in a message proves nothing, because whatever could swap the keys could swap the message.</p>
+
+		<h3 id="s32">What a row says</h3>
+
+		<p>Each person is a <strong>row</strong>: a name, a line under the name, and a fingerprint. Until the key is matched the name is drawn as the claim it is &mdash; <em>calls themselves “Ada”</em> &mdash; because a name is a thing its holder typed. Once it is matched, the person on the other end is known and the name may be their name.</p>
+
+		<p>The line under the name is the only place in Daimond a key's standing is drawn, and it is a line rather than a badge so that it cannot be read in one glance with anything else. It says one of five things: that this is a new key you have not matched; that it was matched in person, with the date; that it was matched by safety number, with the date; that it is a <em>different</em> key from the one you matched; or that it is blocked.</p>
+
+		<div class="note"><strong>A key that changes is not a key that carries over.</strong> A card can name the key it replaces, which links the two, and it does not move a match across: the commonest reason a key changes is that the old one leaked, and whoever took the old key can sign that claim too. So the row says the key is different, and messages from it are held until you decide. A name that folds onto a name you have already matched is called out on the row as well &mdash; names are not identities, and the key is the thing to check.</div>
+
+		<p><span class="ui">Block</span> on any row stops that key at the relay: nothing more from them is carried, and they are told nothing about it. <span class="ui">Unblock</span> lifts it. Nothing in this list is edited or deleted: every card, every match and every block is appended to a record on this device, and the list is rebuilt from that record, with every signature checked again, each time it is drawn.</p>
+	</section>
+
+	<section id="messages">
+		<h2 id="s33">Private messages</h2>
+
+		<p>A message is sealed on this device to a key the other person holds, and opened on theirs. Nothing in between can read it, and that includes us: the relay carries ciphertext and has no way to do anything else with it. What it does see is what routing needs &mdash; which account, when, and how many bytes &mdash; and that is worth saying rather than glossing over.</p>
+
+		<p>At the foot of the <span class="ui">Messages</span> view is the box you write in. Above it a picker names who it goes to: the people whose sealing key this device holds, and the groups you have joined. Under the picker one line says who can read what you are about to type, and it changes with the pick, because <span class="ui quoted">Private. Only you and the person you are writing to can read this.</span> would be false over a group of twelve. <span class="ui">Send privately</span> sends it. A body longer than 8,192 characters is refused rather than cut, on the ground that half a message is not a shorter message.</p>
+
+		<h3 id="s34">Arriving</h3>
+
+		<p>While the <span class="ui">Messages</span> view is open, Daimond holds a request open at the relay, so a message that lands is drawn without your pressing anything. With the panel shut, it is found when you next open it &mdash; and by the count.</p>
+
+		<p>The <span class="ui">Social</span> chip in the chip row carries a number, and the total across the app goes into the browser tab's title and onto the app's own icon where the platform draws one. It is a tally of what has arrived rather than a memory of what you have looked at, and this build has nothing that marks a message as read, so the number stands.</p>
+
+		<p>A first message from somebody you have not accepted does not go into the list. It waits above it, under <span class="ui">Waiting for your answer</span>, with their fingerprint and what they wrote, and three buttons:</p>
+
+		<ul>
+			<li><span class="ui">Accept</span> takes it into the list, and their later messages go straight there.</li>
+			<li><span class="ui">Ignore</span> takes the row away. It writes nothing, and it tells them nothing &mdash; that is the whole of it, so that a sender can never tell an ignore from a silence.</li>
+			<li><span class="ui">Block</span> stops them at the relay, as the <span class="ui">People</span> row does.</li>
+		</ul>
+
+		<div class="note"><strong>One email a day, at most.</strong> Where your account has an address on it, Daimond may send one email saying something is waiting: no sender, no subject, no count, and not more than one in any twenty-four hours. The switch is in the admin panel under <span class="ui">Email doorbell</span>, and for a beta account it starts on, because with a closed tab and no push it is the only thing anybody hears.</div>
+
+		<h3 id="s35">What is said, and what is not promised</h3>
+
+		<ul>
+			<li><strong>Sent, never delivered.</strong> The relay answers a blocked delivery exactly as it answers one it took, deliberately, so that Block cannot be told from Ignore. So a group send says how many people it was <em>sent</em> to, and names anybody the relay would not take it for.</li>
+			<li><strong>A full mailbox is said so.</strong> A box holds five hundred uncollected messages; past that a message does not arrive, and the sender is told that rather than told it went.</li>
+			<li><strong>Thirty days, then the relay lets go.</strong> A message nobody collects is dropped after thirty days and the sender gets a notice for it, in its own section under the list. A message that expired leaves that notice behind rather than a gap, so a silence is never mistaken for nothing having been sent.</li>
+			<li><strong>Nothing is queued.</strong> A message that could not be sent has not been sent, and nothing tries again behind your back. The same rule the note box keeps.</li>
+			<li><strong>Your own devices see them.</strong> Messages, and a copy of what you send, travel with the encrypted parcel <a href="sync.html">sync</a> carries between your devices. On this device they are kept encrypted under your passphrase, so while Daimond is locked the list says so instead of showing an empty one.</li>
+		</ul>
+
+		<div class="note"><strong>Reporting one message.</strong> Because the operator cannot read a message, the only person who can produce an abusive one is the person it was sent to. <span class="ui">Report</span> on a message shows the exact words that will go, and sends them with the sender's signature and the one key that opens that one envelope. Nothing else goes: not the rest of the exchange, not their other messages, not your other conversations.</div>
+	</section>
+
+	<section id="groups">
+		<h2 id="s36">Groups</h2>
+
+		<p>A group is a group chat, and it sits at the foot of the <span class="ui">Messages</span> view rather than behind a chip of its own. There is no shared key: a message to a group is sealed once for each member, one lock per person inside the one envelope. Three things follow from that, and each is on screen where it matters, before a press rather than after it.</p>
+
+		<ul>
+			<li><strong>Joining shows nothing earlier.</strong> The messages sent before you joined were never sealed to your key, so no device can open them for you.</li>
+			<li><strong>Taking somebody out takes nothing back.</strong> They keep every message already sent to them and receive nothing from then on, which is why the control reads <span class="ui">Stop sending to</span> and never <em>remove</em>.</li>
+			<li><strong>Closing is final, and it destroys nothing.</strong> Everybody keeps every message; nobody can write to it again. Daimond asks once before it happens, and closing has a heading of its own below.</li>
+		</ul>
+
+		<p>To make one, name it and pick from the people you hold a card for; <span class="ui">Make this group</span> tells them, and says how many were told. Somebody with no card cannot be added, because there would be nothing to seal to them with. A group holds at most 255 people, and one message to a group is a separate delivery for each member, so a large group is slow and fills mailboxes long before that ceiling matters.</p>
+
+		<p>An invitation arrives under <span class="ui">Group invitations</span>, with <span class="ui">Join</span> and <span class="ui">Not now</span>. Messages sent to the group while you have not answered wait with the invitation: joining a group is what accepts the people in it.</p>
+
+		<p>Only the person who made a group can change who is in it or end it, because a group's name for itself is derived from their key and nobody else can write a membership list for it. Everybody else sees the roster with no buttons over it. A member has <span class="ui">Leave this group</span>, which is local, takes nothing away and tells nobody; the person who made the group cannot leave it, since the next list they write would name them again.</p>
+
+		<h3 id="s37">Closing a group</h3>
+
+		<p>Closing is the creator's one act that cannot be undone. The button reads <span class="ui">Close this group</span> &mdash; not <em>disband</em>, and not <em>delete</em>, because nothing is destroyed by it.</p>
+
+		<p>A dialog asks once, headed <span class="ui">Close this group for everybody?</span>, and it says: “Closing a group closes it for everybody. Nobody can write to it again, you included; every message already sent stays where it is. It cannot be undone.” Under that it names the group, and the button that does it reads <span class="ui">Close it for everybody</span>. Dismiss the dialog and the group is exactly as it was.</p>
+
+		<p>What the press does is write a membership list naming nobody, and hand it to everybody who was in it. Every reader obeys it, so nothing more can be sent to that group by anybody, the person who closed it included, and no later list can reopen it. Nothing is deleted anywhere: every member keeps every message they already hold.</p>
+
+		<div class="note"><strong>A closed group keeps its place on the list.</strong> It sits with the groups you are in, with its name and its messages and no controls at all, saying that it was closed by the person who made it. That is not tidying left undone: the group's name is drawn over each of its messages out of that one record, so taking the record away would leave the transcript the closing exists to preserve under nothing but eight characters of an id.</div>
+
+		<div class="note"><strong>The relay knows nothing about groups.</strong> There is no group record, no group name and no membership list on any server: the list lives in the clients, and it travels as an ordinary sealed message like any other. What the relay can still see is what routing shows it &mdash; one address landing in several mailboxes at one moment &mdash; so it can infer that some set of accounts were written to together, and never who they are to each other.</div>
+	</section>
+
+	<section id="sharing">
+		<h2 id="s38">Sharing a Diamond</h2>
+
+		<p>Under the <span class="ui">Share</span> chip are two halves, in the order you meet them: <span class="ui">Open a share</span> at the top, since taking one in needs nothing of you but the file, and <span class="ui">Send a Diamond</span> under it.</p>
+
+		<p><strong>A share is a copy the receiver owns.</strong> It is re-sealed to their key, it lands in their workspace as a Diamond of their own, and they may change it. You never see their changes and they never see yours. It is not a live view of your Diamond: there is nothing to revoke afterwards, and nothing that goes on reading what you keep.</p>
+
+		<p>A share carries the files of one Diamond, so there has to be one open, and the panel names it and says in the same line what it is: <span class="ui quoted">a copy they will own, not a view of yours.</span> Pick who it goes to from the people whose sealing key this device holds, and press <span class="ui">Share</span>. At most sixty-four files and two megabytes of them; over either it is refused rather than trimmed, because a copy missing a file is not a smaller copy. Three things never travel whatever you do: the Diamond's own version history, the agent's log, and a capp's own manifest.</p>
+
+		<h3 id="s39">Two carriers, chosen by measuring</h3>
+
+		<p>The relay carries a sealed envelope of at most 64 KB, so the carrier is decided by size rather than asked of you, and the panel says which happened and how big the share was.</p>
+
+		<p>Over that size Daimond writes the share out as a file with the extension <code translate="no">.dshare</code> &mdash; always that extension &mdash; names it after the share and its address, and tells you what it was called. Give them that file. A capp page is around 64 KB on its own, so a share carrying a capp always travels this way; so does one going onto a memory stick, or to somebody who has no account here. A <code translate="no">.dshare</code> is not more trusted than a message for having been a file: the bytes are the same sealed envelope, sealed to that one person, and opening it asks the same question.</p>
+
+		<div class="note"><strong>The file is the route that lands.</strong> A share small enough for the relay is sent through it, and the sender is told it went. The receiving side of that route is not finished: there is no control that opens it, and it turns up under their <span class="ui">Messages</span> as a message their device could not read. Until that is done, save the file and hand it over &mdash; which is what a share of any size can do.</div>
+
+		<h3 id="s40">A share that carries code</h3>
+
+		<p>Data travels freely; code travels only by consent. A Diamond carrying a capp page carries a program somebody else wrote, and Daimond runs the page when the Diamond holding it is opened &mdash; so the question is asked before anything is written, and not when it is opened, which would be too late.</p>
+
+		<p>The dialog is headed <span class="ui">This share contains code</span>. It names the share, says whose key it came from, and lists the files that would be added, because “it contains code somewhere” is not enough to answer. The button that accepts it reads <span class="ui">Accept the page</span>.</p>
+
+		<p>Say no and the rest still lands: the data files are written, and the panel names the pages that were left out, so nothing is missing without being said. Where the whole share was a page, nothing is added at all and the panel says that instead.</p>
+
+		<p>To take one in, <span class="ui">Open a share file…</span> asks for the file, and what arrives is added as a Diamond of your own, with the number of files that landed. The name on it is the sender's and is advisory: two people may pick one name and neither is wrong.</p>
+	</section>
+
 	<div class="next">
 		<a href="machine-operations.html">&larr; Machine Operations</a>
 		<a href="index.html">Back to Getting started &rarr;</a>
@@ -585,7 +716,7 @@
 		<a href="sync.html">Cross-device sync</a>
 		<a href="spending.html">Spending</a>
 		<a href="machine-operations.html">Machine Operations</a>
-		<a href="improve.html">Improving Daimond</a>
+		<a href="social.html">Social</a>
 	</nav>
 </footer>
 </body>

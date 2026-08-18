@@ -15,6 +15,16 @@
  * as part of a sync — the gateway holds it for one IMAP conversation and then
  * forgets it. Daimond stores no mail server-side, and never sees the passphrase.
  *
+ * THAT IS THE TRANSPORT THIS RELEASE SHIPS, and the tunnel section below is NOT
+ * yet carrying anything. TLS in the page is built and tested — the socket, the
+ * handshake, the STARTTLS promotion, the close codes and their sentences — and it
+ * is inert, because the two protocol exports it would run over (`mail_imap` and
+ * `mail_smtp_send`) do not exist and cannot until `fe2o3_net`'s IMAP client is
+ * split sans-io. `syncOne`, `loadFolders` and `sendDraft` therefore still post to
+ * `/api/mail/sync`, `/api/mail/folders` and `/api/mail/send`, password and all.
+ * Nothing in this file may claim otherwise until those three call sites move, and
+ * the privacy page may not claim it either.
+ *
  * The UID is the thing that makes an incremental sync possible: `since_uid` is
  * the last message already held, so a sync asks only for what arrived after it.
  * `uidvalidity` is the mailbox's generation — if the server changes it, every
@@ -50,6 +60,18 @@
 	// the gateway would be taken again. See the sync section below.
 	var TOMBS   = 'daimond-mail-tombs';
 	var deps    = null;              // { writeBytes, openFile, refreshFiles, runTool, showDoc }
+
+	// The wasm module, resolved against THIS script rather than the document, so the
+	// app still finds it when served from a sub-path. Same idiom as tools.js and
+	// graph.js, and for the same reason: mail.js is a classic script and cannot
+	// `import` at the top. It is NOT handed over in `deps` because the TLS client
+	// arrived after daimond.js's `DaimondMail.init` call was written, and one
+	// dynamic import of a URL the page has already loaded costs nothing and is not a
+	// second copy of the wasm — the module registry keys on the URL.
+	var SELF = (document.currentScript && document.currentScript.src) || '';
+	var PKG  = SELF ? new URL('../pkg/oxedyne_daimond.js', SELF).href
+	                : '../pkg/oxedyne_daimond.js';
+	var pkgP = null;
 
 	/// Read a message file's BYTES, as bytes.
 	///
@@ -1659,6 +1681,607 @@
 		if (f) f.count = msgs.length;
 	}
 
+	// ── The tunnel ──────────────────────────────────────────────────
+	//
+	// BUILT AND NOT YET CARRYING MAIL. Nothing above this line calls into it: the
+	// three fetch paths still use the bridge, for the reason in the file header. What
+	// is here is the whole client half of the blind tunnel, exercised by
+	// `dev/verify_mailtunnel.mjs` against a real provider and a real bad certificate,
+	// waiting on two protocol exports. Finishing it is moving three call sites.
+	//
+	// TLS in the page. The wasm side is `src/wasm/mailtls.rs` — a rustls client
+	// compiled to wasm32 with the Mozilla root store bundled — and it owns no socket.
+	// This side owns the socket and no key. Ciphertext goes out through
+	// `mail_tunnel_take` and comes in through `mail_tunnel_feed`; the plaintext of the
+	// conversation never leaves the page at all.
+	//
+	// WHAT THE GATEWAY CAN STILL SEE, once this is the transport, and what nobody may
+	// write "we see nothing" about: which host, when, how many bytes each way, and for
+	// how long. Traffic analysis survives a blind pipe.
+	//
+	// Nothing here parses a TLS record, and nothing here parses IMAP either: see the
+	// seam below for why the protocol is not written in JavaScript.
+
+	/// The gateway route that upgrades to the pipe. Same origin: Steel front-proxies
+	/// `/api/*` to the gateway on loopback, so the session cookie rides along as an
+	/// ordinary same-origin cookie and this file sends no credential of its own. The
+	/// query string is carried through the hop verbatim, which is why `host`, `port`
+	/// and `security` travel there rather than in a first frame.
+	var TUNNEL_PATH = '/api/mail/tunnel';
+
+	// ONE TUNNEL PER CONVERSATION, OPENED AND CLOSED. Never held between polls.
+	//
+	// The gateway closes an idle tunnel after 300 seconds and any tunnel after 1800,
+	// and its own keepalive ping deliberately does not reset the idle clock — a
+	// keepalive that did would mean nothing is ever idle. Every refresh interval this
+	// panel offers except the fastest is longer than that window, and the fastest
+	// would race it, so a held socket would be closed under us every time. Each of
+	// `tunnelSync`, `tunnelFolders` and `tunnelSend` therefore opens one, converses,
+	// and closes it in a `finally`.
+	//
+	// Nothing is lost by that: this file has been request/response throughout since it
+	// was written, with no `IDLE`, no held socket and no push of any kind. The window
+	// forbids a capability mail here has never had.
+
+	/// Longest a handshake may take before the tunnel is given up on, in ms.
+	///
+	/// It is a backstop and not the usual way a bad connection ends: a refused
+	/// certificate lands in `failed` within a round trip, and every gateway refusal
+	/// arrives as a close code. This catches the case where the far end accepted the
+	/// socket and then said nothing.
+	var TUNNEL_OPEN_MS = 20000;
+
+	/// Most that goes into one frame, in bytes. Half the gateway's 128 KiB ceiling,
+	/// so a record that straddles a split still cannot reach it.
+	var FRAME_MAX = 64 * 1024;
+
+	/// The wasm namespace, once.
+	async function engine() {
+		if (!pkgP) pkgP = import(PKG);
+		return pkgP;
+	}
+
+	/// The socket's URL. Host, port and security, and nothing else — a URL is the one
+	/// place a secret is hardest to get back out of, because it is in the request
+	/// line, and the gateway logs request lines.
+	function tunnelUrl(host, port, security) {
+		var scheme = (location.protocol === 'https:') ? 'wss:' : 'ws:';
+		return scheme + '//' + location.host + TUNNEL_PATH
+			+ '?host=' + encodeURIComponent(host)
+			+ '&port=' + encodeURIComponent(String(port))
+			+ '&security=' + encodeURIComponent(security);
+	}
+
+	/// What a close code means to the person waiting on their mail.
+	///
+	/// The codes arrive on `ws.onclose` and the wasm cannot see them, so this mapping
+	/// is this file's and is the only place it exists.
+	///
+	/// THE PAIR IS THE KEY, NEVER THE CODE ALONE. `4403` and `4429` are each
+	/// overloaded and the gateway's own reason word is the only discriminator
+	/// (`gateway/src/handlers/mail_tunnel.rs`, and the vocabulary table in
+	/// `dev/SOCIAL_OFFICE_CONTRACT.md`). The halves name different repairs: `port` is
+	/// a number to correct and `host` is a mailbox to bind, `unresolved` is a name
+	/// that does not resolve and `credits` is a top-up while `concurrent` is a tab to
+	/// close. A single sentence per code would be a sentence nobody can act on — and
+	/// `host` against `unresolved` is the pair that once let a test pass with the
+	/// check it was named after switched off, because both refusals said `host`.
+	///
+	/// NOTHING HERE IS SAID AFTER A SUCCESSFUL FETCH. This is reached only from a
+	/// throw, which is to say only when the socket closed while a verb was still
+	/// waiting. A tunnel is opened per conversation and closed, so `1000 done` is the
+	/// ordinary end of every sync — and a warning printed after each one would teach
+	/// the reader to ignore the warnings that matter.
+	function closeWords(code, reason, host, port) {
+		var r = String(reason || '');
+		switch (code) {
+		case 4401:	return t('mail.tunnel.close.auth');
+		case 4402:	return t('mail.tunnel.close.pro');
+		case 4403:	if (r === 'port')       return t('mail.tunnel.close.port', { port: port || 0 });
+				if (r === 'unresolved') return t('mail.tunnel.close.unresolved', { host: host || '' });
+				return t('mail.tunnel.close.host', { host: host || '' });
+		case 4429:	return r === 'concurrent'
+					? t('mail.tunnel.close.concurrent')
+					: t('mail.tunnel.close.credits');
+		case 1009:	return t('mail.tunnel.close.toobig');
+		case 1013:	return t('mail.tunnel.close.unreachable', { host: host || '' });
+		// Not the gateway's: 1006 is what a browser reports when the socket never
+		// opened at all — no gateway, or something in the way of the upgrade.
+		case 1006:	return t('mail.tunnel.close.no_socket');
+		}
+		// Three endings share 1000, so the reason word is all there is to tell them
+		// apart. None of the three is a fault in the mail; each is a fetch to repeat.
+		if (r === 'idle')    return t('mail.tunnel.close.idle');
+		if (r === 'expired') return t('mail.tunnel.close.expired');
+		if (r === 'done')    return t('mail.tunnel.close.done');
+		return t('mail.tunnel.close.other', { code: code });
+	}
+
+	/// What a refused certificate says to a person.
+	///
+	/// `fault` is rustls's own discriminant, verbatim — `InvalidCertificate(UnknownIssuer)`
+	/// and the like. Every sentence carries it, because the three named below do not
+	/// cover every refusal and a fault the user cannot see is a fault nobody can
+	/// report.
+	function certWords(host, fault) {
+		var f = String(fault || '');
+		if (/NotValidForName/.test(f)) return t('mail.tunnel.err.cert_name',    { host: host, fault: f });
+		if (/Expired/.test(f))         return t('mail.tunnel.err.cert_expired', { host: host, fault: f });
+		if (/UnknownIssuer/.test(f))   return t('mail.tunnel.err.cert_issuer',  { host: host, fault: f });
+		return t('mail.tunnel.err.cert', { host: host, fault: f });
+	}
+
+	/// Open one tunnel to one mail server.
+	///
+	/// The returned object owns the socket and the wasm handle together, because
+	/// neither is any use without the other. It resolves as soon as the socket is up:
+	/// `ready` is what waits for the encrypted channel, since a STARTTLS tunnel is
+	/// deliberately in the clear for the line or two before its promotion.
+	///
+	/// EVERY CALLER MUST `close()`, in a `finally`. A tunnel holds a socket at the
+	/// gateway and a socket at the provider, an account may hold only four at once,
+	/// and the gateway charges for the bytes either way.
+	async function openTunnel(spec) {
+		var wasm = await engine();
+		var host = String((spec && spec.host) || '').trim();
+		var port = parseInt((spec && spec.port), 10) || 0;
+		// 993 and 465 are TLS from the first byte; 143 and 587 begin in the clear and
+		// must be promoted before the password is spoken. What the account says wins
+		// over what the port implies, exactly as it did over the old bridge.
+		var sec  = ((spec && spec.security) === 'starttls') ? 'starttls' : 'tls';
+		if (!host || !port) throw new Error(t('mail.tunnel.err.no_server'));
+
+		var h;
+		try { h = wasm.mail_tunnel_open(host, port, sec); }
+		catch (e) { throw new Error(t('mail.tunnel.err.no_client', { reason: friendly(e) })); }
+
+		var ws = new WebSocket(tunnelUrl(host, port, sec));
+		ws.binaryType = 'arraybuffer';
+
+		var gone    = null;      // { code, reason } once the socket has closed
+		var waiters = [];        // one-shot, woken by anything that can move the state
+
+		function wake() {
+			var w = waiters;
+			waiters = [];
+			w.forEach(function (f) { f(); });
+		}
+
+		/// Wait for the next thing that could change the answer, or `ms`.
+		function step(ms) {
+			return new Promise(function (res) {
+				var done = false;
+				var fire = function () { if (!done) { done = true; clearTimeout(tm); res(); } };
+				var tm = setTimeout(fire, Math.max(5, ms));
+				waiters.push(fire);
+			});
+		}
+
+		/// Ciphertext out. Called after everything that can queue a record: the
+		/// socket opening (which releases the ClientHello), a frame arriving, a
+		/// plaintext write, and a STARTTLS promotion.
+		function pump() {
+			if (ws.readyState !== 1) return;
+			var out;
+			try { out = wasm.mail_tunnel_take(h); }
+			catch (e) { return; }        // the handle is closed; `state` will say so
+			if (!out || !out.length) return;
+			// SPLIT, because the gateway closes 1009 on an assembled message over
+			// 128 KiB and a take can return more than that: several TLS records queue
+			// behind one flush whenever a fetch pipelines. A frame limit met by
+			// construction beats a close code the user has to read.
+			for (var i = 0; i < out.length; i += FRAME_MAX) {
+				ws.send(out.subarray(i, Math.min(i + FRAME_MAX, out.length)));
+			}
+		}
+
+		/// The tunnel's own state, and `failed` is what it answers first.
+		///
+		/// `mail_tunnel_state` puts `failed` ahead of everything else because rustls
+		/// abandons a handshake mid-flight on a refused certificate — it does not
+		/// come back to say so. A caller that tested `open` first would wait for
+		/// ever, and that defect was found and fixed once already in the wasm. This
+		/// end must not reintroduce it: nothing here tests for `open` before it has
+		/// tested for `failed`.
+		function state() {
+			try { return wasm.mail_tunnel_state(h); }
+			catch (e) { return 'closed'; }
+		}
+
+		function fault() {
+			try { return wasm.mail_tunnel_fault(h) || ''; }
+			catch (e) { return ''; }
+		}
+
+		ws.onopen    = function () { pump(); wake(); };
+		ws.onmessage = function (ev) {
+			try {
+				wasm.mail_tunnel_feed(h, new Uint8Array(ev.data));
+				pump();
+			} catch (e) {
+				// A feed that threw is a broken stream, not a protocol failure, and
+				// `state` cannot report it. Recorded so `ready` has something to say.
+				gone = gone || { code: 1002, reason: 'feed' };
+			}
+			wake();
+		};
+		// An error is always followed by a close, per the WebSocket specification, so
+		// there is nothing for this arm to do but keep the browser from logging an
+		// unhandled event. `gone` is set by `onclose`, with the code.
+		ws.onerror   = function () { };
+		ws.onclose   = function (ev) {
+			gone = { code: ev.code, reason: ev.reason || '' };
+			wake();
+		};
+
+		var tun = {
+			handle:   h,
+			host:     host,
+			port:     port,
+			security: sec,
+			state:    state,
+			fault:    fault,
+			/// Did the socket carry anything? The gateway meters bytes, so this is
+			/// what decides whether the balance in the header has moved.
+			moved:    false,
+
+			/// Wait until the encrypted channel is up, or say why it never will be.
+			///
+			/// `failed` first, then a socket the gateway closed, then the state the
+			/// caller asked for. In that order, always: a certificate refusal and a
+			/// close code can both be true at once — rustls sends an alert, the
+			/// gateway forwards it, the provider drops the connection — and the
+			/// certificate is the more useful of the two things to be told.
+			ready: async function (want) {
+				want = want || 'open';
+				var t0 = Date.now();
+				for (;;) {
+					if (state() === 'failed') throw new Error(certWords(host, fault()));
+					if (gone) throw new Error(closeWords(gone.code, gone.reason, host, port));
+					if (state() === want) return;
+					if (Date.now() - t0 >= TUNNEL_OPEN_MS) {
+						throw new Error(t('mail.tunnel.err.slow',
+							{ host: host, secs: Math.round(TUNNEL_OPEN_MS / 1000) }));
+					}
+					await step(TUNNEL_OPEN_MS - (Date.now() - t0));
+				}
+			},
+
+			/// Plaintext into the session. Encrypted before it is bytes on the socket,
+			/// unless the tunnel is still in its pre-STARTTLS clear phase — which is
+			/// what that phase is for, and why no password may be written in it.
+			write: function (bytes) {
+				wasm.mail_tunnel_write(h, bytes);
+				tun.moved = true;
+				pump();
+			},
+
+			/// Plaintext the peer has sent. Empty until something arrives.
+			read: function () { return wasm.mail_tunnel_read(h); },
+
+			/// Move whatever the session has queued out to the socket.
+			///
+			/// The pump runs by itself at every point that can queue a record, so this
+			/// is for the seam below: a protocol step that queued a command through the
+			/// wasm has queued it where nothing in this file saw it happen.
+			flush: pump,
+
+			/// Wait for the next frame, close or deadline. What makes the seam's loop a
+			/// loop rather than a spin.
+			wait: step,
+
+			/// Promote a STARTTLS tunnel, once the server has agreed.
+			///
+			/// The wasm REFUSES this while unread cleartext is still buffered, which
+			/// is CVE-2011-0411: a pipelined response and an injected one are
+			/// indistinguishable, so the pre-TLS buffer must be discarded rather than
+			/// carried across the handshake. The refusal is surfaced and not retried
+			/// past — a second attempt would either hit the same guard or, if
+			/// something had drained the buffer in between, be exactly the attack.
+			secure: function () {
+				try {
+					wasm.mail_tunnel_secure(h);
+				} catch (e) {
+					var m = friendly(e);
+					throw new Error(/unread cleartext/.test(m)
+						? t('mail.tunnel.err.starttls_early', { host: host })
+						: t('mail.tunnel.err.starttls', { host: host, reason: m }));
+				}
+				pump();
+			},
+
+			/// The negotiated version, for the panel and for a test that must know a
+			/// handshake really happened rather than that nothing failed.
+			version: function () {
+				try { return wasm.mail_tunnel_version(h) || ''; }
+				catch (e) { return ''; }
+			},
+
+			/// How the socket ended, or null while it is up.
+			closed: function () { return gone; },
+
+			close: function () {
+				try { ws.close(); } catch (e) { /* already gone */ }
+				try { wasm.mail_tunnel_close(h); } catch (e) { /* already closed */ }
+				// The gateway meters as it goes and has no way to answer in band, so
+				// the header's figure is refreshed from the ledger instead. Only when
+				// something actually crossed: a tunnel that carried nothing is free,
+				// as a sync that found nothing was.
+				if (tun.moved && window.DaimondGateway && DaimondGateway.refreshBalance) {
+					DaimondGateway.refreshBalance();
+				}
+			},
+		};
+
+		// The socket, not the handshake. A caller that wants the encrypted channel
+		// asks for it: a STARTTLS tunnel is legitimately in the clear at this point.
+		var t0 = Date.now();
+		while (ws.readyState === 0 && !gone && Date.now() - t0 < TUNNEL_OPEN_MS) {
+			await step(TUNNEL_OPEN_MS - (Date.now() - t0));
+		}
+		if (gone) {
+			try { wasm.mail_tunnel_close(h); } catch (e) { /* nothing to release */ }
+			throw new Error(closeWords(gone.code, gone.reason, host, port));
+		}
+		if (ws.readyState !== 1) {
+			tun.close();
+			throw new Error(t('mail.tunnel.err.slow',
+				{ host: host, secs: Math.round(TUNNEL_OPEN_MS / 1000) }));
+		}
+		return tun;
+	}
+
+	/// Open a tunnel and take it all the way to an encrypted channel.
+	///
+	/// The STARTTLS sequence is here rather than in each caller because getting it
+	/// wrong is a password on the wire in the clear: the greeting is read, `STARTTLS`
+	/// is spoken in the clear, the server's agreement is read, and only then is the
+	/// tunnel promoted. Reading the agreement is not politeness —
+	/// `mail_tunnel_secure` refuses to promote over an unread buffer, so a caller
+	/// that skipped it would meet the CVE guard instead of a working connection.
+	async function secureTunnel(spec) {
+		var tun = await openTunnel(spec);
+		try {
+			if (tun.security === 'tls') {
+				await tun.ready('open');
+				return tun;
+			}
+			// The clear phase, which exists only in order to ask for the encrypted one.
+			await tun.ready('clear');
+			await mailImap(tun, 'starttls', {});
+			tun.secure();
+			await tun.ready('open');
+			return tun;
+		} catch (e) {
+			tun.close();
+			throw e;
+		}
+	}
+
+	// ── The seam ────────────────────────────────────────────────────
+	//
+	// Two exports are the last gap in the chain and nothing has written them yet:
+	//
+	//     mail_imap(handle, verb, args)   -> a JSON string
+	//     mail_smtp_send(handle, args)    -> a JSON string
+	//
+	// They cannot exist until `fe2o3_net`'s IMAP and SMTP clients are split sans-io:
+	// `imap::client` is welded to `tokio::net::TcpStream`, so `fe2o3_net` cannot be a
+	// wasm dependency, and Daimond pins it for non-wasm targets only. That split is in
+	// flight and is the serial part of the release.
+	//
+	// THERE IS NO JAVASCRIPT IMAP HERE AND THERE IS NOT GOING TO BE ONE. Two
+	// implementations of a wire protocol that must agree byte for byte is the seam this
+	// app has been bitten by repeatedly, and a second one written to fill a fortnight's
+	// gap would outlive the gap. The two functions below are the whole of what this
+	// file asks of the protocol, and both fail loudly today: a transport that quietly
+	// answered "no messages" would read as an empty mailbox, which is the one wrong
+	// answer a mail client can give that nobody investigates.
+	//
+	// THE SHAPE, and the one part of it that is not obvious. Neither export can block:
+	// the handle's I/O is driven from here, so a verb that needs another round trip
+	// cannot wait for one. Each call therefore answers either
+	//
+	//     { "state": "pending" }                  it queued bytes and wants more
+	//     { "state": "done", "result": { … } }     the verb finished
+	//
+	// and the loop below pumps the socket and calls again. A verb that answered only
+	// when it was finished would deadlock, every time, with the ClientHello or the
+	// command sitting in the wasm's out-queue and nothing to carry it.
+	//
+	//     mail_imap verbs, and what `result` must hold:
+	//
+	//     'starttls' { }                              -> { }
+	//         the greeting read, STARTTLS sent, the agreement read, and the buffer
+	//         DRAINED — `mail_tunnel_secure` refuses to promote over unread cleartext.
+	//     'login'    { user, password }               -> { }
+	//     'list'     { }                              -> { folders: [{ name, role,
+	//                                                     selectable, delimiter }] }
+	//     'fetch'    { mailbox, since_uid, before_uid }
+	//                -> { uid_validity, messages: [{ uid, flags, raw }],
+	//                     held_back, limit }
+	//
+	// `raw` is base64, as the bridge's reply was, so `syncOne` below is unchanged.
+	// `charged_minor` is deliberately absent: the gateway meters bytes on a pipe it
+	// cannot see into and has no way to answer in band, so the balance is re-read from
+	// the ledger when a tunnel closes.
+	//
+	// `mail_smtp_send` takes `{ user, password, rcpt: [...], raw }` and runs the whole
+	// submission — EHLO, STARTTLS and the promotion, AUTH, MAIL/RCPT/DATA. It has to
+	// own all of it because it is the only SMTP name the contract fixes, so there is no
+	// verb to sequence from here; and the credential and the envelope have to be
+	// arguments because AUTH is not optional at any provider and a Bcc means RCPT TO
+	// cannot be read off the headers. Both of those are gaps in the fixed signature
+	// `mail_smtp_send(handle, rfc5322)` rather than choices, and they are reported
+	// rather than worked around.
+
+	/// Longest one protocol verb may take, in ms. A whole-mailbox fetch is many verbs
+	/// and is not bounded by this; one round of question and answer is.
+	var PROTO_MS = 45000;
+
+	/// One protocol verb, driven to completion over a tunnel this file owns.
+	async function drive(tun, call, what) {
+		var t0 = Date.now();
+		for (;;) {
+			var out = call();
+			var r   = (typeof out === 'string') ? JSON.parse(out) : out;
+			// Called even on `done`: the last step of a verb queues a command as often
+			// as not, and a reply nobody sent is a reply nobody gets.
+			tun.flush();
+			if (!r || r.state !== 'pending') return (r && r.result !== undefined) ? r.result : r;
+			// `failed` first, always. See `state` in `openTunnel`.
+			if (tun.state() === 'failed') throw new Error(certWords(tun.host, tun.fault()));
+			var c = tun.closed();
+			if (c) throw new Error(closeWords(c.code, c.reason, tun.host, tun.port));
+			if (Date.now() - t0 >= PROTO_MS) {
+				throw new Error(t('mail.tunnel.err.no_reply',
+					{ host: tun.host, what: what, secs: Math.round(PROTO_MS / 1000) }));
+			}
+			await tun.wait(PROTO_MS - (Date.now() - t0));
+		}
+	}
+
+	async function mailImap(tun, verb, args) {
+		var wasm = await engine();
+		if (typeof wasm.mail_imap !== 'function') {
+			throw new Error(t('mail.err.protocol_pending'));
+		}
+		var body = JSON.stringify(args || {});
+		return drive(tun, function () { return wasm.mail_imap(tun.handle, verb, body); }, verb);
+	}
+
+	async function mailSmtpSend(tun, args) {
+		var wasm = await engine();
+		if (typeof wasm.mail_smtp_send !== 'function') {
+			throw new Error(t('mail.err.protocol_pending'));
+		}
+		var body = JSON.stringify(args || {});
+		return drive(tun, function () { return wasm.mail_smtp_send(tun.handle, body); }, 'send');
+	}
+
+	/// The one place a plaintext mail password exists at all.
+	///
+	/// Unwrapped HERE and nowhere earlier, which is why `secret` is a function and not
+	/// a string: a fetch that fails on the handshake, on a close code or at the seam
+	/// above never decrypts the password at all. What it does produce lives for the
+	/// length of one call and goes into the TLS session, so no request body, no URL
+	/// and no log line can hold it. That is the property this whole route exists for.
+	async function login(tun, user, secret) {
+		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) {
+			throw new Error(t('mail.err.unlock_first'));
+		}
+		var password = await secret();
+		return mailImap(tun, 'login', { user: user, password: password });
+	}
+
+	/// Mailboxes bound at the gateway this session, by address, and what they were
+	/// bound with.
+	///
+	/// Not persisted and not in the account record: it is a fact about the gateway's
+	/// store, and the only honest way to learn it after a reload is to state it again.
+	var bound   = {};
+	/// A bind in flight, by address, so two fetches make one request.
+	var binding = {};
+
+	/// Bind a mailbox, which is what makes its servers reachable at all.
+	///
+	/// The gateway allowlists the far end of every tunnel against the hosts this
+	/// account has already bound — without that, a blind pipe is an open proxy wearing
+	/// a Daimond badge. Binding used to be a side effect of a sync that authenticated,
+	/// and the tunnel cannot be that door: nothing it observes distinguishes a
+	/// successful login from a rejected one. So it is an explicit act on an ordinary
+	/// route, and this is the caller.
+	///
+	/// Idempotent, and skipped when this session already bound the same pair, so an
+	/// ordinary poll costs no request.
+	async function ensureBound(address) {
+		var a = acct(address);
+		if (!a) throw new Error(t('mail.err.send_from_added'));
+		var smtp = smtpFor(a);
+		var want = a.host + '|' + smtp.host;
+		if (bound[a.address] === want) return;
+		// `addAccount` starts a sync and a folder list in the same breath and both pass
+		// through here, so without the memo one mailbox binds twice in parallel.
+		if (!binding[a.address]) {
+			binding[a.address] = post('/api/mail/accounts', {
+				address:   a.address,
+				action:    'bind',
+				host:      a.host || '',
+				smtp_host: smtp.host || '',
+			}).then(function (j) {
+				bound[a.address] = want;
+				delete binding[a.address];
+				return j;
+			}, function (e) {
+				delete binding[a.address];
+				throw e;
+			});
+		}
+		return binding[a.address];
+	}
+
+	/// Fetch a folder over the tunnel, answering in the shape the panel already reads.
+	///
+	/// Deliberately the same shape `post('/api/mail/sync', body)` answered —
+	/// `{ uid_validity, messages: [{ uid, flags, raw }], held_back, limit }` — so
+	/// nothing downstream of this call knows the transport moved.
+	async function tunnelSync(body, secret) {
+		// Before the socket: the gateway allowlists the far end against the hosts this
+		// account has bound, so an unbound mailbox is a 4403 the user cannot act on
+		// unless something binds it first. Idempotent, and free.
+		await ensureBound(body.address);
+		var tun = await secureTunnel(body);
+		try {
+			await login(tun, body.user, secret);
+			return await mailImap(tun, 'fetch', {
+				mailbox:    body.mailbox,
+				since_uid:  body.since_uid,
+				before_uid: body.before_uid,
+			});
+		} finally {
+			tun.close();
+		}
+	}
+
+	/// Ask the server what folders it has, in the shape `/api/mail/folders` answered.
+	async function tunnelFolders(body, secret) {
+		// Before the socket: the gateway allowlists the far end against the hosts this
+		// account has bound, so an unbound mailbox is a 4403 the user cannot act on
+		// unless something binds it first. Idempotent, and free.
+		await ensureBound(body.address);
+		var tun = await secureTunnel(body);
+		try {
+			await login(tun, body.user, secret);
+			return await mailImap(tun, 'list', {});
+		} finally {
+			tun.close();
+		}
+	}
+
+	/// Put a message on the wire, in the shape `/api/mail/send` answered.
+	///
+	/// Submission does not go through `login`, because `mail_smtp_send` owns the whole
+	/// conversation — see the seam above — so the credential is one of its arguments.
+	/// The unwrap still happens at the last possible moment and nowhere else.
+	async function tunnelSend(body, secret) {
+		await ensureBound(body.address);
+		var tun = await openTunnel(body);
+		try {
+			await tun.ready(tun.security === 'tls' ? 'open' : 'clear');
+			if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) {
+				throw new Error(t('mail.err.unlock_first'));
+			}
+			return await mailSmtpSend(tun, {
+				user:     body.user,
+				password: await secret(),
+				rcpt:     body.rcpt,
+				raw:      body.raw,
+			});
+		} finally {
+			tun.close();
+		}
+	}
+
 	// ── The gateway ─────────────────────────────────────────────────
 
 	// Every call below goes through `DaimondGateway.gwFetch`, which meets a 401 by
@@ -2783,6 +3406,8 @@
 		tombstone(address);
 		state.accounts = state.accounts.filter(function (a) { return a.address !== address; });
 		delete state.folders[address];
+		// The seat is released below, so what this session bound is no longer true.
+		delete bound[address];
 		// Every pause flag under the mailbox goes with it. A stale leaf id is
 		// harmless to `isPaused`, but it would hold `root/mail` amber for ever and
 		// travel in the parcel for the life of the account.
@@ -2857,6 +3482,9 @@
 		state.msgs = [];
 		state.drafts = [];
 		state.folders = {};
+		// What was bound at the gateway is a fact about somebody who has just signed
+		// out. The next session states it again rather than assuming it.
+		bound = {};
 		state.sel = null;
 		state.unlocked = null;
 		state.note = '';
@@ -2948,5 +3576,19 @@
 		// Exposed for the tests, which have no business driving the DOM to find out whether
 		// a message they built is the message that would go on the wire.
 		build:   buildMessage,
+		/// Open one tunnel, for a test that has to watch a handshake finish, a
+		/// certificate be refused, or a close code become a sentence — none of which a
+		/// mailbox is needed for, and none of which can be seen from outside the page.
+		///
+		/// It is the SAME function the sync path calls. A test hook that opened a
+		/// second, simpler tunnel would be proving things about the hook.
+		tunnel:  openTunnel,
+		/// The bundle's own account of how much it checks: `mailtls/verify-always` in
+		/// anything shipped. A page cannot be allowed to drive a module that verifies
+		/// less than the page believes, and this is how a release notices.
+		flavour: async function () {
+			var wasm = await engine();
+			return wasm.mail_tunnel_flavour();
+		},
 	};
 })();

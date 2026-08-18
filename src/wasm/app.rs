@@ -994,11 +994,14 @@ impl DaimondApp {
         diamond::all_links().await.map_err(to_js_err)
     }
 
-    /// Export a whole Diamond as JSON: `{"id":..,"files":{"<path>":"<content>",..}}`.
+    /// Export a whole Diamond as JSON:
+    /// `{"id":..,"files":{"<path>":"<text>",..},"binary":{"<path>":"<base64>",..}}`.
     ///
     /// Every file under `diamonds/<id>/` travels, so a Diamond carried to another
     /// device arrives whole -- crystal, versions, log, deltas, tags and links --
-    /// and a per-Diamond file added later needs nothing to learn its name.
+    /// and a per-Diamond file added later needs nothing to learn its name.  A file
+    /// that is not valid UTF-8 travels in `binary` as base64 and arrives byte for
+    /// byte; see [`diamond::export_diamond`] on what carrying one as text cost.
     /// What `export_diamond` would weigh, without building it. See
     /// [`diamond::export_size`] -- the sync uses this to decide what fits BEFORE
     /// materialising it, which is the difference between a bounded parcel and
@@ -1535,11 +1538,11 @@ impl DaimondApp {
         // is a paragraph it can never act on -- and it would be paid for on every request of every
         // steering turn.
         if registry.tools.contains(&Tool::Run) {
-            // `net_risk` and not the raw taint, so the folders and the network sentence the model
-            // is shown are the fence the command will actually run under. A worker told it had the
-            // network and then refused by the fence spends the turn debugging the app.
-            let machine = crate::prompts::machine_briefing(
-                &registry.ctx.no_write, registry.ctx.net_risk()).await;
+            // The whole context, so the folders and the network sentence the model is shown are
+            // the fence the command will actually run under -- which now includes what the user
+            // has already said about this turn reaching out. A worker told it had the network and
+            // then refused by the fence spends the turn debugging the app.
+            let machine = crate::prompts::machine_briefing(&registry.ctx).await;
             if !machine.is_empty() {
                 if !s.is_empty() {
                     s.push_str("\n\n");
