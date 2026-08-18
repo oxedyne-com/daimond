@@ -1,1 +1,1 @@
-{"build":"5f3cf8a491b0","note":"A repro-check that clones an uncommitted carve checks the release before it"}
+{"build":"84568612475e","note":"Seq 129: the gate could answer, and the deploy could tell which release it checked"}
