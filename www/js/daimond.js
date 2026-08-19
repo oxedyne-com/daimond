@@ -9729,6 +9729,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		});
 		renderQueue();      // clearChat emptied the thread, queue and all
+		// The band belongs to the conversation on screen, and every part of it can differ between
+		// two: a Diamond's fence is not a chat's, and a user may have rewritten one role prompt
+		// and not the other.
+		if (typeof renderWire === 'function') renderWire();
 	}
 
 	/// Badge a recovered assistant message as interrupted, with a Continue button that runs the
@@ -31445,6 +31449,103 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// than one that admits it.
 			toast(t('chat.copy_all_failed'), true);
 		});
+	});
+
+	// ── The Wire: what actually goes to the model ──────────────
+	//
+	// The thread IS the payload, laid out once. Every request re-sends everything above it, so a
+	// view that reprinted each request in full would print the same conversation over and over --
+	// which is why this annotates the thread instead of standing beside it.
+	//
+	// What it turns on is the part that is normally invisible: the composed system message, which
+	// of it is the user's own and which was appended after their edits, the sentence naming the
+	// tools, the machine note derived from the fence, and the tool SCHEMAS -- several kilobytes on
+	// every single request that nobody has ever been shown.
+	//
+	// Composed by `Agent::system_parts`, which is the same function `run_turn` composes the real
+	// request with. A second assembly that agrees today is one that disagrees later, silently.
+	var _wireOn = false;
+
+	/// Roughly how many tokens a string is. Four characters, which is wrong for code and for CJK
+	/// and close enough for a size the reader is using to decide whether to look.
+	function wireTok(s) { return Math.round(String(s || '').length / 4); }
+
+	/// One band of the system message, with whose it is said in the same breath as how big it is.
+	function wireBand(label, why, text) {
+		var row = document.createElement('div');
+		row.className = 'wire-band';
+		var head = document.createElement('button');
+		head.className = 'wire-band-head';
+		head.setAttribute('aria-expanded', 'false');
+		head.innerHTML = '<span class="wire-band-name"></span>'
+			+ '<span class="wire-band-why"></span><span class="wire-band-tok"></span>';
+		head.querySelector('.wire-band-name').textContent = '▸ ' + label;
+		head.querySelector('.wire-band-why').textContent  = why;
+		head.querySelector('.wire-band-tok').textContent  = fmtTok(wireTok(text));
+		var body = document.createElement('pre');
+		body.className = 'wire-band-body';
+		body.style.display = 'none';
+		// textContent, never innerHTML: this is the raw payload, and some of it is written by a
+		// stranger whose page a turn read. It is shown, not run.
+		body.textContent = String(text || '');
+		head.addEventListener('click', function () {
+			var open = body.style.display === 'none';
+			body.style.display = open ? '' : 'none';
+			head.setAttribute('aria-expanded', open ? 'true' : 'false');
+			head.querySelector('.wire-band-name').textContent = (open ? '▾ ' : '▸ ') + label;
+		});
+		row.appendChild(head); row.appendChild(body);
+		return row;
+	}
+
+	/// Draw the band at the head of the thread, or take it away.
+	async function renderWire() {
+		var old = document.getElementById('wire-head');
+		if (old) old.remove();
+		if (!_wireOn || !current) return;
+		var app;
+		try { app = ensureApp(current); } catch (e) { return; }
+		if (!app || typeof app.wire_system !== 'function') return;
+		var w;
+		try { w = JSON.parse(app.wire_system()); } catch (e) { return; }
+
+		var box = document.createElement('div');
+		box.className = 'wire-head';
+		box.id = 'wire-head';
+		var sysTok = wireTok(w.role) + wireTok(w.tools_sentence) + wireTok(w.machine);
+		var schemas = JSON.stringify(w.schemas || [], null, 1);
+		var title = document.createElement('div');
+		title.className = 'wire-title';
+		title.textContent = t('wire.head', { n: fmtTok(sysTok + wireTok(schemas)) });
+		box.appendChild(title);
+
+		// The role prompt and what is appended to it are ONE string on the wire and two facts to
+		// a reader: the first is theirs to rewrite, the second is not. Split on the clause's own
+		// heading, which is where `Role::compose` joins them.
+		var role = String(w.role || ''), cut = role.indexOf('## Rules that always apply');
+		if (cut > 0) {
+			box.appendChild(wireBand(t('wire.role'), t('wire.role_why'), role.slice(0, cut).trim()));
+			box.appendChild(wireBand(t('wire.safety'), t('wire.safety_why'), role.slice(cut).trim()));
+		} else {
+			box.appendChild(wireBand(t('wire.role'), t('wire.role_why'), role));
+		}
+		if (w.tools_sentence) {
+			box.appendChild(wireBand(t('wire.tools'), t('wire.tools_why'), w.tools_sentence));
+		}
+		if (w.machine) {
+			box.appendChild(wireBand(t('wire.machine'), t('wire.machine_why'), w.machine));
+		}
+		box.appendChild(wireBand(
+			t('wire.schemas', { n: (w.names || []).length }), t('wire.schemas_why'), schemas));
+		chatOutput.insertBefore(box, chatOutput.firstChild);
+	}
+
+	var wireBtn = document.getElementById('wire-btn');
+	if (wireBtn) wireBtn.addEventListener('click', function () {
+		_wireOn = !_wireOn;
+		wireBtn.setAttribute('aria-pressed', _wireOn ? 'true' : 'false');
+		wireBtn.classList.toggle('on', _wireOn);
+		renderWire();
 	});
 
 	var conciseChip = document.getElementById('concise-chip');

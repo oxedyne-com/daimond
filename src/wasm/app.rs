@@ -968,6 +968,32 @@ impl DaimondApp {
         diamond::create(&name).await.map_err(to_js_err)
     }
 
+    /// What this app would send as its system message, and the tool schemas beside it, as JSON.
+    ///
+    /// **THE WIRE VIEW'S SOURCE, and it is composed by the code that composes the request.**
+    /// `Agent::system_parts` is called here and by `run_turn`, so what a person is shown cannot
+    /// drift from what goes out -- which is the only property that makes such a view worth having.
+    /// A second assembly agreeing today is a second assembly disagreeing later, silently.
+    ///
+    /// The parts are named rather than concatenated, because the question the view answers is
+    /// WHOSE each paragraph is: the role prompt is the user's and they may rewrite it, the safety
+    /// clause is appended after their edits and they may not, the tool sentence is derived from
+    /// the registry, and the machine note is derived from the fence. A single blob answers none
+    /// of that.
+    pub fn wire_system(&self) -> String {
+        let (role, tools, brief) = self.agent.system_parts(&self.registry);
+        let defs = self.registry.definitions_json().unwrap_or_else(|| fmt!("[]"));
+        fmt!(
+            "{{\"role\":\"{}\",\"tools_sentence\":\"{}\",\"machine\":\"{}\",\"schemas\":{},\"names\":{}}}",
+            crate::llm::json_escape(&role),
+            crate::llm::json_escape(&tools),
+            crate::llm::json_escape(&brief),
+            defs,
+            fmt!("[{}]", self.registry.tool_names().iter()
+                .map(|n| fmt!("\"{}\"", crate::llm::json_escape(n)))
+                .collect::<Vec<_>>().join(",")))
+    }
+
     /// Create a Diamond at a KNOWN id, or answer with the id if it is already there.
     ///
     /// Only the two seeded defaults use this, and the reason is a sync: every device seeds them

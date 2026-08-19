@@ -573,6 +573,13 @@
 						     model -- where copying forty messages one at a time is not a
 						     workaround, it is a refusal. Drawn for a chat and for a Diamond's
 						     chat face alike, because both are conversations. -->
+						<!-- What actually goes to the model. The thread is the payload laid out
+						     once; this turns on the parts of it that are normally invisible —
+						     the composed system message, whose it is, and the tool schemas
+						     nobody has ever seen. -->
+						<button class="chip-btn" id="wire-btn" aria-pressed="false"
+							title="Show what is actually sent to the model"
+							data-i18n="wire.chip" data-i18n-title="wire.chip_help">Wire</button>
 						<button class="chip-btn" id="chat-copy-btn"
 							title="Copy the whole conversation to the clipboard"
 							data-i18n="chat.copy_all" data-i18n-title="chat.copy_all_help">Copy</button>

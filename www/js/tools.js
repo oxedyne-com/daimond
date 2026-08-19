@@ -128,7 +128,9 @@
 		                        'sheet_read', 'doc_edit', 'sheet_write'] },
 		{ id: 'cloud',    fns: ['file_fetch'] },
 		{ id: 'work',     fns: ['artefact_add'] },
-		{ id: 'show',     fns: ['file_show'] },
+		// `say` sits here for `file_show`'s reason: its subject is the READER, not the
+		// workspace. It reaches no file, no host and no process — it folds an answer.
+		{ id: 'show',     fns: ['file_show', 'say'] },
 		{ id: 'machine',  fns: ['run', 'shell'] },
 		{ id: 'reading',  fns: ['web_fetch', 'web_search'] },
 		{ id: 'browsing', fns: ['web_open', 'web_snapshot', 'web_read', 'web_click',

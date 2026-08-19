@@ -331,6 +331,33 @@ impl Agent {
     /// 4. Stream tokens back to the caller via `on_event`.
     /// 5. Append the assistant response to the session.
     /// 6. Emit `Done`.
+
+    /// The three pieces the system message is built from, in the order they are joined.
+    ///
+    /// **Read by the Wire view, and by nothing else that decides anything.** It exists so a person
+    /// can see what is actually sent -- which of it is their own role prompt, which was appended
+    /// after their edits, which is derived from the fence -- and the only way that view can be
+    /// trusted is if it is composed by the same code the request is. So `run_turn` calls this and
+    /// so does the getter; there is no second assembly to drift from the first.
+    ///
+    /// # Arguments
+    /// * `registry` - The tools this turn holds, which decide the middle sentence.
+    pub fn system_parts(&self, registry: &ToolRegistry) -> (String, String, String) {
+        let tools = if registry.is_empty() {
+            String::new()
+        } else {
+            fmt!(
+                "You have exactly these tools, all scoped to the user's \
+                 workspace: {}. Use them to inspect and change the workspace \
+                 when completing a task. You have no other tools; never claim \
+                 to have performed an action you had no tool to perform.",
+                registry.tool_names().join(", "))
+        };
+        let brief = self.briefing.borrow().trim().to_string();
+        (self.system_prompt.clone(), tools, brief)
+    }
+
+
     pub async fn run_turn(
         &self,
         session:    &mut Session,
@@ -344,25 +371,19 @@ impl Agent {
         // Build the working conversation: system prompt + history.
         let mut working = Vec::with_capacity(session.messages.len() + 1);
         if !self.system_prompt.is_empty() {
-            let mut sys = self.system_prompt.clone();
-            if !registry.is_empty() {
-                // Name the tools that are actually registered. A fixed sentence
-                // here once promised a shell tool the browser build does not
-                // have, so a capable model would call it, fail, and report the
-                // failure as work done.
-                sys.push_str(&fmt!(
-                    "\n\nYou have exactly these tools, all scoped to the user's \
-                     workspace: {}. Use them to inspect and change the workspace \
-                     when completing a task. You have no other tools; never claim \
-                     to have performed an action you had no tool to perform.",
-                    registry.tool_names().join(", ")));
-            }
-            // The machine, last, so it sits closest to the conversation and is the most recent
-            // thing the model read before the user's own words.
-            let brief = self.briefing.borrow();
-            if !brief.trim().is_empty() {
+            // ONE COMPOSER, read here and by the Wire view. The sentence naming the tools is
+            // derived from the registry because a fixed one once promised a shell tool the
+            // browser build has not got, so a capable model called it, failed, and reported the
+            // failure as work done. The machine note goes LAST, so it sits closest to the
+            // conversation and is the most recent thing the model read before the user's words.
+            let (mut sys, tools, brief) = self.system_parts(registry);
+            if !tools.is_empty() {
                 sys.push_str("\n\n");
-                sys.push_str(brief.trim());
+                sys.push_str(&tools);
+            }
+            if !brief.is_empty() {
+                sys.push_str("\n\n");
+                sys.push_str(&brief);
             }
             working.push(ChatMessage::system(sys));
         }

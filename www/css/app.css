@@ -3142,3 +3142,51 @@ body.resizing { cursor: col-resize; user-select: none; }
 	padding-top: 8px;
 	border-top: 1px solid var(--border);
 }
+
+/* ── The Wire: the payload, annotated where it lies ───────────────────
+   Not a panel beside the thread. The thread IS the accumulated payload,
+   laid out once, so this turns on the parts of it that are normally
+   invisible rather than printing a second copy of the parts that are not. */
+.wire-head {
+	margin: 0 0 14px;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-secondary);
+}
+.wire-title {
+	font-size: var(--fs-sm);
+	color: var(--text-muted);
+	margin-bottom: 8px;
+}
+.wire-band-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	width: 100%;
+	padding: 5px 0;
+	background: none;
+	border: none;
+	border-top: 1px solid var(--border);
+	color: var(--text);
+	font-size: var(--fs-sm);
+	text-align: left;
+	cursor: pointer;
+}
+.wire-band:first-of-type .wire-band-head { border-top: none; }
+.wire-band-name { flex: none; }
+/* WHOSE it is, which is the thing this view exists to say. Muted, because it
+   is a gloss on the name rather than a second name. */
+.wire-band-why  { flex: 1 1 auto; color: var(--text-muted); font-size: var(--fs-xs); }
+.wire-band-tok  { flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.wire-band-body {
+	margin: 6px 0 8px;
+	padding: 8px 10px;
+	max-height: 24rem;
+	overflow: auto;
+	background: var(--bg-tertiary);
+	border-radius: var(--radius-sm);
+	font-size: var(--fs-xs);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
