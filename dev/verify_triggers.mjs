@@ -29,7 +29,17 @@
 //      section shows them and a daimon can read them.
 //   6. Context is sent ONCE, and changing it makes it new again. Measured on the
 //      composer, which is the thing that decides.
-//   7. A paused Diamond's input says where its play control is.
+//   7. A HELD DIAMOND'S INPUT DOES NOT CLAIM IT WILL NOT WORK — and the turn it
+//      is typed into goes through. This check used to assert the OPPOSITE: that
+//      the box reads "Paused. Press play on its tile". That sentence was false,
+//      and this file specifying it is why it lived so long. Nothing refuses a
+//      turn on the daimon's `/self` leaf — the placeholder was its only reader in
+//      the whole app — so a held Diamond has always answered a typed message
+//      exactly as a running one does. The Optimiser ships held, per (1), so it
+//      said so from the day it was made, to a user who could type perfectly well.
+//      Holding a Diamond means it will not act UNBIDDEN; it has never meant the
+//      user cannot talk to it, and `pauseWidget`'s own seeding code says as much
+//      when it refuses to hold a Diamond with no triggers.
 //   8. A timer that is REFUSED keeps what it accrued. The three refusals are
 //      silent -- no model, a turn already running, a Diamond that is not the one
 //      on screen -- so this drives the real tick with the Diamond off screen and
@@ -424,8 +434,25 @@ try {
 		await p.waitForTimeout(900);
 		const ph = await p.evaluate(() =>
 			(document.getElementById('chat-input') || {}).placeholder || '');
-		check(/paus/i.test(ph) && /play/i.test(ph),
-			'a paused Diamond’s input says where its play control is', ph);
+		check(!/paus/i.test(ph),
+			'a held Diamond’s input does not claim the box will not work', ph);
+		// THE PAIR. Asserting the wording alone would pass on any rewording; what
+		// makes it a property is that the box tells the truth about itself.
+		//
+		// MEASURED AT THE WIRE, not in the thread. Clicking the tile opens the
+		// CRYSTAL face, which does not render the conversation — so reading
+		// `.chat-msg-assistant` there finds nothing whether the turn ran or not,
+		// and the first version of this check went red against a turn that had
+		// reached the provider perfectly well. The request is the property; where
+		// the answer is drawn is a fact about which face is up.
+		const before = mockLog().length;
+		await p.fill('#chat-input', '@text held and answered');
+		await p.click('#chat-send');
+		await p.waitForTimeout(5000);
+		const sent = mockLog().length - before;
+		check(sent > 0,
+			'and the turn typed into it reaches the provider, which is why the old sentence was wrong',
+			`${sent} request(s) while held`);
 	}
 
 	// A Diamond whose TILE has no light must still be typeable when nothing has

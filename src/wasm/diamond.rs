@@ -764,7 +764,39 @@ async fn append_log(id: &str, rec: &LogRecord) -> Outcome<()> {
 /// default is a JS const that this side never sees; writing an empty `crystal.html` here would
 /// only put a file on disk that means the same as no file.
 pub async fn create(name: &str) -> Outcome<String> {
-    let id = generate_session_id();
+    create_at(name, &generate_session_id()).await
+}
+
+/// Create a Diamond AT A KNOWN ID, or answer with the id if one is already there.
+///
+/// **This exists because a random id and a per-device flag cannot agree across a sync.** The two
+/// default Diamonds are seeded by every device separately -- the "already seeded" fact lives in
+/// `localStorage`, which does not travel -- and each minted its own random id, so two devices
+/// produced two Optimisers and two Helps, and the merge kept all four. The name check in
+/// `seedDefaultDiamonds` never saw it, because it reads the local list and the other device's
+/// copy has not arrived yet.
+///
+/// Seeding at a fixed id makes the two devices create the SAME object, so the merge has one thing
+/// to keep rather than two things to add. No flag, no coordination, no ordering.
+///
+/// It is idempotent by construction: a second call finds the meta already written and returns
+/// without touching the crystal, so a device that seeds twice cannot flatten what the first pass
+/// or the user has since put there.
+///
+/// # Arguments
+/// * `name` - The Diamond's name.
+/// * `id` - The id to create it at. Hex, in the shape [`generate_session_id`] produces.
+pub async fn create_at(name: &str, id: &str) -> Outcome<String> {
+    // ALREADY THERE IS A SUCCESS, and it must not rewrite anything: this is the path a second
+    // device takes, and by then the Diamond may hold a crystal somebody has worked on.
+    if read_meta(id).await.is_ok() {
+        return Ok(id.to_string());
+    }
+    create_fresh(name, id).await
+}
+
+async fn create_fresh(name: &str, id: &str) -> Outcome<String> {
+    let id = id.to_string();
     let now = now_ms() as u64;
 
     // Empty crystal plus its version-0 snapshot.

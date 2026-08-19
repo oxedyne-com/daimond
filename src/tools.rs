@@ -5922,6 +5922,20 @@ pub enum Tool {
     DirCreate,
     /// Bring one file down from cloud storage onto this device.
     FileFetch,
+    /// Answer at two depths: a gist the user reads, and the detail behind a fold.
+    ///
+    /// **The detail never travels twice.**  Prose written into a reply is re-sent on every later
+    /// request for the life of the conversation, so a model that explains at length charges the
+    /// user for that explanation on every subsequent turn, whether or not anyone reads it again.
+    /// The detail handed to this tool is stripped from the payload once the call has been made --
+    /// see `strip_said` -- and the summary stays.  It is not lost: the browser keeps the whole
+    /// call in the transcript record, so the fold opens instantly and survives a reload.  What
+    /// changes is only what goes over the wire.
+    ///
+    /// It is TERMINAL.  A tool that answers is the answer, so the loop stops rather than asking
+    /// the model to speak again -- which would cost a whole extra request to say what it has just
+    /// said.
+    Say,
     /// Put a workspace file in front of the user, in the panel they already read files in.
     ///
     /// **This is a defect class, not a feature.**  Asked to compile a Typst source and display
@@ -6116,6 +6130,11 @@ impl Tool {
             // the consequence was worse there, because a model with no way to show a file does
             // not merely fail to show one: it tells the user the app cannot.
             Tool::FileShow,
+            // The other tool whose subject is the READER rather than the workspace.  A worker
+            // gets neither: nobody is watching its transcript, so a fold it draws is a fold in
+            // an empty room -- and its summary goes to the agent that sent it, which wants the
+            // whole thing.
+            Tool::Say,
             // The compiler is vendored into the page, so the browser build can
             // do this and the native build cannot.  It was reachable only from a
             // human's Compile button, which meant an agent asked to produce a PDF
@@ -6445,6 +6464,7 @@ impl Tool {
             Tool::ArtefactAdd => "artefact_add",
             Tool::FileFetch   => "file_fetch",
             Tool::FileShow    => "file_show",
+            Tool::Say         => "say",
             Tool::SheetRead   => "sheet_read",
             Tool::DocEdit     => "doc_edit",
             Tool::SheetWrite  => "sheet_write",
@@ -6503,6 +6523,7 @@ impl Tool {
             "artefact_add" => Some(Tool::ArtefactAdd),
             "file_fetch"   => Some(Tool::FileFetch),
             "file_show"    => Some(Tool::FileShow),
+            "say"          => Some(Tool::Say),
             "sheet_read"   => Some(Tool::SheetRead),
             "doc_edit"     => Some(Tool::DocEdit),
             "sheet_write"  => Some(Tool::SheetWrite),
@@ -6539,6 +6560,7 @@ impl Tool {
             Tool::FileMove    => "Move or rename a file or directory within the workspace.",
             Tool::DirCreate   => "Create a directory in the workspace, and any parent directories it needs.",
             Tool::ArtefactAdd => "Record that a file already in the workspace is an artefact of this Diamond, so it is listed with the work rather than only sitting in the folder. Use it for files the user put there, or found, or wrote themselves -- anything this Diamond produced is recorded without being asked. Recording a file does not read it: read it as well if what it says belongs in the crystal.",
+            Tool::Say         => "Answer at two depths: a short summary the user reads at once, and the detail behind a fold they open if they want it. USE THIS WHENEVER YOUR ANSWER RUNS PAST A few sentences and the length is elaboration rather than substance -- an explanation, a walkthrough, a list of findings, a report. Ordinary short answers stay ordinary prose; do not wrap two sentences in this. 'summary' is what they see without clicking: one or two sentences, the answer itself and not a description of the answer, and IT MUST CARRY ANY CAVEAT -- a qualification hidden behind the fold is one they will act without. 'detail' is everything else, in Markdown, as long as it needs to be; nothing is trimmed. TWO THINGS FOLLOW AND BOTH MATTER TO YOU. This ENDS YOUR TURN: it is the answer, so say everything here and do not plan to add a sentence afterwards. And the detail is not sent back to you on later turns -- the user keeps it, you do not -- so if the next turn will build on this material, put that part in the summary or write it to a file instead.",
             Tool::FileShow    => "Put a workspace file on the user's screen, in Daimond's document panel beside the chat. THIS IS HOW YOU SHOW SOMEBODY SOMETHING. The other file tools hand you bytes or text, which is for you; this is for them. A PDF is drawn page by page by the browser's own document viewer, so the user reads the typeset document rather than its source — say 'it is on screen now', not 'I cannot display a PDF'. Pictures (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF, SVG) are decoded and drawn; sound and video get a player; HTML is rendered; JSON becomes a tree, CSV and TSV a table, Markdown is rendered, and anything the panel treats as source opens in its editor where the user can change it. A format with no viewer of its own is still shown — as a paged hex dump naming the format — so this tool does not fail on an unusual file, and you must never conclude from one such file that Daimond cannot display things. It takes a PATH, not content: the panel reads the file, so after you rewrite or recompile that file, call this again with the same path to put the new version in front of them. 'page' opens a PDF at a particular page (the top otherwise). Show a file when the user asked to see one, when you have just produced a document for them, or when the thing you are discussing is easier looked at than described — and say what you have put on screen, since the panel may be behind whatever they are reading.",
             Tool::SheetRead   => "Read a rectangle of an Excel spreadsheet (.xlsx) as a table. Give a 'path', optionally a 'sheet' by the name on its tab (the first sheet otherwise) and optionally a 'range' like 'A1:H40' (the first 100 rows otherwise). The result carries the column letters and the row numbers, so your next call can name exactly the range you now want. THE VALUE SHOWN IS THE ONE STORED IN THE FILE -- the number the person who wrote it saw. Formulas are NOT recalculated; the formulas inside the range are listed after the table, so you can see what produced a figure without being handed a different figure. Call file_read on a .xlsx first to learn what sheets it has and how big they are, then this to read the cells. A workbook is a compressed archive of XML and one sheet can be a hundred thousand rows, which is why this takes a range and file_read does not hand you the whole thing.",
             Tool::DocEdit     => "Change the words in a Word (.docx) or OpenDocument (.odt) document that already exists, leaving everything else in it exactly as it was. Give a 'path' and 'edits': a list of {\"find\",\"replace\"} pairs, optionally with 'nth' to pick one occurrence (1-based, counted through the whole document) instead of replacing all of them. THIS IS NOT file_edit AND file_edit WILL NOT WORK ON A DOCUMENT: these formats are compressed archives, so there is no text in the file for file_edit to match against. Read the document with file_read first and quote a phrase it actually holds — and note that a writer's formatting splits a sentence into runs, so a phrase interrupted by a footnote mark or a field may not be findable as one string, while an ordinary sentence with a bold word in the middle of it is. A 'find' that matches nothing is an ERROR NAMING THE STRING and nothing at all is written; that refusal is the answer, so read the document again rather than retrying the same string. Only the body is searched: a phrase in a header, a footer or a footnote reports as absent rather than being changed in one of two places. This does NOT work on a presentation: a slide is a position on a canvas, and changing words without knowing the geometry puts text over other text — read it and write a new one instead. For a spreadsheet, use sheet_write.",
@@ -6581,6 +6603,7 @@ impl Tool {
             Tool::DirCreate   => "Make a folder.",
             Tool::ArtefactAdd => "Count an existing file as this Diamond's.",
             Tool::FileFetch   => "Bring a file down from cloud storage onto this device.",
+            Tool::Say         => "Answer with a summary, and the detail behind a fold.",
             Tool::FileShow    => "Put one of your files on the screen beside the chat.",
             Tool::SheetRead   => "Read part of a spreadsheet.",
             Tool::DocEdit     => "Change the words in a Word or OpenDocument document, keeping everything else in it.",
@@ -6618,6 +6641,7 @@ impl Tool {
             Tool::DirCreate => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory to create"}},"required":["path"]}"#,
             Tool::ArtefactAdd => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file to record as this Diamond's artefact"},"note":{"type":"string","description":"Optional: why it belongs to this Diamond, in a few words"}},"required":["path"]}"#,
             Tool::FileFetch => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to bring down from cloud storage"}},"required":["path"]}"#,
+            Tool::Say => r#"{"type":"object","properties":{"summary":{"type":"string","description":"One or two sentences: the answer itself, plus any caveat. This is all the user sees until they open the fold."},"detail":{"type":"string","description":"Everything else, in Markdown. As long as it needs to be."}},"required":["summary","detail"]}"#,
             Tool::FileShow => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to put on screen, e.g. 'notes/report.pdf'; never absolute"},"page":{"type":"integer","description":"Which page to open a PDF at, 1-based. Omit for the start of the document."}},"required":["path"]}"#,
             Tool::SheetRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .xlsx, e.g. 'books/ledger.xlsx'; never absolute"},"sheet":{"type":"string","description":"Which sheet, by the name on its tab. Omit for the first sheet; file_read on the workbook lists the names."},"range":{"type":"string","description":"Which cells, like 'A1:H40'. Omit for the first 100 rows. A range larger than the sheet is clipped to it rather than refused."}},"required":["path"]}"#,
             Tool::DocEdit => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .docx or .odt, e.g. 'notes/report.docx'; never absolute"},"edits":{"type":"array","description":"The replacements to make, in order. Each is applied to the document as the one before it left it.","items":{"type":"object","properties":{"find":{"type":"string","description":"The exact text to look for, as the document holds it"},"replace":{"type":"string","description":"What to put in its place. Empty removes the text."},"nth":{"type":"integer","description":"Which occurrence to change, counted from 1 through the whole document. Omit to change every one."}},"required":["find","replace"]}}},"required":["path","edits"]}"#,
@@ -6681,6 +6705,9 @@ impl Tool {
             Tool::DirCreate  => Self::dir_create(args_json, ctx),
             Tool::ArtefactAdd => Err(err!("artefact_add is a browser-build tool"; Unimplemented)),
             Tool::FileFetch  => Self::cloud_unavailable(),
+            Tool::Say        => Err(err!(
+                "Tool 'say' folds an answer for a reader on a screen; this is the native build, \
+                where there is nobody watching one. Answer in prose."; Unimplemented)),
             Tool::FileShow   => Err(err!(
                 "Tool 'file_show' puts a file in Daimond's document panel, which is part of the \
                 browser page; this is the native build, where there is no panel and nobody \
@@ -7302,6 +7329,7 @@ impl Tool {
             // Message content rather than a string, so it leaves by the same early return that
             // `file_read` uses for an image.
             Tool::FileShow => return Self::file_show(args_json, ctx).await,
+            Tool::Say      => Self::say(args_json, ctx),
             Tool::FileMove => {
                 let from = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
                 let to   = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "to"))));
@@ -7682,6 +7710,44 @@ impl Tool {
         let owner = ctx.daimon().unwrap_or_default();
         let shown = res!(crate::wasm::doc::show(&path, page, &owner).await);
         Ok(Self::show_result(&path, &shown))
+    }
+
+    /// Fold an answer: a summary on screen, the detail behind it.
+    ///
+    /// The work is all elsewhere -- the browser draws the tile from the call's own arguments, and
+    /// [`strip_said`] keeps the detail out of every later payload.  This validates and answers,
+    /// because a tool that did nothing at all would still have to answer something.
+    ///
+    /// **A DISPATCHED WORKER MAY NOT FOLD.**  The same reasoning `file_show` gives: nobody is
+    /// reading that transcript, so the fold is drawn in an empty room -- and worse, a worker's
+    /// summary is read by the agent that sent it, which wants the detail rather than a reference
+    /// to a fold it cannot open.
+    ///
+    /// # Arguments
+    /// * `args_json` - The call, carrying `summary` and `detail`.
+    /// * `ctx` - The turn, which knows whether anybody is watching.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn say(args_json: &str, ctx: &ToolContext) -> Outcome<String> {
+        if ctx.is_unsupervised() {
+            return Ok(fmt!(
+                "Nothing was folded. You are a dispatched worker: nobody is reading this \
+                transcript, and your summary goes to the agent that sent you, which needs the \
+                detail rather than a fold it cannot open. Put all of it in your report instead."));
+        }
+        let summary = res!(Self::arg(args_json, "summary"));
+        if summary.trim().is_empty() {
+            // The one failure worth refusing.  An empty summary draws a fold with nothing on the
+            // outside of it, which is a message the user has to open to discover says nothing.
+            return Err(err!(
+                "'say' needs a summary: it is the only part the user sees without opening the \
+                fold. Give one or two sentences carrying the answer, or reply in ordinary prose."; 
+                Invalid, Input));
+        }
+        let detail = res!(Self::arg(args_json, "detail"));
+        Ok(fmt!(
+            "Shown: a summary of {} characters, with {} characters folded behind it. The user has \
+            it. This ends your turn -- do not say it again.",
+            summary.chars().count(), detail.chars().count()))
     }
 
     /// What `file_show` tells the model it has just put on the user's screen.
@@ -14872,6 +14938,35 @@ mod tests {
             "nothing here stops the generalisation this tool exists to stop: {}", out);
     }
 
+    /// **A dispatched worker may not fold, and is told why in terms it can act on.**
+    ///
+    /// Same reasoning as `file_show`'s refusal: nobody is reading a worker's transcript. But there
+    /// is a second reason here that does not apply there — a worker's summary is read by the agent
+    /// that dispatched it, which now has a job of checking the work, and a reference to a fold it
+    /// cannot open is worse than no summary at all.
+    #[test]
+    fn test_a_worker_is_refused_a_fold_and_told_where_to_put_it() {
+        let c = ctx();
+        c.set_unsupervised();
+        let out = Tool::Say.execute_sync(r#"{"summary":"s","detail":"d"}"#, &c)
+            .expect("say answers").as_text().to_string();
+        assert!(out.contains("Nothing was folded"), "{}", out);
+        assert!(out.contains("report"),
+            "the worker is not told where the detail should go instead: {}", out);
+    }
+
+    /// **A fold with nothing on the outside of it is refused.**
+    ///
+    /// An empty summary draws a tile the user has to open to discover says nothing — which is the
+    /// one failure of this tool that produces a WORSE experience than plain prose.
+    #[test]
+    fn test_a_fold_with_no_summary_is_refused() {
+        let c = ctx();
+        assert!(Tool::Say.execute_sync(r#"{"summary":"   ","detail":"d"}"#, &c).is_err(),
+            "a blank summary was accepted, so the fold has nothing on its face");
+        assert!(Tool::Say.execute_sync(r#"{"summary":"here it is","detail":"d"}"#, &c).is_ok());
+    }
+
     /// **A show that did not reach the screen says so, and says it is waiting rather than
     /// refused.**
     ///
@@ -15361,6 +15456,7 @@ impl Tool {
             Tool::FileList   => Self::file_list(args, ctx),
             Tool::FileSearch => Self::file_search(args, ctx),
             Tool::FileGlob   => Self::file_glob(args, ctx),
+            Tool::Say        => Self::say(args, ctx),
             Tool::FileDelete => Self::file_delete(args, ctx),
             Tool::FileMove   => Self::file_move(args, ctx),
             Tool::DirCreate  => Self::dir_create(args, ctx),

@@ -3112,3 +3112,33 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .id-trail-btn:hover { color: var(--text-primary); border-color: var(--accent); }
 .id-trail-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ── An answer folded in two ──────────────────────────────────────────
+   `say` returns a summary and a detail. The summary reads as an ordinary
+   answer, because that is what it is; the detail sits behind a control that
+   says how big it is, since the size is the whole of what a reader needs to
+   decide whether to open it.
+
+   The left edge is what marks it as folded rather than merely short. Without
+   it, a two-sentence answer with a small control under it looks like an answer
+   that got cut off. */
+.chat-msg.said { border-left: 2px solid var(--accent-soft); padding-left: 10px; }
+.said-more {
+	display: block;
+	margin: 8px 0 0;
+	padding: 4px 0;
+	background: none;
+	border: none;
+	color: var(--text-muted);
+	font-size: var(--fs-sm);
+	text-align: left;
+	cursor: pointer;
+}
+.said-more:hover { color: var(--accent-text); }
+/* Set apart from the summary above it, or an opened fold reads as one long
+   answer and the reader loses which part they chose to see. */
+.said-detail {
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px solid var(--border);
+}

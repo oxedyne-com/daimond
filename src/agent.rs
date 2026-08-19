@@ -586,6 +586,19 @@ impl Agent {
                 session.messages.push(reply);
             }
 
+            // A TOOL THAT ANSWERS IS THE ANSWER. `say` folds a reply for the reader, so the
+            // turn is over: going round again would cost a whole extra request for the model to
+            // repeat what it has just said, and it would arrive under the fold as a second
+            // message saying the same thing. The reply is still recorded above, so the transcript
+            // is well formed -- an assistant turn bearing tool calls, each answered.
+            //
+            // Checked after the loop and not inside it, because a turn may ask for several tools
+            // at once and every one of them has to be answered before the turn can end.
+            if resp.tool_calls.iter().any(|tc| tc.name == "say") {
+                on_event(AgentEvent::Done);
+                return Ok(());
+            }
+
             // THE SEAM. The tool replies are in, and the next request has not gone out,
             // so this is the one moment in a round where the conversation can grow by
             // something the model has not already been told. Anything the user said

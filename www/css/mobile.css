@@ -106,9 +106,44 @@
 		margin-bottom: 0;
 		max-height: calc(100dvh - 16px - var(--safe-t) - var(--safe-b));
 	}
-	.panel.rail .rail-top { flex: none; overflow: visible; min-height: 0; }
+	/* ── EACH LIST SCROLLS, AS IT DOES ON A DESKTOP ───────────────────
+	   These three rules used to say the opposite -- `overflow: visible` on both
+	   lists and `flex: none` on the top half -- which made the drawer one long
+	   scroll: a rail of fifteen Diamonds pushed Chats entirely below the fold,
+	   and finding a chat meant scrolling past every Diamond first. Reported from
+	   a phone.
+
+	   Two bounded sections instead, as the desktop has, with the rail itself
+	   still scrolling so the Admin block below them stays reachable. The caps are
+	   in `dvh` rather than pixels because the drawer is measured against the
+	   visible viewport, which on a phone changes as the address bar comes and
+	   goes.
+
+	   `overscroll-behavior: contain` is what makes two scrollers inside a third
+	   bearable on touch: a flick that reaches the end of a list stops there
+	   rather than dragging the whole drawer with it. */
+	.panel.rail .rail-top {
+		/* Takes the room that is left rather than a share of the viewport. Capping
+		   this in `dvh` was the first attempt and it was wrong twice over: BOTH
+		   lists live inside it, so the cap squeezed the pair into the top of the
+		   drawer and left a third of the screen empty underneath. */
+		flex: 1 1 auto;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+	/* The two lists then split that room between them and scroll inside it, which
+	   is exactly what they do on a desktop. The floor stops either one collapsing
+	   to nothing when the other is long. */
 	.panel.rail .diamond-list,
-	.panel.rail .session-list { overflow: visible; }
+	.panel.rail .session-list {
+		flex: 1 1 0;
+		min-height: 5.5rem;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+		-webkit-overflow-scrolling: touch;
+	}
 	.panel.rail .admin { flex: none; }
 	.panel.rail #handle-rail-split { display: none; }
 

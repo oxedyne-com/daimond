@@ -6113,7 +6113,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// deliberately does not call this yet, because creating a Diamond blocks a
 		/// legacy root from ever migrating. Published so the behaviour stays exercised
 		/// and proven until the migration can merge, rather than rotting unused.
-		seedDefaults: function () { return seedDefaultDiamonds(); },
+		seedDefaults: async function () {
+			await seedDefaultDiamonds();
+			// AFTER seeding and outside its flag, because the duplicates are on devices that
+			// have already seeded -- the flag returns early there and the sweep would never run.
+			await sweepSeededDuplicates();
+		},
 		/// The daimon's own conversation record, made on first ask.
 		///
 		/// Published because it is the one part of a Diamond that is NOT reachable
@@ -6751,7 +6756,72 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	var lastToolBlock = null;
 
+	/// An answer folded in two: the summary on the face of it, the detail behind.
+	///
+	/// Drawn from the `say` call's own arguments, which is what makes this work on BOTH paths for
+	/// free -- the live turn and a reload both arrive here through `renderToolCall`.
+	///
+	/// THE DETAIL IS HELD LOCALLY AND NOT ON THE WIRE. `strip_said` in src/llm.rs replaces it in
+	/// every later payload, so opening the fold costs nothing and re-sending it costs nothing
+	/// either. The transcript record on this side keeps the whole call, which is why the fold
+	/// still opens after a reload.
+	///
+	/// It is drawn as an ASSISTANT message and not as a tool step, because that is what it is: the
+	/// answer. A `say` in the Steps drawer would be an answer the user has to turn on a debugging
+	/// view to read.
+	///
+	/// # Arguments
+	/// * `args` - The call's arguments, as JSON. Unparseable ones return false and fall through to
+	///   the ordinary tool block, which is honest: a fold nobody can read is not a fold.
+	function renderSaid(args) {
+		var o;
+		try { o = JSON.parse(args || '{}'); } catch (e) { return false; }
+		if (!o || typeof o.summary !== 'string' || !o.summary.trim()) return false;
+		finalizeAssistant();
+		var div = document.createElement('div');
+		div.className = 'chat-msg chat-msg-assistant said';
+		var body = document.createElement('div');
+		body.className = 'chat-msg-content';
+		body.innerHTML = DaimondRender.md(o.summary);
+		div.appendChild(body);
+		var detail = String(o.detail == null ? '' : o.detail);
+		if (detail.trim()) {
+			var btn = document.createElement('button');
+			btn.className = 'said-more';
+			btn.setAttribute('aria-expanded', 'false');
+			// The size is on the control on purpose: it is the whole of what the reader needs to
+			// decide whether to open it, and it is the number this tool exists to keep off the wire.
+			btn.textContent = '▸ ' + t('say.more', { n: fmtTok(Math.round(detail.length / 4)) });
+			var more = document.createElement('div');
+			more.className = 'said-detail';
+			more.style.display = 'none';
+			div.appendChild(btn); div.appendChild(more);
+			btn.addEventListener('click', function () {
+				var open = more.style.display === 'none';
+				// Rendered on first open, not on draw: a thread of forty folded answers would
+				// otherwise parse and lay out forty documents nobody has asked to see.
+				if (open && !more.dataset.drawn) {
+					more.innerHTML = DaimondRender.md(detail);
+					more.dataset.drawn = '1';
+				}
+				more.style.display = open ? '' : 'none';
+				btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+				btn.textContent = (open ? '▾ ' : '▸ ')
+					+ t(open ? 'say.less' : 'say.more', { n: fmtTok(Math.round(detail.length / 4)) });
+			});
+			addMsgCopy(div, o.summary + '\n\n' + detail);
+		} else {
+			addMsgCopy(div, o.summary);
+		}
+		chatOutput.appendChild(div);
+		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+		return true;
+	}
+
 	function renderToolCall(name, args) {
+		// The answer, not a step. See `renderSaid`.
+		if (name === 'say' && renderSaid(args)) { _saidJust = true; return; }
+		_saidJust = false;
 		finalizeAssistant();
 		var block = document.createElement('div');
 		block.className = 'tool-block running collapsed';
@@ -6780,7 +6850,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return /^\s*Error\b/i.test(String(result || ''));
 	}
 
+	/// Set by `renderToolCall` when the call it just drew was a fold, so its RESULT -- which is a
+	/// sentence written for the model about what it just did -- is not drawn under the answer.
+	var _saidJust = false;
+
 	function renderToolResult(name, result) {
+		if (name === 'say' && _saidJust) { _saidJust = false; return; }
 		var failed = toolFailed(result);
 		if (lastToolBlock) {
 			lastToolBlock.classList.remove('running');
@@ -13686,13 +13761,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// exactly when the box is empty and they are wondering whether to wait. What
 		// then happens to what they type is said by the line above the bubbles, at
 		// the moment it matters -- there is not room for it here.
-		// A paused Diamond says so in the box you would otherwise type into, exactly
-		// as its crystal's own box does. Both faces of a Diamond share one composer
-		// now, so both had to learn the same sentence.
-		chatInput.placeholder = g ? t('chat.queue_ph')
-			: (current && current.diamondId && diamondHeld(current.diamondId))
-				? t('crystal.steer_paused')
-				: t('chat.input_ph');
+		// PAUSE IS NOT SAID HERE, AND THE REASON IS THAT IT WAS NOT TRUE.
+		//
+		// This box used to read "Paused. Press play on its tile" whenever the
+		// Diamond's `/self` leaf was held. Three things were wrong with that, and
+		// the first is the one that matters: NOTHING REFUSES A TURN ON THAT LEAF.
+		// `diamondHeld` was its only reader in the whole app -- measured, not
+		// assumed -- so a "paused" Diamond answered a typed message exactly as a
+		// running one does. The box you type into was telling you it would not work.
+		//
+		// Second, it fired when nobody had touched that Diamond. `seedPaused` holds
+		// `/self` on any Diamond that ships with a triggered action, and pausing
+		// Everything writes the flag onto every leaf -- so the sentence arrived
+		// unasked, and named a tile as the remedy for a state the user had set at
+		// the root. On a phone, where the rail is a drawer, it named a control that
+		// was not even on screen.
+		//
+		// Third, and this is what the leaf is FOR: pausing a Diamond means it will
+		// not act UNBIDDEN -- no trigger fires, no timer, no mail poll. It has never
+		// meant that the user cannot talk to it, and it should not: the whole point
+		// of the hold is to stop things happening without you. The seeding code says
+		// so itself, refusing to seed a Diamond with no triggers because arriving
+		// held "would mean a new user's Diamond refusing to answer with no light in
+		// front of them to explain it". That is the correct instinct; this line was
+		// the same mistake it was written to avoid, one surface along.
+		//
+		// The state is still shown where it is true: the traffic light on the tile,
+		// and the triggers themselves.
+		chatInput.placeholder = g ? t('chat.queue_ph') : t('chat.input_ph');
 		syncConciseChip();           // the chip belongs to THIS chat, not the last one
 		syncFoldBtn();               // and so does Fold
 		renderQueue();               // this chat's own queue, not the last one's
@@ -20678,6 +20774,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// name check in `seedDefaultDiamonds` skips a Diamond that is already there.
 	var DEFAULTS_KEY = 'daimond-defaults-seeded-2';
 
+	// ── The two defaults are seeded AT A FIXED ID ─────────────────────────
+	//
+	// Reported live: several "Daimond Optimiser" and "Daimond Help" tiles in one rail. The cause
+	// is a sync meeting a per-device flag. `DEFAULTS_KEY` lives in `localStorage`, which does not
+	// travel, so every device seeds these two for itself; `create_diamond` minted a RANDOM id, so
+	// two devices produced two Optimisers with different ids and the merge -- correctly, knowing
+	// nothing about names -- kept both. A third device would have made a third.
+	//
+	// The name check below cannot catch it: it reads the local list, and the other device's copy
+	// has not arrived when the check runs.
+	//
+	// A fixed id makes two devices create the SAME object, so the merge has one thing to keep
+	// rather than two to add. `create_diamond_at` is idempotent, so the second device's call finds
+	// the meta already written and returns without touching a crystal the first may have grown.
+	//
+	// The ids are deliberately unmistakable rather than hashed: they are hex, in the shape
+	// `generate_session_id` produces, and anybody reading a store can see at a glance that these
+	// two were not minted by a clock.
+	var DEFAULT_IDS = {
+		'Daimond Help':      '0da1000000e1',
+		'Daimond Optimiser': '0da1000000f2',
+	};
+
 	var DEFAULT_DIAMONDS = [
 		{
 			name: 'Daimond Help',
@@ -20850,6 +20969,55 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `migrate_root` now MERGES the entries that do not collide, so the act of
 	/// creating a Diamond no longer strands anything. The two guards below stay:
 	/// they were right on their own terms, and one of them still is.
+
+	/// Put the SPARE copies of a seeded Diamond in the trash, and say so.
+	///
+	/// The duplicates are this app's own doing: a per-device flag plus a random id meant every
+	/// device seeded its own Optimiser and its own Help, and the merge kept them all. Fixed ids
+	/// (see `DEFAULT_IDS`) stop it happening again; they cannot undo what is already there.
+	///
+	/// **ONLY THE UNTOUCHED ONES, and to the TRASH rather than out of existence.** A copy whose
+	/// crystal has been folded even once, or whose daimon has been spoken to, is a Diamond
+	/// somebody has used, and no automatic tidy may take it — however certainly this app created
+	/// it by mistake. What is removed goes where a deleted Diamond goes, so a wrong call here is
+	/// one press to undo in the Trash panel.
+	///
+	/// It is said out loud. A rail that quietly loses two tiles is indistinguishable from a bug,
+	/// and this runs on a boot the user did not ask anything of.
+	async function sweepSeededDuplicates() {
+		if (!window.DaimondTrash || typeof DaimondTrash.put !== 'function') return;
+		var names = Object.keys(DEFAULT_IDS);
+		var moved = 0, kept = 0;
+		for (var n = 0; n < names.length; n++) {
+			var name  = names[n];
+			var group = (diamonds || []).filter(function (f) { return f && f.name === name; });
+			if (group.length < 2) continue;
+			// What to KEEP: the copy at the fixed id if one is there, since that is the one both
+			// devices will agree on from now on; otherwise the most worked-on.
+			var keep = group.find(function (f) { return f.id === DEFAULT_IDS[name]; })
+				|| group.slice().sort(function (a, b) {
+					return (b.crystal_version || 0) - (a.crystal_version || 0)
+						|| (b.updated || 0) - (a.updated || 0);
+				})[0];
+			for (var i = 0; i < group.length; i++) {
+				var f = group[i];
+				if (f.id === keep.id) continue;
+				var chat = (chats || []).find(function (c) { return c.diamondId === f.id; });
+				var used = (f.crystal_version || 0) > 0
+					|| !!(chat && chat.messages && chat.messages.length);
+				if (used) { kept++; continue; }
+				try { DaimondTrash.put(f.id); moved++; }
+				catch (e) { /* the panel will still show it; better than throwing on boot */ }
+			}
+		}
+		if (!moved && !kept) return;
+		renderDiamondList();
+		if (moved) toast(t('rail.dupes_trashed', { n: moved }), true);
+		// Said separately, because it is the sentence that needs a decision: these are copies the
+		// app made and the user has since worked in, so only they can say which to keep.
+		if (kept) toast(t('rail.dupes_kept', { n: kept }), true);
+	}
+
 	async function seedDefaultDiamonds() {
 		try { if (localStorage.getItem(DEFAULTS_KEY) === '1') return; }
 		catch (e) { return; }                       // private mode: never seed twice
@@ -20897,7 +21065,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var d = DEFAULT_DIAMONDS[i];
 			if ((diamonds || []).some(function (f) { return f.name === d.name; })) continue;
 			var id;
-			try { id = await diamondApp().create_diamond(d.name); }
+			try {
+				// At the fixed id where there is one, so two devices seed one Diamond. An older
+				// engine has no such export, and falls back to a minted id -- which is the
+				// behaviour that produced the duplicates, so it is a fallback and not a choice.
+				id = (DEFAULT_IDS[d.name] && typeof diamondApp().create_diamond_at === 'function')
+					? await diamondApp().create_diamond_at(d.name, DEFAULT_IDS[d.name])
+					: await diamondApp().create_diamond(d.name);
+			}
 			catch (e) { continue; }                 // no store yet; the flag stops a retry loop
 			// The seeds are written as markdown above, because that is the readable way to
 			// write a paragraph in a source file, and converted here. `crystalJson` is the
@@ -20949,22 +21124,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { await grants[g].write(); } catch (e) { continue; }
 			await grantConsulted(grants[g].id, grants[g].dir);
 		}
-	}
-
-	/// Is this Diamond's daimon held? The leaf, not the branch: a Diamond with a
-	/// trigger paused and a daimon running is amber, and amber must not read as
-	/// "you cannot type here".
-	///
-	/// A Diamond with no widget on its TILE can still be held — by the global
-	/// control, or from its own settings dialog, both of which write this leaf.
-	/// So this asks the tree and nothing else. The release valve is the reason it
-	/// is safe to ask: see `diamondAutomated`.
-	function diamondHeld(id) {
-		if (!id) return false;
-		try {
-			return !!(window.DaimondPause
-				&& DaimondPause.isPaused(DaimondPause.id('root', 'diamonds', id) + '/self'));
-		} catch (e) { return false; }
 	}
 
 	/// One triggered action, in words. Used on its pause light and in its row, so

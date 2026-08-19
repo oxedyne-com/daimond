@@ -968,6 +968,16 @@ impl DaimondApp {
         diamond::create(&name).await.map_err(to_js_err)
     }
 
+    /// Create a Diamond at a KNOWN id, or answer with the id if it is already there.
+    ///
+    /// Only the two seeded defaults use this, and the reason is a sync: every device seeds them
+    /// separately -- the "already seeded" flag is `localStorage` and does not travel -- so a
+    /// random id per device produced one Optimiser per device and the merge kept them all. A fixed
+    /// id makes two devices create one object. See [`diamond::create_at`].
+    pub async fn create_diamond_at(&self, name: String, id: String) -> Result<String, JsValue> {
+        diamond::create_at(&name, &id).await.map_err(to_js_err)
+    }
+
     /// List every Diamond as a JSON array of
     /// `{ id, name, crystal_version, updated, tags }`, most-recently updated
     /// first.

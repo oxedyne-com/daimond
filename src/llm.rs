@@ -1128,8 +1128,10 @@ impl LlmClient {
                         blocks.push(text_block(&said, false));
                     }
                     for tc in tool_calls {
-                        let args = if tc.arguments.trim_start().starts_with('{') {
-                            tc.arguments.as_str()
+                        let stripped = strip_said(&tc.name, &tc.arguments);
+                        let raw = stripped.as_deref().unwrap_or(&tc.arguments);
+                        let args = if raw.trim_start().starts_with('{') {
+                            raw
                         } else {
                             "{}"
                         };
@@ -2742,6 +2744,46 @@ fn message_to_json_cached(msg: &ChatMessage) -> String {
 /// Only the `user` role may carry an image on this side; `system`, `assistant` and `tool` take a
 /// string or text parts and nothing else.  A message of another role that somehow holds one is
 /// flattened to the `[image …]` stand-in rather than sent as a part the API would reject; the
+/// The arguments a `say` call is REPLAYED with, or `None` for every other tool.
+///
+/// `say` answers at two depths: a summary the user reads at once and a detail behind a fold. The
+/// detail is for a person, once. Left in the transcript it would be re-sent on every later request
+/// for the life of the conversation -- so a model that explains at length would charge for that
+/// explanation again on every turn, whether or not anybody looked at it twice.
+///
+/// So the wire carries the summary and a note in the detail's place. Nothing is lost: the browser
+/// keeps the whole call in its own transcript record, which is what the fold opens and what
+/// survives a reload. The local record and the payload simply stop being the same thing.
+///
+/// ONE FUNCTION FOR BOTH DIALECTS. The OpenAI body escapes these arguments into a string and the
+/// Anthropic body embeds them as JSON, so the two sites look nothing alike -- and a rule applied at
+/// one and not the other would mean the same conversation cost different amounts through different
+/// endpoints, silently.
+///
+/// It costs ONE cache miss, at the request after the call: the prefix changes once where the
+/// arguments shrink, and is stable from then on.
+///
+/// # Arguments
+/// * `name` - The tool the call names.
+/// * `arguments` - Its arguments, as the model wrote them.
+fn strip_said(name: &str, arguments: &str) -> Option<String> {
+    if name != "say" {
+        return None;
+    }
+    // A call whose summary cannot be read is left alone. It is malformed, and rewriting a
+    // malformed call would replace one problem the model can see with one it cannot.
+    let summary = extract_json_string(arguments, "summary")?;
+    let n = extract_json_string(arguments, "detail")
+        .map(|d| d.chars().count())
+        .unwrap_or(0);
+    Some(fmt!(
+        "{{\"summary\":\"{}\",\"detail\":\"{}\"}}",
+        json_escape(&summary),
+        json_escape(&fmt!(
+            "[folded to the user, {} characters. They have it on screen; you no longer carry it. \
+             Ask them, or read the file you wrote it from, if you need it again.]", n))))
+}
+
 /// tool results that legitimately produce images are re-homed by
 /// [`build_openai_body`](LlmClient::build_openai_body) instead.
 fn message_to_json(msg: &ChatMessage) -> String {
@@ -2755,9 +2797,13 @@ fn message_to_json(msg: &ChatMessage) -> String {
             if tool_calls.is_empty() {
                 fmt!("{{\"role\":\"assistant\",\"content\":\"{}\"}}", text)
             } else {
-                let calls: Vec<String> = tool_calls.iter().map(|tc| fmt!(
+                let calls: Vec<String> = tool_calls.iter().map(|tc| {
+                    let stripped = strip_said(&tc.name, &tc.arguments);
+                    let args = stripped.as_deref().unwrap_or(&tc.arguments);
+                    fmt!(
                     "{{\"id\":\"{}\",\"type\":\"function\",\"function\":{{\"name\":\"{}\",\"arguments\":\"{}\"}}}}",
-                    json_escape(&tc.id), json_escape(&tc.name), json_escape(&tc.arguments))).collect();
+                    json_escape(&tc.id), json_escape(&tc.name), json_escape(args))
+                }).collect();
                 fmt!("{{\"role\":\"assistant\",\"content\":\"{}\",\"tool_calls\":[{}]}}",
                     text, calls.join(","))
             }
@@ -3819,6 +3865,66 @@ pub mod tests {
         let json = datmap_to_json(&m);
         assert!(json.contains("\\\"world\\\""));
         assert!(json.contains("\\n"));
+    }
+
+    /// **The detail a `say` folds does not go over the wire, and the summary does.**
+    ///
+    /// This is the whole point of the tool. Prose written into a reply is re-sent on every later
+    /// request for the life of the conversation; a fold is read once by a person who then has it
+    /// on their own screen. Left in the payload the tool would save nothing at all — it would be
+    /// a presentation device that quietly cost the same as saying everything twice.
+    ///
+    /// BOTH DIALECTS, because they serialise a call in ways that look nothing alike: one escapes
+    /// the arguments into a JSON string, the other embeds them as an object. A rule applied at one
+    /// site and not the other means the same conversation costs different amounts through
+    /// different endpoints, and nothing on screen would say so.
+    ///
+    /// And a NON-`say` call is asserted to keep its arguments, which is what stops this from being
+    /// a stripper aimed at everything: `file_write`'s content has to survive, or a write replayed
+    /// to the model becomes a write of a placeholder.
+    #[test]
+    fn test_a_folded_detail_never_reaches_the_wire() {
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(
+            ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoVerify))
+                .with_no_client_auth()
+        );
+        const DETAIL: &str = "THE-LONG-EXPLANATION-NOBODY-SHOULD-RESEND";
+        const GIST:   &str = "the fence is a path allow-list";
+        let msgs = vec![
+            ChatMessage::user("explain the fence".to_string()),
+            ChatMessage::Assistant {
+                content: MessageContent::text(String::new()),
+                tool_calls: vec![
+                    crate::protocol::ToolCall {
+                        id:        fmt!("c1"),
+                        name:      fmt!("say"),
+                        arguments: fmt!("{{\"summary\":\"{}\",\"detail\":\"{}\"}}", GIST, DETAIL),
+                    },
+                    crate::protocol::ToolCall {
+                        id:        fmt!("c2"),
+                        name:      fmt!("file_write"),
+                        arguments: fmt!("{{\"path\":\"a.md\",\"content\":\"{}\"}}", DETAIL),
+                    },
+                ],
+            },
+        ];
+        for (host, path) in [("api.test.com", "/v1/chat"), ("api.anthropic.com", "/v1/messages")] {
+            let c = LlmClient::new(host, 443, path, "key", "claude-opus-5", 4096, tls.clone());
+            let body = c.build_body(&msgs, None, false);
+            assert!(!body.contains(DETAIL) || body.matches(DETAIL).count() == 1,
+                "the folded detail is still on the wire via {}: {}", path, body);
+            // Exactly once — carried by `file_write`, never by `say`.
+            assert_eq!(1, body.matches(DETAIL).count(),
+                "via {} the detail appears {} times; it must survive file_write and never say",
+                path, body.matches(DETAIL).count());
+            assert!(body.contains(GIST), "the summary was stripped too, via {}: {}", path, body);
+            assert!(body.contains("folded to the user"),
+                "nothing tells the model what became of the detail, via {}: {}", path, body);
+        }
     }
 
     #[test]

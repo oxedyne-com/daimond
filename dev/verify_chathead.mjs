@@ -29,12 +29,22 @@
 //      state the user reported.
 //   4. AND THE COMPOSER HAS ROOM. The text box takes more than half the bar,
 //      which it did not: 170 of 372 is 46%.
+//   5. AND IT NEVER SAYS YOU CANNOT TYPE WHEN YOU CAN. The box used to read
+//      "Paused. Press play on its tile" whenever the Diamond's `/self` leaf was
+//      held — which nothing enforces: that leaf's only reader in the whole app
+//      was the placeholder, so a held Diamond answered a typed message exactly as
+//      a running one does. It arrived unasked, too: any Diamond shipping with a
+//      triggered action is seeded held, and pausing Everything writes the flag
+//      onto every leaf. Asserted as the PAIR — the ordinary placeholder AND a
+//      message that actually goes through — because changing the wording alone
+//      would satisfy either half on its own.
 //
 // PROVED AGAINST BROKEN CODE FIRST:
 //
 //   node dev/verify_chathead.mjs --break nocopy   # 1 and 2 fail: the button copies nothing
 //   node dev/verify_chathead.mjs --break noscroll # 3 fails: the row overflows unreachably
 //   node dev/verify_chathead.mjs --break inbar    # 4 fails: the chevrons take the row back
+//   node dev/verify_chathead.mjs --break paused   # 5 fails: a held Diamond says you cannot type
 //   node dev/verify_chathead.mjs                  # and then, clean
 //
 // `--break inbar` restores the measured original exactly — three 46px buttons in
@@ -73,6 +83,18 @@ const BREAKS = {
 		file: 'css/responsive.css',
 		find: "\t\toverflow-x: auto;\n\t\toverflow-y: hidden;\n\t\tscrollbar-width: none;",
 		with: "\t\toverflow: visible;\n\t\tscrollbar-width: none;",
+	},
+	// Restores the sentence this file's fifth property exists to keep out. A break
+	// that ADDS code rather than removing it, because the defect was an addition.
+	paused: {
+		file: 'js/daimond.js',
+		find: "\t\tchatInput.placeholder = g ? t('chat.queue_ph') : t('chat.input_ph');",
+		with: "\t\tchatInput.placeholder = g ? t('chat.queue_ph')\n"
+			+ "\t\t\t: (current && current.diamondId && (function (i) { try { return !!(window.DaimondPause"
+			+ " && DaimondPause.isPaused(DaimondPause.id('root','diamonds',i) + '/self')); }"
+			+ " catch (e) { return false; } })(current.diamondId))\n"
+			+ "\t\t\t\t? 'Paused. Press play on its tile'\n"
+			+ "\t\t\t\t: t('chat.input_ph');",
 	},
 	inbar: {
 		file: 'css/responsive.css',
@@ -183,6 +205,44 @@ try {
 	check(m.inputW > m.barW * 0.6,
 		'AND THE BOX YOU TYPE IN HAS ROOM — more than 60% of the bar',
 		`${m.inputW} of ${m.barW} (${Math.round(100 * m.inputW / m.barW)}%), chevrons ${m.jumpPos}`);
+	// ── 5. A held Diamond does not claim you cannot type ─────────
+	await p.setViewportSize({ width: 1500, height: 950 });
+	await p.waitForTimeout(600);
+	await p.evaluate(() => document.getElementById('new-diamond-btn').click());
+	await p.waitForSelector('.dlg-card', { timeout: 8000 });
+	await p.evaluate(() => {
+		const card = [...document.querySelectorAll('.dlg-card')].filter(c => c.getClientRects().length).pop();
+		const inp = card.querySelector('input.dlg-input');
+		inp.value = 'Held'; inp.dispatchEvent(new Event('input', { bubbles: true }));
+		card.querySelector('.dlg-ok').click();
+	});
+	await p.waitForTimeout(1600);
+	// The GLOBAL control, which is how the state arrives without anybody touching
+	// the Diamond: `set` writes the flag onto every leaf under it.
+	const held = await p.evaluate(() => {
+		const g = [...document.querySelectorAll('.pptw')].find(e => (e.dataset.pauseNode || '') === 'root');
+		if (!g) return false;
+		g.querySelector('.pptw-pause').click();
+		return true;
+	});
+	await p.waitForTimeout(900);
+	await p.click('#dview-chat');
+	await p.waitForTimeout(900);
+	const ph = await p.evaluate(() => document.getElementById('chat-input').placeholder);
+	check(held, 'Everything can be paused from the rail head', held ? '' : 'no root PPTW found');
+	check(!/pause/i.test(ph),
+		'A HELD DIAMOND DOES NOT TELL YOU THE BOX WILL NOT WORK',
+		JSON.stringify(ph));
+	// The other half, and the one that makes the first mean something: it works.
+	await p.fill('#chat-input', '@text held and answered');
+	await p.click('#chat-send');
+	await p.waitForTimeout(5000);
+	const answered = await p.evaluate(() =>
+		[...document.querySelectorAll('#chat-output .chat-msg-assistant .chat-msg-content')]
+			.some(e => /held and answered/.test(e.textContent)));
+	check(answered,
+		'and it answers, which is why saying otherwise was wrong rather than merely unhelpful',
+		answered ? '' : 'the turn did not answer while held');
 } finally {
 	await s.close();
 }
