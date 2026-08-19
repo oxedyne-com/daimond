@@ -274,7 +274,7 @@
 	'chat.fold_now': 'Falten',
 	'chat.fold_now_help': 'Diese Unterhaltung jetzt falten und eine Zusammenfassung des Bisherigen behalten.',
 	'say.more': 'das Detail — etwa {n} Token, hier gehalten und nicht erneut gesendet',
-	'say.less': 'Detail ausblenden — etwa {n} Token',
+	'say.less': 'Detail ausblenden — etwa {n} Token, die das Modell jetzt ebenfalls sieht',
 	'rail.dupes_trashed': '{n} doppelte Kopien der eingebauten Diamonds entfernt — eine alte Synchronisierung hat sie erzeugt. Sie liegen im Papierkorb, falls Sie eine zurückholen möchten.',
 	'rail.dupes_kept': 'Es gibt {n} weitere doppelte eingebaute Diamonds, aber Sie haben darin gearbeitet, daher wurde nichts entfernt. Löschen Sie die, die Sie nicht möchten.',
 	'wire.chip': 'Wire',

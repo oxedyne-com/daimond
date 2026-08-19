@@ -780,7 +780,7 @@
 	'chat.fold_now': 'Fold',
 	'chat.fold_now_help': 'Fold this conversation now, keeping a summary of what came before.',
 	'say.more':             'the detail — about {n} tokens, held here and not re-sent',
-	'say.less':             'hide the detail — about {n} tokens',
+	'say.less':             'hide the detail — about {n} tokens, which the model now sees too',
 	'rail.dupes_trashed':   'Removed {n} duplicate copies of the built-in Diamonds — an old sync made them. They are in the Trash if you want one back.',
 	'rail.dupes_kept':      'There are {n} more duplicate built-in Diamonds, but you have worked in them, so nothing was removed. Delete the ones you do not want.',
 	'wire.chip':          'Wire',

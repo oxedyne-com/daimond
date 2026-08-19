@@ -270,7 +270,7 @@
 	'chat.fold_now': 'Dobrar',
 	'chat.fold_now_help': 'Dobrar esta conversa agora, mantendo um resumo do que veio antes.',
 	'say.more': 'o detalhe — cerca de {n} tokens, guardados aqui e não reenviados',
-	'say.less': 'ocultar o detalhe — cerca de {n} tokens',
+	'say.less': 'ocultar o detalhe — cerca de {n} tokens, que o modelo agora também vê',
 	'rail.dupes_trashed': 'Removidas {n} cópias duplicadas dos Diamonds integrados — uma sincronização antiga as criou. Estão na Lixeira caso queira alguma de volta.',
 	'rail.dupes_kept': 'Há mais {n} Diamonds integrados duplicados, mas você trabalhou neles, então nada foi removido. Exclua os que não quiser.',
 	'wire.chip': 'Wire',

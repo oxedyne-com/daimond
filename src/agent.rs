@@ -578,7 +578,14 @@ impl Agent {
             // Execute each requested tool call, recording every result in both
             // places for the same reason.
             for tc in &resp.tool_calls {
-                on_event(AgentEvent::ToolCall { name: tc.name.clone(), args: tc.arguments.clone() });
+                // The ID travels with it. A `say` fold is opened and closed on the page, and the
+                // page has to be able to name WHICH call it is talking about when it tells the
+                // engine what is open -- see `set_open_folds`. Nothing else reads it.
+                on_event(AgentEvent::ToolCall {
+                    id:   tc.id.clone(),
+                    name: tc.name.clone(),
+                    args: tc.arguments.clone(),
+                });
                 // A call cut at the output limit is not a call. Its arguments are a JSON
                 // object that stops in the middle, and dispatching it yields a parse
                 // error -- which reads to the model as its own mistake, so it writes the

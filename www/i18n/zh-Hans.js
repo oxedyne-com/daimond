@@ -351,7 +351,7 @@
 	'chat.fold_now': '折叠',
 	'chat.fold_now_help': '立即折叠此对话，保留此前内容的摘要。',
 	'say.more': '详细内容 — 约 {n} 个 token，保存在本地，不会重复发送',
-	'say.less': '隐藏详细内容 — 约 {n} 个 token',
+	'say.less': '隐藏详细内容 — 约 {n} 个 token，模型现在也能看到',
 	'rail.dupes_trashed': '已移除 {n} 个内置 Diamond 的重复副本 —— 它们是旧的同步造成的。如需找回，可在回收站中查看。',
 	'rail.dupes_kept': '还有 {n} 个重复的内置 Diamond，但你曾在其中工作过，因此未移除。请自行删除不需要的。',
 	'wire.chip': 'Wire',

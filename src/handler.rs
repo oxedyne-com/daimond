@@ -768,7 +768,7 @@ fn hex_decode(s: &str) -> Outcome<Vec<u8>> {
 fn event_to_ws(ev: &AgentEvent) -> (&'static str, Vec<Dat>) {
     match ev {
         AgentEvent::Text(t)   => ("text",  vec![dat!(t.clone())]),
-        AgentEvent::ToolCall { name, args } =>
+        AgentEvent::ToolCall { name, args, .. } =>
             ("tool_call", vec![dat!(name.clone()), dat!(args.clone())]),
         AgentEvent::ToolResult { name, result } =>
             ("tool_result", vec![dat!(name.clone()), dat!(result.clone())]),

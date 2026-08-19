@@ -6773,7 +6773,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// # Arguments
 	/// * `args` - The call's arguments, as JSON. Unparseable ones return false and fall through to
 	///   the ordinary tool block, which is honest: a fold nobody can read is not a fold.
-	function renderSaid(args) {
+	/// Which `say` folds are open, by tool-call id. Read straight into the payload before every
+	/// turn: an open fold's detail travels with the request, a closed one's does not.
+	///
+	/// THE FOLD IS THE CONTEXT CONTROL. A fold the user closed is one they are done with; a fold
+	/// they opened is one they are reading, and the next thing they say is likely to be about it.
+	/// So the gesture that manages their screen manages the model's working set too, and the two
+	/// things that ought to agree do. There is no second control to learn.
+	var _openFolds = Object.create(null);
+
+	/// Hand the engine the open set before a turn goes out.
+	///
+	/// The WHOLE set every time, never a delta: a fold closed since the last turn has to leave the
+	/// payload, and an accumulating set could only grow.
+	function pushOpenFolds(app) {
+		if (!app || typeof app.set_open_folds !== 'function') return;
+		try { app.set_open_folds(JSON.stringify(Object.keys(_openFolds))); }
+		catch (e) { /* an older engine simply strips them all, which is the old behaviour */ }
+	}
+
+	function renderSaid(args, callId) {
 		var o;
 		try { o = JSON.parse(args || '{}'); } catch (e) { return false; }
 		if (!o || typeof o.summary !== 'string' || !o.summary.trim()) return false;
@@ -6785,6 +6804,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		body.innerHTML = DaimondRender.md(o.summary);
 		div.appendChild(body);
 		var detail = String(o.detail == null ? '' : o.detail);
+		var id = String(callId || '');
 		if (detail.trim()) {
 			var btn = document.createElement('button');
 			btn.className = 'said-more';
@@ -6798,6 +6818,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			div.appendChild(btn); div.appendChild(more);
 			btn.addEventListener('click', function () {
 				var open = more.style.display === 'none';
+				// The payload follows the screen. Opening one costs a cache miss on the next
+				// turn, because a message already in the prefix is rewritten; it is stable again
+				// after that.
+				if (id) { if (open) _openFolds[id] = 1; else delete _openFolds[id]; }
 				// Rendered on first open, not on draw: a thread of forty folded answers would
 				// otherwise parse and lay out forty documents nobody has asked to see.
 				if (open && !more.dataset.drawn) {
@@ -6818,9 +6842,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return true;
 	}
 
-	function renderToolCall(name, args) {
+	function renderToolCall(name, args, callId) {
 		// The answer, not a step. See `renderSaid`.
-		if (name === 'say' && renderSaid(args)) { _saidJust = true; return; }
+		if (name === 'say' && renderSaid(args, callId)) { _saidJust = true; return; }
 		_saidJust = false;
 		finalizeAssistant();
 		var block = document.createElement('div');
@@ -9724,7 +9748,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// A record of a tool the agent ran. Display only: it is not sent
 				// back to the model, which cannot replay a tool call it has no
 				// call-id for.
-				renderToolCall(m.name || '', m.args || '');
+				renderToolCall(m.name || '', m.args || '', m.callId || '');
 				renderToolResult(m.name || '', m.content || '');
 			}
 		});
@@ -14403,6 +14427,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			catch (e) { appendError(friendlyError(e)); return; }
 		}
 
+		// What the user has open right now, so the payload matches their screen. See `_openFolds`.
+		pushOpenFolds(app);
+
 		var umid = newMid();
 		// Scored HERE, before the message joins the record, because what is being
 		// measured is this message as a reaction to the turn before it. Counters
@@ -14508,7 +14535,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (wspec && wspec.task) dispatched.push({ name: wspec.name, task: wspec.task });
 					else rejectedSpawns += 1;
 				}
-				pendingTool = { role: 'tool_log', name: ev.name || '', args: ev.args || '', content: '', mid: newMid(), ts: Date.now() };
+				pendingTool = { role: 'tool_log', name: ev.name || '', args: ev.args || '', callId: ev.id || '', content: '', mid: newMid(), ts: Date.now() };
 				chat.messages.push(pendingTool);
 				// Write-ahead: the intent to run this tool is on disk before the tool returns, so
 				// recovery can tell a tool that finished from one caught in the act.
@@ -14528,7 +14555,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				busySay(chat, tOr('chat.busy_tool', 'Running {tool}, step {n}…',
 					{ tool: ev.name || '?', n: step }));
 				if (!owns()) return;
-				renderToolCall(ev.name || '', ev.args || '');
+				renderToolCall(ev.name || '', ev.args || '', ev.id || '');
 			} else if (ev.type === 'tool_result') {
 				// Which capability broke in the field, on a machine we do not
 				// have. `toolFailed` is the app's own reading of the result and is
@@ -27272,9 +27299,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// Recorded whichever tool it was, including `spawn_agent`: the chat view
 				// is the account of what the daimon did, and a fan-out is the largest
 				// thing it does.
-				rec.messages.push({ role: 'tool_log', name: ev.name || '', args: ev.args || '',
+				rec.messages.push({ role: 'tool_log', name: ev.name || '', args: ev.args || '', callId: ev.id || '',
 					content: '', mid: newMid(), ts: Date.now() });
-				if (onScreen()) renderToolCall(ev.name || '', ev.args || '');
+				if (onScreen()) renderToolCall(ev.name || '', ev.args || '', ev.id || '');
 			} else if (ev.type === 'tool_result') {
 				var last = rec.messages[rec.messages.length - 1];
 				if (last && last.role === 'tool_log' && !last.content) last.content = ev.content || '';

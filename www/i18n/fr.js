@@ -274,7 +274,7 @@
 	'chat.fold_now': 'Plier',
 	'chat.fold_now_help': 'Plier cette conversation maintenant, en gardant un résumé de ce qui précède.',
 	'say.more': 'le détail — environ {n} jetons, conservés ici et non renvoyés',
-	'say.less': 'masquer le détail — environ {n} jetons',
+	'say.less': 'masquer le détail — environ {n} jetons, que le modèle voit désormais aussi',
 	'rail.dupes_trashed': '{n} copies en double des Diamonds intégrés ont été supprimées — une ancienne synchronisation les avait créées. Elles sont dans la Corbeille si vous en voulez une.',
 	'rail.dupes_kept': 'Il reste {n} Diamonds intégrés en double, mais vous y avez travaillé, donc rien n’a été supprimé. Supprimez ceux dont vous ne voulez pas.',
 	'wire.chip': 'Wire',

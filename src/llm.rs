@@ -123,6 +123,26 @@ struct ThinkCarry {
     turns: Vec<(String, Vec<String>)>,
 }
 
+/// The `say` calls whose fold the user currently has OPEN, by tool-call id.
+///
+/// **THE FOLD IS THE CONTEXT CONTROL, and this is what makes that true.** A folded detail is
+/// stripped from the payload, which is right when the user has closed it: they are done with it,
+/// and re-sending it on every later turn buys nothing. But a fold they have OPENED is a fold they
+/// are reading, and the next thing they say is likely to be about it -- so the model should be
+/// holding what the user is looking at.
+///
+/// The user's own gesture therefore decides the model's working set, with no second control to
+/// learn and no decision to make twice. What is on their screen and what is in its context are
+/// the same set, which is the only arrangement where "why does it not remember that?" has an
+/// answer they can see.
+///
+/// It is rebuilt from the page before every request rather than accumulated here, because a fold
+/// can be opened and closed between two turns and the payload has to follow.
+///
+/// **It costs a cache miss on the turn it changes.** Opening a fold rewrites a message that was
+/// already in the prefix, so everything from that point is re-read once. Stable again afterwards.
+type OpenFolds = std::rc::Rc<std::cell::RefCell<std::collections::HashSet<String>>>;
+
 /// A [`ThinkCarry`] shared across clones of a client.
 #[cfg(not(target_arch = "wasm32"))]
 type Carry = std::sync::Arc<std::sync::Mutex<ThinkCarry>>;
@@ -193,6 +213,8 @@ pub struct LlmClient {
     /// across clones, because a sub-agent built from a cloned client is
     /// continuing the same turn.  See [`ThinkCarry`].
     think:          Carry,
+    /// The `say` folds the user has open. See [`OpenFolds`].
+    open_folds:     OpenFolds,
     /// Set once this endpoint has been caught refusing a request that carried pictures.
     /// See [`Blind`]; read by [`LlmClient::vision_guard`] and set by the strip-and-retry in
     /// [`LlmClient::stream_turn`] and [`LlmClient::chat_once`].
@@ -556,6 +578,7 @@ impl LlmClient {
             max_tokens,
             retry:      RetryPolicy::default(),
             think:      new_carry(),
+            open_folds: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
             blind:      new_blind(),
             tls_config,
         }
@@ -603,6 +626,7 @@ impl LlmClient {
             max_tokens,
             retry:      RetryPolicy::default(),
             think:      new_carry(),
+            open_folds: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
             blind:      new_blind(),
             secure,
             abort:      std::rc::Rc::new(std::cell::RefCell::new(None)),
@@ -1007,9 +1031,9 @@ impl LlmClient {
             if !first { out.push(','); }
             first = false;
             if marks.contains(&i) {
-                out.push_str(&message_to_json_cached(msg));
+                out.push_str(&message_to_json_cached(msg, &self.open_folds.borrow()));
             } else {
-                out.push_str(&message_to_json(msg));
+                out.push_str(&message_to_json(msg, &self.open_folds.borrow()));
             }
         }
         if !carried.is_empty() {
@@ -1128,7 +1152,7 @@ impl LlmClient {
                         blocks.push(text_block(&said, false));
                     }
                     for tc in tool_calls {
-                        let stripped = strip_said(&tc.name, &tc.arguments);
+                        let stripped = strip_said(&tc.name, &tc.arguments, self.fold_open(&tc.id));
                         let raw = stripped.as_deref().unwrap_or(&tc.arguments);
                         let args = if raw.trim_start().starts_with('{') {
                             raw
@@ -1251,6 +1275,23 @@ impl LlmClient {
         { if let Ok(mut g) = self.think.lock() { go(&mut g); } }
         #[cfg(target_arch = "wasm32")]
         { go(&mut self.think.borrow_mut()); }
+    }
+
+    /// Is this `say` call's fold open on screen?
+    fn fold_open(&self, id: &str) -> bool {
+        !id.is_empty() && self.open_folds.borrow().contains(id)
+    }
+
+    /// Replace the set of open folds, from the page, before a request goes out.
+    ///
+    /// REPLACED and not added to: a fold the user has since closed must leave the payload, and an
+    /// accumulating set could only ever grow.
+    pub fn set_open_folds(&self, ids: Vec<String>) {
+        let mut f = self.open_folds.borrow_mut();
+        f.clear();
+        for id in ids {
+            f.insert(id);
+        }
     }
 
     /// The thinking blocks held for `id`, or none when no held turn produced
@@ -2704,11 +2745,11 @@ fn message_len(msg: &ChatMessage) -> usize {
 /// one-element array rather than a bare string.  Only the system and user roles
 /// are given this form; anything else falls back to the plain serialisation, so
 /// a caller that marks the wrong message loses the cache rather than the turn.
-fn message_to_json_cached(msg: &ChatMessage) -> String {
+fn message_to_json_cached(msg: &ChatMessage, open: &std::collections::HashSet<String>) -> String {
     let (role, content) = match msg {
         ChatMessage::System { content } => ("system", content),
         ChatMessage::User { content }   => ("user", content),
-        _ => return message_to_json(msg),
+        _ => return message_to_json(msg, open),
     };
     // With an image in it the content is already an array, and the marker goes on the last block
     // rather than replacing the whole thing with one text block -- which would drop the image.
@@ -2766,8 +2807,14 @@ fn message_to_json_cached(msg: &ChatMessage) -> String {
 /// # Arguments
 /// * `name` - The tool the call names.
 /// * `arguments` - Its arguments, as the model wrote them.
-fn strip_said(name: &str, arguments: &str) -> Option<String> {
+fn strip_said(name: &str, arguments: &str, open: bool) -> Option<String> {
     if name != "say" {
+        return None;
+    }
+    // OPEN MEANS THE USER IS READING IT, so the model holds it too. Their own gesture decides the
+    // working set, and the two things that ought to agree -- what is on their screen and what it
+    // knows -- do.
+    if open {
         return None;
     }
     // A call whose summary cannot be read is left alone. It is malformed, and rewriting a
@@ -2786,7 +2833,11 @@ fn strip_said(name: &str, arguments: &str) -> Option<String> {
 
 /// tool results that legitimately produce images are re-homed by
 /// [`build_openai_body`](LlmClient::build_openai_body) instead.
-fn message_to_json(msg: &ChatMessage) -> String {
+/// # Arguments
+/// * `msg` - The message to serialise.
+/// * `open` - The `say` folds the user has open, whose detail therefore travels. See
+///   [`OpenFolds`].
+fn message_to_json(msg: &ChatMessage, open: &std::collections::HashSet<String>) -> String {
     match msg {
         ChatMessage::System { content } =>
             fmt!("{{\"role\":\"system\",\"content\":\"{}\"}}", json_escape(&content.as_text())),
@@ -2798,7 +2849,7 @@ fn message_to_json(msg: &ChatMessage) -> String {
                 fmt!("{{\"role\":\"assistant\",\"content\":\"{}\"}}", text)
             } else {
                 let calls: Vec<String> = tool_calls.iter().map(|tc| {
-                    let stripped = strip_said(&tc.name, &tc.arguments);
+                    let stripped = strip_said(&tc.name, &tc.arguments, open.contains(&tc.id));
                     let args = stripped.as_deref().unwrap_or(&tc.arguments);
                     fmt!(
                     "{{\"id\":\"{}\",\"type\":\"function\",\"function\":{{\"name\":\"{}\",\"arguments\":\"{}\"}}}}",
@@ -3839,7 +3890,7 @@ pub mod tests {
                 arguments: r#"{"command":"ls"}"#.to_string(),
             }],
         };
-        let j = message_to_json(&msg);
+        let j = message_to_json(&msg, &std::collections::HashSet::new());
         assert!(j.contains(r#""role":"assistant""#));
         assert!(j.contains(r#""tool_calls""#));
         assert!(j.contains(r#""name":"shell""#));
@@ -3924,6 +3975,54 @@ pub mod tests {
             assert!(body.contains(GIST), "the summary was stripped too, via {}: {}", path, body);
             assert!(body.contains("folded to the user"),
                 "nothing tells the model what became of the detail, via {}: {}", path, body);
+        }
+    }
+
+    /// **An OPEN fold travels; a closed one does not.**
+    ///
+    /// The user's own gesture decides the model's working set. A fold they have closed is one they
+    /// are done with, and re-sending it every turn buys nothing; a fold they have OPEN is one they
+    /// are reading, and the next thing they say is likely to be about it — so the model holds what
+    /// they are looking at. Two controls for one idea would be one control too many.
+    ///
+    /// Asserted BOTH WAYS from the same message, because either half alone is satisfied by a
+    /// stripper that is simply broken: always-strip passes the closed case, never-strip passes the
+    /// open one.
+    #[test]
+    fn test_an_open_fold_travels_and_a_closed_one_does_not() {
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(ClientConfig::builder().dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerify)).with_no_client_auth());
+        const DETAIL: &str = "THE-DETAIL-BEHIND-THE-FOLD";
+        let msgs = vec![
+            ChatMessage::user("explain".to_string()),
+            ChatMessage::Assistant {
+                content: MessageContent::text(String::new()),
+                tool_calls: vec![crate::protocol::ToolCall {
+                    id:        fmt!("call_7"),
+                    name:      fmt!("say"),
+                    arguments: fmt!("{{\"summary\":\"the gist\",\"detail\":\"{}\"}}", DETAIL),
+                }],
+            },
+        ];
+        for (host, path) in [("api.test.com", "/v1/chat"), ("api.anthropic.com", "/v1/messages")] {
+            let c = LlmClient::new(host, 443, path, "key", "claude-opus-5", 4096, tls.clone());
+
+            c.set_open_folds(Vec::new());
+            assert!(!c.build_body(&msgs, None, false).contains(DETAIL),
+                "a CLOSED fold was sent via {}", path);
+
+            c.set_open_folds(vec![fmt!("call_7")]);
+            assert!(c.build_body(&msgs, None, false).contains(DETAIL),
+                "an OPEN fold was withheld via {}, so the model cannot see what the user is \
+                 reading", path);
+
+            // And closing it again takes it back out, which is what makes this a control rather
+            // than a one-way door.
+            c.set_open_folds(vec![fmt!("some_other_call")]);
+            assert!(!c.build_body(&msgs, None, false).contains(DETAIL),
+                "closing a fold did not take it back out of the payload, via {}", path);
         }
     }
 

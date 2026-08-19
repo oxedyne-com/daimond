@@ -271,7 +271,7 @@
 	'chat.fold_now': 'Plegar',
 	'chat.fold_now_help': 'Plegar esta conversación ahora, conservando un resumen de lo anterior.',
 	'say.more': 'el detalle — unos {n} tokens, guardados aquí y no reenviados',
-	'say.less': 'ocultar el detalle — unos {n} tokens',
+	'say.less': 'ocultar el detalle — unos {n} tokens, que el modelo ahora también ve',
 	'rail.dupes_trashed': 'Se eliminaron {n} copias duplicadas de los Diamonds integrados — las creó una sincronización antigua. Están en la Papelera por si quieres recuperar alguna.',
 	'rail.dupes_kept': 'Hay {n} Diamonds integrados duplicados más, pero has trabajado en ellos, así que no se eliminó nada. Borra los que no quieras.',
 	'wire.chip': 'Wire',

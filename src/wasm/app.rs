@@ -968,6 +968,28 @@ impl DaimondApp {
         diamond::create(&name).await.map_err(to_js_err)
     }
 
+    /// Tell the engine which `say` folds the user has OPEN, by tool-call id.
+    ///
+    /// Called before every turn, with the whole set, because a fold can be opened and closed
+    /// between two turns and the payload must follow. An open fold's detail travels; a closed
+    /// one's does not. See [`crate::llm::OpenFolds`].
+    pub fn set_open_folds(&self, ids_json: String) {
+        let mut ids = Vec::new();
+        // Read leniently: a page that sends nothing readable means "none open", which is the
+        // behaviour before this existed and the cheaper of the two mistakes.
+        let mut cur = String::new();
+        let mut inside = false;
+        for c in ids_json.chars() {
+            match c {
+                '"' if inside => { if !cur.is_empty() { ids.push(cur.clone()); } cur.clear(); inside = false; },
+                '"'           => inside = true,
+                _ if inside   => cur.push(c),
+                _             => {},
+            }
+        }
+        self.agent.llm.set_open_folds(ids);
+    }
+
     /// What this app would send as its system message, and the tool schemas beside it, as JSON.
     ///
     /// **THE WIRE VIEW'S SOURCE, and it is composed by the code that composes the request.**
@@ -2264,8 +2286,9 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("type", &JsValue::from_str("text"));
             set("content", &JsValue::from_str(text));
         }
-        AgentEvent::ToolCall { name, args } => {
+        AgentEvent::ToolCall { id, name, args } => {
             set("type", &JsValue::from_str("tool_call"));
+            set("id",   &JsValue::from_str(id));
             set("name", &JsValue::from_str(name));
             set("args", &JsValue::from_str(args));
         }

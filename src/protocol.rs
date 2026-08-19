@@ -865,7 +865,7 @@ pub enum AgentEvent {
     /// Streamed LLM response text (a token or chunk).
     Text(String),
     /// The agent is invoking a tool (name + raw JSON args).
-    ToolCall { name: String, args: String },
+    ToolCall { id: String, name: String, args: String },
     /// A tool returned a result (name + result text).
     ToolResult { name: String, result: String },
     /// The user said something while the turn was running, and it has now been put
@@ -907,7 +907,7 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("text"));
                 m.insert(dat!("content"), dat!(text.clone()));
             }
-            Self::ToolCall { name, args } => {
+            Self::ToolCall { name, args, .. } => {
                 m.insert(dat!("type"), dat!("tool_call"));
                 m.insert(dat!("name"), dat!(name.clone()));
                 m.insert(dat!("args"), dat!(args.clone()));
