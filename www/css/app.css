@@ -3205,13 +3205,17 @@ body.resizing { cursor: col-resize; user-select: none; }
 	   collapsed under 24px — which `verify_sweep_mobile` reported as a target too small to
 	   press, on three of these, at exactly the widths a tablet uses. A word-shaped chip had
 	   its padding to keep it open; a drawing has nothing but this. */
-	width: 30px;
-	min-width: 30px;
-	height: 30px;
-	min-height: 30px;
+	/* THE ROW'S OWN HEIGHT, measured off its neighbours rather than chosen: the mode chip
+	   and the collapse button are both 26px, and at 30 these sat four pixels taller and
+	   square where the rest of the row is a pill. On screen they read as heavier than the
+	   words beside them, which is the opposite of what a drawing is here for. */
+	width: 26px;
+	min-width: 26px;
+	height: 26px;
+	min-height: 26px;
 	padding: 0;
 }
-.chip-btn.icon-chip .ic { width: 16px; height: 16px; }
+.chip-btn.icon-chip .ic { width: 14px; height: 14px; }
 /* Pressed reads as pressed. Without this an icon toggle has no state at all,
    where a word one at least changed weight. */
 .chip-btn.icon-chip[aria-pressed="true"] {
