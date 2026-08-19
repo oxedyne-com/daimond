@@ -567,6 +567,15 @@
 						<button class="chip-btn" id="chat-fold-btn" style="display:none"
 							title="Fold this conversation now, keeping a summary of what came before."
 							data-i18n="chat.fold_now" data-i18n-title="chat.fold_now_help">Fold</button>
+						<!-- The whole conversation, out. Per-message copy has existed since the
+						     thread did, and it answers a different question: this is for taking
+						     a conversation somewhere else -- a bug report, a handover, another
+						     model -- where copying forty messages one at a time is not a
+						     workaround, it is a refusal. Drawn for a chat and for a Diamond's
+						     chat face alike, because both are conversations. -->
+						<button class="chip-btn" id="chat-copy-btn"
+							title="Copy the whole conversation to the clipboard"
+							data-i18n="chat.copy_all" data-i18n-title="chat.copy_all_help">Copy</button>
 						<button class="chip-btn" id="steps-toggle-btn" title="Show or hide the tool steps in the thread" data-i18n="chat.steps" data-i18n-title="chat.steps_help">Steps</button>
 						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold" data-i18n-title="chat.collapse_help" aria-label="Collapse every answer" data-i18n-aria-label="chat.collapse">−</button>
 						<!-- Full screen, and only for the crystal face — `showCentre`

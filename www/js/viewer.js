@@ -1699,6 +1699,67 @@
 		opener = (typeof fn === 'function') ? fn : null;
 	}
 
+	// ── Whose screen it is ───────────────────────────────────────────
+	//
+	// `Tool::file_show` in src/tools.rs already refuses a DISPATCHED WORKER, for a
+	// reason it states in full: nobody is reading that transcript, several workers
+	// run at once, and "the document panel belongs to the conversation the user is
+	// actually in". Every clause of that is just as true of a daimon whose Diamond
+	// is not the one on screen -- it was simply never asked. A background daimon
+	// editing a crystal would open the panel over whatever the user was doing, in
+	// a Diamond that had nothing to do with it.
+	//
+	// So the same question is asked of every caller that names an owner: is the
+	// conversation asking the one in view? The answer lives in `daimond.js`, which
+	// owns the rail, the Diamond selection and the panels; this file owns what
+	// showing MEANS, and asks.
+	//
+	// A show that loses the race is REMEMBERED rather than dropped. A daimon
+	// showing a file is telling the user something, and the moment they open that
+	// Diamond is the moment it is worth seeing -- which is how `pendingFolds`
+	// already treats a proposal made while the user was elsewhere.
+
+	/// Answers the id of the conversation on screen, or `''` for none.
+	var screenOwner = null;
+
+	/// The last file each absent owner asked to show, by owner id.
+	var deferred = Object.create(null);
+
+	/// Register the function that says which conversation is on screen.
+	/// Called once, by `daimond.js`.
+	function setScreenOwner(fn) {
+		screenOwner = (typeof fn === 'function') ? fn : null;
+	}
+
+	/// The file `owner` asked to show while it was off screen, and forget it.
+	///
+	/// Taken rather than read: it is shown once, when the user arrives. Leaving it
+	/// would reopen the panel on every later visit to that Diamond, long after the
+	/// turn that asked had been forgotten by everyone.
+	///
+	/// # Arguments
+	/// * `owner` - The conversation being opened.
+	function takeDeferred(owner) {
+		var p = owner ? deferred[owner] : '';
+		if (owner) delete deferred[owner];
+		return p || '';
+	}
+
+	/// Whether a show asked for by `owner` may take the screen now.
+	///
+	/// Unowned shows -- the user's own click, an ordinary chat before the engine
+	/// learned to name itself -- are the user's own act and always may. Only a
+	/// caller that NAMES an owner can be told it is not the one in view, which is
+	/// what keeps this from refusing anything it cannot actually attribute.
+	///
+	/// # Arguments
+	/// * `owner` - The conversation asking, or `''` when nothing named one.
+	function mayTakeScreen(owner) {
+		if (!owner || !screenOwner) return true;
+		try { return screenOwner() === owner; }
+		catch (e) { return true; }   // a page that cannot answer must not lose its shows
+	}
+
 	/// Put `path` in front of the user, and say what they are now looking at.
 	///
 	/// Rejects with a plain-English `Error` when there is no panel to show it in;
@@ -1712,12 +1773,26 @@
 	/// * `page` - Which page to open a PDF at, or nothing to leave it where this
 	///   file was last aimed -- which is what makes a rebuilt document come back
 	///   in the reader's place rather than at page 1.
-	async function showToUser(path, page) {
+	/// * `owner` - The conversation asking, or nothing when the caller cannot say.
+	///   See `mayTakeScreen`.
+	async function showToUser(path, page, owner) {
 		if (!opener) {
 			throw new Error('Daimond’s document panel is not on this page, so there is '
 				+ 'nothing to show a file in.');
 		}
 		var v = await verdict(path, {});
+		// Answered before the draw and reported in the verdict, so the sentence the
+		// model says to the user is the one thing that actually happened. A tool
+		// result claiming a file is on screen when the user is looking at another
+		// Diamond is worse than no tool at all: it is the model telling them to
+		// look at something that is not there.
+		if (!mayTakeScreen(owner)) {
+			if (owner) deferred[owner] = path;
+			v.shown = false;
+			v.page = aimPage(path);
+			return JSON.stringify(v);
+		}
+		v.shown = true;
 		at(path, page);			// before the draw, which is what reads it
 		// The page ACTUALLY used, not the one asked for. They differ whenever a
 		// re-show keeps an earlier aim, and a model told the argument back would
@@ -1729,6 +1804,10 @@
 
 	window.DaimondDoc = { show: showToUser };
 
+	// `verdict` never sets `shown`; only `showToUser` does, and it sets it on both
+	// paths. So a caller reading it gets a fact about this show and never about
+	// what the panel happens to be holding.
+
 	window.DaimondViewer = {
 		probe:         probe,
 		verdict:       verdict,
@@ -1737,6 +1816,11 @@
 		// Where a document opens next time it is drawn.
 		at:            at,
 		opener:        setOpener,
+		// Who is on screen, and what an absent owner asked for while it was. Both
+		// registered from `daimond.js`, which is the only module that knows.
+		screenOwner:   setScreenOwner,
+		takeDeferred:  takeDeferred,
+		mayTakeScreen: mayTakeScreen,
 		// The routing question a panel with an editor in it has to answer, kept
 		// here beside the table it is answered from rather than restated by every
 		// caller -- one caller restating it is what put a PDF in a <pre>.

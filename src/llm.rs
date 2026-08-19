@@ -367,11 +367,19 @@ pub struct RetryPolicy {
 
 impl Default for RetryPolicy {
     fn default() -> Self {
+        // Widened 2026-08-19: a laptop moving between locations routinely drops
+        // the network for tens of seconds while it wakes, reconnects and DNS
+        // resolves. The previous budget (4 attempts, 20s total) survived a flaky
+        // access point but not a 30-second gap, so a turn that could have completed
+        // once the machine settled died instead. Eight attempts over up to two
+        // minutes gives the reconnect time to happen, while still bounded so a
+        // genuinely down provider ends the turn rather than hanging. The stub test
+        // client overrides this with a fast policy, so the suite is unaffected.
         Self {
-            max_attempts:      4,
-            base_ms:           500,
-            max_backoff_ms:    8_000,
-            max_total_wait_ms: 20_000,
+            max_attempts:      8,
+            base_ms:           1_000,
+            max_backoff_ms:    30_000,
+            max_total_wait_ms: 120_000,
         }
     }
 }
@@ -4872,6 +4880,17 @@ pub mod tests {
     /// for as long as the client keeps trying, so "gives up" is observable as a
     /// connection count rather than as a hang.
     pub async fn start_stub(script: Vec<Reply>) -> (u16, Arc<std::sync::Mutex<Seen>>) {
+        // THE STUB IS A TLS SERVER AND NEEDS A PROVIDER TOO.  Every client helper here installs
+        // one, so in a whole-suite run some earlier test has always installed it process-wide by
+        // the time a stub starts, and every stub test passed.  Run one of them ALONE and the
+        // server is built first, with nothing installed, and rustls panics -- so
+        // `cargo test -- one_test_name` failed for a reason that had nothing to do with the test.
+        //
+        // That is not a hypothetical: a daimon changed the retry policy, wrote a test for it, and
+        // told the user to prove it with exactly that command.  Both it and the test beside it
+        // would have failed, and the change would have looked broken.  Idempotent, so installing
+        // it here costs nothing where a client got there first.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         use tokio_rustls::rustls::ServerConfig;
         use tokio_rustls::rustls::pki_types::CertificateDer;
         use tokio_rustls::TlsAcceptor;
@@ -5413,6 +5432,46 @@ pub mod tests {
             "the turn was restarted on top of a partial tool call");
         assert!(tokens.iter().all(|t| t.starts_with("\n[daimond")),
             "text streamed from a replayed turn: {:?}", tokens);
+    }
+
+    #[tokio::test]
+    async fn test_a_stream_that_breaks_before_any_token_is_retried() {
+        // A network drop before the provider has streamed anything — the laptop
+        // moving between locations, the wifi handing off — is the failure the
+        // widened retry policy is for. The stream resets on chunk 0, nothing has
+        // been emitted, and the turn should start over and complete. This is the
+        // exact shape of "the stream broke" the user sees on the road.
+        let (port, seen) = start_stub(vec![
+            Reply::Sse {
+                chunks: vec![
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n".to_string(),
+                    "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n".to_string(),
+                    "data: [DONE]\n\n".to_string(),
+                ],
+                reset_after: Some(0),
+            },
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+
+        let resp = match client.chat_stream_tools(&msgs, None, &mut |t| {
+            tokens.push(t.to_string());
+        }).await {
+            Ok(r)  => r,
+            Err(e) => panic!("a stream that breaks before tokens should recover: {}", e),
+        };
+
+        assert_eq!(connections(&seen), 2,
+            "the broken stream was not retried");
+        assert_eq!(resp.content, "Hello world",
+            "the retry did not produce the answer");
+        assert_eq!(resp.retries, 1,
+            "the retry was not counted");
+        let text: String = tokens.iter().filter(|t| !t.starts_with("\n[daimond")).cloned().collect();
+        assert_eq!(text, "Hello world",
+            "the answer was not streamed cleanly after the retry: {:?}", tokens);
     }
 
     #[tokio::test]

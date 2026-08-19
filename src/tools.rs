@@ -5893,6 +5893,14 @@ pub struct Shown {
     pub named: String,
     /// The format the BYTES show, as a label, when the two disagree.
     pub found: String,
+    /// Whether the file actually reached the screen.
+    ///
+    /// False when the conversation that asked is not the one the user is in, which the panel
+    /// answers rather than this side: only the page knows which Diamond is in view.  The file is
+    /// held and shown when the user next opens that Diamond, so this is "not yet" and never "not
+    /// possible" -- a distinction [`show_result`](Tool::show_result) has to keep, because a model
+    /// that reads a refusal as a limit of the app reports the limit to the user and stops trying.
+    pub shown: bool,
 }
 
 /// A built-in agent tool.
@@ -7668,7 +7676,11 @@ impl Tool {
             Some(n) if n > 0 => Some(n as u32),
             _                => None,
         };
-        let shown = res!(crate::wasm::doc::show(&path, page).await);
+        // The panel is told WHO is asking, and answers whether it took the screen.  Asked at the
+        // panel and not here because the answer is "which Diamond is in view", which lives on the
+        // page; this side knows only which Diamond the turn acts for.
+        let owner = ctx.daimon().unwrap_or_default();
+        let shown = res!(crate::wasm::doc::show(&path, page, &owner).await);
         Ok(Self::show_result(&path, &shown))
     }
 
@@ -7678,13 +7690,18 @@ impl Tool {
     /// is -- so what a test proves is what the tool says, and not a second composition that happens
     /// to agree with it today.
     ///
-    /// **Every branch here describes a file that IS on screen.**  There is no "cannot show" tier:
-    /// the viewer's floor is a hex dump naming the format, so a `.dSYM` and an `.ipynb` are shown
-    /// too, badly but honestly.  That matters more than it sounds, because this tool exists to
-    /// repair a false generalisation -- a daimon that reasoned from its toolbox to "this app
+    /// **Every FORMAT branch here describes a file that IS on screen.**  There is no "cannot show"
+    /// tier: the viewer's floor is a hex dump naming the format, so a `.dSYM` and an `.ipynb` are
+    /// shown too, badly but honestly.  That matters more than it sounds, because this tool exists
+    /// to repair a false generalisation -- a daimon that reasoned from its toolbox to "this app
     /// cannot display a PDF" -- and a result reading "no viewer for this format" is an invitation
     /// to make exactly the same leap one file later.  So the `hex` branch names what the viewer
     /// DOES draw, and says in as many words not to generalise from the one file in hand.
+    ///
+    /// The one branch that does NOT is [`Shown::shown`] being false, and it is deliberately not a
+    /// tier: it says nothing about the file or its format, only about who is looking at the
+    /// screen right now, and it says the file is waiting rather than refused.  A tier would put
+    /// "this cannot be displayed" back into the vocabulary this tool was written to remove.
     ///
     /// # Arguments
     /// * `path` - The file, as the panel was asked for it.
@@ -7692,6 +7709,15 @@ impl Tool {
     #[cfg(any(target_arch = "wasm32", test))]
     fn show_result(path: &str, s: &Shown) -> MessageContent {
         let size = fmt!("{} bytes", s.size);
+        // Answered before the format, because the format describes a screen nobody is looking at.
+        if !s.shown {
+            return MessageContent::text(fmt!(
+                "'{}' was NOT put on screen: the user is in another Diamond, and the document \
+                panel belongs to the conversation they are actually in. Daimond is holding the \
+                file and will open it the moment they come back to this Diamond, so there is \
+                nothing to do again -- do not call file_show a second time, and do not tell them \
+                to look at it now. Say what is in it instead.", path));
+        }
         let what = match s.tier.as_str() {
             // The one the defect was reported against.  It says "typeset pages, not source"
             // because the model's own answer that day offered the source as a consolation.
@@ -14797,6 +14823,7 @@ mod tests {
             media: fmt!("Pdf"),
             label: fmt!("PDF document"),
             size:  1_131_462,
+            shown: true,
             ..Default::default()
         };
         let out = Tool::show_result("CheapThinking/thinking.pdf", &s).as_text().to_string();
@@ -14828,6 +14855,7 @@ mod tests {
             media: fmt!("Unknown"),
             label: fmt!("unknown format"),
             size:  4096,
+            shown: true,
             ..Default::default()
         };
         let out = Tool::show_result("build/app.bin", &s).as_text().to_string();
@@ -14842,6 +14870,55 @@ mod tests {
         }
         assert!(out.contains("do not tell the user Daimond cannot show files"),
             "nothing here stops the generalisation this tool exists to stop: {}", out);
+    }
+
+    /// **A show that did not reach the screen says so, and says it is waiting rather than
+    /// refused.**
+    ///
+    /// The failure this repairs was reported live: a daimon editing its crystal opened the Doc
+    /// panel over a DIFFERENT Diamond the user was working in.  The panel now declines, and the
+    /// half that matters here is what the model is then told -- because the old result claimed the
+    /// file was on screen whatever happened, so the model would go on to say "as you can see
+    /// above" to somebody looking at another conversation entirely.
+    ///
+    /// Three things are asserted, and the last two are the ones a plausible-but-wrong sentence
+    /// would fail: that it does not claim the screen, that the file is coming rather than
+    /// impossible, and that the model is told not to try again -- a retry would be refused
+    /// identically and burn a round.
+    #[test]
+    fn test_a_show_that_did_not_take_the_screen_is_not_reported_as_shown() {
+        let s = Shown {
+            tier:  fmt!("doc"),
+            media: fmt!("Pdf"),
+            label: fmt!("PDF document"),
+            size:  900,
+            shown: false,
+            ..Default::default()
+        };
+        let out = Tool::show_result("diamonds/x/crystal.html", &s).as_text().to_string();
+        assert!(!out.contains("on the user's screen now"),
+            "a file nobody can see is reported as being on screen: {}", out);
+        assert!(out.contains("NOT put on screen"), "what happened is not stated: {}", out);
+        // "Waiting", not "cannot": the whole point of this tool is that it removed "cannot
+        // display" from the model's vocabulary, and a refusal it reads as a limit puts it back.
+        assert!(out.contains("will open it"),
+            "the file reads as refused rather than as waiting, which is the generalisation this \
+            tool exists to prevent: {}", out);
+        assert!(out.contains("do not call file_show a second time"),
+            "nothing stops the model retrying a call that will be refused the same way: {}", out);
+    }
+
+    /// **A `Shown` nobody filled in does not claim the user's screen.**
+    ///
+    /// `Default` is fail-closed on this one field: every other member describes a file and
+    /// defaults to nothing in particular, but `shown` is a claim ABOUT THE USER, and the wrong
+    /// default is one that asserts a person is looking at something.  The wasm edge reads an
+    /// ABSENT `shown` from an older driver as true, which is a different question -- see
+    /// `crate::wasm::doc::show` -- and this is what keeps the two from being confused.
+    #[test]
+    fn test_an_unfilled_shown_does_not_claim_the_screen() {
+        assert!(!Shown::default().shown,
+            "a Shown nobody filled in claims the user is looking at a file");
     }
 
     /// **A disagreement travels to the model as well as to the screen.**
@@ -14859,6 +14936,7 @@ mod tests {
             disagree: true,
             named:    fmt!("PNG image"),
             found:    fmt!("PDF document"),
+            shown:    true,
         };
         let out = Tool::show_result("export.png", &s).as_text().to_string();
         assert!(out.contains("PNG image") && out.contains("PDF document"), "{}", out);
@@ -14866,6 +14944,7 @@ mod tests {
         // on every single show and read as a warning about nothing.
         let quiet = Tool::show_result("ok.pdf", &Shown {
             tier: fmt!("doc"), media: fmt!("Pdf"), label: fmt!("PDF document"), size: 900,
+            shown: true,
             ..Default::default()
         }).as_text().to_string();
         assert!(!quiet.contains("NAME says"), "a file that agrees with itself got the note: {}", quiet);
@@ -15241,6 +15320,7 @@ mod tests {
     fn test_an_unknown_tier_is_admitted_rather_than_guessed_at() {
         let out = Tool::show_result("thing.xyz", &Shown {
             tier: fmt!("carousel"), media: fmt!("Xyz"), label: fmt!("XYZ file"), size: 12,
+            shown: true,
             ..Default::default()
         }).as_text().to_string();
         assert!(out.contains("ask them what they can see"), "{}", out);

@@ -51,8 +51,12 @@ extern "C" {
     ///
     /// `page` is a `JsValue` so it can be `undefined`, which is the driver's word for "the top"
     /// and is not the same as page 1 asked for deliberately.
+    ///
+    /// `owner` names the conversation asking, so the driver can decline to take a screen that
+    /// belongs to another one.  An empty string means the caller could not say, and the driver
+    /// reads that as the user's own act.
     #[wasm_bindgen(method)]
-    fn show(this: &Panel, path: &str, page: JsValue) -> js_sys::Promise;
+    fn show(this: &Panel, path: &str, page: JsValue, owner: &str) -> js_sys::Promise;
 }
 
 
@@ -85,13 +89,14 @@ fn refusal(e: &JsValue) -> String {
 /// # Arguments
 /// * `path` - The workspace-relative path, already scoped and already checked by the guard.
 /// * `page` - Which page to open a paged document at, or `None` for the top.
-pub async fn show(path: &str, page: Option<u32>) -> Outcome<Shown> {
+/// * `owner` - The Diamond whose daimon is asking, or empty for a chat or the user.
+pub async fn show(path: &str, page: Option<u32>, owner: &str) -> Outcome<Shown> {
     let p = res!(panel());
     let at = match page {
         Some(n) => JsValue::from_f64(n as f64),
         None    => JsValue::UNDEFINED,
     };
-    let v = match JsFuture::from(p.show(path, at)).await {
+    let v = match JsFuture::from(p.show(path, at, owner)).await {
         Ok(v)  => v,
         Err(e) => return Err(err!("{}", refusal(&e); IO, Invalid)),
     };
@@ -126,5 +131,9 @@ pub async fn show(path: &str, page: Option<u32>) -> Outcome<Shown> {
         disagree: extract_json_bool(&json, "disagree").unwrap_or(false),
         named:    extract_json_string(&json, "named").unwrap_or_default(),
         found:    extract_json_string(&json, "found").unwrap_or_default(),
+        // Absent means shown.  An older bundle's driver answers no `shown` at all, and the tool
+        // predates the field: reading a missing one as "not shown" would have every show in that
+        // bundle report a failure that did not happen.
+        shown:    extract_json_bool(&json, "shown").unwrap_or(true),
     })
 }

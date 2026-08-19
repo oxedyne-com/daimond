@@ -37,6 +37,14 @@
 //      with (4), is what a rebuilt document needs. It is also the MOST that is
 //      available: nothing can read where the reader had scrolled to, so what is
 //      restored is where we put them and never where they went.
+//   7. AND IT MAY NOT TAKE A SCREEN THAT BELONGS TO ANOTHER CONVERSATION. A
+//      daimon whose Diamond is not the one in view had the panel open over
+//      whatever the user was doing — reported live, from a daimon editing its
+//      crystal while the user worked in a different Diamond. `Tool::FileShow`
+//      already refused a dispatched WORKER for exactly this reason and in these
+//      words: "the document panel belongs to the conversation the user is
+//      actually in". The same question is now asked of every owner. The show is
+//      held, not dropped, and opens when the user reaches that Diamond.
 //
 // WHAT THIS FILE DOES NOT PROVE, and nothing here should be read as proving:
 // the Rust half. `Tool::FileShow`, its guard, its refusals and the English it
@@ -56,6 +64,7 @@
 //   node dev/verify_fileshow.mjs --break stale    # 4 fails: the rewritten file is not redrawn
 //   node dev/verify_fileshow.mjs --break aim      # 5 fails: page 3 opens at page 1
 //   node dev/verify_fileshow.mjs --break place    # 6 fails: the rebuild loses the reader's place
+//   node dev/verify_fileshow.mjs --break screen   # 7 fails: a background Diamond takes the panel
 //   node dev/verify_fileshow.mjs                  # and then, clean
 //
 // A break may redden more than the check it is named for, and two here do:
@@ -164,6 +173,16 @@ const BREAKS = {
 	// A show with no page forgets where this file was. Harmless on a first show
 	// and ruinous on the second: it is what makes "the PDF was rebuilt" and "I
 	// lost where I was on page 214" the same event.
+	// The question is asked and the answer is thrown away, which is the state the
+	// defect was reported from: every owner may take every screen. Note that this
+	// is the ONLY break here that reddens a check about who is looking rather than
+	// about what is drawn — the panel is perfectly correct throughout, and shows
+	// the wrong person.
+	screen: [{
+		file: 'js/viewer.js',
+		find: '\t\tif (!owner || !screenOwner) return true;',
+		with: '\t\tif (!owner || !screenOwner || owner) return true;',
+	}],
 	place: [{
 		file: 'js/viewer.js',
 		find: '\t\tif (n > 0) { aim = { path: path, page: n }; return; }\n'
@@ -306,17 +325,19 @@ const put = (p, bytes) => page.evaluate(async ({ p, bytes }) => {
 ///
 /// Resolves `{ ok, verdict }` or `{ ok:false, error }`, because a rejection is an
 /// answer too: it is what the model gets when there is no panel to show a file in.
-const show = (p, pg) => page.evaluate(async ({ p, pg }) => {
+const show = (p, pg, owner) => page.evaluate(async ({ p, pg, owner }) => {
 	if (!window.DaimondDoc || typeof DaimondDoc.show !== 'function') {
 		return { ok: false, error: 'window.DaimondDoc is not on the page' };
 	}
 	try {
-		const json = await DaimondDoc.show(p, pg);
+		// Three arguments and not two: `owner` is what the wasm passes from
+		// `ToolContext::daimon`, and a call that omits it is the user's own act.
+		const json = await DaimondDoc.show(p, pg, owner);
 		return { ok: true, verdict: JSON.parse(json) };
 	} catch (e) {
 		return { ok: false, error: String((e && e.message) || e) };
 	}
-}, { p, pg });
+}, { p, pg, owner });
 
 /// What the PREVIEW PANEL holds — `#pv-view`, the panel a person reads, never a
 /// host of this file's own. The claim being made is about the user's screen.
@@ -509,6 +530,53 @@ try {
 		'and the reader is still on page 3 rather than back at page 1',
 		stillAt3 && at1 ? `dark ${pct(stillAt3.dark)} against ${pct(at1.dark)} at page 1`
 			: 'nothing to measure');
+
+	// ── 7. And it may not take a screen that belongs elsewhere ───
+	//
+	// The owner is stubbed rather than driven through the rail: what is under test
+	// is the RULE — does a show name the conversation asking, and is it compared
+	// with the one in view — and building two Diamonds to answer it would put the
+	// rail's own defects between this check and the thing it measures. The stub
+	// goes in through the same door `daimond.js` uses, so the seam being exercised
+	// is the shipped one and not a copy.
+	//
+	// Note what is asserted about the REFUSED show, because the weak version of
+	// this check is "it returned something": the panel must still hold the file
+	// from the show BEFORE it, which is the actual complaint — a user mid-document
+	// having it swapped underneath them.
+	await put('show/other.pdf', PDF3);
+	await page.evaluate(() => DaimondViewer.screenOwner(() => 'd-onscreen'));
+
+	const mine = await show('show/report.pdf', 1, 'd-onscreen');
+	await page.waitForTimeout(1500);
+	check(mine.ok && mine.verdict.shown === true,
+		'the Diamond the user is looking at may put a file on their screen',
+		mine.ok ? JSON.stringify(mine.verdict.shown) : mine.error);
+	const held = await inPanel();
+
+	const theirs = await show('show/other.pdf', 1, 'd-elsewhere');
+	await page.waitForTimeout(1500);
+	check(theirs.ok && theirs.verdict.shown === false,
+		'and a Diamond the user is NOT looking at is told its show did not land',
+		theirs.ok ? JSON.stringify(theirs.verdict.shown) : theirs.error);
+	const kept = await inPanel();
+	check(kept.name === held.name && held.name === 'show/report.pdf',
+		'while the panel goes on holding the document the user was actually reading',
+		`was ${JSON.stringify(held.name)}, now ${JSON.stringify(kept.name)}`);
+
+	// HELD, NOT DROPPED. The refusal is "not yet", so the file has to be waiting
+	// when the user reaches that Diamond — and waiting exactly once, or every
+	// later visit reopens a panel about a turn everyone has forgotten.
+	const waiting = await page.evaluate(() => [
+		DaimondViewer.takeDeferred('d-elsewhere'),
+		DaimondViewer.takeDeferred('d-elsewhere'),
+	]);
+	check(waiting[0] === 'show/other.pdf',
+		'and the file it wanted shown is held for when the user opens that Diamond',
+		JSON.stringify(waiting[0]));
+	check(waiting[0] !== '' && waiting[1] === '',
+		'once, so a later visit does not reopen a panel about a forgotten turn',
+		JSON.stringify(waiting));
 } finally {
 	await s.close();
 }

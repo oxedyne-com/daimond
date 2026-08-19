@@ -9522,6 +9522,45 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return s.replace(/[\x1b\x9b]/g, '');			// a lone introducer
 	}
 
+	/// Did the NETWORK fail, rather than the provider answering?
+	///
+	/// One definition, read twice: `friendlyError` turns a yes into the sentence the user sees,
+	/// and `runTurn`'s catch turns it into the difference between a turn thrown away and a turn
+	/// handed back. Two copies of this test would be two answers to "was that our fault or the
+	/// road's", and the second would drift.
+	///
+	/// The last two patterns are the client's own wording -- `TransportErr::transient` in
+	/// `src/llm.rs` builds every retryable failure with one of exactly two reasons, and they are
+	/// already English written for a person to read. The coupling is deliberate and is the reason
+	/// they are quoted here rather than paraphrased.
+	///
+	/// # Arguments
+	/// * `s` - The error text, already stripped of ANSI and of `src/*.rs:NN` frames -- which
+	///   matters, because a source frame carrying a line number reads as an HTTP status.
+	/// MEASURED, NOT GUESSED. A connection destroyed part way through an answer produces, in
+	/// WebKit and Chromium alike:
+	///
+	///     LLM: read stream chunk failed: TypeError: network error
+	///
+	/// `NetworkError` was in the list; `network error`, with the space, was not — so the
+	/// commonest real transport failure there is fell through every branch below and reached
+	/// the user as that raw sentence, source frames and all. `\s*` covers both spellings.
+	function isUnreachable(s) {
+		return /Failed to fetch|network\s*error|ERR_CONNECTION|ENOTFOUND|ECONNREFUSED|refused|dns/i.test(s)
+			// The client's own words for the two failures it retries, and for the read that
+			// wraps them. See `TransportErr::transient` in src/llm.rs.
+			|| /could not reach|the stream broke|read stream chunk failed/i.test(s);
+	}
+
+	/// As `isUnreachable`, for an error object straight out of a `catch`.
+	///
+	/// Does the same stripping `friendlyError` does before testing, because a raw error carries
+	/// the fe2o3 source frames and the JsValue box around the sentence that matters.
+	function offline(raw) {
+		var s = String(raw == null ? '' : (raw && raw.message ? raw.message : raw));
+		return isUnreachable(stripAnsi(s).replace(/src\/[^\s":]+\.rs:\d+:?/g, ' '));
+	}
+
 	function friendlyError(raw) {
 		var s = String(raw == null ? '' : (raw && raw.message ? raw.message : raw));
 		s = stripAnsi(s);
@@ -9531,7 +9570,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// reported to the user as the provider having a server error.
 		s = s.replace(/src\/[^\s":]+\.rs:\d+:?/g, ' ');
 		// A transport failure is not a provider response, so test it first.
-		if (/Failed to fetch|NetworkError|ERR_CONNECTION|ENOTFOUND|ECONNREFUSED|refused|dns/i.test(s)) {
+		if (isUnreachable(s)) {
 			return t('err.unreachable');
 		}
 		// Map the common upstream-provider HTTP statuses to actionable copy.
@@ -9626,7 +9665,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		foot.className = 'turn-interrupted';
 		var label = document.createElement('span');
 		label.className = 'ti-label';
-		label.textContent = '⚠ ' + t(m.content ? 'turn.interrupted' : 'turn.interrupted_early');
+		// WHICH interruption. A turn that died on the road and a turn that died with the tab
+		// are both interrupted and are not the same sentence, and until the road case existed
+		// there was only one to say. A phone showing "the browser closed before this finished"
+		// to somebody who had just walked out of wifi range is a small lie that makes the app
+		// look like it does not know what happened to it.
+		// Four literal calls rather than a key chosen in an expression: `dev/i18ncheck.mjs`
+		// reads the key out of the source, and a key it cannot read is a key nothing can prove
+		// exists in en.js -- where an absence is English for every language, silently.
+		label.textContent = '⚠ ' + (m.why === 'offline'
+			? (m.content ? t('turn.offline')      : t('turn.offline_early'))
+			: (m.content ? t('turn.interrupted')  : t('turn.interrupted_early')));
 		var btn = document.createElement('button');
 		btn.className = 'ti-continue';
 		btn.textContent = t('turn.continue');
@@ -10609,6 +10658,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// turn and finished after twenty are different stories, and this is the
 		// only moment both the chat and the fact of leaving it are in hand.
 		if (current && current !== chat) tel('chat.leave', turnsIn(current));
+		// Before `current` moves, while the outgoing conversation is still the one
+		// the box belongs to. See `moveComposerTo`.
+		moveComposerTo(chat);
 		current = chat;
 		// Remembered so the next boot comes back here. See OPEN_CHAT_KEY.
 		try { localStorage.setItem(OPEN_CHAT_KEY, chat && chat.id ? chat.id : ''); }
@@ -13570,6 +13622,41 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// builds a list of Diamonds — `js/graph.js` does.
 		trashed:         trashed,
 	};
+	/// The composer, refitted to what is in it.
+	function fitComposer() {
+		if (!chatInput) return;
+		chatInput.style.height = 'auto';
+		chatInput.style.height = Math.min(chatInput.scrollHeight, 263) + 'px';
+	}
+
+	/// Park what is typed on the conversation being left, and put the incoming
+	/// one's own draft in the box.
+	///
+	/// THE COMPOSER IS ONE ELEMENT AND A DRAFT IS NOT. Every chat and both faces
+	/// of every Diamond share `chat-input`, and until this existed the switch
+	/// re-pointed everything about the box except the text in it -- so a
+	/// half-typed sentence followed the user into the next conversation, and
+	/// `syncComposerAttachPrefix` then glued the incoming Diamond's prefix onto
+	/// the outgoing chat's words, which is what put a stranger's text box in a
+	/// Diamond that had never seen it.
+	///
+	/// Kept on the record beside `_queue` and transient for the same reason: a
+	/// draft is what somebody is in the middle of, not part of the conversation.
+	/// `slimChat`'s whitelist is what keeps it out of the store.
+	///
+	/// # Arguments
+	/// * `next` - The conversation about to go on screen. A null -- no Diamond,
+	///   no chat -- parks the outgoing draft and leaves the box empty.
+	function moveComposerTo(next) {
+		if (!chatInput) return;
+		// Guarded on the move actually happening: re-entering the conversation
+		// already on screen must not read the box back into itself, which is how a
+		// draft would be lost to any caller that re-selects the current chat.
+		if (current && current !== next) current._draft = chatInput.value;
+		chatInput.value = (next && next._draft) || '';
+		fitComposer();
+	}
+
 	/// Point the one composer at whichever chat is on screen: showing Stop while
 	/// that chat generates and nothing is typed, ready to type either way.
 	///
@@ -14521,12 +14608,70 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} catch (e) {
 				threw = true;
 				telErr = e;			// classified in the `finally`, where the ending is known.
+				// Read BEFORE `finalizeAssistant`, which clears it: the words that did arrive
+				// before the road went are the whole difference between handing a turn back and
+				// handing back an empty one.
+				var partial = curAsstText || '';
 				finalizeAssistant();
 				if (_unloading) {
 					// The page is going away and took the request with it. That is not a failure to
 					// record — leave the turn OPEN in the journal so the next boot recovers it as
 					// interrupted, and write no error over it.
 					if (J) J.flush();
+				} else if (offline(e)) {
+					// THE ROAD FAILED, NOT THE PROVIDER, AND THAT IS NOT A TERMINAL STATE.
+					//
+					// Until this branch existed the split was `_unloading` against everything
+					// else: a closing tab kept its turn and every other death threw it away. A
+					// laptop closed and carried between locations is neither -- the page is not
+					// unloading, it is SUSPENDED, and when it wakes the fetch has long since
+					// failed, the retries are spent, and the user's turn was deleted from the
+					// journal along with the prompt they typed.
+					//
+					// The retry budget cannot fix that and is the wrong tool for it: a widened
+					// budget buys a couple of minutes, and the gap is however long the walk took.
+					// Worse, `stream_turn` does not retry AT ALL once tokens have started
+					// (`if started || !e.retryable`) -- deliberately, since a re-send would bill
+					// the answer twice -- so the commonest shape of this, a break part way
+					// through a reply, was never retryable and always terminal.
+					//
+					// Everything needed to hand it back was already built for the crash case:
+					// the journal holds the prompt, the partial reply and the tools that ran, and
+					// `markInterrupted` draws the badge and the Continue button. All that was
+					// missing was the judgement that this belongs in the same bucket. So the turn
+					// is left OPEN in the journal -- a reload will recover it exactly as a crash
+					// is recovered -- and the same interrupted message is shown at once, because
+					// `recoverInterrupted` runs at boot and the user is still sitting here.
+					if (J) J.flush();
+					// EVERY MESSAGE OF THE TURN CARRIES ITS ID, which is what makes Continue a
+					// replacement rather than a second copy. `continueTurn` drops by `iturn`, and
+					// `recoverInterrupted` tags the prompt for exactly this reason
+					// (`if (um) um.iturn = iturn`). Doing it there and not here left the prompt
+					// untagged, so pressing Continue sent it again and the thread ended up
+					// holding the question twice.
+					//
+					// Tagged from the prompt forward rather than by mid alone, so the tool logs
+					// this turn wrote go with it: a Continue that removed the question and left
+					// the tool calls would re-run against a transcript describing work the new
+					// turn has not done.
+					for (var mi = chat.messages.length - 1; mi >= 0; mi--) {
+						var mm = chat.messages[mi];
+						mm.iturn = umid;
+						if (mm.role === 'user' && mm.mid === umid) break;
+					}
+					chat.messages.push({
+						role:        'assistant',
+						content:     partial,
+						mid:         newMid(),
+						interrupted: true,
+						why:         'offline',
+						iturn:       umid,
+						itext:       text,
+						ts:          Date.now(),
+					});
+					if (owns()) renderHistory(chat.messages);
+					touchChat(chat);
+					persistChats();
 				} else {
 					if (!sawError) {
 						chat.messages.push({ role: 'error_log', content: friendlyError(e), mid: newMid(), ts: Date.now() });
@@ -19683,6 +19828,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// model finds shut and reports as absent.
 	if (window.DaimondViewer && DaimondViewer.opener) DaimondViewer.opener(Files.open);
 
+	// And who the screen belongs to right now, which only this module knows. A
+	// Diamond in view answers its own id; a chat answers the empty string, which
+	// is also what a daimon that acts for no Diamond names itself -- so an
+	// ordinary chat's show is never refused for want of an id. See
+	// `mayTakeScreen` in js/viewer.js for what is done with the answer.
+	if (window.DaimondViewer && DaimondViewer.screenOwner) {
+		DaimondViewer.screenOwner(function () {
+			return (currentDiamond && currentDiamond.id) || '';
+		});
+	}
+
 	// ── The Terminal panel ─────────────────────────────────────
 	//
 	// The last joint in a road that is otherwise finished. `js/terminal.js` draws
@@ -22674,6 +22830,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	async function selectDiamond(f, view) {
+		// Before anything moves `current`, and once for both faces: they share the
+		// composer, so a draft belongs to the Diamond and not to the face. See
+		// `moveComposerTo`.
+		moveComposerTo(daimonChat(f));
 		currentDiamond = f;
 		signalDiamondChanged();
 		updateActiveDiamond();
@@ -22686,6 +22846,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the user deliberately saved exists, so this never closes a panel behind
 		// their back on a Diamond they never arranged.
 		DaimondPanels.restoreArrangement(f.id);
+		// A file this Diamond's daimon asked to show while the user was elsewhere.
+		// After the arrangement, deliberately: the daimon's show is the more recent
+		// intent of the two, and a restored arrangement that closed the Doc panel
+		// would otherwise swallow it. Taken, so it happens once. See
+		// `mayTakeScreen` in js/viewer.js.
+		if (window.DaimondViewer && DaimondViewer.takeDeferred) {
+			var waiting = DaimondViewer.takeDeferred(f.id);
+			if (waiting) {
+				Promise.resolve(Files.open(waiting)).catch(function () {
+					/* the file may have been moved or deleted since; nothing to say */
+				});
+			}
+		}
 
 		if (want === 'chat') {
 			// `current` IS the daimon's record here, and that is the point: every
@@ -27601,6 +27774,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		resetDiamondApps();
 
 		locked = true;
+		// Parked, not merely abandoned: a half-typed message is the user's words,
+		// and leaving them in the box is the one thing on this screen that a lock
+		// is supposed to put away. Unlocking selects a conversation, which hands
+		// the draft straight back.
+		moveComposerTo(null);
 		current = null;
 		currentDiamond = null;
 		signalDiamondChanged();
@@ -31052,6 +31230,64 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	});
 	applyToolsVisibility();
 
+	// ── The whole conversation, out ────────────────────────────
+	//
+	// Plain text and not the rendered HTML: what this is FOR is carrying a
+	// conversation somewhere else -- a bug report, a handover, another model --
+	// and every one of those destinations wants the words. Markdown survives
+	// because the assistant wrote markdown; the thread's own decorations do not,
+	// because they are this app talking about the conversation rather than part
+	// of it.
+	var copyAllBtn = document.getElementById('chat-copy-btn');
+
+	/// One conversation as plain text, in the order it happened.
+	///
+	/// Tool steps are INCLUDED, named and with their result, because a transcript
+	/// pasted into a bug report without them shows an assistant asserting things
+	/// with nothing behind it -- which is exactly the reading somebody debugging
+	/// must not be given. They are marked as steps so a reader can skip them.
+	///
+	/// # Arguments
+	/// * `chat` - The conversation. A missing one yields the empty string, which
+	///   `copyToClipboard` rejects rather than reporting a copy of nothing.
+	function transcriptOf(chat) {
+		if (!chat || !chat.messages || !chat.messages.length) return '';
+		var out = [];
+		out.push('# ' + chatDisplayName(chat));
+		chat.messages.forEach(function (m) {
+			var body = String(m.content == null ? '' : m.content).trim();
+			switch (m.role) {
+				case 'user':      out.push('\n## You\n\n' + body); break;
+				case 'assistant': out.push('\n## Daimond\n\n' + body); break;
+				case 'tool_log':  out.push('\n### Step: ' + (m.name || '') + '\n\n'
+					+ (m.args ? '`' + m.args + '`\n\n' : '') + body); break;
+				// The app's own voice about the conversation -- a refusal, a limit
+				// reached. Kept, because a transcript that silently drops the reason a
+				// turn stopped is a transcript that misleads whoever reads it next.
+				case 'error_log': out.push('\n> ' + body); break;
+				default: break;
+			}
+		});
+		return out.join('\n').replace(/\n{4,}/g, '\n\n\n') + '\n';
+	}
+
+	if (copyAllBtn) copyAllBtn.addEventListener('click', function () {
+		var text = transcriptOf(current);
+		if (!text) { toast(t('chat.copy_all_empty'), true); return; }
+		var was = copyAllBtn.textContent;
+		copyToClipboard(text).then(function () {
+			copyAllBtn.textContent = t('toast.copied');
+			sayQuietly(t('chat.copy_all_said'));
+			setTimeout(function () { copyAllBtn.textContent = was; }, 1600);
+		}, function () {
+			// `copyToClipboard` already tried the select-and-copy fallback, so
+			// reaching here means both routes were refused. Saying so is the only
+			// honest ending: a button that reports success it did not have is worse
+			// than one that admits it.
+			toast(t('chat.copy_all_failed'), true);
+		});
+	});
+
 	var conciseChip = document.getElementById('concise-chip');
 	if (conciseChip) conciseChip.addEventListener('click', function () { toggleConcise(); });
 	var chatFoldBtn = document.getElementById('chat-fold-btn');
@@ -31338,8 +31574,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// granted, else a one-click reconnect offer).  Best-effort.
 			try { await Files.tryReconnect(); } catch (e) { /* stay on OPFS */ }
 		} catch (e) {
+			// A LinkError here is never an ordinary runtime failure. It means the wasm
+			// and the JS glue beside it came from DIFFERENT BUILDS -- the module asks for
+			// an import the glue does not define -- and that is what a deploy landing
+			// mid-session leaves behind: build A's glue already executing, build B's wasm
+			// fetched a moment later. Nothing in this page can recover from it, and
+			// taking both files again always can, so it repairs itself once rather than
+			// showing a user a message about symbol hashes. `repair` holds the loop
+			// guard; if it refuses, the message says what is actually wrong.
+			var pairBroken = !!(e && (e.name === 'LinkError' || (typeof WebAssembly !== 'undefined'
+				&& WebAssembly.LinkError && e instanceof WebAssembly.LinkError)));
+			if (pairBroken && window.DaimondUpdater && DaimondUpdater.repair
+				&& DaimondUpdater.repair('the engine and its glue are from different builds')) {
+				return;                     // reloading; say nothing, it would only flash
+			}
 			appEl.classList.add('wasm-failed');
-			appendError('Failed to load the browser engine: ' + String(e));
+			appendError(pairBroken
+				? 'The engine and this page came from different builds, and reloading did '
+					+ 'not clear it. Your work is safe on this device -- nothing here can '
+					+ 'reach it until the two match. Close this tab completely and open it '
+					+ 'again; do NOT clear website data, which is where your Diamonds live.'
+				: 'Failed to load the browser engine: ' + String(e));
 			window.__DAIMOND_READY = false;
 			return;
 		}

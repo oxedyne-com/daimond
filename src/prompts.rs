@@ -281,6 +281,13 @@ pub const SAFETY_CLAUSE: &str =
 pub const DEFAULT_CHAT: &str =
 	"You are Daimond, a helpful coding assistant running entirely in the user's \
 	 browser with an OPFS-backed workspace.\n\n\
+	 You are an orchestrator first. Your job is to plan the work, break it into tasks \
+	 you hand to workers, and take responsibility for the quality of what comes back — \
+	 by reading it, testing it, and sending it back when it is wrong. Do the work \
+	 yourself only when a task is genuinely indivisible, or when briefing a worker \
+	 would take longer than doing it: a worker cannot ask you anything, so its task has \
+	 to say everything, and for a one-line change that briefing IS the work. Everything \
+	 above that line goes to a worker. When in doubt, dispatch and review.\n\n\
 	 When you cannot retrieve something the user asked for — a tool failed, or \
 	 returned a page without the answer on it — say so plainly and stop. Never \
 	 fill the gap with a remembered or guessed specific: a price, a rate, a model \
@@ -324,7 +331,15 @@ pub const DEFAULT_CHAT: &str =
 /// instruction to a file edit or to one or more errors, never to chat.
 pub const DEFAULT_DAIMON: &str =
 	"You are the daimon of this Diamond. You take instructions from the user \
-	 and act; you do not converse. Three things are yours to do.\n\n\
+	 and act; you do not converse.\n\n\
+	 You are an orchestrator first. Your job is to plan the work, break it into tasks \
+	 you hand to workers, and take responsibility for the quality of what comes back — \
+	 by reading it, testing it, and sending it back when it is wrong. Do the work \
+	 yourself only when a task is genuinely indivisible, or when briefing a worker \
+	 would take longer than doing it: a worker cannot ask you anything, so its task has \
+	 to say everything, and for a one-line change that briefing IS the work. Everything \
+	 above that line goes to a worker. When in doubt, dispatch and review.\n\n\
+	 Three things are yours to do.\n\n\
 	 First, the crystal. It is two files. `crystal.json` is the reduced state of this \
 	 Diamond, a single JSON object whose core keys are `title`, `summary`, `sections`, \
 	 `facts`, `open` and `links`; keep the ones that are there, add others where they \
@@ -346,13 +361,19 @@ pub const DEFAULT_DAIMON: &str =
 	 page travels wherever the summary goes: when detail is worth keeping but too \
 	 long to belong there, write it to a file in this Diamond and refer to the file \
 	 from the crystal.\n\n\
-	 Second, agents. When a task needs work done rather than merely recorded, \
-	 dispatch a worker with `spawn_agent`. Each worker runs in its OWN context \
+	 Second, agents. Most tasks are work rather than record-keeping, and work is \
+	 what workers are for, so dispatch one with `spawn_agent` as the ordinary \
+	 course rather than the exception. Each worker runs in its OWN context \
 	 with the full workspace file tools; it cannot see this conversation, so \
 	 the `task` you give it must say everything it needs to know. To run \
 	 several agents at once, call `spawn_agent` several times in the SAME turn \
 	 — they then run in parallel. If the user asks for two agents, call it \
 	 twice. Each reports back a summary the user can fold into the crystal.\n\n\
+	 A worker reporting back is not the end of the task, it is the start of your \
+	 half. Read its summary against the task you actually gave it, open what it \
+	 says it changed, run whatever proves it, and send it back when it is wrong. \
+	 A summary you pass on unread is a claim you are making to the user in your \
+	 own voice, on evidence you have not looked at.\n\n\
 	 Third, the graph. The Diamonds, files and pages are joined by links, and \
 	 those links are the world model this Diamond sits in — what supersedes \
 	 what, what produced what, what contradicts what. Read them with \
@@ -397,7 +418,12 @@ pub const DEFAULT_WORKER: &str =
 	 for and carry on with what you can do without it.\n\n\
 	 When you are done, end with a short summary of what you found or changed: \
 	 what a colleague would need to know, and nothing else. That summary is \
-	 folded into a shared crystal, so keep it dense and free of filler.";
+	 folded into a shared crystal, so keep it dense and free of filler.\n\n\
+	 It is also READ AND CHECKED by the agent that sent you, which will open what \
+	 you changed and may send the task back. So write it to be verified rather than \
+	 believed: name the files you touched, the commands you ran and what they \
+	 answered, and say plainly what you could not do. A summary that reports success \
+	 without saying what would show it is the one thing a reviewer cannot use.";
 
 // ── What machine this is ─────────────────────────────────────────────────────
 //
@@ -499,7 +525,33 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) ->
 		None => {
 			// Granted and unresolvable is worth its tokens: the user chose this, the daimon will
 			// try it, and "the hand did not say where home is" is a sentence they can act on.
-			for k in toolkits(bounds) {
+			let granted = toolkits(bounds);
+			if granted.is_empty() {
+				// NONE GRANTED IS ALSO WORTH SAYING, and this sentence was missing.  Asked to run
+				// the test suite with no Rust toolkit, a daimon searched, found no `cargo`, and
+				// reported to the user that THE RUST TOOLCHAIN IS NOT INSTALLED ON THIS MACHINE.
+				// It was installed; the daimon simply could not reach it.  Every clause of that
+				// answer was true about its own fence and false about the computer, and the user
+				// was told to go and install something they already had.
+				//
+				// It is the same false generalisation `file_show` exists to repair -- reasoning
+				// from what is reachable to what EXISTS -- and the branch below already applies
+				// the cure one step later, saying so when a granted toolkit put nothing on PATH
+				// "to stop a daimon concluding the grant did not work".  Nobody had applied it to
+				// the case of no grant at all, which is the commonest state there is.
+				//
+				// So: name the base, say what is missing, and say WHOSE decision it is.  The last
+				// clause is the load-bearing one -- it turns a dead end into a sentence the user
+				// can act on.
+				s.push_str(
+					"\nNo toolchain is granted to this Diamond. A command reaches only \
+					/usr/local/bin, /usr/bin and /bin, so anything installed under the user's own \
+					home -- cargo and rustc, nvm's node, pip's tools, go -- is not on PATH and \
+					not readable, however certainly it is installed. Do not report a missing \
+					toolchain as absent from the computer: it is a grant the user makes in this \
+					Diamond's settings, and asking for it is the way forward.");
+			}
+			for k in granted {
 				s.push_str(&fmt!("\n{} toolkit: granted, but this hand did not say where the \
 					home directory is, so it is not in the fence.", k.label()));
 			}
@@ -930,6 +982,40 @@ mod tests {
 		assert!(s.contains("Never: /home/u/ws/.daimond"), "{}", s);
 	}
 
+	/// **A daimon with no toolchain is told so, and told whose decision it is.**
+	///
+	/// Reported live, 2026-08-19. Asked to run the Rust tests for a change it had just made, a
+	/// daimon looked for `cargo`, could not reach it, and told the user: *"The Rust toolchain --
+	/// cargo, rustc, wasm-pack -- is not installed on this machine. I searched the whole
+	/// filesystem; there is no cargo binary."* All three are installed, in `~/.cargo/bin`. The
+	/// Diamond simply had no Rust toolkit granted, and nothing in its briefing had said so, so
+	/// the daimon reasoned from what it could reach to what EXISTS and reported a fact about the
+	/// user's computer that was false.
+	///
+	/// Three things are asserted, and the third is the one that changes what the daimon does:
+	/// that the state is named, that the base PATH is given so the absence is explicable, and
+	/// that it is attributed to a grant rather than to the machine.
+	#[test]
+	fn test_a_diamond_with_no_toolchain_is_told_that_it_is_a_grant_and_not_the_machine() {
+		let b = diamond_bounds("diamonds/d1", &[fmt!("code")], &[]);
+		let s = machine_note(&machine(), &b, NetStep::Give, Mode::default());
+		assert!(s.contains("No toolchain is granted"), "the state is not named: {}", s);
+		assert!(s.contains("/usr/bin"), "the base a command DOES reach is not given: {}", s);
+		// The load-bearing clause. Without it the daimon knows it cannot reach cargo and still
+		// has no way to tell "absent" from "ungranted", which is the whole defect.
+		assert!(s.contains("grant the user makes"),
+			"nothing says whose decision this is, so the daimon has no way to tell an ungranted \
+			toolchain from an absent one: {}", s);
+		// And it is not said to a Diamond that HAS one, where it would be false.
+		let with = diamond_bounds("diamonds/d1", &[fmt!("code")], &[]);
+		let mut with = with;
+		with.push(Toolkit::Rust.bound());
+		let g = machine_note(&machine(), &with, NetStep::Give, Mode::default());
+		assert!(!g.contains("No toolchain is granted"),
+			"a Diamond that HAS a toolkit is told it has none: {}", g);
+		assert!(g.contains("Rust"), "and the one it has is not named: {}", g);
+	}
+
 	#[test]
 	fn test_a_tainted_turn_is_told_what_becomes_of_its_network_and_why() {
 		let b = diamond();
@@ -967,7 +1053,13 @@ mod tests {
 	fn test_a_granted_toolkit_is_named_and_an_ungranted_one_is_not() {
 		let b = diamond();
 		let bare = machine_note(&machine(), &b, NetStep::Give, Mode::default());
-		assert!(!bare.contains("cargo"), "nothing was granted: {}", bare);
+		// TESTED AS A CLAIM AND NOT AS A WORD. This was `!bare.contains("cargo")`, which stood in
+		// for "no Rust toolkit is offered" and worked for as long as the only sentence mentioning
+		// cargo was the one that granted it. The no-toolchain briefing names cargo as an example
+		// of what is NOT reachable -- the opposite claim in the same word -- so the proxy had to
+		// go. What matters is that nothing here says a toolkit is granted.
+		assert!(!bare.contains("toolkit:"), "a toolkit is named when none was granted: {}", bare);
+		assert!(!bare.contains("on PATH."), "something is claimed to be on PATH: {}", bare);
 		let mut r = b.clone();
 		r.push(Toolkit::Rust.bound());
 		let s = machine_note(&machine(), &r, NetStep::Give, Mode::default());
@@ -1293,6 +1385,76 @@ mod tests {
 			assert_eq!(r == Role::Reducer, r.compose("").contains("never drop one you do not \
 				understand"), "role {} and the schema note disagree", r.name());
 		}
+	}
+
+	/// **Both roles that can dispatch are told that dispatching is the JOB, not a capability.**
+	///
+	/// The owner's brief, 2026-08-19: *"All daimond and chats need to know that they should
+	/// primarily be orchestrators who plan, coordinate and take responsibility for quality
+	/// assurance, dispatching workers to complete work and tests."*
+	///
+	/// The finding behind it is that both prompts described dispatch as something the agent
+	/// COULD do -- "You can dispatch workers", "When a task needs work done" -- and a model
+	/// reading delegation as available rather than expected does the small jobs itself.
+	///
+	/// A worker is not given this: it cannot dispatch, and telling it to orchestrate is telling
+	/// it to do something no tool of its can do. That asymmetry is asserted, not assumed.
+	#[test]
+	fn test_the_roles_that_dispatch_are_told_orchestrating_is_the_job() {
+		for r in [Role::Chat, Role::Daimon] {
+			let p = r.compose("");
+			assert!(p.contains("orchestrator first"),
+				"role {} is not told what its job is: {}", r.name(), p);
+			assert!(p.contains("sending it back when it is wrong"),
+				"role {} is told to delegate and not to check: {}", r.name(), p);
+		}
+		// The one role that holds no `spawn_agent`. A prompt telling it to hand work on
+		// describes a tool it has not got, which is the shape of failure `file_show` and the
+		// toolchain briefing both exist to prevent.
+		let w = Role::Worker.compose("");
+		assert!(!w.contains("orchestrator first"),
+			"a worker is told to orchestrate, and it cannot dispatch: {}", w);
+	}
+
+	/// **And they are told when NOT to dispatch, which is the half that keeps it usable.**
+	///
+	/// "Do the work yourself only when a task is genuinely indivisible" plus "when in doubt,
+	/// dispatch and review" sends a one-line edit to a worker: a whole context, a full briefing
+	/// and a round trip, for a change that takes one tool call. The test is proportion, and it
+	/// is stated as a rule the model can actually apply -- compare the briefing with the work --
+	/// rather than as a plea for judgement.
+	#[test]
+	fn test_a_dispatching_role_is_given_a_test_for_when_not_to() {
+		for r in [Role::Chat, Role::Daimon] {
+			let p = r.compose("");
+			assert!(p.contains("briefing would take longer than doing it")
+				|| p.contains("briefing a worker \\\n\t\t would take longer")
+				|| p.contains("would take longer than doing it"),
+				"role {} has no proportion test, so every one-line edit is a dispatch: {}",
+				r.name(), p);
+			assert!(p.contains("briefing IS the work"),
+				"role {} is not told WHY the small case is different, so the rule is a \
+				number it cannot check: {}", r.name(), p);
+		}
+	}
+
+	/// **A worker writes a summary that can be CHECKED, because now something checks it.**
+	///
+	/// The three changes are one change: telling the dispatcher to verify while leaving the
+	/// worker writing prose for a crystal would give the reviewer nothing to verify against.
+	#[test]
+	fn test_a_worker_is_told_its_summary_will_be_checked() {
+		let w = Role::Worker.compose("");
+		assert!(w.contains("READ AND CHECKED"), "the worker does not know it is reviewed: {}", w);
+		assert!(w.contains("the commands you ran and what they answered"),
+			"the worker is not told to write something a reviewer can use: {}", w);
+		// And the dispatcher's own half, or the two sides are out of step.
+		let d = Role::Daimon.compose("");
+		// Asserted on a phrase that means the thing, not on a fragment that could turn up in
+		// any sentence: `contains("open what it")` would have passed on almost anything, which
+		// is a check that cannot fail wearing the words of one that can.
+		assert!(d.contains("says it changed") && d.contains("run whatever proves it"),
+			"the daimon is not told to look at what the worker did: {}", d);
 	}
 
 	#[test]

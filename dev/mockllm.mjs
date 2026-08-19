@@ -30,6 +30,11 @@
 //                            a test can prove the app bills the REPORTED figure
 //                            rather than its own table's guess.
 //   @err <code>              fail with that HTTP status (the error path)
+//   @drop <n>                stream n words, then DESTROY the socket -- the road
+//                            failing part way through an answer, which is not the
+//                            same event as the provider refusing and must not be
+//                            treated as one. There was no way to produce it, so
+//                            the branch that tells them apart could not be tested.
 //   @slow <ms>               reply after a delay
 //
 // Anything else gets a short generic reply.  Every request is appended to
@@ -196,6 +201,15 @@ const plan = (messages) => {
 		case 'err':
 			return { httpError: Number(d.rest) || 500 };
 
+		// A connection that dies mid-answer. `n` words arrive first so the partial
+		// reply is a real one -- a drop before the first token is a different and
+		// much easier case, and the app retries THAT one on its own.
+		case 'drop': {
+			const n = Math.max(1, Number(d.rest) || 3);
+			return { text: Array.from({ length: n }, (_, i) => `word-${i + 1}`).join(' '),
+				dropAfter: n };
+		}
+
 		case 'slow':
 			return { text: 'Eventually.', delayMs: Number(d.rest) || 2000 };
 
@@ -300,9 +314,19 @@ const stream = async (res, model, p) => {
 		send(frame({}, 'tool_calls'));
 	} else {
 		const words = (p.text || '').split(' ');
+		let sent = 0;
 		for (const w of words) {
 			if (res.writableEnded || res.destroyed) return;	// the client aborted
 			send(frame({ content: w + ' ' }));
+			sent++;
+			// THE SOCKET IS DESTROYED, not ended: an `end()` is a well-formed stream
+			// that stops, which the client reads as a finished turn. A destroy is the
+			// road going away mid-sentence, with no `[DONE]` and no finish reason,
+			// which is what a laptop lid or a lost access point actually does.
+			if (p.dropAfter && sent >= p.dropAfter) {
+				res.destroy();
+				return;
+			}
 			await sleep(p.slowChunks ? 120 : 5);
 		}
 		send(frame({}, 'stop'));

@@ -235,6 +235,39 @@
 		return true;
 	}
 
+	/// A MISMATCHED PAIR: the wasm the page fetched and the JS glue running beside it
+	/// were built at different times, so an import the module needs is not the one the
+	/// glue defines. wasm-bindgen derives every one of those names from a signature, so
+	/// they all move with a build -- which makes this unrecoverable in the page and
+	/// trivially repairable by taking both files again.
+	///
+	/// It exists because the cache logic protects an invariant one file short of the real
+	/// one. `www/sw.js` is careful never to leave two builds in ONE CACHE, and that is
+	/// true and not sufficient: a tab that loaded build A's JS, and then fetches the wasm
+	/// after a deploy has landed, never puts two builds in a cache at all. The mismatch is
+	/// in memory, between a file already executing and a file just arrived.
+	///
+	/// The caches go first. A reload that kept them would be served the same stale glue
+	/// and fail again, which is a loop rather than a repair.
+	function repair(why) {
+		if (!mayForce()) { trail('repair reload REFUSED', 'loop guard held'); return false; }
+		spendForce();
+		trail('repair reload', why || 'a mismatched engine pair');
+		var go = function () { try { location.reload(); } catch (e) {} };
+		try {
+			if (window.caches && caches.keys) {
+				caches.keys()
+					.then(function (ns) {
+						return Promise.all(ns.map(function (n) { return caches.delete(n); }));
+					})
+					.then(go, go);
+				return true;
+			}
+		} catch (e) { /* no Cache Storage; the reload alone is still worth taking */ }
+		go();
+		return true;
+	}
+
 	/// A reload that WORKED clears the counter. Called from `init` when the build
 	/// on disk is not the one this tab last forced away from: whatever was wrong
 	/// is over, and the next genuine update must not be refused because of it.
@@ -325,5 +358,6 @@
 		pending: function () { return pending; },
 		booted:  function () { return booted; },
 		check:   poll,
+		repair:  repair,
 	};
 })();

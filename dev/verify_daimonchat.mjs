@@ -218,6 +218,65 @@ try {
 		'with the MODEL\'s conversation stored beside the transcript',
 		mine[0] && mine[0].session ? String((mine[0].session.msgs || []).length) : 'none');
 
+	// ══ 6. A HALF-TYPED MESSAGE BELONGS TO ITS CONVERSATION ═══════════
+	//
+	// Reported live: "I started interacting with my Daimond daimon, switched to
+	// the Daimond Optimiser diamond, and a text box from the previous chat then
+	// appeared in the new one." There is ONE `#chat-input` for every chat and both
+	// faces of every Diamond, and the switch re-pointed everything about it except
+	// the words in it -- so a sentence meant for one Diamond followed the user into
+	// the next, and `syncComposerAttachPrefix` then glued the arriving Diamond's
+	// attachment prefix onto the front of it.
+	//
+	// A ROUND TRIP AND NOT A CLEARING. Emptying the box on every switch would pass
+	// the first check below and is not the fix: it loses the sentence instead of
+	// misplacing it. What is asserted is that each Diamond gets its OWN words back,
+	// which only a save-and-restore can satisfy.
+	//
+	// Proved against the broken code by hand before it was written -- there is no
+	// `page.route` machinery in this file -- by removing the two `moveComposerTo`
+	// calls from `selectChat` and `selectDiamond` in `www/js/daimond.js`. Checks
+	// two and four go red, and check two's detail prints the other Diamond's
+	// sentence, which is the defect verbatim.
+	const goTo = (name) => p.evaluate((nm) => {
+		const box = [...document.querySelectorAll('#diamond-list .diamond-box')]
+			.find(b => ((b.querySelector('.session-box-name') || {}).textContent || '').trim() === nm);
+		if (!box) return false;
+		box.click();
+		return true;
+	}, name);
+	const boxText = () => p.evaluate(() => document.getElementById('chat-input').value);
+
+	await create(p, 'Dum');
+	await p.waitForTimeout(600);
+	const DEE = 'half a sentence meant for Dee';
+	const DUM = 'and a different one for Dum';
+
+	check(await goTo('Dee'), 'both Diamonds are on the rail');
+	await p.waitForTimeout(700);
+	await p.fill('#chat-input', DEE);
+	await goTo('Dum');
+	await p.waitForTimeout(700);
+	const atDum = await boxText();
+	check(!atDum.includes(DEE),
+		'a draft typed in one Diamond does not follow the user into another',
+		JSON.stringify(atDum));
+
+	await p.fill('#chat-input', DUM);
+	await goTo('Dee');
+	await p.waitForTimeout(700);
+	const atDee = await boxText();
+	check(atDee === DEE,
+		'and going back finds the words that were left there',
+		JSON.stringify(atDee));
+
+	await goTo('Dum');
+	await p.waitForTimeout(700);
+	const atDum2 = await boxText();
+	check(atDum2 === DUM,
+		'each Diamond keeping its own, so nothing was cleared to make the first check pass',
+		JSON.stringify(atDum2));
+
 } catch (e) {
 	check(false, 'the run finished', String(e && e.message || e));
 	try { await shot(s, 'threw'); } catch {}

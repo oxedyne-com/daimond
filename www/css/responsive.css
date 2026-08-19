@@ -140,6 +140,36 @@
 		margin-left: 5px;
 	}
 
+	/* ── The header's controls SCROLL ─────────────────────────────
+	   Reported from a phone: "this header does not scroll so I can't see a lot
+	   of buttons." Every other stage panel's head wraps (`.web .chead, .doc
+	   .chead, .msg .chead { flex-wrap: wrap }` in app.css) and the AI panel's
+	   never did, so its row of chips — mode, Concise, Copy, Steps, Collapse,
+	   Fold on a Diamond, and full screen — squeezed the title to an ellipsis and
+	   then simply ran off the end of the panel, unreachable.
+
+	   SCROLLED RATHER THAN WRAPPED, deliberately. Wrapping costs a second 36px
+	   row of vertical space on every screen for ever, on the axis a phone has
+	   least of; scrolling costs nothing and is the gesture the user asked for.
+	   The title keeps a floor so it cannot be crushed to nothing in the trade,
+	   and the scrollbar is hidden because a phone has no room for one and the
+	   content is dragged, not clicked. */
+	.panel.ai .chead { gap: 6px; }
+	.panel.ai .ctitle { min-width: 4.5em; }
+	.panel.ai .chead-right {
+		flex: 1 1 auto;
+		min-width: 0;
+		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: none;
+		-webkit-overflow-scrolling: touch;
+		/* Without this the chips shrink to fit instead of overflowing, which is
+		   the state that hid them: a row that fits is a row nothing scrolls. */
+		justify-content: flex-start;
+	}
+	.panel.ai .chead-right::-webkit-scrollbar { display: none; }
+	.panel.ai .chead-right > * { flex: none; }
+
 	/* Comfortable chat input row. */
 	.chat-output { padding: 12px 14px; }
 	.chat-msg-user .chat-msg-content,
@@ -155,6 +185,56 @@
 	   32px square. Only Send was grown for touch, so the pair read as a large
 	   button beside a small one, bottom-aligned and mismatched. They grow together. */
 	#chat-send, #chat-jump, #chat-end { min-width: 46px; width: 46px; height: 46px; font-size: var(--fs-2xl); }
+
+	/* ── The box you type in gets the room ────────────────────────
+	   Measured on a 390px phone: the bar is 372 wide and the text box got 170 of
+	   it, because Send and the two walk-back chevrons take 46 each plus gaps —
+	   three buttons eating more of the row than the thing the row is for.
+
+	   The two CHEVRONS ARE NOT COMPOSITION. They walk the transcript; they have
+	   nothing to do with the message being written, and on the one screen where
+	   space is scarce they were charging full price for it. So on a phone they
+	   leave the bar and float at the foot of the thread, where what they act on
+	   actually is. Absolute, so the DOM and every handler are untouched — this is
+	   a placement, not a rebuild.
+
+	   The text box then takes the width they gave up: 170px becomes about 280.
+	   Nothing is lost and nothing new is drawn, which is what "without eating
+	   screen real estate" has to mean. */
+	.chat-input-bar { position: relative; }
+	.chat-input-bar #chat-jump,
+	.chat-input-bar #chat-end {
+		position: absolute;
+		bottom: calc(100% + 10px);
+		width: 40px; min-width: 40px; height: 40px;
+		border-radius: 50%;
+		/* Reading over the thread rather than sitting in a bar, so it needs its
+		   own ground: over a message bubble a transparent button is a floating
+		   glyph nobody can tell is pressable. */
+		background: var(--bg-secondary);
+		border: 1px solid var(--border);
+		box-shadow: 0 2px 8px rgb(0 0 0 / 0.28);
+		opacity: 0.94;
+		z-index: 3;
+	}
+	.chat-input-bar #chat-jump { right: 62px; }
+	.chat-input-bar #chat-end  { right: 12px; }
+	/* WHAT THEY FLOAT OVER, which the first attempt got wrong and a screenshot
+	   caught: they cleared the composer and landed squarely on the attachments
+	   strip, hiding the end of "Mark one in with the paperclip". The strip is not
+	   always there — a Diamond with folders marked in draws rows instead — so
+	   lifting the buttons by a fixed amount would clear it in one state and float
+	   them into the middle of the thread in the other.
+	   Keeping the anchor and giving the strip room on its right is the version
+	   that is correct in both: nothing moves, and no words go under a button.
+
+	   The room goes on the BODY and not on the strip, which was the second thing
+	   a screenshot caught: padding the whole strip dragged the group's own `+`
+	   button 104px in from the edge it belongs on. The head row is a title and a
+	   button, neither of which the chevrons ever reach; only the body sits under
+	   them. */
+	.chat-attach-strip .ws-body,
+	.chat-attach-strip .attach-body { padding-right: 100px; }
 
 	/* Give lists a little more row height for touch. */
 	.session-box { padding: 10px 11px; }
