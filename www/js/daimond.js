@@ -6811,7 +6811,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			btn.setAttribute('aria-expanded', 'false');
 			// The size is on the control on purpose: it is the whole of what the reader needs to
 			// decide whether to open it, and it is the number this tool exists to keep off the wire.
-			btn.textContent = '▸ ' + t('say.more', { n: fmtTok(Math.round(detail.length / 4)) });
+			var size = fmtTok(Math.round(detail.length / 4));
+			// A caret and a number. Everything that used to be on the button -- what it holds,
+			// that it is kept here, that it is not re-sent -- is true, worth knowing once, and
+			// noise on every message after the first. It moves to the tooltip, where it is there
+			// when somebody wonders and gone when they do not.
+			btn.textContent = '▸ ' + size;
+			btn.title = t('say.more_help', { n: size });
 			var more = document.createElement('div');
 			more.className = 'said-detail';
 			more.style.display = 'none';
@@ -6830,8 +6836,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				more.style.display = open ? '' : 'none';
 				btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-				btn.textContent = (open ? '▾ ' : '▸ ')
-					+ t(open ? 'say.less' : 'say.more', { n: fmtTok(Math.round(detail.length / 4)) });
+				btn.textContent = (open ? '▾ ' : '▸ ') + size;
+				// The tooltip carries the state's consequence, which CHANGES: open, the model is
+				// holding this too. That is the sentence worth having, and it belongs where it is
+				// read on purpose rather than skimmed past.
+				btn.title = t(open ? 'say.less_help' : 'say.more_help', { n: size });
 			});
 			addMsgCopy(div, o.summary + '\n\n' + detail);
 		} else {
@@ -31464,11 +31473,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	if (copyAllBtn) copyAllBtn.addEventListener('click', function () {
 		var text = transcriptOf(current);
 		if (!text) { toast(t('chat.copy_all_empty'), true); return; }
-		var was = copyAllBtn.textContent;
+		// A TICK, not the word. The button is a drawing now, and writing "Copied" into it would
+		// replace the icon with text and restore an empty string afterwards -- a control that
+		// works once and then disappears. `addMsgCopy` has flashed a tick since the thread had
+		// copy buttons; this is the same gesture on the same clipboard.
+		var was = copyAllBtn.innerHTML;
 		copyToClipboard(text).then(function () {
-			copyAllBtn.textContent = t('toast.copied');
+			copyAllBtn.innerHTML = TICK_SVG;
+			copyAllBtn.classList.add('done');
 			sayQuietly(t('chat.copy_all_said'));
-			setTimeout(function () { copyAllBtn.textContent = was; }, 1600);
+			setTimeout(function () {
+				copyAllBtn.innerHTML = was;
+				copyAllBtn.classList.remove('done');
+			}, 1600);
 		}, function () {
 			// `copyToClipboard` already tried the select-and-copy fallback, so
 			// reaching here means both routes were refused. Saying so is the only
@@ -31498,7 +31515,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function wireTok(s) { return Math.round(String(s || '').length / 4); }
 
 	/// One band of the system message, with whose it is said in the same breath as how big it is.
-	function wireBand(label, why, text) {
+	function wireBand(label, why, help, text) {
 		var row = document.createElement('div');
 		row.className = 'wire-band';
 		var head = document.createElement('button');
@@ -31508,6 +31525,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			+ '<span class="wire-band-why"></span><span class="wire-band-tok"></span>';
 		head.querySelector('.wire-band-name').textContent = '▸ ' + label;
 		head.querySelector('.wire-band-why').textContent  = why;
+		// One or two words on the row; the sentence behind them on hover. The row has to be
+		// scannable -- five of them stacked -- and the reason has to be reachable.
+		head.title = help || '';
 		head.querySelector('.wire-band-tok').textContent  = fmtTok(wireTok(text));
 		var body = document.createElement('pre');
 		body.className = 'wire-band-body';
@@ -31551,19 +31571,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// heading, which is where `Role::compose` joins them.
 		var role = String(w.role || ''), cut = role.indexOf('## Rules that always apply');
 		if (cut > 0) {
-			box.appendChild(wireBand(t('wire.role'), t('wire.role_why'), role.slice(0, cut).trim()));
-			box.appendChild(wireBand(t('wire.safety'), t('wire.safety_why'), role.slice(cut).trim()));
+			box.appendChild(wireBand(t('wire.role'), t('wire.role_why'), t('wire.role_help'), role.slice(0, cut).trim()));
+			box.appendChild(wireBand(t('wire.safety'), t('wire.safety_why'), t('wire.safety_help'), role.slice(cut).trim()));
 		} else {
-			box.appendChild(wireBand(t('wire.role'), t('wire.role_why'), role));
+			box.appendChild(wireBand(t('wire.role'), t('wire.role_why'), t('wire.role_help'), role));
 		}
 		if (w.tools_sentence) {
-			box.appendChild(wireBand(t('wire.tools'), t('wire.tools_why'), w.tools_sentence));
+			box.appendChild(wireBand(t('wire.tools'), t('wire.tools_why'), t('wire.tools_help'), w.tools_sentence));
 		}
 		if (w.machine) {
-			box.appendChild(wireBand(t('wire.machine'), t('wire.machine_why'), w.machine));
+			box.appendChild(wireBand(t('wire.machine'), t('wire.machine_why'), t('wire.machine_help'), w.machine));
 		}
 		box.appendChild(wireBand(
-			t('wire.schemas', { n: (w.names || []).length }), t('wire.schemas_why'), schemas));
+			t('wire.schemas', { n: (w.names || []).length }), t('wire.schemas_why'),
+			t('wire.schemas_help'), schemas));
 		chatOutput.insertBefore(box, chatOutput.firstChild);
 	}
 

@@ -555,9 +555,11 @@
 						     front of every turn this chat sends. A skill, not a hidden
 						     system-prompt tweak, so what it asks for is a file in the
 						     workspace the user can read and edit. -->
-						<button class="chip-btn" id="concise-chip" aria-pressed="false" style="display:none"
-							title="Ask for short answers in this chat. Every message carries the /concise skill, a file in your workspace you can edit." data-i18n="chat.concise"
-							data-i18n-title="chat.concise_help">Concise</button>
+						<button class="chip-btn icon-chip" id="concise-chip" aria-pressed="false" style="display:none"
+							title="Ask for short answers in this chat. Every message carries the /concise skill, a file in your workspace you can edit."
+							aria-label="Concise" data-i18n-aria-label="chat.concise"
+							data-i18n-title="chat.concise_help"><svg class="ic" viewBox="0 0 24 24"
+							aria-hidden="true"><path d="M4 6h16M4 12h9M4 18h5"/></svg></button>
 						<!-- Fold, on the surface rather than only in the tile dialog.
 						     Folding is done MID-FLOW -- when a thread has grown heavy, not
 						     when you are configuring something -- and a control you reach
@@ -577,13 +579,22 @@
 						     once; this turns on the parts of it that are normally invisible —
 						     the composed system message, whose it is, and the tool schemas
 						     nobody has ever seen. -->
-						<button class="chip-btn" id="wire-btn" aria-pressed="false"
+						<button class="chip-btn icon-chip" id="wire-btn" aria-pressed="false"
 							title="Show what is actually sent to the model"
-							data-i18n="wire.chip" data-i18n-title="wire.chip_help">Wire</button>
-						<button class="chip-btn" id="chat-copy-btn"
+							aria-label="Wire" data-i18n-aria-label="wire.chip"
+							data-i18n-title="wire.chip_help"><svg class="ic" viewBox="0 0 24 24"
+							aria-hidden="true"><path d="M4 7h6M14 7h6M4 12h16M4 17h6M14 17h6"/></svg></button>
+						<button class="chip-btn icon-chip" id="chat-copy-btn"
 							title="Copy the whole conversation to the clipboard"
-							data-i18n="chat.copy_all" data-i18n-title="chat.copy_all_help">Copy</button>
-						<button class="chip-btn" id="steps-toggle-btn" title="Show or hide the tool steps in the thread" data-i18n="chat.steps" data-i18n-title="chat.steps_help">Steps</button>
+							aria-label="Copy the conversation" data-i18n-aria-label="chat.copy_all_aria"
+							data-i18n-title="chat.copy_all_help"><svg class="ic" viewBox="0 0 24 24"
+							aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path
+							d="M5 15V5a2 2 0 012-2h8"/></svg></button>
+						<button class="chip-btn icon-chip" id="steps-toggle-btn"
+							title="Show or hide the tool steps in the thread"
+							aria-label="Tool steps" data-i18n-aria-label="chat.steps"
+							data-i18n-title="chat.steps_help"><svg class="ic" viewBox="0 0 24 24"
+							aria-hidden="true"><path d="M4 6h4v4H4zM10 8h10M4 14h4v4H4zM10 16h10"/></svg></button>
 						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold" data-i18n-title="chat.collapse_help" aria-label="Collapse every answer" data-i18n-aria-label="chat.collapse">−</button>
 						<!-- Full screen, and only for the crystal face — `showCentre`
 						     draws it there and nowhere else. The page a Diamond

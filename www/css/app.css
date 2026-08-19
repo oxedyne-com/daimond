@@ -3190,3 +3190,32 @@ body.resizing { cursor: col-resize; user-select: none; }
 	white-space: pre-wrap;
 	word-break: break-word;
 }
+
+/* ── A chip that is a picture ─────────────────────────────────────────
+   The row was six words in a line — Guarded, Concise, Wire, Copy, Steps —
+   which reads as a sentence you have to parse before you can press
+   anything. The verbs become drawings and keep their words on hover; the
+   MODE chip stays a word, because it names a state with three values and a
+   picture of it would be a guess. */
+.chip-btn.icon-chip {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	/* A FLOOR ON BOTH AXES. Width alone left the height to the row, and at 761-768px it
+	   collapsed under 24px — which `verify_sweep_mobile` reported as a target too small to
+	   press, on three of these, at exactly the widths a tablet uses. A word-shaped chip had
+	   its padding to keep it open; a drawing has nothing but this. */
+	width: 30px;
+	min-width: 30px;
+	height: 30px;
+	min-height: 30px;
+	padding: 0;
+}
+.chip-btn.icon-chip .ic { width: 16px; height: 16px; }
+/* Pressed reads as pressed. Without this an icon toggle has no state at all,
+   where a word one at least changed weight. */
+.chip-btn.icon-chip[aria-pressed="true"] {
+	background: var(--accent-soft);
+	color: var(--accent-text);
+	border-color: var(--accent);
+}

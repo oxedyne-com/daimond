@@ -152,14 +152,22 @@ try {
 	// ── 1 and 2. The whole conversation, out ─────────────────────
 	const btn = await p.evaluate(() => {
 		const b = document.getElementById('chat-copy-btn');
-		return b ? { label: b.textContent, w: Math.round(b.getBoundingClientRect().width) } : null;
+		return b ? { label: b.innerHTML, w: Math.round(b.getBoundingClientRect().width),
+			// An icon-only control is unusable to a screen reader without one, and the row is now
+			// five drawings: if the labels go, nothing on it can be named.
+			aria: b.getAttribute('aria-label') || '', title: b.title || '' } : null;
 	});
 	check(!!(btn && btn.w > 0), 'there is a copy control in the chat header at all',
 		btn ? `${btn.w}px wide` : 'no #chat-copy-btn');
+	// A PICTURE STILL HAS TO HAVE A NAME. The row was words and is now drawings; without these a
+	// screen reader is handed five unlabelled buttons and a pointer user has nothing to hover.
+	check(!!(btn && btn.aria && btn.title),
+		'and being a drawing it carries a name and a tooltip',
+		btn ? `aria=${JSON.stringify(btn.aria)} title=${JSON.stringify(btn.title.slice(0, 30))}` : '');
 
 	await p.click('#chat-copy-btn');
 	await p.waitForTimeout(700);
-	const said = await p.evaluate(() => document.getElementById('chat-copy-btn').textContent);
+	const said = await p.evaluate(() => document.getElementById('chat-copy-btn').innerHTML);
 	const clip = await p.evaluate(async () => {
 		try { return await navigator.clipboard.readText(); } catch (e) { return 'CLIPBOARD UNREADABLE: ' + e.message; }
 	});
@@ -174,7 +182,7 @@ try {
 		JSON.stringify(clip.slice(0, 60)));
 	check(said !== (btn && btn.label),
 		'AND THE BUTTON SAYS SO rather than looking as though nothing happened',
-		`${JSON.stringify(btn && btn.label)} then ${JSON.stringify(said)}`);
+		`changed: ${said !== (btn && btn.label)}`);
 
 	// ── 3 and 4. A phone ─────────────────────────────────────────
 	await p.setViewportSize({ width: 390, height: 844 });
