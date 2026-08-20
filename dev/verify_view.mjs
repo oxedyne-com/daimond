@@ -239,6 +239,47 @@ try {
 		check(vis.light, 'Simple keeps the tile’s traffic light -- a spending control is never hidden');
 		check(vis.global, 'and the global spending control');
 		check(vis.name, 'and the name');
+		// AND THE TAGS, which the CSS block says in as many words and nothing
+		// asserted. On 2026-08-20 an agent moved the tag chips out of
+		// `session-box-meta` onto a row of their own -- a good change -- and the new
+		// row inherited none of the old rules, so it was given a `display: none` in
+		// Simple. That reverses "the last two are how a Diamond is found" three
+		// lines above where it was typed, and the suite stayed green, because every
+		// check here was about what Simple HIDES and none about what it keeps.
+		//
+		// Tagged on purpose rather than hoping a fixture has one: a tile with no
+		// tags satisfies "no tag is hidden" trivially, which is the vacuous pass
+		// this whole file is otherwise careful about.
+		const tagKept = await p.evaluate(async () => {
+			const box = document.querySelector('#diamond-list .diamond-box[data-id]');
+			const id  = box.dataset.id;
+			// Through the ENGINE's own setter and the app's own redraw. Written first
+			// against a guessed `localStorage` key and a `reloadDiamonds` that does
+			// not exist -- neither is real, and a probe that seeds state the product
+			// does not read proves nothing about the product.
+			await DaimondCore.setDiamondTags(id, ['findme']);
+			await new Promise(r => setTimeout(r, 400));
+			const b2 = document.querySelector(`#diamond-list .diamond-box[data-id="${id}"]`);
+			const chips = [...(b2 ? b2.querySelectorAll('.tag-sm') : [])];
+			// LAYOUT, not the chip's own `display`. Written that way first and the
+			// break did not redden: hiding the PARENT row leaves each chip computing
+			// `inline-flex` quite happily -- `display: none` does not cascade, it
+			// simply stops the subtree being rendered. A rect with area is the only
+			// reading that answers "can this be seen".
+			return {
+				present: chips.length,
+				shown:   chips.filter((c) => {
+					const r = c.getBoundingClientRect();
+					return r.width > 0 && r.height > 0;
+				}).length,
+			};
+		});
+		check(tagKept.present > 0,
+			'a tagged Diamond draws its tag chip at all -- the check below needs a subject',
+			`chips=${tagKept.present}`);
+		check(tagKept.present > 0 && tagKept.shown === tagKept.present,
+			'SIMPLE KEEPS THE TAGS -- they are how a Diamond is found',
+			`${tagKept.shown} of ${tagKept.present} visible`);
 		// ══ INVARIANT 1: the way in is always visible ═════════════════
 		check(vis.cog, 'and the cog, which is the route to everything Simple hides');
 

@@ -654,7 +654,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 /* A meta row whose every child is hidden still costs its top margin. Its own
    rule, because an unsupported `:has()` would otherwise drop the whole list
    above with it. */
-.session-box[data-detail="simple"] .session-box-meta:not(:has(.tag-sm, .tag-more, .diamond-pending)) {
+.session-box[data-detail="simple"] .session-box-meta:not(:has(.diamond-pending)) {
 	display: none;
 }
 /* Per-object spend is a Max thing and a new one: "which Diamond is eating the
@@ -663,6 +663,18 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    invariant 2 -- the light and the global spend readout are both still there. */
 .session-box[data-detail="simple"] .session-box-spend { display: none; }
 .session-box-spend { font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* Tags, on a row of their own. They used to sit inline in `session-box-meta`,
+   which read as though they belonged to the version number and the model chip,
+   and a heavily-filed Diamond pushed the rest of the row off the tile.
+
+   NOT HIDDEN IN SIMPLE. The rule above says so in as many words -- "What Simple
+   does NOT hide: ... the pending-fold badge and the tags ... the last two are
+   how a Diamond is found" -- and moving them out of `meta` came within one line
+   of silently reversing it: the row inherited nothing, so a `display: none` was
+   written for it and nothing in the suite went red. Finding a Diamond by its tag
+   is the one thing Simple must not take away, because Simple is the view with
+   fewer other ways to tell two tiles apart. */
+.session-box-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 
 /* Simple is a DESIGN, not a subtraction. Take the room the hidden rows leave
    and give it to what is left, or the tile reads as the dense one with holes in

@@ -13642,6 +13642,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// `verify_diamondwalk`, which has to ask for several walks at once to
 		/// prove they coalesce into one.
 		loadDiamonds:    function () { return loadDiamonds(); },
+		/// Put tags on a Diamond, through the engine's own setter.
+		///
+		/// Published for `verify_view`, which has to assert that Simple KEEPS the
+		/// tags -- a property with no subject unless something is tagged, and a
+		/// check with no subject passes against anything. Seeding `localStorage`
+		/// instead was tried and is wrong twice over: the key was invented, and
+		/// state the product does not read proves nothing about the product.
+		setDiamondTags:  async function (id, tags) {
+			await diamondApp().set_tags(id, JSON.stringify(tags));
+			await loadDiamonds();
+		},
 		/// The name the New Diamond dialog would open on, and the commit that
 		/// burns it. Published for `verify_naming`, which is about the NUMBER and
 		/// would otherwise have to drive three modals to reach it — turning a
@@ -22375,25 +22386,41 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			pend.title = t('fold.pending_badge_help');
 			meta.appendChild(pend);
 		}
-		var tags = tagsOf(f);
-		tags.slice(0, TAG_CHIPS_SHOWN).forEach(function (tag) {
-			// A Diamond only reaches the rail if it passed the filter, so a chip
-			// here is either off or included -- never excluded. The title says
-			// what the next click does rather than what the chip is, because a
-			// chip that already filters looks like it has nothing left to give.
-			var on   = tagState(tag) === 'inc';
-			var chip = tagChip(tag, 'tag-sm' + (on ? ' tag-inc' : ''), cycleTagFilter);
-			chip.title = on ? t('tag.exclude_next', { tag: tag }) : t('tag.only_diamonds', { tag: tag });
-			meta.appendChild(chip);
-		});
-		if (tags.length > TAG_CHIPS_SHOWN) {
-			var more = document.createElement('span');
-			more.className = 'tag-more';
-			more.textContent = '+' + (tags.length - TAG_CHIPS_SHOWN);
-			more.title = tags.slice(TAG_CHIPS_SHOWN).join(', ');
-			meta.appendChild(more);
+		// The daimon's context meter: context-window fraction, tokens, cost.
+		// Finds the chat record WITHOUT creating one — daimonChat would make an
+		// empty session for a Diamond never opened, and an empty meter is noise.
+		var dc = chats.find(function (c) { return c.diamondId === f.id; });
+		if (dc && ((dc.promptTokens || 0) + (dc.completionTokens || 0)) > 0) {
+			meta.appendChild(tileMeter(dc));
 		}
 		box.appendChild(header); box.appendChild(meta);
+		// Tags in their own row, below the meta. Appending inline made them look
+		// like they belonged to the version or the model chip; a separate row
+		// gives them their own line and stops a heavily-tagged Diamond from
+		// pushing the meter off the tile.
+		var tags = tagsOf(f);
+		if (tags.length > 0) {
+			var tagsRow = document.createElement('div');
+			tagsRow.className = 'session-box-tags';
+			tags.slice(0, TAG_CHIPS_SHOWN).forEach(function (tag) {
+				// A Diamond only reaches the rail if it passed the filter, so a chip
+				// here is either off or included -- never excluded. The title says
+				// what the next click does rather than what the chip is, because a
+				// chip that already filters looks like it has nothing left to give.
+				var on   = tagState(tag) === 'inc';
+				var chip = tagChip(tag, 'tag-sm' + (on ? ' tag-inc' : ''), cycleTagFilter);
+				chip.title = on ? t('tag.exclude_next', { tag: tag }) : t('tag.only_diamonds', { tag: tag });
+				tagsRow.appendChild(chip);
+			});
+			if (tags.length > TAG_CHIPS_SHOWN) {
+				var more = document.createElement('span');
+				more.className = 'tag-more';
+				more.textContent = '+' + (tags.length - TAG_CHIPS_SHOWN);
+				more.title = tags.slice(TAG_CHIPS_SHOWN).join(', ');
+				tagsRow.appendChild(more);
+			}
+			box.appendChild(tagsRow);
+		}
 		box.addEventListener('click', function () {
 			selectDiamond(f);
 			if (isMobile()) mshow('ai');
