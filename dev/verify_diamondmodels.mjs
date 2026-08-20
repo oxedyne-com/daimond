@@ -6,10 +6,15 @@
 //   1. A Diamond SHOWS the model it thinks with. It has been stored since
 //      Diamonds had models and drawn nowhere, so two Diamonds deliberately put
 //      on different models were indistinguishable on the rail.
-//   2. Changing the daimon's model is confirmed, takes effect, and is written
-//      into the crystal's own version history — the discontinuity notes2 calls
-//      "a fold and a new daimon". A REFUSED confirm changes nothing, which is
-//      the half a dialog usually gets wrong.
+//   2. Changing the daimon's model takes effect at once, is written into the
+//      crystal's own version history — the discontinuity notes2 calls "a fold and
+//      a new daimon" — and LEAVES THE CONVERSATION WHERE IT IS. There is no
+//      confirm, and the absence is the property: the modal that stood here warned
+//      that the thread would not carry over, which was true for the twenty-two
+//      minutes before a daimon had a thread at all. So the two halves are checked
+//      together, because either one alone can be satisfied by the wrong thing: a
+//      confirm nobody answers also leaves the session intact, and a silent handler
+//      that empties it also asks nothing.
 //   3. The secondary is a map keyed by modality. A task naming an image is
 //      dispatched on the vision model; a task naming none is not. Measured from
 //      the RUN, which is what carries the model and the key, rather than from
@@ -26,13 +31,22 @@
 //   node dev/verify_diamondmodels.mjs
 //   node dev/verify_diamondmodels.mjs --break novision   # dispatch ignores modality
 //   node dev/verify_diamondmodels.mjs --break nomark     # the meter loses the fold mark
-//   node dev/verify_diamondmodels.mjs --break noconfirm  # the model changes unasked
+//   node dev/verify_diamondmodels.mjs --break wipes      # the model change empties the session
+//   node dev/verify_diamondmodels.mjs --break asks       # the confirm comes back
+//   node dev/verify_diamondmodels.mjs --break appguard   # the fold asks for an engine again
+//
+// `wipes` and `asks` are SOURCE breaks: the handler they target is a closure inside
+// daimond.js and cannot be reached from the page, so the file is patched in memory
+// and served through `page.route` — the same trick verify_daimonface.mjs uses. Each
+// one asserts its anchor lands exactly once; an anchor that has drifted is a break
+// that quietly stopped applying, and a green run under it would prove nothing.
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs (dev/world.sh N --up gives both).
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { open, newChat, connectMock, scratch, shot } from './harness.mjs';
+import { fileURLToPath } from 'node:url';
+import { open, newChat, connectMock, scratch, shot, signInAs, steerDiamond, storedChats } from './harness.mjs';
 
 // The mock offers three models, and exactly one of them is in the price TABLE with
 // a context window. That is the one this run connects under, because `mock/fast`
@@ -48,6 +62,65 @@ fs.mkdirSync(OUT, { recursive: true });
 const BI = process.argv.indexOf('--break');
 const BEQ = process.argv.find(a => a.startsWith('--break='));
 const BREAK = BEQ ? BEQ.split('=')[1] : (BI >= 0 ? (process.argv[BI + 1] || '') : '');
+
+// ── The two source breaks ────────────────────────────────────────────
+//
+// Both live in the daimon's model-change handler, which is a closure: nothing the
+// page can reach from outside gets at it, so the only honest way to break it is to
+// serve a different file.
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const SRC  = 'js/daimond.js';
+const SRC_BREAKS = {
+	// THE LOSS THE OLD CONFIRM WARNED ABOUT, made real: the conversation discarded as
+	// the model moves. Both halves of it, because the two are stored separately and a
+	// break that took only one would leave the other check green on a conversation
+	// half gone -- the model's own copy, which is what the next turn carries, and the
+	// transcript the reader is looking at.
+	wipes: {
+		find: "\t\t\t\tresetDiamondApps();\n\t\t\t\tvar logged = true;",
+		with: "\t\t\t\tresetDiamondApps();\n"
+			+ "\t\t\t\tvar _lost = (chats || []).find(function (c) { return c.diamondId === opts.id; });\n"
+			+ "\t\t\t\tif (_lost) {\n"
+			+ "\t\t\t\t\t_lost.messages = [];\n"
+			+ "\t\t\t\t\t_lost.session = { v: 1, msgs: [], upto: '', uptoTs: 0 };\n"
+			+ "\t\t\t\t\tpersistChats();\n"
+			+ "\t\t\t\t\tif (current && current.id === _lost.id) renderHistory(_lost.messages);\n"
+			+ "\t\t\t\t}\n"
+			+ "\t\t\t\tvar logged = true;",
+	},
+	// THE OLD FOLD GUARD, restored: `chat.app`, which asks whether an engine was built
+	// during THIS page load and not whether anything was ever said. After a reload it
+	// is null for every chat there is, so a thread of any length is refused.
+	appguard: {
+		find: "\t\tif (!chatSaid(chat)) { toast(t('tile.fold_unavailable'), true); return; }",
+		with: "\t\tvar _a = chat.app;\n"
+			+ "\t\tif (!_a || typeof _a.fold_now !== 'function') {\n"
+			+ "\t\t\ttoast(t('tile.fold_unavailable'), true); return;\n"
+			+ "\t\t}",
+	},
+	// The confirm back, in its plainest form. Nothing answers it, so the model does
+	// not move either — which is the point: a confirm is a thing that stands there.
+	asks: {
+		find: "\t\t\t\tsetDiamondModel(opts.id, { provider: p.provider, model: p.model });",
+		with: "\t\t\t\tvar _ok = await confirmDialog('Change the model?', 'Change',\n"
+			+ "\t\t\t\t\t{ title: 'Change the daimon', danger: false });\n"
+			+ "\t\t\t\tif (!_ok) return;\n"
+			+ "\t\t\t\tsetDiamondModel(opts.id, { provider: p.provider, model: p.model });",
+	},
+};
+let patched = null;
+if (SRC_BREAKS[BREAK]) {
+	const spec = SRC_BREAKS[BREAK];
+	patched = fs.readFileSync(path.join(HERE, '..', 'www', SRC), 'utf8');
+	const n = patched.split(spec.find).length - 1;
+	if (n !== 1) {
+		console.error(`break '${BREAK}': the anchor appears ${n} times in ${SRC}, so nothing was `
+			+ 'broken and the run below would prove nothing. The file has moved on; move the '
+			+ 'anchor with it.\n  ' + spec.find.split('\n')[0].trim());
+		process.exit(2);
+	}
+	patched = patched.replace(spec.find, spec.with);
+}
 
 let failures = 0;
 const check = (cond, msg, detail) => {
@@ -126,7 +199,14 @@ async function openTile(p, box) {
 	return true;
 }
 
-const s = await open({ name: 'diamondmodels', profile: scratch('pw', 'models-' + process.pid) });
+const s = await open({
+	name: 'diamondmodels', profile: scratch('pw', 'models-' + process.pid),
+	route: patched ? async (page) => {
+		await page.route('**/' + SRC, r => r.fulfill({
+			status: 200, contentType: 'application/javascript', body: patched,
+		}));
+	} : null,
+});
 const { page: p } = s;
 try {
 	await connectMock(s, { model: MODEL });
@@ -179,22 +259,31 @@ try {
 	await setView(p, 'max');
 	await p.waitForTimeout(300);
 
-	if (BREAK === 'noconfirm') {
-		// A dialog that applies a choice the moment the pulldown moves — the common
-		// shape, and the one this phase deliberately does not have, because changing
-		// a daimon's model ends one daimon and starts another. Installed HERE rather
-		// than at the top: an auto-answering observer that runs from the start
-		// answers the New Diamond dialog too, and then what fails is the setup.
-		await p.evaluate(() => {
-			new MutationObserver(() => {
-				document.querySelectorAll('.dlg-card .dlg-ok').forEach(b => {
-					if (!b.closest('.tile-dlg-card')) b.click();
-				});
-			}).observe(document.body, { childList: true, subtree: true });
-		});
-	}
+	// ══ 2. The model changes, at once, and the thread comes with it ═══
+	//
+	// GIVE THE DAIMON A CONVERSATION FIRST. Without one, "the session is the same
+	// length afterwards" is 0 === 0 — a check with no subject, which passes against
+	// anything, including a handler that empties the session on its way past.
+	await p.evaluate((sel) => { document.querySelector(sel).click(); }, dSel);
+	await p.waitForTimeout(900);
+	await steerDiamond(s, 'remember this sentence');
+	await p.waitForSelector('.chat-spinner', { state: 'detached', timeout: 40000 }).catch(() => {});
+	await p.waitForTimeout(1200);
+	/// How many messages the MODEL's own copy of this daimon's conversation holds.
+	///
+	/// Read from IndexedDB rather than from the screen: `session.msgs` is what the next
+	/// turn is built from and carries the provider's tool-call ids, and it is invisible
+	/// from the transcript either way. The transcript is the other half of the same
+	/// claim and is checked beside it.
+	const sessLen = async () => {
+		const all = await storedChats(s);
+		const rec = (all || []).find(c => c && c.diamondId === dId);
+		return rec ? (((rec.session || {}).msgs) || []).length : -1;
+	};
+	const sessBefore = await sessLen();
+	check(sessBefore > 0, 'the daimon has a conversation, so what follows has a subject',
+		'session msgs: ' + sessBefore);
 
-	// ══ 2. The daimon's model changes, and it is recorded ═════════════
 	check(await openCog(p, 'Dee'), 'the cog opens the tile dialog');
 	// The label is a real `<label>` now, bound to its pulldown by `for`/`id`.
 	// It used to wear `.tile-model-chip`, which is the mono pill a model NAME is
@@ -229,10 +318,9 @@ try {
 
 	// Each of the three reads below reaches the DAIMON's pulldown by the setting
 	// it carries -- `/daimon/` in the control's own id -- rather than by taking
-	// the first row on screen. The daimon is the only one of the three that is
-	// confirmed and written into the crystal's history, so a check that found a
-	// row by position would end up asserting the confirm against a setting that
-	// deliberately has none.
+	// the first row on screen. The daimon is the only one of the three written
+	// into the crystal's history, so a check that found a row by position would
+	// end up asserting that against a setting which deliberately has none.
 
 	// A second model to move to. The mock serves whatever it is asked for, so any
 	// second name in the pulldown will do.
@@ -246,7 +334,6 @@ try {
 	if (!other) {
 		console.log('  ..   only one model is configured; the change checks are skipped');
 	} else {
-		// ── The refused confirm changes NOTHING. ──
 		const before = await p.evaluate((id) =>
 			(JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}')[id] || {}).model || '', dId);
 		const move = (v) => p.evaluate((val) => {
@@ -255,47 +342,68 @@ try {
 			sel.value = val;
 			sel.dispatchEvent(new Event('change', { bubbles: true }));
 		}, v);
-		/// Wait for a confirm drawn OVER the tile dialog, and answer it.
+		/// Did a dialog appear OVER the tile dialog, within `ms`?
 		///
-		/// Reported as a failed check rather than thrown: "the model changed with
-		/// nothing asked" is the defect this section exists to catch, and a bare
-		/// selector timeout names neither the property nor the cause.
-		async function answerConfirm(which) {
+		/// Measured as a bounding rectangle -- `getClientRects().length` -- and never as
+		/// a computed `display`. `display: none` does not cascade: a child of a hidden
+		/// parent computes its own `display` quite happily and reports itself drawn, and
+		/// a check written that way is green against a dialog nobody can see and green
+		/// against one everybody can.
+		///
+		/// The tile dialog's own card is excluded by class. It is a `.dlg-card` too, and
+		/// it is standing throughout, so an unscoped read answers "yes" every time and
+		/// the check never had a chance of being false.
+		const confirmWithin = async (ms) => {
 			try {
 				await p.waitForFunction(() =>
 					[...document.querySelectorAll('.dlg-card')]
 						.filter(c => c.getClientRects().length && !c.classList.contains('tile-dlg-card'))
-						.length > 0, null, { timeout: 6000 });
+						.length > 0, null, { timeout: ms });
+				return true;
 			} catch { return false; }
-			await p.evaluate((sel) => {
-				const card = [...document.querySelectorAll('.dlg-card')]
-					.filter(c => c.getClientRects().length && !c.classList.contains('tile-dlg-card')).pop();
-				card.querySelector(sel).click();
-			}, which);
-			await p.waitForTimeout(800);
-			return true;
-		}
+		};
 
+		// ── Moving the pulldown moves the daimon, with nothing asked. ──
 		await move(other);
-		const asked = await answerConfirm('.dlg-cancel');
-		check(asked, 'changing the daimon\'s model asks first');
-		const afterNo = await p.evaluate((id) =>
-			(JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}')[id] || {}).model || '', dId);
-		check(afterNo === before, 'a refused confirm leaves the model where it was',
-			`${before} → ${afterNo}`);
-		const putBack = await p.evaluate(() =>
-			([...document.querySelectorAll('.tile-dlg-card .tile-dlg-model select')]
-				.find(s => /daimon/.test(s.id)) || {}).value || '');
-		check(putBack === before, 'and puts the pulldown back, rather than showing a change it did not make',
-			putBack);
-
-		// ── The accepted confirm changes the model. ──
-		await move(other);
-		await answerConfirm('.dlg-ok');
+		const asked = await confirmWithin(3000);
+		check(!asked, 'NOTHING IS ASKED: a change this cheap to undo takes a receipt, not a modal',
+			asked ? 'a confirm was drawn over the tile dialog' : 'no dialog appeared');
+		await p.waitForTimeout(1200);
 		const afterYes = await p.evaluate((id) =>
 			(JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}')[id] || {}).model || '', dId);
-		check(afterYes === other, 'an accepted confirm moves the daimon to the new model',
+		check(afterYes === other, 'and the daimon really is on the new model',
 			`${before} → ${afterYes}`);
+
+		// ── AND THE CONVERSATION IS STILL THERE. ──
+		//
+		// The claim the deleted modal made was that it would not be. Both halves are
+		// read: the model's own copy, which is what the next turn carries and is
+		// invisible from the screen, and the transcript, which is what the reader sees.
+		const sessAfter = await sessLen();
+		check(sessAfter === sessBefore,
+			'THE MODEL\'S OWN CONVERSATION IS UNTOUCHED by the change of model',
+			`${sessBefore} → ${sessAfter} messages`);
+		const stillDrawn = await p.evaluate(() => {
+			const co = document.getElementById('chat-output');
+			return co ? (co.textContent || '') : '';
+		});
+		check(/remember this sentence/.test(stillDrawn),
+			'and so is the transcript the reader is looking at',
+			stillDrawn.replace(/\s+/g, ' ').slice(0, 70));
+
+		// ── The receipt. ──
+		//
+		// `tile.model_changed` is added by the locale files, so until those land `t()`
+		// hands back the key itself and the toast reads `tile.model_changed`. Either
+		// form is accepted; what is asserted is that the app SAID something when it
+		// moved, rather than moving in silence.
+		const receipt = await p.evaluate(() =>
+			[...document.querySelectorAll('.toast, .toast-msg, [class*="toast"]')]
+				.filter(n => n.getClientRects().length)
+				.map(n => (n.textContent || '').trim()).filter(Boolean).join(' | '));
+		check(/tile\.model_changed/.test(receipt) || /moved from .* to /i.test(receipt),
+			'a receipt says what moved, in place of the question that used to be asked',
+			receipt || '(nothing said)');
 
 		// ── And it is written into the crystal's own history, which is what
 		// notes2 means by "it requires a fold and a new daimon": a change that
@@ -304,6 +412,11 @@ try {
 		await closeDialogs(p);
 		await p.waitForTimeout(400);
 		await p.evaluate((sel) => { document.querySelector(sel).click(); }, dSel);
+		await p.waitForTimeout(900);
+		// Onto the CRYSTAL face: the steer above put this Diamond on its chat face and
+		// `setDiamondView` remembers, so selecting it again lands on the conversation and
+		// the history control -- which belongs to the crystal -- is simply not on screen.
+		await p.click('#dview-crystal', { force: true });
 		await p.waitForTimeout(900);
 		const opened = await p.evaluate(() => {
 			const b = [...document.querySelectorAll('.crystal-act')]
@@ -484,6 +597,84 @@ try {
 	check(foldRows === 0, 'and no fold notice was written for a fold that did not happen',
 		String(foldRows));
 	await shot(s, 'fold-dialog');
+	await closeDialogs(p);
+
+	// ── 5b. AND IT IS STILL ASKABLE AFTER A RELOAD, which is the ordinary case.
+	//
+	// `chat.app` is an engine instance for THIS page load, and `hydrateChat` nulls it on
+	// every boot. The guard used to read it, so the first thing a fold said about a
+	// two-hundred-message thread reopened tomorrow was that the chat had nothing in it.
+	// Nothing could see this from a single-page run, which is why the reload is the
+	// check: the conversation is real, the engine is not, and the fold has to build one.
+	//
+	// What is asserted is the HONEST answer for a one-turn chat -- nothing to fold --
+	// rather than the absence of the refusal. Asserting on the refusal's own words would
+	// be a check written against a string the locales are in the middle of rewording.
+	await p.reload({ waitUntil: 'domcontentloaded' });
+	await signInAs(s, 'diamondmodels');
+	await p.waitForTimeout(2000);
+	await setView(p, 'max');
+	const reopened = await p.evaluate((id) => {
+		const box = document.querySelector(`#session-list .chat-box[data-id="${id}"]`);
+		if (!box) return false;
+		box.click();
+		return true;
+	}, cId);
+	check(reopened, 'the chat is still on the rail after a reload');
+	await p.waitForTimeout(900);
+	const drawnBack = await p.evaluate(() => {
+		const co = document.getElementById('chat-output');
+		return co ? (co.textContent || '').replace(/\s+/g, ' ') : '';
+	});
+	check(/hello/.test(drawnBack),
+		'and it still holds the conversation, so the fold below has a subject',
+		drawnBack.slice(0, 60));
+	const cogAgain = await p.evaluate((id) => {
+		const box = document.querySelector(`#session-list .chat-box[data-id="${id}"]`);
+		const cog = box && box.querySelector('.tile-cog');
+		if (!cog) return false;
+		cog.click();
+		return true;
+	}, cId);
+	check(cogAgain, 'its cog still opens');
+	await p.waitForSelector('.tile-dlg-card', { timeout: 8000 });
+	await p.evaluate(() => {
+		const card = document.querySelector('.tile-dlg-card');
+		[...card.querySelectorAll('.tile-dlg-level:not(.tile-dlg-clear)')]
+			.find(b => /fold/i.test(b.textContent || '')).click();
+	});
+	/// Whatever the app is saying in a toast, right now.
+	const toasts = () => p.evaluate(() =>
+		[...document.querySelectorAll('.toast, .toast-msg, [class*="toast"]')]
+			.filter(n => n.getClientRects().length)
+			.map(n => (n.textContent || '').trim()).filter(Boolean).join(' | '));
+	// Read once BEFORE waiting for the confirm. A refusal is instant and its toast is
+	// gone in a few seconds, so a run that waited out the confirm timeout first would
+	// report the break as "(nothing said)" -- red for the right reason, and unreadable.
+	await p.waitForTimeout(1200);
+	const early = await toasts();
+	// The confirm, if one comes: SCOPED past the tile dialog's own card, which carries
+	// `.dlg-card` and whose Delete at the foot carries `.dlg-ok`. An unscoped wait is
+	// satisfied by the dialog already standing and an unscoped click then trashes the
+	// chat -- which is what happened here, under the break, where a refusal returns
+	// before any confirm is drawn. A missing confirm is not a failure at this point;
+	// the toast is what is being judged.
+	const askedToFold = await p.waitForFunction(() =>
+		[...document.querySelectorAll('.dlg-card')]
+			.filter(c => c.getClientRects().length && !c.classList.contains('tile-dlg-card'))
+			.length > 0, null, { timeout: 8000 }).then(() => true).catch(() => false);
+	if (askedToFold) {
+		await p.evaluate(() => {
+			const card = [...document.querySelectorAll('.dlg-card')]
+				.filter(c => c.getClientRects().length && !c.classList.contains('tile-dlg-card')).pop();
+			card.querySelector('.dlg-ok').click();
+		});
+	}
+	await p.waitForTimeout(3000);
+	const saidAgain = (await toasts()) || early;
+	check(/nothing to fold|already as short/i.test(saidAgain),
+		'A FOLD ASKED FOR AFTER A RELOAD REACHES THE CONVERSATION, and answers about it',
+		saidAgain || '(nothing said)');
 	await closeDialogs(p);
 
 } catch (e) {

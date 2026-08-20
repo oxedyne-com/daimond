@@ -563,9 +563,13 @@
 						<!-- Fold, on the surface rather than only in the tile dialog.
 						     Folding is done MID-FLOW -- when a thread has grown heavy, not
 						     when you are configuring something -- and a control you reach
-						     for mid-flow belongs where the flow is. Drawn only for a
-						     Diamond's chat face, which is the persistent conversation there
-						     is anything to fold. -->
+						     for mid-flow belongs where the flow is. Drawn on an ordinary
+						     chat that has something in it, and NOT on a Diamond. This said
+						     the opposite until 2026-08-20, and was the only place that said
+						     it: a daimon folds itself before every round, and its engine's
+						     session holds no messages for a hand fold to cut, so the one
+						     conversation the button was drawn for was the one it could not
+						     touch. -->
 						<button class="chip-btn" id="chat-fold-btn" style="display:none"
 							title="Fold this conversation now, keeping a summary of what came before."
 							data-i18n="chat.fold_now" data-i18n-title="chat.fold_now_help">Fold</button>

@@ -17,8 +17,19 @@
 // element that was never created reports itself to a browser locator as HIDDEN, which is exactly
 // what a guard doing its job produces, so absence-only checks pass on a panel struck dumb.
 //
+// THE SAME MISTAKE, ONE PANEL OVER, and found on 2026-08-20: the button that asks a provider
+// for its models was drawn inside `if (!p.count)`, so a provider that had answered once could
+// never be asked again and a model released this morning appeared on nobody's screen. The owner
+// had to call `DaimondModels.fetchModels('openrouter')` from the browser console. The checks at
+// the end assert the button EXISTS on a row with a list — drawn disabled where it cannot be
+// used, never hidden, for the reason in the paragraph above — and that the row says when the
+// list was last asked for.
+//
 //   node dev/verify_models.mjs --break notemissing   # the line taken back out of the markup
 //   node dev/verify_models.mjs --break notewiped     # the line eaten by the next redraw
+//   node dev/verify_models.mjs --break emptyonly     # the ask offered only to an empty provider
+//   node dev/verify_models.mjs --break hidesealed    # the ask hidden, not disabled, when unusable
+//   node dev/verify_models.mjs --break mintedtoo     # a second button on the credits row
 //   node dev/verify_models.mjs                       # and then, clean
 import fs from 'node:fs';
 import path from 'node:path';
@@ -48,6 +59,16 @@ const BREAK = (() => {
 //   notewiped    the line is there, but `render()` blanks it — the arrangement you get by
 //                putting the message INSIDE the list that render rewrites wholesale. The
 //                immediate message survives; the one the user is still reading does not.
+//   emptyonly    the catalogue defect exactly as it shipped: the ask, and the age line under
+//                it, drawn only for a provider listing nothing.
+//   hidesealed   the ask hidden rather than disabled when the row cannot use it — the shape of
+//                mistake that made the first one invisible to a locator.
+//   mintedtoo    the guard that keeps the credits row to its one affordance taken off, so Top
+//                up and an ask sit side by side offering work that has already happened.
+// The one line three of the breaks below rewrite. Held once, so a break that stops matching
+// fails loudly at `hurt` rather than quietly patching nothing.
+const ASK_GUARD = "if (!p.minted) {\n\t\t\t\t\tvar refetch";
+
 const BREAKS = {
 	notemissing: {
 		what: 'the message line taken back out of the markup, exactly as it shipped',
@@ -62,6 +83,24 @@ const BREAKS = {
 		edit: (src) => src.replace(
 			"\t\tif (onScreen(el)) refreshCredits();\n\t\tel.innerHTML = '';\n",
 			"\t\tif (onScreen(el)) refreshCredits();\n\t\tel.innerHTML = '';\n\t\tnote('');\n"),
+	},
+	emptyonly: {
+		what: 'the ask offered only to a provider that lists nothing, exactly as it shipped',
+		file: 'www/js/models.js',
+		type: 'text/javascript',
+		edit: (src) => src.replace(ASK_GUARD, "if (!p.count) {\n\t\t\t\t\tvar refetch"),
+	},
+	hidesealed: {
+		what: 'the ask hidden rather than disabled on a row that cannot use it',
+		file: 'www/js/models.js',
+		type: 'text/javascript',
+		edit: (src) => src.replace(ASK_GUARD, "if (!p.minted && p.ready) {\n\t\t\t\t\tvar refetch"),
+	},
+	mintedtoo: {
+		what: 'a second button on the credits row, beside the Top up that is its one affordance',
+		file: 'www/js/models.js',
+		type: 'text/javascript',
+		edit: (src) => src.replace(ASK_GUARD, "if (true) {\n\t\t\t\t\tvar refetch"),
 	},
 };
 if (BREAK && !BREAKS[BREAK]) die(`no break called "${BREAK}"`);
@@ -311,6 +350,154 @@ const cleared = await p.evaluate(() => {
 	return { text: n ? n.textContent.trim() : '(no message line)' };
 });
 check('and a figure that IS a number clears the complaint', cleared.text === '', `“${cleared.text}”`);
+
+// ── Asking a provider again ─────────────────────────────────────────────
+//
+// Groq already lists two models, so it is exactly the row the old `if (!p.count)` silenced.
+// `together` is added with no key, to prove the button is DRAWN and disabled rather than left
+// out: an element that was never created reports itself to a locator as hidden, which is
+// indistinguishable from a guard doing its job — the mistake this whole file was written about.
+// A credits row is put in beside them because it is the one row that must NOT gain the button.
+//
+// Every "is it there" test below reads a bounding rectangle. A computed `display` does not
+// cascade, so an element inside a hidden parent still reports `display: block`.
+
+const STAMP = Date.UTC(2026, 6, 14, 3, 25);		// a fixed moment, so the age line can be read back
+
+await p.evaluate((stamp) => {
+	const M = window.DaimondModels;
+	M.addProvider('together', {});				// configured, keyless, and therefore not ready
+	const raw = JSON.parse(localStorage.getItem('daimond-models-v2'));
+	raw.providers.groq.fetched = stamp;			// a catalogue with a date on it
+	// The minted row as it sits on disk: name, host and models are ordinary and ARE stored;
+	// the key never is. `credits.state` stays '', so no Top up is drawn either.
+	raw.providers.credits = {
+		name: 'Daimond credits', url: '', key: '', keyEnc: '',
+		models: ['z-ai/glm-5.2'], fetched: 0,
+	};
+	localStorage.setItem('daimond-models-v2', JSON.stringify(raw));
+	M.init({});
+	return M.unseal();
+}, STAMP);
+
+/// Open one provider row by id, and leave it open.
+const openRow = async (id) => {
+	await p.evaluate((pid) => {
+		window.DaimondModels.render();
+		const row = document.querySelector('.models-prov[data-prov="' + pid + '"]');
+		if (row && !row.querySelector('.models-prov-body')) row.querySelector('.models-prov-head').click();
+	}, id);
+	await p.waitForTimeout(250);
+};
+
+/// What one provider row draws: the ask, its label and state, and the age line under it.
+///
+/// Direct children only. The credit block's own Set button is a `.models-refetch` too, nested
+/// inside `.models-credit-form`, and counting it would let the ask disappear unnoticed.
+const readRow = (id) => p.evaluate((pid) => {
+	const box = (e) => {
+		if (!e) return null;
+		const r = e.getBoundingClientRect();
+		return { w: Math.round(r.width), h: Math.round(r.height) };
+	};
+	const row = document.querySelector('.models-prov[data-prov="' + pid + '"]');
+	if (!row) return { row: false };
+	const body = row.querySelector('.models-prov-body');
+	const own  = body ? [...body.children].filter(e => e.classList.contains('models-refetch')) : [];
+	const btn  = own[0] || null;
+	const age  = body ? body.querySelector('.models-list-age') : null;
+	return {
+		row:     true,
+		open:    !!body,
+		asks:    own.length,
+		text:    btn ? btn.textContent.trim() : '',
+		off:     btn ? btn.disabled : null,
+		btnBox:  box(btn),
+		age:     !!age,
+		ageText: age ? age.textContent.trim() : '',
+		ageBox:  box(age),
+	};
+}, id);
+
+const words = await p.evaluate(() => ({
+	again:  DaimondI18n.t('models.ask_provider_again'),
+	first:  DaimondI18n.t('models.ask_provider'),
+	nokey:  DaimondI18n.t('models.add_key_first'),
+	never:  DaimondI18n.t('models.list_never'),
+}));
+
+await openRow('groq');
+const listed = await readRow('groq');
+check('a provider that ALREADY lists models is still offered a way to ask again',
+	listed.asks === 1 && !!listed.btnBox && listed.btnBox.w > 0 && listed.btnBox.h > 0,
+	listed.asks === 0 ? 'no ask on a row with a list — it can be asked once and never again'
+		: `${listed.asks} asks, box ${JSON.stringify(listed.btnBox)}`);
+check('and the label says AGAIN, not the words for a provider that has never answered',
+	listed.text === words.again && listed.text !== words.first, `“${listed.text}”`);
+check('and it is live, because this row can ask', listed.off === false, 'disabled=' + listed.off);
+check('the row says when the list was last asked for',
+	listed.age && !!listed.ageBox && listed.ageBox.h > 0
+	&& listed.ageText.length > 0 && listed.ageText !== words.never,
+	listed.age ? `“${listed.ageText}”` : 'no .models-list-age — a count with no date on it');
+
+await openRow('together');
+const keyless = await readRow('together');
+check('a provider with no key still DRAWS the ask, rather than hiding it',
+	keyless.asks === 1 && !!keyless.btnBox && keyless.btnBox.w > 0 && keyless.btnBox.h > 0,
+	keyless.asks === 0 ? 'nothing drawn — indistinguishable from a guard working'
+		: JSON.stringify(keyless.btnBox));
+check('drawn disabled, and saying what is missing',
+	keyless.off === true && keyless.text === words.nokey, `“${keyless.text}” disabled=${keyless.off}`);
+check('and a list never asked for says so',
+	keyless.age && keyless.ageText === words.never, `“${keyless.ageText}”`);
+
+await openRow('credits');
+const minted = await readRow('credits');
+check('the credits row keeps its one affordance and gains no ask',
+	minted.open && minted.asks === 0 && !minted.age,
+	minted.open ? `${minted.asks} asks, age=${minted.age}` : 'the row did not open');
+
+// The button is wired, not decoration. The label flips the instant it is pressed; what the
+// provider then says is the provider's business and is not waited for here.
+const pressed = await p.evaluate(() => {
+	const asking = DaimondI18n.t('models.asking');
+	const body = document.querySelector('.models-prov[data-prov="groq"] .models-prov-body');
+	const btn  = body ? [...body.children].find(e => e.classList.contains('models-refetch')) : null;
+	// A missing button is a FAILURE to report, not an exception to die on: a break that
+	// removes it must still reach the summary and the browser must still be closed.
+	if (!btn) return { asking, there: false, now: '', off: null };
+	btn.click();
+	return { asking, there: true, now: btn.textContent.trim(), off: btn.disabled };
+});
+check('pressing it actually asks — the label and the button both change at once',
+	pressed.there && pressed.now === pressed.asking && pressed.off === true,
+	pressed.there ? `“${pressed.now}”` : 'there is no button to press');
+
+// THE MOMENT ITSELF REACHES THE LINE. The words belong to the locale files; the wiring belongs
+// here. A stand-in table with a marked placeholder proves the stamp is interpolated whatever
+// the sentence around it turns out to say, and does it now rather than after the locales land.
+const dated = await p.evaluate(async (stamp) => {
+	DaimondI18n.register('de', {
+		'models.list_asked': 'A<{when}>B',
+		'models.list_never': 'NEVER',
+	});
+	await DaimondI18n.setLocale('de');
+	window.DaimondModels.render();
+	const at = (pid) => {
+		const e = document.querySelector('.models-prov[data-prov="' + pid + '"] .models-list-age');
+		return e ? e.textContent.trim() : '';
+	};
+	const out = { asked: at('groq'), never: at('together'),
+		day: new Date(stamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) };
+	await DaimondI18n.setLocale('en');
+	return out;
+}, STAMP);
+check('the age line interpolates the moment the list was asked for',
+	/^A<.+>B$/.test(dated.asked), `“${dated.asked}”`);
+check('and the moment is THIS list’s, not some other date',
+	dated.asked.includes(dated.day), `“${dated.asked}” should carry “${dated.day}”`);
+check('while a list never asked for takes the other sentence entirely',
+	dated.never === 'NEVER', `“${dated.never}”`);
 
 await shot(s, 'models');
 const errs = s.errs.filter(e => !/favicon|404|401|net::ERR/.test(e));

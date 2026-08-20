@@ -1149,6 +1149,10 @@
 				url:     providerUrl(id),
 				models:  p.models || [],
 				count:   (p.models || []).length,
+				// When the catalogue was last asked for, so the panel can say. A list has
+				// no other age: it is not re-asked on a beat the way a balance is, and a
+				// count with no date behind it cannot tell you it was taken a month ago.
+				fetched: ms(p.fetched),
 				hasKey:  hasKey(id),
 				sealed:  isSealed(id),
 				ready:   canRun(id),
@@ -1878,11 +1882,26 @@
 				// promise kept the other way.
 				if (!p.minted && p.hasKey && !p.sealed) body.appendChild(creditBlock(p));
 
-				if (!p.count) {
+				// A catalogue is asked for, never delivered: a provider that answered once
+				// can answer again, and a model released this morning appears on nobody's
+				// screen until somebody asks. This used to be drawn only for a provider
+				// listing NOTHING, so the one user who needed a new model had to call
+				// `DaimondModels.fetchModels` from the browser console — the app had built
+				// the route and then shown it to nobody.
+				//
+				// The minted row is the exception, and only that one: it re-asks itself
+				// after every mint, and Top up above is the single deliberate thing to do
+				// on it. A second button there would offer work that has already happened.
+				if (!p.minted) {
 					var refetch = document.createElement('button');
 					refetch.className = 'models-refetch';
-					refetch.textContent = p.hasKey ? t('models.ask_provider')
-						: p.minted ? t('models.waiting_credits') : t('models.add_key_first');
+					// The LABEL carries the state; the button's existence never does. A
+					// control that is simply absent is indistinguishable from one that is
+					// working, which is how the defect above survived — so a row that
+					// cannot ask yet still draws the button, disabled, saying why.
+					refetch.textContent = !p.hasKey ? t('models.add_key_first')
+						: p.count ? t('models.ask_provider_again')
+						: t('models.ask_provider');
 					refetch.disabled = !p.ready;
 					refetch.addEventListener('click', async function () {
 						refetch.disabled = true;
@@ -1896,6 +1915,20 @@
 						render();
 					});
 					body.appendChild(refetch);
+
+					// When the list was last asked for, under the button that asks again.
+					// A date and not the `age_*` family: the credit block a few lines above
+					// already says "Checked twenty minutes ago" about a BALANCE, and two
+					// sentences of that shape in one row read as one fact repeated rather
+					// than two facts of different kinds. No stale colour either — a
+					// catalogue does not move the way a balance does, and a red one here
+					// would teach the eye to skip the red that means something.
+					var age = document.createElement('div');
+					age.className = 'models-list-age';
+					age.textContent = p.fetched
+						? t('models.list_asked', { when: whenShort(p.fetched) })
+						: t('models.list_never');
+					body.appendChild(age);
 				}
 
 				p.models.forEach(function (m) {

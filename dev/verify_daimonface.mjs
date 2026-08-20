@@ -12,7 +12,10 @@
 //     emptying STICK, which is a separate claim and was the false one: the transcript merge
 //     is a deliberate UNION, so an emptied array saved straight back was refilled from the
 //     store, and the conversation returned on the next reload with the screen none the wiser.
-//   * Fold belongs to the face that shows a conversation, and to no other.
+//   * Fold belongs to the conversation a hand fold can REACH, and to no other. It was
+//     drawn on the daimon's face and nowhere else, which is precisely backwards: a
+//     Diamond engine's session holds no messages, so `fold_now` there compacts nothing
+//     and bills for the round; an ordinary chat is the one that can be folded by hand.
 //   * A daimon's reply streams into the thread AS IT ARRIVES, and only when that thread is
 //     the one on screen. A turn can run from a gather round with its Diamond nowhere near
 //     the screen, and drawing then puts one conversation's words in another's transcript.
@@ -37,7 +40,7 @@
 //   node dev/verify_daimonface.mjs --break resurrect    # 1b+1d fail: the union puts it all back
 //   node dev/verify_daimonface.mjs --break sessionless  # 1c fails: the model keeps the conversation
 //   node dev/verify_daimonface.mjs --break clear-midturn # 1e fails: a clear a turn then undoes
-//   node dev/verify_daimonface.mjs --break fold-drift   # 2 fails: Fold drifts to the crystal face
+//   node dev/verify_daimonface.mjs --break fold-drift   # 2 fails: Fold goes back to the daimon
 //   node dev/verify_daimonface.mjs --break crosstalk    # 3a fails: a reply lands in another thread
 //   node dev/verify_daimonface.mjs --break mute         # 3b fails: nothing streams into its own
 //   node dev/verify_daimonface.mjs --break dead-compare # 4a+4b fail: a face nothing enters
@@ -65,10 +68,12 @@
 // forget WHICH thread, so every thread on screen is drawn into and the right one is drawn
 // into too. A single check would have been green under one of them.
 //
-// `unhelped` is the odd one and is not a break at all: it restores the three raw compound
-// conditions the one helper replaced. It MUST leave every check green, which is how this file
-// says that collapsing three copies into `daimonOnScreen` was a refactor and not a change of
-// behaviour. Red there is a failure of the refactor, and the run says so.
+// `unhelped` is the odd one and is not a break at all: it restores the raw compound conditions
+// the one helper replaced. It MUST leave every check green, which is how this file says that
+// collapsing the copies into `daimonOnScreen` was a refactor and not a change of behaviour. Red
+// there is a failure of the refactor, and the run says so. It covers TWO sites and not three:
+// `syncFoldBtn` no longer asks which face is up at all, since a daimon's record is `current` on
+// both of a Diamond's faces and `diamondId` therefore answers for both.
 //
 // THE HARNESS. Use a world, or the run silently drives world 0 on :8777 and says nothing:
 //
@@ -76,7 +81,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, steerDiamond } from './harness.mjs';
+import { open, signInAs, steerDiamond, newChat } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -97,12 +102,14 @@ const BREAKS = {
 		find: "			if (daimonOnScreen(rec)) {\n				await selectDiamond(f, 'chat');",
 		with: "			if (false) {\n				await selectDiamond(f, 'chat');",
 	},
-	// One of three copies of a subtle condition drifting to the wrong face — the shape the
-	// helper exists to prevent. `'focus'` is a real face, so the static checks stay green and
-	// only the Fold check moves.
+	// THE OLD CONDITION, restored: Fold drawn on the daimon's face and on no other. It is a
+	// real comparison against a real face, so every static check stays green and only the
+	// control checks move — which is the point, because for months this was the shipped
+	// behaviour and nothing in this file objected. It must redden 2a (the control is back on
+	// the face that cannot use it) and 2c (it is gone from the one that can).
 	'fold-drift': {
-		find: "		b.style.display = (daimonOnScreen(current) && current.diamondId) ? '' : 'none';",
-		with: "		b.style.display = (centreMode === 'focus' && current && current.diamondId) ? '' : 'none';",
+		find: "		b.style.display = (current && !current.diamondId && chatSaid(current)) ? '' : 'none';",
+		with: "		b.style.display = (daimonOnScreen(current) && current.diamondId) ? '' : 'none';",
 	},
 	// The guard forgets WHICH conversation and remembers only that some conversation is up.
 	crosstalk: {
@@ -168,10 +175,6 @@ const BREAKS = {
 		{
 			find: "			if (daimonOnScreen(rec)) {",
 			with: "			if (currentDiamond && currentDiamond.id === id && centreMode === 'daimon') {",
-		},
-		{
-			find: "		b.style.display = (daimonOnScreen(current) && current.diamondId) ? '' : 'none';",
-			with: "		b.style.display = (centreMode === 'daimon' && current && current.diamondId) ? '' : 'none';",
 		},
 		{
 			find: "		var onScreen = function () { return daimonOnScreen(rec); };",
@@ -389,7 +392,16 @@ try {
 	await makeDiamond('Alpha');
 	await makeDiamond('Beta');
 
-	// ── 2. Fold belongs to the face that shows a conversation.
+	// ── 2. Fold belongs to the conversation a hand fold can reach.
+	//
+	// Two of these say "not here" and one says "here". A file with only the refusals would be
+	// green against a Fold button that had been deleted, and a file with only the assertion
+	// would be green against one drawn on every face at once — so the positive and the two
+	// negatives are all three of them load-bearing.
+	//
+	// EVERY READING IS A BOUNDING RECTANGLE (`drawn`'s `vis`), never a computed `display`.
+	// `display: none` does not cascade: a child of a hidden parent computes its own `display`
+	// perfectly happily and reports itself visible.
 	await openDiamond('Alpha', 'chat');
 	await steerDiamond(s, 'hello alpha');
 	await page.waitForTimeout(4000);
@@ -399,23 +411,51 @@ try {
 	// another check's reason stops being a control.
 	await openDiamond('Alpha', 'chat');
 	const onChat = await drawn();
-	check('2a. FOLD IS ON THE DAIMON FACE, where there is a conversation to fold',
-		onChat.fold === true, 'visible:' + onChat.fold);
-	// The control beside it: the thread really has something in it, so check 1's "empty"
-	// below is a change and not the state it started in.
-	check('the daimon really said something, so what follows is a change and not a start',
+	check('2a. FOLD IS OFF THE DAIMON FACE, the one conversation a hand fold cannot reach',
+		onChat.fold === false, 'visible:' + onChat.fold);
+	// The control beside it: the thread really has something in it, so 2a is a REFUSAL and not
+	// a button hidden for want of a conversation. It also makes check 1's "empty" below a
+	// change and not the state it started in.
+	check('the daimon really said something, so 2a is a refusal and not an empty thread',
 		onChat.users.length === 1 && /hello alpha/.test(onChat.users[0] || ''),
 		JSON.stringify(onChat.users));
 
 	await page.click('#dview-crystal', { force: true });
 	await page.waitForTimeout(900);
 	const onCrystal = await drawn();
-	check('2b. AND OFF THE CRYSTAL FACE, which shows no conversation to fold',
+	check('2b. AND OFF THE CRYSTAL FACE, which shows no conversation at all',
 		onCrystal.fold === false, 'visible:' + onCrystal.fold);
 
+	// ── 2c/2d. And ON an ordinary chat, once there is something in it.
+	//
+	// The chat is made first and measured EMPTY, because "shown on a chat" and "shown on a
+	// chat with something in it" are two different claims and only the second one is the
+	// app's. A fold offered on an empty thread is the same dead control this check is about,
+	// one surface along.
+	await newChat(s);
+	await page.waitForTimeout(600);
+	const fresh = await drawn();
+	check('2d. AND OFF A CHAT NOBODY HAS SAID ANYTHING IN, which has nothing to fold',
+		fresh.fold === false, 'visible:' + fresh.fold);
+	await page.fill('#chat-input', 'hello chat');
+	await page.click('#chat-send', { force: true });
+	// The user's turn is on the record before the reply is, and that is what makes the
+	// control live: `runTurn` pushes and persists first, then syncs the composer.
+	await page.waitForTimeout(2500);
+	const onOrdinary = await drawn();
+	check('2c. FOLD IS ON AN ORDINARY CHAT WITH SOMETHING IN IT, which is the fold that works',
+		onOrdinary.fold === true, 'visible:' + onOrdinary.fold);
+	check('and that chat really has something in it, so 2c is not a control drawn over nothing',
+		onOrdinary.users.length >= 1 && /hello chat/.test(onOrdinary.text),
+		JSON.stringify(onOrdinary.users));
+	// Let the turn finish before the Diamond work below, so a reply still streaming cannot
+	// land in a thread check 1 or check 3 is about to read.
+	await page.waitForSelector('.chat-spinner', { state: 'detached', timeout: 30000 }).catch(() => {});
+	await page.waitForTimeout(500);
+	await openDiamond('Alpha', 'chat');
+	await page.waitForTimeout(600);
+
 	// ── 1. "Fresh daimon" clears WHAT IS DRAWN, not merely what is stored.
-	await page.click('#dview-chat', { force: true });
-	await page.waitForTimeout(900);
 	await freshDaimon('Alpha');
 	const after = await drawn();
 	check('1a. FRESH DAIMON EMPTIES THE THREAD ON SCREEN',
@@ -555,7 +595,7 @@ if (BREAK && MUST_STAY_GREEN.has(BREAK)) {
 		? `\n'${BREAK}' IS NOT A BREAK: it restores the conditions the helper replaced and must `
 			+ 'change nothing. Something failed, so the helper is not the refactor it claims to be.'
 		: `\n'${BREAK}' changed nothing, which is what it is for: the helper says the same thing `
-			+ 'the three conditions said.');
+			+ 'the raw conditions said.');
 	process.exit(bad.length ? 1 : 0);
 }
 if (BREAK) {

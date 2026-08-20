@@ -11882,9 +11882,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		fold.className = 'tile-dlg-level';
 		fold.textContent = t('tile.fold_context');
 		fold.title = t('tile.fold_context_help');
-		fold.addEventListener('click', function () { return foldChatNow(chat, fold); });
+		fold.addEventListener('click', function () { return foldChatNow(chat, fold, say); });
 		row.appendChild(fold);
 		card.appendChild(row);
+	}
+
+	/// Has anything been said in this conversation?
+	///
+	/// The transcript on screen, or the model's own copy of it: either one is a
+	/// conversation, and the two are separate stores. Emphatically NOT `chat.app`, which
+	/// answers a different question -- "was an engine built during this page load" -- and
+	/// is null for every chat after a reload, however much was said before it.
+	function chatSaid(chat) {
+		if (!chat) return false;
+		if (chat.messages && chat.messages.length) return true;
+		return !!(chat.session && chat.session.msgs && chat.session.msgs.length);
 	}
 
 	/// Fold a chat's context now, on the user's say-so.
@@ -11898,13 +11910,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// # Arguments
 	/// * `chat` - The conversation to fold.
 	/// * `btn` - The control pressed, disabled while it runs.
-	async function foldChatNow(chat, btn) {
+	/// * `onDone` - Run once the fold has landed. The dialog passes the function that
+	///   redraws its context line; the header has no line to redraw and passes nothing.
+	async function foldChatNow(chat, btn, onDone) {
 		var fold = btn || {};
 		if (chat._generating) { toast(t('tile.fold_mid_turn'), true); return; }
-		var app = chat.app;
-		if (!app || typeof app.fold_now !== 'function') {
-			toast(t('tile.fold_unavailable'), true); return;
-		}
+		// WHETHER THERE IS A CONVERSATION, not whether an engine object happens to exist.
+		// The guard used to read `chat.app`, which `hydrateChat` nulls on every reload, so
+		// a thread of two hundred messages was told nothing had been said in it. Where the
+		// conversation is real and the engine is not, build one: `ensureApp` is idempotent,
+		// seeds the persisted session back in, and is the same path a turn takes.
+		if (!chatSaid(chat)) { toast(t('tile.fold_unavailable'), true); return; }
+		var app;
+		// `ensureApp` constructs a wasm `DaimondApp` and can throw -- no key, no module --
+		// which is why every other caller wraps it. A fold that cannot start says so with
+		// the reason rather than dying in a rejection nobody sees.
+		try { app = ensureApp(chat); }
+		catch (e) { noticeDialog(t('tile.fold_failed'), friendlyError(e)); return; }
+		// No check for `fold_now` itself. An engine too old to have it throws on the call
+		// below and is reported as the failure it is, which names the real fault; refusing
+		// here would have to borrow `fold_unavailable`, and that sentence is about a chat
+		// with nothing in it.
 		var ok = await confirmDialog(t('tile.fold_context_body'), t('tile.fold_context_ok'),
 			{ title: t('tile.fold_context_title'), danger: false });
 		if (!ok) return;
@@ -11937,7 +11963,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { /* mid-turn read is impossible here; the turn is not running */ }
 		captureSession(chat, app);
 		persistChats();
-		say();
+		// The dialog's context line, when the fold was asked for from the dialog. This
+		// used to call `say()` outright, which does not exist here -- it belongs to the
+		// SIBLING `mountContextSection` -- so every successful fold threw at this line,
+		// and since nothing awaits this function it took `renderSessionList` down with it
+		// in a rejection nobody ever saw.
+		if (typeof onDone === 'function') onDone();
 		renderSessionList();
 	}
 
@@ -12284,8 +12315,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// are:
 	///
 	///   * **The daimon** is persistent, so changing it ends one daimon and starts
-	///     another. It is confirmed, and the change is written into the crystal's version
-	///     history, where the Diamond's other discontinuities are.
+	///     another. It applies at once and is written into the crystal's version
+	///     history, where the Diamond's other discontinuities are. The conversation is
+	///     not one of the things that ends: it belongs to the record, not to the model.
 	///   * **The workers** may be changed at any time and apply to NEW agents only. A
 	///     worker already running keeps the model it was dispatched with, because moving
 	///     it would bill one conversation to two models.
@@ -12340,26 +12372,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		// ── The daimon.
 		var daimonSel = row('tile.model_daimon', 'tile.model_daimon_help',
-			own.provider, own.model, false, async function (p, sel) {
+			own.provider, own.model, false, async function (p) {
 				var before = diamondModel(opts.id);
 				if (p.model === before.model && p.provider === before.provider) return;
-				var ok = await confirmDialog(
-					t('tile.model_change_body', {
-						from: shortModel(before.model) || t('tile.model_none'),
-						to:   shortModel(p.model),
-					}),
-					t('tile.model_change_ok'),
-					{ title: t('tile.model_change_title'), danger: false });
-				if (!ok) {
-					// Put the pulldown back. A refused confirm that left the control showing
-					// the new model would be the app claiming a change it did not make.
-					populateModelSelect(sel, before.model || '', before.provider || '');
-					return;
-				}
+				// NO CONFIRM, DELIBERATELY. The modal that stood here warned that the
+				// conversation would not carry over. That was true for the twenty-two
+				// minutes before a daimon had a conversation at all, and false ever since:
+				// the thread lives on the record and travels as `prior`, and nothing below
+				// so much as reads it. What is left is a setting that costs nothing to
+				// change and is undone by changing it back, and a cheaply reversible act
+				// earns a receipt rather than a question -- asking one for a harmless
+				// change is how people learn to click through the confirms that matter.
 				setDiamondModel(opts.id, { provider: p.provider, model: p.model });
 				// A DaimondApp has no setter for its model, so the cached client for this
 				// Diamond has to go; `diamondApp` builds the new one on next use.
 				resetDiamondApps();
+				var logged = true;
 				try {
 					await diamondApp(opts.id).record_model_change(opts.id,
 						t('tile.model_change_note', {
@@ -12368,7 +12396,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				} catch (e) {
 					// The setting is already written and in force. Say the history entry
 					// failed rather than implying the change did.
+					logged = false;
 					toast(t('tile.model_change_unlogged'), true);
+				}
+				// The receipt: what moved, and that the thread came with it. One message
+				// or the other -- `model_change_unlogged` already says the change stuck,
+				// so a second toast beside it would say it twice.
+				if (logged) {
+					toast(t('tile.model_changed', {
+						from: shortModel(before.model) || t('tile.model_none'),
+						to:   shortModel(p.model),
+					}));
 				}
 				if (currentDiamond && currentDiamond.id === opts.id) {
 					await refreshDiamondAfterChange();
@@ -14081,19 +14119,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chip.classList.toggle('on', on);
 	}
 
-	/// Show Fold in the header when there is a persistent conversation to fold.
+	/// Show Fold in the header when there is a conversation a hand fold can reach.
 	///
-	/// A Diamond's daimon only. A throwaway chat has nothing worth folding into a
-	/// summary -- notes2 fixes its models at creation and expects it to be
-	/// discarded -- and a control that does nothing useful is worse than an
-	/// absent one.
+	/// An ordinary chat with something in it, and nothing else. This used to be the exact
+	/// opposite -- a daimon's face only -- and a daimon is the one conversation a hand
+	/// fold CANNOT touch: the Diamond engine's session holds no messages for its whole
+	/// life, because `steer_inner` builds a local session from `prior`, so `fold_now`
+	/// there charges for a round that compacts nothing and then reports the thread
+	/// "already as short as it goes". Nor does it need touching -- `run_tool_loop` folds a
+	/// daimon before every round, at its own learnt window.
 	function syncFoldBtn() {
 		var b = document.getElementById('chat-fold-btn');
 		if (!b) return;
-		// The DAIMON face only. In the crystal face there is no conversation on
-		// screen, so a Fold there would act on something the reader cannot see;
-		// and an ordinary chat is meant to be thrown away rather than folded.
-		b.style.display = (daimonOnScreen(current) && current.diamondId) ? '' : 'none';
+		// `diamondId` covers the crystal face as well as the daimon's: `selectDiamond`
+		// points `current` at the daimon's record on BOTH faces, because both share the
+		// composer and the composer sends to `current`.
+		b.style.display = (current && !current.diamondId && chatSaid(current)) ? '' : 'none';
 	}
 
 	/// Turn the chip on or off for the chat on screen.

@@ -14,10 +14,21 @@
 //   4. the unknown-model fallback (1.00/3.00) caught most current router ids at
 //      roughly four times reality.
 //
+// And a fifth, found on 2026-08-20: the containment fallback in (3) was left
+// supplying a CONTEXT WINDOW as well as a rate. `glm-5.3` normalises to `glm53`,
+// which contains `glm5`, so it took the glm-5 entry -- 204,800 tokens where the
+// generation it belongs to holds 1,048,576, and a price nobody published wearing
+// no estimate mark. Containment cannot be tightened to tell that from a dated
+// Anthropic id, which is checked below as a property rather than argued about.
+//
 // It also checks the ledger's new reported-cost path and the gateway's balance
 // notice. Everything here is pure: no browser, no network, no gateway. The
 // modules are IIFEs guarded on `window`, so they are evaluated in a sandbox with
 // a stub -- the same trick verify_governor.mjs uses.
+//
+//   node dev/verify_pricing.mjs --break nearwins    # a neighbour's window again
+//   node dev/verify_pricing.mjs --break neartable   # a borrowed rate called surveyed
+//   node dev/verify_pricing.mjs                     # and then, clean
 import { readFileSync } from 'fs';
 
 const ok = [], bad = [];
@@ -26,11 +37,50 @@ const check = (name, pass, detail) => {
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
 };
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
+const die  = (why) => { console.error('ABORT: ' + why); process.exit(2); };
+
+// ── The patches that prove the new checks can fail ─────────────────
+//
+// Each restores ONE half of the defect in the source text of `pricing.js`
+// before it is evaluated, so the check is shown failing on the old behaviour
+// rather than merely asserted against the new one.
+//
+//   nearwins   `contextWindow` back on `resolve`, so a neighbour's window is
+//              handed out as this model's -- the defect exactly as it shipped.
+//   neartable  a borrowed rate counted as a surveyed one, so the figure is
+//              drawn without the estimate mark that says whose it is.
+const BREAK = (() => {
+	const i = process.argv.indexOf('--break');
+	return i > 0 ? String(process.argv[i + 1] || '') : '';
+})();
+const BREAKS = {
+	nearwins: {
+		what: 'contextWindow back on the containment resolver',
+		file: 'js/pricing.js',
+		edit: (src) => src.replace(
+			'\t\tvar entry = resolveExact(model);\n\t\treturn (entry && entry.ctx != null) ? entry.ctx : null;',
+			'\t\tvar entry = resolve(model);\n\t\treturn (entry && entry.ctx != null) ? entry.ctx : null;'),
+	},
+	neartable: {
+		what: 'a borrowed rate counted as a surveyed one, so it wears no estimate mark',
+		file: 'js/pricing.js',
+		edit: (src) => src.replace(
+			"\t\treturn source === 'fallback' || source === 'near';",
+			"\t\treturn source === 'fallback';"),
+	},
+};
+if (BREAK && !BREAKS[BREAK]) die(`no break called "${BREAK}"`);
+if (BREAK) console.log(`BREAK ${BREAK}: ${BREAKS[BREAK].what}\n`);
 
 // ── Load the modules under a stub window ───────────────────────────
 
 function loadModule(rel, extra = {}) {
-	const src = readFileSync(new URL('../www/' + rel, import.meta.url), 'utf8');
+	let src = readFileSync(new URL('../www/' + rel, import.meta.url), 'utf8');
+	if (BREAKS[BREAK] && BREAKS[BREAK].file === rel) {
+		const out = BREAKS[BREAK].edit(src);
+		if (out === src) die(`the "${BREAK}" break no longer matches www/${rel}`);
+		src = out;
+	}
 	const names = ['window', ...Object.keys(extra)];
 	const vals  = [extra.window, ...Object.keys(extra).map(k => extra[k])];
 	// eslint-disable-next-line no-new-func
@@ -236,6 +286,87 @@ const C = P._core;
 	let oldViolations = corpus.filter(id => oldOverNew(id) !== longestOwner(id));
 	check('RED: the old algorithm violates that property on the new table',
 		oldViolations.length > 0, oldViolations.slice(0, 5).join(', '));
+}
+
+// ── 3b. A neighbour lends its rate and never its window ────────────
+//
+// The remaining half of (3). Containment still places an id the table has never
+// heard of, because a rate borrowed from the nearest relation beats the flat
+// fallback and is visible in the spend readout either way. A WINDOW is not
+// visible: a conversation clipped to a fifth of what the model would have held
+// looks exactly like a conversation the model would not hold, so a borrowed
+// window is withheld and the agent's own default assumption stands instead.
+{
+	const NEAR = 'z-ai/glm-5.3';			// a real id the table does not carry
+	check('the case under test is real: glm-5.3 is placed only by containment',
+		C.resolveExact(NEAR) === null && C.resolve(NEAR) === C.TABLE['glm-5'],
+		'exact=' + (C.resolveExact(NEAR) ? 'hit' : 'null'));
+
+	// What it used to hand out, and what the generation it belongs to actually
+	// holds. The ratio is the clip, and it is here so nobody restores the
+	// fallback thinking it a tidy-up.
+	const borrowed = C.TABLE['glm-5'].ctx, sibling = C.TABLE['glm-5.2'].ctx;
+	check('RED: the borrowed window was a fifth of the sibling generation\'s',
+		sibling / borrowed > 4, `${borrowed} vs ${sibling}`);
+	check('a containment-only id now has NO context window',
+		P.contextWindow(NEAR, '') === null,
+		'got ' + P.contextWindow(NEAR, ''));
+	check('and an exactly-known id keeps its own',
+		P.contextWindow('z-ai/glm-5.2', '') === 1048576);
+
+	// The rate still comes, and says what it is.
+	const est = P.priceFor(NEAR, 1e6, 0, 0);
+	check('a containment-only id is still priced', est.usd > 0, 'usd ' + est.usd);
+	check('and the figure is the neighbour\'s, borrowed',
+		near(est.usd, C.TABLE['glm-5'].in), 'usd ' + est.usd);
+	check('and it is marked estimated, because nobody published it for this model',
+		est.estimated === true);
+	check('and the borrowing is named rather than passed off as surveyed',
+		est.source === 'near', 'source ' + est.source);
+	check('rate() names it the same way, so display and charge cannot disagree',
+		P.rate(NEAR).source === 'near' && P.rate('z-ai/glm-5.2').source === 'table',
+		P.rate(NEAR).source);
+	check('an exactly-known id is still not an estimate',
+		P.priceFor('z-ai/glm-5.2', 1e6, 0, 0).estimated === false);
+	// `near` and `fallback` are different states and stay so: one has a
+	// neighbour's number in it, the other has nobody's.
+	const none = P.priceFor('some-vendor/never-heard-of-it', 1e6, 0, 0);
+	check('a model with no neighbour at all still reads as fallback, not near',
+		none.source === 'fallback' && P.contextWindow('some-vendor/never-heard-of-it', '') === null);
+
+	// A live quote outranks all of this: a provider that publishes a window for
+	// an id the table has never seen is the best answer there is.
+	win.DaimondModels = {
+		rateFor: (provider, model) => (provider === 'zai' && model === NEAR)
+			? { inPerM: 0.9, outPerM: 2.8, cachedPerM: null, ctx: 1048576 } : null,
+	};
+	check('a live window is used even where the table can only guess',
+		P.contextWindow(NEAR, 'zai') === 1048576, 'got ' + P.contextWindow(NEAR, 'zai'));
+	check('and a live quote for such an id is not an estimate',
+		P.priceFor(NEAR, 1e6, 0, 0, 'zai').estimated === false);
+	delete win.DaimondModels;
+
+	// WHY THE FALLBACK IS NOT SIMPLY TIGHTENED, as a property rather than an
+	// opinion. The obvious repair -- refuse a match whose leftover starts with a
+	// digit, so `glm5` + `3` cannot borrow -- also refuses `claudeopus5` +
+	// `20251001`, which is the SAME model on a dated id and must match. `norm`
+	// has already dropped the separator that told them apart, so no rule reading
+	// the normalised string can. Anything that reddens this check has broken
+	// Anthropic's dated ids.
+	const leftover = (id) => {
+		const key = C.norm(id);
+		for (const k of C.KEYS) {
+			const at = key.indexOf(k);
+			if (at !== -1) return key.slice(0, at) + key.slice(at + k.length);
+		}
+		return null;
+	};
+	const bump  = leftover('z-ai/glm-5.3');					// a different model
+	const dated = leftover('anthropic/claude-opus-5-20251001');	// the same model, dated
+	check('a version bump and a date suffix are one shape after normalisation',
+		/^\d/.test(bump) && /^\d/.test(dated), `bump "${bump}" vs dated "${dated}"`);
+	check('and the dated id still reaches its own family',
+		C.resolve('anthropic/claude-opus-5-20251001') === C.TABLE['claude-opus-5']);
 }
 
 // ── 4. The fallback is no longer four times reality ────────────────
@@ -501,8 +632,11 @@ const C = P._core;
 
 // ── Result ─────────────────────────────────────────────────────────
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
-if (bad.length) {
-	console.log('FAILED: ' + bad.join(', '));
+if (bad.length) console.log('FAILED: ' + bad.join(', '));
+if (BREAK) {
+	if (bad.length) { console.log('the break was caught, as it should be'); process.exit(0); }
+	console.log('THE BREAK WAS NOT CAUGHT: this check proves nothing');
 	process.exit(1);
 }
+if (bad.length) process.exit(1);
 console.log('pricing, ledger and balance-notice core verified');

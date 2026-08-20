@@ -67,6 +67,16 @@
 .settings-section .models-remove { align-self: flex-start; margin-top: 4px; }
 .settings-section .models-add    { width: 100%; }
 
+/* How old the model list is, under the button that asks for it again. A caveat on
+   the list above rather than a second heading, so it takes the chip size and the
+   secondary ink the rest of the provider furniture uses. No stale state: a
+   catalogue does not go out of date the way a balance does. */
+.models-list-age {
+	padding: 2px 2px 4px;
+	font-size: var(--fs-2xs); line-height: 1.45;
+	color: var(--text-secondary);
+}
+
 .models-default {
 	margin-top: 6px; padding: 6px 2px;
 	font-size: var(--fs-2xs); color: var(--text-secondary);

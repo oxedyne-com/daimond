@@ -332,17 +332,44 @@
 		KEYS = Object.keys(INDEX).sort(function (a, b) { return b.length - a.length; });
 	})();
 
+	// The entry the caller actually named: exact key or alias, and
+	// nothing else. A hit here IS the model, so it is the only kind
+	// of hit allowed to state a context window.
+	function resolveExact(model) {
+		var key = norm(model);
+		if (!key) return null;
+		return INDEX[key] ? TABLE[INDEX[key]] : null;
+	}
+
 	// Resolve a caller's model string to a table entry, or null.
 	//
 	// Exact key or alias first; then the LONGEST table key that the
-	// caller's id contains. The direction matters and only one is
-	// safe. This used to test both ways and return the first hit in
-	// object order, so `deepseek/deepseek-v3.2-exp` met the earlier
-	// `deepseekv3` alias and was billed at v3.1's rate -- more than
-	// twice its own. A shorter key can never outrank a longer one
-	// now, and a key that merely CONTAINS the caller's id (a bare
-	// `glm5` matching `glm52`) is not a match at all: model ids come
-	// from the provider's own list, so they arrive whole.
+	// caller's id CONTAINS. The direction matters. This used to test
+	// both ways and return the first hit in object order, so
+	// `deepseek/deepseek-v3.2-exp` met the earlier `deepseekv3` alias
+	// and was billed at v3.1's rate -- more than twice its own. A
+	// shorter key can never outrank a longer one now, and a key that
+	// merely contains the caller's id (`glm52` offered for a bare
+	// `glm5`) is not a match at all.
+	//
+	// That last guard used to be written here as though it settled
+	// the glm-5 / glm-5.2 confusion. It settles ONE HALF of it. The
+	// same pair collides the other way round and is not caught:
+	// `glm-5.3` normalises to `glm53`, which contains `glm5`, so it
+	// lands on the glm-5 entry -- a fifth of glm-5.2's window and a
+	// price nobody published. The stated reason ("ids arrive whole")
+	// is true and does not help, because a whole id can be a whole
+	// DIFFERENT model whose name starts with a table key.
+	//
+	// Nor can containment be tightened to tell the two cases apart:
+	// `norm` has already dropped the separator that carried the
+	// difference, so `claudeopus5` + `20251001` (the same model,
+	// dated, which should match) and `glm5` + `3` (a version bump,
+	// which should not) are one shape by the time this sees them.
+	// So the fallback is kept for RATES and marked `near` -- see
+	// `entryFor` -- and supplies no context window at all. A wrong
+	// price is visible in the spend readout; a wrong window silently
+	// clips a conversation.
 	function resolve(model) {
 		var key = norm(model);
 		if (!key) return null;
@@ -372,16 +399,27 @@
 		};
 	}
 
-	// The entry to price with, and whether it had to be guessed.
-	// `live` is a quote from the provider, `table` a surveyed figure,
-	// `fallback` neither -- and only the last is called estimated,
-	// because only the last is a number nobody published.
+	// The entry to price with, and how far it is from the model asked
+	// about. `live` is a quote from the provider, `table` a surveyed
+	// figure for this very model, `near` a surveyed figure for a
+	// NEIGHBOUR the id merely contains, `fallback` no figure at all.
+	// The last two are estimates: neither is a number anybody
+	// published about this model.
 	function entryFor(model, provider) {
 		var live = liveEntry(provider, model);
 		if (live) return { entry: live, source: 'live' };
-		var hit = resolve(model);
-		if (hit) return { entry: hit, source: 'table' };
+		var exact = resolveExact(model);
+		if (exact) return { entry: exact, source: 'table' };
+		// `resolve` has already tried exact, so what is left here is a
+		// containment hit and only that.
+		var nearby = resolve(model);
+		if (nearby) return { entry: nearby, source: 'near' };
 		return { entry: FALLBACK_ENTRY(), source: 'fallback' };
+	}
+
+	// Is this a figure nobody published about the model asked about?
+	function guessed(source) {
+		return source === 'fallback' || source === 'near';
 	}
 
 	// ── Public API ─────────────────────────────────────────────
@@ -398,9 +436,11 @@
 	/// captured from that provider's own model list take precedence
 	/// over the baked-in table.
 	///
-	/// Returns `{ usd, estimated, source }`. `estimated` is true only
-	/// when no published rate could be found for the model at all and
-	/// the fallback was applied.
+	/// Returns `{ usd, estimated, source }`. `estimated` is true
+	/// whenever no rate was published for this model itself: the
+	/// fallback was applied (`source: 'fallback'`), or the figure was
+	/// borrowed from a table entry the id merely contains
+	/// (`source: 'near'`).
 	function priceFor(model, promptTokens, completionTokens, cachedTokens, provider) {
 		var got = entryFor(model, provider);
 		var r = got.entry;
@@ -412,7 +452,7 @@
 
 		var cachedRate = (r.cached != null) ? r.cached : r.in;
 		var usd = (fresh * r.in + cached * cachedRate + completion * r.out) / 1e6;
-		return { usd: usd, estimated: got.source === 'fallback', source: got.source };
+		return { usd: usd, estimated: guessed(got.source), source: got.source };
 	}
 
 	// The fallback expressed in the same shape as a table entry.
@@ -423,17 +463,26 @@
 	/// Context window for `model` in tokens, or null when unknown
 	/// (or when the model itself is unknown). A provider's own
 	/// figure, where one was captured, beats the table's.
+	///
+	/// `resolveExact`, not `resolve`: a neighbour's window is not
+	/// this model's window, and `glm-5.3` borrowing glm-5's 204,800
+	/// clipped a conversation to a fifth of what it could have held,
+	/// silently. A null is left alone by every caller -- the agent's
+	/// own default assumption is a better guess than a number
+	/// invented here, and the reactive fold still catches a refusal.
 	function contextWindow(model, provider) {
 		var live = liveEntry(provider, model);
 		if (live && live.ctx != null) return live.ctx;
-		var entry = resolve(model);
+		var entry = resolveExact(model);
 		return (entry && entry.ctx != null) ? entry.ctx : null;
 	}
 
 	/// Display rates for `model` as `{ inUsdPerM, outUsdPerM,
 	/// cachedInUsdPerM, source }`, or null when nothing knows the
 	/// model. A null `cachedInUsdPerM` means no separate cached rate
-	/// is published.
+	/// is published. `source` is named exactly as `priceFor` names
+	/// it, so a display and a charge cannot disagree about how well
+	/// the figure is known.
 	function rate(model, provider) {
 		var live = liveEntry(provider, model);
 		var entry = live || resolve(model);
@@ -442,7 +491,7 @@
 			inUsdPerM:       entry.in,
 			outUsdPerM:      entry.out,
 			cachedInUsdPerM: (entry.cached != null) ? entry.cached : null,
-			source:          live ? 'live' : 'table',
+			source:          live ? 'live' : (resolveExact(model) ? 'table' : 'near'),
 		};
 	}
 
@@ -452,10 +501,13 @@
 		rate:          rate,
 		/// The fallback rate applied to unknown models, for display.
 		fallback:      { inUsdPerM: FALLBACK.inUsdPerM, outUsdPerM: FALLBACK.outUsdPerM, cachedInUsdPerM: FALLBACK.cachedInUsdPerM },
-		/// The table and its resolver, for the pure-node hygiene check
+		/// The table and both resolvers, for the pure-node hygiene check
 		/// in `dev/verify_pricing.mjs`: every canonical id must resolve
-		/// to itself, and no id may resolve to an entry other than the
-		/// owner of its longest matching key. Read-only by convention.
-		_core: { TABLE: TABLE, INDEX: INDEX, KEYS: KEYS, norm: norm, resolve: resolve },
+		/// to itself, no id may resolve to an entry other than the
+		/// owner of its longest matching key, and an id that only
+		/// `resolve` can place must carry no window. Read-only by
+		/// convention.
+		_core: { TABLE: TABLE, INDEX: INDEX, KEYS: KEYS, norm: norm,
+			resolve: resolve, resolveExact: resolveExact },
 	};
 })();
