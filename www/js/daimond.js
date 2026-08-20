@@ -13408,6 +13408,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		applyRoundLimit(chat.app);
 		applyFoldSettings(chat.app, chat.provider || '');
 		applyCrystalCap(chat.app);
+		// THE STANDING NETWORK ANSWER, applied before this chat has run anything.
+		// `net_consent` lives on the engine and a new engine starts with none, so
+		// every new chat -- and every chat after a reload, since these objects do not
+		// survive one -- put the question again from scratch. A person who had
+		// answered it in one chat was asked in the next and called it, correctly, not
+		// having got rid of anything.
+		try {
+			var st = window.DaimondHandMode ? DaimondHandMode.standingNet() : '';
+			if (st && chat.app.set_net_answer) chat.app.set_net_answer(st);
+		} catch (e) { /* an older engine has no setter; it simply asks */ }
 		// A rebuilt DaimondApp starts with an empty Session, so a chat reopened
 		// after a reload would send only its newest message and the model
 		// would answer with no memory of the conversation on screen. Seed
@@ -31931,10 +31941,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					return (current && current.app && current.app.net_state)
 						? current.app.net_state() : '';
 				},
-				netSet: function (answer) {
-					if (current && current.app && current.app.set_net_answer) {
-						current.app.set_net_answer(answer);
-					}
+				// EVERY chat that has an engine, not only the one on screen. The
+				// standing answer is one answer for all of them, and a chat left open
+				// in another tab of the rail would otherwise go on refusing until it
+				// was reloaded -- which is the lifetime problem this replaces.
+				netApplyAll: function (v) {
+					var ans = v === 'allow' ? 'allow' : v === 'refuse' ? 'refuse' : 'ask';
+					chats.forEach(function (c) {
+						if (c && c.app && c.app.set_net_answer) {
+							try { c.app.set_net_answer(ans); } catch (e) { /* a dead engine */ }
+						}
+					});
 				},
 			});
 			// Warm the write-ahead journal (it self-inits, but opening it now surfaces any storage

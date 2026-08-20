@@ -35,6 +35,16 @@
 
 	var LS_MODE = 'daimond-permission-mode';
 	var LS_ACK  = 'daimond-permission-bypass-ack';
+	// The STANDING answer to the network question: '' asks once in each chat,
+	// 'allow' and 'refuse' answer it in advance and for good.
+	//
+	// It is persisted, and that is the whole point of it. The answer itself lives on
+	// a chat's engine object, which is built per chat and does not survive a reload
+	// -- so "you can grant it and not be interrupted again" was true only of a chat
+	// you had already gone into the menu to grant it in. Reported, in those words:
+	// "I thought we got rid of this bullshit!" It was not got rid of; it was made
+	// answerable. This is what gets rid of it.
+	var LS_NET  = 'daimond-net-standing';
 
 	/// The rungs, in the order they are offered: strictest first, so the list
 	/// reads as a ladder and the last row is the one that gives most away.
@@ -77,8 +87,12 @@
 	function netState() {
 		if (current === 'bypass') return 'bypass';
 		if (typeof cfg.netGet !== 'function') return '';
-		try { return String(cfg.netGet() || ''); }
-		catch (e) { return ''; }
+		var s = '';
+		try { s = String(cfg.netGet() || ''); } catch (e) { s = ''; }
+		// A chat with no engine yet has read nothing, which is what a fresh one with
+		// an engine also reports. Returning '' would hide the section on exactly the
+		// new chat where somebody wants to see what they have standing.
+		return s || 'open';
 	}
 
 	/// What was saved, or the guarded rung. A stored value this build does not
@@ -92,6 +106,31 @@
 
 	function save(name) {
 		try { localStorage.setItem(LS_MODE, name); } catch (e) { /* private mode */ }
+	}
+
+	/// The standing answer, or '' where the user has not given one.
+	///
+	/// A value this build does not know falls back to asking, for the same reason a
+	/// stored rung does: the safe reading of "I do not recognise that" is the careful
+	/// one, and here the careful one is to put the question.
+	function standing() {
+		var raw = '';
+		try { raw = localStorage.getItem(LS_NET) || ''; } catch (e) { raw = ''; }
+		return (raw === 'allow' || raw === 'refuse') ? raw : '';
+	}
+
+	/// Record it, and push it into every engine that already exists.
+	///
+	/// BOTH HALVES. Storing it alone would leave every chat already open answering
+	/// the old way until it was reloaded, and setting the engines alone would lose it
+	/// on the next reload -- which is the defect this whole thing exists to fix.
+	function setStanding(v) {
+		try { localStorage.setItem(LS_NET, v); } catch (e) { /* private mode */ }
+		if (typeof cfg.netApplyAll === 'function') {
+			try { cfg.netApplyAll(v); } catch (e) { /* one engine gone is not a failure */ }
+		}
+		draw();
+		if (pop && !pop.hidden) render();
 	}
 
 	function acked() {
@@ -238,40 +277,44 @@
 		if (!state) return;
 		var head = document.createElement('div');
 		head.className = 'pop-head';
-		// THE HEAD CARRIES THE SCOPE, which is why the sentences below it do not
-		// name one: everything above this line is the whole app, everything below it
-		// is the conversation on screen.
-		head.textContent = t('permmode.chat_head');
+		// It said "This chat", and that became false the moment the control below it
+		// became a STANDING answer: the sentence describes this conversation, the
+		// three choices govern every one of them. A head naming one scope over a
+		// section holding both is the kind of label that teaches somebody the wrong
+		// thing and is never corrected. It names the subject instead, and the choices
+		// say their own scope -- "Ask once per chat" is a rule about chats, not a
+		// state of one.
+		head.textContent = t('permmode.net_head');
 		pop.appendChild(head);
 		var line = document.createElement('p');
 		line.className = 'pop-note net-now';
 		line.textContent = (state === 'bypass') ? t('permmode.net_bypass') : netSays(state);
 		pop.appendChild(line);
-		// Bypass withholds nothing, so there is nothing to grant and no button.
+		// Bypass withholds nothing, so there is nothing to grant and no control.
 		if (state === 'bypass') return;
-		// The button says the move, not the state -- the state is the line above it.
-		// It is offered on an `open` chat too, which is the case the whole section was
-		// asked for: an answer given in advance is a question never put.
-		var allowed = (state === 'allowed');
-		var b = document.createElement('button');
-		b.type = 'button';
-		b.className = 'chip-btn net-btn' + (allowed ? '' : ' accent');
-		b.textContent = allowed ? t('permmode.net_withhold') : t('permmode.net_allow');
-		b.addEventListener('click', function () { setNet(allowed ? 'refuse' : 'allow'); });
-		pop.appendChild(b);
-	}
-
-	/// Move this chat's network, and draw what the ENGINE says afterwards.
-	///
-	/// Read back rather than assumed, which is the discipline every security mark
-	/// set from JavaScript is held to here: a popover showing "allowed" over an
-	/// engine still withholding is worse than either state on its own.
-	function setNet(answer) {
-		if (typeof cfg.netSet !== 'function') return;
-		try { cfg.netSet(answer); }
-		catch (e) { if (typeof cfg.notice === 'function') cfg.notice(t('permmode.failed')); }
-		draw();
-		if (pop && !pop.hidden) render();
+		// THREE CHOICES AND NOT A TOGGLE, because a toggle has no way back to the
+		// default. A two-state button would let a user leave "ask me" and never
+		// return to it -- the same no-way-back this section was built to end, rebuilt
+		// one level up. They are chips on one row rather than a second ladder: the
+		// rungs above are a policy with reasons, this is one answer with three values.
+		var now = standing();
+		var row = document.createElement('div');
+		row.className = 'net-row';
+		[['',       'permmode.net_each'],
+		 ['allow',  'permmode.net_always'],
+		 ['refuse', 'permmode.net_never']].forEach(function (pair) {
+			var b = document.createElement('button');
+			b.type = 'button';
+			b.className = 'chip-btn net-opt' + (pair[0] === now ? ' on' : '');
+			b.setAttribute('aria-pressed', pair[0] === now ? 'true' : 'false');
+			// Four literal keys, for the reason `netSays` is written the way it is.
+			b.textContent = pair[1] === 'permmode.net_each'   ? t('permmode.net_each')
+				: pair[1] === 'permmode.net_always' ? t('permmode.net_always')
+				: t('permmode.net_never');
+			b.addEventListener('click', function () { setStanding(pair[0]); });
+			row.appendChild(b);
+		});
+		pop.appendChild(row);
 	}
 
 	function open(anchor) {
@@ -337,6 +380,9 @@
 
 	window.DaimondHandMode = {
 		init: init,
+		/// The standing answer to the network question, for `ensureApp` to put into
+		/// each new engine. '' means the engine is left to ask.
+		standingNet: standing,
 		/// Redraw the chip from what is in force NOW.
 		///
 		/// The rung only moves when this file moves it, so the chip could always

@@ -2969,7 +2969,12 @@ body.resizing { cursor: col-resize; user-select: none; }
    that separates the two scopes, so the note under it must not draw a second one
    three pixels lower. */
 .mode-pop .net-now { border-top: none; margin-top: 0; padding: 2px 6px 0; color: var(--text-secondary); }
-.mode-pop .net-btn { margin: 8px 6px 2px; }
+/* The three standing choices, one row. Chips and not a second radio ladder: the
+   rungs above are a policy with a reason each, this is one answer with three
+   values, and giving it the ladder's shape would say the two were the same kind
+   of thing. `wrap` because the longest set -- French -- does not fit 380px. */
+.mode-pop .net-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 6px 2px; }
+.mode-pop .net-opt { flex: none; }
 
 /* ── Triggered actions, in a Diamond's settings dialog ───────────
    One row per action: its light, what it is in words, and the way in.

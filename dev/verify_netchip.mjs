@@ -18,6 +18,14 @@
 //      answer given in passing could not be changed, and a chat that had lost the
 //      network showed nothing anywhere to say so.
 //
+// A FIRST ATTEMPT FIXED 1 AND 3 AND LEFT THE ASKING EXACTLY WHERE IT WAS, which
+// the same reporter said in the same words a day later: "I thought we got rid of
+// this bullshit!" The answer lived on the chat's engine object, built per chat and
+// gone on reload, so it had to be given again in every new chat and after every
+// refresh -- and it was only ever given by somebody who had gone into the menu
+// looking for it. It was made answerable, not answered. The standing choice is
+// what actually removes the interruption, and check 7 is the one that proves it.
+//
 // SIX PROPERTIES:
 //
 //   1. THE HOVER NAMES THE RUNG. Asserted as the pair — it carries the rung's own
@@ -33,32 +41,53 @@
 //   5. AND IT CAN BE TAKEN BACK, which is the thing that was impossible. Both
 //      directions, because a one-way control that happens to start in the other
 //      state would satisfy check 4 on its own.
-//   6. THE SECTION IS NOT A FOURTH RUNG. Still exactly three radios, under a head
-//      of their own, or a per-chat state would read as a setting outliving the chat.
+//   6. THE SECTION IS NOT A FOURTH RUNG. Still exactly three radios in the ladder,
+//      with the network under a head of its own -- the rungs are one policy for the
+//      whole app and this is one answer, and giving it the ladder's shape would say
+//      the two were the same kind of thing.
+//   7. AND A CHAT THAT DID NOT EXIST WHEN YOU ANSWERED IS NOT ASKED. This is the
+//      property the whole thing is for. Measured at the engine, because
+//      `NetStep::Ask` is the only branch that raises a dialog: a NEW chat that
+//      reports `allowed` while marked has had the question answered before it could
+//      be put. Watching for a dialog instead would also pass on a chat that simply
+//      never got as far as a command.
 //
-// PROVED AGAINST BROKEN CODE FIRST:
+// PROVED AGAINST BROKEN CODE FIRST, each break chosen to survive every check but
+// the ones under test:
 //
-//   node dev/verify_netchip.mjs --break generic  # 1 fails: the hover names the category again
-//   node dev/verify_netchip.mjs --break nomark   # 3 fails: a cut chat looks like a clean one
-//   node dev/verify_netchip.mjs --break stuck    # 5 fails: an answer cannot be changed
-//   node dev/verify_netchip.mjs --break nosection# 3-6 fail, then it dies on the missing button
+//   node dev/verify_netchip.mjs --break generic  # 1-2: the hover names the category again
+//   node dev/verify_netchip.mjs --break nomark   # 3, 5: a cut chat looks like a clean one
+//   node dev/verify_netchip.mjs --break stuck    # 4-5: the choice is stored and never applied
+//   node dev/verify_netchip.mjs --break perchat  # 7:   the answer dies with the chat
+//   node dev/verify_netchip.mjs --break nosection# 8 checks, crudely
 //   node dev/verify_netchip.mjs                  # and then, clean
 //
-// `stuck` is the SHARP one and the reason it exists. The defect it restores lives
-// in Rust — `override_net_consent` tidied back into the write-once rule — which no
-// served-file break can reach, so it is restored here at the surface instead: the
-// button that can only ever say yes. The Rust half is held by
-// `test_the_user_can_take_an_answer_back_though_the_dialog_cannot`, which was run
-// against that exact edit and went red on "a no could not be taken back".
+// `perchat` is the SHARP one: it restores the reported defect exactly -- the
+// standing answer stored, applied to the engines that exist, and never handed to
+// the next one -- and it reddens check 7 and NOTHING ELSE. Every check before it
+// passes, because everything before it was working the day the defect was
+// reported. That is what makes 7 a test of its own and not a rider on the others.
 //
-// `nosection` is the crude one: it fails four checks at once and therefore proves
-// nothing about the three after the first, then dies clicking a button that is not
-// there. It is kept because the section being absent is a real way this can break,
-// not because it tests anything sharply.
+// `stuck` is its sibling one layer up: the choice recorded and never pushed into
+// any engine. A Rust break exists for the write-once rule that sits under both --
+// `override_net_consent` folded back into `set_net_consent` -- which no served file
+// can reach; it is held by `test_the_user_can_take_an_answer_back_though_the_
+// dialog_cannot`, run against that exact edit and red on "a no could not be taken
+// back".
+//
+// `nosection` is the crude one: eight checks at once, so it proves nothing about
+// any check after the first. It is kept because the section being absent is a real
+// way this can break, not because it tests anything sharply.
 //
 // THE MARK IS SET DIRECTLY, through `DaimondCore.markRead`. It is the same one-way
 // flag every real path ends at, so the STATE under test is the real state; which
 // reads produce it is a Rust question and is answered there.
+//
+// AND THE STANDING CHOICE IS ARMED OUTRIGHT at the start. It is `localStorage` and
+// the harness reuses its profile, so a run that ended on "always allow" left the
+// next one starting there -- which duly failed checks 3 and 4 against an app that
+// was working perfectly. A probe that assumes its starting state measures the last
+// run.
 //
 //   eval "$(bash dev/world.sh 4 --up)"
 //   node dev/verify_netchip.mjs
@@ -93,10 +122,19 @@ const BREAKS = {
 	},
 	// The button that can only ever say yes — `override_net_consent` folded back
 	// into the write-once rule, restored where a served file can reach it.
+	// The standing answer stored but never pushed into an engine -- which is what
+	// "I granted it and it asked me again" actually looks like in code.
 	stuck: {
 		file: 'js/handmode.js',
-		find: "\t\tb.addEventListener('click', function () { setNet(allowed ? 'refuse' : 'allow'); });",
-		with: "\t\tb.addEventListener('click', function () { setNet('allow'); });",
+		find: "\t\tif (typeof cfg.netApplyAll === 'function') {",
+		with: "\t\tif (false) {",
+	},
+	// Stored, applied to the engines that exist, and forgotten by the next one. The
+	// exact defect reported: an answer whose lifetime is one chat.
+	perchat: {
+		file: 'js/daimond.js',
+		find: "\t\t\tvar st = window.DaimondHandMode ? DaimondHandMode.standingNet() : '';",
+		with: "\t\t\tvar st = '';",
 	},
 	// No chat can be asked, so the whole section goes.
 	nosection: {
@@ -162,13 +200,14 @@ const readPop = () => p.evaluate(() => {
 	const chip = document.getElementById('hand-mode-chip');
 	const heads = [...pop.querySelectorAll('.pop-head')].map(e => e.textContent.trim());
 	const now   = pop.querySelector('.net-now');
-	const btn   = pop.querySelector('.net-btn');
+	const opts  = [...pop.querySelectorAll('.net-opt')];
 	return {
 		heads,
 		rungs:   pop.querySelectorAll('.mode-row input[type=radio]').length,
 		now:     now ? now.textContent.trim() : '',
-		btn:     btn ? btn.textContent.trim() : '',
-		hasBtn:  !!btn,
+		btn:     opts.map(e => e.textContent.trim()).join(' | '),
+		hasBtn:  opts.length === 3,
+		chosen:  (opts.find(e => e.getAttribute('aria-pressed') === 'true') || {}).textContent || '',
 		marked:  chip.classList.contains('net-cut'),
 		title:   chip.title || '',
 		aria:    chip.getAttribute('aria-label') || '',
@@ -177,6 +216,15 @@ const readPop = () => p.evaluate(() => {
 });
 
 try {
+	// ARM THE DEFAULT OUTRIGHT. The standing answer is `localStorage` and the
+	// harness reuses its profile, so a previous run that ended on "always allow"
+	// left this one starting there -- and checks 3 and 4 duly failed against a chat
+	// that was working correctly. A probe that assumes its starting state is a probe
+	// measuring the last run.
+	// No reload needed: `standing()` reads the key on every call, and no chat engine
+	// exists yet to be carrying an older answer.
+	await p.evaluate(() => { try { localStorage.removeItem('daimond-net-standing'); } catch (e) {} });
+
 	await newChat(s);
 	// A turn, so the chat has an engine to answer for. Nothing here reads anything
 	// from outside — that is check 2's whole point.
@@ -206,8 +254,11 @@ try {
 		`chip_help=${JSON.stringify(generic)}`);
 
 	// ── 2 and 6. A clean chat, and the section's altitude ────────
-	check(clean.heads.some(h => /this chat/i.test(h)),
-		'THE POPOVER HAS A SECTION FOR THIS CHAT', JSON.stringify(clean.heads));
+	// Against the app's own string: the head was reworded once already, and a
+	// literal from the old copy would have made this check unable to fail.
+	const netHead = await p.evaluate(() => DaimondI18n.t('permmode.net_head'));
+	check(!!netHead && clean.heads.includes(netHead),
+		'THE POPOVER HAS A SECTION FOR THE NETWORK', JSON.stringify(clean.heads));
 	check(/nothing/i.test(clean.now) && clean.engine === 'open',
 		'A CLEAN CHAT SAYS NOTHING IS WITHHELD, and the engine agrees',
 		`${JSON.stringify(clean.now.slice(0, 60))} engine=${clean.engine}`);
@@ -246,30 +297,79 @@ try {
 		'AND THE BUTTON SAYS SO WITHOUT ANYTHING BEING OPENED',
 		`net-cut=${cut.marked}, aria=${JSON.stringify(cut.aria)}`);
 	check(/no network|without.*network/i.test(cut.now) && cut.hasBtn,
-		'and the section says it in a sentence, with the way out beside it',
-		`${JSON.stringify(cut.now.slice(0, 70))} btn=${JSON.stringify(cut.btn)}`);
+		'and the section says it in a sentence, with all three ways out beside it',
+		`${JSON.stringify(cut.now.slice(0, 70))} choices=${JSON.stringify(cut.btn)}`);
 
 	// ── 4. Granting it moves the ENGINE ──────────────────────────
-	await p.click('#hand-mode-pop .net-btn');
-	await p.waitForTimeout(500);
+	const pick = async (label) => {
+		await p.evaluate((l) => {
+			const b = [...document.querySelectorAll('#hand-mode-pop .net-opt')]
+				.find(x => x.textContent.trim() === l);
+			if (b) b.click();
+		}, label);
+		await p.waitForTimeout(500);
+	};
+	const ALWAYS = await p.evaluate(() => DaimondI18n.t('permmode.net_always'));
+	const EACH   = await p.evaluate(() => DaimondI18n.t('permmode.net_each'));
+	const NEVER  = await p.evaluate(() => DaimondI18n.t('permmode.net_never'));
+	await pick(ALWAYS);
 	const on = await readPop();
 	check(on.engine === 'allowed',
-		'GRANTING IT MOVES THE ENGINE, not merely the label on the button',
-		`engine=${on.engine}, btn now ${JSON.stringify(on.btn)}`);
+		'GRANTING IT MOVES THE ENGINE, not merely the label that was pressed',
+		`engine=${on.engine}`);
 	check(!on.marked,
 		'and the button stops saying the network is gone', `net-cut=${on.marked}`);
 
 	// ── 5. And it can be taken back ──────────────────────────────
-	await p.click('#hand-mode-pop .net-btn');
-	await p.waitForTimeout(500);
+	await pick(NEVER);
 	const off = await readPop();
-	await popClose();
 	check(off.engine === 'refused',
 		'AND IT CAN BE TAKEN BACK — the thing that was impossible',
 		`engine=${off.engine}`);
 	check(off.marked,
 		'with the button marked again, so the two never disagree',
 		`net-cut=${off.marked}`);
+	// The default is reachable again, which a two-state toggle would have lost.
+	await pick(EACH);
+	const back = await readPop();
+	check(back.engine === 'cut',
+		'and "ask once per chat" is still reachable, so nothing is a one-way door',
+		`engine=${back.engine}`);
+	await popClose();
+
+	// ── 7. THE ONE THAT MATTERS: a NEW chat is not asked again ───
+	//
+	// The reported defect, in the reporter's words: "I thought we got rid of this
+	// bullshit!" It had not been got rid of. The answer lived on the chat's engine,
+	// which is built per chat and does not survive a reload, so every new chat put
+	// the question again however many times it had been answered.
+	//
+	// Measured at the ENGINE and not by watching for a dialog, because `NetStep::Ask`
+	// is the only branch that raises one: a chat that reports `allowed` while marked
+	// has had the question answered before it could be put. A dialog watcher would
+	// also pass on a chat that simply never ran a command.
+	await popOpen();
+	await pick(ALWAYS);
+	await popClose();
+	await newChat(s);
+	await p.fill('#chat-input', '@text a brand new chat');
+	await p.click('#chat-send');
+	await p.waitForTimeout(3500);
+	await p.evaluate(() => DaimondCore.markRead());
+	await p.fill('#chat-input', '@text and it reads something');
+	await p.click('#chat-send');
+	await p.waitForTimeout(3500);
+	const fresh = await p.evaluate(() => ({
+		engine: DaimondCore.netState(),
+		marked: document.getElementById('hand-mode-chip').classList.contains('net-cut'),
+		dialog: !![...document.querySelectorAll('.dlg-card')].filter(c => c.getClientRects().length).length,
+	}));
+	check(fresh.engine === 'allowed',
+		'A CHAT THAT NEVER EXISTED WHEN YOU ANSWERED IS NOT ASKED AGAIN',
+		`engine=${fresh.engine}`);
+	check(!fresh.marked && !fresh.dialog,
+		'and nothing on screen interrupts it',
+		`net-cut=${fresh.marked}, dialog=${fresh.dialog}`);
 } finally {
 	await s.close();
 }

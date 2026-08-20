@@ -2613,14 +2613,15 @@
 	// The words are the four `DaimondApp::net_state` returns, and they are read by four
 	// literal `t()` calls in a switch rather than a composed key, because `i18ncheck`
 	// cannot follow a key it has to build.
-	'permmode.chat_head':    'This chat',
+	'permmode.net_head':    'The network',
 	'permmode.net_open':     'Nothing has been read from outside, so nothing is withheld.',
 	'permmode.net_cut':      'Something written by somebody else has been read, so commands run with no network.',
 	'permmode.net_allowed':  'Commands may reach the network.',
 	'permmode.net_refused':  'Commands run with no network.',
 	'permmode.net_bypass':   'Nothing is withheld in Bypass.',
-	'permmode.net_allow':    'Allow the network',
-	'permmode.net_withhold': 'Withhold the network',
+	'permmode.net_each':     'Ask once per chat',
+	'permmode.net_always':   'Always allow',
+	'permmode.net_never':    'Never',
 	'permmode.net_cut_mark': 'no network',
 
 	// The three rungs of the ladder, each with a name and a note, built by
@@ -2631,7 +2632,7 @@
 	// than the one it catches, so it is given up HERE and nowhere else -- the
 	// eleven other families keep it. What that costs: a seventh key under
 	// `permmode.` that nobody declares is not reported.
-	// i18n-family: permmode. = one-way ask ask_blurb guarded guarded_blurb bypass bypass_blurb -- the prefix is a namespace, not a set: thirty-four keys sit under it and six are rungs
+	// i18n-family: permmode. = one-way ask ask_blurb guarded guarded_blurb bypass bypass_blurb -- the prefix is a namespace, not a set: thirty-five keys sit under it and six are rungs
 	'permmode.ask':          'Ask every time',
 	'permmode.ask_blurb':    'Every command and every page fetch is put to you first.',
 	'permmode.guarded':      'Guarded',
