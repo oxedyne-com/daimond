@@ -2157,6 +2157,8 @@ pub struct Machine {
     pub home: Option<String>,
     /// What this hand says it can enforce.
     pub caps: Vec<String>,
+    /// This computer's name, where the hand said it.  Carried in `caps` as `host:<name>`.
+    pub host: Option<String>,
 }
 
 impl Machine {
@@ -2190,6 +2192,7 @@ impl Machine {
             os:   extract_json_string(status, "os").unwrap_or_default(),
             root: extract_json_string(status, "root").unwrap_or_default(),
             home: cap_value(&caps, "home").filter(|h| abs_dir(h)),
+            host: cap_value(&caps, "host").filter(|h| !h.trim().is_empty()),
             caps,
         }
     }
@@ -2199,7 +2202,7 @@ impl Machine {
     /// # Arguments
     /// * `root` - The absolute folder the hand's grant covers.
     pub fn at(root: &str) -> Self {
-        Self { os: String::new(), root: root.to_string(), home: None, caps: Vec::new() }
+        Self { os: String::new(), root: root.to_string(), home: None, host: None, caps: Vec::new() }
     }
 
     /// Whether the granted root is a path a fence can be expressed against.
@@ -14765,7 +14768,7 @@ mod tests {
     fn test_the_git_toolkit_grants_the_configuration_and_denies_every_credential() {
         let m = Machine {
             os: fmt!("linux"), root: fmt!("/home/u/work"),
-            home: Some(fmt!("/home/u")), caps: vec![fmt!("fence:linux")],
+            home: Some(fmt!("/home/u")), host: None, caps: vec![fmt!("fence:linux")],
         };
         let kit = Kit::resolve(&[Toolkit::Git.bound()], &m).expect("git resolves");
         assert!(kit.ro.contains(&fmt!("/home/u/.gitconfig")), "{:?}", kit.ro);

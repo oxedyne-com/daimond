@@ -471,7 +471,31 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) ->
 	if fence.rw.is_empty() && fence.ro.is_empty() {
 		return String::new();
 	}
-	let os = if m.os.trim().is_empty() { "this computer" } else { m.os.trim() };
+	// WHICH COMPUTER, BY NAME, wherever the hand said one.
+	//
+	// "this computer" is the phrase that cost a whole exchange on 2026-08-20. Asked to build
+	// and deploy, a daimon found no `cargo` and no `.git` and reported that the Rust toolchain
+	// was not installed and the repository did not exist. Both were true of the machine it was
+	// standing on -- the browser was open on the author's SECOND box, whose `~/usr` is a
+	// Syncthing copy with `target` and `.*` in its `.stignore`, so the repository and every
+	// build artefact are absent there by design. The user read "this computer" beside a
+	// terminal on the OTHER box, where both plainly exist, and concluded the daimon was
+	// hallucinating. So did I, and I told him so.
+	//
+	// Neither of them could have known. Nothing the daimon can reach names the host: the fence
+	// lists paths, the briefing named the operating system, and `Linux` is true of both
+	// machines. A name turns "the toolchain is not installed" into "the toolchain is not
+	// installed on gilgamesh", which is a sentence a person can act on and a daimon can be
+	// argued with about.
+	//
+	// It falls back exactly as before where the hand will not say -- an unnamed machine gets
+	// the old wording rather than an invented name.
+	let os = match (&m.host, m.os.trim()) {
+		(Some(h), "")   => fmt!("{}", h.trim()),
+		(Some(h), sys)  => fmt!("{} ({})", h.trim(), sys),
+		(None, "")      => fmt!("this computer"),
+		(None, sys)     => fmt!("{}", sys),
+	};
 	// "To a command" is load-bearing and costs two words. The file tools and the fence no longer
 	// answer alike -- a scope fences writing and running and leaves reading free
 	// (`tools::Bound::OnlyWriteUnder`), while a command's fence is both verbs -- so a briefing that
@@ -901,6 +925,39 @@ mod tests {
 		m.home = Some(fmt!("/home/u"));
 		m.caps = vec![fmt!("fence:linux"), fmt!("root:/home/u/ws"), fmt!("home:/home/u")];
 		m
+	}
+
+	/// The briefing NAMES THE COMPUTER, and says nothing invented where the hand will not.
+	///
+	/// The sentence "Commands run on this computer" is true of every machine at once, which is
+	/// how a daimon on the author's second box came to report that the Rust toolchain was not
+	/// installed and the git repository did not exist -- both true there, both false on the
+	/// machine he was reading it from, and nothing in the briefing able to tell the two apart.
+	/// See the comment in `machine_note`.
+	///
+	/// Asserted as the PAIR. A test for the name alone would pass on a briefing that invented
+	/// one for a hand that never said it, which is the worse of the two failures: a wrong name
+	/// is acted on, a missing name is only unhelpful.
+	#[test]
+	fn test_the_briefing_names_the_computer_when_the_hand_said_which_one() {
+		let mut m = machine();
+		m.host = Some(fmt!("gilgamesh"));
+		let b = diamond_bounds("diamonds/d1", &[fmt!("proj")], &[]);
+		let named = machine_note(&m, &b, NetStep::Give, Mode::default());
+		assert!(named.contains("gilgamesh"),
+			"the briefing did not say which computer: {}", named);
+		assert!(!named.contains("Commands run on this computer"),
+			"it named the machine and still said 'this computer': {}", named);
+		// The operating system survives beside it: a daimon writing a command line needs to
+		// know it is Linux, and the host name does not tell it that.
+		assert!(named.contains("linux"), "the system was lost with the wording: {}", named);
+
+		// A hand that will not say gets the old sentence, not an invented name.
+		let mut anon = machine();
+		anon.host = None;
+		let plain = machine_note(&anon, &b, NetStep::Give, Mode::default());
+		assert!(plain.contains("linux"), "{}", plain);
+		assert!(!plain.contains("gilgamesh"), "a name arrived from nowhere: {}", plain);
 	}
 
 	/// A Diamond with a folder attached, which is the only kind of Diamond that describes a

@@ -1,6 +1,6 @@
 {
 	"algo": "sha-256",
-	"source": "3e7010ba53e36ec1c16e45e6fb4e9384c33532138c7044049a966e0c8b2384c0",
+	"source": "f282219825a4b2c9fd8a61b7c5f7d08c09183256dc3a7eeab471cd87759517ae",
 	"toolchain": "1.90.0",
 	"build": "cargo build --release --manifest-path hand/Cargo.toml",
 	"binary": "hand/target/release/daimond-hand",
@@ -9,6 +9,7 @@
 		"Cargo.toml": "f02ccf4f037d17a321783629c604d17542bda72e7e1e38e00e4c3f30f1c00afa",
 		"README.md": "17829aa8501bb066dd4a775ac3338db2f1c94a614f5dea6cc5dbf5d0a09f81db",
 		"REVIEW.md": "10653e8851225b28e46d42df3dd23fbdc8a6ea9d4085ef271f75e4ddcdddbb96",
+		"examples/fenceprobe.rs": "dc6030adf3108e41f142ac82a6b3b211f9e1c7ac17744e09f9fc1a3224f6a9b7",
 		"install/README.md": "53343deaec6f5b21749e7797b9fe2904be5d356911f0e35fc90d5392202766c9",
 		"install/com.oxedyne.daimond.hand.json": "7239b6c2270ee9f93f2bdcb130740824f8b4da2e2f5d79d083977486cdfd3fe5",
 		"install/install.sh": "a70698a3efe58915114e2ad388063b9e46df9e38218a5c04a05273bae73d23b4",
@@ -19,7 +20,7 @@
 		"src/fence.rs": "bc73a5868b84fcb448a16d10e7cf2b2dcd19850e60e284c593f4b232bff4d7c1",
 		"src/journal.rs": "ba1a0fe1f668c8d28e32ae072dd20f590feb306794c209b9196f049f1a02c161",
 		"src/lib.rs": "94c6560aab40840f15aad50fe9dbd6ff7bded98d738edd66e3a8861c1966cadf",
-		"src/main.rs": "1ca4b3482db0a567d49f8ed55909451490f79d6726a7116d1cdfa34b8bf44320",
+		"src/main.rs": "944b6f56d54d4bf44fea8ff5c72e7a797aa8526b41dd3eed2d6750f537e898b8",
 		"src/pty.rs": "892b4024dd9f2ad544b7b59b3ca4ac69c545562dc015cd563823de0dda6994ba",
 		"src/seccomp.rs": "9c4ab27ecebf6fd6833daff1f53839aa03cd422f5b71928410de6e7ab51bb76a",
 		"src/wire.rs": "bb4b5983b65f023313beb492288f155aeaa608d79bdf1d5943bcd8e05b7cddd1"

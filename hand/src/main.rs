@@ -1307,6 +1307,28 @@ impl Desk {
             Ok(h) if h.starts_with('/') => caps.push(fmt!("home:{}", h)),
             _ => {},
         }
+        // WHICH COMPUTER THIS IS. Rides beside `root:` and `home:` for the same reason and
+        // with the same apology about the wire.
+        //
+        // On 2026-08-20 a daimon was asked to build and deploy, found no `cargo` and no
+        // `.git`, and reported that the Rust toolchain was not installed and the repository
+        // did not exist. Both were true where it was standing and false where the user was:
+        // the browser was open on the author's SECOND machine, whose `~/usr` is a Syncthing
+        // copy, and `.stignore` there holds `target` and `.*` -- so the repository and every
+        // build artefact are absent by design and always will be.
+        //
+        // Nothing the daimon could reach could have told it that. The briefing named the
+        // operating system and the fence and never the HOST, so "this machine" meant a
+        // machine it could not name, and the user -- reading it beside a terminal on the
+        // other box -- read it as a claim about the one in front of him. He spent a round
+        // telling it that cargo was at a path where, on that computer, it genuinely was not.
+        //
+        // A name costs nine bytes and turns "the toolchain is not installed" into "the
+        // toolchain is not installed on gilgamesh", which is a sentence somebody can act on.
+        match hostname() {
+            Some(h) => caps.push(fmt!("host:{}", h)),
+            None    => {},
+        }
         if !self.say(Resp::Hello {
             proto:   daimond_hand::PROTO,
             host:    fmt!("{}", daimond_hand::HOST_NAME),
@@ -1865,6 +1887,25 @@ fn hidden_in_home(p: &Path) -> Option<String> {
 /// # Arguments
 /// * `p`    - The path.
 /// * `home` - The home directory it may be under.
+/// This computer's name, or `None` where it will not say.
+///
+/// `/etc/hostname` first because it is a file the fence can be given and `gethostname` is a
+/// syscall the seccomp filter would have to allow; `HOSTNAME` after it, which a shell exports
+/// and a bare service does not. An empty or absurd answer is treated as no answer -- a briefing
+/// that names the machine wrongly is worse than one that does not name it.
+fn hostname() -> Option<String> {
+    let from_file = std::fs::read_to_string("/etc/hostname").ok()
+        .map(|s| s.trim().to_string());
+    let h = match from_file {
+        Some(s) if !s.is_empty() => s,
+        _ => std::env::var("HOSTNAME").unwrap_or_default().trim().to_string(),
+    };
+    if h.is_empty() || h.len() > 64 || h.contains(char::is_whitespace) {
+        return None;
+    }
+    Some(h)
+}
+
 fn hidden_under(p: &Path, home: &Path) -> Option<String> {
     let rest = match p.strip_prefix(home) {
         Ok(r)  => r,
