@@ -2593,11 +2593,35 @@
 	// have and have not switched off.
 	'permmode.title':        'Permission mode',
 	'permmode.lead':         'What Daimond does without asking',
-	'permmode.chip_help':    'Permission mode: what Daimond does without asking',
+	// The hover said 'Permission mode: what Daimond does without asking' -- the CATEGORY,
+	// which is the one thing a person hovering a button marked Guarded already knows. What
+	// it governs was written and hidden a click away in the rung blurbs. So the tooltip is
+	// composed in `handmode.js` from the current rung's name and blurb, and this is only
+	// what a surface with no rung to hand can say.
+	'permmode.chip_help':    'What Daimond does without asking',
 	'permmode.chip_aria':    'Permission mode: {mode}. Change it.',
 	'permmode.astat':        'Permissions: {mode}',
-	'permmode.never':        'No mode changes the fence a command runs inside, the folders a Diamond can reach, or the journal that records what ran.',
+	'permmode.never':        'No mode moves the fence, a Diamond’s folders, or the journal.',
 	'permmode.failed':       'That permission mode could not be set, so nothing changed.',
+
+	// ── This chat's network ────────────────────────────────────
+	// The rungs above are one setting for the whole app; this is one chat's own state,
+	// which is why it is a section and not a fourth rung. Before it existed there was no
+	// way to see whether a chat was cut off, no way to grant it in advance, and -- once
+	// answered -- no way to change your mind: the answer was written once and kept.
+	//
+	// The words are the four `DaimondApp::net_state` returns, and they are read by four
+	// literal `t()` calls in a switch rather than a composed key, because `i18ncheck`
+	// cannot follow a key it has to build.
+	'permmode.chat_head':    'This chat',
+	'permmode.net_open':     'Nothing has been read from outside, so nothing is withheld.',
+	'permmode.net_cut':      'Something written by somebody else has been read, so commands run with no network.',
+	'permmode.net_allowed':  'Commands may reach the network.',
+	'permmode.net_refused':  'Commands run with no network.',
+	'permmode.net_bypass':   'Nothing is withheld in Bypass.',
+	'permmode.net_allow':    'Allow the network',
+	'permmode.net_withhold': 'Withhold the network',
+	'permmode.net_cut_mark': 'no network',
 
 	// The three rungs of the ladder, each with a name and a note, built by
 	// `handmode.js:44-45` from `MODES`. Declared ONE-WAY because `permmode.` is a
@@ -2607,29 +2631,35 @@
 	// than the one it catches, so it is given up HERE and nowhere else -- the
 	// eleven other families keep it. What that costs: a seventh key under
 	// `permmode.` that nobody declares is not reported.
-	// i18n-family: permmode. = one-way ask ask_blurb guarded guarded_blurb bypass bypass_blurb -- the prefix is a namespace, not a set: twenty-five keys sit under it and six are rungs
+	// i18n-family: permmode. = one-way ask ask_blurb guarded guarded_blurb bypass bypass_blurb -- the prefix is a namespace, not a set: thirty-four keys sit under it and six are rungs
 	'permmode.ask':          'Ask every time',
-	'permmode.ask_blurb':    'Every command is put to you before it runs, and Daimond asks before it fetches any page.',
+	'permmode.ask_blurb':    'Every command and every page fetch is put to you first.',
 	'permmode.guarded':      'Guarded',
-	'permmode.guarded_blurb': 'Commands run without asking. Once a turn has read a page, an email or a build log, Daimond asks before reaching out: once for that turn’s commands, and again for each new site it fetches.',
+	'permmode.guarded_blurb': 'Commands run. Once something written by somebody else has been read, Daimond asks before reaching out.',
 	'permmode.bypass':       'Bypass',
-	'permmode.bypass_blurb': 'Nothing is asked. Commands run and pages are fetched, whatever the turn has read.',
+	'permmode.bypass_blurb': 'Nothing is asked, whatever has been read.',
 
 	'permmode.bypass_title': 'Stop asking?',
-	'permmode.bypass_body':  'Bypass stops the asking. Daimond runs commands on your machine and fetches pages it chose without putting either to you, including on a turn that has already read a web page, an email, or a build log written by somebody else.\n\nThat last case is what you are giving up. It is where something you did not write could talk Daimond into sending your work somewhere.\n\nBypass leaves the rest alone. A command still runs inside the same fence; each Diamond still reaches only its own folders; the system-call filter under it is untouched; text from outside is still marked as somebody else’s words; and every command still goes into the machine hand’s journal, so what ran can be checked afterwards.\n\nYou will not be asked this again.',
+	'permmode.bypass_body':  'Commands run on your machine and pages are fetched without asking — including after Daimond has read a page, an email or a build log written by somebody else.\n\nThat last case is what you give up: where something you did not write could talk Daimond into sending your work somewhere.\n\nUntouched: the fence a command runs inside, each Diamond’s own folders, the system-call filter, and the journal you can check afterwards — and text from outside is still marked as somebody else’s words.\n\nYou will not be asked again.',
 	'permmode.bypass_ok':    'Use bypass',
 
 	'permmode.run_title':    'Run this command?',
 	'permmode.run_body':     'Daimond wants to run a command on your machine.\n\n{cmd}\n\nin {cwd}\n\nThe “ask every time” permission mode puts every command to you first.',
 	'permmode.run_ok':       'Run it',
 
-	// The network question a tainted turn's first command puts (`hand/REVIEW.md` §1.13,
+	// The network question a marked chat's first command puts (`hand/REVIEW.md` §1.13,
 	// remedy 2). Not the same question as `run_body` above and it must not read like it:
 	// that one asks whether a command may RUN, this one asks whether it may REACH OUT,
-	// and a no here still runs the command. Both halves of the answer are said, because
-	// a person deciding needs to know what a yes covers and what a no costs.
-	'permmode.net_title':    'Let this turn reach the network?',
-	'permmode.net_body':     'This turn has already read something from outside your workspace — a page, an email, or a command’s own output. Daimond wants to run a command that can reach the network.\n\n{cmd}\n\nin {cwd}\n\nWhatever it read could have chosen where that command goes. Yes covers every command for the rest of this turn. No runs the command anyway, with no network — and that is also what happens if you say nothing.',
+	// and a no here still runs the command. Both halves of the answer are still said,
+	// because a person deciding needs to know what a yes covers and what a no costs.
+	//
+	// IT SAID "THIS TURN" AND MEANT THIS CHAT. The memory lives on the chat's own engine
+	// object, which lasts until the tab is reloaded -- so a user who read the word and
+	// expected to be asked again next message was told something untrue by the one
+	// sentence in it that was meant to be reassuring. It now says which conversation it
+	// covers, and points at the control that can change it afterwards.
+	'permmode.net_title':    'Let this chat reach the network?',
+	'permmode.net_body':     'Daimond has read something written by somebody else, so commands are running with no network. Whatever it read could choose where this one goes.\n\n{cmd}\n\nin {cwd}\n\nYes covers the commands that follow, and the permissions button can change it afterwards. No runs the command anyway, with no network — and so does saying nothing.',
 	'permmode.net_ok':       'Allow the network',
 
 	// A dispatched worker asking to act on a page. Nobody is reading its

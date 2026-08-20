@@ -100,7 +100,14 @@ const explainsBypass = (d) => ({
 	asking:   /\b(stops? (the )?asking|without (asking|putting)|no longer asks?)\b/i.test(d)
 		&& /\bcommands?\b/i.test(d) && /\b(machine|computer)\b/i.test(d),
 	// So does fetching a page the model chose for itself.
-	fetching: /\b(fetch(es|ing)?|opens?|requests?|loads?)\b/i.test(d) && /\b(pages?|web|url)\b/i.test(d),
+	//
+	// `fetched` is in the alternation because it was NOT, and the copy rewrite of
+	// 2026-08-19 reddened this check by writing "pages are fetched" -- the passive of
+	// the very verb being looked for. The instrument could see three inflections of
+	// its own keyword and not the fourth, so a dialog saying exactly the right thing
+	// failed. The property is that the dialog says pages get fetched; the voice it
+	// says it in is not the property.
+	fetching: /\b(fetch(es|ing|ed)?|opens?|requests?|loads?)\b/i.test(d) && /\b(pages?|web|url)\b/i.test(d),
 	// And it holds even on a turn that has read somebody else's words.
 	injected: /\b(somebody|someone) else\b|\bwritten by (somebody|someone)\b/i.test(d)
 		&& /\b(already read|has read|a turn that)\b/i.test(d),

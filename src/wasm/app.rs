@@ -303,6 +303,58 @@ impl DaimondApp {
         self.registry.ctx.is_unsupervised()
     }
 
+    /// What this chat's commands may do about the network, in one word for the control that shows
+    /// it.
+    ///
+    /// Composed by [`crate::tools::net_step`], the same function [`crate::tools::Tool::run`] builds
+    /// the fence from, so the word on screen and the network a command actually gets are one
+    /// decision.  A second reading of the flags here would be a view that can disagree with the
+    /// wire, which is the fault the Wire view exists to avoid.
+    ///
+    /// Until this existed there was no way to find out whether a chat was cut off except to run a
+    /// command and be interrupted by the question.
+    ///
+    /// * `open` -- nothing is withheld: the chat has read nothing from outside, or the rung
+    ///   withholds nothing.
+    /// * `cut` -- withheld, and the next command puts the question.
+    /// * `allowed` -- withheld, and the user gave it back.
+    /// * `refused` -- withheld, and the user said no.
+    /// * `alone` -- withheld with nobody to ask, which is a worker rather than a chat.
+    pub fn net_state(&self) -> String {
+        let ctx  = &self.registry.ctx;
+        let step = crate::tools::net_step(
+            crate::tools::mode(), ctx.net_risk(), ctx.is_unsupervised(), ctx.net_consent());
+        match step {
+            crate::tools::NetStep::Give     => "open",
+            crate::tools::NetStep::Restored => "allowed",
+            crate::tools::NetStep::Ask      => "cut",
+            crate::tools::NetStep::Withhold =>
+                if ctx.is_unsupervised() { "alone" } else { "refused" },
+        }.to_string()
+    }
+
+    /// Set what this chat's commands may do about the network, from the user's own control.
+    ///
+    /// Returns the state that is now in force, read back out of the engine rather than assumed --
+    /// the discipline every security mark set from JavaScript is held to here, because every
+    /// silent failure in this direction is a page claiming a fence it has not got.
+    ///
+    /// `allow` and `refuse` answer for this chat; anything else forgets the answer, so the next
+    /// command asks again.  It may overwrite, which the dialog's own recorder may not: see
+    /// [`crate::tools::ToolContext::override_net_consent`] for why those are different acts.
+    ///
+    /// # Arguments
+    /// * `answer` - `allow`, `refuse`, or anything else to forget it.
+    pub fn set_net_answer(&self, answer: &str) -> String {
+        let v = match answer {
+            "allow"  => Some(crate::tools::Verdict::Allow),
+            "refuse" => Some(crate::tools::Verdict::Deny),
+            _        => None,
+        };
+        self.registry.ctx.override_net_consent(v);
+        self.net_state()
+    }
+
     /// Offer this agent the dispatch tool, so the user's own chat can send workers out.
     ///
     /// NOT in [`crate::tools::Tool::browser`], which is the list a worker is built from too: a

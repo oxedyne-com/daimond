@@ -2928,6 +2928,26 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .mode-chip[data-mode="ask"]    .mode-chip-dot { background: var(--ok); }
 .mode-chip[data-mode="bypass"] .mode-chip-dot { background: var(--accent); }
+/* This chat has lost the network, which outranks the rung's own tint on the one
+   mark the chip has. No conflict with the bypass accent above: bypass withholds
+   nothing, so a bypass chip is never cut. LAST, so it wins on order.
+
+   The dot is the right place for it because the dot was never carrying anything
+   -- the rung is the word beside it, and index.html says so: "The word IS the
+   state; the accent is only so the eye lands." The colour alone is not the
+   signal; `handmode.js` puts "no network" into the chip's aria-label, and the
+   popover says it in a sentence. */
+/* THE PILL'S OWN EDGE, not only the dot. Tried the dot alone first, twice: amber
+   against grey is a 6px difference somebody has to already know about, and an
+   open ring inside 6px leaves a 2px hole that reads at real size as a slightly
+   lighter dot rather than as a ring. Both were looked at, blown up 8x, and
+   rejected there -- the sweep would have passed either.
+
+   The edge is 60px of line instead of 6px of fill, it costs no width on a phone,
+   and it does not disturb the ladder's own colours. The dot follows it so the two
+   marks are one signal. */
+.mode-chip.net-cut { border-color: var(--warn); }
+.mode-chip.net-cut .mode-chip-dot { background: var(--warn); }
 
 /* The picker. `.pop` already carries the surface, the shadow and the scroll. */
 .mode-pop .mode-row {
@@ -2945,6 +2965,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .mode-pop .mode-row-name { color: var(--text-primary); font-size: var(--fs-xs); }
 .mode-pop .mode-row-blurb { color: var(--text-secondary); font-size: var(--fs-2xs); line-height: 1.4; }
 .mode-pop .mode-row:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* This chat's own network, below the rungs. `.pop-head` already draws the rule
+   that separates the two scopes, so the note under it must not draw a second one
+   three pixels lower. */
+.mode-pop .net-now { border-top: none; margin-top: 0; padding: 2px 6px 0; color: var(--text-secondary); }
+.mode-pop .net-btn { margin: 8px 6px 2px; }
 
 /* ── Triggered actions, in a Diamond's settings dialog ───────────
    One row per action: its light, what it is in words, and the way in.

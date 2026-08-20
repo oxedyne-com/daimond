@@ -14,6 +14,14 @@
  * the user lives in i18n/en.js under `permmode.`, and the wording that says it
  * to the model lives in Rust (src/prompts.rs), so neither can drift alone.
  *
+ * A SECOND AXIS lives in the same popover and is not a fourth rung: the rungs
+ * are one setting for the whole app, and whether ONE CHAT's commands may reach
+ * the network is that chat's own state. It is here rather than in a chip of its
+ * own because the button already claims this ground -- its hover text promised
+ * "what Daimond does without asking", which is precisely this question -- and a
+ * second permissions control beside one making that promise is two answers to
+ * one thing. See `netState`/`setNet`.
+ *
  * Two rules about the surface, and they pull opposite ways on purpose:
  *
  *   VISIBLE   the mode is a word in the chat header, beside the model. A mode
@@ -43,6 +51,35 @@
 
 	function label(name) { return t('permmode.' + name); }
 	function blurb(name) { return t('permmode.' + name + '_blurb'); }
+
+	/// What this chat's network state says, as a sentence.
+	///
+	/// A switch of LITERAL keys and not `t('permmode.net_' + state)`, because
+	/// `i18ncheck` cannot follow a key a call site builds: a composed one would
+	/// have to be declared indirect, and five sentences that no sweep can see are
+	/// five sentences that quietly stop being translated.
+	function netSays(state) {
+		switch (state) {
+			case 'open':    return t('permmode.net_open');
+			case 'cut':     return t('permmode.net_cut');
+			case 'allowed': return t('permmode.net_allowed');
+			case 'refused': return t('permmode.net_refused');
+			default:        return '';
+		}
+	}
+
+	/// This chat's network state, or '' where no chat can be asked -- before the
+	/// engine exists, or on a surface that holds no conversation.
+	///
+	/// Bypass is answered here rather than in the wasm, which correctly reports
+	/// `open`: the rung withholds nothing, so there is nothing to grant, and a
+	/// button offering to grant it would do nothing and say it had.
+	function netState() {
+		if (current === 'bypass') return 'bypass';
+		if (typeof cfg.netGet !== 'function') return '';
+		try { return String(cfg.netGet() || ''); }
+		catch (e) { return ''; }
+	}
 
 	/// What was saved, or the guarded rung. A stored value this build does not
 	/// know is NOT rounded to the nearest thing: it falls back, because the safe
@@ -84,7 +121,19 @@
 			// it is marked as "not the default" rather than scolded — and the word
 			// carries the state regardless, so nothing rests on the colour.
 			chip.classList.toggle('accent', current === 'bypass');
-			chip.setAttribute('aria-label', t('permmode.chip_aria', { mode: label(current) }));
+			// The hover names what THIS rung does. It used to name the category --
+			// "Permission mode: what Daimond does without asking" -- which is the one
+			// thing somebody hovering a button marked Guarded can already see, while
+			// the sentence that answers them sat a click away in the popover.
+			chip.title = label(current) + ' — ' + blurb(current);
+			// A chat whose commands have lost the network says so on the button,
+			// because it is a state that changes what a command can do and nothing
+			// on screen showed it. The dot was already in the markup doing nothing.
+			var ns = netState();
+			var cut = (ns === 'cut' || ns === 'refused');
+			chip.classList.toggle('net-cut', cut);
+			chip.setAttribute('aria-label', t('permmode.chip_aria', { mode: label(current) })
+				+ (cut ? ' ' + t('permmode.net_cut_mark') : ''));
 		}
 		var row = document.getElementById('astat-hand');
 		if (row) {
@@ -173,11 +222,65 @@
 		foot.className = 'pop-note';
 		foot.textContent = t('permmode.never');
 		pop.appendChild(foot);
+		renderNet();
+	}
+
+	/// This chat's own network, under the rungs and under a head of its own.
+	///
+	/// The head is what carries the scope: everything above it is the whole app
+	/// and everything below it is this conversation, and without that line the
+	/// section reads as a fourth rung -- which it is not, and which would make a
+	/// per-chat state look like a setting that outlives the chat.
+	///
+	/// Nothing is drawn where there is no chat to answer for.
+	function renderNet() {
+		var state = netState();
+		if (!state) return;
+		var head = document.createElement('div');
+		head.className = 'pop-head';
+		// THE HEAD CARRIES THE SCOPE, which is why the sentences below it do not
+		// name one: everything above this line is the whole app, everything below it
+		// is the conversation on screen.
+		head.textContent = t('permmode.chat_head');
+		pop.appendChild(head);
+		var line = document.createElement('p');
+		line.className = 'pop-note net-now';
+		line.textContent = (state === 'bypass') ? t('permmode.net_bypass') : netSays(state);
+		pop.appendChild(line);
+		// Bypass withholds nothing, so there is nothing to grant and no button.
+		if (state === 'bypass') return;
+		// The button says the move, not the state -- the state is the line above it.
+		// It is offered on an `open` chat too, which is the case the whole section was
+		// asked for: an answer given in advance is a question never put.
+		var allowed = (state === 'allowed');
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.className = 'chip-btn net-btn' + (allowed ? '' : ' accent');
+		b.textContent = allowed ? t('permmode.net_withhold') : t('permmode.net_allow');
+		b.addEventListener('click', function () { setNet(allowed ? 'refuse' : 'allow'); });
+		pop.appendChild(b);
+	}
+
+	/// Move this chat's network, and draw what the ENGINE says afterwards.
+	///
+	/// Read back rather than assumed, which is the discipline every security mark
+	/// set from JavaScript is held to here: a popover showing "allowed" over an
+	/// engine still withholding is worse than either state on its own.
+	function setNet(answer) {
+		if (typeof cfg.netSet !== 'function') return;
+		try { cfg.netSet(answer); }
+		catch (e) { if (typeof cfg.notice === 'function') cfg.notice(t('permmode.failed')); }
+		draw();
+		if (pop && !pop.hidden) render();
 	}
 
 	function open(anchor) {
 		if (!pop) return;
 		if (!pop.hidden) { close(); return; }
+		// The chip too, and not only the popover about to be drawn over it. Opening
+		// the menu is the one moment the state is certainly being read, and a button
+		// left saying the opposite of the panel hanging off it is worse than either.
+		draw();
 		render();
 		pop.hidden = false;
 		if (chip) chip.setAttribute('aria-expanded', 'true');
@@ -203,6 +306,11 @@
 	/// `apply` is the wasm setter, which only `daimond.js` can reach: this file
 	/// is a classic script and the wasm is a module. `confirm` and `notice` are
 	/// the app's own dialog and toast, for the same reason.
+	///
+	/// `netGet` and `netSet` reach the CURRENT chat's engine, which only the app
+	/// knows -- this file has no notion of which conversation is on screen, and
+	/// must not acquire one: a permission surface that picked its own subject
+	/// could answer for a chat the user is not looking at.
 	function init(opts) {
 		cfg = opts || {};
 		chip = document.getElementById('hand-mode-chip');
@@ -229,6 +337,14 @@
 
 	window.DaimondHandMode = {
 		init: init,
+		/// Redraw the chip from what is in force NOW.
+		///
+		/// The rung only moves when this file moves it, so the chip could always
+		/// draw itself. This chat's network cannot: a turn that reads a page marks
+		/// the chat while the popover is shut, and the mark on the button is the
+		/// only thing on screen that says so. The app calls this where the
+		/// conversation on screen changes and where a turn ends.
+		refresh: draw,
 		get:  function () { return current; },
 		set:  set,
 		list: function () {

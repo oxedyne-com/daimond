@@ -5102,6 +5102,23 @@ impl ToolContext {
             c.net_consent = Some(v);
         }
     }
+
+    /// Replace the answer, because the user moved a control they can SEE rather than answered a
+    /// question that interrupted them.
+    ///
+    /// [`ToolContext::set_net_consent`] refuses to overwrite and must keep refusing: two answers
+    /// to one question is how a race turns a no into a yes.  This is the other case entirely.  A
+    /// person looking at a chip that says the network is cut, and pressing it, is not a second
+    /// answer to the dialog's question -- it is the first answer to a different one, and its whole
+    /// value is that a no can be taken back.  Nothing in the tool loop may call it.
+    ///
+    /// `None` puts the chat back to unanswered, so the next command asks again.
+    ///
+    /// # Arguments
+    /// * `v` - What the user set it to, or `None` to forget the answer.
+    pub fn override_net_consent(&self, v: Option<Verdict>) {
+        lock_cache(&self.read_seen).net_consent = v;
+    }
 }
 
 /// Maximum bytes returned from a file read / command output before
@@ -12215,6 +12232,56 @@ mod tests {
         c.set_net_consent(Verdict::Deny);
         c.set_net_consent(Verdict::Allow);
         assert_eq!(Some(Verdict::Deny), c.net_consent(), "a second answer overwrote the first");
+    }
+
+    /// ...and the user may still take it back, which is the whole point of a control they can see.
+    ///
+    /// Held together with the test above deliberately: the two rules read as contradictory and are
+    /// not, so a later edit that "tidies" one into the other breaks a property nothing else states.
+    #[test]
+    fn test_the_user_can_take_an_answer_back_though_the_dialog_cannot() {
+        let c = ctx();
+        c.set_tainted();
+        c.set_net_consent(Verdict::Deny);
+        // What the chip does: a no, looked at and reversed.
+        c.override_net_consent(Some(Verdict::Allow));
+        assert_eq!(Some(Verdict::Allow), c.net_consent(), "a no could not be taken back");
+        assert_eq!(NetStep::Restored, net_step(Mode::Guarded, c.net_risk(), false, c.net_consent()),
+            "the chat did not get the network the user had just restored");
+        // And back the other way, which matters more: a yes given in passing is undone.
+        c.override_net_consent(Some(Verdict::Deny));
+        assert_eq!(NetStep::Withhold, net_step(Mode::Guarded, c.net_risk(), false, c.net_consent()),
+            "a yes could not be withdrawn");
+        // Forgetting it puts the chat back to being asked, rather than to either answer.
+        c.override_net_consent(None);
+        assert_eq!(None, c.net_consent(), "the answer was not forgotten");
+        assert_eq!(NetStep::Ask, net_step(Mode::Guarded, c.net_risk(), false, c.net_consent()),
+            "a forgotten answer did not put the question back");
+        // The dialog's own recorder still refuses to overwrite, so nothing above loosened it.
+        c.set_net_consent(Verdict::Allow);
+        c.set_net_consent(Verdict::Deny);
+        assert_eq!(Some(Verdict::Allow), c.net_consent(),
+            "the tool loop's recorder started overwriting");
+    }
+
+    /// The user's control moves the network and nothing else -- the same clause the rung and the
+    /// dialog's yes are held to, applied to the third way an answer can arrive.
+    #[test]
+    fn test_the_users_own_answer_moves_nothing_but_the_network() {
+        let m = rung_machine();
+        let b = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[fmt!("refs")]);
+        let c = ToolContext { no_write: b.clone(), ..ctx() };
+        c.set_tainted();
+        let before = fence_spec(&c.no_write, &m, true);
+        c.override_net_consent(Some(Verdict::Allow));
+        let after = fence_spec(&c.no_write, &m,
+            !net_step(Mode::Guarded, c.net_risk(), false, c.net_consent()).gives_net());
+        assert!(!before.rw.is_empty() && !before.ro.is_empty(),
+            "the reference fence is empty, so this test would pass against anything");
+        assert_eq!(before.rw, after.rw, "the user's answer moved a writable root");
+        assert_eq!(before.ro, after.ro, "the user's answer moved a read-only root");
+        assert_eq!(before.deny, after.deny, "the user's answer moved a denial");
+        assert!(!before.net && after.net, "the one thing it is allowed to move did not move");
     }
 
     /// A yes moves the network and nothing else.  The same clause `test_a_rung_moves_nothing_but_

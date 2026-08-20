@@ -9766,6 +9766,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// two: a Diamond's fence is not a chat's, and a user may have rewritten one role prompt
 		// and not the other.
 		if (typeof renderWire === 'function') renderWire();
+		// And the permissions chip, which carries the same kind of fact: whether THIS
+		// conversation's commands have the network. Two chats side by side differ, and
+		// the mark is on a button that does not otherwise redraw.
+		if (window.DaimondHandMode && DaimondHandMode.refresh) DaimondHandMode.refresh();
 	}
 
 	/// Badge a recovered assistant message as interrupted, with a Continue button that runs the
@@ -13569,6 +13573,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { return (Wasm && Wasm.permission_mode) ? Wasm.permission_mode() : ''; }
 			catch (e) { return ''; }
 		},
+		/// Mark the conversation on screen as having read a stranger's words.
+		///
+		/// Published for `verify_netchip`, which has to reach the state the
+		/// permissions chip and its dialog both turn on. It is the SAME one-way flag
+		/// every real path sets -- a fetched page, a mail message, a command's own
+		/// output all end at `ToolContext::wrap_untrusted` -- so what the verifier
+		/// measures is the real state; what it does not cover is WHICH reads produce
+		/// it, which `test_the_turn_is_recorded_as_tainted_only_when_it_reads_a_
+		/// strangers_words` covers in Rust.
+		markRead:        function () {
+			if (current && current.app && current.app.set_tainted) {
+				current.app.set_tainted();
+				return true;
+			}
+			return false;
+		},
+		/// What this chat's commands may do about the network, from the ENGINE.
+		///
+		/// The same reasoning as `permissionMode` above: a check reading the page's
+		/// idea of it would be measuring the drawing against itself. Published so
+		/// `verify_netchip` can assert that pressing the button moved the thing that
+		/// decides, rather than the label on the button that was pressed.
+		netState:        function () {
+			try {
+				return (current && current.app && current.app.net_state)
+					? current.app.net_state() : '';
+			} catch (e) { return ''; }
+		},
 		/// Hold Tab inside `card` for one keydown. Published because the two
 		/// popovers in workspace.js are `role="dialog"` and have to keep the
 		/// promise that makes -- and a second copy of a focus trap is a second
@@ -14908,6 +14940,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// drain starts another turn, which takes the same lock again, and asking for
 		// it from inside would deadlock the tab.
 		drainQueue(chat, sawError || threw);
+		// A turn that read a page, an email or a command's own output has just cut this
+		// chat off from the network, and nothing else on screen would say so.
+		if (window.DaimondHandMode && DaimondHandMode.refresh) DaimondHandMode.refresh();
 	}
 
 	/// Which model a chat's workers run on: the chat's own.
@@ -31870,6 +31905,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				apply:   applyPermissionMode,
 				confirm: confirmDialog,
 				notice:  function (m) { toast(m, true); },
+				// THIS chat's network, not a chat of the surface's choosing. The
+				// permission popover has no idea which conversation is on screen and
+				// must not learn: the one it would answer for and the one the user is
+				// looking at are the same only by luck. An engine that has not been
+				// built yet answers '' and the section is not drawn.
+				// THE CONVERSATION ON SCREEN, which is `current` on every face. A
+				// Diamond's chat face is an ordinary chat record running through
+				// `ensureApp` like any other; `diamondApp` builds a SEPARATE client for
+				// the daimon's own steering turns, and that one is shared by every
+				// Diamond on the same model ("two Diamonds on the same model are the
+				// same client"). Reading it here was tried and reverted: it is not the
+				// conversation the chip sits above, and on a Diamond nobody had steered
+				// it does not exist at all, so the section simply vanished.
+				//
+				// WHAT THIS THEREFORE DOES NOT SHOW: a steering turn's own network
+				// state. Those turns can read and can run commands, on a client with
+				// its own taint and its own answer, and no control anywhere shows it.
+				//
+				// `current.app` and NOT `ensureApp(current)`: building an engine merely
+				// because somebody opened a menu would mint a chat's model, key and
+				// generation before they had said anything. A chat with no engine yet
+				// has read nothing, so there is nothing to show and nothing to grant.
+				netGet: function () {
+					return (current && current.app && current.app.net_state)
+						? current.app.net_state() : '';
+				},
+				netSet: function (answer) {
+					if (current && current.app && current.app.set_net_answer) {
+						current.app.set_net_answer(answer);
+					}
+				},
 			});
 			// Warm the write-ahead journal (it self-inits, but opening it now surfaces any storage
 			// problem before the first turn rather than during it).

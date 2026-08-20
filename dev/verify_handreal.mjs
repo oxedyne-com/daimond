@@ -499,7 +499,18 @@ async function allowHand(ms = 30000) {
 //
 // The answer is NO, which is the fence every command below has always been
 // measured against; a yes would silently change what each of them ran with.
-const NET_TITLE = 'Let this turn reach the network?';   // permmode.net_title
+// READ FROM THE APP, not copied out of it. This was the literal string, and on
+// 2026-08-19 `permmode.net_title` changed -- it said "this turn" and meant this
+// chat -- which would have left the watcher below never recognising the dialog
+// and therefore never answering it. That is not a red: it is the failure of
+// 2026-08-18, where an unanswered network dialog made `chat()` time out with the
+// turn still running and every assertion after it read ONE COMMAND LATE. A
+// verifier that silently measures the wrong command is worse than one that stops.
+//
+// `t()` falls back to the key's own name if the key is gone, which no dialog will
+// ever match, so a DELETED key stops this loudly instead of quietly.
+const netTitle = async (page) => await page.evaluate(() =>
+	(window.DaimondI18n ? DaimondI18n.t('permmode.net_title') : 'permmode.net_title'));
 let netAsked = 0;
 let netStop  = false;
 let netWatch = null;
@@ -514,7 +525,7 @@ async function answerNet(page) {
 				if (h && h.textContent.indexOf(title) >= 0) return true;
 			}
 			return false;
-		}, NET_TITLE).catch(() => false);
+		}, await netTitle(page)).catch(() => false);
 		// PRESSED, rather than resolved from inside the page: the button is what
 		// a user has, and a question answered by reaching past it proves nothing
 		// about the one they are actually shown.
