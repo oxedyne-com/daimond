@@ -258,6 +258,13 @@ async function restartGateway() {
 }
 
 const s = await open({ name: 'sync', signIn: true, connect: true, defaults: false });
+// NOTHING LEAVES THIS MACHINE. The sync checks seed a real Groq provider with a key to
+// prove the provider store travels, and from 2026-08-20 a catalogue over a day old asks
+// for itself -- so a suite that had never been a client of anybody's API quietly became
+// one. The seeded row is a fixture and its host is stubbed rather than reached.
+await s.page.route('https://api.groq.com/**', (r) => r.fulfill({
+	status: 200, contentType: 'application/json', body: JSON.stringify({ data: [] }),
+}));
 const { page } = s;
 let child = null;		// a second REAL device, paired in at (12)
 

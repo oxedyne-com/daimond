@@ -404,6 +404,10 @@
 		// were about a credential this row no longer holds.
 		delete p.credit;
 		delete probes[id];
+		// And the catalogue gate's memory, for the same reason: its floor and its failure count
+		// were earned by a credential this row no longer holds, and a key pasted to replace a
+		// revoked one should not wait out the backoff the revoked one collected.
+		delete lists[id];
 		save();
 		if (canProbeCredit(providerUrl(id))) {
 			fetchCredit(id).then(function (got) {
@@ -896,6 +900,20 @@
 	/// working and the age is no longer a footnote on the figure but the point of it.
 	var CREDIT_STALE_MS = 30 * 60 * 1000;
 
+	/// When a catalogue is old enough to be asked for again without anybody asking.
+	///
+	/// A provider publishes a model when it publishes one and tells nobody; a list a day old
+	/// has very likely missed something, and a list an hour old very likely has not. That is
+	/// the whole of the reasoning, and it is also why this is compiled in rather than offered:
+	/// every figure between an hour and a day produces the same experience for the same person,
+	/// so a control over it would be a choice with nothing on either side of it.
+	///
+	/// Two orders of magnitude above `CREDIT_STALE_MS` above, and the gap is the point. A
+	/// balance moves whenever the user spends or tops up; a catalogue moves when a company
+	/// ships. The two figures are next to each other so that neither is ever copied from the
+	/// other by somebody in a hurry.
+	var LIST_STALE_MS = 24 * 60 * 60 * 1000;
+
 	/// Per provider: `{ at, busy, ok, fails }` — when it was last ASKED, whether an ask is in
 	/// flight, whether the last completed one answered, and how many have failed in a row.
 	///
@@ -937,6 +955,152 @@
 				}).catch(function () { ageLines(); });
 			})(id);
 		}
+	}
+
+	// ── When the catalogue is asked for again ───────────────────────
+	// A balance goes wrong because the user spent or topped up. A LIST goes wrong for a reason
+	// nothing in this browser can see: the provider published something. The button beside the
+	// list is the deliberate way to find out, and it was the ONLY way — so a catalogue asked for
+	// on the day a key was pasted stayed that way until somebody thought to press it, which for
+	// the models a person actually uses is never. So it is also asked for by itself, at the two
+	// moments a person would expect it to be current: the panel coming up, and the app starting.
+	//
+	// THE GATE IS THE WHOLE OF THIS. `fetchModels` ends in `save()`, `save()` tells daimond.js
+	// the store changed, and daimond.js redraws this panel — so an ask made BY a redraw makes a
+	// redraw that makes an ask. It is the loop the comment above `refreshCredits` measured at
+	// four thousand requests, with two differences, both bad: this one runs against a third
+	// party rather than the same one twice, and it carries the user's own API key while it does
+	// it. Three things stop it, and all three are needed:
+	//
+	//   * BUSY — the redraw from `save()` happens while the first ask is still in flight, and so
+	//     does every redraw for a row expanded or a language changed in the meantime. Without
+	//     this, a tight run of redraws is a request each, because none of them has an answer
+	//     yet and the list is still as stale as it was.
+	//   * THE FLOOR — a FAILED ask writes nothing, so `fetched` stays old and staleness alone
+	//     would wave the next redraw straight through. The floor is what makes a refusal cost
+	//     one request rather than one per redraw.
+	//   * THE FAILURE COUNT — a provider that is refusing is not persuaded by being asked
+	//     faster, and a tab left open overnight would otherwise spend the night asking.
+	//
+	// A SEPARATE RECORD from `probes`, deliberately. "When the balance was last asked" and "when
+	// the list was last asked" are different facts about different endpoints, and one record
+	// answering both would have each of them lying about the other.
+
+	/// The shortest gap between two automatic asks for one provider's catalogue.
+	///
+	/// It governs the failing case and only that: a successful ask stamps `fetched`, after which
+	/// `LIST_STALE_MS` holds the next one off for a day. So it is set at the length of a network
+	/// hiccup rather than at anything to do with catalogues — a provider unreachable at boot
+	/// should get another chance when the panel is opened, and should not have spent a whole day
+	/// on one refusal.
+	var LIST_FLOOR_MS = 10 * 60 * 1000;
+
+	/// Per provider: `{ at, busy, ok, fails }`, the same shape and the same job as `probes`.
+	///
+	/// Memory only, and for the same reason: an attempt stamp restored from disk would hold back
+	/// the one ask a freshly loaded tab most needs.
+	var lists = {};
+
+	/// How long the gate holds this catalogue: the floor, doubled once per consecutive failure,
+	/// and never longer than the staleness it exists to notice. A provider refusing all day is
+	/// still asked once a day, which is what a provider answering perfectly gets anyway.
+	function listWait(id) {
+		var st = lists[id];
+		var n  = (st && st.fails) || 0;
+		return Math.min(LIST_FLOOR_MS * Math.pow(2, n), LIST_STALE_MS);
+	}
+
+	/// Whether an AUTOMATIC ask for this provider's catalogue is allowed right now. The button
+	/// under the list is the user asking, is not automatic, and does not come through here.
+	function listDue(id) {
+		var p = store.providers[id];
+		if (!p) return false;
+		// The minted row asks for its own list after every mint (`syncCredits`), which is a
+		// better moment than either of ours: the key it would be asked with did not exist a
+		// second earlier. Asking again here would be asking for work already done.
+		if (id === CREDITS) return false;
+		// No key, or a key sealed under a passphrase nobody has typed yet. Either way there is
+		// nothing to ask with, and an ask would spend a request to be told so.
+		if (!canRun(id)) return false;
+		var st = lists[id];
+		if (st) {
+			if (st.busy) return false;				// one in flight is one request already
+			if ((Date.now() - st.at) < listWait(id)) return false;
+		}
+		return (Date.now() - ms(p.fetched)) >= LIST_STALE_MS;
+	}
+
+	/// Ask one provider for its catalogue, silently.
+	///
+	/// The button reports what the provider said, because somebody pressed it and is waiting for
+	/// an answer. This did not ask, so it says nothing: a panel that opens with a provider's
+	/// error across it is blaming the user for arriving. The old list stands, and the line under
+	/// it goes on saying how old it is, which is the honest account of what happened. The
+	/// failure is counted, because that is the one thing that has to happen — see `listWait`.
+	async function askList(id) {
+		var st = lists[id] = {
+			at:    Date.now(),				// stamped BEFORE the request, so a slow one still counts
+			busy:  true,
+			ok:    lists[id] ? lists[id].ok : null,
+			fails: (lists[id] && lists[id].fails) || 0,
+		};
+		var got = false;
+		try {
+			await fetchModels(id);
+			got = true;
+		} catch (e) {
+			/* a revoked key, a typo in a URL, a rate limit: none of it was asked for */
+		} finally {
+			st.busy  = false;
+			st.done  = Date.now();
+			st.ok    = got;
+			st.fails = got ? 0 : st.fails + 1;
+		}
+	}
+
+	/// Ask every provider whose catalogue has gone stale, wherever the gate allows it.
+	///
+	/// Fire-and-forget, like `refreshCredits` beside it: nothing on screen may wait on somebody
+	/// else's server. An ask that answers redraws the panel through `save()`, which is how a
+	/// model published this morning arrives without anybody pressing anything.
+	function refreshLists() {
+		// Offline is not a refusal to hold against a provider — there is nothing to ask — so it
+		// returns before anything is stamped and nothing is counted against anybody.
+		if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+		for (var id in store.providers) {
+			if (!listDue(id)) continue;
+			askList(id);
+		}
+	}
+
+	/// Whether a check is already waiting for the panel to appear.
+	var showCheck = false;
+
+	/// Try the panel again one task after a redraw that found nothing on screen.
+	///
+	/// `settings()` in daimond.js draws this list and THEN reveals the drawer holding it, so at
+	/// the instant of that draw the list has no box and `onScreen` is quite correctly false —
+	/// which means the redraw the trigger was written for, the panel being OPENED, is the one
+	/// redraw the trigger misses. Measured: a click on Models asks nothing, and the ask waits
+	/// for whatever the user does next inside the panel. A task later the drawer is up and the
+	/// box is real, so the same test is asked again then.
+	///
+	/// The credit probe above has the same blind spot and is deliberately left with it: it has a
+	/// heartbeat behind it that catches the panel within the minute, this has none, and rewiring
+	/// somebody else's trigger is not what this change is.
+	///
+	/// One timer at a time. A run of redraws must not become a run of timers — that is the same
+	/// loop again wearing a different hat — and a single check is all any of them wanted.
+	function askWhenShown() {
+		if (showCheck || typeof setTimeout !== 'function') return;
+		showCheck = true;
+		setTimeout(function () {
+			showCheck = false;
+			// Still nothing on screen: the redraw was a sync pull or a change of language, and
+			// nobody is looking. The panel will be drawn again when somebody is.
+			if (!onScreen(document.getElementById('models-list'))) return;
+			refreshLists();
+		}, 0);
 	}
 
 	/// Ask a provider what is left on its key.
@@ -1811,7 +1975,17 @@
 		// stacking, and it TERMINATES this: a probe that answers redraws the panel, and a redraw
 		// asks again. Measured with the gate taken out, that loop reached four thousand requests
 		// in the seconds it took to hide and show the tab five times.
-		if (onScreen(el)) refreshCredits();
+		//
+		// The catalogue joins on exactly those terms, and needed its own gate to do it: an ask
+		// that answers ends in `save()`, and `save()` is a redraw. Same shape, same trap, and
+		// see the paragraph above `refreshLists` for what the second gate holds back that the
+		// first one could not have.
+		//
+		// The `else` is not decoration; see `askWhenShown`. The one redraw that matters most —
+		// the panel being opened — happens while the panel is still hidden, so the test above is
+		// false at exactly the moment it was written for.
+		if (onScreen(el)) { refreshCredits(); refreshLists(); }
+		else askWhenShown();
 		el.innerHTML = '';
 
 		var list = providers();
@@ -2314,6 +2488,14 @@
 		// When each key was last asked, and how that went. A snapshot, so nothing outside this
 		// file can move the floor the probes are held behind.
 		creditProbes:   function () { return JSON.parse(JSON.stringify(probes)); },
+		// Ask every provider whose catalogue has gone stale, if the gate allows it. Exported for
+		// the one caller that is not this file: daimond.js, at the moment the app finishes
+		// starting, which is the other occasion a list ought to be current.
+		refreshLists:   refreshLists,
+		// When each catalogue was last asked for, and how that went. A snapshot, like
+		// `creditProbes`, so nothing outside this file can move the floor the asks are held
+		// behind by writing to the record that holds them.
+		listAsks:       function () { return JSON.parse(JSON.stringify(lists)); },
 		setCreditBase:  setCreditBase,
 		creditFor:      creditFor,
 		all:            all,

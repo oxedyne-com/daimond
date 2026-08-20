@@ -162,9 +162,15 @@ async function scenario(label, patches) {
 				return r.fulfill(json({ data: { total_credits: or.total, total_usage: or.usage } }));
 			});
 			await page.route(`${OR}/models`, (r) => r.fulfill(json({ data: [{ id: 'z-ai/glm-5p2' }] })));
-			// A provider that has no such endpoint. Any request at all to it is a request to
-			// nowhere, so the whole host is counted rather than one path.
-			await page.route('https://api.fireworks.ai/**', (r) => { fw.hits++; return r.fulfill(json({}, 404)); });
+			// A provider that has no CREDIT endpoint. A request for one is a request to
+			// nowhere, so everything but the catalogue is counted -- the whole host used to
+			// be, and `/models` stopped being nowhere on 2026-08-20, when a stale catalogue
+			// began asking for itself. The route still covers the host so that nothing can
+			// leave this machine; only the counting narrowed.
+			await page.route('https://api.fireworks.ai/**', (r) => {
+				if (!/\/models(\?|$)/.test(new URL(r.request().url()).pathname + '')) fw.hits++;
+				return r.fulfill(json({}, 404));
+			});
 		},
 	});
 	const p = s.page;

@@ -17176,6 +17176,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var afterCredits = function () { grew('syncCredits'); };
 		try { syncCredits().then(afterCredits, afterCredits); }
 		catch (e) { afterCredits(); }
+		// And the same for the lists behind the user's OWN keys. `syncCredits` above re-asks the
+		// minted row's catalogue after every mint, so that one row has been current since the
+		// day it was built; a key the user pasted had nothing whatever doing this for it, and a
+		// catalogue read once at pasting is the catalogue that provider had that day. Keys are
+		// unsealed by this point in the boot, so there is something to ask with.
+		//
+		// Fire-and-forget like everything else on this path, and silent: the gate inside decides
+		// whether any of it becomes a request, and a provider that refuses says nothing to a
+		// user who did not ask.
+		if (window.DaimondModels) DaimondModels.refreshLists();
 		// The Email panel's entitlement is a signed read, so it could not have
 		// been fetched at boot -- the identity was still locked. Ask now that
 		// there is a session, or a returning user is told the account service is
