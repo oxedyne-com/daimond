@@ -7782,6 +7782,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				t('permmode.net_body', { cmd: shownNet, cwd: String(req.detail || '').slice(0, 300) }),
 				t('permmode.net_ok'),
 				{ title: t('permmode.net_title'), danger: true });
+			// A YES IS THE LAST ONE. It used to answer for this chat's engine only,
+			// which is built per chat and gone on reload -- so the next chat asked
+			// again, and the one after that, and a person who had said yes a dozen
+			// times had said it a dozen times to no lasting effect. Reported three
+			// times, the last two in anger, and rightly: consent that is discarded
+			// the moment it is given is not consent being sought, it is a habit
+			// being trained.
+			//
+			// Only a YES becomes standing. A no stays where it was said: refusing
+			// once is not a decision to refuse for ever, and making it one would be
+			// the same fault pointing the other way. The permissions button shows
+			// which it now is and takes it back.
+			if (okNet && window.DaimondHandMode && DaimondHandMode.setStandingNet) {
+				try { DaimondHandMode.setStandingNet('allow'); } catch (e) { /* asked again, no worse */ }
+			}
 			return okNet ? 'allow-net' : 'deny';
 		}
 		// A search is a destination this door cannot see. The wasm posts

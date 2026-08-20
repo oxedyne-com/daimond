@@ -870,7 +870,7 @@
 	'permmode.run_body': 'Daimond möchte einen Befehl auf deinem Rechner ausführen.\n\n{cmd}\n\nin {cwd}\n\nDie Stufe „jedes Mal fragen“ legt dir jeden Befehl zuerst vor.',
 	'permmode.run_ok': 'Ausführen',
 	'permmode.net_title': 'Diesem Chat den Zugang zum Netz erlauben?',
-	'permmode.net_body': 'Daimond hat etwas gelesen, das jemand anderes geschrieben hat, daher laufen Befehle ohne Netz. Was es gelesen hat, könnte bestimmen, wohin dieser Befehl geht.\n\n{cmd}\n\nin {cwd}\n\nJa gilt für die folgenden Befehle, und die Berechtigungsschaltfläche kann es danach ändern. Nein führt den Befehl trotzdem aus, ohne Netz — und das geschieht auch, wenn Sie nichts sagen.',
+	'permmode.net_body': 'Daimond hat etwas gelesen, das jemand anderes geschrieben hat, daher laufen Befehle ohne Netz. Was es gelesen hat, könnte bestimmen, wohin dieser Befehl geht.\n\n{cmd}\n\nin {cwd}\n\nJa, und Daimond fragt nicht mehr — die Berechtigungsschaltfläche nimmt es zurück. Nein führt den Befehl trotzdem aus, ohne Netz — und das geschieht auch, wenn Sie nichts sagen.',
 	'permmode.net_ok': 'Netz erlauben',
 	'permmode.act_worker_title': 'Ein Agent möchte auf einer Seite handeln',
 	'permmode.act_worker_body': 'Ein Agent, der eigenständig arbeitet, möchte auf {host} etwas anklicken. Du steuerst ihn nicht, und er kann dich nicht selbst fragen, also fragt Daimond. Ein Klick kann dein Geld ausgeben, eine Nachricht senden oder ein Formular abschicken, und nichts davon lässt sich rückgängig machen. Ein Ja erlaubt diesen einen Klick und nichts danach.',

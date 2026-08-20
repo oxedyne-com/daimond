@@ -866,7 +866,7 @@
 	'permmode.run_body': 'O Daimond quer rodar um comando na sua máquina.\n\n{cmd}\n\nem {cwd}\n\nO modo de permissão “perguntar sempre” mostra todo comando a você primeiro.',
 	'permmode.run_ok': 'Rodar',
 	'permmode.net_title': 'Deixar este chat alcançar a rede?',
-	'permmode.net_body': 'O Daimond leu algo escrito por outra pessoa, então os comandos rodam sem rede. O que ele leu poderia escolher para onde este comando vai.\n\n{cmd}\n\nem {cwd}\n\nSim vale para os comandos seguintes, e o botão de permissões pode mudar isso depois. Não roda o comando mesmo assim, sem rede — e é isso que acontece também se você não disser nada.',
+	'permmode.net_body': 'O Daimond leu algo escrito por outra pessoa, então os comandos rodam sem rede. O que ele leu poderia escolher para onde este comando vai.\n\n{cmd}\n\nem {cwd}\n\nSim, e o Daimond para de perguntar; o botão de permissões desfaz isso. Não roda o comando mesmo assim, sem rede — e é isso que acontece também se você não disser nada.',
 	'permmode.net_ok': 'Permitir a rede',
 	'permmode.act_worker_title': 'Um agente quer agir numa página',
 	'permmode.act_worker_body': 'Um agente que trabalha por conta própria quer clicar em algo em {host}. Você não o está conduzindo e ele não pode perguntar a você, então quem pergunta é o Daimond. Clicar pode gastar o seu dinheiro, enviar uma mensagem ou submeter um formulário, e nada disso dá para desfazer. Dizer sim permite este único clique e nada depois dele.',

@@ -129,6 +129,13 @@ const BREAKS = {
 		find: "\t\tif (typeof cfg.netApplyAll === 'function') {",
 		with: "\t\tif (false) {",
 	},
+	// The dialog's yes answering this chat's engine and nothing else -- exactly
+	// what it did through three reports.
+	yesnotsticky: {
+		file: 'js/daimond.js',
+		find: "\t\t\tif (okNet && window.DaimondHandMode && DaimondHandMode.setStandingNet) {",
+		with: "\t\t\tif (false) {",
+	},
 	// Stored, applied to the engines that exist, and forgotten by the next one. The
 	// exact defect reported: an answer whose lifetime is one chat.
 	perchat: {
@@ -370,6 +377,47 @@ try {
 	check(!fresh.marked && !fresh.dialog,
 		'and nothing on screen interrupts it',
 		`net-cut=${fresh.marked}, dialog=${fresh.dialog}`);
+
+	// ── 8. A YES IN THE DIALOG IS THE LAST ONE ───────────────────
+	//
+	// The standing choice above is only reachable by somebody who went looking for
+	// it in a menu. Nobody did: three reports came from a person answering the
+	// DIALOG, whose yes went to the chat's own engine and died with it. A person who
+	// has said yes has consented, and asking again in the next chat treats that
+	// answer as though it had never been given.
+	//
+	// DRIVEN THROUGH THE APP'S OWN GATE, `window.__daimondEgressAllowed` -- the
+	// global the wasm calls when a command wants the network -- and the dialog it
+	// raises is clicked like a person clicks it. The first version of this called
+	// `setStandingNet` directly instead, and `--break yesnotsticky` reddened
+	// NOTHING: the check proved the recorder worked and said nothing about whether
+	// the dialog ever reaches it, which is the entire defect. A break that does not
+	// go red is a finding, and this one's finding was about the check.
+	await p.evaluate(() => { try { localStorage.removeItem('daimond-net-standing'); } catch (e) {} });
+	await newChat(s);
+	await p.fill('#chat-input', '@text before the yes');
+	await p.click('#chat-send');
+	await p.waitForTimeout(3500);
+	const gate = p.evaluate(() => window.__daimondEgressAllowed(JSON.stringify({
+		tool: 'run_net', url: 'cargo build --release', detail: '/home/jason/usr/code',
+	})));
+	await p.waitForSelector('.dlg-card', { timeout: 8000 });
+	await p.evaluate(() => {
+		const card = [...document.querySelectorAll('.dlg-card')].filter(c => c.getClientRects().length).pop();
+		card.querySelector('.dlg-ok').click();
+	});
+	const verdict = await gate;
+	check(verdict === 'allow-net',
+		'the network dialog is raised and a yes comes back as a yes', String(verdict));
+	await newChat(s);
+	await p.fill('#chat-input', '@text a chat made after the yes');
+	await p.click('#chat-send');
+	await p.waitForTimeout(3500);
+	await p.evaluate(() => DaimondCore.markRead());
+	const after = await p.evaluate(() => DaimondCore.netState());
+	check(after === 'allowed',
+		'A YES IN THE DIALOG IS THE LAST ONE — a later chat is never asked',
+		`engine=${after}`);
 } finally {
 	await s.close();
 }

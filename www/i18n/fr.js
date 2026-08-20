@@ -871,7 +871,7 @@
 	'permmode.run_body': 'Daimond veut exécuter une commande sur votre machine.\n\n{cmd}\n\ndans {cwd}\n\nLe mode « demander à chaque fois » vous soumet chaque commande d’abord.',
 	'permmode.run_ok': 'L’exécuter',
 	'permmode.net_title': 'Autoriser cette conversation à sortir sur le réseau ?',
-	'permmode.net_body': 'Daimond a lu quelque chose écrit par quelqu’un d’autre, donc les commandes s’exécutent sans réseau. Ce qu’il a lu pourrait choisir où va cette commande.\n\n{cmd}\n\ndans {cwd}\n\nOui vaut pour les commandes qui suivent, et le bouton des permissions peut le changer ensuite. Non l’exécute quand même, sans réseau — et c’est aussi ce qui arrive si vous ne dites rien.',
+	'permmode.net_body': 'Daimond a lu quelque chose écrit par quelqu’un d’autre, donc les commandes s’exécutent sans réseau. Ce qu’il a lu pourrait choisir où va cette commande.\n\n{cmd}\n\ndans {cwd}\n\nOui, et Daimond cesse de demander — le bouton des permissions le reprend. Non l’exécute quand même, sans réseau — et c’est aussi ce qui arrive si vous ne dites rien.',
 	'permmode.net_ok': 'Autoriser le réseau',
 	'permmode.act_worker_title': 'Un agent veut agir sur une page',
 	'permmode.act_worker_body': 'Un agent qui travaille de lui-même veut cliquer sur quelque chose sur {host}. Vous ne le pilotez pas et il ne peut pas vous demander lui-même : c’est donc Daimond qui demande. Un clic peut dépenser votre argent, envoyer un message ou valider un formulaire, et rien de tout cela ne peut être annulé. Dire oui autorise ce seul clic et rien après lui.',

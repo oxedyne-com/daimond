@@ -383,6 +383,13 @@
 		/// The standing answer to the network question, for `ensureApp` to put into
 		/// each new engine. '' means the engine is left to ask.
 		standingNet: standing,
+		/// Record a standing answer from somewhere other than these chips.
+		///
+		/// The dialog is the caller. A person who answers YES has consented, in the
+		/// clearest way the app has, and asking them the same question in the next
+		/// chat treats that answer as though it had not been given -- which is what
+		/// happened, and what was reported three times. One yes is enough.
+		setStandingNet: setStanding,
 		/// Redraw the chip from what is in force NOW.
 		///
 		/// The rung only moves when this file moves it, so the chip could always

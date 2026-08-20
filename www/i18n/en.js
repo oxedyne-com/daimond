@@ -2660,7 +2660,7 @@
 	// sentence in it that was meant to be reassuring. It now says which conversation it
 	// covers, and points at the control that can change it afterwards.
 	'permmode.net_title':    'Let this chat reach the network?',
-	'permmode.net_body':     'Daimond has read something written by somebody else, so commands are running with no network. Whatever it read could choose where this one goes.\n\n{cmd}\n\nin {cwd}\n\nYes covers the commands that follow, and the permissions button can change it afterwards. No runs the command anyway, with no network — and so does saying nothing.',
+	'permmode.net_body':     'Daimond has read something written by somebody else, so commands are running with no network. Whatever it read could choose where this one goes.\n\n{cmd}\n\nin {cwd}\n\nYes, and Daimond stops asking — the permissions button takes it back. No runs the command anyway, with no network — and so does saying nothing.',
 	'permmode.net_ok':       'Allow the network',
 
 	// A dispatched worker asking to act on a page. Nobody is reading its
