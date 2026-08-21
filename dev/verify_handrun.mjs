@@ -470,7 +470,13 @@ try {
 	check('WITH NOTHING MARKED IN, a command is refused rather than run',
 		/^Refused: /.test(r) && /holds nothing on this computer/.test(r), r.slice(0, 200));
 	check('and the sentence says what to do about it, and where',
-		/paperclip/.test(r) && /add it to this chat's workspace/.test(r), r.slice(0, 400));
+		// The CONTROL, and the right one. `/paperclip/` was green while the
+		// paperclip attaches for READING and grants no writing -- so the sentence
+		// sent the user to a button that changed nothing. The negative half is the
+		// one that matters: naming the right control is no use while the wrong one
+		// is still named beside it.
+		/\+ in the Workspace group/.test(r) && !/paperclip/.test(r)
+			&& /mark it into this chat's workspace/.test(r), r.slice(0, 400));
 	// The refusal a chat gets and the refusal a Diamond gets are different
 	// sentences on purpose (`ToolContext::is_chat_scoped`), and a model handed the
 	// wrong one is sent to a panel that is not where a chat's workspace is changed.

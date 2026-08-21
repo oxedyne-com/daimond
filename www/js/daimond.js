@@ -882,6 +882,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// and each reload lands on whichever selected last; opening the wrong chat of
 	// two you have open is a smaller fault than losing the one you were reading.
 	var OPEN_CHAT_KEY = 'daimond-open-chat';
+	// AND THE DIAMOND, for exactly the reason the chat is remembered. A reload
+	// restored the chat you were reading and dropped the Diamond you were in,
+	// so a Diamond came back as an empty "+ New chat" on the crystal face --
+	// every reload, on the one surface Daimond is developed from. Whichever was
+	// selected last wins: `selectChat` clears this and `selectDiamond` clears
+	// the chat key, so there is one answer to "where was I" and not two.
+	var OPEN_DIAMOND_KEY = 'daimond-open-diamond';
 
 	/// A message id minted by the scheme that named a message by its POSITION ALONE.
 	///
@@ -10065,6 +10072,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			.replace(/\s+([.,;:])/g, '$1')
 			.trim()
 			.replace(/[\s.:;,-]+$/, '');
+		// Do NOT capitalise a leading `snake_case` identifier: a tool's name is a
+		// name, and `file_edit: old_string not found` shown as `File_edit: ...`
+		// reads as a typo in the product rather than as the tool that refused.
+		if (/^[a-z][a-z0-9]*(_[a-z0-9]+)+\b/.test(s)) return s ? s + '.' : t('err.generic');
 		return s ? s.charAt(0).toUpperCase() + s.slice(1) + '.' : t('err.generic');
 	}
 
@@ -11166,7 +11177,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		moveComposerTo(chat);
 		current = chat;
 		// Remembered so the next boot comes back here. See OPEN_CHAT_KEY.
-		try { localStorage.setItem(OPEN_CHAT_KEY, chat && chat.id ? chat.id : ''); }
+		try {
+			localStorage.setItem(OPEN_CHAT_KEY, chat && chat.id ? chat.id : '');
+			localStorage.removeItem(OPEN_DIAMOND_KEY);   // a chat is where you are now
+		}
 		catch (e) { /* private mode: the boot falls back to the newest chat */ }
 		currentDiamond = null;                       // a chat is not a Diamond
 		signalDiamondChanged();
@@ -19248,6 +19262,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			curFile = null;
 			syncLineNo();                    // a report has no lines of a file to number
 			viewEl.style.display = '';
+			// SHOW THE PANEL, which `openFile` does and this did not: with the Doc
+			// panel shut, the Cloud chip wrote its whole report into `display:none`
+			// and the user saw nothing happen at all. This is the billing
+			// disclosure, so a silent one is the worst of the three.
+			DaimondPanels.markUsed('doc');
+			DaimondPanels.show('doc');
+			DaimondPanels.reflow();
 			var s  = await DaimondCloud.summary();
 			var ix = DaimondCloud.index();
 			var away = DaimondCloud.awayPaths();
@@ -20171,6 +20192,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Edit ⇄ Save: swap the <pre> for a textarea; Save writes via the
 			// file_write tool (honouring the active workspace root — OPFS or FSA).
 			var editBtn   = viewEl.querySelector('[data-act="edit"]');
+			/// Caption and tooltip together, because they were set apart and drifted.
+			///
+			/// `title` was written once, at build, and six later sites changed only
+			/// `textContent` -- so hovering "✔ Save" said "Edit", and hovering
+			/// "✕ Cancel" said "Stop editing". A button whose tooltip contradicts its
+			/// face is worse than one with no tooltip: the reader believes the hover.
+			/// One door now, so a seventh caption cannot desync.
+			function sayEditBtn(mode) {
+				var face = mode === 'saving' ? t('files.saving')
+					: mode === 'edit'    ? '✎ ' + t('files.edit')
+					: '✔ ' + t('common.save');
+				editBtn.textContent = face;
+				editBtn.title = mode === 'saving' ? t('files.saving')
+					: mode === 'edit'    ? t('files.edit')
+					: t('common.save');
+				editBtn.setAttribute('aria-label', editBtn.title);
+			}
+			// AND THE STARTING STATE COMES THROUGH THE SAME DOOR. The markup above
+			// sets a caption and a `title` and no `aria-label`, so a screen that had
+			// been through Edit and back was not the screen it started as -- an
+			// attribute the round trip ADDED. `verify_reversible` reads exactly that:
+			// it found nothing on the Doc panel that returned the user to where they
+			// were, because nothing could. One door for the first state as well as
+			// every later one.
+			sayEditBtn('edit');
 			var cancelBtn = viewEl.querySelector('[data-act="cancel-edit"]');
 
 			/// Leave edit mode without writing, putting the read view back.
@@ -20182,7 +20228,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					ta.replaceWith(pre);
 				}
 				editing = false;
-				editBtn.textContent = '✎ ' + t('files.edit');
+				sayEditBtn('edit');
 				editBtn.disabled = false;
 				cancelBtn.style.display = 'none';
 				renderFileBody();
@@ -20215,12 +20261,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					ta.setSelectionRange(0, 0);
 					ta.scrollTop = 0;
 					ta.scrollLeft = 0;
-					editBtn.textContent = '✔ ' + t('common.save');
+					sayEditBtn('save');
 					cancelBtn.style.display = '';
 					syncLineNo();            // a textarea has no gutter to number
 				} else {
 					var ta2 = viewEl.querySelector('.files-edit'), content = ta2.value;
-					editBtn.disabled = true; editBtn.textContent = t('files.saving');
+					editBtn.disabled = true; sayEditBtn('saving');
 					// The agent may have rewritten this file since it was opened.
 					// Saving the editor's stale copy would silently erase that work,
 					// so a disk that no longer matches the edit's base is confirmed
@@ -20237,14 +20283,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 							t('files.conflict_body'), t('files.overwrite'),
 							{ title: t('files.conflict_title'), danger: true });
 						if (!over) {
-							editBtn.disabled = false; editBtn.textContent = '✔ ' + t('common.save');
+							editBtn.disabled = false; sayEditBtn('save');
 							fileMsg(t('files.save_cancelled'), true);
 							return;
 						}
 					}
 					writeOpenFile(path, content).then(function (wr) {
 						if (!wr || wr.outcome !== 'done') {
-							editBtn.disabled = false; editBtn.textContent = '✔ ' + t('common.save');
+							editBtn.disabled = false; sayEditBtn('save');
 							fileMsg(t('files.save_failed', { reason: toolReason(wr) }), true);
 							return;
 						}
@@ -20252,7 +20298,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						var pre = document.createElement('pre'); pre.className = 'files-view-body';
 						ta2.replaceWith(pre);
 						renderFileBody();
-						editBtn.textContent = '✎ ' + t('files.edit'); editBtn.disabled = false;
+						sayEditBtn('edit'); editBtn.disabled = false;
 						cancelBtn.style.display = 'none';
 						fileMsg(t('files.saved')); refresh();
 						nudgeSync();	// a saved edit outside a turn pushes on its own
@@ -20260,7 +20306,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						else if (path.indexOf(PROMPTS_DIR + '/') === 0) Prompts.refresh();
 						if (storeFile) sysList(sysDir);	// sizes move when a store file is saved
 					}).catch(function (e) {
-						editBtn.disabled = false; editBtn.textContent = '✔ ' + t('common.save');
+						editBtn.disabled = false; sayEditBtn('save');
 						fileMsg(t('files.save_failed', { reason: friendlyError(e) }));
 					});
 				}
@@ -20894,6 +20940,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			},
 		};
 	})();
+
+	/// What root the file tools are ACTUALLY on, published for `verify_machine`.
+	///
+	/// The same reasoning as `DaimondCore.permissionMode`: the panel's chip and the
+	/// engine's root can differ, and only one of them decides where a write lands.
+	/// A check reading the chip would be measuring the drawing against itself --
+	/// which is exactly the failure `--break noswitch` reproduces, where the chip
+	/// goes active, the handle is remembered, and `set_workspace_dir` is never
+	/// called. `entries` runs a real `file_list` through the wasm tools, so what it
+	/// answers is the engine's own view and not the tree's copy of it.
+	window.DaimondFiles = {
+		folder:  function () { try { return Files.folder(); } catch (e) { return null; } },
+		entries: function (dir) { return Files.entries(dir || ''); },
+	};
 
 	// The daimon's door to the Doc panel. `file_show` in src/tools.rs reaches it
 	// from the wasm through `window.DaimondDoc`, which `js/viewer.js` installs --
@@ -24031,6 +24091,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `moveComposerTo`.
 		moveComposerTo(daimonChat(f));
 		currentDiamond = f;
+		// Remembered so the next boot comes back here. See OPEN_DIAMOND_KEY.
+		try { localStorage.setItem(OPEN_DIAMOND_KEY, f && f.id ? f.id : ''); }
+		catch (e) { /* private mode: the boot falls back to the newest chat */ }
 		signalDiamondChanged();
 		updateActiveDiamond();
 		sessionNameEl.textContent = f.name;
@@ -28276,6 +28339,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// aborting is idempotent, and a Diamond's app is rebuilt by `diamondApp` on the
 		// next use, so a stopped daimon does not leave a poisoned client behind.
 		rec.app = diamondApp(currentDiamond.id);
+		// What the user has open right now, so the payload matches their screen --
+		// the same call `runTurn` makes, and it was missing here. A Diamond's app
+		// starts with an EMPTY open set, so every `<details>` body was stripped
+		// from every steer regardless of what was open on screen: the two-depth
+		// answer was inert on the one surface a Diamond is developed from.
+		pushOpenFolds(rec.app);
 		// `syncComposer` raises the dots as well as putting Stop on the button, so
 		// what this turn is doing has to be on the record before it is called.
 		rec._busy = tOr('chat.busy', 'Thinking…');
@@ -28811,6 +28880,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// says does not exist.
 		var want = '';
 		try { want = localStorage.getItem(OPEN_CHAT_KEY) || ''; } catch (e) { /* private mode */ }
+		// READ BEFORE `selectChat` BELOW, which clears it. The restore itself
+		// cannot run until `loadDiamonds` has read the rail, and by then the
+		// chat this boot opened has already forgotten the Diamond on the user's
+		// behalf -- so a boot with any stored chat lost the Diamond every time,
+		// and one with none did not. That is why it passed here and failed in
+		// the gate: the fixture, not the feature.
+		var wantDiamond = '';
+		try { wantDiamond = localStorage.getItem(OPEN_DIAMOND_KEY) || ''; } catch (e) { /* private mode */ }
 		var openChat = chats.find(function (c) { return !c.diamondId && c.id === want; });
 		// Failing that, the newest — which is the tile at the top of the rail, and
 		// so the one somebody looking at the rail would expect to be reading.
@@ -28826,7 +28903,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `migrate_root` -- so the "only into an empty rail" rule is answered from
 		// the store as it finally stands, not as it stood mid-migration.
 		step('loadDiamonds', function () {
-			return loadDiamonds().then(function () { return seedDefaultDiamonds(); });
+			return loadDiamonds().then(function () { return seedDefaultDiamonds(); })
+				.then(function () {
+					// AFTER the rail is read, because a Diamond cannot be reopened
+					// before it exists -- and after `selectChat` above, which it
+					// deliberately overrides: the key is only set when a Diamond was
+					// the last thing selected, and `selectChat` removes it.
+					var wantF = wantDiamond;
+					if (!wantF) return;
+					var f = diamonds.find(function (x) { return x.id === wantF; });
+					// Gone, or trashed: fall back to the chat already on screen rather
+					// than to an empty stage, and forget the id so it stops being asked.
+					if (!f) {
+						try { localStorage.removeItem(OPEN_DIAMOND_KEY); } catch (e) {}
+						return;
+					}
+					// No `view`: `selectDiamond` reads the face this Diamond was last
+					// left on from `diamondView`, which is already persisted per Diamond.
+					// It also writes the key back, which `selectChat` removed on the
+					// way past -- so a second reload finds it exactly as this one did.
+					return selectDiamond(f);
+				});
 		});
 		// `load` marks every parked consent expired, because what a tile holds is a
 		// promise and a promise does not survive the reload that just happened.

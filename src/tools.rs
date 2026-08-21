@@ -4816,7 +4816,8 @@ impl ToolContext {
                     in. This chat's workspace is: {}. Inside it you may write and create freely and \
                     need ask nobody for anything. Reading is not fenced -- you may read anything the \
                     user can -- so if you only meant to look at it, read it. To CHANGE it, say which \
-                    path you need and let the user add it with the paperclip. Note and Read add \
+                    path you need and let the user mark it in with the + in the Workspace group. The \
+                    paperclip attaches for reading and grants no writing. Note and Read add \
                     nothing: they only decide what is quoted into the conversation.",
                     path, self.allowed_places());
             }
@@ -8856,8 +8857,8 @@ impl Tool {
                         "Refused: this chat's workspace holds nothing on this computer, so there \
                         is nowhere for a command to run. Your own working folder is in Daimond's \
                         storage, which is not a place on this computer. Tell the user which folder \
-                        the command needs and ask them to add it to this chat's workspace with the \
-                        paperclip; once it is in, you may work in it freely."));
+                        the command needs and ask them to mark it into this chat's workspace with the + \
+                        in the Workspace group; once it is in, you may work in it freely."));
                 }
                 if d.is_empty() && ctx.is_scoped() {
                     return Ok(fmt!(
@@ -8898,8 +8899,8 @@ impl Tool {
                 return Ok(fmt!(
                     "Refused: '{}' is your own working folder, which is in Daimond's storage and \
                     not a place on this computer, so no command can run there. Run in a folder \
-                    the user marked into this chat's workspace, or ask them to add one with the \
-                    paperclip.", cwd_rel));
+                    the user marked into this chat's workspace, or ask them to mark one in with the + \
+                    in the Workspace group.", cwd_rel));
             }
             return Ok(fmt!(
                 "Refused: '{}' is in Daimond's storage and not a place on this computer, so no \

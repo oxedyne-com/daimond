@@ -366,8 +366,8 @@ pub const DEFAULT_CHAT: &str =
 	 works alone and cannot ask anybody anything, so it reads wherever you can read, writes \
 	 only in this chat's own working folder and whatever the user has attached here, and runs \
 	 commands only in an attached folder on their machine. If a task needs a command, and \
-	 nothing is attached, say which folder it needs and let the user attach it with the \
-	 paperclip — do not send a worker off to discover that for itself.";
+	 nothing is attached, say which folder it needs and let the user mark it in with the + \
+	 in the Workspace group — do not send a worker off to discover that for itself.";
 
 /// The daimon's role: it maintains one Diamond's crystal, resolving an
 /// instruction to a file edit or to one or more errors, never to chat.
@@ -927,8 +927,18 @@ mod tests {
 		assert!(p.contains("in parallel"), "the false denial is not ruled out: {}", p);
 		// What a worker can do is not what the chat can do, and a chat that does not know the
 		// difference hands out tasks its workers will be refused half way through.  Naming the
-		// paperclip is the operative part: it is what the user has to press.
-		assert!(p.contains("paperclip"), "a chat cannot say how to put a folder in scope: {}", p);
+		// control is the operative part: it is what the user has to press.
+		//
+		// AND IT MUST BE THE RIGHT ONE.  This said `paperclip` and was green, while the
+		// paperclip attaches for READING and grants no writing at all -- so the user was
+		// told to press a button, pressed it, and was refused again in the same words.
+		// The control that marks a folder in is the `+` in the Workspace group.  The
+		// negative assertion is the half that matters: naming the right control is no
+		// use while the wrong one is still named beside it.
+		assert!(p.contains("Workspace group"),
+			"a chat cannot say how to put a folder in scope: {}", p);
+		assert!(!p.contains("with the paperclip"),
+			"the prompt still sends the user to the control that grants no writing: {}", p);
 	}
 
 	#[test]

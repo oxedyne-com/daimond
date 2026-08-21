@@ -1970,7 +1970,7 @@
 	'attach.ws_help':      'The folders this chat may read and change. Marking one in is the permission, and nothing will ask you again.',
 	'attach.ws_on':        'In this chat’s workspace: it may read and change what is inside. Press to take it out.',
 	'attach.ws_off':       'Not in the workspace, so this chat cannot open it. Press to mark it in.',
-	'attach.ws_empty':     'No folder is marked in. This chat can reach nothing of yours, only its own working folder. Mark one in with the paperclip, or with + above.',
+	'attach.ws_empty':     'No folder is marked in. This chat can reach nothing of yours, only its own working folder. Mark one in with the + above.',
 	'attach.group_prompt': 'In front of the model',
 	'attach.group_prompt_help': 'Named or quoted in the prompt when you send. This grants no reach.',
 	'attach.read_block':   'The contents of {path}:',

@@ -338,6 +338,38 @@ try {
 	await page.waitForFunction(() => window.DaimondRender && window.DaimondRender.foldScan,
 		null, { timeout: 20000 });
 
+	// ── 0c. EVERY turn pushes the open set, not just the one that was checked ──
+	//
+	// Static, and deliberately so: the browser checks below drive an ordinary
+	// chat, and an ordinary chat was never the path that was broken. `doSteer`
+	// -- the Diamond's own thread, which is the surface Daimond is developed
+	// from -- set `_generating` and streamed without ever calling
+	// `pushOpenFolds`, so a Diamond's app carried an EMPTY open set for its
+	// whole life and every fold body was stripped from every payload. The
+	// feature worked, was tested, and was inert where it mattered most.
+	//
+	// So the property is not "a turn pushes the open set" but "there is no turn
+	// that does not". Each `_generating = true` is a turn beginning; the push
+	// must be within reach of it in the same function. A third turn path added
+	// without the call reddens here rather than in a month of use.
+	{
+		const js = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
+		const lines = js.split('\n');
+		const starts = [], missing = [];
+		lines.forEach((ln, i) => { if (/_generating\s*=\s*true/.test(ln)) starts.push(i); });
+		for (const i of starts) {
+			// The push sits beside the app the turn will run on, which is within a
+			// few lines of the flag in both existing paths. Sixty lines is wide
+			// enough for a commented one and far narrower than a function.
+			const near = lines.slice(Math.max(0, i - 60), i + 60).join('\n');
+			if (!/pushOpenFolds\s*\(/.test(near)) missing.push(`daimond.js:${i + 1}`);
+		}
+		check(`0c every turn pushes what is open on screen (${starts.length} turn path(s))`,
+			starts.length >= 2 && missing.length === 0,
+			missing.length ? `no pushOpenFolds near ${missing.join(', ')}`
+				: `${starts.length} turn path(s), all push`);
+	}
+
 	// ── 1. The key, against the fixture ───────────────────────────────
 	//
 	// Body length is counted in CODE POINTS on both sides, because the contract

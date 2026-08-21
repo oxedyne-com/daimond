@@ -83,7 +83,8 @@
 //     folder only through a native dialog no harness can answer. The refusal is
 //     asserted here against the real hand and then stood in for; the note beside
 //     the stand-in says exactly what is substituted and what is not.
-//  6. **Mark a folder into the chat's workspace, with the paperclip.** The grant
+//  6. **Mark a folder into the chat's workspace, with the `+` in the Workspace
+//     group** -- NOT the paperclip, which attaches for reading. The grant
 //     says what Daimond MAY reach on this computer; the mark says where THIS
 //     conversation works. Both are the user's own press, and neither stands in
 //     for the other — which is why step 5 being stood in for leaves step 6 to be
@@ -663,8 +664,16 @@ try {
 	const bare = await run(s, { argv: ['/bin/cat', 'inside.txt'], timeout_ms: 30000 });
 	check('WITH NOTHING MARKED IN, a command is refused rather than run',
 		/^Refused: /.test(bare) && /holds nothing on this computer/.test(bare), bare.slice(0, 200));
+	// The CONTROL, and the right one. This asserted `/paperclip/` and was green
+	// while the paperclip attaches for READING and grants no writing at all --
+	// so the sentence sent the user to a button that changed nothing, they
+	// pressed it, and the next command was refused in the same words. The `+`
+	// in the Workspace group is what marks a folder in. The negative half is
+	// the one that matters: naming the right control is no use while the wrong
+	// one is still named beside it.
 	check('and the sentence says what to do about it, and where',
-		/paperclip/.test(bare) && /add it to this chat's workspace/.test(bare), bare.slice(0, 400));
+		/\+ in the Workspace group/.test(bare) && !/paperclip/.test(bare)
+			&& /mark it into this chat's workspace/.test(bare), bare.slice(0, 400));
 	// The refusal a chat gets and the refusal a Diamond gets are different
 	// sentences on purpose (`ToolContext::is_chat_scoped`), and a model handed the
 	// wrong one is sent to a panel that is not where a chat's workspace is changed.

@@ -1853,7 +1853,7 @@ impl DaimondApp {
         if marked.is_empty() && consult.is_empty() {
             local.push_str(" Nothing is attached to this Diamond yet, so the folder above is the \
                 only place you may write. If the user asks for work on files that are not there, \
-                say what needs attaching with the paperclip rather than creating it.");
+                say what needs marking in with the + in the Workspace group rather than creating it.");
         } else {
             local.push_str("\n\nAttached to this Diamond, and reachable now:\n");
             for p in &marked {

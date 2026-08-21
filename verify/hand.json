@@ -1,12 +1,12 @@
 {
 	"algo": "sha-256",
-	"source": "a56668ffca34f4c2f514841f20ee2544ce20594511fd387efa21216a91c05fcf",
+	"source": "efdf11f014f46a9faa3bd5393a75114d0d851761a2cf7f7b9c84f8319abd5f19",
 	"toolchain": "1.90.0",
 	"build": "cargo build --release --manifest-path hand/Cargo.toml",
 	"binary": "hand/target/release/daimond-hand",
 	"files": {
-		"Cargo.lock": "62b6d563d9ee7c133d39fdaa510610d9caee6d8c719bcde53f4917d7cdbb74ed",
-		"Cargo.toml": "fa8afdc0b56cf8fab06974f76669aec87cb25c7c609004ad8e660843bd941c04",
+		"Cargo.lock": "487220c7cf3a76fcb4a4fbc11342decd716066cb5258c7642aacc1a7c75f40ad",
+		"Cargo.toml": "30fdc8f54cd4e180f29d53bd993a0de97c482a672b2bad292601ffdce02c0164",
 		"README.md": "c9a8b919325e8537e0285c99f687ab5159b042e075ccb2ea818a9dd8f1e09022",
 		"REVIEW.md": "10653e8851225b28e46d42df3dd23fbdc8a6ea9d4085ef271f75e4ddcdddbb96",
 		"examples/fenceprobe.rs": "dc6030adf3108e41f142ac82a6b3b211f9e1c7ac17744e09f9fc1a3224f6a9b7",
