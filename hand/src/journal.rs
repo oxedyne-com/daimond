@@ -786,6 +786,12 @@ impl Event {
                     mechs:       mechs.to_vec(),
                 })
             },
+            // A VERIFY IS NOT ITSELF AN ACT, and writing it down as one would put a verb in the
+            // record where a reader expects a process. Every run it makes is journalled as the
+            // `Exec` it really is -- the node command line, the granted root, and `fence:none` in
+            // the mechanisms, because a verifier runs outside the command fence on purpose. A
+            // verify that is REFUSED is still recorded, by the refusal on its way out.
+            Req::Verify { .. } => None,
             Req::Signal { id, sig } => Some(Self::Signalled {
                 id:  id.clone(),
                 sig: *sig,

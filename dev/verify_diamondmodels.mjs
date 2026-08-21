@@ -34,6 +34,7 @@
 //   node dev/verify_diamondmodels.mjs --break wipes      # the model change empties the session
 //   node dev/verify_diamondmodels.mjs --break asks       # the confirm comes back
 //   node dev/verify_diamondmodels.mjs --break appguard   # the fold asks for an engine again
+//   node dev/verify_diamondmodels.mjs --break refuses    # the fold refuses before it asks
 //
 // `wipes` and `asks` are SOURCE breaks: the handler they target is a closure inside
 // daimond.js and cannot be reached from the page, so the file is patched in memory
@@ -97,6 +98,15 @@ const SRC_BREAKS = {
 			+ "\t\tif (!_a || typeof _a.fold_now !== 'function') {\n"
 			+ "\t\t\ttoast(t('tile.fold_unavailable'), true); return;\n"
 			+ "\t\t}",
+	},
+	// THE FOLD REFUSING BEFORE IT ASKS, which is the shape that trashed a chat.
+	// `appguard` above produces it only after a reload; this one produces it on the
+	// first press, where section 5a stands. It is here so the SCOPING in 5a and 5b is
+	// held by something: unscoped, this break does not merely fail, it deletes the
+	// conversation the rest of the section is about and then reports on what is left.
+	refuses: {
+		find: "\t\tif (!chatSaid(chat)) { toast(t('tile.fold_unavailable'), true); return; }",
+		with: "\t\tif (true) { toast(t('tile.fold_unavailable'), true); return; }",
 	},
 	// The confirm back, in its plainest form. Nothing answers it, so the model does
 	// not move either — which is the point: a confirm is a thing that stands there.
@@ -365,6 +375,30 @@ try {
 
 		// ── Moving the pulldown moves the daimon, with nothing asked. ──
 		await move(other);
+		// THE RECEIPT IS CAUGHT AS IT APPEARS. It used to be read at the bottom of
+		// this block, and that read was a coin toss.
+		//
+		// `toast()` fades its box at 3600ms and REMOVES it at 4200ms
+		// (daimond.js:29857). The read below it stood behind `confirmWithin(3000)`,
+		// which burns its whole window on the healthy path where no confirm ever
+		// comes, then a 1200ms settle, then a localStorage read, an IndexedDB round
+		// trip and a transcript read. So the earliest it could sample was 4200ms
+		// plus three round trips: the removal boundary itself, missed or hit on a
+		// few milliseconds of jitter. It came up "(nothing said)" once in ten runs
+		// on 2026-08-21 — red for the right reason, in the one shape that cannot be
+		// attributed to anything, and a gate of 253 checks that reports a different
+		// count each time is a gate nobody can read.
+		//
+		// The fade is not the problem and a shorter wait would not have fixed it:
+		// an opacity-0 box still answers `getClientRects()`, so the window is sharp
+		// rather than soft. What is wanted is not an earlier guess at when to look
+		// but a watch that fires the moment the toast exists, which is this.
+		const receiptEarly = await p.waitForFunction(() => {
+			const said = [...document.querySelectorAll('.toast, .toast-msg, [class*="toast"]')]
+				.filter(n => n.getClientRects().length)
+				.map(n => (n.textContent || '').trim()).filter(Boolean).join(' | ');
+			return (/tile\.model_changed/.test(said) || /moved from .* to /i.test(said)) ? said : false;
+		}, null, { timeout: 4000 }).then(h => h.jsonValue()).catch(() => '');
 		const asked = await confirmWithin(3000);
 		check(!asked, 'NOTHING IS ASKED: a change this cheap to undo takes a receipt, not a modal',
 			asked ? 'a confirm was drawn over the tile dialog' : 'no dialog appeared');
@@ -397,10 +431,15 @@ try {
 		// hands back the key itself and the toast reads `tile.model_changed`. Either
 		// form is accepted; what is asserted is that the app SAID something when it
 		// moved, rather than moving in silence.
-		const receipt = await p.evaluate(() =>
+		// The watch above is what answers this; the late read stays as the fallback,
+		// so a build whose toast lingers still reports what it said rather than an
+		// empty string, and so a failure names whatever IS on screen instead of
+		// nothing at all.
+		const receiptLate = await p.evaluate(() =>
 			[...document.querySelectorAll('.toast, .toast-msg, [class*="toast"]')]
 				.filter(n => n.getClientRects().length)
 				.map(n => (n.textContent || '').trim()).filter(Boolean).join(' | '));
+		const receipt = receiptEarly || receiptLate;
 		check(/tile\.model_changed/.test(receipt) || /moved from .* to /i.test(receipt),
 			'a receipt says what moved, in place of the question that used to be asked',
 			receipt || '(nothing said)');
@@ -579,16 +618,57 @@ try {
 		[...card.querySelectorAll('.tile-dlg-level:not(.tile-dlg-clear)')]
 			.find(b => /fold/i.test(b.textContent || '')).click();
 	});
-	await p.waitForSelector('.dlg-card .dlg-ok', { timeout: 8000 });
-	await p.evaluate(() => {
-		const card = [...document.querySelectorAll('.dlg-card')]
-			.filter(c => c.getClientRects().length).pop();
-		card.querySelector('.dlg-ok').click();
-	});
-	await p.waitForTimeout(2500);
-	const said = await p.evaluate(() =>
+	// THE CONFIRM, SCOPED PAST THE TILE DIALOG'S OWN CARD — and this is the
+	// second place in this file to need saying so.
+	//
+	// What stood here was `waitForSelector('.dlg-card .dlg-ok')` followed by a
+	// click on the last visible `.dlg-card`. The tile dialog is a `.dlg-card`
+	// too (`modal-card dlg-card tile-dlg-card`), it is standing at this point
+	// because the Fold button that was just pressed is inside it, and the only
+	// `.dlg-ok` it carries is DELETE at its foot — which `deleteChat` acts on
+	// with no second question. So the wait was answered by the dialog already on
+	// screen, and the click was a coin toss settled by document order.
+	//
+	// It came up tails on 2026-08-20/21. Under a break where the fold refuses
+	// before any confirm is drawn, this block pressed Delete and the run said
+	// "Moved 'the chat from just now' to the trash" — a check destroying the
+	// fixture it was in the middle of measuring, and then reporting on the
+	// wreckage. 5b was scoped that night; this one was left because it passed,
+	// and it passed only because a confirm happens to be drawn LAST in document
+	// order on the healthy path. That is not a reason, it is a coincidence.
+	//
+	// Scoped by `:not(.tile-dlg-card)` — the same guard 5b uses — and a missing
+	// confirm is now a NAMED failure rather than a timeout thrown out of the
+	// block: the fold is a destructive-enough act to be worth asking about, so
+	// its absence is a fact about the product and belongs in the list.
+	//
+	// Read the toast once BEFORE waiting the confirm out, for the reason 5b gives
+	// below: a refusal is instant and its toast is gone in a few seconds, so a run
+	// that waits the full timeout first reports the break as "(nothing said)" —
+	// red for the right reason and unreadable, which is how a red run gets blamed
+	// on the harness.
+	await p.waitForTimeout(1200);
+	const earlySaid = await p.evaluate(() =>
 		[...document.querySelectorAll('.toast, .toast-msg, [class*="toast"]')]
+			.filter(n => n.getClientRects().length)
 			.map(n => (n.textContent || '').trim()).filter(Boolean).join(' | '));
+	const askedFirst = await p.waitForFunction(() =>
+		[...document.querySelectorAll('.dlg-card')]
+			.filter(c => c.getClientRects().length && !c.classList.contains('tile-dlg-card'))
+			.length > 0, null, { timeout: 8000 }).then(() => true).catch(() => false);
+	check(askedFirst, 'pressing Fold asks first, in a card of its own',
+		askedFirst ? 'a confirm was drawn over the tile dialog' : 'no confirm appeared, so nothing was pressed');
+	if (askedFirst) {
+		await p.evaluate(() => {
+			const card = [...document.querySelectorAll('.dlg-card')]
+				.filter(c => c.getClientRects().length && !c.classList.contains('tile-dlg-card')).pop();
+			card.querySelector('.dlg-ok').click();
+		});
+	}
+	await p.waitForTimeout(2500);
+	const said = (await p.evaluate(() =>
+		[...document.querySelectorAll('.toast, .toast-msg, [class*="toast"]')]
+			.map(n => (n.textContent || '').trim()).filter(Boolean).join(' | '))) || earlySaid;
 	check(/nothing to fold|already as short/i.test(said),
 		'a fold of a conversation that cannot be folded says so', said || '(nothing said)');
 	// And the transcript is not quietly shorter for having pressed it.

@@ -677,6 +677,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The largest `max_tokens` this model is known to accept, or 0 when nothing
 	/// knows. A published context window bounds it whatever the table says: a
 	/// completion cannot be longer than the window it is generated into.
+	///
+	/// `modelFamily`'s containment fallback is left in place here, and the reason is
+	/// the `Math.min` below rather than any confidence in containment itself.
+	/// `contextWindow` stopped trusting containment on 2026-08-20 because a borrowed
+	/// window is applied SILENTLY and in either direction -- `glm-5.3` took glm-5's
+	/// 204,800 against its own generation's 1,048,576 and clipped every conversation
+	/// to a fifth. A borrowed OUTPUT ceiling cannot do that, for two reasons that
+	/// hold together:
+	///
+	///   * it can only ever TIGHTEN. `MAX_OUT` holds Anthropic rows alone and every
+	///     value in it is at or below that model's window, so `min(pub, ctx) <= ctx`
+	///     -- the answer with a borrowed row is never larger than the answer with no
+	///     row at all, which is `ctx` or no ceiling. A containment hit therefore
+	///     cannot produce a request a provider would refuse;
+	///   * and a ceiling that is too tight is VISIBLE. It shortens one reply, and
+	///     `capCut` says so in words, naming the limit and the setting that raises
+	///     it. A refusal in the other direction is caught by `noteCapRefused` and
+	///     costs one turn, once.
+	///
+	/// So the fallback is benign here and the two resolvers may honestly differ.
+	/// The invariant it rests on -- every `MAX_OUT` value at or below its model's
+	/// published window -- is checked in `dev/verify_spendowner.mjs`, because it is
+	/// the thing that would have to change for this note to stop being true.
 	function maxOutCeiling(model, provider) {
 		var pub = MAX_OUT[modelFamily(model)] || 0;
 		var ctx = window.DaimondPricing
@@ -2691,10 +2714,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		while (todo.length && guard++ < 5000) {
 			var dir = todo.shift();
 			var res;
-			try { res = await app.run_tool('file_list', JSON.stringify({ path: dir || '.' })); }
+			try { res = await app.run_tool_outcome('file_list', JSON.stringify({ path: dir || '.' })); }
 			catch (e) { out.complete = false; continue; }
-			if (typeof res !== 'string' || /^\s*Error\b/i.test(res)) { out.complete = false; continue; }
-			var entries = parseSyncListing(res);
+			// A REFUSED LISTING IS NOT AN EMPTY DIRECTORY, and this is the seam where the
+			// two used to look alike. The test read the sentence for `Error:`; a refusal
+			// opens `Refused:` (`refusal_line`, src/tools.rs), so a directory the scope
+			// fence had just closed sailed past into `parseSyncListing`, which reads
+			// anything ending "is empty." as no entries and anything else as junk ones.
+			// The census then called itself COMPLETE -- the one word that entitles the
+			// other device to read an absent path as a deletion -- so a Diamond could
+			// sync a file set with the fenced folder silently missing from it, and
+			// nothing anywhere said so. The engine states the outcome; this asks it.
+			if (!res || res.outcome !== 'done') {
+				console.warn('sync: ' + (dir || '.') + ' would not list ('
+					+ ((res && res.outcome) || 'no answer')
+					+ '), so this census is incomplete and deletes nothing');
+				out.complete = false;
+				continue;
+			}
+			var entries = parseSyncListing(res.text);
 			for (var i = 0; i < entries.length; i++) {
 				var e = entries[i];
 				if (e.name.charAt(0) === '.') continue;					// dotfiles/dirs
@@ -2751,16 +2789,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Write a workspace file, best-effort (a failure drops that one file, not
 	/// the whole sync).
+	///
+	/// A refused write RESOLVES, like every other tool result, so awaiting it and
+	/// returning `true` said "written" for a file the fence had just stopped -- and
+	/// the caller then recorded the path as agreed by both devices.
 	async function writeSyncFile(app, path, content) {
-		try { await app.run_tool('file_write', JSON.stringify({ path: path, content: content })); return true; }
-		catch (e) { return false; }
+		try {
+			var r = await app.run_tool_outcome('file_write',
+				JSON.stringify({ path: path, content: content }));
+			return !!r && r.outcome === 'done';
+		} catch (e) { return false; }
 	}
 
 	/// Delete a workspace file, best-effort. Used to propagate a deletion made on
 	/// another device.
 	async function deleteSyncFile(app, path) {
-		try { await app.run_tool('file_delete', JSON.stringify({ path: path })); return true; }
-		catch (e) { return false; }
+		try {
+			var r = await app.run_tool_outcome('file_delete', JSON.stringify({ path: path }));
+			return !!r && r.outcome === 'done';
+		} catch (e) { return false; }
 	}
 
 	/// Set the file baseline to the current local files: this is "what both
@@ -2813,13 +2860,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!Object.prototype.hasOwnProperty.call(paths, p)) continue;
 			var l = local[p], r = remoteFiles[p];
 			if (r == null) continue;								// only local has it: keep, it will push.
-			if (l == null) { await writeSyncFile(app, p, r); agreed[p] = fileHash(r); continue; }	// only remote: adopt.
+			// Agreed only if the write LANDED. A refused or failed write leaves this
+			// device without the file, and a fork point that says both devices hold it
+			// is a fork point that will read its absence here as a deletion there.
+			if (l == null) { if (await writeSyncFile(app, p, r)) agreed[p] = fileHash(r); continue; }	// only remote: adopt.
 			var lh = fileHash(l), rh = fileHash(r);
 			if (lh === rh) { agreed[p] = lh; continue; }			// identical: genuinely shared.
 			var bh = base[p] || null;
 			var localChanged  = (lh !== bh);
 			var remoteChanged = (rh !== bh);
-			if (remoteChanged && !localChanged) { await writeSyncFile(app, p, r); agreed[p] = rh; }
+			if (remoteChanged && !localChanged) { if (await writeSyncFile(app, p, r)) agreed[p] = rh; }
 			else if (localChanged && !remoteChanged) { /* keep local; it will push. */ }
 			else { await writeSyncFile(app, p + '.synced', r); }	// both diverged: preserve both.
 		}
@@ -2833,7 +2883,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (Object.prototype.hasOwnProperty.call(remoteFiles, bp)) continue;	// remote still has it.
 				var lv = local[bp];
 				if (lv == null) continue;							// already gone here.
-				if (fileHash(lv) === base[bp]) { await deleteSyncFile(app, bp); gone[bp] = 1; }	// unchanged: honour the delete.
+				// And gone only if the delete LANDED, for the same reason in reverse.
+				if (fileHash(lv) === base[bp] && await deleteSyncFile(app, bp)) gone[bp] = 1;	// unchanged: honour the delete.
 			}
 		}
 		// ONLY what was shared. This used to be `commitFileBaseline()`, which records every file
@@ -6718,12 +6769,192 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return chatOutput.scrollHeight - chatOutput.scrollTop - chatOutput.clientHeight < 48;
 	}
 
+	// ── A fold the model wrote, drawn while it is still being written ──
+	//
+	// The tool this replaces did not stream at all: an unchanging spinner for the
+	// whole of a generation, one to three minutes on a hard question, and then
+	// the answer all at once.  Folding in the text itself is only worth having
+	// because it streams, so the streaming is the part to be careful with.
+	//
+	// The whole accumulated message is re-parsed every frame -- that is what
+	// makes streaming markdown work at all -- and a `<details>` rebuilt every
+	// frame is a `<details>` that snaps shut sixty times a second, taking the
+	// reader's place in it with it.  So the CONTROL is made once and kept, and
+	// only its body is redrawn.  A message with no fold in it never reaches any
+	// of this and takes the same single `innerHTML` it always did.
+	//
+	// Each entry is `{ id, node, body, text }`.  `id` is what lets a frame tell
+	// "the same fold, longer" from "a different fold in that place".
+	var _asstSegs = [];
+
+	function newTextSeg() {
+		var d = document.createElement('div');
+		d.className = 'md-seg';
+		return { id: '', node: d, body: d, text: null };
+	}
+
+	/// Is there nothing on screen above this fold?
+	///
+	/// Judged on what was RENDERED, not on the source. An empty heading or a
+	/// stray blank list item is markdown that produces no visible text, and to a
+	/// reader that is the same as nothing at all.
+	function nothingAbove(upTo) {
+		for (var i = 0; i < upTo && i < _asstSegs.length; i++) {
+			var n = _asstSegs[i].node;
+			if (n && String(n.textContent || '').trim()) return false;
+		}
+		return true;
+	}
+
+	/// The control, made ONCE per fold per stream.
+	function newFoldSeg(seg, headless) {
+		var d = document.createElement('details');
+		d.className = 'md-fold';
+		d.dataset.foldKey = seg.key;
+		var sum = document.createElement('summary');
+		// The label as HTML rather than as markdown: `marked` hands a `<details>`
+		// block through raw, so this is the same label a reader saw before folds
+		// were drawn a piece at a time.
+		sum.innerHTML = DaimondRender.sanitize(seg.label);
+		var body = document.createElement('div');
+		body.className = 'md-fold-body';
+		d.appendChild(sum);
+		d.appendChild(body);
+		// A FOLD WITH NOTHING ABOVE IT IS NOT A FOLD, it is the whole answer behind
+		// a control the reader has to press to find out there was nothing else.
+		// `say` could refuse that -- src/tools.rs calls an empty summary "the one
+		// failure worth refusing" -- but markup cannot be refused, so it is drawn
+		// OPEN instead. Not unwrapped: unwrapping throws the model's own label
+		// away, and it leaves the screen showing a body the open set calls closed,
+		// so the next payload would strip the only thing the reader can see.
+		//
+		// Decided ONCE, where the control is made, and it cannot thrash: the text
+		// above a fold is final the moment that fold's opening marker completes,
+		// because the message only ever grows at its end.
+		if (headless) d.classList.add('md-fold-bare');
+		// A fold the model itself marked `open`, or one drawn open for the reason
+		// above, is on screen from the first frame -- so it belongs in the open set
+		// too: what the reader can see is what the next payload carries.
+		if ((seg.open || headless) && !(seg.key in _openFolds)) _openFolds[seg.key] = 1;
+		d.open = !!_openFolds[seg.key];
+		d.addEventListener('toggle', function () { foldToggled(d); });
+		return { id: '', node: d, body: body, text: null };
+	}
+
+	/// Carry a fold-inside-a-fold's open state across the frame that rebuilds it.
+	///
+	/// A nested fold takes no key of its own (dev/CONTRACT_FOLD.md §8): the OUTER
+	/// body is what travels to the model or does not, and an inner fold goes with
+	/// it either way. So there is nothing to restore one from, and it is
+	/// remembered by its label for the length of a single redraw instead --
+	/// enough that a reader who opens one while the answer is still arriving does
+	/// not have it shut in their face on the next frame.
+	function foldLabels(root, openOnly) {
+		var out = Object.create(null);
+		var got = root.querySelectorAll('details.md-fold');
+		for (var i = 0; i < got.length; i++) {
+			if (openOnly && !got[i].open) continue;
+			var sm = got[i].querySelector('summary');
+			out[sm ? String(sm.textContent || '').replace(/\s+/g, ' ').trim() : ''] = got[i];
+		}
+		return out;
+	}
+
+	function reopenNested(root, was) {
+		var got = foldLabels(root, false);
+		Object.keys(was).forEach(function (k) { if (got[k]) got[k].open = true; });
+	}
+
+	/// A reader opened or closed a fold, so the payload follows the screen.
+	///
+	/// The first `toggle` a fold fires is the initial state settling rather than
+	/// a gesture, and it is told apart here by the set already agreeing with the
+	/// element -- which also keeps a reloaded thread of open folds from writing
+	/// the store back once per fold.
+	function foldToggled(el) {
+		var k = el.dataset ? el.dataset.foldKey : '';
+		if (!k) return;
+		if (!!el.open === !!_openFolds[k]) return;
+		if (el.open) _openFolds[k] = 1; else delete _openFolds[k];
+		saveTextFolds();
+		if (current && current.app) pushOpenFolds(current.app);
+	}
+
+	/// Draw the accumulated assistant text into its bubble.  See `_asstSegs`.
+	///
+	/// `settled` says the turn is over, which is the difference between "this fold
+	/// has not been finished yet" and "this fold never was".
+	function drawAsst(settled) {
+		var host = curAsstDiv && curAsstDiv.querySelector('.chat-msg-content');
+		if (!host) return;
+		var segs = null;
+		// A scan that throws must not cost the reader their answer: the whole
+		// message still renders, it simply renders unfolded.
+		try { segs = DaimondRender.foldSegments(curAsstText, settled); }
+		catch (e) { segs = null; }
+		if (!segs) {
+			_asstSegs = [];
+			host.innerHTML = DaimondRender.md(curAsstText);	// sanitised (H5)
+			return;
+		}
+		var folded = false;
+		for (var f = 0; f < segs.length; f++) { if (segs[f].kind === 'fold') { folded = true; break; } }
+		if (!folded) {
+			_asstSegs = [];
+			// The SEGMENTS, not the raw text. A `<details>` half written at the end
+			// of the buffer is held back until it is a fold (`foldPending`), and
+			// rendering the whole of `curAsstText` here would put the browser's own
+			// half-formed disclosure on screen anyway -- which is the flicker the
+			// hold-back exists to prevent.
+			var flat = '';
+			for (var k = 0; k < segs.length; k++) flat += segs[k].text;
+			host.innerHTML = DaimondRender.md(flat);	// sanitised (H5)
+			return;
+		}
+		if (!_asstSegs.length) host.innerHTML = '';
+		for (var i = 0; i < segs.length; i++) {
+			var s = segs[i];
+			var id = s.kind === 'fold' ? 'f' + s.key : 't';
+			var cur = _asstSegs[i];
+			if (!cur || cur.id !== id) {
+				// A segment that changed kind -- or a fold whose label changed
+				// while the summary was still being typed -- is a different thing
+				// on screen.  Everything after it is stale with it, so the tail is
+				// dropped rather than patched.
+				dropSegsFrom(i);
+				cur = s.kind === 'fold' ? newFoldSeg(s, nothingAbove(i)) : newTextSeg();
+				cur.id = id;
+				host.appendChild(cur.node);
+				_asstSegs[i] = cur;
+			}
+			var src = s.kind === 'fold' ? s.body : s.text;
+			// Only when the text under it moved.  A frame in which the fold grew
+			// must not rebuild the answer above it, or every code block's copy
+			// button in it is remade sixty times a second.
+			if (cur.text !== src) {
+				cur.text = src;
+				var was = foldLabels(cur.body, true);
+				cur.body.innerHTML = DaimondRender.md(src);	// sanitised (H5)
+				reopenNested(cur.body, was);
+			}
+		}
+		dropSegsFrom(segs.length);
+	}
+
+	function dropSegsFrom(i) {
+		for (var j = _asstSegs.length - 1; j >= i; j--) {
+			var n = _asstSegs[j] && _asstSegs[j].node;
+			if (n && n.parentNode) n.parentNode.removeChild(n);
+		}
+		if (_asstSegs.length > i) _asstSegs.length = i;
+	}
+
 	var _asstRenderPending = false;
 	function renderAsst() {
 		_asstRenderPending = false;
 		if (!curAsstDiv) return;
 		var pinned = nearBottom();
-		curAsstDiv.querySelector('.chat-msg-content').innerHTML = DaimondRender.md(curAsstText);	// sanitised (H5)
+		drawAsst();
 		if (pinned) chatOutput.scrollTop = chatOutput.scrollHeight;
 	}
 	function appendAssistantText(text) {
@@ -6734,6 +6965,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			tagTurn(curAsstDiv);
 			postToChat(curAsstDiv);
 			curAsstText = '';
+			_asstSegs = [];
 		}
 		curAsstText += text;
 		// Throttle to one markdown re-render per frame: re-parsing the whole
@@ -6747,11 +6979,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function finalizeAssistant() {
 		if (curAsstDiv && curAsstText) {
 			var pinned = nearBottom();
-			curAsstDiv.querySelector('.chat-msg-content').innerHTML = DaimondRender.md(curAsstText);
+			drawAsst(true);
 			addMsgCopy(curAsstDiv, curAsstText);
 			if (pinned) chatOutput.scrollTop = chatOutput.scrollHeight;
 		}
 		curAsstDiv = null; curAsstText = ''; _asstRenderPending = false;
+		_asstSegs = [];
 	}
 
 	var lastToolBlock = null;
@@ -6792,6 +7025,57 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { /* an older engine simply strips them all, which is the old behaviour */ }
 	}
 
+	// Which TEXT folds the reader has open, kept across a reload.
+	//
+	// A text fold's key is an ordinal and a label and carries no message identity
+	// (dev/CONTRACT_FOLD.md §2), which is exactly what lets the open set outlive a
+	// reload -- there is no message id to have gone stale. It is stored PER CHAT:
+	// one global set would have two threads opening each other's folds, and the
+	// chat record itself is not this change's to alter.
+	//
+	// A tool-call id never begins with a run of digits and a colon, which is what
+	// keeps the two namespaces sharing `_openFolds` apart. Only the text folds are
+	// stored: a `say` fold's id belongs to a call that will not recur.
+	var FOLDS_KEY = 'daimond-open-folds';
+	var TEXT_FOLD = /^[0-9]+:/;
+
+	function foldStore() {
+		try {
+			var o = JSON.parse(localStorage.getItem(FOLDS_KEY) || '{}');
+			return (o && typeof o === 'object') ? o : {};
+		} catch (e) { return {}; }
+	}
+
+	/// Put this chat's open text folds back, and take the last chat's away.
+	function loadTextFolds() {
+		Object.keys(_openFolds).forEach(function (k) {
+			if (TEXT_FOLD.test(k)) delete _openFolds[k];
+		});
+		if (!current || !current.id) return;
+		var keys = foldStore()[current.id];
+		if (Array.isArray(keys)) keys.forEach(function (k) { _openFolds[String(k)] = 1; });
+	}
+
+	function saveTextFolds() {
+		if (!current || !current.id) return;
+		var all = foldStore();
+		var keys = Object.keys(_openFolds).filter(function (k) { return TEXT_FOLD.test(k); });
+		if (keys.length) all[current.id] = keys; else delete all[current.id];
+		// Bounded, because nothing else prunes it: a chat deleted a year ago would
+		// otherwise keep its folds open forever inside a string that only grows.
+		var ids = Object.keys(all);
+		while (ids.length > 60) delete all[ids.shift()];
+		try { localStorage.setItem(FOLDS_KEY, JSON.stringify(all)); } catch (e) { /* best effort */ }
+	}
+
+	/// Draw a stored `say` call: the summary in the open, the detail behind a control.
+	///
+	/// **`say` IS NO LONGER A TOOL and this is not dead code.** An answer is written at two
+	/// depths in the model's own prose now, as a `<details>` element -- but a conversation
+	/// saved before that still carries `say` tool_calls, and the history-replay path draws
+	/// them through here. Delete this and those answers render as NOTHING the moment tool
+	/// steps are hidden: silent loss, in conversations the user already has. The engine's
+	/// half is `strip_said` in src/llm.rs, kept for the same reason.
 	function renderSaid(args, callId) {
 		var o;
 		try { o = JSON.parse(args || '{}'); } catch (e) { return false; }
@@ -6852,7 +7136,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	function renderToolCall(name, args, callId) {
-		// The answer, not a step. See `renderSaid`.
+		// The answer, not a step. Only ever a STORED call -- see `renderSaid`, which says
+		// why the reader outlives the tool.
 		if (name === 'say' && renderSaid(args, callId)) { _saidJust = true; return; }
 		_saidJust = false;
 		finalizeAssistant();
@@ -6875,31 +7160,90 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chatOutput.scrollTop = chatOutput.scrollHeight;
 	}
 
-	// A tool returns its failure as `Error: …` text rather than rejecting, so
-	// the result has to be read to know whether it worked. Rendering every
-	// result as a success is how `Error: unknown tool 'spawn_agent'` came to
-	// display as a green tick, and how raw fe2o3 frames reached the chat.
-	function toolFailed(result) {
-		return /^\s*Error\b/i.test(String(result || ''));
+	/// How a tool call ended, read back out of its RESULT TEXT.
+	///
+	/// FOR A LOG WRITTEN BEFORE THE OUTCOME WAS A FIELD, and for nothing else --
+	/// dev/CONTRACT_OUTCOME.md §4. A live event carries `ev.outcome`, which is the
+	/// engine's own word; calling this on one puts back the defect the field was
+	/// added to remove. `Refused:` is `refusal_line`'s unconditional prefix
+	/// (src/tools.rs) across some twenty sites and was missing from the test that
+	/// used to stand here, so every fence refusal drew as a COMPLETED step, was
+	/// journalled as a success, and told `DaimondSignals.noteTool` the tool had
+	/// worked.
+	///
+	/// The set of conversations it has to serve stops growing: a tool log written
+	/// from here on stores the outcome beside the result.
+	function outcomeOfStoredText(result) {
+		var s = String(result || '');
+		if (/^\s*Refused\b/i.test(s)) return 'refused';
+		if (/^\s*Error\b/i.test(s))   return 'failed';
+		return 'done';
 	}
 
 	/// Set by `renderToolCall` when the call it just drew was a fold, so its RESULT -- which is a
 	/// sentence written for the model about what it just did -- is not drawn under the answer.
 	var _saidJust = false;
 
-	function renderToolResult(name, result) {
+	/// Draw a finished tool call in the state the ENGINE said it ended in.
+	///
+	/// `outcome` is `AgentEvent::ToolResult`'s third field -- exactly `done`,
+	/// `refused` or `failed` -- and the result text is never asked about it. An
+	/// outcome that is none of the three is drawn as a failure rather than quietly
+	/// as a success, so a build whose engine has stopped sending one says so on the
+	/// first tool call instead of going green.
+	function renderToolResult(name, result, outcome) {
 		if (name === 'say' && _saidJust) { _saidJust = false; return; }
-		var failed = toolFailed(result);
+		var refused = outcome === 'refused';
+		var failed  = !refused && outcome !== 'done';
 		if (lastToolBlock) {
 			lastToolBlock.classList.remove('running');
 			lastToolBlock.classList.toggle('failed', failed);
+			// A REFUSAL IS NOT A BREAKAGE. The fence did its job and the text under it
+			// is the rule, written for the person: the remedy is to grant a path or ask
+			// for something else, not to debug. So it is drawn in the warning colour
+			// rather than the danger one -- and NAMED as well as coloured, because amber
+			// against red is the one distinction a red-green reader cannot make, and
+			// until this seam landed there were not two states to tell apart at all.
+			lastToolBlock.classList.toggle('refused', refused);
+			lastToolBlock.style.borderColor = refused ? 'var(--warn)' : '';
+			markOutcome(lastToolBlock, refused ? 'refused' : failed ? 'failed' : 'done');
 			var resPre = lastToolBlock.querySelector('.tool-result');
-			// A tool that SUCCEEDS can be colourful too, so the plain path is
-			// stripped as well; only the failing path went through friendlyError.
-			resPre.textContent = failed ? friendlyError(result) : stripAnsi(result);   // escaped via textContent
+			// A tool that SUCCEEDS can be colourful too, so the plain path is stripped
+			// as well; ONLY A STATED FAILURE goes through friendlyError. Neither a refusal
+			// nor an outcome this build does not recognise does: `friendlyError` is for raw
+			// fe2o3 frames, and it collapses paragraphs, strips punctuation and swallows any
+			// string naming a number into its status-code arm -- which turns a refusal's own
+			// sentence, and a plain "Wrote 6 bytes", into "Could not reach that endpoint".
+			// So an unknown outcome is FLAGGED but its text is left alone: saying loudly
+			// that something is wrong is right, and rewriting the tool's words to say it is
+			// not.
+			resPre.textContent = outcome === 'failed' ? friendlyError(result) : stripAnsi(result);
+			resPre.style.color  = refused ? 'var(--warn)' : '';
 			resPre.style.display = '';
 		}
 		chatOutput.scrollTop = chatOutput.scrollHeight;
+	}
+
+	/// Put a tool call's outcome on its head in words, beside the colour.
+	function markOutcome(block, outcome) {
+		var head = block.querySelector('.tool-head');
+		if (!head) return;
+		var tag = head.querySelector('.tool-outcome');
+		if (outcome === 'done') { if (tag && tag.parentNode) tag.parentNode.removeChild(tag); return; }
+		if (!tag) {
+			tag = document.createElement('span');
+			tag.className = 'tool-outcome';
+			tag.style.fontWeight = '400';
+			tag.style.fontSize   = 'var(--fs-xs)';
+			head.appendChild(tag);
+		}
+		// English here rather than a key that does not exist yet: www/i18n is not this
+		// file's to write, and a head reading "chat.tool_refused" is worse than one
+		// reading English. The table wins the moment the keys land.
+		tag.textContent = outcome === 'refused'
+			? tOr('chat.tool_refused', 'refused')
+			: tOr('chat.tool_failed', 'failed');
+		tag.style.color = outcome === 'refused' ? 'var(--warn)' : 'var(--danger)';
 	}
 
 	/// The most a live command's output may occupy in the chat.
@@ -9724,6 +10068,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return s ? s.charAt(0).toUpperCase() + s.slice(1) + '.' : t('err.generic');
 	}
 
+	/// The sentence to SHOW for a tool call that did not complete.
+	///
+	/// A refusal is already a whole sentence, written by the door that refused and meant
+	/// for the person reading it; `friendlyError` would collapse its paragraphs and hunt
+	/// it for status codes, so it is shown as it stands. Anything else is raw error text
+	/// and wants prettifying. The same rule `renderToolResult` follows, in one place the
+	/// panels can share -- and it decides on the OUTCOME, never on the words.
+	function toolReason(r) {
+		var txt = r && typeof r.text === 'string' ? r.text : '';
+		return r && r.outcome === 'refused' ? stripAnsi(txt) : friendlyError(txt);
+	}
+
 	function clearChat() {
 		chatOutput.innerHTML = ''; curAsstDiv = null; curAsstText = '';
 		// The turns belonged to the thread that has just been thrown away. Numbering them from
@@ -9751,6 +10107,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	function renderHistory(messages) {
 		clearChat();
+		// Before a single fold is drawn: which of them this chat's reader had open.
+		loadTextFolds();
 		if (!Array.isArray(messages)) return;
 		messages.forEach(function (m) {
 			// A message said into a running turn is a user message to the model and
@@ -9767,13 +10125,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (m.interrupted && div) markInterrupted(div, m);
 			}
 			else if (m.role === 'error_log') { appendError(m.content); }
-			else if (m.role === 'fold_log') { appendCompacted(m.content || ''); }
+			else if (m.role === 'fold_log' || m.role === 'vision_log') { appendCompacted(m.content || ''); }
 			else if (m.role === 'tool_log') {
 				// A record of a tool the agent ran. Display only: it is not sent
 				// back to the model, which cannot replay a tool call it has no
 				// call-id for.
 				renderToolCall(m.name || '', m.args || '', m.callId || '');
-				renderToolResult(m.name || '', m.content || '');
+				// THE ONE PLACE PROSE IS STILL READ. A tool log stored before the outcome
+				// was a field has the text and nothing else; one stored since carries it.
+				renderToolResult(m.name || '', m.content || '',
+					m.outcome || outcomeOfStoredText(m.content || ''));
 			}
 		});
 		renderQueue();      // clearChat emptied the thread, queue and all
@@ -9890,8 +10251,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 			// The tools that ran, in order; one still open when the tab died is shown as such.
 			(t.tools || []).forEach(function (tl) {
+				// The write-ahead journal narrows the outcome to a BOOLEAN (`toolDone`,
+				// www/js/journal.js), so a recovered turn can say that a tool did not
+				// complete but not which of the two ways. The boolean decides that much;
+				// only when it says not-done is the stored text asked to split a refusal
+				// off, and a text that will not commit is read as the failure the journal
+				// already called it. A tool the tab died inside never returned at all, so
+				// it has no outcome and is drawn plainly, under its own word.
+				var oc = !tl.done ? 'done'
+					: !tl.failed ? 'done'
+					: outcomeOfStoredText(tl.result || '') === 'refused' ? 'refused' : 'failed';
 				chat.messages.push({ role: 'tool_log', name: tl.name || '', args: tl.args || '',
-					content: tl.done ? (tl.result || '') : '(interrupted)', mid: newMid(), iturn: iturn, ts: nowTs() });
+					content: tl.done ? (tl.result || '') : '(interrupted)',
+					outcome: oc, mid: newMid(), iturn: iturn, ts: nowTs() });
 			});
 
 			// The partial reply, badged interrupted, carrying the prompt so Continue can re-run it.
@@ -10741,7 +11113,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			cur = await fa.read_crystal_data(diamondId);
 			proposed = await fa.fold_propose(diamondId, delta);
 		} catch (e) {
-			meterDiamondTurn(fa);
+			meterDiamondTurn(fa, diamondId);
 			hideCrystalSpinner();
 			// The status line alone was invisible: it is 12px of muted grey under
 			// controls the user is not looking at, on a panel they may have left.
@@ -10749,7 +11121,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			toast(friendlyError(e), true);
 			return;
 		}
-		meterDiamondTurn(fa);
+		meterDiamondTurn(fa, diamondId);
 		hideCrystalSpinner();
 		setCrystalStatus(''); setCrystalBusy(false);
 		// A reducer that returned nothing has failed, whatever the crystal held. Shown
@@ -13100,39 +13472,50 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return { window: cw || 0, foldAt: at };
 	}
 
+	// The context bar alone: window fraction, fold mark, percentage. Factored out
+	// of `tileMeter` when the Diamond tile wanted the bar without the tokens and
+	// cost that ride beside it on a chat -- one implementation, two callers, so
+	// the bar cannot come to mean something slightly different in the two places.
+	/// Returns null when there is nothing to draw: no window published, or no
+	/// tokens spent. The two cases are different facts and the CALLER decides
+	/// which one it is looking at; a bar invented to fill the silence would hide
+	/// the difference.
+	function tileCtxBar(s, win) {
+		var cw = win.window;
+		var last = s.lastPrompt || 0;
+		if (!cw || last <= 0) return null;
+		var pct = Math.min(100, Math.round(last / cw * 100));
+		var foldPct = Math.round(win.foldAt * 100);
+		var ctx = document.createElement('span');
+		ctx.className = 'tile-ctx';
+		ctx.title = t('tile.context_used_folds', {
+			used: fmtCtx(last), all: fmtCtx(cw), at: foldPct,
+		});
+		var bar = document.createElement('span'); bar.className = 'tile-ctx-bar';
+		var fill = document.createElement('span');
+		fill.className = 'tile-ctx-fill' + (pct >= foldPct ? ' high' : '');
+		fill.style.width = pct + '%';
+		bar.appendChild(fill);
+		// Where the fold happens, drawn ON the bar. The number has existed in
+		// `compact.rs` since folding was written and has never been anywhere a user
+		// could see it, so a meter at 78% said nothing about whether that was nearly
+		// there or plenty of room.
+		var mark = document.createElement('span');
+		mark.className = 'tile-ctx-fold';
+		mark.style.left = foldPct + '%';
+		bar.appendChild(mark);
+		var lab = document.createElement('span'); lab.className = 'tile-ctx-pct'; lab.textContent = pct + '%';
+		ctx.appendChild(bar); ctx.appendChild(lab);
+		return ctx;
+	}
+
 	// The live per-chat meter: context-window fraction · tokens · cost.
 	function tileMeter(s) {
 		var wrap = document.createElement('div');
 		wrap.className = 'tile-meter';
 		var total = (s.promptTokens || 0) + (s.completionTokens || 0);
-		var win = chatWindow(s);
-		var cw = win.window;
-		var last = s.lastPrompt || 0;
-		if (cw && last > 0) {
-			var pct = Math.min(100, Math.round(last / cw * 100));
-			var foldPct = Math.round(win.foldAt * 100);
-			var ctx = document.createElement('span');
-			ctx.className = 'tile-ctx';
-			ctx.title = t('tile.context_used_folds', {
-				used: fmtCtx(last), all: fmtCtx(cw), at: foldPct,
-			});
-			var bar = document.createElement('span'); bar.className = 'tile-ctx-bar';
-			var fill = document.createElement('span');
-			fill.className = 'tile-ctx-fill' + (pct >= foldPct ? ' high' : '');
-			fill.style.width = pct + '%';
-			bar.appendChild(fill);
-			// Where the fold happens, drawn ON the bar. The number has existed in
-			// `compact.rs` since folding was written and has never been anywhere a user
-			// could see it, so a meter at 78% said nothing about whether that was nearly
-			// there or plenty of room.
-			var mark = document.createElement('span');
-			mark.className = 'tile-ctx-fold';
-			mark.style.left = foldPct + '%';
-			bar.appendChild(mark);
-			var lab = document.createElement('span'); lab.className = 'tile-ctx-pct'; lab.textContent = pct + '%';
-			ctx.appendChild(bar); ctx.appendChild(lab);
-			wrap.appendChild(ctx);
-		}
+		var ctx = tileCtxBar(s, chatWindow(s));
+		if (ctx) wrap.appendChild(ctx);
 		var toks = document.createElement('span'); toks.className = 'tile-tok';
 		toks.textContent = fmtCtx(total) + ' tok';
 		wrap.appendChild(toks);
@@ -13867,10 +14250,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///   no chat -- parks the outgoing draft and leaves the box empty.
 	function moveComposerTo(next) {
 		if (!chatInput) return;
-		// Guarded on the move actually happening: re-entering the conversation
-		// already on screen must not read the box back into itself, which is how a
-		// draft would be lost to any caller that re-selects the current chat.
-		if (current && current !== next) current._draft = chatInput.value;
+		// RE-ENTERING THE CONVERSATION ALREADY ON SCREEN LEAVES THE BOX ALONE ENTIRELY.
+		//
+		// The guard below used to cover only the SAVE, and the overwrite on the next
+		// line ran anyway -- so re-selecting the current conversation neither kept
+		// what was in the box nor had anything to put back, and replaced it with a
+		// stale `_draft`, empty for anyone who had not switched away before.
+		//
+		// A Diamond's two faces share ONE conversation record, so a face switch is
+		// exactly that case: the owner typed a reply to a daimon on the chat face,
+		// moved to the crystal face, and watched it go. The comment here already said
+		// a draft belongs to the Diamond and not to the face; only half of it was
+		// implemented.
+		if (current && current === next) return;
+		if (current) current._draft = chatInput.value;
 		chatInput.value = (next && next._draft) || '';
 		fitComposer();
 	}
@@ -14008,9 +14401,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) { /* nothing written yet */ }
 		if (folderOpen()) {
 			try {
-				var raw = await tools().run_tool('file_list', JSON.stringify({ path: CONCISE_DIR }));
-				if (typeof raw === 'string' && !/^\s*Error\b/i.test(raw)) {
-					raw.split('\n').forEach(function (line) {
+				var raw = await tools().run_tool_outcome('file_list', JSON.stringify({ path: CONCISE_DIR }));
+				if (raw && raw.outcome === 'done') {
+					raw.text.split('\n').forEach(function (line) {
 						var m = line.match(/^\s*(?:[-*]\s*)?(\S.*?)(?:\s+\(\d+.*\))?\s*$/);
 						if (m) take(m[1]);
 					});
@@ -14081,22 +14474,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Make sure the skill the chip invokes actually exists. Resolves true when
 	/// it does.
 	///
-	/// A `run_tool` RESOLVES with its error text rather than rejecting, so a
-	/// refusal and a success look identical to `try`/`catch`; the reply is read
-	/// as well as awaited. Seeded on the way in rather than at boot: a user who
+	/// A tool call RESOLVES whatever became of it, so `try`/`catch` cannot tell a
+	/// refusal from a success and the reply used to be read for the word `Error` --
+	/// which a refusal does not carry. `run_tool_outcome` states which of the three
+	/// it was, so this asks. Seeded on the way in rather than at boot: a user who
 	/// never presses the chip gets no file they did not ask for.
 	async function ensureConciseSkill() {
 		try {
-			var cur = await tools().run_tool('file_read', JSON.stringify({ path: CONCISE_SKILL }));
-			if (typeof cur === 'string' && !/^\s*Error\b/i.test(cur) && cur.trim()) return true;
+			var cur = await tools().run_tool_outcome('file_read', JSON.stringify({ path: CONCISE_SKILL }));
+			if (cur && cur.outcome === 'done' && cur.text.trim()) return true;
 		} catch (e) { /* not there, or no workspace yet */ }
 		try {
-			await tools().run_tool('dir_create', JSON.stringify({ path: CONCISE_DIR }));
+			await tools().run_tool_outcome('dir_create', JSON.stringify({ path: CONCISE_DIR }));
 		} catch (e) { /* it may already be there, which is the state wanted */ }
 		try {
-			var res = await tools().run_tool('file_write',
+			var res = await tools().run_tool_outcome('file_write',
 				JSON.stringify({ path: CONCISE_SKILL, content: conciseSeed() }));
-			if (typeof res === 'string' && /^\s*Error\b/i.test(res)) return false;
+			if (!res || res.outcome !== 'done') return false;
 		} catch (e) { return false; }
 		try { Files.refresh(); } catch (e) { /* the tree redraws on its own next time */ }
 		return true;
@@ -14169,7 +14563,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// scope, and its turn records a crystal version when it writes one. The two
 		// part here, and only here.
 		if (current && current.diamondId) {
-			if (crystalBusy) return;
+			// A message typed while the daimon is mid-turn is HELD, not dropped. This
+			// branch used to `return` on `crystalBusy` and do nothing else: the Send
+			// button is enabled and reads "Send" throughout a steer -- `sendMode` asks
+			// `curGen`, which reads `_generating`, and a steer sets `crystalBusy`
+			// instead -- so the press was swallowed whole. Nothing sent, nothing
+			// queued, nothing said, and the text still sitting in a box the user had
+			// just pressed the button under. A chat has never behaved that way; there
+			// was simply no daimon half of `enqueueMessage`, and with none the queue
+			// badge on a Diamond tile could never have anything to say either.
+			//
+			// Queued, never interjected: `steer_crystal` borrows the session mutably
+			// for the whole turn and offers no seam to deliver into, which is exactly
+			// what `interjectMessage` needs and cannot have here.
+			if (crystalBusy) { enqueueMessage(current, text); return; }
 			chatInput.value = ''; chatInput.style.height = 'auto';
 			doSteer(text);
 			return;
@@ -14384,22 +14791,97 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return b;
 	}
 
+	/// The conversation one rail tile stands for, or null.
+	///
+	/// A chat tile's `dataset.id` IS a chat id. A DIAMOND tile's is the DIAMOND'S,
+	/// and the conversation that queues under it is its daimon's -- an ordinary
+	/// record in `chats` carrying `diamondId`, with no tile of its own. Looking the
+	/// second up in a map keyed by the first is the quiet failure this exists to
+	/// prevent: every lookup misses, `queueBadge(undefined)` is null, and the badge
+	/// is stripped on every pass by the very function meant to keep it current --
+	/// correct-looking the moment it is drawn and permanently wrong after.
+	///
+	/// # Arguments
+	/// * `byId` - Chats by their own id, built once by the caller.
+	function tileConversation(box, byId) {
+		if (!box) return null;
+		var id = box.dataset.id || '';
+		if (!id) return null;
+		if (box.classList.contains('diamond-box')) {
+			// WITHOUT creating one: `daimonChat` would mint an empty session for
+			// every Diamond the user has never opened, on every rail refresh.
+			for (var i = 0; i < chats.length; i++) if (chats[i].diamondId === id) return chats[i];
+			return null;
+		}
+		return byId[id] || null;
+	}
+
+	/// The row one rail tile keeps its queue badge in, made if it is not there yet.
+	///
+	/// The two shapes of tile keep it in different rows and the choice is not
+	/// cosmetic. A chat's goes in `.tile-active-top`, beside Fold and Keep. A
+	/// Diamond's goes in `.session-box-meta`, beside the pending-fold badge --
+	/// because `app.css` keeps that row alive in Simple with
+	/// `:not(:has(.diamond-pending))`, and `queueBadge` returns a
+	/// `.diamond-pending`, so the meta row is the ONE row on a Diamond tile where
+	/// the badge survives the view the stylesheet says it survives. `.diamond-meter`
+	/// below the tags is hidden in Simple outright, and the header is the control
+	/// row.
+	///
+	/// A Diamond with no model chip and no pending fold has no meta row at all --
+	/// an empty row still costs its top margin, so `diamondBox` does not append one
+	/// -- hence the row is built here on demand and put where `diamondBox` puts it:
+	/// under the header, above the tags.
+	function queueBadgeSlot(box) {
+		if (!box.classList.contains('diamond-box')) return box.querySelector('.tile-active-top');
+		var meta = box.querySelector('.session-box-meta');
+		if (meta) return meta;
+		meta = document.createElement('div');
+		meta.className = 'session-box-meta';
+		box.insertBefore(meta, box.querySelector('.session-box-tags')
+			|| box.querySelector('.diamond-meter') || null);
+		return meta;
+	}
+
 	/// Bring every tile's queue badge up to date in place.
 	///
 	/// In place, rather than by redrawing the rail: renderSessionList rebuilds the
 	/// label inputs, so a queue changing under a half-typed rename would take the
 	/// caret out of it.
+	///
+	/// BOTH RAILS. It scanned `sessionList` alone, which is why a Diamond's tile
+	/// never carried the badge even after `diamondBox` learned to draw one: the
+	/// build would put it there and the first refresh would not know the tile
+	/// existed, so it froze at whatever the queue was when the rail was last
+	/// redrawn.
 	function updateQueueBadges() {
-		if (!sessionList) return;
 		var byId = {};
 		chats.forEach(function (c) { byId[c.id] = c; });
-		sessionList.querySelectorAll('.session-box').forEach(function (box) {
-			var top = box.querySelector('.tile-active-top');
-			if (!top) return;                        // a pending chat cannot hold a queue
-			var was = top.querySelector('.queue-badge');
-			var now = queueBadge(byId[box.dataset.id]);
+		var boxes = [];
+		if (sessionList) boxes = boxes.concat(
+			Array.prototype.slice.call(sessionList.querySelectorAll('.session-box')));
+		if (diamondList) boxes = boxes.concat(
+			Array.prototype.slice.call(diamondList.querySelectorAll('.diamond-box')));
+		boxes.forEach(function (box) {
+			// The old badge is found wherever it is rather than looked for in the row it
+			// ought to be in, so a badge left behind by an earlier shape of tile is
+			// cleared rather than duplicated.
+			var was  = box.querySelector('.queue-badge');
+			var host = was && was.parentElement;
+			var now  = queueBadge(tileConversation(box, byId));
 			if (was) was.remove();
-			if (now) top.appendChild(now);
+			// The row is MADE only when there is something to put in it. Asking for the
+			// slot unconditionally would build and drop a row on every Diamond tile on
+			// every pass, and `renderQueue` reaches here on every keystroke.
+			if (now) {
+				var slot = queueBadgeSlot(box);
+				if (slot) slot.appendChild(now);      // a pending chat cannot hold a queue
+			} else if (host && !host.firstChild && host.classList.contains('session-box-meta')) {
+				// A row that existed only to carry the badge still costs its top margin,
+				// and in Simple an empty meta row is the one thing `:has(.diamond-pending)`
+				// was written to avoid. Emptied, it goes.
+				host.remove();
+			}
 		});
 	}
 
@@ -14450,6 +14932,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// they knew the last one had failed -- so instead the text comes back to the
 	/// composer, where they can see it and decide.
 	function drainQueue(chat, failed) {
+		// A daimon's conversation is an ordinary record and can now hold a queue, but
+		// its turn is `doSteer`'s -- see `drainSteerQueue`. Nothing routes one here
+		// today; the guard costs a line and the alternative costs a wrong turn.
+		if (chat.diamondId) return;
 		var aborted = !!chat._aborted;
 		chat._aborted = false;
 		var q = chat._queue || [];
@@ -14493,6 +14979,45 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return;
 		}
 		drainQueue(chat, false);
+	}
+
+	/// Send what was typed into a daimon while it was busy, now it is not.
+	///
+	/// The daimon half of `drainQueue`, and deliberately NOT `drainQueue` itself:
+	/// that one ends in `runTurn`, which is a CHAT'S turn machinery. A daimon's
+	/// tools are pinned to its own directory, its fence is the Diamond's scope and
+	/// its turn records a crystal version -- the split `sendUserMessage` makes, and
+	/// running one record through the other side of it would undo the whole of it.
+	///
+	/// The rules are the chat's, for the chat's reasons. Only while this Diamond is
+	/// still the one on screen, because `doSteer` writes into the live thread. Not
+	/// after a turn that failed, because the queued question was asked before the
+	/// user knew the last one had. And on a later tick, because `doSteer` refuses to
+	/// re-enter while `crystalBusy` is up and this runs as that flag comes down.
+	function drainSteerQueue(rec, diamondId, failed) {
+		if (!rec || !(rec._queue || []).length) return;
+		if (_unloading || !currentDiamond || currentDiamond.id !== diamondId) {
+			// Left where it is, badged on the tile, with HOW the turn ended remembered
+			// -- `resumeSteerQueue` needs it to decide send or hand back when the user
+			// comes back, exactly as `resumeQueue` does for a chat.
+			rec._queueFailed = !!failed;
+			updateQueueBadges();
+			return;
+		}
+		if (failed) { returnQueue(rec); return; }
+		rec._queueFailed = false;
+		var next = rec._queue.shift();
+		renderQueue();
+		setTimeout(function () { doSteer(next); }, 0);
+	}
+
+	/// Pick up a queue left on a Diamond, now the user has come back to it.
+	function resumeSteerQueue(rec, diamondId) {
+		if (!rec || !(rec._queue || []).length) return;
+		if (!currentDiamond || currentDiamond.id !== diamondId) return;   // moved on again
+		if (crystalBusy) return;                                          // its own turn will drain it
+		if (rec._queueFailed) { rec._queueFailed = false; returnQueue(rec); return; }
+		drainSteerQueue(rec, diamondId, false);
 	}
 
 	/// Give a queue back rather than send it.
@@ -14556,7 +15081,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			if (window.DaimondSignals) {
 				DaimondSignals.noteUserMessage({
-					diamondId:  chat.diamondId || (currentDiamond && currentDiamond.id) || '',
+					// The chat's OWN Diamond, and nothing else. This read the selection as a
+					// fallback, which is the same misattribution `recordSpend` had four hundred
+					// lines down and does the same damage in the other index: a cross word typed
+					// into an ordinary chat, with a Diamond open behind it, counted as a MISSED
+					// turn against that Diamond -- and `findings` reads exactly that counter to
+					// decide which Diamond is failing the user.
+					diamondId:  chat.diamondId || '',
 					text:       text,
 					prevModel:  chat.model || '',
 					prevTools:  (chat._lastTurnTools || []).slice(),
@@ -14675,20 +15206,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (!owns()) return;
 				renderToolCall(ev.name || '', ev.args || '', ev.id || '');
 			} else if (ev.type === 'tool_result') {
-				// Which capability broke in the field, on a machine we do not
-				// have. `toolFailed` is the app's own reading of the result and is
-				// already computed twice below; the tool's OUTPUT is not read
-				// here and never leaves.
-				if (toolFailed(ev.content || '')) tel('tool.fail', telOrd('TOOLS', ev.name || ''));
-				if (pendingTool) { pendingTool.content = ev.content || ''; pendingTool = null; }
-				if (J) J.toolDone(umid, chat.id, pendingCallId, ev.content || '', toolFailed(ev.content || ''));
+				// Which capability broke in the field, on a machine we do not have. The
+				// ENGINE's word on that, `ev.outcome` -- see dev/CONTRACT_OUTCOME.md §1 --
+				// and not a reading of the result: the tool's OUTPUT is not looked at here
+				// and never leaves.
+				if (ev.outcome !== 'done') tel('tool.fail', telOrd('TOOLS', ev.name || ''));
+				// Stored WITH the outcome, so the history exception above stops growing.
+				if (pendingTool) {
+					pendingTool.content = ev.content || '';
+					pendingTool.outcome = ev.outcome || '';
+					pendingTool = null;
+				}
+				if (J) J.toolDone(umid, chat.id, pendingCallId, ev.content || '', ev.outcome !== 'done');
 				// Which tools this turn used, and whether they refused. Kept on the
 				// chat so the NEXT user message can be attributed to them: a tool
 				// whose turns keep needing correcting is the one thing here that no
 				// error rate can show, because it is not failing.
 				try {
 					if (window.DaimondSignals) {
-						DaimondSignals.noteTool(ev.name || '', !toolFailed(ev.content || ''));
+						DaimondSignals.noteTool(ev.name || '', ev.outcome === 'done');
 						if (ev.name) {
 							if (!chat._lastTurnTools) chat._lastTurnTools = [];
 							if (chat._lastTurnTools.indexOf(ev.name) < 0) chat._lastTurnTools.push(ev.name);
@@ -14701,7 +15237,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// that stopped on the tool it last named.
 				busySay(chat, tOr('chat.busy_next', 'Step {n} done, thinking…', { n: step }));
 				if (!owns()) return;
-				renderToolResult(ev.name || '', ev.content || '');
+				renderToolResult(ev.name || '', ev.content || '', ev.outcome);
 			} else if (ev.type === 'interjected') {
 				// It has landed: the agent put it into the conversation at the seam,
 				// and the model has it from the next request on. So it stops being
@@ -14716,6 +15252,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (!owns()) return;
 				appendInterjected(said);
 				renderQueue();
+			} else if (ev.type === 'unseeable') {
+				// A conversation is not re-routed -- there is no second model for it to move
+				// to and its history would have to move with it. What it gets is the fact,
+				// persisted, in the app's voice: the picture was left out and this is the
+				// model that would not look. Silence here is what let a daimon answer
+				// confidently about a cover nobody had shown it.
+				chat.messages.push({ role: 'vision_log',
+					content: t('agent.model_blind', { model: ev.model || chat.model || '' }),
+					mid: newMid(), ts: Date.now() });
+				if (!owns()) return;
+				appendCompacted(chat.messages[chat.messages.length - 1].content);
 			} else if (ev.type === 'compacted') {
 				// Persisted, so a reload still shows that the history was folded --
 				// otherwise the thread silently loses messages between two visits.
@@ -14835,7 +15382,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// there was simply no getter for it, so `restore` could set it and
 				// nothing could read it back.
 				chat.lastPrompt = app.last_prompt_tokens || 0;
-				recordSpend(chat.model, turnP, turnC, turnCa, turnCost, chat.provider);
+				// Billed to the chat's OWN Diamond, which for an ordinary chat is nothing at
+				// all. `sendUserMessage` diverts a daimon's conversation into `doSteer` before
+				// it can reach here, so `chat.diamondId` is '' on every live path -- but the
+				// field is read rather than assumed, because `continueTurn` revives a turn from
+				// the journal and the guard above (`if (!chat.diamondId)`) already allows for a
+				// record with one. NOT the selected Diamond: an ordinary chat that outlived its
+				// turn while the user went to look at a Diamond was billing that Diamond for a
+				// conversation it had never seen.
+				recordSpend(chat.model, turnP, turnC, turnCa, turnCost, chat.provider,
+					chat.diamondId || '');
 				// A tool call arrived unparseable, which means the reply ran out of room
 				// mid-argument. Said once, at the end, naming the limit and the setting —
 				// the alternative is a tool that silently did nothing.
@@ -15029,13 +15585,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// that sent it — and on a different key, which is how a fan-out gets billed to a
 	/// balance the user was not spending from.
 	///
+	/// `chosen` is what tells `Workers.routeFor` not to second-guess this pair. It is
+	/// the whole of a chat's answer: the user picked this model for this conversation,
+	/// its workers ride it deliberately, and there is no image-worker setting anywhere
+	/// on a chat for routing to move them TO. A Diamond's `diamondWorkerModel` carries
+	/// no such flag, because a Diamond's worker model is a default sitting beside the
+	/// image model that routing chooses between.
+	///
 	/// # Arguments
 	/// * `chat` - The chat dispatching.
 	function chatWorkerModel(chat) {
 		var r = window.DaimondModels
 			&& DaimondModels.resolve(chat.provider || '', chat.model || '');
-		if (r) return { provider: r.provider, model: r.model };
-		return { provider: chat.provider || '', model: chat.model || '' };
+		if (r) return { provider: r.provider, model: r.model, chosen: true };
+		return { provider: chat.provider || '', model: chat.model || '', chosen: true };
 	}
 
 	// Record a completed turn's cost and feed the spend governor in one
@@ -15048,7 +15611,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// rather than decorate it: a cache hit is charged at a fraction of a fresh token, and a
 	// reported cost is not an estimate at all. Passing zero for either -- which this function used
 	// to hardcode -- is what made a 90%-cached turn bill as though every token were new.
-	function recordSpend(model, promptTokens, completionTokens, cachedTokens, costUsd, provider) {
+	//
+	// `diamondId` IS THE THING THAT SPENT THE MONEY, and it is a parameter because it cannot be
+	// worked out here. This used to read `currentDiamond` -- whichever Diamond happened to be
+	// SELECTED at the moment the money was counted -- and every one of the three callers reaches
+	// this line after an await, so the user is free to have gone elsewhere in between. A Diamond
+	// fanning out four workers and then being left for another is not an edge case; it is what a
+	// fan-out is FOR, and each worker was billed to whatever was on screen when it landed. On an
+	// ordinary chat `selectChat` nulls the global, so the same spend was billed to nobody.
+	// Passing '' means exactly that -- nobody -- and it is the honest answer for an ordinary
+	// chat, which is not a Diamond and has no row in the index.
+	function recordSpend(model, promptTokens, completionTokens, cachedTokens, costUsd, provider,
+		diamondId) {
 		if (!window.DaimondLedger || (promptTokens + completionTokens) <= 0) return;
 		var entry = null;
 		try {
@@ -15062,12 +15636,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		// The ledger carries no Diamond, deliberately -- it is the account's
 		// money and the governor learns a rate from it. Cost PER DIAMOND is a
-		// different question and it is asked here, where the answer is known.
+		// different question, and it is asked here with the answer the CALLER
+		// gave rather than with the one the screen happened to be showing.
 		try {
 			if (entry && window.DaimondSignals) {
 				DaimondSignals.noteTurn({
 					ts:        entry.t,
-					diamondId: (currentDiamond && currentDiamond.id) || '',
+					diamondId: diamondId || '',
 					model:     entry.m || '',
 					usd:       entry.u || 0,
 				});
@@ -15168,6 +15743,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// transcript so far plus this nudge, so the model continues rather than
 	// starts over. See Workers.resume.
 	var RESUME_NUDGE = 'Continue the task from where you left off. Do not repeat work already done above.';
+	// And the one a RE-ROUTED worker carries. Different words because the situation is
+	// different: the model has changed underneath it, the picture it was refused is still
+	// there to be read, and "carry on" would leave it carrying on without ever looking.
+	var VISION_NUDGE = 'You are now running on a model that can be shown pictures. Read the '
+		+ 'image again with file_read and "as":"image", then carry on. Do not repeat work '
+		+ 'already done above.';
 
 	// The predictive spend gate on a fan-out. The cost of dispatching N
 	// workers is known BEFORE any of them runs — N times what a worker
@@ -15295,6 +15876,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// Which modality put this worker on this model. Without it a tile drawn
 						// after a reload cannot say why an image task is on the text model.
 						sees: !!r.sees,
+						// Which model would not take a picture, and which one this worker left
+						// when it moved. Without them a tile drawn after a reload says the work
+						// was always on the model it ended on, and the move is lost.
+						blindModel: r.blindModel || '', reroutedFrom: r.reroutedFrom || '',
 						promptTokens: r.promptTokens, completionTokens: r.completionTokens,
 						// The cached share and the reported cost, so a tile drawn after a reload
 						// still says what the run actually cost rather than re-guessing it.
@@ -15364,7 +15949,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// than once for the batch: one fan-out can quite reasonably be two agents reading
 			// code and one reading a screenshot. The text half is still resolved once, above,
 			// so a batch with no image in it behaves exactly as it did.
-			var vm = diamondVisionModel(diamondId);
+			// A CHAT HAS NOWHERE TO ROUTE A WORKER TO, so its own pair is both halves.
+			// `diamondVisionModel('')` finds no record and answers with the STARRED
+			// DEFAULT, which is not an image model and is not what anybody chose; routing
+			// on it would move a chat's worker onto an unrelated model and an unrelated
+			// key. `pick.chosen` suppresses routing on that path anyway, and this makes
+			// the pair honest rather than relying on the flag alone.
+			var vm = diamondId ? diamondVisionModel(diamondId) : wm;
 			// One batch per dispatch, so the reports can be gathered together when the
 			// LAST of them finishes rather than one at a time. A conductor that reads
 			// three reports in one round can say which two agree; one that reads them
@@ -15378,7 +15969,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				depth: (depth | 0), expected: specs.length, ids: [],
 			};
 			specs.forEach(function (spec) {
-				var route = self.routeFor(spec.task, wm, vm, !!(pick && pick.model));
+				// `pick.chosen`, NOT `pick.model`. Every caller passes a pair with a model in
+				// it -- a conversation that cannot name one cannot dispatch at all -- so
+				// `!!(pick && pick.model)` was true on every dispatch there has ever been,
+				// `sees` was false on every one of them, and `vm` was resolved and read by
+				// nothing. The setting the user filled in under "Workers, images" had no
+				// effect from the day it shipped. See DEFECTS_20260821.md §AB.
+				var route = self.routeFor(spec.task, wm, vm, !!(pick && pick.chosen));
 				var sees = route.sees, mm = route;
 				var run = {
 					id: 'w' + (++self.seq),
@@ -15395,6 +15992,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// Why this worker is on this model, so a run that fell back to the text
 					// model because no vision model is set says so instead of looking chosen.
 					sees: sees,
+					// The caller named this pair for this fan-out and there is nowhere else to
+					// send it, so nothing may move this worker afterwards either. Transient:
+					// a re-route only ever happens inside the session that dispatched it.
+					_pinned: route.pinned,
 					model: mm.model || '',
 					// The provider is the other half of the choice, and it has to travel with the
 					// model rather than be read off the starred default: the same model name sits
@@ -15447,16 +16048,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// * `task` - What the daimon asked for; the only signal available here.
 		/// * `text` - The text worker model for this Diamond.
 		/// * `vision` - The image worker model, already fallen back to `text` if unset.
-		/// * `supplied` - The caller named a model for the whole fan-out, which is the
-		///   user's own choice for this dispatch and is not second-guessed.
+		/// * `supplied` - The caller named this pair for this fan-out itself, rather than
+		///   handing over the Diamond's configured worker default for this rule to choose
+		///   between. To suppress routing a caller passes a pair carrying `chosen: true`,
+		///   and today exactly one does: `chatWorkerModel`, on the chat path. A chat's
+		///   workers ride the conversation's own model by design and a chat has no
+		///   image-worker setting, so there is nothing to route them to. The Diamond path
+		///   passes `diamondWorkerModel`, which carries no flag, so it is routed.
+		///
+		/// It used to be `!!(pick && pick.model)`, which is true whenever a dispatch is
+		/// possible at all, so this whole rule was dead from the day it shipped.
 		routeFor: function (task, text, vision, supplied) {
 			var sees = !supplied && taskWantsVision(task);
 			var m = sees ? vision : text;
-			return { provider: m.provider || '', model: m.model || '', sees: sees };
+			// `pinned` travels with the answer because the capability re-route asks the same
+			// question later, from the worker rather than from the task: a pair the caller
+			// named is not second-guessed by a refusal either.
+			return { provider: m.provider || '', model: m.model || '', sees: sees,
+				pinned: !!supplied };
 		},
 
 		/// The same question asked from outside, for a Diamond, with its own models
 		/// resolved. What a verifier drives, and what a future settings preview would.
+		///
+		/// `false` because a Diamond's pair is a default and never a per-fan-out choice --
+		/// the same thing `dispatch` now passes on the Diamond path, so this is no longer a
+		/// door production never opens.
 		routeForDiamond: function (diamondId, task) {
 			return this.routeFor(task, diamondWorkerModel(diamondId),
 				diamondVisionModel(diamondId), false);
@@ -15773,10 +16390,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (ev.type === 'text') { run.text += (ev.content || ''); if (window.DaimondJournal) DaimondJournal.agentDelta(run.id, ev.content || ''); }
 				else if (ev.type === 'tool_call') { run.tools.push({ name: ev.name || '', status: 'running' }); }
 				else if (ev.type === 'tool_result') {
-					var failed = toolFailed(ev.content || '');
+					// The engine's word, kept as the word: a tile that only knew ok/not-ok
+					// could not show a fence refusal as anything but a broken tool.
+					var outcome = ev.outcome === 'done' || ev.outcome === 'refused' ? ev.outcome : 'failed';
 					for (var i = run.tools.length - 1; i >= 0; i--) {
-						if (run.tools[i].status === 'running') { run.tools[i].status = failed ? 'failed' : 'done'; break; }
+						if (run.tools[i].status === 'running') { run.tools[i].status = outcome; break; }
 					}
+				} else if (ev.type === 'unseeable') {
+					self.unseeable(run, ev);
 				} else if (ev.type === 'truncated') {
 					// The provider stopped at the output limit. Recorded on the run rather
 					// than written into its output: it is a fact about the reply, not part
@@ -15793,7 +16414,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			};
 			try {
 				try {
-					await run.app.run_turn(run.resume ? RESUME_NUDGE : run.task, sink);
+					// Cleared as it is read, so one re-route buys one vision nudge: a worker
+					// paused by hand afterwards resumes on the ordinary one.
+					var nudge = run.resume ? (run._vision ? VISION_NUDGE : RESUME_NUDGE) : run.task;
+					run._vision = false;
+					await run.app.run_turn(nudge, sink);
 				} catch (e) {
 					if (!authFail || run.status === 'stopped' || run.status === 'paused') throw e;
 					reminted = true; authFail = false;
@@ -15845,7 +16470,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// metered like anything else. A resumed worker bills only its own
 				// session here -- the paused session was billed already -- and the
 				// tile shows the running total across both.
-				recordSpend(run.model, _pt, _ct, _ca, _cost, run.provider);
+				//
+				// Billed to the Diamond THAT DISPATCHED IT, which the run has carried since
+				// `dispatch` wrote it and which nothing on screen can change. This block is a
+				// `finally`: it runs whenever the worker happens to finish, with no relation
+				// whatever to what the user is looking at by then, so reading the selection
+				// here was reading an unrelated variable. A chat-dispatched run has no
+				// `diamondId` -- see `agentDiamondChip` -- and bills nobody, which is what an
+				// ordinary chat's own turn does two thousand lines up.
+				recordSpend(run.model, _pt, _ct, _ca, _cost, run.provider, run.diamondId || '');
 				run.promptTokens = (run.priorPrompt || 0) + _pt;
 				run.completionTokens = (run.priorCompletion || 0) + _ct;
 				run.cachedTokens = (run.priorCached || 0) + _ca;
@@ -15865,6 +16498,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// of the same batch has been started and the batch is not called
 				// finished while one of its own is still waiting for a slot.
 				this.gather(run.batch);
+				// AFTER `recordSpend`, and that is the whole of the ordering rule: the leg that
+				// has just ended was spent on `run.model`, and `reroute` is what changes it.
+				// Swapping first would bill the wasted leg to the image model -- the same class
+				// of lie as the spend misattribution fixed on 2026-08-21. `gather` above is a
+				// no-op for a paused run, so nothing else has to change to let this through.
+				if (run._reroute) Workers.reroute(run);
 				// A finished agent may leave the app idle; let a deferred update settle.
 				if (this.active === 0) { try { window.dispatchEvent(new Event('daimond:idle')); } catch (e) {} }
 			}
@@ -15927,6 +16566,91 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			this.persist();
 			this.render();
 			this.pump();
+		},
+
+		/// A picture could not be put in front of this worker's model, and the app has
+		/// only just found out.
+		///
+		/// The capability signal `taskWantsVision` cannot have: a worker that discovers an
+		/// image for itself. The engine emits `unseeable` either when a model on the
+		/// deny-list is handed one, or when an endpoint refuses one for the first time --
+		/// see `Agent::run_tool_loop`. Both mean the same thing here.
+		///
+		/// IT ALWAYS SAYS SOMETHING, and which thing depends on whether there is anywhere
+		/// to go. A worker that moves says so and names both models; a worker that cannot
+		/// says which model would not look -- the only place this app may truthfully tell
+		/// somebody that a model they chose cannot see, and then only from evidence, once,
+		/// about a named model. Recording both would put the same fact on one tile twice.
+		unseeable: function (run, ev) {
+			var to = this.visionTarget(run);
+			if (!to) {
+				run.blindModel = (ev && ev.model) || run.model || '';
+				this.persist();
+				this.render();
+				return;
+			}
+			// Decided here, applied in `start`'s `finally` AFTER the spend is recorded.
+			run._reroute = { to: to, from: run.model, pending: true };
+			run.status = 'paused';
+			try { if (run.app) run.app.abort(); } catch (e) { /* already gone */ }
+			this.persist();
+			this.render();
+		},
+
+		/// Where a worker refused a picture can be moved to, or nothing.
+		///
+		/// Nothing is the ordinary answer and it is not a failure: most workers have
+		/// nowhere to go, and the disclosure above is then the whole of what this can do.
+		visionTarget: function (run) {
+			// ONCE PER RUN. Without this a Diamond whose IMAGE model is itself blind is
+			// moved to it, refused there, and moved again for as long as the pool allows --
+			// every leg a fresh session, a fresh prompt and a fresh bill. Measured under
+			// `verify_vision --break loop`: 2,101 requests and 700 refusals in one minute.
+			if (run._reroute) return;
+			// A pair the caller named for this fan-out is not second-guessed by a refusal
+			// either -- see `routeFor`. A chat's worker is that case: it rides its
+			// conversation's own model and there is no image-worker setting to move it to.
+			if (run._pinned || !run.diamondId) return;
+			// A worker DISPATCHED onto the image model is already where this would send it:
+			// `routeFor` put it there because its task named a picture. Moving would buy a
+			// second leg on the model that has just refused.
+			if (run.sees) return;
+			if (run.status !== 'running') return;	// stopped or paused by hand; not ours
+			// NOWHERE TO GO, and both spellings of it: no image model was ever chosen for
+			// this Diamond, or the one chosen is the same pair as the worker model.
+			var chose = diamondModels()[run.diamondId];
+			if (!chose || !chose.visionModel) return;
+			var vm = diamondVisionModel(run.diamondId);
+			var wm = diamondWorkerModel(run.diamondId);
+			if (!vm || !vm.model) return;
+			if (vm.model === wm.model && (vm.provider || '') === (wm.provider || '')) return;
+			return { provider: vm.provider || '', model: vm.model };
+		},
+
+		/// Move a worker that was refused a picture onto its Diamond's image model, and
+		/// let it carry on from where it stopped.
+		///
+		/// `resume`'s semantics, deliberately, and NOT the auth re-mint path a few lines
+		/// up: that one rebuilds the app and runs `run.task` again from the top, which is
+		/// right for a 401 that spent nothing and wrong here -- a worker that has already
+		/// written a file or run a command would do it twice.
+		///
+		/// The model is swapped HERE rather than in `unseeable`, because `start`'s
+		/// `finally` bills the leg that has just ended against `run.model`. Swapping first
+		/// bills the wasted leg to the image model.
+		reroute: function (run) {
+			var mv = run._reroute;
+			// The record stays on the run as the once-per-run mark; only the pending flag
+			// is spent, so a worker paused by hand two legs later is not moved by a
+			// decision taken back then.
+			if (!mv || !mv.pending) return;
+			mv.pending = false;
+			if (run.status !== 'paused' || !mv.to || !mv.to.model) return;
+			run.reroutedFrom = run.model;
+			run.model = mv.to.model;
+			run.provider = mv.to.provider || '';
+			run._vision = true;		// the nudge that tells it to look again
+			this.resume(run);
 		},
 
 		/// Pause every worker still in flight or waiting, and hold the pool so
@@ -16053,6 +16777,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		tile: function (run) {
 			var self = this;
+			/// The model this worker LEFT, or ''.
+			///
+			/// ONE READING, shared by the chip and the line below it, so there is a single
+			/// answer to "did anything move" and the two cannot disagree about it.
+			function movedFrom(r) { return r.reroutedFrom || ''; }
+
+			/// What this worker's tile says about a picture it could not be shown, or ''.
+			///
+			/// Three cases and they are different facts: it moved; it moved and the model it
+			/// moved to would not look either; it had nowhere to move to at all. The last is
+			/// the sentence a previous session invented and told the owner about a
+			/// configuration it had not read -- here it is said only from evidence, only
+			/// once, and only about a named model.
+			function visionNote(r) {
+				var from = movedFrom(r);
+				if (from) {
+					var moved = t('agent.model_rerouted', { from: from, to: r.model });
+					return (r.blindModel && r.blindModel === r.model)
+						? moved + ' ' + t('agent.model_blind', { model: r.blindModel })
+						: moved;
+				}
+				if (!r.blindModel) return '';
+				var chose = r.diamondId ? diamondModels()[r.diamondId] : null;
+				return (r.diamondId && !(chose && chose.visionModel))
+					? t('agent.model_blind_none', { model: r.blindModel })
+					: t('agent.model_blind', { model: r.blindModel });
+			}
 			var card = document.createElement('div');
 			card.className = 'acard ' + run.status;
 
@@ -16103,9 +16854,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						? t('agent.model_vision', { model: run.model })
 						: t('agent.model_vision_fallback', { model: run.model });
 				}
+				// A worker that MOVED names both models in the chip's own text. Both,
+				// because the destination alone does not tell a reader that anything moved
+				// — it reads as the model somebody chose. A title would not do either: a
+				// tooltip is not disclosure, and a tooltip was the whole of what this app
+				// said on the night it cost A$17.
+				var came = movedFrom(run);
+				if (came) {
+					mc.classList.add('achip-rerouted');
+					mc.textContent = shortModel(came) + ' → ' + shortModel(run.model);
+					mc.title = came + ' → ' + run.model;
+				}
 				chips.appendChild(mc);
 			}
 			card.appendChild(chips);
+
+			// And in words, in the app's voice rather than the worker's. The engine says
+			// the same thing through `on_token` for a plain chat, which puts it inside
+			// what the model appears to have said; a boundary the app enforced belongs to
+			// the app.
+			var vline = visionNote(run);
+			if (vline) {
+				var vn = document.createElement('div');
+				vn.className = 'anote avision';
+				vn.textContent = vline;
+				card.appendChild(vn);
+			}
 
 			var arow = document.createElement('div'); arow.className = 'arow';
 			var left = document.createElement('span');
@@ -16151,8 +16925,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				run.tools.slice(-8).forEach(function (t) {
 					var row = document.createElement('div'); row.className = 'atool ' + t.status;
 					var dot = document.createElement('span');
-					dot.className = t.status === 'running' ? 'live' : t.status === 'failed' ? 'cross' : 'tick';
-					dot.textContent = t.status === 'running' ? '●' : t.status === 'failed' ? '✗' : '✓';
+					dot.className = t.status === 'running' ? 'live' : t.status === 'done' ? 'tick' : 'cross';
+					dot.textContent = t.status === 'running' ? '●'
+						: t.status === 'done' ? '✓' : t.status === 'refused' ? '⊘' : '✗';
+					// A refusal is the fence working, so it is not drawn in the danger colour
+					// the `cross` class carries. The glyph differs as well as the colour.
+					if (t.status === 'refused') dot.style.color = 'var(--warn)';
 					var nm = document.createElement('span'); nm.textContent = t.name;
 					row.appendChild(dot); row.appendChild(nm);
 					wrap.appendChild(row);
@@ -16290,11 +17068,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// never clobbered by their old ones.
 		migrate: async function () {
 			try {
-				var cur = await tools().run_tool('file_read', JSON.stringify({ path: INSTRUCTIONS_FILE }));
-				if (typeof cur === 'string' && !/^\s*Error\b/i.test(cur)) return;   // already renamed, or never named
-				var old = await tools().run_tool('file_read', JSON.stringify({ path: INSTRUCTIONS_FILE_WAS }));
-				if (typeof old !== 'string' || /^\s*Error\b/i.test(old)) return;    // nothing to carry
-				await tools().run_tool('file_move', JSON.stringify({ path: INSTRUCTIONS_FILE_WAS, to: INSTRUCTIONS_FILE }));
+				var cur = await tools().run_tool_outcome('file_read', JSON.stringify({ path: INSTRUCTIONS_FILE }));
+				if (cur && cur.outcome === 'done') return;    // already renamed, or never named
+				var old = await tools().run_tool_outcome('file_read', JSON.stringify({ path: INSTRUCTIONS_FILE_WAS }));
+				if (!old || old.outcome !== 'done') return;   // nothing to carry
+				await tools().run_tool_outcome('file_move',
+					JSON.stringify({ path: INSTRUCTIONS_FILE_WAS, to: INSTRUCTIONS_FILE }));
 			} catch (e) {
 				// A workspace we cannot read is a workspace we cannot migrate. The
 				// refresh below will find no rules and the app carries on as it does
@@ -16322,9 +17101,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			this.theirs = '';
 			if (folderOpen()) {
 				try {
-					var proj = await tools().run_tool('file_read',
+					var proj = await tools().run_tool_outcome('file_read',
 						JSON.stringify({ path: INSTRUCTIONS_FILE }));
-					if (typeof proj === 'string' && !/^\s*Error\b/i.test(proj)) this.theirs = proj;
+					if (proj && proj.outcome === 'done') this.theirs = proj.text;
 				} catch (e) { /* a folder without one is the ordinary case */ }
 			}
 			this.md = this.layered();
@@ -17223,7 +18002,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// same per-app reading. `absorb_usage` rolls all four out of each throwaway Session into the
 	// app, so all four grow together and one delta rule serves them all.
 	var _diamondMeter = new Map();       // app -> { p, c, ca, cost } at the last reading
-	function meterDiamondTurn(app) {
+
+	/// Bill one Diamond turn -- a steer, a fold proposal -- to the Diamond that ran it.
+	///
+	/// `diamondId` is a parameter and CANNOT be derived from `app`: `_diamondApps` is keyed by
+	/// "provider model", so two Diamonds on the same model share one client and the object knows
+	/// nothing about either of them. It used to be read off `currentDiamond` inside `recordSpend`
+	/// instead, which is a different variable with the same name in it -- every caller here is
+	/// past an await, and a fold that lands after the user has moved on was billed to wherever
+	/// they moved to.
+	function meterDiamondTurn(app, diamondId) {
 		if (!app || !window.DaimondLedger) return;
 		var prev = _diamondMeter.get(app) || { p: 0, c: 0, ca: 0, cost: 0 };
 		var p = app.prompt_tokens || 0, c = app.completion_tokens || 0;
@@ -17233,7 +18021,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_diamondMeter.set(app, { p: p, c: c, ca: ca, cost: cost });
 		if (dp + dc === 0) return;
 		recordSpend(_diamondAppModel.get(app) || cfg.model, dp, dc, dca, dcost,
-			_diamondAppProvider.get(app) || '');
+			_diamondAppProvider.get(app) || '', diamondId || '');
 		updateSpend();
 	}
 
@@ -17255,10 +18043,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			cur = await fa.read_crystal_data(diamondId);
 			proposed = await fa.fold_propose(diamondId, delta);
 		} catch (e) {
-			meterDiamondTurn(fa);
+			meterDiamondTurn(fa, diamondId);
 			setCrystalStatus(friendlyError(e)); setCrystalBusy(false); return;
 		}
-		meterDiamondTurn(fa);
+		meterDiamondTurn(fa, diamondId);
 		setCrystalStatus(''); setCrystalBusy(false);
 		pendingFolds[diamondId] = {
 			base: cur, proposed: proposed, delta: delta,
@@ -17421,9 +18209,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var todo = [curDir || ''];
 			while (todo.length && hits.length < 200) {
 				var dir = todo.shift();
-				var res = await tools().run_tool('file_list', JSON.stringify({ path: dir || '.' }));
-				if (typeof res !== 'string' || /^\s*Error\b/i.test(res)) continue;
-				parseListing(res).forEach(function (e) {
+				var res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: dir || '.' }));
+				if (!res || res.outcome !== 'done') continue;   // refused or broken: no entries to search
+				parseListing(res.text).forEach(function (e) {
 					if (e.name.charAt(0) === '.') return;
 					var full = joinPath(dir, e.name);
 					if (!dir && e.name === 'diamonds' && e.dir) return;      // Daimond's own store
@@ -17855,9 +18643,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var todo = roots.slice();
 			while (todo.length && hits.length < 200) {
 				var dir = todo.shift();
-				var res = await tools().run_tool('file_list', JSON.stringify({ path: dir || '.' }));
-				if (typeof res !== 'string' || /^\s*Error\b/i.test(res)) continue;
-				parseListing(res).forEach(function (e) {
+				var res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: dir || '.' }));
+				if (!res || res.outcome !== 'done') continue;   // refused or broken: no entries to search
+				parseListing(res.text).forEach(function (e) {
 					if (e.name.charAt(0) === '.') return;
 					var full = joinPath(dir, e.name);
 					if (e.dir) { todo.push(full); return; }
@@ -17885,16 +18673,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			await loadAttached();
 			if (curDir) {
 				renderCrumbs(pathEl, t('dws.title'), curDir, goDir);
-				var res = await tools().run_tool('file_list', JSON.stringify({ path: curDir }));
-				if (typeof res === 'string' && res.indexOf('Error') === 0) {
+				var res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: curDir }));
+				if (!res || res.outcome !== 'done') {
 					treeEl.innerHTML = '';
 					var err = document.createElement('div');
 					err.className = 'files-empty';
-					err.textContent = friendlyError(res);
+					err.textContent = toolReason(res);
 					treeEl.appendChild(err);
 					return;
 				}
-				renderTree(parseListing(res));
+				renderTree(parseListing(res.text));
 				refreshResidency();
 				return;
 			}
@@ -17904,8 +18692,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			treeEl.innerHTML = '';
 			var own = ownDir();
 			var entries = [];
-			var lres = await tools().run_tool('file_list', JSON.stringify({ path: own }));
-			if (typeof lres === 'string' && lres.indexOf('Error') !== 0) entries = parseListing(lres);
+			var lres = await tools().run_tool_outcome('file_list', JSON.stringify({ path: own }));
+			if (lres && lres.outcome === 'done') entries = parseListing(lres.text);
 			lastEntries = entries;
 			entries = entries.filter(function (e) { return e.name.charAt(0) !== '.'; });
 			entries.sort(function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); });
@@ -18230,13 +19018,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { dest = await window.showDirectoryPicker({ mode: 'readwrite' }); }
 			catch (e) { if (!(e && e.name === 'AbortError')) showModeMsg('Could not open that folder.', true); return; }
 			var app; try { app = tools(); } catch (e) { return; }
-			var wrote = 0, away = 0;
+			var wrote = 0, away = 0, unread = 0;
 			async function out(dir, rel) {
 				var res;
-				try { res = await app.run_tool('file_list', JSON.stringify({ path: rel || '.' })); }
+				try { res = await app.run_tool_outcome('file_list', JSON.stringify({ path: rel || '.' })); }
 				catch (e) { return; }
-				if (typeof res !== 'string' || /^\s*Error\b/i.test(res)) return;
-				var entries = parseListing(res);
+				// A refused directory is counted apart from a cloud-only file, because they
+				// are different news: one is a folder this copy does not carry at all. It
+				// used to be neither -- the refusal sentence went into `parseListing` and
+				// the copy was announced as though whole.
+				if (!res || res.outcome !== 'done') { unread++; return; }
+				var entries = parseListing(res.text);
 				for (var i = 0; i < entries.length; i++) {
 					var e = entries[i];
 					if (e.name.charAt(0) === '.') continue;
@@ -18275,8 +19067,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			try { await out(dest, ''); }
 			catch (e) { showModeMsg('Save stopped: ' + (e && e.message ? e.message : e), true); }
-			showModeMsg('Saved ' + wrote + ' files to "' + dest.name + '"' +
-				(away ? ('; ' + away + ' are in cloud storage and were not fetched.') : '.'));
+			showModeMsg('Saved ' + wrote + ' files to "' + dest.name + '"'
+				+ (away ? ('; ' + away + ' are in cloud storage and were not fetched') : '')
+				+ (unread ? ('; ' + unread + ' folder(s) could not be read, so this copy is not '
+					+ 'the whole workspace') : '')
+				+ '.');
 		}
 
 		// Render the mode row: which files the agent is touching, and the ways to change that.
@@ -18891,10 +19686,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			renderCrumbs(pathEl, t('panel.work'), curDir, goDir);
 			treeEl.innerHTML = '<div class="files-empty">…</div>';
 			await loadAttached();		// so a row can say whether it is attached
-			var res = await tools().run_tool('file_list', JSON.stringify({ path: curDir || '.' }));
+			var res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: curDir || '.' }));
 			// A revoked grant is detected at the file edge, which raises `daimond:folder-lost`
 			// for every tool call rather than only this one — so there is nothing to check here.
-			if (typeof res === 'string' && res.indexOf('Error') === 0) {
+			if (!res || res.outcome !== 'done') {
 				treeEl.innerHTML = '';
 				var err = document.createElement('div');
 				err.className = 'files-empty';
@@ -18902,11 +19697,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// is reported, and it was printing the tool's answer verbatim: on a
 				// browser with no OPFS the whole panel filled with terminal colour
 				// codes and `src/wasm/opfs.rs:210` around one readable sentence.
-				err.textContent = friendlyError(res);         // escaped
+				// A REFUSAL is already a sentence, so `toolReason` shows that one as
+				// it stands and prettifies only a raw failure.
+				err.textContent = toolReason(res);            // escaped
 				treeEl.appendChild(err);
 				return;
 			}
-			renderTree(parseListing(res));
+			renderTree(parseListing(res.text));
 			refreshResidency();
 		}
 
@@ -19028,12 +19825,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The result used to be discarded, so a failed directory
 				// delete looked exactly like a successful one: the user
 				// confirmed a destructive action and was told nothing.
-				var res = await tools().run_tool('file_delete', JSON.stringify({
+				var res = await tools().run_tool_outcome('file_delete', JSON.stringify({
 					path: full,
 					recursive: e.dir ? 'true' : 'false',
 				}));
-				if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
-					fileMsg(t('files.delete_failed', { name: e.name, reason: friendlyError(res) }), true);
+				if (!res || res.outcome !== 'done') {
+					fileMsg(t('files.delete_failed', { name: e.name, reason: toolReason(res) }), true);
 				} else nudgeSync();	// a quiet delete must travel like any edit
 				list(curDir);
 			});
@@ -19445,7 +20242,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 							return;
 						}
 					}
-					writeOpenFile(path, content).then(function () {
+					writeOpenFile(path, content).then(function (wr) {
+						if (!wr || wr.outcome !== 'done') {
+							editBtn.disabled = false; editBtn.textContent = '✔ ' + t('common.save');
+							fileMsg(t('files.save_failed', { reason: toolReason(wr) }), true);
+							return;
+						}
 						curContent = content; editing = false;
 						var pre = document.createElement('pre'); pre.className = 'files-view-body';
 						ta2.replaceWith(pre);
@@ -19589,7 +20391,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					+ '- \n';
 			}
 			try {
-				await tools().run_tool('file_write', JSON.stringify({ path: p, content: seed }));
+				var w = await tools().run_tool_outcome('file_write',
+					JSON.stringify({ path: p, content: seed }));
+				// The result used to be thrown away, so a refused create opened an editor
+				// on a file that was never made.
+				if (!w || w.outcome !== 'done') {
+					fileMsg(t('files.create_failed', { reason: toolReason(w) }), true);
+					return;
+				}
 				await list(curDir);
 				await Instructions.refresh();
 				await Prompts.refresh();
@@ -19605,9 +20414,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				{ placeholder: 'notes', okLabel: t('rail.create') });
 			if (name === null) return;
 			name = name.trim(); if (!name) return;
-			var res = await tools().run_tool('dir_create', JSON.stringify({ path: joinPath(writeDir(), name) }));
-			if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
-				fileMsg(t('files.create_folder_failed', { reason: friendlyError(res) }), true);
+			var res = await tools().run_tool_outcome('dir_create',
+				JSON.stringify({ path: joinPath(writeDir(), name) }));
+			if (!res || res.outcome !== 'done') {
+				fileMsg(t('files.create_folder_failed', { reason: toolReason(res) }), true);
 			}
 			await list(curDir);
 		}
@@ -19630,9 +20440,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			name = name.trim();
 			if (!name || name === e.name) return;
 			var to = name.indexOf('/') === -1 ? joinPath(parent, name) : name;
-			var res = await tools().run_tool('file_move', JSON.stringify({ path: from, to: to }));
-			if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
-				fileMsg(t('files.rename_failed', { reason: friendlyError(res) }), true);
+			var res = await tools().run_tool_outcome('file_move', JSON.stringify({ path: from, to: to }));
+			if (!res || res.outcome !== 'done') {
+				fileMsg(t('files.rename_failed', { reason: toolReason(res) }), true);
 			} else nudgeSync();	// a rename or move outside a turn pushes on its own
 			await list(curDir);
 		}
@@ -19741,9 +20551,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		/// Write the file the Doc panel has open, through whichever door it came from.
+		///
+		/// Both doors answer `{ outcome, text }`, because they report a failure differently
+		/// and the caller must not have to know which one it used: `store_write` REJECTS,
+		/// while a tool call RESOLVES whatever became of it. So a refused save resolved,
+		/// took the success branch, and told the user the file was saved -- while the fence
+		/// had stopped the write and the edit existed nowhere but in the textarea.
 		function writeOpenFile(path, content) {
-			if (storeFile) return Wasm.store_write(path, content);
-			return tools().run_tool('file_write', JSON.stringify({ path: path, content: content }));
+			if (storeFile) {
+				return Wasm.store_write(path, content)
+					.then(function () { return { outcome: 'done', text: '' }; });
+			}
+			return tools().run_tool_outcome('file_write',
+				JSON.stringify({ path: path, content: content }));
 		}
 
 		function renderFileBody() {
@@ -19965,10 +20785,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// no dotfiles, and no `diamonds/` at the root, which is Daimond's
 			/// own store and is not the user's to browse.
 			entries:       async function (dir) {
-				var res = await tools().run_tool('file_list', JSON.stringify({ path: dir || '.' }));
-				if (typeof res === 'string' && res.indexOf('Error') === 0) return [];
+				var res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: dir || '.' }));
+				if (!res || res.outcome !== 'done') return [];
 				var atRoot = !dir || dir === '.' || dir === '/';
-				return parseListing(res).filter(function (e) {
+				return parseListing(res.text).filter(function (e) {
 					if (e.name.charAt(0) === '.') return false;
 					return !(atRoot && e.name === 'diamonds' && e.dir);
 				}).sort(function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); });
@@ -20648,6 +21468,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// not an image as far as anything here is concerned, so routing that task to the
 	/// vision model would spend the more expensive model on a file it will be handed as
 	/// bytes anyway.
+	///
+	/// DO NOT WIDEN IT to `heic`, `avif`, `tiff` or `bmp`. `ImageMedia::sniff` answers
+	/// `None` for all four, `file_read` refuses them as bytes, and the only effect would
+	/// be to send the task to the dearer model for a file no model can be shown. A worker
+	/// that meets a picture this cannot predict is moved by `Workers.unseeable`, which
+	/// asks the model rather than the filename.
 	var IMAGE_EXT = /\.(png|jpe?g|gif|webp)\b/i;
 
 	/// Does this task look as though it will put an image in front of a model?
@@ -20660,18 +21486,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// It is a guess, and a guess in one direction only: a task that names no image runs on
 	/// the text model, which is what every task did before there was a second one. What it
 	/// can get wrong is a worker that discovers an image for itself, and that one is not
-	/// knowable here at all.
+	/// knowable here at all -- so it is not decided here. `Workers.unseeable` moves that
+	/// worker when the model actually refuses the picture; dispatch is no longer the only
+	/// place routing happens.
 	function taskWantsVision(task) {
 		return IMAGE_EXT.test(String(task || ''));
 	}
 
 	/// The model this Diamond's workers run on for a task that carries an image.
 	///
-	/// Falls back to the text worker model, and says nothing clever about capability: there
-	/// is no `vision` flag anywhere in `models.js`, so the app cannot check that the model
-	/// the user chose can see, and pretending to would be worse than leaving the choice
-	/// theirs. A Diamond with no vision model set falls back to the text one — the run says
-	/// which model it got, so a fallback is visible rather than silent.
+	/// Falls back to the text worker model. There is still no `vision` flag anywhere in
+	/// `models.js`, and inventing one would be a guess maintained by hand and wrong for
+	/// every model released after it was written — so the choice of WHICH image model
+	/// stays the user's. What the app can now check is the other half: it cannot know
+	/// before the first request, and it acts on what the first refusal teaches. See
+	/// `Workers.unseeable`. A Diamond with no vision model set falls back to the text one —
+	/// the run says which model it got, so a fallback is visible rather than silent.
 	function diamondVisionModel(id) {
 		var m = diamondModels()[id];
 		if (m && m.visionModel) {
@@ -22381,12 +23211,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				onDelete: function () { return deleteDiamond(f); },
 			});
 		}));
+		// THE META ROW KEEPS THE MODEL CHIP AND NOTHING ELSE. The version number
+		// was tile furniture nobody compared, and the time and the spend moved down
+		// to the meter row where they sit beside the thing they measure. A pending
+		// fold is a warning and warnings never leave the tile, so it stays here
+		// rather than being tidied into the meter row where it would read as a
+		// reading.
 		var meta = document.createElement('div');
 		meta.className = 'session-box-meta';
-		var ver = document.createElement('span');
-		ver.className = 'session-box-ctx';
-		ver.textContent = 'v' + (f.crystal_version || 0);
-		meta.appendChild(ver);
+		// The daimon's conversation, found WITHOUT creating one -- `daimonChat` would
+		// mint an empty session for a Diamond the user has never opened. Read here
+		// rather than in the meter row below because two rows want it now: the queue
+		// badge on this row, and the context bar on that one.
+		var dc = chats.find(function (c) { return c.diamondId === f.id; });
 		// What this Diamond thinks with. Stored since Diamonds had models and drawn
 		// nowhere, so two Diamonds deliberately put on different models looked identical
 		// on the rail — and a fan-out is billed to this pair. Detail, so Simple hides it
@@ -22399,17 +23236,57 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			mchip.title = t('tile.diamond_model_help', { model: dm.model });
 			meta.appendChild(mchip);
 		}
+		if (pendingFolds[f.id]) {
+			var pend = document.createElement('span');
+			pend.className = 'diamond-pending';
+			pend.textContent = t('fold.pending_badge');
+			pend.title = t('fold.pending_badge_help');
+			meta.appendChild(pend);
+		}
+		// What is waiting on this Diamond's daimon, in the same words and the same
+		// style the chat tile uses -- a daimon's conversation is an ordinary chat
+		// record, so it queues the way one does and there is no second thing to say
+		// about it. ON THIS ROW rather than the meter row below, because the
+		// stylesheet keeps a meta row alive in Simple exactly when it holds a
+		// `.diamond-pending` and this badge is one, while `.diamond-meter` is hidden
+		// in Simple outright. `app.css` states that Simple keeps the queue badge; the
+		// meter row is the one place on this tile where that would have been false.
+		//
+		// `updateQueueBadges` maintains it after this, and it has to find the same
+		// row -- see `queueBadgeSlot`, which both ends call so they cannot drift.
+		var qb = queueBadge(dc);
+		if (qb) meta.appendChild(qb);
+		// A meta row holding nothing still costs its top margin, which is why the
+		// meter row below is guarded the same way. It empties whenever a Diamond has
+		// no model set, no fold pending and nothing queued -- the ordinary state of a
+		// new one.
+		box.appendChild(header);
+		if (meta.firstChild) box.appendChild(meta);
+		// The meter row, BELOW the tags and shaped like the one on an ordinary
+		// chat tile: context bar with its percentage, then the relative time that
+		// used to sit in the meta row, then the spend. No token count — the chat
+		// tile's count is per-conversation running totals, and a Diamond's
+		// conversation is one of several things that spend under its id, so a count
+		// here would be a number that looks comparable to the chat's and is not.
+		// The spend figure is the Diamond's OWN — the signals-index figure that was
+		// already on the tile — and NOT the daimon conversation's cost, for the same
+		// reason.
+		//
+		// The context bar is drawn only when the daimon has spent tokens AND its
+		// model publishes a window. A missing bar means one of those two, and the
+		// caller does not invent a placeholder.
+		var meterRow = document.createElement('div');
+		meterRow.className = 'diamond-meter';
+		var spent = dc && ((dc.promptTokens || 0) + (dc.completionTokens || 0)) > 0;
+		var bar = null;
+		if (dc && spent) bar = tileCtxBar(dc, chatWindow(dc));
+		if (bar) meterRow.appendChild(bar);
 		if (f.updated) {
 			var upd = document.createElement('span');
 			upd.className = 'session-box-time';
 			upd.textContent = relTime(f.updated);
-			meta.appendChild(upd);
+			meterRow.appendChild(upd);
 		}
-		// What this Diamond has cost. Hoisted onto the tile in Max because it is
-		// the question no other surface answers: the spend readout at the foot of
-		// the rail is the account's total, and "which Diamond is eating the
-		// money" needs them side by side. The figure comes from the signal index,
-		// which counts it per Diamond for the Optimiser.
 		try {
 			if (window.DaimondSignals) {
 				var ix = DaimondSignals.snapshot();
@@ -22419,41 +23296,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					sp.className = 'session-box-spend';
 					sp.textContent = fmtUsd(mine.usd);
 					sp.title = t('tile.spend_help', { turns: mine.turns || 0 });
-					meta.appendChild(sp);
+					meterRow.appendChild(sp);
 				}
 			}
-		} catch (e) { /* no index yet: the tile simply says nothing about cost */ }
-		// Tags sit with the other plain facts of the Diamond. Only the first few
-		// show, so one heavily-filed Diamond cannot push the rest off the rail;
-		// a Diamond with no tags adds nothing here and looks exactly as it did
-		// before tags existed.
-		// A fold proposed but not yet answered. The diff lives in the centre, which
-		// may be showing something else entirely by the time the reducer returns, so
-		// the row says there is something here to come back to.
-		if (pendingFolds[f.id]) {
-			var pend = document.createElement('span');
-			pend.className = 'diamond-pending';
-			pend.textContent = t('fold.pending_badge');
-			pend.title = t('fold.pending_badge_help');
-			meta.appendChild(pend);
-		}
-		// The daimon's context meter: context-window fraction, tokens, cost.
-		// Finds the chat record WITHOUT creating one — daimonChat would make an
-		// empty session for a Diamond never opened, and an empty meter is noise.
-		var dc = chats.find(function (c) { return c.diamondId === f.id; });
-		if (dc && ((dc.promptTokens || 0) + (dc.completionTokens || 0)) > 0) {
-			meta.appendChild(tileMeter(dc));
-		}
-		box.appendChild(header); box.appendChild(meta);
-		// Tags in their own row, below the meta. Appending inline made them look
-		// like they belonged to the version or the model chip; a separate row
-		// gives them their own line and stops a heavily-tagged Diamond from
-		// pushing the meter off the tile.
+	} catch (e) { /* no index yet: the row says nothing about spend */ }
+		// A row with nothing in it still costs its margin-top, so it is not appended
+		// at all rather than appended empty.
+
+		// Tags in their own row, below the meta. EVERY tag renders and the row
+		// scrolls sideways when they do not fit, because the +N overflow chip hid
+		// the very thing a tag exists for: an excluded tag cannot be clicked back
+		// into a filter, and a Diamond you cannot see the filing of is a Diamond
+		// you cannot find by it. A chip scrolled out of view is still in the tab
+		// order and still a click away; a chip never rendered is neither.
 		var tags = tagsOf(f);
 		if (tags.length > 0) {
 			var tagsRow = document.createElement('div');
 			tagsRow.className = 'session-box-tags';
-			tags.slice(0, TAG_CHIPS_SHOWN).forEach(function (tag) {
+			tags.forEach(function (tag) {
 				// A Diamond only reaches the rail if it passed the filter, so a chip
 				// here is either off or included -- never excluded. The title says
 				// what the next click does rather than what the chip is, because a
@@ -22463,15 +23323,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				chip.title = on ? t('tag.exclude_next', { tag: tag }) : t('tag.only_diamonds', { tag: tag });
 				tagsRow.appendChild(chip);
 			});
-			if (tags.length > TAG_CHIPS_SHOWN) {
-				var more = document.createElement('span');
-				more.className = 'tag-more';
-				more.textContent = '+' + (tags.length - TAG_CHIPS_SHOWN);
-				more.title = tags.slice(TAG_CHIPS_SHOWN).join(', ');
-				tagsRow.appendChild(more);
-			}
 			box.appendChild(tagsRow);
 		}
+		// THE METER ROW GOES LAST, BELOW THE TAGS, which is where it was asked to be.
+		// It is built further up and appended here: the comment on its construction
+		// said "BELOW the tags" while the append stood three lines ABOVE them, so the
+		// tile drew the opposite of what the line beside it claimed. A row with
+		// nothing in it still costs its margin, so an empty one is not appended.
+		if (meterRow.firstChild) box.appendChild(meterRow);
 		box.addEventListener('click', function () {
 			selectDiamond(f);
 			if (isMobile()) mshow('ai');
@@ -23222,6 +24081,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			syncComposer();
 			renderChatAttachments();          // the chat footer never applies to a Diamond
 			syncComposerAttachPrefix();       // may seed the composer -- see ATTACH_CONTRACT.md §6
+			// Anything left queued on this daimon is drawn again -- `renderHistory` has
+			// just rebuilt the thread it lives in -- and then acted on, one tick later
+			// so this function finishes drawing before a turn starts writing into it.
+			// The chat face's own pair, for the chat face's own reasons; see
+			// `selectChat`.
+			renderQueue();
+			setTimeout(function () { resumeSteerQueue(rec, f.id); }, 0);
 			return;
 		}
 		// `current` is the daimon's own conversation on BOTH faces, because both
@@ -23229,12 +24095,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// nulled here on the reading that "a Diamond's crystal is not a chat" --
 		// true of what is DISPLAYED, and false of what the box at the bottom
 		// talks to. The thread stays hidden; only the destination is set.
-		current = daimonChat(f);
+		var crec = daimonChat(f);
+		current = crec;
 		updateActiveSession();
 		showCentre('focus');
 		syncComposer();
 		renderChatAttachments();
 		syncComposerAttachPrefix();
+		// And on the crystal face too: the composer is the same box talking to the
+		// same daimon, so a queue left behind is picked up from whichever face the
+		// user comes back on. The thread it draws into is hidden here, which costs a
+		// few nodes nobody sees and keeps one code path for both faces.
+		renderQueue();
+		setTimeout(function () { resumeSteerQueue(crec, f.id); }, 0);
 		// A proposal left pending on this Diamond is restored rather than lost.
 		if (pendingFolds[f.id]) renderFoldDiff(f.id);
 		else await renderCrystal();
@@ -26445,6 +27318,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		pick:         attachPicker,
 	};
 
+	/// Say why an artefact will not open, and say the two apart.
+	///
+	/// A file that was renamed or deleted and a path the fence closed look identical from
+	/// here, and they are not the same thing to the person in front of it: a deletion has
+	/// no next step, and a refusal has an exact one -- grant the folder to this Diamond, or
+	/// move the file into one it already holds. Told apart on the OUTCOME. There is no
+	/// wording either message could be read out of, which is the whole reason the outcome
+	/// travels.
+	function artefactMissing(r, path) {
+		if (r && r.outcome === 'refused') {
+			noticeDialog(t('arte.file_fenced'), t('arte.file_fenced_body'));
+		} else {
+			noticeDialog(t('arte.file_gone'), t('arte.file_gone_body', { path: path }));
+		}
+	}
+
 	/// Show an artefact in whichever panel already owns that kind of thing.
 	///
 	/// A file that has since been renamed or deleted is said to be missing rather than
@@ -26457,12 +27346,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return;
 		}
 		if (kind === 'file') {
-			try {
-				await diamondApp().run_tool('file_read', JSON.stringify({ path: rest }));
-			} catch (e) {
-				noticeDialog(t('arte.file_gone'), t('arte.file_gone_body', { path: rest }));
-				return;
-			}
+			// An existence test, so the OUTCOME is the whole answer -- and a read the
+			// fence refuses is not a file that is there.
+			var fr = null;
+			try { fr = await diamondApp().run_tool_outcome('file_read', JSON.stringify({ path: rest })); }
+			catch (e) { fr = null; }
+			if (!fr || fr.outcome !== 'done') { artefactMissing(fr, rest); return; }
 			Files.open(rest);
 			return;
 		}
@@ -26470,10 +27359,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// folders, like a file is read in the panel that reads files.
 		if (kind === 'dir') {
 			var res = null;
-			try { res = await diamondApp().run_tool('file_list', JSON.stringify({ path: rest })); }
-			catch (e) { res = 'Error'; }
-			if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
-				noticeDialog(t('arte.file_gone'), t('arte.file_gone_body', { path: rest }));
+			try { res = await diamondApp().run_tool_outcome('file_list', JSON.stringify({ path: rest })); }
+			catch (e) { res = null; }
+			if (!res || res.outcome !== 'done') {
+				artefactMissing(res, rest);
 				return;
 			}
 			try { DaimondPanels.markUsed('work'); DaimondPanels.show('work'); } catch (e) { /* no panels */ }
@@ -27451,9 +28340,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (onScreen()) renderToolCall(ev.name || '', ev.args || '', ev.id || '');
 			} else if (ev.type === 'tool_result') {
 				var last = rec.messages[rec.messages.length - 1];
-				if (last && last.role === 'tool_log' && !last.content) last.content = ev.content || '';
+				// The outcome is stored with the log, as it is in a chat: this conversation
+				// is durable, and a reload must not have to guess at prose to redraw it.
+				if (last && last.role === 'tool_log' && !last.content) {
+					last.content = ev.content || '';
+					last.outcome = ev.outcome || '';
+				}
 				busySay(rec, tOr('chat.busy_next', 'Step {n} done, thinking…', { n: step }));
-				if (onScreen()) renderToolResult(ev.name || '', ev.content || '');
+				if (onScreen()) renderToolResult(ev.name || '', ev.content || '', ev.outcome);
+			} else if (ev.type === 'unseeable') {
+				// The daimon is NOT re-routed: its conversation is durable and there is no
+				// second model configured for it. What this buys it is that the picture
+				// never enters its stored conversation -- see `Agent::run_tool_loop` -- and
+				// that the thread says so instead of going quiet.
+				rec.messages.push({ role: 'vision_log',
+					content: t('agent.model_blind', { model: ev.model || '' }),
+					mid: newMid(), ts: Date.now() });
+				if (onScreen()) appendCompacted(rec.messages[rec.messages.length - 1].content);
 			} else if (ev.type === 'compacted') {
 				// The fold notes2 asks for by name: *"automatically and visibly folded at
 				// the context threshold"*. Visibly is this line.
@@ -27517,7 +28420,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// and the Diamond's Links section stay stale until something unrelated
 		// redraws them, and the world model looks like it did not take.
 		signalLinksChanged();
-			meterDiamondTurn(fa);
+			meterDiamondTurn(fa, diamondId);
 			setCrystalStatus('');
 			await refreshDiamondAfterChange();
 			Files.refresh();
@@ -27542,6 +28445,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// kept its dots for ever because nothing ever re-decided them.
 			syncComposer();
 			setCrystalBusy(false);
+			// AFTER the flag comes down, and handed the failure: what was typed while
+			// this ran comes back to the composer rather than being sent into the dark.
+			drainSteerQueue(rec, diamondId, true);
 			return;
 		}
 		rec._generating = false;
@@ -27596,6 +28502,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// same answer twice.
 			setCrystalReply(replyText);
 		}
+		// LAST, so a status line the drain's own turn will overwrite has at least
+		// been written once. `sawError` is how the turn ended, and it decides the
+		// same thing here it decides for a chat: send the next one, or hand it back.
+		drainSteerQueue(rec, diamondId, sawError);
 	}
 
 	/// Propose a fold: run the reducer over the current crystal plus the
@@ -31596,7 +32506,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			switch (m.role) {
 				case 'user':      out.push('\n## You\n\n' + body); break;
 				case 'assistant': out.push('\n## Daimond\n\n' + body); break;
-				case 'tool_log':  out.push('\n### Step: ' + (m.name || '') + '\n\n'
+				// The outcome is named in the heading, because an exported transcript is
+				// read away from the colours: a step that was REFUSED and one that ran are
+				// otherwise the same heading over prose that may not say which it was.
+				case 'tool_log':  out.push('\n### Step: ' + (m.name || '')
+					+ (function () {
+						var oc = m.outcome || outcomeOfStoredText(body);
+						return oc === 'done' ? '' : ' \u2014 ' + oc;
+					}()) + '\n\n'
 					+ (m.args ? '`' + m.args + '`\n\n' : '') + body); break;
 				// The app's own voice about the conversation -- a refusal, a limit
 				// reached. Kept, because a transcript that silently drops the reason a
@@ -31647,13 +32564,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// Composed by `Agent::system_parts`, which is the same function `run_turn` composes the real
 	// request with. A second assembly that agrees today is one that disagrees later, silently.
 	var _wireOn = false;
+	// Which render is the current one. The getter awaits now -- it asks the hand for the
+	// machine note, exactly as the turn does -- so two renders can be in flight at once when a
+	// chat is switched mid-await, and the older one must not insert a second band under the newer.
+	var _wireSeq = 0;
 
 	/// Roughly how many tokens a string is. Four characters, which is wrong for code and for CJK
 	/// and close enough for a size the reader is using to decide whether to look.
 	function wireTok(s) { return Math.round(String(s || '').length / 4); }
 
 	/// One band of the system message, with whose it is said in the same breath as how big it is.
-	function wireBand(label, why, help, text) {
+	///
+	/// `tok` overrides the count for the one band whose DISPLAY is not what is sent: the schemas
+	/// are re-indented here to be readable, and the reader is owed the size of the bytes rather
+	/// than the size of the indenting.
+	function wireBand(label, why, help, text, tok) {
 		var row = document.createElement('div');
 		row.className = 'wire-band';
 		var head = document.createElement('button');
@@ -31666,7 +32591,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// One or two words on the row; the sentence behind them on hover. The row has to be
 		// scannable -- five of them stacked -- and the reason has to be reachable.
 		head.title = help || '';
-		head.querySelector('.wire-band-tok').textContent  = fmtTok(wireTok(text));
+		head.querySelector('.wire-band-tok').textContent  = fmtTok(tok == null ? wireTok(text) : tok);
 		var body = document.createElement('pre');
 		body.className = 'wire-band-body';
 		body.style.display = 'none';
@@ -31688,31 +32613,88 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var old = document.getElementById('wire-head');
 		if (old) old.remove();
 		if (!_wireOn || !current) return;
+		// WHICH TURN THIS THREAD ACTUALLY RUNS. A Diamond's chat uses this composer and this
+		// thread and NOT this turn: `sendUserMessage` hands a record carrying a `diamondId` to
+		// `doSteer`, which steers the DIAMOND'S own app through `steer_crystal` -- its own model,
+		// the daimon's tools, the daimon's system message. Reading the chat app here was the whole
+		// of the defect: the band showed a Diamond's owner 28 tools including `say` and the nine
+		// web tools, while the daimon in front of him held 17 and none of those -- and showed it
+		// to him while he was asking why it never used one.
+		var did = (current.diamondId || '');
 		var app;
-		try { app = ensureApp(current); } catch (e) { return; }
+		try { app = did ? diamondApp(did) : ensureApp(current); } catch (e) { return; }
 		if (!app || typeof app.wire_system !== 'function') return;
+		// What is marked into this Diamond, from the same `Files.bounds` the turn reads it from,
+		// so the band and the turn cannot come to different ideas of what is attached. A failure
+		// is the empty pair, which the engine reads as "nothing was marked" and confines to the
+		// Diamond's own folder -- the same fail-closed reading `doSteer` takes.
+		var marks = { attached: [], read_only: [] };
+		if (did) {
+			try { marks = await Files.bounds(did); }
+			catch (e) { marks = { attached: [], read_only: [] }; }
+		}
+		var seq = ++_wireSeq;
 		var w;
-		try { w = JSON.parse(app.wire_system()); } catch (e) { return; }
+		try {
+			w = JSON.parse(await app.wire_system(did,
+				JSON.stringify(marks.attached  || []),
+				JSON.stringify(marks.read_only || [])));
+		} catch (e) { return; }
+		// Still the thread this render was started for, and still wanted. Re-read rather than
+		// assumed: everything above this line may have happened while the user was moving.
+		if (seq !== _wireSeq || !_wireOn || !current || (current.diamondId || '') !== did) return;
+		var stale = document.getElementById('wire-head');
+		if (stale) stale.remove();
 
 		var box = document.createElement('div');
 		box.className = 'wire-head';
 		box.id = 'wire-head';
 		var sysTok = wireTok(w.role) + wireTok(w.tools_sentence) + wireTok(w.machine);
+		// INDENTED TO BE READ, COUNTED AS IT IS SENT. The request carries the schemas with no
+		// whitespace at all; this copy is spaced out so a person can find their way through it,
+		// which for the browser toolbelt adds about four thousand characters -- a thousand
+		// tokens, an eighth of the figure. Counting the copy was the band overstating the one
+		// number anybody quotes from it, and this band's whole claim is that it does not do that.
+		// `schemas_len` is the length the engine measured of the string it puts in the request.
 		var schemas = JSON.stringify(w.schemas || [], null, 1);
+		var schemaTok = Math.round((w.schemas_len || 0) / 4);
 		var title = document.createElement('div');
 		title.className = 'wire-title';
-		title.textContent = t('wire.head', { n: fmtTok(sysTok + wireTok(schemas)) });
+		title.textContent = t('wire.head', { n: fmtTok(sysTok + schemaTok) });
 		box.appendChild(title);
 
 		// The role prompt and what is appended to it are ONE string on the wire and two facts to
 		// a reader: the first is theirs to rewrite, the second is not. Split on the clause's own
 		// heading, which is where `Role::compose` joins them.
-		var role = String(w.role || ''), cut = role.indexOf('## Rules that always apply');
+		// A daimon's system message carries a paragraph that is true of THIS Diamond on THIS turn
+		// and of no other -- its folder, what the paperclip has attached, and its crystal as it
+		// stands. It is taken out of the blob before the blob is split, so that a Diamond's
+		// crystal is not filed under "Safety clause". It is a SUBSTRING of the role rather than an
+		// addition to it, so the token figures above have counted it exactly once already.
+		var role = String(w.role || ''), local = String(w.local || ''), standing = '';
+		var at = local ? role.indexOf(local) : -1;
+		if (at >= 0) role = role.slice(0, at) + role.slice(at + local.length);
+		// The user's own house rules (DAIMOND.md), which are appended AFTER everything the app
+		// composes and are therefore the tail of the blob. Cut out for the same reason the safety
+		// clause is: they are the reader's own writing and the rest is not. Without this they were
+		// drawn inside a band headed "Safety clause", and on a Diamond -- where the paragraph
+		// above sits between the clause and them -- the two halves of that band would have been
+		// text that never stood together in the message at all.
+		var std = role.indexOf('## Standing instructions from the user');
+		if (std > 0) { standing = role.slice(std); role = role.slice(0, std); }
+		var cut = role.indexOf('## Rules that always apply');
 		if (cut > 0) {
 			box.appendChild(wireBand(t('wire.role'), t('wire.role_why'), t('wire.role_help'), role.slice(0, cut).trim()));
 			box.appendChild(wireBand(t('wire.safety'), t('wire.safety_why'), t('wire.safety_help'), role.slice(cut).trim()));
 		} else {
 			box.appendChild(wireBand(t('wire.role'), t('wire.role_why'), t('wire.role_help'), role));
+		}
+		if (local) {
+			box.appendChild(wireBand(t('wire.diamond'), t('wire.diamond_why'), t('wire.diamond_help'), local));
+		}
+		if (standing) {
+			box.appendChild(wireBand(t('wire.standing'), t('wire.standing_why'), t('wire.standing_help'),
+				standing.trim()));
 		}
 		if (w.tools_sentence) {
 			box.appendChild(wireBand(t('wire.tools'), t('wire.tools_why'), t('wire.tools_help'), w.tools_sentence));
@@ -31722,7 +32704,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		box.appendChild(wireBand(
 			t('wire.schemas', { n: (w.names || []).length }), t('wire.schemas_why'),
-			t('wire.schemas_help'), schemas));
+			t('wire.schemas_help'), schemas, schemaTok));
 		chatOutput.insertBefore(box, chatOutput.firstChild);
 	}
 
@@ -31874,8 +32856,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// too, back when a tile could be waiting on that draft; no kind of tile
 				// waits on a file any more.
 				refreshFiles: function () { Files.refresh(); },
+				// `{ text, outcome }`, not the bare text: mail read that text for the word
+				// `Error` to decide whether a listing was a listing, and a refusal opens
+				// `Refused` -- so a refused mailbox read as a mailbox with nothing in it.
 				runTool:      function (name, args) {
-					return tools().run_tool(name, JSON.stringify(args || {}));
+					return tools().run_tool_outcome(name, JSON.stringify(args || {}));
 				},
 				showMessage:  showMessage,
 				showCompose:  showCompose,

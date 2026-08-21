@@ -28,16 +28,16 @@ name = "daimond_hand"
 path = "src/lib.rs"
 
 [dependencies]
-oxedyne_fe2o3_core	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b64c5d7fa77cc3997c82f41acc12ca4579784b82" }
-oxedyne_fe2o3_jdat	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b64c5d7fa77cc3997c82f41acc12ca4579784b82" }
+oxedyne_fe2o3_core	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "56c9c940ecbb30e3c11d4592e1609d735f87104e" }
+oxedyne_fe2o3_jdat	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "56c9c940ecbb30e3c11d4592e1609d735f87104e" }
 # The journal's chain. Each entry's hash covers the entry before it, so rewriting
 # any past line breaks every line after it.
-oxedyne_fe2o3_hash	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b64c5d7fa77cc3997c82f41acc12ca4579784b82" }
+oxedyne_fe2o3_hash	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "56c9c940ecbb30e3c11d4592e1609d735f87104e" }
 # The pty half of the wire carries raw bytes as base64, and `base64::decode` is
 # strict where it matters: non-alphabet characters, misplaced padding, a length
 # that is not a whole quantum and non-zero trailing bits are all refused rather
 # than guessed at. Already in the tree, since fe2o3_jdat depends on it.
-oxedyne_fe2o3_text	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "b64c5d7fa77cc3997c82f41acc12ca4579784b82" }
+oxedyne_fe2o3_text	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "56c9c940ecbb30e3c11d4592e1609d735f87104e" }
 
 tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "process", "io-util", "io-std", "sync", "time", "net"] }
 

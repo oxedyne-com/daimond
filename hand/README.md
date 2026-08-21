@@ -157,8 +157,48 @@ pointed, and that is the user's call rather than this session's.
 | `src/exec.rs` | The runner: argv, cleared environment, streamed output, process-group kill |
 | `src/fence.rs` | What a command may touch |
 | `src/seccomp.rs` | What a command may *call* — the half Landlock cannot express |
+| `src/verify.rs` | Running a NAMED verifier from the tracked tree, and refusing to report a bare pass |
 | `src/journal.rs` | What was run, what it returned, and what it was refused |
 | `install/` | The host manifest, the installer (`--workspace`, `--check`, `--selftest`), and a mock host for tests |
+
+## The one thing that runs outside the fence
+
+`Req::Verify` runs a `dev/verify_*.mjs` from the granted tree **unfenced**, and
+that is a deliberate exception rather than an oversight. State it plainly before
+reading further: a verify makes a process that Landlock and seccomp are not
+applied to.
+
+The reason is that the fence makes browser evidence impossible. A fenced command
+cannot open the display server's unix socket and cannot `listen`, so every
+verifier that drives a real page dies under it — and those verifiers are half the
+proof of a release. A machine that can write code and cannot check it is not a
+safer machine, it is a machine whose claims nobody can test.
+
+The justification is **provenance, not confinement**. The fence exists to contain
+a command a MODEL wrote. What the model supplies here is a *name*, which the hand
+looks up in its own granted `dev/` directory, and at most a *break*, which the
+hand looks up in that file's own source. What reaches the argument vector is the
+directory entry's own file name and a break name parsed out of the file — never
+the caller's string, and never through a shell. That puts a verifier in the same
+trust class as `cargo test`, which the hand already runs.
+
+Three things keep that checkable rather than merely asserted:
+
+* Every run is journalled as the `Exec` it really is, with the real node command
+  line and `fence:none` in its mechanisms. A reader of the record sees the
+  exception; nothing hides it.
+* `--report` prints the verifiers this machine would run, and says they run
+  outside the fence, above the list of what the fence enforces.
+* The handshake carries `verify:dev` or `verify:none`, so a page can say "not on
+  this computer" rather than discovering it one refusal at a time.
+
+And the verb **cannot report a bare pass**. It runs the clean pass and each
+declared break, and answers with three numbers: checks passed, breaks confirmed
+red, and breaks that reddened nothing. `verify::Verdict` is an enum whose every
+arm carries the third number, so there is no expression in the program that
+yields the first without it; a clean-only run is labelled UNPROVEN in the report
+and in the trailer the app restates. `dev/verify_verifyverb.mjs` proves this
+against a fixture with a deliberately dead break.
 
 ## Release gates
 

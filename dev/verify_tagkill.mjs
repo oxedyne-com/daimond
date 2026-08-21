@@ -146,13 +146,13 @@ check('and leaves their other tags alone',
 const pool2 = await pool();
 check('the deleted tag is gone from the pool',
 	!pool2.some(x => x.text === 'shared'), JSON.stringify(pool2.map(x => x.text)));
-const railChips = await p.$$eval('.session-box-meta .tag-chip', els => els.map(e => e.textContent));
+const railChips = await p.$$eval('.session-box-tags .tag-chip', els => els.map(e => e.textContent));
 check('and gone from the rail',
 	!railChips.includes('shared'), JSON.stringify(railChips));
 
 // ── 5. A filter on a deleted tag is cleared, not left hiding everything ──
 await p.evaluate(() => {
-	const chip = [...document.querySelectorAll('.session-box-meta .tag-chip')]
+	const chip = [...document.querySelectorAll('.session-box-tags .tag-chip')]
 		.find(e => e.textContent === 'alpha-only');
 	if (chip) chip.click();
 });

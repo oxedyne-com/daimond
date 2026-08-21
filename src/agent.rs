@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use crate::llm::LlmClient;
 use crate::prompts::Role;
-use crate::protocol::{AgentEvent, ChatMessage, MessageContent, Session};
+use crate::protocol::{AgentEvent, ChatMessage, Dropped, MessageContent, Session};
 use crate::tools::ToolRegistry;
 
 /// Folding a conversation that has outgrown the model's context window.
@@ -410,7 +410,7 @@ impl Agent {
         let mut refolded = false;
         loop {
             self.fold_if_needed(session, &mut working, 0, Fold::IfNeeded, on_event).await;
-            let sent = compact::conversation_bytes(&working);
+            let sent = compact::conversation_bytes(&working, &self.llm.open_folds());
             let mut full = String::new();
             let result = self.llm.chat_stream(
                 &working,
@@ -493,11 +493,15 @@ impl Agent {
             // because a single turn of fifty file reads can outgrow the window on its own,
             // without any earlier turn being large at all.
             self.fold_if_needed(session, &mut working, schema, Fold::IfNeeded, on_event).await;
-            let mut sent = compact::conversation_bytes(&working);
+            let mut sent = compact::conversation_bytes(&working, &self.llm.open_folds());
 
             // Stream this round's assistant text as it arrives; the tool
             // calls (if any) are returned assembled once the round ends.
             let mut refolded = false;
+            // What this endpoint would take BEFORE the request goes out. Only a refusal can
+            // change it and it changes it exactly once, so sampling either side of the round is
+            // the whole of the learned signal -- no counter and no flag of our own.
+            let could_see = self.llm.can_take_images();
             let resp = loop {
                 match self.llm.chat_stream_tools(
                     &working,
@@ -512,7 +516,7 @@ impl Agent {
                         if !refolded && self.overflowed(&e, sent + schema) {
                             refolded = true;
                             if self.fold_if_needed(session, &mut working, schema, Fold::Refused, on_event).await {
-                                sent = compact::conversation_bytes(&working);
+                                sent = compact::conversation_bytes(&working, &self.llm.open_folds());
                                 continue;
                             }
                         }
@@ -521,6 +525,15 @@ impl Agent {
                     }
                 }
             };
+            // The endpoint has just been caught refusing pictures, mid-turn, having taken
+            // them a moment ago. Said out loud rather than left in the client: it is the one
+            // moment the app knows it is on the wrong model, and `stream_turn` has already
+            // stripped the pictures and answered anyway, so nothing downstream would ever
+            // find out.
+            if could_see && !self.llm.can_take_images() {
+                let images: usize = working.iter().map(|m| m.content().images().count()).sum();
+                on_event(AgentEvent::Unseeable { images, model: self.llm.model.clone() });
+            }
             self.gauge.observe(sent + schema, resp.prompt_tokens);
             session.prompt_tokens += resp.prompt_tokens;
             session.completion_tokens += resp.completion_tokens;
@@ -578,9 +591,10 @@ impl Agent {
             // Execute each requested tool call, recording every result in both
             // places for the same reason.
             for tc in &resp.tool_calls {
-                // The ID travels with it. A `say` fold is opened and closed on the page, and the
-                // page has to be able to name WHICH call it is talking about when it tells the
-                // engine what is open -- see `set_open_folds`. Nothing else reads it.
+                // The ID travels with it. A stored conversation's `say` fold is opened and closed
+                // on the page, and the page has to be able to name WHICH call it is talking about
+                // when it tells the engine what is open -- see `set_open_folds`. Nothing else
+                // reads it.
                 on_event(AgentEvent::ToolCall {
                     id:   tc.id.clone(),
                     name: tc.name.clone(),
@@ -605,27 +619,49 @@ impl Agent {
                 // screen -- renders a string, and an image inside that string would be a base64
                 // wall in a tile. The image travels in the message instead, where the model is
                 // the only reader of it.
+                //
+                // WHAT THE CALL CAME TO IS DECIDED HERE, ONCE. This is the only place the event is
+                // built, so it is the only place the outcome is set; every reader downstream asks
+                // rather than re-reading the prose. Four readers used to guess it back out of the
+                // text, and one of them did not know that a refusal opens "Refused" rather than
+                // "Error" -- so a write the fence had just stopped was drawn as a completed step.
+                let text    = result.as_text().into_owned();
+                let outcome = crate::tools::call_outcome(&text);
                 on_event(AgentEvent::ToolResult {
                     name:   tc.name.clone(),
-                    result: result.as_text().into_owned(),
+                    result: text,
+                    outcome,
                 });
+                // A PICTURE FOR A MODEL THAT WILL NOT TAKE ONE NEVER ENTERS THE SESSION.
+                //
+                // `sighted()` takes it out of every request anyway, so the model sees the same
+                // words either way -- but stored, the picture is folded around, reloaded, and
+                // re-stripped for the life of the conversation. That is what bricked a real
+                // Diamond on 2026-08-13. Left out here it costs one elision that names the file,
+                // and the act is announced once instead of being invisible.
+                let result = if result.has_image() && !self.llm.can_take_images() {
+                    on_event(AgentEvent::Unseeable {
+                        images: result.images().count(),
+                        model:  self.llm.model.clone(),
+                    });
+                    result.without_images(Dropped::Unseeable)
+                } else {
+                    result
+                };
                 let reply = ChatMessage::tool(tc.id.clone(), result);
                 working.push(reply.clone());
                 session.messages.push(reply);
             }
 
-            // A TOOL THAT ANSWERS IS THE ANSWER. `say` folds a reply for the reader, so the
-            // turn is over: going round again would cost a whole extra request for the model to
-            // repeat what it has just said, and it would arrive under the fold as a second
-            // message saying the same thing. The reply is still recorded above, so the transcript
-            // is well formed -- an assistant turn bearing tool calls, each answered.
+            // NO TOOL ENDS A TURN ANY MORE. `say` was the one that did -- it folded a reply for
+            // the reader, so the loop stopped rather than buying a request for the model to
+            // repeat itself under the fold. Folding is written into the model's own prose now, so
+            // the turn ends where every other turn ends: at a reply with no tool calls in it.
             //
-            // Checked after the loop and not inside it, because a turn may ask for several tools
-            // at once and every one of them has to be answered before the turn can end.
-            if resp.tool_calls.iter().any(|tc| tc.name == "say") {
-                on_event(AgentEvent::Done);
-                return Ok(());
-            }
+            // The rule that decided it read the tool RESULT and not the call's name, because a
+            // `say` had three ways to answer nothing and a turn ended on each of them. That
+            // reasoning is kept where it can still be used: [`crate::tools::call_outcome`] is the
+            // tool layer's own statement of what became of a call, and the fold's ledger reads it.
 
             // THE SEAM. The tool replies are in, and the next request has not gone out,
             // so this is the one moment in a round where the conversation can grow by
@@ -735,13 +771,20 @@ impl Agent {
     )
         -> bool
     {
+        // THE FOLDS THE USER HAS OPEN, taken once for the whole fold. Every size below is a
+        // size on the wire, and a closed fold's detail is not on the wire: `msg_bytes` asks the
+        // serialiser's own `sent_args_len` what a `say` costs, and that answer depends on this
+        // set. A copy rather than a borrow, because the page may set the folds again while the
+        // summarising call is in flight and a live borrow at that moment would panic.
+        let open = self.llm.open_folds();
+
         // A refusal is the only occasion the provider ever says anything about the size of
         // its window. Believing it is what lets a chat against a model nobody published a
         // window for recover instead of folding to a budget that was never the real one --
         // and it is why a fold the USER asked for must not come through here, since that
         // one carries no news at all.
         if why.teaches_window() {
-            let refused = self.gauge.tokens(compact::conversation_bytes(working) + schema);
+            let refused = self.gauge.tokens(compact::conversation_bytes(working, &open) + schema);
             self.limits.borrow_mut().learn_from_refusal(refused);
         }
         let (budget, tail, model) = {
@@ -749,9 +792,9 @@ impl Agent {
             let cap = self.reply_cap();
             (l.budget(cap), l.tail_budget(cap), l.fold_model.clone())
         };
-        let before = compact::conversation_bytes(&session.messages);
+        let before = compact::conversation_bytes(&session.messages, &open);
         if !why.forces()
-            && self.gauge.tokens(compact::conversation_bytes(working) + schema) <= budget
+            && self.gauge.tokens(compact::conversation_bytes(working, &open) + schema) <= budget
         {
             return false;
         }
@@ -762,7 +805,7 @@ impl Agent {
         // bigger than what may be sent is a fold that changed nothing.
         let ceiling = self.gauge.bytes(budget).saturating_sub(schema);
         let cut = compact::tail_start(&session.messages, self.gauge.bytes(tail).min(ceiling),
-            compact::MIN_KEEP_MESSAGES, ceiling);
+            compact::MIN_KEEP_MESSAGES, ceiling, &open);
         if cut > 0 {
             // Built before the summarising call, so a call that fails still leaves a
             // truthful record: which files were read, which were written, what ran, and
@@ -781,7 +824,7 @@ impl Agent {
                 Ok(new) => {
                     // A fold that made the conversation bigger is not a fold; it happens
                     // when the folded part was small and the note is not.
-                    if compact::conversation_bytes(&new) < before {
+                    if compact::conversation_bytes(&new, &open) < before {
                         session.messages = new;
                         folded = cut;
                     }
@@ -797,8 +840,8 @@ impl Agent {
         // those are the bulky ones, so the second reaches them too. The user's own words
         // are never touched by either.
         let mut elided = compact::elide_bulk(&mut session.messages, ceiling,
-            compact::MIN_KEEP_MESSAGES);
-        elided += compact::elide_bulk(&mut session.messages, ceiling, 1);
+            compact::MIN_KEEP_MESSAGES, &open);
+        elided += compact::elide_bulk(&mut session.messages, ceiling, 1, &open);
         let changed = folded > 0 || elided > 0;
         if !changed {
             return false;
@@ -818,7 +861,7 @@ impl Agent {
 
         // Told, not done quietly. A fold is lossy, and a user who is not shown one has no
         // way to tell a model that forgot from a model that never knew.
-        let after = compact::conversation_bytes(&session.messages);
+        let after = compact::conversation_bytes(&session.messages, &open);
         let mut said = fmt!(
             "Folded {} earlier messages and shortened {} tool results: {} tokens of \
              conversation became about {}.",
@@ -1041,6 +1084,9 @@ pub fn build_tls_client_config() -> Outcome<Arc<ClientConfig>> {
 mod tests {
     use super::*;
     use crate::llm::LlmClient;
+    use crate::tools::CallOutcome;
+
+    use oxedyne_fe2o3_jdat::prelude::*;
 
     fn make_test_agent() -> Agent {
         let tls = build_test_tls_config();
@@ -1331,6 +1377,157 @@ mod tests {
         })
     }
 
+    /// A registry holding one tool, so a turn takes the agentic path.
+    fn one_tool() -> crate::tools::ToolRegistry {
+        let mut r = no_tools();
+        r.tools = vec![crate::tools::Tool::FileWrite];
+        r
+    }
+
+    // ── A picture in front of a model that will not take one ────────────
+
+    /// The one-pixel PNG whose base64 `src/llm.rs` documents.
+    ///
+    /// The same bytes, so a test asserting the picture did NOT travel is naming a string a
+    /// provider published rather than one this file invented.
+    const COVER_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nG\
+                                 P4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+
+    /// A registry holding `file_read` over a scratch workspace with `cover.png` in it.
+    fn image_tools() -> crate::tools::ToolRegistry {
+        let dir = match oxedyne_fe2o3_test::scratch::scratch_dir("daimond_agent_vision") {
+            Ok(d)  => d,
+            Err(e) => panic!("a scratch directory: {}", e),
+        };
+        let png = match oxedyne_fe2o3_text::base64::decode(COVER_PNG_B64) {
+            Ok(b)  => b,
+            Err(e) => panic!("the documented base64 must decode: {}", e),
+        };
+        if let Err(e) = std::fs::write(dir.join("cover.png"), &png) {
+            panic!("the fixture picture could not be written: {}", e);
+        }
+        let ws = match crate::workspace::Workspace::new(dir) {
+            Ok(w)  => w,
+            Err(e) => panic!("a scratch workspace: {}", e),
+        };
+        crate::tools::ToolRegistry::new(vec![crate::tools::Tool::FileRead],
+            crate::tools::ToolContext {
+                workspace:   ws,
+                executor:    crate::executor::Executor::local_default(),
+                cwd:         String::new(),
+                path_prefix: String::new(),
+                root:        crate::tools::FileRoot::Workspace,
+                read_seen:   crate::tools::new_read_cache(),
+                no_write:    Vec::new(),
+                daimon_of:   String::new(),
+            })
+    }
+
+    /// One streamed round that asks to LOOK at the fixture picture.
+    fn asks_to_look() -> crate::llm::tests::Reply {
+        crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\
+                    \"type\":\"function\",\"function\":{\"name\":\"file_read\",\"arguments\":\
+                    \"{\\\"path\\\":\\\"cover.png\\\",\\\"as\\\":\\\"image\\\"}\"}}]}}]}\n\n"
+                    .to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\
+                    \"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        }
+    }
+
+    /// A plain streamed answer, ending the turn.
+    fn plain_answer() -> crate::llm::tests::Reply {
+        crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Done\"}}]}\n\n".to_string(),
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2}}\n\n"
+                    .to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        }
+    }
+
+    /// A refusal that says nothing about images, which is what a real one often does.
+    fn refuses() -> crate::llm::tests::Reply {
+        crate::llm::tests::Reply::Http {
+            status: 404, reason: "Not Found", headers: Vec::new(),
+            body: "{\"error\":{\"message\":\"No endpoint found\"}}".to_string(),
+        }
+    }
+
+    /// Every `Unseeable` in a run, as `(images, model)`.
+    fn unseeable(events: &[AgentEvent]) -> Vec<(usize, String)> {
+        events.iter().filter_map(|e| match e {
+            AgentEvent::Unseeable { images, model } => Some((*images, model.clone())),
+            _ => None,
+        }).collect()
+    }
+
+    #[tokio::test]
+    async fn test_a_picture_for_a_model_known_blind_is_announced_and_left_out_00() {
+        // The DECLARED half: `model_can_see` refuses this family before any request, so the
+        // picture is taken out of the tool reply and never reaches the session at all. What it
+        // leaves behind names the file, so the same read on a sighted endpoint still works.
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            asks_to_look(),
+            plain_answer(),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.model = fmt!("openai/gpt-3.5-turbo-0125");
+        let a = Agent::new(llm, "You are Daimond.");
+        let registry = image_tools();
+        let mut session = Session::new(fmt!("s"), fmt!("look"), fmt!("openai/gpt-3.5-turbo-0125"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("what is on the cover"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let said = unseeable(&events);
+        assert_eq!(said.len(), 1, "the picture was left out and nothing said so: {:?}", events);
+        assert_eq!(said[0].0, 1, "the count of pictures left out is wrong");
+        assert!(said[0].1.contains("gpt-3.5"), "the model was not named: {}", said[0].1);
+
+        let tool_text = session.messages.iter()
+            .filter(|m| m.role() == "tool")
+            .map(|m| m.text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!tool_text.is_empty(), "the tool reply never reached the session");
+        assert!(!tool_text.contains(COVER_PNG_B64), "the bytes went into the session anyway");
+        assert!(tool_text.contains("cannot be shown"),
+            "the elision does not say why: {}", tool_text);
+        assert!(tool_text.contains("cover.png"), "the file is not named in its place");
+        assert!(!session.messages.iter().any(|m| m.content().has_image()),
+            "an image survived into the stored conversation");
+    }
+
+    #[tokio::test]
+    async fn test_a_model_learned_blind_mid_turn_is_announced_once_00() {
+        // The LEARNED half: nothing declares this model blind, so the picture goes out, the
+        // endpoint refuses it, and `stream_turn` strips and retries. That retry is the only
+        // moment the app knows it is on the wrong model, and it used to pass in silence.
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            asks_to_look(),
+            refuses(),
+            plain_answer(),
+        ]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        let registry = image_tools();
+        let mut session = Session::new(fmt!("s"), fmt!("look"), fmt!("anthropic/claude-opus-5"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("what is on the cover"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let said = unseeable(&events);
+        assert_eq!(said.len(), 1,
+            "a refusal learned mid-turn was announced {} time(s): {:?}", said.len(), events);
+        assert!(said[0].1.contains("claude-opus-5"), "the model was not named: {}", said[0].1);
+    }
+
     #[tokio::test]
     async fn test_a_fold_reaches_the_user_as_a_fold_00() {
         // It used to borrow the tool surface -- a ToolCall and a ToolResult both named
@@ -1369,6 +1566,109 @@ mod tests {
         assert!(!events.iter().any(|e| matches!(e,
             AgentEvent::ToolCall { .. } | AgentEvent::ToolResult { .. })),
             "the fold is still announcing itself as a tool");
+    }
+
+    // ── What a tool call came to travels with the event ─────────────────
+
+    /// Three real calls in one round: one that works, one the fence stops, one that is not there.
+    ///
+    /// Written as a script for the stub provider rather than as three hand-built strings, because
+    /// a fixture that states the reply AND the expected reading agrees with itself whatever the
+    /// tool layer does.  What is under test is that the app carries the tool layer's own verdict,
+    /// so the verdict has to come from the tool layer.
+    fn three_calls() -> crate::llm::tests::Reply {
+        crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                // Works: a relative path inside the scratch workspace.
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c0\",\
+                    \"type\":\"function\",\"function\":{\"name\":\"file_write\",\"arguments\":\
+                    \"{\\\"path\\\":\\\"notes/ok.txt\\\",\\\"content\\\":\\\"hi\\\"}\"}}]}}]}\n\n"
+                    .to_string(),
+                // Refused: an absolute path on the machine, which `guard` stops before any write.
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"c1\",\
+                    \"type\":\"function\",\"function\":{\"name\":\"file_write\",\"arguments\":\
+                    \"{\\\"path\\\":\\\"/etc/passwd\\\",\\\"content\\\":\\\"x\\\"}\"}}]}}]}\n\n"
+                    .to_string(),
+                // Failed: a real tool, not registered here, so `dispatch` composes an error line.
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2,\"id\":\"c2\",\
+                    \"type\":\"function\",\"function\":{\"name\":\"spawn_agent\",\"arguments\":\
+                    \"{}\"}}]}}]}\n\n".to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                    .to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        }
+    }
+
+    /// Every `ToolResult` in a run, as `(name, outcome, text)`.
+    fn tool_results(events: &[AgentEvent]) -> Vec<(String, CallOutcome, String)> {
+        events.iter().filter_map(|e| match e {
+            AgentEvent::ToolResult { name, result, outcome } =>
+                Some((name.clone(), *outcome, result.clone())),
+            _ => None,
+        }).collect()
+    }
+
+    #[tokio::test]
+    async fn test_a_tool_result_carries_what_the_call_came_to_00() {
+        // The app used to flatten the tool layer's verdict into the reply's opening word and let
+        // four browser consumers read it back out of the prose, each with its own reading. One of
+        // them tested for "Error" alone -- so a refusal, which opens "Refused", was drawn as a
+        // completed step, journalled as a success and reported to the Optimiser as a tool that
+        // worked.
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            three_calls(),
+            plain_answer(),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(2);
+
+        let registry = one_tool();
+        let mut session = Session::new(fmt!("s1"), fmt!("three"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("do three things"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let got = tool_results(&events);
+        assert_eq!(3, got.len(), "three calls went out and {} results came back: {:?}",
+            got.len(), events.iter().map(|e| fmt!("{:?}", e)).collect::<Vec<_>>());
+
+        // Each verdict is the tool layer's, on a reply the tool layer actually composed.
+        assert_eq!(CallOutcome::Done, got[0].1, "a write inside the workspace: {}", got[0].2);
+        assert_eq!(CallOutcome::Refused, got[1].1, "a write the fence stopped: {}", got[1].2);
+        assert_eq!(CallOutcome::Failed, got[2].1, "a tool that is not here: {}", got[2].2);
+
+        // THE DEFECT, NAMED. The refused reply does not contain the word a reader looking for
+        // failure would look for, which is why reading the prose lost it.
+        assert!(got[1].2.trim_start().starts_with("Refused"),
+            "the refusal no longer opens with its own word: {}", got[1].2);
+        assert!(!got[1].2.starts_with("Error"),
+            "if a refusal ever opens 'Error' this test stops proving anything: {}", got[1].2);
+        assert!(got[2].2.trim_start().starts_with("Error"), "{}", got[2].2);
+
+        // And the refused call is a refusal and not a write with a warning on it: if the fence
+        // ever let this path through, the reply would be `file_write`'s own success sentence and
+        // the outcome above would be Done -- which is the whole failure, arriving one layer down.
+        assert!(!got[1].2.contains("Wrote"),
+            "the fence let the write through: {}", got[1].2);
+
+        // The wire. Exactly the three words, in the key the browser reads.
+        let maps: Vec<DaticleMap> = events.iter()
+            .filter(|e| matches!(e, AgentEvent::ToolResult { .. }))
+            .map(|e| e.to_datmap()).collect();
+        let words = ["done", "refused", "failed"];
+        for (i, m) in maps.iter().enumerate() {
+            assert_eq!(Some(&dat!("tool_result")), m.get(&dat!("type")));
+            assert_eq!(Some(&dat!(words[i])), m.get(&dat!("outcome")),
+                "call {} spelled its outcome {:?}", i, m.get(&dat!("outcome")));
+            // The two fields that were always there are still there: this is a field added,
+            // not a shape changed. The event carries the result TEXT, and not the image.
+            assert_eq!(Some(&dat!(got[i].0.clone())), m.get(&dat!("name")));
+            assert_eq!(Some(&dat!(got[i].2.clone())), m.get(&dat!("content")));
+        }
     }
 
     // ── A reply that ran out of room ────────────────────────────────────
@@ -1460,11 +1760,84 @@ mod tests {
         assert!(!reply.as_text().contains("Wrote"), "{}", reply);
     }
 
-    /// A registry holding one tool, so a turn takes the agentic path.
-    fn one_tool() -> crate::tools::ToolRegistry {
-        let mut r = no_tools();
-        r.tools = vec![crate::tools::Tool::FileWrite];
-        r
+    // ── A refused tool call does not end the turn ───────────────────────
+
+    /// **A worker whose tool call is refused gets the round it was told to use, and its report
+    /// survives.**
+    ///
+    /// Two rounds from the stub. In the first the worker calls `file_show`, which a dispatched
+    /// worker may not take -- nobody is reading its transcript. In the second it writes the report
+    /// the refusal told it to write.
+    ///
+    /// **The subject used to be `say`, and it was the tool that ended a turn.** A `say` that
+    /// ANSWERED ended it; the rule first read the tool's NAME alone, so a `say` that was REFUSED
+    /// ended it too -- and a worker told to put the detail in its report was denied the round in
+    /// which to write one, so the errand came back as whatever prose happened to accompany the
+    /// call, which is usually nothing. Work done, paid for and thrown away. The tool is gone and
+    /// no tool ends a turn now, which makes this the guard on that: a refusal must still leave the
+    /// loop running, whichever tool refused.
+    ///
+    /// **Asserted on the report's CONTENT and not on the round count**, because a count is
+    /// satisfied by any second round at all -- including one that says nothing.
+    #[tokio::test]
+    async fn test_a_worker_refused_a_tool_still_reports_00() {
+        use crate::llm::tests::{start_stub, stub_client, Reply};
+        const REPORT: &str = "THE-CRATE-FAILS-TO-BUILD-ON-LINE-42";
+        let (port, _seen) = start_stub(vec![
+            // Round one: the call, which is refused.
+            Reply::Sse {
+                chunks: vec![
+                    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\
+                     \"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\
+                     \"file_show\",\"arguments\":\"{\\\"path\\\":\\\"report.md\\\"}\"}}]}}]}\n\n"
+                        .to_string(),
+                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+                        .to_string(),
+                    "data: [DONE]\n\n".to_string(),
+                ],
+                reset_after: None,
+            },
+            // Round two: the report, in the place the refusal told it to put it.
+            Reply::Sse {
+                chunks: vec![
+                    fmt!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\n",
+                        REPORT),
+                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+                        .to_string(),
+                    "data: [DONE]\n\n".to_string(),
+                ],
+                reset_after: None,
+            },
+        ]).await;
+        let mut llm = stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are a worker.");
+        a.set_max_rounds(3);
+
+        let mut registry = no_tools();
+        registry.tools = vec![crate::tools::Tool::FileShow];
+        registry.ctx.set_unsupervised();
+
+        let mut session = Session::new(fmt!("s1"), fmt!("worker"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("check the build"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        // What the agent that dispatched this worker actually receives.
+        let report = session.messages.iter().rev()
+            .find_map(|m| match m {
+                ChatMessage::Assistant { content, tool_calls } if tool_calls.is_empty() =>
+                    Some(content.as_text().into_owned()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        assert!(report.contains(REPORT),
+            "the worker's report is not in the transcript: the turn ended on a refused call and \
+             its findings were discarded. Last assistant turn: {:?}", report);
+        // And the refusal is still on the record, so the transcript is well formed and the
+        // model can see why it was asked to write prose.
+        assert!(session.messages.iter().any(|m| matches!(m, ChatMessage::Tool { .. })),
+            "the refused call was never answered, which is a malformed conversation");
     }
 
     #[test]
@@ -1648,7 +2021,8 @@ mod tests {
         // The conversation is deliberately built into the gap, and the gap is asserted rather
         // than assumed: a change to the gauge or to `FOLD_AT` that closed it would otherwise make
         // this test pass while testing nothing.
-        let tokens = a.gauge.tokens(compact::conversation_bytes(&session.messages));
+        let tokens = a.gauge.tokens(
+            compact::conversation_bytes(&session.messages, &a.llm.open_folds()));
         let honest = a.limits().budget(a.reply_cap());
         let blind  = a.limits().budget(a.llm.max_tokens);
         assert!(honest < tokens && tokens <= blind,

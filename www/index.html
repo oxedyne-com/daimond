@@ -1502,6 +1502,11 @@
      clause through it. -->
 <script src="js/legal.js"></script>
 <script src="js/lapse.js"></script>
+<!-- Interaction recording, for turning a path somebody actually took into a
+     permanent check (dev/replay.mjs). INERT until a person presses Ctrl+Alt+R:
+     it binds one keydown listener at load and nothing else. See dev/RECORD.md
+     for what it captures, what it refuses to look at, and why. -->
+<script src="js/record.js"></script>
 <script type="module" src="js/daimond.js"></script>
 </body>
 </html>

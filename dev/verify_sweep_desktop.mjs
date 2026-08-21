@@ -501,7 +501,7 @@ async function tag(name, tags) {
 	await page.click('.crystal-act', { force: true });		// ← back to the crystal
 	await page.waitForTimeout(350);
 }
-const tagged = await page.$$eval('.session-box-meta .tag-chip', (e) => e.length);
+const tagged = await page.$$eval('.session-box-tags .tag-chip', (e) => e.length);
 if (!tagged) {
 	await tag('Ship a CSV parser', ['rust', 'parser']);
 	await tag('Mum birthday plan', ['person', 'family', 'gifts', 'urgent']);

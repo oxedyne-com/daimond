@@ -176,6 +176,7 @@ impl Role {
 		let mut out = fmt!("{}\n\n{}", body, VISION_NOTE);
 		if self.can_show() {
 			out.push_str(&fmt!("\n\n{}", SHOW_NOTE));
+			out.push_str(&fmt!("\n\n{}", FOLD_NOTE));
 		}
 		out.push_str(&fmt!("\n\n{}\n\n{}", SEARCH_NOTE, SAFETY_CLAUSE));
 		out
@@ -226,6 +227,47 @@ pub const SHOW_NOTE: &str =
 	 looked at than described. Never tell the user that Daimond cannot display a PDF, a picture \
 	 or a document — it can, this is how, and saying otherwise describes your own toolbox rather \
 	 than the app they are using.";
+
+/// How to answer at two depths, appended to every role whose reader is a person.
+///
+/// The long half of an answer is for somebody once. Left in the open it is read past, and left in
+/// the transcript it is re-sent on every later turn for the life of the conversation -- so an
+/// explanation the user skipped is charged for again and again. A fold puts the short answer where
+/// it can be read and the working behind a disclosure they open if they want it, and
+/// [`crate::llm::sent_text_len`] takes a closed one's body off the wire.
+///
+/// **This is now the ONLY enforcement point, which is why it is longer than a note usually is.**
+/// While folding was a tool, `Tool::Say` REFUSED a call whose summary was empty -- the one failure
+/// worth refusing, because a fold with nothing outside it is a message the user must open to
+/// discover says nothing. Models produced that even against a required field with a schema
+/// description on it. Nothing validates markup and nothing can refuse it, so every rule the tool
+/// used to enforce has to be carried by the words, and the wording is transposed from that tool's
+/// own description where it can be.
+///
+/// **The blank lines are instructed in so many words, with their consequence attached.** A tight
+/// `<details>` block is ONE CommonMark HTML block, so `marked` never parses the markdown inside it
+/// and a `## heading` comes back as four characters and a space. Measured, not assumed. A rule
+/// carrying its cost is followed; a bare rule is tidied away, because the blank lines look like
+/// slovenly formatting and every other blank line in an answer is optional.
+///
+/// **It is composed for [`Role::can_show`] and not for every role with tools**, on [`SHOW_NOTE`]'s
+/// reasoning and not on a guess: a worker's report goes to the agent that dispatched it, which
+/// wants the whole of it. A fold in that report is a marker nobody can open, hiding the working
+/// from the one reader whose job is to check it.
+pub const FOLD_NOTE: &str =
+	"## Answering at two depths\n\n\
+	 Put the short answer in the open and the working behind a fold — the derivation, the \
+	 walkthrough, the long listing. Write one exactly like this:\n\n\
+	 <details>\n\
+	 <summary>a few words naming what is inside</summary>\n\n\
+	 the long part, ordinary markdown\n\n\
+	 </details>\n\n\
+	 The blank lines are not formatting: without them the element is one block of raw HTML, \
+	 nothing inside it is parsed, and your headings reach the reader as literal hashes.\n\n\
+	 Never fold the whole answer. Above the fold goes the answer itself and any caveat on it — a \
+	 qualification behind a fold is one they will act without — and a fold with nothing above it \
+	 opens on nothing. When the whole answer IS a sentence or two, fold nothing. A closed fold's \
+	 body does not come back to you next turn.";
 
 /// That the web can be searched, and whose choice the engine is, appended to every role that
 /// holds tools.
@@ -910,6 +952,115 @@ mod tests {
 				"role {} tools={} clause={}", r.name(), r.has_tools(),
 				composed.contains("untrusted data"));
 		}
+	}
+
+	/// **The fold instruction reaches exactly the roles whose reader is a person.**
+	///
+	/// Gated on [`Role::can_show`] and not on [`Role::has_tools`], which is the line
+	/// [`SHOW_NOTE`] is drawn on and for the same reason. A worker's report goes to the agent
+	/// that dispatched it, and that agent wants the whole of it -- a fold there is a marker
+	/// nobody can open, hiding the working from the one reader whose job is to check it.
+	///
+	/// Asserted across EVERY role rather than on the chat alone: a note appended unconditionally
+	/// passes any test that only looks at a role which should have it.
+	#[test]
+	fn test_only_a_role_with_a_human_reader_is_told_to_fold() {
+		for r in Role::all() {
+			let composed = r.compose("");
+			assert_eq!(composed.contains(FOLD_NOTE), r.can_show(),
+				"role {} can_show={} but the fold note is {}", r.name(), r.can_show(),
+				if composed.contains(FOLD_NOTE) { "present" } else { "absent" });
+		}
+		// And the note is the markup, not a paragraph about it. Without this the assertion above
+		// is satisfied by an empty constant composed into the right roles.
+		assert!(FOLD_NOTE.contains("<details>") && FOLD_NOTE.contains("<summary>"),
+			"the note does not show the markup: {}", FOLD_NOTE);
+	}
+
+	/// **The blank lines are instructed, and the reason travels with them.**
+	///
+	/// Measured, not stylistic: a tight `<details>` block is one CommonMark HTML block, so
+	/// `marked` never parses the markdown inside it and a `## heading` renders as four characters
+	/// and a space. Every fold would come out as literal markdown source. The reason is asserted
+	/// beside the instruction because a model told to leave blank lines and not told why tidies
+	/// them away -- they look like slovenly formatting.
+	///
+	/// **Asserted against [`FOLD_NOTE`] and not against the composed prompt.** The first draft of
+	/// this test read the composed prompt for "raw HTML" and PASSED with the whole reason cut out
+	/// of the note, because [`DEFAULT_CHAT`] says "raw HTML" about `web_fetch` several paragraphs
+	/// above. A phrase that appears elsewhere in the same string proves nothing about the note.
+	#[test]
+	fn test_the_fold_note_instructs_the_blank_lines_and_says_why() {
+		assert!(Role::Chat.compose("").contains(FOLD_NOTE),
+			"the note is not composed into the chat's prompt at all");
+		assert!(FOLD_NOTE.contains("blank lines"),
+			"the note does not name the blank lines: {}", FOLD_NOTE);
+		assert!(FOLD_NOTE.contains("literal hashes"),
+			"the blank lines are demanded with no consequence attached, so they will be tidied \
+			 away: {}", FOLD_NOTE);
+		// The worked example has to carry them, or the sentence describes a shape the prompt
+		// does not show.
+		let start = match FOLD_NOTE.find("<details>") {
+			Some(i) => i,
+			None    => panic!("no worked example: {}", FOLD_NOTE),
+		};
+		assert!(FOLD_NOTE[start..].starts_with("<details>\n<summary>"),
+			"the example does not open in the shape it describes: {}", &FOLD_NOTE[start..]);
+		let end = match FOLD_NOTE[start..].find("</details>") {
+			Some(i) => start + i,
+			None    => panic!("the example never closes: {}", FOLD_NOTE),
+		};
+		assert!(FOLD_NOTE[start..end].contains("</summary>\n\n"),
+			"the example runs the summary straight into the body: {}", &FOLD_NOTE[start..end]);
+		assert!(FOLD_NOTE[start..end].ends_with("\n\n"),
+			"the example runs the body straight into the close: {}", &FOLD_NOTE[start..end]);
+	}
+
+	/// **The rules the `say` tool used to ENFORCE are all carried by the words.**
+	///
+	/// `Tool::say` refused a call with an empty summary outright -- "the one failure worth
+	/// refusing", because a fold with nothing outside it is a message the user has to open to
+	/// discover says nothing. It refused it even though `summary` was a required field with a
+	/// schema description on it, which is the measure of how readily a model produces the shape.
+	///
+	/// The `<details>` convention has no enforcement point at all: nothing validates markup and
+	/// nothing can refuse it. So each of those rules is asserted here, at the only place left
+	/// that can hold them -- and against [`FOLD_NOTE`] itself, for the reason recorded on
+	/// [`test_the_fold_note_instructs_the_blank_lines_and_says_why`].
+	#[test]
+	fn test_the_fold_note_carries_what_the_tool_used_to_refuse() {
+		assert!(FOLD_NOTE.contains("Never fold the whole answer"),
+			"nothing forbids a fold with nothing above it: {}", FOLD_NOTE);
+		assert!(FOLD_NOTE.contains("opens on nothing"),
+			"the whole-answer fold is forbidden with no reason given: {}", FOLD_NOTE);
+		// The converse, or the instruction to fold reads as universal and a one-line answer
+		// arrives wrapped in a control that opens on nothing.
+		assert!(FOLD_NOTE.contains("fold nothing"),
+			"a short answer is not excused from folding: {}", FOLD_NOTE);
+		// The caveat rule, transposed from the tool description that used to carry it.
+		assert!(FOLD_NOTE.contains("caveat") && FOLD_NOTE.contains("act without"),
+			"a qualification may still be hidden behind the fold: {}", FOLD_NOTE);
+	}
+
+	/// The two-depth note is short enough to ride on every request of every turn.
+	///
+	/// It lives in the cached prefix, so it is charged once per prefix rather than per turn --
+	/// but a prefix is re-read whenever anything before it changes. Four CHARACTERS to the token
+	/// is the usual rough conversion and is what [`crate::llm::CACHE_MIN_PREFIX_CHARS`] uses;
+	/// bytes would overstate it by the em dashes alone.
+	///
+	/// **The ceiling is 200 and the note was first budgeted at 80-120.** That budget was set
+	/// while `Tool::Say` still refused a call with an empty summary. With the tool gone nothing
+	/// validates the markup and nothing can refuse it, so the note is the only place left that
+	/// can hold those rules -- and it now measures about 193. Every sentence past the original
+	/// budget is one the tool used to enforce or one its description used to carry: the
+	/// whole-answer ban and its reason, the converse for a one-line answer, the caveat rule, and
+	/// that a closed body does not come back. Recorded here rather than quietly widened, so the
+	/// next reader can see what the extra tokens bought and cut the right one if they must.
+	#[test]
+	fn test_the_fold_note_stays_inside_its_budget() {
+		let n = FOLD_NOTE.chars().count() / 4;
+		assert!(n <= 200, "the fold note is about {} tokens, over its budget: {}", n, FOLD_NOTE);
 	}
 
 	// ── What the daimon is told about the machine ────────────────────────────

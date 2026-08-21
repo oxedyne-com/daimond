@@ -642,8 +642,19 @@ function hsl(h, s, l) {
 	return v.map(q => Math.round((q + m) * 255));
 }
 /// The `hsl(var(--tag-h, 0) S% L%)` triples declared by one rule in app.css.
+///
+/// THE SELECTOR MUST START ITS OWN LINE, and that is the whole of this comment.
+/// This was a bare `indexOf(selector + ' {')` until 2026-08-21, so ANY more
+/// specific rule written earlier in the file shadowed it: `.session-box-tags
+/// .tag-chip { flex: none; }` arrived at line 700 and the search stopped there,
+/// on a rule with no colour in it at all. Every formula then read null and the
+/// whole tag-chip section of this file went dark -- reported as "the formulas are
+/// not readable", which sounds like a stylesheet fault and was a parser fault.
+/// Anchoring to a line start makes a shadowing rule impossible rather than
+/// unlikely: a nested selector cannot begin a line with the bare one.
 function chipRule(selector) {
-	const i = appCss.indexOf(selector + ' {');
+	const at = appCss.indexOf('\n' + selector + ' {');
+	const i = at < 0 ? -1 : at + 1;
 	if (i < 0) return null;
 	const body = appCss.slice(i, appCss.indexOf('}', i));
 	const grab = (prop) => {

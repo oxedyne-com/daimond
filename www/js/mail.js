@@ -60,6 +60,7 @@
 	// the gateway would be taken again. See the sync section below.
 	var TOMBS   = 'daimond-mail-tombs';
 	var deps    = null;              // { writeBytes, openFile, refreshFiles, runTool, showDoc }
+	                                 // runTool answers { text, outcome } -- see readText below
 
 	// The wasm module, resolved against THIS script rather than the document, so the
 	// app still finds it when served from a sub-path. Same idiom as tools.js and
@@ -86,27 +87,32 @@
 	/// import inside daimond.js and unreachable from here, so it arrives as
 	/// `deps.readText`. If it is absent the panel says so rather than quietly
 	/// showing the numbered rendering as if it were the message.
+	///
+	/// It answers `{ text, outcome }`, the same shape `deps.runTool` does, so every caller
+	/// below asks ONE question of both doors: did this call come back with something.
+	///
+	/// It used to hand back a bare string, and the callers tested that string for the
+	/// word `Error` -- a rule that could only ever be true of the tool door, and not even
+	/// of all of it, since a refusal opens `Refused`. `Wasm.read_file` REJECTS instead, so
+	/// after mail was switched to it those branches were unreachable and the rejection
+	/// escaped: on a device with no `mail/` directory -- a phone that has never opened the
+	/// Email panel -- two unhandled rejections on every boot, which is what the first
+	/// usable trail from an iPhone showed.
+	///
+	/// `refused` cannot arise here: this door is the raw byte reader, and only the tool
+	/// layer has a fence to refuse anything. Two of the three words is not a second
+	/// vocabulary -- it is this door's share of the one there is.
 	async function readText(path) {
 		if (deps && typeof deps.readText === 'function') {
-			// `Wasm.read_file` REJECTS on a missing path; `run_tool('file_read')`,
-			// which this replaced, returned an "Error: …" STRING. Every caller
-			// below still tests the returned value for that string, so the switch
-			// left four call sites whose error branch could never be reached and
-			// whose rejection escaped instead.
-			//
-			// On a device with no `mail/` directory -- a phone that has never
-			// opened the Email panel -- that produced two unhandled rejections on
-			// every boot, which is what the first usable trail from an iPhone
-			// showed. Restoring the contract here fixes all four at once.
 			try {
-				return await deps.readText(path);
+				return { text: await deps.readText(path), outcome: 'done' };
 			} catch (e) {
-				return 'Error: ' + ((e && (e.message || e)) || 'unreadable');
+				return { text: String((e && (e.message || e)) || 'unreadable'), outcome: 'failed' };
 			}
 		}
 		console.error('mail: deps.readText is missing, so message headers cannot be read; '
 			+ 'see DaimondMail.init in daimond.js');
-		return '';
+		return { text: '', outcome: 'failed' };
 	}
 
 	var els     = {};
@@ -1209,8 +1215,11 @@
 		var listing;
 		try { listing = await deps.runTool('file_list', { path: dir }); }
 		catch (e) { return []; }
-		if (typeof listing !== 'string' || /^\s*Error\b/i.test(listing)) return [];
-		var names = listing.split('\n').map(function (l) {
+		// A LISTING THAT DID NOT HAPPEN IS NOT AN EMPTY FOLDER. The test read the
+		// sentence for `Error`, which a refusal does not open with, so a drafts folder
+		// the fence had closed was parsed for `.eml` names and reported as no drafts.
+		if (!listing || listing.outcome !== 'done') return [];
+		var names = listing.text.split('\n').map(function (l) {
 			var m = l.match(/^\s*(?:[-*]\s*)?(\S.*?)(?:\s+\(\d+.*\))?\s*$/);
 			return m ? m[1].trim().replace(/\/$/, '') : '';
 		}).filter(function (n) { return /\.eml$/i.test(n); });
@@ -1219,8 +1228,8 @@
 		for (var i = 0; i < names.length; i++) {
 			var path = dir + '/' + names[i];
 			var raw = await readText(path);
-			if (typeof raw !== 'string' || /^\s*Error\b/i.test(raw)) continue;
-			var hs = parseHeaders(raw);
+			if (raw.outcome !== 'done') continue;
+			var hs = parseHeaders(raw.text);
 			out.push({
 				path:    path,
 				id:      names[i].replace(/\.eml$/i, ''),
@@ -1237,11 +1246,11 @@
 	/// wrote is an ordinary message file, so it opens the same way.
 	async function readDraft(address, path) {
 		var raw = await readText(path);
-		if (typeof raw !== 'string' || /^\s*Error\b/i.test(raw)) {
+		if (raw.outcome !== 'done') {
 			throw new Error(t('mail.err.draft_unreadable'));
 		}
-		var hs   = parseHeaders(raw);
-		var mime = parseMime(raw, 0);
+		var hs   = parseHeaders(raw.text);
+		var mime = parseMime(raw.text, 0);
 		var f    = splitAddr(header(hs, 'from'));
 		return {
 			id:          (path.split('/').pop() || '').replace(/\.eml$/i, ''),
@@ -1625,9 +1634,11 @@
 		} catch (e) {
 			return [];                       // the workspace is not up yet
 		}
-		if (typeof listing !== 'string' || /^\s*Error\b/i.test(listing)) return [];
+		// Refused, failed and empty are three different answers, and only one of them
+		// means the mailbox has nothing in it.
+		if (!listing || listing.outcome !== 'done') return [];
 		var out = [];
-		var names = listing.split('\n').map(function (l) {
+		var names = listing.text.split('\n').map(function (l) {
 			var m = l.match(/^\s*(?:[-*]\s*)?(\S.*?)(?:\s+\(\d+.*\))?\s*$/);
 			return m ? m[1].trim() : '';
 		}).filter(function (n) { return n && n.indexOf(':2,') > 0; });
@@ -1635,8 +1646,8 @@
 		for (var i = 0; i < names.length; i++) {
 			var name = names[i].replace(/\/$/, '');
 			var raw = await readText(dir + '/' + name);
-			if (typeof raw !== 'string' || /^\s*Error\b/i.test(raw)) continue;
-			var hs = parseHeaders(raw);
+			if (raw.outcome !== 'done') continue;
+			var hs = parseHeaders(raw.text);
 			out.push({
 				uid:     parseInt(name.split('.')[0], 10) || 0,
 				file:    dir + '/' + name,
@@ -3184,13 +3195,13 @@
 
 	async function openMessage(m) {
 		var raw = await readText(m.file);
-		if (typeof raw !== 'string' || /^\s*Error\b/i.test(raw)) {
+		if (raw.outcome !== 'done') {
 			state.err = t('mail.err.msg_unreadable');
 			render();
 			return;
 		}
-		var hs    = parseHeaders(raw);
-		var mime  = parseMime(raw, 0);
+		var hs    = parseHeaders(raw.text);
+		var mime  = parseMime(raw.text, 0);
 		var view = {
 			subject: decodeWords(header(hs, 'subject')) || t('mail.no_subject'),
 			from:    splitAddr(header(hs, 'from')),

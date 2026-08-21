@@ -40,6 +40,8 @@
 //   node dev/verify_view.mjs --break stuck     # a stored detail wins over the view
 //   node dev/verify_view.mjs --break light     # Simple hides the pause widget
 //   node dev/verify_view.mjs --break cog       # Simple hides the way in
+//   node dev/verify_view.mjs --break tags      # Simple hides the tag row
+//   node dev/verify_view.mjs --break scrolled  # the tags render, past the row's edge
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs (dev/world.sh N --up gives both).
 import { open, connectMock, signInAs, scratch } from './harness.mjs';
@@ -67,6 +69,25 @@ try {
 			st.id = 'viewbreak';
 			if (b === 'light') st.textContent = '[data-view="simple"] .session-box .pptw { display: none !important; }';
 			if (b === 'cog')   st.textContent = '[data-view="simple"] .session-box .tile-cog { display: none !important; }';
+			// The original tag defect, put back: the row moved out of
+			// `session-box-meta` on 2026-08-20 and inherited none of the rules
+			// that had kept it, so it was given a `display: none` in Simple and
+			// nothing went red. This is the break the check below was written
+			// for and it must go on reddening whatever else changes.
+			if (b === 'tags') st.textContent = '[data-view="simple"] .session-box .session-box-tags { display: none !important; }';
+			// The second way to lose a tag, which the first check could not see:
+			// the chip is drawn, has a rect with area, and lies outside the band
+			// its own row shows -- the geometry of a chip scrolled off the end of
+			// a horizontal scroller. The break imposes the clipping band itself
+			// rather than leaning on `.session-box-tags` being a scroller today,
+			// so it means the same thing if that rule is written differently
+			// tomorrow.
+			if (b === 'scrolled') st.textContent =
+				'[data-view="simple"] .session-box .session-box-tags {'
+				+ ' flex-wrap: nowrap !important; overflow-x: auto !important;'
+				+ ' overflow-y: hidden !important; }'
+				+ '[data-view="simple"] .session-box .session-box-tags .tag-sm {'
+				+ ' margin-left: 320px !important; }';
 			document.head.appendChild(st);
 			if (b === 'copy') {
 				// The classic bug: the view writes itself into every tile, so the
@@ -266,12 +287,63 @@ try {
 			// `inline-flex` quite happily -- `display: none` does not cascade, it
 			// simply stops the subtree being rendered. A rect with area is the only
 			// reading that answers "can this be seen".
+			//
+			// 2026-08-21: THAT LAST SENTENCE STOPPED BEING TRUE, and the app's own
+			// daimon is what noticed, unprompted. The tag row became a horizontal
+			// scroller -- `flex-wrap: nowrap; overflow-x: auto`, so every tag renders
+			// and the row is cut at its edge instead of capping the list with a `+N`
+			// chip that hid the one thing a tag exists for. A chip past that edge
+			// STILL REPORTS A RECT WITH WIDTH AND HEIGHT: `getBoundingClientRect`
+			// gives layout position and knows nothing about clipping or about the
+			// scroll offset of an ancestor. So `shown === present` went on passing,
+			// went on catching the `display: none` it was written for, and had
+			// quietly stopped meaning what it said. It proved RENDERED, not VISIBLE.
+			//
+			// A rect with area is still necessary and is no longer sufficient. What
+			// is measured now is that rect intersected with the band every CLIPPING
+			// ancestor actually shows -- any overflow that is not `visible`, the tag
+			// row first among them -- and then with the viewport. That is the same
+			// question asked properly, and it is the right answer in both CSS states:
+			// where nothing clips, the loop intersects nothing and the reading is the
+			// old one, so a plain wrapping row is not made to fail by it.
+			//
+			// A CHIP CUT IN HALF AT THE EDGE COUNTS AS VISIBLE, deliberately. The
+			// CSS says the cut is the affordance -- the chips "say 'more this way' by
+			// being cut at the edge" -- so half a chip is the design working and any
+			// positive overlap passes. Demanding a whole chip would redden the day a
+			// Diamond is filed under a long tag, which is use, not regression.
+			//
+			// `shown === present` is a fair thing to ask ONLY because the fixture
+			// seeds exactly one tag into a full-width rail, where nothing overflows.
+			// Seed a dozen and the honest assertion changes: chips past the edge
+			// would then be scrolled-away rather than lost, and this would have to
+			// become "the row is visible and every chip lies within its scrollable
+			// content". Add a tag to the line above and this check has to move too.
+			//
+			//   --break tags      the row hidden -- the original defect, still red
+			//   --break scrolled  the chips drawn, laid out past the row's own edge
+			const seen = (el) => {
+				const r = el.getBoundingClientRect();
+				if (r.width <= 0 || r.height <= 0) return false;
+				let l = r.left, tp = r.top, rt = r.right, bt = r.bottom;
+				for (let a = el.parentElement; a; a = a.parentElement) {
+					const cs = getComputedStyle(a);
+					// An overflow that is not `visible` clips on BOTH axes: setting one
+					// axis alone computes the other to `auto`, which clips as well.
+					if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
+					const ar = a.getBoundingClientRect();
+					l  = Math.max(l, ar.left);   tp = Math.max(tp, ar.top);
+					rt = Math.min(rt, ar.right); bt = Math.min(bt, ar.bottom);
+					if (rt <= l || bt <= tp) return false;
+				}
+				// The viewport clips everything, and clips it last.
+				l  = Math.max(l, 0);                  tp = Math.max(tp, 0);
+				rt = Math.min(rt, window.innerWidth); bt = Math.min(bt, window.innerHeight);
+				return rt > l && bt > tp;
+			};
 			return {
 				present: chips.length,
-				shown:   chips.filter((c) => {
-					const r = c.getBoundingClientRect();
-					return r.width > 0 && r.height > 0;
-				}).length,
+				shown:   chips.filter(seen).length,
 			};
 		});
 		check(tagKept.present > 0,

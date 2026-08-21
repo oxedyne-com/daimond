@@ -46,6 +46,23 @@
 // the state the defect was reported from. `--break everything` widens it to every
 // error, which is the plausible over-correction and the reason check 4 exists.
 //
+// WAITING FOR THE TURN TO END, RATHER THAN FOR A FIXED FIVE SECONDS. Check 4 sends
+// `@err 500` and used to look at the thread 5,000 ms later. A 500 is RETRYABLE —
+// `RetryPolicy::default()` in `src/llm.rs` is eight attempts over up to 120 s of
+// backoff, widened from four attempts over 20 s on 2026-08-19 so a laptop that
+// wakes in another building does not lose its turn — so at five seconds the turn
+// is on attempt 4 of 8 and has not ended. Measured in world 7 on 2026-08-21: the
+// first request goes out at once, the retry notices land at 1.1, 1.7, 2.8, 4.8,
+// 12.1, 20.9 and 40.8 s, and the error line is written at 69.2 s. Nothing was
+// misclassified; the file was reading the thread mid-turn.
+//
+// That made check 4a pass for the wrong reason as well: NOTHING is marked
+// interrupted five seconds in, because nothing has ended, so "a 500 is not offered
+// back" was true of a turn that was still running. Both checks now wait on the
+// composer — the app's own "this turn is over" — and the wait is bounded well
+// above the retry budget, so a turn that really hangs still fails rather than
+// being waited out.
+//
 //   eval "$(bash dev/world.sh 4 --up)"
 //   node dev/verify_dropped.mjs
 //
@@ -122,6 +139,27 @@ const lastTurn = () => p.evaluate(() => {
 	};
 });
 
+/// Wait for the composer to offer Send again — the app's own "the turn is over".
+///
+/// The bound is above `RetryPolicy::default()`'s whole budget (eight attempts,
+/// `max_total_wait_ms` 120 s, `max_backoff_ms` 30 s) plus the requests between
+/// them, so a turn that ends fails nothing and a turn that HANGS still fails.
+/// Answers how long it waited, because that number is the retry budget and a
+/// change to it should be visible here rather than as a mystery timeout.
+const settle = async (label, timeout = 180000) => {
+	const t0 = Date.now();
+	while (Date.now() - t0 < timeout) {
+		const busy = await p.evaluate(() => {
+			const b = document.getElementById('chat-send');
+			return !!b && (b.classList.contains('stop') || b.disabled);
+		});
+		if (!busy) return { ended: true, ms: Date.now() - t0 };
+		await p.waitForTimeout(200);
+	}
+	console.log(`  note  the ${label} turn was still running after ${timeout} ms`);
+	return { ended: false, ms: Date.now() - t0 };
+};
+
 try {
 	await newChat(s);
 
@@ -131,7 +169,9 @@ try {
 	// reason, exactly what a lid closing does to a connection.
 	await p.fill('#chat-input', '@drop 3');
 	await p.click('#chat-send');
-	await p.waitForTimeout(6000);
+	const dropEnd = await settle('dropped');
+	check(dropEnd.ended, 'THE DROPPED TURN ENDS rather than hanging on the road',
+		`${dropEnd.ms} ms`);
 	const dropped = await lastTurn();
 	await shot(s, 'dropped-interrupted');
 
@@ -162,7 +202,7 @@ try {
 			const inter = [...document.querySelectorAll('#chat-output .chat-msg.interrupted')].pop();
 			inter.querySelector('.turn-interrupted button').click();
 		});
-		await p.waitForTimeout(6000);
+		await settle('continued');
 	}
 	const after = await p.evaluate(() => ({
 		count: document.querySelectorAll('#chat-output .chat-msg').length,
@@ -190,7 +230,15 @@ try {
 	await newChat(s);
 	await p.fill('#chat-input', '@err 500');
 	await p.click('#chat-send');
-	await p.waitForTimeout(5000);
+	// THE TURN MUST HAVE ENDED BEFORE EITHER CHECK BELOW MEANS ANYTHING. A 500 is
+	// retryable, so this is not a five-second wait: it is the retry ladder running
+	// to the end of its budget, about seventy seconds against the mock. Asked as a
+	// check of its own, because "a 500 is not offered back" is trivially true of a
+	// turn still in flight and was passing that way.
+	const errEnd = await settle('500');
+	check(errEnd.ended,
+		'A PROVIDER 500 IS RETRIED TO THE END OF THE BUDGET AND THEN THE TURN ENDS',
+		`${errEnd.ms} ms`);
 	const refused = await lastTurn();
 	await shot(s, 'dropped-refusal');
 	check(!refused.interrupted,

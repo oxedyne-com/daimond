@@ -41,7 +41,7 @@ const checkKnown = (ok, what, why) => { if (!ok) known.push(`${what}\n        ${
 const boxes = () => page.$$eval('.diamond-box .session-box-name', els => els.map(e => e.textContent));
 const railOf = () => page.$$eval('.diamond-box', els => els.map(e => ({
 	name: (e.querySelector('.session-box-name') || {}).textContent,
-	tags: [...e.querySelectorAll('.session-box-meta .tag-chip')].map(c => c.textContent),
+	tags: [...e.querySelectorAll('.session-box-tags .tag-chip')].map(c => c.textContent),
 	more: (e.querySelector('.tag-more') || {}).textContent || null,
 })));
 
@@ -100,8 +100,14 @@ check(rawRows.length === 3 && rawRows.every(r => Array.isArray(r.tags) && r.tags
 	'list_diamonds rows carry "tags":[] when a Diamond has none');
 
 // An untagged Diamond must look exactly as it did before tags existed.
+//
+// THE WHOLE TILE, not the meta row. This read `.session-box-meta`'s innerHTML
+// until 2026-08-21, and on 2026-08-20 the chips moved out of that row onto one of
+// their own -- so the check went on passing while asking a question whose answer
+// had become "no" by construction. A chip could have been drawn on every untagged
+// Diamond in the rail and this would have said nothing.
 const untaggedMeta = await page.$$eval('.diamond-box', els =>
-	els.map(e => (e.querySelector('.session-box-meta') || {}).innerHTML || ''));
+	els.map(e => e.innerHTML || ''));
 check(untaggedMeta.every(h => !h.includes('tag-chip')), 'untagged Diamonds render no chips (zero regression)');
 
 // ── The tag pool's empty state ───────────────────────────────────
@@ -230,7 +236,7 @@ const poolOff = async (tag) => {
 /// One click on a tag chip on a Diamond BOX -- the other way into the filter,
 /// and the only one there is while the pool is closed.
 const clickTag = async (name) => {
-	await page.$$eval('.session-box-meta .tag-chip', (els, n) => {
+	await page.$$eval('.session-box-tags .tag-chip', (els, n) => {
 		for (const e of els) if (e.textContent === n) { e.click(); return; }
 	}, name);
 	await page.waitForTimeout(400);
@@ -417,13 +423,20 @@ await page.waitForTimeout(500);
 // ── Chips in the rail ────────────────────────────────────────────
 const railChips = await railOf();
 const mum = railChips.find(r => r.name === 'Mum birthday plan');
-check(mum && mum.tags.length === 3 && mum.more === '+1',
-	`overflow caps at 3 chips + "+N": ${JSON.stringify(mum)}`);
+// EVERY TAG RENDERS AND THE ROW SCROLLS. Until 2026-08-21 this asserted a cap of
+// three chips and a `+N`, which is what the tile drew then. The overflow chip was
+// removed on the owner's instruction, because a tag that is never drawn cannot be
+// clicked back into the filter -- and a Diamond you cannot see the filing of is a
+// Diamond you cannot find by it. The check now asserts the replacement rather than
+// the thing replaced, or it would hold the old design in place the way
+// verify_daimonface's Fold check did.
+check(mum && mum.tags.length === 4 && mum.more === null,
+	`every tag renders and no overflow chip stands in for any: ${JSON.stringify(mum)}`);
 const csv = railChips.find(r => r.name === 'Ship a CSV parser');
 check(csv && csv.tags.length === 2, `chips render on the tagged Diamond: ${JSON.stringify(csv && csv.tags)}`);
 
 // Colour is deterministic and theme-driven, not hardcoded.
-const hues = await page.$$eval('.session-box-meta .tag-chip',
+const hues = await page.$$eval('.session-box-tags .tag-chip',
 	els => els.map(e => ({ t: e.textContent, h: e.style.getPropertyValue('--tag-h') })));
 const byTag = {};
 let stable = true;
@@ -441,7 +454,7 @@ await page.waitForTimeout(1500);
 const afterReload = await railOf();
 const mumAfter = afterReload.find(r => r.name === 'Mum birthday plan');
 const csvAfter = afterReload.find(r => r.name === 'Ship a CSV parser');
-check(mumAfter && JSON.stringify(mumAfter.tags) === JSON.stringify(['person', 'family', 'gifts']) && mumAfter.more === '+1',
+check(mumAfter && JSON.stringify(mumAfter.tags) === JSON.stringify(['person', 'family', 'gifts', 'urgent']) && mumAfter.more === null,
 	`tags PERSIST across a page reload: ${JSON.stringify(mumAfter)}`);
 check(csvAfter && csvAfter.tags.length === 2,
 	`every tagged Diamond survives the reload: ${JSON.stringify(csvAfter && csvAfter.tags)}`);
@@ -512,7 +525,7 @@ const setMode = async (m) => {
 	await page.click(`#diamond-filter .tag-mode-btn[data-mode="${m}"]`, { force: true });
 	await page.waitForTimeout(400);
 };
-const railMarks = () => page.$$eval('.session-box-meta .tag-chip',
+const railMarks = () => page.$$eval('.session-box-tags .tag-chip',
 	els => els.map(e => ({ t: e.textContent, on: e.classList.contains('tag-inc') })));
 
 // A chip cycles: off -> wanted -> refused -> off. Every leg is now walked in
@@ -719,7 +732,7 @@ await shot(s, 'tags-light-editor');
 await page.click('.crystal-act', { force: true });
 await page.waitForTimeout(400);
 await shot(s, 'tags-light-rail');
-const contrast = await page.$$eval('.session-box-meta .tag-chip', els => els.map(e => {
+const contrast = await page.$$eval('.session-box-tags .tag-chip', els => els.map(e => {
 	const cs = getComputedStyle(e);
 	return { t: e.textContent, fg: cs.color, bg: cs.backgroundColor };
 }));
@@ -816,7 +829,7 @@ await signInAs(b, 'tagsB');
 await b.page.waitForTimeout(800);
 const restored = await b.page.$$eval('.diamond-box', els => els.map(e => ({
 	name: (e.querySelector('.session-box-name') || {}).textContent,
-	tags: [...e.querySelectorAll('.session-box-meta .tag-chip')].map(c => c.textContent),
+	tags: [...e.querySelectorAll('.session-box-tags .tag-chip')].map(c => c.textContent),
 	more: (e.querySelector('.tag-more') || {}).textContent || null,
 })));
 // A restore must bring each Diamond back ONCE. The workspace files carry the whole
@@ -827,8 +840,8 @@ check(restored.length === 3, `a restore brings each Diamond back exactly once --
 
 // The thing this pass is actually proving: tags survive the round trip.
 const rmum = restored.filter(r => r.name === 'Mum birthday plan');
-check(rmum.length > 0 && rmum.every(r => r.tags.length === 3 && r.more === '+2'),
-	`tags RESTORE from a backup into a fresh profile (5 tags -> 3 chips + "+2"): ${JSON.stringify(rmum[0])}`);
+check(rmum.length > 0 && rmum.every(r => r.tags.length === 5 && r.more === null),
+	`tags RESTORE from a backup into a fresh profile (5 tags, 5 chips, no "+N"): ${JSON.stringify(rmum[0])}`);
 const rrust = restored.filter(r => r.name === 'Rust compiler notes');
 check(rrust.length > 0 && rrust.every(r => r.tags.length === 0),
 	`an untagged Diamond restores untagged, with no chips: ${JSON.stringify(rrust[0])}`);
@@ -842,7 +855,7 @@ await shot(b, 'tags-restored');
 const bp = b.page;
 const bBoxes = () => bp.$$eval('.diamond-box .session-box-name', els => els.map(e => e.textContent));
 const bClickTag = async (name) => {
-	await bp.$$eval('.session-box-meta .tag-chip', (els, n) => {
+	await bp.$$eval('.session-box-tags .tag-chip', (els, n) => {
 		for (const e of els) if (e.textContent === n) { e.click(); return; }
 	}, name);
 	await bp.waitForTimeout(400);

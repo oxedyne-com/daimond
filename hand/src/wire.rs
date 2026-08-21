@@ -124,6 +124,34 @@ pub struct PtySize {
     pub rows: u16,
 }
 
+/// Which of a verifier's declared breaks a [`Req::Verify`] should run.
+///
+/// **Not a free string, and that is the point.**  A break is a mode the verifier
+/// itself implements and names in its own source; a caller who could invent one
+/// would run the file unchanged and be handed a pass that measured nothing.  So
+/// the only shapes here are "every break the file declares", "this one, which
+/// the file must declare", and "none, and say so".
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Breaks {
+    /// Every break the verifier declares, one run each.
+    All,
+    /// One named break, which the verifier must declare or the request is refused.
+    One(String),
+    /// None.  The clean run alone, whose result is UNPROVEN and says so in words.
+    None,
+}
+
+impl Breaks {
+    /// The word this travels under.
+    pub fn word(&self) -> &'static str {
+        match self {
+            Self::All	=> "all",
+            Self::One(_)	=> "one",
+            Self::None	=> "none",
+        }
+    }
+}
+
 // ── Why a pty is a separate pair of messages ────────────────────────
 //
 // [`Req::Exec`] is non-interactive by design: stdin is a string decided before the
@@ -211,6 +239,40 @@ pub enum Req {
         /// back.  A name this build does not know grants nothing, and an absent
         /// field is no grant -- both fail closed.
         toolkits:   Vec<String>,
+    },
+    /// Run one named verifier from the tracked tree, clean and under its breaks.
+    ///
+    /// **A NAME, not a path and not a command line.**  `name` is looked up in the
+    /// granted root's `dev/` directory and must match a `verify_<name>.mjs` that
+    /// is actually there; what reaches the argument vector is the directory
+    /// entry's own file name, never the caller's string.  `breaks` is checked
+    /// against the declarations in that file's own source.  So there is no
+    /// element of this request that a page can turn into a program, an argument
+    /// or a path -- which is why it is a request of its own rather than an
+    /// [`Req::Exec`] with a convention attached to it.
+    ///
+    /// **It runs OUTSIDE the command fence, deliberately.**  A fenced command
+    /// cannot open the display server's socket or listen on a port, so every
+    /// verifier that drives a real browser dies under it -- and those are the
+    /// ones a release actually rests on.  The justification is provenance and
+    /// not confinement: a verifier is tracked repository code in the same trust
+    /// class as `cargo test`, and the model supplies a selector rather than a
+    /// command.  The journal records each run with `fence:none` in its
+    /// mechanisms, so the claim is checkable rather than merely written down.
+    Verify {
+        /// Caller-chosen identifier, echoed on every response about this run.
+        id:         String,
+        /// The verifier's short name: `graph` for `dev/verify_graph.mjs`.
+        name:       String,
+        /// Which of its declared breaks to run beside the clean pass.
+        breaks:     Breaks,
+        /// The WHOLE sequence's wall-clock budget, not one run's.
+        ///
+        /// The page arms one timer from this, so it has to cover every run the
+        /// sequence makes.  A break the budget does not reach is reported as
+        /// never having run, which is a worse result than a slow one and is
+        /// meant to be.
+        timeout_ms: u64,
     },
     /// Send a signal to a running command.
     Signal {

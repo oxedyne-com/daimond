@@ -22,6 +22,9 @@
 //! * [`fence`] -- what a command may touch.  Platform-specific, and therefore
 //!   behind an enum from the start with the platforms that are not built yet
 //!   declared rather than forgotten.
+//! * [`verify`] -- running a NAMED verifier out of the tracked tree, clean and
+//!   under each break it declares, and refusing to report a passing count
+//!   without the count of breaks that reddened nothing.
 //! * [`journal`] -- what was run, what it returned, and what it was stopped
 //!   from doing.  Load-bearing: the product's claim is that it can be checked
 //!   rather than trusted, and that claim has to cover the hand too.
@@ -35,6 +38,7 @@ pub mod journal;
 #[cfg(unix)]
 pub mod pty;
 pub mod seccomp;
+pub mod verify;
 pub mod wire;
 
 /// The wire protocol version this build speaks.

@@ -2869,6 +2869,23 @@ pub fn fence_enforced(caps: &[String]) -> bool {
         && !caps.iter().any(|c| c == "fence:none")
 }
 
+/// Is this a name a verifier or a break may be looked up by?
+///
+/// The same alphabet the hand applies and the extension applies: lower case, digits and
+/// underscore.  Repeated here rather than shared because the three ends have no shared code, and
+/// the point of the narrowness is what it leaves OUT -- no dot, so `..` cannot be spelled; no
+/// slash; no dash, so nothing can begin with one and be read as an option.  A name that gets past
+/// all three still names nothing unless the file is really there.
+///
+/// # Arguments
+/// * `name` - The name, as the model wrote it.
+pub fn verify_name_ok(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+
 /// The word every refusal this layer writes opens with.
 ///
 /// Written down once because [`call_outcome`] reads it back: a refusal is recognised by the fact
@@ -2923,6 +2940,23 @@ pub enum CallOutcome {
     Refused,
     /// The tool tried and failed.  Nothing was completed.
     Failed,
+}
+
+impl CallOutcome {
+
+    /// The word this outcome travels as, on the wire and in a stored tool log.
+    ///
+    /// Spelled here and nowhere else because the browser recognises these three words and no
+    /// others: an encoder that invented a fourth spelling would not fail, it would quietly hand
+    /// every consumer a refusal they read as work that was done -- which is the defect this field
+    /// exists to close.
+    pub fn wire(&self) -> &'static str {
+        match self {
+            Self::Done      => "done",
+            Self::Refused   => "refused",
+            Self::Failed    => "failed",
+        }
+    }
 }
 
 /// What a tool reply says about whether its call actually did anything.
@@ -5952,20 +5986,6 @@ pub enum Tool {
     DirCreate,
     /// Bring one file down from cloud storage onto this device.
     FileFetch,
-    /// Answer at two depths: a gist the user reads, and the detail behind a fold.
-    ///
-    /// **The detail never travels twice.**  Prose written into a reply is re-sent on every later
-    /// request for the life of the conversation, so a model that explains at length charges the
-    /// user for that explanation on every subsequent turn, whether or not anyone reads it again.
-    /// The detail handed to this tool is stripped from the payload once the call has been made --
-    /// see `strip_said` -- and the summary stays.  It is not lost: the browser keeps the whole
-    /// call in the transcript record, so the fold opens instantly and survives a reload.  What
-    /// changes is only what goes over the wire.
-    ///
-    /// It is TERMINAL.  A tool that answers is the answer, so the loop stops rather than asking
-    /// the model to speak again -- which would cost a whole extra request to say what it has just
-    /// said.
-    Say,
     /// Put a workspace file in front of the user, in the panel they already read files in.
     ///
     /// **This is a defect class, not a feature.**  Asked to compile a Typst source and display
@@ -6067,6 +6087,27 @@ pub enum Tool {
     /// own file an artefact" stops being "get the model to touch it", which
     /// would record it as produced, which is a lie about where it came from.
     ArtefactAdd,
+    /// Run one named verifier from the tracked tree, clean and under each break it declares.
+    ///
+    /// **This is the tool that lets a daimon check its own work, and it exists because the
+    /// fence made that impossible.**  A fenced command cannot open the display server's socket
+    /// or listen on a port, so every `dev/verify_*.mjs` that drives a real page dies under the
+    /// compartment [`Tool::Run`] puts a command in -- and those verifiers are half the proof of
+    /// a release.  The machine that could write the code could not look at it.
+    ///
+    /// The way out is not a wider fence.  The fence exists to contain a command a MODEL wrote,
+    /// and a verifier is tracked repository code in the same trust class as `cargo test`: what
+    /// the model supplies here is a NAME, which the hand looks up in its own granted `dev/`
+    /// directory, and at most a BREAK, which the hand looks up in that file's own source.
+    /// Neither reaches an argument vector in the form it was written.
+    ///
+    /// **And it cannot report a bare pass.**  Running a verifier clean and saying "27 checks
+    /// passed" is exactly the evidence that has been lying -- three instruments passed while
+    /// aimed at nothing on one night of 2026-08.  So the verb runs the clean pass AND each
+    /// declared break, and answers with three numbers: checks passed, breaks confirmed red, and
+    /// breaks that reddened nothing.  A clean-only run is labelled UNPROVEN in the result, in
+    /// the words a model should repeat.
+    Verify,
     /// Read the relations between Diamonds, files, pages and chats.
     ///
     /// The graph is the Diamond store's world model, and until this existed no
@@ -6160,11 +6201,6 @@ impl Tool {
             // the consequence was worse there, because a model with no way to show a file does
             // not merely fail to show one: it tells the user the app cannot.
             Tool::FileShow,
-            // The other tool whose subject is the READER rather than the workspace.  A worker
-            // gets neither: nobody is watching its transcript, so a fold it draws is a fold in
-            // an empty room -- and its summary goes to the agent that sent it, which wants the
-            // whole thing.
-            Tool::Say,
             // The compiler is vendored into the page, so the browser build can
             // do this and the native build cannot.  It was reachable only from a
             // human's Compile button, which meant an agent asked to produce a PDF
@@ -6180,9 +6216,77 @@ impl Tool {
             // fence it can actually enforce.  Both the description the model reads and the summary
             // the panel shows say so, because a tool listed without its condition is a promise.
             Tool::Run,
+            // Evidence. Offered beside `run` because it is the same machine hand, and because a
+            // person reading the Tools panel should see that Daimond can check its own work as
+            // well as do it -- but it is the narrower claim of the two: it runs THIS
+            // repository's own verifiers, and refuses where the granted folder holds none.
+            Tool::Verify,
         ];
         t.extend(Tool::web());
         t
+    }
+
+    /// The toolbelt a Diamond's daimon is given, which is not the chat's.
+    ///
+    /// A daimon's turn never goes through the chat agent: `DaimondApp::compose_daimon` builds this
+    /// registry and steers the Diamond's own app.  Written here beside [`browser`](Tool::browser)
+    /// rather than inline at the one call site, so a test that has no browser can still ask what a
+    /// daimon is handed -- the Wire band drew a chat's belt on a daimon thread for a whole release,
+    /// and the owner sat asking why his daimon never used a tool it had never held.
+    pub fn daimon() -> Vec<Tool> {
+        vec![
+            Tool::FileRead,
+            Tool::FileWrite,
+            Tool::FileEdit,
+            Tool::FileList,
+            Tool::FileSearch,
+            Tool::FileGlob,
+            Tool::FileDelete,
+            Tool::FileMove,
+            Tool::DirCreate,
+            // The three a daimon went without, and the reason they were withheld expired
+            // rather than being overruled.
+            //
+            // `Tool::Run` was refused on the ground that a turn pinned to `diamonds/<id>` on
+            // the OPFS root has nowhere on the machine to run anything, so offering it would
+            // produce only refusals. That was true and is not any more: the pin went when a
+            // daimon proved unable to read the book attached to its own Diamond, and what
+            // replaced it is `diamond_bounds` and a `start_dir` that names the first folder
+            // the user marked in. A daimon asked to set up an editing loop over that book
+            // could not open a terminal, could not put a file on the Doc panel, and could not
+            // compile it -- three refusals in one turn, all of them structural.
+            //
+            // Each is fenced by something that already exists: `run` by `fence_spec` from the
+            // same bounds a worker gets, and `typst_compile` by pack `drop01`, which refuses
+            // on an account that has not bought it and says so. `file_show` is the one whose
+            // absence was worst, and the catalogue says why -- a model with no way to show a
+            // file does not merely fail to show one, it tells the user the app cannot.
+            Tool::Run,
+            // The daimon is the turn that most needs this and the one that could least reach
+            // it: a worker writes code and a daimon is answerable for it, and until this tool
+            // existed the answer could only ever be `cargo test`.
+            Tool::Verify,
+            Tool::FileShow,
+            Tool::TypstCompile,
+            // Counting a file as this Diamond's, which `DEFAULT_DAIMON` has instructed the
+            // daimon to do since the tool was written -- while no registry anywhere offered
+            // it.  A prompt naming a tool that is not there does not fail loudly: the model
+            // reports that it cannot record the file, or invents a way to, and the user reads
+            // either as the app being broken.  It belongs to this turn and no other, because
+            // an artefact is recorded ON a Diamond and this is the turn that has one.
+            Tool::ArtefactAdd,
+            // The daimon commands agents; the workers do the work.
+            Tool::SpawnAgent,
+            // The world model.  These three are the daimon's and not the chat's, on the same
+            // ground `spawn_agent` is: a link is kept ON a Diamond, and this is the only turn
+            // that HAS one -- its `path_prefix` names the Diamond, so `link_add` knows where
+            // the record goes without the model having to be right about it.  A chat is scoped
+            // to no Diamond, so every write it made would be aimed by an argument the model
+            // chose at a Diamond it does not belong to.
+            Tool::LinkList,
+            Tool::LinkAdd,
+            Tool::LinkRemove,
+        ]
     }
 
     /// The web tool set, which the caller composes in explicitly.
@@ -6494,12 +6598,12 @@ impl Tool {
             Tool::ArtefactAdd => "artefact_add",
             Tool::FileFetch   => "file_fetch",
             Tool::FileShow    => "file_show",
-            Tool::Say         => "say",
             Tool::SheetRead   => "sheet_read",
             Tool::DocEdit     => "doc_edit",
             Tool::SheetWrite  => "sheet_write",
             Tool::Shell       => "shell",
             Tool::Run         => "run",
+            Tool::Verify      => "verify",
             Tool::SpawnAgent  => "spawn_agent",
             Tool::WebOpen     => "web_open",
             Tool::WebClose    => "web_close",
@@ -6553,12 +6657,12 @@ impl Tool {
             "artefact_add" => Some(Tool::ArtefactAdd),
             "file_fetch"   => Some(Tool::FileFetch),
             "file_show"    => Some(Tool::FileShow),
-            "say"          => Some(Tool::Say),
             "sheet_read"   => Some(Tool::SheetRead),
             "doc_edit"     => Some(Tool::DocEdit),
             "sheet_write"  => Some(Tool::SheetWrite),
             "shell"        => Some(Tool::Shell),
             "run"          => Some(Tool::Run),
+            "verify"       => Some(Tool::Verify),
             "spawn_agent"  => Some(Tool::SpawnAgent),
             "web_open"     => Some(Tool::WebOpen),
             "web_close"    => Some(Tool::WebClose),
@@ -6590,13 +6694,13 @@ impl Tool {
             Tool::FileMove    => "Move or rename a file or directory within the workspace.",
             Tool::DirCreate   => "Create a directory in the workspace, and any parent directories it needs.",
             Tool::ArtefactAdd => "Record that a file already in the workspace is an artefact of this Diamond, so it is listed with the work rather than only sitting in the folder. Use it for files the user put there, or found, or wrote themselves -- anything this Diamond produced is recorded without being asked. Recording a file does not read it: read it as well if what it says belongs in the crystal.",
-            Tool::Say         => "THE ORDINARY WAY TO ANSWER. Use it for almost everything you say, not for the occasional long reply: the user reads a short summary at once, and the rest is one click away under it. 'summary' is one or two sentences — the answer itself, not a description of the answer, and IT MUST CARRY ANY CAVEAT, because a qualification behind the fold is one they will act without. 'detail' is everything else, in Markdown, as long as it needs to be; nothing is trimmed and nothing is lost. REPLY IN PLAIN PROSE ONLY when the whole answer IS one or two sentences and there is nothing behind it — a yes, a number, a name, a one-line confirmation. Wrapping that in this gives the user a control that opens on nothing, which is worse than saying it plainly. EVERYTHING ELSE GOES HERE: an explanation, a walkthrough, a list of findings, a plan, a report, a comparison, a diagnosis. If you are about to write three paragraphs, that is this tool. TWO THINGS FOLLOW AND BOTH MATTER TO YOU. This ENDS YOUR TURN — it is the answer, so say everything here and do not plan to add a sentence afterwards. And the detail is not sent back to you on later turns: the user keeps it, you do not. So if the next turn will build on the material, put that part in the summary, or write it to a file and name the file.",
             Tool::FileShow    => "Put a workspace file on the user's screen, in Daimond's document panel beside the chat. THIS IS HOW YOU SHOW SOMEBODY SOMETHING. The other file tools hand you bytes or text, which is for you; this is for them. A PDF is drawn page by page by the browser's own document viewer, so the user reads the typeset document rather than its source — say 'it is on screen now', not 'I cannot display a PDF'. Pictures (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF, SVG) are decoded and drawn; sound and video get a player; HTML is rendered; JSON becomes a tree, CSV and TSV a table, Markdown is rendered, and anything the panel treats as source opens in its editor where the user can change it. A format with no viewer of its own is still shown — as a paged hex dump naming the format — so this tool does not fail on an unusual file, and you must never conclude from one such file that Daimond cannot display things. It takes a PATH, not content: the panel reads the file, so after you rewrite or recompile that file, call this again with the same path to put the new version in front of them. 'page' opens a PDF at a particular page (the top otherwise). Show a file when the user asked to see one, when you have just produced a document for them, or when the thing you are discussing is easier looked at than described — and say what you have put on screen, since the panel may be behind whatever they are reading.",
             Tool::SheetRead   => "Read a rectangle of an Excel spreadsheet (.xlsx) as a table. Give a 'path', optionally a 'sheet' by the name on its tab (the first sheet otherwise) and optionally a 'range' like 'A1:H40' (the first 100 rows otherwise). The result carries the column letters and the row numbers, so your next call can name exactly the range you now want. THE VALUE SHOWN IS THE ONE STORED IN THE FILE -- the number the person who wrote it saw. Formulas are NOT recalculated; the formulas inside the range are listed after the table, so you can see what produced a figure without being handed a different figure. Call file_read on a .xlsx first to learn what sheets it has and how big they are, then this to read the cells. A workbook is a compressed archive of XML and one sheet can be a hundred thousand rows, which is why this takes a range and file_read does not hand you the whole thing.",
             Tool::DocEdit     => "Change the words in a Word (.docx) or OpenDocument (.odt) document that already exists, leaving everything else in it exactly as it was. Give a 'path' and 'edits': a list of {\"find\",\"replace\"} pairs, optionally with 'nth' to pick one occurrence (1-based, counted through the whole document) instead of replacing all of them. THIS IS NOT file_edit AND file_edit WILL NOT WORK ON A DOCUMENT: these formats are compressed archives, so there is no text in the file for file_edit to match against. Read the document with file_read first and quote a phrase it actually holds — and note that a writer's formatting splits a sentence into runs, so a phrase interrupted by a footnote mark or a field may not be findable as one string, while an ordinary sentence with a bold word in the middle of it is. A 'find' that matches nothing is an ERROR NAMING THE STRING and nothing at all is written; that refusal is the answer, so read the document again rather than retrying the same string. Only the body is searched: a phrase in a header, a footer or a footnote reports as absent rather than being changed in one of two places. This does NOT work on a presentation: a slide is a position on a canvas, and changing words without knowing the geometry puts text over other text — read it and write a new one instead. For a spreadsheet, use sheet_write.",
             Tool::SheetWrite  => "Write cells into an Excel (.xlsx) or OpenDocument (.ods) spreadsheet that already exists. Give a 'path' and 'edits': a list of cells, each with a 'ref' like 'B2' and either a 'value' or a 'formula'. Name the 'sheet' by the tab it is on, or leave it out for the first sheet — a sheet name that is not in the workbook is refused and the refusal lists the ones that are. A 'value' is typed the way a person typing into a cell would have it typed: '3.5' becomes the number 3.5, 'true' becomes a boolean, and text that is not exactly how a number prints stays text, so a part number like '007' is not renumbered. An empty value empties the cell. A 'formula' is written in the ordinary A1 form ('=B2*C2', '=SUM(D2:D10)') and is converted to whatever the file's own format needs. NOTHING IS RECALCULATED: a formula you write goes in without a value beside it and the reader works it out when the file is opened, and every formula already in the workbook keeps the number it had. A 'ref' beyond the end of the sheet is written and the sheet grows; only a bad reference is refused. Read the sheet with sheet_read first, so you write to the cell you mean.",
             Tool::FileFetch   => "Download one file from cloud storage onto this device, so the other file tools can reach it. The workspace is one set of files and this device holds as much of it as it can; file_list marks the rest 'in cloud storage', and file_read refuses them and says how big they are. This is the only thing that moves those bytes, and it may transfer a great deal of data at the user's expense — so fetch a file when you actually need its contents, one at a time, and never speculatively or in bulk. Once it has arrived, read it as you would any other file.",
             Tool::Shell       => "Run a shell command in the workspace and return its stdout/stderr and exit code.",
+            Tool::Verify      => "Run one of this repository's own verifiers and report what it PROVED. A verifier is a tracked script in 'dev/' that drives the real app in a real browser and prints one line per check; 'name' is its short name -- 'graph' for dev/verify_graph.mjs -- and it is a NAME, not a path and not a command line, because the hand looks it up in the folder the user granted and builds the command itself. This is how you check work a person would have to look at: 'run' with 'cargo test' proves the Rust, and nothing proves the screen. THE ANSWER IS ALWAYS THREE NUMBERS, and you must carry all three. CHECKS PASSED is how many checks the clean run passed. BREAKS CONFIRMED RED is how many of the verifier's own deliberate breakages made a check that passed clean fail -- each one is a check that has now been SEEN to fail, which is the only thing that makes its pass mean anything. BREAKS THAT PROVED NOTHING is the number that matters most and the one you must never drop: a break that changed no verdict means the check it aims at cannot be made to fail, so that check is measuring nothing and its pass is worth nothing. Report those checks as UNMEASURED, by name. Every declared break is run by default, so the tool takes as long as the verifier times one plus the number of breaks -- give 'timeout_ms' for a slow one rather than reaching for 'clean_only'. 'clean_only' skips every break, and its result is labelled NOT PROVEN and IS NOT EVIDENCE: a check that has never been observed failing is not a check, so do not report a passing count from a clean-only run -- say that it ran and that its instrument was not proved. Use 'break' to run one named break, which must be one the verifier itself declares; if you name one it does not, the refusal lists the ones it does. A verifier runs OUTSIDE the fence every other tool works inside, because it is tracked repository code rather than a command anyone's model wrote -- so it is refused to a dispatched worker, who is working with nobody watching: if you are one, say which verifier you wanted and what it should prove, and let the daimon run it. It needs Daimond's machine hand, and it needs the granted folder to be a tree that HAS verifiers: it is not a general test runner and it refuses rather than pretending. Where it writes screenshots they land under dev/shots/ and the report names them; read one with file_read and \"as\":\"image\" if you can see, or dispatch a worker who can.",
             Tool::Run         => "Run one command on the user's machine and return its output and exit code. This is how you build, test, run a linter, or use any command-line tool. Give 'argv' as an ARRAY -- the program, then each argument separately: [\"cargo\",\"test\",\"--lib\"]. It is NOT a shell command line and there is no shell: a semicolon, a pipe, a redirection, a backtick, a '$(...)' or a '&&' is passed to the program as a literal argument and will not do what it does in a terminal, and '~' is not expanded either, so '~/x' asks for a directory actually named '~' and the command reports the path missing -- write every path in 'argv' out in full from '/'. 'cwd' is the one that goes the other way: it is workspace-relative, as the file tools' paths are, and an absolute one is refused rather than joined onto the workspace root. To feed a command some input use 'stdin'; to chain two commands, call this tool twice and decide between them yourself, which is better anyway because you see the first result before choosing. It needs a companion program -- Daimond's machine hand -- that the user installs and approves once: a browser cannot start a process on its own. Where there is no hand, or where the hand says it cannot contain a command on that computer, this REFUSES and says which; believe the refusal, tell the user what you wanted to run, and carry on with the file tools. Where there is one, the command runs inside the folder they granted and not the rest of the machine. Whether it may reach the network, and whether the user is asked before it runs at all, is the permission mode they chose: the note about this computer says which, so read that rather than assuming either way. A command that fails is usually telling you something true: read its stderr before running it again.",
             Tool::SpawnAgent  => "Dispatch a worker agent to carry out one bounded task in its own context, with the full workspace file tools. Call it once per agent; several calls in a single turn run in parallel. Each agent reports back a summary you can fold into the crystal.",
             Tool::WebOpen     => "Show a web page to the user in Daimond's Web panel. This makes the page VISIBLE; it does not mean you can operate it. Most sites refuse to be shown inside another page at all, and a page that is shown can still be beyond your reach unless a browser driver is attached. To READ a page's text, use web_fetch, which always works. To find out whether you can act on this one, call web_snapshot: if it refuses, believe the refusal and say so rather than guessing at clicks.",
@@ -6633,12 +6737,12 @@ impl Tool {
             Tool::DirCreate   => "Make a folder.",
             Tool::ArtefactAdd => "Count an existing file as this Diamond's.",
             Tool::FileFetch   => "Bring a file down from cloud storage onto this device.",
-            Tool::Say         => "Answer with a summary, and the detail behind a fold.",
             Tool::FileShow    => "Put one of your files on the screen beside the chat.",
             Tool::SheetRead   => "Read part of a spreadsheet.",
             Tool::DocEdit     => "Change the words in a Word or OpenDocument document, keeping everything else in it.",
             Tool::SheetWrite  => "Write cells into a spreadsheet you already have.",
             Tool::Shell       => "Run a command. Only where Daimond has a machine to run it on.",
+            Tool::Verify      => "Run one of this repository's verifiers, clean and under each break it declares, and say how many checks passed, how many breaks went red, and how many breaks proved nothing.",
             Tool::Run         => "Run a command on your computer, in the folder you granted. Needs Daimond's machine hand installed; refused where it is not, and where it cannot contain the command.",
             Tool::SpawnAgent  => "Send a worker off to do one task on its own, several at once.",
             Tool::WebOpen     => "Show you a web page beside the chat.",
@@ -6671,12 +6775,12 @@ impl Tool {
             Tool::DirCreate => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory to create"}},"required":["path"]}"#,
             Tool::ArtefactAdd => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file to record as this Diamond's artefact"},"note":{"type":"string","description":"Optional: why it belongs to this Diamond, in a few words"}},"required":["path"]}"#,
             Tool::FileFetch => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to bring down from cloud storage"}},"required":["path"]}"#,
-            Tool::Say => r#"{"type":"object","properties":{"summary":{"type":"string","description":"One or two sentences: the answer itself, plus any caveat. This is all the user sees until they open the fold."},"detail":{"type":"string","description":"Everything else, in Markdown. As long as it needs to be."}},"required":["summary","detail"]}"#,
             Tool::FileShow => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to put on screen, e.g. 'notes/report.pdf'; never absolute"},"page":{"type":"integer","description":"Which page to open a PDF at, 1-based. Omit for the start of the document."}},"required":["path"]}"#,
             Tool::SheetRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .xlsx, e.g. 'books/ledger.xlsx'; never absolute"},"sheet":{"type":"string","description":"Which sheet, by the name on its tab. Omit for the first sheet; file_read on the workbook lists the names."},"range":{"type":"string","description":"Which cells, like 'A1:H40'. Omit for the first 100 rows. A range larger than the sheet is clipped to it rather than refused."}},"required":["path"]}"#,
             Tool::DocEdit => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .docx or .odt, e.g. 'notes/report.docx'; never absolute"},"edits":{"type":"array","description":"The replacements to make, in order. Each is applied to the document as the one before it left it.","items":{"type":"object","properties":{"find":{"type":"string","description":"The exact text to look for, as the document holds it"},"replace":{"type":"string","description":"What to put in its place. Empty removes the text."},"nth":{"type":"integer","description":"Which occurrence to change, counted from 1 through the whole document. Omit to change every one."}},"required":["find","replace"]}}},"required":["path","edits"]}"#,
             Tool::SheetWrite => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .xlsx or .ods, e.g. 'books/ledger.xlsx'; never absolute"},"edits":{"type":"array","description":"The cells to write.","items":{"type":"object","properties":{"sheet":{"type":"string","description":"Which sheet, by the name on its tab. Omit for the first sheet."},"ref":{"type":"string","description":"Which cell, like 'B2' or 'AC14'"},"value":{"type":"string","description":"What to put in the cell, as a person would type it. '' empties it."},"formula":{"type":"string","description":"A formula in the ordinary A1 form, e.g. '=B2*C2'. Give this or 'value', not both unless you know the cached value is right."}},"required":["ref"]}}},"required":["path","edits"]}"#,
             Tool::Shell => r#"{"type":"object","properties":{"command":{"type":"string","description":"Shell command to run"}},"required":["command"]}"#,
+            Tool::Verify => r#"{"type":"object","properties":{"name":{"type":"string","description":"The verifier's short name: 'graph' for dev/verify_graph.mjs. Lower-case letters, digits and underscores. A name, never a path or a command line."},"break":{"type":"string","description":"Run the clean pass and this ONE break, instead of every declared break. It must be one the verifier declares in its own source; any other string is refused and the refusal lists the ones it knows."},"clean_only":{"type":"boolean","description":"Skip every break and run the clean pass alone. The result is labelled NOT PROVEN and is not evidence: no check in it has been shown to be able to fail. Use it to see whether something is broken at all, never to report that something works."},"timeout_ms":{"type":"integer","description":"Budget in milliseconds for the WHOLE sequence -- the clean run and every break after it (default 1200000, maximum 7200000). A break the budget does not reach is reported as never having run."}},"required":["name"]}"#,
             Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program and each argument as a separate element, e.g. [\"cargo\",\"test\"]. Never a shell command line. A path in an argument is the machine's own: absolute, with no '~'."},"cwd":{"type":"string","description":"Workspace-relative directory to run in, e.g. 'src/api' (default: this Diamond's own directory). Never absolute."},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit in milliseconds (default 120000, maximum 900000)"}},"required":["argv"]}"#,
             Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string","description":"Short label for the agent, e.g. 'research-opfs'"},"task":{"type":"string","description":"The complete, self-contained instruction for the agent. It cannot see this conversation, so say everything it needs."}},"required":["name","task"]}"#,
             Tool::WebOpen => r#"{"type":"object","properties":{"url":{"type":"string","description":"Absolute URL of the page to show, including the https:// scheme"}},"required":["url"]}"#,
@@ -6735,9 +6839,6 @@ impl Tool {
             Tool::DirCreate  => Self::dir_create(args_json, ctx),
             Tool::ArtefactAdd => Err(err!("artefact_add is a browser-build tool"; Unimplemented)),
             Tool::FileFetch  => Self::cloud_unavailable(),
-            Tool::Say        => Err(err!(
-                "Tool 'say' folds an answer for a reader on a screen; this is the native build, \
-                where there is nobody watching one. Answer in prose."; Unimplemented)),
             Tool::FileShow   => Err(err!(
                 "Tool 'file_show' puts a file in Daimond's document panel, which is part of the \
                 browser page; this is the native build, where there is no panel and nobody \
@@ -6748,6 +6849,10 @@ impl Tool {
             Tool::Run        => Err(err!(
                 "Tool 'run' reaches the machine hand, which exists to give the BROWSER build a \
                 process. This is the native build, which has 'shell'.";
+                Unimplemented)),
+            Tool::Verify     => Err(err!(
+                "Tool 'verify' reaches the machine hand, which exists to give the BROWSER build \
+                a process. This is the native build: run the verifier with 'shell'.";
                 Unimplemented)),
             Tool::SpawnAgent => Self::spawn_agent(args_json, ctx),
             Tool::WebOpen
@@ -7359,7 +7464,6 @@ impl Tool {
             // Message content rather than a string, so it leaves by the same early return that
             // `file_read` uses for an image.
             Tool::FileShow => return Self::file_show(args_json, ctx).await,
-            Tool::Say      => Self::say(args_json, ctx),
             Tool::FileMove => {
                 let from = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
                 let to   = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "to"))));
@@ -7377,8 +7481,7 @@ impl Tool {
             Tool::ArtefactAdd => {
                 let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
                 if !res!(crate::wasm::opfs::exists(ctx.root, &path).await) {
-                    return Ok(MessageContent::text(fmt!(
-                        "No file at {}. Nothing was recorded -- check the path with file_list.", path)));
+                    return Ok(Self::absent_artefact(&path));
                 }
                 // Recorded by the fold, from this line in the tool log, with
                 // every other artefact. Nothing is written behind the user's
@@ -7389,6 +7492,7 @@ impl Tool {
                 "Tool 'shell' is not available in the browser build (no in-browser process executor).";
                 Unimplemented)),
             Tool::Run => Self::run(args_json, ctx).await,
+            Tool::Verify => Self::verify(args_json, ctx).await,
             Tool::SpawnAgent => Self::spawn_agent(args_json, ctx),
             Tool::WebOpen => {
                 let url = res!(Self::arg(args_json, "url"));
@@ -7705,25 +7809,15 @@ impl Tool {
         // doing.  The same reasoning `act_needs_consent` applies to a click -- an act with a
         // consequence its actor cannot see -- arriving at a surface rather than at a page.
         if ctx.is_unsupervised() {
-            return Ok(MessageContent::text(fmt!(
-                "Nothing was shown. You are a dispatched worker: nobody is reading this \
-                transcript, and the document panel belongs to the conversation the user is \
-                actually in. Name the file in your report instead -- the agent that dispatched \
-                you can show it.")));
+            return Ok(Self::worker_may_not_show());
         }
         let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
         if !res!(crate::wasm::opfs::exists(ctx.root, &path).await) {
             // A file in cloud storage is not a missing file, and saying which is what stops the
-            // model hunting for a path that is exactly where it should be.
-            if let Some(size) = crate::wasm::cloud::size_of(&path) {
-                return Ok(MessageContent::text(fmt!(
-                    "'{}' is in cloud storage rather than on this device, so there is nothing \
-                    here to show. It is {} bytes. Bring it down with file_fetch first, then show \
-                    it.", path, size)));
-            }
-            return Ok(MessageContent::text(fmt!(
-                "There is no file at '{}', so nothing was shown and the panel is unchanged. \
-                Check the path with file_list.", path)));
+            // model hunting for a path that is exactly where it should be.  Both sentences are
+            // composed by [`absent_result`], where the two are side by side and their DIFFERENT
+            // bookings can be read against each other.
+            return Ok(Self::absent_result(&path, crate::wasm::cloud::size_of(&path)));
         }
         // A page of nought is not a page, so it is read as "no page named" rather than refused.
         // What that MEANS is the panel's to decide, and it decides "wherever this file was last
@@ -7742,42 +7836,99 @@ impl Tool {
         Ok(Self::show_result(&path, &shown))
     }
 
-    /// Fold an answer: a summary on screen, the detail behind it.
+    /// What `file_show` tells a dispatched worker, which may not take the screen.
     ///
-    /// The work is all elsewhere -- the browser draws the tile from the call's own arguments, and
-    /// [`strip_said`] keeps the detail out of every later payload.  This validates and answers,
-    /// because a tool that did nothing at all would still have to answer something.
+    /// A composer rather than a sentence written at the branch, for [`show_result`]'s reason: the
+    /// dispatch is wasm-only and a test process has no panel, so a wording only the dispatch knew
+    /// could not be proved to be booked the way this file says it is.
     ///
-    /// **A DISPATCHED WORKER MAY NOT FOLD.**  The same reasoning `file_show` gives: nobody is
-    /// reading that transcript, so the fold is drawn in an empty room -- and worse, a worker's
-    /// summary is read by the agent that sent it, which wants the detail rather than a reference
-    /// to a fold it cannot open.
+    /// **Through [`refusal_line`]**, so [`call_outcome`] books it [`CallOutcome::Refused`] and the
+    /// fold's ledger records a screen that was never taken as one that was never taken.  A refusal
+    /// that does not open with the word its readers read is booked as work that was done -- which
+    /// is what `say`'s twin refusal was, until it ended a worker's turn and threw the report away.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn worker_may_not_show() -> MessageContent {
+        MessageContent::text(refusal_line(
+            "Nothing was shown. You are a dispatched worker: nobody is reading this \
+            transcript, and the document panel belongs to the conversation the user is \
+            actually in. Name the file in your report instead -- the agent that dispatched \
+            you can show it."))
+    }
+
+    /// What `file_show` says about a path with no file on this device: in the cloud, or nowhere.
+    ///
+    /// **The two sentences are composed together because their BOOKINGS differ**, and a reader who
+    /// meets them apart will eventually make them agree.  [`call_outcome`] reads the opening word
+    /// of every tool reply, and what it decides is which column of the fold's ledger a call lands
+    /// in -- `REFUSED, so nothing was touched`, `FAILED`, or, for this tool, no column at all.
+    ///
+    /// **The cloud file is a REFUSAL.**  Nothing reached the screen, nothing is going to, and the
+    /// model met a condition with a documented way round it -- fetch it down, then show it, which
+    /// is what [`Ledger::refused`](crate::agent::compact::Ledger::refused) means by a rule it can
+    /// work around.  Booked `Done`, a fold recorded an attempted show as an event and then said
+    /// nothing about it at all.
+    ///
+    /// **The missing file is NOT, and this is a judgement rather than an oversight.**  The tool was
+    /// asked a question about a path and answered it truthfully; the model can act on the answer,
+    /// and `file_list` is named so it can.  Neither other word is available without saying
+    /// something false: `FAILED` tells a later self that the tool broke, which is the exact false
+    /// generalisation this tool exists to repair -- reasoning from one awkward file to "this app
+    /// cannot display things" -- and `REFUSED` tells it a door was closed on a path it is perfectly
+    /// entitled to show, which a fold would then hand the user as a permission it does not lack.
+    /// `Done` costs nothing here: `record` in [`crate::agent::compact`] has no `file_show` arm, so a
+    /// `Done` show is listed in no column and therefore claims nothing.  A fold that says less than
+    /// it could beats one that says something untrue.
     ///
     /// # Arguments
-    /// * `args_json` - The call, carrying `summary` and `detail`.
-    /// * `ctx` - The turn, which knows whether anybody is watching.
+    /// * `path` - The file as the model named it, already scoped.
+    /// * `cloud` - Its size in the cloud index, or `None` where nothing knows the path at all.
     #[cfg(any(target_arch = "wasm32", test))]
-    fn say(args_json: &str, ctx: &ToolContext) -> Outcome<String> {
-        if ctx.is_unsupervised() {
-            return Ok(fmt!(
-                "Nothing was folded. You are a dispatched worker: nobody is reading this \
-                transcript, and your summary goes to the agent that sent you, which needs the \
-                detail rather than a fold it cannot open. Put all of it in your report instead."));
-        }
-        let summary = res!(Self::arg(args_json, "summary"));
-        if summary.trim().is_empty() {
-            // The one failure worth refusing.  An empty summary draws a fold with nothing on the
-            // outside of it, which is a message the user has to open to discover says nothing.
-            return Err(err!(
-                "'say' needs a summary: it is the only part the user sees without opening the \
-                fold. Give one or two sentences carrying the answer, or reply in ordinary prose."; 
-                Invalid, Input));
-        }
-        let detail = res!(Self::arg(args_json, "detail"));
-        Ok(fmt!(
-            "Shown: a summary of {} characters, with {} characters folded behind it. The user has \
-            it. This ends your turn -- do not say it again.",
-            summary.chars().count(), detail.chars().count()))
+    fn absent_result(path: &str, cloud: Option<u64>) -> MessageContent {
+        MessageContent::text(match cloud {
+            Some(size) => refusal_line(&fmt!(
+                "'{}' is in cloud storage rather than on this device, so there is nothing \
+                here to show. It is {} bytes. Bring it down with file_fetch first, then show \
+                it.", path, size)),
+            None => fmt!(
+                "There is no file at '{}', so nothing was shown and the panel is unchanged. \
+                Check the path with file_list.", path),
+        })
+    }
+
+    /// What `artefact_add` says about a path with no file on it.
+    ///
+    /// **Beside [`absent_result`] deliberately: the two sentences say almost the same thing about
+    /// almost the same situation, and they are booked OPPOSITE ways.**  A reader who meets them
+    /// apart will eventually make them agree, and either direction of that would be a defect.
+    ///
+    /// This one is a REFUSAL, and the reason is not the sentence -- it is what the fold does with
+    /// it.  `record` in [`crate::agent::compact`] has no `file_show` arm, so a `Done` show is
+    /// listed in no column and claims nothing; it HAS an `artefact_add` arm, which pushes the path
+    /// into [`Ledger::wrote`](crate::agent::compact::Ledger::wrote).  So a `Done` here does not
+    /// stay quiet: the fold's note reads `Files written: notes/x.pdf` for a file that does not
+    /// exist and was never recorded, three lines above *"Do not claim to have done anything that
+    /// is not listed above."*  The one part of a fold that is meant to be arithmetic rather than
+    /// judgement was inventing a file and then vouching for it.
+    ///
+    /// The second reason agrees with the first.  A missing path is no rule at all for `file_show`,
+    /// which was asked to put a file on screen and truthfully answered that there is none; here
+    /// the tool has a rule of its own and is applying it -- **an artefact must exist to be
+    /// declared**, because a record pointing at nothing is found by the user clicking it.  That is
+    /// what [`Ledger::refused`](crate::agent::compact::Ledger::refused) means by a rule the model
+    /// met and can work around, and the sentence names both the rule and the way round it so the
+    /// model can.
+    ///
+    /// Not [`CallOutcome::Failed`]: nothing broke, and a tool reported as broken is one the model
+    /// stops reaching for.
+    ///
+    /// # Arguments
+    /// * `path` - The file as the model named it, already scoped.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn absent_artefact(path: &str) -> MessageContent {
+        MessageContent::text(refusal_line(&fmt!(
+            "No file at {}, and an artefact must exist to be declared -- a record pointing at \
+            nothing is found by the user clicking it. Nothing was recorded; check the path with \
+            file_list.", path)))
     }
 
     /// What `file_show` tells the model it has just put on the user's screen.
@@ -9041,6 +9192,220 @@ impl Tool {
         }
         out
     }
+
+    // ┌───────────────────────────────────────────────────────────────┐
+    // │ verify: evidence, and the refusal to report a bare pass        │
+    // └───────────────────────────────────────────────────────────────┘
+
+    /// The default whole-sequence budget, when the caller names none.
+    ///
+    /// A sequence is one clean run plus one run per declared break, so the cost multiplies by
+    /// however many breaks the file has.  Twenty minutes covers a browser verifier with a
+    /// handful of them; a big one is asked for explicitly.
+    #[cfg(any(target_arch = "wasm32", test))]
+    const VERIFY_BUDGET_DEFAULT_MS: u64 = 20 * 60 * 1_000;
+
+    /// The largest budget a caller may ask for.
+    #[cfg(any(target_arch = "wasm32", test))]
+    const VERIFY_BUDGET_MAX_MS: u64 = 2 * 60 * 60 * 1_000;
+
+    /// The line the hand puts all three numbers on.
+    ///
+    /// Checked for rather than trusted.  A result with no trailer is a result whose three
+    /// numbers were never computed, and the model is told so in place of them.
+    #[cfg(any(target_arch = "wasm32", test))]
+    const VERIFY_TRAILER: &str = "[verify:";
+
+    /// Does this hand have verifiers to run at all?
+    ///
+    /// From the handshake's `caps`, exactly as `fence_enforced` reads the fence out of it: a
+    /// hand that does not say it can, has not said it can.
+    ///
+    /// # Arguments
+    /// * `caps` - What the hand said it can do.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn verify_available(caps: &[String]) -> bool {
+        caps.iter().any(|c| c == "verify:dev")
+    }
+
+    /// The wire request one `verify` call becomes, or the sentence refusing it.
+    ///
+    /// **Nothing composed here is a program, a path or an argument.**  The request carries a
+    /// NAME and at most a BREAK, both of which the hand looks up -- the name in its own `dev/`
+    /// directory, the break in that file's own source -- and neither of which reaches a command
+    /// line in the form the model wrote it.  There is no `argv` field to fill, no `cwd`, no
+    /// `env` and no shell anywhere on the road, which is why this function is twenty lines
+    /// where [`Tool::run`]'s equivalent is two hundred.
+    ///
+    /// Available on the native build for its tests: it is pure string composition, and the
+    /// checks it makes are the ones worth holding to.
+    ///
+    /// **A DISPATCHED WORKER DOES NOT GET THIS**, and it is the one policy this function
+    /// carries.  Every other tool a worker holds runs inside the fence; this one runs a process
+    /// outside it, and a worker is the turn with nobody watching -- `markAlone` in
+    /// `www/js/daimond.js` marks each one on dispatch for exactly this class of act.  The
+    /// daimon that dispatched it is supervised, is answerable for the work, and is where the
+    /// decision to run an unfenced script belongs.  The refusal says so, so a worker reports
+    /// rather than retries.
+    ///
+    /// # Arguments
+    /// * `args` - The raw tool arguments.
+    /// * `id` - The identifier every answer about this sequence is tagged with.
+    /// * `alone` - Whether this turn is a dispatched worker, acting with nobody watching.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn verify_spec(args: &str, id: &str, alone: bool) -> Result<String, String> {
+        if alone {
+            return Err(fmt!(
+                "Refused: verify runs a script OUTSIDE the fence every other tool works inside, \
+                and you are working alone with nobody watching. That decision belongs to the \
+                daimon that dispatched you. Say in your answer which verifier you wanted run and \
+                what you expected it to prove, and let it run it."));
+        }
+        let name = match extract_json_string(args, "name") {
+            Some(n) => n,
+            None    => return Err(fmt!(
+                "Refused: verify needs 'name' -- the verifier's short name, as in 'graph' for \
+                dev/verify_graph.mjs. It takes a NAME and never a path or a command line.")),
+        };
+        if !verify_name_ok(&name) {
+            return Err(fmt!(
+                "Refused: '{}' is not a verifier name. A name is lower-case letters, digits and \
+                underscores -- 'graph', not 'dev/verify_graph.mjs' and not 'node dev/...'. This \
+                tool looks the name up in the tracked tree; it does not run what you write.",
+                name.chars().take(40).collect::<String>()));
+        }
+        let clean_only = extract_json_bool(args, "clean_only").unwrap_or(false);
+        let asked      = extract_json_string(args, "break").filter(|b| !b.trim().is_empty());
+        // Two arguments that want opposite things. Refused rather than resolved, because
+        // either resolution silently gives the caller the run they did not ask for -- and one
+        // of the two is the run that proves nothing.
+        if clean_only && asked.is_some() {
+            return Err(fmt!(
+                "Refused: 'clean_only' asks for no break and 'break' names one. Send one or the \
+                other. A clean-only run proves nothing, so it is never what you want alongside \
+                a break."));
+        }
+        let (breaks, brk) = match (&asked, clean_only) {
+            (Some(b), _) => {
+                if !verify_name_ok(b) {
+                    return Err(fmt!(
+                        "Refused: '{}' is not a break name. A break is lower-case letters, \
+                        digits and underscores, and it must be one the verifier itself \
+                        declares in its own source.",
+                        b.chars().take(40).collect::<String>()));
+                }
+                ("one", fmt!(r#""{}""#, json_escape(b)))
+            },
+            (None, true)  => ("none", fmt!("null")),
+            (None, false) => ("all",  fmt!("null")),
+        };
+        let budget = extract_json_number(args, "timeout_ms")
+            .unwrap_or(Self::VERIFY_BUDGET_DEFAULT_MS)
+            .min(Self::VERIFY_BUDGET_MAX_MS)
+            .max(1);
+        Ok(fmt!(
+            r#"{{"t":"verify","id":"{}","name":"{}","breaks":"{}","break":{},"timeout_ms":{}}}"#,
+            json_escape(id),
+            json_escape(&name),
+            breaks,
+            brk,
+            budget))
+    }
+
+    /// The hand's report, as the model reads it.
+    ///
+    /// **The one thing this function is for is refusing to pass on a bare pass.**  The three
+    /// numbers are computed in the hand, by `verify::Verdict`, whose every arm carries the
+    /// count of breaks that reddened nothing -- but a report is text, and text can arrive
+    /// truncated, from an older hand, or from a verifier that printed something shaped like a
+    /// trailer.  So the trailer is lifted out of the report and re-stated OUTSIDE the untrusted
+    /// envelope, as Daimond's own sentence; and where there is no trailer to lift, the model is
+    /// told in plain words that what it is holding is not evidence.
+    ///
+    /// # Arguments
+    /// * `name` - The verifier, for the origin line.
+    /// * `res` - The hand's JSON result.
+    /// * `ctx` - The turn, which the envelope marks as tainted.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn verify_result(name: &str, res: &str, ctx: &ToolContext) -> String {
+        if let Some(reason) = extract_json_string(res, "refused") {
+            return refusal_line(&reason);
+        }
+        let out = extract_json_string(res, "stdout").unwrap_or_default();
+        let err = extract_json_string(res, "stderr").unwrap_or_default();
+        let exit = extract_json_i64(res, "exit").unwrap_or(-1);
+        // The trailer, taken from the report rather than composed here: the numbers are the
+        // hand's, which is the half of this that ran the processes.
+        let trailer = out.lines().rev()
+            .find(|l| l.trim_start().starts_with(Self::VERIFY_TRAILER))
+            .map(|l| fmt!("{}", l.trim()));
+        let mut s = String::new();
+        if !out.is_empty() { s.push_str(&out); }
+        if !err.is_empty() {
+            if !s.is_empty() && !s.ends_with('\n') { s.push('\n'); }
+            s.push_str("[progress] ");
+            s.push_str(&err);
+        }
+        let origin = fmt!("verify: dev/verify_{}.mjs", name);
+        s = defang(&s);
+        let tail = match (&trailer, exit) {
+            // No trailer, whatever the exit code says. This is the case the whole tool exists
+            // to make survivable: a passing count with nothing behind it is the evidence that
+            // has been lying, so it is not handed on as evidence at all.
+            (None, _) => fmt!(
+                "\n[THIS IS NOT EVIDENCE. The run did not report how many breaks were \
+                confirmed red and how many proved nothing, so nothing above has been shown to \
+                be capable of failing. Do not report a passing count from this. Say that the \
+                verifier ran and that its instrument was not proved.]"),
+            (Some(t), -1) => fmt!(
+                "\n{}\n[the sequence did not finish, so these numbers cover only what ran]", t),
+            (Some(t), _) => fmt!("\n{}", t),
+        };
+        truncate_output(&mut s, MAX_OUTPUT.saturating_sub(envelope_overhead(&origin) + tail.len()));
+        fmt!("{}{}", ctx.wrap_untrusted(&origin, &s), tail)
+    }
+
+    /// Run one named verifier from the tracked tree and hand back what it proved.
+    ///
+    /// Short, and the shortness is the design.  [`Tool::run`] spends two hundred lines building
+    /// a fence out of the turn's bounds, because it is about to run a command a MODEL wrote.
+    /// This one has nothing to fence: the hand is given a name it looks up in its own granted
+    /// `dev/` directory and at most a break it looks up in that file's own source, and it
+    /// composes the argument vector itself out of what it found.  The model's text is a
+    /// selector and never an input.
+    ///
+    /// # Arguments
+    /// * `args` - The raw tool arguments.
+    /// * `ctx` - The turn.
+    #[cfg(target_arch = "wasm32")]
+    async fn verify(args: &str, ctx: &ToolContext) -> Outcome<String> {
+        let name = extract_json_string(args, "name").unwrap_or_default();
+        let st = res!(crate::wasm::hand::status().await);
+        if extract_json_bool(&st, "paired") != Some(true) {
+            return Ok(fmt!("Refused: {}", extract_json_string(&st, "reason").unwrap_or_else(|| fmt!(
+                "There is no machine hand paired with this browser, so there is nothing to run \
+                a verifier on. Tell the user, and carry on with the file tools."))));
+        }
+        let machine = Machine::from_status(&st);
+        if !machine.rooted() {
+            return Err(err!(
+                "The machine hand did not say which folder it was granted, so there is no tree \
+                to look a verifier up in. Nothing was run."; Missing, Configuration));
+        }
+        if !Self::verify_available(&machine.caps) {
+            return Ok(fmt!(
+                "Refused: the folder this hand was granted holds no 'dev/verify_*.mjs', so \
+                there is nothing here to verify with. This tool runs THIS repository's own \
+                verifiers; it is not a general test runner. Tell the user which folder they \
+                granted, and use 'run' for the project's own test command instead."));
+        }
+        let spec = match Self::verify_spec(args, &Self::run_id("verify", ctx), ctx.is_unsupervised()) {
+            Ok(s)  => s,
+            Err(r) => return Ok(r),
+        };
+        let res = res!(crate::wasm::hand::run(&spec).await);
+        Ok(Self::verify_result(&name, &res, ctx))
+    }
 }
 
 /// What a command's result says when a walk met the one directory every fence denies.
@@ -9087,6 +9452,10 @@ impl ToolRegistry {
     }
 
     /// True if no tools are enabled (pure-chat mode).
+    ///
+    /// What it HOLDS and not what it [`offers`](Self::offered): this is what decides whether a
+    /// turn takes the tool loop at all, and a registry whose only tools were the two a worker is
+    /// withheld is not a case any caller builds.
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
@@ -9131,19 +9500,56 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// The tools this registry actually OFFERS, which on a dispatched worker is not everything
+    /// it holds.
+    ///
+    /// [`Tool::FileShow`] is the one whose subject is the READER rather than the workspace, and it
+    /// refuses a worker at execution: nobody is watching that transcript.  The withholding used to
+    /// stop there, so the refusal was all a worker ever got -- it was shown the schema on every
+    /// request of every round and refused the moment it believed what it had been shown.  Taken
+    /// out of the offer, [`Tool::worker_may_not_show`] becomes the backstop it was meant to be
+    /// rather than the mechanism.
+    ///
+    /// **The `say` tool stood here beside it and no longer exists.**  Folding an answer is written
+    /// into the model's own prose as a `<details>` element now, so what withholds it from a worker
+    /// is [`Role::can_show`](crate::prompts::Role::can_show) declining to append
+    /// [`FOLD_NOTE`](crate::prompts::FOLD_NOTE) -- a prompt sentence rather than a schema, which
+    /// costs a worker nothing per round.
+    ///
+    /// Filtered HERE and not in [`Tool::browser`], because that vector is also the list the Tools
+    /// panel shows a person about their own chat, where the tool is real.  The mark is read each
+    /// time rather than at construction, because it is set on the context after the app is built
+    /// -- see [`ToolContext::set_unsupervised`].
+    ///
+    /// [`dispatch`](Self::dispatch) still resolves it, so a worker that names it anyway gets the
+    /// refusal that tells it what to do instead, and not "tool 'file_show' is not available here."
+    pub fn offered(&self) -> Vec<Tool> {
+        if !self.ctx.is_unsupervised() {
+            return self.tools.clone();
+        }
+        self.tools.iter()
+            .filter(|t| !matches!(t, Tool::FileShow))
+            .cloned()
+            .collect()
+    }
+
     /// The wire names of the registered tools, in order.  The system prompt
     /// is built from this rather than from a fixed sentence, so it can never
     /// promise the model a tool that is not actually registered.
+    ///
+    /// Built from [`offered`](Self::offered), so the sentence naming the tools and the schema
+    /// array beside it name the same set.
     pub fn tool_names(&self) -> Vec<String> {
-        self.tools.iter().map(|t| t.name().to_string()).collect()
+        self.offered().iter().map(|t| t.name().to_string()).collect()
     }
 
     /// The `tools` JSON array for the LLM request, or `None` if empty.
     pub fn definitions_json(&self) -> Option<String> {
-        if self.tools.is_empty() {
+        let offered = self.offered();
+        if offered.is_empty() {
             return None;
         }
-        let defs: Vec<String> = self.tools.iter().map(|t| t.definition_json()).collect();
+        let defs: Vec<String> = offered.iter().map(|t| t.definition_json()).collect();
         Some(fmt!("[{}]", defs.join(",")))
     }
 
@@ -12168,6 +12574,205 @@ mod tests {
         assert!(out.contains("not because the project is broken"), "{}", out);
     }
 
+    // ── verify: the tool that cannot report a bare pass ─────────────────────
+    //
+    // Every check below is about ONE property: a passing count never leaves this file without
+    // the count of breaks that proved nothing beside it.  The hand computes those numbers, and
+    // these tests hold the app to refusing a result that does not carry them -- which is the
+    // case that matters, because the failure it guards against is a report that LOOKS complete.
+
+    /// A name is a name.  A path, a command line or anything with a dot in it is refused before
+    /// a request is composed, in a sentence that says what the argument is for.
+    #[test]
+    fn test_verify_takes_a_name_and_never_a_path() {
+        for bad in [
+            r#"{"name":"dev/verify_graph.mjs"}"#,
+            r#"{"name":"../../etc/passwd"}"#,
+            r#"{"name":"graph.mjs"}"#,
+            r#"{"name":"node dev/verify_graph.mjs"}"#,
+            r#"{"name":"graph; rm -rf /"}"#,
+            r#"{"name":"-rf"}"#,
+            r#"{"name":""}"#,
+        ] {
+            match Tool::verify_spec(bad, "v-1", false) {
+                Err(r) => assert!(r.starts_with("Refused:"), "{} -> {}", bad, r),
+                Ok(s)  => panic!("{} composed a request: {}", bad, s),
+            }
+        }
+        // And the absence of the argument is its own sentence, not a silent default.
+        match Tool::verify_spec(r#"{}"#, "v-1", false) {
+            Err(r) => assert!(r.contains("needs 'name'"), "{}", r),
+            Ok(s)  => panic!("a nameless call composed a request: {}", s),
+        }
+    }
+
+    /// The request carries a name and a break and nothing a shell could be made of: no argv, no
+    /// cwd, no env.  If this ever grows one of those, the security argument for the whole verb
+    /// has changed and this test is where it shows.
+    #[test]
+    fn test_verify_composes_a_selector_and_not_a_command() {
+        let spec = match Tool::verify_spec(r#"{"name":"graph"}"#, "v-1", false) {
+            Ok(s)  => s,
+            Err(r) => panic!("{}", r),
+        };
+        assert!(spec.contains(r#""t":"verify""#), "{}", spec);
+        assert!(spec.contains(r#""name":"graph""#), "{}", spec);
+        assert!(spec.contains(r#""breaks":"all""#), "every break is the default: {}", spec);
+        for forbidden in [r#""argv""#, r#""cwd""#, r#""env""#, r#""stdin""#, r#""fence""#] {
+            assert!(!spec.contains(forbidden),
+                "the verify request carries {} -- there is now a way for a model's string to \
+                reach a process: {}", forbidden, spec);
+        }
+    }
+
+    /// A break is a selector too, and it is checked against the same alphabet.  Whether it is one
+    /// the verifier DECLARES is the hand's to answer -- only the hand can read the file -- and the
+    /// wire says which of the three shapes was asked for so the two ends cannot disagree.
+    #[test]
+    fn test_verify_break_is_a_selector_and_clean_only_is_the_other_shape() {
+        let one = match Tool::verify_spec(r#"{"name":"graph","break":"nolinks"}"#, "v", false) {
+            Ok(s)  => s,
+            Err(r) => panic!("{}", r),
+        };
+        assert!(one.contains(r#""breaks":"one""#) && one.contains(r#""break":"nolinks""#), "{}", one);
+        let none = match Tool::verify_spec(r#"{"name":"graph","clean_only":true}"#, "v", false) {
+            Ok(s)  => s,
+            Err(r) => panic!("{}", r),
+        };
+        assert!(none.contains(r#""breaks":"none""#), "{}", none);
+        // A break that is not spellable is refused here rather than sent.
+        assert!(Tool::verify_spec(r#"{"name":"graph","break":"../x"}"#, "v", false).is_err());
+        // The two arguments want opposite runs, and one of them is the run that proves nothing.
+        match Tool::verify_spec(r#"{"name":"graph","break":"nolinks","clean_only":true}"#, "v", false) {
+            Err(r) => assert!(r.contains("proves nothing"), "{}", r),
+            Ok(s)  => panic!("both were accepted: {}", s),
+        }
+    }
+
+    /// The budget covers the WHOLE sequence and is capped, since the page arms one timer from it.
+    #[test]
+    fn test_verify_budget_is_bounded() {
+        let big = match Tool::verify_spec(
+            r#"{"name":"graph","timeout_ms":999999999}"#, "v", false) {
+            Ok(s)  => s,
+            Err(r) => panic!("{}", r),
+        };
+        assert!(big.contains(&fmt!(r#""timeout_ms":{}"#, Tool::VERIFY_BUDGET_MAX_MS)),
+            "an unbounded budget went out: {}", big);
+        let plain = match Tool::verify_spec(r#"{"name":"graph"}"#, "v", false) {
+            Ok(s)  => s,
+            Err(r) => panic!("{}", r),
+        };
+        assert!(plain.contains(&fmt!(r#""timeout_ms":{}"#, Tool::VERIFY_BUDGET_DEFAULT_MS)),
+            "{}", plain);
+    }
+
+    /// The one tool that runs outside the fence is not handed to the turn with nobody watching.
+    #[test]
+    fn test_a_worker_working_alone_is_not_given_the_unfenced_verb() {
+        match Tool::verify_spec(r#"{"name":"graph"}"#, "v", true) {
+            Err(r) => {
+                assert!(r.starts_with("Refused:"), "{}", r);
+                assert!(r.contains("OUTSIDE the fence"), "the reason is not given: {}", r);
+                assert!(r.contains("daimon that dispatched you"),
+                    "the worker is not told what to do instead: {}", r);
+            },
+            Ok(s) => panic!("a worker acting alone composed a verify request: {}", s),
+        }
+        // And the turns that ARE watched still get it.
+        assert!(Tool::verify_spec(r#"{"name":"graph"}"#, "v", false).is_ok());
+    }
+
+    /// **The check this whole tool exists for.**  A report with no trailer is a report whose
+    /// three numbers were never computed, and it must not reach the model dressed as evidence --
+    /// however green the text above it looks and whatever the exit code says.
+    #[test]
+    fn test_a_result_without_the_three_numbers_is_not_evidence() {
+        let c = ctx();
+        // As convincing as a lying instrument gets: everything passed, exit zero, no trailer.
+        let bare = Tool::verify_result("graph",
+            r#"{"stdout":"  ok   the links are drawn\n  ok   the badge counts\n27 checks passed\n","exit":0}"#,
+            &c);
+        assert!(bare.contains("THIS IS NOT EVIDENCE"), "a bare pass was handed on: {}", bare);
+        assert!(bare.contains("Do not report a passing count"), "{}", bare);
+        // With the trailer, the numbers are restated as Daimond's own sentence, outside the
+        // envelope that marks the verifier's own words as untrusted.
+        let whole = Tool::verify_result("graph",
+            r#"{"stdout":"  ok   a\n\n[verify: 27 checks passed, 0 failed, 2 breaks confirmed red, 1 breaks proved nothing]\n","exit":2}"#,
+            &c);
+        assert!(!whole.contains("THIS IS NOT EVIDENCE"), "{}", whole);
+        assert!(whole.trim_end().ends_with("1 breaks proved nothing]"),
+            "the three numbers are not the last thing the model reads: {}", whole);
+    }
+
+    /// A clean-only run carries its own label all the way through, in the words the model repeats.
+    #[test]
+    fn test_a_clean_only_result_arrives_labelled_unproven() {
+        let c = ctx();
+        let out = Tool::verify_result("graph",
+            r#"{"stdout":"  ok   a\n[verify: 27 checks passed, 0 failed -- NOT PROVEN: no break was run, so no check here has been shown to be able to fail.]\n","exit":2}"#,
+            &c);
+        assert!(out.contains("NOT PROVEN"), "{}", out);
+        assert!(!out.contains("THIS IS NOT EVIDENCE"),
+            "a labelled clean-only run was refused as trailerless: {}", out);
+    }
+
+    /// A sequence that died part-way says so beside its numbers, rather than letting a partial
+    /// count read as a whole one.
+    #[test]
+    fn test_a_sequence_that_did_not_finish_says_so() {
+        let c = ctx();
+        let out = Tool::verify_result("graph",
+            r#"{"stdout":"[verify: 5 checks passed, 0 failed, 1 breaks confirmed red, 0 breaks proved nothing]\n","exit":-1}"#,
+            &c);
+        assert!(out.contains("did not finish"), "{}", out);
+    }
+
+    /// A refusal is the hand speaking, and it is passed through as a refusal rather than dressed
+    /// as a verifier's output -- which is how a model comes to debug the wrong thing.
+    #[test]
+    fn test_a_refused_verify_is_a_refusal() {
+        let c = ctx();
+        let out = Tool::verify_result("graph",
+            r#"{"refused":"Refused: there is no 'dev/verify_graph.mjs' in the folder this hand was granted."}"#,
+            &c);
+        assert!(out.starts_with("Refused:"), "{}", out);
+        assert!(!out.contains("THIS IS NOT EVIDENCE"),
+            "a refusal was also accused of being a bare pass: {}", out);
+    }
+
+    /// A hand that has not said it holds verifiers has not said it holds any.
+    #[test]
+    fn test_verify_needs_the_hand_to_say_it_has_verifiers() {
+        assert!(Tool::verify_available(&[fmt!("fence:landlock"), fmt!("verify:dev")]));
+        assert!(!Tool::verify_available(&[fmt!("verify:none")]));
+        assert!(!Tool::verify_available(&[]), "an empty caps list read as a capability");
+    }
+
+    /// The tool is offered where it can work, is described by its three numbers, and its
+    /// description says in so many words that a clean-only run proves nothing.
+    #[test]
+    fn test_verify_is_offered_and_described_by_what_it_proves() {
+        assert!(Tool::browser().contains(&Tool::Verify), "a chat cannot check its own work");
+        assert!(Tool::daimon().contains(&Tool::Verify), "a daimon cannot check its own work");
+        assert_eq!("verify", Tool::Verify.name());
+        assert_eq!(Some(Tool::Verify), Tool::from_name("verify"));
+        let d = Tool::Verify.description();
+        for phrase in [
+            "THREE NUMBERS",
+            "BREAKS THAT PROVED NOTHING",
+            "UNMEASURED",
+            "NOT PROVEN",
+            "IS NOT EVIDENCE",
+        ] {
+            assert!(d.contains(phrase), "the description does not say {:?}", phrase);
+        }
+        let sum = Tool::Verify.summary();
+        assert!(sum.contains("proved nothing"), "the panel does not say what it measures: {}", sum);
+        let sch = Tool::Verify.parameters();
+        assert!(sch.contains("clean_only") && sch.contains("NOT PROVEN"), "{}", sch);
+    }
+
     /// Silence is not consent.  A browser that cannot put the question -- a missing global, a page
     /// mid-reload, a dialog nobody answered -- withholds, and does not ask again.
     #[test]
@@ -15018,33 +15623,229 @@ mod tests {
             "nothing here stops the generalisation this tool exists to stop: {}", out);
     }
 
-    /// **A dispatched worker may not fold, and is told why in terms it can act on.**
+    /// **Nobody is offered `say`, and `file_show` is still the chat's and the daimon's.**
     ///
-    /// Same reasoning as `file_show`'s refusal: nobody is reading a worker's transcript. But there
-    /// is a second reason here that does not apply there — a worker's summary is read by the agent
-    /// that dispatched it, which now has a job of checking the work, and a reference to a fold it
-    /// cannot open is worse than no summary at all.
+    /// The tool is gone: folding is written into the model's own prose as a `<details>` element,
+    /// and what a chat is told about it is [`FOLD_NOTE`](crate::prompts::FOLD_NOTE), which costs a
+    /// prompt sentence rather than a schema on every request of every round.  This used to assert
+    /// the opposite of half of that -- *a chat IS offered `say`* -- so it is rewritten rather than
+    /// halved: the rule moved, and a rule nobody checks is a rule that comes back.
+    ///
+    /// **Asked of the schema ARRAY and not of a name list**, because the array is the thing the
+    /// provider is actually sent and the thing the user pays for.  A name list would still pass
+    /// against a registry that had dropped the name and kept the schema.
+    ///
+    /// Three actors, because they are built from three different vectors and a tool can be lost
+    /// from one without the others noticing: a chat from [`Tool::browser`], a daimon from
+    /// [`Tool::daimon`], and a dispatched worker from the chat's vector with the mark set.
+    ///
+    /// `file_show` is the control on every assertion here.  A filter that emptied every registry
+    /// would satisfy the `say` half on its own, and would take the document panel away from the
+    /// two actors that have a reader in front of them.
     #[test]
-    fn test_a_worker_is_refused_a_fold_and_told_where_to_put_it() {
-        let c = ctx();
-        c.set_unsupervised();
-        let out = Tool::Say.execute_sync(r#"{"summary":"s","detail":"d"}"#, &c)
-            .expect("say answers").as_text().to_string();
-        assert!(out.contains("Nothing was folded"), "{}", out);
-        assert!(out.contains("report"),
-            "the worker is not told where the detail should go instead: {}", out);
+    fn test_no_actor_is_offered_the_fold_and_the_panel_is_still_a_readers() {
+        // Nothing answers to the name any more, so no vector anywhere can hold it by mistake and
+        // no skill can narrow itself onto it.
+        assert!(Tool::from_name("say").is_none(),
+            "the wire name still resolves to a tool, so a registry can hold one again");
+        assert!(Tool::browser().iter().all(|t| t.name() != "say"),
+            "the chat's belt still carries it, and that belt is also what the Tools panel claims \
+             to a person");
+        assert!(Tool::daimon().iter().all(|t| t.name() != "say"),
+            "a daimon's belt still carries it");
+
+        // Two contexts and not one cloned: the mark lives in a shared cache, so a clone of a
+        // marked context is marked too and the control would be no control at all.
+        let chat   = ToolRegistry::new(Tool::browser(), ctx());
+        let daimon = ToolRegistry::new(Tool::daimon(), ctx());
+        let worker = ToolRegistry::new(Tool::browser(), ctx());
+        worker.ctx.set_unsupervised();
+
+        let chat_defs   = chat.definitions_json().expect("a chat holds tools");
+        let daimon_defs = daimon.definitions_json().expect("a daimon holds tools");
+        let worker_defs = worker.definitions_json().expect("a worker holds tools");
+        for (who, defs) in [("chat", &chat_defs), ("daimon", &daimon_defs), ("worker", &worker_defs)] {
+            assert!(!defs.contains("\"say\""),
+                "a {} is still sent the fold's schema on every request of every round", who);
+        }
+
+        // And `file_show`'s rule, unchanged: the two actors with a reader hold it, a worker does
+        // not, and the withholding is worth real bytes rather than being a gesture.
+        assert!(chat_defs.contains("\"file_show\""), "a chat's schema lost the document panel");
+        assert!(daimon_defs.contains("\"file_show\""), "a daimon's schema lost the document panel");
+        assert!(!worker_defs.contains("\"file_show\""),
+            "a worker still pays for the document panel on every request of every round");
+        assert!(chat.tool_names().iter().any(|n| n == "file_show"),
+            "a chat is no longer offered 'file_show', which is the actor it is FOR");
+        assert!(!worker.tool_names().iter().any(|n| n == "file_show"),
+            "a worker is still offered 'file_show', so the note in `Tool::browser` describes an \
+             intention nobody implemented");
+        // The description alone runs 1,443 characters and the schema 339, so the two belts differ
+        // by well over a thousand bytes on every request of every round.  A margin rather than an
+        // equality, because the wording is edited and this test is not about its length.
+        assert!(worker_defs.len() + 1_000 < chat_defs.len(),
+            "the worker's schema is {} bytes against the chat's {}, so nothing was actually \
+             withheld", worker_defs.len(), chat_defs.len());
+        // Withheld from the OFFER only. A worker that names it anyway must still meet the refusal
+        // that tells it what to do instead, and not "not available here", which says nothing
+        // about the report it should be writing.
+        assert!(worker.tools.contains(&Tool::FileShow),
+            "the tool was taken out of the registry itself, so the refusal that tells a worker \
+             to name the file in its report can no longer be reached");
     }
 
-    /// **A fold with nothing on the outside of it is refused.**
+    /// **Every `file_show` result that never reached the screen is booked as what it was.**
     ///
-    /// An empty summary draws a tile the user has to open to discover says nothing — which is the
-    /// one failure of this tool that produces a WORSE experience than plain prose.
+    /// [`call_outcome`] reads the opening word of a tool reply and decides which column of the
+    /// fold's ledger the call lands in.  A result that reports a non-event while opening like a
+    /// success is booked [`CallOutcome::Done`] -- the defect that ended a worker's turn on a
+    /// refused `say`, and the reason this tool's own results were swept.
+    ///
+    /// Two of `file_show`'s four negative outcomes are refusals and are asserted here.  The other
+    /// two are answers, and are asserted NOT to be refusals in the test below -- the pair is what
+    /// makes either half mean anything, because a sweep that relabelled all four would satisfy
+    /// this one alone.
+    ///
+    /// The last assert is the control on the other side: a file that IS on screen must still be
+    /// `Done`, or the ledger would book the tool's whole purpose as a failure.
     #[test]
-    fn test_a_fold_with_no_summary_is_refused() {
-        let c = ctx();
-        assert!(Tool::Say.execute_sync(r#"{"summary":"   ","detail":"d"}"#, &c).is_err(),
-            "a blank summary was accepted, so the fold has nothing on its face");
-        assert!(Tool::Say.execute_sync(r#"{"summary":"here it is","detail":"d"}"#, &c).is_ok());
+    fn test_a_show_that_never_took_the_screen_is_booked_as_a_refusal() {
+        // A worker: a door said no, and nobody is in front of the panel.
+        let worker = Tool::worker_may_not_show().as_text().to_string();
+        assert_eq!(CallOutcome::Refused, call_outcome(&worker),
+            "a worker's refused show reads as work that was done, so a fold records a screen \
+             that was never taken as one that was: {}", worker);
+        // A file that is in the cloud and not on this device. Nothing reached the screen and
+        // nothing is going to until it is fetched down.
+        let cloud = Tool::absent_result("notes/big.pdf", Some(90_000)).as_text().to_string();
+        assert_eq!(CallOutcome::Refused, call_outcome(&cloud),
+            "an attempted show of a file that is not on this device is booked as a show: {}",
+            cloud);
+        // And the booking did not eat the advice: the way round the rule is what makes it a
+        // refusal rather than a failure, so it has to survive the prefix.
+        assert!(cloud.contains("file_fetch"),
+            "the model is no longer told how to get the file here: {}", cloud);
+        assert!(cloud.contains("90000"), "the size was lost: {}", cloud);
+        // The control. A file the panel actually drew is the tool doing its job.
+        let shown = Tool::show_result("notes/report.pdf", &Shown {
+            tier:  fmt!("doc"),
+            media: fmt!("Pdf"),
+            label: fmt!("PDF document"),
+            size:  900,
+            shown: true,
+            ..Default::default()
+        }).as_text().to_string();
+        assert_eq!(CallOutcome::Done, call_outcome(&shown),
+            "a file that IS on the user's screen is booked as a refusal: {}", shown);
+    }
+
+    /// **A truthful answer about a file is NOT a refusal, and the ledger must not call it one.**
+    ///
+    /// The other half of the sweep, and the half that is a judgement rather than a relabel.  Both
+    /// of these report that nothing reached the screen, and both are correctly [`CallOutcome::Done`]
+    /// -- which for this tool means listed in no column of the fold at all, since `record` in
+    /// [`crate::agent::compact`] has no `file_show` arm.  Silence is what they are owed:
+    ///
+    /// * **A path with no file** was a question answered truthfully, and `file_list` is named so
+    ///   the model can act.  `FAILED` would tell a later self the tool broke, which is the false
+    ///   generalisation this tool exists to repair; `REFUSED` would tell it a door closed on a
+    ///   path it is entitled to show, which a fold would hand the user as a permission it does
+    ///   not lack.
+    /// * **A show the panel deferred** is waiting, not refused: Daimond is holding the file and
+    ///   will open it when the user returns to this Diamond, the model is told not to call again,
+    ///   and [`show_result`]'s own note says in as many words that this branch must read as
+    ///   waiting -- a word that reads as a limit puts "cannot display" back in the vocabulary.
+    ///
+    /// Asserted as `Done` rather than merely "not Refused", because `Failed` is the other way to
+    /// get this wrong and a one-sided assert would pass on it.
+    #[test]
+    fn test_a_show_that_answered_the_model_is_not_booked_as_a_refusal() {
+        let missing = Tool::absent_result("notes/nope.pdf", None).as_text().to_string();
+        assert_eq!(CallOutcome::Done, call_outcome(&missing),
+            "a path with no file is booked as a refusal or a failure, so a fold tells the model \
+             it was stopped or that the panel broke, when it was simply answered: {}", missing);
+        assert!(missing.contains("file_list"),
+            "the model is not told how to find the real path: {}", missing);
+
+        let deferred = Tool::show_result("diamonds/x/crystal.html", &Shown {
+            tier:  fmt!("doc"),
+            media: fmt!("Pdf"),
+            label: fmt!("PDF document"),
+            size:  900,
+            shown: false,
+            ..Default::default()
+        }).as_text().to_string();
+        assert_eq!(CallOutcome::Done, call_outcome(&deferred),
+            "a show the panel deferred is booked as a refusal, so the file that IS coming reads \
+             to the model as one it was denied: {}", deferred);
+        assert!(deferred.contains("will open it"),
+            "the deferral no longer reads as waiting, which is what its booking rests on: {}",
+            deferred);
+    }
+
+    /// **The fold does not tell the model it wrote a file that does not exist.**
+    ///
+    /// Asserted on the NOTE, which is what the model actually reads, and not only on the booking.
+    /// `record` in [`crate::agent::compact`] pushes an `artefact_add` that came back
+    /// [`CallOutcome::Done`] into the written column, so the sentence this tool returns for a path
+    /// with no file on it decided whether a fold said `Files written: notes/nope.pdf` about a file
+    /// nothing had ever created -- three lines above *"Do not claim to have done anything that is
+    /// not listed above."*  A fold's ledger is the half that is meant to be arithmetic rather than
+    /// judgement, and it was inventing a file and then vouching for it.
+    ///
+    /// The control at the end is what keeps this honest: a record that DID happen must still
+    /// appear in that column, or the fix would be a tool the fold has stopped hearing from.
+    #[test]
+    fn test_a_fold_never_reports_an_artefact_that_was_never_recorded() {
+        use crate::agent::compact::{ledger_of, notice};
+        use crate::protocol::{ChatMessage, ToolCall};
+
+        const PATH: &str = "notes/nope.pdf";
+        let call = || ToolCall {
+            id:        fmt!("call_1"),
+            name:      fmt!("artefact_add"),
+            arguments: fmt!("{{\"path\":\"{}\"}}", PATH),
+        };
+        let asked = |reply: MessageContent| vec![
+            ChatMessage::Assistant {
+                content:    MessageContent::text(String::new()),
+                tool_calls: vec![call()],
+            },
+            ChatMessage::tool(fmt!("call_1"), reply),
+        ];
+
+        let refused = asked(Tool::absent_artefact(PATH));
+        let ledger  = ledger_of(&refused);
+        let note    = notice(refused.len(), "", &ledger, None);
+
+        assert!(!note.contains("Files written"),
+            "the fold tells the model it wrote a file that does not exist and was never \
+             recorded, in the one part of the note that is supposed to be a record:\n{}", note);
+        assert!(!ledger.wrote.iter().any(|w| w == PATH),
+            "'{}' is in the written column of a fold and no such file exists", PATH);
+        assert!(note.contains("REFUSED, so nothing was touched: artefact_add notes/nope.pdf"),
+            "the call is not recorded as the refusal it was, so the fold says nothing about it \
+             at all:\n{}", note);
+        // The line that makes a false entry dangerous rather than merely untidy. If this ever
+        // goes, the reasoning above needs revisiting rather than this assert deleting.
+        assert!(note.contains("Do not claim to have done anything that is not listed above"),
+            "the note no longer tells the model to trust this list:\n{}", note);
+
+        // The sentence itself: booked as a refusal, with the rule and the way round it intact.
+        let said = Tool::absent_artefact(PATH).as_text().to_string();
+        assert_eq!(CallOutcome::Refused, call_outcome(&said),
+            "an artefact that was never recorded reads as one that was: {}", said);
+        assert!(said.contains("must exist to be declared"),
+            "the model is not told the rule it just met: {}", said);
+        assert!(said.contains("file_list"),
+            "the model is not told how to find the real path: {}", said);
+
+        // THE CONTROL. A declaration that actually happened is still reported as one.
+        let done = asked(MessageContent::text(fmt!(
+            "Recorded {} as an artefact of this Diamond.", PATH)));
+        assert!(ledger_of(&done).wrote.iter().any(|w| w == PATH),
+            "a record that DID happen no longer reaches the fold, so the ledger has gone quiet \
+             rather than truthful");
     }
 
     /// **A show that did not reach the screen says so, and says it is waiting rather than
@@ -15536,7 +16337,6 @@ impl Tool {
             Tool::FileList   => Self::file_list(args, ctx),
             Tool::FileSearch => Self::file_search(args, ctx),
             Tool::FileGlob   => Self::file_glob(args, ctx),
-            Tool::Say        => Self::say(args, ctx),
             Tool::FileDelete => Self::file_delete(args, ctx),
             Tool::FileMove   => Self::file_move(args, ctx),
             Tool::DirCreate  => Self::dir_create(args, ctx),
@@ -15552,6 +16352,7 @@ impl Tool {
                 "file_show needs the browser's document panel."; Unimplemented)),
             Tool::Shell      => Err(err!("use execute() for shell"; Invalid)),
             Tool::Run        => Err(err!("use execute() for run"; Invalid)),
+            Tool::Verify     => Err(err!("use execute() for verify"; Invalid)),
             Tool::SpawnAgent => Self::spawn_agent(args, ctx),
             Tool::WebOpen
             | Tool::WebClose

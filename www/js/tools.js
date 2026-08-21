@@ -128,10 +128,16 @@
 		                        'sheet_read', 'doc_edit', 'sheet_write'] },
 		{ id: 'cloud',    fns: ['file_fetch'] },
 		{ id: 'work',     fns: ['artefact_add'] },
-		// `say` sits here for `file_show`'s reason: its subject is the READER, not the
-		// workspace. It reaches no file, no host and no process — it folds an answer.
-		{ id: 'show',     fns: ['file_show', 'say'] },
+		// `say` sat here beside `file_show` until folding stopped being a tool: an answer
+		// is written at two depths in the model's own prose now, so there is no function
+		// to list and nothing for a person to grant or withhold.
+		{ id: 'show',     fns: ['file_show'] },
 		{ id: 'machine',  fns: ['run', 'shell'] },
+		// ITS OWN CAPABILITY, not a member of `machine`, because it is the one tool that
+		// runs a process OUTSIDE the fence -- a named verifier from the tracked tree, never
+		// a command the model wrote. That is a different thing to grant from `run`, so it is
+		// a different thing to withhold.
+		{ id: 'checking', fns: ['verify'] },
 		{ id: 'reading',  fns: ['web_fetch', 'web_search'] },
 		{ id: 'browsing', fns: ['web_open', 'web_snapshot', 'web_read', 'web_click',
 		                        'web_type', 'web_scroll', 'web_close'] },

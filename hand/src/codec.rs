@@ -32,6 +32,7 @@
 //!   from [`FRAME_MAX`] is wrong in both directions.
 
 use crate::wire::{
+    Breaks,
     Capture,
     FenceSpec,
     PtySize,
@@ -666,6 +667,33 @@ fn fence_field(obj: &Dat, what: &str, key: &str) -> Outcome<FenceSpec> {
 /// # Arguments
 /// * `d` - The decoded value.
 /// * `what` - What was expected, for the error.
+/// Which breaks a `verify` request asks for.
+///
+/// Two fields rather than one, because `all` and `none` are decisions and a
+/// break name is a value, and a single string field would make `all` a name
+/// somebody could give a break.  `one` without a `break` is refused rather than
+/// read as `none`: a request that asked to prove something must not quietly
+/// become a request that proves nothing.
+///
+/// # Arguments
+/// * `obj` - The decoded object.
+fn breaks_of(obj: &Dat) -> Outcome<Breaks> {
+    let word = res!(str_field(obj, "verify", "breaks"));
+    match word.as_str() {
+        "all"	=> Ok(Breaks::All),
+        "none"	=> Ok(Breaks::None),
+        "one"	=> match res!(opt_str_field(obj, "verify", "break")) {
+            Some(b) if !b.is_empty()	=> Ok(Breaks::One(b)),
+            _				=> Err(Fault::WrongShape.raise(
+                "A verify asking for one break did not say which. Send \"breaks\":\"one\" \
+                with a \"break\" naming one the verifier declares, or \"breaks\":\"all\".")),
+        },
+        other	=> Err(Fault::WrongShape.raise(&fmt!(
+            "A verify's \"breaks\" is {:?}, which is none of \"all\", \"one\" or \"none\".",
+            other))),
+    }
+}
+
 fn want_object(d: &Dat, what: &str) -> Outcome<()> {
     match d {
         Dat::Map(_) | Dat::OrdMap(_) => Ok(()),
@@ -1006,6 +1034,17 @@ fn req_dat(req: &Req) -> Dat {
                 "toolkits"		=> strs(toolkits),
             }
         },
+        Req::Verify { id, name, breaks, timeout_ms } => omapdat!{
+            "t"				=> "verify",
+            "id"			=> Dat::Str(id.clone()),
+            "name"			=> Dat::Str(name.clone()),
+            "breaks"		=> Dat::Str(breaks.word().to_string()),
+            "break"			=> match breaks {
+                Breaks::One(b)	=> Dat::Str(b.clone()),
+                _		=> Dat::Opt(Box::new(None)),
+            },
+            "timeout_ms"	=> *timeout_ms,
+        },
         Req::Signal { id, sig } => omapdat!{
             "t"		=> "signal",
             "id"	=> Dat::Str(id.clone()),
@@ -1064,6 +1103,8 @@ fn check_req(req: &Req) -> Outcome<()> {
         Req::Input { data, .. } => res!(data_check(data)),
         Req::Exec { id, timeout_ms, .. } =>
             res!(safe_int(*timeout_ms, id, "the wall-clock limit")),
+        Req::Verify { id, timeout_ms, .. } =>
+            res!(safe_int(*timeout_ms, id, "the whole sequence's budget")),
         _ => (),
     }
     Ok(())
@@ -1107,6 +1148,12 @@ pub fn req_of_json(txt: &str) -> Outcome<Req> {
             capture:    res!(capture_of(&res!(str_field(&obj, "exec", "capture")))),
             fence:      res!(fence_field(&obj, "exec", "fence")),
             toolkits:   res!(opt_strs_field(&obj, "exec", "toolkits")),
+        }),
+        "verify" => Ok(Req::Verify {
+            id:         res!(str_field(&obj, "verify", "id")),
+            name:       res!(str_field(&obj, "verify", "name")),
+            breaks:     res!(breaks_of(&obj)),
+            timeout_ms: res!(safe_int_field(&obj, "verify", "timeout_ms")),
         }),
         "signal" => Ok(Req::Signal {
             id:  res!(str_field(&obj, "signal", "id")),
@@ -1928,6 +1975,24 @@ mod tests {
                 },
                 toolkits: Vec::new(),
             },
+            Req::Verify {
+                id:         fmt!("v-1"),
+                name:       fmt!("graph"),
+                breaks:     Breaks::All,
+                timeout_ms: 1_200_000,
+            },
+            Req::Verify {
+                id:         fmt!("v-2"),
+                name:       fmt!("a11y_aria"),
+                breaks:     Breaks::One(fmt!("nolinks")),
+                timeout_ms: 60_000,
+            },
+            Req::Verify {
+                id:         fmt!("v-3"),
+                name:       fmt!("graph"),
+                breaks:     Breaks::None,
+                timeout_ms: SAFE_INT_MAX,
+            },
             Req::Signal { id: fmt!("run-1"), sig: Sig::Term },
             Req::Signal { id: fmt!("run-1"), sig: Sig::Kill },
             Req::Signal { id: fmt!("run-1"), sig: Sig::Int  },
@@ -2055,6 +2120,28 @@ mod tests {
             let back = res!(req_of_json(&txt));
             assert_eq!(req, back, "{}", txt);
         }
+        Ok(())
+    }
+
+    /// A verify asking for one break and naming none is refused, not read as
+    /// asking for none.
+    ///
+    /// The two are opposite requests: one asks to prove something and the other
+    /// proves nothing, so a decoder that quietly turned the first into the
+    /// second would hand back a pass with nothing behind it.
+    #[test]
+    fn a_verify_asking_for_one_break_must_name_it() -> Outcome<()> {
+        let bad = r#"{"t":"verify","id":"v","name":"graph","breaks":"one","break":null,"timeout_ms":1000}"#;
+        assert!(req_of_json(bad).is_err(), "'one' with no break was accepted");
+        let worse = r#"{"t":"verify","id":"v","name":"graph","breaks":"most","break":null,"timeout_ms":1000}"#;
+        assert!(req_of_json(worse).is_err(), "an invented breaks word was accepted");
+        let good = r#"{"t":"verify","id":"v","name":"graph","breaks":"one","break":"x","timeout_ms":1000}"#;
+        assert_eq!(Req::Verify {
+            id:         fmt!("v"),
+            name:       fmt!("graph"),
+            breaks:     Breaks::One(fmt!("x")),
+            timeout_ms: 1000,
+        }, res!(req_of_json(good)));
         Ok(())
     }
 

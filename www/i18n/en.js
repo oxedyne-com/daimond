@@ -401,6 +401,8 @@
 	'egress.search_ok':    'Run this search',
 
 	// ── A chat tile in the rail ────────────────────────────────
+	'chat.tool_refused':   'refused',
+	'chat.tool_failed':    'failed',
 	'chat.copy_message':   'Copy message',
 	'chat.include_turn':   'Include this turn when folding',
 	'chat.connect_to_chat': 'Connect a provider, or unlock, to chat on this model.',
@@ -439,7 +441,7 @@
 	'tile.daimon_reset_busy': 'This daimon is in the middle of a turn. Its answer would land in the conversation you are about to discard, and so would the conversation the model is holding — so nothing is discarded yet. Stop the turn first: while it runs, the composer’s button is Stop.',
 	'tile.model_workers': 'Workers',
 	'tile.model_vision': 'Workers, images',
-	'tile.model_vision_help': 'The model a worker runs on when its task names an image. Daimond cannot check that a model can see, so the choice is yours.',
+	'tile.model_vision_help': 'The model a worker runs on when its task names an image, and the model a worker is moved to when the one it is on turns out not to take pictures. Daimond cannot tell in advance which models see, so the choice is yours; it acts on the first refusal.',
 	'tile.model_same_as_text': 'Same as the daimon',
 	'tile.model_none': 'none',
 	'tile.diamond_model_help': 'This Diamond thinks with {model}.',
@@ -790,6 +792,8 @@
 	'wire.tools_help':    'Written from the tools this conversation actually holds, so it cannot promise one that is not there.',
 	'wire.machine_help':  'Written from the same fence that enforces it, so the description and the rule cannot disagree.',
 	'wire.schemas_help':  'The full JSON schema of every tool, sent on every single request. Usually the largest thing in the payload.',
+	'wire.diamond_help':  'Composed for this turn alone: the Diamond\'s own folder, what the paperclip has attached, and its crystal as it stands now.',
+	'wire.standing_help': 'Your DAIMOND.md, appended to the system message of every turn in every conversation.',
 	'chat.copy_all_aria':   'Copy the conversation',
 	'wire.chip':          'Wire',
 	'wire.chip_help':     'Show what is actually sent to the model on every turn — the system message, whose each part is, and the tool schemas.',
@@ -802,6 +806,10 @@
 	'wire.tools_why':     'from the registry',
 	'wire.machine':       'This computer',
 	'wire.machine_why':   'from the fence',
+	'wire.diamond':       'This Diamond',
+	'wire.diamond_why':   'this turn only',
+	'wire.standing':      'Standing instructions',
+	'wire.standing_why':  'yours',
 	'wire.schemas':       'Tool schemas ({n})',
 	'wire.schemas_why':   'every turn',
 	'chat.copy_all':        'Copy',
@@ -943,6 +951,9 @@
 	'agents.clear_finished': 'Clear finished agents',
 	'agent.model_vision':    'This task names an image, so it runs on the Diamond’s image model, {model}.',
 	'agent.model_vision_fallback': 'This task names an image, but no image model is set for this Diamond, so it runs on the text model, {model}.',
+	'agent.model_rerouted':   '{from} cannot be shown pictures, so this worker moved to {to}.',
+	'agent.model_blind':      '{model} cannot be shown pictures, so the picture was left out.',
+	'agent.model_blind_none': '{model} cannot be shown pictures and this Diamond has no image model set.',
 	// ── Pending ────────────────────────────────────────────────
 	'pending.empty':        'Nothing waiting on you.',
 	'pending.sort':         'Sort',
@@ -1581,7 +1592,7 @@
 		// new capability lands here or the panel names it `tools.cap.x.name`.
 		// i18n-family: tools.cap. = files.name files.blurb cloud.name cloud.blurb
 		// i18n-family: tools.cap. = work.name work.blurb show.name show.blurb
-		// i18n-family: tools.cap. = machine.name machine.blurb reading.name reading.blurb
+		// i18n-family: tools.cap. = checking.name checking.blurb machine.name machine.blurb reading.name reading.blurb
 		// i18n-family: tools.cap. = browsing.name browsing.blurb typeset.name typeset.blurb
 		// i18n-family: tools.cap. = dispatch.name dispatch.blurb graph.name graph.blurb
 		// i18n-family: tools.cap. = other.name other.blurb
@@ -1593,6 +1604,8 @@
 		'tools.cap.work.blurb':      'Daimond records which files belong to a piece of work, so something you made yourself is listed with it instead of sitting unremarked in a folder.',
 		'tools.cap.show.name':       'Showing you a file',
 		'tools.cap.show.blurb':      'Daimond puts a file on your screen beside the chat — a PDF as its typeset pages, a picture drawn, a table as a table — rather than only describing it to you.',
+		'tools.cap.checking.name':   'Checking its own work',
+		'tools.cap.checking.blurb':  'Daimond runs one of this project’s own checks and reports what passed, what failed, and which of the check’s own break tests proved nothing.',
 		'tools.cap.machine.name':    'Your computer',
 		'tools.cap.machine.blurb':   'With Daimond’s machine hand installed, Daimond builds, tests and runs command-line tools inside the folder you granted it, and nowhere else.',
 		'tools.cap.reading.name':    'Reading the web',
@@ -1925,6 +1938,8 @@
 	'arte.refer_help':     'Refer to this in the steer box',
 	'arte.drop_help':      'Not an artefact of this Diamond',
 	'arte.drop_named': 'Drop "{name}" as an artefact',
+	'arte.file_fenced':      'That path is outside what this Diamond may read',
+	'arte.file_fenced_body': 'The fence stopped the read. Grant the folder to this Diamond, or move the file inside one it already has.',
 	'arte.file_gone':      'That file is not there any more',
 	'arte.file_gone_body': '“{path}” is an artefact of this Diamond, but it cannot be read now; it may have been renamed, moved or deleted.',
 	'arte.nothing_to_open': 'Nothing to open',

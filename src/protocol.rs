@@ -4,6 +4,8 @@
 //! protocol with JDAT values.  This module defines the command and
 //! response types and their JDAT conversion functions.
 
+use crate::tools::CallOutcome;
+
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_jdat::prelude::*;
 
@@ -866,8 +868,15 @@ pub enum AgentEvent {
     Text(String),
     /// The agent is invoking a tool (name + raw JSON args).
     ToolCall { id: String, name: String, args: String },
-    /// A tool returned a result (name + result text).
-    ToolResult { name: String, result: String },
+    /// A tool returned a result: its name, the reply text, and what the call came to.
+    ///
+    /// The outcome travels because the tool layer is the only place that knows it.  It used to be
+    /// flattened into the reply's opening word and read back out of the prose by four separate
+    /// consumers, each with its own reading -- so a refusal, whose sentence opens "Refused" rather
+    /// than "Error", was drawn as a completed step, journalled as a success and reported to the
+    /// Optimiser as a tool that had worked.  A daimon has nothing to check that against, and
+    /// reports the turn done.
+    ToolResult { name: String, result: String, outcome: CallOutcome },
     /// The user said something while the turn was running, and it has now been put
     /// into the conversation at the seam between two rounds.
     ///
@@ -882,6 +891,16 @@ pub enum AgentEvent {
     /// did, it is lossy, and the user is entitled to see it as an act rather than as prose
     /// the model produced.
     Compacted { folded: usize, kept: usize, note: String },
+    /// A picture could not be put in front of this model.
+    ///
+    /// Its own variant and not an error: the turn goes on without the picture.  The app did
+    /// something, it is lossy, and the user is entitled to see it as an act -- the same reasoning
+    /// as [`Compacted`](Self::Compacted).
+    ///
+    /// It says WHICH model, because that is the fact anybody acting on this has to have: the
+    /// worker that is re-routed by it needs to name the model it left, and a conversation that
+    /// cannot be re-routed at all needs to name the model that would not look.
+    Unseeable { images: usize, model: String },
     /// The provider stopped generating because the reply reached the output limit.
     ///
     /// Said outright rather than inferred.  A tool call cut at the limit arrives as
@@ -912,10 +931,11 @@ impl AgentEvent {
                 m.insert(dat!("name"), dat!(name.clone()));
                 m.insert(dat!("args"), dat!(args.clone()));
             }
-            Self::ToolResult { name, result } => {
+            Self::ToolResult { name, result, outcome } => {
                 m.insert(dat!("type"), dat!("tool_result"));
                 m.insert(dat!("name"), dat!(name.clone()));
                 m.insert(dat!("content"), dat!(result.clone()));
+                m.insert(dat!("outcome"), dat!(outcome.wire()));
             }
             Self::Interjected(text) => {
                 m.insert(dat!("type"), dat!("interjected"));
@@ -926,6 +946,11 @@ impl AgentEvent {
                 m.insert(dat!("folded"), Dat::U64(*folded as u64));
                 m.insert(dat!("kept"), Dat::U64(*kept as u64));
                 m.insert(dat!("content"), dat!(note.clone()));
+            }
+            Self::Unseeable { images, model } => {
+                m.insert(dat!("type"), dat!("unseeable"));
+                m.insert(dat!("images"), Dat::U64(*images as u64));
+                m.insert(dat!("model"), dat!(model.clone()));
             }
             Self::Truncated => {
                 m.insert(dat!("type"), dat!("truncated"));

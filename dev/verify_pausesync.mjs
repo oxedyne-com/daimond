@@ -34,6 +34,18 @@
 //
 //   node dev/verify_pausesync.mjs
 //
+// SECTION D's PRO CHECK WAS REPORTED INTERMITTENT and could not be reproduced:
+// 13 runs in world 7 on 2026-08-21 — 7 as it stood, 6 after the changes below,
+// one of them deliberately timed so the licence was asked for in the middle of a
+// console rollup walk, when the gateway store answers a prefix scan not at all —
+// and every one of them said pro=true. So nothing here is a fix for it. What is
+// here is the two things that were missing to say WHY it failed, next time it
+// does: `refreshLicence()` returns null the moment `state.authed` is false and
+// swallows every other failure into the same null, so one unanswered read and an
+// account that genuinely holds nothing arrive identically. The session is now a
+// precondition of its own, the read is asked again rather than trusted once, and
+// the raw `/api/licence` reply is printed when it still says no.
+//
 // Sections A-C need dev/serve.mjs only (DAIMOND_PORT, default 8777).
 // Section D needs a gateway on :9002 as well, and SKIPS with a line rather than
 // failing when there is none -- :9002 holds one account store and is shared.
@@ -219,9 +231,66 @@ try {
 		skip('two real devices converge, both ways', 'no gateway on :9002');
 		skip('the mailbox version stops moving when both devices are idle', 'no gateway on :9002');
 	} else {
+		// THE GATEWAY SESSION FIRST, AND ASKED FOR RATHER THAN ASSUMED.
+		//
+		// `makePagePro` mints the licence at the gateway and then asks the PAGE
+		// whether it holds it, through `DaimondGateway.refreshLicence()` -- whose
+		// first line is `if (!state.authed) { state.pro = null; return null; }`
+		// (www/js/gateway.js). The session follows the unlock, not the page load,
+		// and section C above has just reloaded and signed in again; ask a beat
+		// too early and the webhook says 200 while the page says pro=false, which
+		// is the shape this file was failing in and it is not about Pro at all.
+		// The mate device below already waits for exactly this state; this device
+		// never did.
+		const tAuth = Date.now();
+		const authed = await page.waitForFunction(
+			() => !!(window.DaimondGateway && DaimondGateway.state().authed),
+			null, { timeout: 20000 }).then(() => true).catch(() => false);
+		check(authed, 'this device holds a gateway session before Pro is asked for',
+			authed ? `waited ${Date.now() - tAuth} ms`
+				: 'DaimondGateway.state().authed never became true in 20 s');
+
 		const lic = await makePagePro(page, GWDIR, GWURL);
-		check(lic.pro === true, 'the account holds Pro, so sync may run at all',
-			`webhook ${lic.status}, pro=${lic.pro}`);
+
+		// ASKING AGAIN IS NOT THE SAME AS LOWERING THE BAR.
+		//
+		// `makePagePro` asks the page once, through `refreshLicence()`, which
+		// swallows EVERY failure into `pro = null`: a gateway that could not answer
+		// and an account that holds nothing arrive here as the same false. One
+		// unanswered read is not evidence that the licence was not issued -- the
+		// webhook's own 200 is that evidence, since a grant that fails is answered
+		// 500 and left unmarked for Stripe to retry (gateway/src/handlers/webhook.rs).
+		// So the page is asked until it has a definite answer or the budget is out,
+		// and a licence that was genuinely never issued still fails: the gateway
+		// answers `held:false` every time and this runs out and says so.
+		let pro = lic.pro === true, waited = 0;
+		const tPro = Date.now();
+		while (!pro && Date.now() - tPro < 20000) {
+			await sleep(1000);
+			pro = await page.evaluate(async () => {
+				try { return !!(await DaimondGateway.refreshLicence()); }
+				catch (e) { return false; }
+			});
+			waited = Date.now() - tPro;
+		}
+
+		// WHAT THE GATEWAY ITSELF SAYS, when the page still says no. Read raw, so
+		// the failure line names which of the two it was -- a store that could not
+		// answer, or a licence that is not there -- rather than leaving the reader
+		// to reproduce it by hand. A store timing out is defect Y, and it belongs
+		// to o3db, not to sync.
+		let why = `webhook ${lic.status}, pro=${pro}`
+			+ (waited ? `, after ${waited} ms of asking` : '');
+		if (!pro) {
+			const raw = await page.evaluate(async () => {
+				try {
+					const r = await fetch('/api/licence', { credentials: 'same-origin' });
+					return r.status + ' ' + (await r.text()).slice(0, 160);
+				} catch (e) { return 'threw ' + String(e && e.message); }
+			});
+			why += `, GET /api/licence -> ${raw}`;
+		}
+		check(pro, 'the account holds Pro, so sync may run at all', why);
 
 		// A second REAL device on its own profile, paired in as verify_sync §12
 		// does it. Two windows both open and both focused is the case that broke

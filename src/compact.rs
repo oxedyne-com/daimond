@@ -47,7 +47,7 @@
 //! and because the two would otherwise drift apart, which is how one of them ends up with
 //! the reasoning and the other with the bug.
 
-use crate::llm::{extract_json_string, extract_json_string_array};
+use crate::llm::{OpenSet, extract_json_string, extract_json_string_array};
 use crate::protocol::{ChatMessage, ImagePart, MessageContent, ToolCall};
 use crate::tools::{CallOutcome, call_outcome};
 
@@ -386,27 +386,53 @@ pub fn image_bytes(img: &ImagePart) -> u64 {
 ///
 /// An image is counted by [`image_bytes`], NOT by its own length -- see there for why the
 /// difference is the whole of this feature's viability.
-pub fn msg_bytes(m: &ChatMessage) -> u64 {
+///
+/// **A fold is sized by what SERIALISATION will send, which is not what the model wrote.**
+/// [`crate::llm::sent_args_len`] and [`crate::llm::sent_text_len`] are the serialiser's own
+/// functions, asked here rather than imitated: a closed fold's body leaves the payload on the way
+/// out, so counting it kept the trigger measuring a conversation that was never going to be sent.
+/// Whether it leaves depends on the fold state, which is why `open` is a parameter of every size
+/// in this module.
+///
+/// Both depths of answer are covered.  A STORED `say` call -- the tool is gone, but a conversation
+/// saved before it went still carries them -- folds through tool arguments and is sized by them;
+/// an inline `<details>` folds through the assistant's own prose and is sized by its text.  Sizing
+/// one and not the other would leave the same defect standing, just moved.
+///
+/// # Arguments
+/// * `m` - The message to size.
+/// * `open` - The folds the user has open, from [`crate::llm::LlmClient::open_folds`] -- stored
+///   `say` call ids and inline fold keys in the one set.
+pub fn msg_bytes(m: &ChatMessage, open: &OpenSet) -> u64 {
 	// The JSON around every message: the role, the two keys, the braces and the commas.
-	let mut n = m.content().text_len() as u64 + 32;
+	let mut n = 32u64;
 	for img in m.content().images() {
 		n += image_bytes(img);
 	}
 	match m {
-		ChatMessage::Assistant { tool_calls, .. } => {
+		ChatMessage::Assistant { content, tool_calls } => {
+			n += crate::llm::sent_text_len(&content.as_text(), open) as u64;
 			for tc in tool_calls {
-				n += (tc.id.len() + tc.name.len() + tc.arguments.len()) as u64 + 64;
+				let args = crate::llm::sent_args_len(
+					&tc.name, &tc.arguments, open.contains(&tc.id));
+				n += (tc.id.len() + tc.name.len() + args) as u64 + 64;
 			}
 		},
-		ChatMessage::Tool { tool_call_id, .. } => n += tool_call_id.len() as u64,
-		_ => {},
+		ChatMessage::Tool { tool_call_id, .. } => {
+			n += m.content().text_len() as u64 + tool_call_id.len() as u64;
+		},
+		_ => n += m.content().text_len() as u64,
 	}
 	n
 }
 
 /// Bytes a whole conversation costs on the wire.
-pub fn conversation_bytes(msgs: &[ChatMessage]) -> u64 {
-	msgs.iter().map(msg_bytes).sum()
+///
+/// # Arguments
+/// * `msgs` - The conversation, oldest first.
+/// * `open` - The folds the user has open. See [`msg_bytes`].
+pub fn conversation_bytes(msgs: &[ChatMessage], open: &OpenSet) -> u64 {
+	msgs.iter().map(|m| msg_bytes(m, open)).sum()
 }
 
 
@@ -478,11 +504,14 @@ pub fn pairing_is_whole(msgs: &[ChatMessage]) -> bool {
 /// * `keep_bytes` - Bytes of tail to keep verbatim.
 /// * `min_keep` - Messages to keep where they fit inside `hard_bytes`.
 /// * `hard_bytes` - Bytes the tail may not exceed, whatever `min_keep` asks for.
+/// * `open` - The folds the user has open, so the tail is measured as it will be sent. See
+///   [`msg_bytes`].
 pub fn tail_start(
 	msgs:       &[ChatMessage],
 	keep_bytes: u64,
 	min_keep:   usize,
 	hard_bytes: u64,
+	open:       &OpenSet,
 )
 	-> usize
 {
@@ -493,7 +522,7 @@ pub fn tail_start(
 	let mut i   = n;
 	let mut acc = 0u64;
 	while i > 0 {
-		let c    = msg_bytes(&msgs[i - 1]);
+		let c    = msg_bytes(&msgs[i - 1], open);
 		let kept = n - i;
 		if kept >= 1 && acc + c > hard_bytes {
 			break;
@@ -911,14 +940,17 @@ pub fn fold(msgs: &[ChatMessage], cut: usize, notice: String) -> Outcome<Vec<Cha
 /// * `msgs` - The conversation, edited in place.
 /// * `target_bytes` - The size to get under.
 /// * `keep_last` - Trailing messages never touched, so the newest work stays whole.
+/// * `open` - The folds the user has open, so what is elided is measured as it will be sent. See
+///   [`msg_bytes`].
 pub fn elide_bulk(
 	msgs:         &mut [ChatMessage],
 	target_bytes: u64,
 	keep_last:    usize,
+	open:         &OpenSet,
 )
 	-> usize
 {
-	let mut total = conversation_bytes(msgs);
+	let mut total = conversation_bytes(msgs, open);
 	if total <= target_bytes {
 		return 0;
 	}
@@ -933,9 +965,9 @@ pub fn elide_bulk(
 		if !msgs[i].content().has_image() {
 			continue;
 		}
-		let before = msg_bytes(&msgs[i]);
+		let before = msg_bytes(&msgs[i], open);
 		msgs[i] = msgs[i].with_content(msgs[i].content().without_images(crate::protocol::Dropped::ToFit));
-		total = total.saturating_sub(before.saturating_sub(msg_bytes(&msgs[i])));
+		total = total.saturating_sub(before.saturating_sub(msg_bytes(&msgs[i], open)));
 		n += 1;
 	}
 
@@ -1335,6 +1367,10 @@ pub fn looks_like_overflow(err: &str, prompt_tokens: u64, budget: u64) -> bool {
 mod tests {
 	use super::*;
 
+	/// No fold open, which is what every size in these tests is measured against unless the test
+	/// is about the fold state itself.
+	fn shut() -> OpenSet { OpenSet::new() }
+
 	// The tool layer as the app runs it.  The ledger's tests take their tool replies from the
 	// dispatcher rather than composing any, so what they assert about is what a user's
 	// conversation would actually contain.
@@ -1476,7 +1512,7 @@ mod tests {
 		let msg = ChatMessage::user(MessageContent::parts(vec![
 			crate::protocol::ContentPart::Image(img.clone()),
 		]));
-		let charged = msg_bytes(&msg);
+		let charged = msg_bytes(&msg, &shut());
 		let gauge = Gauge::default();
 		assert!(gauge.tokens(charged) < actual * 2,
 			"a screenshot is being charged {} tokens against the {} the provider will",
@@ -1524,10 +1560,10 @@ mod tests {
 			replies("call_1", &"z".repeat(4_000)),
 			says("done"),
 		];
-		let before = conversation_bytes(&v);
+		let before = conversation_bytes(&v, &shut());
 		// A target that the images alone can meet.
-		let target = before - msg_bytes(&v[2]) / 2;
-		let n = elide_bulk(&mut v, target, 1);
+		let target = before - msg_bytes(&v[2], &shut()) / 2;
+		let n = elide_bulk(&mut v, target, 1, &shut());
 		assert_eq!(1, n, "exactly the image message should have been touched");
 		assert!(!v[2].content().has_image(), "the image survived");
 		assert_eq!(4_000, v[4].content().text_len(), "the prose was shortened before it had to be");
@@ -1542,7 +1578,7 @@ mod tests {
 			replies_with_image("call_0", "mobile-desktop-after.png"),
 			says("done"),
 		];
-		elide_bulk(&mut v, 100, 1);
+		elide_bulk(&mut v, 100, 1, &shut());
 		let left = v[2].text();
 		assert!(!v[2].content().has_image(), "the image should have gone");
 		assert!(left.contains("shots/mobile-desktop-after.png"),
@@ -1568,9 +1604,9 @@ mod tests {
 		}
 		v.push(says("done"));
 		let target = 4_000;
-		elide_bulk(&mut v, target, 1);
-		assert!(conversation_bytes(&v) <= target + 2_000,
-			"elision left {} bytes against a target of {}", conversation_bytes(&v), target);
+		elide_bulk(&mut v, target, 1, &shut());
+		assert!(conversation_bytes(&v, &shut()) <= target + 2_000,
+			"elision left {} bytes against a target of {}", conversation_bytes(&v, &shut()), target);
 		assert!(!v.iter().any(|m| m.content().has_image()), "an image survived");
 		assert_eq!(0, orphan_count(&v));
 	}
@@ -1584,9 +1620,9 @@ mod tests {
 			asks("call_0", "file_read", r#"{"path":"shots/mobile-desktop-after.png"}"#),
 			replies_with_image("call_0", "mobile-desktop-after.png"),
 		];
-		assert!(conversation_bytes(&v) < FOLD_INPUT_CAP,
+		assert!(conversation_bytes(&v, &shut()) < FOLD_INPUT_CAP,
 			"one screenshot exceeded the whole fold input cap: {} of {}",
-			conversation_bytes(&v), FOLD_INPUT_CAP);
+			conversation_bytes(&v, &shut()), FOLD_INPUT_CAP);
 		// And what the summariser is shown names the file rather than carrying it.
 		let r = render_for_fold(&v, FOLD_INPUT_CAP);
 		assert!(r.contains("shots/mobile-desktop-after.png"), "{}", r);
@@ -1665,8 +1701,8 @@ mod tests {
 		// Every budget, on a conversation made entirely of blocks. The cut must never be a
 		// tool reply, whatever the arithmetic wanted.
 		let v = session(12, 500);
-		for keep in (0..conversation_bytes(&v)).step_by(37) {
-			let cut = tail_start(&v, keep, MIN_KEEP_MESSAGES, u64::MAX);
+		for keep in (0..conversation_bytes(&v, &shut())).step_by(37) {
+			let cut = tail_start(&v, keep, MIN_KEEP_MESSAGES, u64::MAX, &shut());
 			assert!(!matches!(v.get(cut), Some(ChatMessage::Tool { .. })),
 				"a cut at {} opens the tail with a reply to a call that was folded away", cut);
 		}
@@ -1677,8 +1713,8 @@ mod tests {
 		// The property that actually matters, checked across the whole range rather than at
 		// one convenient point.
 		let v = session(12, 500);
-		for keep in (0..conversation_bytes(&v)).step_by(37) {
-			let cut = tail_start(&v, keep, MIN_KEEP_MESSAGES, u64::MAX);
+		for keep in (0..conversation_bytes(&v, &shut())).step_by(37) {
+			let cut = tail_start(&v, keep, MIN_KEEP_MESSAGES, u64::MAX, &shut());
 			if cut == 0 {
 				continue;
 			}
@@ -1729,7 +1765,7 @@ mod tests {
 	#[test]
 	fn test_the_newest_messages_are_always_kept_00() {
 		let v = session(20, 800);
-		let cut = tail_start(&v, 1_000, MIN_KEEP_MESSAGES, u64::MAX);
+		let cut = tail_start(&v, 1_000, MIN_KEEP_MESSAGES, u64::MAX, &shut());
 		assert!(v.len() - cut >= MIN_KEEP_MESSAGES,
 			"only {} messages kept; a model just told the answer must not lose it",
 			v.len() - cut);
@@ -1751,8 +1787,8 @@ mod tests {
 			v.push(says(&"z".repeat(20_000)));
 		}
 		let ceiling = 8_000u64;
-		let cut = tail_start(&v, ceiling, MIN_KEEP_MESSAGES, ceiling);
-		let kept: u64 = v[cut..].iter().map(msg_bytes).sum();
+		let cut = tail_start(&v, ceiling, MIN_KEEP_MESSAGES, ceiling, &shut());
+		let kept: u64 = v[cut..].iter().map(|m| msg_bytes(m, &shut())).sum();
 		assert!(kept <= ceiling + 20_100,
 			"the tail is {} bytes against a ceiling of {}", kept, ceiling);
 		assert!(v.len() - cut < MIN_KEEP_MESSAGES,
@@ -1769,7 +1805,7 @@ mod tests {
 			says(&"a".repeat(5_000)),
 			user("what now?"),
 		];
-		let n = elide_bulk(&mut v, 3_000, 1);
+		let n = elide_bulk(&mut v, 3_000, 1, &shut());
 		assert_eq!(n, 1, "the assistant's own turn should have been shortened");
 		assert!(v[1].content().text_len() < 1_000, "{}", v[1].content().text_len());
 		assert_eq!(v[0].content().text_len(), 5_000, "the user's own words were shortened");
@@ -1788,7 +1824,7 @@ mod tests {
 			replies("a", "1"),
 			user("next"),
 		];
-		elide_bulk(&mut v, 500, 1);
+		elide_bulk(&mut v, 500, 1, &shut());
 		assert_eq!(orphan_count(&v), 0, "the block lost its call");
 		assert!(v[1].content().text_len() < 1_000);
 	}
@@ -1796,12 +1832,12 @@ mod tests {
 	#[test]
 	fn test_a_short_conversation_is_not_folded_00() {
 		let v = vec![user("hello"), says("hi")];
-		assert_eq!(tail_start(&v, 0, MIN_KEEP_MESSAGES, u64::MAX), 0);
+		assert_eq!(tail_start(&v, 0, MIN_KEEP_MESSAGES, u64::MAX, &shut()), 0);
 		assert!(fold(&v, 0, fmt!("x")).is_err(), "a fold of nothing is not a fold");
 		// Not even under a ceiling it cannot meet. There is nothing worth folding in three
 		// messages, and replacing one of them with a note explaining the fold is pure loss.
 		let three = vec![user("hello"), says(&"x".repeat(50_000)), user("and?")];
-		assert_eq!(tail_start(&three, 100, MIN_KEEP_MESSAGES, 100), 0);
+		assert_eq!(tail_start(&three, 100, MIN_KEEP_MESSAGES, 100, &shut()), 0);
 	}
 
 	// ── The ledger ───────────────────────────────────────────────────────────
@@ -2075,10 +2111,10 @@ mod tests {
 	#[test]
 	fn test_eliding_shrinks_without_touching_pairing_00() {
 		let mut v = session(10, 5_000);
-		let before = conversation_bytes(&v);
-		let n = elide_bulk(&mut v, before / 4, 4);
+		let before = conversation_bytes(&v, &shut());
+		let n = elide_bulk(&mut v, before / 4, 4, &shut());
 		assert!(n > 0);
-		assert!(conversation_bytes(&v) < before);
+		assert!(conversation_bytes(&v, &shut()) < before);
 		assert_eq!(orphan_count(&v), 0, "eliding must not add or remove a message");
 		assert_eq!(v.len(), session(10, 5_000).len());
 	}
@@ -2086,7 +2122,7 @@ mod tests {
 	#[test]
 	fn test_eliding_leaves_the_newest_results_whole_00() {
 		let mut v = session(10, 5_000);
-		elide_bulk(&mut v, 100, 4);
+		elide_bulk(&mut v, 100, 4, &shut());
 		let last_tool = v.iter().rposition(|m| matches!(m, ChatMessage::Tool { .. }))
 			.expect("a reply");
 		assert_eq!(v[last_tool].content().text_len(), 5_000,
@@ -2096,7 +2132,7 @@ mod tests {
 	#[test]
 	fn test_eliding_says_what_it_took_00() {
 		let mut v = session(3, 5_000);
-		elide_bulk(&mut v, 100, 0);
+		elide_bulk(&mut v, 100, 0, &shut());
 		let t = v.iter().find(|m| matches!(m, ChatMessage::Tool { .. })).expect("a reply");
 		assert!(t.text().contains("folded away"), "{}", t.text());
 		assert!(t.text().contains("read it again"), "{}", t.text());
@@ -2297,24 +2333,24 @@ mod tests {
 		let limits = Limits { window: 32_768, ..Limits::default() };
 		let gauge  = Gauge::default();
 		let budget = limits.budget(4_096);
-		assert!(gauge.tokens(conversation_bytes(&v)) > budget, "the fixture must be too big");
+		assert!(gauge.tokens(conversation_bytes(&v, &shut())) > budget, "the fixture must be too big");
 
 		let keep = gauge.bytes(limits.tail_budget(4_096));
-		let cut  = tail_start(&v, keep, MIN_KEEP_MESSAGES, u64::MAX);
+		let cut  = tail_start(&v, keep, MIN_KEEP_MESSAGES, u64::MAX, &shut());
 		assert!(cut > 0);
 		let l   = ledger_of(&v[..cut]);
 		let mut out = match fold(&v, cut, notice(cut, "read forty files", &l, None)) {
 			Ok(o)  => o,
 			Err(e) => panic!("{}", e),
 		};
-		elide_bulk(&mut out, gauge.bytes(budget), MIN_KEEP_MESSAGES);
+		elide_bulk(&mut out, gauge.bytes(budget), MIN_KEEP_MESSAGES, &shut());
 
 		assert!(out.len() < v.len(),
 			"the fold kept {} of {} messages, so nothing was folded at all",
 			out.len(), v.len());
-		assert!(gauge.tokens(conversation_bytes(&out)) <= budget,
+		assert!(gauge.tokens(conversation_bytes(&out, &shut())) <= budget,
 			"still {} tokens against a budget of {}",
-			gauge.tokens(conversation_bytes(&out)), budget);
+			gauge.tokens(conversation_bytes(&out, &shut())), budget);
 		assert!(pairing_is_whole(&out), "the folded conversation would be rejected");
 		// And it still knows what it did: the earliest file it read is named in the note,
 		// and the latest is still in the conversation verbatim.
@@ -2334,16 +2370,16 @@ mod tests {
 		// up folding on every single turn and paying for a summary each time.
 		let v = session(40, 6_000);
 		let g = Gauge::default();
-		let cut = tail_start(&v, g.bytes(4_000), MIN_KEEP_MESSAGES, u64::MAX);
+		let cut = tail_start(&v, g.bytes(4_000), MIN_KEEP_MESSAGES, u64::MAX, &shut());
 		let once = match fold(&v, cut, notice(cut, "", &ledger_of(&v[..cut]), None)) {
 			Ok(o) => o, Err(e) => panic!("{}", e),
 		};
-		let cut2 = tail_start(&once, g.bytes(2_000), MIN_KEEP_MESSAGES, u64::MAX);
+		let cut2 = tail_start(&once, g.bytes(2_000), MIN_KEEP_MESSAGES, u64::MAX, &shut());
 		if cut2 > 0 {
 			let twice = match fold(&once, cut2, notice(cut2, "", &ledger_of(&once[..cut2]), None)) {
 				Ok(o) => o, Err(e) => panic!("{}", e),
 			};
-			assert!(conversation_bytes(&twice) < conversation_bytes(&once));
+			assert!(conversation_bytes(&twice, &shut()) < conversation_bytes(&once, &shut()));
 			assert!(pairing_is_whole(&twice));
 		}
 	}

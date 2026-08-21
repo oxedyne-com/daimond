@@ -528,7 +528,7 @@ static_one() {                  # name, command…
 #
 # THE COST, so nobody meets it as a surprise: any edit that adds or removes a
 # `t()` call site moves a count in the map, and the gate then goes red until
-# `node dev/i18ncheck.mjs` is run in the main tree and the map committed. That is
+# `node dev/i18ncheck.mjs --write-map` is run in the main tree and the map committed. That is
 # one command, it is named in the failure, and it is the price of the map being
 # true rather than merely present.
 if [ $# -eq 0 ]; then

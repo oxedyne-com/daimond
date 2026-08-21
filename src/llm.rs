@@ -141,7 +141,11 @@ struct ThinkCarry {
 ///
 /// **It costs a cache miss on the turn it changes.** Opening a fold rewrites a message that was
 /// already in the prefix, so everything from that point is re-read once. Stable again afterwards.
-type OpenFolds = std::rc::Rc<std::cell::RefCell<std::collections::HashSet<String>>>;
+type OpenFolds = std::rc::Rc<std::cell::RefCell<OpenSet>>;
+
+/// The call ids of the `say` folds the user has open, as [`LlmClient::open_folds`] hands them
+/// over and as the sizing path in [`crate::agent::compact`] reads them.
+pub type OpenSet = std::collections::HashSet<String>;
 
 /// A [`ThinkCarry`] shared across clones of a client.
 #[cfg(not(target_arch = "wasm32"))]
@@ -910,6 +914,16 @@ impl LlmClient {
         { self.blind.set(true) }
     }
 
+    /// May a picture be put in front of this endpoint?
+    ///
+    /// Both halves of what is known, and nothing else: the deny-list [`model_can_see`] before any
+    /// request has been sent, and the refusal [`is_blind`](Self::is_blind) records after one has
+    /// been turned away.  There is no third source -- no `vision` flag is published by anybody --
+    /// so a model released after this line was written is taken to see until it says otherwise.
+    pub fn can_take_images(&self) -> bool {
+        model_can_see(&self.model) && !self.is_blind()
+    }
+
     /// The conversation as it must be sent: whole, or with the pictures turned into words when
     /// this endpoint has been caught refusing them.
     ///
@@ -1149,7 +1163,11 @@ impl LlmClient {
                     // Assistant turns are the model's own words; an image cannot appear in one.
                     let said = content.as_text();
                     if !said.is_empty() {
-                        blocks.push(text_block(&said, false));
+                        // The same fold strip the OpenAI side applies.  Applied at one site and
+                        // not the other, the same conversation would cost different amounts
+                        // through different endpoints, silently.
+                        let folded = strip_folds(&said, &self.open_folds.borrow());
+                        blocks.push(text_block(folded.as_deref().unwrap_or(&said), false));
                     }
                     for tc in tool_calls {
                         let stripped = strip_said(&tc.name, &tc.arguments, self.fold_open(&tc.id));
@@ -1280,6 +1298,15 @@ impl LlmClient {
     /// Is this `say` call's fold open on screen?
     fn fold_open(&self, id: &str) -> bool {
         !id.is_empty() && self.open_folds.borrow().contains(id)
+    }
+
+    /// The open folds, copied out.
+    ///
+    /// A COPY and not a borrow: the sizing path holds this across the awaits of a fold, and the
+    /// page may set the folds again at any point in between -- a `RefCell` borrow still live at
+    /// that moment would panic.  The set holds one short id per fold on screen.
+    pub fn open_folds(&self) -> OpenSet {
+        self.open_folds.borrow().clone()
     }
 
     /// Replace the set of open folds, from the page, before a request goes out.
@@ -2779,17 +2806,18 @@ fn message_to_json_cached(msg: &ChatMessage, open: &std::collections::HashSet<St
         role, json_escape(&content.as_text()))
 }
 
-/// Serialise a `ChatMessage` to an OpenAI-API JSON object, including
-/// assistant `tool_calls` and the `tool` role — which `datmap_to_json`
-/// does not carry.
-/// Only the `user` role may carry an image on this side; `system`, `assistant` and `tool` take a
-/// string or text parts and nothing else.  A message of another role that somehow holds one is
-/// flattened to the `[image …]` stand-in rather than sent as a part the API would reject; the
 /// The arguments a `say` call is REPLAYED with, or `None` for every other tool.
 ///
-/// `say` answers at two depths: a summary the user reads at once and a detail behind a fold. The
+/// **`say` was a tool and is not one any more.**  Folding is written into the model's own prose as
+/// a `<details>` element now -- see [`sent_text_len`] -- and no model is offered `say` or can call
+/// it.  This stays because STORED CONVERSATIONS still carry `say` tool_calls: every one of them
+/// travels on every request for the life of that conversation, so a stripper deleted here is not a
+/// tidying, it is every old folded answer going out in full again, on exactly the conversations
+/// the feature existed to make cheap.
+///
+/// `say` answered at two depths: a summary the user read at once and a detail behind a fold. The
 /// detail is for a person, once. Left in the transcript it would be re-sent on every later request
-/// for the life of the conversation -- so a model that explains at length would charge for that
+/// for the life of the conversation -- so a model that explained at length would charge for that
 /// explanation again on every turn, whether or not anybody looked at it twice.
 ///
 /// So the wire carries the summary and a note in the detail's place. Nothing is lost: the browser
@@ -2831,8 +2859,364 @@ fn strip_said(name: &str, arguments: &str, open: bool) -> Option<String> {
              Ask them, or read the file you wrote it from, if you need it again.]", n))))
 }
 
+/// How many bytes of `arguments` this call will actually put on the wire.
+///
+/// **The compaction trigger's half of [`strip_said`], and it calls that function rather than
+/// restating its rule.**  [`crate::agent::compact::msg_bytes`] sized a `say` with the length the
+/// model wrote, so the trigger measured a conversation nobody was going to send: every closed
+/// fold in it was counted at full length, the budget was spent on bytes that leave at
+/// serialisation, and a conversation was folded earlier than it needed to be.  The
+/// [`Gauge`](crate::agent::compact::Gauge) absorbed part of the error by recalibrating tokens-per-byte against the provider's real
+/// `prompt_tokens` -- but that ratio is one number for the whole conversation, so the correction
+/// was paid for by every other message's estimate.
+///
+/// Whether the detail travels depends on the fold state, which is why `open` is asked for here
+/// and not decided here: an OPEN fold is one the user is reading and its detail goes out in full.
+///
+/// # Arguments
+/// * `name` - The tool the call names.
+/// * `arguments` - Its arguments, as the model wrote them.
+/// * `open` - Whether this call's fold is open on screen.
+pub fn sent_args_len(name: &str, arguments: &str, open: bool) -> usize {
+    match strip_said(name, arguments, open) {
+        Some(replayed) => replayed.len(),
+        None           => arguments.len(),
+    }
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The two-depth answer, written inline                           │
+// └───────────────────────────────────────────────────────────────┘
+//
+// `say` answered at two depths through a tool call.  The model now writes the same two depths
+// into its own prose as a `<details>` element, and this is the reading half of it: the same
+// economy applied to text rather than to tool arguments.  `strip_said` above stays exactly as it
+// is -- stored conversations carry `say` tool_logs, and a reader deleted is an answer that
+// renders as nothing.  The shared shape is pinned in `dev/CONTRACT_FOLD.md`; the fixture both
+// languages are tested against is `dev/fixtures/fold_keys.json`.
+
+/// The note a stripped fold leaves in place of its body.
+///
+/// [`strip_said`]'s wording, near enough, so the two paths read alike to a model that may hold
+/// both in one conversation.  The exact string is pinned by the fixture.
+///
+/// # Arguments
+/// * `n` - Characters of the fold's trimmed body, as the user still has it on screen.
+fn fold_note(n: usize) -> String {
+    fmt!("[folded to the user, {} characters. They have it on screen; you no longer carry it. \
+          Ask them if you need it again.]", n)
+}
+
+/// One `<details>` fold found in one assistant message's text.
+///
+/// Byte offsets rather than copied strings, so the strip rewrites in place and every character
+/// outside the body stays exactly where the model put it -- including the blank lines the
+/// renderer needs, which a reconstructed element would have to get right a second time.
+struct Fold {
+    ord:        usize,                  // 0-based over the real folds of this message
+    summary:    String,                 // tags removed, whitespace runs collapsed to one space
+    body:       std::ops::Range<usize>, // the TRIMMED body, as byte offsets into the text
+    chars:      usize,                  // characters of that trimmed body
+    closed:     bool,                   // whether a `</details>` was found for it
+}
+
+impl Fold {
+    /// The one name the Rust and JS halves must agree on: `"<ordinal>:<summary>"`.
+    ///
+    /// No hash and no message identity, deliberately -- see `dev/CONTRACT_FOLD.md` §2.  Two
+    /// messages can therefore share a key, and the only consequence is that opening one fold
+    /// sends the body of a same-labelled, same-ordinal fold in another.  Nothing renders wrong.
+    fn key(&self) -> String {
+        fmt!("{}:{}", self.ord, self.summary)
+    }
+}
+
+/// The fence a line opens or closes, as `(character, run length, whether an info string follows)`.
+///
+/// CommonMark's rule, to the part that matters here: up to three leading spaces, then three or
+/// more backticks or tildes.  A run with an info string after it can only OPEN a fence, never
+/// close one, which is what keeps ```` ```html ```` from closing the fence it opened.
+fn fence_run(line: &str) -> Option<(u8, usize, bool)> {
+    let t = line.trim_end_matches(['\n', '\r']);
+    let lead = t.len() - t.trim_start_matches(' ').len();
+    if lead > 3 {
+        return None;
+    }
+    let rest = &t[lead..];
+    let ch = match rest.as_bytes().first() {
+        Some(&c) if c == b'`' || c == b'~' => c,
+        _                                  => return None,
+    };
+    let n = rest.bytes().take_while(|&b| b == ch).count();
+    if n < 3 {
+        return None;
+    }
+    Some((ch, n, !rest[n..].trim().is_empty()))
+}
+
+/// The byte ranges of every line inside a fenced code region, the fence lines included.
+///
+/// **This is the single most likely source of a wrong strip.**  A `<details>` inside a fence is
+/// literal text the model is SHOWING the user -- the markup itself, quoted.  It is not a fold, it
+/// takes no ordinal, and rewriting it would edit the example out from under the person reading
+/// it.  The renderer is already safe there because `marked` escapes it; nothing but this function
+/// makes the stripper safe.
+fn fenced_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    let mut open: Option<(u8, usize)> = None;
+    let mut at = 0usize;
+    for line in text.split_inclusive('\n') {
+        let end = at + line.len();
+        match (fence_run(line), open) {
+            // A close must match the character it opened with, be at least as long, and carry no
+            // info string.
+            (Some((ch, n, info)), Some((c, k))) if ch == c && n >= k && !info => {
+                out.push((at, end));
+                open = None;
+            },
+            (Some((ch, n, _)), None) => {
+                out.push((at, end));
+                open = Some((ch, n));
+            },
+            // Anything else inside a fence is fenced; anything else outside one is prose.
+            _ => if open.is_some() { out.push((at, end)); },
+        }
+        at = end;
+    }
+    out
+}
+
+/// Every real fold in one assistant message's text, in document order.
+///
+/// Four shapes are deliberately NOT folds, and each one is a case in the fixture.  A `<details>`
+/// in a fence is quoted markup.  A `<details>` with no `<summary>` has no label, so it has no key
+/// and could not be matched against the open set anyway.  A `<details>` NESTED inside another is
+/// carried away by its parent's strip, so a key of its own would name a body that no longer
+/// exists.  A `<details>` with no `</details>` is a fold still being written: it keys, because the
+/// ordinal it takes is settled the moment its summary is, but it is left alone by the strip --
+/// see [`strip_folds`].
+///
+/// **Elements are paired by DEPTH, not by the first closing tag that turns up.**  The browser's
+/// parser nests correctly, so a scanner that closed an outer fold at its child's `</details>`
+/// would disagree with the renderer about where the fold ENDS -- and then replace the wrong span
+/// of text, cutting the body short and leaving the remainder of the element dangling in the
+/// payload.  Measured: the shared fixture's nested case gives a 48-character body under
+/// first-close pairing and the correct 67 under this one.
+fn folds(text: &str) -> Vec<Fold> {
+    let fenced = fenced_spans(text);
+    let hidden = |p: usize| fenced.iter().any(|&(a, b)| p >= a && p < b);
+    // The next occurrence of `tag` at or after `from` that is not inside a fence.
+    let next = |from: usize, tag: &str| -> Option<usize> {
+        let mut at = from;
+        while at < text.len() {
+            match text[at..].find(tag) {
+                Some(p) => {
+                    let abs = at + p;
+                    if !hidden(abs) {
+                        return Some(abs);
+                    }
+                    at = abs + tag.len();
+                },
+                None => return None,
+            }
+        }
+        None
+    };
+    let mut out: Vec<Fold> = Vec::new();
+    let mut at = 0usize;
+    while at < text.len() {
+        let open = match next(at, "<details") {
+            Some(p) => p,
+            None    => break,
+        };
+        // Walk to the MATCHING close, counting depth.  `inner` is where the first child element
+        // starts, which is the bound on how far the label may be looked for.
+        let mut depth = 1usize;
+        let mut scan  = open + "<details".len();
+        let mut close: Option<usize> = None;
+        let mut inner: Option<usize> = None;
+        while depth > 0 {
+            // `"<details"` cannot match inside `"</details>"`, so the two searches never see the
+            // same tag twice.
+            match (next(scan, "<details"), next(scan, "</details>")) {
+                (Some(o), Some(c)) if o < c => {
+                    depth += 1;
+                    if inner.is_none() {
+                        inner = Some(o);
+                    }
+                    scan = o + "<details".len();
+                },
+                (_, Some(c)) => {
+                    depth -= 1;
+                    scan = c + "</details>".len();
+                    if depth == 0 {
+                        close = Some(c);
+                    }
+                },
+                // Nothing closes it: the model is still writing.
+                (_, None) => break,
+            }
+        }
+        // Without a close the element runs to the end of what has been written so far, which is
+        // what a fold looks like part way through a stream.
+        let limit = close.unwrap_or(text.len());
+        // Where scanning resumes whether or not this element turns out to be a fold.  Past the
+        // WHOLE element, which is what keeps a nested fold from taking an ordinal of its own.
+        let after = match close {
+            Some(c) => c + "</details>".len(),
+            None    => text.len(),
+        };
+        // The label must belong to THIS element: a `<summary>` after the first child is the
+        // child's, and borrowing it would put a nested fold's name on its parent's body.
+        let labelled = |p: usize| p < limit && inner.map_or(true, |i| p < i);
+        let sum_open = match next(open, "<summary").filter(|&p| labelled(p)) {
+            Some(p) => p,
+            None    => { at = after; continue; },
+        };
+        // AND IT MUST BE THE FIRST THING INSIDE, whitespace aside.  This is stricter than the
+        // browser, which takes the first `<summary>` child as the control wherever it sits, and
+        // the strictness is the point: it is the only shape in which "the body is what lies
+        // between `</summary>` and `</details>`" is unambiguous, and it is exactly what the
+        // prompt asks the model to write.  Prose before the label makes the element not a fold,
+        // so it is left alone -- the reader still gets a native disclosure widget and the body
+        // still travels, which costs tokens.  Keying it instead would strip a fold whose open
+        // state the page never tracked, and lose the reader's gesture rather than some money.
+        let head_gt = match text[open..limit].find('>') {
+            Some(p) => open + p + 1,
+            None    => { at = after; continue; },
+        };
+        if !text[head_gt..sum_open].trim().is_empty() {
+            at = after;
+            continue;
+        }
+        let sum_gt = match text[sum_open..limit].find('>') {
+            Some(p) => sum_open + p + 1,
+            None    => { at = after; continue; },
+        };
+        let sum_close = match next(sum_gt, "</summary>").filter(|&p| p < limit) {
+            Some(p) => p,
+            None    => { at = after; continue; },
+        };
+        let body_from = sum_close + "</summary>".len();
+        let raw = &text[body_from..limit];
+        let lead = raw.len() - raw.trim_start().len();
+        let trimmed = raw.trim();
+        out.push(Fold {
+            ord:     out.len(),
+            summary: collapse_ws(&strip_tags(&text[sum_gt..sum_close])),
+            body:    (body_from + lead)..(body_from + lead + trimmed.len()),
+            chars:   trimmed.chars().count(),
+            closed:  close.is_some(),
+        });
+        at = after;
+    }
+    out
+}
+
+/// Everything outside `<...>`, which is the `<summary>` element's own text.
+///
+/// A `<` with no `>` after it is NOT a tag and is kept, because the browser keeps it too: the JS
+/// half reads this same summary with `textContent`, and a model writing `a < b` in a label would
+/// otherwise key it as `a` here and as `a < b` there -- one label, two keys, and a fold that
+/// never opens.
+fn strip_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    loop {
+        let lt = match rest.find('<') {
+            Some(p) => p,
+            None    => { out.push_str(rest); return out; },
+        };
+        match rest[lt..].find('>') {
+            Some(gt) => {
+                out.push_str(&rest[..lt]);
+                rest = &rest[lt + gt + 1..];
+            },
+            None => { out.push_str(rest); return out; },
+        }
+    }
+}
+
+/// Trimmed, with every internal whitespace run collapsed to one space.
+fn collapse_ws(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The text an assistant message is REPLAYED with, or `None` when nothing in it changes.
+///
+/// The text sibling of [`strip_said`], and it exists for the same reason: a fold's body is for a
+/// person, once.  Left in the transcript it is re-sent on every later request for the life of the
+/// conversation, so a model that explains at length charges for the explanation again on every
+/// turn whether or not anybody looked at it twice.
+///
+/// **The element is kept and only the body is replaced.**  A model that sees the fold it wrote
+/// still knows it folded something and what it called it, which a wholesale deletion would take
+/// away along with the bytes.
+///
+/// Two folds are passed over.  An OPEN one is on the user's screen, so the model holds it too --
+/// their own gesture decides the working set.  An UNCLOSED one is malformed, and [`strip_said`]'s
+/// rule applies: rewriting it replaces a problem the model can see with one it cannot.
+///
+/// # Arguments
+/// * `text` - The assistant's own words, as the model wrote them.
+/// * `open` - The keys of the folds the user has open. See [`Fold::key`].
+fn strip_folds(text: &str, open: &OpenSet) -> Option<String> {
+    let found = folds(text);
+    if found.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0usize;
+    for f in &found {
+        if !f.closed || open.contains(&f.key()) {
+            continue;
+        }
+        // An empty body would be REPLACED by a hundred characters of note, so the one case where
+        // stripping costs tokens rather than saving them is not stripped.
+        if f.chars == 0 {
+            continue;
+        }
+        out.push_str(&text[at..f.body.start]);
+        out.push_str(&fold_note(f.chars));
+        at = f.body.end;
+    }
+    if at == 0 {
+        return None;
+    }
+    out.push_str(&text[at..]);
+    Some(out)
+}
+
+/// How many bytes of an assistant message's text will actually go on the wire.
+///
+/// The sibling of [`sent_args_len`] for the inline fold, and it exists for the same defect: the
+/// compaction trigger in [`crate::agent::compact::msg_bytes`] sized a message by what the model
+/// wrote, while serialisation takes every closed fold's body out.  So the trigger measured a
+/// conversation nobody was going to send, spent the budget on bytes that leave on the way out,
+/// and folded a conversation earlier than it needed to.  Asked here rather than restated there,
+/// because a rule written twice is a rule that eventually disagrees with itself.
+///
+/// # Arguments
+/// * `text` - The assistant's own words.
+/// * `open` - The keys of the folds the user has open.
+pub fn sent_text_len(text: &str, open: &OpenSet) -> usize {
+    match strip_folds(text, open) {
+        Some(replayed) => replayed.len(),
+        None           => text.len(),
+    }
+}
+
+/// Serialise a `ChatMessage` to an OpenAI-API JSON object, including
+/// assistant `tool_calls` and the `tool` role — which `datmap_to_json`
+/// does not carry.
+///
+/// Only the `user` role may carry an image on this side; `system`, `assistant` and `tool` take a
+/// string or text parts and nothing else.  A message of another role that somehow holds one is
+/// flattened to the `[image …]` stand-in rather than sent as a part the API would reject; the
 /// tool results that legitimately produce images are re-homed by
 /// [`build_openai_body`](LlmClient::build_openai_body) instead.
+///
 /// # Arguments
 /// * `msg` - The message to serialise.
 /// * `open` - The `say` folds the user has open, whose detail therefore travels. See
@@ -2844,7 +3228,12 @@ fn message_to_json(msg: &ChatMessage, open: &std::collections::HashSet<String>) 
         ChatMessage::User { content } =>
             fmt!("{{\"role\":\"user\",\"content\":{}}}", openai_content(content)),
         ChatMessage::Assistant { content, tool_calls } => {
-            let text = json_escape(&content.as_text());
+            // The assistant's own words are the one role's text that serialisation rewrites: a
+            // closed `<details>` fold travels as a note in its body's place.  Both branches below
+            // read this, so neither can be given the fold and the other the raw text.
+            let said = content.as_text();
+            let folded = strip_folds(&said, open);
+            let text = json_escape(folded.as_deref().unwrap_or(&said));
             if tool_calls.is_empty() {
                 fmt!("{{\"role\":\"assistant\",\"content\":\"{}\"}}", text)
             } else {
@@ -3612,6 +4001,372 @@ pub mod tests {
 
     use crate::protocol::ImageMedia;
 
+    // ── The two-depth answer, written inline ─────────────────────────────────
+
+    /// The fixture the Rust and JS halves are BOTH tested against.
+    ///
+    /// Authored by the orchestrator and read from disk rather than transcribed into this file,
+    /// so a case added or corrected there cannot silently stop being checked here.
+    const FOLD_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/dev/fixtures/fold_keys.json");
+
+    /// The integers in a JSON array, for the fixture's `body_chars`.
+    fn json_numbers(json: &str, key: &str) -> Vec<usize> {
+        let arr = match find_json_array(json, key) {
+            Some(a) => a,
+            None    => return Vec::new(),
+        };
+        arr.split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse::<usize>().ok())
+            .collect()
+    }
+
+    /// **Every case in `dev/fixtures/fold_keys.json`, driven from the file itself.**
+    ///
+    /// The key is the one name the two languages must agree on, and the fixture is where they
+    /// agree. Three things are checked per case, and the third is the one that carries the risk:
+    /// the keys, the body character counts, and the stripped text -- where a `null` means the
+    /// stripper must leave the input EXACTLY as it found it, which is the assertion a stripper
+    /// that rewrites too eagerly fails.
+    #[test]
+    fn test_every_case_in_the_shared_fold_fixture() {
+        let json = match std::fs::read_to_string(FOLD_FIXTURE) {
+            Ok(s)  => s,
+            Err(e) => panic!("the shared fixture must be readable at {}: {}", FOLD_FIXTURE, e),
+        };
+        // The wording of the note, pinned by the fixture rather than by this file: the JS half
+        // renders the same sentence and the two must not drift apart.
+        let want_note = extract_json_string(&json, "_placeholder").unwrap_or_default();
+        assert_eq!(fold_note(7), want_note.replace("N characters", "7 characters"),
+            "the placeholder wording has drifted from the fixture");
+
+        let cases = match extract_json_objects(&json, "cases") {
+            Some(c) => c,
+            None    => panic!("the fixture has no `cases` array: {}", FOLD_FIXTURE),
+        };
+        // A fixture that stopped being read would pass every case it no longer had, and one that
+        // LOST a case would pass just as quietly.  The floor rises with the file: 11 at first
+        // writing, 15 once nesting, the empty body and the lone angle bracket were pinned.
+        assert!(cases.len() >= 15, "only {} cases read from {}", cases.len(), FOLD_FIXTURE);
+
+        let shut = OpenSet::new();
+        for c in &cases {
+            let name = extract_json_string(c, "name").unwrap_or_default();
+            let input = match extract_json_string(c, "input") {
+                Some(i) => i,
+                None    => panic!("case '{}' has no input", name),
+            };
+            let found = folds(&input);
+
+            let keys: Vec<String> = found.iter().map(|f| f.key()).collect();
+            let want: Vec<String> = extract_json_string_array(c, "keys").unwrap_or_default();
+            assert_eq!(keys, want, "case '{}': keys, from {:?}", name, input);
+
+            let chars: Vec<usize> = found.iter().map(|f| f.chars).collect();
+            assert_eq!(chars, json_numbers(c, "body_chars"),
+                "case '{}': body characters, from {:?}", name, input);
+
+            let got = strip_folds(&input, &shut);
+            match extract_json_string(c, "stripped_all_closed") {
+                Some(w) => assert_eq!(got.as_deref(), Some(w.as_str()),
+                    "case '{}': the strip", name),
+                None    => assert!(got.is_none(),
+                    "case '{}': the stripper rewrote a text it must leave exactly as it found \
+                     it.\n  in:  {:?}\n  out: {:?}", name, input, got),
+            }
+        }
+    }
+
+    /// **A `<details>` inside a fenced region is markup being SHOWN, not a fold.**
+    ///
+    /// Named rather than incidental because it is the likeliest wrong strip in the feature: a
+    /// model quoting the convention to the user -- which the prompt now invites, since the prompt
+    /// itself contains the markup -- would have its example silently edited out from under the
+    /// person reading it, and the fake would steal the ordinal of the real fold below.
+    ///
+    /// Four shapes, and each has failed a stripper written without one of them: a fence with an
+    /// info string, a tilde fence, a fence indented up to three spaces, and a fence INSIDE a
+    /// real fold whose contents include a literal `</details>` that must not end the element.
+    #[test]
+    fn test_a_fold_inside_a_fenced_region_is_not_a_fold() {
+        let shut = OpenSet::new();
+        for (what, text) in [
+            ("a backtick fence with an info string",
+             "```html\n<details>\n<summary>Not a fold</summary>\n\nLiteral.\n\n</details>\n```\n"),
+            ("a tilde fence",
+             "~~~\n<details>\n<summary>Not a fold</summary>\n\nLiteral.\n\n</details>\n~~~\n"),
+            ("a fence indented three spaces",
+             "   ```\n   <details>\n   <summary>Not a fold</summary>\n\n   Literal.\n\n   </details>\n   ```\n"),
+        ] {
+            assert!(folds(text).is_empty(), "{} produced folds: {:?}", what, folds(text).len());
+            assert!(strip_folds(text, &shut).is_none(), "{} was rewritten", what);
+        }
+
+        // The fake takes no ordinal, so the real fold below it is fold ZERO.
+        let mixed = "```\n<details>\n<summary>Fake</summary>\nx\n</details>\n```\n\n\
+                     <details>\n<summary>Real</summary>\n\nYes.\n\n</details>\n";
+        let f = folds(mixed);
+        assert_eq!(1, f.len(), "the fenced fake was counted as a fold");
+        assert_eq!("0:Real", f[0].key(), "the fenced fake consumed an ordinal");
+
+        // A run carrying an INFO STRING opens a fence and can never close one, so a `\u{60}\u{60}\u{60}rust`
+        // line part way through a code block does not end it and hand the rest of the answer back
+        // to the scanner as prose.
+        let info = "```\n<details>\n<summary>Fake</summary>\nx\n```rust\nstill fenced\n```\n\n\
+                    <details>\n<summary>Real</summary>\n\nYes.\n\n</details>\n";
+        assert_eq!(vec![fmt!("0:Real")],
+            folds(info).iter().map(|f| f.key()).collect::<Vec<_>>(),
+            "an info string closed a fence it can only open");
+
+        // And a SHORTER run does not close a longer fence, which is how a model shows a fenced
+        // block inside a fenced block.
+        let longer = "````\n```\n<details>\n<summary>Fake</summary>\nx\n</details>\n```\n````\n\n\
+                      <details>\n<summary>Real</summary>\n\nYes.\n\n</details>\n";
+        assert_eq!(vec![fmt!("0:Real")],
+            folds(longer).iter().map(|f| f.key()).collect::<Vec<_>>(),
+            "a three-backtick run closed a four-backtick fence");
+
+        // A fence INSIDE a fold: the literal `</details>` in the code block must not be taken for
+        // this element's close, or the body is cut short and the remainder left dangling.
+        let inner = "<details>\n<summary>How to write one</summary>\n\n\
+                     ```\n</details>\n```\n\nand that is the shape.\n\n</details>\n";
+        let g = folds(inner);
+        assert_eq!(1, g.len(), "the fold with a fence in it was lost");
+        assert_eq!("0:How to write one", g[0].key());
+        assert!(inner[g[0].body.clone()].ends_with("and that is the shape."),
+            "the body stopped at the fenced `</details>`: {:?}", &inner[g[0].body.clone()]);
+    }
+
+    /// **A nested fold belongs to its parent: no ordinal, no key, no strip of its own.**
+    ///
+    /// Pairing by the FIRST `</details>` rather than the matching one is the failure this guards.
+    /// The browser's parser nests, so the renderer's idea of where the outer fold ends is the
+    /// last tag and the scanner's was the first -- and the strip then replaced the wrong span,
+    /// cutting the body short and leaving the tail of the element sitting in the payload it was
+    /// meant to remove. The shared fixture measures it at 48 characters against the correct 67.
+    ///
+    /// The inner fold needs no key because the outer strip carries it away entirely: a key for a
+    /// body that no longer exists is a fold the user can open to no effect.
+    #[test]
+    fn test_a_nested_fold_is_carried_by_its_parent() {
+        let shut = OpenSet::new();
+        let text = "<details>\n<summary>Outer</summary>\n\nbefore\n\n\
+                    <details>\n<summary>Inner</summary>\n\ndeep\n\n</details>\n\n\
+                    after\n\n</details>\n";
+        let f = folds(text);
+        assert_eq!(vec![fmt!("0:Outer")], f.iter().map(|x| x.key()).collect::<Vec<_>>(),
+            "the inner fold took an ordinal of its own");
+        // The body runs to the LAST closing tag, so it holds the whole inner element.
+        let body = &text[f[0].body.clone()];
+        assert!(body.starts_with("before") && body.ends_with("after"),
+            "the outer body was cut at the inner fold's close: {:?}", body);
+        assert!(body.contains("<summary>Inner</summary>"),
+            "the inner element fell outside its parent's body: {:?}", body);
+        // And the strip takes the whole of it, leaving one element where there were two.
+        let out = match strip_folds(text, &shut) {
+            Some(o) => o,
+            None    => panic!("the outer fold was not stripped"),
+        };
+        assert_eq!(1, out.matches("<details>").count(),
+            "the inner element survived its parent's strip: {}", out);
+        assert!(out.contains("folded to the user, 67 characters"), "{}", out);
+
+        // A nested pair consumes NOTHING, so the next top-level fold is ordinal one.
+        let after = fmt!("{}\n<details>\n<summary>Sibling</summary>\n\nYes.\n\n</details>\n", text);
+        assert_eq!(vec![fmt!("0:Outer"), fmt!("1:Sibling")],
+            folds(&after).iter().map(|x| x.key()).collect::<Vec<_>>(),
+            "the nested fold shifted the ordinal of the one after it");
+
+        // An unlabelled parent does NOT borrow its child's summary. It is not a fold, and neither
+        // is the child, which is inside it -- so the answer is no folds rather than a fold whose
+        // label names something else.
+        let borrowed = "<details>\n\n<details>\n<summary>Inner</summary>\n\ndeep\n\n</details>\n\n</details>\n";
+        assert!(folds(borrowed).is_empty(),
+            "an unlabelled parent wore its child's label: {:?}",
+            folds(borrowed).iter().map(|x| x.key()).collect::<Vec<_>>());
+        assert!(strip_folds(borrowed, &shut).is_none());
+    }
+
+    /// **A malformed fold is left exactly as the model wrote it.**
+    ///
+    /// [`strip_said`]'s rule, and the reason is the same: rewriting a malformed element replaces
+    /// a problem the model can SEE -- its own broken markup, in its own transcript -- with one it
+    /// cannot. An unclosed fold still keys, because its ordinal is settled the moment its summary
+    /// is and the user may already have opened it; it is only the rewrite that stands off.
+    #[test]
+    fn test_a_malformed_fold_is_left_alone() {
+        let shut = OpenSet::new();
+        let unclosed = "<details>\n<summary>Partial</summary>\n\nStill being written";
+        assert_eq!(vec![fmt!("0:Partial")],
+            folds(unclosed).iter().map(|f| f.key()).collect::<Vec<_>>());
+        assert!(strip_folds(unclosed, &shut).is_none(), "an unclosed fold was rewritten");
+
+        let unlabelled = "<details>\n\nNo summary here.\n\n</details>\n";
+        assert!(folds(unlabelled).is_empty(), "a `<details>` with no `<summary>` keyed");
+        assert!(strip_folds(unlabelled, &shut).is_none(), "an unlabelled fold was rewritten");
+
+        // A well-formed fold BESIDE a malformed one is still stripped: the leniency is per fold,
+        // not per message, or one broken element would keep a whole answer on the wire forever.
+        let both = fmt!("{}\n\nand then\n\n{}", unlabelled.trim_end(), unclosed);
+        assert!(strip_folds(&both, &shut).is_none());
+        let good = fmt!("<details>\n<summary>Good</summary>\n\nkept short.\n\n</details>\n\n{}",
+            unclosed);
+        let out = match strip_folds(&good, &shut) {
+            Some(s) => s,
+            None    => panic!("the sound fold beside a broken one was not stripped"),
+        };
+        assert!(out.contains("folded to the user, 11 characters"), "{}", out);
+        assert!(out.ends_with("Still being written"), "the broken fold was touched: {}", out);
+
+        // A fold with an EMPTY body is left alone too, and for the opposite reason: there is
+        // nothing to save, and replacing nothing with a hundred characters of note would cost
+        // tokens rather than save them.
+        let hollow = "<details>\n<summary>Nothing in here</summary>\n\n</details>\n";
+        assert_eq!(vec![fmt!("0:Nothing in here")],
+            folds(hollow).iter().map(|f| f.key()).collect::<Vec<_>>());
+        assert!(strip_folds(hollow, &shut).is_none(), "an empty fold grew a note: {:?}",
+            strip_folds(hollow, &shut));
+    }
+
+    /// **A `<` that opens no tag stays in the label, because the browser keeps it too.**
+    ///
+    /// The JS half reads the summary with `textContent`, which returns `a < b` unchanged. A
+    /// stripper that treated every `<` as a tag opener would key that label `0:a` while the page
+    /// keyed it `0:a < b` -- one label, two keys, and a fold the user opens that never travels.
+    /// The contract says HTML TAGS removed; a `<` with no `>` after it is not one.
+    #[test]
+    fn test_a_lone_angle_bracket_in_a_summary_is_not_a_tag() {
+        let text = "<details>\n<summary>when a < b</summary>\n\nBody.\n\n</details>\n";
+        assert_eq!(vec![fmt!("0:when a < b")],
+            folds(text).iter().map(|f| f.key()).collect::<Vec<_>>());
+        // And a real tag is still removed, which is the half the fixture already pins.
+        let tagged = "<details>\n<summary><em>when</em> a < b</summary>\n\nBody.\n\n</details>\n";
+        assert_eq!(vec![fmt!("0:when a < b")],
+            folds(tagged).iter().map(|f| f.key()).collect::<Vec<_>>());
+    }
+
+    /// **The strip reaches ALL THREE serialisation sites.**
+    ///
+    /// `message_to_json` has two assistant branches -- with tool calls and without -- and
+    /// `build_anthropic_body` has an assistant text path of its own. Missing one means the same
+    /// conversation costs different amounts through different endpoints, silently, which is
+    /// exactly the failure [`sent_args_len`]'s doc comment records for `say`.
+    ///
+    /// Asserted on the finished bodies of both dialects, not on the stripper: a stripper that
+    /// works and is never called is the shape this defect takes.
+    #[test]
+    fn test_the_folded_body_leaves_by_every_serialisation_path() {
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(ClientConfig::builder().dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerify)).with_no_client_auth());
+        const BODY: &str = "THE-WORKING-BEHIND-THE-FOLD";
+        let said = fmt!("Yes, it terminates.\n\n<details>\n<summary>the working</summary>\n\n\
+                         {}\n\n</details>\n", BODY);
+        let msgs = vec![
+            ChatMessage::user(fmt!("does it terminate?")),
+            // The assistant branch with NO tool calls.
+            ChatMessage::Assistant {
+                content:    MessageContent::text(said.clone()),
+                tool_calls: Vec::new(),
+            },
+            ChatMessage::user(fmt!("and again?")),
+            // The assistant branch WITH tool calls, which formats its text separately.
+            ChatMessage::Assistant {
+                content:    MessageContent::text(said.clone()),
+                tool_calls: vec![crate::protocol::ToolCall {
+                    id:        fmt!("call_3"),
+                    name:      fmt!("file_read"),
+                    arguments: fmt!("{{\"path\":\"a.txt\"}}"),
+                }],
+            },
+            ChatMessage::tool(fmt!("call_3"), MessageContent::text(fmt!("ok"))),
+        ];
+        for (host, path) in [("api.test.com", "/v1/chat"), ("api.anthropic.com", "/v1/messages")] {
+            let c = LlmClient::new(host, 443, path, "key", "claude-opus-5", 4096, tls.clone());
+            c.set_open_folds(Vec::new());
+            let body = c.build_body(&msgs, None, false);
+            assert_eq!(0, body.matches(BODY).count(),
+                "a closed fold's body is still on the wire via {}: {}", path, body);
+            assert_eq!(2, body.matches("folded to the user").count(),
+                "via {} only {} of the two assistant messages left a note, so one \
+                 serialisation path does not strip: {}",
+                path, body.matches("folded to the user").count(), body);
+            // The element is KEPT: a model that sees the fold it wrote still knows it folded
+            // something and what it called it.
+            assert_eq!(2, body.matches("<summary>the working</summary>").count(),
+                "the element was deleted rather than emptied, via {}: {}", path, body);
+            assert!(body.contains("Yes, it terminates."),
+                "the short answer above the fold was stripped too, via {}: {}", path, body);
+
+            // And the key JS sends is the key Rust matches: open it and the body travels.
+            c.set_open_folds(vec![fmt!("0:the working")]);
+            assert_eq!(2, c.build_body(&msgs, None, false).matches(BODY).count(),
+                "an OPEN fold was withheld via {}, so the model cannot see what the user is \
+                 reading", path);
+        }
+
+        // The cache-marked serialisation delegates the assistant role rather than repeating it,
+        // and this is the assertion that keeps that true.
+        let shut = OpenSet::new();
+        assert_eq!(message_to_json(&msgs[1], &shut), message_to_json_cached(&msgs[1], &shut),
+            "the cached path grew an assistant branch of its own");
+    }
+
+    /// **What the compaction trigger measures is the text the wire will carry.**
+    ///
+    /// Defect F, one depth further in. [`crate::agent::compact::msg_bytes`] was taught to ask
+    /// [`sent_args_len`] what a `say` costs; an inline fold folds the assistant's own prose
+    /// instead, and a sizer that knew about one and not the other would leave the same defect
+    /// standing with a new name.
+    ///
+    /// The second assertion is the one that matters. A closed fold sizing smaller than an open
+    /// one is satisfied by any discount at all; that the discount is exactly what serialisation
+    /// saves is satisfied only by asking the serialiser.
+    #[test]
+    fn test_the_trigger_sizes_the_folded_text_the_wire_will_carry() {
+        use crate::agent::compact::conversation_bytes;
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(ClientConfig::builder().dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerify)).with_no_client_auth());
+        // Plain letters and spaces on both sides of the swap, so the two bodies differ by the
+        // fold's body and by nothing an escape would change.
+        let working = "the long working behind the fold ".repeat(40);
+        let said = fmt!("Yes.\n\n<details>\n<summary>the working</summary>\n\n{}\n\n</details>\n",
+            working.trim());
+        let msgs = vec![
+            ChatMessage::user(fmt!("explain")),
+            ChatMessage::Assistant {
+                content:    MessageContent::text(said),
+                tool_calls: Vec::new(),
+            },
+        ];
+        let shut = OpenSet::new();
+        let open: OpenSet = [fmt!("0:the working")].into_iter().collect();
+        let sized_shut = conversation_bytes(&msgs, &shut);
+        let sized_open = conversation_bytes(&msgs, &open);
+
+        for (host, path) in [("api.test.com", "/v1/chat"), ("api.anthropic.com", "/v1/messages")] {
+            let c = LlmClient::new(host, 443, path, "key", "claude-opus-5", 4096, tls.clone());
+            c.set_open_folds(Vec::new());
+            let wire_shut = c.build_body(&msgs, None, false).len() as u64;
+            c.set_open_folds(vec![fmt!("0:the working")]);
+            let wire_open = c.build_body(&msgs, None, false).len() as u64;
+
+            assert!(wire_shut < wire_open, "the fixture proves nothing via {}: closing the fold \
+                did not shrink the payload", path);
+            assert!(sized_shut < sized_open,
+                "a closed fold is sized as though its body were still sent, so the trigger folds \
+                 a conversation of {} bytes that goes out as {} (via {})",
+                sized_shut, wire_shut, path);
+            assert_eq!(sized_open - sized_shut, wire_open - wire_shut,
+                "the sizer books {} bytes for closing the fold and the wire saves {} (via {}), \
+                 so the trigger is measuring a rule of its own rather than the serialiser's",
+                sized_open - sized_shut, wire_open - wire_shut, path);
+        }
+    }
+
     #[test]
     fn test_extract_json_string() {
         let json = r#"{"choices":[{"delta":{"content":"hello"}}]}"#;
@@ -3918,12 +4673,16 @@ pub mod tests {
         assert!(json.contains("\\n"));
     }
 
-    /// **The detail a `say` folds does not go over the wire, and the summary does.**
+    /// **The detail a stored `say` folds does not go over the wire, and the summary does.**
     ///
-    /// This is the whole point of the tool. Prose written into a reply is re-sent on every later
-    /// request for the life of the conversation; a fold is read once by a person who then has it
-    /// on their own screen. Left in the payload the tool would save nothing at all — it would be
-    /// a presentation device that quietly cost the same as saying everything twice.
+    /// This was the whole point of the tool, and the tool is gone — so this is now the guard on
+    /// what remains of it. A conversation saved before the `<details>` convention still carries
+    /// `say` tool_calls, and every one of them is re-sent on every later request for the life of
+    /// that conversation. Delete the stripper with the tool and nothing on screen changes: those
+    /// answers simply start travelling in full again, and the bill goes up on the conversations
+    /// the feature existed to make cheap. The message below is exactly that — an assistant turn
+    /// out of an old transcript, built by NAME rather than through any `Tool`, because there is no
+    /// longer a variant to build it from.
     ///
     /// BOTH DIALECTS, because they serialise a call in ways that look nothing alike: one escapes
     /// the arguments into a JSON string, the other embeds them as an object. A rule applied at one
@@ -4023,6 +4782,71 @@ pub mod tests {
             c.set_open_folds(vec![fmt!("some_other_call")]);
             assert!(!c.build_body(&msgs, None, false).contains(DETAIL),
                 "closing a fold did not take it back out of the payload, via {}", path);
+        }
+    }
+
+    /// **What the compaction trigger measures is what the wire will carry.**
+    ///
+    /// [`crate::agent::compact::msg_bytes`] sized a `say` with `tc.arguments.len()` -- the full
+    /// call as the model wrote it -- while [`strip_said`] takes a closed fold's detail out at
+    /// serialisation.  So the trigger measured a conversation nobody was going to send, spent the
+    /// budget on bytes that leave on the way out, and folded earlier than it needed to.  The
+    /// [`Gauge`](crate::agent::compact::Gauge) absorbed part of that by recalibrating
+    /// tokens-per-byte against the provider's real `prompt_tokens`, but the ratio is one number
+    /// for the whole conversation, so the correction was paid for by distorting every other
+    /// message's estimate.
+    ///
+    /// Two things are asserted and the second is the one that matters.  A closed fold sizing
+    /// smaller than an open one is satisfied by ANY discount, arbitrary or not; that the discount
+    /// is exactly the number of bytes serialisation actually saves is satisfied only by asking
+    /// the serialiser, which is what [`sent_args_len`] does.
+    ///
+    /// Both dialects, because the strip applies to both and a sizing that matched one of them
+    /// would mean the same conversation folded at different lengths through different endpoints.
+    #[test]
+    fn test_the_fold_trigger_sizes_what_the_wire_will_carry() {
+        use crate::agent::compact::conversation_bytes;
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(ClientConfig::builder().dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerify)).with_no_client_auth());
+        // Plain letters and spaces: nothing here is escaped differently from the note that
+        // replaces it, so the two bodies differ by the detail and by nothing else.
+        let detail = "the long explanation behind the fold ".repeat(40);
+        let msgs = vec![
+            ChatMessage::user(fmt!("explain")),
+            ChatMessage::Assistant {
+                content: MessageContent::text(String::new()),
+                tool_calls: vec![crate::protocol::ToolCall {
+                    id:        fmt!("call_9"),
+                    name:      fmt!("say"),
+                    arguments: fmt!("{{\"summary\":\"the gist\",\"detail\":\"{}\"}}", detail),
+                }],
+            },
+            ChatMessage::tool(fmt!("call_9"), MessageContent::text(fmt!("Shown."))),
+        ];
+        let shut = OpenSet::new();
+        let open: OpenSet = [fmt!("call_9")].into_iter().collect();
+        let sized_shut = conversation_bytes(&msgs, &shut);
+        let sized_open = conversation_bytes(&msgs, &open);
+
+        for (host, path) in [("api.test.com", "/v1/chat"), ("api.anthropic.com", "/v1/messages")] {
+            let c = LlmClient::new(host, 443, path, "key", "claude-opus-5", 4096, tls.clone());
+            c.set_open_folds(Vec::new());
+            let wire_shut = c.build_body(&msgs, None, false).len() as u64;
+            c.set_open_folds(vec![fmt!("call_9")]);
+            let wire_open = c.build_body(&msgs, None, false).len() as u64;
+
+            assert!(wire_shut < wire_open, "the fixture proves nothing via {}: closing the fold \
+                did not shrink the payload", path);
+            assert!(sized_shut < sized_open,
+                "a closed fold is sized as though its detail were still sent, so the trigger \
+                folds a conversation of {} bytes that goes out as {} (via {})",
+                sized_shut, wire_shut, path);
+            assert_eq!(sized_open - sized_shut, wire_open - wire_shut,
+                "the sizer books {} bytes for closing the fold and the wire saves {} (via {}), \
+                so the trigger is measuring a rule of its own rather than the serialiser's",
+                sized_open - sized_shut, wire_open - wire_shut, path);
         }
     }
 

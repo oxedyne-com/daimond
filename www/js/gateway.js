@@ -1222,14 +1222,35 @@
 	/// does not know the view -- is the same answer as "no role": the console
 	/// is offered only on a definite yes, because an entry that leads to a
 	/// locked door is worse than no entry at all.
+	///
+	/// THE MEMO IS NOT WRITTEN BEFORE THE ANSWER. `state.role` was set to null on the way
+	/// IN, as a placeholder, so a second caller arriving while the first ask was still in
+	/// flight was answered "no role" by a request that had not come back. Home draws its
+	/// console entry hidden and reveals it on that answer, and `renderHome` runs more than
+	/// once around an unlock -- so whichever draw lost the race kept a hidden entry for the
+	/// rest of the session while `state.role` went on to hold 'owner'. An owner then loses
+	/// the console until they lock and unlock. Measured 2026-08-21: seven runs of
+	/// `dev/verify_operator_button` in thirty-eight failed exactly that way, every ask
+	/// answered 200.
+	///
+	/// A SECOND CALLER MAKES ITS OWN ASK, AND THAT IS DELIBERATE. Sharing one promise
+	/// between callers was tried and reverted the same day: it is the shape the block above
+	/// `reauth()` exists to forbid -- ownership travels with the call, and a promise another
+	/// caller can join is not evidence about THIS call. `whoami` can meet a 401 and renew,
+	/// so a joined ask can be a bootstrap's own call and a stranger's at once, which is the
+	/// state that parked `reauthing` and took a tab silent for two days. One duplicate
+	/// request is the cheaper mistake.
 	async function operatorRole() {
 		if (state.role !== undefined) return state.role;
-		state.role = null;
+		var got = null;
 		try {
 			var j = await get('/api/admin?view=whoami');
-			state.role = (j && j.role) || null;
-		} catch (e) { state.role = null; }
-		return state.role;
+			got = (j && j.role) || null;
+		} catch (e) { got = null; }
+		// A lock in the middle of the ask has already cleared the memo, and the answer
+		// belongs to the session that has gone, so it is not written back.
+		if (state.authed) state.role = got;
+		return got;
 	}
 
 	/// End this device's session on the gateway.

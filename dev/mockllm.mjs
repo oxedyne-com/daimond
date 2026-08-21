@@ -36,10 +36,42 @@
 //                            treated as one. There was no way to produce it, so
 //                            the branch that tells them apart could not be tested.
 //   @slow <ms>               reply after a delay
+//   @look <path>             the model that keeps trying to LOOK. It answers with
+//                            `file_read {"path":…,"as":"image"}` until a tool result
+//                            has come back, and with words afterwards. Unlike every
+//                            directive above it is read from the WHOLE transcript
+//                            rather than from the last user message, because a worker
+//                            moved to another model is RESUMED -- its new session is
+//                            seeded with its own task and text and the last thing in
+//                            it is the app's nudge. A mock that only read the last
+//                            message would answer that nudge with prose, the second
+//                            leg would carry no picture, and a verifier could not
+//                            tell a correct re-route from a broken one.
 //
 // Anything else gets a short generic reply.  Every request is appended to
 // dev/mockllm.log as JSON lines, so a test can assert on what the model was
 // actually shown — the system prompt, the tool results, the whole transcript.
+//
+// ── Blindness is a property of the MODEL NAME ─────────────────────────────
+//
+// A model whose id contains `blind` refuses any request that carries a picture, with
+// the 400 and the words a real provider uses; `mock/eyes` takes it.  Both answer at
+// THIS endpoint, with this key, at the same time, which is the whole point: a test of
+// vision routing has to watch the work move from one model to another, and if
+// blindness were a directive or a flag it would be a property of the REQUEST — the
+// very thing the app under test is being asked to change.  So it is a property of the
+// name, which is what it is in the real world.
+//
+// The refusal's shape is not decorative.  `LlmClient::stream_turn` (src/llm.rs, the
+// `!started && !retried_blind && images > 0` arm) learns that an endpoint is blind by
+// being refused ONCE: it calls `mark_blind`, takes the pictures out, and sends the same
+// turn again.  A 200 saying no, or a refusal before the pictures are logged, teaches it
+// nothing.  Hence: log first, then refuse, with `image_url` in the provider's own words.
+//
+// Every logged request carries `images` — how many picture parts it held, in either
+// dialect — and a refused one carries `refusedImages`.  Those two fields are what let a
+// verifier say "the second leg named the other model AND carried the picture", which is
+// what a re-route looks like from outside.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -56,7 +88,30 @@ const MODELS = [
 	'mock/fast',
 	'mock/thinker',
 	'accounts/fireworks/models/glm-5p2',
+	// Appended, never inserted: dev/verify_diamondmodels.mjs picks "the first model
+	// in the pulldown that is not the one already chosen", so the order of the three
+	// above is load-bearing for a file that is not about vision at all.
+	'mock/blind',
+	'mock/eyes',
 ];
+
+/// Is this a model that cannot be shown pictures?
+///
+/// Substring, like [`model_can_see`]'s deny-list in src/llm.rs, so a test can mint a
+/// second blind model — `mock/blind-too` — without touching this file. That is what
+/// the no-ping-pong check needs: a Diamond whose IMAGE model is itself blind.
+const isBlindModel = (model) => /blind/i.test(String(model || ''));
+
+/// How many picture parts a request carries, in either wire dialect.
+///
+/// OpenAI puts them in the content array as `{"type":"image_url",…}` and the Messages
+/// API as `{"type":"image","source":{…}}`; both are counted because the mock does not
+/// know which dialect the caller configured.
+const imageCount = (messages) => (messages || []).reduce((n, m) => {
+	const c = m && m.content;
+	if (!Array.isArray(c)) return n;
+	return n + c.filter((p) => p && (p.type === 'image_url' || p.type === 'image')).length;
+}, 0);
 
 // Requests are logged for assertion, newest last.  A test truncates the file
 // first, then reads it back to see what the model saw.
@@ -98,6 +153,29 @@ const toolRounds = (messages) => {
 	}
 	return messages.slice(lastUserIdx + 1).filter(m => m.role === 'tool').length;
 };
+
+// The path a `@look` named, from ANY user message in the conversation, or ''.
+//
+// The whole transcript rather than the last message, and see the header for why: a
+// resumed worker's last user message is the app's own nudge, not its task. The last
+// occurrence wins, so a second `@look` in a later turn replaces the first.
+const lookPath = (messages) => {
+	let found = '';
+	for (const m of messages || []) {
+		if (!m || m.role !== 'user') continue;
+		const c = typeof m.content === 'string' ? m.content
+			: Array.isArray(m.content) ? m.content.map(p => (p && p.text) || '').join(' ')
+			: '';
+		const hit = /(^|\s)@look\s+(\S+)/.exec(c);
+		if (hit) found = hit[2];
+	}
+	return found;
+};
+
+// Has this session already been handed a tool result?  Anywhere in the transcript,
+// not just since the last user message, because a look that already happened must not
+// happen again inside the same session however many nudges follow it.
+const hasLooked = (messages) => (messages || []).some(m => m && m.role === 'tool');
 
 const parseDirective = (text) => {
 	const t = (text || '').trim();
@@ -169,6 +247,34 @@ const crystalReply = (words) => JSON.stringify({
 const plan = (messages) => {
 	const d      = parseDirective(lastUser(messages));
 	const rounds = toolRounds(messages);
+
+	// A worker that was told to look keeps trying until it has looked.  Before the
+	// switch, so a RESUMED session -- whose last user message is the app's nudge and
+	// whose task is buried two messages up -- still asks for the picture.  Reached only
+	// by a conversation that actually carries `@look`: every other transcript takes the
+	// path it took yesterday, byte for byte.
+	//
+	// AND BEFORE THE REDUCER, which is not where it was first put.  `isReducer` matches
+	// any conversation whose SYSTEM prompt says "crystal", and a worker's does: its role
+	// prompt is composed with the Diamond's crystal.  So every worker request whose last
+	// user message is not a directive -- the tool-result round, and the app's own nudge
+	// on a resumed leg -- was being answered with a crystal proposal.  Harmless while the
+	// re-route does not exist, and fatal the moment it does: the second leg's first
+	// request would have been answered with JSON instead of a `file_read`, no picture
+	// would ever have reached the sighted model, and dev/verify_vision.mjs's first check
+	// would have failed against a working fix.  A worker is not a reducer, and a
+	// conversation carrying `@look` is never a fold.
+	if (d.kind === 'look' || d.kind === 'plain') {
+		const look = lookPath(messages);
+		if (look) {
+			if (!hasLooked(messages)) {
+				return { calls: [toolCall(nextCallId(), 'file_read', { path: look, as: 'image' })] };
+			}
+			// Names the file, so a resumed session's seeded assistant message is
+			// recognisable as THIS worker's own earlier words and not a generic reply.
+			return { text: `Looked at ${look}.` };
+		}
+	}
 
 	// Before the directives: a reducer answered with prose is a fold that cannot
 	// land. `@text` and the rest still win, so a test that wants to exercise a
@@ -379,14 +485,37 @@ const server = http.createServer((req, res) => {
 		}
 
 		const messages = payload.messages || [];
+		// A blind model refuses a picture; the count is needed either way, because a
+		// verifier reads it back to say which leg carried one.
+		const images  = imageCount(messages);
+		const refused = images > 0 && isBlindModel(payload.model);
 		log({
 			at:        new Date().toISOString(),
 			model:     payload.model,
 			stream:    !!payload.stream,
 			tools:     (payload.tools || []).map(t => t.function?.name).filter(Boolean),
 			auth:      !!(req.headers.authorization),
+			images,		// picture parts in this request, either dialect
+			...(refused ? { refusedImages: true } : {}),
 			messages,	// the whole transcript, so a test can assert what was sent
 		});
+
+		// THE REFUSAL A REAL PROVIDER SENDS, and it is logged before it is sent: the
+		// request that was turned away is the evidence that the app was on the wrong
+		// model, so a mock that refused before logging would hide the very thing.
+		//
+		// 400 with the provider's own words about `image_url`. `stream_turn` does not
+		// read them -- it retries on any refusal of a turn that carried pictures -- but
+		// `vision_error` (src/llm.rs) does, and it only names the model when the
+		// provider's sentence is about images. So the wording is part of the fixture.
+		if (refused) {
+			return sendJson(res, { error: {
+				message: 'this model does not support image_url content',
+				type:    'invalid_request_error',
+				param:   'messages',
+				code:    'unsupported_content',
+			} }, 400);
+		}
 
 		const p = plan(messages);
 

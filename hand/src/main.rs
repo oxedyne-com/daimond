@@ -63,6 +63,7 @@ use daimond_hand::{
         Seccomp,
         Spec as SysSpec,
     },
+    verify,
     wire::{
         proto_ok,
         proto_refusal,
@@ -286,6 +287,30 @@ fn report() -> Outcome<()> {
             }
         },
         Err(e) => println!("  - none: {}", e.msgs().join(" ")),
+    }
+    println!();
+
+    // WHAT RUNS OUTSIDE THE FENCE, said to a person before the fence is described --
+    // because a list of what the compartment enforces, printed above a verb that steps
+    // around it, would be a report that told the truth twice and the whole truth never.
+    println!("Verifiers it will run, OUTSIDE the fence:");
+    match journal::default_dir().and_then(|d| granted_root(&d)) {
+        Ok(root) => match verify::catalogue(&root) {
+            Ok(v) if v.is_empty() => println!(
+                "  - none: there is no dev/verify_*.mjs in that folder, so the \
+                verify verb refuses on this machine."),
+            Ok(v) => {
+                println!("  {} in {}", v.len(), root.join(verify::DEV_DIR).display());
+                println!(
+                    "  Each is run by NAME, looked up in that directory, with an argument \
+                    vector this program builds; a page cannot name a path, a program or an \
+                    argument. They run unfenced deliberately -- a fenced command cannot \
+                    reach the display server, so a verifier that drives a browser cannot \
+                    run at all -- and each run is journalled with fence:none.");
+            },
+            Err(e) => println!("  - none: {}", e.msgs().join(" ")),
+        },
+        Err(_) => println!("  - none, since no folder is granted."),
     }
     println!();
 
@@ -1293,6 +1318,10 @@ impl Desk {
         caps.extend(self.sys.caps());
         caps.push(fmt!("root:{}", self.root.display()));
         caps.push(self.ws.cap());
+        // Whether this folder holds verifiers at all. A page that knows the answer can say
+        // "not on this computer" once, instead of letting a model find it out one refusal at
+        // a time -- which is what `fence:` beside it is for.
+        caps.push(verify::cap(&self.root));
         // Where the user's home is, so the page can place a toolkit.
         //
         // A compiler does not live in the workspace: cargo is under ~/.cargo, node under
@@ -1485,6 +1514,96 @@ impl Desk {
         Ok(())
     }
 
+    /// Runs a named verifier, clean and under each break it declares.
+    ///
+    /// The gates are the same three a command meets, in the same order and for
+    /// the same reasons -- the record must be writable, the request must be
+    /// written down, and only then does anything run -- and then two of its own:
+    ///
+    /// * **The name has to resolve to a file that is really there.**
+    ///   [`verify::resolve`] reads the directory and matches; what goes on to
+    ///   the command line is the directory entry, not the caller's string.
+    /// * **The break has to be one the verifier declares**, parsed out of that
+    ///   file's own source by [`verify::declared_breaks`].
+    ///
+    /// The fence is NOT one of them, and that is the deliberate difference from
+    /// [`Desk::exec`].  A fenced command cannot reach the display server's
+    /// socket or listen on a port, so a verifier that drives a browser cannot
+    /// run under one at all -- and the whole reason this verb exists is that
+    /// browser evidence was the half of a release a daimon could not produce.
+    /// What is fenced here is the INPUT: a name looked up in a directory and a
+    /// break looked up in a file, with no route from a model's text to a
+    /// program, an argument or a path.
+    ///
+    /// # Arguments
+    /// * `req` - The [`Req::Verify`].
+    async fn verify(&self, req: Req) -> Outcome<()> {
+        let (id, name, want, budget_ms) = match &req {
+            Req::Verify { id, name, breaks, timeout_ms } =>
+                (id.clone(), name.clone(), breaks.clone(), *timeout_ms),
+            _ => return Ok(()),
+        };
+
+        // A run whose record cannot be written is a run that does not happen. The same
+        // sentence as `exec`'s, because it is the same promise.
+        if !self.sound.load(Ordering::SeqCst) {
+            self.refuse(&id, fmt!(
+                "Refused: the hand's journal cannot be written, and a run that cannot be \
+                written down is not made. Look at the hand's standard error for what the file \
+                system said."));
+            return Ok(());
+        }
+
+        let script = match verify::resolve(&self.root, &name) {
+            Ok(s)  => s,
+            Err(s) => { self.refuse(&id, s); return Ok(()); },
+        };
+        let breaks = match verify::chosen(&script, &want) {
+            Ok(b)  => b,
+            Err(s) => { self.refuse(&id, s); return Ok(()); },
+        };
+        let node = match verify::on_path("node") {
+            Some(n) => n,
+            None    => {
+                self.refuse(&id, fmt!(
+                    "Refused: there is no 'node' on this hand's PATH, and every verifier in \
+                    dev/ is a Node script. Nothing was run. Tell the user; the file tools and \
+                    'run' do not need it."));
+                return Ok(());
+            },
+        };
+
+        // A budget of nothing is a budget the caller forgot rather than one they meant.
+        let budget = match budget_ms {
+            0	=> verify::BUDGET_DEFAULT_MS,
+            n	=> n.min(verify::BUDGET_MAX_MS),
+        };
+
+        let job = verify::Job {
+            id:     id.clone(),
+            root:   self.root.clone(),
+            script,
+            breaks,
+            node,
+            budget: Duration::from_millis(budget),
+            ledger: verify::Ledger::new(Arc::clone(&self.jr), Arc::clone(&self.sound)),
+        };
+
+        // A task of its own, as a command is: the dispatcher must stay able to answer while a
+        // sequence of browser verifiers runs for twenty minutes.
+        let bulk = self.bulk.clone();
+        let ctl  = self.ctl.clone();
+        tokio::spawn(async move {
+            if let Err(e) = verify::conduct(job, bulk).await {
+                let _ = ctl.send(Resp::Error {
+                    id:      Some(id),
+                    message: fmt!("{}", e),
+                }).await;
+            }
+        });
+        Ok(())
+    }
+
     /// Passes a signal to a run.
     ///
     /// The record is written first, as everywhere else, but a failure to write
@@ -1548,6 +1667,7 @@ impl Desk {
                             eprintln!("daimond-hand: resize was not delivered: {}", e);
                         }
                     },
+                    Req::Verify { .. } => res!(self.verify(req).await),
                     Req::Signal { .. } => res!(self.signal(&req)),
                     Req::Bye => {
                         // Written down before anything is stopped.

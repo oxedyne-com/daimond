@@ -4,7 +4,9 @@
 // and `dev/stamp-build.mjs`, and BEFORE the files leave for the server:
 //
 //   wasm-pack build --target web --out-dir www/pkg
-//   node dev/stamp-build.mjs            # www/build.json — the staleness id
+//   node dev/stamp-build.mjs "what changed"   # www/build.json — the staleness id
+//                                             # and the note; the note is REQUIRED
+//                                             # since 2026-08-21, no commit-subject fallback
 //   node verify/manifest.mjs            # www/manifest.json + transparency entry
 //
 // It writes `www/manifest.json` — a SHA-256 for every served file and one bundle

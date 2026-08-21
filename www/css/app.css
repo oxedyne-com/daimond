@@ -663,6 +663,15 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    invariant 2 -- the light and the global spend readout are both still there. */
 .session-box[data-detail="simple"] .session-box-spend { display: none; }
 .session-box-spend { font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* The Diamond tile's meter row: context bar · relative time · spend, in the
+   shape of the meter on an ordinary chat tile (`.tile-meter`) minus the token
+   count. Shown in Max, hidden in Simple with the rest of the comparable
+   detail -- it is information, not a control, so invariant 2 is untouched.
+   A missing context bar means the daimon has spent no tokens or its model
+   publishes no window; the row still carries time and spend, so it renders
+   whenever either exists. */
+.diamond-meter { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+.session-box[data-detail="simple"] .diamond-meter { display: none; }
 /* Tags, on a row of their own. They used to sit inline in `session-box-meta`,
    which read as though they belonged to the version number and the model chip,
    and a heavily-filed Diamond pushed the rest of the row off the tile.
@@ -673,8 +682,22 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    of silently reversing it: the row inherited nothing, so a `display: none` was
    written for it and nothing in the suite went red. Finding a Diamond by its tag
    is the one thing Simple must not take away, because Simple is the view with
-   fewer other ways to tell two tiles apart. */
-.session-box-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+   fewer other ways to tell two tiles apart.
+
+   EVERY TAG RENDERS and the row SCROLLS SIDEWAYS rather than wrapping or
+   truncating with a +N chip: an unrendered tag cannot be clicked into a filter,
+   so the overflow chip hid the one thing a tag exists for. The row does not
+   wrap, and `scrollbar-width: none` keeps a scrollbar from stealing a row of
+   height on a narrow rail -- the chips say "more this way" by being cut at the
+   edge, which is the affordance a horizontal clip gives for free. */
+.session-box-tags {
+	display: flex; flex-wrap: nowrap; gap: 4px; margin-top: 3px;
+	overflow-x: auto; overflow-y: hidden;
+	scrollbar-width: none;           /* Firefox */
+	-ms-overflow-style: none;        /* legacy Edge */
+}
+.session-box-tags::-webkit-scrollbar { display: none; }   /* Chromium/Safari */
+.session-box-tags .tag-chip { flex: none; }                /* keep chips their own width */
 
 /* Simple is a DESIGN, not a subtraction. Take the room the hidden rows leave
    and give it to what is left, or the tile reads as the dense one with holes in
@@ -1460,6 +1483,15 @@ span.arte-open { cursor: default; }
 /* A worker routed by modality. Marked rather than recoloured: which model a run
    is on is the fact, and how it came to be on it is a note about that fact. */
 .acard .achip-model.achip-vision { border-style: dashed; }
+/* A worker that was MOVED names both models in the chip itself -- the one it left
+   and the one it went to. Wider than an ordinary model chip because it carries two
+   names, and it must not ellipse away the half that says anything moved. */
+.acard .achip-model.achip-rerouted { max-width: 232px; border-style: dashed; border-color: var(--accent); color: var(--text-secondary); }
+/* What the app did to a picture, in the app's own voice, under the chips. Not a
+   title: a tooltip is not disclosure, and a tooltip was all this said on the night
+   it sent a whole run to a model that could not see. */
+.acard .anote { font-size: var(--fs-2xs); line-height: 1.35; margin: 3px 0 0; color: var(--text-muted); }
+.acard .anote.avision { color: var(--text-secondary); }
 
 .acard { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; padding: 8px 9px; flex: none; }
 .acard.running { border-color: var(--border-2); }
@@ -3265,3 +3297,56 @@ body.resizing { cursor: col-resize; user-select: none; }
 	color: var(--accent-text);
 	border-color: var(--accent);
 }
+
+/* ── A fold the model wrote itself ────────────────────────────────────
+   `<details>` now survives the renderer's whitelist, so a model can fold
+   part of an answer away in the answer itself, with no tool involved. The
+   class is stamped by the sanitiser (`render.js`) rather than matched on a
+   bare `details`, because the app draws one of its own -- the release notes'
+   list of sealed builds, `.rel-builds` -- and that one keeps the browser's
+   look. A model's fold cannot reach this selector without going through the
+   sanitiser first.
+
+   Drawn as the `say` fold above is drawn, and for the same reasons: a left
+   edge that says folded rather than merely short, a muted label, and a rule
+   between the label and what it opens onto. The disclosure triangle is the
+   browser's own, inheriting `color` from the summary, since a model's
+   summary text can be anything and a fold with no affordance but a colour
+   change is a fold nobody opens. */
+details.md-fold {
+	margin: 8px 0;
+	padding-left: 10px;
+	border-left: 2px solid var(--accent-soft);
+}
+details.md-fold > summary {
+	padding: 4px 0;
+	color: var(--text-muted);
+	font-size: var(--fs-sm);
+	cursor: pointer;
+}
+details.md-fold > summary:hover { color: var(--accent-text); }
+details.md-fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Set apart from the label above it, or an opened fold reads as one long
+   answer and the reader loses which part they chose to see. Only when open:
+   a closed fold is a single line and a rule under it marks off nothing. */
+details.md-fold[open] > summary {
+	margin-bottom: 8px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--border);
+}
+/* The last paragraph inside carries the bottom margin every `p` gets, which
+   below a border reads as the fold not having ended. */
+details.md-fold > :last-child { margin-bottom: 0; }
+
+/* ── The same fold, drawn while it is still arriving ──────────────────
+   A fold that streams keeps ONE `<details>` for the whole of a generation --
+   rebuilt per frame it would snap shut sixty times a second -- so the chat
+   redraws its body inside a wrapper rather than the element itself, and the
+   runs of ordinary answer around it get wrappers of their own. Neither is a
+   box: no margin, no padding, no rule, so a fold watched arriving and the same
+   fold after a reload are the same picture.
+
+   `> :last-child` above lands on the wrapper rather than on the paragraph it
+   holds, which is why the rule is repeated one level in. */
+details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
+.chat-msg-content > .md-seg > :last-child { margin-bottom: 0; }

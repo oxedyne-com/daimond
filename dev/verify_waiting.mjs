@@ -244,6 +244,11 @@ const send = async (p, text) => {
 };
 
 /// Wait for the composer to offer Send again — the app's own "the turn is over".
+///
+/// `took` is how long that was, and it is reported rather than discarded: the
+/// provider-failure exits below are the two turns whose length is a POLICY, and a
+/// silent timeout is how a widened retry budget came to read as a stuck
+/// indicator. See the `@err` loop.
 const settle = async (p, timeout = 40000) => {
 	const t0 = Date.now();
 	while (Date.now() - t0 < timeout) {
@@ -251,10 +256,10 @@ const settle = async (p, timeout = 40000) => {
 			const b = document.getElementById('chat-send');
 			return !!b && (b.classList.contains('stop') || b.disabled);
 		});
-		if (!busy) return true;
+		if (!busy) return { ended: true, took: Date.now() - t0 };
 		await p.waitForTimeout(100);
 	}
-	return false;
+	return { ended: false, took: Date.now() - t0 };
 };
 
 /// Make a NEW chat from the rail, and say which one it turned out to be.
@@ -329,7 +334,7 @@ check('the chat has a scratch folder, so its tools have real work to do', !!SCRA
 
 await watch(p);
 await send(p, `@chain file_write {"path":"${SCRATCH}/waiting.txt","content":"hello"}`);
-check('the multi-call turn ran to the end', await settle(p));
+check('the multi-call turn ran to the end', (await settle(p)).ended);
 const shown = await reap(p);
 
 check('the app was seen working, so there was something to watch',
@@ -379,7 +384,7 @@ await p.waitForTimeout(200);
 
 await watch(p);
 await send(p, `@chain file_write {"path":"${SCRATCH}/waiting2.txt","content":"again"}`);
-check('the hidden-steps turn ran to the end', await settle(p));
+check('the hidden-steps turn ran to the end', (await settle(p)).ended);
 const hidden = await reap(p);
 
 // Prove the case is really the hidden one before asserting anything about it.
@@ -408,7 +413,7 @@ const wasUp = await p.evaluate(() =>
 	!!document.querySelector('#chat-output .chat-spinner'));
 check('a long answer is still being watched over while it streams', wasUp);
 await p.evaluate(() => document.getElementById('chat-send').click());   // Stop
-check('the stopped turn ended', await settle(p));
+check('the stopped turn ended', (await settle(p)).ended);
 await reap(p);
 const stopped = await resting(p);
 check('stopping a turn takes the indicator down with it',
@@ -416,10 +421,30 @@ check('stopping a turn takes the indicator down with it',
 
 // ── Exit: the provider fails ────────────────────────────────────────
 
-for (const code of [500, 403]) {
+// A 500 IS RETRIED AND A 403 IS NOT, so the two are not the same turn with a
+// different number in it, and giving them one budget was what made this file red.
+//
+// `RetryPolicy::default()` (src/llm.rs) treats a 5xx as transient: eight attempts
+// over up to 120 s of backoff, widened from four over 20 s on 2026-08-19 so that a
+// laptop waking in another building keeps its turn. Measured in world 7 on
+// 2026-08-21 the retry notices land at 1.1, 1.7, 2.8, 4.8, 12.1, 20.9 and 40.8 s
+// and the turn ends at 59-69 s -- past the 40 s this waited, so it reported a
+// stuck indicator on a turn that was still correctly retrying. The indicator was
+// doing exactly what this file exists to require.
+//
+// So each code carries its own bound, and the bound on the 403 is the assertion:
+// a refusal the client must not retry has to end PROMPTLY. Should 403 ever be
+// classified retryable, the 403 arm goes over 15 s and this says so — which the
+// single shared budget could not.
+for (const { code, budget, why } of [
+	{ code: 500, budget: 180000, why: 'retried: eight attempts, up to 120s of backoff' },
+	{ code: 403, budget:  15000, why: 'not retried: the provider has answered' },
+]) {
 	await watch(p);
 	await send(p, '@err ' + code);
-	check(`the ${code} turn ended`, await settle(p));
+	const end = await settle(p, budget);
+	check(`the ${code} turn ended`, end.ended,
+		`${(end.took / 1000).toFixed(1)}s of ${budget / 1000}s — ${why}`);
 	await reap(p);
 	const r = await resting(p);
 	check(`a ${code} from the provider takes the indicator down`,

@@ -39,7 +39,10 @@ async fn run() -> Outcome<()> {
     // is a tmpfs, so whatever the agent writes there stays resident in memory.
     let dir = res!(oxedyne_fe2o3_test::scratch::scratch_dir("daimond_smoke"));
     let ws = res!(Workspace::new(dir.clone()));
-    let ctx = ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: oxedyne_daimond::tools::FileRoot::Workspace, read_seen: oxedyne_daimond::tools::new_read_cache(), no_write: Vec::new() };
+    let ctx = ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: oxedyne_daimond::tools::FileRoot::Workspace, read_seen: oxedyne_daimond::tools::new_read_cache(), no_write: Vec::new(),
+        // The Diamond this turn belongs to. A smoke run belongs to none, which is
+        // the same thing an ordinary chat says.
+        daimon_of: String::new() };
     let registry = ToolRegistry::new(Tool::defaults(), ctx);
 
     let mut session = Session::new("smoke".to_string(), "Smoke".to_string(),
@@ -53,7 +56,10 @@ async fn run() -> Outcome<()> {
     let mut on_event = |ev: AgentEvent| {
         match ev {
             AgentEvent::Text(t) => print!("{}", t),
-            AgentEvent::ToolCall { name, args } => println!("\n[tool_call] {} {}", name, args),
+            // `id` is the provider's own call id, which pairs a call with its reply.
+            // A smoke run prints neither side by id, so it is named and dropped rather
+            // than matched with `..` -- a new field should break this again on purpose.
+            AgentEvent::ToolCall { name, args, id: _ } => println!("\n[tool_call] {} {}", name, args),
             AgentEvent::ToolResult { name, result } => {
                 let r = if result.len() > 200 { &result[..200] } else { &result };
                 println!("[tool_result] {} -> {}", name, r);

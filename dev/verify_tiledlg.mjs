@@ -391,22 +391,38 @@ try {
 			const e = box.querySelector(sel);
 			return { present: !!e, visible: !!e && e.getClientRects().length > 0 };
 		};
-		return { detail: box.dataset.detail, ver: st('.session-box-ctx'), time: st('.session-box-time'),
-			meta: st('.session-box-meta') };
+		return { detail: box.dataset.detail, time: st('.session-box-time'),
+			meter: st('.diamond-meter'), meta: st('.session-box-meta') };
 	});
 	const simple = await shownAt();
 	check(simple && simple.detail === 'simple', 'a new tile starts Simple', simple && simple.detail);
-	check(simple && simple.ver.present && simple.time.present && simple.meta.visible,
-		'the tile really has a version, a timestamp and a visible meta row to hide',
+	// WHAT A DIAMOND TILE HOLDS CHANGED ON 2026-08-21, and this block asserted the
+	// shape before it. Two things moved and one went:
+	//
+	//   * the crystal version left the tile altogether, on the owner's instruction
+	//     -- `.session-box-ctx` is not drawn on a Diamond at all now, so asking
+	//     whether Simple hides it is asking about something that does not exist;
+	//   * the relative time moved out of the meta row into `.diamond-meter`, below
+	//     the tags, where it sits beside the spend it belongs with;
+	//   * the meta row is no longer appended at all when it would be empty.
+	//
+	// The old assertion also required the META ROW to be VISIBLE in Simple, and
+	// that was wrong before any of tonight's work: `app.css` has hidden it in
+	// Simple -- unless it carries a pending badge -- since the two views were
+	// written. It failed at bd5a2c3 for exactly that reason, so it is not a
+	// regression being papered over here; it is a check that never matched the
+	// stylesheet and was never run often enough to say so.
+	check(simple && simple.time.present && simple.meter.present,
+		'the tile really has a timestamp and a meter row to hide',
 		JSON.stringify(simple));
-	check(simple && !simple.ver.visible && !simple.time.visible,
-		'Simple hides the version and the timestamp', JSON.stringify(simple));
+	check(simple && !simple.time.visible && !simple.meter.visible,
+		'Simple hides the meter row, and the timestamp with it', JSON.stringify(simple));
 	await snap(page, 'tile-simple', '#diamond-list .session-box');
 
 	await page.evaluate(() => window.DaimondView.set('max'));
 	await page.waitForTimeout(300);
 	const max = await shownAt();
-	check(max && max.detail === 'max' && max.ver.visible && max.time.visible,
+	check(max && max.detail === 'max' && max.meter.visible && max.time.visible,
 		'Max shows what Simple hid', JSON.stringify(max));
 	await snap(page, 'tile-max', '#diamond-list .session-box');
 
@@ -441,7 +457,7 @@ try {
 	await page.waitForTimeout(300);
 	const backToSimple = await shownAt();
 	check(backToSimple && backToSimple.detail === 'simple'
-		&& !backToSimple.ver.visible && !backToSimple.time.visible,
+		&& !backToSimple.meter.visible && !backToSimple.time.visible,
 		'Max can be turned back to Simple', backToSimple && JSON.stringify(backToSimple));
 
 	// ── 6. Nothing on a tile DESTROYS anything ──

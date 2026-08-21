@@ -11,7 +11,7 @@
 // "sealed in the public log" check can pass offline against the same chain.
 //
 // WHAT IS BEING MEASURED, AND WHAT IS NOT. `www/manifest.json` and the chain are
-// written by `node dev/stamp-build.mjs && node verify/manifest.mjs`, which runs
+// written by `node dev/stamp-build.mjs "note" && node verify/manifest.mjs`, which runs
 // when a release is SEALED — so between seals the working tree legitimately does
 // not match the manifest that is committed beside it. From 2026-08-12 that made
 // this file fail on every commit that was not itself a seal (4e13bbc, 40e6ed4,

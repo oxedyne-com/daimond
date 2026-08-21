@@ -770,7 +770,12 @@ fn event_to_ws(ev: &AgentEvent) -> (&'static str, Vec<Dat>) {
         AgentEvent::Text(t)   => ("text",  vec![dat!(t.clone())]),
         AgentEvent::ToolCall { name, args, .. } =>
             ("tool_call", vec![dat!(name.clone()), dat!(args.clone())]),
-        AgentEvent::ToolResult { name, result } =>
+        // The outcome is deliberately NOT carried here. This is the Steel WS wire, whose
+        // `tool_result` command is declared in `src/syntax.rs` as two values, and widening a
+        // declared command is a change to a protocol nobody in this round owns a reader for.
+        // The browser gets the outcome over `wasm::app::event_to_js`, which is the path the
+        // page actually runs on.
+        AgentEvent::ToolResult { name, result, .. } =>
             ("tool_result", vec![dat!(name.clone()), dat!(result.clone())]),
         AgentEvent::Interjected(text) => ("interjected", vec![dat!(text.clone())]),
         // The two counts before the prose, so a client can draw the act without
@@ -778,6 +783,10 @@ fn event_to_ws(ev: &AgentEvent) -> (&'static str, Vec<Dat>) {
         AgentEvent::Compacted { folded, kept, note } =>
             ("compacted", vec![Dat::U64(*folded as u64), Dat::U64(*kept as u64),
                 dat!(note.clone())]),
+        // The count before the model name, for the same reason as `compacted` above: how
+        // many pictures were left out is drawable without reading a sentence.
+        AgentEvent::Unseeable { images, model } =>
+            ("unseeable", vec![Dat::U64(*images as u64), dat!(model.clone())]),
         AgentEvent::Truncated => ("truncated", vec![]),
         AgentEvent::Done      => ("done",  vec![]),
         AgentEvent::Error(msg) => ("error", vec![dat!(msg.clone())]),

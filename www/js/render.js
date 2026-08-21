@@ -4,7 +4,8 @@
    Self-contained, dependency-free (relies only on the already
    global `marked`).  Exposes:
 
-       window.DaimondRender = { md, escapeHtml }
+       window.DaimondRender = { md, escapeHtml, sanitize,
+                                foldScan, foldSegments, summaryText }
 
    `DaimondRender.md(text)` renders markdown to an HTML string with:
      - single-newline line breaks (marked `breaks: true`),
@@ -12,6 +13,12 @@
      - a "Copy" button on every fenced code block.
 
    Tables (and all other non-code markup) pass through untouched.
+
+   `foldScan` / `foldSegments` do not render anything.  They read a
+   model's `<details>` folds straight out of the raw text, so the chat
+   can keep one control across a whole stream and so the key a fold is
+   known by is derived the same way here as it is in Rust.  See
+   dev/CONTRACT_FOLD.md §2.
    ============================================================ */
 (function () {
 	'use strict';
@@ -306,11 +313,21 @@
 
 	// Inline formatting, lists, headings, tables, code — the shape of
 	// ordinary markdown output, nothing that can execute.
+	//
+	// DETAILS and SUMMARY are here because a model that writes a fold was
+	// being punished for it.  Neither tag was on this list nor on TAG_DROP,
+	// so a `<details>` fell to the unknown-wrapper branch in `scrub` and the
+	// WHOLE fold — every heading, list, code block and paragraph inside it —
+	// was replaced by one unformatted text node.  That is worse than not
+	// folding at all: the markup a reader would have seen without the fold is
+	// destroyed by the attempt to add one.  Both tags are inert (a disclosure
+	// widget the browser opens and closes; no script, no fetch, no navigation),
+	// so admitting them costs nothing this list exists to withhold.
 	var TAG_OK = wordSet([
-		'A', 'ABBR', 'B', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'DIV', 'EM',
-		'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR', 'I', 'IMG', 'KBD', 'LI',
-		'OL', 'P', 'PRE', 'S', 'SPAN', 'STRONG', 'SUB', 'SUP', 'TABLE',
-		'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'U', 'UL',
+		'A', 'ABBR', 'B', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'DETAILS', 'DIV',
+		'EM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR', 'I', 'IMG', 'KBD',
+		'LI', 'OL', 'P', 'PRE', 'S', 'SPAN', 'STRONG', 'SUB', 'SUMMARY', 'SUP',
+		'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'U', 'UL',
 	]);
 	// Elements dropped whole (content and all), never merely unwrapped.
 	var TAG_DROP = wordSet([
@@ -342,7 +359,14 @@
 			if (ch.nodeType !== 1) continue;                            // keep text
 			var tag = ch.tagName;
 			if (TAG_DROP[tag]) { node.removeChild(ch); continue; }
-			if (!TAG_OK[tag]) {
+			// A `<summary>` anywhere but directly inside a `<details>` is a
+			// disclosure label with nothing to disclose.  The browser still
+			// draws the triangle, so it reads as a control and does nothing
+			// when pressed — a lie about what is on screen.  It takes the same
+			// treatment as an unknown wrapper, for the same reason: the words
+			// are the reader's, the markup is not to be trusted.
+			var orphanSummary = (tag === 'SUMMARY' && node.nodeName !== 'DETAILS');
+			if (!TAG_OK[tag] || orphanSummary) {
 				// Unknown wrapper: keep the text, discard the markup.
 				node.replaceChild(document.createTextNode(ch.textContent || ''), ch);
 				continue;
@@ -354,9 +378,19 @@
 				var keep = ATTR_OK[up];
 				if (!keep && up === 'HREF' && tag === 'A') keep = safeUrl(attrs[a].value);
 				if (!keep && up === 'SRC' && tag === 'IMG') keep = safeUrl(attrs[a].value);
+				// The one attribute a fold needs: `open` says whether it starts
+				// expanded, which is the model's call and not the renderer's.
+				// Scoped to its element like HREF and SRC above, so it does not
+				// become a spare attribute anybody may write on anything.
+				if (!keep && up === 'OPEN' && tag === 'DETAILS') keep = true;
 				if (!keep) ch.removeAttribute(name);
 			}
 			if (tag === 'A') ch.setAttribute('rel', 'noopener noreferrer nofollow');
+			// Stamped rather than left to a bare `details` selector in the
+			// stylesheet, because the app draws a `<details>` of its own — the
+			// release notes' list of sealed builds — and that one must keep the
+			// browser's look rather than inherit a model's.
+			if (tag === 'DETAILS') ch.classList.add('md-fold');
 			scrub(ch);
 		}
 	}
@@ -371,6 +405,195 @@
 		tpl.innerHTML = String(html == null ? '' : html);
 		scrub(tpl.content);
 		return tpl.innerHTML;
+	}
+
+	// ── A model's own fold, read out of the text ───────────────
+	//
+	// The chat draws a streaming fold as a real `<details>` that it KEEPS across
+	// frames, so it has to know where a fold begins before `marked` has turned
+	// anything into markup.  The same scan names the fold, and that name has to
+	// agree character for character with the Rust half that strips a closed
+	// fold's body out of the next payload -- dev/CONTRACT_FOLD.md §2, pinned by
+	// dev/fixtures/fold_keys.json.
+	//
+	// Nothing here touches the DOM, and that is the point.  A DOM parse decodes
+	// entities, lowercases tag names and normalises attributes; the Rust half
+	// does none of those, so a key taken off a parsed tree would part company
+	// with a key taken off the text exactly where a summary happened to contain
+	// an `&`.
+
+	// A CommonMark fence: three or more backticks or tildes, up to three spaces
+	// of indent, and -- for backticks -- an info string with no backtick in it.
+	var FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+	var DETAILS_TOK = /<details(?:\s[^>]*)?>|<\/details\s*>/gi;
+	// Sticky: the label has to be the FIRST thing inside the element, or the
+	// `<details>` is a disclosure with nothing on its front and takes no ordinal.
+	var SUMMARY_AT = /\s*<summary(?:\s[^>]*)?>([\s\S]*?)<\/summary\s*>/iy;
+	// `open` as an attribute of its own, not the tail of `data-open` and not the
+	// word inside `class="reopen"`.
+	var OPEN_ATTR = /\sopen(?=[\s=>])/i;
+
+	/// The half-open character ranges that fenced code covers, the fence lines
+	/// included.  A `<details>` inside one is a model SHOWING markup rather than
+	/// writing it, and it is not a fold.
+	function fencedRanges(src) {
+		var out = [], lines = src.split('\n'), pos = 0, open = '', openAt = 0;
+		for (var i = 0; i < lines.length; i++) {
+			var line = lines[i];
+			var end = pos + line.length + (i < lines.length - 1 ? 1 : 0);
+			var m = FENCE.exec(line);
+			if (!open) {
+				if (m && !(m[1].charAt(0) === '`' && m[2].indexOf('`') >= 0)) {
+					open = m[1]; openAt = pos;
+				}
+			} else if (m && m[1].charAt(0) === open.charAt(0) && m[1].length >= open.length
+					&& /^[ \t]*$/.test(m[2])) {
+				out.push([openAt, end]);
+				open = '';
+			}
+			pos = end;
+		}
+		// A fence still open at the end of the buffer runs to the end of it. That
+		// is the ordinary mid-stream case, and it is why a half-written code block
+		// showing a fold never briefly grows one.
+		if (open) out.push([openAt, src.length]);
+		return out;
+	}
+
+	function inRanges(ranges, i) {
+		for (var r = 0; r < ranges.length; r++) {
+			if (i >= ranges[r][0] && i < ranges[r][1]) return true;
+		}
+		return false;
+	}
+
+	/// A `<summary>`'s words: tags out, ends trimmed, every internal run of
+	/// whitespace one space.  Not lowercased, not truncated, not decoded.
+	function summaryText(raw) {
+		return String(raw == null ? '' : raw)
+			.replace(/<[^>]*>/g, '')
+			.replace(/\s+/g, ' ')
+			.trim();
+	}
+
+	/// Every TOP-LEVEL fold in `text`, in the order the openings appear, each with
+	/// the key both halves of the app know it by.
+	///
+	/// A fold left unclosed -- the ordinary case mid-stream -- keys exactly as a
+	/// closed one does and its body runs to the end of what has arrived, so the
+	/// name does not change under the reader when `</details>` finally lands.
+	function foldScan(text) {
+		var src = String(text == null ? '' : text);
+		var fenced = fencedRanges(src);
+		var stack = [], found = [], m;
+		DETAILS_TOK.lastIndex = 0;
+		while ((m = DETAILS_TOK.exec(src)) !== null) {
+			if (inRanges(fenced, m.index)) continue;
+			if (m[0].charAt(1) === '/') {
+				var done = stack.pop();
+				if (done) { done.bodyEnd = m.index; done.end = m.index + m[0].length; }
+				continue;
+			}
+			var top = stack.length === 0;
+			SUMMARY_AT.lastIndex = m.index + m[0].length;
+			var sm = SUMMARY_AT.exec(src);
+			// An unlabelled `<details>` still nests, so it goes on the stack and
+			// claims its own `</details>`; it simply is not a fold.
+			if (!sm) { stack.push(null); continue; }
+			var fold = {
+				ord:	0,
+				key:	'',
+				summary: '',
+				label:	sm[1],			// the summary's inner markup, as written
+				body:	'',
+				open:	OPEN_ATTR.test(m[0]),	// the model asked for it expanded
+				start:	m.index,
+				bodyStart: SUMMARY_AT.lastIndex,
+				bodyEnd: -1,
+				end:	-1,
+			};
+			// A fold inside a fold takes no ordinal, no key and no strip of its own
+			// (dev/CONTRACT_FOLD.md §8): the outer body is what travels or does
+			// not, and an inner fold goes with it. It still goes on the stack, or
+			// the outer one would pair with the WRONG closing tag and the two
+			// halves would disagree about where the fold ends.
+			if (top) found.push(fold);
+			stack.push(fold);
+		}
+		for (var i = 0; i < found.length; i++) {
+			var f = found[i];
+			f.ord = i;
+			f.summary = summaryText(f.label);
+			f.key = i + ':' + f.summary;
+			f.body = (f.bodyEnd < 0 ? src.slice(f.bodyStart)
+				: src.slice(f.bodyStart, f.bodyEnd)).trim();
+		}
+		return found;
+	}
+
+	/// Could what follows an unfinished `<details>` still turn into a fold?
+	///
+	/// MEASURED, not assumed: between `<details>` arriving and `</summary>`
+	/// arriving there are a few frames in which the element is real markup with a
+	/// half-typed label, and the HTML parser auto-closes it at the end of the
+	/// fragment.  So `marked` draws a closed disclosure whose label grows, and the
+	/// control proper then replaces it -- a fold that appears shut and snaps open,
+	/// for no reason a reader can see.  Those frames draw nothing at all instead.
+	///
+	/// Only while it could STILL become a fold.  A `<details>` that is plainly
+	/// never going to have a label is drawn at once, or a model that wrote a bare
+	/// one by mistake would have the rest of its answer held back for ever.
+	function foldPending(rest) {
+		if (/<\/summary\s*>/i.test(rest)) return false;		// it already has one
+		var r = rest.replace(/^\s+/, '');
+		if (r === '') return true;
+		if (/^<summary(?:\s[^>]*)?>/i.test(r)) return true;		// inside the label
+		// Part way through writing the tag that opens it.
+		return /^<[a-z]*(?:\s[^>]*)?$/i.test(r)
+			&& '<summary'.indexOf(r.split(/[\s>]/)[0]) === 0;
+	}
+
+	/// `text` cut into the pieces the chat draws: runs of ordinary markdown, and
+	/// the TOP-LEVEL folds between them.
+	///
+	/// A nested fold stays inside its parent's body and is drawn there in the
+	/// ordinary way -- it has no key of its own to be drawn against.
+	///
+	/// `settled` says no more text is coming, which turns off the hold-back in
+	/// `foldPending`: a turn that died half way through a `<summary>` should show
+	/// the words that did arrive rather than wait for a frame that never comes.
+	function foldSegments(text, settled) {
+		var src = String(text == null ? '' : text);
+		var all = foldScan(src), segs = [], at = 0;
+		for (var i = 0; i < all.length; i++) {
+			var f = all[i];
+			if (f.start < at) continue;			// already inside one that is drawn
+			if (f.start > at) segs.push({ kind: 'text', text: src.slice(at, f.start) });
+			segs.push({
+				kind: 'fold', ord: f.ord, key: f.key, summary: f.summary,
+				label: f.label, body: f.body, open: f.open, closed: f.end >= 0,
+			});
+			at = f.end >= 0 ? f.end : src.length;
+		}
+		if (at < src.length) {
+			var tail = src.slice(at), cut = tail.length;
+			// The guard keeps the ordinary answer -- the overwhelming
+			// majority, which has no fold in it at all -- off a second line scan
+			// of the whole message on every frame of every stream.
+			if (!settled && /<details/i.test(tail)) {
+				// The LAST opener in what is left is the only one that can still be
+				// being written; everything before it has had its chance.
+				var fenced = fencedRanges(src), mm, openAt = -1, openEnd = 0;
+				DETAILS_TOK.lastIndex = 0;
+				while ((mm = DETAILS_TOK.exec(tail)) !== null) {
+					if (mm[0].charAt(1) === '/' || inRanges(fenced, at + mm.index)) continue;
+					openAt = mm.index; openEnd = mm.index + mm[0].length;
+				}
+				if (openAt >= 0 && foldPending(tail.slice(openEnd))) cut = openAt;
+			}
+			if (cut > 0) segs.push({ kind: 'text', text: tail.slice(0, cut) });
+		}
+		return segs;
 	}
 
 	// ── Public render ──────────────────────────────────────────
@@ -443,5 +666,8 @@
 	});
 
 	// ── Export ─────────────────────────────────────────────────
-	window.DaimondRender = { md: md, escapeHtml: escapeHtml, sanitize: sanitize };
+	window.DaimondRender = {
+		md: md, escapeHtml: escapeHtml, sanitize: sanitize,
+		foldScan: foldScan, foldSegments: foldSegments, summaryText: summaryText,
+	};
 })();

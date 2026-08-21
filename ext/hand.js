@@ -760,6 +760,18 @@
 					return;
 				}
 				break;
+			case 'verify': {
+				const bad = wrongVerify(m);
+				if (bad) {
+					say({ t: 'refused', id: String(m.id || ''), reason: bad });
+					return;
+				}
+				// Registered like an exec, and for the same reason: a sequence the host dies
+				// before acknowledging is still one the page is owed an answer about.
+				if (!runs.has(m.id)) runs.set(m.id, { out: null, err: null });
+				breathe();
+				break;
+			}
 			case 'signal':
 				if (!m.id || typeof m.id !== 'string') {
 					fail(null, 'A signal needs the id of the run it is for.');
@@ -770,7 +782,7 @@
 				closing = true;
 				break;
 			default:
-				fail(m.id, `The machine hand does not know the message "${m.t}". It understands hello, exec, open, input, resize, signal and bye.`);
+				fail(m.id, `The machine hand does not know the message "${m.t}". It understands hello, exec, open, verify, input, resize, signal and bye.`);
 				return;
 			}
 
@@ -851,6 +863,58 @@
 
 			return wrongFence(m.fence, m.cwd, m.toolkits);
 		}
+
+		/// What is wrong with a request to run a verifier.
+		///
+		/// Shorter than `wrongExec` because there is far less to be wrong with,
+		/// and that IS the security argument for this message existing rather
+		/// than being an exec with a convention attached. A verify carries no
+		/// argv, no cwd, no env and no fence: it carries a NAME the hand looks up
+		/// in its own granted `dev/` directory, and at most a BREAK the hand
+		/// looks up in that file's own source. There is nothing here for a page
+		/// to turn into a program or a path, so there is nothing here for this
+		/// second line to have to defend.
+		///
+		/// What it does check is the shape of the two selectors, so that a
+		/// malformed one becomes a sentence rather than a dropped connection.
+		function wrongVerify(m) {
+			if (!m.id || typeof m.id !== 'string') {
+				return 'Every verify needs an id, which every answer about it is tagged with.';
+			}
+			if (m.id.length > ID_MAX) {
+				return `That id is ${m.id.length} characters, over the ${ID_MAX} the hand carries. Use a short handle.`;
+			}
+			// eslint-disable-next-line no-control-regex
+			if (/[\u0000-\u001f\u007f]/.test(m.id)) {
+				return 'That id has a control character in it. An id is a handle, not data.';
+			}
+			if (typeof m.name !== 'string' || !NAME.test(m.name)) {
+				return 'verify needs a name: the verifier\'s short name, lower-case letters, digits and underscores -- '
+					+ '"graph" for dev/verify_graph.mjs. It is a NAME and not a path or a command line, and the hand '
+					+ 'looks it up in the folder it was granted.';
+			}
+			if (['all', 'one', 'none'].indexOf(m.breaks) < 0) {
+				return 'verify needs breaks: "all" to run every break the verifier declares, "one" with a "break" naming '
+					+ 'a declared break, or "none" for a clean run whose result proves nothing and says so.';
+			}
+			if (m.breaks === 'one' && (typeof m.break !== 'string' || !NAME.test(m.break))) {
+				return 'A verify asking for one break did not name a usable one. A break is lower-case letters, digits '
+					+ 'and underscores, and it has to be one the verifier itself declares.';
+			}
+			if (typeof m.timeout_ms !== 'number' || !Number.isInteger(m.timeout_ms)
+				|| m.timeout_ms <= 0 || m.timeout_ms > TIMEOUT_MAX) {
+				return `verify needs timeout_ms: a whole number of milliseconds between 1 and ${TIMEOUT_MAX}, covering `
+					+ `the WHOLE sequence -- the clean run and every break after it.`;
+			}
+			return null;
+		}
+
+		/// The one alphabet a verifier's name and a break's name are spelled in.
+		///
+		/// Deliberately narrow: no dot, so ".." cannot be written; no slash; no
+		/// dash, so nothing can begin with one and be read as an option. The hand
+		/// applies the same rule again -- this is a second line, never the only one.
+		const NAME = /^[a-z0-9_]{1,64}$/;
 
 		/// Base64, strictly: the alphabet, correct padding, whole quanta. The hand
 		/// rejects anything else outright, so catching it here turns a dropped
