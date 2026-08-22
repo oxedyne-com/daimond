@@ -60,9 +60,13 @@ async fn run() -> Outcome<()> {
             // A smoke run prints neither side by id, so it is named and dropped rather
             // than matched with `..` -- a new field should break this again on purpose.
             AgentEvent::ToolCall { name, args, id: _ } => println!("\n[tool_call] {} {}", name, args),
-            AgentEvent::ToolResult { name, result } => {
+            // The OUTCOME is printed and never inferred from the text.  A smoke run
+            // whose tool was refused prints the same 200 characters as one that
+            // worked, and telling them apart by reading the prose is the defect the
+            // outcome field was added to end.
+            AgentEvent::ToolResult { name, result, outcome } => {
                 let r = if result.len() > 200 { &result[..200] } else { &result };
-                println!("[tool_result] {} -> {}", name, r);
+                println!("[tool_result] {} {} -> {}", name, outcome.wire(), r);
             }
             AgentEvent::Done => println!("\n[done]"),
             AgentEvent::Error(e) => println!("\n[error] {}", e),
@@ -73,6 +77,11 @@ async fn run() -> Outcome<()> {
                 println!("\n[compacted] folded {} kept {} — {}", folded, kept, note),
             AgentEvent::Truncated => println!("\n[truncated] the provider cut the reply short"),
             AgentEvent::Interjected(text) => println!("\n[interjected] {}", text),
+            AgentEvent::Unseeable { images, model } =>
+                println!("\n[unseeable] {} image(s) withheld from {}", images, model),
+            // The working, not the answer.  Printed whole, because a smoke run is read
+            // by a person deciding whether the turn went the way they meant.
+            AgentEvent::Thinking(text) => println!("\n[thinking] {}", text),
         }
     };
     res!(agent.run_turn(&mut session, prompt, &registry, &mut on_event).await);

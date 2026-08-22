@@ -116,6 +116,11 @@ pub struct Agent {
     /// agent's prompt at all -- it is what a DIFFERENT, tool-less model is told when the
     /// conversation is folded.  Shared on clone for the same reason [`Interjections`] is.
     pub fold_prompt:     Rc<RefCell<String>>,
+    // How the last turn ended.  Shared on clone rather than copied, exactly as the
+    // interjection queue is: the page holds a clone of the agent and has to be able to read
+    // the ending of the turn it just watched, which a detached cell would not carry.  Written
+    // once per turn, at the single exit in `Agent::ended`.
+    ending:              Rc<RefCell<Option<TurnEnding>>>,
 }
 
 
@@ -155,6 +160,147 @@ impl Fold {
 	}
 }
 
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ How a turn ended, and whether its claims stood up              │
+// └───────────────────────────────────────────────────────────────┘
+
+/// How a turn stopped running.
+///
+/// Three of these were already announced -- the output cap, the round limit and a turn that said
+/// nothing -- and every other ending was silence.  A user watched a model say it would rewrite
+/// lines 43 to 49, watched the spinner clear, and was left with "I have no visibility on what
+/// occurred here": nothing had gone wrong, so nothing had been said.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TurnEnd {
+	Answered,   // a reply with no tool call in it, which is how a turn is meant to end
+	Stopped,    // the user cancelled while the reply was streaming
+	Capped,     // the tool-round budget ran out with work still going
+	Silent,     // the final message carried no text at all
+	Failed,     // the provider or the transport ended the turn
+}
+
+impl TurnEnd {
+
+	/// The word this ending travels as, on the wire and in a stored turn.
+	///
+	/// Spelled here and nowhere else, for the reason [`crate::tools::CallOutcome::wire`] gives:
+	/// the browser knows these words and no others, so a second speller would not fail loudly,
+	/// it would quietly draw an ending nobody recognises.
+	pub fn wire(&self) -> &'static str {
+		match self {
+			Self::Answered	=> "answered",
+			Self::Stopped	=> "stopped",
+			Self::Capped	=> "capped",
+			Self::Silent	=> "silent",
+			Self::Failed	=> "failed",
+		}
+	}
+}
+
+/// What a turn came to, in figures the app measured rather than sentences the model wrote.
+///
+/// **Every field here is decidable from the tool log.**  Nothing in it is read out of the model's
+/// prose, and nothing in it may be: this crate removed thirty-four prose sniffs on one night of
+/// 2026-08 and `dev/CONTRACT_OUTCOME.md` exists because four consumers were guessing a tool's
+/// outcome by reading its reply.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TurnEnding {
+	pub how:		TurnEnd,
+	pub offered:	usize,			// tools this turn was allowed to call
+	pub rounds:		usize,			// requests it sent
+	pub calls:		usize,			// tool calls it dispatched
+	pub refused:	usize,			// ... of which a door turned away
+	pub failed:		usize,			// ... of which broke
+	// Paths a completed call said it had left on the store, and which are not there.
+	pub missing:	Vec<String>,
+}
+
+impl TurnEnding {
+
+	/// Is there anything here for a reader to act on?
+	///
+	/// **This is the line between a status and a warning, and the reason the app can afford to
+	/// report every ending.**  A turn that did what it was asked answers `false` and is drawn as
+	/// furniture; only a turn with a refusal, a breakage or a missing file answers `true`.  An app
+	/// that appended a warning to every turn would teach its reader to skip the one that mattered,
+	/// which is the failure this whole mechanism exists to prevent.
+	pub fn unaccounted(&self) -> bool {
+		self.refused > 0 || self.failed > 0 || !self.missing.is_empty()
+	}
+}
+
+/// One dispatched tool call, as the audit sees it.
+#[derive(Clone, Debug)]
+struct Claim {
+	outcome:	crate::tools::CallOutcome,
+	opaque:		bool,										// see [`crate::tools::Tool::opaque`]
+	paths:		Vec<(String, crate::tools::PathClaim)>,
+}
+
+/// The turn's tool log, and the findings that can be read out of it.
+///
+/// Built as the turn runs and audited once at the end.  It holds no prose and offers no way to
+/// look at any: a reader of this type cannot accidentally start sniffing sentences.
+#[derive(Clone, Debug, Default)]
+struct Claims {
+	calls: Vec<Claim>,
+}
+
+impl Claims {
+
+	/// Record one dispatched call.
+	///
+	/// A call that was refused or that broke states nothing about the store, so its paths are not
+	/// taken: a write the fence stopped is not a file anybody should be looking for.
+	fn record(&mut self, name: &str, args: &str, outcome: crate::tools::CallOutcome) {
+		let tool = crate::tools::Tool::from_name(name);
+		let paths = match tool {
+			Some(t) if outcome == crate::tools::CallOutcome::Done => t.path_claims(args),
+			_ => Vec::new(),
+		};
+		// A refused shell ran nothing, so it cannot have moved a file.  Anything else that
+		// reached a shell, a build or a worker did.
+		let opaque = tool.map(|t| t.opaque()).unwrap_or(false)
+			&& outcome != crate::tools::CallOutcome::Refused;
+		self.calls.push(Claim { outcome, opaque, paths });
+	}
+
+	fn tally(&self, want: crate::tools::CallOutcome) -> usize {
+		self.calls.iter().filter(|c| c.outcome == want).count()
+	}
+
+	/// Can a missing file be blamed on anybody?
+	///
+	/// False once the turn has run something whose reach is not in its arguments; see
+	/// [`crate::tools::Tool::opaque`] for why that silences the check rather than qualifying it.
+	fn accountable(&self) -> bool {
+		!self.calls.iter().any(|c| c.opaque)
+	}
+
+	/// The paths this turn's completed calls say are on the store now.
+	///
+	/// Resolved in call order, so the turn's LAST word about a path is the turn's word about it: a
+	/// file written and then deleted is claimed by nobody, and one deleted and then written back
+	/// is claimed.  Without that, every scratch file a turn tidied up after itself would be
+	/// reported as a write that did not happen.
+	fn standing(&self) -> Vec<String> {
+		let mut seen: Vec<(String, crate::tools::PathClaim)> = Vec::new();
+		for call in &self.calls {
+			for (path, claim) in &call.paths {
+				match seen.iter_mut().find(|(p, _)| p == path) {
+					Some(slot)	=> slot.1 = *claim,
+					None		=> seen.push((path.clone(), *claim)),
+				}
+			}
+		}
+		seen.into_iter()
+			.filter(|(_, c)| *c == crate::tools::PathClaim::Left)
+			.map(|(p, _)| p)
+			.collect()
+	}
+}
+
 impl Agent {
 
     pub fn new(llm: LlmClient, system_prompt: &str) -> Self {
@@ -170,6 +316,85 @@ impl Agent {
             limits:          Rc::new(RefCell::new(Limits::default())),
             gauge:           Rc::new(Gauge::default()),
             fold_prompt:     Rc::new(RefCell::new(String::new())),
+            ending:          Rc::new(RefCell::new(None)),
+        }
+    }
+
+    /// How the last turn on this agent ended.
+    ///
+    /// `None` before any turn has run.  Read after `run_turn` returns -- including after it
+    /// returns an error, which is the ending that used to be the least visible of all.
+    pub fn ending(&self) -> Option<TurnEnding> {
+        self.ending.borrow().clone()
+    }
+
+    /// Settle the turn's ending, and say it.
+    ///
+    /// **The one exit.**  Every path out of a turn comes through here, which is what makes the
+    /// promise -- every turn says how it ended -- checkable rather than aspirational: a new exit
+    /// that forgot to call this would leave `ending()` holding the turn before it, and the test
+    /// that reads the ending after each kind of finish is what catches that.
+    ///
+    /// # Arguments
+    /// * `ending` - What the turn came to; see [`TurnEnding`].
+    fn ended(&self, ending: TurnEnding, on_event: &mut impl FnMut(AgentEvent)) {
+        // THE ONE EXIT. Every path out of a turn comes through here, which is why the emit can
+        // be one line and why no second exit can grow beside it -- an ending reported from two
+        // places is an ending that can be reported from neither.
+        on_event(AgentEvent::Ended {
+            how:     ending.how.wire().to_string(),
+            offered: ending.offered,
+            rounds:  ending.rounds,
+            calls:   ending.calls,
+            refused: ending.refused,
+            failed:  ending.failed,
+            missing: ending.missing.clone(),
+        });
+        *self.ending.borrow_mut() = Some(ending);
+    }
+
+    /// Check the turn's claims against the store, and settle what it came to.
+    ///
+    /// The audit is two questions, and neither of them is asked of the model's prose:
+    ///
+    /// 1. **A refused call is not a completed step.**  The tool layer already decided this and
+    ///    `AgentEvent::ToolResult` already carries it, so the count is a tally rather than a
+    ///    reading.
+    /// 2. **A file a completed call said it left is on the store.**  The claim is in the call's
+    ///    ARGUMENTS, which name a path; whether that path is there afterwards is a fact.
+    ///
+    /// # Arguments
+    /// * `how` - How the turn stopped running.
+    /// * `rounds` - Requests the turn sent.
+    /// * `claims` - The turn's tool log; empty on the pure-chat path.
+    /// * `registry` - The tools this turn held, which is also what answers for the store.
+    async fn audit(
+        &self,
+        how:        TurnEnd,
+        rounds:     usize,
+        claims:     &Claims,
+        registry:   Option<&ToolRegistry>,
+    )
+        -> TurnEnding
+    {
+        let mut missing = Vec::new();
+        if let Some(reg) = registry {
+            if claims.accountable() {
+                for path in claims.standing() {
+                    if !reg.path_is_there(&path).await {
+                        missing.push(path);
+                    }
+                }
+            }
+        }
+        TurnEnding {
+            how,
+            offered: registry.map(|r| r.offered().len()).unwrap_or(0),
+            rounds,
+            calls:   claims.calls.len(),
+            refused: claims.tally(crate::tools::CallOutcome::Refused),
+            failed:  claims.tally(crate::tools::CallOutcome::Failed),
+            missing,
         }
     }
 
@@ -408,10 +633,12 @@ impl Agent {
         on_event:   &mut impl FnMut(AgentEvent),
     ) -> Outcome<()> {
         let mut refolded = false;
+        let mut rounds = 0usize;
         loop {
             self.fold_if_needed(session, &mut working, 0, Fold::IfNeeded, on_event).await;
             let sent = compact::conversation_bytes(&working, &self.llm.open_folds());
             let mut full = String::new();
+            rounds += 1;
             let result = self.llm.chat_stream(
                 &working,
                 &mut |token| {
@@ -421,6 +648,12 @@ impl Agent {
             ).await;
             match result {
                 Ok(resp) => {
+                    // BEFORE the answer is settled, so the working reaches the page ahead of
+                    // the reply it produced. Reasoning that arrived afterwards would read as
+                    // an explanation invented to fit, which is the opposite of what it is.
+                    if !resp.thinking.trim().is_empty() {
+                        on_event(AgentEvent::Thinking(resp.thinking.clone()));
+                    }
                     let content = if resp.content.is_empty() { full } else { resp.content };
                     // A TURN MUST NEVER END IN SILENCE. Both empty means the provider
                     // returned a final message with nothing in it -- which happens on a
@@ -448,6 +681,11 @@ impl Agent {
                     self.live_completion.set(session.completion_tokens);
                     self.live_cached.set(session.cached_tokens);
                     self.live_cost.set(session.cost_usd);
+                    // A pure chat holds no tools, so it can claim nothing about the store and
+                    // its ending is the shape of the turn and nothing else.
+                    let how = if silent { TurnEnd::Silent } else { TurnEnd::Answered };
+                    let ending = self.audit(how, rounds, &Claims::default(), None).await;
+                    self.ended(ending, on_event);
                     on_event(AgentEvent::Done);
                     return Ok(());
                 }
@@ -459,6 +697,8 @@ impl Agent {
                         }
                     }
                     on_event(AgentEvent::Error(e.to_string()));
+                    let ending = self.audit(TurnEnd::Failed, rounds, &Claims::default(), None).await;
+                    self.ended(ending, on_event);
                     return Err(e);
                 }
             }
@@ -488,7 +728,13 @@ impl Agent {
         // registered, which for the browser set is several thousand tokens.
         let schema = tools_json.as_ref().map(|s| s.len() as u64).unwrap_or(0);
         let max_rounds = self.limits.borrow().max_rounds;
+        // THE TURN'S TOOL LOG, and the only thing the audit reads. It carries an outcome and a
+        // set of argument-named paths per call, and no prose at all -- so no reader of it can
+        // slip back into working out what happened by reading what the model said about it.
+        let mut claims = Claims::default();
+        let mut rounds = 0usize;
         for _ in 0..max_rounds {
+            rounds += 1;
             // Fold before the request rather than after the refusal. Checked every round,
             // because a single turn of fifty file reads can outgrow the window on its own,
             // without any earlier turn being large at all.
@@ -521,10 +767,20 @@ impl Agent {
                             }
                         }
                         on_event(AgentEvent::Error(e.to_string()));
+                        let ending = self.audit(
+                            TurnEnd::Failed, rounds, &claims, Some(registry)).await;
+                        self.ended(ending, on_event);
                         return Err(e);
                     }
                 }
             };
+            // FIRST, so the working reaches the page ahead of the tool calls it decided on
+            // and ahead of the text it produced. A tool loop runs many rounds and each one
+            // may think, so this is per ROUND rather than per turn -- the page gets one tile
+            // for each round that reasoned, in the order they happened.
+            if !resp.thinking.trim().is_empty() {
+                on_event(AgentEvent::Thinking(resp.thinking.clone()));
+            }
             // The endpoint has just been caught refusing pictures, mid-turn, having taken
             // them a moment ago. Said out loud rather than left in the client: it is the one
             // moment the app knows it is on the wrong model, and `stream_turn` has already
@@ -561,6 +817,8 @@ impl Agent {
                 session.messages.push(ChatMessage::Assistant {
                     content: MessageContent::text(resp.content), tool_calls: Vec::new(),
                 });
+                let ending = self.audit(TurnEnd::Stopped, rounds, &claims, Some(registry)).await;
+                self.ended(ending, on_event);
                 on_event(AgentEvent::Done);
                 return Ok(());
             }
@@ -568,9 +826,21 @@ impl Agent {
             if resp.tool_calls.is_empty() {
                 // Final answer — its text has already streamed via the
                 // token callback, so it is not re-emitted here.
+                //
+                // A final message with nothing in it is the ending the user met: the spinner
+                // clears, the screen does not change, and a finished turn is indistinguishable
+                // from a hung one. The streaming path has said so since it was found; here the
+                // ending names it, which costs nothing and is the same fact.
+                let how = if resp.content.trim().is_empty() {
+                    TurnEnd::Silent
+                } else {
+                    TurnEnd::Answered
+                };
                 session.messages.push(ChatMessage::Assistant {
                     content: MessageContent::text(resp.content), tool_calls: Vec::new(),
                 });
+                let ending = self.audit(how, rounds, &claims, Some(registry)).await;
+                self.ended(ending, on_event);
                 on_event(AgentEvent::Done);
                 return Ok(());
             }
@@ -627,6 +897,10 @@ impl Agent {
                 // "Error" -- so a write the fence had just stopped was drawn as a completed step.
                 let text    = result.as_text().into_owned();
                 let outcome = crate::tools::call_outcome(&text);
+                // AND THE AUDIT IS KEPT FROM THE SAME VERDICT, not from a second reading of it.
+                // The paths come from the ARGUMENTS the model sent, which name the file it meant
+                // whatever the reply says about it.
+                claims.record(&tc.name, &tc.arguments, outcome);
                 on_event(AgentEvent::ToolResult {
                     name:   tc.name.clone(),
                     result: text,
@@ -692,6 +966,8 @@ impl Agent {
         let msg = fmt!("Reached the tool-call round limit ({}).", max_rounds);
         on_event(AgentEvent::Error(msg.clone()));
         session.messages.push(compact::round_limit_note(max_rounds));
+        let ending = self.audit(TurnEnd::Capped, rounds, &claims, Some(registry)).await;
+        self.ended(ending, on_event);
         on_event(AgentEvent::Done);
         Ok(())
     }
@@ -1671,6 +1947,317 @@ mod tests {
         }
     }
 
+    // ── The claims audit, and how a turn says it ended ──────────────────
+
+    /// A registry over its own scratch workspace, holding the tools named.
+    fn tools_over_scratch(tools: Vec<crate::tools::Tool>) -> crate::tools::ToolRegistry {
+        let mut r = no_tools();
+        r.tools = tools;
+        r
+    }
+
+    /// One round of tool calls, as a provider streams them.
+    ///
+    /// Scripted rather than hand-built so a test states the CALL and lets the tool layer decide
+    /// what becomes of it.  What is under test is that the app carries the tool layer's own
+    /// verdict and the model's own arguments, so both have to come from the real thing.
+    ///
+    /// # Arguments
+    /// * `calls` - Each call as its wire name and its arguments JSON.
+    fn tool_round(calls: &[(&str, &str)]) -> crate::llm::tests::Reply {
+        let mut chunks = Vec::new();
+        for (i, (name, args)) in calls.iter().enumerate() {
+            // The arguments ride as a JSON string inside a JSON object, so they are escaped once
+            // here and unescaped once by the stream accumulator.
+            let esc = args.replace('\\', "\\\\").replace('"', "\\\"");
+            chunks.push(fmt!(
+                "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":{},\
+                 \"id\":\"c{}\",\"type\":\"function\",\"function\":{{\"name\":\"{}\",\
+                 \"arguments\":\"{}\"}}}}]}}}}]}}\n\n",
+                i, i, name, esc));
+        }
+        chunks.push(
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n".to_string());
+        chunks.push("data: [DONE]\n\n".to_string());
+        crate::llm::tests::Reply::Sse { chunks, reset_after: None }
+    }
+
+    /// Run one turn against a scripted provider, and hand back what the turn came to.
+    async fn ran(
+        script:     Vec<crate::llm::tests::Reply>,
+        registry:   &ToolRegistry,
+        max_rounds: usize,
+    )
+        -> TurnEnding
+    {
+        let (port, _seen) = crate::llm::tests::start_stub(script).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(max_rounds);
+        let mut session = Session::new(fmt!("s1"), fmt!("audit"), fmt!("model"));
+        let _ = a.run_turn(&mut session, fmt!("do the work"), registry, &mut |_| {}).await;
+        match a.ending() {
+            Some(e) => e,
+            None    => panic!("a turn ran and said nothing at all about how it ended"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_a_refused_tool_is_not_a_completed_step_00() {
+        // Three real calls: one that works, one the fence stops, one that is not registered. The
+        // audit tallies the tool layer's own verdict -- it does not re-read the sentence, which is
+        // how a refusal, whose reply opens "Refused" rather than "Error", was drawn as a completed
+        // step, journalled as a success and reported to the Optimiser as a tool that had worked.
+        let registry = one_tool();
+        let end = ran(vec![three_calls(), plain_answer()], &registry, 2).await;
+
+        assert_eq!(3, end.calls, "{:?}", end);
+        assert_eq!(1, end.refused, "the call the fence stopped was booked as work: {:?}", end);
+        assert_eq!(1, end.failed, "{:?}", end);
+        assert!(end.unaccounted(),
+            "a turn holding a refusal and a breakage reported nothing to answer for: {:?}", end);
+        // And the ending itself is the ordinary one: the turn ANSWERED. What is unaccounted for
+        // is a separate question from how the turn finished, and collapsing the two would make
+        // every turn with one refused call look like a turn that fell over.
+        assert_eq!(TurnEnd::Answered, end.how, "{:?}", end);
+    }
+
+    #[tokio::test]
+    async fn test_a_file_a_call_said_it_left_and_did_not_is_reported_00() {
+        // The claim is not in the prose. It is in the ARGUMENTS of the call, which name a path,
+        // and after the turn a named path that is not there is a fact rather than a reading.
+        //
+        // Two calls, identical but for the file: one names a path that is on the store and one
+        // names a path that is not. The pair is what makes either half mean anything -- an audit
+        // that reported both, or neither, would satisfy a test of only one.
+        let registry = one_tool();
+        let there = registry.ctx.workspace.root().join("there.txt");
+        if let Err(e) = std::fs::write(&there, "x") {
+            panic!("the fixture file must exist for the control half to mean anything: {}", e);
+        }
+        let mut claims = Claims::default();
+        claims.record("file_write", r#"{"path":"there.txt","content":"x"}"#, CallOutcome::Done);
+        claims.record("file_write", r#"{"path":"ghost.txt","content":"x"}"#, CallOutcome::Done);
+
+        let a = dead_agent();
+        let end = a.audit(TurnEnd::Answered, 1, &claims, Some(&registry)).await;
+        assert_eq!(vec![fmt!("ghost.txt")], end.missing,
+            "the file that is there, the file that is not, or both: {:?}", end);
+        assert!(end.unaccounted(), "{:?}", end);
+    }
+
+    #[tokio::test]
+    async fn test_a_call_that_never_ran_claims_nothing_00() {
+        // A REFUSED WRITE IS NOT A FILE ANYBODY SHOULD BE LOOKING FOR, and neither is one whose
+        // call was cut off at the output limit -- that reply opens "Error", so the call is booked
+        // `Failed`. Both carry a perfectly readable `path`; the outcome is what keeps them out of
+        // the audit, which is the same rule `AgentEvent::ToolResult` carries.
+        let registry = one_tool();
+        let mut claims = Claims::default();
+        claims.record("file_write", r#"{"path":"stopped.txt","content":"x"}"#,
+            CallOutcome::Refused);
+        claims.record("file_write", r#"{"path":"src/big.rs","content":"fn main() {"#,
+            CallOutcome::Failed);
+        let a = dead_agent();
+        let end = a.audit(TurnEnd::Answered, 1, &claims, Some(&registry)).await;
+        assert!(end.missing.is_empty(),
+            "a turn was told to go looking for a file no tool ever wrote: {:?}", end);
+        // Counted, though. They are the other half of the audit and the reason the turn has
+        // something to answer for at all.
+        assert_eq!(1, end.refused, "{:?}", end);
+        assert_eq!(1, end.failed, "{:?}", end);
+        assert!(end.unaccounted(), "{:?}", end);
+    }
+
+    #[tokio::test]
+    async fn test_a_file_written_and_then_deleted_is_not_reported_missing_00() {
+        // The turn's LAST word about a path is the turn's word about it. Without that rule every
+        // scratch file a turn tidied up after itself would be reported as a write that did not
+        // happen -- which is a warning on a turn that did exactly what it said, and an app that
+        // does that is teaching its reader to skip the warning that matters.
+        let registry = tools_over_scratch(vec![
+            crate::tools::Tool::FileWrite,
+            crate::tools::Tool::FileDelete,
+        ]);
+        let end = ran(vec![
+            tool_round(&[
+                ("file_write",  r#"{"path":"scratch.txt","content":"working"}"#),
+                ("file_delete", r#"{"path":"scratch.txt"}"#),
+            ]),
+            plain_answer(),
+        ], &registry, 2).await;
+
+        assert_eq!(2, end.calls, "{:?}", end);
+        assert_eq!(0, end.refused, "{:?}", end);
+        assert_eq!(0, end.failed, "{:?}", end);
+        assert!(end.missing.is_empty(), "{:?}", end);
+        assert!(!end.unaccounted(), "{:?}", end);
+        // AND THE FILE REALLY IS GONE. Without this the test would pass just as well against a
+        // delete that silently did nothing, and would be proving that the audit ignores a file
+        // that is present rather than that it forgives one that was deliberately removed.
+        assert!(!registry.ctx.workspace.root().join("scratch.txt").exists(),
+            "the delete did not happen, so nothing here is being tested");
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_that_ran_a_shell_command_is_not_told_a_file_is_missing_00() {
+        // A shell command, a build, a verifier run and a worker each act on paths nobody wrote
+        // down. The app cannot know which of them removed a file, and the honest answer to a
+        // question it cannot answer is silence -- an audit that guessed here would raise a finding
+        // on any turn that wrote a file and then ran `cargo test`.
+        let registry = one_tool();
+        let a = dead_agent();
+        let write = r#"{"path":"ghost.txt","content":"x"}"#;
+
+        // The control: with no shell in the turn, the missing file IS reported.
+        let mut alone = Claims::default();
+        alone.record("file_write", write, CallOutcome::Done);
+        let end = a.audit(TurnEnd::Answered, 1, &alone, Some(&registry)).await;
+        assert_eq!(vec![fmt!("ghost.txt")], end.missing,
+            "the control half does not report the file, so the half below proves nothing: {:?}",
+            end);
+
+        // The same turn, having also run a command.
+        let mut with_shell = Claims::default();
+        with_shell.record("file_write", write, CallOutcome::Done);
+        with_shell.record("shell", r#"{"command":"rm ghost.txt"}"#, CallOutcome::Done);
+        let end = a.audit(TurnEnd::Answered, 1, &with_shell, Some(&registry)).await;
+        assert!(end.missing.is_empty(),
+            "the app claimed to know what a shell command did not do: {:?}", end);
+
+        // A command the fence turned away ran nothing, so it explains nothing and silences
+        // nothing. Without this the whole check would be switched off by any refused shell call.
+        let mut refused_shell = Claims::default();
+        refused_shell.record("file_write", write, CallOutcome::Done);
+        refused_shell.record("shell", r#"{"command":"rm ghost.txt"}"#, CallOutcome::Refused);
+        let end = a.audit(TurnEnd::Answered, 1, &refused_shell, Some(&registry)).await;
+        assert_eq!(vec![fmt!("ghost.txt")], end.missing,
+            "a refused command switched the audit off: {:?}", end);
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_that_did_what_it_said_has_nothing_to_answer_for_00() {
+        // THIS MATTERS AS MUCH AS THE FINDING DOES. An audit that raises something on an ordinary
+        // turn is an audit nobody reads, and then the one turn that needed reading goes past with
+        // everything else.
+        let registry = one_tool();
+        let end = ran(vec![
+            tool_round(&[("file_write", r#"{"path":"notes/kept.txt","content":"hi"}"#)]),
+            plain_answer(),
+        ], &registry, 2).await;
+
+        assert_eq!(TurnEnd::Answered, end.how, "{:?}", end);
+        assert_eq!(1, end.calls, "{:?}", end);
+        assert_eq!(0, end.refused, "{:?}", end);
+        assert_eq!(0, end.failed, "{:?}", end);
+        assert!(end.missing.is_empty(), "{:?}", end);
+        assert!(!end.unaccounted(),
+            "an ordinary turn was given something to answer for: {:?}", end);
+        // The check RAN and passed, rather than being skipped: the file the call named is there.
+        assert!(registry.ctx.workspace.root().join("notes/kept.txt").exists(),
+            "the write did not land, so the audit had nothing to be right about");
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_that_used_none_of_its_tools_says_so_00() {
+        // THE CASE THIS WAS BUILT FOR. A model announced "let me rewrite from line 43 through 49
+        // applying the lessons" and then ended its turn having written nothing. The spinner
+        // stopped, which was correct, and the user was left saying "I have no visibility on what
+        // occurred here". Nothing was technically wrong, so nothing was said.
+        //
+        // The figures say it without reading a word of the reply: tools on the table, no call
+        // made. What the model promised is the reader's business; whether it did anything is the
+        // app's, and this is the app's answer.
+        let registry = one_tool();
+        let end = ran(vec![plain_answer()], &registry, 4).await;
+
+        assert_eq!(TurnEnd::Answered, end.how, "{:?}", end);
+        assert_eq!(0, end.calls, "{:?}", end);
+        assert_eq!(1, end.rounds, "{:?}", end);
+        assert!(end.offered > 0,
+            "a turn that held no tools is a different case entirely: {:?}", end);
+        // AND IT IS NOT A WARNING. Nothing went wrong -- the model may simply have answered a
+        // question -- so the ending reports the shape of the turn and claims no fault.
+        assert!(!end.unaccounted(),
+            "a turn that merely answered was reported as having something wrong: {:?}", end);
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_that_spent_its_round_budget_says_so_00() {
+        // The round limit was already announced, in the app's own voice. What it did not do was
+        // say what the turn had MADE OF that budget, which is the figure that tells a reader
+        // whether to raise the ceiling or stop the work.
+        let registry = one_tool();
+        let end = ran(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+            tool_round(&[("file_write", r#"{"path":"b.txt","content":"2"}"#)]),
+        ], &registry, 2).await;
+
+        assert_eq!(TurnEnd::Capped, end.how, "{:?}", end);
+        assert_eq!(2, end.rounds, "{:?}", end);
+        assert_eq!(2, end.calls, "{:?}", end);
+        assert!(end.missing.is_empty(), "{:?}", end);
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_the_provider_ended_still_says_how_it_ended_00() {
+        // The ending that was least visible of all: the turn returns an error, and until now
+        // nothing recorded that a turn had finished at all.
+        let a = dead_agent();
+        let registry = no_tools();
+        let mut session = Session::new(fmt!("s1"), fmt!("dead"), fmt!("model"));
+        let out = a.run_turn(&mut session, fmt!("hello"), &registry, &mut |_| {}).await;
+        assert!(out.is_err(), "the stub agent reached a provider, so this proves nothing");
+
+        let end = match a.ending() {
+            Some(e) => e,
+            None    => panic!("a turn ended in an error and said nothing about how it ended"),
+        };
+        assert_eq!(TurnEnd::Failed, end.how, "{:?}", end);
+        assert!(!end.unaccounted(),
+            "a turn that never reached a tool has no tool to answer for: {:?}", end);
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_that_said_nothing_says_that_it_said_nothing_00() {
+        // The one ending the app already explained, kept explained -- and now in the same words
+        // every other ending uses, so a reader does not have to know which of two mechanisms
+        // produced the line in front of them.
+        let quiet = crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{}}]}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        let registry = no_tools();
+        let end = ran(vec![quiet], &registry, 1).await;
+        assert_eq!(TurnEnd::Silent, end.how, "{:?}", end);
+        assert_eq!(0, end.offered, "a pure chat holds no tools: {:?}", end);
+    }
+
+    #[test]
+    fn test_an_ending_travels_as_one_of_five_words_00() {
+        // Spelled once, for the reason `CallOutcome::wire` is: the browser knows these words and
+        // no others, so a second speller would not fail loudly -- it would draw an ending nobody
+        // recognises, which is the silence this whole mechanism replaces.
+        let all = [
+            (TurnEnd::Answered, "answered"),
+            (TurnEnd::Stopped,  "stopped"),
+            (TurnEnd::Capped,   "capped"),
+            (TurnEnd::Silent,   "silent"),
+            (TurnEnd::Failed,   "failed"),
+        ];
+        for (end, word) in all {
+            assert_eq!(word, end.wire(), "{:?}", end);
+        }
+        // `Stopped` is the browser's alone: the native transport has no cancellation path, so
+        // `stream_sse` always reports a stream that ran to its end. It is spelled here so the two
+        // halves of the seam agree about a word only one of them can produce.
+        assert_eq!("stopped", TurnEnd::Stopped.wire());
+    }
+
     // ── A reply that ran out of room ────────────────────────────────────
 
     #[test]
@@ -1691,6 +2278,56 @@ mod tests {
         // the same loop again.
         assert!(!note.to_lowercase().contains("invalid json"), "{}", note);
         assert!(!note.to_lowercase().contains("malformed"), "{}", note);
+    }
+
+    #[tokio::test]
+    async fn test_every_turn_says_how_it_ended_and_says_it_before_done_00() {
+        // The owner watched a model announce work and then end its turn having done none.
+        // The spinner stopped, correctly -- the turn HAD ended -- and there was no way to
+        // tell that from a turn that finished.  Three endings were explained before this
+        // and every other one was silence, so the assertion is that there is no longer any
+        // such thing as a turn that ends without saying so.
+        use crate::llm::tests::{start_stub, stub_client, Reply};
+        let (port, _seen) = start_stub(vec![Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"content\":\"I will rewrite it.\"}}]}\n\n"
+                    .to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+                    .to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        }]).await;
+        let mut llm = stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(2);
+
+        let registry = one_tool();
+        let mut session = Session::new(fmt!("s1"), fmt!("ended"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("rewrite lines 43 to 49"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let end = events.iter().position(|e| matches!(e, AgentEvent::Ended { .. }));
+        assert!(end.is_some(), "a turn ended and said nothing about how: {:?}",
+            events.iter().map(|e| fmt!("{:?}", e)).collect::<Vec<_>>());
+        // ORDER, because a reader draws the closing line under the turn: an ending that
+        // arrived after `Done` would be drawn under the turn after it.
+        if let Some(done) = events.iter().position(|e| matches!(e, AgentEvent::Done)) {
+            assert!(end < Some(done), "the ending arrived after the turn was declared done");
+        }
+        // Tools were on the table and none was called, which is exactly the owner's case.
+        // It is reported as a FACT and not as a fault: what the model promised is the
+        // reader's business, whether it did anything is the app's.
+        match events.iter().find(|e| matches!(e, AgentEvent::Ended { .. })) {
+            Some(AgentEvent::Ended { how, offered, calls, .. }) => {
+                assert_eq!(how, "answered", "a plain stop is not a failure");
+                assert!(*offered > 0, "the turn was offered no tools, so it proves nothing here");
+                assert_eq!(*calls, 0, "the stub called nothing, so the count must say so");
+            }
+            _ => panic!("no ending to read"),
+        }
     }
 
     #[tokio::test]

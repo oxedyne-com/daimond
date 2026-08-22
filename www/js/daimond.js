@@ -6219,6 +6219,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// is advisory and the store settles a clash, because two people may
 		/// choose one name and neither is wrong.
 		land: function (name, files) { return landDiamond(name, files); },
+		/// This Diamond's SHAPE as a template pack, as JSON.
+		///
+		/// `withConversation` carries everything instead, which is the door back to
+		/// a complete copy -- and it is still a template, so it still opens as a new
+		/// Diamond rather than over the one it came from. What a template drops and
+		/// why is `protocol::template_carries`'s to say, not this app's.
+		template: function (id, withConversation) {
+			return diamondApp().export_template(String(id || ''), !!withConversation);
+		},
+		/// Open a template pack as a NEW Diamond, answering its id.
+		///
+		/// NOTHING ALREADY HERE IS WRITTEN OVER, whatever the pack says its id is:
+		/// the id in a template says where it was MADE, and `import_diamond` -- the
+		/// other door -- deletes the directory a pack names before rewriting it. The
+		/// two are separate doors for exactly that reason.
+		///
+		/// The QUESTION IS NOT ASKED HERE. `js/share.js` asks it, before this call,
+		/// because there is no half-landing behind this one: `import_template`
+		/// writes as soon as it is reached. A caller that reaches this without
+		/// asking has skipped the consent step, which is why the only production
+		/// caller is `DaimondShare.takeTemplate`.
+		openTemplate: async function (json) {
+			var id = await diamondApp().import_template(String(json || ''));
+			// It is on the rail now, and a filter left over from a moment ago would
+			// hide it behind "No Diamonds match" -- which reads exactly like the
+			// import having done nothing. The same three calls `createDiamond` makes,
+			// and for the same reason.
+			bumpDiamonds();
+			clearDiamondFilters();
+			await loadDiamonds();
+			return id;
+		},
 	};
 
 	/// The walk behind `DaimondDiamond.files`.
@@ -6729,6 +6761,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Not a tool row: a fold is something Daimond did, not something the model
 	/// called, and it is lossy. A user who is not shown one has no way to tell a
 	/// model that forgot from a model that never knew.
+	/// The model's own working, in a tile that is SHUT.
+	///
+	/// Reasoning is not the answer, so it must never sit where the reply goes -- but the
+	/// user pays for these tokens and they decide what the model then does, so drawing
+	/// none of them was the app holding back something already bought. Shut by default
+	/// because it is long, it is not addressed to the reader, and an answer buried under
+	/// its own working is worse than one without it.
+	///
+	/// A `<details>` and not a bespoke widget: the browser gives the disclosure, the
+	/// keyboard behaviour and the open state for nothing, and `.md-fold` already styles
+	/// exactly this shape for the two-depth answer. `textContent` and never the markdown
+	/// renderer -- this is the model talking to itself, and running it through a parser
+	/// would turn a stray backtick or angle bracket into layout.
+	function appendThinking(text) {
+		var body = String(text || '').trim();
+		if (!body) return;                       // most endpoints return none; draw nothing
+		finalizeAssistant();
+		var d = document.createElement('details');
+		d.className = 'md-fold chat-msg-thinking';
+		var sum = document.createElement('summary');
+		sum.textContent = tOr('chat.thinking', 'Thinking');
+		var pre = document.createElement('div');
+		pre.className = 'chat-msg-content chat-thinking-body';
+		pre.textContent = body;                  // escaped, and deliberately not parsed
+		d.appendChild(sum); d.appendChild(pre);
+		tagTurn(d); postToChat(d);
+	}
+
 	function appendCompacted(note) {
 		finalizeAssistant();
 		var div = document.createElement('div');
@@ -6743,6 +6803,108 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		div.appendChild(head); div.appendChild(body);
 		tagTurn(div); postToChat(div);
 		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+	}
+
+	// ── How the turn ended ─────────────────────────────────────
+	//
+	// `AgentEvent::Ended` closes every turn, and `dev/CONTRACT_CLAIMS.md` §3 is
+	// the whole of how it is drawn. It exists because a model announced work --
+	// "let me rewrite from line 43 through 49" -- and ended its turn having
+	// written nothing. The spinner stopped, correctly, because the turn HAD
+	// ended, and the owner was left saying "I have no visibility on what occurred
+	// here".
+	//
+	// So it is FURNITURE: one quiet line closing the turn, in the register of a
+	// timestamp, wearing neither the error nor the alert styling and using no
+	// word that claims a fault. Two rules follow and neither is optional.
+	//
+	//   1. A turn that did what it was asked reads as furniture. An app that
+	//      appends a warning to every turn teaches its reader to skip the one
+	//      that mattered, which is the failure this exists to prevent. Only
+	//      `refused`, `failed` or `missing` promotes it to a notice.
+	//   2. `offered === 0` draws NOTHING AT ALL. A pure chat has no tool log, so
+	//      its ending carries no news, and a line under every message in a
+	//      conversation with no tools in it is noise with nothing behind it.
+
+	/// What an ending says, or `null` where it says nothing.
+	///
+	/// Answers `{ line, paths, notice, title }`. Nothing here reads the model's
+	/// words: every figure is the engine's own tally, which is the rule the whole
+	/// mechanism is built on.
+	function endingParts(e) {
+		// Rule 2, first, so no caller can forget it.
+		if (!e || !((e.offered | 0) > 0)) return null;
+		var calls = e.calls | 0, refused = e.refused | 0, failed = e.failed | 0;
+		var missing = Array.isArray(e.missing) ? e.missing : [];
+		// The wire word, or the word itself where a later engine has learnt a
+		// sixth: an ending nobody recognises is still better said than swallowed.
+		var bits = [tOr('end.how_' + (e.how || ''), String(e.how || ''))];
+		// THE CASE THIS WAS BUILT FOR: tools on the table and no call made. Said
+		// as a fact, not as a fault -- what the model PROMISED is the reader's
+		// business, and whether it did anything is the app's.
+		bits.push(calls ? tn('end.calls', calls, { n: calls })
+			: tOr('end.no_calls', 'no tools used'));
+		if (refused) bits.push(tn('end.refused', refused, { n: refused }));
+		if (failed)  bits.push(tn('end.broke', failed, { n: failed }));
+		return {
+			line:   bits.join(' · '),
+			// The paths THEMSELVES. It is a short list or it is empty, and a turn
+			// that produces a long one has a real fault whose names the reader wants.
+			paths:  missing.length
+				? tOr('end.missing', 'not written: {paths}', { paths: missing.join(', ') })
+				: '',
+			notice: !!(refused || failed || missing.length),
+			// `offered` and `rounds` are here rather than on the line, so the line
+			// stays quiet and no figure is lost.
+			title:  tOr('end.help',
+				'How this turn ended. Tools available: {offered}. Requests sent: {rounds}. '
+				+ 'Tool calls made: {calls}.',
+				{ offered: e.offered | 0, rounds: e.rounds | 0, calls: calls }),
+		};
+	}
+
+	/// Close the turn on screen with the line above, where there is one to draw.
+	function appendEnding(e) {
+		var p = endingParts(e);
+		if (!p) return;
+		finalizeAssistant();
+		var div = document.createElement('div');
+		div.className = 'chat-msg chat-msg-ended' + (p.notice ? ' ended-notice' : '');
+		div.title = p.title;
+		var line = document.createElement('div');
+		line.className = 'end-line';
+		line.textContent = p.line;                   // escaped (H5)
+		div.appendChild(line);
+		if (p.paths) {
+			var pl = document.createElement('div');
+			pl.className = 'end-paths';
+			pl.textContent = p.paths;                // escaped: these are paths a model chose
+			div.appendChild(pl);
+		}
+		tagTurn(div); postToChat(div);
+		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+	}
+
+	/// The stored form of an ending, or `null` where there is nothing to store.
+	///
+	/// Written into the conversation the way `think_log` and `fold_log` are, so a
+	/// reload still shows how a turn ended. A turn that draws nothing stores
+	/// nothing: a record kept for a line no build will ever draw is a message per
+	/// turn in every pure chat, which is the noise rule 2 exists to prevent.
+	function endLogOf(ev) {
+		if (!ev || !((ev.offered | 0) > 0)) return null;
+		return {
+			role:    'end_log',
+			how:     String(ev.how || ''),
+			offered: ev.offered | 0,
+			rounds:  ev.rounds  | 0,
+			calls:   ev.calls   | 0,
+			refused: ev.refused | 0,
+			failed:  ev.failed  | 0,
+			missing: Array.isArray(ev.missing) ? ev.missing.slice(0) : [],
+			mid:     newMid(),
+			ts:      Date.now(),
+		};
 	}
 
 	/// Put something into the thread, taking the placeholder away first.
@@ -10137,6 +10299,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			else if (m.role === 'error_log') { appendError(m.content); }
 			else if (m.role === 'fold_log' || m.role === 'vision_log') { appendCompacted(m.content || ''); }
+			else if (m.role === 'think_log') { appendThinking(m.content || ''); }
+			// How the turn ended, redrawn from the record: a reload that dropped it
+			// would leave a reader who had walked away with the same silence the
+			// line exists to replace.
+			else if (m.role === 'end_log') { appendEnding(m); }
 			else if (m.role === 'tool_log') {
 				// A record of a tool the agent ran. Display only: it is not sent
 				// back to the model, which cannot replay a tool call it has no
@@ -11989,6 +12156,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// ── Triggered actions, for a Diamond.
 		if (opts.models === 'diamond') mountTriggers(card, opts);
 
+		// ── A template of this Diamond, for a Diamond. BELOW the triggers, because
+		// the section immediately above is the one thing a template deliberately
+		// leaves behind, and reading them in that order is the explanation.
+		if (opts.models === 'diamond') mountTemplate(card, opts);
+
 		// ── The foot, which is now Delete and nothing else. Done has become the
 		// closer cross above, so the destructive act no longer shares a row with
 		// the thumb that meant to dismiss.
@@ -12032,6 +12204,84 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// arriving by keyboard most likely wants, and it is the one Escape mirrors.
 		x.focus();
 		return { card: card, close: close };
+	}
+
+	/// Save this Diamond's shape as a template file.
+	///
+	/// BEHIND THE COG, because everything about ONE Diamond is behind its cog and
+	/// a person looking for "what can I do with this Diamond" looks there. Its
+	/// counterpart -- OPENING a template -- is in the Share view of the Social
+	/// panel instead: that act is about no Diamond in particular, and it is the
+	/// one place in the app where something arrives as a FILE and is asked about
+	/// before it is written.
+	///
+	/// The two facts a person cannot guess are said here rather than only in the
+	/// dialog the file route draws: a template leaves the triggers behind on
+	/// purpose, and opening one mints a new Diamond.
+	function mountTemplate(card, opts) {
+		if (!window.DaimondShare || typeof DaimondShare.saveTemplate !== 'function') return;
+		card.appendChild(secHead(tOr('tmpl.section', 'Template')));
+
+		var note = document.createElement('p');
+		note.className = 'tile-dlg-note';
+		note.textContent = tOr('tmpl.dlg_help',
+			'A template carries this Diamond’s shape — the page it draws through, its '
+			+ 'automation, and whatever a capp keeps beside itself — and none of what it has '
+			+ 'recorded. Triggered actions are left out on purpose: a trigger fires with '
+			+ 'nobody pressing anything, and one carried across would start work on somebody '
+			+ 'else’s machine because they opened a file. Whoever opens it gets a NEW '
+			+ 'Diamond; nothing of theirs is written over.');
+		card.appendChild(note);
+
+		// The door back to a complete copy, off by default. It is a second decision
+		// and a bigger one -- the memory, the kept conversation and a capp's entries
+		// are the Diamond's CONTENTS, and a template is its shape.
+		var row = document.createElement('div');
+		row.className = 'tile-dlg-field tile-dlg-tmpl';
+		var box = document.createElement('input');
+		box.type = 'checkbox';
+		box.className = 'tile-dlg-check';
+		box.id = 'tile-tmpl-conv-' + _tileDlgSeq;
+		var lab = document.createElement('label');
+		lab.className = 'tile-dlg-label';
+		lab.htmlFor = box.id;
+		lab.textContent = tOr('tmpl.with_conversation', 'Include what it has recorded');
+		lab.title = tOr('tmpl.with_conversation_help',
+			'Carries everything instead: the memory, the kept conversation and a capp’s own '
+			+ 'entries. Still a template, so it still opens as a new Diamond.');
+		row.appendChild(box);
+		row.appendChild(lab);
+		card.appendChild(row);
+
+		var say = document.createElement('p');
+		say.className = 'tile-dlg-note tile-dlg-say';
+		say.hidden = true;
+
+		var btn = document.createElement('button');
+		btn.type = 'button';
+		btn.className = 'tile-dlg-tmpl-save';
+		btn.textContent = tOr('tmpl.save', 'Save as a template…');
+		btn.addEventListener('click', async function () {
+			btn.disabled = true;
+			say.hidden = false;
+			say.classList.remove('warn');
+			say.textContent = tOr('tmpl.saving', 'Making the template…');
+			try {
+				var json = await DaimondDiamond.template(opts.id, box.checked);
+				// The name is the Diamond's, so two templates of two Diamonds do not
+				// arrive as one file called "template".
+				var file = DaimondShare.saveTemplate(opts.name || opts.id, json);
+				say.textContent = tOr('tmpl.saved',
+					'Saved as {file}. Anybody you give it to opens it as a Diamond of their '
+					+ 'own, from the Share view of the Social panel.', { file: file });
+			} catch (e) {
+				say.classList.add('warn');
+				say.textContent = friendlyError(e);
+			}
+			btn.disabled = false;
+		});
+		card.appendChild(btn);
+		card.appendChild(say);
 	}
 
 	/// The rename field in a chat's cog dialog. See the call site for why it is
@@ -14042,6 +14292,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// measures is the real state; what it does not cover is WHICH reads produce
 		/// it, which `test_the_turn_is_recorded_as_tainted_only_when_it_reads_a_
 		/// strangers_words` covers in Rust.
+		/// Steer with a PRESET, which is the door a gather round, a trigger and the
+		/// conductor all take. Published for `verify_steerqueue`, which has to prove
+		/// that a preset arriving mid-turn is NOT queued -- the half of the fix that
+		/// a check on typed text cannot see, and the half a later simplification
+		/// would quietly remove. It is the same call those three make and not a
+		/// second path, so what the verifier drives is what they drive.
+		steer:           function (preset) { return doSteer(String(preset || ''), 0); },
 		markRead:        function () {
 			if (current && current.app && current.app.set_tainted) {
 				current.app.set_tainted();
@@ -15163,6 +15420,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// cut off at the length limit. Recorded here and reported once at the end
 		// of the turn, where the whole turn is known.
 		var capCut = false;
+		// The turn's closing line, held until the turn actually closes. See the
+		// `ended` arm below for why it cannot be drawn where it arrives.
+		var pendingEnd = null;
 		var pendingTool = null, toolSeq = 0, pendingCallId = null;
 		var owns = function () { return current === chat && chats.indexOf(chat) !== -1; };
 		var onEvent = function (ev) {
@@ -15266,6 +15526,39 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (!owns()) return;
 				appendInterjected(said);
 				renderQueue();
+			} else if (ev.type === 'thinking') {
+				// THE TWO ARMS WERE IN EACH OTHER'S FUNCTIONS. This one read `rec` and
+				// `onScreen`, which are `doSteer`'s locals and do not exist here, while
+				// `doSteer`'s read `chat` and `owns`, which are these. Neither is a
+				// global, so every `thinking` event threw a ReferenceError inside the
+				// event sink -- in a chat AND in a daimon's thread -- and the model's
+				// working was drawn in neither. A turn's reasoning is bought and paid
+				// for, so drawing none of it was the app holding back something the
+				// user had already been billed for.
+				//
+				// Kept on the record so a reload still shows it, and drawn only when
+				// this conversation is the one on screen.
+				chat.messages.push({ role: 'think_log', content: ev.content || '',
+					mid: newMid(), ts: Date.now() });
+				if (!owns()) return;
+				appendThinking(ev.content || '');
+			} else if (ev.type === 'ended') {
+				// One quiet line closing the turn. Persisted like the fold above it,
+				// because a reader who walked away and came back is exactly the reader
+				// this was built for. `endLogOf` answers null for a toolless turn, and
+				// nothing is stored or drawn then -- see `endingParts` for the rule.
+				// STORED NOW, DRAWN LAST. `appendEnding` calls `finalizeAssistant`, which
+				// clears the partial answer -- and on an error path the ending arrives
+				// BEFORE the catch that reads those words. Drawing here emptied the
+				// partial: `verify_dropped` caught it, on the check that says the words
+				// which arrived before the road went are still there. The ending closes
+				// the turn, so it is drawn when the turn closes and not when the engine
+				// mentions it.
+				var endLog = endLogOf(ev);
+				if (endLog) {
+					chat.messages.push(endLog);
+					pendingEnd = endLog;
+				}
 			} else if (ev.type === 'unseeable') {
 				// A conversation is not re-routed -- there is no second model for it to move
 				// to and its history would have to move with it. What it gets is the fact,
@@ -15498,6 +15791,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (J) J.clearTurn(umid);
 				}
 			} finally {
+				// LAST, after the catch above has read the partial answer and after any
+				// error line is on screen: this is the line that closes the turn, so it
+				// is drawn when everything else about the turn has been.
+				if (pendingEnd && owns()) appendEnding(pendingEnd);
+				pendingEnd = null;
 				chat._generating = false;
 				chat._capTry = 0;            // the backoff belonged to this turn only
 				// HOW THE TURN ENDED, reported here because this is the one place
@@ -15898,6 +16196,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// The cached share and the reported cost, so a tile drawn after a reload
 						// still says what the run actually cost rather than re-guessing it.
 						cachedTokens: r.cachedTokens || 0, costUsd: r.costUsd || 0,
+						// How the turn ended, so a tile drawn after a reload still says it.
+						// Persisted for the reason the vision fields above are: the question
+						// it answers -- did this worker actually do anything? -- is asked
+						// after the reload that would otherwise have lost the answer.
+						ended: r.ended || null,
 					};
 				});
 			var n = Math.min(all.length, this.KEEP);
@@ -16410,6 +16713,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					for (var i = run.tools.length - 1; i >= 0; i--) {
 						if (run.tools[i].status === 'running') { run.tools[i].status = outcome; break; }
 					}
+				} else if (ev.type === 'thinking') {
+					// A worker's working, kept ON THE RUN and never appended to `run.text`.
+					// `run.text` is what the worker SAID -- it is gathered, sent back to the
+					// daimon that dispatched it, and billed as the report. Reasoning folded
+					// into it would be delivered as the worker's answer and re-read by
+					// another model as if the worker had written it.
+					run.thinking = (run.thinking || '') + (ev.content || '');
+					self.render();
+				} else if (ev.type === 'ended') {
+					// A WORKER'S TILE IS NOT A CHAT THREAD. There is no transcript here to
+					// close -- `run.text` is what the worker SAID, gathered and handed back
+					// to the daimon that dispatched it -- so the ending is kept ON THE RUN
+					// and drawn as a line on the tile, beside the vision note, which is the
+					// other fact the app states about a run in its own voice rather than the
+					// worker's. Putting it in `run.text` would deliver the app's audit to
+					// another model as if the worker had written it.
+					//
+					// Stored whole and judged at drawing time, so `endingParts` stays the
+					// one place the furniture rule lives.
+					run.ended = {
+						how:     String(ev.how || ''),
+						offered: ev.offered | 0,
+						rounds:  ev.rounds  | 0,
+						calls:   ev.calls   | 0,
+						refused: ev.refused | 0,
+						failed:  ev.failed  | 0,
+						missing: Array.isArray(ev.missing) ? ev.missing.slice(0) : [],
+					};
 				} else if (ev.type === 'unseeable') {
 					self.unseeable(run, ev);
 				} else if (ev.type === 'truncated') {
@@ -16451,7 +16782,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// The user is spared only the noticing. What was shown of the dead attempt is
 					// cleared so the retry does not append to it, and its journal rows go with it,
 					// since the recovery fold sums deltas and would otherwise show both attempts.
-					run.text = ''; run.tools = [];
+					// The ending goes with them: the dead attempt's tally is not this
+					// worker's, and one left standing would be read as the retry's.
+					run.text = ''; run.tools = []; run.ended = null;
 					if (window.DaimondJournal) {
 						try {
 							await DaimondJournal.clearAgent(run.id);
@@ -16893,6 +17226,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				vn.className = 'anote avision';
 				vn.textContent = vline;
 				card.appendChild(vn);
+			}
+
+			// And how its turn ended, in the same voice. Furniture unless something
+			// went unaccounted for; nothing at all for a run that held no tools. See
+			// `endingParts` -- one rule, in one place, for the tile and the thread.
+			var eparts = endingParts(run.ended);
+			if (eparts) {
+				var en = document.createElement('div');
+				en.className = 'anote aended' + (eparts.notice ? ' ended-notice' : '');
+				en.textContent = eparts.paths ? (eparts.line + ' · ' + eparts.paths) : eparts.line;
+				en.title = eparts.title;
+				card.appendChild(en);
 			}
 
 			var arow = document.createElement('div'); arow.className = 'arow';
@@ -19728,43 +20073,134 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			refreshResidency();
 		}
 
+		// ── What the tree used to keep from you, in one shut row ──────
+		//
+		// The tree dropped every dotfile on the floor. So `.daimond` — where a person's
+		// own rules and skills live — could not be seen or edited from the UI at all,
+		// and neither could `.env`, `.gitignore` or anything else they had put there:
+		// a file the panel silently drops is a file they cannot see they have. The app's
+		// own working directories had the opposite fault, sitting at the root among
+		// their files and cluttering the place they keep their own work.
+		//
+		// Both are answered by design rather than by concealment: ONE row, at the
+		// bottom of whichever directory is showing, shut, carrying the count of what is
+		// inside it. Their own files are exactly where they were, at the top, and
+		// nothing at all is now withheld.
+		//
+		// THE COUNT IS THE POINT of the row rather than decoration. A real project's
+		// `.git` is tens of thousands of entries, and a bare triangle gives no idea
+		// whether opening it costs a line or a screenful. It counts THIS LEVEL, which
+		// is all the panel knows and all it will list: opening the row reveals rows
+		// already built from the listing the tree was drawn from, so it costs nothing,
+		// and walking into `.git` costs exactly one `file_list` of `.git` — the same
+		// lazy step per directory that every other folder takes.
+		//
+		// `diamonds/` is deliberately NOT in it, and is not concealed either: it has
+		// the System section below the tree, which is read-and-edit but never delete or
+		// rename, and a `×` beside `diamonds/` in this tree would destroy every Diamond
+		// the user has (D4).
+		//
+		// Nothing about what happens INSIDE the row is special: an entry in it opens,
+		// renames and deletes exactly as an entry above it does, and walking into one
+		// leaves an ordinary listing of an ordinary directory. The refusal that stops an
+		// AGENT reading `.daimond` is a fence in `src/tools.rs` and is untouched by any
+		// of this — the panel's own `tools()` is unfenced, so this listing could always
+		// see these entries and only the filter below was hiding them from their owner.
+		var APP_DIRS = { chats: 1, mail: 1, prompts: 1, system: 1 };
+		var LS_RESTGROUP = 'daimond-files-rest';
+		// Shut unless the device says otherwise, so the panel opens on the user's own files.
+		var restOpen = (function () {
+			try { return localStorage.getItem(LS_RESTGROUP) === '1'; }
+			catch (e) { return false; }
+		})();
+
 		function renderTree(entries) {
 			lastEntries = entries;
-			// Daimond's own store must not be browsable or deletable from the
-			// workspace (D4). It lives at the OPFS root, so only hide it there.
 			var atRoot = !curDir || curDir === '.' || curDir === '/';
-			entries = entries.filter(function (e) {
-				if (e.name.charAt(0) === '.') return false;          // `.daimond` and any other dotfile
-				if (atRoot && e.name === 'diamonds' && e.dir) return false;
-				return true;
-			});
-			entries.sort(function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); });
-			treeEl.innerHTML = '';
-			if (entries.length === 0) { treeEl.innerHTML = '<div class="files-empty">empty</div>'; return; }
+			var mine = [], rest = [];
 			entries.forEach(function (e) {
-				var row = document.createElement('div');
-				var full = joinPath(curDir, e.name);
-				row.className = 'files-row' + (e.dir ? ' dir' : '') + (e.cloud ? ' cloud' : '');
-				row.dataset.path = full;
-				var name = document.createElement('span');
-				name.className = 'files-name';
-				name.textContent = (e.dir ? '📁 ' : (e.cloud ? '☁ ' : '📄 ')) + e.name;   // escaped
-				row.appendChild(name);
-				if (!e.dir) {
-					var size = document.createElement('span');
-					size.className = 'files-size';
-					size.textContent = fmtBytes(e.size || 0);
-					row.appendChild(size);
-				}
-				addFileControls(row, e, full, mayManage(full));
-				sysRowAsButton(row, e.name, function () {
-					var p = joinPath(curDir, e.name);
-					if (e.dir) list(p);
-					else if (e.cloud) fetchEntry(p, e.size || 0, true);
-					else openFile(p);
-				});
-				treeEl.appendChild(row);
+				if (atRoot && e.name === 'diamonds' && e.dir) return;   // the System section's, not the tree's
+				if (e.name.charAt(0) === '.' || (atRoot && e.dir && APP_DIRS[e.name])) { rest.push(e); return; }
+				mine.push(e);
 			});
+			var byKind = function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); };
+			mine.sort(byKind); rest.sort(byKind);
+			treeEl.innerHTML = '';
+			if (!mine.length && !rest.length) { treeEl.innerHTML = '<div class="files-empty">empty</div>'; return; }
+			mine.forEach(function (e) { treeEl.appendChild(treeRow(e)); });
+			// Last: the user's own work reads down from the top of the panel, and what
+			// they did not put there themselves is one row underneath it.
+			if (rest.length) treeEl.appendChild(restGroup(rest));
+		}
+
+		/// One row of the tree, for something in `curDir`.
+		function treeRow(e) {
+			var row = document.createElement('div');
+			var full = joinPath(curDir, e.name);
+			row.className = 'files-row' + (e.dir ? ' dir' : '') + (e.cloud ? ' cloud' : '');
+			row.dataset.path = full;
+			var name = document.createElement('span');
+			name.className = 'files-name';
+			name.textContent = (e.dir ? '📁 ' : (e.cloud ? '☁ ' : '📄 ')) + e.name;   // escaped
+			row.appendChild(name);
+			if (!e.dir) {
+				var size = document.createElement('span');
+				size.className = 'files-size';
+				size.textContent = fmtBytes(e.size || 0);
+				row.appendChild(size);
+			}
+			addFileControls(row, e, full, mayManage(full));
+			sysRowAsButton(row, e.name, function () {
+				if (e.dir) list(full);
+				else if (e.cloud) fetchEntry(full, e.size || 0, true);
+				else openFile(full);
+			});
+			return row;
+		}
+
+		/// The disclosure at the foot of the tree, with its rows already inside it.
+		///
+		/// Built fresh on every listing rather than toggled in place, because the tree
+		/// is: the open state is the module's, not the element's, so it survives the
+		/// relist that follows a save, a sync landing or a folder being walked into.
+		function restGroup(rest) {
+			var wrap = document.createElement('div');
+			wrap.className = 'files-rest';
+			var head = document.createElement('button');
+			head.type = 'button';
+			head.className = 'files-rest-head';
+			head.id = 'files-rest-head';
+			head.setAttribute('aria-controls', 'files-rest-body');
+			head.title = t('files.rest_help');
+			var label = document.createElement('span');
+			label.className = 'files-rest-label';
+			label.textContent = t('files.rest');
+			head.appendChild(label);
+			// The count is a fact about what opening it costs, so it is beside the name
+			// and not in the tooltip, where nobody reads it before deciding.
+			var n = document.createElement('span');
+			n.className = 'files-rest-count';
+			n.textContent = tn('files.rest_count', rest.length);
+			head.appendChild(n);
+			var body = document.createElement('div');
+			body.className = 'files-rest-body';
+			body.id = 'files-rest-body';
+			rest.forEach(function (e) { body.appendChild(treeRow(e)); });
+			function paint() {
+				head.setAttribute('aria-expanded', restOpen ? 'true' : 'false');
+				body.hidden = !restOpen;
+			}
+			head.addEventListener('click', function () {
+				restOpen = !restOpen;
+				paint();
+				// A device preference, kept like the scope chips and the line numbers.
+				try { localStorage.setItem(LS_RESTGROUP, restOpen ? '1' : '0'); }
+				catch (e2) { /* private mode: it holds for this session only */ }
+			});
+			paint();
+			wrap.appendChild(head);
+			wrap.appendChild(body);
+			return wrap;
 		}
 
 		/// Whether this row may be renamed or deleted from where it is being shown.
@@ -20827,9 +21263,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// answer to any of the three. A second listing parser is how two
 			// views of one folder come to disagree about what is in it.
 
-			/// One directory as data, filtered exactly as the tree filters it —
-			/// no dotfiles, and no `diamonds/` at the root, which is Daimond's
-			/// own store and is not the user's to browse.
+			/// One directory as data: no dotfiles, and no `diamonds/` at the root,
+			/// which is Daimond's own store and is not the user's to browse.
+			///
+			/// This used to say "filtered exactly as the tree filters it", and since
+			/// the tree grew its `files-rest` row that is no longer true and is no
+			/// longer wanted. The tree is the owner LOOKING at his workspace and must
+			/// conceal nothing; this is a picker choosing what a chat may reach, and
+			/// an `.env` or a `.git` offered for attachment is a different question
+			/// from one shown in a list. The panel is where he goes to see them.
 			entries:       async function (dir) {
 				var res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: dir || '.' }));
 				if (!res || res.outcome !== 'done') return [];
@@ -28265,7 +28707,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// this already is, so a daimon that answers every report by dispatching again
 	/// stops rather than fanning out for ever.
 	async function doSteer(presetArg, depthArg) {
-		if (crystalBusy || !currentDiamond) return;
+		if (!currentDiamond) return;
+		// A STEER TYPED WHILE A TURN IS IN FLIGHT USED TO VANISH. This was
+		// `if (crystalBusy || !currentDiamond) return;`: Send did nothing, the box
+		// kept its text, and nothing on screen said why -- while an ordinary chat
+		// in the same state queues the message and draws it (`enqueueMessage`).
+		// The queue for a Diamond already existed and was already drained at the
+		// end of every turn (`drainSteerQueue`) and on coming back to it
+		// (`resumeSteerQueue`); this was the one door that never put anything in
+		// it. `crystalBusy` is one flag for the whole app, so the turn in flight
+		// may belong to a DIFFERENT Diamond, which is how a Send could do nothing
+		// on a Diamond that was not itself doing anything.
+		if (crystalBusy) {
+			// A preset is a gather round, a trigger or the conductor, none of
+			// which came from the box and each of which has its own way back.
+			// Queueing one would deliver a stale report at an arbitrary later
+			// turn, which is worse than the retry it already has.
+			if (typeof presetArg === 'string' && presetArg) return;
+			var box   = document.getElementById('chat-input');
+			var typed = box ? box.value.trim() : '';
+			// ONLY WHAT WAS TYPED. Never a fallback to the preset: the guard above
+			// already turns those away, and a fallback would queue a stale gather
+			// report to be delivered at an arbitrary later turn. It would also
+			// queue a half-written line the user had not sent, if a trigger
+			// happened to fire while it sat in the box.
+			if (!typed) return;
+			enqueueMessage(daimonChat(currentDiamond), typed);
+			return;
+		}
 		// `doSteer` is wired straight to the Send button and to a key handler, so
 		// the first argument is USUALLY a DOM event, not an instruction. Taking it
 		// on trust made the MouseEvent the prompt: the box was never cleared, the
@@ -28417,6 +28886,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				busySay(rec, tOr('chat.busy_next', 'Step {n} done, thinking…', { n: step }));
 				if (onScreen()) renderToolResult(ev.name || '', ev.content || '', ev.outcome);
+			} else if (ev.type === 'thinking') {
+				// Persisted like a fold, and for the same reason: a reload that dropped it
+				// would leave the answer with no working behind it and no sign there had
+				// been any. Its own role, never `assistant` -- reasoning put where the
+				// reply goes is the model's working out mistaken for its answer, and it
+				// would then be sent back to the model as if it had said it.
+				//
+				// `rec` and `onScreen`, which are this function's. It read `chat` and
+				// `owns` -- `runTurn`'s locals, swapped with this arm at some point --
+				// and threw a ReferenceError on every reasoning event. See the same
+				// note in `runTurn`.
+				rec.messages.push({ role: 'think_log', content: ev.content || '',
+					mid: newMid(), ts: Date.now() });
+				if (onScreen()) appendThinking(ev.content || '');
+			} else if (ev.type === 'ended') {
+				// The daimon's turn closes the same way a chat's does. Its conversation
+				// is durable and it is the surface this app is developed from, so a
+				// steer that quietly did nothing is exactly as invisible here as it was
+				// in a chat -- and the reader is the same person.
+				var dEnd = endLogOf(ev);
+				if (dEnd) {
+					rec.messages.push(dEnd);
+					if (onScreen()) appendEnding(dEnd);
+				}
 			} else if (ev.type === 'unseeable') {
 				// The daimon is NOT re-routed: its conversation is durable and there is no
 				// second model configured for it. What this buys it is that the picture

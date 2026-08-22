@@ -433,6 +433,37 @@
 .cloud-size { color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--fs-2xs); }
 .cloud-pin  { font-size: var(--fs-2xs); }
 
+/* ── The rest of the folder, at the foot of the tree ─────────────
+   One shut row instead of a filter: the tree used to drop every dotfile
+   silently, which is a file its owner cannot see he has. The clutter it was
+   avoiding is answered by DESIGN — his own files stay at the top level, and
+   what he did not put there himself sits under one row with a count on it, so
+   he knows before pressing whether it costs a line or a screenful.
+   It borrows the System section's disclosure triangle deliberately: both rows
+   say the same thing about the same kind of contents, and two pictures for one
+   idea is how a panel stops being read. */
+.files-rest { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 4px; }
+.files-rest-head {
+	display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+	background: none; border: 0; cursor: pointer; padding: 6px 12px;
+	font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.04em;
+	color: var(--text-muted);
+}
+.files-rest-head::before { content: '\25B8'; display: inline-block; }
+.files-rest-head[aria-expanded="true"]::before { content: '\25BE'; }
+.files-rest-label { flex: 1; }
+/* The count is a number about size, so it is set like every other one in this
+   panel — mono, quiet, and not shouted by the row's own uppercase. */
+.files-rest-count {
+	font-family: var(--font-mono); font-size: var(--fs-3xs);
+	text-transform: none; letter-spacing: 0;
+}
+.files-rest-head:hover { color: var(--text-primary); }
+.files-rest-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Indented, so an entry inside the row is plainly the row's and not the tree's
+   — the only difference between the two; the controls on it are the same ones. */
+.files-rest-body .files-row { padding-left: 26px; }
+
 /* ── The System section: Daimond's own store ─────────────────────
    Its own section under the tree, not part of it. The two resolve against
    different roots — the tree against whatever workspace is active, this always

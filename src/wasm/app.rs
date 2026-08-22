@@ -1198,6 +1198,35 @@ impl DaimondApp {
         diamond::import_diamond(&json).await.map_err(to_js_err)
     }
 
+    /// Export a Diamond's SHAPE as a template anybody can open, sealed to nobody.
+    ///
+    /// The page it renders through, its automation and whatever a capp keeps beside itself
+    /// travel; the memory, its history, the kept conversation, the fold record and a capp's
+    /// entries do not.  [`diamond::export_template`] names the line and
+    /// `protocol::template_carries` draws it, file by file, with the reasoning for each.
+    ///
+    /// # Arguments
+    /// * `with_conversation` - Carry everything instead, which is the door back to a complete
+    ///   copy.  It is still a template and still opens as a new Diamond.
+    pub async fn export_template(
+        &self,
+        id:                String,
+        with_conversation: bool,
+    )
+        -> Result<String, JsValue>
+    {
+        diamond::export_template(&id, with_conversation).await.map_err(to_js_err)
+    }
+
+    /// Open a template as a NEW Diamond, answering its id.
+    ///
+    /// Nothing already on this device is written over, whatever the pack says its id is -- which
+    /// is the whole difference between this and [`DaimondApp::import_diamond`], and the reason
+    /// the two are separate doors.
+    pub async fn import_template(&self, json: String) -> Result<String, JsValue> {
+        diamond::import_template(&json).await.map_err(to_js_err)
+    }
+
     /// Assert a link, returning its id.
     ///
     /// `owner` is the Diamond whose sidecar holds the record; `rel` and `note`
@@ -2453,6 +2482,22 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
         AgentEvent::Text(text) => {
             set("type", &JsValue::from_str("text"));
             set("content", &JsValue::from_str(text));
+        }
+        AgentEvent::Thinking(text) => {
+            set("type", &JsValue::from_str("thinking"));
+            set("content", &JsValue::from_str(text));
+        }
+        AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing } => {
+            set("type",    &JsValue::from_str("ended"));
+            set("how",     &JsValue::from_str(how));
+            set("offered", &JsValue::from_f64(*offered as f64));
+            set("rounds",  &JsValue::from_f64(*rounds  as f64));
+            set("calls",   &JsValue::from_f64(*calls   as f64));
+            set("refused", &JsValue::from_f64(*refused as f64));
+            set("failed",  &JsValue::from_f64(*failed  as f64));
+            let arr = js_sys::Array::new();
+            for p in missing { arr.push(&JsValue::from_str(p)); }
+            set("missing", &arr);
         }
         AgentEvent::ToolCall { id, name, args } => {
             set("type", &JsValue::from_str("tool_call"));

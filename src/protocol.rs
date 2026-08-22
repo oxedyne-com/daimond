@@ -8,6 +8,7 @@ use crate::tools::CallOutcome;
 
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_jdat::prelude::*;
+use oxedyne_fe2o3_sbj::share;
 
 
 // ┌───────────────────────────────────────────────────────────────┐
@@ -910,6 +911,49 @@ pub enum AgentEvent {
     ///
     /// It is not an error.  The request succeeded; a setting was reached.
     Truncated,
+    /// A chunk of the model's own reasoning, as it arrives.
+    ///
+    /// Its own variant and not [`Text`](Self::Text), because the two are different KINDS of
+    /// content on the wire -- the provider sends `thinking` blocks and `text` blocks, and a
+    /// page that ran them together could never fold one and stream the other.  The user pays
+    /// for these tokens and they decide the answer, so drawing none of them was the app
+    /// holding something back that was already bought.
+    ///
+    /// Delivered WHOLE, at the end of the round that produced it, from
+    /// [`ChatOnceResponse::thinking`] -- not streamed.  The tile is shut by default, so
+    /// there is nothing for a stream to fill: chunking it would be work whose only visible
+    /// effect is on a surface nobody is looking at.  It arrives before the round's text is
+    /// finished being read, so the order on screen is still working-then-answer.
+    ///
+    /// Empty for every endpoint that does not return reasoning, which is most of them.  The
+    /// tokens are billed either way, so a provider that thinks and says nothing costs the
+    /// same and shows nothing -- that is the provider's doing and the tile simply does not
+    /// appear.
+    Thinking(String),
+    /// How the turn ended, and what its tool log came to.
+    ///
+    /// Always emitted, on every path out of a turn, and drawn as FURNITURE -- one quiet line
+    /// in the register of a timestamp.  That is not decoration: an app that appends a warning
+    /// to every turn teaches its reader to skip the one that mattered, which is the failure
+    /// this exists to prevent.  `dev/CONTRACT_CLAIMS.md` §3 binds the drawing to it, and
+    /// `TurnEnding::unaccounted` is the only thing that promotes the line to a notice.
+    ///
+    /// It exists because a model announced work and then ended its turn having done none, the
+    /// spinner stopped -- correctly, the turn HAD ended -- and the owner was left with no way
+    /// to tell that from a turn that finished.  Three endings were explained before this and
+    /// every other one was silence.
+    ///
+    /// `missing` is paths a completed call SAID it left on the store and which are not there,
+    /// read off the call's arguments and never off the model's words.
+    Ended {
+        how:     String,        // answered | stopped | capped | silent | failed
+        offered: usize,         // tools this turn was allowed to call
+        rounds:  usize,
+        calls:   usize,
+        refused: usize,
+        failed:  usize,
+        missing: Vec<String>,
+    },
     /// Agent turn complete.
     Done,
     /// Error occurred.
@@ -925,6 +969,21 @@ impl AgentEvent {
             Self::Text(text) => {
                 m.insert(dat!("type"), dat!("text"));
                 m.insert(dat!("content"), dat!(text.clone()));
+            }
+            Self::Thinking(text) => {
+                m.insert(dat!("type"), dat!("thinking"));
+                m.insert(dat!("content"), dat!(text.clone()));
+            }
+            Self::Ended { how, offered, rounds, calls, refused, failed, missing } => {
+                m.insert(dat!("type"),    dat!("ended"));
+                m.insert(dat!("how"),     dat!(how.clone()));
+                m.insert(dat!("offered"), Dat::U64(*offered as u64));
+                m.insert(dat!("rounds"),  Dat::U64(*rounds  as u64));
+                m.insert(dat!("calls"),   Dat::U64(*calls   as u64));
+                m.insert(dat!("refused"), Dat::U64(*refused as u64));
+                m.insert(dat!("failed"),  Dat::U64(*failed  as u64));
+                m.insert(dat!("missing"),
+                    Dat::List(missing.iter().map(|p| dat!(p.clone())).collect()));
             }
             Self::ToolCall { name, args, .. } => {
                 m.insert(dat!("type"), dat!("tool_call"));
@@ -1001,6 +1060,53 @@ pub fn generate_session_id() -> String {
 // │ The Diamond pack                                               │
 // └───────────────────────────────────────────────────────────────┘
 
+/// What a pack is, which decides what an importer may do with it.
+///
+/// The whole difference between the two doors: a `Diamond` is written OVER the id it names, and
+/// whatever stood there is deleted first ([`crate::wasm::diamond::import_diamond`]); a `Template`
+/// is opened as a NEW Diamond whatever id it names.  A reader that could not tell them apart would
+/// eventually take one for the other, and one of those two mistakes destroys the Diamond the pack
+/// happened to be named after.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PackKind {
+    Diamond,    // a whole Diamond, id and all
+    Template,   // a shape to open as a new one
+}
+
+impl PackKind {
+
+    /// The word this kind travels as.
+    pub fn wire(&self) -> &'static str {
+        match self {
+            Self::Diamond   => "diamond",
+            Self::Template  => "template",
+        }
+    }
+
+    /// What a pack says it is.
+    ///
+    /// Read from the head of the pack -- everything before the `files` map -- and not from the
+    /// whole of it, because a file called `kind` inside `files` would be a key of exactly the shape
+    /// [`crate::llm::extract_json_string`] is looking for.  A pack that says nothing is a whole
+    /// Diamond: nothing that predates this field could pack anything else.
+    pub fn of(json: &str) -> Self {
+        let head = match json.find("\"files\":") {
+            Some(i) => &json[..i],
+            None    => json,
+        };
+        match crate::llm::extract_json_string(head, PACK_KIND).as_deref() {
+            Some(w) if w == Self::Template.wire()   => Self::Template,
+            _                                       => Self::Diamond,
+        }
+    }
+}
+
+// The key a pack says its kind under.  Absent means [`PackKind::Diamond`].
+pub const PACK_KIND: &str = "kind";
+
+// The key a template carries its display name under.
+pub const PACK_NAME: &str = "name";
+
 /// The JSON a whole Diamond travels in, between two devices and inside a share.
 ///
 /// # A file that is not text used to be destroyed on the way out
@@ -1025,6 +1131,40 @@ pub fn generate_session_id() -> String {
 ///   tell two copies apart without opening a file inside the pack.
 /// * `files` - Every file under the Diamond's directory, by its path relative to it.
 pub fn pack_diamond(id: &str, touched: u64, files: &[(String, Vec<u8>)]) -> String {
+    pack(id, touched, PackKind::Diamond, "", files)
+}
+
+/// The same pack, said to be a template and carrying the display name.
+///
+/// The name travels at the top level because `.daimond/meta.json` does not travel at all (see
+/// [`template_carries`]), and a Diamond that arrived with no name would be a tile with nothing on
+/// it but a cog.  It is the same place `fe2o3_sbj`'s share format keeps it, and for the same
+/// reason.
+///
+/// # Arguments
+/// * `id` - Where the template came from.  Provenance and nothing else: [`PackKind::Template`]
+///   says an importer must mint its own.
+/// * `name` - What to call the Diamond the template opens as.
+pub fn pack_template(
+    id:      &str,
+    touched: u64,
+    name:    &str,
+    files:   &[(String, Vec<u8>)],
+)
+    -> String
+{
+    pack(id, touched, PackKind::Template, name, files)
+}
+
+fn pack(
+    id:      &str,
+    touched: u64,
+    kind:    PackKind,
+    name:    &str,
+    files:   &[(String, Vec<u8>)],
+)
+    -> String
+{
     // Sorted, so two packs of an unchanged Diamond are the same bytes and a caller comparing states
     // sees no change where there is none.
     let mut sorted: Vec<&(String, Vec<u8>)> = files.iter().collect();
@@ -1041,9 +1181,19 @@ pub fn pack_diamond(id: &str, touched: u64, files: &[(String, Vec<u8>)]) -> Stri
                 crate::llm::json_escape(path), oxedyne_fe2o3_text::base64::encode(bytes))),
         }
     }
+    // A whole Diamond says nothing, so a pack from a build that predates this field is byte for
+    // byte what it always was -- which matters, because the sync compares a Diamond's pack with the
+    // one it last sent and a new constant field would make every Diamond on every device look
+    // changed once.  Absence is unambiguous in the other direction too: nothing before this could
+    // pack anything but a whole Diamond.
+    let head = match kind {
+        PackKind::Diamond  => String::new(),
+        PackKind::Template => fmt!(",\"{}\":\"{}\",\"{}\":\"{}\"",
+            PACK_KIND, kind.wire(), PACK_NAME, crate::llm::json_escape(name)),
+    };
     fmt!(
-        "{{\"id\":\"{}\",\"touched\":{},\"files\":{{{}}},\"{}\":{{{}}}}}",
-        crate::llm::json_escape(id), touched, text.join(","), PACK_BINARY, binary.join(","),
+        "{{\"id\":\"{}\",\"touched\":{}{},\"files\":{{{}}},\"{}\":{{{}}}}}",
+        crate::llm::json_escape(id), touched, head, text.join(","), PACK_BINARY, binary.join(","),
     )
 }
 
@@ -1061,6 +1211,155 @@ pub fn unpack_binary(path: &str, body: &str) -> Outcome<Vec<u8>> {
         "The file '{}' in a Diamond export is not valid base64, so its bytes cannot be recovered.",
         path; Invalid, Input, Decode))))
 }
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ A template: the shape without the contents                     │
+// └───────────────────────────────────────────────────────────────┘
+
+// The path prefixes a template drops, over and above the ones the share format already refuses.
+//
+// `log/` is a capp's ENTRIES.  It is refused by name rather than by inspection because that is
+// where the shipped Log Life page puts what its user records, and `cappNeverDelivered` in
+// `www/js/daimond.js` already refuses a served template the same path from the other direction.
+// One rule, in the two places that have to agree about it.
+const TEMPLATE_DROP_PREFIXES: [&str; 1] = ["log/"];
+
+// The exact paths a template drops.
+//
+// `crystal.json` is the Diamond's MEMORY -- what its folds accumulated -- and `crystal.md` is the
+// same memory before the migration.  `transcript.md` is a conversation kept whole.  A bare `log`
+// is the file form of the prefix above.
+// `triggers.json` is dropped for a reason of its own, and it is the only entry here that is
+// not about the sender's privacy: a trigger is automation that fires WITHOUT anybody pressing
+// anything, so a template carrying one would start work on a stranger's machine because they
+// opened a file.  Disarming rather than dropping was considered and refused: `on: false` does
+// NOT disarm a trigger -- the pause tree is the authority and a trigger left in the file stays
+// armed under it -- so a template that carried one and claimed it was off would be worse than
+// one that carries none.  The receiver sets up their own, which is a sentence of documentation
+// and not a data problem.
+const TEMPLATE_DROP_EXACT: [&str; 5] =
+    ["crystal.json", "crystal.md", "transcript.md", "log", "triggers.json"];
+
+/// Does a template carry this file?
+///
+/// The rule is DROP A KNOWN LIST AND KEEP THE REST, which is the way round it has to be: a capp
+/// keeps its data beside itself, in folders this build has never heard of, and a template built
+/// from a list of what to keep would silently lose whichever folder the refinement was in.  That is
+/// the failure `cappManifest` exists to avoid on the delivery side.
+///
+/// Three of the drops are `fe2o3_sbj`'s and are not invented here -- `.daimond/`, `versions/` and
+/// the `capp.json` delivery record -- so an unsealed template and a sealed share refuse the same
+/// paths for the same stated reasons and the two cannot drift.  What this adds is the memory, the
+/// kept conversation and a capp's entries, because a share is a copy of a Diamond for one named
+/// person and a template is its shape for anybody at all.
+///
+/// # Arguments
+/// * `rel` - The path relative to the Diamond's own directory.
+pub fn template_carries(rel: &str) -> bool {
+    for prefix in share::REFUSED_PREFIXES {
+        if rel.starts_with(prefix) {
+            return false;
+        }
+    }
+    if rel == share::REFUSED_EXACT {
+        return false;
+    }
+    for prefix in TEMPLATE_DROP_PREFIXES.iter() {
+        if rel.starts_with(prefix) {
+            return false;
+        }
+    }
+    !TEMPLATE_DROP_EXACT.contains(&rel)
+}
+
+/// What of a Diamond's directory goes into a template.
+///
+/// `with_conversation` is the door back to a complete copy: everything travels, exactly as
+/// [`pack_diamond`] would have carried it, and the pack is still a [`PackKind::Template`], so it
+/// still opens as a new Diamond rather than over the one it came from.
+pub fn template_files(
+    files:             &[(String, Vec<u8>)],
+    with_conversation: bool,
+)
+    -> Vec<(String, Vec<u8>)>
+{
+    files.iter()
+        .filter(|(rel, _)| with_conversation || template_carries(rel))
+        .cloned()
+        .collect()
+}
+
+// The files inside a Diamond that name it by id, and so have to be readdressed when a copy opens
+// under a new one.
+//
+// Both are the app's own records rather than anybody's content, and neither is in a shape-only
+// template at all -- they arrive only with `with_conversation`.  The log's `delta_ref` holds a
+// PATH written when the fold was applied, which is what `rewrite_delta_refs` exists for on the
+// move between Diamond roots; a link's ends are `diamond:<id>` and `file:diamonds/<id>/...`.  Left
+// alone, every stored delta and every link in a complete copy would point at the directory it was
+// copied from.
+const TEMPLATE_RETARGET: [&str; 2] = [".daimond/log", ".daimond/links.jsonl"];
+
+/// One file of a template, readdressed from the id it was packed under to the one it is landing at.
+///
+/// Only the two files that carry an id are touched, and only where they are text.  A blanket
+/// search and replace over everything would reach a page's prose and a picture's bytes, where the
+/// id is not a reference to anything.
+pub fn retarget(
+    rel:    &str,
+    body:   Vec<u8>,
+    old_id: &str,
+    new_id: &str,
+)
+    -> Vec<u8>
+{
+    if old_id == new_id || old_id.is_empty() || !TEMPLATE_RETARGET.contains(&rel) {
+        return body;
+    }
+    let text = match String::from_utf8(body) {
+        Ok(t)  => t,
+        Err(e) => return e.into_bytes(),        // not text: no reference here to readdress
+    };
+    text
+        .replace(&fmt!("diamonds/{}/", old_id), &fmt!("diamonds/{}/", new_id))
+        .replace(&fmt!("diamond:{}", old_id), &fmt!("diamond:{}", new_id))
+        .into_bytes()
+}
+
+// How many ids are tried before an import gives up.
+//
+// A collision needs two ids minted in the same millisecond by the same counter, so one retry would
+// almost certainly do.  The figure is what turns "almost certainly" into a bounded loop that fails
+// loudly, rather than a guess that fails silently over somebody's Diamond.
+const FRESH_ID_TRIES: usize = 32;
+
+/// An id no Diamond in `taken` is using.
+///
+/// This is what stops an imported template writing over a Diamond that is already there.  The
+/// pack's id is NOT consulted: a template says where it came from, and a Log Life template imported
+/// by the person who made it would otherwise land on the Log Life it was made from and delete it.
+/// That is the shape this project has already lost a user's tags to.
+///
+/// # Arguments
+/// * `taken` - Every id the store already holds.
+pub fn fresh_id(taken: &[String]) -> Outcome<String> {
+    fresh_id_from(taken, generate_session_id)
+}
+
+/// [`fresh_id`], with the mint named, so a test can hand it one that collides on purpose.
+pub fn fresh_id_from(taken: &[String], mint: fn() -> String) -> Outcome<String> {
+    for _ in 0..FRESH_ID_TRIES {
+        let id = mint();
+        if !taken.iter().any(|t| t == &id) {
+            return Ok(id);
+        }
+    }
+    Err(err!(
+        "{} ids were minted for an imported template and every one of them was already a Diamond \
+        on this device, so the import stopped rather than write over one.", FRESH_ID_TRIES;
+        Conflict, Data))
+}
+
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Tests                                                          │
@@ -1089,6 +1388,25 @@ mod content_tests {
     /// would not open. Neither end reported a fault, because as far as either could see the file had
     /// travelled. Run against that code this fails on the very first assertion: the pack's `files`
     /// map holds the picture's path and its bytes are not the picture's.
+    #[test]
+    fn test_the_models_working_travels_as_its_own_kind_and_not_as_text() {
+        // The wire name is the whole contract with the page: `type: "thinking"` is what
+        // decides whether a chunk is drawn in the answer or in a shut tile beside it. It is
+        // asserted here rather than left to the browser, because a reasoning block that
+        // arrived typed as `text` would be appended to the reply -- the model's working
+        // mistaken for what it said, and then stored and sent back as if it had said it.
+        let m = AgentEvent::Thinking(fmt!("1071 = 2 x 462 + 147")).to_datmap();
+        assert_eq!(m.get(&dat!("type")), Some(&dat!("thinking")),
+            "reasoning did not travel as its own kind");
+        assert_eq!(m.get(&dat!("content")), Some(&dat!("1071 = 2 x 462 + 147")),
+            "the working was not carried whole");
+        // And it is NOT the same shape as an answer, which is the distinction the page
+        // depends on. A single map with both spellings would be indistinguishable.
+        let t = AgentEvent::Text(fmt!("1071 = 2 x 462 + 147")).to_datmap();
+        assert_ne!(t.get(&dat!("type")), m.get(&dat!("type")),
+            "an answer and the working behind it are the same kind on the wire");
+    }
+
     #[test]
     fn test_a_picture_survives_a_diamond_pack() {
         let png = doc_png();
@@ -1562,5 +1880,273 @@ mod tests {
         assert_eq!(sessions_key("jason"), Dat::Str("daimond:jason:sessions".to_string()));
         assert_eq!(session_key("s1"), Dat::Str("daimond:session:s1".to_string()));
         assert_eq!(user_config_key("jason"), Dat::Str("daimond:user:jason".to_string()));
+    }
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Template tests                                                 │
+// └───────────────────────────────────────────────────────────────┘
+
+#[cfg(test)]
+mod template_tests {
+    use super::*;
+
+    /// A Log Life Diamond as one is on disk after a year of use.
+    ///
+    /// Every path here is one something in this codebase really writes: the page and the seeded
+    /// tables come from `CAPP_TEMPLATES.lifelog`, `log/` is where the shipped page puts what its
+    /// user records, `transcript.md` is what "Keep as a Diamond" writes, and the three under
+    /// `.daimond/` are the store's own. The bodies stand in for content, but each is distinctive
+    /// enough that a test can say whether it travelled.
+    fn log_life() -> Vec<(String, Vec<u8>)> {
+        vec![
+            (fmt!("crystal.html"),                  b"<p>Log Life</p>".to_vec()),
+            (fmt!("crystal.json"),                  b"{\"summary\":\"I weigh 84kg\"}".to_vec()),
+            (fmt!("index.json"),                    b"{\"v\":2}".to_vec()),
+            (fmt!("lanes/gym.json"),                b"{\"lane\":\"gym\"}".to_vec()),
+            (fmt!("cat/gym.json"),                  b"{\"squat\":1}".to_vec()),
+            (fmt!("triggers.json"),                 b"{\"actions\":[]}".to_vec()),
+            (fmt!("capp.json"),                     b"{\"capp\":\"lifelog\"}".to_vec()),
+            (fmt!("log/2026-08-21.json"),           b"{\"ate\":\"two eggs\"}".to_vec()),
+            (fmt!("transcript.md"),                 b"# what I told it about my heart".to_vec()),
+            (fmt!("versions/0007.json"),            b"{\"summary\":\"I weighed 91kg\"}".to_vec()),
+            (fmt!("versions/0007.html"),            b"<p>older page</p>".to_vec()),
+            (fmt!(".daimond/meta.json"),            b"{\"name\":\"Log Life\"}".to_vec()),
+            (fmt!(".daimond/log"),                  b"{\"task\":\"my blood results\"}".to_vec()),
+            (fmt!(".daimond/links.jsonl"),          b"{\"from\":\"diamond:d1\"}".to_vec()),
+            (fmt!(".daimond/deltas/0007.md"),       b"user: I have been drinking".to_vec()),
+        ]
+    }
+
+    // The paths a template must carry, and the paths it must not.
+    //
+    // Named here rather than inline so the two directions are read together: a rule that keeps
+    // everything passes the first list, and a rule that keeps nothing passes the second.
+    const KEPT: [&str; 4] = [
+        "crystal.html", "index.json", "lanes/gym.json", "cat/gym.json",
+    ];
+    const DROPPED: [&str; 11] = [
+        // Automation, and the only entry here dropped for the RECEIVER's sake rather than
+        // the sender's: a trigger fires without anybody pressing anything.
+        "triggers.json",
+        "crystal.json", "capp.json", "log/2026-08-21.json", "transcript.md",
+        "versions/0007.json", "versions/0007.html",
+        ".daimond/meta.json", ".daimond/log", ".daimond/links.jsonl", ".daimond/deltas/0007.md",
+    ];
+
+    /// A TEMPLATE CARRIES NO MESSAGES, and no memory, and no entries.
+    ///
+    /// Asserted against the PACK's bytes rather than against the filtered list, because the pack is
+    /// what leaves the device: a filter that dropped a file and a packer that put it back would
+    /// pass a test on the list and still send the user's life log. Each dropped path is named in
+    /// the failure, so the assertion says which one escaped.
+    #[test]
+    fn test_a_template_carries_no_conversation_no_memory_and_no_entries() {
+        let files = log_life();
+        let kept  = template_files(&files, false);
+        let pack  = pack_template("d1", 42, "Log Life", &kept);
+
+        for path in DROPPED.iter() {
+            assert!(!pack.contains(path),
+                "a template carried '{}', which is the owner's own record and not the shape of \
+                 anything: {}", path, pack);
+        }
+        // And the bodies, not only the paths: a pack that named no file and carried the bytes
+        // anyway would pass the loop above.
+        for body in ["I weigh 84kg", "two eggs", "my heart", "I weighed 91kg", "blood results",
+                     "been drinking"].iter() {
+            assert!(!pack.contains(body),
+                "a template carried the words '{}' out of the owner's Diamond: {}", body, pack);
+        }
+        // The other direction, so this cannot be passed by a template that carries nothing at all.
+        for path in KEPT.iter() {
+            assert!(pack.contains(path),
+                "a template did not carry '{}', without which it is not the Diamond it is a \
+                 template of: {}", path, pack);
+        }
+    }
+
+    /// The classification, path by path, as the table in the brief has it.
+    #[test]
+    fn test_each_path_falls_on_the_side_it_was_classified_on() {
+        for path in KEPT.iter() {
+            assert!(template_carries(path), "'{}' is shape and was dropped", path);
+        }
+        for path in DROPPED.iter() {
+            assert!(!template_carries(path), "'{}' is contents and was carried", path);
+        }
+        // `capp.json` is refused AT THE ROOT and nowhere else, which is the distinction
+        // `fe2o3_sbj` draws: one inside a folder of the user's own making is ordinary data.
+        assert!(template_carries("recipes/capp.json"),
+            "a file that merely shares a name with the delivery record was dropped");
+        // A bare `log` file is the file form of the `log/` prefix, and `logbook.md` is not.
+        assert!(!template_carries("log"), "the entries file was carried");
+        assert!(template_carries("logbook.md"), "a file whose name begins with 'log' was dropped");
+    }
+
+    /// The door back to a complete copy carries everything -- and is still a template.
+    #[test]
+    fn test_the_conversation_door_carries_everything_and_is_still_a_template() {
+        let files = log_life();
+        let all   = template_files(&files, true);
+        assert_eq!(all.len(), files.len(), "a complete copy left something behind");
+        let pack = pack_template("d1", 42, "Log Life", &all);
+        for (path, _) in files.iter() {
+            assert!(pack.contains(path.as_str()), "a complete copy did not carry '{}'", path);
+        }
+        assert_eq!(PackKind::Template, PackKind::of(&pack),
+            "a complete copy did not say it was a template, so it would be imported OVER the \
+             Diamond it was copied from");
+    }
+
+    /// A template and a whole Diamond are distinguishable, and a whole Diamond's pack is exactly
+    /// the bytes it always was.
+    #[test]
+    fn test_a_pack_says_which_kind_it_is() {
+        let files = vec![(fmt!("crystal.html"), b"<p>x</p>".to_vec())];
+        let whole = pack_diamond("d1", 42, &files);
+        assert_eq!(PackKind::Diamond, PackKind::of(&whole));
+        assert!(!whole.contains(PACK_KIND),
+            "a whole Diamond's pack grew a field, so every Diamond on every device would look \
+             changed to the sync once: {}", whole);
+
+        let tmpl = pack_template("d1", 42, "Log Life", &files);
+        assert_eq!(PackKind::Template, PackKind::of(&tmpl));
+        assert!(tmpl.contains("\"name\":\"Log Life\""),
+            "a template did not carry what to call the Diamond it opens as: {}", tmpl);
+
+        // The kind is read from the HEAD of the pack. A Diamond holding a file called `kind` must
+        // not be able to say what kind of pack it is in.
+        let sneaky = pack_diamond("d1", 42, &vec![(fmt!("kind"), b"template".to_vec())]);
+        assert_eq!(PackKind::Diamond, PackKind::of(&sneaky),
+            "a file inside the Diamond decided what kind of pack it was travelling in: {}", sneaky);
+    }
+
+    /// What a colliding mint answers, so the retry below has something that collides.
+    fn always_taken() -> String { fmt!("d1") }
+
+    /// The first two ids are already Diamonds and the third is not.
+    fn third_time_lucky() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        fmt!("d{}", N.fetch_add(1, Ordering::Relaxed) + 1)
+    }
+
+    /// AN EXISTING DIAMOND IS NEVER WRITTEN OVER.
+    ///
+    /// The pack's own id is in `taken`, which is the case that matters: the person most likely to
+    /// open a Log Life template is the one whose Log Life it was made from.
+    #[test]
+    fn test_an_existing_diamond_is_never_written_over() {
+        let taken: Vec<String> = vec![fmt!("d1"), fmt!("d2"), fmt!("19fb11892cdc")];
+        let id = fresh_id(&taken).expect("an id had to be minted");
+        assert!(!taken.contains(&id),
+            "an imported template was to be written at '{}', where there is already a Diamond", id);
+        assert_ne!(fmt!("d1"), id, "an imported template took the id the pack named");
+
+        // The retry itself, with a mint that is made to collide. Two ids are already Diamonds, so
+        // a `fresh_id` that minted once and hoped would answer 'd1' and destroy it.
+        let id = fresh_id_from(&taken, third_time_lucky).expect("the third id was free");
+        assert_eq!(fmt!("d3"), id, "the mint was not tried again after it collided");
+
+        // And a mint that never gets clear of the store FAILS, rather than answering an id that is
+        // taken. Silence here would be a deletion.
+        assert!(fresh_id_from(&taken, always_taken).is_err(),
+            "an id that is already a Diamond was answered as a fresh one");
+    }
+
+    /// Two imports in a row do not land on each other.
+    #[test]
+    fn test_two_templates_opened_in_a_row_get_different_ids() {
+        let one = fresh_id(&[]).expect("an id had to be minted");
+        let two = fresh_id(&[one.clone()]).expect("a second id had to be minted");
+        assert_ne!(one, two, "two templates opened in a row took the same id");
+    }
+
+    /// A complete copy's records point at the Diamond it landed in, not the one it came from.
+    #[test]
+    fn test_a_complete_copy_is_readdressed_to_where_it_landed() {
+        let log = b"{\"delta_ref\":\"diamonds/d1/.daimond/deltas/0007.md\"}".to_vec();
+        let out = retarget(".daimond/log", log, "d1", "d9");
+        assert_eq!("{\"delta_ref\":\"diamonds/d9/.daimond/deltas/0007.md\"}",
+            String::from_utf8_lossy(&out),
+            "a stored delta still points at the Diamond the copy was made from");
+
+        let links = b"{\"from\":\"diamond:d1\",\"to\":\"file:diamonds/d1/lanes/gym.json\"}".to_vec();
+        let out = retarget(".daimond/links.jsonl", links, "d1", "d9");
+        assert!(!String::from_utf8_lossy(&out).contains("d1"),
+            "a link still names the Diamond the copy was made from: {}",
+            String::from_utf8_lossy(&out));
+
+        // And NOTHING ELSE is rewritten. A page that mentions the id is prose, not a reference,
+        // and a picture is not text at all.
+        let page = b"<p>made in diamonds/d1/</p>".to_vec();
+        assert_eq!(page.clone(), retarget("crystal.html", page, "d1", "d9"),
+            "a search and replace reached a file that holds no reference");
+    }
+
+    /// EXPORT A TEMPLATE, OPEN IT, AND THE ORIGINAL IS UNTOUCHED.
+    ///
+    /// The store is a list of workspace-relative paths and their bytes, which is what OPFS holds;
+    /// `wasm::diamond` is compiled only for the browser, so the walk and the writes are simulated
+    /// here over the same pure functions the browser calls -- `template_files` to choose,
+    /// `pack_template` to pack, `fresh_id` to mint, `retarget` to readdress.
+    #[test]
+    fn test_a_template_round_trip_leaves_the_original_alone() {
+        let mut store: Vec<(String, Vec<u8>)> = log_life().into_iter()
+            .map(|(rel, body)| (fmt!("diamonds/d1/{}", rel), body))
+            .collect();
+        let before = store.clone();
+
+        // Export.
+        let files = log_life();
+        let kept  = template_files(&files, false);
+        let pack  = pack_template("d1", 42, "Log Life", &kept);
+        assert_eq!(PackKind::Template, PackKind::of(&pack));
+
+        // Open. The id is minted against what the store already holds, and never taken from the
+        // pack.
+        let taken: Vec<String> = vec![fmt!("d1")];
+        let new_id = fresh_id(&taken).expect("an id had to be minted");
+        assert_ne!(fmt!("d1"), new_id, "the template landed on the Diamond it was made from");
+        for (rel, body) in kept.iter() {
+            let bytes = retarget(rel, body.clone(), "d1", &new_id);
+            // An UPSERT, because that is what a write to a path does: an import that reused the
+            // pack's id would land on the original's files and replace them, and a store that
+            // merely appended would hide exactly the loss this test is here to catch.
+            let at = fmt!("diamonds/{}/{}", new_id, rel);
+            match store.iter().position(|(p, _)| *p == at) {
+                Some(i) => store[i] = (at, bytes),
+                None    => store.push((at, bytes)),
+            }
+        }
+
+        // The original, byte for byte, still there.
+        for (path, body) in before.iter() {
+            let found = store.iter().find(|(p, _)| p == path);
+            match found {
+                Some((_, now)) => assert_eq!(body, now,
+                    "the original Diamond's '{}' was rewritten by an import", path),
+                None => panic!("the original Diamond lost '{}' to an import", path),
+            }
+        }
+        // Nothing new on disk means every write landed on a path that was already there, which is
+        // what an import that took the pack's id does: it replaces the original file by file.
+        assert!(store.len() > before.len(),
+            "the import added no file to the store, so it wrote over the Diamond it came from");
+
+        // The new Diamond has the shape.
+        let home = fmt!("diamonds/{}/", new_id);
+        let mine: Vec<&String> = store.iter().map(|(p, _)| p).filter(|p| p.starts_with(&home))
+            .collect();
+        for path in KEPT.iter() {
+            assert!(mine.iter().any(|p| p.ends_with(path)),
+                "the new Diamond has no '{}', so it is not the Diamond it is a template of", path);
+        }
+        for path in DROPPED.iter() {
+            assert!(!mine.iter().any(|p| p.ends_with(path)),
+                "the new Diamond arrived holding '{}', out of somebody else's Diamond", path);
+        }
     }
 }

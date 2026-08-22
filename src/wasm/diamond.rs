@@ -1787,14 +1787,24 @@ pub async fn export_size(id: &str) -> Outcome<u64> {
 }
 
 pub async fn export_diamond(id: &str) -> Outcome<String> {
+    let files = res!(diamond_files(id).await);
+    // A Diamond with no readable metadata still exports; it simply carries no
+    // stamp, and a carrier falls back to whatever the pack itself says.
+    let touched = read_meta(id).await.map(|m| m.touched).unwrap_or(0);
+    Ok(crate::protocol::pack_diamond(id, touched, &files))
+}
+
+/// Every file under `diamonds/<id>/`, by its path relative to it.
+///
+/// Bytes, not text.  What each file IS, is decided by [`crate::protocol::pack_diamond`], which is
+/// the one place that knows the pack's shape and the one place a test can reach.
+async fn diamond_files(id: &str) -> Outcome<Vec<(String, Vec<u8>)>> {
     let root = diamond_dir(id);
     if !res!(opfs::exists(FileRoot::Opfs, &root).await) {
         return Err(err!("There is no Diamond '{}' to export.", id; Missing, Data));
     }
     // Recursion is spelled out with an explicit stack: an `async fn` cannot
     // recurse without boxing its future (as `opfs::copy_dir` does the same).
-    // Bytes, not text. What each file IS, is decided by `protocol::pack_diamond`, which is the one
-    // place that knows the pack's shape and the one place a test can reach.
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut todo: Vec<String> = vec![String::new()];
     while let Some(rel) = todo.pop() {
@@ -1820,10 +1830,37 @@ pub async fn export_diamond(id: &str) -> Outcome<String> {
             files.push((child, bytes));
         }
     }
-    // A Diamond with no readable metadata still exports; it simply carries no
-    // stamp, and a carrier falls back to whatever the pack itself says.
-    let touched = read_meta(id).await.map(|m| m.touched).unwrap_or(0);
-    Ok(crate::protocol::pack_diamond(id, touched, &files))
+    Ok(files)
+}
+
+/// Export a Diamond's SHAPE as a template anybody can open: the page it renders through, its
+/// automation, and whatever a capp keeps beside itself -- and none of what has been recorded in it.
+///
+/// The line is drawn by [`crate::protocol::template_carries`], which is where the reasoning for
+/// each path is written and where it is tested.  Unsealed, deliberately: a share is sealed to one
+/// named recipient's key and so cannot reach anybody without an account, which is the whole reason
+/// this second door exists.
+///
+/// # Arguments
+/// * `id` - The Diamond to take the shape of.
+/// * `with_conversation` - Carry everything instead, which is the door back to a complete copy.
+///   It is still a template, so it still opens as a NEW Diamond.
+pub async fn export_template(id: &str, with_conversation: bool) -> Outcome<String> {
+    let files = res!(diamond_files(id).await);
+    let kept  = crate::protocol::template_files(&files, with_conversation);
+    // The name has to come out of the metadata here, because the metadata itself does not travel:
+    // a template carries the name at the top of the pack and nothing else from `.daimond/`.  A
+    // Diamond whose name cannot be read is refused rather than sent nameless -- what would arrive
+    // is a tile with nothing on it but a cog, and the person opening it would have no way to know
+    // what they had been given.
+    let meta = res!(read_meta(id).await);
+    let name = meta.name.trim().to_string();
+    if name.is_empty() {
+        return Err(err!(
+            "Diamond '{}' has no name, so a template made from it would arrive with nothing to \
+            call it. Name the Diamond and export it again.", id; Missing, Data));
+    }
+    Ok(crate::protocol::pack_template(id, meta.touched, &name, &kept))
 }
 
 /// Recreate a Diamond from an [`export_diamond`] JSON, REPLACING whatever this
@@ -1860,61 +1897,18 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
     if !is_safe_rel(&id) || id.contains('/') {
         return Err(err!("'{}' is not a Diamond id.", id; Invalid, Input, Path));
     }
-    let files_val = res!(js_sys::Reflect::get(&val, &JsValue::from_str("files"))
-        .map_err(|e| err!("A Diamond export has no files: {}.", js_str(&e); Invalid, Input)));
-    let files: js_sys::Object = res!(files_val.dyn_into()
-        .map_err(|_| err!("A Diamond export's files were not an object."; Invalid, Input)));
-
-    let mut writes: Vec<(String, Vec<u8>)> = Vec::new();
-    for pair in js_sys::Object::entries(&files).iter() {
-        let pair: js_sys::Array = match pair.dyn_into() {
-            Ok(a)  => a,
-            Err(_) => continue,
-        };
-        let rel = match pair.get(0).as_string() {
-            Some(p) => p,
-            None    => continue,
-        };
-        let body = match pair.get(1).as_string() {
-            Some(c) => c,
-            None    => continue,        // not a string; `files` carries only text
-        };
-        if !is_safe_rel(&rel) {
-            return Err(err!("A Diamond export names '{}', which is not a path inside it.", rel;
-                Invalid, Input, Path));
-        }
-        writes.push((rel, body.into_bytes()));
+    // A TEMPLATE MAY NOT COME THROUGH THIS DOOR. Everything below deletes the directory the pack
+    // names, and a template names where it CAME FROM -- so the owner opening his own Log Life
+    // template on this path would destroy the Log Life he made it from. `import_template` mints an
+    // id instead. A kind this build has never heard of still lands as it always did; only the one
+    // that is known to mean something else is refused.
+    if crate::protocol::PackKind::of(json) == crate::protocol::PackKind::Template {
+        return Err(err!(
+            "That is a Diamond template, not a Diamond export. It says it came from '{}', which is \
+            a note about where it was made and not a place to write it; open it as a template and \
+            it becomes a new Diamond.", id; Invalid, Input));
     }
-    // The pictures, the fonts, the compiled PDFs -- everything that is not text. A pack from a build
-    // that predates them simply has no `binary`, and lands as it always did.
-    if let Ok(blobs) = js_sys::Reflect::get(&val, &JsValue::from_str(crate::protocol::PACK_BINARY)) {
-        if let Ok(blobs) = blobs.dyn_into::<js_sys::Object>() {
-            for pair in js_sys::Object::entries(&blobs).iter() {
-                let pair: js_sys::Array = match pair.dyn_into() {
-                    Ok(a)  => a,
-                    Err(_) => continue,
-                };
-                let rel = match pair.get(0).as_string() {
-                    Some(p) => p,
-                    None    => continue,
-                };
-                let body = match pair.get(1).as_string() {
-                    Some(c) => c,
-                    None    => continue,
-                };
-                if !is_safe_rel(&rel) {
-                    return Err(err!(
-                        "A Diamond export names '{}', which is not a path inside it.", rel;
-                        Invalid, Input, Path));
-                }
-                // A file whose base64 is damaged is REFUSED rather than written as whatever decoded.
-                // Half a picture written over a good one is the corruption this whole change exists
-                // to remove, and it would arrive looking like a successful sync.
-                let bytes = res!(crate::protocol::unpack_binary(&rel, &body));
-                writes.push((rel, bytes));
-            }
-        }
-    }
+    let mut writes = res!(pack_files(&val));
     // An export with nothing in it would otherwise delete the Diamond it claims
     // to be, which is a deletion nobody asked for.
     if writes.is_empty() {
@@ -1976,6 +1970,186 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
         res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), &bytes).await);
     }
     Ok(())
+}
+
+/// The files a pack carries, text and base64 alike, each path checked against the Diamond it is
+/// landing in.
+///
+/// One reader for both doors, so an import and a template import cannot come to disagree about
+/// what a pack holds.  A `files` entry that is not a string is skipped rather than refused, which
+/// is the tolerance [`crate::protocol::pack_diamond`] promises: a pack may carry things this build
+/// does not understand and must still lay down the files it does.
+fn pack_files(val: &JsValue) -> Outcome<Vec<(String, Vec<u8>)>> {
+    let files_val = res!(js_sys::Reflect::get(val, &JsValue::from_str("files"))
+        .map_err(|e| err!("A Diamond export has no files: {}.", js_str(&e); Invalid, Input)));
+    let files: js_sys::Object = res!(files_val.dyn_into()
+        .map_err(|_| err!("A Diamond export's files were not an object."; Invalid, Input)));
+
+    let mut writes: Vec<(String, Vec<u8>)> = Vec::new();
+    for pair in js_sys::Object::entries(&files).iter() {
+        let pair: js_sys::Array = match pair.dyn_into() {
+            Ok(a)  => a,
+            Err(_) => continue,
+        };
+        let rel = match pair.get(0).as_string() {
+            Some(p) => p,
+            None    => continue,
+        };
+        let body = match pair.get(1).as_string() {
+            Some(c) => c,
+            None    => continue,        // not a string; `files` carries only text
+        };
+        if !is_safe_rel(&rel) {
+            return Err(err!("A Diamond export names '{}', which is not a path inside it.", rel;
+                Invalid, Input, Path));
+        }
+        writes.push((rel, body.into_bytes()));
+    }
+    // The pictures, the fonts, the compiled PDFs -- everything that is not text. A pack from a build
+    // that predates them simply has no `binary`, and lands as it always did.
+    if let Ok(blobs) = js_sys::Reflect::get(val, &JsValue::from_str(crate::protocol::PACK_BINARY)) {
+        if let Ok(blobs) = blobs.dyn_into::<js_sys::Object>() {
+            for pair in js_sys::Object::entries(&blobs).iter() {
+                let pair: js_sys::Array = match pair.dyn_into() {
+                    Ok(a)  => a,
+                    Err(_) => continue,
+                };
+                let rel = match pair.get(0).as_string() {
+                    Some(p) => p,
+                    None    => continue,
+                };
+                let body = match pair.get(1).as_string() {
+                    Some(c) => c,
+                    None    => continue,
+                };
+                if !is_safe_rel(&rel) {
+                    return Err(err!(
+                        "A Diamond export names '{}', which is not a path inside it.", rel;
+                        Invalid, Input, Path));
+                }
+                // A file whose base64 is damaged is REFUSED rather than written as whatever decoded.
+                // Half a picture written over a good one is the corruption this whole change exists
+                // to remove, and it would arrive looking like a successful sync.
+                let bytes = res!(crate::protocol::unpack_binary(&rel, &body));
+                writes.push((rel, bytes));
+            }
+        }
+    }
+    Ok(writes)
+}
+
+/// Open a template as a NEW Diamond, answering its id.
+///
+/// **Nothing that is already here is written over, whatever the pack says.**  [`import_diamond`]
+/// takes the id from the pack and deletes that directory before rewriting it, which is right for a
+/// sync and catastrophic for a template: the id in a template is where it was MADE, so the person
+/// most likely to open a Log Life template is the one whose Log Life would be destroyed by it.  The
+/// id is minted here instead ([`crate::protocol::fresh_id`]) and checked against the store a second
+/// time before a byte is written.
+///
+/// A plain Diamond export opens here too, and makes a copy rather than a replacement.  That is a
+/// door worth leaving open -- duplicating a Diamond is a thing people want and this path cannot
+/// destroy anything -- and it costs nothing, since a pack that names no name has one in the
+/// `.daimond/meta.json` it carries.
+pub async fn import_template(json: &str) -> Outcome<String> {
+    // The browser's own parser, for the reason `import_diamond` gives: this JSON holds whole files
+    // and a hand-rolled scan would be a second unescaping implementation to keep in step.
+    let val = res!(js_sys::JSON::parse(json)
+        .map_err(|e| err!("A Diamond template could not be parsed: {}.", js_str(&e);
+            Invalid, Input)));
+    // Provenance only. It is never a path here, so it is not checked as one; it is used to
+    // readdress the two files that name the Diamond they were written in.
+    let old_id = js_prop(&val, "id").unwrap_or_default();
+    let mut writes = res!(pack_files(&val));
+    if writes.is_empty() {
+        return Err(err!("A Diamond template holds no files, so there is nothing to open.";
+            Invalid, Input));
+    }
+
+    // The name, from the top of the pack where a template carries it, or out of the metadata where
+    // a whole-Diamond export carries it instead.
+    let mut name = js_prop(&val, crate::protocol::PACK_NAME).unwrap_or_default();
+    if name.trim().is_empty() {
+        let meta_rel = fmt!("{}/meta.json", STORE_DIR);
+        if let Some((_, body)) = writes.iter().find(|(rel, _)| *rel == meta_rel) {
+            name = Meta::from_json(&String::from_utf8_lossy(body)).name;
+        }
+    }
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(err!("A Diamond template carries nothing to call the Diamond it opens as.";
+            Missing, Input));
+    }
+
+    // Every id the store holds, so the mint has something to avoid. A root that cannot be listed is
+    // a store with no Diamonds in it yet, which is the ordinary state on a device's first run.
+    let taken: Vec<String> = match opfs::list_dir(FileRoot::Opfs, ROOT_DIR).await {
+        Ok(entries) => entries.into_iter()
+            .filter(|(_, is_dir, _)| *is_dir)
+            .map(|(name, _, _)| name)
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    let new_id = res!(crate::protocol::fresh_id(&taken));
+    // ASKED OF THE STORE, not of the listing. The listing is a moment old and the mint is a clock;
+    // this is the check that has to be true, and it costs one lookup.
+    if res!(opfs::exists(FileRoot::Opfs, &diamond_dir(&new_id)).await) {
+        return Err(err!(
+            "A template was to open as Diamond '{}' and there is already one there, so nothing was \
+            written.", new_id; Conflict, Data));
+    }
+
+    // The skeleton first, by the same function that makes any other Diamond: an empty crystal, its
+    // version-0 snapshot, the metadata and a `create` record. A template that carries any of those
+    // then lands on top of them.
+    res!(create_fresh(&name, &new_id).await);
+
+    // The metadata goes LAST, for the reason `import_diamond` gives: `list` admits a Diamond on its
+    // metadata alone, so a half-written one that already has metadata lists, opens and throws.
+    let meta_rel = fmt!("{}/meta.json", STORE_DIR);
+    let carries_crystal = writes.iter().any(|(rel, _)| rel == crate::tools::CRYSTAL_DATA_FILE);
+    writes.sort_by_key(|(rel, _)| (*rel == meta_rel) as u8);
+    for (rel, body) in writes {
+        let bytes = crate::protocol::retarget(&rel, body, &old_id, &new_id);
+        res!(opfs::write_file(FileRoot::Opfs,
+            &fmt!("{}/{}", diamond_dir(&new_id), rel), &bytes).await);
+    }
+
+    // A CRYSTAL WITH SOMETHING IN IT, because a page without one never appears. `renderCrystal`
+    // draws its "nothing here yet" line INSTEAD OF MOUNTING THE PAGE when the crystal is empty, so
+    // a Diamond furnished with a capp and an empty crystal is one whose capp is invisible -- which
+    // is what happened the first time a template that shipped no `crystal.json` was delivered.
+    // The title is the name, which is already at the top of the pack: this seeds nothing the
+    // template did not already say about itself.
+    if !carries_crystal {
+        let seed = crate::tools::CrystalData {
+            title: name.clone(),
+            ..Default::default()
+        }.to_json();
+        res!(opfs::write_file(FileRoot::Opfs, &crystal_data_path(&new_id), seed.as_bytes()).await);
+        res!(opfs::write_file(FileRoot::Opfs, &version_data_path(&new_id, 0), seed.as_bytes())
+            .await);
+    }
+
+    // AND THE METADATA IS PUT RIGHT, whichever way it arrived.
+    //
+    // The grants are the reason. `kits` decides what a COMMAND may touch outside the workspace, and
+    // a template is opened by somebody who has never met the person who made it: a grant that
+    // travelled would be a permission nobody on this device gave. A toolkit is off by default and
+    // it stays off, so what the template wanted is a question for whoever opens it, not a fact it
+    // brings with it. The tags go for a smaller reason -- they are the sender's filing, not the
+    // Diamond's shape -- and both stamps say now, because a copy that has just landed here was not
+    // worked on last year.
+    let mut meta = res!(read_meta(&new_id).await);
+    let now = now_ms() as u64;
+    meta.name    = name;
+    meta.tags    = Vec::new();
+    meta.kits    = Vec::new();
+    meta.updated = now;
+    meta.touched = now;
+    res!(write_meta(&new_id, &meta).await);
+
+    Ok(new_id)
 }
 
 

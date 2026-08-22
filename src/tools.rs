@@ -1479,6 +1479,50 @@ pub fn crystal_from_markdown(md: &str) -> CrystalData {
 /// skill may do.  A turn running under a skill's declaration is fenced out of it.
 pub const DAIMOND_DIR: &str = ".daimond/";
 
+// The skills index
+pub const SKILLS_DIR: &str	= ".daimond/skills/";	// where installed skills live
+pub const SKILL_MANIFEST: &str	= "SKILL.md";		// the one file that declares one
+
+/// Is this one of the few paths inside Daimond's own directory that a fenced turn may still read?
+///
+/// **Two shapes and no more**: the skills directory itself, so a listing can name what is
+/// installed, and `.daimond/skills/<name>/SKILL.md`, so each skill's declaration can be read.  Not
+/// a second file in a skill's folder, not the config beside them, and no write anywhere -- only
+/// [`ToolContext::may_read`] consults this.
+///
+/// It is spelled as an exact shape rather than as a [`Bound::MayRead`] prefix on purpose.  A prefix
+/// on the skills directory is the obvious way to write the grant and it opens every file every
+/// skill ships, which is most of what the fence around [`DAIMOND_DIR`] exists to keep shut.  So the
+/// hole is cut to the two paths that answer the question, and a path one segment deeper is refused.
+///
+/// The reason it exists at all, from a transcript.  A daimon asked to list its skills was refused,
+/// fell back to two stale paths out of its standing instructions -- one of which did not exist in
+/// that workspace -- and then stated a conclusion about the directory it had been refused: that a
+/// named skill "has not been copied into the skills directory, so it is not reachable".  It could
+/// not know that.  It had never seen the directory.  A fence that leaves an agent answering from a
+/// substitute for the evidence has moved the failure rather than prevented it.
+///
+/// Only `.daimond` is at issue.  A skill tree the user keeps elsewhere -- `notes/skills`, say -- is
+/// an ordinary part of the workspace and was always readable.
+pub(crate) fn is_skills_disclosure(path: &str) -> bool {
+    let p   = normalise(path);
+    let idx = normalise(SKILLS_DIR);
+    if p == idx {
+        return true; // the index itself, which is what "what skills have I got?" asks for
+    }
+    let rest = match p.strip_prefix(&fmt!("{}/", idx)) {
+        Some(r) => r,
+        None    => return false,
+    };
+    // Exactly `<name>/SKILL.md`: one segment for the skill, then its declaration.  `normalise` has
+    // already resolved `..`, so `<name>/../../config.jdat` arrived here spelled as `.daimond/
+    // config.jdat` and never reached the prefix test above.
+    match rest.split_once('/') {
+        Some((_, file)) => file == SKILL_MANIFEST,
+        None            => false,
+    }
+}
+
 /// One prefix rule bounding what a turn may touch, checked at the single dispatch door in
 /// [`Tool::execute`].
 ///
@@ -1619,6 +1663,12 @@ pub fn skill_bounds(skill_dirs: &[String]) -> Vec<Bound> {
     let mut out = vec![
         Bound::NoWrite(DAIMOND_DIR.to_string()),
         Bound::NoRead(DAIMOND_DIR.to_string()),
+        // The skills index BY NAME, which the deny above already covers.  It is stated a second
+        // time because the disclosure in [`is_skills_disclosure`] opens the deny above it and this
+        // one is what stops it here: a turn running under someone's declaration sees the skill it
+        // is running and no other, which is the sentence three paragraphs up.  A daimon reaches
+        // the index because its scope denies Daimond's directory and nothing narrower.
+        Bound::NoRead(SKILLS_DIR.to_string()),
     ];
     for dir in skill_dirs {
         // A carve-out is a hole punched at ONE named folder.  A directory that normalises away is
@@ -2987,6 +3037,18 @@ pub fn call_outcome(reply: &str) -> CallOutcome {
     } else {
         CallOutcome::Done
     }
+}
+
+/// What a call says about one path, once it has returned.
+///
+/// **Read off the ARGUMENTS, never off the reply.**  A reply is a sentence the tool composed, and
+/// four consumers once tried to read facts back out of such sentences -- which is the defect
+/// [`call_outcome`] exists to close.  The arguments are the model's own statement of which file it
+/// meant, they are the same whatever the wording, and they are what an audit can check.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PathClaim {
+    Left,       // on the store when the call returned
+    Removed,    // gone from the store when the call returned
 }
 
 /// What a command may touch, as the machine hand's wire spells it.
@@ -4832,9 +4894,23 @@ impl ToolContext {
                 "Refused: '{}' may be read here but not written. It was attached to be consulted \
                 rather than edited.", path);
         }
-        fmt!(
+        let mut out = fmt!(
             "Refused: '{}' is inside Daimond's own directory, which holds the rules about what \
-            agents may do. Those are not yours to read or rewrite.", path)
+            agents may do. Those are not yours to read or rewrite.", path);
+        // The half a refusal usually leaves out.  A daimon refused this went on to answer the
+        // question anyway, from its standing instructions, and stated as fact what was in a
+        // directory it had never opened.  So the sentence says both things: where it MAY look, and
+        // that a refusal is not evidence about what it was refused.  Offered only to a turn that
+        // really has the disclosure -- a skill running under a declaration does not, and pointing
+        // it at a second refusal would cost it a round trip to learn the same thing.
+        if self.may_read(SKILLS_DIR) {
+            out.push_str(&fmt!(
+                " You MAY list '{}' and read each skill's '{}', so if you were asked what skills \
+                are installed, look. Do not answer from memory, and do not conclude anything about \
+                what is or is not in there from this refusal: you have not seen it.",
+                SKILLS_DIR, SKILL_MANIFEST));
+        }
+        out
     }
 
     /// The workspace-relative directory a command starts in when the model names none.
@@ -5078,9 +5154,43 @@ impl ToolContext {
         {
             return true;
         }
+        // The skills index, and each skill's declaration.  A turn fenced out of Daimond's own
+        // directory may still see what skills are installed and read what each one says it does --
+        // otherwise a daimon asked the question answers it from memory, which is the failure
+        // [`is_skills_disclosure`] is written from.  Two paths wide, read-only, and it opens the
+        // deny on Daimond's directory and no other: a turn denied the index by name keeps that
+        // deny, which is how a skill goes on seeing its own declaration and nobody else's.
+        if is_skills_disclosure(&p) && !self.denied_deeper(&p) {
+            return true;
+        }
         !self.no_write.iter().any(|b| match b {
             Bound::NoRead(prefix) => under(&p, prefix),
             _                     => false,
+        })
+    }
+
+    /// Is `p` refused by a read deny NARROWER than the one on Daimond's own directory?
+    ///
+    /// The one guard on the skills disclosure, and the reason the whole grant is safe to make
+    /// unconditionally.  A hole punched in the deny on [`DAIMOND_DIR`] must not also punch through
+    /// a deny that names something inside it: [`skill_bounds`] denies the skills index by name, so
+    /// a turn running under a declaration cannot read the skill next door's, which is what that
+    /// fence has always been for.
+    ///
+    /// A deny whose prefix normalises away is counted, not skipped.  It denies every path there
+    /// is, and the disclosure returns early -- so skipping it would let two paths past a rule that
+    /// was written to stop all of them.
+    ///
+    /// # Arguments
+    /// * `p` - An already-normalised workspace-relative path.
+    fn denied_deeper(&self, p: &str) -> bool {
+        let dir = normalise(DAIMOND_DIR);
+        self.no_write.iter().any(|b| match b {
+            Bound::NoRead(prefix) => {
+                let pre = normalise(prefix);
+                pre != dir && under(p, &pre)
+            },
+            _ => false,
         })
     }
 
@@ -6367,6 +6477,61 @@ impl Tool {
             },
             _ => Vec::new(),
         })
+    }
+
+    /// Every path this call states something about once it has run, and what it states.
+    ///
+    /// The counterpart of [`write_targets`](Self::write_targets) and deliberately not the same
+    /// list.  The guard asks what a call is ABOUT TO touch, so a delete's target belongs there;
+    /// the audit asks what the call says is TRUE AFTERWARDS, and a delete's target is the one path
+    /// that must NOT be found.  Everything that only reads, searches, fetches a page or dispatches
+    /// a worker states nothing about the store and yields nothing here.
+    ///
+    /// Arguments that will not parse yield nothing rather than an error.  A call whose path cannot
+    /// be read is a call the dispatcher refused a moment later, and a claim invented out of a
+    /// half-parsed object would be a finding about a file nobody named.
+    ///
+    /// # Arguments
+    /// * `args_json` - The arguments as the model sent them.
+    pub fn path_claims(&self, args_json: &str) -> Vec<(String, PathClaim)> {
+        let named = |key: &str, claim: PathClaim| -> Option<(String, PathClaim)> {
+            match extract_json_string(args_json, key) {
+                Some(p) if !p.trim().is_empty() => Some((p, claim)),
+                _                               => None,
+            }
+        };
+        match self {
+            // The seven doors that leave bytes at a path the model wrote down.  `dir_create`
+            // belongs with them: a directory that was reported made and is not there is the same
+            // fault as a file that was, and both stores answer for either.
+            Tool::FileWrite | Tool::FileEdit | Tool::FileFetch | Tool::DocEdit
+            | Tool::SheetWrite | Tool::DirCreate =>
+                named("path", PathClaim::Left).into_iter().collect(),
+            // The PDF is named by the same function the guard and the result use, so the audit
+            // checks the file the compile actually wrote rather than the source it read.
+            Tool::TypstCompile => match Self::typst_out(args_json) {
+                Ok(out) if !out.trim().is_empty() => vec![(out, PathClaim::Left)],
+                _                                 => Vec::new(),
+            },
+            // A move states both halves, and the audit needs both: without the `Removed` half a
+            // file moved away from a path an earlier call wrote would be reported as a write that
+            // never happened.
+            Tool::FileMove => named("path", PathClaim::Removed).into_iter()
+                .chain(named("to", PathClaim::Left))
+                .collect(),
+            Tool::FileDelete => named("path", PathClaim::Removed).into_iter().collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Can this call have changed files its own arguments do not name?
+    ///
+    /// A shell command, a build, a verifier run and a dispatched worker each act on paths nobody
+    /// wrote down.  A turn holding one of them cannot be told that a file it wrote is missing,
+    /// because the honest answer is that the app does not know which of them removed it -- and an
+    /// audit that guesses at what it cannot see is an audit its readers learn to skip.
+    pub fn opaque(&self) -> bool {
+        matches!(self, Tool::Shell | Tool::Run | Tool::Verify | Tool::SpawnAgent)
     }
 
     /// The Diamond whose sidecar a link tool's call will change, or nothing when the call names
@@ -9554,6 +9719,35 @@ impl ToolRegistry {
         Some(fmt!("[{}]", defs.join(",")))
     }
 
+    /// Is a path a tool named on the store NOW?
+    ///
+    /// The same jail the tools themselves go through, so the audit asks about the file the call
+    /// actually wrote: the native side resolves against the workspace root and the browser side
+    /// applies the Diamond prefix first, exactly as `file_write` does.
+    ///
+    /// **A path it cannot answer for comes back `true`,** and that is the design rather than a
+    /// lapse.  This backs an audit; an audit that reports what it does not know is one people
+    /// learn to ignore, and a store that will not say is not evidence that a file is gone.
+    ///
+    /// # Arguments
+    /// * `rel` - The path as the model wrote it, before any prefix.
+    pub async fn path_is_there(&self, rel: &str) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            match Tool::scoped(&self.ctx, rel) {
+                Ok(p)  => crate::wasm::opfs::exists(self.ctx.root, &p).await.unwrap_or(true),
+                Err(_) => true,
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match self.ctx.workspace.resolve(rel) {
+                Ok(abs) => abs.exists(),
+                Err(_)  => true,
+            }
+        }
+    }
+
     /// Execute a tool call by name, returning its result.  Unknown
     /// tools and errors are returned as text so the LLM can recover.
     ///
@@ -9712,6 +9906,172 @@ mod tests {
         assert!(c.may_read("notes/specs/api.md"));
         // And a name that merely starts the same way is a different place.
         assert!(c.may_read(".daimonds-notes/x.md"));
+    }
+
+    // ── The one thing inside Daimond's directory a fenced turn may see ──────
+    //
+    // A daimon asked to list its skills was refused, fell back to two stale paths out of its
+    // standing instructions, and then stated a conclusion about the directory it had been refused.
+    // The grant that closes that is deliberately two paths wide, so the tests that matter here are
+    // the REFUSALS: a fence opened completely would satisfy every permission below and none of
+    // them.
+
+    #[test]
+    fn test_a_fenced_daimon_may_see_which_skills_are_installed_00() {
+        let c = scoped(&["notes/specs"], &[]);
+        assert!(c.may_read(".daimond/skills"), "the index, which is what a listing names");
+        assert!(c.may_read(".daimond/skills/pickup/SKILL.md"), "and each skill's declaration");
+        // Everything one segment either side of the grant.
+        assert!(!c.may_read(".daimond/skills/pickup/references/style.md"),
+            "a second file in a skill's folder is not that skill's declaration");
+        assert!(!c.may_read(".daimond/skills/pickup/notes.md"));
+        assert!(!c.may_read(".daimond/skills/pickup"),
+            "nor the skill's own folder: the grant lists ONE directory");
+        assert!(!c.may_read(".daimond/skills/pickup/sub/SKILL.md"),
+            "nor a manifest one segment deeper, which is not a skill's");
+        assert!(!c.may_read(".daimond/config.jdat"), "and the config is no more readable than before");
+        assert!(!c.may_read(".daimond"), "nor Daimond's own directory itself");
+        assert!(!c.may_read(".daimond/skills/pickup.md"),
+            "and the flat form of a skill is NOT granted -- the grant was each skill's SKILL.md, \
+            and widening it to every .md beside them is the decision nobody made");
+        // WRITING is untouched at every path the read was just opened at.
+        for p in [".daimond/skills", ".daimond/skills/pickup/SKILL.md", ".daimond/config.jdat"] {
+            assert!(!c.may_write(p), "{} became writable", p);
+        }
+        // The control: an unbounded turn reads all of it, so the refusals above are the fence
+        // speaking and not the paths.
+        assert!(ctx().may_read(".daimond/config.jdat"));
+    }
+
+    #[test]
+    fn test_the_skills_grant_survives_every_way_of_spelling_it_00() {
+        let c = scoped(&[], &[]);
+        for p in [".daimond/skills", ".daimond/skills/", "./.daimond/skills", ".daimond//skills"] {
+            assert!(c.may_read(p), "{} is the skills index and was refused", p);
+        }
+        for p in [
+            ".daimond/skills/pickup/SKILL.md",
+            "./.daimond/skills/pickup/SKILL.md",
+            ".daimond//skills//pickup/SKILL.md",
+            ".daimond/skills/other/../pickup/SKILL.md",
+        ] {
+            assert!(c.may_read(p), "{} is a skill's declaration and was refused", p);
+        }
+        // And the spellings that would turn a narrow grant into a wide one. `normalise` resolves
+        // these before the shape is tested; a check made on the spelling would let each one by.
+        for p in [
+            ".daimond/skills/pickup/../../config.jdat",
+            ".daimond/skills/pickup/references/../../../config.jdat",
+            ".daimond//skills/pickup/../../config.jdat",
+            ".daimond/skills/../SKILL.md",
+            ".daimond/skills/pickup/SKILL.md/../secrets.md",
+        ] {
+            assert!(!c.may_read(p), "{} spelled its way out of the grant", p);
+        }
+    }
+
+    #[test]
+    fn test_the_skills_grant_is_a_hole_in_one_fence_and_not_a_key_to_another_00() {
+        // A scope that could not be expressed reaches nothing, and that must include the two paths
+        // this grant names: the allow-list is tested BEFORE the disclosure for exactly this.
+        let mut nowhere = ctx();
+        nowhere.no_write = diamond_bounds("", &[], &[]);
+        assert!(!nowhere.may_read(".daimond/skills"), "a Nowhere bound must stay nowhere");
+        assert!(!nowhere.may_read(".daimond/skills/pickup/SKILL.md"));
+        // A both-verb allow-list naming somewhere else does not contain the skills index either.
+        let mut only = ctx();
+        only.no_write = vec![Bound::OnlyUnder(fmt!("proj")), Bound::NoRead(DAIMOND_DIR.to_string())];
+        assert!(!only.may_read(".daimond/skills"),
+            "a hole in the deny fence is not a way out of an allow-list");
+        assert!(only.may_read("proj/x.md"), "and the allow-list still passes its own paths");
+    }
+
+    #[test]
+    fn test_a_skill_under_a_declaration_still_sees_its_own_and_no_others_00() {
+        // The property the disclosure had to be built AROUND rather than through. `skill_bounds`
+        // denies the skills index by name, so a turn running under someone's declaration cannot
+        // read the skill next door's -- which is what that fence has always been for.
+        let mut c = ctx();
+        c.no_write = skill_bounds(&[fmt!(".daimond/skills/mine")]);
+        assert!(c.may_read(".daimond/skills/mine/SKILL.md"), "its own, by the carve-out");
+        assert!(c.may_read(".daimond/skills/mine/references/x.md"), "and its own shipped files");
+        assert!(!c.may_read(".daimond/skills/theirs/SKILL.md"),
+            "the disclosure must not reach past the deny skill_bounds states by name");
+        assert!(!c.may_read(".daimond/skills"), "nor let a skill enumerate the others");
+        // Composed with a Diamond's scope, the same both ways round.
+        let mut both = ctx();
+        both.no_write = compose(&diamond_bounds("diamonds/d1", &[fmt!("notes")], &[]),
+            &skill_bounds(&[fmt!(".daimond/skills/mine")]));
+        assert!(!both.may_read(".daimond/skills"));
+        assert!(!both.may_read(".daimond/skills/theirs/SKILL.md"));
+    }
+
+    #[test]
+    fn test_the_refusal_points_at_the_skills_index_rather_than_at_a_guess_00() {
+        let c = scoped(&["notes/specs"], &[]);
+        let said = c.refusal(".daimond/config.jdat", false);
+        assert!(said.contains("Daimond's own directory"), "{}", said);
+        assert!(said.contains(SKILLS_DIR), "it must name where the turn MAY look: {}", said);
+        assert!(said.contains("not seen it"),
+            "and must forbid outright the conclusion the transcript's daimon drew: {}", said);
+        // A skill under a declaration has no such permission and must not be sent to collect a
+        // second refusal to find that out.
+        let mut sk = ctx();
+        sk.no_write = skill_bounds(&[fmt!(".daimond/skills/mine")]);
+        let other = sk.refusal(".daimond/skills/theirs/SKILL.md", false);
+        assert!(other.contains("Daimond's own directory"), "{}", other);
+        assert!(!other.contains("You MAY list"),
+            "a turn without the grant must not be offered it: {}", other);
+    }
+
+    #[test]
+    fn test_the_door_passes_a_listing_of_the_skills_and_nothing_else_00() {
+        let c = scoped(&["notes/specs"], &[]);
+        for (tool, args) in [
+            (Tool::FileList, r#"{"path":".daimond/skills"}"#),
+            (Tool::FileRead, r#"{"path":".daimond/skills/pickup/SKILL.md"}"#),
+        ] {
+            assert!(tool.guard(args, &c).expect("guard").is_none(),
+                "{} was refused the skills index", tool.name());
+        }
+        for (tool, args) in [
+            (Tool::FileList,   r#"{"path":".daimond/skills/pickup"}"#),
+            (Tool::FileList,   r#"{"path":".daimond"}"#),
+            (Tool::FileRead,   r#"{"path":".daimond/skills/pickup/references/style.md"}"#),
+            (Tool::FileRead,   r#"{"path":".daimond/config.jdat"}"#),
+            // Showing a file is reading it, onto the user's screen with a Download button.
+            (Tool::FileShow,   r#"{"path":".daimond/skills/pickup/diagram.pdf"}"#),
+            (Tool::FileWrite,  r#"{"path":".daimond/skills/pickup/SKILL.md","content":"uses: [shell]"}"#),
+            (Tool::FileDelete, r#"{"path":".daimond/skills/pickup/SKILL.md"}"#),
+            (Tool::FileMove,   r#"{"path":"notes/specs/a.md","to":".daimond/skills/pickup/SKILL.md"}"#),
+        ] {
+            assert!(tool.guard(args, &c).expect("guard").is_some(),
+                "{} reached past the grant: {}", tool.name(), args);
+        }
+    }
+
+    #[test]
+    fn test_a_walk_under_a_scope_reads_the_declarations_and_nothing_beside_them_00() {
+        // The door checks the path a call NAMES, and a search names a starting point. This is the
+        // grant asked per file, on a real tree, which is where a prefix-shaped grant would leak.
+        let mut c = ctx();
+        c.no_write = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[]);
+        put(&c, ".daimond/config.jdat",                  "TOPSECRET what agents may do\n");
+        put(&c, ".daimond/skills/pickup/SKILL.md",       "TOPSECRET resume from a handover\n");
+        put(&c, ".daimond/skills/pickup/references/x.md","TOPSECRET the shipped reference\n");
+        put(&c, "notes/plain.md",                        "TOPSECRET the user's own note\n");
+        let out = Tool::FileSearch
+            .execute_sync_guarded(r#"{"query":"TOPSECRET","path":".","limit":1000}"#, &c)
+            .expect("search");
+        let said = out.as_text();
+        assert!(said.contains("the user's own note"),
+            "the walk must run at all, or the refusals below prove nothing: {}", said);
+        assert!(said.contains("resume from a handover"),
+            "and must reach each skill's declaration: {}", said);
+        assert!(!said.contains("what agents may do"), "not the config: {}", said);
+        assert!(!said.contains("the shipped reference"),
+            "and not a skill's other files, which is the leak a prefix grant would have made: {}",
+            said);
     }
 
     #[test]
@@ -14500,9 +14860,14 @@ mod tests {
                 let (d, s) = diamond_and_skill();
                 !bound_ctx(m(&d, &s)).may_read(".daimond/config.jdat")
             }),
-            ("another skill's declaration is refused", false, |m: Merge| {
+            // A skill's shipped files rather than its SKILL.md, which stopped being a liveness
+            // check when the skills disclosure was added: a Diamond's scope alone now grants every
+            // declaration, so the assignment and the merge answer differently and the entry would
+            // belong in the other column. The composed refusal of another skill's DECLARATION is
+            // asserted in `test_a_skill_under_a_declaration_still_sees_its_own_and_no_others_00`.
+            ("another skill's shipped files are refused", false, |m: Merge| {
                 let (d, s) = diamond_and_skill();
-                !bound_ctx(m(&d, &s)).may_read(".daimond/skills/other/SKILL.md")
+                !bound_ctx(m(&d, &s)).may_read(".daimond/skills/other/references/x.md")
             }),
             ("the skill's carve-out does not escape the Diamond", true, |m: Merge| {
                 let (d, s) = diamond_and_skill();
@@ -16498,5 +16863,76 @@ mod read_prefix_tests {
 	#[test]
 	fn numbers_and_tabs_in_real_content_still_strip_and_that_is_why_it_is_a_last_resort() {
 		assert_eq!(without_read_prefix("1\talpha\n2\tbeta"), Some("alpha\nbeta".to_string()));
+	}
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Tests: what a call claims about the store                      │
+// └───────────────────────────────────────────────────────────────┘
+
+#[cfg(test)]
+mod claim_tests {
+	use super::*;
+
+	/// **A call's claim comes off its ARGUMENTS, and off nothing else.**
+	///
+	/// The whole point of the type: the reply is a sentence the tool composed, and this crate has
+	/// already been burnt once by consumers reading facts back out of such sentences.  The path is
+	/// the model's own word for the file it meant, and it says the same thing however the reply is
+	/// worded.
+	#[test]
+	fn test_a_calls_claim_is_read_off_its_arguments_00() {
+		assert_eq!(
+			vec![(fmt!("notes/a.txt"), PathClaim::Left)],
+			Tool::FileWrite.path_claims(r#"{"path":"notes/a.txt","content":"hi"}"#));
+		assert_eq!(
+			vec![(fmt!("notes/a.txt"), PathClaim::Left)],
+			Tool::FileEdit.path_claims(
+				r#"{"path":"notes/a.txt","old_string":"a","new_string":"b"}"#));
+		// A delete states the opposite, and the audit needs it stated: without it, a file written
+		// and then tidied away in the same turn would be reported as a write that never happened.
+		assert_eq!(
+			vec![(fmt!("scratch.txt"), PathClaim::Removed)],
+			Tool::FileDelete.path_claims(r#"{"path":"scratch.txt"}"#));
+		assert_eq!(
+			vec![(fmt!("a.txt"), PathClaim::Removed), (fmt!("b.txt"), PathClaim::Left)],
+			Tool::FileMove.path_claims(r#"{"path":"a.txt","to":"b.txt"}"#));
+		// The PDF, by the same function the guard and the result use, rather than the source.
+		assert_eq!(
+			vec![(fmt!("doc/paper.pdf"), PathClaim::Left)],
+			Tool::TypstCompile.path_claims(r#"{"path":"doc/paper.typ"}"#));
+		// Reading claims nothing about the store, and neither does searching it.
+		assert!(Tool::FileRead.path_claims(r#"{"path":"notes/a.txt"}"#).is_empty());
+		assert!(Tool::FileSearch.path_claims(r#"{"query":"needle"}"#).is_empty());
+		// Arguments that name no path yield no claim rather than an error. A call whose path
+		// cannot be read is one the dispatcher refuses a moment later, and a claim invented from a
+		// half-parsed object would be a finding about a file nobody named.
+		assert!(Tool::FileWrite.path_claims("{}").is_empty());
+		assert!(Tool::FileWrite.path_claims(r#"{"path":"   "}"#).is_empty());
+		// A CALL CUT OFF AT THE OUTPUT LIMIT still carries a whole `path` -- the cut fell in the
+		// content after it -- so this function reads one and it is the OUTCOME that keeps the
+		// claim out of the audit: the note such a call gets back opens "Error", so it is booked
+		// `Failed` and never asked what it left behind. Asserted where the gate is, in
+		// `agent::tests::test_a_call_that_never_ran_claims_nothing_00`.
+		assert_eq!(
+			vec![(fmt!("src/big.rs"), PathClaim::Left)],
+			Tool::FileWrite.path_claims(r#"{"path":"src/big.rs","content":"fn main() {"#));
+	}
+
+	/// **A shell, a build, a verifier and a worker reach files nobody wrote down.**
+	///
+	/// Named as a set here because the audit is silenced by any one of them, and a tool that
+	/// quietly joined the set -- or quietly left it -- would change what the audit reports without
+	/// changing a line of the audit.
+	#[test]
+	fn test_the_tools_whose_reach_is_not_in_their_arguments_00() {
+		for t in [Tool::Shell, Tool::Run, Tool::Verify, Tool::SpawnAgent] {
+			assert!(t.opaque(), "'{}' reaches files its arguments do not name", t.name());
+		}
+		for t in [Tool::FileWrite, Tool::FileEdit, Tool::FileDelete, Tool::FileMove,
+				Tool::FileRead, Tool::DirCreate, Tool::TypstCompile] {
+			assert!(!t.opaque(), "'{}' silences the audit for every turn that calls it", t.name());
+		}
 	}
 }

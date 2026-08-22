@@ -175,19 +175,26 @@ pub struct SkillInvocation {
 fn is_ident(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-'
 }
-
+// The workspace-relative directory skills are stored in.
 /// The workspace-relative directory skills are stored in.
-const SKILLS_DIR: &str = ".daimond/skills";
+// The same two strings the fence is written against, and never a second spelling of
+// them: `tools::is_skills_disclosure` decides what a fenced turn may read here, and a
+// module that carried its own copy could drift into naming a directory the fence does
+// not know about -- a skill loader and a fence disagreeing about where skills live is
+// the one disagreement neither of them can detect.
+use crate::tools::{SKILLS_DIR as SKILLS_DIR_SLASH, SKILL_MANIFEST as SKILL_FILE};
 
-/// The file that makes a directory a skill.  A directory without one is not a skill.
-const SKILL_FILE: &str = "SKILL.md";
+/// The skills directory without its trailing separator, which is how every path in this
+/// module is composed.
+fn skills_dir() -> &'static str { SKILLS_DIR_SLASH.trim_end_matches('/') }
+
 
 /// The subdirectory of a skill directory that holds executable code.
 const SCRIPTS_DIR: &str = "scripts";
 
 /// The file that names any FURTHER directories a `/name` command should look in, one
 /// workspace-relative directory per line.  Absent is the ordinary case and means the only place
-/// searched is [`SKILLS_DIR`].
+/// searched is [`skills_dir`].
 ///
 /// This file exists because two facts pull against each other.  A person who has been typing
 /// `/pickup` for months keeps their skills wherever they already keep them, and copying every one
@@ -236,7 +243,7 @@ pub fn parse_search_path(text: &str) -> Vec<String> {
         if dir.split('/').any(|seg| seg == ".." || seg == "." || seg.is_empty()) {
             continue;                                   // reaches out, or is not a path at all
         }
-        if dir == SKILLS_DIR || out.iter().any(|d| d == dir) {
+        if dir == skills_dir() || out.iter().any(|d| d == dir) {
             continue;                                   // already searched
         }
         out.push(dir.to_string());
@@ -257,7 +264,7 @@ pub fn parse_search_path(text: &str) -> Vec<String> {
 /// * `extra` - The directories from [`parse_search_path`], or an empty slice.
 pub fn command_dirs(extra: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(1 + extra.len());
-    out.push(SKILLS_DIR.to_string());
+    out.push(skills_dir().to_string());
     out.extend(extra.iter().cloned());
     out
 }
@@ -408,12 +415,12 @@ fn list_scripts(abs: &Path, rel: &str) -> Vec<String> {
 pub fn list_skills(ws: &Workspace)
     -> Outcome<Vec<Skill>>
 {
-    let dir = res!(ws.resolve(SKILLS_DIR));
+    let dir = res!(ws.resolve(skills_dir()));
     if !dir.exists() {
         return Ok(Vec::new());
     }
     let rd = res!(std::fs::read_dir(&dir)
-        .map_err(|e| err!(e, "list_skills: cannot read '{}'.", SKILLS_DIR; IO, File, Read)));
+        .map_err(|e| err!(e, "list_skills: cannot read '{}'.", skills_dir(); IO, File, Read)));
     let mut out = Vec::new();
     for ent in rd.filter_map(|e| e.ok()) {
         let p = ent.path();
@@ -426,7 +433,7 @@ pub fn list_skills(ws: &Workspace)
                 Ok(t)  => t,
                 Err(_) => continue,
             };
-            let rel = fmt!("{}/{}", SKILLS_DIR, stem);
+            let rel = fmt!("{}/{}", skills_dir(), stem);
             let mut skill = parse_skill(&text, &stem);
             skill.scripts = list_scripts(&p, &rel);
             skill.dir     = Some(rel);
@@ -677,7 +684,7 @@ mod tests {
 
     /// Write a single-file skill into the workspace's `.daimond/skills` directory.
     fn write_skill(ws: &Workspace, name: &str, content: &str) {
-        let dir = ws.resolve(SKILLS_DIR).expect("resolve skills dir");
+        let dir = ws.resolve(skills_dir()).expect("resolve skills dir");
         std::fs::create_dir_all(&dir).expect("create skills dir");
         let path = dir.join(fmt!("{}.md", name));
         std::fs::write(&path, content).expect("write skill");
@@ -687,7 +694,7 @@ mod tests {
     /// whatever directories it needs.  With `rel` = `SKILL.md` this makes the directory a skill;
     /// with anything else it ships a file alongside.
     fn write_skill_file(ws: &Workspace, name: &str, rel: &str, content: &str) {
-        let path = ws.resolve(&fmt!("{}/{}/{}", SKILLS_DIR, name, rel)).expect("resolve");
+        let path = ws.resolve(&fmt!("{}/{}/{}", skills_dir(), name, rel)).expect("resolve");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("create skill dir");
         }
@@ -842,7 +849,7 @@ mod tests {
         assert!(paths.contains(&fmt!("notes/skills/pickup.md")),       "{:?}", paths);
         assert!(paths.contains(&fmt!("team/skills/pickup/SKILL.md")),  "{:?}", paths);
         // Daimond's own comes first: a skill it created must not be shadowed by one it did not.
-        assert!(paths[0].starts_with(SKILLS_DIR), "{:?}", paths);
+        assert!(paths[0].starts_with(skills_dir()), "{:?}", paths);
 
         // A name that is not a bare identifier reaches nothing at all, so nothing that skipped
         // `parse_command` can walk out of the skills directories with one.

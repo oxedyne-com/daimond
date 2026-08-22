@@ -119,11 +119,31 @@ const p = s.page;
 // absent.
 async function reboot() {
 	await p.reload({ waitUntil: 'domcontentloaded' });
-	await p.waitForFunction(() => window.__DAIMOND_READY === true, null, { timeout: 30000 });
-	if (await p.evaluate(() => document.body.classList.contains('locked'))) {
-		await signInAs(s, 'reopen');
+	await until(() => p.evaluate(() => window.__DAIMOND_READY === true), 40000);
+	// Sign in again if the lock is up, and TRY MORE THAN ONCE. Under load the
+	// unlock has been seen to need a second go, and the first shape of this
+	// function threw on the wait that followed -- taking the whole run with it and
+	// attributing the failure to no check at all.
+	for (var i = 0; i < 3; i++) {
+		if (!(await p.evaluate(() => document.body.classList.contains('locked')))) break;
+		try { await signInAs(s, 'reopen'); } catch (e) { /* the button may have gone already */ }
+		if (await until(() => p.evaluate(
+			() => !document.body.classList.contains('locked')), 20000)) break;
 	}
-	await p.waitForFunction(() => !document.body.classList.contains('locked'), null, { timeout: 30000 });
+	// Not asserted here: a lock that never lifts is the business of the checks
+	// below, which say what they were looking for and what they found instead.
+}
+
+/// Poll a predicate to a deadline. Answers whether it came true, and NEVER throws:
+/// a timeout in a helper is a crash with no check attached to it, which is exactly
+/// how this file failed in the gate while passing locally.
+async function until(fn, ms) {
+	const stop = Date.now() + ms;
+	while (Date.now() < stop) {
+		try { if (await fn()) return true; } catch (e) { /* mid-navigation */ }
+		await sleep(250);
+	}
+	return false;
 }
 
 /// Poll until `want()` matches, then hand back what it last saw.

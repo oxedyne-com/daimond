@@ -869,6 +869,7 @@
 	'chat.interject_pending': 'Not delivered yet. Click to edit it.',
 	'chat.interjected':       'You cut in here',
 	'chat.interjected_help':  'Said into the turn at this point. The model had it from here on.',
+	'chat.thinking':       'Thinking',
 	'chat.compacted':         'Conversation folded',
 	'chat.compacted_help':    'Daimond replaced the earlier part with a summary so the conversation fits the model’s context window.',
 	// The same thing said on the chat's TILE, for a queue left on a conversation
@@ -878,6 +879,62 @@
 	'chat.queue_badge.other':      '{n} waiting',
 	'chat.queue_badge_help.one':   'One message is waiting on this chat. Open it and it is sent as its own turn.',
 	'chat.queue_badge_help.other': '{n} messages are waiting on this chat. Open it and they are sent, one turn each.',
+
+	// ── How the turn ended, and a template of a Diamond ────────
+	//
+	// FURNITURE, in the register of a timestamp. `dev/CONTRACT_CLAIMS.md` §3 binds
+	// every word here: no word may claim a fault, because the line closes EVERY
+	// turn that held tools and an app appending a warning to each of them teaches
+	// its reader to skip the one that mattered. "Answered · no tools used" is a
+	// statement of what happened, not an accusation — the reader decides whether
+	// the model promised otherwise.
+	// i18n-family: end.how_ = answered stopped capped silent failed
+	'end.how_answered': 'Answered',
+	'end.how_stopped':  'Stopped',
+	'end.how_capped':   'Step limit reached',
+	'end.how_silent':   'Ended without saying anything',
+	'end.how_failed':   'Ended on an error',
+	'end.no_calls':     'no tools used',
+	'end.calls.one':    '{n} tool call',
+	'end.calls.other':  '{n} tool calls',
+	'end.refused.one':  '{n} refused',
+	'end.refused.other': '{n} refused',
+	'end.broke.one':    '{n} failed',
+	'end.broke.other':  '{n} failed',
+	'end.missing':      'not written: {paths}',
+	'end.help':         'How this turn ended. Tools available: {offered}. Requests sent: {rounds}. Tool calls made: {calls}.',
+
+	// A template is a Diamond's SHAPE without its contents. Two facts run through
+	// every string below because neither is guessable and both change what a
+	// person does: opening one mints a NEW Diamond and can never write over an
+	// existing one, and triggered actions are deliberately not carried, because a
+	// trigger fires with nobody pressing anything.
+	'tmpl.section':               'Template',
+	'tmpl.dlg_help':              'A template carries this Diamond’s shape — the page it draws through, its automation, and whatever a capp keeps beside itself — and none of what it has recorded. Triggered actions are left out on purpose: a trigger fires with nobody pressing anything, and one carried across would start work on somebody else’s machine because they opened a file. Whoever opens it gets a NEW Diamond; nothing of theirs is written over.',
+	'tmpl.with_conversation':      'Include what it has recorded',
+	'tmpl.with_conversation_help': 'Carries everything instead: the memory, the kept conversation and a capp’s own entries. Still a template, so it still opens as a new Diamond.',
+	'tmpl.save':                  'Save as a template…',
+	'tmpl.saving':                'Making the template…',
+	'tmpl.saved':                 'Saved as {file}. Anybody you give it to opens it as a Diamond of their own, from the Share view of the Social panel.',
+	'tmpl.panel_head':            'Open a template',
+	'tmpl.panel_help':            'A template is a Diamond’s shape without its contents: the page it draws through and its automation, and none of what it has recorded. It opens as a NEW Diamond and can never write over one you already have. Triggered actions are never carried, because a trigger fires with nobody pressing anything.',
+	'tmpl.panel_open':            'Open a template file…',
+	'tmpl.opened':                'Opened as a new Diamond, “{name}”. {n} file(s) arrived.',
+	'tmpl.unnamed':               'this template',
+	// The consent question. It says what it is (a page — a program), what cannot
+	// be told about it (a template carries no signature and no name, unlike a
+	// share), which files, and what declining does — which here is nothing at all,
+	// because the engine's door has no half-landing behind it.
+	'tmpl.code_title':            'This template contains code',
+	'tmpl.code_body':             '“{name}” includes a page: a program written by somebody else, which Daimond will run when you open it. A template carries no signature and nobody’s name, so nothing here can tell you where it came from — only the person who gave you the file can.\n\nWhat would be added: {files}\n\nIt opens as a NEW Diamond and can never write over one you already have. Declining writes nothing at all.',
+	'tmpl.code_ok':               'Accept the page and open it',
+	'tmpl.declined':              'The page was not accepted, so nothing has been opened.',
+	'tmpl.err_empty':             'That file is empty, so there is nothing to open.',
+	'tmpl.err_not_template':      'That file is not a Daimond template.',
+	'tmpl.err_file_huge':         'That file is {size}, which is larger than any template can be, so it was not opened.',
+	'tmpl.err_no_file':           'No file was chosen, so nothing was opened.',
+	'tmpl.err_nothing':           'There is nothing to save: that Diamond made an empty template.',
+	'tmpl.err_no_door':           'This build can read a template but has nowhere to open one.',
 
 	// ── The Web panel ──────────────────────────────────────────
 	'web.who_drives': 'Who is driving',
@@ -2114,6 +2171,13 @@
 	'role.compactor_help':  'Summarises a conversation that has outgrown its window. Its answer becomes what the chat remembers.',
 
 	// ── The Workspace panel ────────────────────────────────────
+	// The disclosure at the foot of the Workspace tree. Not "hidden files": the
+	// row is the panel saying what it is not showing, so the name describes the
+	// contents rather than labelling them, and the count says what opening it costs.
+	'files.rest':            'The rest of this folder',
+	'files.rest_count.one':  '{n} entry',
+	'files.rest_count.other': '{n} entries',
+	'files.rest_help':       'Everything else in this folder: the files and folders whose names begin with a dot, and the ones Daimond keeps for its own work \u2014 your rules and skills, your mail, the prompt each kind of agent is given. Nothing here is off limits to you; it is only out of the way. Open it to read or change any of it.',
 	'files.back':            'Back',
 	'files.edit':            'Edit',
 	'files.stop_editing':    'Stop editing',

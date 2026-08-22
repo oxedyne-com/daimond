@@ -778,6 +778,16 @@ fn event_to_ws(ev: &AgentEvent) -> (&'static str, Vec<Dat>) {
         AgentEvent::ToolResult { name, result, .. } =>
             ("tool_result", vec![dat!(name.clone()), dat!(result.clone())]),
         AgentEvent::Interjected(text) => ("interjected", vec![dat!(text.clone())]),
+        // NOT carried on this wire, for the same reason the tool outcome is not: the WS
+        // commands are declared in `src/syntax.rs`, and adding one is a protocol change
+        // nobody in this round owns a reader for. The browser gets it over
+        // `wasm::app::event_to_js`, which is the path the page runs on. An empty vector
+        // rather than a silent drop, so a client that ever does read `thinking` sees the
+        // act happened even before this wire learns to carry the text.
+        AgentEvent::Thinking(_) => ("thinking", vec![]),
+        // Not carried on this wire either, and for the reason given above: the WS commands are
+        // declared in `src/syntax.rs`. The browser reads it over `wasm::app::event_to_js`.
+        AgentEvent::Ended { .. } => ("ended", vec![]),
         // The two counts before the prose, so a client can draw the act without
         // parsing the sentence: what went, what is left, and then what it says.
         AgentEvent::Compacted { folded, kept, note } =>

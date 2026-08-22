@@ -948,6 +948,262 @@
 		});
 	}
 
+	// ── A template: the shape, and how one is opened ───────────
+	//
+	// A DIFFERENT THING FROM A SHARE, travelling by the same route. A share is
+	// sealed to one named person's key and carries a Diamond as it stands; a
+	// template is UNSEALED, carries the SHAPE without the contents, and is opened
+	// by whoever is handed the file. `DaimondApp.export_template` builds one and
+	// `import_template` opens it; both are the engine's, and everything here is
+	// the file route and the question in front of them.
+	//
+	// TWO FACTS ABOUT ONE THAT ARE NOT GUESSABLE, and both belong in front of the
+	// person opening it:
+	//
+	//   - `triggers.json` is NOT in a template, deliberately. A trigger fires with
+	//     nobody pressing anything, so a template carrying one would start work on
+	//     a stranger's machine because they opened a file. Disarming rather than
+	//     dropping was refused: `on: false` does not actually disarm a trigger --
+	//     the pause tree is the authority -- so a template that carried one and
+	//     said it was off would be worse than one that carries none.
+	//   - Opening one MINTS A NEW DIAMOND and can never write over an existing
+	//     one. The id inside a template says where it was MADE, which is why
+	//     `import_diamond` refuses a template outright: that door deletes the
+	//     directory the pack names, and the person most likely to open a Log Life
+	//     template is the one whose Log Life it would destroy.
+	//
+	// AND THE CONSENT STEP IS THE SAME ONE, for the same reason a `.dshare` is no
+	// more trusted than a message: a Diamond carrying a crystal page is carrying a
+	// PROGRAM somebody else wrote. `import_template` writes unconditionally, so
+	// the question is asked HERE, before the call -- there is no `withCode` on
+	// that door and no half-landing behind it, so the answer is the whole import.
+
+	/// What a template is called when it is handed over as a file.
+	var TEMPLATE_EXT = '.dtemplate';
+
+	/// The type it travels under. A pack IS JSON -- readable, and deliberately so:
+	/// there is nothing sealed about a template and a person may look inside one
+	/// before opening it.
+	var TEMPLATE_MIME = 'application/json';
+
+	/// The largest template this will even try to read.
+	///
+	/// Not a rule of the format: a guard so that a video dropped into the chooser
+	/// by mistake costs a sentence rather than a parse of sixteen megabytes. A
+	/// template carries whole file bodies, and a binary one goes as base64, so the
+	/// ceiling is well above a share's.
+	var TEMPLATE_MAX = 16 * 1024 * 1024;
+
+	/// What this build considers code, BY SUFFIX AND NOTHING ELSE.
+	///
+	/// A MIRROR OF `fe2o3_sbj::share::is_code_path`, and it is a mirror because
+	/// there is no door to that function from JavaScript: the judgement reaches
+	/// this side only as `ShareRead.isCode(i)`, which needs a signed, sealed share
+	/// to exist at all, and a template is neither. So the list is repeated here,
+	/// ONCE, in the module that owns the idea of code travelling by consent, and
+	/// `codePaths` above is what reads it -- rather than a second opinion growing
+	/// beside the import button. **A `is_code_path(path)` export on the wasm would
+	/// remove this; it is the right fix and it is not in this lane's files.**
+	///
+	/// The suffix and not the contents, for the reason the Rust says: a rule about
+	/// contents is one a reader must run over every byte before it can say whether
+	/// there is a question to ask, and it answers differently on two builds.
+	var CODE_SUFFIXES = ['.htm', '.html', '.js', '.mjs', '.svg', '.wasm'];
+
+	/// Does this path name a file this build considers code?
+	function isCodePath(path) {
+		var lower = String(path || '').toLowerCase();
+		for (var i = 0; i < CODE_SUFFIXES.length; i++) {
+			if (lower.length >= CODE_SUFFIXES[i].length
+				&& lower.slice(-CODE_SUFFIXES[i].length) === CODE_SUFFIXES[i]) return true;
+		}
+		return false;
+	}
+
+	/// What a template pack says about itself, without opening it.
+	///
+	/// Answers `{ name, kind, files, code }` -- `code` being the paths `codePaths`
+	/// picks out, so the import question and the share question are answered by
+	/// ONE reading of what counts as code rather than by two.
+	///
+	/// A pack presented as a reading of the same shape `describe` takes: the
+	/// judgement is `codePaths`'s, called and not copied.
+	function readTemplate(json) {
+		var text = String(json || '');
+		if (!text.trim()) {
+			throw new Error(tOr('tmpl.err_empty',
+				'That file is empty, so there is nothing to open.'));
+		}
+		var val;
+		try { val = JSON.parse(text); }
+		catch (e) {
+			throw new Error(tOr('tmpl.err_not_template',
+				'That file is not a Daimond template.'));
+		}
+		if (!val || typeof val !== 'object' || !val.files || typeof val.files !== 'object') {
+			throw new Error(tOr('tmpl.err_not_template',
+				'That file is not a Daimond template.'));
+		}
+		// Both maps: `files` is what round-trips as text and `binary` is everything
+		// else, base64. A picture inside a template is still a file the person is
+		// being given, so it is counted and it may be named.
+		var paths = Object.keys(val.files);
+		if (val.binary && typeof val.binary === 'object') {
+			Object.keys(val.binary).forEach(function (p) {
+				if (paths.indexOf(p) === -1) paths.push(p);
+			});
+		}
+		paths.sort();
+		// The SAME `codePaths` the sealed path uses, over a reading of the same
+		// shape. A second sweep written here would be the second judgement about
+		// what counts as code, live on the door with no signature behind it.
+		var read = {
+			count:  function () { return paths.length; },
+			path:   function (i) { return paths[i] || ''; },
+			isCode: function (i) { return isCodePath(paths[i] || ''); },
+		};
+		return {
+			name:  String(val.name || ''),
+			kind:  String(val.kind || 'diamond'),
+			files: paths,
+			code:  codePaths(read),
+		};
+	}
+
+	/// Ask whether a page inside a template may be written into this workspace.
+	///
+	/// `askAboutCode` is the sealed path's question and it cannot be used here:
+	/// its sentence names WHO the share came from, by fingerprint, and a template
+	/// has no author, no signature and no envelope -- there is nothing truthful to
+	/// put in that half of the sentence. So the question is asked in the same
+	/// place, in the same box, with the same refusal when there is nothing to ask
+	/// with; what differs is the one clause that would have been a lie.
+	///
+	/// ALL OR NOTHING, unlike a share. `accept` can land the data half of a share
+	/// and leave the pages out; `import_template` has no such door, so declining
+	/// means nothing is written at all, and the button says so.
+	async function askAboutTemplate(desc) {
+		var body = tOr('tmpl.code_body',
+			'“{name}” includes a page: a program written by somebody else, which Daimond will '
+			+ 'run when you open it. A template carries no signature and nobody’s name, so '
+			+ 'nothing here can tell you where it came from — only the person who gave you the '
+			+ 'file can.\n\nWhat would be added: {files}\n\nIt opens as a NEW Diamond and can '
+			+ 'never write over one you already have. Declining writes nothing at all.',
+			{ name: desc.name || tOr('tmpl.unnamed', 'this template'),
+			  files: desc.code.join(', ') });
+		if (window.DaimondCore && typeof DaimondCore.confirm === 'function') {
+			return await DaimondCore.confirm(body, tOr('tmpl.code_ok', 'Accept the page and open it'),
+				{ title: tOr('tmpl.code_title', 'This template contains code'), danger: true });
+		}
+		// The same answer `askAboutCode` gives, and for the same reason: the fence
+		// is the consent, not the dialog. A build with nothing to ask with refuses.
+		log('no confirm dialog: refusing the template’s code');
+		return false;
+	}
+
+	/// Hand a template over as a file. Answers the name it was given.
+	///
+	/// THE APP'S OWN HANDOVER, not a second one: one `Blob`, one object URL, a
+	/// synthetic `<a download>`, and the URL revoked straight after -- exactly
+	/// what `save` above does, because a second way of giving somebody a file
+	/// would be a second thing to fix.
+	function saveTemplate(name, json) {
+		var text = String(json || '');
+		if (!text.trim()) {
+			throw new Error(tOr('tmpl.err_nothing',
+				'There is nothing to save: that Diamond made an empty template.'));
+		}
+		var stem = String(name || 'template')
+			.replace(/[^A-Za-z0-9 _-]+/g, '').trim().replace(/\s+/g, '-').slice(0, 40);
+		var file = (stem || 'template') + TEMPLATE_EXT;
+		var a = document.createElement('a');
+		a.href = URL.createObjectURL(new Blob([text], { type: TEMPLATE_MIME }));
+		a.download = file;
+		a.rel = 'noopener';
+		a.click();
+		URL.revokeObjectURL(a.href);
+		log('saved template', file, text.length, 'bytes');
+		return file;
+	}
+
+	/// Open a template's text: ask about any page in it, then open it as a NEW
+	/// Diamond. Answers `{ id, name, files, code }`.
+	///
+	/// The question comes BEFORE the call and there is nothing after it to undo:
+	/// `import_template` writes as soon as it is reached.
+	async function takeTemplate(json) {
+		var desc = readTemplate(json);
+		if (desc.code.length) {
+			var yes = await askAboutTemplate(desc);
+			if (!yes) {
+				return { ok: false, why: tOr('tmpl.declined',
+					'The page was not accepted, so nothing has been opened.'), code: desc.code };
+			}
+		}
+		if (!window.DaimondDiamond || typeof DaimondDiamond.openTemplate !== 'function') {
+			throw new Error(tOr('tmpl.err_no_door',
+				'This build can read a template but has nowhere to open one.'));
+		}
+		var id = await DaimondDiamond.openTemplate(json);
+		log('opened template as', id, desc.files.length, 'files');
+		return { ok: true, id: id, name: desc.name, files: desc.files, code: desc.code };
+	}
+
+	/// Ask for a template from the machine, and open what is chosen.
+	///
+	/// Must be called from a click, for the reason `pick` gives: an
+	/// `<input type="file">` opens nothing without a user gesture, and that is the
+	/// browser's rule and the right one.
+	function pickTemplate() {
+		return new Promise(function (resolve, reject) {
+			if (typeof document === 'undefined' || !document.body) {
+				reject(new Error(tOr('tmpl.err_no_file',
+					'No file was chosen, so nothing was opened.')));
+				return;
+			}
+			var input = document.createElement('input');
+			input.type = 'file';
+			// Both, for the reason `pick` gives: a browser matches the extension and
+			// an operating system that has never seen a `.dtemplate` matches the type.
+			input.accept = TEMPLATE_EXT + ',' + TEMPLATE_MIME;
+			input.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px';
+			var done = false;
+			function finish(fn, arg) {
+				if (done) return;
+				done = true;
+				try { input.remove(); } catch (e) { /* already gone */ }
+				fn(arg);
+			}
+			input.addEventListener('change', function () {
+				var f = input.files && input.files[0];
+				if (!f) {
+					finish(reject, new Error(tOr('tmpl.err_no_file',
+						'No file was chosen, so nothing was opened.')));
+					return;
+				}
+				if (f.size > TEMPLATE_MAX) {
+					finish(reject, new Error(tOr('tmpl.err_file_huge',
+						'That file is {size}, which is larger than any template can be, so it '
+						+ 'was not opened.', { size: kb(f.size) })));
+					return;
+				}
+				// Resolved with the PROMISE of the opening, so a caller awaiting this is
+				// awaiting the whole of it -- the consent question included.
+				f.text().then(function (text) { return takeTemplate(text); })
+					.then(function (r) { finish(resolve, r); },
+						function (e) { finish(reject, e); });
+			});
+			// A chooser somebody closed still has to SETTLE: a promise left pending is
+			// a button that never comes back.
+			input.addEventListener('cancel', function () {
+				finish(reject, new Error(tOr('tmpl.err_no_file',
+					'No file was chosen, so nothing was opened.')));
+			});
+			document.body.appendChild(input);
+			input.click();
+		});
+	}
+
 	// ── The panel ──────────────────────────────────────────────
 	//
 	// EVERYTHING ABOVE THIS LINE WAS COMPLETE AND UNREACHABLE. share.js could
@@ -1002,6 +1258,13 @@
 		}
 		h.appendChild(takeBlock());
 		h.appendChild(sendBlock());
+		// LAST, because it is the odd one out here and the ordering says so: the two
+		// blocks above are a share -- one named person to another, sealed. A template
+		// is neither sealed nor addressed, and it is in this view because this is the
+		// one place in Daimond where something arrives AS A FILE and is asked about
+		// before it is written. A person who has just read "Open a share file…" is
+		// looking at the right shelf for "Open a template".
+		h.appendChild(templateBlock());
 		said(1);
 	}
 
@@ -1048,6 +1311,53 @@
 					var more = node('p', 'shr-say shr-warn', r.said);
 					say.parentNode.appendChild(more);
 				}
+			}, function (e) {
+				say.className = 'shr-say shr-warn';
+				say.textContent = (e && e.message) ? e.message : String(e);
+				say.hidden = false;
+			});
+		});
+		box.appendChild(b);
+		box.appendChild(say);
+		return box;
+	}
+
+	/// Opening a template. Its counterpart -- SAVING one -- is behind the cog on
+	/// the Diamond it is made from, because that is a fact about one Diamond and
+	/// this is not about any.
+	function templateBlock() {
+		var box = node('div', 'shr-block');
+		box.appendChild(node('h3', 'shr-head', tOr('tmpl.panel_head', 'Open a template')));
+		// The two facts a person cannot guess, said before they press anything
+		// rather than in the dialog afterwards.
+		box.appendChild(node('p', 'shr-note', tOr('tmpl.panel_help',
+			'A template is a Diamond’s shape without its contents: the page it draws through '
+			+ 'and its automation, and none of what it has recorded. It opens as a NEW '
+			+ 'Diamond and can never write over one you already have. Triggered actions are '
+			+ 'never carried, because a trigger fires with nobody pressing anything.')));
+		var say = node('p', 'shr-say');
+		say.hidden = true;
+		var b = node('button', 'shr-btn shr-tmpl', tOr('tmpl.panel_open', 'Open a template file…'));
+		b.type = 'button';
+		b.addEventListener('click', function () {
+			say.className = 'shr-say';
+			say.textContent = '';
+			say.hidden = true;
+			// From the click, for the reason `takeBlock` gives: an
+			// `<input type="file">` opens nothing without a user gesture.
+			pickTemplate().then(function (r) {
+				say.className = 'shr-say';
+				if (!r || !r.ok) {
+					// Declining the page is not an error and is not drawn as one.
+					say.textContent = (r && r.why) || tOr('tmpl.declined',
+						'The page was not accepted, so nothing has been opened.');
+					say.hidden = false;
+					return;
+				}
+				say.textContent = tOr('tmpl.opened',
+					'Opened as a new Diamond, “{name}”. {n} file(s) arrived.',
+					{ name: r.name || '', n: r.files.length });
+				say.hidden = false;
 			}, function (e) {
 				say.className = 'shr-say shr-warn';
 				say.textContent = (e && e.message) ? e.message : String(e);
@@ -1275,6 +1585,23 @@
 		/// chip does rather than through a second path written for it.
 		render: render,
 		view:   VIEW,
+		/// A template: the shape of a Diamond, unsealed, opened by whoever holds
+		/// the file. `saveTemplate` writes one out; `readTemplate` says what is in
+		/// one without opening it; `takeTemplate` asks about any page in it and
+		/// then opens it as a NEW Diamond; `pickTemplate` asks for the file and
+		/// must be called from a click. The consent question is on the WRITE, as
+		/// it is for a share, and `import_template` has no half-landing behind it.
+		saveTemplate: saveTemplate,
+		readTemplate: readTemplate,
+		takeTemplate: takeTemplate,
+		pickTemplate: pickTemplate,
+		askAboutTemplate: askAboutTemplate,
+		templateExt:  TEMPLATE_EXT,
+		/// This build's reading of what counts as code, by suffix. Published
+		/// because it is the ONE answer in JavaScript and a second caller must
+		/// reach it rather than write another -- see its own note for why it is a
+		/// mirror of `fe2o3_sbj::share::is_code_path` at all.
+		isCodePath: isCodePath,
 		/// The schema, and the ceilings, for a panel that wants to say them.
 		schema: SCHEMA,
 		limits: { files: FILES_MAX, bytes: TOTAL_MAX, note: NOTE_MAX,

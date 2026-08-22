@@ -877,6 +877,42 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 	white-space: pre-wrap;
 }
 
+/* How the turn ended — FURNITURE, and the styling is the whole of the
+   not-crying-wolf rule (dev/CONTRACT_CLAIMS.md §3). One quiet line in the
+   register of a timestamp: no box, no rule, no colour that claims a fault. An
+   app that appends a warning to every turn teaches its reader to skip the one
+   that mattered, and that is exactly the failure this line exists to prevent.
+
+   `.ended-notice` is the promotion, and it is deliberately NOT the error or the
+   alert styling — neither --danger nor --warn appears here. What changes is
+   contrast and a thin rule: one step nearer the reader, which is what a notice
+   is, without a colour that says something broke. `refused > 0`, `failed > 0`
+   or a missing path is the only thing that reaches it. */
+.chat-msg-ended {
+	margin: 2px 0 12px;
+	font-size: var(--fs-2xs);
+	line-height: 1.5;
+	color: var(--text-muted);
+}
+.chat-msg-ended .end-paths {
+	margin-top: 2px;
+	font-family: var(--font-mono, ui-monospace, monospace);
+	word-break: break-all;
+}
+.chat-msg-ended.ended-notice {
+	color: var(--text-secondary);
+	border-left: 2px solid var(--border-strong);
+	padding-left: 8px;
+}
+/* The same fact on a worker's tile, which is not a thread: it rides with the
+   vision note, in the app's own voice rather than the worker's. */
+.acard .anote.aended { color: var(--text-muted); }
+.acard .anote.aended.ended-notice {
+	color: var(--text-secondary);
+	border-left: 2px solid var(--border-strong);
+	padding-left: 6px;
+}
+
 /* Diamonds rail list — reuses .session-box styling via the shared class. A long
    list scrolls rather than squeezing the chats out of the pane above it. */
 .diamond-list { display: flex; flex-direction: column; gap: 6px; padding: 0 4px 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
@@ -2385,6 +2421,39 @@ span.arte-open { cursor: default; }
    the only thing that changes -- a bordered callout here would read as an error,
    and the choice is not an error. */
 .tile-dlg-note.warn { color: var(--warn); }
+/* Saving a template. The checkbox row reads left to right -- box then words --
+   because it is a choice about what goes in, not a labelled field; the button
+   below it takes its own width, since a control stretched across a dialog is
+   the one a person presses without reading it. */
+.tile-dlg-tmpl { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.tile-dlg-check { accent-color: var(--accent); width: 15px; height: 15px; flex: 0 0 auto; }
+/* THE WORDS, NOT A LABEL COLUMN. `.tile-dlg-label` is 116px wide with an
+   ellipsis, which is right beside a field it names and wrong for a checkbox
+   whose whole meaning is in its own sentence: it drew "Include what it ha…".
+   Here the words take the rest of the row and wrap. */
+.tile-dlg-tmpl .tile-dlg-label {
+	flex: 1 1 auto; width: auto;
+	white-space: normal; overflow: visible; text-overflow: clip;
+	cursor: pointer;
+}
+/* Saving is the SECTION's main action, not the dialog's, and directly below it
+   sits Delete — filled, in the danger colour, and the one thing in here that
+   cannot be undone. Two filled buttons a thumb apart is how the wrong one gets
+   pressed, so this one wears a box rather than a fill. Its own rule and not
+   `.tile-dlg-clear`'s, for the reason that class states about itself: a control
+   borrowing another's styling depends on it outliving the control it was
+   written for. */
+.tile-dlg-tmpl-save {
+	flex: 0 0 auto; align-self: flex-start; margin-top: 12px;
+	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm); color: var(--text-secondary);
+	padding: 8px 14px; font-size: var(--fs-sm);
+}
+.tile-dlg-tmpl-save:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }
+.tile-dlg-tmpl-save:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tile-dlg-tmpl-save:disabled { opacity: 0.55; cursor: default; }
+.tile-dlg-say[hidden] { display: none; }
+
 /* The foot. Delete takes what it needs and no more -- it is the one thing in
    here that cannot be undone, and a button stretched across the width of a
    dialog is the button a person presses without reading it. Where a dialog
@@ -3337,6 +3406,17 @@ details.md-fold[open] > summary {
 /* The last paragraph inside carries the bottom margin every `p` gets, which
    below a border reads as the fold not having ended. */
 details.md-fold > :last-child { margin-bottom: 0; }
+
+/* The model's own working. Same disclosure as a two-depth answer, quieter: it
+   is not addressed to the reader, so it must not compete with the reply above
+   it. Pre-wrap because reasoning arrives with its own line breaks and nothing
+   parses it into paragraphs. */
+details.chat-msg-thinking > summary { font-style: italic; opacity: 0.72; }
+.chat-thinking-body {
+	white-space: pre-wrap;
+	font-size: 0.92em;
+	opacity: 0.86;
+}
 
 /* ── The same fold, drawn while it is still arriving ──────────────────
    A fold that streams keeps ONE `<details>` for the whole of a generation --
