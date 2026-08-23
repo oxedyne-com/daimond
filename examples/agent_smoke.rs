@@ -82,6 +82,16 @@ async fn run() -> Outcome<()> {
             // The working, not the answer.  Printed whole, because a smoke run is read
             // by a person deciding whether the turn went the way they meant.
             AgentEvent::Thinking(text) => println!("\n[thinking] {}", text),
+            // How the turn ended, and what it did.  Printed rather than dropped for the
+            // reason every other arm here is: a smoke run is read by somebody deciding
+            // whether the turn went the way they meant, and "answered with 4 calls, 1
+            // refused" is that sentence.
+            AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing } =>
+                println!("\n[ended] {} — {} tool(s) offered, {} round(s), {} call(s), \
+                    {} refused, {} failed{}",
+                    how, offered, rounds, calls, refused, failed,
+                    if missing.is_empty() { String::new() }
+                    else { format!(", missing: {}", missing.join(" ")) }),
         }
     };
     res!(agent.run_turn(&mut session, prompt, &registry, &mut on_event).await);

@@ -112,12 +112,27 @@ fn content_hash(bytes: &[u8]) -> u64 {
     h
 }
 
-/// Whether these bytes are binary: not valid UTF-8, or carrying a NUL byte.
+/// How far into a file the NUL scan looks. Git's own `buffer_is_binary` uses the same figure.
+const SNIFF: usize = 8000;
+
+/// Whether these bytes are binary: not valid UTF-8, or carrying a NUL IN THE FIRST BLOCK.
 ///
 /// The NUL test earns its place because some binary formats are accidentally valid UTF-8, and a
 /// NUL is the conventional tell that a file is not text.
+///
+/// **It is bounded to the first block, and that is the whole of this function's history.** Read
+/// over the whole file, it refused `www/js/daimond.js` -- 1.6 MB of the app's own UI, valid UTF-8
+/// throughout, holding three deliberate `'\0'` characters as a composite-key separator, the first
+/// of them at byte 1,113,118. A daimon asked on 2026-08-23 to change one line of that file was
+/// told by this app that this app's largest source file was binary, and spent the rest of its turn
+/// reading the file through `run sed` instead. Nothing was broken except the sniff: a NUL a
+/// megabyte into a text file is a character somebody typed, not a format marker.
+///
+/// A real binary declares itself immediately -- PNG, zip and ELF all carry a NUL inside their
+/// first sixteen bytes -- so the bound costs nothing that matters and the full UTF-8 check below
+/// still reads every byte.
 fn is_binary(bytes: &[u8]) -> bool {
-    bytes.contains(&0) || std::str::from_utf8(bytes).is_err()
+    bytes[..bytes.len().min(SNIFF)].contains(&0) || std::str::from_utf8(bytes).is_err()
 }
 
 /// Refuse a binary file, naming it, its size, and what to do instead.
@@ -5292,6 +5307,33 @@ const MAX_OUTPUT: usize = 80_000;
 /// How many lines `file_read` returns when the call does not say.
 const READ_LINES_DEFAULT: usize = 2_000;
 
+/// Above this many bytes, a `file_read` that names neither `offset` nor `limit` gets a PEEK
+/// rather than [`READ_LINES_DEFAULT`] lines.
+///
+/// **Measured, on 2026-08-23.** A daimon asked for the line number of one call inside one
+/// function of `www/js/daimond.js` -- 1.6 MB, 33,000 lines -- opened it with a bare
+/// `file_read`, and took **80,016 bytes** into the conversation: `MAX_OUTPUT`, to the byte,
+/// because the default limit of 2,000 lines is far more than the budget can hold. It found
+/// the answer, through `file_search`, which had cost 1,752 bytes. The 80 KB bought nothing
+/// and is re-sent on every later round of the turn.
+///
+/// **The default was written for the ordinary file and applied to every file.** Under 64 KB
+/// nothing changes and nothing ever did: those come back whole, as they always have. What
+/// changes is the case the default was never about, where handing over as much as the budget
+/// allows is not generosity but a bill the reader pays for the rest of the turn.
+///
+/// An EXPLICIT `offset` or `limit` is honoured to the old ceiling, whatever the size. A caller
+/// that has said which part it wants has answered this question itself.
+const READ_BIG_BYTES: usize = 64_000;
+
+/// Lines a peek returns: enough to see what a file IS, never enough to search it by eye.
+///
+/// In this tree the head of a file is where its `//!` or block header lives, which is the
+/// part that tells a reader what they have opened. Two hundred lines is about 8 KB -- a tenth
+/// of what the same call used to cost -- and the notice beside it names the tool that answers
+/// "where is X", which is the question a whole-file read is usually a clumsy way of asking.
+const READ_PEEK_LINES: usize = 200;
+
 /// The most lines one `file_read` returns, however large a `limit` it is given.
 const READ_LINES_MAX: usize = 10_000;
 
@@ -5505,6 +5547,12 @@ impl WalkBudget {
     /// * `tool` - The tool's name, for the `[tool]` prefix the other notices use.
     /// * `start` - Where the walk began, as the caller wrote it.
     /// * `advice` - What that tool's caller should do instead, in that tool's own arguments.
+    /// Did the walk run out of budget before it ran out of tree?
+    pub fn stopped(&self) -> bool { self.stop.is_some() }
+
+    /// Directories still on the stack when the budget ran out.
+    pub fn unwalked_count(&self) -> usize { self.queued }
+
     pub fn notice(&self, tool: &str, start: &str, advice: &str) -> String {
         let stop = match &self.stop {
             Some(d) => d,
@@ -5527,6 +5575,17 @@ impl WalkBudget {
 /// * `key` - The argument's name.
 /// * `default` - What to use when the argument is absent or unreadable.
 /// * `max` - The largest value honoured; anything above it is clamped.
+/// Whether the call NAMED this argument at all, however it spelled the value.
+///
+/// [`uint_arg`] cannot answer this: it returns the default for an absent key and for an
+/// unreadable one alike, which is right for reading a value and wrong for deciding whether the
+/// caller has expressed a preference. The peek in [`Tool::read_view`] turns on exactly that
+/// difference -- a bare read of a large file is a different act from one that asked for the
+/// first 2,000 lines of it.
+fn arg_given(args: &str, key: &str) -> bool {
+    extract_json_number(args, key).is_some() || extract_json_string(args, key).is_some()
+}
+
 fn uint_arg(args: &str, key: &str, default: usize, max: usize) -> usize {
     let raw = match extract_json_number(args, key) {
         Some(n) => Some(n),
@@ -5560,12 +5619,15 @@ fn split_lines(text: &str) -> Vec<&str> {
 /// * `offset` - 1-based line to start at.
 /// * `limit` - How many lines to return.
 /// * `budget` - Bytes available for the whole result.
+/// * `peek` - Whether `limit` is this tool's own reduction rather than the caller's ask, in
+///   which case the notice says so and names the tool that answers "where is X" for nothing.
 fn numbered_view(
     path:   &str,
     text:   &str,
     offset: usize,
     limit:  usize,
     budget: usize,
+    peek:   bool,
 )
     -> String
 {
@@ -5618,6 +5680,17 @@ fn numbered_view(
             "[file_read] the rest is at {{\"path\":\"{}\",\"offset\":{}}}\n",
             json_escape(path), last + 1));
     }
+    // Said only when the reduction is OURS. A caller that asked for 200 lines and got 200
+    // lines is not being told anything by this, and a notice that appears on every read is a
+    // notice nobody reads.
+    if peek {
+        out.push_str(&fmt!(
+            "[file_read] this file is large, so these are the first {} lines rather than the \
+            usual {}. To find something by NAME use file_search, which returns only the lines \
+            that match and costs a fraction of this; to read a region you can already name, \
+            pass 'offset' and 'limit', which are honoured in full at any size.\n",
+            limit, READ_LINES_DEFAULT));
+    }
     out.push_str(
         "[file_read] the line number and the tab after it are this tool's, not the file's — \
         strip them before quoting a line into file_edit.\n\n");
@@ -5629,6 +5702,98 @@ fn numbered_view(
             last, total, after, json_escape(path), last + 1));
     }
     out
+}
+
+/// Where a walk starts when the call did not say: THE TURN'S MARKS, never the workspace root.
+///
+/// **This is the difference between what a user PERMITS and where the app should LOOK, and
+/// until 2026-08-23 the app had only the first.** A mark is a permission statement -- the user
+/// says which folders a Diamond may write in, and [`diamond_bounds`] turns each into an
+/// [`Bound::OnlyWriteUnder`]. Reading was never fenced by it and should not be. But a search
+/// with no `path` then began at the WORKSPACE ROOT, which is above every mark, so a Diamond
+/// marked into one project searched the whole estate the project happens to sit in.
+///
+/// What that cost, measured. A daimon marked into `code/web/apps/oxedyne/daimond` was asked
+/// for a function in `www/js/daimond.js`. Its searches began at `~/usr`, met
+/// [`WALK_ENTRIES_MAX`] long before they reached the app, and it reported that the function
+/// "does not exist in that file". `grep` finds ten. The tool was working perfectly and was
+/// pointed at the wrong tree, which nobody had told it was the wrong tree.
+///
+/// **The marks are the answer and they were already here.** No new setting, no second thing for
+/// a user to declare, nothing to keep in step: the folders they chose are the folders the work
+/// is in, which is why they chose them. An explicit `path` still wins outright -- a caller that
+/// named a place has answered this question itself -- and a turn with no marks still starts at
+/// the root, which is what an unbounded chat is.
+///
+/// # Arguments
+/// * `args` - The raw tool arguments, read for an explicit `path`.
+/// * `ctx` - The turn, whose [`Bound`]s carry the marks.
+fn walk_starts(args: &str, ctx: &ToolContext) -> Vec<String> {
+    // ANY path the call names wins, INCLUDING ".", and that last word was nearly wrong. Making
+    // "." mean the marks would have turned a write fence into a read fence as a side effect of
+    // a performance fix: a scope fences writing and leaves reading free, deliberately, and
+    // three existing tests exist to say so -- one of them walking from "." specifically to
+    // prove it still reaches a file nobody attached. They caught this within the hour.
+    //
+    // So "." keeps meaning the whole workspace and is the spelling for it, which the
+    // `stopped_empty` refusal names. What changes is the DEFAULT, which said nothing at all.
+    if let Some(p) = extract_json_string(args, "path") {
+        let t = p.trim();
+        if !t.is_empty() {
+            return vec![t.to_string()];
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    for b in &ctx.no_write {
+        if let Bound::OnlyWriteUnder(prefix) = b {
+            let p = normalise(prefix);
+            if !p.is_empty() && !out.contains(&p) {
+                out.push(p);
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push(".".to_string());
+    }
+    out
+}
+
+/// The starting points as one string, for a notice or a refusal to name.
+fn starts_named(starts: &[String]) -> String {
+    if starts.len() == 1 {
+        return starts[0].clone();
+    }
+    starts.join("', '")
+}
+
+/// The refusal for a walk that stopped early and found NOTHING, or `None` where it may answer.
+///
+/// **A stopped walk with no hits is not an answer, and until 2026-08-23 it was returned as
+/// one.** The tool reported "0 match(es) ... 20000 file(s) searched" with the shortfall in a
+/// footnote, and a footnote is not a refusal: a model reading it usually proceeds on "no
+/// matches", which here means "none in the 3.4% of your workspace this happened to reach".
+///
+/// The measurement that made it worth writing. [`WALK_ENTRIES_MAX`] is 20,000, and its own
+/// comment justifies the figure by measuring the intended case -- *"an ordinary project is
+/// walked whole and never sees this number"*. The owner's own mark is `~/usr/code`, **590,141
+/// files**, so the premise is false and the walk sees one entry in thirty. The premise was
+/// load-bearing and nothing asserted it. That is the same shape as the five faults of 21
+/// August, written up as `feedback_answer_from_the_wrong_evidence`: a cap standing in for
+/// having looked.
+///
+/// **Hits are still returned when the walk stops.** Some of the answer is worth having and the
+/// notice says it is partial. It is the EMPTY stopped walk that has to refuse, because empty
+/// and "not there" are indistinguishable to the reader and only one of them is true.
+fn stopped_empty(tool: &str, start: &str, budget: &WalkBudget, matched: usize)
+    -> Option<Error<ErrTag>>
+{
+    if !budget.stopped() || matched > 0 {
+        return None;
+    }
+    Some(err!(
+        "{}: this walk stopped after {} entries under '{}' with at least {} director(ies) never         opened, and found nothing in what it did reach. That is not a search of '{}' and it is         refused rather than reported as no matches -- an empty result here would be         indistinguishable from there being nothing to find. Narrow it: set 'path' to the         subtree the answer is in, or pass a 'glob' so fewer files are opened. If the whole         tree really must be walked, say so with a narrower 'path' per subtree.",
+        tool, WALK_ENTRIES_MAX, start, budget.unwalked_count(), start;
+        Invalid, Input, Size))
 }
 
 /// One line of a search result, cut when it is long enough to swamp the answer.
@@ -7413,8 +7578,9 @@ impl Tool {
             }
             Tool::FileSearch => {
                 let query = res!(Self::arg(args_json, "query"));
-                let raw = extract_json_string(args_json, "path").unwrap_or_else(|| ".".to_string());
-                let start = res!(Self::scoped(ctx, &raw));
+                // The turn's marks when the call did not name a place: see `walk_starts`.
+                let starts = walk_starts(args_json, ctx);
+                let raw = starts_named(&starts);
                 // Strip the Diamond prefix from reported paths so results are
                 // Diamond-relative and round-trip back through `file_read`.
                 // Normalised, so the prefix `scoped` joined with is the prefix stripped back off.
@@ -7431,7 +7597,11 @@ impl Tool {
                 // The bound on the WALK: see the native arm.  It matters most here, where every
                 // entry costs a round trip into the browser's own filesystem.
                 let mut budget = WalkBudget::new();
-                let mut stack = vec![start];
+                // Reversed so the first mark is popped first, as on the native arm.
+                let mut stack: Vec<String> = Vec::new();
+                for st in starts.iter().rev() {
+                    stack.push(res!(Self::scoped(ctx, st)));
+                }
                 'walk: while let Some(dir) = stack.pop() {
                     let mut entries = match crate::wasm::opfs::list_dir(ctx.root, &dir).await {
                         Ok(e)  => e,
@@ -7507,6 +7677,9 @@ impl Tool {
                     }
                 }
                 budget.unwalked(stack.len());
+                if let Some(e) = stopped_empty("file_search", &raw, &budget, stats.matched) {
+                    return Err(e);
+                }
                 let notes = search_notes(&opts, &stats, &budget, &raw);
                 Ok(Self::search_output(ctx, &query, trusted, untrusted, &notes, budget.spent()))
             }
@@ -7524,8 +7697,8 @@ impl Tool {
                 let pattern = res!(Self::arg(args_json, "pattern"));
                 let glob = res!(Glob::new(pattern.trim()).map_err(|e| err!(e,
                     "file_glob: 'pattern' is not a glob this build can read."; Invalid, Input)));
-                let raw = extract_json_string(args_json, "path").unwrap_or_else(|| ".".to_string());
-                let start = res!(Self::scoped(ctx, &raw));
+                let starts = walk_starts(args_json, ctx);
+                let raw = starts_named(&starts);
                 // Normalised, so the prefix `scoped` joined with is the prefix stripped back off.
                 let strip = {
                     let p = normalise(&ctx.path_prefix);
@@ -7541,7 +7714,10 @@ impl Tool {
                 // was seen on -- a `**` pattern over an open machine folder, one round trip per
                 // entry, and a turn that never ended.
                 let mut budget = WalkBudget::new();
-                let mut stack = vec![start];
+                let mut stack: Vec<String> = Vec::new();
+                for st in starts.iter().rev() {
+                    stack.push(res!(Self::scoped(ctx, st)));
+                }
                 'walk: while let Some(dir) = stack.pop() {
                     let mut entries = match crate::wasm::opfs::list_dir_stamped(ctx.root, &dir).await {
                         Ok(e)  => e,
@@ -7588,6 +7764,9 @@ impl Tool {
                     }
                 }
                 budget.unwalked(stack.len());
+                if let Some(e) = stopped_empty("file_glob", &raw, &budget, hits.len()) {
+                    return Err(e);
+                }
                 Ok(Self::glob_output(
                     &pattern, &raw, hits, limit, skipped, refused, walk, &budget))
             }
@@ -8323,7 +8502,12 @@ impl Tool {
         } else {
             MAX_OUTPUT
         };
-        numbered_view(path, text, offset, limit, budget)
+        // A bare read of a large file is a peek. See `READ_BIG_BYTES` for the 80,016 bytes
+        // that bought nothing.
+        let bare = !arg_given(args, "offset") && !arg_given(args, "limit");
+        let peek = bare && text.len() > READ_BIG_BYTES;
+        let limit = if peek { READ_PEEK_LINES } else { limit };
+        numbered_view(path, text, offset, limit, budget, peek)
     }
 
     /// Read a file (native).
@@ -8335,6 +8519,15 @@ impl Tool {
     fn file_read(args: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
         let path = res!(Self::arg(args, "path"));
         let abs = res!(ctx.workspace.resolve(&path));
+        // A DIRECTORY, said as a directory. `std::fs::read` on one answers "Is a directory"
+        // through the OS, which reaches the model wrapped in two error frames and a file name
+        // and reads as the path being wrong. Watched happening: a daimon adding one key to
+        // eight locale files called `file_read` on `www/i18n`, got that, and spent the call.
+        // The name of the tool that answers this question costs one sentence.
+        if abs.is_dir() {
+            return Err(err!(
+                "file_read: '{}' is a directory, not a file. file_list answers what is in it,                 and file_search looks inside everything under it.", path; Invalid, Input));
+        }
         let data = res!(std::fs::read(&abs)
             .map_err(|e| err!(e, "file_read: cannot read '{}'.", path; IO, File, Read)));
         let want = Want::read(args);
@@ -8580,8 +8773,9 @@ impl Tool {
     fn file_search(args: &str, ctx: &ToolContext) -> Outcome<String> {
         let query = res!(Self::arg(args, "query"));
         let opts = res!(search_opts(args));
-        let path = extract_json_string(args, "path").unwrap_or_else(|| ".".to_string());
-        let root = res!(ctx.workspace.resolve(&path));
+        // Where to look, which is the turn's marks when the call did not say. See `walk_starts`.
+        let starts = walk_starts(args, ctx);
+        let path = starts_named(&starts);
         let mut trusted: Vec<String> = Vec::new();
         // Match lines from under `mail/`, which are a stranger's words and go in an envelope.
         let mut untrusted: Vec<String> = Vec::new();
@@ -8590,7 +8784,15 @@ impl Tool {
         // that matches nothing walks every file there is, and on a large enough folder it never
         // comes back.
         let mut budget = WalkBudget::new();
-        let mut stack = vec![root.clone()];
+        // Reversed so the first mark is popped first: a walk over several marks should reach the
+        // one the user named first before it spends its budget on the others.
+        let mut stack: Vec<std::path::PathBuf> = Vec::new();
+        for st in starts.iter().rev() {
+            match ctx.workspace.resolve(st) {
+                Ok(p)  => stack.push(p),
+                Err(e) => return Err(e),
+            }
+        }
         'walk: while let Some(dir) = stack.pop() {
             let entries = Self::sorted_entries(&dir);
             let here = ctx.workspace.display_rel(&dir);
@@ -8661,6 +8863,9 @@ impl Tool {
             }
         }
         budget.unwalked(stack.len());
+        if let Some(e) = stopped_empty("file_search", &path, &budget, stats.matched) {
+            return Err(e);
+        }
         let notes = search_notes(&opts, &stats, &budget, &path);
         Ok(Self::search_output(ctx, &query, trusted, untrusted, &notes, budget.spent()))
     }
@@ -8675,18 +8880,24 @@ impl Tool {
         let pattern = res!(Self::arg(args, "pattern"));
         let glob = res!(Glob::new(pattern.trim()).map_err(|e| err!(e,
             "file_glob: 'pattern' is not a glob this build can read."; Invalid, Input)));
-        let path = extract_json_string(args, "path").unwrap_or_else(|| ".".to_string());
+        let starts = walk_starts(args, ctx);
+        let path = starts_named(&starts);
         let all = extract_json_bool(args, "all").unwrap_or(false);
         let walk = Skips::new(all, &[&path, &pattern]);
         let limit = uint_arg(args, "limit", GLOB_PATHS_MAX, GLOB_PATHS_MAX).max(1);
-        let root = res!(ctx.workspace.resolve(&path));
         let mut hits: Vec<GlobHit> = Vec::new();
         let mut skipped = 0usize;
         let mut refused = 0usize;
         // The bound on the WALK.  `limit` bounds what comes back, which on a `**` pattern over a
         // machine folder is a handful of paths found by looking at everything there is.
         let mut budget = WalkBudget::new();
-        let mut stack = vec![root];
+        let mut stack: Vec<std::path::PathBuf> = Vec::new();
+        for st in starts.iter().rev() {
+            match ctx.workspace.resolve(st) {
+                Ok(p)  => stack.push(p),
+                Err(e) => return Err(e),
+            }
+        }
         'walk: while let Some(dir) = stack.pop() {
             let here = ctx.workspace.display_rel(&dir);
             for (name, p, is_dir) in Self::sorted_entries(&dir) {
@@ -8724,6 +8935,9 @@ impl Tool {
             }
         }
         budget.unwalked(stack.len());
+        if let Some(e) = stopped_empty("file_glob", &path, &budget, hits.len()) {
+            return Err(e);
+        }
         Ok(Self::glob_output(&pattern, &path, hits, limit, skipped, refused, walk, &budget))
     }
 
@@ -14184,6 +14398,18 @@ mod tests {
         Tool::FileSearch.execute_sync(args, c).expect("search").as_text().to_string()
     }
 
+    /// What a tool SAID, whether it answered or refused.
+    ///
+    /// The two above panic on a refusal, which was right while a stopped walk always answered.
+    /// It does not always answer now -- see `stopped_empty` -- and a helper that panics on the
+    /// case under test cannot test it.
+    fn tool_said(t: Tool, c: &ToolContext, args: &str) -> (bool, String) {
+        match t.execute_sync(args, c) {
+            Ok(v)  => (true,  v.as_text().to_string()),
+            Err(e) => (false, e.to_string()),
+        }
+    }
+
     /// The directory a `STOPPED EARLY` notice names, if it carries one.
     fn stopped_in(text: &str) -> Option<String> {
         let line = match text.lines().find(|l| l.contains("STOPPED EARLY")) {
@@ -14224,23 +14450,29 @@ mod tests {
             "the walk cannot have run out anywhere but in the bulk, yet it reports '{}'", stop);
     }
 
+    /// **A stopped walk that found nothing REFUSES, and this is the fixture that proves it on a
+    /// real oversized tree rather than on the predicate alone.**
+    ///
+    /// It used to assert the NOTICE: the empty answer had to carry "STOPPED EARLY" and "does
+    /// NOT mean there is nothing to find". That was the right property and the wrong strength.
+    /// A notice beside a wrong answer relies on the reader acting on it, and the reader here is
+    /// a model that mostly proceeds on "no matches" -- which is what the owner's own daimon did
+    /// on 2026-08-23 under a 590,141-file mark. There is no answer to misread now.
     #[test]
     fn test_a_stopped_walk_does_not_answer_as_though_the_file_were_not_there() {
         let c = big_ctx();
         let (missed, dir) = missed_needle(&glob_says(&c, r#"{"pattern":"**/needle-*.txt"}"#));
-        let text = glob_text(&c, &fmt!(r#"{{"pattern":"{}"}}"#, missed));
-        assert!(glob_says(&c, &fmt!(r#"{{"pattern":"{}"}}"#, missed)).is_empty(),
-            "the walk reached the file this check needs it to miss: {}", text);
-        // THE CHECK. The file is there, and nothing came back. The result must therefore not be
-        // readable as "there is no such file" -- that reading is what sent an agent hunting for a
-        // ref that was in front of it, and a bound with no notice would repeat it wholesale.
+        let (answered, text) = tool_said(Tool::FileGlob, &c, &fmt!(r#"{{"pattern":"{}"}}"#, missed));
+        // THE CHECK. The file is there, and the walk did not reach it. Nothing may come back
+        // that a reader could take for "there is no such file".
+        assert!(!answered,
+            "a stopped walk that found nothing ANSWERED, and an empty answer here is \
+             indistinguishable from the file not existing: {}", text);
         assert!(!text.contains(&fmt!("No paths under '.' match '{}'.", missed)),
-            "an empty answer from a stopped walk claimed the tree does not hold the file: {}",
-            text);
-        assert!(text.contains("STOPPED EARLY"),
-            "an empty answer from a stopped walk did not say it stopped: {}", text);
-        assert!(text.contains("does NOT mean there is nothing to find"),
-            "the notice does not say how to read the empty answer: {}", text);
+            "the refusal still says the tree does not hold the file: {}", text);
+        // The refusal has to be actionable, or it is a dead end rather than a redirection.
+        assert!(text.contains("Narrow it"), "the refusal offers no way forward: {}", text);
+        assert!(text.contains("20000"), "the refusal does not say how far it got: {}", text);
         // And the control: named directly, the same pattern finds it -- so what is above is the
         // bound speaking and not a missing file.
         let got = glob_says(&c, &fmt!(r#"{{"pattern":"{}","path":"{}"}}"#, missed, dir));
@@ -14259,13 +14491,15 @@ mod tests {
             .collect();
         let (missed, dir) = missed_needle(&paths);
         let tag = if missed.contains("aaa") { "AAA" } else { "ZZZ" };
-        let text = search_text(&c, &fmt!(r#"{{"query":"NEEDLE-IN-{}"}}"#, tag));
-        assert!(text.contains("STOPPED EARLY"),
-            "a search whose walk stopped early did not say so: {}", text);
+        let (answered, text) = tool_said(Tool::FileSearch, &c,
+            &fmt!(r#"{{"query":"NEEDLE-IN-{}"}}"#, tag));
+        // Refused rather than noticed, for the reason on the glob test above: the line IS in the
+        // tree, so "no matches" is a false sentence and a footnote does not make it true.
+        assert!(!answered,
+            "a search whose walk stopped early and matched nothing ANSWERED: {}", text);
         assert!(!text.contains(&fmt!("No matches for 'NEEDLE-IN-{}'.", tag)),
             "the search answered a stopped walk as though the tree held no such line: {}", text);
-        assert!(text.contains("in the part of the tree this call reached"),
-            "the empty answer does not say how far the search got: {}", text);
+        assert!(text.contains("Narrow it"), "the refusal offers no way forward: {}", text);
         // The control, again: the line is there when the search starts beside it.
         let hits = search_says(&c, &fmt!(
             r#"{{"query":"NEEDLE-IN-{}","path":"{}"}}"#, tag, dir));
@@ -16290,6 +16524,218 @@ mod tests {
             ..Default::default()
         }).as_text().to_string();
         assert!(!quiet.contains("NAME says"), "a file that agrees with itself got the note: {}", quiet);
+    }
+
+    /// **A `file_read` of a directory says it is a directory and names the tool that helps.**
+    ///
+    /// Found by the probe on the run after it learned to name a failing call: a daimon adding
+    /// one key to eight locale files called `file_read` on `www/i18n` and got the operating
+    /// system's "Is a directory" wrapped in two error frames, which reads as the path being
+    /// wrong rather than the tool being the wrong one.
+    #[test]
+    fn test_reading_a_directory_says_so_and_names_the_tool_that_answers() {
+        let c = ctx();
+        put(&c, "notes/specs/api.md", "hello\n");
+        let (ok, text) = tool_said(Tool::FileRead, &c, r#"{"path":"notes/specs"}"#);
+        assert!(!ok, "a directory was read as a file: {}", text);
+        assert!(text.contains("is a directory"), "the refusal does not say what went wrong: {}", text);
+        assert!(text.contains("file_list"), "the refusal does not name the tool that answers: {}", text);
+        // And the control: the file beside it still reads.
+        let (ok2, text2) = tool_said(Tool::FileRead, &c, r#"{"path":"notes/specs/api.md"}"#);
+        assert!(ok2 && text2.contains("hello"), "an ordinary read broke: {}", text2);
+    }
+
+    /// **A walk with no `path` starts at the turn's MARKS, not at the workspace root.**
+    ///
+    /// The measurement this exists for. A daimon marked into
+    /// `code/web/apps/oxedyne/daimond` was asked for a function in `www/js/daimond.js`. Its
+    /// searches began at the workspace root, `~/usr`, met `WALK_ENTRIES_MAX` long before they
+    /// reached the app, and it reported that the function "does not exist in that file". `grep`
+    /// finds ten. The tool was working and was pointed at the wrong tree.
+    ///
+    /// Four cases, because the value of this is entirely in which one applies when:
+    /// an explicit `path` still wins, `"."` is not an explicit path, several marks all count,
+    /// and a turn with no marks is unchanged.
+    #[test]
+    fn test_a_walk_with_no_path_starts_at_the_marks() {
+        let marked = ToolContext {
+            no_write: diamond_bounds("", &[fmt!("code/web/apps/oxedyne/daimond")], &[]),
+            ..ctx()
+        };
+        assert_eq!(walk_starts("{\"query\":\"x\"}", &marked),
+            vec![fmt!("code/web/apps/oxedyne/daimond")],
+            "a bare search did not start at the mark");
+        // **`"."` MUST still mean the whole workspace**, and the first draft of this had it
+        // meaning the marks. That would have made a scope fence READING, which it does not and
+        // must not: `test_a_diamond_scoped_walk_reads_the_workspace_and_writes_only_its_own`
+        // walks from "." precisely to prove a daimon still reaches a file nobody attached to it.
+        // A performance fix that quietly narrows what may be read is a different change, and it
+        // was not the one being made.
+        assert_eq!(walk_starts("{\"query\":\"x\",\"path\":\".\"}", &marked), vec![fmt!(".")],
+            "an explicit '.' stopped meaning the whole workspace");
+        // A caller that named a place has answered the question itself, even outside the mark:
+        // reading is not fenced by a mark and this must not start fencing it.
+        assert_eq!(walk_starts("{\"query\":\"x\",\"path\":\"complement/img\"}", &marked),
+            vec![fmt!("complement/img")],
+            "an explicit path was overridden by the mark");
+        // Several marks are all walked, in the order they were given.
+        let two = ToolContext {
+            no_write: diamond_bounds("", &[fmt!("code"), fmt!("complement")], &[]),
+            ..ctx()
+        };
+        assert_eq!(walk_starts("{\"query\":\"x\"}", &two),
+            vec![fmt!("code"), fmt!("complement")], "a second mark was dropped");
+        // And an unmarked turn is exactly as it was.
+        let bare = ToolContext { no_write: Vec::new(), ..ctx() };
+        assert_eq!(walk_starts("{\"query\":\"x\"}", &bare), vec![fmt!(".")],
+            "a turn with no marks stopped starting at the root");
+    }
+
+    /// Can `file_search` find a symbol in the app's own 1.6 MB UI source at all?
+    ///
+    /// Written to chase a probe run in which a daimon searched for `updateSpend` in
+    /// `www/js/daimond.js` and reported that the function "does not exist in that file". `grep`
+    /// finds ten of them. Asked here directly, of the real file, because the probe could only
+    /// say what the model concluded and not what the tool returned.
+    #[test]
+    fn test_the_search_finds_a_symbol_in_the_apps_own_largest_file() {
+        let ws = Workspace::new(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+            .expect("this crate is a workspace");
+        let c = ToolContext { workspace: ws, ..ctx() };
+        let (ok, text) = tool_said(Tool::FileSearch, &c,
+            r#"{"query":"updateSpend","path":"www/js"}"#);
+        assert!(ok, "the search refused: {}", text);
+        assert!(text.contains("daimond.js"),
+            "updateSpend is in daimond.js ten times and the search did not say so: {}",
+            text.chars().take(600).collect::<String>());
+    }
+
+    /// **A stopped walk that found nothing REFUSES; a stopped walk that found something answers.**
+    ///
+    /// `WALK_ENTRIES_MAX` is 20,000, and the comment on it justifies the figure by measuring
+    /// the intended case: *"an ordinary project is walked whole and never sees this number"*.
+    /// The owner's own mark is `~/usr/code` -- 590,141 files on 2026-08-23 -- so the premise is
+    /// false there and the walk reaches one entry in thirty. It reported "0 match(es)" with the
+    /// shortfall in a footnote, and a footnote is not a refusal.
+    ///
+    /// **The predicate is tested rather than a whole walk**, deliberately. Building a 20,001-
+    /// entry tree in a unit test costs seconds and tests the filesystem; what can be wrong here
+    /// is the RULE -- which of the four states refuses -- and all four are checked. The rule
+    /// meeting a real oversized tree is `devcycle_probe`'s `bigmark`, which marks at `code`.
+    #[test]
+    fn test_a_stopped_walk_with_nothing_to_show_refuses() {
+        let mut stopped = WalkBudget::new();
+        // Spend it out, then record where it gave up, exactly as a walk does.
+        while stopped.spend("code/deep/somewhere") {}
+        stopped.unwalked(41);
+        assert!(stopped.stopped(), "the budget did not record that it stopped");
+
+        let whole = WalkBudget::new();
+        assert!(!whole.stopped(), "an unspent budget reports as stopped");
+
+        // The one case that must refuse.
+        match stopped_empty("file_search", "code", &stopped, 0) {
+            Some(e) => {
+                let text = e.to_string();
+                assert!(text.contains("20000"), "the refusal hides how far it got: {}", text);
+                assert!(text.contains("41"), "the refusal hides what it never opened: {}", text);
+                assert!(text.contains("'code'"), "the refusal does not name the subject: {}", text);
+            }
+            None => panic!("a stopped walk with no matches was allowed to answer 'no matches'"),
+        }
+        // And the three that must not.
+        assert!(stopped_empty("file_search", "code", &stopped, 1).is_none(),
+            "a stopped walk WITH a hit was refused; part of an answer is worth having");
+        assert!(stopped_empty("file_search", "code", &whole, 0).is_none(),
+            "a COMPLETE walk that found nothing was refused -- that one really is 'not there'");
+        assert!(stopped_empty("file_search", "code", &whole, 3).is_none(),
+            "a complete walk with hits was refused");
+    }
+
+    /// **A bare read of a large file is a peek, and an explicit one is still honoured in full.**
+    ///
+    /// The measurement: a daimon asked for one line number inside `www/js/daimond.js` and took
+    /// 80,016 bytes -- `MAX_OUTPUT` exactly -- because `READ_LINES_DEFAULT` is 2,000 lines and
+    /// the budget runs out long before they do. It answered through `file_search` at 1,752
+    /// bytes, so the 80 KB bought nothing and was re-sent on every later round.
+    ///
+    /// **Asserted against the real file**, for the reason the test below gives: a fixture would
+    /// have to be a megabyte to exercise this at all, and the figure that made it worth doing
+    /// came off this file.
+    ///
+    /// Three cases, because the middle one is where a fix like this usually goes wrong. An
+    /// ordinary file must be completely unaffected -- it was never the problem -- and a caller
+    /// who NAMED a limit must get what they named, or `offset`/`limit` paging stops working at
+    /// exactly the size it exists for.
+    #[test]
+    fn test_a_bare_read_of_a_large_file_is_a_peek() {
+        let big = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"), "/www/js/daimond.js")).expect("the app's own UI source");
+        assert!(big.len() > READ_BIG_BYTES * 4,
+            "daimond.js is {} bytes, too small to test the peek", big.len());
+
+        let bare = Tool::read_view("{\"path\":\"www/js/daimond.js\"}", "www/js/daimond.js", &big);
+        assert!(bare.len() < 20_000,
+            "a bare read of {} bytes came back as {} -- the peek did not apply", big.len(), bare.len());
+        assert!(bare.contains("file_search"),
+            "the peek does not name the tool that answers 'where is X': {}",
+            bare.chars().take(400).collect::<String>());
+        // And it is a peek of the HEAD, so the reader learns what the file is.
+        assert!(bare.contains("lines 1-"), "the peek does not start at line 1: {}",
+            bare.chars().take(200).collect::<String>());
+
+        // A caller who named a limit gets what they named, at any size.
+        let asked = Tool::read_view(
+            "{\"path\":\"www/js/daimond.js\",\"offset\":15980,\"limit\":40}",
+            "www/js/daimond.js", &big);
+        assert!(asked.contains("lines 15980-16019"),
+            "an explicit window was not honoured: {}", asked.chars().take(200).collect::<String>());
+        assert!(!asked.contains("this file is large, so these are the first"),
+            "an explicit read was told its limit had been reduced: {}",
+            asked.chars().take(400).collect::<String>());
+
+        // An ordinary file is untouched: whole, and with no notice at all.
+        let small = "one\ntwo\nthree\n";
+        let got = Tool::read_view("{\"path\":\"a.txt\"}", "a.txt", small);
+        assert!(!got.contains("[file_read]"),
+            "a three-line file was given a notice it does not need: {}", got);
+        assert!(got.contains("three"), "a three-line file was cut: {}", got);
+    }
+
+    /// **A NUL a megabyte into a source file is a character somebody typed, not a format marker.**
+    ///
+    /// Asserted against `www/js/daimond.js` ITSELF, and not against a fixture of this test's own
+    /// making. The whole finding is that the app refused its own largest file, so a synthetic
+    /// megabyte with a NUL in it would prove the predicate and not the thing that was wrong -- and
+    /// a fixture cannot go stale in the direction that matters, which is somebody one day removing
+    /// the separator and leaving a green test standing over a bound nothing exercises. If that
+    /// happens this test says so rather than passing quietly.
+    ///
+    /// The other half is asserted too: a real binary still refuses. Every format that matters
+    /// declares itself in its first bytes, which is why the bound is where it is.
+    #[test]
+    fn test_the_apps_own_largest_source_file_is_not_called_binary() {
+        let ui = concat!(env!("CARGO_MANIFEST_DIR"), "/www/js/daimond.js");
+        let bytes = std::fs::read(ui).expect("the app's own UI source");
+        // The premise. If this ever fails, the separator is gone and the test below has stopped
+        // measuring anything -- point it at whatever file carries a late NUL, or delete both.
+        let nuls = bytes.iter().filter(|b| **b == 0).count();
+        assert!(nuls > 0,
+            "daimond.js no longer holds a NUL, so this test proves nothing about the bound");
+        let first = match bytes.iter().position(|b| *b == 0) {
+            Some(i) => i,
+            None    => unreachable!(),
+        };
+        assert!(first > SNIFF,
+            "the first NUL is at byte {}, inside the sniff window, so the bound is untested", first);
+        assert!(!is_binary(&bytes),
+            "{} bytes of valid UTF-8 with {} NUL(s), the first at byte {}, was called binary",
+            bytes.len(), nuls, first);
+
+        // And the bound did not cost the refusal. A zip -- which is what a .docx is -- carries a
+        // NUL well inside the first block.
+        let png = [0x89u8, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d];
+        assert!(is_binary(&png), "a PNG header is still binary");
     }
 
     /// **A Word document reaches the model as prose, and says what it left out.**
