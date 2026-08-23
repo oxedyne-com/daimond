@@ -3377,11 +3377,28 @@ body.resizing { cursor: col-resize; user-select: none; }
    sanitiser first.
 
    Drawn as the `say` fold above is drawn, and for the same reasons: a left
-   edge that says folded rather than merely short, a muted label, and a rule
-   between the label and what it opens onto. The disclosure triangle is the
-   browser's own, inheriting `color` from the summary, since a model's
-   summary text can be anything and a fold with no affordance but a colour
-   change is a fold nobody opens. */
+   edge that says folded rather than merely short, and a rule between the label
+   and what it opens onto. The disclosure triangle is the browser's own,
+   inheriting `color` from the summary, since a model's summary text can be
+   anything and a fold with no affordance but a colour change is a fold nobody
+   opens.
+
+   THE SUMMARY IS NOT A CAPTION AND IS NO LONGER DRAWN AS ONE. It was muted at
+   `--fs-sm` while the prompt modelled it as "a few words naming what is
+   inside", and the owner, 2026-08-23, found a real one on his own screen only
+   after being told where to look: four muted words at 13px, between a reply
+   above and a reply below, is a caption for something rather than a thing to
+   read. `FOLD_NOTE` now asks for a sentence or two of what the fold concludes,
+   so the summary carries the substance of the half that is hidden and has to
+   be legible at the weight of the answer it belongs to. The left edge and the
+   triangle are what say it is foldED; the type no longer says it is minor.
+
+   The thinking tile below KEEPS the quiet treatment, and the difference is the
+   reader: that one is the model's own working, not addressed to anybody, and
+   it must not compete with the reply. It carries BOTH classes -- `md-fold
+   chat-msg-thinking`, `daimond.js:6782` -- so it inherited this rule and had to
+   be given the muted size and colour back by name. A comment here saying it was
+   untouched would have been true of the intent and wrong about the screen. */
 details.md-fold {
 	margin: 8px 0;
 	padding-left: 10px;
@@ -3389,8 +3406,8 @@ details.md-fold {
 }
 details.md-fold > summary {
 	padding: 4px 0;
-	color: var(--text-muted);
-	font-size: var(--fs-sm);
+	color: var(--text-primary);
+	font-size: var(--fs-base);
 	cursor: pointer;
 }
 details.md-fold > summary:hover { color: var(--accent-text); }
@@ -3411,7 +3428,14 @@ details.md-fold > :last-child { margin-bottom: 0; }
    is not addressed to the reader, so it must not compete with the reply above
    it. Pre-wrap because reasoning arrives with its own line breaks and nothing
    parses it into paragraphs. */
-details.chat-msg-thinking > summary { font-style: italic; opacity: 0.72; }
+details.chat-msg-thinking > summary {
+	font-style: italic;
+	opacity: 0.72;
+	/* Taking back what `details.md-fold > summary` now gives every fold. Same
+	   specificity, later in the file, so these win. */
+	color: var(--text-muted);
+	font-size: var(--fs-sm);
+}
 .chat-thinking-body {
 	white-space: pre-wrap;
 	font-size: 0.92em;

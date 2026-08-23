@@ -254,14 +254,37 @@ pub const SHOW_NOTE: &str =
 /// reasoning and not on a guess: a worker's report goes to the agent that dispatched it, which
 /// wants the whole of it. A fold in that report is a marker nobody can open, hiding the working
 /// from the one reader whose job is to check it.
+///
+/// **2026-08-23, the owner, on a live daimon thread: two-depth is not for the turns that happen to
+/// have working in them, it is for EVERY answer.** He read four replies in one Ontheism session.
+/// The first folded its analysis and the next three did not, and the three were the long ones.
+/// Nothing was broken: the note said to fold "the working", and those three were asked *which
+/// example is better* -- so the candidates weighed, the tradeoff and the draft all read as the
+/// answer, and a criterion that sorts answer from working has nothing to sort. The trigger is now
+/// LENGTH, which is the thing he was actually objecting to.
+///
+/// **And the summary is a summary, in his words a "sentence or two of the actual detail".** The
+/// note used to model it as `a few words naming what is inside`, and a four-word label in muted
+/// small type is what he called very hard to find -- so the failure was both that he could not see
+/// it and that, seen, it gave him nothing to decide on. `www/css/app.css` stopped drawing the
+/// label quietly at the same time; a summary carrying the substance is not a caption.
+///
+/// **What the extra tokens bought**, since the budget test now allows 260 rather than 200: the
+/// universality clause, and the summary rule with its reason. Both are his, both are the thing
+/// that was wrong, and neither survives being compressed into the example alone -- the previous
+/// example said `a few words` and was followed exactly.
 pub const FOLD_NOTE: &str =
 	"## Answering at two depths\n\n\
-	 Put the short answer in the open and the working behind a fold — the derivation, the \
-	 walkthrough, the long listing. Write one exactly like this:\n\n\
+	 Answer at two depths whenever you have more than a couple of sentences to say: the short \
+	 answer in the open, the working behind a fold — the reasoning, the comparison, the long \
+	 listing. Like this:\n\n\
 	 <details>\n\
-	 <summary>a few words naming what is inside</summary>\n\n\
+	 <summary>One or two sentences saying what the fold concludes, so it can be judged \
+	 unopened.</summary>\n\n\
 	 the long part, ordinary markdown\n\n\
 	 </details>\n\n\
+	 A summary is a summary, not a label: a few words naming a topic says nothing and is easy \
+	 to miss.\n\n\
 	 The blank lines are not formatting: without them the element is one block of raw HTML, \
 	 nothing inside it is parsed, and your headings reach the reader as literal hashes.\n\n\
 	 Never fold the whole answer. Above the fold goes the answer itself and any caveat on it — a \
@@ -1052,6 +1075,40 @@ mod tests {
 			"a qualification may still be hidden behind the fold: {}", FOLD_NOTE);
 	}
 
+	/// **The summary is a SUMMARY, and every answer of any length is two-depth.** Both the
+	/// owner's, 2026-08-23, and both of them faults the note itself produced.
+	///
+	/// **Asserted on the worked EXAMPLE and not only on the prose**, because the example is the
+	/// part that gets copied. The note used to say the rules in prose and then model the summary
+	/// as `a few words naming what is inside`; models wrote a few words, and a four-word label in
+	/// muted small type is what he could not find on the screen. A test that reads the prose
+	/// alone passes on a note whose example still shows the thing being forbidden.
+	#[test]
+	fn test_the_fold_note_wants_a_real_summary_on_every_answer() {
+		// Universality. The old wording sorted the ANSWER from the WORKING, so a reply that was
+		// all answer -- a recommendation and its reasoning -- folded nothing, which is the whole
+		// of what he objected to.
+		assert!(FOLD_NOTE.contains("whenever you have more than a couple of sentences"),
+			"folding is not asked of every answer, only of ones with working in them: {}",
+			FOLD_NOTE);
+		assert!(FOLD_NOTE.contains("A summary is a summary, not a label"),
+			"nothing forbids a bare label as the summary: {}", FOLD_NOTE);
+		// And the example obeys its own rule.
+		let open = match FOLD_NOTE.find("<summary>") {
+			Some(i) => i + "<summary>".len(),
+			None    => panic!("no worked example: {}", FOLD_NOTE),
+		};
+		let shut = match FOLD_NOTE[open..].find("</summary>") {
+			Some(i) => open + i,
+			None    => panic!("the example's summary never closes: {}", FOLD_NOTE),
+		};
+		let eg = FOLD_NOTE[open..shut].trim();
+		assert!(eg.chars().count() >= 40,
+			"the example models a label of {} characters: {:?}", eg.chars().count(), eg);
+		assert!(eg.ends_with('.'),
+			"the example's summary is not written as a sentence: {:?}", eg);
+	}
+
 	/// The two-depth note is short enough to ride on every request of every turn.
 	///
 	/// It lives in the cached prefix, so it is charged once per prefix rather than per turn --
@@ -1059,18 +1116,23 @@ mod tests {
 	/// is the usual rough conversion and is what [`crate::llm::CACHE_MIN_PREFIX_CHARS`] uses;
 	/// bytes would overstate it by the em dashes alone.
 	///
-	/// **The ceiling is 200 and the note was first budgeted at 80-120.** That budget was set
+	/// **The ceiling is 260 and the note was first budgeted at 80-120.** That budget was set
 	/// while `Tool::Say` still refused a call with an empty summary. With the tool gone nothing
 	/// validates the markup and nothing can refuse it, so the note is the only place left that
-	/// can hold those rules -- and it now measures about 193. Every sentence past the original
-	/// budget is one the tool used to enforce or one its description used to carry: the
-	/// whole-answer ban and its reason, the converse for a one-line answer, the caveat rule, and
-	/// that a closed body does not come back. Recorded here rather than quietly widened, so the
-	/// next reader can see what the extra tokens bought and cut the right one if they must.
+	/// can hold those rules. It reached about 193 carrying them: the whole-answer ban and its
+	/// reason, the converse for a one-line answer, the caveat rule, and that a closed body does
+	/// not come back.
+	///
+	/// **It went to 260 on 2026-08-23 for two rules of the owner's**, both of them things the
+	/// note as written had actively caused: that EVERY answer of more than a couple of sentences
+	/// is two-depth, and that the summary is a sentence or two of what the fold concludes rather
+	/// than a label. Recorded rather than quietly widened, so the next reader can see what the
+	/// extra tokens bought and cut the right one if they must. Nothing in here is decorative; the
+	/// cut that costs least is the parenthetical list of what counts as working.
 	#[test]
 	fn test_the_fold_note_stays_inside_its_budget() {
 		let n = FOLD_NOTE.chars().count() / 4;
-		assert!(n <= 200, "the fold note is about {} tokens, over its budget: {}", n, FOLD_NOTE);
+		assert!(n <= 260, "the fold note is about {} tokens, over its budget: {}", n, FOLD_NOTE);
 	}
 
 	// ── What the daimon is told about the machine ────────────────────────────

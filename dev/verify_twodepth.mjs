@@ -68,6 +68,11 @@
 //      (CONTRACT_FOLD.md §8) and one extra here would rename every fold after it
 //      in the engine's eyes.
 //
+//   11. THE LABEL IS LEGIBLE. Measured against the ANSWER IT SITS BESIDE, not
+//      against a number written here: same size, same ink. Every other check in
+//      this file passes on a fold the reader never finds, which is what happened
+//      -- see 11 below for whose screen it happened on.
+//
 //   10. THE READER'S CHOICE SURVIVES A RELOAD. The key is an ordinal and a label
 //      and carries no message identity, which is exactly what makes this possible
 //      without touching the stored chat schema.
@@ -91,6 +96,7 @@
 //   node dev/verify_twodepth.mjs --break bareclosed  # 6: nothing above it, shut
 //   node dev/verify_twodepth.mjs --break barequiet   # 6: the decision left unsaid
 //   node dev/verify_twodepth.mjs --break noreload    # 10: the choice not restored
+//   node dev/verify_twodepth.mjs --break mutedlabel  # 11: the label as a caption
 //   node dev/verify_twodepth.mjs                     # and then, clean
 //
 //   eval "$(bash dev/world.sh 3 --up)"
@@ -161,6 +167,17 @@ const BREAKS = {
 		file: 'js/daimond.js',
 		find: '\t\tsum.innerHTML = DaimondRender.sanitize(seg.label);',
 		with: '\t\tsum.innerHTML = seg.label;',
+	}],
+	// The label drawn as a caption again: muted, and a size below the answer it
+	// belongs to. This is the state the owner met on 2026-08-23, and it is the one
+	// shape of this feature that nothing could see -- every behavioural check above
+	// passes on a fold nobody can find.
+	mutedlabel: [{
+		file: 'css/app.css',
+		find: 'details.md-fold > summary {\n\tpadding: 4px 0;\n\tcolor: var(--text-primary);'
+			+ '\n\tfont-size: var(--fs-base);',
+		with: 'details.md-fold > summary {\n\tpadding: 4px 0;\n\tcolor: var(--text-muted);'
+			+ '\n\tfont-size: var(--fs-sm);',
 	}],
 	// A nested fold given an ordinal of its own, which is what the contract's
 	// Amendment 1 forbids: the engine counts only top-level folds, so every key
@@ -708,6 +725,37 @@ try {
 		!!restored && restored.open === true, JSON.stringify(after));
 	check('10b and one the reader never touched comes back shut',
 		!!untouched && untouched.open === false, JSON.stringify(after));
+
+	// ── 11. The label is legible ──────────────────────────────────────
+	//
+	// A fold nobody finds is a fold nobody opens, and every check above this one
+	// passes on exactly that. The owner, 2026-08-23, located a real fold on his own
+	// screen only after being told it was there: the summary was `--text-muted` at
+	// `--fs-sm`, which between a reply above and a reply below reads as a caption
+	// for something rather than as a thing to read.
+	//
+	// MEASURED AGAINST THE ANSWER IT BELONGS TO, never against a value written
+	// here. A check pinned to `#ECE6DC` would go red on a theme and green on a
+	// regression under the pink one; a check pinned to the answer's own computed
+	// style moves with every theme and still catches a summary set apart as minor.
+	const legible = await page.evaluate(() => {
+		const d = [...document.querySelectorAll('#chat-output details.md-fold')]
+			.filter(x => !x.classList.contains('chat-msg-thinking')).pop();
+		if (!d) return { why: 'no fold on screen' };
+		const sum = d.querySelector('summary');
+		const bubble = d.closest('.chat-msg-content') || d.parentElement;
+		// The answer above the fold, in the same bubble. `!d.contains` because the
+		// fold's own body is full of paragraphs and one of those proves nothing.
+		const above = [...bubble.querySelectorAll('p')].find(x => !d.contains(x));
+		if (!sum || !above) return { why: 'no summary, or nothing above the fold' };
+		const a = getComputedStyle(sum), b = getComputedStyle(above);
+		return { size: a.fontSize, answerSize: b.fontSize,
+			ink: a.color, answerInk: b.color };
+	});
+	check('11a the summary is set at the size of the answer it belongs to',
+		!!legible && legible.size === legible.answerSize, JSON.stringify(legible));
+	check('11b and in the same ink, not the grey of a caption',
+		!!legible && legible.ink === legible.answerInk, JSON.stringify(legible));
 
 	// The attack's own 404 is expected -- the image is MEANT to fail, which is what
 	// makes 8a mean anything -- so it is not counted as the app throwing.
