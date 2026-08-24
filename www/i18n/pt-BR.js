@@ -797,6 +797,7 @@
 	'spend.session': 'esta sessão',
 	'spend.balance': 'saldo',
 	'spend.tok': 'tok',
+	'spend.period_day': 'Hoje',
 	'spend.period_week': 'Semana',
 	'spend.period_month': 'Mês',
 	'spend.no_turns': 'Ainda não há turnos nesta janela.',
@@ -1366,7 +1367,6 @@
 	'gov.run_n.one': 'Rodar {n} agente',
 	'gov.run_n.other': 'Rodar {n} agentes',
 	'spend.includes_estimate': 'Estimado. Pelo menos um modelo aqui não está na tabela de preços.',
-	'spend.session_short': 'Sessão',
 
 	// ── Quoting a message without a readable date ──────────────
 	'mail.quote.head_undated': '{who} escreveu:',
@@ -1622,6 +1622,9 @@
 	'attach.already': 'Já anexado',
 	'attach.ws_mark': 'Espaço',
 	'attach.ws_add': 'Marcar uma pasta no espaço',
+	'attach.add_mark': 'Marcar uma pasta',
+	'attach.mark_note': 'Marcar uma PASTA a inclui: este espaço poderá ler e mudar o que há dentro. Marcar um arquivo apenas o põe diante do modelo.',
+	'attach.mark_focus': 'Marcar esta pasta em {name}, para que o daimon dele possa ler e mudar o que há dentro',
 	'attach.not_here': 'Guardado por esta conversa, mas fica {where}, que não é o espaço que você tem aberto. Esta conversa não alcança daqui.',
 	'attach.ws_help': 'As pastas que esta conversa pode ler e alterar. Marcar uma é a permissão, e nada vai perguntar de novo.',
 	'attach.ws_on': 'No espaço desta conversa: ela pode ler e alterar o que está dentro. Toque para tirar.',
@@ -1654,6 +1657,14 @@
 	'dws.kit_none': 'Sem cadeia de ferramentas. Um comando alcança os arquivos deste Diamond e nada mais no seu computador.',
 	'dws.elsewhere': 'Vive no espaço de trabalho',
 	'dws.readonly': 'Somente leitura',
+	'dws.showing': 'Mostrando',
+	'dws.reach': 'Alcance',
+	'dws.reach_help': 'As pastas em que o daimon deste Diamond pode escrever. Aparece nas duas árvores, porque vale nas duas.',
+	'dws.reach_own': 'a pasta dele',
+	'dws.reach_search': 'Uma busca que não nomeia caminho nenhum olha aqui e em nenhum outro lugar.',
+	'dws.reach_none': 'Nada mais está marcado, então o daimon de {name} não pode escrever em nenhum outro lugar seu — e uma busca que não nomeia caminho nenhum só olha aqui.',
+	'dws.mark_here': 'Marcar “{name}”',
+	'dws.mark_here_help': 'Colocar a pasta que você está vendo no espaço de {name}. O daimon dele poderá ler e mudar o que há dentro, e uma busca que não nomeia caminho nenhum vai olhar lá.',
 
 	// ── Links between Diamonds ─────────────────────────────────
 	'link.count.one': '{n} Diamond vinculado',

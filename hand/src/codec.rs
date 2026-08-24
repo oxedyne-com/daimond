@@ -38,10 +38,14 @@ use crate::wire::{
     PtySize,
     Req,
     Resp,
+    Run,
+    RunState,
     Sig,
     Stream,
     CHUNK_MAX,
     FRAME_MAX,
+    RUNS_MAX,
+    RUN_WHAT_MAX,
     SAFE_INT_MAX,
 };
 
@@ -641,6 +645,57 @@ fn env_field(obj: &Dat, what: &str, key: &str) -> Outcome<Vec<(String, String)>>
     Ok(out)
 }
 
+/// The `runs` field of a [`Resp::Runs`].
+///
+/// # Arguments
+/// * `obj` - The decoded object.
+fn runs_field(obj: &Dat) -> Outcome<Vec<Run>> {
+    let v = res!(field(obj, "runs", "runs"));
+    let items = match v.get_list() {
+        Some(l) => l,
+        None => return Err(Fault::WrongShape.raise(&fmt!(
+            "The \"runs\" field of a \"runs\" message is not a list."))),
+    };
+    if items.len() > RUNS_MAX {
+        return Err(Fault::WrongShape.raise(&fmt!(
+            "A \"runs\" message listed {} runs and {} is the most one carries. What did not \
+            fit is counted in \"more\" rather than sent.", items.len(), RUNS_MAX)));
+    }
+    let mut out = Vec::with_capacity(items.len());
+    for (i, it) in items.iter().enumerate() {
+        res!(want_object(it, "run"));
+        let what = res!(str_field(it, "run", "what"));
+        if what.len() > RUN_WHAT_MAX {
+            return Err(Fault::WrongShape.raise(&fmt!(
+                "Entry {} of a \"runs\" message carries a command line of {} bytes and {} is \
+                the most one carries.", i, what.len(), RUN_WHAT_MAX)));
+        }
+        out.push(Run {
+            id:    res!(str_field(it, "run", "id")),
+            pid:   res!(u32_field(it, "run", "pid")),
+            what,
+            state: res!(run_state_of(&res!(str_field(it, "run", "state")))),
+            secs:  res!(u32_field(it, "run", "secs")),
+        });
+    }
+    Ok(out)
+}
+
+/// The word a [`RunState`] travels under, read back.
+///
+/// # Arguments
+/// * `s` - The word.
+fn run_state_of(s: &str) -> Outcome<RunState> {
+    match s {
+        "running"	=> Ok(RunState::Running),
+        "standing"	=> Ok(RunState::Standing),
+        other => Err(Fault::WrongShape.raise(&fmt!(
+            "A listed run says its state is {:?}, and the only two are \"running\" -- the \
+            command itself has not finished -- and \"standing\" -- it has, and the process \
+            group it led has not emptied.", other))),
+    }
+}
+
 /// The fence field.
 ///
 /// # Arguments
@@ -1080,6 +1135,9 @@ fn req_dat(req: &Req) -> Dat {
             "id"	=> Dat::Str(id.clone()),
             "size"	=> size_dat(size),
         },
+        Req::Runs => omapdat!{
+            "t"	=> "runs",
+        },
         Req::Bye => omapdat!{
             "t"	=> "bye",
         },
@@ -1176,6 +1234,7 @@ pub fn req_of_json(txt: &str) -> Outcome<Req> {
             id:   res!(str_field(&obj, "resize", "id")),
             size: res!(size_field(&obj, "resize", "size")),
         }),
+        "runs" => Ok(Req::Runs),
         "bye" => Ok(Req::Bye),
         other => Err(Fault::UnknownTag.raise(&fmt!(
             "There is no request called {:?}. This page is asking for something \
@@ -1238,6 +1297,17 @@ fn resp_dat(resp: &Resp) -> Dat {
             "id"	=> Dat::Str(id.clone()),
             "seq"	=> *seq,
             "data"	=> Dat::Str(data.clone()),
+        },
+        Resp::Runs { runs, more } => omapdat!{
+            "t"		=> "runs",
+            "runs"	=> Dat::List(runs.iter().map(|r| omapdat!{
+                "id"	=> Dat::Str(r.id.clone()),
+                "pid"	=> r.pid,
+                "what"	=> Dat::Str(r.what.clone()),
+                "state"	=> r.state.word(),
+                "secs"	=> r.secs,
+            }).collect()),
+            "more"	=> *more,
         },
         Resp::Closed { id, exit, killed } => omapdat!{
             "t"			=> "closed",
@@ -1368,6 +1438,10 @@ pub fn resp_of_json(txt: &str) -> Outcome<Resp> {
             id:     res!(str_field(&obj, "closed", "id")),
             exit:   res!(i32_field(&obj, "closed", "exit")),
             killed: res!(bool_field(&obj, "closed", "killed")),
+        }),
+        "runs" => Ok(Resp::Runs {
+            runs: res!(runs_field(&obj)),
+            more: res!(u32_field(&obj, "runs", "more")),
         }),
         "error" => Ok(Resp::Error {
             id:      res!(opt_str_field(&obj, "error", "id")),
@@ -2028,6 +2102,7 @@ mod tests {
             Req::Input { id: fmt!("pty-1"), data: data_encode(&[0x00, 0xff, 0xfe]) },
             Req::Input { id: fmt!("pty-1"), data: data_encode(&[]) },
             Req::Resize { id: fmt!("pty-1"), size: PtySize { cols: 120, rows: 40 } },
+            Req::Runs,
             Req::Bye,
         ]
     }
@@ -2084,6 +2159,28 @@ mod tests {
             Resp::Closed  { id: fmt!("pty-2"), exit: -1, killed: true  },
             Resp::Error   { id: Some(fmt!("run-3")), message: fmt!("Broke.") },
             Resp::Error   { id: None, message: fmt!("Broke before there was a run.") },
+            Resp::Runs    { runs: Vec::new(), more: 0 },
+            Resp::Runs {
+                runs: vec![
+                    Run {
+                        id:    fmt!("run-bash-3"),
+                        pid:   4242,
+                        what:  fmt!("bash dev/world.sh 3 --up"),
+                        state: RunState::Standing,
+                        secs:  91,
+                    },
+                    // The extremes of the fields' own types, which is where a
+                    // decoder that widened or narrowed one would show.
+                    Run {
+                        id:    fmt!("run-cargo-1"),
+                        pid:   u32::MAX,
+                        what:  fmt!(""),
+                        state: RunState::Running,
+                        secs:  u32::MAX,
+                    },
+                ],
+                more: 7,
+            },
         ]
     }
 
@@ -2095,6 +2192,49 @@ mod tests {
         }
         assert!(capture_of("BOTH").is_err());
         assert!(capture_of("").is_err());
+        Ok(())
+    }
+
+    /// Every run state is spelled and read back, and nothing else is accepted.
+    #[test]
+    fn run_state_vocabulary() -> Outcome<()> {
+        for st in [RunState::Running, RunState::Standing] {
+            assert_eq!(st, res!(run_state_of(st.word())));
+        }
+        assert!(run_state_of("Running").is_err());
+        assert!(run_state_of("stopped").is_err());
+        assert!(run_state_of("").is_err());
+        Ok(())
+    }
+
+    /// A listing that overruns either of its two ceilings is refused rather than
+    /// read.
+    ///
+    /// Both are the wire's own limits and both matter for the same reason: the
+    /// listing is the ONE message that has to be believed about what is still
+    /// running, so a frame that could not have been produced by this hand is
+    /// better refused by name than silently half-read.
+    #[test]
+    fn a_listing_past_its_ceilings_is_refused() -> Outcome<()> {
+        let one = |what: &str| -> String {
+            fmt!(r#"{{"t":"runs","more":0,"runs":[{{"id":"a","pid":1,"what":"{}",                "state":"standing","secs":0}}]}}"#, what)
+        };
+        let ok = res!(resp_of_json(&one(&"x".repeat(RUN_WHAT_MAX))));
+        match ok {
+            Resp::Runs { runs, .. } => assert_eq!(runs[0].what.len(), RUN_WHAT_MAX),
+            other => return Err(err!("Expected a listing, got {:?}.", other; Test, Mismatch)),
+        }
+        assert!(resp_of_json(&one(&"x".repeat(RUN_WHAT_MAX + 1))).is_err(),
+            "a command line past RUN_WHAT_MAX was accepted");
+
+        let entry = r#"{"id":"a","pid":1,"what":"x","state":"running","secs":0}"#;
+        let many = |n: usize| -> String {
+            fmt!(r#"{{"t":"runs","more":0,"runs":[{}]}}"#,
+                vec![entry; n].join(","))
+        };
+        assert!(resp_of_json(&many(RUNS_MAX)).is_ok(), "a listing of exactly RUNS_MAX was refused");
+        assert!(resp_of_json(&many(RUNS_MAX + 1)).is_err(),
+            "a listing past RUNS_MAX was accepted");
         Ok(())
     }
 

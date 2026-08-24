@@ -954,7 +954,7 @@
 	'spend.balance':         '余额',
 	'spend.tok':             '词元',
 	// 侧栏支出行的三格。要短：它们压在数字下面。
-	'spend.session_short':   '本次',
+	'spend.period_day':      '今天',
 	'spend.period_week':     '周',
 	'spend.period_month':    '月',
 	'spend.no_turns':        '这个时间段里还没有轮次。',
@@ -1653,6 +1653,9 @@
 	'attach.already':      '已附加',
 	'attach.ws_mark':      '工作区',
 	'attach.ws_add':       '把文件夹放进工作区',
+	'attach.add_mark':     '放一个文件夹进去',
+	'attach.mark_note':    '勾选文件夹就把它放进去：这个工作区随后可以读取和修改里面的东西。勾选文件只是把它放到模型面前。',
+	'attach.mark_focus':   '把这个文件夹放进 {name}，让它的 daimon 可以读取和修改里面的东西',
 	'attach.not_here':     '这个对话保留着它，但它在{where}，不是你现在打开的工作区。从这里够不到。',
 	'attach.ws_help':      '这个对话可以读取和更改的文件夹。放进来就是授权，之后不会再问你。',
 	'attach.ws_on':        '在这个对话的工作区里：可以读取和更改其中的内容。按一下移出。',
@@ -1685,6 +1688,14 @@
 	'dws.kit_none':        '没有工具链。命令只能访问这个 Diamond 的文件，电脑上的其他内容都访问不到。',
 	'dws.elsewhere':       '在工作区里',
 	'dws.readonly':        '只读',
+	'dws.showing':         '正在显示',
+	'dws.reach':           '可及范围',
+	'dws.reach_help':      '这个 Diamond 的 daimon 可以写入的文件夹。两棵树里都会显示，因为两边都算数。',
+	'dws.reach_own':       '它自己的文件夹',
+	'dws.reach_search':    '没有指定路径的搜索只看这几处，别处不看。',
+	'dws.reach_none':      '没有放进别的东西，所以 {name} 的 daimon 写不到你的其他地方，没有指定路径的搜索也只看这里。',
+	'dws.mark_here':       '把“{name}”放进去',
+	'dws.mark_here_help':  '把你正在看的文件夹放进 {name} 的工作区。它的 daimon 就能读取和修改里面的东西，没有指定路径的搜索也会看那里。',
 
 	// ── Diamond 之间的关联 ─────────────────────────────────────
 	'link.count.one':      '{n} 个关联的 Diamond',

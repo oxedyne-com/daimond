@@ -798,6 +798,7 @@
 	'spend.session': 'esta sesión',
 	'spend.balance': 'saldo',
 	'spend.tok': 'tok',
+	'spend.period_day': 'Hoy',
 	'spend.period_week': 'Semana',
 	'spend.period_month': 'Mes',
 	'spend.no_turns': 'Todavía no hay turnos en esta ventana.',
@@ -1367,7 +1368,6 @@
 	'gov.run_n.one': 'Lanzar {n} agente',
 	'gov.run_n.other': 'Lanzar {n} agentes',
 	'spend.includes_estimate': 'Estimado. Al menos uno de los modelos de aquí no está en la tabla de precios.',
-	'spend.session_short': 'Sesión',
 
 	// ── Quoting a message without a readable date ──────────────
 	'mail.quote.head_undated': '{who} escribió:',
@@ -1623,6 +1623,9 @@
 	'attach.already': 'Ya adjunto',
 	'attach.ws_mark': 'Espacio',
 	'attach.ws_add': 'Marcar una carpeta en el espacio',
+	'attach.add_mark': 'Marcar una carpeta',
+	'attach.mark_note': 'Marcar una CARPETA la incorpora: este espacio podrá leer y cambiar lo que hay dentro. Marcar un archivo solo lo pone delante del modelo.',
+	'attach.mark_focus': 'Marcar esta carpeta en {name}, para que su daimon pueda leer y cambiar lo que hay dentro',
 	'attach.not_here': 'Lo tiene este chat, pero está {where}, que no es el espacio que tienes abierto. Este chat no puede alcanzarlo desde aquí.',
 	'attach.ws_help': 'Las carpetas que este chat puede leer y cambiar. Marcar una es el permiso, y no se te volverá a preguntar.',
 	'attach.ws_on': 'En el espacio de este chat: puede leer y cambiar lo que hay dentro. Pulsa para sacarla.',
@@ -1655,6 +1658,14 @@
 	'dws.kit_none': 'Sin cadena de herramientas. Un comando alcanza los archivos de este Diamond y nada más en tu ordenador.',
 	'dws.elsewhere': 'Vive en el espacio de trabajo',
 	'dws.readonly': 'Solo lectura',
+	'dws.showing': 'Mostrando',
+	'dws.reach': 'Alcance',
+	'dws.reach_help': 'Las carpetas en las que puede escribir el daimon de este Diamond. Se muestra en ambos árboles, porque vale en los dos.',
+	'dws.reach_own': 'su propia carpeta',
+	'dws.reach_search': 'Una búsqueda que no nombra ninguna ruta mira aquí y en ningún otro sitio.',
+	'dws.reach_none': 'No hay nada más marcado, así que el daimon de {name} no puede escribir en ningún otro sitio tuyo, y una búsqueda que no nombra ninguna ruta solo mira aquí.',
+	'dws.mark_here': 'Marcar “{name}”',
+	'dws.mark_here_help': 'Pon la carpeta que estás viendo en el espacio de {name}. Su daimon podrá leer y cambiar lo que hay dentro, y una búsqueda que no nombra ninguna ruta mirará ahí.',
 
 	// ── Links between Diamonds ─────────────────────────────────
 	'link.count.one': '{n} Diamond vinculado',

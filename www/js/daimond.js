@@ -7145,6 +7145,58 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 	}
 
+	/// Close the open run of prose as WORKING rather than as an answer.
+	///
+	/// **Text that is followed by a tool call is not the answer**, and until 2026-08-23 it was
+	/// drawn as one. A turn that made twenty calls put twenty paragraphs of "let me pin the line
+	/// numbers", "all pinned down", "now the ledger" into the thread at full weight, and the
+	/// owner read the lot looking for the reply. He asked where the folding was. `FOLD_NOTE`
+	/// governs the ANSWER and exempts anything a sentence or two long, so every one of those
+	/// lines was exempt by the rule -- correctly, and uselessly.
+	///
+	/// Decided at the moment a tool call arrives, which is when the question is answerable: a
+	/// run of prose with a call after it was the model thinking out loud on its way somewhere.
+	/// The run after the LAST call is untouched, and that is the answer.
+	///
+	/// Drawn as the thinking tile is drawn, because it is the same thing arriving by a different
+	/// door -- the model's own working, addressed to nobody. One sentence gets a quiet line and
+	/// no disclosure, since a control that opens on the words already on screen is the
+	/// "opens on nothing" fault; more than one gets the first sentence as its summary.
+	///
+	/// It hides with the tool steps (`.hide-tools`), because that is the switch a reader already
+	/// uses to say they do not want the working.
+	function demoteToWorking() {
+		var text = (curAsstText || '').trim();
+		if (!curAsstDiv || !text) { finalizeAssistant(); return; }
+		var div = curAsstDiv;
+		// Cleared BEFORE the rebuild, so nothing that runs below can append into a div that is
+		// about to be replaced.
+		curAsstDiv = null; curAsstText = ''; _asstRenderPending = false; _asstSegs = [];
+		// The first sentence, which is what a model's narration opens with and is already a
+		// summary of the rest. Cut on the sentence end, never mid-word.
+		var cut = text.search(/[.!?](\s|$)/);
+		var head = (cut > 0 && cut < 160) ? text.slice(0, cut + 1) : text.slice(0, 160);
+		var rest = text.slice(head.length).trim();
+		div.className = 'chat-msg-working';
+		div.innerHTML = '';
+		if (!rest) {
+			var line = document.createElement('div');
+			line.className = 'chat-working-line';
+			line.textContent = head;             // escaped: this is not an answer to parse
+			div.appendChild(line);
+			return;
+		}
+		var d = document.createElement('details');
+		d.className = 'md-fold chat-msg-thinking';
+		var sum = document.createElement('summary');
+		sum.textContent = head;
+		var body = document.createElement('div');
+		body.className = 'chat-msg-content chat-thinking-body';
+		body.textContent = rest;
+		d.appendChild(sum); d.appendChild(body);
+		div.appendChild(d);
+	}
+
 	function finalizeAssistant() {
 		if (curAsstDiv && curAsstText) {
 			var pinned = nearBottom();
@@ -7309,7 +7361,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// why the reader outlives the tool.
 		if (name === 'say' && renderSaid(args, callId)) { _saidJust = true; return; }
 		_saidJust = false;
-		finalizeAssistant();
+		// Not `finalizeAssistant`: prose with a tool call after it is working, not an answer.
+		// See `demoteToWorking`.
+		demoteToWorking();
 		var block = document.createElement('div');
 		block.className = 'tool-block running collapsed';
 		var head = document.createElement('div');
@@ -15966,8 +16020,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { writeUsageDigest(); } catch (e) { /* best-effort */ }
 	}
 
-	// The global spend readout at the foot of the Diamonds/Chats panel: session
-	// (usage since a ≥15-min idle gap) · this week · this month. Precise but
+	// The global spend readout at the foot of the Diamonds/Chats panel: day
+	// (local midnight to now) · this week · this month. Precise but
 	// calm — a quiet reassurance, not a running total shouting in dollars.
 	function updateSpend() {
 		var el = document.getElementById('spend-row');
@@ -15993,7 +16047,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (part.estimated) a.title = t('spend.includes_estimate');
 			c.appendChild(l); c.appendChild(a); return c;
 		}
-		el.appendChild(cell(t('spend.session_short'), tot.session));
+		el.appendChild(cell(t('spend.period_day'),    tot.day));
 		el.appendChild(cell(t('spend.period_week'),   tot.week));
 		el.appendChild(cell(t('spend.period_month'),  tot.month));
 		// A quiet "faster than usual" note when the live rate runs well
@@ -18464,6 +18518,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			catch (e) { return 'all'; }
 		})();
 		var scopeEl = null;			// the row of two chips, built in bind()
+		var reachEl = null;			// where this Diamond's daimon may work, built in bind()
+		var reachSeq = 0;			// so a slow store read cannot repaint over a newer one
 		var kitsEl  = null;			// the row of toolchain grants, built in bind()
 		var attached = [];			// the open Diamond's attachments; see loadAttached
 		var lastDiamondId = null;		// so a re-read of the SAME Diamond does not relist
@@ -18810,16 +18866,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			btn.style.display = '';
 			var st = attachStateOf(path, dir);
 			var on = st.on, away = st.away, where = st.where;
+			// A FOLDER ROW WITH A DIAMOND IN FOCUS IS A PERMISSION CONTROL, whatever
+			// the tooltip says. The link it writes is what `Files.bounds` turns into
+			// the write fence, so it comes out of hiding: the hover gate is right for
+			// an ordinary attachment and wrong for a grant, because a grant nobody can
+			// see is a grant nobody takes back. `.files-hold.on` has stood visible for
+			// the same reason since the Diamond tree was first drawn.
+			var marks = !!dir && f.kind === 'diamond';
+			btn.classList.toggle('mark', marks);
 			btn.classList.toggle('on', on);
 			btn.classList.toggle('away', away);
 			btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-			btn.title = away ? t('dws.not_here', { where: where }) : t('attach.to_focus');
+			btn.title = away ? t('dws.not_here', { where: where })
+				: (marks ? t('attach.mark_focus', { name: f.name || '' }) : t('attach.to_focus'));
 			btn.setAttribute('aria-label', btn.title);
 		}
 
 		/// Reload the attachment set and repaint whatever is on screen for it.
 		async function refreshAttached() {
 			await loadAttached();
+			// The marks ARE the fence, so the row that names it redraws with them --
+			// and before the early returns below, which are about the tree and not
+			// about the reach.
+			paintReach();
 			if (!listed || curFile) return;
 			if (diamondScope()) { await list(curDir); return; }
 			if (!filter) renderTree(lastEntries);
@@ -18832,11 +18901,125 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function renderScope() {
 			if (!scopeEl) return;
 			scopeEl.innerHTML = '';
-			if (!currentDiamond) { scopeEl.style.display = 'none'; return; }
+			if (!currentDiamond) {
+				scopeEl.style.display = 'none';
+				renderKits();
+				paintReach();
+				return;
+			}
 			scopeEl.style.display = '';
+			// SHOWING, and the word is the fix. These chips choose a TREE and change
+			// no permission whatever, but "Everything" beside "◈ This Diamond" reads
+			// as a setting for how much the daimon may touch -- which is how a whole
+			// evening got worked on the wrong one. The row is now labelled as a view
+			// control, and the row underneath says what the permission actually is.
+			var lab = document.createElement('span');
+			lab.className = 'files-scope-label';
+			lab.textContent = t('dws.showing');
+			scopeEl.appendChild(lab);
 			scopeEl.appendChild(scopeChip('all', t('dws.mode_all'), t('dws.mode_all')));
 			scopeEl.appendChild(scopeChip('diamond', t('dws.mode_diamond'), currentDiamond.name));
 			renderKits();
+			paintReach();
+		}
+
+		// ── Where the daimon will actually look ─────────────────────
+		//
+		// THE SCOPE CHIPS WERE READ AS A PERMISSION SETTING AND ARE A VIEW FILTER,
+		// and on 2026-08-23 the owner worked an evening on "Everything", where this
+		// panel draws the workspace at large and said nothing at all about the
+		// Diamond in front of him: no marks on screen, no Toolchains row, no
+		// sentence. Nothing was marked into that Diamond, so `diamond_bounds` gave
+		// it one `OnlyWriteUnder` -- its own folder -- and a `file_search` that
+		// named no path started there, because `walk_starts` (src/tools.rs) takes
+		// its default from exactly those prefixes. His daimon reported a function
+		// present ten times as absent. Every fact needed to see that coming was in
+		// the store; none of it was on the screen.
+		//
+		// So this row is drawn in BOTH trees and is built from `Files.bounds` --
+		// the same call that composes the fence, so the sentence cannot come to
+		// disagree with what the turn is confined to. Text and chips, never a
+		// tooltip: "is my daimon fenced, and where will it look" has to be
+		// answerable by looking.
+		async function paintReach() {
+			if (!reachEl) return;
+			if (!currentDiamond) { reachEl.innerHTML = ''; reachEl.style.display = 'none'; return; }
+			var seq = ++reachSeq;
+			var b = { own_dir: '', attached: [], read_only: [] };
+			try { b = await Files.bounds(currentDiamond.id); }
+			catch (e) { /* the empty pair is what a turn is given too; the row says the same */ }
+			// The store was read across an await and the user may have moved on.
+			if (seq !== reachSeq || !currentDiamond || !reachEl) return;
+			var own = b.own_dir || ownDir();
+			var marks = b.attached || [], ro = b.read_only || [];
+			reachEl.innerHTML = '';
+			reachEl.style.display = '';
+
+			var lab = document.createElement('span');
+			lab.className = 'files-reach-label';
+			lab.textContent = t('dws.reach');
+			lab.title = t('dws.reach_help');
+			reachEl.appendChild(lab);
+
+			// Its own folder first, because that is the order `diamond_bounds`
+			// declares them in and therefore the order a bare walk takes them in.
+			reachEl.appendChild(reachChip(t('dws.reach_own'), own, false));
+			marks.forEach(function (path) {
+				reachEl.appendChild(reachChip(tailOf(path, 1) || path, path, ro.indexOf(path) >= 0));
+			});
+
+			var says = document.createElement('span');
+			says.className = 'files-reach-says' + (marks.length ? '' : ' none');
+			says.textContent = marks.length
+				? t('dws.reach_search')
+				: t('dws.reach_none', { name: currentDiamond.name });
+			reachEl.appendChild(says);
+
+			var here = markHereBtn(marks, own);
+			if (here) reachEl.appendChild(here);
+		}
+
+		/// One place a daimon may work, named by as little of its path as tells it
+		/// from the others and carrying the whole of it for anyone who wants it.
+		function reachChip(label, path, ro) {
+			var c = document.createElement('span');
+			c.className = 'files-reach-chip' + (ro ? ' ro' : '');
+			c.dataset.path = path;
+			// Read-only is spelled out rather than left to a tint. It is the
+			// difference between a folder a daimon may rewrite and one it may only
+			// consult, and nobody hovers a chip to find that out.
+			c.textContent = '\u25c8 ' + label + (ro ? ' \u00b7 ' + t('dws.readonly') : '');
+			c.title = path;
+			return c;
+		}
+
+		/// Mark the folder already on screen, in one press.
+		///
+		/// The only route to marking used to be a `+` that opens a picker at the
+		/// workspace root: to grant the folder you were standing in you walked back
+		/// down the tree to it and ticked it. The owner did that on 2026-08-23 and
+		/// asked, reasonably, why. Absent where there is nothing to mark -- the
+		/// composed root names no directory, and a folder already inside the fence
+		/// would be a button that changes nothing.
+		function markHereBtn(marks, own) {
+			if (!currentDiamond || !curDir) return null;
+			if (underPath(curDir, own)) return null;
+			for (var i = 0; i < marks.length; i++) {
+				if (underPath(curDir, marks[i])) return null;
+			}
+			var b = document.createElement('button');
+			b.type = 'button';
+			b.className = 'files-mark-here';
+			b.dataset.act = 'mark-here';
+			b.dataset.path = curDir;
+			b.textContent = '\u25c8 ' + t('dws.mark_here', { name: tailOf(curDir, 1) || curDir });
+			b.title = t('dws.mark_here_help', { name: currentDiamond.name });
+			b.setAttribute('aria-label', b.title);
+			b.addEventListener('click', function (ev) {
+				ev.stopPropagation();
+				toggleAttachHold(curDir, true);
+			});
+			return b;
 		}
 
 		/// The toolchains this build can grant, in the order they are offered.
@@ -18859,11 +19042,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		/// Draw the toolchain grants for the open Diamond.
 		///
-		/// Only in the Diamond tree: a grant is per Diamond, and a row of toolchain buttons over
-		/// the whole workspace would be asking about something that has no answer.
+		/// Wherever a Diamond is open, in EITHER tree. It used to be drawn only in the Diamond
+		/// tree, on the reasoning that a grant is per Diamond and the other tree is not about one
+		/// -- true of the tree and false of the row, which is about the Diamond either way. What
+		/// it cost was that a person on "Everything" could not see, and could not give, the one
+		/// grant that decides whether `cargo` is a command or a refusal: the row was not dimmed
+		/// or explained, it was absent, so nothing on the screen said the question existed.
 		function renderKits() {
 			if (!kitsEl) return;
-			if (!currentDiamond || !diamondScope()) { kitsEl.style.display = 'none'; return; }
+			if (!currentDiamond) { kitsEl.style.display = 'none'; return; }
 			kitsEl.style.display = '';
 			kitsEl.innerHTML = '';
 			var d = diamonds.find(function (x) { return x.id === currentDiamond.id; });
@@ -19030,6 +19217,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			curFile = null; listed = true;
 			viewEl.style.display = 'none'; syncLineNo();
 			await loadAttached();
+			paintReach();
 			if (curDir) {
 				renderCrumbs(pathEl, t('dws.title'), curDir, goDir);
 				var res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: curDir }));
@@ -19199,7 +19387,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				scopeEl.style.display = 'none';
 				modeEl.parentNode.insertBefore(scopeEl, modeEl.nextSibling);
 			}
-			// The toolchain grants, under the scope row and above the tree. It belongs in
+			// Between the chips that choose a tree and the grants that are not folders:
+			// what this Diamond's daimon may write in, and where a search that names no
+			// path will start. See `paintReach` for the evening that made it necessary.
+			reachEl = panel.querySelector('.files-reach');
+			if (!reachEl) {
+				reachEl = document.createElement('div');
+				reachEl.className = 'files-reach';
+				reachEl.style.display = 'none';
+				scopeEl.parentNode.insertBefore(reachEl, scopeEl.nextSibling);
+			}
+			// The toolchain grants, under the reach row and above the tree. They belong in
 			// this panel and nowhere else: this is where a person says what a Diamond may
 			// reach, and a toolchain is one more thing it may reach — the only one that is
 			// not a folder in the workspace.
@@ -19208,7 +19406,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				kitsEl = document.createElement('div');
 				kitsEl.className = 'files-kits';
 				kitsEl.style.display = 'none';
-				scopeEl.parentNode.insertBefore(kitsEl, scopeEl.nextSibling);
+				reachEl.parentNode.insertBefore(kitsEl, reachEl.nextSibling);
 			}
 			panel.querySelector('[data-act="refresh"]').addEventListener('click', function () { list(curDir); });
 			var newBtn = panel.querySelector('[data-act="new-file"]');
@@ -20050,6 +20248,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			curFile = null; listed = true;
 			viewEl.style.display = 'none'; syncLineNo();   // the preview is not ours to close
 			renderCrumbs(pathEl, t('panel.work'), curDir, goDir);
+			// The one-press mark names the directory on screen, so it moves with it.
+			paintReach();
 			treeEl.innerHTML = '<div class="files-empty">…</div>';
 			await loadAttached();		// so a row can say whether it is attached
 			var res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: curDir || '.' }));
@@ -27507,17 +27707,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		if (o.add !== false) {
+			// A CONTROL MEANS WHAT ITS POSITION SAYS, this used to argue, and it was
+			// true of whoever laid the panel out and false of everybody else. Two `+`
+			// buttons a few pixels apart read the same, one of them granting a daimon
+			// the run of a folder and the other putting a file in front of a model,
+			// and the only difference on screen was a tooltip. On 2026-08-23 the owner
+			// could not find the control that marks a folder in; neither could the
+			// agent sent to read the source.
+			//
+			// Worse, the position was not even the whole answer. The crystal footer's
+			// `+` passes no `mark` and was labelled "Attach", while on a Diamond every
+			// folder it adds becomes a mark anyway -- `Files.attachAdd` writes a
+			// `holds` link and `Files.bounds` turns each of those into an
+			// `OnlyWriteUnder`. So the word is asked of the FOCUS as well as the group,
+			// through one function the picker reads too, and a `+` that widens a fence
+			// wears the accent that every other granting control in the app wears.
+			var grants = attachAddGrants(o);
 			var add = document.createElement('button');
 			add.type = 'button';
-			add.className = 'attach-add';
+			add.className = 'attach-add' + (grants ? ' grants' : '');
 			add.dataset.act = 'attach-add';
-			add.textContent = '+';
-			add.title = o.mark ? t('attach.ws_add') : t('attach.add');
+			add.dataset.grants = grants ? '1' : '';
+			add.textContent = '+ ' + t(grants ? 'attach.add_mark' : 'attach.add');
+			add.title = grants ? t('attach.ws_add') : t('attach.add');
 			add.setAttribute('aria-label', add.title);
-			// A CONTROL MEANS WHAT ITS POSITION SAYS. This `+` sits in the workspace
-			// group, under a sentence that says to mark a folder in with it, so a
-			// folder it adds is marked in. One that merely attached would be the
-			// control that visibly did something and changed no permission.
 			add.addEventListener('click', function (ev) {
 				ev.stopPropagation();
 				attachPicker({ mark: !!o.mark });
@@ -27526,6 +27739,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		return head;
+	}
+
+	/// Does pressing this `+` widen what the thing in focus may reach?
+	///
+	/// The group is half the answer and the FOCUS is the other half. A chat's
+	/// workspace group marks what it adds and its prompt group does not; a Diamond
+	/// marks whatever is added from anywhere, because there is only one mechanism
+	/// on that surface and attaching IS marking. One function, so the word the
+	/// button wears and the words the picker says cannot come apart.
+	function attachAddGrants(o) {
+		var f = attachFocus();
+		if (!f) return false;
+		if (f.kind === 'diamond') return true;
+		return !!(o && o.mark);
 	}
 
 	/// The scrolling box of tiles, in whichever view is chosen.
@@ -27679,19 +27906,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// panel's own listing, and does one thing the panel does not: several at
 	/// once, from where you already are.
 	/// # Arguments
-	/// * `opts.mark` - Also mark the FOLDERS it adds into the chat's workspace,
-	///   which is what the `+` in the workspace group means.
+	/// * `opts.mark` - Also mark the FOLDERS it adds into the CHAT's workspace,
+	///   which is what the `+` in the workspace group means. It says nothing about
+	///   a Diamond, where attaching is already marking and this flag is not passed.
 	async function attachPicker(opts) {
 		var f0 = attachFocus();
 		if (!f0) return;			// no focus, nothing to attach to
-		var mark = !!(opts && opts.mark) && f0.kind === 'chat';
+		// TWO NAMES BECAUSE THEY ARE TWO QUESTIONS, and one name doing both was how a
+		// picker came to say "Attach files and folders" while widening a write fence.
+		// `wsMark` is the chat's own flag and is the one thing here a Diamond must not
+		// have; `grants` is whether a folder ticked in this picker ends up inside a
+		// fence at all, which on a Diamond is true however it was opened. The heading,
+		// the legend and the button's word are read off `grants`, so the picker says
+		// what will happen; only `chatAttachSetWorkspace` below reads `wsMark`.
+		var wsMark = !!(opts && opts.mark) && f0.kind === 'chat';
+		var grants = attachAddGrants(opts);
 		var dir = '';
 		var ticked = {};				// path -> { dir }
 		var picked = await dialog({
 			kind:  'pick',
-			title: mark ? t('attach.ws_add') : t('attach.pick_title'),
-			okLabel: t('attach.add'),
+			title: grants ? t('attach.ws_add') : t('attach.pick_title'),
+			okLabel: t(grants ? 'attach.add_mark' : 'attach.add'),
 			build: function (card) {
+				if (grants) {
+					// What a tick will DO, at the top of the thing doing it. A folder and
+					// a file are ticked with the same box here and mean two different
+					// things, and the row cannot say so without a legend per row.
+					var note = document.createElement('div');
+					note.className = 'attach-pick-note';
+					note.textContent = t('attach.mark_note');
+					card.appendChild(note);
+				}
 				var crumbs = document.createElement('div');
 				crumbs.className = 'files-path attach-pick-path';
 				card.appendChild(crumbs);
@@ -27770,7 +28015,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			await Files.attachAdd(paths[i], picked[paths[i]].dir);
 			// A file cannot be marked in -- the workspace is a union of folders --
 			// so it is attached and nothing more, whichever `+` was pressed.
-			if (mark && picked[paths[i]].dir) {
+			if (wsMark && picked[paths[i]].dir) {
 				chatAttachSetWorkspace(f0.id, rootedRef('dir', paths[i]), true);
 			}
 		}

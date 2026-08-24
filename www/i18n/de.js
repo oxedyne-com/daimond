@@ -801,6 +801,7 @@
 	'spend.session': 'diese Sitzung',
 	'spend.balance': 'Saldo',
 	'spend.tok': 'Tok',
+	'spend.period_day': 'Heute',
 	'spend.period_week': 'Woche',
 	'spend.period_month': 'Monat',
 	'spend.no_turns': 'Noch keine Züge in diesem Zeitraum.',
@@ -1371,7 +1372,6 @@
 	'gov.run_n.one': '{n} Agenten starten',
 	'gov.run_n.other': '{n} Agenten starten',
 	'spend.includes_estimate': 'Geschätzt. Mindestens eines der Modelle hier steht nicht in der Preistabelle.',
-	'spend.session_short': 'Sitzung',
 
 	// ── Quoting a message without a readable date ──────────────
 	'mail.quote.head_undated': '{who} schrieb:',
@@ -1627,6 +1627,9 @@
 	'attach.already': 'Bereits angehängt',
 	'attach.ws_mark': 'Arbeitsbereich',
 	'attach.ws_add': 'Einen Ordner in den Arbeitsbereich aufnehmen',
+	'attach.add_mark': 'Einen Ordner aufnehmen',
+	'attach.mark_note': 'Ein Häkchen an einem ORDNER nimmt ihn auf: dieser Arbeitsbereich darf dann lesen und ändern, was darin liegt. Ein Häkchen an einer Datei legt sie nur dem Modell vor.',
+	'attach.mark_focus': 'Diesen Ordner in {name} aufnehmen, damit sein Daimon lesen und ändern darf, was darin liegt',
 	'attach.not_here': 'Von diesem Chat gehalten, liegt aber {where}, und das ist nicht der Arbeitsbereich, den Sie geöffnet haben. Dieser Chat kann es von hier aus nicht erreichen.',
 	'attach.ws_help': 'Die Ordner, die dieser Chat lesen und ändern darf. Ein Ordner hier hinein zu setzen ist die Erlaubnis, und danach wird nicht noch einmal gefragt.',
 	'attach.ws_on': 'Im Arbeitsbereich dieses Chats: er darf lesen und ändern, was darin liegt. Zum Herausnehmen drücken.',
@@ -1659,6 +1662,14 @@
 	'dws.kit_none': 'Keine Toolchain. Ein Befehl erreicht die Dateien dieses Diamonds und sonst nichts auf deinem Computer.',
 	'dws.elsewhere': 'Liegt im Arbeitsbereich',
 	'dws.readonly': 'Nur lesen',
+	'dws.showing': 'Angezeigt',
+	'dws.reach': 'Reichweite',
+	'dws.reach_help': 'Die Ordner, in denen der Daimon dieses Diamonds schreiben darf. In beiden Bäumen sichtbar, weil es in beiden gilt.',
+	'dws.reach_own': 'sein eigener Ordner',
+	'dws.reach_search': 'Eine Suche ohne Pfadangabe sieht hier nach und sonst nirgends.',
+	'dws.reach_none': 'Sonst ist nichts aufgenommen, also kann der Daimon von {name} nirgendwo sonst bei dir schreiben — und eine Suche ohne Pfadangabe sieht nur hier nach.',
+	'dws.mark_here': '„{name}“ aufnehmen',
+	'dws.mark_here_help': 'Den Ordner, den du gerade ansiehst, in den Arbeitsbereich von {name} aufnehmen. Sein Daimon darf dann lesen und ändern, was darin liegt, und eine Suche ohne Pfadangabe sieht dort nach.',
 
 	// ── Links between Diamonds ─────────────────────────────────
 	'link.count.one': '{n} verknüpftes Diamond',

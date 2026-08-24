@@ -958,7 +958,7 @@
 	'spend.balance':         '残高',
 	'spend.tok':             'トークン',
 	// レールの支出行にある 3 つの欄。数字の下に入るので短く。
-	'spend.session_short':   '今回',
+	'spend.period_day':      '今日',
 	'spend.period_week':     '週',
 	'spend.period_month':    '月',
 	'spend.no_turns':        'この期間のやり取りはまだありません。',
@@ -1660,6 +1660,9 @@
 	'attach.already':      '添付済み',
 	'attach.ws_mark':      '作業領域',
 	'attach.ws_add':       'フォルダーを作業領域に入れる',
+	'attach.add_mark':     'フォルダーを入れる',
+	'attach.mark_note':    'フォルダーにチェックを入れると取り込まれ、この作業領域が中身を読み書きできるようになります。ファイルのチェックはモデルの前に置くだけです。',
+	'attach.mark_focus':   'このフォルダーを {name} に入れて、daimon が中身を読み書きできるようにします',
 	'attach.not_here':     'このチャットが保持していますが、{where}にあり、いま開いている作業領域ではありません。ここからは届きません。',
 	'attach.ws_help':      'このチャットが読み書きしてよいフォルダーです。ここに入れることが許可そのもので、あとから確認を求めることはありません。',
 	'attach.ws_on':        'このチャットの作業領域にあります。中身を読んで変更できます。押すと外れます。',
@@ -1692,6 +1695,14 @@
 	'dws.kit_none':        'ツールチェーンなし。コマンドはこの Diamond のファイルに到達でき、あなたのコンピューター上のそれ以外には到達できません。',
 	'dws.elsewhere':       '作業領域にあります',
 	'dws.readonly':        '読み取り専用',
+	'dws.showing':         '表示中',
+	'dws.reach':           '届く範囲',
+	'dws.reach_help':      'この Diamond の daimon が書き込めるフォルダー。どちらのツリーでも同じことが成り立つので、両方に表示されます。',
+	'dws.reach_own':       '自分のフォルダー',
+	'dws.reach_search':    'パスを指定しない検索はこれらだけを見ます。',
+	'dws.reach_none':      'ほかに入れてあるものがないので、{name} の daimon はあなたのほかの場所には書き込めず、パスを指定しない検索もここしか見ません。',
+	'dws.mark_here':       '「{name}」を入れる',
+	'dws.mark_here_help':  '今見ているフォルダーを {name} の作業領域に入れます。daimon は中身を読み書きできるようになり、パスを指定しない検索もそこを見ます。',
 
 	// ── Diamond 同士のリンク ───────────────────────────────────
 	'link.count.one':      'リンクした Diamond {n} 件',

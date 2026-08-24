@@ -142,12 +142,20 @@ check((await page.$eval('.files-dws-hint', e => e.textContent)) === await T('dws
 
 // ── Attaching a directory ──────────────────────────────────────────────
 // The paperclip superseded the ◈ here on 2026-08-11 (ATTACH_CONTRACT.md §4):
-// one control, one hover text, regardless of what it is about to do.
+// one control, one hover text, regardless of what it is about to do. THE SECOND
+// HALF OF THAT WAS WITHDRAWN ON 2026-08-24. It is one control still, and it does
+// not say the same thing everywhere any more: on a FOLDER with a Diamond in
+// focus this button writes the `holds` link that `Files.bounds` turns into an
+// `OnlyWriteUnder`, so pressing it grants a daimon the run of that folder, and
+// "Attach to current focus" was the wording under which the owner could not find
+// the marking control at all. What is asserted here is therefore that the folder
+// row NAMES the Diamond it is granting to. `dev/verify_reachlegible.mjs` owns the
+// rest of that change and proves the control is not behind a hover either.
 await setScope('all');
 await page.waitForTimeout(300);
 const dirBtnTitle = await page.$eval('.files-row[data-path="docs"] [data-act="attach"]', b => b.title);
-check(dirBtnTitle === await T('attach.to_focus'),
-	`a folder offers to attach to the open focus: ${JSON.stringify(dirBtnTitle)}`);
+check(dirBtnTitle === await T('attach.mark_focus', { name: 'Ship a CSV parser' }),
+	`a folder says it MARKS INTO the open Diamond: ${JSON.stringify(dirBtnTitle)}`);
 await page.click('.files-row[data-path="docs"] [data-act="attach"]', { force: true });
 await page.waitForTimeout(900);
 
@@ -170,8 +178,8 @@ check(await page.$eval('.files-row[data-path="docs"] [data-act="attach"]',
 	b => b.classList.contains('on') && b.getAttribute('aria-pressed') === 'true'),
 	'the control reports the state it just reached');
 check(await page.$eval('.files-row[data-path="docs"] [data-act="attach"]', b => b.title)
-	=== await T('attach.to_focus'),
-	'and the same hover text takes it back out -- the control, not the label, says which');
+	=== await T('attach.mark_focus', { name: 'Ship a CSV parser' }),
+	'and the same wording takes it back out -- the control, not the label, says which way it goes');
 
 // Two folders with the same basename: the case that makes a basename useless.
 for (const parent of ['a', 'b']) {

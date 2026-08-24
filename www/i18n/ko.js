@@ -959,7 +959,7 @@
 	'spend.balance':         '잔액',
 	'spend.tok':             '토큰',
 	// 레일 지출 줄의 세 칸. 숫자 아래에 놓이니 짧게 둬요.
-	'spend.session_short':   '이번',
+	'spend.period_day':      '오늘',
 	'spend.period_week':     '주',
 	'spend.period_month':    '달',
 	'spend.no_turns':        '이 기간에는 아직 턴이 없어요.',
@@ -1659,6 +1659,9 @@
 	'attach.already':      '이미 첨부됨',
 	'attach.ws_mark':      '작업 공간',
 	'attach.ws_add':       '폴더를 작업 공간에 넣기',
+	'attach.add_mark':     '폴더 넣기',
+	'attach.mark_note':    '폴더에 체크하면 작업 공간에 들어가고, 이 작업 공간이 안의 것을 읽고 바꿀 수 있게 됩니다. 파일에 체크하는 것은 모델 앞에 놓기만 합니다.',
+	'attach.mark_focus':   '이 폴더를 {name}에 넣어 그 daimon이 안의 것을 읽고 바꿀 수 있게 합니다',
 	'attach.not_here':     '이 대화가 가지고 있지만 {where} 있어서, 지금 열어 둔 작업 공간이 아닙니다. 여기서는 닿을 수 없어요.',
 	'attach.ws_help':      '이 대화가 읽고 바꿀 수 있는 폴더입니다. 여기에 넣는 것이 곧 허가이고, 다시 묻지 않습니다.',
 	'attach.ws_on':        '이 대화의 작업 공간에 있습니다. 안에 있는 것을 읽고 바꿀 수 있어요. 누르면 빼냅니다.',
@@ -1691,6 +1694,14 @@
 	'dws.kit_none':        '툴체인 없음. 명령은 이 Diamond의 파일에만 닿고 컴퓨터의 다른 것에는 닿지 않습니다.',
 	'dws.elsewhere':       '작업 공간에 있어요',
 	'dws.readonly':        '읽기 전용',
+	'dws.showing':         '표시 중',
+	'dws.reach':           '닿는 범위',
+	'dws.reach_help':      '이 Diamond의 daimon이 쓸 수 있는 폴더. 두 트리 모두에서 같은 사실이므로 양쪽에 표시됩니다.',
+	'dws.reach_own':       '자기 폴더',
+	'dws.reach_search':    '경로를 적지 않은 검색은 여기만 보고 다른 곳은 보지 않습니다.',
+	'dws.reach_none':      '다른 것이 하나도 들어 있지 않아서 {name}의 daimon은 당신의 다른 곳에는 쓸 수 없고, 경로를 적지 않은 검색도 여기만 봅니다.',
+	'dws.mark_here':       '“{name}” 넣기',
+	'dws.mark_here_help':  '지금 보고 있는 폴더를 {name}의 작업 공간에 넣습니다. 그 daimon은 안의 것을 읽고 바꿀 수 있게 되며, 경로를 적지 않은 검색도 그곳을 봅니다.',
 
 	// ── Diamond 사이의 연결 ────────────────────────────────────
 	'link.count.one':      '연결된 Diamond {n}개',

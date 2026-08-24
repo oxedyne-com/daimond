@@ -20,6 +20,17 @@
 //   @tool <name> <json>      one tool call, then a text reply once it returns
 //   @tools <name> <json> ;; <name> <json>   several tool calls in one turn
 //   @chain <name> <json>     tool call, then a second call, then text
+//   @narrate <words> ;; <name> <json>
+//                            PROSE AND THEN A TOOL CALL, in one assistant message,
+//                            then a text reply once the tool returns. Every other
+//                            directive here emits `content: null` beside its calls,
+//                            so until 2026-08-23 NO fixture in this repository
+//                            produced the shape a real provider produces constantly
+//                            -- the model saying "let me check the line numbers"
+//                            and then checking them. That is the shape the owner
+//                            read twenty of in one turn while asking where the
+//                            folding was, and nothing could have caught it, because
+//                            nothing could make it happen.
 //   @usage <in> <out> [cost] [cached]
 //                            reply reporting those token counts, and -- when the
 //                            trailing two are given -- the USD the provider says
@@ -334,6 +345,14 @@ const plan = (messages) => {
 			return { calls };
 		}
 
+		// Prose, then a call, in ONE message. See the directive list.
+		case 'narrate': {
+			if (rounds > 0) return { text: 'Narration done.' };
+			const [say, call] = d.rest.split(';;');
+			const { name, args } = splitCall((call || 'file_list {"path":"."}').trim());
+			return { text: (say || '').trim(), calls: [toolCall(nextCallId(), name, args)] };
+		}
+
 		case 'chain': {
 			// Two rounds of one call each, then a text reply — the shape a real
 			// agentic turn takes, and the one the UI has to keep up with.
@@ -377,8 +396,12 @@ const completion = (model, { text, calls, usage }) => ({
 	model,
 	choices: [{
 		index: 0,
+		// BOTH, when a turn has both. `content: null` beside `tool_calls` was the only
+		// shape this mock could make, and a real provider sends prose alongside a call
+		// all the time -- which is how the narration fault stayed invisible to every
+		// fixture here. `text` stays null when there is none, so nothing else moves.
 		message: calls
-			? { role: 'assistant', content: null, tool_calls: calls }
+			? { role: 'assistant', content: text || null, tool_calls: calls }
 			: { role: 'assistant', content: text },
 		finish_reason: calls ? 'tool_calls' : 'stop',
 	}],
@@ -404,6 +427,13 @@ const stream = async (res, model, p) => {
 	send(frame({ role: 'assistant', content: '' }));
 
 	if (p.calls) {
+		// The preamble, word by word, BEFORE the call frames -- which is the order a
+		// provider sends it in and the order the app has to cope with.
+		for (const w of (p.text || '').split(' ').filter(Boolean)) {
+			if (res.writableEnded || res.destroyed) return;
+			send(frame({ content: w + ' ' }));
+			await sleep(5);
+		}
 		p.calls.forEach((c, i) => {
 			send(frame({ tool_calls: [{ index: i, id: c.id, type: 'function',
 				function: { name: c.function.name, arguments: '' } }] }));

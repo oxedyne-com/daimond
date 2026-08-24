@@ -536,6 +536,8 @@ impl Fence {
                 if abi.all_threads() {
                     out.push(fmt!("landlock:all-threads"));
                 }
+                // Withheld from every writable grant; see `writable`.
+                out.push(fmt!("landlock:no-make-sym"));
                 out.push(match listing {
                     Listing::Sealed	=> fmt!("carve:sealed"),
                     Listing::Names	=> fmt!("carve:names-visible"),
@@ -693,6 +695,19 @@ impl Fence {
                     inside a granted one, it is readable through that link. \
                     Landlock decides by the path walked; the command cannot \
                     create such a link, but it cannot undo one that exists."));
+                // A cost rather than a hole, and it is here because this is the
+                // list the consent window is drawn from and the one place a
+                // reader looks to find out why a command was refused.
+                out.push(fmt!(
+                    "A command cannot create a SYMBOLIC link, anywhere, \
+                    including in the folders it may write and in its own \
+                    temporary directory. `ln -s` and `symlink(2)` answer \
+                    \"Permission denied\". The right is withheld because a link \
+                    is half of a leak: the command makes it, and whatever later \
+                    follows it -- an archiver, a packager, a version control \
+                    system recording the tree -- supplies the other half by \
+                    reading a file the command itself could not open. Nothing \
+                    else is narrowed by it."));
                 if *listing == Listing::Names {
                     out.push(fmt!(
                         "Entry names inside denied subtrees are visible, because \
@@ -1001,7 +1016,7 @@ impl Plan {
         // avoid.
         for g in &self.grants {
             let mut access = match g.level {
-                Level::Rw	=> AccessFs::from_all(abi),
+                Level::Rw	=> writable(abi),
                 Level::Ro	=> AccessFs::from_read(abi),
                 // A denied path carries no rule at all; it is absent from
                 // `grants` by construction, and this arm is here so that adding
@@ -1576,6 +1591,42 @@ fn probe_abi() -> Abi {
         // direction that lets a command run unfenced.
         Err(_)	=> Abi::None,
     }
+}
+
+// ── A writable grant does not include the right to make a symbolic link ─────
+//
+// A link is half of a leak, and a fenced command supplies exactly that half.  It
+// costs one call inside a folder the command may write, and the other half is
+// supplied by whatever later reads the link -- an archiver, a packager, an
+// uploader, a version control system.  Ore is the case that was measured: it
+// absorbs the CONTENT of a link that leaves the working copy, under the link's
+// own path, into a signed history with no forget, and a global `post-commit`
+// hook runs it from outside the fence on the owner's key.  `ln -s
+// ../../../outside/private.txt leak.txt` was enough, and the daimon needed no
+// access to Ore at all.
+//
+// The obvious repair is to check what a link points at, and it is weaker twice
+// over.  It races a repoint between the check and the read, and it cannot see a
+// `symlink(2)` a compiler makes rather than an `ln` a model runs.  Withholding
+// the capability has neither weakness, because there is no call left to make.
+//
+// The right is still HANDLED at the ruleset -- `AccessFs::from_all` covers it --
+// which is what turns it from unrestricted into denied-unless-granted.  What
+// changes here is that no grant carries it, so `symlink(2)` answers
+// `EACCES` everywhere, including in the command's own scratch directory.
+//
+// Nothing else narrows: reading, writing, creating, removing, renaming, hard
+// linking and truncating are all as they were.  The cost is stated in
+// `Fence::holes`, because a command meeting "Permission denied" from `ln -s`
+// deserves to find out why somewhere other than here.
+
+/// The rights a writable grant carries.
+///
+/// # Arguments
+/// * `abi` - The ABI the rules are being built for.
+#[cfg(target_os = "linux")]
+fn writable(abi: ABI) -> BitFlags<AccessFs> {
+    AccessFs::from_all(abi) & !BitFlags::from(AccessFs::MakeSym)
 }
 
 /// The crate's ABI constant for a detected level, capped at what it knows.

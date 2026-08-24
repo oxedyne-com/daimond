@@ -5,7 +5,7 @@
    localStorage so spend survives a reload. Every turn the app
    completes is handed to `record`, which prices it through
    `DaimondPricing` and stores a compact entry. The getters roll the
-   log up into session, weekly and monthly totals for the meters.
+   log up into day, session, weekly and monthly totals for the meters.
 
    Storage is bounded: entries older than ~90 days are pruned on
    write, so the log cannot grow without limit. A corrupt or
@@ -207,14 +207,21 @@
 		return sorted.slice(start);
 	}
 
-	/// Rolled-up totals for the meters: `{ session, week, month }`,
-	/// each `{ usd, tokens }`. Session is the tail of activity with
+	/// Rolled-up totals for the meters: `{ day, session, week, month }`,
+	/// each `{ usd, tokens }`. Day is local midnight to now -- a calendar
+	/// question, so NOT a rolling 24h, which would start the day at a
+	/// different time every hour. Session is the tail of activity with
 	/// no ≥15 min gap; week and month are the rolling last 7 and 30
 	/// days. This getter reads the clock (`Date.now`).
 	function totals() {
 		var entries = reprice(load());
 		var now = Date.now();
+		// Midnight today, local, as `series` also takes it: the day window
+		// is today's calendar day, not the trailing 24 hours.
+		var d0 = new Date();
+		d0.setHours(0, 0, 0, 0);
 		return {
+			day:     sum(since(entries, d0.getTime())),
 			session: sum(sessionSlice(entries, now)),
 			week:    sum(since(entries, now - WEEK_MS)),
 			month:   sum(since(entries, now - MONTH_MS)),

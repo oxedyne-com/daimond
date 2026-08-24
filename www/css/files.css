@@ -110,6 +110,61 @@
 	color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent);
 }
 
+/* The word in front of the chips. They pick a TREE and change no permission,
+   and without a label they read as a setting for how much the daimon may
+   touch -- which is exactly how they were read. */
+.files-scope-label, .files-reach-label {
+	font-size: var(--fs-2xs); font-weight: 600; color: var(--text-secondary);
+}
+
+/* ── Where this Diamond's daimon may actually work ─────────────
+   Under the chips because it answers the question the chips were being asked:
+   what may be written, and where a search that names no path will look. Drawn
+   in BOTH trees and built from the same `Files.bounds` that composes the fence,
+   so it cannot come to disagree with what a turn is confined to. Nothing here
+   waits for a hover: a fence nobody can see is a fence nobody trusts. */
+.files-reach {
+	display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--border);
+	flex: none;
+}
+/* A place inside the fence. The accent edge is the app's one mark for "this
+   grants something", worn by the workspace rail in the chat footer and by a
+   granted toolchain beside it. */
+.files-reach-chip {
+	display: inline-flex; align-items: center;
+	padding: 2px 8px; border-radius: 999px;
+	font-size: var(--fs-2xs); font-weight: 600;
+	max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	color: var(--accent-text); background: var(--accent-soft);
+	border: 1px solid var(--accent);
+}
+/* Consulted, not worked in. It reads as a place and not as a grant, so it drops
+   the accent and keeps the ordinary control edge. */
+.files-reach-chip.ro {
+	color: var(--text-secondary); background: var(--bg-tertiary);
+	border-color: var(--border-strong);
+}
+.files-reach-says {
+	flex: 1 1 100%;
+	font-size: var(--fs-3xs-2xs); color: var(--text-secondary); line-height: 1.5;
+}
+/* The state that most needs saying, and the one a person is most likely to be
+   in without knowing: the daimon can write nowhere of theirs. */
+.files-reach-says.none { color: var(--accent-text); }
+/* One press, from the folder already on screen. A button and not a chip: the
+   row beside it reports, and this changes something. */
+.files-mark-here {
+	display: inline-flex; align-items: center;
+	padding: 2px 9px; border-radius: 999px;
+	font-size: var(--fs-2xs); font-weight: 600;
+	color: var(--text-secondary); background: var(--bg-tertiary);
+	border: 1px dashed var(--border-strong); cursor: pointer;
+}
+.files-mark-here:hover { color: var(--accent-text); border-color: var(--accent); }
+.files-mark-here:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 /* ── What a Diamond may reach that is not a folder ─────────────
    A toolchain grant. It sits under the scope row because it answers the same
    question the row above and the tree below answer -- what this Diamond may
@@ -169,6 +224,11 @@
    than replacing them. */
 .files-dws-hint { text-align: left; font-size: var(--fs-2xs); line-height: 1.5; }
 
+/* A folder row with a Diamond in focus: the paperclip is the control that puts
+   that folder inside the write fence, so it does not wait for a hover. The same
+   rule `.files-hold.on` already follows, for the same reason. */
+.attach-btn.mark { visibility: visible; }
+
 /* The paperclip: "Attach to current focus" (ATTACH_CONTRACT.md §4), on a
    folder row, a file row, and the Doc header. Its own class rather than a
    `.files-res` modifier for the reason `.files-pin` already has one -- '📎' is
@@ -190,6 +250,7 @@
    one cannot be reached at all. */
 @media (max-width: 760px), (pointer: coarse) {
 	.files-scope-chip { min-height: 24px; padding-top: 4px; padding-bottom: 4px; }
+	.files-mark-here { min-height: 24px; padding-top: 4px; padding-bottom: 4px; }
 	.files-row .files-hold { visibility: visible; padding: 4px 6px; }
 	.files-row .attach-btn { visibility: visible; padding: 4px 6px; }
 }

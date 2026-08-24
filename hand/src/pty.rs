@@ -97,6 +97,7 @@
 
 use crate::{
     exec::{
+        add_defaults,
         detected_fence,
         encode_payload,
         screen_env,
@@ -475,6 +476,12 @@ impl PtySessions {
             env.push((fmt!("{}", k), fmt!("{}", scratch.dir().display())));
         }
         env.push((fmt!("TERM"), fmt!("{}", TERM)));
+        // The same two a piped command is given where the request named neither,
+        // and for the same reasons -- a terminal is a command with a screen. A
+        // shell with no `HOME` cannot expand `~`, read a profile or find a
+        // configuration, and one with no `PATH` cannot find a program at all,
+        // which for an interactive session is the whole of it.
+        add_defaults(&mut env);
 
         let term = match Pty::make(size) {
             Ok(p)  => p,

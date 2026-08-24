@@ -1903,15 +1903,31 @@ pub struct Grant {
 /// `cc`, `ld` and `git` away from every build it was meant to enable.
 const PATH_BASE: &str = "/usr/local/bin:/usr/bin:/bin";
 
-/// Files a build tool reads a credential out of, denied whenever any toolkit is granted.
+/// Credentials denied whenever any toolkit is granted, whichever one it is.
 ///
-/// One entry, and it earns its place: `.netrc` is read by cargo, pip, npm and the go command alike
-/// when a registry asks for a password, so it is the one file every toolkit would otherwise hand
-/// over at once.  It is denied rather than merely left ungranted, because a user whose workspace
-/// root IS their home directory has already granted it by granting the workspace.
+/// Two entries, and each earns its place.  `.netrc` is read by cargo, pip, npm and the go command
+/// alike when a registry asks for a password, so it is the one file every toolkit would otherwise
+/// hand over at once.  `.config/oxedyne` is a whole directory of credentials -- the Stripe secret
+/// keys, the DKIM signing key and the mail password file were all moved there on 2026-08-22
+/// precisely so that they would sit outside the tree a hand is granted -- and a directory whose
+/// entire contents are secrets is the same class of thing as `.ssh`.
+///
+/// Both are denied rather than merely left ungranted, because a user whose workspace root IS their
+/// home directory has already granted them by granting the workspace.  That hazard has nothing to
+/// do with which toolchain was lent, which is why these are here and not in [`Toolkit::Git`]
+/// beside `.ssh`: `.ssh` sits there because git is the tool that would reach for it, and an
+/// absolute path in an `argv` needs no toolkit at all to be tried.
+///
+/// A deny costs nothing at the far end.  The hand clamps an arriving fence's `rw` and `ro` roots
+/// against what its grant could imply and pointedly does not clamp `deny`, since a deny only ever
+/// takes access away; and a denied path that does not exist on the machine is tolerated where a
+/// granted one is not (`hand/src/fence.rs`, `canonical`).
 const CREDS: &[Grant] = &[
     Grant { tail: ".netrc", level: Level::Deny,
         why: "the password file cargo, pip, npm and go all read for a private registry" },
+    Grant { tail: ".config/oxedyne", level: Level::Deny,
+        why: "the Stripe keys, the DKIM signing key and the mail password, kept out of the \
+            workspace on purpose" },
 ];
 
 /// A named toolchain a Diamond may be granted, so that a build can reach its compiler.
@@ -1940,14 +1956,25 @@ const CREDS: &[Grant] = &[
 /// fence built on a guessed one is not a fence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Toolkit {
-    /// Rust: `cargo`, `rustc`, `rustup`, and the two caches cargo cannot build without.
+    /// Rust: `cargo`, `rustc`, `rustup`, the two caches cargo cannot build without, and the
+    /// target directory the trees here point every build at.
+    ///
+    /// `~/.cache/cargo-targets` is named because a build in these trees does not put its
+    /// artefacts in the workspace: `CARGO_TARGET_DIR` is set per agent under that directory, so a
+    /// fence without it leaves a daimon unable to run the build its own repository's scripts
+    /// describe.  It is named at that one folder and never at `~/.cache`, which also holds the
+    /// browser's cache and the thumbnailer's copy of every image the user has opened.
     ///
     /// Deliberately excluded: `~/.cargo` itself (2.2 GB, and where `cargo login` writes
     /// `credentials.toml`), and `~/.cargo/config.toml`, which names a linker and `rustflags` for
     /// every build on the machine -- writable, it is a way to run something of the command's
     /// choosing the next time the user builds anything at all.
     Rust,
-    /// Node: what `nvm` installed, and npm's cache.
+    /// Node: what `nvm` installed, npm's cache, and the scratch the dev scripts write.
+    ///
+    /// `~/.cache/daimond` is where every `dev/*.mjs` puts what it produces -- shots, logs, a
+    /// built extension -- unless `DAIMOND_SCRATCH` says otherwise.  Named at that one folder for
+    /// the reason `~/.cache/cargo-targets` is: the directory above it is not this app's.
     ///
     /// Deliberately excluded: `~/.npmrc` and `~/.yarnrc.yml`, which hold registry tokens.  A
     /// project's `node_modules` needs nothing here -- it sits in the workspace, which the turn's
@@ -1981,6 +2008,40 @@ pub enum Toolkit {
     ///
     /// A hooks directory outside the granted root is still unreachable, and the hook still does not
     /// run: the page cannot read `~/.gitconfig` and so cannot know where to look.
+    ///
+    /// # The repository itself is not granted here, and cannot be
+    ///
+    /// Every path in this table is relative to the HOME directory, so none of them can name a
+    /// `.git` in the workspace.  Nor do they need to.  A repository sits inside the folder the
+    /// Diamond marked, which [`fence_spec`] grants whole and writable, so `.git` is reachable for
+    /// exactly the same reason `src` is -- and a daimon that cannot see one is a daimon whose
+    /// command is running somewhere the repository is not ABOVE it, which no grant here fixes.
+    ///
+    /// It is granted WRITABLE and there is no read-only middle ground, which is worth writing down
+    /// because `.git/config` sets `core.fsmonitor`, `core.pager` and `core.sshCommand`, each of
+    /// which runs a program of the writer's choosing on the next ordinary git command.  Two things
+    /// bound that.  A program git starts is a child of the fenced command, so it inherits the
+    /// fence and reaches nothing the model could not already reach; the exposure is the user's own
+    /// later `git` in their own shell, outside all of this.  And the alternative does not work:
+    /// re-stating `.git/config` as read-only makes the hand carve `.git` around it, and a carved
+    /// directory cannot have a file created directly in it -- which is `index.lock`, `HEAD.lock`
+    /// and `COMMIT_EDITMSG`, so every commit fails.  A `.git` that can be committed to is a
+    /// `.git` that can be reconfigured.
+    ///
+    /// # Ore needs no grant of its own
+    ///
+    /// A tree under Ore as well as git gets its replica marked by the global `post-commit` hook,
+    /// which runs `ore mark` beside the commit -- so the second system rides on the first and
+    /// `.ore` is granted at no width, which is the only safe answer: `.ore/key` is a plaintext
+    /// signing key and EVERY Ore verb but `init`, `import` and `help` captures the working copy
+    /// and signs it, so there is no read-only verb to lend.  What that hook needs is to be
+    /// REACHABLE, and `core.hooksPath` usually names a directory outside the folder the Diamond
+    /// marked; attach that directory to the Diamond read-only and it runs, since a read-only grant
+    /// carries execute.  Unattached, git finds no hook and says nothing -- so the mark is missed
+    /// silently, and so is the credential-scanning `pre-commit` beside it.
+    ///
+    /// One thing not to widen for: a repository initialised `--mirror` has Ore shell out to `git
+    /// fast-import`.  There is no mirror in this tree, so that path does not run here.
     Git,
 }
 
@@ -2048,6 +2109,12 @@ impl Toolkit {
     }
 
     /// The paths this toolkit names, each relative to the home directory.
+    ///
+    /// **A row added here needs its twin in `TOOLKIT_ROOTS` in `hand/src/exec.rs`.**  The fence
+    /// travels through the page and the page is not the app, so the hand clamps every arriving
+    /// `rw` and `ro` root against the folders its own copy of this table says the named toolkits
+    /// could imply -- and refuses the WHOLE command, not merely the unknown root, when one is not
+    /// there.  The drift fails safe and loud, and the refusal names the constant to fix.
     pub fn grants(&self) -> &'static [Grant] {
         match self {
             Self::Rust => &[
@@ -2061,6 +2128,9 @@ impl Toolkit {
                     why: "checkouts of git dependencies" },
                 Grant { tail: ".cargo/.package-cache", level: Level::Rw,
                     why: "the lock cargo takes before touching either cache" },
+                Grant { tail: ".cache/cargo-targets", level: Level::Rw,
+                    why: "the target directory CARGO_TARGET_DIR points a build at, so the \
+                        artefacts do not land in the workspace" },
                 Grant { tail: ".cargo/credentials.toml", level: Level::Deny,
                     why: "the crates.io token cargo login writes" },
                 Grant { tail: ".cargo/credentials",   level: Level::Deny,
@@ -2071,6 +2141,9 @@ impl Toolkit {
                     why: "the node versions nvm installed" },
                 Grant { tail: ".npm",                 level: Level::Rw,
                     why: "npm's package cache" },
+                Grant { tail: ".cache/daimond",       level: Level::Rw,
+                    why: "the scratch every dev script writes into, unless DAIMOND_SCRATCH \
+                        names another" },
                 Grant { tail: ".npmrc",               level: Level::Deny,
                     why: "the registry token npm login writes" },
                 Grant { tail: ".yarnrc.yml",          level: Level::Deny,
@@ -2990,8 +3063,24 @@ pub fn refusal_line(reason: &str) -> String {
 /// what [`call_outcome`] reads, so it is composed in one place rather than written out at each
 /// arm of [`ToolRegistry::dispatch`].
 ///
+/// **THE REASON MUST COME FROM `Error::plain()` AND NEVER FROM `Display`.** An `fe2o3` error
+/// displays for a developer at a terminal: ANSI colour, the `UpstreamErr{…}` / `LocalErr{…}`
+/// frames, and a `file:line` of ours at every level. A model was reading all of it. What
+/// actually reached one on 2026-08-24, when a daimon read a directory as a file:
+///
+/// ```text
+/// Error: \u{1b}[91m\u{1b}[1mUpstreamErr{\u{1b}[0m … "src/tools.rs:8733: file_read: …
+/// ```
+///
+/// The sentence after that colon had been written and reworded FOR A MODEL that same evening,
+/// and it was delivered inside an envelope addressed to somebody else. `plain()` gathers the
+/// messages, drops the locations and carries no colour -- it is in `fe2o3_core` and has been all
+/// along, which makes this one more of the shape where the right thing existed and the caller
+/// reached past it.
+///
 /// # Arguments
-/// * `reason` - What went wrong, as a whole sentence.
+/// * `reason` - What went wrong, as a whole sentence, from `Error::plain()` where it came from an
+///   error at all.
 pub fn error_line(reason: &str) -> String {
     fmt!("{}: {}", ERROR_OPENING, reason)
 }
@@ -3193,6 +3282,247 @@ fn run_cwd_refusal(cwd: &str, root: &str) -> String {
         "Refused: 'cwd' is relative to the workspace and '{}' is absolute, so it would be looked \
         for at '{}'. {} Only 'argv' takes the machine's own paths.",
         cwd, doubled, fix)
+}
+
+// ── Two scripts a command cannot run, told apart before it tries ─────────────
+//
+// Both rules below refuse an `argv` before the hand is asked anything, and both exist for the
+// same measured failure: a model that meets a bare `Permission denied` or a missing dependency
+// spends the turn on it. They are kept separate because the REASONS are different and a reader
+// has to be able to tell which one fired -- a verifier is absent from the fence, a linking script
+// is refused a capability inside it.
+//
+// What they share is the narrowness, which is the whole of the care. An argument is only looked
+// at where it is the thing the command would START: a path handed to `rg`, to `cat` or to
+// `git commit -m` is being talked about, not run, and a refusal there costs the turn the rules
+// exist to save.
+
+// Interpreters
+const NODE_RUNNERS:  [&str; 2] = ["node", "nodejs"];             // would run a .mjs
+const SHELL_RUNNERS: [&str; 4] = ["bash", "sh", "dash", "zsh"];  // would run a .sh
+
+/// Whether the argument at `i` is the one this command would actually start.
+///
+/// True for an argument to a named interpreter, and true for `argv[0]` itself where that is not
+/// an interpreter -- which is the self-executing spelling, `./dev/gate.sh`.  False everywhere
+/// else, and that is what keeps `git commit -m "dev/gate.sh"` from being refused.
+///
+/// # Arguments
+/// * `argv` - The command, as the model wrote it.
+/// * `i` - Which argument is being asked about.
+/// * `runners` - The interpreters that would run this kind of file.
+fn started_here(argv: &[String], i: usize, runners: &[&str]) -> bool {
+    let prog = match argv.first() {
+        Some(a) => a.rsplit('/').next().unwrap_or(""),
+        None    => return false,
+    };
+    let by_runner = runners.contains(&prog);
+    if i == 0 { !by_runner } else { by_runner }
+}
+
+/// A path's last two segments as `dev/<file>`, where it names something in `dev/`.
+///
+/// One spelling out of the several a model writes: `dev/gate.sh`, `./dev/gate.sh` and the
+/// absolute path all answer `dev/gate.sh`, and a bare `gate.sh` does too, since a command whose
+/// `cwd` is `dev` needs no directory part.  Anything under another directory answers nothing.
+///
+/// # Arguments
+/// * `arg` - One element of an `argv`, as the model wrote it.
+fn dev_script(arg: &str) -> Option<String> {
+    let mut segs = arg.rsplit('/');
+    let file = match segs.next() {
+        Some(f) if !f.is_empty() => f,
+        _                        => return None,
+    };
+    match segs.next() {
+        None | Some("dev") => Some(fmt!("dev/{}", file)),
+        Some(_)            => None,
+    }
+}
+
+// ── A verifier asked for through the wrong door ──────────────────────────────
+
+/// The verifier a path names, where it names one.
+///
+/// Segment-wise and narrow, in the same spirit as [`names_segment`]: the last segment must be
+/// `verify_<name>.mjs`, the directory part must be `dev` or absent, and the name must pass
+/// [`verify_name_ok`], which is the alphabet the tool itself looks a verifier up by.  So
+/// `dev/verify_graph.mjs`, `./dev/verify_graph.mjs` and the absolute spelling all answer `graph`,
+/// while `tools/verify_thing.mjs`, `dev/sweep.mjs` and `dev/verify_graph.mjs.bak` answer nothing.
+///
+/// # Arguments
+/// * `arg` - One element of an `argv`, as the model wrote it.
+fn verifier_name(arg: &str) -> Option<String> {
+    let mut segs = arg.rsplit('/');
+    let file = match segs.next() {
+        Some(f) => f,
+        None    => return None,
+    };
+    let stem = match file.strip_suffix(".mjs") {
+        Some(s) => s,
+        None    => return None,
+    };
+    let name = match stem.strip_prefix("verify_") {
+        Some(n) => n,
+        None    => return None,
+    };
+    // A verifier lives in `dev/`. A file spelled like one somewhere else is somebody else's
+    // script, and refusing it would be this guard costing a turn rather than saving one.
+    match segs.next() {
+        None | Some("dev") => (),
+        Some(_)            => return None,
+    }
+    if !verify_name_ok(name) {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+/// The refusal a `run` gets for an `argv` that would start one of `dev/`'s verifiers, or `None`
+/// where it would not.
+///
+/// **Measured on a live daimon turn, 2026-08-23: forty-one tool calls and nothing verified.**
+/// Asked to check the work it had just done, the daimon reached for `run`.  It stood up a dev
+/// server, hunted the tree for `playwright-core`, tested whether the network answered, and came
+/// away with not one check proved.  It could never have worked: a verifier is run OUTSIDE the
+/// command fence deliberately, because it is tracked repository code rather than something a
+/// model wrote (`hand/src/verify.rs`), and inside the fence playwright is absent and there is no
+/// network to fetch it from.  The turn was not slow, it was impossible, and nothing the model
+/// could see said so.
+///
+/// So the answer is given before the hand is asked anything -- no fact about the machine changes
+/// it -- and it names the tool and the argument that work.  A refusal that only said no would
+/// send the model back for another forty-one.
+///
+/// # Arguments
+/// * `argv` - The command, as the model wrote it.
+pub fn verifier_refusal(argv: &[String]) -> Option<String> {
+    for (i, a) in argv.iter().enumerate() {
+        // Only the argument node would actually run; see `started_here`.
+        if !started_here(argv, i, &NODE_RUNNERS) {
+            continue;
+        }
+        if let Some(name) = verifier_name(a) {
+            return Some(fmt!(
+                "Refused: '{}' is one of this repository's verifiers, and a verifier cannot run \
+                inside the fence a command runs in -- playwright is not installed there and there \
+                is no network to fetch it from, so this would fail slowly having proved nothing. \
+                The 'verify' tool runs it OUTSIDE the fence, which is the whole reason that tool \
+                exists: verify {{\"name\":\"{}\"}}. It reports what the clean pass proved, every \
+                break the verifier declares, and any break that proved nothing. Nothing was run.",
+                a, name));
+        }
+    }
+    None
+}
+
+// ── A script the fence has taken a capability away from ──────────────────────
+//
+// A writable grant no longer carries `LANDLOCK_ACCESS_FS_MAKE_SYM`, so a fenced command cannot
+// create a symbolic link ANYWHERE -- not in the folders it may write, not in its own scratch --
+// and `ln -s` and `symlink(2)` answer "Permission denied".  The right was withheld because a link
+// is half of a leak: the command makes it, and whatever later follows it supplies the other half.
+// Ore is the case that was measured, and it is the sharp one here -- it absorbs the CONTENT of a
+// link that leaves the working copy, under the link's own path, into a signed history with no
+// forget, and the global `post-commit` hook runs it on the owner's key from outside the fence.
+//
+// The cost is four scripts in this tree, and it is paid in the worst possible currency: `ln`
+// fails PART WAY THROUGH, after the script has made a worktree or a directory, so the model gets
+// a bare permission error attached to work that half happened.  Naming them here turns that into
+// one sentence before anything runs.
+//
+// The list is short because it was gathered by reading the tree rather than guessed, and it is a
+// list rather than a pattern for the same reason `SKIP_DIRS` is: a rule that tried to detect
+// "would this create a link" from an `argv` would be wrong in both directions.  A script added
+// later that links will not be named here, and will fail the way it did before this existed.
+
+/// One `dev/` script a fenced command cannot run, and what to do about it.
+struct Linking {
+    path:    &'static str,  // as the tree spells it, from the repository root
+    does:    &'static str,  // what it links, in a clause that completes "it links ..."
+    instead: &'static str,  // the sentence the refusal ends on
+}
+
+/// The scripts in `dev/` that create a symbolic link, with the line each does it on at the time
+/// of writing: `gate.sh:135` and `:147`, `attribute.sh:72`, `devgw.sh:26`, `shot_betatier.mjs:80`.
+const LINKING_SCRIPTS: &[Linking] = &[
+    Linking {
+        path: "dev/gate.sh",
+        does: "the vendored Typst compiler, and the gateway's keys and store, into a worktree",
+        instead: "It is the release gate in any case, which is a two-hour job and not yours to \
+            start: run the one verifier you actually need with the 'verify' tool, and ask the \
+            user when a release is what is wanted.",
+    },
+    Linking {
+        path: "dev/attribute.sh",
+        does: "the built wasm into a worktree checked out at an older commit",
+        instead: "Ask the user to run it outside Daimond, and say which commit you wanted \
+            attributed.",
+    },
+    Linking {
+        path: "dev/devgw.sh",
+        does: "the sandbox keys and the live store into the dev gateway's directory",
+        instead: "Ask the user to start the dev gateway; the links it needs are exactly what the \
+            fence withholds, and a copy would not do -- a webhook signature is checked against \
+            those keys.",
+    },
+    Linking {
+        path: "dev/shot_betatier.mjs",
+        does: "a signing key into the work directory it shoots from",
+        instead: "Ask the user to run it, or take the shots you need from a page that does not \
+            need the gateway.",
+    },
+];
+
+/// The linking script a path names, where it names one.
+///
+/// # Arguments
+/// * `arg` - One element of an `argv`, as the model wrote it.
+fn linking_script(arg: &str) -> Option<&'static Linking> {
+    let named = match dev_script(arg) {
+        Some(n) => n,
+        None    => return None,
+    };
+    LINKING_SCRIPTS.iter().find(|s| s.path == named)
+}
+
+/// The refusal a `run` gets for an `argv` that would start one of the scripts that cannot work
+/// under the fence, or `None` where it would not.
+///
+/// Deliberately not the same sentence as [`verifier_refusal`], because it is not the same fault.
+/// A verifier is refused for something ABSENT from the fence -- playwright, and the network to
+/// fetch it with.  These are refused for a capability withheld INSIDE it, on purpose, and one
+/// that no amount of installing anything will restore.  A model told the wrong reason goes
+/// looking for the wrong fix, which is the whole failure both rules exist against.
+///
+/// # Arguments
+/// * `argv` - The command, as the model wrote it.
+pub fn symlink_refusal(argv: &[String]) -> Option<String> {
+    for (i, a) in argv.iter().enumerate() {
+        // A `.sh` is started by a shell or by itself, a `.mjs` by node or by itself. Asked of
+        // both sets rather than of the file's extension, so that `bash dev/shot_betatier.mjs` --
+        // wrong, but a thing a model writes -- is refused for the right reason instead of running
+        // and failing at the link.
+        let started = started_here(argv, i, &SHELL_RUNNERS)
+            || started_here(argv, i, &NODE_RUNNERS);
+        if !started {
+            continue;
+        }
+        if let Some(s) = linking_script(a) {
+            return Some(fmt!(
+                "Refused: '{}' creates a symbolic link -- it links {} -- and a fenced command \
+                cannot create one anywhere: not in the folders it may write, not in its own \
+                scratch directory. 'ln -s' answers 'Permission denied', and that is the fence \
+                working rather than a fault. The capability is withheld because a link is half of \
+                a leak: this command would make it, and whatever later follows it supplies the \
+                other half -- including the Ore replica this tree records into, which absorbs the \
+                CONTENT of a link that leaves the working copy into a signed history that cannot \
+                forget. So the script cannot be made to work from in here, and nothing you \
+                install will change that. {} Nothing was run.",
+                a, s.does, s.instead));
+        }
+    }
+    None
 }
 
 // ── Content that did not come from the user ─────────────────────────
@@ -9166,6 +9496,17 @@ impl Tool {
             return Err(err!(
                 "run: 'argv' is empty, so there is no program to run."; Invalid, Input));
         }
+        // A verifier, asked for through the wrong door. Answered before the hand is asked whether
+        // it is even paired: nothing about the machine changes the answer, and the whole point of
+        // the refusal is the turn it saves. See `verifier_refusal` for what that turn cost.
+        if let Some(why) = verifier_refusal(&argv) {
+            return Ok(why);
+        }
+        // And a script the fence has taken a capability away from, which is a different fault
+        // said in different words: `symlink_refusal` explains why the two are not one rule.
+        if let Some(why) = symlink_refusal(&argv) {
+            return Ok(why);
+        }
         // Where the hand's grant reaches on this machine. The page cannot know it -- a real folder
         // arrives through the File System Access API, which hands over a handle and never a path --
         // so the hand is asked, and its answer is what the fence is expressed against.
@@ -9977,7 +10318,8 @@ impl ToolRegistry {
             // carries it.
             Some(t) if self.tools.contains(&t) => match t.execute(args_json, &self.ctx).await {
                 Ok(c)  => c,
-                Err(e) => MessageContent::text(error_line(&fmt!("{}", e))),
+                // `plain()`, NEVER `Display`. See `error_line`.
+                Err(e) => MessageContent::text(error_line(&e.plain())),
             },
             Some(_) => MessageContent::text(
                 error_line(&fmt!("tool '{}' is not available here.", name))),
@@ -16003,6 +16345,201 @@ mod tests {
         assert_eq!(Ok(Toolkit::Git), Toolkit::parse("git").map_err(|_| ()));
     }
 
+    // ── The repository a daimon has to be able to commit ────────────
+
+    /// A machine with a home directory, which is what a toolkit resolves against.
+    fn homed() -> Machine {
+        Machine {
+            os: fmt!("linux"), root: fmt!("/home/u/usr"), home: Some(fmt!("/home/u")),
+            host: None, caps: vec![fmt!("fence:linux")],
+        }
+    }
+
+    /// **A Diamond attached to a repository reaches its own `.git`, and this file withholds none
+    /// of it.**
+    ///
+    /// Measured the other way round on 2026-08-23: a daimon under the fence could see no `.git`
+    /// at all and `git status` walked every parent to `/`.  Nothing here was the cause.  The hand
+    /// on that machine is granted the tree ABOVE the repository -- `~/usr`, chosen 2026-08-16, so
+    /// that one root covers the code and the books -- and a Landlock grant never reaches upward,
+    /// so a command started anywhere the repository is not inside has no `.git` the kernel will
+    /// let it open.  What this pins is the half that IS this file's: a marked folder is granted
+    /// whole, `.git` and all, the command starts inside it, and the only path denied
+    /// unconditionally is Daimond's own directory.
+    #[test]
+    fn test_a_diamond_attached_to_a_repository_reaches_its_own_git_directory() {
+        let m = homed();
+        let b = diamond_bounds("diamonds/d1", &[fmt!("code/app")], &[]);
+        let f = fence_spec(&b, &m, false);
+        assert!(f.rw.contains(&fmt!("/home/u/usr/code/app")),
+            "the marked folder is not writable, so nothing inside it is: {:?}", f.rw);
+        // Writable, and not merely readable. A repository re-stated as read-only is one no commit
+        // can be written to, and the hand would carve `.git` to express it -- which takes away
+        // `index.lock` and `COMMIT_EDITMSG` with it.
+        assert!(!f.ro.iter().any(|p| p.contains("/.git")),
+            "the repository was made read-only, so no commit could be written: {:?}", f.ro);
+        assert_eq!(vec![fmt!("/home/u/usr/.daimond")], f.deny,
+            "something other than Daimond's own directory is denied: {:?}", f.deny);
+        // And the command starts in the marked folder, which is what puts the repository above it
+        // rather than out of reach: from the granted root there is no `.git` to find at all.
+        assert_eq!("code/app", start_dir(&b),
+            "a command would start somewhere other than the folder that holds the repository");
+    }
+
+    /// **A build reaches the two caches this tree points it at, and never `~/.cache` itself.**
+    ///
+    /// `~/.cache` was fence-denied on the same turn as `.git`, and it is where every target
+    /// directory and every dev script's scratch lives on this machine.  Granting the directory
+    /// itself would hand over the browser's cache and the thumbnailer's copy of every image the
+    /// user has opened, so the two that matter are named and nothing else is.
+    #[test]
+    fn test_a_build_reaches_the_named_caches_and_never_the_cache_directory_itself() {
+        let m = homed();
+        let rust = Kit::resolve(&[Toolkit::Rust.bound()], &m).expect("rust resolves");
+        assert!(rust.rw.contains(&fmt!("/home/u/.cache/cargo-targets")),
+            "a build cannot write the target directory it is pointed at: {:?}", rust.rw);
+        let node = Kit::resolve(&[Toolkit::Node.bound()], &m).expect("node resolves");
+        assert!(node.rw.contains(&fmt!("/home/u/.cache/daimond")),
+            "a dev script cannot write its own scratch: {:?}", node.rw);
+        for k in Toolkit::all() {
+            let kit = Kit::resolve(&[k.bound()], &m).expect("resolves");
+            for list in [&kit.ro, &kit.rw, &kit.deny] {
+                assert!(!list.contains(&fmt!("/home/u/.cache")),
+                    "the {} toolkit names the whole cache directory: {:?}", k.name(), list);
+            }
+        }
+        // The fence carries them too, since the fence is what the hand is handed.
+        let f = fence_spec(&[Toolkit::Rust.bound(), Toolkit::Node.bound()], &m, false);
+        assert!(f.rw.contains(&fmt!("/home/u/.cache/cargo-targets")), "{:?}", f.rw);
+        assert!(f.rw.contains(&fmt!("/home/u/.cache/daimond")), "{:?}", f.rw);
+        // A grant is the user's to give: a turn granted nothing reaches neither.
+        let bare = fence_spec(&[], &m, false);
+        assert!(!bare.rw.iter().any(|p| p.contains(".cache")), "{:?}", bare.rw);
+    }
+
+    /// **Every toolkit denies the directory the credentials were moved to.**
+    ///
+    /// `~/.config/oxedyne` holds the Stripe secret keys, the DKIM signing key and the mail
+    /// password file, all put there on 2026-08-22 so that they would sit outside the tree a hand
+    /// is granted.  Denied for every toolkit and not only for git, because the hazard is a
+    /// workspace root that contains it and that has nothing to do with which toolchain was lent.
+    #[test]
+    fn test_every_toolkit_denies_the_credential_directory_outside_the_tree() {
+        let m = homed();
+        for k in Toolkit::all() {
+            let kit = Kit::resolve(&[k.bound()], &m).expect("resolves");
+            assert!(kit.deny.contains(&fmt!("/home/u/.config/oxedyne")),
+                "the {} toolkit does not deny the credential directory: {:?}", k.name(), kit.deny);
+            // The control, so a check that stopped discriminating goes red rather than quiet.
+            assert!(kit.deny.contains(&fmt!("/home/u/.netrc")),
+                "the {} toolkit lost the credential deny it always had: {:?}", k.name(), kit.deny);
+            assert!(!kit.ro.contains(&fmt!("/home/u/.config/oxedyne")), "{:?}", kit.ro);
+            assert!(!kit.rw.contains(&fmt!("/home/u/.config/oxedyne")), "{:?}", kit.rw);
+        }
+    }
+
+    /// **`run` refuses a verifier and names the tool that runs one, with its argument.**
+    ///
+    /// Forty-one calls and nothing verified, on a live daimon turn on 2026-08-23.  A verifier
+    /// cannot work inside the fence -- no playwright, no network to fetch it with -- so the
+    /// refusal has to arrive before the attempt and has to carry the alternative, or the model
+    /// spends the same turn again a different way.
+    #[test]
+    fn test_run_refuses_a_verifier_and_names_the_tool_that_runs_one() {
+        let refused = verifier_refusal(&[fmt!("node"), fmt!("dev/verify_vocabulary.mjs")])
+            .expect("a verifier run through `run` was allowed");
+        assert!(refused.starts_with(REFUSAL_OPENING),
+            "the refusal is not recognisable as one: {}", refused);
+        assert!(refused.contains(r#"verify {"name":"vocabulary"}"#),
+            "the refusal does not name the tool and the argument that work: {}", refused);
+        assert!(refused.contains("playwright"),
+            "the refusal does not say why the command could never have worked: {}", refused);
+        // Every spelling that would start the same script.
+        for argv in [
+            vec![fmt!("node"), fmt!("./dev/verify_vocabulary.mjs")],
+            vec![fmt!("/usr/bin/node"), fmt!("--trace-warnings"), fmt!("dev/verify_vocabulary.mjs")],
+            vec![fmt!("node"), fmt!("/home/u/usr/code/app/dev/verify_vocabulary.mjs")],
+            vec![fmt!("dev/verify_vocabulary.mjs")],
+        ] {
+            assert!(verifier_refusal(&argv).is_some(), "{:?} was allowed through", argv);
+        }
+        // The controls, and they matter more than the refusals do: a guard that refused a command
+        // ABOUT a verifier would be costing the turn it exists to save.
+        for argv in [
+            vec![fmt!("cargo"), fmt!("test")],
+            vec![fmt!("node"), fmt!("dev/sweep.mjs")],
+            vec![fmt!("rg"), fmt!("-n"), fmt!("verify_"), fmt!("dev")],
+            vec![fmt!("git"), fmt!("commit"), fmt!("-m"), fmt!("dev/verify_vocabulary.mjs")],
+            vec![fmt!("ls"), fmt!("-la"), fmt!("dev/verify_vocabulary.mjs")],
+            vec![fmt!("node"), fmt!("tools/verify_thing.mjs")],
+            vec![fmt!("node"), fmt!("dev/verify_vocabulary.mjs.bak")],
+        ] {
+            assert!(verifier_refusal(&argv).is_none(),
+                "{:?} was refused, and it is not a verifier: {:?}", argv, verifier_refusal(&argv));
+        }
+    }
+
+    /// **`run` refuses the scripts that create a symbolic link, and for the right reason.**
+    ///
+    /// A writable grant no longer carries `MAKE_SYM`, so `ln -s` answers "Permission denied"
+    /// everywhere -- and these four scripts fail PART WAY THROUGH, after a worktree or a
+    /// directory has been made, which is a bare permission error attached to work that half
+    /// happened.  The refusal has to arrive first, has to say the capability is withheld rather
+    /// than missing, and must not be mistakable for the verifier rule beside it: one is about
+    /// something absent from the fence, the other about something withheld inside it, and a model
+    /// told the wrong one goes looking for the wrong fix.
+    #[test]
+    fn test_run_refuses_the_scripts_that_cannot_make_a_symbolic_link() {
+        let refused = symlink_refusal(&[fmt!("bash"), fmt!("dev/gate.sh")])
+            .expect("a script that cannot make its links was allowed");
+        assert!(refused.starts_with(REFUSAL_OPENING),
+            "the refusal is not recognisable as one: {}", refused);
+        assert!(refused.contains("symbolic link") && refused.contains("Permission denied"),
+            "the refusal does not say what will actually happen: {}", refused);
+        assert!(refused.contains("verify"),
+            "the release gate's refusal does not say what to do instead: {}", refused);
+        // The two rules are told apart by what they blame. A reader -- and a model -- has to be
+        // able to see which one fired, or the fix it goes looking for is the other rule's.
+        assert!(!refused.contains("playwright"),
+            "the symlink refusal blames the verifier rule's cause: {}", refused);
+        let verifier = verifier_refusal(&[fmt!("node"), fmt!("dev/verify_vocabulary.mjs")])
+            .expect("the control failed: a verifier must still be refused");
+        assert!(!verifier.contains("symbolic link"),
+            "the verifier refusal blames the symlink rule's cause: {}", verifier);
+        // Every script that links, in every spelling that would start one.
+        for argv in [
+            vec![fmt!("bash"), fmt!("dev/gate.sh")],
+            vec![fmt!("sh"), fmt!("./dev/gate.sh")],
+            vec![fmt!("/bin/bash"), fmt!("-x"), fmt!("/home/u/usr/code/app/dev/gate.sh")],
+            vec![fmt!("dev/gate.sh")],
+            vec![fmt!("bash"), fmt!("dev/attribute.sh"), fmt!("abc123")],
+            vec![fmt!("dev/devgw.sh")],
+            vec![fmt!("node"), fmt!("dev/shot_betatier.mjs")],
+        ] {
+            assert!(symlink_refusal(&argv).is_some(), "{:?} was allowed through", argv);
+        }
+        // The controls, and they are the half that matters: refusing a command that merely NAMES
+        // one of these costs the turn the rule exists to save. This is the trap the verifier rule
+        // fell into on its third break, so it is pinned here too.
+        for argv in [
+            vec![fmt!("git"), fmt!("commit"), fmt!("-m"), fmt!("dev/gate.sh")],
+            vec![fmt!("cat"), fmt!("dev/gate.sh")],
+            vec![fmt!("rg"), fmt!("-n"), fmt!("ln -s"), fmt!("dev")],
+            vec![fmt!("ls"), fmt!("-la"), fmt!("dev/devgw.sh")],
+            vec![fmt!("bash"), fmt!("dev/suite.sh")],
+            vec![fmt!("bash"), fmt!("tools/gate.sh")],
+            vec![fmt!("node"), fmt!("dev/sweep.mjs")],
+        ] {
+            assert!(symlink_refusal(&argv).is_none(),
+                "{:?} was refused, and it makes no link: {:?}", argv, symlink_refusal(&argv));
+        }
+        // Each row names a real file, or the refusal is describing a tree that is not there.
+        for s in LINKING_SCRIPTS {
+            assert!(std::path::Path::new(s.path).exists(),
+                "{} is named as a linking script and is not in the tree", s.path);
+        }
+    }
+
     // ── A tool that is sold rather than shipped ─────────────────────────────
     //
     // The gate proper is proved in the browser, where the compiler is (see
@@ -16700,6 +17237,110 @@ mod tests {
         assert!(!got.contains("[file_read]"),
             "a three-line file was given a notice it does not need: {}", got);
         assert!(got.contains("three"), "a three-line file was cut: {}", got);
+    }
+
+    /// **A tool failure reaches the model as words, not as a developer's error frame.**
+    ///
+    /// Found by `devcycle_probe` on 2026-08-24, in its own output, in a refusal written for a
+    /// model earlier the same evening. The dispatcher formatted the error with `Display`, which
+    /// is for a person at a terminal: ANSI colour, `UpstreamErr{…}` and `LocalErr{…}` frames, and
+    /// one of our `file:line`s at every level. All of it went into the conversation and was
+    /// re-sent on every later round.
+    ///
+    /// **Asserted on the escape byte and the frame names**, not on the wording -- the sentence is
+    /// meant to change, the envelope is not.
+    #[test]
+    fn test_a_tool_failure_reaches_the_model_without_a_developers_envelope() {
+        let c = ctx();
+        put(&c, "notes/specs/api.md", "hello\n");
+        // A directory read as a file: a real failure with a real message, and the exact call the
+        // probe caught this on.
+        let out = Tool::FileRead.execute_sync(r#"{"path":"notes/specs"}"#, &c);
+        let text = match out {
+            Ok(v)  => v.as_text().to_string(),
+            Err(e) => error_line(&e.plain()),
+        };
+        assert!(!text.contains('\u{1b}'),
+            "an ANSI escape reached the model: {:?}", text);
+        assert!(!text.contains("LocalErr") && !text.contains("UpstreamErr"),
+            "an error frame reached the model: {}", text);
+        assert!(!text.contains("src/tools.rs:"),
+            "one of our own file:line locations reached the model: {}", text);
+        // And the words that WERE written for it survive the trip.
+        assert!(text.contains("is a directory"),
+            "the sentence written for the model did not arrive: {}", text);
+        assert!(text.contains("file_list"),
+            "the tool that answers was not named: {}", text);
+    }
+
+    /// **Every script in `dev/` that makes a link is refused by ONE of the two rules.**
+    ///
+    /// The lane that built the symlink refusal flagged the gap itself: `LINKING_SCRIPTS` is a
+    /// list, so a script added later that links will fail the old way -- a bare `ln: Permission
+    /// denied` a daimon spends a turn on -- and nothing would notice. Its own test asserts each
+    /// row names a real file, which catches a deletion or a rename and cannot catch an ADDITION.
+    ///
+    /// **The property is COVERAGE, not membership**, and the first draft of this test got that
+    /// wrong. Scanning `dev/` and demanding every hit be in `LINKING_SCRIPTS` reported five
+    /// verifiers -- `verify_applications`, `verify_passcode`, `verify_redeem`,
+    /// `verify_relay_e2e`, `verify_search_gateway`, each linking a signing key into a work
+    /// directory -- and every one of them is correctly absent from that table, because
+    /// `verifier_refusal` already turns them away and `verify` runs them outside the fence where
+    /// the link succeeds. Two rules, one question. Asking the question of the rules rather than
+    /// of one table's contents leaves no exemption to be written down and later forgotten.
+    ///
+    /// **Scanned rather than parsed.** A link is made by `ln -s`, by `ln -sfn`, by `symlinkSync`
+    /// or by an awaited `symlink`, and a scanner exact about shell and JavaScript at once would
+    /// be a second opinion about two languages. A substring hit may be a false alarm; the cost of
+    /// one is a table row, and the cost of a miss is a turn.
+    #[test]
+    fn test_every_linking_script_in_dev_is_refused_by_one_rule_or_the_other() {
+        let dev = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/dev"));
+        let listing = match std::fs::read_dir(dev) {
+            Ok(r)  => r,
+            Err(e) => panic!("dev/ could not be read, so this check saw nothing: {}", e),
+        };
+        let mut links: Vec<String> = Vec::new();
+        let mut looked = 0usize;
+        for entry in listing.filter_map(|e| e.ok()) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !(name.ends_with(".sh") || name.ends_with(".mjs")) {
+                continue;
+            }
+            let text = match std::fs::read_to_string(entry.path()) {
+                Ok(t)  => t,
+                Err(_) => continue,
+            };
+            looked += 1;
+            // A comment DESCRIBING this rule is not an instance of it. Without this the check
+            // reports itself the moment somebody documents it in a script's header.
+            let makes = text.lines()
+                .filter(|l| !l.trim_start().starts_with("//") && !l.trim_start().starts_with('#'))
+                .any(|l| l.contains("ln -s") || l.contains("symlinkSync") || l.contains("fs.symlink"));
+            if makes {
+                links.push(fmt!("dev/{}", name));
+            }
+        }
+        // The premise. A scan that read nothing would pass in silence, which is the failure this
+        // test exists to prevent, committed by the test.
+        assert!(looked > 50,
+            "only {} script(s) were read from dev/, so the scan is not working", looked);
+        assert!(!links.is_empty(),
+            "no script in dev/ appears to make a link, and five of them do -- the scan is blind");
+
+        let naked: Vec<&String> = links.iter()
+            .filter(|p| {
+                let argv = vec![fmt!("bash"), (*p).clone()];
+                let node = vec![fmt!("node"), (*p).clone()];
+                verifier_refusal(&argv).is_none() && symlink_refusal(&argv).is_none()
+                    && verifier_refusal(&node).is_none() && symlink_refusal(&node).is_none()
+            })
+            .collect();
+        assert!(naked.is_empty(),
+            "{} script(s) in dev/ create a symbolic link and NEITHER rule refuses them, so a \
+             daimon running one meets a bare 'Permission denied' and spends a turn on it. Add a \
+             LINKING_SCRIPTS row, saying what it links and what to do instead: {:?}",
+            naked.len(), naked);
     }
 
     /// **A NUL a megabyte into a source file is a character somebody typed, not a format marker.**

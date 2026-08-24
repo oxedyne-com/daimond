@@ -82,9 +82,13 @@ use crate::{
         FenceSpec,
         Req,
         Resp,
+        Run,
+        RunState,
         Sig,
         Stream,
         CHUNK_MAX,
+        RUNS_MAX,
+        RUN_WHAT_MAX,
     },
 };
 
@@ -152,6 +156,20 @@ pub const DRAIN_GRACE_MS: u64 = 2_000;
 
 /// How long a group-signal helper is given before it is given up on.
 const SIGNAL_GRACE_MS: u64 = 2_000;
+
+/// How long a signalled process group is given to empty before it is looked at.
+///
+/// A signal is delivered before it is acted on: between the `kill` returning and
+/// the target running its exit path there is a scheduler tick, and a probe taken
+/// inside it sees a process that is already dying.  Short for the same reason --
+/// a tick is all there is between a `KILL` and an empty group, and a longer wait
+/// would only make a `TERM` that is being obeyed slowly look more like one that
+/// is being ignored, which is a judgement this code deliberately does not make.
+///
+/// A member already reaped needs no wait at all: [`counts_as_member`] does not
+/// count a zombie, so the group reads as empty the moment the last of it has
+/// exited rather than the moment the kernel gets round to collecting it.
+const STOP_SETTLE_MS: u64 = 250;
 
 /// Bytes taken from a pipe in one read.
 ///
@@ -238,12 +256,16 @@ pub enum Launch {
 }
 
 /// What became of a request to signal a command.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// Three arms and not two, because the missing one was the defect.  A signal
+/// that was attempted and did not take used to answer `Finished`, which reads as
+/// "it had already stopped" -- so a page told its command was gone had no way to
+/// learn that it was not.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Signalled {
-    /// The signal was handed to the run's supervisor.
-    Sent,
-    /// No such run is live; it had already finished.  Not an error.
-    Finished,
+    Sent,			// handed to the supervisor, or sent to a standing group
+    Finished,		// no such run; it had already gone. Not an error
+    Failed(String),	// the signal was attempted and did not take; the sentence says what happened
 }
 
 /// The result of vetting a working directory against a fence.
@@ -344,10 +366,44 @@ impl Launcher {
 
 /// One live run, as the registry holds it.
 struct Live {
-    /// The child's process id, which is also its process group.
-    pid:   u32,
-    /// The line to the supervisor, which owns the child and does the killing.
-    sigtx: UnboundedSender<Sig>,
+    pid:   u32,						// the child's process id, which is also its process group
+    sigtx: UnboundedSender<Sig>,	// to the supervisor, which owns the child and does the killing
+    what:  String,					// the command line, for the listing
+    since: std::time::Instant,		// when it started
+}
+
+// ── A run that ended and left its process group standing ────────────────────
+//
+// A command may start something that outlives it.  `bash dev/world.sh 3 --up`
+// starts a dev server and a mock provider in the background and returns; the
+// direct child is reaped and the two servers go on holding their ports, in the
+// process group the launcher made for the run.
+//
+// Until this existed the hand forgot them at that moment, and nothing else could
+// reach them.  The fence scopes signals to the Landlock domain that sent them, so
+// a LATER command's `kill` answers "Operation not permitted"; `/proc` is outside
+// every fence, so the pid cannot be found either.  A daimon that brought up a
+// world could not take it down, and a person had to clear the ports from outside
+// the app.  That is a leak the app creates and then forbids fixing, which is
+// worse than either half.
+//
+// So a run whose group is not empty is kept, and kept whole: the group, so it can
+// be signalled; the command line, so a listing means something; and the SCRATCH
+// DIRECTORY, because `TMPDIR` still points into it and the survivors are still
+// writing there.  Removing it at the moment the direct child exited was pulling
+// the ground out from under a process the hand knew about.
+//
+// Keyed by the run's identifier, which is what [`Runner::signal`] already takes.
+// A pid would be a second way in and the wrong one -- a caller that could name a
+// number could name any number, and the whole guarantee here is that only a group
+// this hand's own launcher created can be named at all.
+
+/// A run whose command has ended and whose process group has not emptied.
+struct Left {
+    pgid:    u32,				// the ended child's pid, which named the group
+    what:    String,			// the command line, for the listing
+    since:   std::time::Instant,	// when the command itself ended
+    scratch: Option<Scratch>,	// held until the group goes: TMPDIR still points into it
 }
 
 /// Starts commands, streams what they say, and keeps them reachable.
@@ -357,10 +413,9 @@ struct Live {
 /// waiting, reading and killing all happen in tasks.
 #[derive(Clone)]
 pub struct Runner {
-    /// Live runs, keyed by the caller's identifier.
-    live:     Arc<Mutex<HashMap<String, Live>>>,
-    /// What is re-executed to apply the fence.  See [`Launcher`].
-    launcher: Arc<Launcher>,
+    live:     Arc<Mutex<HashMap<String, Live>>>,	// runs whose command is still going
+    left:     Arc<Mutex<HashMap<String, Left>>>,	// runs that ended and left a group standing
+    launcher: Arc<Launcher>,						// what is re-executed to apply the fence
 }
 
 impl Default for Runner {
@@ -383,6 +438,7 @@ impl Runner {
     pub fn with_launcher(launcher: Launcher) -> Self {
         Self {
             live:     Arc::new(Mutex::new(HashMap::new())),
+            left:     Arc::new(Mutex::new(HashMap::new())),
             launcher: Arc::new(launcher),
         }
     }
@@ -432,6 +488,11 @@ impl Runner {
         // before there is a second child. The answer is taken out of the lock
         // before it is used, so that no guard is held across the `await` that
         // sends the refusal.
+        //
+        // A LEFTOVER counts too, and for the same reason. A run that ended and
+        // left its process group standing is still reachable by that identifier
+        // and by no other means at all, so letting a second run take the name
+        // would put the first beyond the only door there is.
         let already = {
             let g = lock_mutex!(self.live);
             g.contains_key(&id)
@@ -442,6 +503,17 @@ impl Runner {
                 Identifiers are how a run is signalled and how its output is recognised, so two \
                 runs cannot share one. Give this command a different id, or signal the one \
                 already running.", id)).await;
+        }
+        let standing = {
+            let g = lock_mutex!(self.left);
+            g.contains_key(&id)
+        };
+        if standing {
+            return self.refuse(&id, &tx, fmt!(
+                "Refused: '{}' named a command that has finished and left processes of its own \
+                still running -- a server it started, most likely. That identifier is the only \
+                way anything can reach them, so it cannot be given to a second command. Ask what \
+                is running, stop that one, or give this command a different id.", id)).await;
         }
 
         if let Some(s) = screen_env(&env) {
@@ -487,6 +559,10 @@ impl Runner {
         for k in TMP_VARS {
             env.push((fmt!("{}", k), fmt!("{}", scratch.dir().display())));
         }
+        // And the two the hand fills in only where the request said nothing. The
+        // opposite rule to the three above, and the section on [`add_defaults`]
+        // says why each of the two is there and why the rest are not.
+        add_defaults(&mut env);
 
         // The fence is decided here, in the hand, where a failure can still
         // become a sentence the page shows. The launcher only applies it: by the
@@ -602,10 +678,16 @@ impl Runner {
             });
         }
 
+        let what = cut_to(&argv.join(" "), RUN_WHAT_MAX);
         let (sigtx, sigrx) = tokio::sync::mpsc::unbounded_channel::<Sig>();
         {
             let mut g = lock_mutex!(self.live);
-            g.insert(id.clone(), Live { pid, sigtx: sigtx.clone() });
+            g.insert(id.clone(), Live {
+                pid,
+                sigtx: sigtx.clone(),
+                what:  what.clone(),
+                since: std::time::Instant::now(),
+            });
         }
 
         if tx.send(Resp::Started { id: id.clone(), pid }).await.is_err() {
@@ -626,8 +708,10 @@ impl Runner {
         let job = Job {
             id:      id.clone(),
             pgid:    pid,
+            what,
             dur:     Duration::from_millis(clamp_timeout(timeout_ms)),
             live:    Arc::clone(&self.live),
+            left:    Arc::clone(&self.left),
             tx:      tx.clone(),
             scratch: Some(scratch),
         };
@@ -645,33 +729,165 @@ impl Runner {
         Ok(Launch::Started(pid))
     }
 
-    /// Sends a signal to a live run.
+    /// Sends a signal to a run this hand started, live or standing.
     ///
-    /// Signalling a run that has already ended is not an error; it answers
-    /// [`Signalled::Finished`], which is what the page needs to hear.
+    /// Two paths, and the second is the one that was missing.  A live run is
+    /// signalled through its supervisor, which owns the child.  A run that has
+    /// ENDED and left its process group standing has no supervisor, so the group
+    /// is signalled directly -- and it can be, because the hand is not the fenced
+    /// thing.  Nothing else on the machine can: Landlock scopes signals to the
+    /// domain that sent them, so a later command's `kill` answers "Operation not
+    /// permitted", which is what left two servers holding ports with no route to
+    /// them.
+    ///
+    /// **Only by identifier, and only one this hand issued.**  There is no arm
+    /// here that takes a pid, a name or a pattern.  The guard is not a check on
+    /// the argument; it is that the argument cannot express anything else.
+    ///
+    /// Signalling a run that has already gone is not an error and answers
+    /// [`Signalled::Finished`].  A signal that was attempted and did not take
+    /// answers [`Signalled::Failed`] and never `Finished`.
     ///
     /// # Arguments
     /// * `id` - The identifier given at [`wire::Req::Exec`].
     /// * `sig` - Which signal.
-    pub fn signal(&self, id: &str, sig: Sig) -> Outcome<Signalled> {
+    pub async fn signal(&self, id: &str, sig: Sig) -> Outcome<Signalled> {
         let line = {
             let g = lock_mutex!(self.live);
             g.get(id).map(|l| l.sigtx.clone())
         };
-        match line {
-            Some(t) => match t.send(sig) {
-                Ok(())  => Ok(Signalled::Sent),
-                Err(_)  => Ok(Signalled::Finished), // The supervisor is gone.
-            },
-            None => Ok(Signalled::Finished),
+        if let Some(t) = line {
+            if t.send(sig).is_ok() {
+                return Ok(Signalled::Sent);
+            }
+            // The supervisor has gone, which means the run ended between the
+            // lookup and the send. Fall through: it may be standing.
         }
+        let pgid = {
+            let g = lock_mutex!(self.left);
+            g.get(id).map(|l| l.pgid)
+        };
+        let pgid = match pgid {
+            Some(p) => p,
+            None    => return Ok(Signalled::Finished),
+        };
+        let said = match timeout(
+            Duration::from_millis(SIGNAL_GRACE_MS),
+            signal_group(pgid, sig)).await
+        {
+            Ok(Signalling::Sent)			=> None,
+            Ok(Signalling::Degraded(w))		=> Some(w),
+            Ok(Signalling::Unavailable(w))	=> Some(w),
+            Err(_)							=> Some(fmt!(
+                "The kill helper did not finish within {} ms and was given up on.",
+                SIGNAL_GRACE_MS)),
+        };
+        // Then ask the machine, rather than believe the bookkeeping. A group is
+        // not emptied the instant the signal is delivered -- the leader has to be
+        // reaped -- so the probe waits first, and the wait is short because the
+        // only thing between a KILL and an empty group is a scheduler tick.
+        tokio::time::sleep(Duration::from_millis(STOP_SETTLE_MS)).await;
+        let still = group_standing(pgid).await;
+        res!(self.reap().await);
+        Ok(signalled(&id, pgid, said, still))
     }
 
-    /// Asks every live run to die, for [`wire::Req::Bye`].
+    /// Forgets every standing group that has emptied, and clears its scratch.
+    ///
+    /// A listing that still holds a group nobody is in is a listing that lies,
+    /// and it lies in the direction that matters: a reader would go on trying to
+    /// stop something already gone rather than looking for what is not.  A group
+    /// the machine will not answer about is KEPT, because "I cannot tell" is not
+    /// "it is gone".
+    pub async fn reap(&self) -> Outcome<usize> {
+        let asking = {
+            let g = lock_mutex!(self.left);
+            g.iter().map(|(k, l)| (k.clone(), l.pgid)).collect::<Vec<_>>()
+        };
+        let mut gone = Vec::new();
+        for (id, pgid) in asking {
+            if group_standing(pgid).await == Some(false) {
+                gone.push(id);
+            }
+        }
+        let mut taken = Vec::new();
+        {
+            let mut g = lock_mutex!(self.left);
+            for id in &gone {
+                if let Some(mut l) = g.remove(id) {
+                    if let Some(sc) = l.scratch.take() {
+                        taken.push(sc);
+                    }
+                }
+            }
+        }
+        // Removed outside the lock: a scrub of a tree the command built is not
+        // work to do while every other run is waiting to look at the registry.
+        for mut sc in taken {
+            let _ = sc.remove();
+        }
+        Ok(gone.len())
+    }
+
+    /// What this hand is still running, standing groups included.
+    ///
+    /// Measured rather than remembered: [`Runner::reap`] runs first, so a group
+    /// that has emptied since anyone last looked is gone from the answer rather
+    /// than reported and then found missing.
+    ///
+    /// Standing runs come first, oldest first, because they are the ones nothing
+    /// else can reach and therefore the ones a reader is looking for.
+    pub async fn runs(&self) -> Outcome<(Vec<Run>, u32)> {
+        res!(self.reap().await);
+        let now = std::time::Instant::now();
+        let mut out = Vec::new();
+        {
+            let g = lock_mutex!(self.left);
+            for (id, l) in g.iter() {
+                out.push(Run {
+                    id:    id.clone(),
+                    pid:   l.pgid,
+                    what:  l.what.clone(),
+                    state: RunState::Standing,
+                    secs:  now.saturating_duration_since(l.since).as_secs().min(u32::MAX as u64)
+                               as u32,
+                });
+            }
+        }
+        out.sort_by(|a, b| b.secs.cmp(&a.secs).then(a.id.cmp(&b.id)));
+        let mut live = Vec::new();
+        {
+            let g = lock_mutex!(self.live);
+            for (id, l) in g.iter() {
+                live.push(Run {
+                    id:    id.clone(),
+                    pid:   l.pid,
+                    what:  l.what.clone(),
+                    state: RunState::Running,
+                    secs:  now.saturating_duration_since(l.since).as_secs().min(u32::MAX as u64)
+                               as u32,
+                });
+            }
+        }
+        live.sort_by(|a, b| b.secs.cmp(&a.secs).then(a.id.cmp(&b.id)));
+        out.extend(live);
+        let more = out.len().saturating_sub(RUNS_MAX) as u32;
+        out.truncate(RUNS_MAX);
+        Ok((out, more))
+    }
+
+    /// Stops everything this hand started, for [`wire::Req::Bye`].
+    ///
+    /// **Standing groups included, and that is a decision rather than tidiness.**
+    /// A dev server a run left behind is reachable through this hand and through
+    /// nothing else; if the hand exits without stopping it, it holds its port
+    /// until somebody finds it from outside the app, which is the incident this
+    /// whole arrangement is a repair for. A server outliving the page that asked
+    /// for it is a thing nobody asked for either.
     ///
     /// # Returns
-    /// How many runs were signalled.
-    pub fn stop_all(&self) -> Outcome<usize> {
+    /// How many runs were signalled, live and standing together.
+    pub async fn stop_all(&self) -> Outcome<usize> {
         let lines = {
             let g = lock_mutex!(self.live);
             g.values().map(|l| l.sigtx.clone()).collect::<Vec<_>>()
@@ -682,6 +898,22 @@ impl Runner {
                 n += 1;
             }
         }
+        let standing = {
+            let g = lock_mutex!(self.left);
+            g.values().map(|l| l.pgid).collect::<Vec<_>>()
+        };
+        for pgid in standing {
+            // Awaited, unlike the line above: there is no supervisor here to do
+            // the killing after this function returns, and the process this one
+            // is in is about to exit.
+            if let Ok(Signalling::Sent) = timeout(
+                Duration::from_millis(SIGNAL_GRACE_MS),
+                signal_group(pgid, Sig::Kill)).await
+            {
+                n += 1;
+            }
+        }
+        res!(self.reap().await);
         Ok(n)
     }
 
@@ -697,6 +929,16 @@ impl Runner {
     /// How many runs are live.
     pub fn live_count(&self) -> Outcome<usize> {
         let g = lock_mutex!(self.live);
+        Ok(g.len())
+    }
+
+    /// How many ended runs are still holding a process group.
+    ///
+    /// Remembered rather than measured, unlike [`Runner::runs`]: a caller that
+    /// wants the honest picture asks for the listing, and this is the cheap
+    /// question a test or a shutdown path asks.
+    pub fn standing_count(&self) -> Outcome<usize> {
+        let g = lock_mutex!(self.left);
         Ok(g.len())
     }
 
@@ -722,15 +964,12 @@ impl Runner {
 
 /// Everything the supervisor needs that is not the child itself.
 struct Job {
-    /// The caller's identifier.
-    id:      String,
-    /// The child's process group, which is its process id.
-    pgid:    u32,
-    /// The hard wall-clock limit.
-    dur:     Duration,
-    /// The shared registry, so the run can forget itself when it ends.
-    live:    Arc<Mutex<HashMap<String, Live>>>,
-    /// Where responses go.
+    id:      String,	// the caller's identifier
+    pgid:    u32,		// the child's process group, which is its process id
+    what:    String,	// the command line, kept for a listing if the group outlives the command
+    dur:     Duration,	// the hard wall-clock limit
+    live:    Arc<Mutex<HashMap<String, Live>>>,	// so the run can forget itself when it ends
+    left:    Arc<Mutex<HashMap<String, Left>>>,	// and remember itself where its group has not
     tx:      Sender<Resp>,
     /// The command's private temporary directory.
     ///
@@ -849,11 +1088,56 @@ async fn supervise(
         g.remove(&job.id);
     }
 
+    // Did the command leave anything of its own behind? The direct child is
+    // reaped; its process GROUP may not be empty, and `bash x.sh --up` starting
+    // a server in the background is the ordinary way that happens. Asked before
+    // the scratch is removed, because the answer decides whether removing it
+    // would pull the ground out from under a process that is still writing
+    // there.
+    //
+    // ASKED EVEN WHERE THE GROUP WAS SIGNALLED, and the first draft skipped that
+    // case as empty by construction. It is not: `killed` is set by any of the
+    // three signals, and a `Term` the group declined to obey leaves exactly the
+    // thing this record exists for -- unrecorded, because the skip looked safe.
+    // What makes asking here safe is that a zombie does not count as standing;
+    // see `counts_as_member`.
+    let standing = group_standing(job.pgid).await;
+
     // And take the scratch away before announcing it too, so that a page told a
     // run has ended can never look and still find it. This is the ordinary path;
     // every other way out of this function drops the guard instead, which does
     // the same thing without being able to say that it failed.
-    if let Some(mut s) = job.scratch.take() {
+    //
+    // The exception is a group still standing, where the scratch goes into the
+    // leftover record instead and is removed when the group finally is.
+    if standing == Some(true) {
+        let s = job.scratch.take();
+        {
+            let mut g = lock_mutex!(job.left);
+            g.insert(job.id.clone(), Left {
+                pgid:    job.pgid,
+                what:    job.what.clone(),
+                since:   std::time::Instant::now(),
+                scratch: s,
+            });
+        }
+        // Said before `Ended`, because the page attaches a note to a run before
+        // it settles it and this has to reach the model that started the thing.
+        // Naming the identifier is the whole of the message: it is the only way
+        // anything can reach that group, since the fence scopes signals to the
+        // domain that sent them and a later command's `kill` answers "Operation
+        // not permitted".
+        let _ = job.tx.send(Resp::Error {
+            id:      Some(job.id.clone()),
+            message: fmt!(
+                "'{}' has finished and the processes it started are still running, in process \
+                group {}. Nothing you can RUN will stop them -- each command is fenced into a \
+                domain of its own and cannot signal another one's -- so the hand keeps them \
+                reachable by this identifier. Ask it what is running, and stop '{}' when you are \
+                done with them. They are stopped for you when the page goes away.",
+                job.id, job.pgid, job.id),
+        }).await;
+    } else if let Some(mut s) = job.scratch.take() {
         if let Err(e) = s.remove() {
             let _ = job.tx.send(Resp::Error {
                 id:      Some(job.id.clone()),
@@ -1209,13 +1493,28 @@ pub(crate) async fn signal_group(pgid: u32, sig: Sig) -> Signalling {
 /// * `pgid` - The group, which is the process id of the child that leads it.
 /// * `sig` - Which signal.
 pub(crate) async fn signal_group_with(progs: &[&str], pgid: u32, sig: Sig) -> Signalling {
+    let name = match sig {
+        Sig::Term	=> "TERM",
+        Sig::Kill	=> "KILL",
+        Sig::Int	=> "INT",
+    };
+    signal_group_named(progs, pgid, name).await
+}
+
+/// [`signal_group_with`], with the signal named as `kill -s` spells it.
+///
+/// Split out for the null signal.  `0` is not a [`wire::Sig`] and must not
+/// become one -- the wire's three are the signals a page may SEND -- but it is
+/// how the hand asks whether a group still has anybody in it, which is the same
+/// question in the same words to the same program.
+///
+/// # Arguments
+/// * `progs` - The `kill` binaries to try, in order.
+/// * `pgid` - The group, which is the process id of the child that led it.
+/// * `name` - The signal, as `kill -s` spells it.
+async fn signal_group_named(progs: &[&str], pgid: u32, name: &str) -> Signalling {
     #[cfg(unix)]
     {
-        let name = match sig {
-            Sig::Term	=> "TERM",
-            Sig::Kill	=> "KILL",
-            Sig::Int	=> "INT",
-        };
         let mut said = Vec::<String>::new();
         for prog in progs {
             if !Path::new(prog).exists() {
@@ -1260,10 +1559,129 @@ pub(crate) async fn signal_group_with(progs: &[&str], pgid: u32, sig: Sig) -> Si
     }
     #[cfg(not(unix))]
     {
-        let _ = (progs, pgid, sig);
+        let _ = (progs, pgid, name);
         Signalling::Unavailable(fmt!(
             "Signalling a process group is a POSIX idea and this is not a POSIX \
             platform."))
+    }
+}
+
+/// Whether one `/proc/<pid>/stat` line describes a process still holding the
+/// group `pgid` open.
+///
+/// Two things are easy to get wrong here and both are why this is its own
+/// function with its own test.
+///
+/// **Where the fields are.**  The second field is the executable's name in
+/// brackets, and a file name may contain brackets, spaces and anything else a
+/// file name may.  So the fields are counted from after the LAST `)`, which is
+/// what `pty::session_groups` already does; the three after it are state, parent
+/// and group.
+///
+/// **A zombie is not standing.**  It holds no port, writes no file and will do
+/// nothing further; it is an exit status waiting to be collected.  Counting one
+/// would make every killed run look as though it had left something behind for
+/// as long as the kernel took to reap it -- a false alarm about the one subject
+/// this has to be believed on -- and would hold the run's scratch directory open
+/// for a process that no longer exists.
+///
+/// # Arguments
+/// * `stat` - The contents of one `/proc/<pid>/stat`.
+/// * `pgid` - The group being asked about.
+fn counts_as_member(stat: &str, pgid: u32) -> bool {
+    let tail = match stat.rsplit_once(')') {
+        Some((_, t)) => t,
+        None         => return false,
+    };
+    let mut f = tail.split_whitespace();
+    let state = match f.next() {
+        Some(s) => s,
+        None    => return false,
+    };
+    if state == "Z" {
+        return false;
+    }
+    // Past the parent, to the group.
+    match f.nth(1).and_then(|v| v.parse::<u32>().ok()) {
+        Some(g) => g == pgid,
+        None    => false,
+    }
+}
+
+/// Whether any process is still in the group `pgid`.
+///
+/// `/proc` first, because the hand is not the fenced thing and may read it, and
+/// because it answers without starting a process.  Where there is no `/proc`,
+/// the null signal: `kill -s 0` validates its arguments, delivers nothing, and
+/// succeeds only where there is somebody to deliver to.
+///
+/// `None` is neither yes nor no, and a caller must not read it as either.  It
+/// means the machine would not answer, which is why the listing goes on showing
+/// a run it cannot ask about rather than quietly forgetting one.
+///
+/// # Arguments
+/// * `pgid` - The group, which is the process id of the child that led it.
+async fn group_standing(pgid: u32) -> Option<bool> {
+    if let Ok(dir) = std::fs::read_dir("/proc") {
+        for entry in dir.flatten() {
+            let name = entry.file_name();
+            if !name.to_string_lossy().chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            let stat = match std::fs::read_to_string(entry.path().join("stat")) {
+                Ok(s)  => s,
+                Err(_) => continue, // It ended while we were looking at it.
+            };
+            if counts_as_member(&stat, pgid) {
+                return Some(true);
+            }
+        }
+        return Some(false);
+    }
+    match signal_group_named(KILL_PROGS, pgid, "0").await {
+        Signalling::Sent			=> Some(true),
+        Signalling::Degraded(_)		=> Some(false),
+        Signalling::Unavailable(_)	=> None,
+    }
+}
+
+/// What to tell the caller about a signal, given what `kill` said and what the
+/// machine then showed.
+///
+/// Separate from [`Runner::signal`] so that the one judgement it makes can be
+/// put under a test, because getting it wrong is the defect this whole
+/// arrangement exists to repair: a signal that did not take, reported as a stop.
+/// The rule has no arm that can do that.
+///
+/// * The group is gone -- **finished**, whatever `kill` printed.  BusyBox exits 1
+///   on the POSIX spelling and empties the group anyway (`REVIEW.md` §3.10), so
+///   the exit status is the weaker witness and the probe is the stronger one.
+/// * The group is still standing and `kill` refused -- **failed**, and the
+///   sentence names the group so a person can find it from outside.
+/// * The group is still standing and `kill` was accepted -- **sent**, which says
+///   the signal went and does not say the command stopped.  A `TERM` is a
+///   request, and something part-way through shutting down is not a failure.
+/// * The machine would not say -- **sent**, with the same reading.  "I cannot
+///   tell" is not "it failed", and the run stays in the listing so the question
+///   can be asked again.
+///
+/// # Arguments
+/// * `id` - The run, for the sentence.
+/// * `pgid` - Its process group, for the sentence.
+/// * `said` - What went wrong with the `kill`, or `None` if nothing did.
+/// * `still` - Whether the group was still standing afterwards, where the
+///   machine would answer.
+fn signalled(id: &str, pgid: u32, said: Option<String>, still: Option<bool>) -> Signalled {
+    if still == Some(false) {
+        return Signalled::Finished;
+    }
+    match said {
+        None    => Signalled::Sent,
+        Some(w) => Signalled::Failed(fmt!(
+            "'{}' was signalled and the signal did not take, so anything it started is still \
+            running as process group {}. Nothing inside a fence can reach it -- that is what \
+            the refusal below is -- so it has to be stopped from outside the app. {}",
+            id, pgid, w)),
     }
 }
 
@@ -1311,6 +1729,110 @@ pub const SCRATCH_DIR_VAR: &str = "DAIMOND_HAND_SCRATCH_DIR";
 /// three are set to the same directory, so there is no case in which a program
 /// finds one of them and gets a different answer.
 pub(crate) const TMP_VARS: &[&str] = &["TMPDIR", "TMP", "TEMP"];
+
+// ── What a command is given that nobody asked for ────────────────────────────
+//
+// The command's environment is the caller's pairs and nothing else, cleared by
+// the launcher and rebuilt from the plan.  That is right, and it was too narrow
+// by two names.
+//
+// **`env_clear` is not the thing to change.**  There are two clears in this file
+// and they answer different questions.  `Runner::spawn`'s clears the LAUNCHER's
+// environment -- and the launcher's environment is replaced wholesale by
+// `execve`, so nothing added there ever reaches the command.  `launch_inner`'s
+// clears the command's, and rebuilds it from the pairs that travelled down the
+// pipe.  A default therefore has to be added to the PAIRS, here, which is also
+// the only place it can be journalled and screened like any other pair.
+//
+// **The two that are added, and why each of them and not more.**
+//
+// * `HOME`.  A shell script under `set -u` dies on its first line without one --
+//   `HOME: unbound variable` -- and nearly every script in this repository's
+//   `dev/` reads it.  The value is the hand's own, which is the same path the
+//   page is already told in `caps` as `home:`; a hand that advertises where home
+//   is and then hides it from the command is telling two stories.  It POINTS and
+//   it does not GRANT: what a command can open is the fence's decision, so a tool
+//   that follows `HOME` somewhere ungranted meets a refusal rather than a file.
+//   That is `tools.rs`'s own argument for setting it for a git grant, and it is
+//   the same argument.
+// * `PATH`.  [`PATH_FALLBACK`] is already the hand's answer to "where do programs
+//   live" -- `vet_program` resolves a bare `argv[0]` through it when the caller
+//   names none.  Handing that program an environment in which it cannot find
+//   `node`, `grep` or `curl` is the same answer given twice and differently.  It
+//   grants nothing either: the fence decides what may be executed, and everything
+//   on this list is in the read-only system base already.
+//
+// **The ones deliberately refused, because an environment is an input.**
+// Everything passed is something a command can be steered by, so the list is
+// short and each absence is a decision:
+//
+// * `USER` and `LOGNAME`.  Nothing needs them.  The kernel already knows who the
+//   process is; `id`, `whoami` and git's own author fallback go through
+//   `getpwuid` and never read these.  Nothing in this repository's `dev/` reads
+//   them either.  A name a program is TOLD is a name the kernel would contradict.
+// * `LANG`, `LC_ALL` and the rest of the locale family.  A locale changes what a
+//   program PRINTS -- collation, the decimal separator, the language of an error
+//   -- and the reader here is a model.  An absent locale is the C locale, which
+//   is the deterministic one; the user's desktop setting was chosen for their
+//   screen and not for this.  A caller that needs one can send it.
+// * `SHELL`.  There is no shell here by design, and a variable naming one is an
+//   invitation to find it.
+// * `TERM`.  A command run down a pipe has no terminal, and one that believes it
+//   has writes escape sequences into captured output.  A pty session is the
+//   exception and sets it itself; see `pty::TERM`.
+// * `TMPDIR`, `TMP` and `TEMP`.  Set already, unconditionally, and refused from
+//   the caller by [`screen_scratch`] -- the one case where the hand's answer is
+//   the last word rather than a default.  A caller that could name them would be
+//   choosing where a command writes.
+//
+// The rule for the two that are added is the opposite of the scratch's: the
+// caller's pair WINS.  A default is a floor under a caller that said nothing, not
+// a correction of one that spoke -- and the app does speak, setting `HOME` for a
+// git grant and `PATH` for every toolkit.
+
+/// The names the hand fills in where the request named none.
+pub(crate) const ENV_DEFAULTED: &[&str] = &["HOME", "PATH"];
+
+/// Where the hand's own home directory is, where it has one.
+///
+/// Absolute or nothing: a relative `HOME` is not a home directory, and passing
+/// one on would put a command's configuration wherever it happened to be
+/// standing.
+pub fn home_dir() -> Option<String> {
+    match std::env::var("HOME") {
+        Ok(h) if h.starts_with('/')	=> Some(h),
+        _							=> None,
+    }
+}
+
+/// What the hand would set a defaulted name to, where it has an answer.
+///
+/// # Arguments
+/// * `name` - One of [`ENV_DEFAULTED`].
+pub(crate) fn default_env(name: &str) -> Option<String> {
+    match name {
+        "HOME"	=> home_dir(),
+        "PATH"	=> Some(fmt!("{}", PATH_FALLBACK)),
+        // A name in the list with no answer here would be a name silently never
+        // set, so the two are kept together and this arm cannot be reached.
+        _		=> None,
+    }
+}
+
+/// Adds the defaults the request left unsaid.
+///
+/// # Arguments
+/// * `env` - The caller's pairs, appended to in place.
+pub(crate) fn add_defaults(env: &mut Vec<(String, String)>) {
+    for name in ENV_DEFAULTED {
+        if env.iter().any(|(k, _)| k == name) {
+            continue;
+        }
+        if let Some(v) = default_env(name) {
+            env.push((fmt!("{}", name), v));
+        }
+    }
+}
 
 /// How much of a run's identifier reaches the directory name.
 ///
@@ -1977,6 +2499,29 @@ fn push_cluster_refusal(cluster: &str, letter: char, does: &str) -> String {
             dash", does, cluster))
 }
 
+/// A string cut to at most `max` bytes on a character boundary, marked where it
+/// was cut.
+///
+/// The mark is not decoration: a command line a reader takes for whole is one
+/// they will try to run again, and the argument that went missing is usually the
+/// one that mattered.
+///
+/// # Arguments
+/// * `s` - The text.
+/// * `max` - The most bytes the result may take, including the mark.
+fn cut_to(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return fmt!("{}", s);
+    }
+    const MARK: &str = " …";
+    let room = max.saturating_sub(MARK.len());
+    let mut end = room;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    fmt!("{}{}", &s[..end], MARK)
+}
+
 /// Resolves `prefix` where it exists, so both sides of a containment test agree.
 ///
 /// # Arguments
@@ -2039,9 +2584,19 @@ const TOOLKIT_ROOTS: &[KitRoot] = &[
     KitRoot { kit: "rust",   tail: ".cargo/registry",      write: true  },
     KitRoot { kit: "rust",   tail: ".cargo/git",           write: true  },
     KitRoot { kit: "rust",   tail: ".cargo/.package-cache", write: true  },
+    // The target directory this repository's own convention puts a build in, one
+    // named subdirectory per agent slot. Without the row the clamp refuses the
+    // whole command, so the grant the app now sends makes a fenced build WORSE
+    // than none at all. `~/.cache` is never granted: only this tail is, and only
+    // to a request that named the Rust toolkit.
+    KitRoot { kit: "rust",   tail: ".cache/cargo-targets", write: true  },
     // node
     KitRoot { kit: "node",   tail: ".nvm",                 write: false },
     KitRoot { kit: "node",   tail: ".npm",                 write: true  },
+    // Where a world's dev server and mock provider keep their pid files, their
+    // output and their scratch root. Same reasoning as the row above, and the
+    // same narrowness: the tail and not `~/.cache`.
+    KitRoot { kit: "node",   tail: ".cache/daimond",       write: true  },
     // python
     KitRoot { kit: "python", tail: ".pyenv",               write: false },
     KitRoot { kit: "python", tail: ".local/bin",           write: false },
@@ -2182,6 +2737,63 @@ pub fn vet_roots(root: &Path, fence: &FenceSpec, kits: &[String]) -> Option<Stri
         }
     }
     None
+}
+
+/// Drops the toolchain folders this machine does not have.
+///
+/// A toolkit grant is a list of paths the APP expands from one name the user
+/// ticked, and the machine may simply not have all of them: `~/.config/git` and
+/// `~/.nvm` and `~/.pyenv` are absent here, and each of them is an ordinary
+/// arrangement rather than a fault.  [`fence::canonical`] refuses an `rw` or `ro`
+/// root it cannot resolve, and rightly -- so before this existed, ticking the Git
+/// toolkit refused EVERY command the Diamond ran, with a sentence about a path
+/// the user had never named.
+///
+/// Skipping is the safe direction: a path that is not there grants nothing, so
+/// dropping it tightens the fence.  It is also the rule `fence::resolve` already
+/// applies to the read-only system base, and for the same reason -- these are
+/// paths nobody asked for by name.
+///
+/// **A WORKSPACE root is not touched, and that is the whole of the care here.**
+/// A marked folder that cannot be resolved is a fence that would silently not
+/// cover what the user marked, which is the opposite case and must keep
+/// refusing.  So only a root under a [`TOOLKIT_ROOTS`] tail of a toolkit this
+/// request NAMED is eligible, and it is dropped only when the filesystem says it
+/// is not there.
+///
+/// # Arguments
+/// * `fence` - The fence as it arrived; the absent toolchain roots are removed.
+/// * `kits` - The toolkit names the request carried.
+///
+/// # Returns
+/// What was dropped, so a caller that wants to say so can.
+pub fn drop_absent_kit_roots(fence: &mut FenceSpec, kits: &[String]) -> Vec<String> {
+    let home = match home_dir() {
+        Some(h) => PathBuf::from(h),
+        None    => return Vec::new(),
+    };
+    let tails = TOOLKIT_ROOTS.iter()
+        .filter(|k| kits.iter().any(|n| n == k.kit))
+        .map(|k| home.join(k.tail))
+        .collect::<Vec<_>>();
+    if tails.is_empty() {
+        return Vec::new();
+    }
+    let mut gone = Vec::new();
+    for roots in [&mut fence.rw, &mut fence.ro] {
+        roots.retain(|r| {
+            let p = resolve(r);
+            // Under a toolkit tail AND not there. Either half alone keeps it: a
+            // workspace root that is missing still refuses, and a toolchain
+            // folder that exists is granted as before.
+            if tails.iter().any(|t| under(&p, t)) && !p.exists() {
+                gone.push(fmt!("{}", r));
+                return false;
+            }
+            true
+        });
+    }
+    gone
 }
 
 /// Checks a working directory against a fence, in the app's own refusing voice.
@@ -3110,6 +3722,43 @@ mod tests {
         }
     }
 
+    /// The process group of `pid`, read straight out of `/proc` by the test.
+    ///
+    /// Deliberately not [`group_standing`]: a test that measured the machine with
+    /// the code under test would agree with it whatever either of them did.
+    fn proc_pgrp(pid: u32) -> Option<u32> {
+        let stat = match std::fs::read_to_string(fmt!("/proc/{}/stat", pid)) {
+            Ok(s)  => s,
+            Err(_) => return None,
+        };
+        let tail = match stat.rsplit_once(')') {
+            Some((_, t)) => t,
+            None         => return None,
+        };
+        tail.split_whitespace().nth(2).and_then(|f| f.parse::<u32>().ok())
+    }
+
+    /// A request that runs in a named directory, with that directory as the
+    /// whole of its fence.
+    fn exec_at(id: &str, argv: &[&str], dir: &Path) -> Req {
+        Req::Exec {
+            id:         fmt!("{}", id),
+            argv:       argv.iter().map(|a| fmt!("{}", a)).collect(),
+            cwd:        fmt!("{}", dir.display()),
+            env:        Vec::new(),
+            stdin:      None,
+            timeout_ms: 30_000,
+            capture:    Capture::Both,
+            fence:      FenceSpec {
+                rw:   vec![fmt!("{}", dir.display())],
+                ro:   Vec::new(),
+                deny: Vec::new(),
+                net:  false,
+            },
+            toolkits:   Vec::new(),
+        }
+    }
+
     /// Collects responses until the run closes.
     async fn collect(rx: &mut Receiver<Resp>) -> Vec<Resp> {
         let mut v = Vec::new();
@@ -3283,9 +3932,11 @@ mod tests {
     /// The command sees the pairs it was given, the three the hand adds, and
     /// nothing else at all.
     ///
-    /// `PATH` and `HOME` are named on purpose: both are certainly in the hand's
-    /// own environment, and an inherited environment is how a credential the
-    /// user never meant to lend reaches a command.
+    /// `PATH` is named on purpose.  It is certainly in the hand's own
+    /// environment, an inherited environment is how a credential the user never
+    /// meant to lend reaches a command, and it is now DEFAULTED as well -- so the
+    /// test is that the command holds [`PATH_FALLBACK`] and not the hand's, which
+    /// is the difference between a default and an inheritance.
     #[tokio::test]
     async fn test_environment_really_is_cleared() -> Outcome<()> {
         let req = match exec("e6", &["/usr/bin/env"]) {
@@ -3308,9 +3959,17 @@ mod tests {
             .filter(|l| !l.is_empty())
             .collect::<Vec<_>>();
         lines.sort();
+        // A default and an inheritance look alike from here, and the way to tell
+        // them apart is the value. The hand's own PATH is whatever launched the
+        // browser and is nothing like the fixed list.
+        if let Ok(mine) = std::env::var("PATH") {
+            assert!(!lines.iter().any(|l| *l == fmt!("PATH={}", mine)) || mine == PATH_FALLBACK,
+                "the hand's own PATH reached the command");
+        }
         for l in &lines {
-            assert!(!l.starts_with("PATH="), "the hand's PATH was inherited");
-            assert!(!l.starts_with("HOME="), "the hand's HOME was inherited");
+            if let Some(rest) = l.strip_prefix("PATH=") {
+                assert_eq!(rest, PATH_FALLBACK, "the command's PATH is not the fixed list");
+            }
         }
 
         // The three the hand adds are the same directory, and that directory is
@@ -3333,6 +3992,11 @@ mod tests {
         let mut want = vec![fmt!("AND=that"), fmt!("ONLY=this")];
         for name in TMP_VARS {
             want.push(fmt!("{}={}", name, tmp[0]));
+        }
+        for name in ENV_DEFAULTED {
+            if let Some(v) = default_env(name) {
+                want.push(fmt!("{}={}", name, v));
+            }
         }
         want.sort();
         assert_eq!(lines, want);
@@ -3454,7 +4118,7 @@ mod tests {
             Some(Resp::Started { .. }) => {},
             other => return Err(err!("Expected Started, got {:?}.", other; Test, Mismatch)),
         }
-        assert_eq!(res!(runner.signal("s1", Sig::Term)), Signalled::Sent);
+        assert_eq!(res!(runner.signal("s1", Sig::Term).await), Signalled::Sent);
 
         let rs = collect(&mut rx).await;
         let (_, timed_out, killed, _) = match ended(&rs) {
@@ -3474,8 +4138,8 @@ mod tests {
         res!(runner.spawn(exec("s2", &["/bin/echo", "done"]), tx).await);
         let _ = collect(&mut rx).await;
 
-        assert_eq!(res!(runner.signal("s2", Sig::Kill)), Signalled::Finished);
-        assert_eq!(res!(runner.signal("never-existed", Sig::Term)), Signalled::Finished);
+        assert_eq!(res!(runner.signal("s2", Sig::Kill).await), Signalled::Finished);
+        assert_eq!(res!(runner.signal("never-existed", Sig::Term).await), Signalled::Finished);
         Ok(())
     }
 
@@ -3511,7 +4175,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(600)).await;
         assert!(group_members(pid) >= 2, "the grandchild never appeared");
 
-        assert_eq!(res!(runner.signal("g1", Sig::Kill)), Signalled::Sent);
+        assert_eq!(res!(runner.signal("g1", Sig::Kill).await), Signalled::Sent);
         let _ = collect(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(600)).await;
 
@@ -4176,6 +4840,15 @@ mod tests {
         for name in TMP_VARS {
             want.push(fmt!("{}={}", name, scratch));
         }
+        // The two the hand fills in where the request named neither. Neither
+        // says anything about the fence: `HOME` is the user's own home and
+        // `PATH` is the fixed system list, and the assertion below is what holds
+        // that.
+        for name in ENV_DEFAULTED {
+            if let Some(v) = default_env(name) {
+                want.push(fmt!("{}={}", name, v));
+            }
+        }
         want.sort();
         assert_eq!(pairs, want,
             "the command's environment is not exactly what it was given");
@@ -4395,7 +5068,7 @@ mod tests {
             "the registry took a second entry under one identifier");
 
         // And the first is still reachable, which is the property that was lost.
-        assert_eq!(res!(runner.signal("same", Sig::Kill)), Signalled::Sent);
+        assert_eq!(res!(runner.signal("same", Sig::Kill).await), Signalled::Sent);
         // Drained to the closing message rather than to the first thing that
         // ends a run: the refusal for the second exec is already in the queue.
         while let Some(r) = rx.recv().await {
@@ -4606,6 +5279,13 @@ mod tests {
             None    => return Err(err!("No Ended was sent."; Test, Missing)),
         };
         assert!(timed_out, "the run did not time out, so this proved nothing");
+        // Nothing was recorded as left standing. A group that has been killed is
+        // empty, and a reaped member of it still answers in `/proc` for as long
+        // as it takes to be collected -- so a probe that counted one would
+        // announce a run as having left processes behind when it had not, and
+        // would hold its scratch open for them. See `counts_as_member`.
+        assert_eq!(res!(waiter.standing_count()), 0,
+            "a timed-out run was recorded as having left its process group standing");
         assert!(res!(scratches("scr-timeout")).is_empty(),
             "the scratch survived a timeout");
 
@@ -4620,13 +5300,15 @@ mod tests {
         }
         assert_eq!(res!(scratches("scr-killed")).len(), 1,
             "a running command had no scratch directory, so nothing was removed later");
-        assert_eq!(res!(killer.signal("scr-killed", Sig::Kill)), Signalled::Sent);
+        assert_eq!(res!(killer.signal("scr-killed", Sig::Kill).await), Signalled::Sent);
         let rs = collect(&mut rx).await;
         let (_, _, killed, _) = match ended(&rs) {
             Some(e) => e,
             None    => return Err(err!("No Ended was sent."; Test, Missing)),
         };
         assert!(killed, "the run was not killed, so this proved nothing");
+        assert_eq!(res!(killer.standing_count()), 0,
+            "a killed run was recorded as having left its process group standing");
         assert!(res!(scratches("scr-killed")).is_empty(),
             "the scratch survived a kill");
         Ok(())
@@ -4901,6 +5583,553 @@ mod tests {
         Ok(())
     }
 
+    /// A script that reads `$HOME` runs, and the command is told only the two
+    /// names the hand fills in.
+    ///
+    /// The measured failure is the whole reason this exists: a daimon ran
+    /// `bash dev/world.sh 3 --up` and it died on its first line with
+    /// `HOME: unbound variable`, because the environment was the caller's pairs
+    /// and the caller sends none unless a toolkit was granted.  Nearly every
+    /// script under `dev/` in the app reads `$HOME`, so nearly every one of them
+    /// died the same way.
+    ///
+    /// Both directions are checked.  A `set -u` script that reads `$HOME` and
+    /// `$PATH` has to run and print real values; and the environment has to hold
+    /// no more than the caller's pairs, the three scratch names and these two,
+    /// because a default nobody argued for is a variable a command can be
+    /// steered by.
+    #[tokio::test]
+    async fn a_command_is_given_a_home_and_a_path() -> Outcome<()> {
+        let base = res!(fixture("env-defaults"));
+        let ws   = base.join("ws");
+        let sh   = ws.join("reads-home.sh");
+        res!(std::fs::write(&sh, concat!(
+            "#!/bin/bash\n",
+            "set -u\n",
+            "echo \"HOME=$HOME\"\n",
+            "echo \"PATH=$PATH\"\n",
+            "env | sort\n")));
+
+        let rs = res!(run(exec_at("env-defaults",
+            &["/bin/bash", &fmt!("{}", sh.display())], &ws)).await);
+        let said = text_of(&rs, Stream::Out);
+        let (exit, ..) = match ended(&rs) {
+            Some(e) => e,
+            None    => return Err(err!("No Ended was sent: {:?}", rs; Test, Missing)),
+        };
+        assert_eq!(exit, 0,
+            "a script that reads $HOME under `set -u` did not run: {}{}",
+            said, text_of(&rs, Stream::Err));
+
+        let home = match home_dir() {
+            Some(h) => h,
+            None    => return Err(err!(
+                "These tests need HOME to say what the hand would pass on."; Test, Missing)),
+        };
+        assert!(said.contains(&fmt!("HOME={}", home)),
+            "the command was given some other home: {}", said);
+        assert!(said.contains(&fmt!("PATH={}", PATH_FALLBACK)),
+            "the command was given some other path: {}", said);
+
+        // And nothing else. Named individually, because each of these is a
+        // separate decision recorded in the section above `ENV_DEFAULTED` and a
+        // later edit that adds one should have to change this line.
+        for refused in ["USER=", "LOGNAME=", "LANG=", "LC_ALL=", "SHELL=", "TERM="] {
+            assert!(!said.lines().any(|l| l.starts_with(refused)),
+                "the hand passed {} to a command: {}", refused, said);
+        }
+
+        // The caller's own pair wins, because a default is a floor and not a
+        // correction. The app sets HOME itself for a git grant.
+        let req = match exec_at("env-mine", &["/usr/bin/env"], &ws) {
+            Req::Exec { id, argv, cwd, stdin, timeout_ms, capture, fence, .. } =>
+                Req::Exec {
+                    id, argv, cwd, stdin, timeout_ms, capture, fence,
+                    env: vec![(fmt!("HOME"), fmt!("{}", ws.display()))],
+                    toolkits: Vec::new(),
+                },
+            other => other,
+        };
+        let rs = res!(run(req).await);
+        let said = text_of(&rs, Stream::Out);
+        assert!(said.contains(&fmt!("HOME={}", ws.display())),
+            "the hand overrode a HOME the caller set: {}", said);
+        assert_eq!(said.lines().filter(|l| l.starts_with("HOME=")).count(), 1,
+            "HOME was set twice, so which one a program reads is luck: {}", said);
+        Ok(())
+    }
+
+    /// A toolchain folder this machine does not have is skipped; a workspace
+    /// root that is missing still refuses.
+    ///
+    /// `~/.config/git` is absent on the machine this was written on, and
+    /// `Toolkit::Git` grants it read access -- so ticking the Git toolkit
+    /// refused EVERY command the Diamond ran, with a sentence about a path the
+    /// user had never named.  Both halves are here because only the pair is the
+    /// rule: skipping a grant nobody asked for by name tightens the fence, and
+    /// skipping a root the USER marked would leave a fence that silently did not
+    /// cover what they marked.
+    #[test]
+    fn an_absent_toolchain_folder_is_skipped_and_a_missing_workspace_is_not() -> Outcome<()> {
+        let home = match home_dir() {
+            Some(h) => PathBuf::from(h),
+            None    => return Err(err!("This test needs HOME."; Test, Missing)),
+        };
+        let base = res!(fixture("kit-absent"));
+        let ws   = base.join("ws");
+        let kits = vec![fmt!("git"), fmt!("node"), fmt!("python"), fmt!("rust")];
+
+        // A toolkit path this machine does not have, named exactly as the app
+        // spells it. Chosen from the table rather than invented, so a machine
+        // that HAS them all makes this test say so instead of passing hollowly.
+        let absent = TOOLKIT_ROOTS.iter()
+            .map(|k| home.join(k.tail))
+            .find(|p| !p.exists());
+        let absent = match absent {
+            Some(p) => p,
+            None    => {
+                println!("[an_absent_toolchain_folder_is_skipped_and_a_missing_workspace_is_not] \
+                    SKIPPED: every toolchain folder in TOOLKIT_ROOTS exists here.");
+                return Ok(());
+            },
+        };
+
+        let mut spec = FenceSpec {
+            rw:   vec![fmt!("{}", ws.display())],
+            ro:   vec![fmt!("{}", absent.display())],
+            deny: Vec::new(),
+            net:  false,
+        };
+        // The clamp accepts it -- it is a root the grant implies -- and the fence
+        // would then refuse the command for a path that is simply not there.
+        assert_eq!(None, vet_roots(&ws, &spec, &kits),
+            "the clamp refused a toolchain root, so this test is measuring the wrong thing");
+        assert!(detected_fence().plan(&spec, &Unfenced::Refuse).is_err(),
+            "a fence naming {} resolved, so this machine cannot show the failure",
+            absent.display());
+
+        let gone = drop_absent_kit_roots(&mut spec, &kits);
+        assert_eq!(gone, vec![fmt!("{}", absent.display())],
+            "the absent toolchain root was not the thing dropped");
+        assert!(detected_fence().plan(&spec, &Unfenced::Refuse).is_ok(),
+            "the fence still will not resolve after the absent root was dropped");
+
+        // The other half. A workspace root that is missing is a fence that would
+        // not cover what the user marked, and it must keep refusing.
+        let ghost = base.join("ws/never-made");
+        let mut marked = FenceSpec {
+            rw:   vec![fmt!("{}", ghost.display())],
+            ro:   Vec::new(),
+            deny: Vec::new(),
+            net:  false,
+        };
+        let gone = drop_absent_kit_roots(&mut marked, &kits);
+        assert!(gone.is_empty(), "a workspace root was dropped: {:?}", gone);
+        assert_eq!(marked.rw, vec![fmt!("{}", ghost.display())]);
+        assert!(detected_fence().plan(&marked, &Unfenced::Refuse).is_err(),
+            "a marked folder that is not there was accepted");
+
+        // And a toolchain folder that IS there is left alone.
+        let present = TOOLKIT_ROOTS.iter()
+            .map(|k| home.join(k.tail))
+            .find(|p| p.exists());
+        if let Some(p) = present {
+            let mut have = FenceSpec {
+                rw:   vec![fmt!("{}", ws.display())],
+                ro:   vec![fmt!("{}", p.display())],
+                deny: Vec::new(),
+                net:  false,
+            };
+            let gone = drop_absent_kit_roots(&mut have, &kits);
+            assert!(gone.is_empty(), "a toolchain folder that exists was dropped: {:?}", gone);
+        }
+
+        // A request naming no toolkit drops nothing at all, whatever is missing:
+        // the eligibility comes from the toolkit and not from the path.
+        let mut none = FenceSpec {
+            rw:   Vec::new(),
+            ro:   vec![fmt!("{}", absent.display())],
+            deny: Vec::new(),
+            net:  false,
+        };
+        assert!(drop_absent_kit_roots(&mut none, &[]).is_empty(),
+            "a root was dropped for a toolkit the request never named");
+        Ok(())
+    }
+
+    /// A run that leaves a server behind is listed, reachable and stoppable --
+    /// and nothing else on the machine can reach it.
+    ///
+    /// The measured incident, in one test.  A daimon brought a dev server and a
+    /// mock provider up through `run`, the command that started them exited, and
+    /// then nothing could stop them: a later command's `kill` answered
+    /// "Operation not permitted" because Landlock scopes signals to the domain
+    /// that sent them, `/proc` is outside every fence so the pid could not be
+    /// found, and the teardown script swallowed the failed kill, reported success
+    /// and deleted its own pid files.  Two ports were held with no route to them.
+    ///
+    /// Four things are proved here and the third is the one that makes the other
+    /// three worth having:
+    ///
+    /// * the background process really is alive and really is in the run's group,
+    ///   measured from `/proc` by this test rather than by the code under test;
+    /// * the hand lists it, as `standing`, under the identifier the run was given;
+    /// * a SECOND fenced command cannot signal it -- which is the fault, still
+    ///   present, and the reason the hand has to be the one that can;
+    /// * the hand stops it, and afterwards the process is gone, the listing no
+    ///   longer holds it, and the run's scratch directory has been cleared.
+    #[tokio::test]
+    async fn a_run_that_leaves_a_group_standing_is_listed_and_can_be_stopped() -> Outcome<()> {
+        res!(clear_scratches("world-up"));
+        let base = res!(fixture("standing"));
+        let ws   = base.join("ws");
+        let pidf = ws.join("child.pid");
+        let sh   = ws.join("leaves-one.sh");
+        // The shape `dev/world.sh --up` has: start something, write down where it
+        // went, and return. Nothing here holds a port; the group is the point.
+        res!(std::fs::write(&sh, fmt!(concat!(
+            "#!/bin/bash\n",
+            "set -u\n",
+            "/bin/sleep 600 &\n",
+            "echo $! > {}\n",
+            "echo up\n"), pidf.display())));
+
+        let runner = res!(runner());
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Resp>(256);
+        let started = res!(runner.spawn(
+            exec_at("world-up", &["/bin/bash", &fmt!("{}", sh.display())], &ws), tx).await);
+        let pgid = match started {
+            Launch::Started(p) => p,
+            Launch::Refused    => return Err(err!(
+                "The run was refused: {:?}", collect(&mut rx).await; Test, Mismatch)),
+        };
+        let rs = collect(&mut rx).await;
+        let (exit, ..) = match ended(&rs) {
+            Some(e) => e,
+            None    => return Err(err!("No Ended was sent: {:?}", rs; Test, Missing)),
+        };
+        assert_eq!(exit, 0, "the script did not run: {}", text_of(&rs, Stream::Err));
+
+        // Measured from /proc by this test, so that the listing below is checked
+        // against the machine and not against the same reading of it.
+        let child: u32 = match std::fs::read_to_string(&pidf) {
+            Ok(t)  => match t.trim().parse() {
+                Ok(n)  => n,
+                Err(e) => return Err(err!(e, "The script wrote {:?} as a pid.", t; Test, Invalid)),
+            },
+            Err(e) => return Err(err!(e,
+                "The script did not write down what it started."; Test, Missing)),
+        };
+        assert_eq!(Some(pgid), proc_pgrp(child),
+            "the background process is not in the run's process group, so this test is not \
+            measuring what it says it is");
+
+        // The hand said so on the way out, in a sentence naming the one way in.
+        let note = rs.iter().find_map(|r| match r {
+            Resp::Error { id: Some(i), message } if i == "world-up" => Some(message.clone()),
+            _ => None,
+        });
+        let note = match note {
+            Some(n) => n,
+            None    => return Err(err!(
+                "The run ended holding a process group and said nothing: {:?}", rs;
+                Test, Missing)),
+        };
+        assert!(note.contains("world-up"), "the note does not name the run: {}", note);
+        assert!(note.contains(&fmt!("{}", pgid)), "the note does not name the group: {}", note);
+
+        // And it is in the listing, as standing, under that identifier.
+        assert_eq!(res!(runner.live_count()), 0);
+        assert_eq!(res!(runner.standing_count()), 1);
+        let (runs, more) = res!(runner.runs().await);
+        assert_eq!(more, 0);
+        assert_eq!(runs.len(), 1, "{:?}", runs);
+        assert_eq!(runs[0].id, "world-up");
+        assert_eq!(runs[0].pid, pgid);
+        assert_eq!(runs[0].state, RunState::Standing);
+        assert!(runs[0].what.contains("leaves-one.sh"),
+            "the listing does not say what was run: {:?}", runs[0]);
+
+        // THE FAULT, still there and now shown rather than described: a second
+        // command cannot signal the first one's leftovers. This is why the hand
+        // has to be the one that can.
+        let rs = res!(run(exec_at("try-kill",
+            &["/bin/kill", "-s", "TERM", "--", &fmt!("-{}", pgid)], &ws)).await);
+        let (exit, ..) = match ended(&rs) {
+            Some(e) => e,
+            None    => return Err(err!("No Ended was sent: {:?}", rs; Test, Missing)),
+        };
+        let said = fmt!("{}{}", text_of(&rs, Stream::Out), text_of(&rs, Stream::Err));
+        assert_ne!(exit, 0,
+            "a fenced command signalled another run's process group, so the leak this test is \
+            about no longer needs the hand to fix it: {}", said);
+        assert!(std::fs::metadata(fmt!("/proc/{}", child)).is_ok(),
+            "the second command killed it after all");
+
+        // The hand can, and afterwards the machine agrees.
+        let scratch = res!(scratches("world-up"));
+        assert_eq!(scratch.len(), 1, "the run's scratch was cleared while its group stood");
+        assert_eq!(res!(runner.signal("world-up", Sig::Kill).await), Signalled::Finished,
+            "the hand could not stop a group it started");
+        assert!(std::fs::metadata(fmt!("/proc/{}", child)).is_err(),
+            "the background process is still there after the hand stopped its group");
+        assert_eq!(res!(runner.standing_count()), 0, "the stopped run is still in the registry");
+        let (runs, _) = res!(runner.runs().await);
+        assert!(runs.is_empty(), "the listing still holds a run that is gone: {:?}", runs);
+        assert!(res!(scratches("world-up")).is_empty(),
+            "the run's temporary directory outlived the group it was held for");
+
+        // And asking again is not an error.
+        assert_eq!(res!(runner.signal("world-up", Sig::Kill).await), Signalled::Finished);
+        Ok(())
+    }
+
+    /// An identifier holding a standing group cannot be given to a second
+    /// command.
+    ///
+    /// It is the only door there is: a group a run left behind is reachable by
+    /// that name and by nothing else at all, so letting a second run take the
+    /// name would shut the first beyond reach exactly as `REVIEW.md` §3.6
+    /// described for two live runs.
+    #[tokio::test]
+    async fn an_identifier_holding_a_standing_group_is_not_reissued() -> Outcome<()> {
+        let base = res!(fixture("standing-id"));
+        let ws   = base.join("ws");
+        let sh   = ws.join("leaves-one.sh");
+        res!(std::fs::write(&sh, concat!(
+            "#!/bin/bash\n",
+            "set -u\n",
+            "/bin/sleep 600 &\n")));
+
+        let runner = res!(runner());
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Resp>(256);
+        res!(runner.spawn(
+            exec_at("taken", &["/bin/bash", &fmt!("{}", sh.display())], &ws), tx).await);
+        let _ = collect(&mut rx).await;
+        assert_eq!(res!(runner.standing_count()), 1, "nothing was left standing to test with");
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Resp>(256);
+        res!(runner.spawn(exec_at("taken", &["/bin/echo", "hi"], &ws), tx).await);
+        let rs = collect(&mut rx).await;
+        let reason = res!(refusal(&rs));
+        assert!(reason.contains("taken"), "{}", reason);
+        assert!(reason.contains("still running"), "{}", reason);
+        assert!(reason.contains("different id"),
+            "the refusal leaves the caller no way forward: {}", reason);
+
+        assert_eq!(res!(runner.signal("taken", Sig::Kill).await), Signalled::Finished);
+        Ok(())
+    }
+
+    /// Nothing this hand started outlives the conversation, standing groups
+    /// included.
+    ///
+    /// A server a run left behind is reachable through this hand and through
+    /// nothing else, so a hand that exited without stopping it would leave it
+    /// holding its port until somebody found it from outside the app -- which is
+    /// the incident, arriving by a different door.
+    #[tokio::test]
+    async fn a_standing_group_does_not_outlive_the_hand() -> Outcome<()> {
+        let base = res!(fixture("standing-bye"));
+        let ws   = base.join("ws");
+        let pidf = ws.join("child.pid");
+        let sh   = ws.join("leaves-one.sh");
+        res!(std::fs::write(&sh, fmt!(concat!(
+            "#!/bin/bash\n",
+            "set -u\n",
+            "/bin/sleep 600 &\n",
+            "echo $! > {}\n"), pidf.display())));
+
+        let runner = res!(runner());
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Resp>(256);
+        res!(runner.spawn(
+            exec_at("bye-world", &["/bin/bash", &fmt!("{}", sh.display())], &ws), tx).await);
+        let _ = collect(&mut rx).await;
+        let child: u32 = match std::fs::read_to_string(&pidf) {
+            Ok(t)  => match t.trim().parse() {
+                Ok(n)  => n,
+                Err(_) => return Err(err!("The script wrote {:?} as a pid.", t; Test, Invalid)),
+            },
+            Err(e) => return Err(err!(e, "The script started nothing."; Test, Missing)),
+        };
+        assert!(std::fs::metadata(fmt!("/proc/{}", child)).is_ok());
+
+        assert_eq!(res!(runner.stop_all().await), 1, "the goodbye did not reach a standing group");
+        assert!(std::fs::metadata(fmt!("/proc/{}", child)).is_err(),
+            "a process the hand started outlived the hand's own goodbye");
+        assert_eq!(res!(runner.standing_count()), 0);
+        Ok(())
+    }
+
+    /// A `/proc` line is read for the right field, and a zombie is not counted.
+    ///
+    /// The field offsets are the trap: the second field is the executable's name
+    /// in brackets and a file name may hold brackets and spaces, so counting from
+    /// the front reads the wrong number and reads it plausibly.  The zombie is
+    /// the other one: an exit status waiting to be collected is not a process
+    /// holding a port, and counting one would make every killed run look as
+    /// though it had left something behind.
+    #[test]
+    fn a_zombie_is_not_a_process_group_still_standing() {
+        // A real line, from a `sleep` in group 4242.
+        let live = "4243 (sleep) S 4242 4242 4242 0 -1 1077936128 96 0 0 0 0 0";
+        assert!(counts_as_member(live, 4242));
+        assert!(!counts_as_member(live, 4241), "the wrong group was matched");
+
+        // The same process, reaped and not yet collected.
+        let dead = "4243 (sleep) Z 4242 4242 4242 0 -1 1077936128 96 0 0 0 0 0";
+        assert!(!counts_as_member(dead, 4242),
+            "a zombie was counted as a process still holding its group open");
+
+        // A name that looks like the rest of the line. Counting from the front
+        // reads 7 as the group here, which is a plausible number and wrong.
+        let awkward = "4243 (a b) c 5 6) R 4242 4242 4242 0 -1 0 1 0 0 0 0 0";
+        assert!(counts_as_member(awkward, 4242),
+            "the fields were counted from the wrong side of the name");
+        assert!(!counts_as_member(awkward, 7));
+
+        // Nothing usable is not a member, in either direction.
+        assert!(!counts_as_member("", 4242));
+        assert!(!counts_as_member("4243 (sleep", 4242));
+        assert!(!counts_as_member("4243 (sleep) S", 4242));
+    }
+
+    /// A signal that did not take is never reported as a stop.
+    ///
+    /// The classifier and not the plumbing, because this one judgement is the
+    /// defect: `dev/world.sh --down` swallowed a failed kill, said "stopped" and
+    /// deleted its pid files, and there was no arm anywhere in the hand that
+    /// could have contradicted it.  Every combination is named, including the two
+    /// that are easy to get backwards -- a `kill` that failed while the group
+    /// died anyway is a stop, and a `kill` that succeeded while the group stands
+    /// is not.
+    #[test]
+    fn a_signal_that_did_not_take_is_never_reported_as_a_stop() {
+        let why = || Some(fmt!("/bin/kill exited 1 (kill: (-4242) - Operation not permitted)"));
+
+        // The group is gone. The probe outranks the exit status, because BusyBox
+        // exits 1 on the POSIX spelling and empties the group anyway.
+        assert_eq!(signalled("r", 4242, None, Some(false)), Signalled::Finished);
+        assert_eq!(signalled("r", 4242, why(), Some(false)), Signalled::Finished);
+
+        // The group is standing and the signal was refused. THE ONE THAT MATTERS.
+        match signalled("r", 4242, why(), Some(true)) {
+            Signalled::Failed(s) => {
+                assert!(s.contains("'r'"), "{}", s);
+                assert!(s.contains("4242"), "the sentence does not name the group: {}", s);
+                assert!(s.contains("still running"), "{}", s);
+                assert!(s.contains("Operation not permitted"),
+                    "the sentence drops what the machine said: {}", s);
+            },
+            other => panic!("a refused signal on a standing group answered {:?}", other),
+        }
+
+        // The group is standing and the signal was accepted: the signal went, and
+        // that is all this says. A TERM is a request.
+        assert_eq!(signalled("r", 4242, None, Some(true)), Signalled::Sent);
+
+        // The machine would not answer. Not a failure, and not a stop either.
+        assert_eq!(signalled("r", 4242, None, None), Signalled::Sent);
+        match signalled("r", 4242, why(), None) {
+            Signalled::Failed(_) => (),
+            other => panic!("a refused signal nobody could check answered {:?}", other),
+        }
+    }
+
+    /// A fenced command cannot create a symbolic link, and the kernel is what    /// A fenced command cannot create a symbolic link, and the kernel is what
+    /// refuses it.
+    ///
+    /// The link is the leg a daimon supplies to a leak whose other leg is
+    /// somewhere else entirely.  Ore absorbs the CONTENT of a link that leaves
+    /// the working copy, under the link's own path, into a signed history with
+    /// no forget; a global `post-commit` hook runs `ore mark` from outside the
+    /// fence on the owner's key, so `ln -s ../outside/other.txt leak.txt` inside
+    /// the workspace is the whole of the attack.  Nothing about it is Ore's:
+    /// every archiver, uploader and packager that follows a link is the same
+    /// shape, which is why the capability is withheld here rather than a target
+    /// check being written in one of them.
+    ///
+    /// Checking the target instead was considered and is weaker twice over: it
+    /// races a repoint between the check and the read, and it cannot see a
+    /// `symlink(2)` a compiler makes rather than an `ln` a model runs.
+    /// Withholding `LANDLOCK_ACCESS_FS_MAKE_SYM` has neither weakness, because
+    /// there is no call to make.
+    ///
+    /// Both halves are here.  The control runs the same `ln` on the same paths
+    /// with no fence, so a machine where `ln` is missing or the fixture is wrong
+    /// says so instead of passing; the fenced run then has to fail, and the link
+    /// has to be absent afterwards.
+    #[tokio::test]
+    async fn a_fenced_command_cannot_make_a_symlink() -> Outcome<()> {
+        let base = res!(fixture("symlink-refused"));
+        let ws   = base.join("ws");
+
+        // Unfenced first. Without this, a fenced `ln` that failed because the
+        // program is not there would read as the fence doing its job.
+        let control = ws.join("control.txt");
+        let out = res!(std::process::Command::new("/bin/ln")
+            .args(["-s", "../outside/other.txt"])
+            .arg(&control)
+            .output());
+        assert!(out.status.success(),
+            "the control link was not made, so this machine cannot show the \
+            difference: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(res!(std::fs::symlink_metadata(&control)).file_type().is_symlink(),
+            "the control wrote something that is not a link");
+        res!(std::fs::remove_file(&control));
+
+        // And now the same call, inside a fence that grants the workspace for
+        // writing. Everything about it is permitted except the one syscall.
+        let leak = ws.join("leak.txt");
+        let req = Req::Exec {
+            id:         fmt!("symlink-refused"),
+            argv:       vec![fmt!("/bin/ln"), fmt!("-s"), fmt!("../outside/other.txt"),
+                             fmt!("{}", leak.display())],
+            cwd:        fmt!("{}", ws.display()),
+            env:        Vec::new(),
+            stdin:      None,
+            timeout_ms: 30_000,
+            capture:    Capture::Both,
+            fence:      FenceSpec {
+                rw:   vec![fmt!("{}", ws.display())],
+                ro:   Vec::new(),
+                deny: Vec::new(),
+                net:  false,
+            },
+            toolkits: Vec::new(),
+        };
+        let rs = res!(run(req).await);
+        let said = fmt!("{}{}", text_of(&rs, Stream::Out), text_of(&rs, Stream::Err));
+        let (exit, ..) = match ended(&rs) {
+            Some(e) => e,
+            None    => return Err(err!("No Ended was sent: {:?}", rs; Test, Missing)),
+        };
+        assert_ne!(exit, 0,
+            "a fenced command created a symbolic link: MAKE_SYM is granted, so \
+            `ln -s ../outside/other.txt` succeeded inside the fence. {}", said);
+        assert!(!leak.exists() && std::fs::symlink_metadata(&leak).is_err(),
+            "the link is on disk at {} although the command reported failure",
+            leak.display());
+        // Named, so that a refusal for some other reason -- a missing program, a
+        // cwd outside the fence -- cannot pass for this one.
+        assert!(said.contains("denied") || said.contains("not permitted"),
+            "the command failed for some reason other than the fence:\n{}", said);
+
+        // A file the fence DOES permit is still written, so what was withheld is
+        // one capability and not the workspace.
+        let rs = res!(run(exec_at(
+            "symlink-ordinary",
+            &["/usr/bin/touch", &fmt!("{}", ws.join("ordinary.txt").display())],
+            &ws)).await);
+        let (exit, ..) = match ended(&rs) {
+            Some(e) => e,
+            None    => return Err(err!("No Ended was sent: {:?}", rs; Test, Missing)),
+        };
+        assert_eq!(exit, 0, "withholding MAKE_SYM took ordinary writing with it: {}{}",
+            text_of(&rs, Stream::Out), text_of(&rs, Stream::Err));
+        Ok(())
+    }
+
     /// A name is readable at the front and unguessable at the back.
     #[test]
     fn a_scratch_name_is_readable_and_unguessable() {
@@ -4955,6 +6184,55 @@ mod tests {
         // The first explanation stands; a later success does not erase it.
         note_signalling(&mut slot, Ok(Signalling::Sent));
         assert!(slot.is_some());
+    }
+
+    /// The two cache folders a build in this repository actually writes are
+    /// granted by name, and `~/.cache` itself never is.
+    ///
+    /// Both are here because the pair is the rule.  Without the rows the clamp
+    /// refuses the whole command when the app sends the grant, so a fenced build
+    /// is worse off than an unfenced one -- and the cheap repair, granting
+    /// `~/.cache`, would hand a command the pip cache, the go build cache and
+    /// whatever else lives there, none of which any toolkit lent it.
+    #[test]
+    fn the_named_cache_roots_are_granted_and_the_cache_itself_is_not() -> Outcome<()> {
+        let base = res!(fixture("cache-roots"));
+        let ws   = base.join("ws");
+        let home = match home_dir() {
+            Some(h) => PathBuf::from(h),
+            None    => return Err(err!("This test needs HOME."; Test, Missing)),
+        };
+        let rw = |p: &Path| -> FenceSpec {
+            FenceSpec {
+                rw:   vec![fmt!("{}", ws.display()), fmt!("{}", p.display())],
+                ro:   Vec::new(),
+                deny: Vec::new(),
+                net:  false,
+            }
+        };
+        let kits = |names: &[&str]| -> Vec<String> {
+            names.iter().map(|n| fmt!("{}", n)).collect()
+        };
+
+        let targets = home.join(".cache/cargo-targets");
+        let worlds  = home.join(".cache/daimond");
+        assert_eq!(None, vet_roots(&ws, &rw(&targets), &kits(&["rust"])),
+            "the Rust toolkit cannot write the target directory this repository builds into");
+        assert_eq!(None, vet_roots(&ws, &rw(&worlds), &kits(&["node"])),
+            "the Node toolkit cannot write a world's own scratch root");
+
+        // Each belongs to ONE toolkit, and a grant of the other does not reach it.
+        assert!(vet_roots(&ws, &rw(&targets), &kits(&["node"])).is_some(),
+            "a target directory was granted to a request that named only Node");
+        assert!(vet_roots(&ws, &rw(&worlds), &kits(&["rust"])).is_some(),
+            "a world's scratch root was granted to a request that named only Rust");
+
+        // And the folder above them is never granted, however many toolkits are
+        // in play. `~/.cache` holds the pip and go caches as well.
+        assert!(vet_roots(&ws, &rw(&home.join(".cache")),
+                &kits(&["rust", "node", "python", "go", "git"])).is_some(),
+            "the whole of ~/.cache was granted");
+        Ok(())
     }
 
     /// A fence may name only roots this hand's grant could imply.
@@ -5045,6 +6323,7 @@ mod tests {
             home.clone(),
             home.join(".ssh"),
             home.join(".config"),
+            home.join(".cache"),          // the folder itself, although two tails under it are granted
             home.join(".cargo"),          // the folder itself: 2.2 GB, and the crates.io token
             base.join("outside"),
         ] {

@@ -176,6 +176,76 @@ impl Breaks {
 // draws the rest of the screen wrong. Text with a lossy conversion would be smaller
 // and would silently corrupt exactly the case a terminal exists to handle.
 
+// ── What a run leaves behind, and how it is reached afterwards ──────
+//
+// A command may outlive itself.  `bash dev/world.sh 3 --up` starts a dev server
+// and a mock provider in the background and exits; the direct child is reaped,
+// its process GROUP is not empty, and the two servers go on holding their ports.
+// That is a legitimate thing to want -- a browser verifier needs a server to
+// drive -- so the answer is not to refuse it.
+//
+// The answer that was there was worse than none.  Nothing recorded the group, so
+// nothing could reach it; the fence scopes signals to the Landlock domain that
+// sent them, so a LATER command cannot signal an earlier one's leftovers and gets
+// "Operation not permitted"; `/proc` is outside the fence, so the pid cannot even
+// be found; and `dev/world.sh --down` swallowed the failed kill with `2>/dev/null`,
+// reported success and deleted its own pid files.  Two servers were left on 8780
+// and 9102 with no route to them and a person had to clear them from outside.
+//
+// So the hand keeps what it started.  [`Req::Runs`] asks what is still going and
+// [`Req::Signal`] stops one of them BY THE IDENTIFIER THE RUN WAS GIVEN -- never
+// a pid, never a name, never a pattern, because a hand that took any of those
+// would be `pkill` with extra steps.  Only a group this hand's own launcher
+// created can be named at all, which is the whole of the guard.
+//
+// There is deliberately no "stopped" answer.  A signal that could not be
+// delivered comes back as [`Resp::Error`]; a signal that could is confirmed by
+// asking again, because the listing is a measurement and an acknowledgement is a
+// claim.  Reporting success on a kill that failed is the defect this exists to
+// close, and the cheapest way not to write it again is to have nowhere to write
+// it.
+
+/// Where a run this hand started has got to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RunState {
+    Running,	// the command itself has not finished
+    Standing,	// the command has finished and its process group has not emptied
+}
+
+impl RunState {
+    /// The word this travels under.
+    pub fn word(&self) -> &'static str {
+        match self {
+            Self::Running	=> "running",
+            Self::Standing	=> "standing",
+        }
+    }
+}
+
+/// One command this hand started, as [`Resp::Runs`] reports it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Run {
+    pub id:    String,	// the identifier the run was given, and the way to signal it
+    pub pid:   u32,		// the process, which is also its group
+    pub what:  String,	// the command line, cut to [`RUN_WHAT_MAX`]
+    pub state: RunState,
+    pub secs:  u32,		// how long it has been in that state
+}
+
+/// The longest command line a listing carries for one run.
+///
+/// Enough to recognise a command by and not enough for a listing of many runs to
+/// approach [`FRAME_MAX`].  A cut is marked, because a command line a reader
+/// takes for whole is one they will try to run again.
+pub const RUN_WHAT_MAX: usize = 160;
+
+/// The most runs one [`Resp::Runs`] carries.
+///
+/// A listing is bounded so that a page asking what is running cannot be answered
+/// with a frame it must then refuse.  What did not fit is COUNTED rather than
+/// dropped -- see [`Resp::Runs`]'s `more`.
+pub const RUNS_MAX: usize = 200;
+
 /// A message from the page to the hand.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Req {
@@ -324,6 +394,13 @@ pub enum Req {
         /// The new size.
         size: PtySize,
     },
+    /// What is this hand still running, including what a finished run left
+    /// standing.
+    ///
+    /// Takes nothing, on purpose.  A field would be a filter and a filter is a
+    /// selector, and the one selector this message must not grow is one that
+    /// names a process the hand did not start.
+    Runs,
     /// The page is going away; stop everything and exit.
     Bye,
 }
@@ -442,6 +519,15 @@ pub enum Resp {
         exit:   i32,
         /// Whether a signal ended it rather than the program itself.
         killed: bool,
+    },
+    /// Everything this hand started that has not finished going.
+    ///
+    /// The honest picture and not a receipt: a run listed here was measured a
+    /// moment ago, and a run absent from it is one the hand can no longer reach.
+    /// After a [`Req::Signal`] this is what says whether the signal took.
+    Runs {
+        runs: Vec<Run>,
+        more: u32,	// how many did not fit, past [`RUNS_MAX`]
     },
     /// Something went wrong that is nobody's fault in particular.
     Error {

@@ -1547,8 +1547,10 @@
 	'spend.balance':         'balance',
 	'spend.tok':             'tok',
 	// The three cells of the rail's spend row. Short: they sit under a figure.
-	'spend.session_short':   'Session',
-	// i18n-family: spend.period_ = week month
+	// `day` is local midnight to now -- a calendar day, not a rolling 24h, so a
+	// late-evening figure does not still carry yesterday morning's spend.
+	// i18n-family: spend.period_ = day week month
+	'spend.period_day':      'Today',
 	'spend.period_week':     'Week',
 	'spend.period_month':    'Month',
 	'spend.no_turns':        'No turns in this window yet.',
@@ -2024,6 +2026,9 @@
 	// account strip and the guide say the same words about the same idea.
 	'attach.ws_mark':      'Workspace',
 	'attach.ws_add':       'Mark a folder into the workspace',
+	'attach.add_mark':     'Mark a folder in',
+	'attach.mark_note':    'Ticking a FOLDER marks it in: this workspace may then read and change what is inside. Ticking a file only puts it in front of the model.',
+	'attach.mark_focus':   'Mark this folder into {name}, so its daimon may read and change what is inside',
 	'attach.ws_help':      'The folders this chat may read and change. Marking one in is the permission, and nothing will ask you again.',
 	'attach.ws_on':        'In this chat’s workspace: it may read and change what is inside. Press to take it out.',
 	'attach.ws_off':       'Not in the workspace, so this chat cannot open it. Press to mark it in.',
@@ -2051,6 +2056,14 @@
 	'dws.detach_dir':      'Stop keeping this folder with {name}',
 	'dws.elsewhere':       'Lives in the workspace',
 	'dws.readonly':        'Read only',
+	'dws.showing':         'Showing',
+	'dws.reach':           'Reach',
+	'dws.reach_help':      'The folders this Diamond’s daimon may write in. Shown in both trees, because it is true in both.',
+	'dws.reach_own':       'its own folder',
+	'dws.reach_search':    'A search that names no path looks in these and nowhere else.',
+	'dws.reach_none':      'Nothing else is marked in, so {name}’s daimon can write nowhere else of yours — and a search that names no path looks only here.',
+	'dws.mark_here':       'Mark “{name}” in',
+	'dws.mark_here_help':  'Put the folder you are looking at into {name}’s workspace. Its daimon may then read and change what is inside, and a search that names no path will look there.',
 	'dws.kits':            'Toolchains',
 	'dws.kits_help':       'Which compilers and package managers a command from this Diamond may reach on your computer. Off unless you say so; no daimon chooses this.',
 	'dws.kit_on':          'Grant the {kit} toolchain to {name}',

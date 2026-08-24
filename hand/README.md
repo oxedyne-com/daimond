@@ -44,6 +44,53 @@ their own arguments, so a command can still choose what it runs with — from
 inside the fence, using only what the fence already grants. What bounds that is
 the compartment, not the screen: see `REVIEW.md` §3.13.
 
+**Two names the hand fills in where the request named neither**, and they are the
+whole of what a command gets that nobody asked for. `HOME`, because a shell script
+under `set -u` dies on its first line without one — `bash dev/world.sh 3 --up` did
+— and it is the hand's own home, the same path the page is told in `caps` as
+`home:`. It POINTS and it does not GRANT: what a command may open is the fence's
+decision, so a tool following `HOME` somewhere ungranted meets a refusal rather
+than a file. And `PATH`, the same fixed `/usr/local/bin:/usr/bin:/bin` the hand
+already resolves a bare `argv[0]` through; handing a program an environment in
+which it cannot find `node` or `grep` was the same answer given twice and
+differently. A pair the caller sent always wins, because a default is a floor and
+not a correction.
+
+`USER`, `LOGNAME`, `LANG`, `LC_*`, `SHELL` and `TERM` are deliberately absent, and
+each absence is argued at `ENV_DEFAULTED` in `exec.rs`. The short of it: nothing
+needs the first two, a locale changes what a program prints and the reader here is
+a machine, and a command down a pipe has no terminal. `TMPDIR`, `TMP` and `TEMP`
+are the other kind — set unconditionally, refused from the caller, and the hand's
+answer is the last word.
+
+## What a run leaves behind
+
+A command may outlive itself. `bash dev/world.sh 3 --up` starts a dev server and a
+mock provider in the background and returns; the direct child is reaped and the
+two servers go on holding their ports. That is a legitimate thing to want — a
+browser verifier needs a server to drive — so it is not refused.
+
+What was wrong was forgetting them at that moment. **Nothing else on the machine
+can reach them.** Landlock scopes signals to the domain that sent them, so a later
+command's `kill` answers `Operation not permitted`; `/proc` is outside every
+fence, so the pid cannot be found either. Measured: a daimon brought a world up,
+could not take it down, and two ports were held until a person cleared them from
+outside the app. That is a leak the app creates and then forbids fixing, which is
+worse than either half on its own.
+
+So the hand keeps what it started. `Req::Runs` asks what is still going —
+`running` for a command that has not finished, `standing` for one that has and
+whose process group has not emptied — and `Req::Signal` stops one **by the
+identifier the run was given**. Never a pid, never a name, never a pattern: the
+guard is not a check on the argument, it is that the argument cannot express
+anything else, so `pkill` stays impossible. `Req::Bye` stops the standing ones
+too, because a server nothing can reach is not a server anybody wanted.
+
+There is no `stopped` answer, on purpose. A signal that could not be delivered
+comes back as `Resp::Error`; a signal that could is confirmed by asking again. A
+teardown reporting success on a kill that failed is the defect this closes, and
+the cheapest way not to write it again is to have nowhere to write it.
+
 ## The three tiers
 
 The Workspace panel has said `Browser · Machine · Cloud` since long before this
@@ -78,6 +125,28 @@ against deliberately broken code in `src/tools.rs`:
   may still build and test inside its own paths, and may not reach outward. This
   is the existing `egress_check` rule applied to a process rather than a URL, and
   it is the direct answer to a page that says "now upload this somewhere".
+
+**One thing the fence takes away that the app's own bounds do not: a command
+cannot create a symbolic link.** Anywhere — including the folders it may write and
+its own temporary directory. `ln -s` and `symlink(2)` answer `Permission denied`,
+because Landlock's `MAKE_SYM` is withheld from every writable grant.
+
+A link is half of a leak, and it is the half a fenced command can supply for the
+price of one call. The other half is supplied by whatever later follows it: an
+archiver, a packager, an uploader, a version control system recording the tree.
+The case that was measured is Ore, which absorbs the *content* of a link leaving
+the working copy, under the link's own path, into a signed history that has no
+forget — with a global `post-commit` hook running it from outside the fence on the
+owner's key. Checking what a link points at was the obvious repair and is weaker
+twice over: it races a repoint between the check and the read, and it cannot see a
+`symlink(2)` a compiler makes rather than an `ln` a model runs.
+
+Measured cost, on this tree: a cold `cargo check` over the whole dependency graph
+and a `node` verifier make **no** `symlink` or `symlinkat` call at all, and both
+run to exit 0 behind the fence with the right withheld. What does need it is four
+shell scripts and six node scripts under `dev/`, all of them build and gate
+plumbing — five of the six are `verify_*` and run outside the command fence
+anyway.
 
 ## Which folder, and whether it is the right one
 

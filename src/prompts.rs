@@ -131,7 +131,9 @@ impl Role {
 	/// [`Tool::FileShow`](crate::tools::Tool::FileShow) refuses it for that reason --
 	/// several workers run at once and the panel is one panel.
 	///
-	/// This exists so [`SHOW_NOTE`] does not reach the actor it is false for.
+	/// This exists so [`SHOW_NOTE`], [`FOLD_NOTE`] and [`VERIFY_NOTE`] do not reach the actor
+	/// all three are false for -- and the third answers here for a reason of its own: a worker
+	/// holds `Tool::Verify` and is refused it at the call, for working with nobody watching.
 	/// [`DEFAULT_CHAT`] records the same lesson from the other side: the paragraph
 	/// about dispatching workers is in the chat's own default rather than composed in,
 	/// because it is false for the daimon. Text placed in the wrong default reaches
@@ -162,9 +164,10 @@ impl Role {
 	/// compactor gets nothing appended at all, since its output is prose nobody
 	/// parses.
 	///
-	/// [`SHOW_NOTE`] is the one piece here that is not appended to every role with
-	/// tools, because it is the one that is FALSE for one of them: see
-	/// [`can_show`](Role::can_show).
+	/// [`SHOW_NOTE`], [`FOLD_NOTE`] and [`VERIFY_NOTE`] are the pieces here that are NOT
+	/// appended to every role with tools, because each is false for a worker -- it cannot
+	/// take the panel, its report goes to a machine, and `verify` refuses it for working
+	/// with nobody watching: see [`can_show`](Role::can_show).
 	pub fn compose(&self, text: &str) -> String {
 		let body = if text.trim().is_empty() { self.default_prompt() } else { text.trim() };
 		if matches!(self, Self::Reducer) {
@@ -174,9 +177,11 @@ impl Role {
 			return body.to_string();
 		}
 		let mut out = fmt!("{}\n\n{}", body, VISION_NOTE);
+		out.push_str(&fmt!("\n\n{}", QUIET_NOTE));
 		if self.can_show() {
 			out.push_str(&fmt!("\n\n{}", SHOW_NOTE));
 			out.push_str(&fmt!("\n\n{}", FOLD_NOTE));
+			out.push_str(&fmt!("\n\n{}", VERIFY_NOTE));
 		}
 		out.push_str(&fmt!("\n\n{}\n\n{}", SEARCH_NOTE, SAFETY_CLAUSE));
 		out
@@ -227,6 +232,36 @@ pub const SHOW_NOTE: &str =
 	 looked at than described. Never tell the user that Daimond cannot display a PDF, a picture \
 	 or a document — it can, this is how, and saying otherwise describes your own toolbox rather \
 	 than the app they are using.";
+
+/// That the space between tool calls is not for talking, appended to every role with tools.
+///
+/// **The fold governs the ANSWER, and on 2026-08-23 the owner read a turn in which almost
+/// nothing was the answer.** Twenty-odd paragraphs of "let me pin the line numbers", "all
+/// pinned down", "baseline is clean", "now the ledger", "de.js is done cleanly" -- each one or
+/// two sentences, each therefore exempt from [`FOLD_NOTE`] by its own last rule, and together
+/// the whole of what he had to read. He had asked where the folding was. It was working; it
+/// was pointed at the one part of the turn that was short.
+///
+/// **Running commentary is the most expensive text a turn produces**, because it is not one
+/// message: it is one per tool call, each stored, each re-sent on every later round. A turn of
+/// twenty calls pays for its own narration twenty times over.
+///
+/// It is composed for every role with tools rather than for [`Role::can_show`], unlike
+/// [`FOLD_NOTE`]: a worker's report goes to the agent that dispatched it, and that agent is a
+/// worse reader of padding than a person is, not a better one.
+///
+/// **What it does NOT say is "explain less".** A turn that finds something the user needs to
+/// know says so at the end, at whatever length the finding is worth. What is forbidden is
+/// saying it BEFORE the work, and again DURING it, and again after.
+pub const QUIET_NOTE: &str =
+	"## Working quietly\n\n\
+	 Do not narrate. Between tool calls, say nothing: no plan before you start, no note that a \
+	 step worked, no announcement of the next one. Your tool calls are already on the reader's \
+	 screen and they say all of that better than a sentence can.\n\n\
+	 Speak when the work is DONE, or when you have hit something the user has to decide. A \
+	 running commentary is stored once per call and re-sent on every later round, so a turn of \
+	 twenty calls pays for its own narration twenty times -- and the reader skips it, which \
+	 means the one line that mattered is skipped with it.";
 
 /// How to answer at two depths, appended to every role whose reader is a person.
 ///
@@ -291,6 +326,46 @@ pub const FOLD_NOTE: &str =
 	 qualification behind a fold is one they will act without — and a fold with nothing above it \
 	 opens on nothing. When the whole answer IS a sentence or two, fold nothing. A closed fold's \
 	 body does not come back to you next turn.";
+
+/// That a verifier is run with `verify` and not built out of `run` calls, appended to every role
+/// whose turn is watched by a person.
+///
+/// **Measured on a live daimon turn, 2026-08-23: forty-one tool calls and nothing verified.**
+/// Asked to check the work it had just done, the daimon reached for `run`. It stood up a dev
+/// server, hunted the tree for playwright-core, tested whether the network answered, and died on a
+/// provider error with not one check proved. It could never have worked. A verifier runs OUTSIDE
+/// the fence precisely because it is tracked repository code; a command runs inside it, where
+/// playwright is absent and there is no network to fetch it from. The turn was not slow, it was
+/// impossible, and the model had no way to know that.
+///
+/// **`verify` is the one tool in this app whose absence is invisible from the other tools.** A
+/// model that does not know about `file_show` at least fails at showing something; a model that
+/// does not know about `verify` sees a general-purpose `run` and concludes, reasonably, that
+/// checking work is a matter of assembling the right command. Nothing refutes that conclusion
+/// until the turn is over.
+///
+/// **Composed for [`Role::can_show`] and not for [`Role::has_tools`]**, on [`FOLD_NOTE`]'s
+/// precedent and not on a guess. A worker HOLDS `Tool::Verify` -- its registry is built from
+/// [`crate::tools::Tool::browser`] -- and `Tool::verify_spec` refuses it anyway, in those words:
+/// *"you are working alone with nobody watching. That decision belongs to the daimon that
+/// dispatched you."* So the roles that can run a verifier are exactly the two whose reader is a
+/// person, which is the question [`can_show`](Role::can_show) already answers. Telling a worker
+/// otherwise would spend a turn on a refusal, which is the failure [`SHOW_NOTE`] was written
+/// against.
+///
+/// **What the tokens bought**, at a budget of 110 rather than the one sentence [`SEARCH_NOTE`]
+/// gets: the second sentence, which is the whole note. The rule alone -- use `verify` -- is
+/// advice, and a model that has just watched `run` succeed at twenty other things will argue with
+/// it. What cannot be argued with is that the fence has no playwright in it and no network to
+/// fetch one. Cut the third sentence first if it must be cut; the cost is what makes the reason
+/// land, but the reason is what makes the rule true.
+pub const VERIFY_NOTE: &str =
+	"## Checking your work\n\n\
+	 Where the work has verifiers of its own — the scripts in dev/ — verify is what runs one, and \
+	 run is not. There is no sequence of commands that gets there: a verifier runs outside the \
+	 fence, and inside it playwright is absent and a command has no network to fetch it. A daimon \
+	 that tried spent forty-one calls standing up a dev server and hunting for playwright, and its \
+	 turn ended with nothing verified.";
 
 /// That the web can be searched, and whose choice the engine is, appended to every role that
 /// holds tools.
@@ -566,10 +641,26 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) ->
 	// (`tools::Bound::OnlyWriteUnder`), while a command's fence is both verbs -- so a briefing that
 	// said "reachable" without saying to WHAT would teach a daimon that it cannot read a file it
 	// can read perfectly well, and it would stop trying.
+	//
+	// AND WHICH PATHS ARE NOT ON THE MACHINE AT ALL, which cost three refused commands in one turn
+	// on 2026-08-23. A daimon asked to put a file in its own Diamond ran `cp` into
+	// `diamonds/<id>/` three times, was refused three times, and wrote in its own notes that the
+	// folder was "invisible to run" -- having worked out the expensive way what `fence_spec`
+	// already knows and drops. `diamonds/<id>`, `chats/<id>/work` and `mail/<address>` resolve to
+	// the browser's own storage whatever folder is open (`tools::is_store_path`,
+	// `crate::wasm::opfs::resolve_root`), so they are filtered out of the fence and no command can
+	// ever name one.
+	//
+	// The sentence has to say which TOOLS reach them, not merely that they are elsewhere. Saying
+	// "not on this machine" alone reads as "out of reach", and a daimon that concluded THAT would
+	// stop writing crystals -- the same false generalisation the "to a command" clause above was
+	// added to prevent, one level along.
 	let mut s = fmt!(
 		"## This computer\n\nCommands run on {} through Daimond's machine hand: only the paths \
 		below are reachable to a command, and every other path is refused. Your file tools are \
-		not fenced this way -- they read the whole workspace.", os);
+		not fenced this way -- they read the whole workspace. And diamonds/, chats/ and mail/ are \
+		not on this machine but in the browser's own storage, which a file tool reaches and a \
+		command never can.", os);
 	if !fence.rw.is_empty() {
 		s.push_str(&fmt!("\nRead and write: {}", fence.rw.join(", ")));
 	}
@@ -1075,6 +1166,35 @@ mod tests {
 			"a qualification may still be hidden behind the fold: {}", FOLD_NOTE);
 	}
 
+	/// **The no-narration rule reaches every role that holds tools, and says WHEN to speak.**
+	///
+	/// Composed for [`Role::has_tools`] and not for [`Role::can_show`], which is the line
+	/// [`FOLD_NOTE`] is drawn on and deliberately not this one: a worker's report goes to the
+	/// agent that dispatched it, and that agent is a worse reader of padding than a person.
+	///
+	/// **The second assertion is the one that matters.** A rule that only said "say less" would
+	/// be obeyed by a turn that also said nothing at the end, which is worse than the fault --
+	/// the owner has spent a week on turns that did work and did not report it. So the note has
+	/// to carry both halves, and the test has to check both.
+	#[test]
+	fn test_every_role_with_tools_is_told_not_to_narrate() {
+		for r in Role::all() {
+			let composed = r.compose("");
+			assert_eq!(composed.contains(QUIET_NOTE), r.has_tools(),
+				"role {} tools={} but the quiet note is {}", r.name(), r.has_tools(),
+				if composed.contains(QUIET_NOTE) { "present" } else { "absent" });
+		}
+		assert!(QUIET_NOTE.contains("Do not narrate"),
+			"the note does not forbid the thing it is for: {}", QUIET_NOTE);
+		assert!(QUIET_NOTE.contains("Speak when"),
+			"the note forbids narration without saying when to speak, so a turn that goes \
+			 silent and reports nothing obeys it: {}", QUIET_NOTE);
+		// The reason travels with the rule, on FOLD_NOTE's precedent: a bare rule is tidied away.
+		assert!(QUIET_NOTE.contains("re-sent"),
+			"the cost of narrating is not stated, so the rule reads as a matter of taste: {}",
+			QUIET_NOTE);
+	}
+
 	/// **The summary is a SUMMARY, and every answer of any length is two-depth.** Both the
 	/// owner's, 2026-08-23, and both of them faults the note itself produced.
 	///
@@ -1133,6 +1253,67 @@ mod tests {
 	fn test_the_fold_note_stays_inside_its_budget() {
 		let n = FOLD_NOTE.chars().count() / 4;
 		assert!(n <= 260, "the fold note is about {} tokens, over its budget: {}", n, FOLD_NOTE);
+	}
+
+	/// **The verifier instruction reaches exactly the roles that can run a verifier.**
+	///
+	/// Gated on [`Role::can_show`] and not on [`Role::has_tools`]. A worker HOLDS
+	/// `Tool::Verify` -- its registry is built from [`crate::tools::Tool::browser`] -- and
+	/// `Tool::verify_spec` refuses it all the same, for working alone with nobody watching. So
+	/// the two roles that can actually run one are the two whose reader is a person, and telling
+	/// a worker to check its work this way would spend a turn on a refusal.
+	///
+	/// Asserted across EVERY role rather than on the daimon alone: a note appended
+	/// unconditionally passes any test that only looks at a role which should have it.
+	///
+	/// The substance is asserted against [`VERIFY_NOTE`] and not against the composed prompt, on
+	/// [`test_the_fold_note_instructs_the_blank_lines_and_says_why`]'s finding -- `run` and
+	/// `verify` both appear in half a dozen other places in the same string, so a composed-prompt
+	/// assertion would pass with the note cut out entirely.
+	#[test]
+	fn test_only_a_role_that_can_run_a_verifier_is_told_to_reach_for_it() {
+		for r in Role::all() {
+			let composed = r.compose("");
+			assert_eq!(composed.contains(VERIFY_NOTE), r.can_show(),
+				"role {} can_show={} but the verify note is {}", r.name(), r.can_show(),
+				if composed.contains(VERIFY_NOTE) { "present" } else { "absent" });
+		}
+		// And it survives the user replacing the prompt, which is the whole reason it is composed
+		// in rather than written into two defaults.
+		assert!(Role::Daimon.compose("Just do what I say.").contains(VERIFY_NOTE));
+		// THE RULE: which tool, and which tool it is not. Without the second half the note is a
+		// suggestion sitting beside a general-purpose `run` that has worked twenty times today.
+		assert!(VERIFY_NOTE.contains("verify is what runs one"),
+			"the note does not name the tool: {}", VERIFY_NOTE);
+		assert!(VERIFY_NOTE.contains("run is not"),
+			"the note does not rule out the tool the daimon actually reached for: {}", VERIFY_NOTE);
+		// THE REASON, which is the half that cannot be argued with. `run` did not merely fail; no
+		// sequence of `run` calls could have succeeded, and the note has to say why.
+		assert!(VERIFY_NOTE.contains("no sequence of commands"),
+			"the note forbids a route without saying it is impassable, so a model that has just \
+			 watched `run` succeed will try it anyway: {}", VERIFY_NOTE);
+		assert!(VERIFY_NOTE.contains("playwright is absent"),
+			"the reason is not given in a form the model can check against its own fence: {}",
+			VERIFY_NOTE);
+		// THE COST, on QUIET_NOTE's register: a bare rule is tidied away.
+		assert!(VERIFY_NOTE.contains("forty-one calls"),
+			"nothing says what ignoring this cost: {}", VERIFY_NOTE);
+	}
+
+	/// The verifier note is short enough to ride on every request of every turn.
+	///
+	/// Four CHARACTERS to the token, as [`test_the_fold_note_stays_inside_its_budget`] measures
+	/// it and as [`crate::llm::CACHE_MIN_PREFIX_CHARS`] does.
+	///
+	/// **The ceiling is 110, and what it bought over [`SEARCH_NOTE`]'s one sentence is the second
+	/// sentence.** The rule alone is advice; what makes it stick is that the fence has no
+	/// playwright in it and no network to fetch one, which the model can check. The third
+	/// sentence -- the forty-one calls -- is the one to cut first if this ever has to shrink.
+	#[test]
+	fn test_the_verify_note_stays_inside_its_budget() {
+		let n = VERIFY_NOTE.chars().count() / 4;
+		assert!(n <= 110, "the verify note is about {} tokens, over its budget: {}", n,
+			VERIFY_NOTE);
 	}
 
 	// ── What the daimon is told about the machine ────────────────────────────
@@ -1243,6 +1424,46 @@ mod tests {
 			assert!(s.contains(p.as_str()), "the fence grants {} and the briefing does not say so",
 				p);
 		}
+	}
+
+	/// **The briefing says which paths are not on this machine at all, and which tools DO reach
+	/// them.**
+	///
+	/// Measured on a live turn, 2026-08-23. Asked to put a file in its own Diamond, a daimon ran
+	/// `cp` into `diamonds/<id>/` three times and was refused three times, then wrote in its own
+	/// notes that the folder was "invisible to run". It was right, and it had paid three turns to
+	/// find out something `fence_spec` computes on every request: a store path is browser storage
+	/// rather than a directory, so it is filtered out of the fence and no command can name one.
+	///
+	/// **The second half is the half that matters.** "Not on this machine" on its own teaches a
+	/// daimon that its own Diamond is out of reach, and a daimon that believes that stops writing
+	/// crystals -- the same false generalisation the "to a command" clause in `machine_note` was
+	/// added to prevent, one level along. So the tools are named, and asserted.
+	#[test]
+	fn test_the_briefing_says_which_paths_are_browser_storage_and_which_tools_reach_them() {
+		let b = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[]);
+		let s = machine_note(&machine(), &b, NetStep::Give, Mode::default());
+		assert!(s.contains("diamonds/, chats/ and mail/"),
+			"the briefing does not name the paths a command can never reach: {}", s);
+		assert!(s.contains("not on this machine"),
+			"the briefing does not say the store is somewhere else: {}", s);
+		assert!(s.contains("browser's own storage"),
+			"the briefing does not say WHERE, so 'not on this machine' reads as 'gone': {}", s);
+		// The load-bearing clause, and the one a tidying edit would cut first.
+		assert!(s.contains("a file tool reaches and a command never can"),
+			"the briefing does not say which tools reach the store, so a daimon told its Diamond \
+			is not on this machine will stop writing to it: {}", s);
+		// Tied to the predicate rather than to a remembered list of names, so the sentence and
+		// `fence_spec`'s filter cannot drift apart.
+		for root in ["diamonds", "chats", "mail"] {
+			assert!(crate::tools::is_store_path(root),
+				"the briefing calls {} browser storage and `is_store_path` disagrees", root);
+		}
+		// And it is a claim about the FENCE, so it says nothing where there is no hand to fence:
+		// the whole briefing is empty there, which `test_no_hand_means_not_one_word_about_a_machine`
+		// holds, and this is the half of that which names this sentence.
+		assert!(!machine_note(&Machine::default(), &b, NetStep::Give, Mode::default())
+			.contains("browser's own storage"));
 	}
 
 	#[test]
@@ -1413,10 +1634,16 @@ mod tests {
 	fn test_the_briefing_stays_short_enough_to_pay_for_every_turn() {
 		// It is sent on every request of every turn. The number is a ceiling, not a target: this
 		// exists so that a later addition has to be argued for rather than merely appended.
+		//
+		// 700 -> 840 on 2026-08-23, for the 138 bytes that say diamonds/, chats/ and mail/ are
+		// browser storage. Bought with three refused `cp` commands in one live turn and a daimon
+		// concluding in its notes that its own Diamond was "invisible to run"; the headroom above
+		// what the briefing actually costs is unchanged, so the next addition is argued for on the
+		// same terms this one was.
 		let mut b = diamond();
 		b.push(Toolkit::Rust.bound());
 		let s = machine_note(&machine(), &b, NetStep::Give, Mode::default());
-		assert!(s.len() < 700, "the machine briefing is {} bytes:\n{}", s.len(), s);
+		assert!(s.len() < 840, "the machine briefing is {} bytes:\n{}", s.len(), s);
 	}
 
 	// ── Which rung the daimon is in ──────────────────────────────────────────
@@ -1519,8 +1746,11 @@ mod tests {
 					assert_eq!(real.net, s.contains("Network: available"),
 						"the {} rung's briefing and fence disagree about the network, risk={} \
 						said={:?}:\n{}", rung.name(), risk, said, s);
-					// It stays affordable on every rung, not merely on the default.
-					assert!(s.len() < 900, "the {} rung's briefing is {} bytes:\n{}",
+					// It stays affordable on every rung, not merely on the default. 900 -> 1040
+					// with the store sentence, for the reason recorded on
+					// `test_the_briefing_stays_short_enough_to_pay_for_every_turn`, and by the
+					// same 138 bytes: the headroom over the real cost is unchanged.
+					assert!(s.len() < 1040, "the {} rung's briefing is {} bytes:\n{}",
 						rung.name(), s.len(), s);
 				}
 			}

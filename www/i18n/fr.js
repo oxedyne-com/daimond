@@ -802,6 +802,7 @@
 	'spend.session': 'cette session',
 	'spend.balance': 'solde',
 	'spend.tok': 'tok',
+	'spend.period_day': 'Aujourd’hui',
 	'spend.period_week': 'Semaine',
 	'spend.period_month': 'Mois',
 	'spend.no_turns': 'Aucun tour dans cette fenêtre pour l’instant.',
@@ -1376,7 +1377,6 @@
 	'gov.run_n.one': 'Lancer {n} agent',
 	'gov.run_n.other': 'Lancer {n} agents',
 	'spend.includes_estimate': 'Estimé. Au moins un des modèles présents n’est pas dans la table des prix.',
-	'spend.session_short': 'Session',
 
 	// ── Quoting a message without a readable date ──────────────
 	'mail.quote.head_undated': '{who} a écrit :',
@@ -1634,6 +1634,9 @@
 	'attach.already': 'Déjà joint',
 	'attach.ws_mark': 'Espace',
 	'attach.ws_add': 'Marquer un dossier dans l’espace',
+	'attach.add_mark': 'Marquer un dossier',
+	'attach.mark_note': 'Cocher un DOSSIER le marque : cet espace pourra lire et modifier ce qu’il contient. Cocher un fichier ne fait que le mettre devant le modèle.',
+	'attach.mark_focus': 'Marquer ce dossier dans {name}, pour que son daimon puisse lire et modifier ce qu’il contient',
 	'attach.not_here': 'Retenu par cette conversation, mais il se trouve {where}, qui n’est pas l’espace que vous avez ouvert. Cette conversation ne peut pas l’atteindre d’ici.',
 	'attach.ws_help': 'Les dossiers que cette conversation peut lire et modifier. Marquer un dossier ici vaut permission, et rien ne vous le redemandera.',
 	'attach.ws_on': 'Dans l’espace de cette conversation : elle peut lire et modifier ce qui s’y trouve. Appuyez pour le retirer.',
@@ -1666,6 +1669,14 @@
 	'dws.kit_none': 'Aucune chaîne d’outils. Une commande atteint les fichiers de ce Diamond et rien d’autre sur votre ordinateur.',
 	'dws.elsewhere': 'Vit dans l’espace de travail',
 	'dws.readonly': 'Lecture seule',
+	'dws.showing': 'Affiché',
+	'dws.reach': 'Portée',
+	'dws.reach_help': 'Les dossiers dans lesquels le daimon de ce Diamond peut écrire. Affiché dans les deux arbres, parce que cela vaut dans les deux.',
+	'dws.reach_own': 'son propre dossier',
+	'dws.reach_search': 'Une recherche qui ne nomme aucun chemin regarde ici et nulle part ailleurs.',
+	'dws.reach_none': 'Rien d’autre n’est marqué, donc le daimon de {name} ne peut écrire nulle part ailleurs chez vous — et une recherche qui ne nomme aucun chemin ne regarde qu’ici.',
+	'dws.mark_here': 'Marquer « {name} »',
+	'dws.mark_here_help': 'Mettre le dossier que vous regardez dans l’espace de {name}. Son daimon pourra alors lire et modifier ce qu’il contient, et une recherche qui ne nomme aucun chemin y regardera.',
 
 	// ── Links between Diamonds ─────────────────────────────────
 	'link.count.one': '{n} Diamond lié',

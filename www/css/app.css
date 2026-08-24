@@ -1229,9 +1229,24 @@ span.arte-open { cursor: default; }
 	cursor: pointer; color: var(--text-secondary); font-size: var(--fs-3xs-2xs);
 	line-height: 1.6; padding: 0 9px; }
 .attach-view-btn:hover { border-color: var(--accent); color: var(--accent-text); }
-.attach-add { background: none; border: none; cursor: pointer; color: var(--text-muted);
-	font-size: var(--fs-sm); line-height: 1; padding: 2px 6px; min-width: 26px; min-height: 26px; }
-.attach-add:hover { color: var(--accent); }
+/* It carries a WORD now, so it is shaped like the pill beside it rather than
+   like an icon: a bare `+` said nothing, and the two of them a few pixels apart
+   -- one granting a fence, one not -- read as the same button. */
+.attach-add { background: none; border: 1px solid var(--border-strong); border-radius: 999px;
+	cursor: pointer; color: var(--text-secondary); font-size: var(--fs-3xs-2xs);
+	line-height: 1.6; padding: 0 9px; min-height: 22px; }
+.attach-add:hover { border-color: var(--accent); color: var(--accent-text); }
+/* And a `+` that widens what a daimon may write wears the accent every other
+   granting control in this app wears, so the two are told apart without reading
+   either one. */
+.attach-add.grants { color: var(--accent-text); border-color: var(--accent);
+	background: var(--accent-soft); }
+.attach-add.grants:hover { background: var(--accent); color: var(--on-fill, #fff); }
+
+/* The legend at the head of the picker, where a tick on a folder and a tick on
+   a file mean two different things and no row has room to say which. */
+.attach-pick-note { padding: 6px 2px 8px; line-height: 1.45;
+	font-size: var(--fs-3xs-2xs); color: var(--accent-text); }
 
 /* The tiles themselves, and the only thing in either footer that scrolls. The
    cap is `--attach-cap` tiles, which is six and is measured -- variables.css
@@ -1494,6 +1509,16 @@ span.arte-open { cursor: default; }
 /* Collapsed by default: hide the (often long) args JSON, keep the result. */
 .tool-block.collapsed .tool-args { display: none !important; }
 .chat-output.hide-tools .tool-block { display: none; }
+/* The model thinking out loud on its way to a tool call. It hides with the steps
+   because it is one: the reader who turned the working off meant this too. */
+.chat-output.hide-tools .chat-msg-working { display: none; }
+.chat-msg-working { margin: 4px 0 4px 2px; }
+.chat-working-line {
+	color: var(--text-muted);
+	font-size: var(--fs-sm);
+	font-style: italic;
+	opacity: 0.72;
+}
 
 /* Context-window meter (session boxes + agent tiles) */
 .ctx-meter { display: flex; align-items: center; gap: 6px; margin-top: 5px; }

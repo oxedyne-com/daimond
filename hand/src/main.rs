@@ -46,6 +46,7 @@ use daimond_hand::{
         launch_main,
         Launcher,
         Runner,
+        Signalled,
         LAUNCH_ARG,
     },
     fence::{
@@ -811,6 +812,8 @@ fn id_of(resp: &Resp) -> Option<String> {
         Resp::Opened  { id, .. }	=> Some(id.clone()),
         Resp::Output  { id, .. }	=> Some(id.clone()),
         Resp::Closed  { id, .. }	=> Some(id.clone()),
+        // A listing is about every run at once, so it is about no single one.
+        Resp::Runs    { .. }		=> None,
         Resp::Hello   { .. }		=> None,
     }
 }
@@ -988,6 +991,11 @@ fn cut(resp: &Resp) -> Outcome<Option<(Resp, String)>> {
         },
         // The rest are bounded by their own fields and cannot be cut without
         // changing what they say.
+        // A listing is bounded at the source: `wire::RUNS_MAX` entries of
+        // `wire::RUN_WHAT_MAX` bytes cannot approach a frame, and what did not
+        // fit is COUNTED in `more` rather than cut here. Trimming it would drop
+        // a run silently, which is the one thing a listing must never do.
+        Resp::Runs { .. } => Ok(None),
         Resp::Hello { .. } | Resp::Started { .. } | Resp::Ended { .. }
         | Resp::Opened { .. } | Resp::Closed { .. } => Ok(None),
     }
@@ -1038,6 +1046,7 @@ fn kind_of(resp: &Resp) -> &'static str {
         Resp::Opened  { .. }	=> "opened",
         Resp::Output  { .. }	=> "output",
         Resp::Closed  { .. }	=> "closed",
+        Resp::Runs    { .. }	=> "runs",
     }
 }
 
@@ -1322,6 +1331,11 @@ impl Desk {
         // "not on this computer" once, instead of letting a model find it out one refusal at
         // a time -- which is what `fence:` beside it is for.
         caps.push(verify::cap(&self.root));
+        // That this hand can be ASKED what it is still running, and told to stop
+        // one of them. A page that cannot see the capability cannot know whether
+        // silence means "nothing is running" or "this hand is older than the
+        // question", and those are opposite answers.
+        caps.push(fmt!("runs:list-and-stop"));
         // Where the user's home is, so the page can place a toolkit.
         //
         // A compiler does not live in the workspace: cargo is under ~/.cargo, node under
@@ -1332,9 +1346,14 @@ impl Desk {
         //
         // It rides in `caps` beside `root:` because `wire.rs` has no field for it and the
         // wire is fixed. Both belong in `Resp::Hello` properly one day.
-        match std::env::var("HOME") {
-            Ok(h) if h.starts_with('/') => caps.push(fmt!("home:{}", h)),
-            _ => {},
+        //
+        // Read through `exec::home_dir`, which is also what a command's defaulted
+        // `HOME` comes from. Two answers to "where is home" -- one told to the
+        // page and a different one given to the command -- would be a bug nobody
+        // would think to look for.
+        match daimond_hand::exec::home_dir() {
+            Some(h) => caps.push(fmt!("home:{}", h)),
+            None    => {},
         }
         // WHICH COMPUTER THIS IS. Rides beside `root:` and `home:` for the same reason and
         // with the same apology about the wire.
@@ -1415,7 +1434,7 @@ impl Desk {
         // gate 1 -- because it IS a command, differing only in how the conversation is shaped.
         // Written once so the two cannot drift: a second copy of this would eventually be the
         // copy that forgot to check something.
-        let (id, spec, kits, terminal) = match &req {
+        let (id, mut spec, kits, terminal) = match &req {
             Req::Exec { id, fence, toolkits, .. } =>
                 (id.clone(), fence.clone(), toolkits.clone(), false),
             Req::Open { id, fence, toolkits, .. } =>
@@ -1445,6 +1464,19 @@ impl Desk {
             self.refuse(&id, s);
             return Ok(());
         }
+
+        // A toolchain folder this machine does not have is dropped rather than
+        // refused. The app expands one ticked toolkit into several paths, and a
+        // machine that keeps git's configuration in `~/.gitconfig` alone has no
+        // `~/.config/git` -- so before this line, ticking Git refused EVERY
+        // command the Diamond ran, naming a path the user had never heard of.
+        // Only a toolkit's own paths are eligible: a workspace root that cannot
+        // be resolved still refuses, because that one is a fence that would
+        // silently not cover what the user marked.
+        // Not said to the page: a path that is not there grants nothing, and a
+        // note on every command naming a folder the user never asked for is
+        // noise. The list comes back so that a caller who wants it has it.
+        let _dropped = daimond_hand::exec::drop_absent_kit_roots(&mut spec, &kits);
 
         // A fence that reaches the journal is a fence over the record of what
         // the fence was used for.  And denied outright as well, in case a root
@@ -1613,7 +1645,7 @@ impl Desk {
     ///
     /// # Arguments
     /// * `req` - The [`Req::Signal`].
-    fn signal(&self, req: &Req) -> Outcome<()> {
+    async fn signal(&self, req: &Req) -> Outcome<()> {
         let (id, sig) = match req {
             Req::Signal { id, sig } => (id.clone(), *sig),
             _ => return Ok(()),
@@ -1623,12 +1655,48 @@ impl Desk {
                 eprintln!("daimond-hand: a signal was not journalled: {}", e);
             }
         }
-        if let Err(e) = self.runner.signal(&id, sig) {
-            self.say(Resp::Error {
-                id:      Some(id),
-                message: fmt!("{}", e),
-            });
-        }
+        // Handed to a task of its own, like an exec and for the same reason:
+        // `REVIEW.md` §3.7 is the loop that stopped reading while it waited.
+        // Signalling a LIVE run is instant -- one send down a channel the
+        // supervisor owns -- but signalling the group a finished run left
+        // standing starts a `kill` and then waits to see whether the group
+        // emptied, and the dispatcher must not be the thing waiting.
+        let runner = self.runner.clone();
+        let ctl    = self.ctl.clone();
+        tokio::spawn(async move {
+            let told = match runner.signal(&id, sig).await {
+                Ok(Signalled::Sent) | Ok(Signalled::Finished) => return,
+                // The half that was missing. A signal that did not take used to
+                // be indistinguishable from one that had nothing left to reach,
+                // so a page was told its command had stopped when it had not.
+                Ok(Signalled::Failed(why)) => why,
+                Err(e) => fmt!("{}", e),
+            };
+            let _ = ctl.send(Resp::Error { id: Some(id), message: told }).await;
+        });
+        Ok(())
+    }
+
+    /// Answers what this hand is still running.
+    ///
+    /// Not journalled: a question is not an act, and every run it can name was
+    /// written down when it started.  See `Event::from_req`.
+    async fn runs(&self) -> Outcome<()> {
+        // Also off the loop. The listing walks `/proc` once per standing group,
+        // which is quick and is still not the dispatcher's work to do.
+        let runner = self.runner.clone();
+        let ctl    = self.ctl.clone();
+        tokio::spawn(async move {
+            let said = match runner.runs().await {
+                Ok((runs, more)) => Resp::Runs { runs, more },
+                Err(e) => Resp::Error {
+                    id:      None,
+                    message: fmt!(
+                        "The hand could not say what it is still running. {}", e.msgs().join(" ")),
+                },
+            };
+            let _ = ctl.send(said).await;
+        });
         Ok(())
     }
 
@@ -1668,7 +1736,8 @@ impl Desk {
                         }
                     },
                     Req::Verify { .. } => res!(self.verify(req).await),
-                    Req::Signal { .. } => res!(self.signal(&req)),
+                    Req::Signal { .. } => res!(self.signal(&req).await),
+                    Req::Runs => res!(self.runs().await),
                     Req::Bye => {
                         // Written down before anything is stopped.
                         if let Some(ev) = Event::from_req(&req, &[]) {
@@ -1865,7 +1934,7 @@ where
     // `PtySessions::close_all` sweeps every process group in each session, not merely the leader's
     // -- a terminal is what makes job control work, so `sleep 60 &` is in a group of its own (see
     // `pty::sweep`).
-    if let Err(e) = desk.runner.stop_all() {
+    if let Err(e) = desk.runner.stop_all().await {
         eprintln!("daimond-hand: not every run could be stopped: {}", e);
     }
     match desk.ptys.close_all() {

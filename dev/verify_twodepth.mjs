@@ -68,6 +68,10 @@
 //      (CONTRACT_FOLD.md §8) and one extra here would rename every fold after it
 //      in the engine's eyes.
 //
+//   12. PROSE FOLLOWED BY A TOOL CALL IS WORKING, NOT AN ANSWER. The fold governs the
+//      answer; this governs everything else the model says, which on a twenty-call turn is
+//      most of what a reader sees. The run after the LAST call is untouched and is the reply.
+//
 //   11. THE LABEL IS LEGIBLE. Measured against the ANSWER IT SITS BESIDE, not
 //      against a number written here: same size, same ink. Every other check in
 //      this file passes on a fold the reader never finds, which is what happened
@@ -97,10 +101,20 @@
 //   node dev/verify_twodepth.mjs --break barequiet   # 6: the decision left unsaid
 //   node dev/verify_twodepth.mjs --break noreload    # 10: the choice not restored
 //   node dev/verify_twodepth.mjs --break mutedlabel  # 11: the label as a caption
+//   node dev/verify_twodepth.mjs --break loudworking # 12: narration drawn as an answer
 //   node dev/verify_twodepth.mjs                     # and then, clean
 //
 //   eval "$(bash dev/world.sh 3 --up)"
 //   node dev/verify_twodepth.mjs
+//
+// BRING THE WORLD DOWN AND UP BETWEEN RUNS. Measured on 2026-08-23: a second run against a
+// world already used reported 22 of 34 failed, and the same run against a freshly restarted
+// world reported 34 of 34. The mock keeps state across a run -- its call-id sequence and the
+// tool-round arithmetic it does over a conversation -- so a re-run is not a repeat. It cost an
+// hour of disbelieving a break that was working perfectly, and it is the fixture-order trap
+// this file already warns about, wearing a different coat.
+//
+//   bash dev/world.sh 3 --down && eval "$(bash dev/world.sh 3 --up)"
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs. No gateway and no real provider: the
 // mock is told exactly what to stream, so nothing here spends anything.
@@ -178,6 +192,15 @@ const BREAKS = {
 			+ '\n\tfont-size: var(--fs-base);',
 		with: 'details.md-fold > summary {\n\tpadding: 4px 0;\n\tcolor: var(--text-muted);'
 			+ '\n\tfont-size: var(--fs-sm);',
+	}],
+	// Prose before a tool call left as an ANSWER, at full weight in the thread. This is the
+	// state the owner met on 2026-08-23: twenty paragraphs of "let me pin the line numbers"
+	// and "de.js is done cleanly", each a sentence or two and so each exempt from FOLD_NOTE
+	// by its own last rule. The fold was working and was pointed at the wrong text.
+	loudworking: [{
+		file: 'js/daimond.js',
+		find: "\t\t// See `demoteToWorking`.\n\t\tdemoteToWorking();",
+		with: "\t\t// See `demoteToWorking`.\n\t\tfinalizeAssistant();",
 	}],
 	// A nested fold given an ordinal of its own, which is what the contract's
 	// Amendment 1 forbids: the engine counts only top-level folds, so every key
@@ -725,6 +748,47 @@ try {
 		!!restored && restored.open === true, JSON.stringify(after));
 	check('10b and one the reader never touched comes back shut',
 		!!untouched && untouched.open === false, JSON.stringify(after));
+
+	// ── 12. Narration is working, and the last word is the answer ─────
+	//
+	// `@narrate` makes the mock send prose AND a tool call in one message, which no fixture
+	// here could do until today -- and a provider does it constantly. Both halves are checked
+	// in one turn, because the rule is a DIVISION and testing one side of it would pass on a
+	// build that folded everything, reply included.
+	await chat(s, '@narrate Let me pin the exact line numbers first, and check nothing else '
+		+ 'renders that key. ;; file_list {"path":"."}');
+	await page.waitForTimeout(900);
+	const split = await page.evaluate(() => {
+		const out = document.querySelector('#chat-output');
+		const working = [...out.querySelectorAll('.chat-msg-working')];
+		const answers = [...out.querySelectorAll('.chat-msg-assistant')]
+			.map(d => (d.textContent || '').trim()).filter(Boolean);
+		return {
+			working:    working.length,
+			workingSaid: working.map(w => (w.textContent || '').trim().slice(0, 60)),
+			// The narration must NOT be in any assistant bubble.
+			leaked:     answers.some(t => t.indexOf('Let me pin the exact line numbers') >= 0),
+			// And the turn's last word must still be a real answer.
+			answered:   answers.some(t => t.indexOf('Narration done') >= 0),
+		};
+	});
+	check('12a prose that precedes a tool call is drawn as working',
+		!!split && split.working >= 1, JSON.stringify(split));
+	check('12b and is NOT left in the thread as an answer',
+		!!split && split.leaked === false, JSON.stringify(split));
+	check('12c while the reply after the last call is still an answer',
+		!!split && split.answered === true, JSON.stringify(split));
+	// The reader who turned the working off meant this too.
+	const hidden = await page.evaluate(() => {
+		const out = document.querySelector('#chat-output');
+		out.classList.add('hide-tools');
+		const w = out.querySelector('.chat-msg-working');
+		const shown = w ? getComputedStyle(w).display !== 'none' : null;
+		out.classList.remove('hide-tools');
+        return shown;
+	});
+	check('12d and it hides with the tool steps, which is the switch for the working',
+		hidden === false, String(hidden));
 
 	// ── 11. The label is legible ──────────────────────────────────────
 	//

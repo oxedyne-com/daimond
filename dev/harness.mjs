@@ -180,6 +180,32 @@ export const contentText = (content) => {
 ///
 /// `name` seeds a distinct identity so parallel sessions never share state;
 /// each gets its own browser profile, so OPFS and localStorage are its own.
+/// Why this DISPLAY must not be handed to a headed browser, or `null` where it may be.
+///
+/// Separate and pure so `dev/verify_harness.mjs` can put the cases to it without launching
+/// anything -- a check that had to start a browser to test where a browser would appear is a
+/// check nobody runs.
+///
+/// # Arguments
+/// * `display` - The `DISPLAY` a headed launch would inherit, or undefined where there is none.
+export function displayFault(display) {
+	const d = (display || '').trim();
+	if (!d) {
+		return 'A headed run needs a display and DISPLAY is unset. Start it under '
+			+ '`xvfb-run -a -s "-screen 0 1500x950x24"`, which is what every headed verifier '
+			+ 'in this tree expects.';
+	}
+	// Everything before the colon. X puts the host there, and only there.
+	const host = d.slice(0, d.indexOf(':') < 0 ? d.length : d.indexOf(':'));
+	if (host) {
+		return `DISPLAY is "${d}", which names the host "${host}" -- a display on another `
+			+ 'machine, forwarded over SSH. A headed browser started with it PAINTS ITSELF '
+			+ 'THERE, on somebody else\'s screen, across the network. Refused. Start this under '
+			+ '`xvfb-run -a -s "-screen 0 1500x950x24"` so it renders on a virtual display here.';
+	}
+	return null;
+}
+
 export async function open(opts = {}) {
 	const {
 		headed    = false,
@@ -241,9 +267,30 @@ export async function open(opts = {}) {
 	// second frame, and every ordinary click times out on a button that is
 	// perfectly fine. Measured on a blank page: with DISPLAY set, no frames in
 	// either headless mode; with it unset, frames, clicks and screenshots all
-	// work. A headed run genuinely needs the display, so it keeps it.
+	// work.
+	//
+	// A HEADED RUN NEEDS A DISPLAY AND MUST NOT BE GIVEN THAT ONE. The sentence
+	// here used to read "a headed run genuinely needs the display, so it keeps
+	// it", and the display it kept was the forwarded one -- so a headed verifier
+	// started from an rc session PAINTED ITSELF ON THE OWNER'S LAPTOP, across the
+	// network, in front of whatever he was doing. He reported it happening more
+	// than once before anybody looked at this line.
+	//
+	// A forwarded display is decidable and is not guessed at: X names a remote
+	// display with a HOST PART before the colon (`localhost:10.0`, `gilgamesh:0`),
+	// and a local one has none (`:0`, and `:99` from `xvfb-run`). So a headed
+	// launch refuses a display carrying a host part rather than quietly using it.
+	// Watching a headed run on argonaut's own seat still works -- that is `:0`,
+	// which has no host part and is allowed.
 	const env = { ...process.env };
-	if (!headed) delete env.DISPLAY;
+	if (!headed) {
+		delete env.DISPLAY;
+	} else {
+		const shown = displayFault(env.DISPLAY);
+		if (shown) {
+			throw new Error(shown);
+		}
+	}
 
 	const browser = await chromium.launchPersistentContext(profileDir, {
 		executablePath: CHROME,

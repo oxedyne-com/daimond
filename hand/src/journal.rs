@@ -786,6 +786,10 @@ impl Event {
                     mechs:       mechs.to_vec(),
                 })
             },
+            // Asking what is running is a question and not an act, so it is not written down --
+            // and every run it can name was journalled when it started. The SIGNAL that follows
+            // is recorded, which is the half a reader would want.
+            Req::Runs => None,
             // A VERIFY IS NOT ITSELF AN ACT, and writing it down as one would put a verb in the
             // record where a reader expects a process. Every run it makes is journalled as the
             // `Exec` it really is -- the node command line, the granted root, and `fence:none` in
@@ -849,6 +853,10 @@ impl Event {
                 id:      id.clone(),
                 message: message.clone(),
             }),
+            // A listing is a measurement of what the journal already records the
+            // starting of. Writing it down again would put a reader's question
+            // in a record of a machine's acts.
+            Resp::Runs {..} => None,
             Resp::Hello {..} | Resp::Chunk {..} => None,
         }
     }
