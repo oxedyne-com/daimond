@@ -51,8 +51,9 @@
 //				and the only honest way to break a function
 //				that lives in a .wasm.
 //
-//	node dev/verify_ptyedge.mjs              # reuse the broken packages
-//	node dev/verify_ptyedge.mjs --prove      # build them (about three minutes)
+//	node dev/verify_ptyedge.mjs              # reuse the packages built from THIS
+//	                                         # source; rebuild any that are older
+//	node dev/verify_ptyedge.mjs --prove      # rebuild them all (about three minutes)
 //
 // Needs tmux, python3 and a built www/pkg. Run it headed, under xvfb, because
 // the grant window is a real window and is really clicked:
@@ -81,6 +82,28 @@ const WORK	= path.join(SCRATCH, `ptyedge-${process.pid}`);
 const PROFILE	= path.join(WORK, 'profile');
 const BROKEN	= path.join(SCRATCH, 'ptyedge-broken');
 const PROVE	= process.argv.includes('--prove');
+
+// Where the wasm packages below are compiled, and it is PRIVATE TO THIS SLOT.
+//
+// It used to be `~/.cache/cargo-targets/daimond_ptyedge_target`, one directory
+// for the whole fleet. The isolation unit is the (slot, workspace root) pair:
+// two agents building the same workspace into one target directory write two
+// differently resolved artefacts of the same crate and the link takes a mix of
+// them. That is not theoretical here — on 2026-08-24 it gave a lane five
+// failures in this file which all went green, 61 ok / 0 failed, once the build
+// went into a slot-private directory instead. The tell is rustc's "there are
+// multiple different versions of crate X in the dependency graph" while
+// `cargo tree -d` shows one: the duplicate is in the target directory, not the
+// manifest.
+//
+// An inherited `CARGO_TARGET_DIR` is deliberately NOT used. The build below
+// carries its own `--remap-path-prefix` flags, so sharing a directory with an
+// ordinary `cargo build` costs a full recompile in each direction every time,
+// and the whole point of naming the slot is that the path is predictable.
+// `PTYEDGE_TARGET_DIR` overrides it for anyone who needs to.
+const TARGET_DIR = process.env.PTYEDGE_TARGET_DIR
+	|| path.join(os.homedir(), '.cache/cargo-targets', process.env.RC_SLOT || 'solo',
+		'daimond_ptyedge');
 
 // The Diamond this session belongs to, as the panel names it. NOT a directory on
 // this machine: it is Daimond's own storage, in the browser, whatever folder the
@@ -493,8 +516,7 @@ function buildWasm(name) {
 			fs.writeFileSync(file, orig.replace(from, to));
 		}
 		const env = Object.assign({}, process.env, {
-			CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR
-				|| path.join(os.homedir(), '.cache/cargo-targets/daimond_ptyedge_target'),
+			CARGO_TARGET_DIR: TARGET_DIR,
 			RUSTFLAGS: `--remap-path-prefix=${os.homedir()}/.cargo=/cargo `
 				+ `--remap-path-prefix=${ROOT}=/build`,
 		});
@@ -523,9 +545,68 @@ function buildWasm(name) {
 // so. Checking each one costs a `statSync` and makes a partial build
 // self-repairing.
 const PKGS = ['whole', ...Object.keys(WASM_PATCHES)];
-const missing = PKGS.filter((n) => !fs.existsSync(path.join(BROKEN, n, 'pkg/oxedyne_daimond.js')));
-if (PROVE || missing.length) {
-	const todo = PROVE ? PKGS : missing;
+
+/// The engine inside the package built for the break `name`, or 0 where there
+/// is no such package.
+const pkgBuilt = (name) => {
+	const f = path.join(BROKEN, name, 'pkg/oxedyne_daimond.js');
+	try { return fs.statSync(f).mtimeMs; } catch (e) { return 0; }
+};
+
+// ── And rebuild the ones that are there but are not this tree's ─────
+//
+// Absence was the only thing asked about, and absence is the easy half. A
+// package that IS there is loaded and believed however old it is, and the
+// packages live in `~/.cache/daimond`, which nothing ever clears. On 2026-08-24
+// six of the ten on this machine dated from 2 August: for twenty-two days every
+// `PROVED` pair in section 4 was a three-week-old engine going red against a
+// today engine going green, and the pair was reported as a proof. That is the
+// same fail-open the guards at the top of this file exist to close, one
+// directory further down — and worse, because those guards refuse while this
+// one certified.
+//
+// `newestSrc` is the same oracle the app's own bundle is held to above: every
+// `.rs` under `src/`, so a change anywhere below the pty edge counts. It is
+// already known to be no newer than `www/pkg`, or this file would have refused
+// at line one, so a package older than it is a package older than the engine
+// under test. `buildWasm` restores the mtime of every file it patches, so the
+// comparison does not drift by a build.
+const staleFrom = newestSrc ? newestSrc.t : 0;
+const missing = PKGS.filter((n) => !pkgBuilt(n));
+const rotted = PKGS.filter((n) => pkgBuilt(n) && pkgBuilt(n) < staleFrom);
+if (PROVE || missing.length || rotted.length) {
+	const todo = PROVE ? PKGS : [...missing, ...rotted];
+	if (rotted.length && !PROVE) {
+		console.log(`\n${rotted.length} wasm package(s) are older than ${newestSrc.f} and are`
+			+ ` being rebuilt: ${rotted.join(', ')}.`);
+	}
+	// ── Nothing is patched while somebody is editing it ─────────
+	//
+	// `buildWasm` writes a deliberate bug into `src/wasm/pty.rs` or
+	// `src/tools.rs` and puts the file back afterwards from the bytes it read
+	// at the start. This is a SHARED TREE with other agents working in it, so
+	// that restore is a `git checkout --` in slow motion: an edit made between
+	// the read and the write is gone, and gone silently, since the file it is
+	// restored to is a file that compiled. Refusing while the file is dirty is
+	// the whole fix — an uncommitted change is exactly the state in which
+	// somebody's work is at risk, and a clean file cannot lose anything the
+	// restore does not put back.
+	const dirty = [];
+	for (const f of [PTY_RS, TOOLS_RS]) {
+		const st = spawnSync('git', ['status', '--porcelain', '--', f],
+			{ cwd: ROOT, encoding: 'utf8' });
+		// Not a git tree (the mirror is not always one), so there is nothing to
+		// compare against and nothing that can be said about it.
+		if (st.status !== 0) continue;
+		if ((st.stdout || '').trim()) dirty.push(path.relative(ROOT, f));
+	}
+	if (dirty.length) {
+		console.error(`\nThis run would have patched and restored ${dirty.join(' and ')}, which `
+			+ `${dirty.length > 1 ? 'have' : 'has'} uncommitted changes. The restore writes back the `
+			+ `bytes read before the build, so it would silently discard that work — and this tree is `
+			+ `shared. Commit or set the change aside and run this again.`);
+		process.exit(2);
+	}
 	console.log(`\nBuilding ${todo.length} wasm package(s) the pty_request checks are proved`
 		+ ` against${PROVE ? '' : ` (${PKGS.length - todo.length} already built)`}.`);
 	for (const name of todo) {

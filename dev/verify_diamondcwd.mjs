@@ -116,6 +116,45 @@ check('a cwd the model named is still honoured',
 	named.sent.length === 1 && named.sent[0].cwd === ROOT + '/src/api/inner',
 	JSON.stringify(named.sent.map((x) => x.cwd)));
 
+// ── "." is not a place, it is "here" ────────────────────────────────────
+//
+// A daimon writes `cwd: "."` because it is the most ordinary working directory
+// there is. Taken literally it normalises to the workspace ROOT, which a scoped
+// turn may not run in, so it met "'.' is not in this chat's workspace" — correct
+// and useless, and one call spent every time. Three live self-development runs on
+// 2026-08-24 were lost to it. It is now the same request as no `cwd` at all.
+const dot = await run(
+	{ own: 'diamonds/d6', attached: ['src/api'] }, { argv: ['ls'], cwd: '.' });
+check('a command asked for in "." runs in the folder the user marked',
+	dot.sent.length === 1 && dot.sent[0].cwd === ROOT + '/src/api',
+	JSON.stringify(dot.sent.map((x) => x.cwd)) + ' | ' + dot.said.slice(0, 100));
+
+// The empty spellings of the same thing, so the answer cannot be one branch that
+// happens to catch a full stop.
+const dotSlash = await run(
+	{ own: 'diamonds/d7', attached: ['src/api'] }, { argv: ['ls'], cwd: './' });
+check('and so does one asked for in "./"',
+	dotSlash.sent.length === 1 && dotSlash.sent[0].cwd === ROOT + '/src/api',
+	JSON.stringify(dotSlash.sent.map((x) => x.cwd)));
+
+// A Diamond with nothing on the machine gets the sentence that says what to do,
+// because "." now takes the same branch an absent cwd takes. It used to get a
+// sentence about ".", which names nothing anybody can act on.
+const dotBare = await run({ own: 'diamonds/d8', attached: [] }, { argv: ['ls'], cwd: '.' });
+check('a Diamond with nothing attached is refused in the words that name the fix',
+	/^Refused/.test(dotBare.said) && /attach/i.test(dotBare.said)
+		&& /Workspace panel/i.test(dotBare.said) && dotBare.sent.length === 0,
+	dotBare.said.slice(0, 160));
+
+// NOTHING IS WIDENED. The two refusals either side of "." are untouched: a named
+// place outside the Diamond, and an absolute path.
+const dotAbs = await run(
+	{ own: 'diamonds/d9', attached: ['src/api'] }, { argv: ['ls'], cwd: '/etc' });
+check('an absolute cwd is still refused, and told which convention it met',
+	/^Refused/.test(dotAbs.said) && /is absolute/.test(dotAbs.said)
+		&& /relative to the workspace/.test(dotAbs.said) && dotAbs.sent.length === 0,
+	dotAbs.said.slice(0, 140));
+
 // A Diamond may not name a cwd outside its own workspace, which is a different
 // refusal and must not be swallowed by the new one.
 const outside = await run(

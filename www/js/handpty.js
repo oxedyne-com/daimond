@@ -461,15 +461,39 @@
 		if (subs) s.subs = subs;
 		live[id] = s;
 
-		var msg = {
-			t:     'open',
-			id:    id,
-			argv:  spec.argv.slice(),
-			cwd:   spec.cwd,
-			env:   Array.isArray(spec.env) ? spec.env : [],
-			size:  sizeOf(spec.size),
-			fence: spec.fence,
-		};
+		// EVERY FIELD THE COMPOSER SENT, and not a list of the ones this file
+		// happened to know about.
+		//
+		// It WAS such a list until 2026-08-24, and the list was one field out of
+		// date. `pty_request` grew `toolkits` when a Diamond's granted toolchain
+		// began travelling beside the fence — the hand cannot check a fence naming
+		// `~/.cargo/registry` against the granted root unless it is TOLD which
+		// toolchain was granted — and this end went on sending the same six
+		// fields. So a session in a Diamond granted git arrived at the extension
+		// with `~/.gitconfig` in its fence and no toolchain named, was refused by
+		// the extension's own correct rule, and the owner could not open a
+		// terminal at all. The two ends had not disagreed about the fence; one of
+		// them had simply stopped copying part of the request.
+		//
+		// The compartment is composed in ONE place, in Rust, and `wrongOpen` above
+		// says so in as many words. A relay that re-lists the fields is a second
+		// composer holding an older idea of what a request is, so this one
+		// re-lists nothing: what arrived is forwarded whole, and only what this
+		// end OWNS is set over the top of it. The id is this end's because only it
+		// knows which sessions this page already has open; the size is normalised
+		// because the wire carries two cell counts and a caller may hand over
+		// anything; `env` and `argv` are pinned to the shapes the wire requires.
+		// The extension checks what arrives and the hand enforces it, so a field
+		// this end does not understand is not this end's to drop.
+		var msg = {};
+		for (var k in spec) {
+			if (Object.prototype.hasOwnProperty.call(spec, k)) msg[k] = spec[k];
+		}
+		msg.t    = 'open';
+		msg.id   = id;
+		msg.argv = spec.argv.slice();
+		msg.env  = Array.isArray(spec.env) ? spec.env : [];
+		msg.size = sizeOf(spec.size);
 
 		return new Promise(function (resolve, reject) {
 			s.resolve = resolve;

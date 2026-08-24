@@ -367,8 +367,19 @@ const addBtn = await p.evaluate(() => {
 	const r = b.getBoundingClientRect();
 	return { text: b.textContent, title: b.title, w: Math.round(r.width), h: Math.round(r.height) };
 });
+// WHAT THIS ASKS, AND WHAT IT DELIBERATELY DOES NOT. The defect was a control
+// that did not exist in the one state it exists for, so what is asked is that
+// it is THERE, that it leads with the `+`, and that it has real size on the
+// page. It used to demand `textContent === '+'` exactly. `bd6425d` then gave
+// that button its words -- on a Diamond this `+` widens the write fence, and
+// the two `+` buttons had been telling apart by position and a tooltip alone --
+// so from seq 149 this check asserted the button back into the state that made
+// a fence widen silently, and `verify_reachlegible` 6b-6e asserted the opposite
+// about the same button in the same suite. Two checks disagreeing about one
+// element is a gate whose colour depends on running order. The words are 6c's
+// to guard; the reachability is this one's.
 check('opening it reveals the control that attaches the first thing, with real size',
-	!!addBtn && addBtn.text === '+' && addBtn.w > 0 && addBtn.h > 0, JSON.stringify(addBtn));
+	!!addBtn && /^\+/.test(addBtn.text.trim()) && addBtn.w > 0 && addBtn.h > 0, JSON.stringify(addBtn));
 check('and a line saying what keeping something here is for',
 	await p.evaluate(() => /\S/.test((document.querySelector('#arte-list .arte-empty') || {}).textContent || '')),
 	await p.evaluate(() => (document.querySelector('#arte-list .arte-empty') || {}).textContent || '(nothing)'));

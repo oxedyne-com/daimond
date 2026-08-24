@@ -75,6 +75,7 @@
 //   node dev/verify_render.mjs --break keeporphan   # 5: a stray disclosure
 //   node dev/verify_render.mjs --break noopen       # 6: `open` thrown away
 //   node dev/verify_render.mjs --break bareselector # 7: the app's own details
+//   node dev/verify_render.mjs --break quietsummary # 7: the fold's label gone quiet
 //   node dev/verify_render.mjs                      # and then, clean
 //
 //   eval "$(bash dev/world.sh 5 --up)"
@@ -199,6 +200,16 @@ const BREAKS = {
 		file: 'css/app.css',
 		find: 'details.md-fold {',
 		with: 'details {',
+	}],
+	// The summary handed back to the quiet treatment it carried before 4017d78,
+	// which is the regression that change exists to prevent: a fold's label is
+	// the substance of the half that is hidden, and set in the muted ink at the
+	// small size it reads as a caption for something rather than a thing to
+	// read. Nothing else on the page moves, so only 7a can catch it.
+	quietsummary: [{
+		file: 'css/app.css',
+		find: 'details.md-fold > summary {\n\tpadding: 4px 0;\n\tcolor: var(--text-primary);',
+		with: 'details.md-fold > summary {\n\tpadding: 4px 0;\n\tcolor: var(--text-muted);',
 	}],
 };
 
@@ -538,12 +549,21 @@ try {
 		geom.spaced ? `${geom.spaced.closedH}px closed` : null);
 
 	// ── 7. Styling, both ways ─────────────────────────────────────────
-	const muted = await page.evaluate(() =>
-		getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim());
+	// WHICH INK, AND WHY IT MOVED. This read `--text-muted` until 4017d78, when
+	// the summary was deliberately given the answer's own size and ink: a fold's
+	// label is now a sentence or two of what the fold concludes, so it has to be
+	// legible at the weight of the reply it belongs to, and the left edge and
+	// the triangle are what say it is foldED. The muted treatment stayed with
+	// the thinking tile, which is the model's own working and must not compete.
+	// So the token asked for here is `--text-primary`. Left pointing at the old
+	// one, this check has been red since seq 147 about a change it was never
+	// told of -- three releases went out over it.
+	const ink = await page.evaluate(() =>
+		getComputedStyle(document.documentElement).getPropertyValue('--text-primary').trim());
 	const asRgb = await page.evaluate((hex) => {
 		const d = document.createElement('span'); d.style.color = hex;
 		document.body.appendChild(d); const c = getComputedStyle(d).color; d.remove(); return c;
-	}, muted);
+	}, ink);
 	check('7a a model\'s fold is drawn in the app\'s language, not the browser\'s',
 		!!geom.spaced && geom.spaced.styles.border === '2px'
 			&& geom.spaced.styles.colour === asRgb,

@@ -620,10 +620,19 @@ export async function newChat(s, { reuse = false } = {}) {
 	return after;
 }
 
-/// Point the app at the mock provider through the real Settings form.
-export async function connectMock(s, { baseUrl = MOCK, model = MODEL } = {}) {
+/// Point the app at a provider through the real Settings form.
+///
+/// `apiKey` is a parameter because `dev/reflux.mjs` drives this whole stack against a
+/// REAL provider, and a probe that had to edit this function to do it would be measuring
+/// a build nobody ships.  It defaults to the mock's sentinel, so every existing caller is
+/// unchanged.
+///
+/// **Nothing here ever reads a credential from a file, and none is written down in this
+/// tree.**  What a caller passes is whatever it holds; `reflux.mjs` passes a per-run token
+/// its own relay mints, so the provider key never enters the page's storage at all.
+export async function connectMock(s, { baseUrl = MOCK, model = MODEL, apiKey = 'mock-key' } = {}) {
 	const { page } = s;
-	await page.evaluate(async ({ baseUrl, model }) => {
+	await page.evaluate(async ({ baseUrl, model, apiKey }) => {
 		// Drive the form the user drives, so its own save path is exercised.
 		const open = document.getElementById('settings-btn')
 			|| document.querySelector('[data-admin="settings"]')
@@ -644,7 +653,7 @@ export async function connectMock(s, { baseUrl = MOCK, model = MODEL } = {}) {
 		}
 		const key = document.getElementById('cfg-api-key');
 		if (key) {
-			key.value = 'mock-key';
+			key.value = apiKey;
 			key.dispatchEvent(new Event('input', { bubbles: true }));
 			key.dispatchEvent(new Event('change', { bubbles: true }));
 		}
@@ -662,15 +671,32 @@ export async function connectMock(s, { baseUrl = MOCK, model = MODEL } = {}) {
 		}
 		const save = document.getElementById('byok-save');
 		if (save) save.click();
-	}, { baseUrl, model });
+	}, { baseUrl, model, apiKey });
 	await s.page.waitForTimeout(1200);
 
 	// Whatever the form did, the app is only connected if it says it is.
+	//
+	// READ FROM `daimond-models-v2`, WHICH IS WHERE THE APP KEEPS IT. This asked
+	// `daimond-byok` -- the single-provider config that key replaced -- so from the
+	// day the provider list landed it answered `null` for every connection that had
+	// in fact worked perfectly. Nothing caught it because `open()` throws the value
+	// away, and it was found by the first caller that read it: `dev/reflux.mjs`
+	// refused to spend against a relay the app had plainly taken. The old key is
+	// still read, for a profile written before the migration.
 	const ready = await s.page.evaluate(() => {
 		try {
-			const raw = localStorage.getItem('daimond-byok');
-			if (!raw) return null;
-			const j = JSON.parse(raw);
+			const raw = localStorage.getItem('daimond-models-v2');
+			if (raw) {
+				const j = JSON.parse(raw);
+				const id = (j.def || {}).provider;
+				const p  = ((j.providers || {})[id]) || {};
+				if (!id) return null;
+				return { baseUrl: p.url || '', model: (j.def || {}).model || '',
+					hasKey: !!(p.key || p.keyEnc) };
+			}
+			const old = localStorage.getItem('daimond-byok');
+			if (!old) return null;
+			const j = JSON.parse(old);
 			return { baseUrl: j.baseUrl, model: j.model, hasKey: !!(j.apiKey || j.apiKeyEnc) };
 		} catch { return null; }
 	});

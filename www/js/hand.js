@@ -79,6 +79,22 @@
 	/// host process and a second approval question for a hand the user granted
 	/// once (see the header, and js/handpty.js).
 	var subs = {};           // id -> [fn, ...]
+	// ── Waiting for an answer that carries no id ────────────────────
+	//
+	// `Req::Runs` takes nothing, on purpose: a field would be a filter, and a
+	// filter is a selector, and the one selector that message must never grow is
+	// one naming a process the hand did not start. So its answer carries no id
+	// either, and there is nothing to route it BY -- which is how a `runs` reply
+	// came to be dropped at the run switch below for having no `id` while the
+	// hand was answering it correctly.
+	//
+	// A queue, and not a single slot: two questions asked at once are answered
+	// in the order they were asked, over one ordered port, so the oldest waiter
+	// takes the oldest answer. An id-less ERROR settles the oldest waiter too --
+	// the hand sends one when it cannot say what it is running, and the
+	// extension sends one when the link itself has failed, and neither leaves an
+	// answer coming.
+	var runsWait = [];       // [{ resolve, reject, timer }, ...], oldest first
 
 	/// Whether a hand has ever answered in this page. It is the difference
 	/// between "you have not installed it" and "it stopped", and those are
@@ -167,6 +183,15 @@
 	/// It mirrors `Tool::RUN_TIMEOUT_DEFAULT_MS`; the page never enforces it, it
 	/// only decides how long to believe in an answer.
 	var TIMEOUT_DEFAULT = 120000;
+
+	/// The longest the page waits for the hand to say what it is still running.
+	///
+	/// A measurement, not a command: the hand reaps the groups it knows of and
+	/// walks `/proc` once for each, so the answer is quick or it is not coming.
+	/// A `signal` sent immediately before one is allowed for -- the hand gives a
+	/// group two seconds to take a kill and a quarter of a second to empty
+	/// before it looks -- and the rest is room for a machine under load.
+	var RUNS_WAIT = 20000;
 
 	/// How much of one stream the page keeps, at each end.
 	///
@@ -274,6 +299,10 @@
 		var w = rec.waiters;
 		rec.waiters = [];
 		for (var i = 0; i < w.length; i++) w[i].reject(new Error(why));
+		// Including whoever asked what is still running: their answer is not
+		// coming, and a question left hanging on a dead link is how a caller
+		// waits out a timeout for a sentence it could have had at once.
+		dropRuns(why);
 		// Every run on this link is over, whatever it was doing.
 		for (var id in live) {
 			if (Object.prototype.hasOwnProperty.call(live, id) && live[id].link === rec) {
@@ -323,6 +352,24 @@
 		if (deps.note) { try { deps.note(why); } catch (e) {} }
 	}
 
+	/// Hand the oldest outstanding `runs` question its answer, or its refusal.
+	///
+	/// # Arguments
+	/// * `how` - `'resolve'` or `'reject'`.
+	/// * `value` - The listing, or the sentence a reader acts on.
+	function settleRuns(how, value) {
+		var w = runsWait.shift();
+		if (!w) return false;
+		clearTimeout(w.timer);
+		if (how === 'resolve') w.resolve(value); else w.reject(new Error(value));
+		return true;
+	}
+
+	/// Settle every outstanding `runs` question at once, for a link that died.
+	function dropRuns(why) {
+		while (settleRuns('reject', why)) { /* until the queue is empty */ }
+	}
+
 	// ── What the hand says ──────────────────────────────────────────
 
 	/// One message from the hand, routed to whoever it is about.
@@ -340,12 +387,27 @@
 			greeted(rec);
 			return;
 		}
+		// What the hand is still running. No id, by design (see `runsWait`), so it
+		// is taken HERE, above the run switch that would otherwise drop it.
+		if (msg.t === 'runs') {
+			settleRuns('resolve', {
+				runs: Array.isArray(msg.runs) ? msg.runs : [],
+				more: Number(msg.more) || 0,
+			});
+			return;
+		}
 		// A connection-level error — no id — is the extension speaking about the
 		// link itself: not installed, declined, dismissed, forbidden, or the host
 		// disconnecting. It is written for the model, so it is kept verbatim and
 		// used as the reason when the port closes a moment later.
+		//
+		// It is ALSO how the hand answers a `runs` it could not carry out, and
+		// the two are not distinguishable from here. Both mean the same thing to
+		// whoever is waiting — no listing is coming — so the oldest waiter is
+		// settled with the sentence either way, and the note is still kept.
 		if (msg.t === 'error' && !msg.id) {
 			rec.note = msg.message || rec.note;
+			settleRuns('reject', msg.message || (met ? HAND_GONE : NO_HAND));
 			if (!rec.greeted) drop(rec, rec.note || NO_HAND);
 			return;
 		}
@@ -748,6 +810,61 @@
 		});
 	}
 
+	// ── What is still running, and stopping it ─────────────────────
+	//
+	// A command may outlive itself: `bash dev/world.sh 3 --up` starts a server
+	// and exits, the direct child is reaped, and the process GROUP goes on
+	// holding a port. Nothing else on the machine can reach it -- the fence
+	// scopes signals to the Landlock domain that sent them, so a LATER command's
+	// `kill` answers "Operation not permitted", and `/proc` is outside the fence
+	// so the pid cannot even be found. The hand is not the fenced thing, so the
+	// hand can; these two are how the page asks it to.
+	//
+	// There is deliberately no "stopped" answer to a signal, so `signal` resolves
+	// when the message has been HANDED OVER and promises nothing about the
+	// process. Whether it took is a question for `runs`, which measures.
+
+	/// Ask the hand what it is still running, standing groups included.
+	///
+	/// # Returns
+	/// A promise for `{ runs: [{ id, pid, what, state, secs }], more }`, or a
+	/// rejection carrying the sentence a reader acts on.
+	function runs() {
+		return send({ t: 'runs' }).then(function () {
+			return new Promise(function (resolve, reject) {
+				var w = { resolve: resolve, reject: reject, timer: null };
+				w.timer = setTimeout(function () {
+					// Taken out of the queue by hand rather than through
+					// `settleRuns`, which settles the OLDEST: this one timed out
+					// and an answer arriving late belongs to whoever is still
+					// waiting, not to a caller who has already given up.
+					var i = runsWait.indexOf(w);
+					if (i < 0) return;
+					runsWait.splice(i, 1);
+					reject(new Error('The machine hand did not say what it is still running within '
+						+ Math.round(RUNS_WAIT / 1000) + ' seconds. It may have stopped; ask the user '
+						+ 'to check it is still there.'));
+				}, RUNS_WAIT);
+				runsWait.push(w);
+			});
+		});
+	}
+
+	/// Signal one run this hand started, by the identifier it was given.
+	///
+	/// # Arguments
+	/// * `id` - The identifier the run was given at `exec`. Never a pid, never a
+	///   name and never a pattern: only a group this hand's own launcher created
+	///   can be named at all, and that is the whole of the guard.
+	/// * `sig` - `'term'`, `'kill'` or `'int'`.
+	function signal(id, sig) {
+		if (!id || typeof id !== 'string') {
+			return Promise.reject(new Error('A signal needs the identifier of the run it is for.'));
+		}
+		var which = (sig === 'kill' || sig === 'int') ? sig : 'term';
+		return send({ t: 'signal', id: id, sig: which });
+	}
+
 	/// Watch everything the hand says about one id.
 	///
 	/// # Arguments
@@ -916,6 +1033,8 @@
 		close: close,
 		status: status,
 		run: run,
+		runs: runs,
+		signal: signal,
 		send: send,
 		subscribe: subscribe,
 		hasHand: function () { return state.transport !== 'none'; },

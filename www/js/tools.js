@@ -132,7 +132,11 @@
 		// is written at two depths in the model's own prose now, so there is no function
 		// to list and nothing for a person to grant or withhold.
 		{ id: 'show',     fns: ['file_show'] },
-		{ id: 'machine',  fns: ['run', 'shell'] },
+		// `runs` is here and not in a capability of its own: it says what the machine hand
+		// is still running and stops one of them, and a person who granted the starting of
+		// commands has already granted this. Withholding it would not stop a command being
+		// left behind -- it would only stop Daimond being able to clear it up.
+		{ id: 'machine',  fns: ['run', 'runs', 'shell'] },
 		// ITS OWN CAPABILITY, not a member of `machine`, because it is the one tool that
 		// runs a process OUTSIDE the fence -- a named verifier from the tracked tree, never
 		// a command the model wrote. That is a different thing to grant from `run`, so it is

@@ -44,6 +44,15 @@ extern "C" {
     /// model reads it once.  The live stream is for the person watching.
     #[wasm_bindgen(method)]
     fn run(this: &Relay, spec_json: &str) -> js_sys::Promise;
+
+    /// What the hand is still running, standing process groups included.
+    #[wasm_bindgen(method)]
+    fn runs(this: &Relay) -> js_sys::Promise;
+
+    /// Signal one run by the identifier it was given, resolving when the
+    /// message has been handed over.
+    #[wasm_bindgen(method)]
+    fn signal(this: &Relay, id: &str, sig: &str) -> js_sys::Promise;
 }
 
 
@@ -126,4 +135,32 @@ pub async fn run(spec_json: &str) -> Outcome<String> {
         Ok(v)  => stringify(&v),
         Err(e) => Ok(fmt!(r#"{{"refused":"{}"}}"#, crate::llm::json_escape(&refusal(&e)))),
     }
+}
+
+/// What this hand is still running, as the relay's JSON.
+///
+/// Two things a caller must not read into it.  The listing is a MEASUREMENT
+/// taken a moment ago, so a run in it may have ended since; and a run absent
+/// from it is one the hand can no longer reach, which is not the same claim as
+/// one that has stopped.
+pub async fn runs() -> Outcome<String> {
+    let r = res!(relay());
+    settle(r.runs()).await
+}
+
+/// Signal one run this hand started, by the identifier the run was given.
+///
+/// **Resolving promises nothing about the process.**  There is deliberately no
+/// "stopped" answer on the wire: a signal that could not be delivered comes back
+/// as an error, and a signal that could is confirmed by asking [`runs`] again.
+/// Reporting success on a kill that failed is the defect that arrangement exists
+/// to close, so nothing here may be read as one.
+///
+/// # Arguments
+/// * `id` - The identifier the run was given, never a pid and never a pattern.
+/// * `sig` - `term`, `kill` or `int`.
+pub async fn signal(id: &str, sig: &str) -> Outcome<()> {
+    let r = res!(relay());
+    res!(settle(r.signal(id, sig)).await);
+    Ok(())
 }

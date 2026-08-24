@@ -691,7 +691,7 @@
 				return;
 			}
 			if (!m || typeof m !== 'object' || typeof m.t !== 'string') {
-				fail(null, 'Every message to the machine hand needs a "t" saying which it is: hello, exec, open, input, resize, signal or bye.');
+				fail(null, 'Every message to the machine hand needs a "t" saying which it is: hello, exec, open, verify, input, resize, signal, runs or bye.');
 				return;
 			}
 
@@ -777,12 +777,29 @@
 					fail(null, 'A signal needs the id of the run it is for.');
 					return;
 				}
+				// The wire takes three and no more, and a word outside them is
+				// refused HERE rather than at the host: the host answers an
+				// unreadable frame with a decode error naming the field, which
+				// reads as the hand being broken rather than as the word being
+				// wrong. There is deliberately no default: a signal nobody named
+				// is not a `term` somebody would have chosen.
+				if (m.sig !== 'term' && m.sig !== 'kill' && m.sig !== 'int') {
+					fail(m.id, `A signal must name "term" (ask it to stop), "kill" (insist) or "int" (interrupt, as Ctrl-C would); this one named ${JSON.stringify(m.sig)}.`);
+					return;
+				}
+				break;
+			// Takes nothing, so there is nothing to check. It was reaching the
+			// default below -- which refuses -- so a page could be TOLD by the
+			// hand that a command had left a server standing and had no way to
+			// ask what was standing or to stop it. The hand grew `runs` on
+			// 2026-08-23 and this end went on denying it.
+			case 'runs':
 				break;
 			case 'bye':
 				closing = true;
 				break;
 			default:
-				fail(m.id, `The machine hand does not know the message "${m.t}". It understands hello, exec, open, verify, input, resize, signal and bye.`);
+				fail(m.id, `The machine hand does not know the message "${m.t}". It understands hello, exec, open, verify, input, resize, signal, runs and bye.`);
 				return;
 			}
 

@@ -1112,11 +1112,15 @@ impl DaimondApp {
     /// * `attached` - JSON array of the paths marked into that Diamond, exactly as
     ///   [`DaimondApp::steer_crystal`] takes them.  Ignored for a chat.
     /// * `read_only` - Those of them to be consulted rather than edited.
+    /// * `toolkits` - The toolchains granted to that Diamond, so the view of the request says
+    ///   what the turn will actually carry.  A view composed without them described a briefing
+    ///   nobody would be sent.
     pub async fn wire_system(
         &self,
         diamond_id: String,
         attached:   String,
         read_only:  String,
+        toolkits:   String,
     )
         -> Result<String, JsValue>
     {
@@ -1129,7 +1133,7 @@ impl DaimondApp {
             self.agent.set_briefing(&brief);
             return Ok(wire_json(&self.agent, &self.registry, ""));
         }
-        let turn = self.compose_daimon(&diamond_id, &attached, &read_only).await;
+        let turn = self.compose_daimon(&diamond_id, &attached, &read_only, &toolkits).await;
         Ok(wire_json(&turn.agent, &turn.registry, &turn.local))
     }
 
@@ -1507,12 +1511,13 @@ impl DaimondApp {
         instruction: String,
         attached:    String,
         read_only:   String,
+        toolkits:    String,
         prior:       js_sys::Array,
         on_event:    js_sys::Function,
     )
         -> Result<js_sys::Array, JsValue>
     {
-        self.steer_inner(&id, instruction, attached, read_only, prior, on_event)
+        self.steer_inner(&id, instruction, attached, read_only, toolkits, prior, on_event)
             .await
             .map_err(to_js_err)
     }
@@ -1829,11 +1834,14 @@ impl DaimondApp {
     ///   them.  Read per turn because they change per turn; empty is a turn confined to the
     ///   Diamond's own directory, which is the safe reading of "nothing was said".
     /// * `read_only` - Those of them to be consulted rather than edited.
+    /// * `toolkits` - JSON array of the toolchain names the user granted this Diamond, as
+    ///   `Files.bounds` reports them.
     async fn compose_daimon(
         &self,
         id:        &str,
         attached:  &str,
         read_only: &str,
+        toolkits:  &str,
     )
         -> DaimonTurn
     {
@@ -1848,8 +1856,23 @@ impl DaimondApp {
         // ask about it, and a scope composed once at construction would still be yesterday's.
         let marked = parse_path_array(attached);
         let consult = parse_path_array(read_only);
-        let bounds = crate::tools::diamond_bounds(
+        let mut bounds = crate::tools::diamond_bounds(
             &diamond::diamond_dir(id), &marked, &consult);
+        // THE TOOLCHAINS THE USER TICKED ON THIS DIAMOND, and they were missing here.
+        //
+        // [`DaimondApp::set_diamond_scope`] has extended a worker's bounds with these since the
+        // grant existed; this composer never did.  So ticking Git on a Diamond granted it to the
+        // workers that Diamond dispatched and NOT to the daimon the user was talking to -- the
+        // one surface where the grant is made.  The daimon's own briefing said "No toolchain is
+        // granted to this Diamond" while the panel beside it drew the chip as on.
+        //
+        // Measured, not reasoned: `dev/reflux.mjs` gave a real model a repository and a granted
+        // Git toolkit and watched it spend twenty-seven tool calls on
+        // `unable to access '/home/jason/.gitconfig': Permission denied`, reaching in the end for
+        // `chmod o+x /home/jason` and `mv ~/.gitconfig ~/.gitconfig.bak` -- both refused by the
+        // fence, and both what a missing grant provokes.  The hand's journal for that turn
+        // recorded `"ro": []`.
+        bounds.extend(crate::tools::toolkit_bounds(&parse_path_array(toolkits)));
         // Stateless per instruction: reconstruct context from the crystal.
         //
         // The heading names the FILE, not the format, and that is what makes the standing context
@@ -1961,6 +1984,7 @@ impl DaimondApp {
         instruction: String,
         attached:    String,
         read_only:   String,
+        toolkits:    String,
         prior:       js_sys::Array,
         on_event:    js_sys::Function,
     )
@@ -1986,7 +2010,7 @@ impl DaimondApp {
         // which the agent already holds, and a second copy of half of it would be one more thing
         // able to disagree with the first.
         let DaimonTurn { agent, registry, crystal: before, .. } =
-            self.compose_daimon(id, &attached, &read_only).await;
+            self.compose_daimon(id, &attached, &read_only, &toolkits).await;
         // Read before the turn, compared after it. The page is not put in the prompt -- it is
         // markup the daimon can open with `file_read` when it has been asked to change it, and it
         // would otherwise be paid for on every request of every steering turn.

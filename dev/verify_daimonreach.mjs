@@ -165,7 +165,7 @@ try {
 		const app = new m.DaimondApp(a.mock, 'mock-key', 'mock/fast', 4096, '', true);
 		const seen = [];
 		const after = await app.steer_crystal(a.id, a.instruction,
-			JSON.stringify(a.marks), JSON.stringify(a.ro), [],
+			JSON.stringify(a.marks), JSON.stringify(a.ro), '[]', [],
 			(ev) => { seen.push({ type: ev.type, name: ev.name || '', content: ev.content || '' }); });
 		return { seen, after: Array.prototype.slice.call(after || []).length };
 	}, { id, instruction, marks, ro, mock: MOCKURL });

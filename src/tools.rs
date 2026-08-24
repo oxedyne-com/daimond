@@ -3249,6 +3249,37 @@ fn absolute_path_refusal(tool: &Tool, path: &str) -> Option<String> {
         path, tool.name(), inside))
 }
 
+/// The directory a `run` call NAMED, or `None` where it asked to work "here".
+///
+/// `.` is not a place, it is "wherever I am", and where a turn is is the folder the user marked
+/// into it.  Taken literally it [`normalise`]s to the workspace ROOT, which a scoped turn may not
+/// run in, so a daimon writing the most ordinary working directory there is met *"'.' is not in
+/// this chat's workspace"* -- correct, useless, and one call spent every time.  Three live
+/// self-development runs on 2026-08-24 were lost to exactly that.
+///
+/// So `.`, `./`, `""` and an absent `cwd` are ONE request, answered by
+/// [`ToolContext::default_cwd`], and they cannot drift apart because they are the same branch.
+/// [`crate::wasm::pty::pty_request`] has read a terminal's `cwd` this way since 2026-08-13.
+///
+/// **Nothing is widened.**  The fence is built from the turn's [`Bound`]s and never from the
+/// working directory, so this only moves the start from a place the turn may not run in to one it
+/// may -- and where a turn has nowhere on the machine at all, it now meets the sentence that says
+/// so instead of a sentence about `.`.
+///
+/// **It says nothing about `.` as a SEARCH root**, which still means the whole workspace.  Those
+/// are two different questions, and answering them alike would turn a write fence into a read
+/// fence: see the note in [`walk_starts`], where three tests caught that within the hour.
+///
+/// An absolute `cwd` is passed through unchanged so that [`run_cwd_refusal`] still meets it.
+///
+/// # Arguments
+/// * `args` - The raw tool arguments, read for an explicit `cwd`.
+#[cfg(any(target_arch = "wasm32", test))]
+fn asked_cwd(args: &str) -> Option<String> {
+    extract_json_string(args, "cwd")
+        .filter(|c| c.starts_with('/') || !normalise(c).is_empty())
+}
+
 /// The refusal a `run` call gets for an absolute `cwd`.
 ///
 /// `run` is the one tool with a different convention on each side -- `argv` is the machine's,
@@ -3465,6 +3496,13 @@ const LINKING_SCRIPTS: &[Linking] = &[
         instead: "Ask the user to start the dev gateway; the links it needs are exactly what the \
             fence withholds, and a copy would not do -- a webhook signature is checked against \
             those keys.",
+    },
+    Linking {
+        path: "dev/reflux.mjs",
+        does: "a file inside its own fixture tree, to prove that its symlink task can go red",
+        instead: "It drives a real browser, a real model and real spending, and is the loop the \
+            owner starts rather than a check you run inside a turn. Ask the user to run it, and \
+            say which task you wanted measured.",
     },
     Linking {
         path: "dev/shot_betatier.mjs",
@@ -5088,6 +5126,208 @@ pub fn push_note() -> String {
 }
 
 
+// ── What a run leaves behind, and how a daimon reaches it ────────────────────
+//
+// A command may outlive itself.  `bash dev/world.sh 3 --up` starts a dev server
+// and a mock provider in the background and exits; the direct child is reaped and
+// its process GROUP is not empty, so two servers go on holding their ports after
+// the tool call has answered.  That is a legitimate thing to want -- a browser
+// verifier needs a server to drive -- so the answer is not to refuse it.
+//
+// Nothing else on the machine can reach what is left.  The fence scopes signals
+// to the Landlock domain that sent them, so a LATER command's `kill` answers
+// "Operation not permitted", and `/proc` is outside the fence, so the pid cannot
+// even be found.  A daimon that started two servers in front of the owner on
+// 2026-08-23 could not stop either, and a person cleared them from outside.
+//
+// The hand is not the fenced thing, and it keeps what it started, so the reach
+// exists one layer down: `Req::Runs` asks what is still going and `Req::Signal`
+// stops one BY THE IDENTIFIER THE RUN WAS GIVEN.  This is the daimon's door to
+// both, and the two live in one tool on purpose -- a stop is answered with a
+// fresh LISTING and never with an acknowledgement, because reporting success on
+// a kill that failed is the whole of the defect being closed.  There is nowhere
+// here to write "stopped", which is the cheapest way not to write it again.
+//
+// It widens nothing.  The only selector is an identifier this app itself issued
+// for a command the user's own grant let it start; there is no arm that takes a
+// pid, a name or a pattern, so the argument cannot express anything else.
+
+/// What a `runs` call must do, once its arguments have been read.
+///
+/// Pure, and therefore the whole of the decision: the call site in [`Tool::runs`] is wasm-only
+/// and cannot be unit-tested at all, so nothing is decided there.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RunsStep {
+    /// Measure and report, changing nothing.
+    List,
+    /// Signal this run, then measure and report what that left.
+    Stop(String, String),
+    /// Send nothing, and say this.
+    Refuse(String),
+}
+
+/// The three signals the wire carries, in the order a caller should reach for them.
+pub const RUN_SIGNALS: [&str; 3] = ["term", "kill", "int"];
+
+/// Everything `runs` decides from its arguments, in one place.
+///
+/// # Arguments
+/// * `args` - The tool call's arguments as JSON, as the model wrote them.
+pub fn runs_step(args: &str) -> RunsStep {
+    // The likeliest wrong door, and it is worth its own sentence: `run` and `runs` differ by one
+    // letter, and a model that reaches the wrong one would otherwise be handed a listing as though
+    // its command had been carried out.
+    if extract_json_string_array(args, "argv").is_some() {
+        return RunsStep::Refuse(fmt!(
+            "Refused: 'runs' says what is still running on the machine and stops one of them; it \
+            does not start anything, and this call carried an 'argv'. Use 'run' to start a \
+            command."));
+    }
+    let stop = match extract_json_string(args, "stop") {
+        Some(s) => s.trim().to_string(),
+        None    => String::new(),
+    };
+    let sig = match extract_json_string(args, "signal") {
+        Some(s) => s.trim().to_lowercase(),
+        None    => String::new(),
+    };
+    if stop.is_empty() {
+        // A signal with nothing to signal is a call the model meant to be a stop, so it is
+        // refused rather than quietly answered with a listing it did not ask for.
+        if !sig.is_empty() {
+            return RunsStep::Refuse(fmt!(
+                "Refused: 'signal' says WHICH signal to send and 'stop' says what to send it to, \
+                and this call named a signal with nothing to send it to. Call 'runs' with no \
+                arguments to see what is still running, then call it again with the 'stop' of the \
+                one you want stopped."));
+        }
+        return RunsStep::List;
+    }
+    // A pid is what a person reaches for, and it is the one thing this tool must never take: the
+    // hand answers an identifier it does not know by saying there is nothing there, which reads
+    // exactly like a run that has already stopped. So it is refused here, where the sentence can
+    // say where the right string is.
+    if stop.chars().all(|c| c.is_ascii_digit()) {
+        return RunsStep::Refuse(fmt!(
+            "Refused: '{}' is a process id, and 'stop' takes the run's IDENTIFIER -- the first \
+            column of this tool's own listing, such as 'run-1-bash'. Only a run this hand started \
+            can be named at all, which is why a pid is not a name it has. Call 'runs' with no \
+            arguments to see the identifiers.", stop));
+    }
+    if sig.is_empty() {
+        // Asking is the default, and it is the only defensible one: a server given SIGTERM closes
+        // its listening socket, and one given SIGKILL does not get to.
+        return RunsStep::Stop(stop, fmt!("term"));
+    }
+    if !RUN_SIGNALS.contains(&sig.as_str()) {
+        return RunsStep::Refuse(fmt!(
+            "Refused: '{}' is not a signal this hand sends. It sends 'term' to ask a command to \
+            stop, 'kill' to insist, and 'int' to interrupt it as Ctrl-C would; there are three \
+            because an agent needs to ask, to insist, or to interrupt, and the rest of the POSIX \
+            set is a way to reach behaviour nobody asked for.", sig));
+    }
+    RunsStep::Stop(stop, sig)
+}
+
+/// One row of the hand's listing, as [`runs_report`] reads it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunRow {
+    pub id:    String,	// the identifier, and the only way to signal it
+    pub pid:   u64,
+    pub what:  String,	// the command line, cut by the hand at 160 bytes
+    pub state: String,	// `running` or `standing`
+    pub secs:  u64,
+}
+
+/// The rows of a `runs` answer, in the order the hand sent them.
+///
+/// A row with no `id` is dropped rather than reported blank: the identifier is the whole of what
+/// makes a row actionable, and a listing offering a run nothing can reach would be worse than one
+/// that did not mention it.
+pub fn run_rows(listing: &str) -> Vec<RunRow> {
+    let objs = match crate::llm::extract_json_objects(listing, "runs") {
+        Some(o) => o,
+        None    => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for o in &objs {
+        let id = match extract_json_string(o, "id") {
+            Some(s) if !s.is_empty() => s,
+            _ => continue,
+        };
+        out.push(RunRow {
+            id,
+            pid:   extract_json_number(o, "pid").unwrap_or(0),
+            what:  extract_json_string(o, "what").unwrap_or_default(),
+            state: extract_json_string(o, "state").unwrap_or_else(|| fmt!("running")),
+            secs:  extract_json_number(o, "secs").unwrap_or(0),
+        });
+    }
+    out
+}
+
+/// How long a run has been where it is, in the words a reader uses.
+fn run_age(secs: u64) -> String {
+    if secs < 60 { return fmt!("{}s", secs); }
+    if secs < 3600 { return fmt!("{}m{:02}s", secs / 60, secs % 60); }
+    fmt!("{}h{:02}m", secs / 3600, (secs % 3600) / 60)
+}
+
+/// What the model reads after a `runs` call, built from the hand's own listing.
+///
+/// **The listing is the answer to a stop, and there is no other.**  A signal is delivered before
+/// it is acted on, so the hand measures rather than acknowledges; this reports what it measured,
+/// and where a signalled run is STILL in the listing it says so in the loudest sentence here.
+/// The alternative -- reporting a kill as done because the message went out -- is the defect that
+/// left two servers holding ports with nothing able to reach them.
+///
+/// # Arguments
+/// * `listing` - The hand's `runs` answer, as JSON.
+/// * `stopped` - The identifier a signal was just sent to and which signal, where one was sent.
+pub fn runs_report(listing: &str, stopped: Option<(&str, &str)>) -> String {
+    let rows = run_rows(listing);
+    let more = extract_json_number(listing, "more").unwrap_or(0);
+    let mut s = String::new();
+    if let Some((id, sig)) = stopped {
+        if rows.iter().any(|r| r.id == id) {
+            s.push_str(&fmt!(
+                "'{}' WAS SENT {} AND IS STILL THERE. The signal went out and the run is in the \
+                listing below, which was measured after it. Do not report this as stopped. Send \
+                'kill' if you sent 'term'; if 'kill' has already been sent and it is still here, \
+                those processes are not this hand's to stop and the user has to clear them.\n\n",
+                id, sig.to_uppercase()));
+        } else {
+            s.push_str(&fmt!(
+                "'{}' is gone: it was sent {} and it is not in the listing below, which was \
+                measured afterwards.\n\n", id, sig.to_uppercase()));
+        }
+    }
+    if rows.is_empty() {
+        s.push_str("Nothing this hand started is still running.");
+        return s;
+    }
+    s.push_str(&fmt!("{} run(s) this hand started are still going:\n\n", rows.len()));
+    for r in &rows {
+        s.push_str(&fmt!("  {}  {}  pid {}  {}  {}\n",
+            r.id, r.state, r.pid, run_age(r.secs), r.what));
+    }
+    if more > 0 {
+        s.push_str(&fmt!("\n...and {} more, which did not fit in one answer.\n", more));
+    }
+    // Said every time there is one, because a standing group is the case a reader has no other way
+    // to recognise: the tool call it came from answered normally and reported an exit code.
+    if rows.iter().any(|r| r.state == "standing") {
+        s.push_str(
+            "\nA run marked 'standing' is one whose command has FINISHED and whose processes have \
+            not: a server started in the background outlives the command that started it. It is \
+            still holding whatever it holds -- a port, usually -- and nothing on this machine can \
+            reach it except this tool, because the compartment a command runs in scopes signals to \
+            itself. Stop one with 'stop' when it is no longer wanted.\n");
+    }
+    s
+}
+
+
 /// Shared context every tool executes against.
 #[derive(Clone, Debug)]
 pub struct ToolContext {
@@ -5280,6 +5520,10 @@ impl ToolContext {
     /// A Diamond therefore runs in its first ATTACHED path, and one with no attachment has nowhere
     /// on the machine to run at all -- which [`Tool::Run`] says in those words rather than sending
     /// the hand a directory it will not find.
+    ///
+    /// **A `cwd` of `"."` is answered here too**, and not only an absent one: see [`asked_cwd`]
+    /// for why the two are one request.  `"."` as a SEARCH root is a different question and keeps
+    /// its own answer.
     pub fn default_cwd(&self) -> String {
         let prefix = normalise(&self.path_prefix);
         if !prefix.is_empty() && !is_store_path(&prefix) {
@@ -6654,6 +6898,18 @@ pub enum Tool {
     /// takes an argument vector, so there is nothing to inject into.  `shell`
     /// exists only on the native build; this is the browser's.
     Run,
+    /// Say what the hand is still running, and stop one of them by its identifier.
+    ///
+    /// The other half of [`Tool::Run`], and it exists because a command may outlive itself: a
+    /// server started in the background leaves a process group standing after the run has
+    /// answered, and NOTHING ELSE ON THE MACHINE CAN REACH IT.  The compartment scopes signals to
+    /// itself, so a later command's `kill` is refused by the kernel, and `/proc` is outside the
+    /// fence, so the pid cannot be found.  A daimon leaked two servers in front of the owner on
+    /// 2026-08-23 and a person cleared them by hand.
+    ///
+    /// It widens nothing.  The hand acts only on an identifier its own launcher issued; there is
+    /// no arm that takes a pid, a name or a pattern, so the argument cannot express one.
+    Runs,
     /// Dispatch a worker agent to carry out a bounded task in its own
     /// context.  Only the conductor (a Diamond's crystal agent) is given this.
     SpawnAgent,
@@ -6822,6 +7078,9 @@ impl Tool {
             // fence it can actually enforce.  Both the description the model reads and the summary
             // the panel shows say so, because a tool listed without its condition is a promise.
             Tool::Run,
+            // The other half of `run`, and it has to be offered wherever `run` is: a turn that can
+            // start a server and cannot stop one leaves the leak with nobody able to reach it.
+            Tool::Runs,
             // Evidence. Offered beside `run` because it is the same machine hand, and because a
             // person reading the Tools panel should see that Daimond can check its own work as
             // well as do it -- but it is the narrower claim of the two: it runs THIS
@@ -6868,6 +7127,9 @@ impl Tool {
             // absence was worst, and the catalogue says why -- a model with no way to show a
             // file does not merely fail to show one, it tells the user the app cannot.
             Tool::Run,
+            // And the means to stop what `run` started. Withholding it does not stop a daimon
+            // leaking a server; it only stops the daimon being the one who clears it up.
+            Tool::Runs,
             // The daimon is the turn that most needs this and the one that could least reach
             // it: a worker writes code and a daimon is answerable for it, and until this tool
             // existed the answer could only ever be `cargo test`.
@@ -7264,6 +7526,7 @@ impl Tool {
             Tool::SheetWrite  => "sheet_write",
             Tool::Shell       => "shell",
             Tool::Run         => "run",
+            Tool::Runs        => "runs",
             Tool::Verify      => "verify",
             Tool::SpawnAgent  => "spawn_agent",
             Tool::WebOpen     => "web_open",
@@ -7323,6 +7586,7 @@ impl Tool {
             "sheet_write"  => Some(Tool::SheetWrite),
             "shell"        => Some(Tool::Shell),
             "run"          => Some(Tool::Run),
+            "runs"         => Some(Tool::Runs),
             "verify"       => Some(Tool::Verify),
             "spawn_agent"  => Some(Tool::SpawnAgent),
             "web_open"     => Some(Tool::WebOpen),
@@ -7361,6 +7625,7 @@ impl Tool {
             Tool::SheetWrite  => "Write cells into an Excel (.xlsx) or OpenDocument (.ods) spreadsheet that already exists. Give a 'path' and 'edits': a list of cells, each with a 'ref' like 'B2' and either a 'value' or a 'formula'. Name the 'sheet' by the tab it is on, or leave it out for the first sheet — a sheet name that is not in the workbook is refused and the refusal lists the ones that are. A 'value' is typed the way a person typing into a cell would have it typed: '3.5' becomes the number 3.5, 'true' becomes a boolean, and text that is not exactly how a number prints stays text, so a part number like '007' is not renumbered. An empty value empties the cell. A 'formula' is written in the ordinary A1 form ('=B2*C2', '=SUM(D2:D10)') and is converted to whatever the file's own format needs. NOTHING IS RECALCULATED: a formula you write goes in without a value beside it and the reader works it out when the file is opened, and every formula already in the workbook keeps the number it had. A 'ref' beyond the end of the sheet is written and the sheet grows; only a bad reference is refused. Read the sheet with sheet_read first, so you write to the cell you mean.",
             Tool::FileFetch   => "Download one file from cloud storage onto this device, so the other file tools can reach it. The workspace is one set of files and this device holds as much of it as it can; file_list marks the rest 'in cloud storage', and file_read refuses them and says how big they are. This is the only thing that moves those bytes, and it may transfer a great deal of data at the user's expense — so fetch a file when you actually need its contents, one at a time, and never speculatively or in bulk. Once it has arrived, read it as you would any other file.",
             Tool::Shell       => "Run a shell command in the workspace and return its stdout/stderr and exit code.",
+            Tool::Runs        => "Say what the machine hand is STILL RUNNING, and stop one of them. A command can outlive itself: 'bash dev/world.sh 3 --up' starts a server in the background and exits, so 'run' answers with an exit code while two processes go on holding ports. Nothing else on this computer can reach them -- the compartment a command runs in scopes signals to itself, so a later command's 'kill' is refused by the kernel, and it cannot even find the process id. This tool is the only route, and it is the route because the hand keeps a record of what IT started. Call it with no arguments and it lists every run still going, each with an IDENTIFIER, whether it is 'running' (the command has not finished) or 'standing' (the command finished and its processes did not), how long it has been that way, and the command line. Pass 'stop' with one of those identifiers to signal it. THE ANSWER TO A STOP IS ALWAYS A FRESH LISTING, taken after the signal, and it is the only evidence you have: if the run is still in that listing then it did not stop, and you must not say it did. There is deliberately no 'stopped' reply anywhere in this machinery, because reporting success on a kill that failed is the defect it was built to close. 'stop' takes the identifier the listing gives and nothing else -- never a process id, never a program name, never a pattern -- because only a run this hand itself started can be named at all, and that is the whole of what keeps this from being 'pkill' with extra steps. 'signal' chooses between 'term' (ask it to stop, and the default), 'kill' (insist) and 'int' (interrupt, as Ctrl-C would). Ask it before you finish any task in which you started something in the background: a server you leave behind is one the user has to find and clear from outside Daimond.",
             Tool::Verify      => "Run one of this repository's own verifiers and report what it PROVED. A verifier is a tracked script in 'dev/' that drives the real app in a real browser and prints one line per check; 'name' is its short name -- 'graph' for dev/verify_graph.mjs -- and it is a NAME, not a path and not a command line, because the hand looks it up in the folder the user granted and builds the command itself. This is how you check work a person would have to look at: 'run' with 'cargo test' proves the Rust, and nothing proves the screen. THE ANSWER IS ALWAYS THREE NUMBERS, and you must carry all three. CHECKS PASSED is how many checks the clean run passed. BREAKS CONFIRMED RED is how many of the verifier's own deliberate breakages made a check that passed clean fail -- each one is a check that has now been SEEN to fail, which is the only thing that makes its pass mean anything. BREAKS THAT PROVED NOTHING is the number that matters most and the one you must never drop: a break that changed no verdict means the check it aims at cannot be made to fail, so that check is measuring nothing and its pass is worth nothing. Report those checks as UNMEASURED, by name. Every declared break is run by default, so the tool takes as long as the verifier times one plus the number of breaks -- give 'timeout_ms' for a slow one rather than reaching for 'clean_only'. 'clean_only' skips every break, and its result is labelled NOT PROVEN and IS NOT EVIDENCE: a check that has never been observed failing is not a check, so do not report a passing count from a clean-only run -- say that it ran and that its instrument was not proved. Use 'break' to run one named break, which must be one the verifier itself declares; if you name one it does not, the refusal lists the ones it does. A verifier runs OUTSIDE the fence every other tool works inside, because it is tracked repository code rather than a command anyone's model wrote -- so it is refused to a dispatched worker, who is working with nobody watching: if you are one, say which verifier you wanted and what it should prove, and let the daimon run it. It needs Daimond's machine hand, and it needs the granted folder to be a tree that HAS verifiers: it is not a general test runner and it refuses rather than pretending. Where it writes screenshots they land under dev/shots/ and the report names them; read one with file_read and \"as\":\"image\" if you can see, or dispatch a worker who can.",
             Tool::Run         => "Run one command on the user's machine and return its output and exit code. This is how you build, test, run a linter, or use any command-line tool. Give 'argv' as an ARRAY -- the program, then each argument separately: [\"cargo\",\"test\",\"--lib\"]. It is NOT a shell command line and there is no shell: a semicolon, a pipe, a redirection, a backtick, a '$(...)' or a '&&' is passed to the program as a literal argument and will not do what it does in a terminal, and '~' is not expanded either, so '~/x' asks for a directory actually named '~' and the command reports the path missing -- write every path in 'argv' out in full from '/'. 'cwd' is the one that goes the other way: it is workspace-relative, as the file tools' paths are, and an absolute one is refused rather than joined onto the workspace root. To feed a command some input use 'stdin'; to chain two commands, call this tool twice and decide between them yourself, which is better anyway because you see the first result before choosing. It needs a companion program -- Daimond's machine hand -- that the user installs and approves once: a browser cannot start a process on its own. Where there is no hand, or where the hand says it cannot contain a command on that computer, this REFUSES and says which; believe the refusal, tell the user what you wanted to run, and carry on with the file tools. Where there is one, the command runs inside the folder they granted and not the rest of the machine. Whether it may reach the network, and whether the user is asked before it runs at all, is the permission mode they chose: the note about this computer says which, so read that rather than assuming either way. A command that fails is usually telling you something true: read its stderr before running it again.",
             Tool::SpawnAgent  => "Dispatch a worker agent to carry out one bounded task in its own context, with the full workspace file tools. Call it once per agent; several calls in a single turn run in parallel. Each agent reports back a summary you can fold into the crystal.",
@@ -7403,6 +7668,7 @@ impl Tool {
             Tool::DocEdit     => "Change the words in a Word or OpenDocument document, keeping everything else in it.",
             Tool::SheetWrite  => "Write cells into a spreadsheet you already have.",
             Tool::Shell       => "Run a command. Only where Daimond has a machine to run it on.",
+            Tool::Runs        => "Say what the machine hand is still running, standing background processes included, and stop one of them by the identifier it was given.",
             Tool::Verify      => "Run one of this repository's verifiers, clean and under each break it declares, and say how many checks passed, how many breaks went red, and how many breaks proved nothing.",
             Tool::Run         => "Run a command on your computer, in the folder you granted. Needs Daimond's machine hand installed; refused where it is not, and where it cannot contain the command.",
             Tool::SpawnAgent  => "Send a worker off to do one task on its own, several at once.",
@@ -7442,6 +7708,7 @@ impl Tool {
             Tool::SheetWrite => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .xlsx or .ods, e.g. 'books/ledger.xlsx'; never absolute"},"edits":{"type":"array","description":"The cells to write.","items":{"type":"object","properties":{"sheet":{"type":"string","description":"Which sheet, by the name on its tab. Omit for the first sheet."},"ref":{"type":"string","description":"Which cell, like 'B2' or 'AC14'"},"value":{"type":"string","description":"What to put in the cell, as a person would type it. '' empties it."},"formula":{"type":"string","description":"A formula in the ordinary A1 form, e.g. '=B2*C2'. Give this or 'value', not both unless you know the cached value is right."}},"required":["ref"]}}},"required":["path","edits"]}"#,
             Tool::Shell => r#"{"type":"object","properties":{"command":{"type":"string","description":"Shell command to run"}},"required":["command"]}"#,
             Tool::Verify => r#"{"type":"object","properties":{"name":{"type":"string","description":"The verifier's short name: 'graph' for dev/verify_graph.mjs. Lower-case letters, digits and underscores. A name, never a path or a command line."},"break":{"type":"string","description":"Run the clean pass and this ONE break, instead of every declared break. It must be one the verifier declares in its own source; any other string is refused and the refusal lists the ones it knows."},"clean_only":{"type":"boolean","description":"Skip every break and run the clean pass alone. The result is labelled NOT PROVEN and is not evidence: no check in it has been shown to be able to fail. Use it to see whether something is broken at all, never to report that something works."},"timeout_ms":{"type":"integer","description":"Budget in milliseconds for the WHOLE sequence -- the clean run and every break after it (default 1200000, maximum 7200000). A break the budget does not reach is reported as never having run."}},"required":["name"]}"#,
+            Tool::Runs => r#"{"type":"object","properties":{"stop":{"type":"string","description":"Stop this run. It is the IDENTIFIER from this tool's own listing, such as 'run-1-bash' -- never a process id, never a program name and never a pattern. Leave it out to list without stopping anything."},"signal":{"type":"string","description":"Which signal to send with 'stop': 'term' to ask it to stop (the default), 'kill' to insist, 'int' to interrupt it as Ctrl-C would."}},"required":[]}"#,
             Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program and each argument as a separate element, e.g. [\"cargo\",\"test\"]. Never a shell command line. A path in an argument is the machine's own: absolute, with no '~'."},"cwd":{"type":"string","description":"Workspace-relative directory to run in, e.g. 'src/api' (default: this Diamond's own directory). Never absolute."},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit in milliseconds (default 120000, maximum 900000)"}},"required":["argv"]}"#,
             Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string","description":"Short label for the agent, e.g. 'research-opfs'"},"task":{"type":"string","description":"The complete, self-contained instruction for the agent. It cannot see this conversation, so say everything it needs."}},"required":["name","task"]}"#,
             Tool::WebOpen => r#"{"type":"object","properties":{"url":{"type":"string","description":"Absolute URL of the page to show, including the https:// scheme"}},"required":["url"]}"#,
@@ -7510,6 +7777,10 @@ impl Tool {
             Tool::Run        => Err(err!(
                 "Tool 'run' reaches the machine hand, which exists to give the BROWSER build a \
                 process. This is the native build, which has 'shell'.";
+                Unimplemented)),
+            Tool::Runs       => Err(err!(
+                "Tool 'runs' says what the machine hand is still running, and this is the native \
+                build, which has no hand: a command started here is this process's own child.";
                 Unimplemented)),
             Tool::Verify     => Err(err!(
                 "Tool 'verify' reaches the machine hand, which exists to give the BROWSER build \
@@ -7740,6 +8011,26 @@ impl Tool {
                             bytes. Use file_fetch to bring it here first.", path, size;
                             IO, File, Read, Missing));
                     }
+                }
+                // A DIRECTORY, SAID AS A DIRECTORY -- the browser's half of a sentence that
+                // existed only in the native one.  The OPFS edge answers a read of a folder with
+                // the browser's own words, `JsValue(TypeMismatchError: The path supplied exists,
+                // but was not an entry of requested type. undefined)`, and a daimon that met that
+                // on 2026-08-24 spent three calls working out what it meant.  The native
+                // `file_read` has named `file_list` here since `f064764`; the product did not,
+                // and that is exactly the shape a native probe cannot see -- `dev/reflux.mjs`
+                // found it on its first outing.
+                //
+                // Asked of OPFS rather than matched against the exception's name: a listing that
+                // SUCCEEDS is the proof that the path is a directory, and it costs one call on a
+                // path that has already failed.
+                if read.is_err()
+                    && crate::wasm::opfs::list_dir(ctx.root, &path).await.is_ok()
+                {
+                    return Err(err!(
+                        "file_read: '{}' is a directory, not a file. file_list answers what is \
+                        in it, and file_search looks inside everything under it.", raw;
+                        Invalid, Input));
                 }
                 let bytes = res!(read);
                 // Remember what was seen here, so a later write can tell if the
@@ -8167,6 +8458,7 @@ impl Tool {
                 "Tool 'shell' is not available in the browser build (no in-browser process executor).";
                 Unimplemented)),
             Tool::Run => Self::run(args_json, ctx).await,
+            Tool::Runs => Self::runs(args_json, ctx).await,
             Tool::Verify => Self::verify(args_json, ctx).await,
             Tool::SpawnAgent => Self::spawn_agent(args_json, ctx),
             Tool::WebOpen => {
@@ -8856,7 +9148,8 @@ impl Tool {
         // The name of the tool that answers this question costs one sentence.
         if abs.is_dir() {
             return Err(err!(
-                "file_read: '{}' is a directory, not a file. file_list answers what is in it,                 and file_search looks inside everything under it.", path; Invalid, Input));
+                "file_read: '{}' is a directory, not a file. file_list answers what is in it, \
+                and file_search looks inside everything under it.", path; Invalid, Input));
         }
         let data = res!(std::fs::read(&abs)
             .map_err(|e| err!(e, "file_read: cannot read '{}'.", path; IO, File, Read)));
@@ -9563,7 +9856,7 @@ impl Tool {
         // machine folder rather than a bad one -- and the alternative is the hand's
         // "cannot be resolved to a directory on this machine", which is true, unhelpful, and points
         // at a path the user never chose.
-        let cwd_rel = match extract_json_string(args, "cwd") {
+        let cwd_rel = match asked_cwd(args) {
             Some(c) => c,
             None    => {
                 let d = ctx.default_cwd();
@@ -10126,6 +10419,59 @@ impl Tool {
         };
         let res = res!(crate::wasm::hand::run(&spec).await);
         Ok(Self::verify_result(&name, &res, ctx))
+    }
+
+    /// Say what this hand is still running, and stop one of them.
+    ///
+    /// Short, like [`Tool::verify`] and for the opposite reason: there is no fence to build
+    /// because there is nothing here a fence could be built out of.  The only thing the model
+    /// supplies is an identifier this app itself issued, and the hand will not act on one it did
+    /// not issue -- so the whole of the decision is [`runs_step`], which is pure and tested, and
+    /// the whole of the answer is [`runs_report`] over a listing the hand MEASURED.
+    ///
+    /// # Arguments
+    /// * `args` - The raw tool arguments.
+    /// * `ctx` - The turn, which is not consulted: a run is the hand's, not a turn's.
+    #[cfg(target_arch = "wasm32")]
+    async fn runs(args: &str, _ctx: &ToolContext) -> Outcome<String> {
+        let stop = match runs_step(args) {
+            RunsStep::Refuse(why) => return Ok(why),
+            RunsStep::List        => None,
+            RunsStep::Stop(id, sig) => Some((id, sig)),
+        };
+        // **No `status()` gate, and that is a decision rather than an omission.**  Every other
+        // route to the hand refuses on `paired`, which `hand/REVIEW.md` §1.14 makes false wherever
+        // the page cannot PROVE that the folder it has open is the folder the hand was granted.
+        // That rule stands where it was written: it stops a command running against files nobody
+        // meant it to touch.  Nothing here runs, reads or writes anything -- one question about
+        // what the hand itself started, and one signal to a group it started -- so the rule has
+        // nothing to protect, and applying it would make a leaked server unstoppable on exactly
+        // the workspaces where it is easiest to leak one: a chat whose folder lives in the
+        // browser can never satisfy §1.14, so `runs` would have been built and unreachable.
+        //
+        // What is left of the gate is the honest half: with no hand there is no link, so the calls
+        // below reject with the sentence the relay already writes for a model to act on.
+        //
+        // The signal first, then the measurement, and the measurement is the answer. A failed
+        // delivery comes back as an error here; a delivery that succeeded promises nothing, which
+        // is why the listing below is taken afterwards rather than believed instead.
+        if let Some((id, sig)) = &stop {
+            if let Err(e) = crate::wasm::hand::signal(id, sig).await {
+                return Ok(fmt!(
+                    "Refused: '{}' could not be sent {}. {} Ask what is running before naming one: \
+                    only a run this hand started can be named at all.",
+                    id, sig.to_uppercase(), e.plain()));
+            }
+        }
+        let listing = match crate::wasm::hand::runs().await {
+            Ok(l)  => l,
+            Err(e) => return Ok(fmt!(
+                "The machine hand did not say what it is still running, so nothing here is \
+                evidence about anything{}. {}",
+                match &stop { Some((id, _)) => fmt!(", '{}' included", id), None => String::new() },
+                e.plain())),
+        };
+        Ok(runs_report(&listing, stop.as_ref().map(|(i, g)| (i.as_str(), g.as_str()))))
     }
 }
 
@@ -11473,6 +11819,52 @@ mod tests {
         // And an ordinary turn still starts at the workspace root, and is not scoped.
         assert_eq!(ctx().default_cwd(), fmt!(""));
         assert!(!ctx().is_scoped());
+    }
+
+    #[test]
+    fn test_a_dot_working_directory_is_the_turns_own_folder_and_not_a_refusal_00() {
+        // Three live self-development runs on 2026-08-24 were lost to a daimon writing
+        // `cwd: "."` and meeting "'.' is not in this chat's workspace". The refusal was true --
+        // "." normalises to the workspace ROOT, and a scoped turn may not run there -- and it cost
+        // a call every time, because "." is the most ordinary working directory there is.
+        //
+        // `.` is not a place. It is "where I am", and where a turn is is what the user marked.
+        for here in ["\".\"", "\"./\"", "\"\"", "\"./.\""] {
+            assert_eq!(asked_cwd(&fmt!("{{\"cwd\": {}}}", here)), None,
+                "{} names no directory, so the turn's own folder answers it", here);
+        }
+        assert_eq!(asked_cwd("{}"), None, "and an absent cwd is the same request");
+        // A named place still wins outright. This is the half that must not move: a fence is a
+        // fence because a turn cannot choose where it runs.
+        assert_eq!(asked_cwd("{\"cwd\": \"notes/ch1\"}"), Some(fmt!("notes/ch1")));
+        assert_eq!(asked_cwd("{\"cwd\": \"/etc\"}"), Some(fmt!("/etc")),
+            "an absolute cwd is passed through, or `run_cwd_refusal` never meets it");
+        // And what "." now resolves to is a directory the turn may actually run in, which is the
+        // whole point: the answer replaces a refusal with a command that runs.
+        let c = scoped(&["notes"], &[]);
+        assert_eq!(c.default_cwd(), fmt!("notes"));
+        assert!(c.may_run_in(&c.default_cwd()));
+        assert!(!c.may_run_in(""), "while the root it used to mean is still refused");
+        // NOTHING IS WIDENED. The fence is composed from the turn's bounds and never from the
+        // working directory, so the same places are reachable before and after.
+        let m = Machine::at("/home/u/ws");
+        let f = fence_spec(&c.no_write, &m, false);
+        assert!(f.rw.contains(&fmt!("/home/u/ws/notes")), "{:?}", f.rw);
+        assert!(!f.rw.contains(&fmt!("/home/u/ws")), "the root is not granted by this: {:?}", f.rw);
+        // A turn with nowhere on the machine gets the sentence that says so rather than a
+        // sentence about ".", because it takes the same branch an absent cwd takes.
+        assert_eq!(scoped(&[], &[]).default_cwd(), fmt!(""));
+        assert!(scoped(&[], &[]).is_scoped());
+        // ── And the read fence is untouched ─────────────────────────────
+        //
+        // "." as a WORKING DIRECTORY and "." as a SEARCH ROOT are different questions. A first
+        // draft of the walk change made "." mean the marks, which would have turned a write fence
+        // into a read fence as a side effect; three tests caught it. This asserts the two answers
+        // stayed apart.
+        assert_eq!(walk_starts("{\"path\": \".\"}", &c), vec![fmt!(".")],
+            "a search from '.' still means the whole workspace");
+        assert_eq!(walk_starts("{}", &c), vec![fmt!("diamonds/d1"), fmt!("notes")],
+            "and a search with no path still starts at the marks");
     }
 
     #[test]
@@ -13838,6 +14230,225 @@ mod tests {
         assert_eq!(no.to_json().replace(r#""net":false"#, r#""net":true"#), yes.to_json(),
             "a yes changed something other than the network:\n{}\n{}",
             no.to_json(), yes.to_json());
+    }
+
+
+    // ── Stopping what a run left standing ───────────────────────────────────
+    //
+    // Every one of these is native and pure. `Tool::runs` is wasm-only and cannot be reached from
+    // here at all, which is the reason `runs_step` and `runs_report` exist as functions rather
+    // than as lines inside it: what is decided there is decided nowhere else, and what is said to
+    // the model is composed nowhere else.
+
+    /// One row of a hand's listing, spelled the way the wire spells it.
+    fn run_json(id: &str, pid: u64, what: &str, state: &str, secs: u64) -> String {
+        fmt!(r#"{{"id":"{}","pid":{},"what":"{}","state":"{}","secs":{}}}"#,
+            id, pid, what, state, secs)
+    }
+
+    /// A whole `Resp::Runs`, as the relay hands it over.
+    fn runs_json(rows: &[String], more: u32) -> String {
+        fmt!(r#"{{"runs":[{}],"more":{}}}"#, rows.join(","), more)
+    }
+
+    /// A bare call lists; nothing is signalled by asking the question.
+    #[test]
+    fn test_asking_what_is_running_signals_nothing() {
+        assert_eq!(RunsStep::List, runs_step("{}"));
+        assert_eq!(RunsStep::List, runs_step(r#"{"stop":""}"#));
+        assert_eq!(RunsStep::List, runs_step(r#"{"stop":"   "}"#));
+    }
+
+    /// **A pid is refused, and the refusal says where the right string is.**
+    ///
+    /// The hand answers an identifier it never issued by saying there is nothing there, which is
+    /// indistinguishable from a run that has already stopped -- so a model handed a pid would be
+    /// told its leak was gone. This is the one wrong argument that fails silently one layer down,
+    /// which is why it is caught one layer up.
+    #[test]
+    fn test_a_stop_takes_the_identifier_and_a_pid_is_refused_by_name() {
+        match runs_step(r#"{"stop":"481920"}"#) {
+            RunsStep::Refuse(why) => {
+                assert!(why.contains("481920"), "the refusal does not name what was sent: {}", why);
+                assert!(why.contains("IDENTIFIER"),
+                    "the refusal does not say what to send instead: {}", why);
+                assert!(why.contains("run-1-bash"),
+                    "the refusal does not show what an identifier looks like: {}", why);
+            },
+            other => panic!("a pid was accepted as a run to stop: {:?}", other),
+        }
+        // And an identifier with digits in it is not a pid.
+        assert_eq!(RunsStep::Stop(fmt!("run-12-bash"), fmt!("term")),
+            runs_step(r#"{"stop":"run-12-bash"}"#));
+    }
+
+    /// Asking is the default, because a server given SIGTERM closes its listening socket.
+    #[test]
+    fn test_the_default_signal_asks_rather_than_insists() {
+        assert_eq!(RunsStep::Stop(fmt!("run-1-bash"), fmt!("term")),
+            runs_step(r#"{"stop":"run-1-bash"}"#));
+        for sig in RUN_SIGNALS {
+            assert_eq!(RunsStep::Stop(fmt!("run-1-bash"), fmt!("{}", sig)),
+                runs_step(&fmt!(r#"{{"stop":"run-1-bash","signal":"{}"}}"#, sig)),
+                "'{}' is one of the three the wire carries and was not passed through", sig);
+        }
+    }
+
+    /// A word outside the three is refused, and the three are named.
+    #[test]
+    fn test_a_signal_the_wire_does_not_carry_is_refused_and_the_three_are_named() {
+        match runs_step(r#"{"stop":"run-1-bash","signal":"hup"}"#) {
+            RunsStep::Refuse(why) => {
+                assert!(why.contains("hup"), "the refusal does not name what was sent: {}", why);
+                for sig in RUN_SIGNALS {
+                    assert!(why.contains(&fmt!("'{}'", sig)),
+                        "the refusal does not offer '{}': {}", sig, why);
+                }
+            },
+            other => panic!("a signal outside the three was sent: {:?}", other),
+        }
+    }
+
+    /// A signal with nothing to send it to is a stop the model forgot to aim, not a listing.
+    #[test]
+    fn test_a_signal_with_nothing_to_send_it_to_is_refused_rather_than_listed() {
+        match runs_step(r#"{"signal":"kill"}"#) {
+            RunsStep::Refuse(why) => assert!(why.contains("'stop'"),
+                "the refusal does not name the field that was missing: {}", why),
+            other => panic!("a signal with no target was answered with {:?}", other),
+        }
+    }
+
+    /// `run` and `runs` differ by one letter, so the wrong door says which the right one is.
+    #[test]
+    fn test_a_command_sent_to_runs_is_pointed_at_run() {
+        match runs_step(r#"{"argv":["cargo","test"]}"#) {
+            RunsStep::Refuse(why) => assert!(why.contains("'run'"),
+                "the refusal does not name the tool that starts a command: {}", why),
+            other => panic!("a command reached the tool that stops them: {:?}", other),
+        }
+    }
+
+    /// **THE DEFECT THIS WHOLE CHAIN EXISTS TO CLOSE.**
+    ///
+    /// A signal is delivered before it is acted on, and one that was delivered to a group that
+    /// ignores it is delivered all the same. So the answer to a stop is the listing taken AFTER
+    /// it, and a run still in that listing has not stopped -- whatever the send returned. Two
+    /// servers were left holding ports on 2026-08-23 by machinery that reported the opposite.
+    #[test]
+    fn test_a_signalled_run_still_in_the_listing_is_never_reported_as_stopped() {
+        let listing = runs_json(
+            &[run_json("run-1-bash", 4812, "bash dev/world.sh 3 --up", "standing", 91)], 0);
+        let said = runs_report(&listing, Some(("run-1-bash", "term")));
+        assert!(said.contains("STILL THERE"),
+            "a signalled run that is still listed was not called out: {}", said);
+        assert!(!said.contains("is gone"),
+            "a signalled run that is still listed was reported gone: {}", said);
+        assert!(said.contains("Do not report this as stopped"),
+            "the report does not tell the model what not to say: {}", said);
+        assert!(said.contains("'kill'"),
+            "the report does not say what to do next: {}", said);
+        assert!(said.contains("run-1-bash"), "{}", said);
+    }
+
+    /// And the other half, which is what makes the first half mean anything.
+    #[test]
+    fn test_a_signalled_run_absent_from_the_listing_is_reported_gone() {
+        let said = runs_report(&runs_json(&[], 0), Some(("run-1-bash", "kill")));
+        assert!(said.contains("'run-1-bash' is gone"),
+            "a run that left the listing was not reported gone: {}", said);
+        assert!(!said.contains("STILL THERE"), "{}", said);
+        assert!(said.contains("measured afterwards"),
+            "the report does not say the listing is the evidence: {}", said);
+        // A run that is gone while another is still going is still gone, and the survivor is
+        // still reported: the two halves of one answer.
+        let both = runs_report(
+            &runs_json(&[run_json("run-2-node", 51, "node dev/serve.mjs", "running", 4)], 0),
+            Some(("run-1-bash", "term")));
+        assert!(both.contains("'run-1-bash' is gone"), "{}", both);
+        assert!(both.contains("run-2-node"), "the survivor is missing from the listing: {}", both);
+    }
+
+    /// A standing group is the case a reader has no other way to recognise, so it is explained
+    /// every time there is one -- and not when there is not.
+    #[test]
+    fn test_a_standing_group_is_named_and_explained_and_a_running_one_is_not() {
+        let standing = runs_report(
+            &runs_json(&[run_json("run-1-bash", 4812, "bash dev/world.sh 3 --up", "standing", 3661)], 0),
+            None);
+        assert!(standing.contains("run-1-bash"), "{}", standing);
+        assert!(standing.contains("standing"), "{}", standing);
+        assert!(standing.contains("1h01m"),
+            "the age is not in words a reader uses: {}", standing);
+        assert!(standing.contains("bash dev/world.sh 3 --up"),
+            "the listing does not say what the run is: {}", standing);
+        assert!(standing.contains("command has FINISHED"),
+            "a standing group is not explained: {}", standing);
+
+        let running = runs_report(
+            &runs_json(&[run_json("run-2-cargo", 77, "cargo test", "running", 12)], 0), None);
+        assert!(running.contains("run-2-cargo"), "{}", running);
+        assert!(!running.contains("command has FINISHED"),
+            "the standing note was said of a run that has not finished: {}", running);
+    }
+
+    /// Nothing running says so plainly, rather than drawing an empty table.
+    #[test]
+    fn test_an_empty_listing_says_nothing_is_running() {
+        let said = runs_report(&runs_json(&[], 0), None);
+        assert_eq!("Nothing this hand started is still running.", said);
+        // And the same when the hand answered something this end cannot read at all: an
+        // unreadable answer is not evidence that something is running, and it is not a panic.
+        assert_eq!("Nothing this hand started is still running.", runs_report("not json", None));
+    }
+
+    /// What did not fit is COUNTED rather than dropped, so a reader knows the listing is partial.
+    #[test]
+    fn test_a_listing_that_did_not_fit_says_how_many_it_left_out() {
+        let said = runs_report(
+            &runs_json(&[run_json("run-1-bash", 1, "bash x", "standing", 1)], 7), None);
+        assert!(said.contains("7 more"), "the count that did not fit is missing: {}", said);
+    }
+
+    /// A row with no identifier is dropped, because an identifier is the whole of what makes a
+    /// row actionable -- there is nothing else the hand will act on.
+    #[test]
+    fn test_a_row_with_no_identifier_is_not_offered_as_something_to_stop() {
+        let rows = run_rows(&runs_json(
+            &[fmt!(r#"{{"pid":9,"what":"x","state":"standing","secs":1}}"#),
+              run_json("run-1-bash", 1, "bash x", "standing", 1)], 0));
+        assert_eq!(1, rows.len(), "a row with no identifier was kept: {:?}", rows);
+        assert_eq!("run-1-bash", rows[0].id);
+    }
+
+    /// **A turn that can start a command can stop one.**
+    ///
+    /// Held as a property of the belts rather than checked belt by belt: `run` was offered to the
+    /// daimon on 2026-08-13 and the means to stop what it started did not exist until ten days
+    /// later, so a daimon leaked two servers with no route back to them. Any future belt that
+    /// gains `run` gains this with it or fails here.
+    #[test]
+    fn test_every_belt_that_can_start_a_command_can_also_stop_one() {
+        let belts: [(&str, Vec<Tool>); 3] = [
+            ("browser",  Tool::browser()),
+            ("daimon",   Tool::daimon()),
+            ("defaults", Tool::defaults()),
+        ];
+        let mut starters = 0;
+        for (name, belt) in &belts {
+            if !belt.contains(&Tool::Run) { continue; }
+            starters += 1;
+            assert!(belt.contains(&Tool::Runs),
+                "the '{}' belt can start a command on the machine and cannot stop one", name);
+        }
+        assert!(starters >= 2,
+            "no belt in this test offers 'run', so it would pass against anything");
+        assert_eq!("runs", Tool::Runs.name());
+        assert_eq!(Some(Tool::Runs), Tool::from_name("runs"));
+        assert!(Tool::Runs.description().contains("identifier"),
+            "the description does not say what 'stop' takes");
+        assert!(Tool::Runs.parameters().contains("\"stop\""),
+            "the schema does not offer the field that stops a run");
     }
 
     /// **Why a build failed, said rather than guessed at** (`hand/REVIEW.md` §1.13).
@@ -16355,6 +16966,104 @@ mod tests {
         }
     }
 
+    // ── The fence and the toolkit names must describe the same grant ─────────
+    //
+    // A request carries two things the hand reads together: the fence, and the names of the
+    // toolchains the user granted. It has to be told the names, because a toolchain does not live
+    // in the workspace -- a fence naming `~/.cargo/registry` cannot be checked against the granted
+    // root -- so the extension refuses any fence root outside the grant unless a toolkit was named
+    // beside it. The two are therefore one statement in two fields, and NOTHING made them agree
+    // until 2026-08-24, when the owner could not open a terminal at all:
+    //
+    //   The fence root "/home/jason/.gitconfig" is outside "/home/jason/usr", which is the folder
+    //   this machine's hand was granted and this request granted no toolchain.
+    //
+    // Both functions read the same `toolkits(bounds)`, so they cannot disagree over one set of
+    // bounds -- and the fault was not there at all. `pty_request` composed both fields correctly
+    // and `www/js/handpty.js` copied SIX NAMED FIELDS out of the request it was handed, of which
+    // `toolkits` was not one, so the field was composed and dropped on the way past. It is pinned
+    // in `dev/prove_ptyfields.mjs`, which forwards a real request through the real relay.
+    //
+    // What is pinned HERE is the half a Rust test can hold: the two functions describe the same
+    // grant, for every toolkit this build knows, so a future toolchain cannot arrive in one and
+    // not the other.
+
+    /// **Every fence root outside the granted folder is accounted for by a named toolkit.**
+    ///
+    /// The extension's rule stated as the invariant that makes it satisfiable: a root outside the
+    /// grant passes only where the request names a toolchain, so a `fence_spec` that emits one
+    /// while `toolkit_names_json` names nothing composes a request that cannot be accepted by any
+    /// correct relay. Asserted over every toolkit the build knows, singly and all together,
+    /// because the next toolchain added is the one that would reintroduce this.
+    #[test]
+    fn test_a_fence_root_outside_the_grant_is_always_matched_by_a_named_toolkit() {
+        let m = homed();
+        let root = m.root.clone();
+        let mut sets: Vec<Vec<Bound>> = Toolkit::all().iter().map(|k| vec![k.bound()]).collect();
+        sets.push(Toolkit::all().iter().map(|k| k.bound()).collect());
+        sets.push(Vec::new());
+        for bounds in &sets {
+            let f = fence_spec(bounds, &m, false);
+            let named = toolkit_names_json(bounds);
+            let outside: Vec<&String> = f.rw.iter().chain(f.ro.iter())
+                .filter(|p| !under(p, &root) && p.as_str() != root)
+                .collect();
+            let kits = toolkits(bounds);
+            if outside.is_empty() { continue; }
+            assert!(!kits.is_empty(),
+                "the fence reaches {:?}, outside the granted {}, and the request names no \
+                toolchain: {}", outside, root, named);
+            for k in &kits {
+                assert!(named.contains(&fmt!("\"{}\"", k.name())),
+                    "the '{}' toolkit put roots outside the grant and is not named in {}",
+                    k.name(), named);
+            }
+        }
+        // And it would pass against anything if no set produced an outside root at all.
+        let all: Vec<Bound> = Toolkit::all().iter().map(|k| k.bound()).collect();
+        let f = fence_spec(&all, &m, false);
+        assert!(f.ro.iter().chain(f.rw.iter()).any(|p| !under(p, &root)),
+            "no toolkit reaches outside the granted root, so this test measures nothing: {:?}", f);
+        // The other direction: a turn that names no toolkit reaches nothing outside the grant.
+        let bare = fence_spec(&[], &m, false);
+        for p in bare.rw.iter().chain(bare.ro.iter()) {
+            assert!(under(p, &root) || p == &root,
+                "a turn granted no toolchain was fenced to {}, outside {}", p, root);
+        }
+        assert_eq!("[]", toolkit_names_json(&[]));
+    }
+
+    /// **And a machine that will not say where home is grants no toolchain at all**, in BOTH
+    /// fields rather than in one of them.
+    ///
+    /// The dangerous asymmetry, and the reason this is a second test: `Kit::resolve` gives up when
+    /// the hand reports no home, so the fence quietly loses the toolchain roots -- and a
+    /// `toolkit_names_json` that went on naming the toolkit would be telling the hand a toolchain
+    /// was granted while the fence named none of it. That is the harmless direction of the same
+    /// disagreement, and it is asserted so that nobody "fixes" it by making the names conditional
+    /// on the home and reintroduces the harmful one.
+    #[test]
+    fn test_a_machine_with_no_home_grants_no_toolchain_root() {
+        let m = Machine {
+            os: fmt!("linux"), root: fmt!("/home/u/usr"), home: None,
+            host: None, caps: vec![fmt!("fence:linux")],
+        };
+        let bounds: Vec<Bound> = Toolkit::all().iter().map(|k| k.bound()).collect();
+        let f = fence_spec(&bounds, &m, false);
+        for p in f.rw.iter().chain(f.ro.iter()) {
+            assert!(under(p, &m.root) || p == &m.root,
+                "a machine that named no home was fenced to {}, which no grant reaches", p);
+        }
+        assert!(Kit::resolve(&bounds, &m).is_none(),
+            "a toolkit resolved against a machine that will not say where home is");
+        // The names are still sent, because they say what the USER granted and the hand clamps
+        // with them; what changes is that the fence asks for nothing they would have to cover.
+        for k in Toolkit::all() {
+            assert!(toolkit_names_json(&bounds).contains(&fmt!("\"{}\"", k.name())),
+                "'{}' left the names when the machine lost its home", k.name());
+        }
+    }
+
     /// **A Diamond attached to a repository reaches its own `.git`, and this file withholds none
     /// of it.**
     ///
@@ -17805,6 +18514,7 @@ impl Tool {
                 "file_show needs the browser's document panel."; Unimplemented)),
             Tool::Shell      => Err(err!("use execute() for shell"; Invalid)),
             Tool::Run        => Err(err!("use execute() for run"; Invalid)),
+            Tool::Runs       => Err(err!("use execute() for runs"; Invalid)),
             Tool::Verify     => Err(err!("use execute() for verify"; Invalid)),
             Tool::SpawnAgent => Self::spawn_agent(args, ctx),
             Tool::WebOpen

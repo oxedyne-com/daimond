@@ -29209,6 +29209,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var after = await fa.steer_crystal(diamondId, instruction,
 				JSON.stringify(marks.attached  || []),
 				JSON.stringify(marks.read_only || []),
+				// The toolchains the user ticked on this Diamond. Handed over here because
+				// `compose_daimon` is where a daimon's own bounds are built, and it is not the
+				// place a worker's are: ticking Git granted it to this daimon's workers and not
+				// to the daimon, which is the surface the user granted it on.
+				JSON.stringify(marks.toolkits  || []),
 				(rec.session && rec.session.msgs) || [], onEvent);
 			if (onScreen()) finalizeAssistant();
 			if (replyText) {
@@ -33473,7 +33478,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			w = JSON.parse(await app.wire_system(did,
 				JSON.stringify(marks.attached  || []),
-				JSON.stringify(marks.read_only || [])));
+				JSON.stringify(marks.read_only || []),
+				JSON.stringify(marks.toolkits  || [])));
 		} catch (e) { return; }
 		// Still the thread this render was started for, and still wanted. Re-read rather than
 		// assumed: everything above this line may have happened while the user was moving.
