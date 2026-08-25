@@ -18,11 +18,11 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
+import { GW_URL as GW } from './ports.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
 const GWDIR = path.join(ROOT, 'gateway');
-const GW    = 'http://127.0.0.1:9002';
 /// What the gateway says while this runs. A webhook that mints no licence
 /// answers 200 either way; the reason it rejected the event is only here.
 const GW_LOG = procLog('verify_pro');

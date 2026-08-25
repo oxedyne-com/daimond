@@ -24,6 +24,9 @@
 //!   relay behind `run`, which reaches a process outside the page.
 //! - [`web`] — the Web panel edge: bindings to the `window.DaimondWeb`
 //!   driver behind the agent's web tools.
+//! - [`ask`] — the question card's edge: bindings to `window.DaimondAsk`
+//!   behind `ask`, which is how a model puts ONE decision to the user with
+//!   options they answer by tapping rather than by typing.
 //! - [`doc`] — the document panel's edge: bindings to `window.DaimondDoc`
 //!   behind `file_show`, which is how a model puts a file in front of the
 //!   user rather than reading its bytes.
@@ -42,6 +45,7 @@
 //! first browser vertical.
 
 pub mod app;
+pub mod ask;
 pub mod cloud;
 pub mod doc;
 pub mod entry;
@@ -51,6 +55,7 @@ pub mod mailtls;
 pub mod office;
 pub mod opfs;
 pub mod pty;
+pub mod social;
 pub mod typst;
 pub mod web;
 

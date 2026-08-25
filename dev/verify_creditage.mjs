@@ -75,7 +75,21 @@ const FLOOR = 5 * MIN;
 const BREAK = {
 	floor: {
 		what:    'the shared floor removed, so every trigger probes',
-		patches: [['if (!probeDue(id)) continue;', '/* floor removed */']],
+		// TWO PATCHES, AND THE SECOND ONE IS NOT PART OF THE CLAIM. Removing the floor also
+		// removes the only thing standing between `render()` and itself: models.js:1987 calls
+		// `refreshCredits()` from a redraw, a probe that answers calls `render()`, and with no
+		// floor that loop feeds itself. MEASURED with the one patch (2026-08-25): 8,238 probes
+		// after five round trips and 20,790 by the end of the scenario, every one of them a
+		// route round trip across the Playwright channel -- 73 seconds against the 16 every
+		// other scenario takes, and enough to expire a click's own 30-second actionability
+		// wait on a busy box. The second patch cuts the success -> redraw edge, so what is
+		// left is exactly the claim: one probe per trigger, five round trips making five
+		// requests where the shipped build makes none. A sharper proof and a cheaper one.
+		patches: [
+			['if (!probeDue(id)) continue;', '/* floor removed */'],
+			['if (got && document.getElementById(\'models-list\')) render();\n\t\t\t\t\telse ageLines();',
+				'if (got) ageLines();'],
+		],
 	},
 	hidden: {
 		what:    'the beat left running while the tab is hidden',
@@ -174,6 +188,13 @@ async function scenario(label, patches) {
 		},
 	});
 	const p = s.page;
+	// A BROKEN BUILD IS ALLOWED TO BE SLOW, and the plumbing waits for it rather than the
+	// assertions being loosened -- nothing in this file asserts a duration, so a longer wait
+	// costs a slow run time and cannot buy a wrong answer. Playwright's default is 30 seconds
+	// per action, and on a busy box a patched build that is deliberately making requests can
+	// expire it inside a click that has already happened; the run then dies with an uncaught
+	// TimeoutError, which reads as the app being broken and is not.
+	p.setDefaultTimeout(120000);
 	await signInAs(s, `creditage-${label}`);
 	await p.waitForTimeout(1500);
 

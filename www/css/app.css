@@ -1170,16 +1170,17 @@ span.arte-open { cursor: default; }
 	font-size: var(--fs-3xs-2xs); font-family: var(--font-mono); color: var(--text-muted);
 	text-transform: uppercase; letter-spacing: .04em; }
 
-/* The fence, drawn as a fence: one box, one rail, whatever is inside it. The
-   rail is the accent because this is the one thing on the surface that grants
-   anything -- and it is the only accent edge in the footer, so it cannot be
-   confused with the Read pill's. The cap is `--ws-cap` rows, in the same unit
-   and for the same reason `--attach-cap` is: see variables.css. */
-.ws-body { border: 1px solid var(--border-strong); border-left: 3px solid var(--accent);
-	/* Square down the rail's own side. A rounded left corner turns a 3px rail
-	   into a sliver that curves away from the row it is meant to bracket. */
-	border-radius: 0 var(--radius) var(--radius) 0; background: var(--bg-tertiary);
-	max-height: calc(var(--ws-cap) * var(--attach-row-h) + var(--attach-peek));
+/* ONE LIST since 2026-08-24, and therefore no accent rail down its edge. The
+   rail said "everything in this box is in the fence", which was true while the
+   box held only marked folders and stopped being true the moment the two groups
+   became one: it would have bracketed attachments that grant nothing. The claim
+   is now made once, on the row that makes it -- the `Workspace` pill below --
+   rather than twice, once wrongly.
+   The cap is `--attach-cap`, the FOOTER's own, because this is the whole footer
+   and not the upper of two groups. */
+.ws-body { border: 1px solid var(--border-strong);
+	border-radius: var(--radius); background: var(--bg-tertiary);
+	max-height: calc(var(--attach-cap) * var(--attach-row-h) + var(--attach-peek));
 	overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; }
 .ws-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .ws-body::-webkit-scrollbar { width: 10px; }
@@ -1191,17 +1192,9 @@ span.arte-open { cursor: default; }
    what it says is what the chat can reach. */
 .ws-empty { padding: 7px 9px; line-height: 1.45; }
 
-/* What has merely been put in front of the model: no box and no ground of its
-   own, so the eye reads a list of separate things beside a bounded one. */
-.at-group .attach-body { border-top: 1px solid var(--border); }
-
-/* Two groups share the room one group used to have. Both are capped and both
-   scroll, so the composer stays where it is however much is marked or attached
-   -- which is the property `verify_attachfocus` measures. */
-#chat-attachments.two { --attach-cap: 3; --ws-cap: 2; }
-@media (max-height: 700px) {
-	#chat-attachments.two { --attach-cap: 2; --ws-cap: 2; }
-}
+/* One list since 2026-08-24, so there is no second group to make room for and
+   no `.two` arithmetic to do. What tells a marked folder from an attached file
+   is the row itself: the `Workspace` pill below, pressed or not. */
 
 /* The workspace mark, on a folder's tile in either group: SQUARE, where
    Note/Read is round. Two independent things sit side by side here, and one of
@@ -3309,6 +3302,130 @@ body.resizing { cursor: col-resize; user-select: none; }
 	margin-top: 8px;
 	padding-top: 8px;
 	border-top: 1px solid var(--border);
+}
+
+/* ── A question the model put, answered with one tap ──────────────────
+   IT MUST NOT LOOK LIKE A PERMISSION PROMPT. `.modal.dlg` is what asks
+   "may I do this": centred, over a scrim, danger-coloured, and it takes
+   the screen. This is the opposite question -- "which of these do you
+   want" -- so it sits IN the thread, in the accent, takes no focus and
+   blocks nothing. The two mean opposite things and a reader has to be
+   able to tell them apart at a glance. */
+.ask-card {
+	margin: 12px 0;
+	padding: 12px 14px;
+	border: 1px solid var(--accent);
+	border-left-width: 3px;
+	border-radius: var(--radius);
+	background: var(--bg-secondary);
+}
+.ask-card.answered { border-color: var(--border-2); background: var(--bg-primary); }
+.ask-count {
+	font-size: var(--fs-2xs);
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	margin-bottom: 4px;
+}
+.ask-q {
+	font-size: var(--fs-lg);
+	color: var(--text-primary);
+	line-height: 1.4;
+	margin-bottom: 10px;
+}
+.ask-opts { display: flex; flex-direction: column; gap: 6px; }
+/* One tap answers, so the whole option is the target: the label, the badge
+   and what it means are all inside the button. A row where only a small
+   word was clickable would be a decision answered by aiming. */
+.ask-opt {
+	display: block;
+	width: 100%;
+	text-align: left;
+	padding: 8px 10px;
+	border: 1px solid var(--border-2);
+	border-radius: var(--radius-sm);
+	background: var(--bg-tertiary);
+	color: var(--text-primary);
+	font: inherit;
+	cursor: pointer;
+}
+.ask-opt:hover  { background: var(--bg-hover); border-color: var(--border-strong); }
+.ask-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ask-opt.recommended { border-color: var(--accent); background: var(--accent-soft); }
+.ask-label { font-size: var(--fs-base); font-weight: 600; }
+/* NAMED, not merely first. A recommendation implied by ordering is not one. */
+.ask-rec {
+	margin-left: 8px;
+	padding: 1px 6px;
+	border-radius: 999px;
+	background: var(--accent);
+	color: var(--on-fill);
+	font-size: var(--fs-3xs);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	vertical-align: middle;
+}
+.ask-means {
+	display: block;
+	margin-top: 3px;
+	font-size: var(--fs-sm);
+	color: var(--text-secondary);
+	line-height: 1.45;
+}
+.ask-why, .ask-silent {
+	margin-top: 8px;
+	font-size: var(--fs-sm);
+	color: var(--text-secondary);
+	line-height: 1.45;
+}
+.ask-silent { color: var(--text-muted); }
+.ask-other { margin-top: 10px; }
+.ask-other-open {
+	padding: 0;
+	background: none;
+	border: none;
+	color: var(--text-muted);
+	font: inherit;
+	font-size: var(--fs-sm);
+	cursor: pointer;
+}
+.ask-other-open:hover { color: var(--accent-text); }
+.ask-other-row { display: flex; gap: 6px; }
+.ask-other-box {
+	flex: 1;
+	min-width: 0;
+	padding: 6px 8px;
+	border: 1px solid var(--border-2);
+	border-radius: var(--radius-sm);
+	background: var(--bg-primary);
+	color: var(--text-primary);
+	font: inherit;
+	font-size: var(--fs-sm);
+}
+.ask-other-go {
+	padding: 6px 10px;
+	border: 1px solid var(--accent);
+	border-radius: var(--radius-sm);
+	background: var(--accent);
+	color: var(--on-fill);
+	cursor: pointer;
+}
+/* An answered card keeps its options and stops offering them. What it was
+   decided AGAINST is the part somebody comes back to a month later. */
+.ask-opt:disabled { cursor: default; opacity: 0.55; }
+.ask-opt:disabled:hover { background: var(--bg-tertiary); border-color: var(--border-2); }
+.ask-opt.chosen {
+	opacity: 1;
+	border-color: var(--ok);
+	background: var(--ok-bg);
+}
+.ask-opt.chosen:disabled:hover { background: var(--ok-bg); border-color: var(--ok); }
+/* The recommendation badge on a card already answered is history, not advice. */
+.ask-card.answered .ask-rec { background: var(--border-2); color: var(--text-secondary); }
+.ask-done {
+	margin-top: 8px;
+	font-size: var(--fs-sm);
+	color: var(--ok);
 }
 
 /* ── The Wire: the payload, annotated where it lies ───────────────────

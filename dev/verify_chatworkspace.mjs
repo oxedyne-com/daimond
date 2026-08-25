@@ -106,10 +106,23 @@ const BREAKS = {
 	// The attachment group draws everything the chat holds rather than what is not
 	// already in the workspace, so a marked folder appears in both groups -- and
 	// the reader cannot tell whether that is one folder or two.
+	// The heading put back over the list. Nothing else changes and nothing breaks;
+	// what goes red is the one check that says the footer no longer restates in a
+	// heading what every row already says, which is the change the owner asked for.
+	headingback: {
+		file: 'js/daimond.js',
+		find: `			help:  t('attach.ws_help'),`,
+		with: `			title: workspaceTitle(),
+			help:  t('attach.ws_help'),`,
+	},
+	// RE-AIMED 2026-08-24 with the group it damaged. It used to append the whole
+	// held list to the SECOND group, so a marked folder was drawn in both; there is
+	// one list now, so it appends the marked rows a second time. Same fault, same
+	// check red: a folder is drawn twice.
 	bothgroups: {
 		file: 'js/daimond.js',
-		find: `			at.appendChild(attachBody(noted.map(toTile)));`,
-		with: `			at.appendChild(attachBody(held.map(toTile)));`,
+		find: `		var body = attachBody(marked.concat(noted).map(toTile),`,
+		with: `		var body = attachBody(marked.concat(noted).concat(marked).map(toTile),`,
 	},
 	// A FILE is offered the workspace mark. The workspace is a union of folders; a
 	// fence around one file is a fence around its folder wearing a smaller name,
@@ -251,45 +264,64 @@ const focus = await page.evaluate(() => window.DaimondAttach.focus());
 const chatId = focus && focus.id;
 check('a chat is in focus', !!chatId && focus.kind === 'chat', JSON.stringify(focus));
 
-/// What the footer is showing, by GROUP. Never a bare `#chat-attachments`
-/// selector: with two groups on screen, the first match in DOM order is the
-/// workspace's, and a check that meant the attachments would silently be asking
-/// the wrong one.
+/// What the footer is showing, split by WHAT EACH ROW CLAIMS.
+///
+/// RE-AIMED 2026-08-24, when the two groups became one list. This used to read
+/// `.ws-group .arte-row` and `.at-group .arte-row` and take the section a row sat
+/// in as the statement of what it had granted. The sections are gone -- the owner
+/// objected to being charged a split list for what every row already says -- so
+/// the question is now put to the ROW, through the one control that answers it:
+/// the `Workspace` pill and its `aria-pressed`.
+///
+/// The property is unchanged and every check below still means what it said: a
+/// row that has widened the fence is told apart, in ink, from one merely put in
+/// front of the model. Only the place the answer is read from has moved, from
+/// the furniture around the row to the row itself.
 const footer = () => page.evaluate(() => {
-	const g = (sel) => [...document.querySelectorAll(sel)].map(r => ({
+	const read = (r) => ({
 		path:  (r.querySelector('.arte-open') || {}).textContent || '',
 		state: (r.querySelector('.attach-state') || {}).textContent || '',
 		ws:    (r.querySelector('.attach-ws') || {}).getAttribute
 			? r.querySelector('.attach-ws').getAttribute('aria-pressed') : null,
 		hasWsBtn: !!r.querySelector('.attach-ws'),
-	}));
+	});
+	const all = [...document.querySelectorAll('#chat-attachments .arte-row')].map(read);
 	const box = document.getElementById('chat-attachments');
 	return {
 		shown:   !!box && box.style.display !== 'none',
-		title:   ((box || document).querySelector('.ws-group .attach-group-title') || {}).textContent || '',
-		atTitle: ((box || document).querySelector('.at-group .attach-group-title') || {}).textContent || '',
+		// No heading is drawn any more, and its absence is asserted rather than
+		// assumed: a heading creeping back is the change this file would want to
+		// catch, because it is the thing he asked to be rid of.
+		heads:   [...(box || document).querySelectorAll('.attach-group-title')].length,
 		empty:   ((box || document).querySelector('.ws-empty') || {}).textContent || '',
 		add:     !!(box || document).querySelector('.ws-group [data-act="attach-add"]'),
-		ws:      g('#chat-attachments .ws-group .arte-row'),
-		at:      g('#chat-attachments .at-group .arte-row'),
+		all,
+		ws:      all.filter(r => r.ws === 'true'),
+		at:      all.filter(r => r.ws !== 'true'),
 	};
 });
+
 const scopeOf = () => page.evaluate((id) => window.DaimondAttach.chatScope(id), chatId);
 
 // ── 1. THE EMPTY STATE, which is the state that most needs saying ──────
 await section('the empty state', async () => {
 	const f = await footer();
-	check('WITH NOTHING MARKED, THE WORKSPACE GROUP IS ON SCREEN',
-		f.shown === true && !!f.title, JSON.stringify({ shown: f.shown, title: f.title }));
-	// The app's OWN words for this idea, reused rather than coined again: the
-	// same key the account strip and the guide say.
-	check('and it is headed with the app’s existing words for the workspace',
-		f.title === await T('astat.workspace_browser'), `${JSON.stringify(f.title)} vs the catalogue`);
+	check('WITH NOTHING MARKED, THE FOOTER IS ON SCREEN',
+		f.shown === true && f.add === true, JSON.stringify({ shown: f.shown, add: f.add }));
+	// RE-AIMED. This asked that the group be HEADED with `astat.workspace_browser`,
+	// and the heading is deliberately gone: it restated what each row says, which
+	// is what the owner objected to. What survives is the claim the heading was
+	// there to make -- that the footer says which workspace, in the app's own
+	// words -- and it is made by the empty sentence and by the tiles themselves.
+	// So this now asserts the absence, because a heading drifting back in is the
+	// regression a reader of this file would want caught.
+	check('and it carries no group heading, because every row says its own claim',
+		f.heads === 0, `${f.heads} heading(s) still drawn`);
 	const want = await T('attach.ws_empty');
 	check('and it says, in words, that the chat can reach nothing of the user’s',
 		f.empty === want && /reach nothing/.test(want), JSON.stringify(f.empty));
-	check('with no attachment group beside it, because there are no attachments',
-		f.at.length === 0 && f.ws.length === 0, JSON.stringify({ ws: f.ws.length, at: f.at.length }));
+	check('and the list itself is empty, because nothing is attached',
+		f.all.length === 0, JSON.stringify({ rows: f.all.length }));
 	// The lesson of 4216383: the control that ends this state must be reachable
 	// FROM this state.
 	check('and the control that marks the first folder is inside that group',
@@ -310,8 +342,12 @@ await section('attaching', async () => {
 	const f = await footer();
 	check('ATTACHING A FOLDER PUTS IT IN FRONT OF THE MODEL, not in the workspace',
 		f.ws.length === 0 && f.at.some(r => r.path === 'papers'), JSON.stringify(f.at));
-	check('and the attachment group says what it is, in the app’s words',
-		f.atTitle === await T('attach.group_prompt'), JSON.stringify(f.atTitle));
+	// RE-AIMED from the group's heading to the row's own control. The claim is the
+	// same one: a thing merely put in front of the model SAYS SO, and does not have
+	// to be told apart by which half of the footer it landed in.
+	check('and each says so on itself: an unmarked folder offers the pill, unpressed',
+		f.at.some(r => r.path === 'papers' && r.hasWsBtn && r.ws === 'false'),
+		JSON.stringify(f.at.find(r => r.path === 'papers')));
 	check('the folder’s tile carries BOTH controls: a cost, and the mark',
 		f.at.some(r => r.path === 'papers' && r.state === 'Note' && r.ws === 'false'),
 		JSON.stringify(f.at.find(r => r.path === 'papers')));
@@ -328,7 +364,7 @@ await section('the mark', async () => {
 	// position: `.attach-ws` first-in-DOM would be whichever row happens to be
 	// drawn first.
 	const clicked = await page.evaluate(() => {
-		const row = [...document.querySelectorAll('#chat-attachments .at-group .arte-row')]
+		const row = [...document.querySelectorAll('#chat-attachments .arte-row')]
 			.find(r => (r.querySelector('.arte-open') || {}).textContent === 'papers');
 		const btn = row && row.querySelector('.attach-ws');
 		if (!btn) return 'no control';
@@ -338,10 +374,13 @@ await section('the mark', async () => {
 	check('the folder’s workspace control is there to press', clicked === 'clicked', clicked);
 	await page.waitForTimeout(700);
 	const f = await footer();
-	check('PRESSING IT MOVES THE FOLDER INTO THE WORKSPACE GROUP',
+	check('PRESSING IT MARKS THE FOLDER IN, and the row says so in ink',
 		f.ws.some(r => r.path === 'papers'), JSON.stringify({ ws: f.ws, at: f.at }));
-	check('and it appears ONCE, not in both groups',
-		f.at.every(r => r.path !== 'papers'), JSON.stringify(f.at));
+	// RE-AIMED. "Not in both groups" was a real property and there is only one
+	// list now, so it is counted rather than located: a folder drawn twice is
+	// still the fault, and `bothgroups` still reddens this.
+	check('and it appears ONCE in the list, not twice',
+		f.all.filter(r => r.path === 'papers').length === 1, JSON.stringify(f.all));
 	check('carrying both marks: the cost it had, and the mark it now has',
 		f.ws.some(r => r.path === 'papers' && r.state === 'Note' && r.ws === 'true'),
 		JSON.stringify(f.ws.find(r => r.path === 'papers')));
@@ -382,7 +421,7 @@ await section('the group’s own +', async () => {
 await section('independence', async () => {
 	// Read on the marked folder: the cost changes, the permission must not.
 	await page.evaluate(() => {
-		const row = [...document.querySelectorAll('#chat-attachments .ws-group .arte-row')]
+		const row = [...document.querySelectorAll('#chat-attachments .arte-row')]
 			.find(r => (r.querySelector('.arte-open') || {}).textContent === 'papers');
 		row.querySelector('.attach-state').click();
 	});
@@ -398,7 +437,7 @@ await section('independence', async () => {
 	check('and the fence has not moved', sc.indexOf('papers') >= 0, JSON.stringify(sc));
 	// And back, so the rest of the run reads a Note folder.
 	await page.evaluate(() => {
-		const row = [...document.querySelectorAll('#chat-attachments .ws-group .arte-row')]
+		const row = [...document.querySelectorAll('#chat-attachments .arte-row')]
 			.find(r => (r.querySelector('.arte-open') || {}).textContent === 'papers');
 		row.querySelector('.attach-state').click();
 	});
@@ -414,7 +453,7 @@ await section('read quotes', async () => {
 	// papers/spec.md is attached and NOT marked in, which is the case the fence
 	// makes interesting: the chat may quote it and may not open it.
 	await page.evaluate(() => {
-		const row = [...document.querySelectorAll('#chat-attachments .at-group .arte-row')]
+		const row = [...document.querySelectorAll('#chat-attachments .arte-row')]
 			.find(r => (r.querySelector('.arte-open') || {}).textContent === 'papers/spec.md');
 		row.querySelector('.attach-state').click();
 	});
@@ -513,7 +552,7 @@ await section('the cap', async () => {
 		const r = el => el ? el.getBoundingClientRect() : { height: 0, top: 0 };
 		return {
 			box: Math.round(r(b).height), inside: b ? b.scrollHeight : 0,
-			rows: document.querySelectorAll('#chat-attachments .ws-group .arte-row').length,
+			rows: document.querySelectorAll('#chat-attachments .arte-row').length,
 			bar: Math.round(r(bar).top),
 		};
 	});
@@ -558,7 +597,7 @@ await section('the cap', async () => {
 	// A mark made in another workspace is still a mark: it is shown, saying where
 	// it lives, rather than vanishing into an empty box the user cannot account for.
 	const strays = await page.evaluate(() => [...document.querySelectorAll(
-		'#chat-attachments .ws-group .arte-row.shut .arte-why')].length);
+		'#chat-attachments .arte-row.shut .arte-why')].length);
 	check('and an unreachable mark is shown in the workspace, saying where it lives',
 		strays > 0, String(strays));
 	await shot(s, 'chatworkspace-4-capped');
@@ -591,9 +630,22 @@ await section('the look', async () => {
 });
 
 // 502s are the local gateway proxy (/api) not running in this world -- a world
-// is the browser tiers only, as dev/world.sh says in as many words. The same
-// exclusion is in verify_attachfocus, verify_compact and verify_credits.
-const errs = errors(s).filter(e => !/502 \(Bad Gateway\)/.test(e));
+// is the browser tiers only, as dev/world.sh says in as many words.
+//
+// 401 IS NOT EXCLUDED, AND WAS. On 2026-08-24 this check went red four runs out
+// of six on an unchanged tree, naming a session the page had never had: every
+// world's `/api` was proxied to a fixed :9002, so whether the answer was 502 or
+// 401 depended on which OTHER lane had a gateway up at that moment. The 401 went
+// into the filter, which fixed the symptom in this file and in three others, and
+// left two files without it -- a per-file remedy for a fault in `dev/world.sh`.
+//
+// The gateway is a world's own now (9700 + N) and no other world's is reachable
+// from here, so a 401 on this page can only be a gateway THIS world started. That
+// is the app being refused by something it asked, which is exactly what "nothing
+// threw along the way" is for. Excluding it would now be a lie about what a 401
+// means.
+const GATEWAY_NOISE = /502 \(Bad Gateway\)/;
+const errs = errors(s).filter(e => !GATEWAY_NOISE.test(e));
 check('nothing threw along the way', errs.length === 0, errs.slice(0, 3).join(' | '));
 console.log(`\n${ok} ok, ${bad} failed`);
 if (BREAK) {

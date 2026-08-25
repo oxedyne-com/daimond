@@ -42,6 +42,7 @@
 //      it does not, across a gateway restart, carrying version integers only.
 import { open, chat, signInAs } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
+import { GW_PORT, GW_URL } from './ports.mjs';
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -200,7 +201,7 @@ const allMoved = (lines) => Array.isArray(lines) && lines.length > 0
 /// Is the gateway answering?
 async function gatewayUp() {
 	try {
-		const r = await fetch('http://127.0.0.1:9002/api/health', { signal: AbortSignal.timeout(2000) });
+		const r = await fetch(`${GW_URL}/api/health`, { signal: AbortSignal.timeout(2000) });
 		return r.ok;
 	} catch (e) { return false; }
 }
@@ -215,10 +216,21 @@ async function gatewayUp() {
 /// Returns `true`, or a string saying what went wrong -- this test is the one
 /// place in the suite that takes the gateway down, and it must not leave the
 /// verifiers that run after it wondering why.
+///
+/// WHICH PROCESS. Not `pgrep -x daimond_gateway`. A libtest harness built from
+/// `src/app_main.rs` is called `daimond_gateway-<hash>`, and Linux truncates a
+/// process name to fifteen characters -- which is exactly `daimond_gateway`. So on
+/// a machine where any lane is running `cargo test` in gateway/, that pgrep matches
+/// the test harness, `[0]` picks it, and this function reads /proc/<it>/exe and
+/// spawns A TEST BINARY as the gateway. The port is the identity: the gateway is
+/// whatever answers on :9002, because that is the only thing the rest of the suite
+/// means by "the gateway".
 async function restartGateway() {
 	let pid;
-	try { pid = execFileSync('pgrep', ['-x', 'daimond_gateway'], { encoding: 'utf8' }).trim().split('\n')[0]; }
-	catch (e) { return 'no daimond_gateway process to restart'; }
+	try {
+		const ss = execFileSync('ss', ['-ltnp', `sport = :${GW_PORT}`], { encoding: 'utf8' });
+		pid = (/pid=(\d+)/.exec(ss) || [])[1];
+	} catch (e) { return `could not ask which process holds :${GW_PORT}: ` + e.message; }
 	if (!pid) return 'no daimond_gateway process to restart';
 
 	let cwd, exe;
@@ -235,7 +247,11 @@ async function restartGateway() {
 	} catch (e) { return 'could not read the gateway process: ' + e.message; }
 	if (!fs.existsSync(exe)) return 'the gateway binary is no longer at ' + exe;
 
-	try { execFileSync('pkill', ['-x', 'daimond_gateway']); } catch (e) { /* already gone */ }
+	// THE ONE PROCESS, never `pkill -x daimond_gateway`. That form signals every
+	// process on the machine whose (truncated) name is `daimond_gateway`, which
+	// includes every other lane's libtest harness and every other worktree's
+	// gateway. The pid is already known; use it.
+	try { process.kill(Number(pid), 'SIGTERM'); } catch (e) { /* already gone */ }
 	for (let i = 0; i < 20 && await gatewayUp(); i++) await sleep(500);
 	if (await gatewayUp()) return 'the gateway would not stop';
 
@@ -254,7 +270,7 @@ async function restartGateway() {
 		if (await gatewayUp()) return true;
 		await sleep(500);
 	}
-	return 'the gateway did not come back on :9002';
+	return `the gateway did not come back on :${GW_PORT}`;
 }
 
 const s = await open({ name: 'sync', signIn: true, connect: true, defaults: false });
@@ -284,6 +300,30 @@ try {
 	// without it the gateway answers 402 and there is nothing below to measure.
 	const GWDIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'gateway');
 	const lic = await makePagePro(page, GWDIR);
+	// AN UNPROVISIONED IDENTITY REFUSES BY NAME, rather than reddening every check below it.
+	//
+	// `makePagePro` answers `{ id: '', status: 0, pro: false }` when this page's identity has
+	// no gateway account at all -- the binding `/api/account` makes, which `dev/provision.mjs`
+	// is what calls. Until 2026-08-24 `run_all.sh` provisioned one identity, `compose`, and
+	// this file drives its own, `sync`. So it came out of every gate at 37 failed / 68 passed,
+	// with `pro=false` on the second line and all thirty-five others downstream of it: sync is
+	// Pro-gated, so without Pro there is nothing below to measure. Nothing was wrong with the
+	// engine -- provisioned by hand it answers 177/177 -- and the report said "regression".
+	//
+	// So the missing thing is named, and the file stops. A suite reads `SKIPPED:` and counts
+	// it as neither a pass nor a fail, which is what it is.
+	if (!lic.id) {
+		console.log('SKIPPED: this file drives the `sync` identity, and it has no gateway '
+			+ 'account. Nothing here can be measured without one, because sync is behind Pro '
+			+ 'and Pro is bought for an account.');
+		console.log('  To provision it: node dev/provision.mjs "$DAIMOND_SCRATCH/sync-profile" '
+			+ 'sync, then `daimond_ctl topup <id> 5000`, RESTART the gateway (o3db holds its '
+			+ 'key index per process), then node dev/pro.mjs <id> gateway.');
+		console.log('  dev/run_all.sh does all of that: `sync` is in NEEDS_GRANT and ident_for '
+			+ 'names its identity. If you are seeing this from a suite run, that provisioning '
+			+ 'failed -- read $DAIMOND_SCRATCH/suite-provision.log.');
+		process.exit(2);
+	}
 	check('the account holds Pro, so sync may run at all',
 		lic.pro === true, `webhook ${lic.status}, pro=${lic.pro}`);
 	// A refusal must never put anything over the app -- that dialog is gone, and

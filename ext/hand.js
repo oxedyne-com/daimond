@@ -27,6 +27,12 @@
 // own host with it and nobody else's, and a host that dies kills only the runs
 // that belonged to it.
 //
+// ONE QUALIFICATION, AND IT IS THE RELOAD. A page that goes away does not take
+// its host with it AT ONCE: the pair is parked for thirty seconds and the same
+// tab, reloaded, adopts it. What arrives meanwhile is held and handed over on
+// re-attach; what the grace runs out on is stopped, named, and reported to the
+// next page from that tab. See "The reload grace" below.
+//
 // Three things this relay owes the page, which are the whole of its work.
 //
 // ORDER AND ATTRIBUTION. Every chunk carries an id, a stream and a monotonic
@@ -102,7 +108,7 @@
 	/// interpreted here: the page announces its own in `hello` and the hand
 	/// answers with its own, and the two settle it between them. It is held
 	/// only so a relay that has drifted can be recognised in a report.
-	const PROTO = 1;
+	const PROTO = 2;
 
 	/// Chrome's cap on a message FROM the host, and the reason a disconnect is
 	/// ambiguous. Mirrors `wire::FRAME_MAX`.
@@ -126,6 +132,67 @@
 	/// this is generous; it exists so a wedged host cannot leave the question
 	/// unasked for ever.
 	const CAPS_MS = 5000;
+
+	// -- The reload grace -------------------------------------------------
+	//
+	// A page that goes away used to take the machine hand with it, on the spot.
+	// That is right for a tab closed for good and wrong for the commonest way a
+	// page goes away, which is a RELOAD: F5, a crash, `dev/serve.mjs` restarting,
+	// or the app's own 426 heal.  A daimon that started a dev server and a build
+	// lost both to a keypress, and the listing afterwards was honestly empty --
+	// which is the worst of both, because nothing anywhere said a thing had been
+	// stopped.
+	//
+	// The owner chose this shape on 2026-08-25, over "keep them until stopped"
+	// and over "keep killing them, but say so": HOLD FOR ABOUT THIRTY SECONDS
+	// AND RE-ATTACH.  So a relay whose page has gone is PARKED rather than
+	// stopped -- the host stays connected, its runs keep running -- and the next
+	// page from the same tab adopts it.
+	//
+	// THE TAB IS THE KEY, NOT THE ORIGIN.  A reload keeps `sender.tab.id`; a
+	// second tab of the same origin does not.  Parking by origin alone would
+	// hand a new tab the runs of a tab that had just been closed, which is
+	// somebody else's compartment.  Where Chrome names no tab -- which it does
+	// not for a page connection, but the field is not ours to guarantee -- the
+	// relay is stopped as it always was, because a hold that cannot be aimed is
+	// a hold that reaches the wrong page.
+	//
+	// A PAGE THAT SAYS `bye` IS TAKEN AT ITS WORD and stopped on the spot. The
+	// grace is for a page that VANISHED, which cannot be told from a crash; a
+	// goodbye is a page saying it is finished with this host, and a hold that
+	// ignored it would make the wire's own word mean nothing.
+	//
+	// WHAT ARRIVES WHILE THE PAGE IS AWAY IS HELD, NOT DROPPED.  A daimon that
+	// re-attaches and silently misses thirty seconds of a build's output is
+	// being lied to, which is worse than a process that was honestly killed.  So
+	// every page-bound message is buffered while parked, and the buffer is
+	// BOUNDED -- a `cargo build` outruns any buffer worth keeping in a service
+	// worker.  When the bound bites the oldest go, and how many went is said on
+	// re-attach beside the rest.  This file already refuses to hide a sequence
+	// gap for the same reason (`checkSeq`): output the reader believes is
+	// complete is the fault, not output that is short.
+	const HOLD_MS = 30000;
+
+	/// The most a parked relay holds for a page that may be coming back, in
+	/// bytes of JSON and in messages. Two bounds because one message can be a
+	/// megabyte and a thousand can be a byte each.
+	const HELD_BYTES = 512 * 1024;
+	const HELD_MSGS  = 4000;
+
+	/// How long the hand is given to name what it is about to lose, when the
+	/// grace runs out. One message each way over a pipe, and a listing that does
+	/// not arrive leaves the count unknown rather than the report unwritten.
+	const RITES_MS = 2000;
+
+	/// Relays whose page has gone and whose thirty seconds have not run out, by
+	/// tab id. At most one per tab: a second park for the same tab can only mean
+	/// the first was never adopted, and it is stopped rather than forgotten.
+	const parked = new Map();
+
+	/// What lapsed, by tab id, so the page that comes back LATE is told rather
+	/// than meeting an empty listing. Read once and cleared -- it is news about
+	/// one gap, not a standing condition.
+	const lapses = new Map();
 
 	// -- What an exec may look like --------------------------------------
 	//
@@ -471,7 +538,12 @@
 	/// # Arguments
 	/// * `page` - The port the Daimond page opened.
 	/// * `origin` - Which Daimond origin it is, already checked.
-	function relay(page, origin) {
+	/// * `tabId` - The tab it came from, which a reload keeps and a new tab does
+	///   not, or 0 where Chrome named none.
+	function relay(page, origin, tabId) {
+		/// The port to the page, swapped for a new one when a reloaded page
+		/// adopts this relay, and null while nothing is attached.
+		let wire = page;
 		/// The native port, or null once it has gone.
 		let host = null;
 		/// True once we have deliberately closed the pair, so the disconnect
@@ -518,8 +590,37 @@
 		/// Waiting for the hand to say what it can enforce, before the user is
 		/// asked. Null once that is settled, one way or another.
 		let capsWait = null;
+		/// Waiting for the hand to name what the grace is about to take with it.
+		/// Null except during those two seconds.
+		let ritesWait = null;
+		/// The timer counting out the grace, or null while a page is attached.
+		let holding = null;
+		/// The grace has run out and the last rites are being read. The relay is
+		/// still in `parked` through those two seconds, so a page arriving in
+		/// them adopts it and the lapse is abandoned rather than stopping a hand
+		/// the page has just taken back.
+		let dying = false;
+		/// When the page went, so a re-attach can say how long it was away.
+		let wentAt = 0;
+		/// What arrived while nothing was attached, oldest first, and what had
+		/// to be let go to keep it bounded.
+		let held = [];
+		let heldBytes = 0;
+		let dropped = 0;
+		let droppedBytes = 0;
 
-		const self = { stop, page, origin, busy: () => runs.size > 0 };
+		const self = {
+			stop,
+			adopt,
+			lapsed,
+			origin,
+			tabId,
+			// A parked relay is BUSY. Not because anything is necessarily
+			// running -- it may be holding nothing but a buffer -- but because
+			// an MV3 worker evicted mid-grace takes the native port with it, and
+			// the grace would then be thirty seconds that sometimes happen.
+			busy: () => runs.size > 0 || holding !== null || dying,
+		};
 
 		/// Says something to the page, if it is still there.
 		///
@@ -527,11 +628,32 @@
 		/// destroy the attribution the seq exists to provide, and buffering to
 		/// "smooth" the stream would turn live output into a report.
 		function say(m) {
+			if (!wire) { hold(m); return; }
 			try {
-				page.postMessage(m);
+				wire.postMessage(m);
 			} catch (e) {
 				// The page has gone. Its own disconnect handler is about to run
-				// and will take the host with it.
+				// and will park or stop this relay.
+			}
+		}
+
+		/// Keeps one page-bound message for a page that may be coming back.
+		///
+		/// The bound is on the BUFFER and the loss is COUNTED, so a re-attach
+		/// that is short of output says how short. Dropping the oldest rather
+		/// than refusing the newest is deliberate: the end of a build is what a
+		/// reader wants, and the beginning is what they already saw.
+		function hold(m) {
+			let size = 0;
+			try { size = JSON.stringify(m).length; } catch (e) { size = 0; }
+			held.push({ m, size });
+			heldBytes += size;
+			while (held.length > HELD_MSGS || heldBytes > HELD_BYTES) {
+				const gone = held.shift();
+				if (!gone) break;
+				heldBytes -= gone.size;
+				dropped++;
+				droppedBytes += gone.size;
 			}
 		}
 
@@ -556,6 +678,28 @@
 		function stop(why) {
 			closing = true;
 			relays.delete(self);
+			// Stopped while parked -- revoked, or the hand died in the grace --
+			// so the page that comes back must be told rather than meeting an
+			// empty listing with nothing to explain it. `lapse` has already
+			// written its own record; this covers every other way out.
+			if (holding !== null || dying) {
+				clearTimeout(holding);
+				holding = null;
+				dying   = false;
+				parked.delete(tabId);
+				if (!lapses.has(tabId)) {
+					lapses.set(tabId, {
+						at:      Date.now(),
+						away:    Math.max(0, Date.now() - wentAt),
+						ids:     [...runs.keys()],
+						unknown: true,
+						why:     why || '',
+						dropped,
+						droppedBytes,
+					});
+				}
+			}
+			if (ritesWait) { const settle = ritesWait; ritesWait = null; settle({ ids: [], unknown: true }); }
 			// Whoever is waiting on the hand's capabilities is waiting on a hand
 			// that has gone. Let them get on with it rather than sit out the
 			// timeout.
@@ -574,7 +718,136 @@
 				try { host.disconnect(); } catch (e) { /* already gone */ }
 				host = null;
 			}
-			try { page.disconnect(); } catch (e) { /* already gone */ }
+			if (wire) { try { wire.disconnect(); } catch (e) { /* already gone */ } }
+			wire = null;
+			held = [];
+			heldBytes = 0;
+		}
+
+		// -- The grace ------------------------------------------------------
+
+		/// The page went. Hold what it left running, for the length of the grace.
+		///
+		/// Stopping outright is kept for the two cases a hold cannot serve: no
+		/// host, so there is nothing to hold; and no tab id, so a hold could not
+		/// be aimed at the page that comes back and would be offered to whichever
+		/// page connected next.
+		function park() {
+			// A PAGE THAT SAID GOODBYE IS NOT A PAGE THAT VANISHED. The grace is
+			// for the second, which cannot be told from a crash or a tab closing
+			// for good; `bye` is the wire's word for "I am finished with this
+			// host", and honouring it at once is what makes the two different
+			// things. `fromPage` sets `closing` on one and nothing else does.
+			//
+			// It is also a LEAK if it is not honoured: a relay whose page said
+			// bye and then disconnected would sit in `relays` with a live host
+			// on the end of it and no timer to end it.
+			if (closing) { stop(''); return; }
+			if (!host || !tabId) { stop(''); return; }
+			const was = parked.get(tabId);
+			if (was && was !== self) was.stop('');
+			wire   = null;
+			wentAt = Date.now();
+			parked.set(tabId, self);
+			holding = setTimeout(() => { lapse(); }, HOLD_MS);
+			breathe();
+		}
+
+		/// The grace ran out and nothing came back.
+		async function lapse() {
+			holding = null;
+			dying   = true;
+			const what = await lastRites();
+			// Adopted while the hand was being asked. The page has it back, so
+			// there is nothing to report and nothing to stop.
+			if (!dying) return;
+			dying = false;
+			parked.delete(tabId);
+			lapses.set(tabId, {
+				at:      Date.now(),
+				away:    HOLD_MS,
+				ids:     what.ids,
+				unknown: what.unknown,
+				why:     '',
+				dropped,
+				droppedBytes,
+			});
+			stop('');
+		}
+
+		/// Asks the hand what the stop is about to take with it.
+		///
+		/// The relay's own `runs` map holds what is IN FLIGHT and not what is
+		/// STANDING -- a `sleep 300 &` left by a command that already ended has
+		/// no entry here and is the commonest thing a reload loses. So the hand
+		/// is asked, because the hand is the one that knows.
+		function lastRites() {
+			return new Promise((resolve) => {
+				if (!host) { resolve({ ids: [...runs.keys()], unknown: true }); return; }
+				let settled = false;
+				const once = (v) => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					ritesWait = null;
+					resolve(v);
+				};
+				const timer = setTimeout(() => once({ ids: [...runs.keys()], unknown: true }), RITES_MS);
+				ritesWait = once;
+				try { host.postMessage({ t: 'runs' }); }
+				catch (e) { once({ ids: [...runs.keys()], unknown: true }); }
+			});
+		}
+
+		/// A reloaded page takes this relay, and everything held for it, over.
+		///
+		/// # Arguments
+		/// * `port` - The port the returning page opened.
+		function adopt(port) {
+			if (holding !== null) { clearTimeout(holding); holding = null; }
+			dying = false;
+			parked.delete(tabId);
+			wire = port;
+			port.onMessage.addListener(fromPage);
+			port.onDisconnect.addListener(pageGone);
+			const away  = Math.max(0, Date.now() - wentAt);
+			const batch = held;
+			const lost  = dropped;
+			const bytes = droppedBytes;
+			wentAt       = 0;
+			held         = [];
+			heldBytes    = 0;
+			dropped      = 0;
+			droppedBytes = 0;
+			// Said BEFORE the replay, so a reader meets the warning about a hole
+			// ahead of the output that has one -- the same order `checkSeq` puts
+			// a gap in.
+			say({
+				t:        'resumed',
+				away_ms:  away,
+				held:     batch.length,
+				dropped:  lost,
+				dropped_bytes: bytes,
+				ids:      [...runs.keys()],
+			});
+			for (const h of batch) say(h.m);
+			breathe();
+		}
+
+		/// Tells a fresh page what the grace took, when it came back too late.
+		///
+		/// # Arguments
+		/// * `gap` - The record `lapse` or `stop` left behind for this tab.
+		function lapsed(gap) {
+			say({
+				t:       'lapsed',
+				away_ms: gap.away,
+				hold_ms: HOLD_MS,
+				ids:     Array.isArray(gap.ids) ? gap.ids : [],
+				unknown: !!gap.unknown,
+				why:     gap.why || '',
+				dropped: gap.dropped || 0,
+			});
 		}
 
 		/// The host sent something. Forward it, in order, having first checked
@@ -612,12 +885,30 @@
 				}
 			}
 
+			if (m.t === 'runs' && ritesWait) {
+				// Ours, not the page's: nobody out there asked for it, and a page
+				// that met it would settle a waiter it never armed.
+				const settle = ritesWait;
+				ritesWait = null;
+				const rows = Array.isArray(m.runs) ? m.runs : [];
+				settle({
+					ids: rows.map((r) => (r && r.id)).filter((x) => typeof x === 'string' && x),
+					unknown: false,
+				});
+				return;
+			}
+
 			if (m.t === 'started' || m.t === 'opened') {
 				runs.set(m.id, { out: null, err: null });
 				breathe();
 			} else if (m.t === 'chunk' || m.t === 'output') {
 				checkSeq(m);
-			} else if (m.t === 'ended' || m.t === 'refused' || m.t === 'closed') {
+			} else if (m.t === 'ended' || m.t === 'refused' || m.t === 'closed' || m.t === 'filed') {
+				// A `filed` is the whole of a file operation's answer: there is no `started`
+				// before it and no `ended` after it, so it is what closes the registry entry
+				// `fromPage` opened. Left out, the entry would be permanent -- and the
+				// abandonment path below would owe the page an `ended` for something that
+				// never started.
 				runs.delete(m.id);
 				breathe();
 			}
@@ -691,7 +982,7 @@
 				return;
 			}
 			if (!m || typeof m !== 'object' || typeof m.t !== 'string') {
-				fail(null, 'Every message to the machine hand needs a "t" saying which it is: hello, exec, open, verify, input, resize, signal, runs or bye.');
+				fail(null, 'Every message to the machine hand needs a "t" saying which it is: hello, exec, open, file, verify, input, resize, signal, runs or bye.');
 				return;
 			}
 
@@ -760,6 +1051,32 @@
 					return;
 				}
 				break;
+			case 'file': {
+				const bad = wrongFile(m);
+				if (bad) {
+					say({ t: 'refused', id: String(m.id || ''), reason: bad });
+					return;
+				}
+				let size = 0;
+				try { size = JSON.stringify(m).length; } catch (e) { size = 0; }
+				if (size > TO_HOST_MAX) {
+					say({
+						t: 'refused',
+						id: String(m.id),
+						reason: `That file request is ${size} bytes to send, over the ${TO_HOST_MAX} byte limit for a message to the machine hand. `
+							+ `Chrome would drop the connection rather than deliver it, killing everything else running. `
+							+ `Change the file in smaller pieces: file_edit sends only the two strings, not the whole file.`,
+					});
+					return;
+				}
+				// Registered like an exec, and for the same reason: an operation the host dies
+				// before acknowledging is still one the page is owed an answer about -- and it
+				// is the one whose answer matters most, because "did the write land" cannot be
+				// inferred from silence.
+				if (!runs.has(m.id)) runs.set(m.id, { out: null, err: null });
+				breathe();
+				break;
+			}
 			case 'verify': {
 				const bad = wrongVerify(m);
 				if (bad) {
@@ -799,7 +1116,7 @@
 				closing = true;
 				break;
 			default:
-				fail(m.id, `The machine hand does not know the message "${m.t}". It understands hello, exec, open, verify, input, resize, signal, runs and bye.`);
+				fail(m.id, `The machine hand does not know the message "${m.t}". It understands hello, exec, open, file, verify, input, resize, signal, runs and bye.`);
 				return;
 			}
 
@@ -877,6 +1194,74 @@
 
 			const env = wrongEnv(m.env);
 			if (env) return env;
+
+			return wrongFence(m.fence, m.cwd, m.toolkits);
+		}
+
+		/// What is wrong with a request to change one file.
+		///
+		/// The same shape of check as `wrongExec`, and deliberately no more: there is no argv,
+		/// no environment and no shell here, so the only things this end can be sure about are
+		/// the id, the operation's name, the absoluteness of the paths and the fence. What may
+		/// be READ or WRITTEN is not this end's question at all -- it is the kernel's, one
+		/// process further on, from the same plan a command's fence is built from.
+		function wrongFile(m) {
+			if (!m.id || typeof m.id !== 'string') {
+				return 'Every file request needs an id, which the answer about it is tagged with.';
+			}
+			if (m.id.length > ID_MAX) {
+				return `That id is ${m.id.length} characters, over the ${ID_MAX} the hand carries. Use a short handle.`;
+			}
+			// eslint-disable-next-line no-control-regex
+			if (/[\u0000-\u001f\u007f]/.test(m.id)) {
+				return 'That id has a control character in it. An id is a handle, not data: use letters, digits and punctuation.';
+			}
+			// A CLOSED SET, checked here as well as at the host. A word outside it reaches the
+			// host as a decode error naming a field, which reads as the hand being broken
+			// rather than as the request being wrong.
+			if (['read', 'write', 'edit', 'move', 'list', 'mkdir', 'search', 'glob'].indexOf(m.op) < 0) {
+				return `A file request must name one of read, write, edit, move, list, mkdir, search or glob; this one named ${JSON.stringify(m.op)}.`;
+			}
+			// EVERY path, and a walk carries a list of them. Checking `path` alone would leave
+			// the starts of a search unvetted, which is the half that decides where it looks.
+			const paths = [m.path, m.to, m.base].concat(Array.isArray(m.paths) ? m.paths : []);
+			for (const p of paths) {
+				if (p === undefined || p === null) continue;
+				if (typeof p !== 'string' || !p) {
+					return 'A file request\'s paths must each be a path.';
+				}
+				if (!absolute(p) || segments(p).indexOf('..') >= 0) {
+					return `The path "${p}" is not an absolute path without ".." in it. The hand does not guess `
+						+ `what a relative path is relative to, and a ".." is a way out of whatever it is written under.`;
+				}
+			}
+			if ((m.op === 'search' || m.op === 'glob')) {
+				if (typeof m.query !== 'string' || !m.query) {
+					return `A ${m.op} needs a pattern in "query".`;
+				}
+				if (!Array.isArray(m.paths) || !m.paths.length) {
+					return `A ${m.op} needs "paths": where to start. A walk with nowhere to start would `
+						+ 'look at nothing and answer as though it had looked everywhere.';
+				}
+				if (m.skip !== undefined && (!Array.isArray(m.skip) || !m.skip.every((d) => typeof d === 'string'))) {
+					return 'A walk\'s "skip" is the directory NAMES to pass over, as an array of strings.';
+				}
+				if (!Number.isInteger(m.budget) || m.budget < 1) {
+					return 'A walk needs "budget": how many directory entries it may look at. A walk with no '
+						+ 'ceiling is a walk that never comes back.';
+				}
+			}
+			if (typeof m.cwd !== 'string' || !m.cwd) {
+				return 'A file request needs cwd, an absolute working directory inside the fence.';
+			}
+			if (!absolute(m.cwd) || segments(m.cwd).indexOf('..') >= 0) {
+				return `The working directory "${m.cwd}" is not an absolute path without ".." in it.`;
+			}
+			for (const k of ['text', 'text2']) {
+				if (m[k] !== undefined && m[k] !== null && typeof m[k] !== 'string') {
+					return `A file request's ${k} must be text.`;
+				}
+			}
 
 			return wrongFence(m.fence, m.cwd, m.toolkits);
 		}
@@ -1179,14 +1564,16 @@
 			});
 		}
 
+		/// The page has gone: a tab closed, a reload, a crash. Which of those it
+		/// was cannot be told from here and does not have to be -- the commonest
+		/// by far is a reload, so what it left is HELD for the length of the
+		/// grace and stopped only when nothing comes back for it.
+		function pageGone() {
+			park();
+		}
+
 		page.onMessage.addListener(fromPage);
-		page.onDisconnect.addListener(() => {
-			// The page has gone: a tab closed, a reload, a crash. Whatever was
-			// running belongs to nobody now, so it is stopped rather than left
-			// as an orphan holding the machine's CPU.
-			closing = true;
-			stop('');
-		});
+		page.onDisconnect.addListener(pageGone);
 
 		begin();
 		return self;
@@ -1267,7 +1654,28 @@
 			try { port.disconnect(); } catch (e) { /* already gone */ }
 			return;
 		}
-		relay(port, origin);
+		// The tab is what tells a reload from a second window. Chrome names it
+		// on a page connection; where it does not, this is 0 and no relay is
+		// ever parked for it, so the old behaviour stands unchanged.
+		const sender = port.sender || {};
+		const tab = (sender.tab && Number.isInteger(sender.tab.id)) ? sender.tab.id : 0;
+
+		const waiting = tab ? parked.get(tab) : null;
+		if (waiting) {
+			if (waiting.origin === origin) { waiting.adopt(port); return; }
+			// The same tab at a different Daimond origin. Its runs were started
+			// under the other origin's grant and are not this page's to have.
+			waiting.stop('');
+		}
+
+		const r = relay(port, origin, tab);
+		// A page that came back after the grace had run out. Told once, and the
+		// record cleared: it is news about one gap, not a standing condition.
+		const gap = tab ? lapses.get(tab) : null;
+		if (gap) {
+			lapses.delete(tab);
+			r.lapsed(gap);
+		}
 	});
 
 	globalThis.DaimondHand = {

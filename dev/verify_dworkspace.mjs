@@ -37,8 +37,15 @@ const linksOf = () => page.evaluate(async () => {
 	return links.map(l => ({ other: l.other, rel: l.rel, by: l.by }));
 });
 
-/// The tree as the user sees it.
-const rows = () => page.$$eval('.files-tree .files-row', els => els.map(e => ({
+/// The tree as the user sees it: what is IN the folder, and nothing else.
+///
+/// `.files-up` is excluded, and that is the whole of what changed here on
+/// 2026-08-24. The parent-folder control moved out of the panel's header and into
+/// a `..` row at the top of the listing, where every file manager puts it -- so it
+/// is a `.files-row` and carries `data-act="up"`, which is what keeps the clicks
+/// below working. It is navigation and not an entry, and counting it as one would
+/// have every "this folder holds exactly its one file" check reading two.
+const rows = () => page.$$eval('.files-tree .files-row:not(.files-up)', els => els.map(e => ({
 	name:      (e.querySelector('.files-name') || {}).textContent || '',
 	path:      e.dataset.path || '',
 	attached:  e.dataset.attached || '',
@@ -265,6 +272,20 @@ check(inside.length === 1 && inside[0].path === 'a/notes/one.md',
 	`an attached folder can be opened (${JSON.stringify(inside.map(x => x.path))})`);
 check(inside.every(x => !x.canDelete),
 	'and what is inside it offers no delete either');
+// THE WAY OUT IS THE FIRST ROW, not a button three controls away in the header.
+// Asserted before it is pressed, because "there is a way up" and "pressing it
+// works" are two properties and the panel used to satisfy the second with a
+// control nobody could find.
+const upFirst = await page.evaluate(() => {
+	const first = document.querySelector('.files-tree .files-row');
+	const head  = document.querySelector('#panel-work .railhead [data-act="up"]');
+	return { act: first ? (first.dataset.act || '') : '(no rows)',
+		text: first ? first.textContent.trim() : '', inHeader: !!head };
+});
+check(upFirst.act === 'up' && /\.\./.test(upFirst.text),
+	`the way out of a folder is the first row of the listing (${JSON.stringify(upFirst)})`);
+check(upFirst.inHeader === false,
+	'and it is not ALSO a button in the panel header, which is what he objected to');
 await page.click('[data-act="up"]', { force: true });
 await page.waitForTimeout(800);
 check((await page.$eval('.files-path', e => e.textContent)) === await T('dws.title'),

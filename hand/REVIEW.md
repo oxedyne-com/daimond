@@ -87,6 +87,7 @@ which is why each one cites code.
 | 1.18 | Scoped workers cannot run with a default `cwd` | **closed** |
 | 1.19 | `id` neither unique nor bounded | **closed** |
 | 1.20 | A Diamond's crystal agent could reach another Diamond | **closed** |
+| 1.21 | A verifier's trustworthiness is reported, not enforced | **closed** — with one residual named for the owner |
 | 3.13 | `screen_env` is past through `argv`, not through `env` | **closed by correction** — the claim, not the code |
 
 **One open, and it is not an escape.** 1.9 and 1.12 were one thing and both are
@@ -1443,6 +1444,148 @@ and jail on the workspace root instead, so it reaches only `default_cwd`. Every
 native context sets it empty today, so nothing is wrong now -- and the day a
 native turn carries a prefix, it will confine nothing. Wiring `scoped` into the
 native transport is a no-op on today's values and would make the two agree.
+
+**1.21 A verifier's trustworthiness is reported and never enforced, so a daimon can
+run its own script outside the fence.** CONFIRMED 2026-08-25, found while measuring
+B6 rather than while looking for this.
+
+`verify` runs a script OUTSIDE the command fence deliberately, and `verify.rs`'s
+own first section says why: *the fence exists to contain a command a MODEL wrote,
+and a verifier is tracked repository code.* The report says it to the model
+verbatim, on every run — "Run OUTSIDE the command fence, because a verifier is
+tracked repository code and not a command anybody's model wrote."
+
+Trackedness is asked of git and not assumed — `tracked_by_git`,
+`hand/src/verify.rs:434`, `git ls-files --error-unmatch` — and the answer is used
+for one thing: a phrase in the report's first line (`Tracked::phrase`, its only
+call site, `:1298`). Nothing anywhere refuses `Tracked::No`. And the file it is
+asked about is `<granted root>/dev/verify_<name>.mjs`, inside the writable root
+that every fenced command in the turn already has.
+
+*The reproduction.* A root with no git in it, an untracked `dev/verify_probe.mjs`
+whose whole body writes a file OUTSIDE that root, then `resolve` and `conduct`
+from this crate's own public API:
+
+```
+trackedness reported: NOT TRACKED -- a clean checkout of this commit would not have it
+marker outside the granted root exists: true
+```
+
+Accepted, run with no fence, and it wrote where no fence would have let it.
+
+**Reachable from an ordinary daimon's turn, and every step is one the turn already
+takes.** `Tool::Verify` is in `Tool::daimon()` — `src/tools.rs:16463` asserts it in
+those words. The granted root is writable, so `file_write` or any fenced command
+puts the file in `dev/`. The `verify:dev` capability is computed by looking at
+whether the root holds any `dev/verify_*.mjs` (`verify::available`), which this
+repository satisfies hundreds of times over, so the daimon's own new file is not
+even needed to unlock the door. The one policy the door does carry — a dispatched
+worker is refused, because a worker is the turn with nobody watching — does not
+reach this, since the daimon is not a worker.
+
+**And enforcing what is already measured would narrow it without closing it.**
+`git ls-files --error-unmatch` answers about the INDEX, not about the file: with
+one comment appended to `dev/verify_graph.mjs` it still exits 0, while `git diff
+--quiet` on the same file exits 1. So a daimon that edits a tracked verifier gets
+the same unfenced run, and the report calls it "tracked". The claim the door
+rests on is *this is the repository's code*, and the question that answers it is
+whether the file differs from the commit — not whether git has heard of it.
+
+**OPEN.** The cheapest honest close is a refusal on anything but "unmodified since
+the commit", written as a sentence the model can act on: name the file, say a
+verifier it wrote or changed is not repository code, and say the person can run it
+themselves. Two prices come with it and both look right: a lane writing a NEW
+verifier has to `git add` it before a daimon may run it, which is the same
+discipline `dev/gate.sh` already imposes by building its tree from a commit; and
+a daimon can no longer test a verifier it has just improved, which is a real loss
+and is the thing to weigh. Whoever takes it should keep the probe above and assert
+it goes red first: a check on this that has never been seen to fail proves nothing.
+
+**CLOSED 2026-08-25, and not the way the paragraph above proposed.** The gate is
+`verify::unfenced_refusal`, `hand/src/verify.rs`, and it asks
+`verify::provenance` — three questions of git in order: is there a repository
+here at all, is the path a symlink, and does `git diff --quiet HEAD` say the
+working file is the commit's. `conduct` passes it before the journal and before
+the first process, and `once` asks again immediately before every spawn, because
+the sequence runs for minutes and a command an earlier turn left in the
+background can rewrite the file inside it. The gate is in `verify.rs` and not in
+`main.rs` deliberately: the reproduction above went in through this crate's
+public API, and a gate in the dispatcher is a gate it would have walked past
+again.
+
+**Three things the entry above did not say, each of which changed the design.**
+
+*The strict refusal it recommends does not close it either.* `.git` is inside the
+granted root and no fence denies it — `src/tools.rs` says so in its own words
+where it explains why a Daimond push injects `core.hooksPath`, `protocol.allow`
+and an empty `credential.helper`: *the model can write `.git/config`*. So a
+daimon can commit its own verifier with one `run` call and then be told, truly,
+that the bytes are the commit's. Every check available on this side of the line
+is one `run` call from being satisfied; that is not an argument for leaving the
+door open, but it is the reason this is a narrowing and not a close. What
+changes is that the act is a commit in the repository's history rather than a
+`file_write` nobody sees, and that the report's first line stops being false.
+
+*A committed symlink is the same hole wearing 1.1's clothes.* `resolve` asked
+`std::fs::metadata`, which follows a link, so `dev/verify_x.mjs -> ../notes/x.mjs`
+committed once would run whatever the model last wrote into `notes/x.mjs`, with
+`git diff` reporting no change because the link's target string had not moved.
+`provenance` asks `symlink_metadata` and refuses a link outright.
+
+*A folder with no git in it was the permissive default.* That is the state the
+reproduction was run in, and `Tracked::Unknown` — reported, never refused — is
+what let it through. It refuses now: a granted folder that cannot say whose code
+a file is cannot vouch for it.
+
+**The two prices the entry above weighed are paid differently, and this is the
+part that bears on the objective.** A refusal a model cannot converge on costs
+the run anyway, so the refusal hands over the fenced route in the same breath:
+
+> Refused: dev/verify_about.mjs is not this repository's committed code — it is
+> tracked, and the working copy is not what the commit holds — staging a change
+> is not committing it. Nothing was run. […] RUN IT YOURSELF INSTEAD: 'run' with
+> `["node","dev/verify_about.mjs"]` runs this same file inside the fence every
+> command gets, which is all a verifier that reads the tree needs. It is not
+> enough for one that drives a browser or opens a port — the fence refuses both,
+> so a failure there is the fence and not your script. To get the unfenced run,
+> commit the file and ask again, or ask the person to run it themselves.
+
+So a daimon that has just improved a verifier is not stopped; it is moved into
+the compartment, which is where a script a model wrote belongs. **That covers
+253 of this tree's 282 verifiers**, which is every one that does not name
+playwright, chromium, webkit or firefox — measured, not estimated. The 29 that
+drive a browser cannot run fenced at all, for the reason this module exists, and
+for those the daimon has two moves it can make and a person it can ask.
+
+**Proved by making it happen, in both directions.** The reproduction is now nine
+tests in `verify.rs`, run through `resolve` and `conduct` exactly as the original
+probe was, over a fixture verifier whose entire body writes a file OUTSIDE the
+granted root — so the marker's existence is the measurement and not a proxy for
+it. Untracked, tracked-and-edited, tracked-edited-and-staged, no-repository and
+committed-symlink all wrote that marker before the gate and all are refused after
+it. One test keeps the rest honest: a verifier that IS the commit must still
+write its marker, so a gate that refused everything would go red rather than
+reading as a pass. One asserts the refusal's four working parts by meaning — the
+argv, the tool that takes it, what commits it, and what fenced running cannot do
+— since a refusal a model cannot converge on costs the run anyway. And one aims
+at the mid-sequence re-ask, with a committed verifier that appends to its own
+source: the clean run is the commit's, the break run is not, and the report says
+`NEVER RAN` with the reason rather than measuring a file that changed underneath
+it. Every one was run against a deliberately broken gate first — six mutations,
+each reddening a different subset, none reddening all — because a check that has
+never been seen to fail proves nothing, which is this document's own rule. The
+crate's suite went 268 → 277, every compiled test executed, by `dev/testcount.mjs`.
+
+**What is left, and it is the owner's.** Two ways to close the commit path, one
+clause each. Take `.git` out of every fence — cheap to state, and it stops a
+daimon using git at all, which is most of what self-development is. Or bind
+consent to the bytes, the way `social_send` already binds publishing consent to
+exactly what would go out and never remembers it — right in shape, and it means
+a daimon working while nobody is awake cannot verify its own new verifier, which
+is the objective this app is for. **Recommendation: neither, yet.** The gate
+above turns an invisible `file_write` into a visible commit, which is most of the
+value, and both closes cost more than the residual is worth until the hand ships
+to somebody who is not the author.
 
 ## What was verified as genuinely sound
 

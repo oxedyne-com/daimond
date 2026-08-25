@@ -80,6 +80,7 @@ use crate::{
     wire::{
         Capture,
         FenceSpec,
+        FileOp,
         Req,
         Resp,
         Run,
@@ -89,11 +90,20 @@ use crate::{
         CHUNK_MAX,
         RUNS_MAX,
         RUN_WHAT_MAX,
+        FILE_TEXT_MAX,
+        SEARCH_ANSWER_MAX,
+        SEARCH_CONTEXT_LINES,
     },
 };
 
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_core::rand::Rand;
+// The SAME matchers the page compiles, from the same source text. Two engines that agree
+// today is not a property worth resting a search on: the hand's pass decides which files are
+// worth carrying and the page's decides what the reader sees, so a hand that matched less
+// than the page would hide files the page would have reported and nothing would say so.
+use oxedyne_fe2o3_text::glob::Glob;
+use oxedyne_fe2o3_text::regex::Regex;
 
 use std::{
     collections::HashMap,
@@ -648,7 +658,8 @@ impl Runner {
             argv: argv.clone(),
             env:  env.clone(),
             plan: plan.clone(),
-                    tty:  false,
+            tty:  false,
+            act:  Act::Exec,
         }));
 
         let mut child = res!(cmd.spawn()
@@ -955,6 +966,176 @@ impl Runner {
                 Channel, IO));
         }
         Ok(Launch::Refused)
+    }
+}
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The file door                                                  │
+// └───────────────────────────────────────────────────────────────┘
+
+/// How long one file operation is given.
+///
+/// A file op is not a build.  It opens a file, reads or writes it and exits, so a minute is
+/// already generous -- and a launcher that has not answered in a minute is one that will not,
+/// which is a better thing to say than to wait for.
+const FILE_TIMEOUT_MS: u64 = 60_000;
+
+/// Carries out one [`Req::File`], behind the fence a command would run behind.
+///
+/// **The whole of what this type adds over [`Runner`] is that nothing is exec'd.**  The
+/// gates are the same gates in the same order -- the working directory is vetted against the
+/// fence the caller sent, the plan is made here where a failure can still become a sentence,
+/// release gate 1 refuses an unfenceable request rather than running it and mentioning it,
+/// and the system-call filter is proved buildable before a child exists.  Then the same
+/// launcher is started with the same plan, and it applies the same ruleset before it opens
+/// anything.
+///
+/// It holds no registry.  A file op cannot be signalled, cannot leave a process group
+/// standing and cannot outlive its own answer, so there is nothing for a caller to reach
+/// afterwards and nothing to record for them to reach it by.
+#[derive(Clone)]
+pub struct Files {
+    launcher: Arc<Launcher>,
+}
+
+impl Default for Files {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Files {
+
+    /// A door that fences through this binary.
+    pub fn new() -> Self {
+        Self::with_launcher(Launcher::SelfExe)
+    }
+
+    /// A door with a stated launcher, which is how a test reaches the real [`launch_main`].
+    pub fn with_launcher(launcher: Launcher) -> Self {
+        Self { launcher: Arc::new(launcher) }
+    }
+
+    /// Does the operation and answers, or says why it did not.
+    ///
+    /// # Arguments
+    /// * `req` - The [`Req::File`].
+    /// * `tx` - Where the answer goes.
+    pub async fn apply(&self, req: Req, tx: Sender<Resp>) -> Outcome<()> {
+        let (id, op, cwd, fence) = match req {
+            // Named rather than swept up by `..`, so a field added later has to be looked at
+            // here too. `toolkits` is spent before the request gets here, exactly as it is for
+            // an `Exec`: `Desk::exec` clamps the fence against it.
+            Req::File { id, op, cwd, fence, toolkits: _ } => (id, op, cwd, fence),
+            other => return Err(err!(
+                "Files::apply was given {:?}, which is not a File request.", other;
+                Bug, Invalid, Input)),
+        };
+
+        let dir = match vet_cwd(&cwd, &fence) {
+            Vetted::Ok(p)      => p,
+            Vetted::Refused(s) => return self.refuse(&id, &tx, s).await,
+        };
+
+        // Release gate 1, word for word as `Runner::spawn` meets it: the fence is decided in
+        // the hand, where a failure can still be a sentence the page shows, and an
+        // unfenceable request is refused rather than run and mentioned afterwards.
+        let plan = match detected_fence().plan(&fence, &Unfenced::Refuse) {
+            Ok(p)  => p,
+            Err(e) => return self.refuse(&id, &tx, fmt!(
+                "Refused: {}", e.msgs().join(" "))).await,
+        };
+
+        // The other half of the compartment. Landlock does not govern `chmod`, `chown`,
+        // `utimensat` or `setxattr`, so a fence without the filter is not a compartment on
+        // this kernel -- and a file op is precisely a thing that would use them.
+        if let Err(e) = detected_seccomp().plan(&SysSpec::for_command()) {
+            return self.refuse(&id, &tx, fmt!("Refused: {}", e.msgs().join(" "))).await;
+        }
+
+        let payload = res!(encode_payload(&Payload {
+            prog: PathBuf::new(),
+            argv: Vec::new(),
+            env:  Vec::new(),
+            plan: plan.clone(),
+            tty:  false,
+            act:  Act::File(op.clone()),
+        }));
+
+        let mut cmd = Command::new(res!(self.launcher.prog()));
+        cmd.args(self.launcher.args());
+        cmd.current_dir(&dir);
+        cmd.env_clear();
+        for (k, v) in self.launcher.env() {
+            cmd.env(k, v);
+        }
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.kill_on_drop(true);
+        #[cfg(unix)]
+        cmd.process_group(0);
+
+        let mut child = res!(cmd.spawn().map_err(|e| err!(e,
+            "The hand could not start the launcher that fences a file operation in '{}'.",
+            dir.display(); IO, Init)));
+
+        // Written from a task for the reason `Runner::spawn` gives: a plan can exceed a pipe
+        // buffer, and a writer that blocks against its own unread output deadlocks.
+        if let Some(mut w) = child.stdin.take() {
+            tokio::spawn(async move {
+                let _ = w.write_all(&payload).await;
+                let _ = w.shutdown().await;
+            });
+        }
+
+        let waited = tokio::time::timeout(
+            Duration::from_millis(FILE_TIMEOUT_MS),
+            child.wait_with_output()).await;
+        let out = match waited {
+            Ok(Ok(o))  => o,
+            Ok(Err(e)) => return self.refuse(&id, &tx, fmt!(
+                "Refused: the fenced child that was to {} '{}' could not be waited on ({}). \
+                Do not assume nothing changed.", op.word(), op.path(), e)).await,
+            Err(_)     => return self.refuse(&id, &tx, fmt!(
+                "Refused: the fenced child that was to {} '{}' did not answer within {} \
+                seconds and was stopped. Do not assume nothing changed.",
+                op.word(), op.path(), FILE_TIMEOUT_MS / 1000)).await,
+        };
+
+        // A non-zero exit is the launcher's own, and every one of its codes means the fence
+        // was NOT in force and therefore that nothing was done. Its sentence is on standard
+        // error and is written for a reader; it is passed through rather than summarised.
+        if !out.status.success() {
+            let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            return self.refuse(&id, &tx, fmt!(
+                "Refused: the fence could not be put on the process that was to {} '{}', so \
+                nothing was done. {}", op.word(), op.path(), why)).await;
+        }
+
+        let (ok, text) = match out.stdout.split_first() {
+            Some((b, rest)) => (*b != 0, String::from_utf8_lossy(rest).to_string()),
+            None            => return self.refuse(&id, &tx, fmt!(
+                "Refused: the fenced child that was to {} '{}' exited without saying what it \
+                did. Do not assume nothing changed.", op.word(), op.path())).await,
+        };
+
+        if tx.send(Resp::Filed { id: id.clone(), ok, text }).await.is_err() {
+            return Err(err!(
+                "The page stopped listening before the answer for '{}' could be sent.", id;
+                Channel, IO));
+        }
+        Ok(())
+    }
+
+    /// Sends a refusal and says so.
+    async fn refuse(&self, id: &str, tx: &Sender<Resp>, reason: String) -> Outcome<()> {
+        if tx.send(Resp::Refused { id: fmt!("{}", id), reason }).await.is_err() {
+            return Err(err!(
+                "The page stopped listening before the refusal for '{}' could be sent.", id;
+                Channel, IO));
+        }
+        Ok(())
     }
 }
 
@@ -2796,6 +2977,294 @@ pub fn drop_absent_kit_roots(fence: &mut FenceSpec, kits: &[String]) -> Vec<Stri
     gone
 }
 
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The credential scanner a fence switches off in silence         │
+// └───────────────────────────────────────────────────────────────┘
+//
+// `core.hooksPath` names the directory git runs `pre-commit` from, and on the machine this
+// was written on it names a credential scanner -- added after a live key reached a public
+// repository and was used by somebody else nine days later.
+//
+// A fenced git loses that hook in either of two ways, and only one of them is loud.
+//
+//   * **The hooks directory is unreachable but git knows where it is.**  Git tries to run
+//     the hook, `execve` answers EACCES, and the commit fails with `cannot exec ...
+//     Permission denied`.  Loud, and already fail-closed.
+//   * **Git cannot read the configuration that names it.**  Nothing grants `~/.gitconfig`
+//     unless the user ticked the Git toolkit, and git needs no toolkit to commit -- so the
+//     ordinary case is a git that never learns `core.hooksPath` exists, looks in
+//     `.git/hooks`, finds nothing, and commits.  Exit 0, no message, no scanner.  Measured
+//     2026-08-24: a fenced commit put AWS's published example key into a repository one
+//     after the same hook had refused the same bytes outside the fence.
+//
+// The second is the one this section closes, and the shape of the answer is the shape of
+// the fault: what is missing is the CONFIGURATION, so what is checked is whether git will
+// be able to read it.  The hand can always read it -- the hand is not fenced -- so it reads
+// the user's own global configuration itself and then asks the plan whether the fenced git
+// could have.
+//
+// Two halves, closing different failures.  [`grant_git_hooks`] puts the hooks directory
+// into the fence read-only, which carries execute, so a Diamond that granted the Git
+// toolchain runs the hook -- the normal case working.  [`git_hooks_refusal`] refuses a
+// commit that would run without it, naming what is missing -- an unreachable hook made
+// loud instead of invisible.  A refusal costs one call; the silence costs a credential.
+//
+// # Only the user's own GLOBAL value is read, and that is the security of it
+//
+// A repository's `.git/config` is inside the fence and a command can write it, so a
+// `core.hooksPath` read from there would let a turn choose which directory the fence lends
+// it: `~/.ssh` is an exfiltration path, and an empty folder in the workspace is the scanner
+// disabled without a word.  So the grant follows the user's own configuration and nothing
+// else, and a repository that overrides it is refused by name rather than obeyed.
+
+/// The git verbs that run a hook the user could be relying on.
+///
+/// `push` is absent on purpose: a Daimond push runs with `core.hooksPath` pointed at a
+/// denied directory deliberately, so that a `pre-push` script in a repository a model can
+/// write does not run with a credential in its environment.  That decision is argued where
+/// it is made, in `src/tools.rs` beside `PushCred::git_env`.
+const HOOKED_VERBS: &[&str] = &[
+    "commit",
+    "merge",
+    "rebase",
+    "am",
+    "cherry-pick",
+    "revert",
+];
+
+/// Where the user's own global configuration says hooks live, and which file said so.
+///
+/// Asked of git rather than parsed out of `~/.gitconfig`, because `include.path` and
+/// `includeIf` mean the file is not the answer -- and a parser that missed one of those
+/// would report "no hooks configured" for a machine that has them, which is the silence
+/// this whole section exists to end.
+///
+/// Read with the HAND's environment and not the command's.  The command's environment
+/// arrives from the page, and a `HOME` chosen there would decide which configuration counts
+/// as the user's own.
+///
+/// # Arguments
+/// * `env` - Overrides laid over the hand's own environment.  Empty in the hand; a test
+///   passes `GIT_CONFIG_GLOBAL` so that it never touches the real configuration.
+///
+/// # Returns
+/// The hooks directory and the configuration file naming it, both resolved, or `None`
+/// where the user configured none or named somewhere that is not there -- in which case
+/// there is no hook to lose, fenced or not.
+fn user_hooks_dir(env: &[(String, String)]) -> Option<(PathBuf, PathBuf)> {
+    let out = git_config_read(env, None, &["--global", "--show-origin"])?;
+    let (origin, value) = out.split_once('\t')?;
+    let file = PathBuf::from(origin.strip_prefix("file:")?).canonicalize().ok()?;
+    let dir  = hooks_dir_of(value, None, env)?;
+    Some((dir, file))
+}
+
+/// What `core.hooksPath` reads as, or `None` where it is unset and where git failed.
+///
+/// # Arguments
+/// * `env` - Overrides laid over the hand's own environment.
+/// * `cwd` - Where to ask from, which decides whether a repository's own configuration is
+///   in the answer.  `None` asks from wherever the hand is.
+/// * `flags` - Extra arguments to `git config`, before `--get`.
+fn git_config_read(
+    env:   &[(String, String)],
+    cwd:   Option<&Path>,
+    flags: &[&str],
+)
+    -> Option<String>
+{
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("config").args(flags).args(["--get", "core.hooksPath"]);
+    if let Some(d) = cwd {
+        cmd.current_dir(d);
+    }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    // A prompt here would hang the hand rather than fail. `config --get` should never ask,
+    // and this makes sure of it.
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
+    if s.trim().is_empty() { None } else { Some(s) }
+}
+
+/// The directory a `core.hooksPath` value names on this machine, if it is one.
+///
+/// A value naming somewhere that is not there is not a fence problem: git would run no hook
+/// with or without a fence, so there is nothing here to lose and nothing to refuse.
+///
+/// # Arguments
+/// * `value` - What git said.
+/// * `cwd` - What a relative value is relative to, which is git's own rule: the directory
+///   the hooks are run from, meaning the top of the working tree.
+/// * `env` - Where `HOME` comes from, for a value written with a leading `~`.
+fn hooks_dir_of(value: &str, cwd: Option<&Path>, env: &[(String, String)]) -> Option<PathBuf> {
+    let v = value.trim();
+    if v.is_empty() {
+        return None;
+    }
+    let home = env.iter().find(|(k, _)| k == "HOME").map(|(_, v)| v.clone())
+        .or_else(home_dir);
+    let raw = if v == "~" {
+        PathBuf::from(home?)
+    } else if let Some(rest) = v.strip_prefix("~/") {
+        PathBuf::from(home?).join(rest)
+    } else {
+        let p = PathBuf::from(v);
+        if p.is_absolute() { p } else { cwd?.join(p) }
+    };
+    let real = raw.canonicalize().ok()?;
+    if real.is_dir() { Some(real) } else { None }
+}
+
+/// Puts the user's own hooks directory into the fence, read-only.
+///
+/// Read-only and never writable, for the reason every other configuration grant is:
+/// a hooks directory a command can write is a directory that decides what runs on the
+/// user's next commit, in their own shell, outside all of this.  A read-only grant carries
+/// execute, which is what a hook needs.
+///
+/// Called after [`vet_roots`], which checks that the roots the PAGE named are ones its
+/// grant could have produced.  This root is not one of those: it is read here, on the
+/// machine, from configuration the model cannot reach and the page cannot see.
+///
+/// # Arguments
+/// * `fence` - The fence as it arrived; the directory is added to its read-only roots.
+/// * `kits` - The toolkit names the request carried.  Nothing happens without `git`,
+///   because without it the fenced git cannot read `~/.gitconfig` either, and a hooks
+///   directory git will never be told about is a widening that buys nothing.
+/// * `env` - Overrides for reading the user's configuration; empty in the hand.
+///
+/// # Returns
+/// The directory added, so a caller that wants to say so can.
+pub fn grant_git_hooks(
+    fence:  &mut FenceSpec,
+    kits:   &[String],
+    env:    &[(String, String)],
+)
+    -> Option<PathBuf>
+{
+    if !kits.iter().any(|k| k == "git") {
+        return None;
+    }
+    let (dir, _) = user_hooks_dir(env)?;
+    // A denial is a decision somebody made, and widening one from here would be the fence
+    // quietly disagreeing with it. `.config/oxedyne` is denied to every toolkit on purpose.
+    if fence.deny.iter().any(|d| under(&dir, &resolve(d))) {
+        return None;
+    }
+    if fence.rw.iter().chain(fence.ro.iter()).any(|r| under(&dir, &resolve(r))) {
+        return None;
+    }
+    fence.ro.push(fmt!("{}", dir.display()));
+    Some(dir)
+}
+
+/// Refuses a git command whose hooks would not run, naming what is missing.
+///
+/// The fail-closed half, and the one that catches the silent case: git needs no toolkit to
+/// commit, so the ordinary fenced commit is one that cannot read `~/.gitconfig`, never
+/// learns `core.hooksPath` exists, and commits with no scanner and no message.
+///
+/// Three ways that happens, and each gets its own sentence, because the fix for each is
+/// different:
+///
+///   * the configuration naming the hooks is outside the fence -- grant the Git toolchain;
+///   * the hooks directory is outside the fence -- attach it read-only;
+///   * the repository's own `.git/config`, which is inside the fence and which a command can
+///     write, points `core.hooksPath` somewhere else.
+///
+/// # What this does not reach
+///
+/// Only a command whose `argv[0]` is git is checked, so `sh -c 'git commit'` is not.  With
+/// the Git toolchain granted that spelling is covered anyway, because [`grant_git_hooks`]
+/// puts the directory in the fence and git reads its own configuration; without it, a
+/// shell-wrapped commit still runs unscanned.  Written down rather than papered over: the
+/// honest boundary of this guard is the command it can see.
+///
+/// And it fails OPEN where the hand cannot run `git config` at all -- no git on the hand's
+/// own `PATH`, or a `git config` that exits non-zero -- because it then cannot tell a
+/// machine with no `core.hooksPath` from a machine it could not ask.  Refusing both would
+/// refuse every commit on every ordinary machine, which is a guard nobody would keep.  The
+/// case is narrow: a hand that cannot find git is a hand whose fenced git will not run
+/// either.
+///
+/// # Arguments
+/// * `plan` - The fence as it will be enforced, which is the only honest thing to ask
+///   "could git have read this" of.
+/// * `argv` - The command.
+/// * `cwd` - Where it will run, which decides which repository's configuration is in play.
+/// * `env` - Overrides for reading the user's configuration; empty in the hand.
+pub fn git_hooks_refusal(
+    plan:   &Plan,
+    argv:   &[String],
+    cwd:    &str,
+    env:    &[(String, String)],
+)
+    -> Option<String>
+{
+    let prog = argv.first()?;
+    if Path::new(prog).file_name().map(|n| n != "git").unwrap_or(true) {
+        return None;
+    }
+    // The verb is the first argument that is not an option. `git -C x commit` takes an
+    // argument after `-C`, so a lone `-C` swallows the next word rather than the verb.
+    let mut verb: Option<&str> = None;
+    let mut skip = false;
+    for a in argv.iter().skip(1) {
+        if skip { skip = false; continue; }
+        if a == "-C" || a == "-c" || a == "--git-dir" || a == "--work-tree" {
+            skip = true;
+            continue;
+        }
+        if a.starts_with('-') { continue; }
+        verb = Some(a.as_str());
+        break;
+    }
+    if !HOOKED_VERBS.contains(&verb?) {
+        return None;
+    }
+    // Nothing configured is nothing to lose: git's own default is `.git/hooks`, inside the
+    // repository, inside the folder the fence was built around.
+    let (want, from) = user_hooks_dir(env)?;
+    if !plan.permits(&from, Level::Ro) {
+        return Some(fmt!(
+            "Refused: this would commit without the hooks the user configured. Their git \
+            configuration at {} points core.hooksPath at {}, and this command's fence does \
+            not reach that configuration -- so git would never learn the directory exists, \
+            would look in .git/hooks, would find nothing, and would commit. That is how a \
+            credential-scanning pre-commit hook stops running without saying so, which is \
+            why this is refused rather than run. Grant this Diamond the Git toolchain, \
+            which lends git the user's own configuration, and ask again.",
+            from.display(), want.display()));
+    }
+    if !plan.permits(&want, Level::Ro) {
+        return Some(fmt!(
+            "Refused: git would run its hooks from {}, and this command's fence does not \
+            reach it. Attach that directory to the Diamond read-only -- a read-only grant \
+            carries execute, which is what a hook needs -- or take core.hooksPath out of \
+            the git configuration if the hooks are not wanted.", want.display()));
+    }
+    let here = Path::new(cwd);
+    let effective = git_config_read(env, Some(here), &[])
+        .and_then(|v| hooks_dir_of(&v, Some(here), env));
+    if effective.as_deref() != Some(want.as_path()) {
+        return Some(fmt!(
+            "Refused: this repository's own configuration points core.hooksPath at {}, and \
+            the user's points it at {}. A repository's .git/config is inside the fence and \
+            a command can write it, so a hooks directory named there is one this turn chose \
+            -- and choosing an empty one is how the credential-scanning pre-commit hook \
+            stops running without saying so. Take core.hooksPath out of .git/config.",
+            effective.map(|p| fmt!("{}", p.display())).unwrap_or_else(|| fmt!("nothing")),
+            want.display()));
+    }
+    None
+}
+
 /// Checks a working directory against a fence, in the app's own refusing voice.
 ///
 /// Symbolic links are resolved before the comparison, because a link inside the
@@ -2993,6 +3462,21 @@ fn clamp_timeout(ms: u64) -> u64 {
 // │ The launcher                                                   │
 // └───────────────────────────────────────────────────────────────┘
 
+/// What the launcher does once the fence is in force.
+///
+/// **The fence is applied before this is looked at, and that is the point.**  A file op run
+/// any other way would be a second compartment to keep in step with the first; run here it
+/// is the same Landlock ruleset and the same seccomp filter as a command's, built from the
+/// same [`Plan`], in a child of the same launcher.  A path the fence does not reach fails
+/// with the kernel's own refusal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Act {
+    /// Become the command.
+    Exec,
+    /// Carry out one file operation and answer on standard output.
+    File(FileOp),
+}
+
 /// Everything the launcher is told, and everything it is allowed to decide.
 ///
 /// It decides nothing.  The program is already resolved, the fence is already
@@ -3011,6 +3495,14 @@ pub struct Payload {
     pub env:  Vec<(String, String)>,
     /// The fence to apply before the command exists.
     pub plan: Plan,
+    /// What to do once the fence is on.
+    ///
+    /// Two arms and not a flag, because they are not two shapes of one thing: [`Act::Exec`]
+    /// ends in `execve` and never returns, and [`Act::File`] ends in a write to standard
+    /// output and an exit.  What they share is everything above them -- the same plan, the
+    /// same ruleset, the same filter, applied in the same order -- and that sharing is the
+    /// whole guarantee the file door rests on.
+    pub act:  Act,
     /// Whether this command is to have a controlling terminal.
     ///
     /// A terminal is adopted BEFORE the fence, because Landlock's ABI 5 governs `ioctl` on a
@@ -3136,6 +3628,30 @@ fn launch_inner() -> (i32, String) {
             run. {}", e.msgs().join(" ")));
     }
 
+    // The file door, and it is HERE and not one line earlier for the one reason this
+    // whole arrangement exists: everything above has already happened to this process --
+    // the ruleset is on, the filter is on, `no_new_privs` is set -- so the `open` below is
+    // governed by exactly the rules the command on the other branch would have met. There
+    // is no second check and there is deliberately nowhere to put one.
+    if let Act::File(op) = &payload.act {
+        let (ok, text) = do_file(op);
+        // A byte and then the bytes. No JSON, nothing escaped, nothing to parse wrongly:
+        // the parent reads this and the text may be anything a file holds, including the
+        // quotes and backslashes an encoding would have had to survive. That is the same
+        // sentence the request is built on, one layer down.
+        let mut out: Vec<u8> = Vec::with_capacity(text.len() + 1);
+        out.push(u8::from(ok));
+        out.extend_from_slice(text.as_bytes());
+        use std::io::Write;
+        let mut sink = std::io::stdout();
+        if sink.write_all(&out).is_err() || sink.flush().is_err() {
+            return (EXIT_EXEC_FAILED, fmt!(
+                "the fence was applied, the file operation was carried out and its answer \
+                could not be written back. Do not assume nothing changed."));
+        }
+        std::process::exit(0)
+    }
+
     let mut cmd = std::process::Command::new(&payload.prog);
     // Exec the RESOLVED binary, but under the name the caller asked for.
     //
@@ -3173,6 +3689,691 @@ fn launch_inner() -> (i32, String) {
     (EXIT_EXEC_FAILED, fmt!(
         "the fence was applied and then {} could not be started ({}). Nothing \
         ran behind the fence.", payload.prog.display(), e))
+}
+
+// ── The file operations themselves, run behind the fence ────────────
+//
+// Everything in this section executes in the launcher, AFTER `Plan::apply` and after the
+// seccomp filter, and it is written on the assumption that the kernel is the guard. There
+// is no path check here beyond "is it absolute", on purpose: a check written here would be
+// a second opinion about what the fence allows, it would drift from the first, and the day
+// it disagreed the laxer of the two would be the one that ran. What this code does with a
+// path the fence does not reach is exactly what any other program does -- it gets EACCES
+// from `open` -- and the only value added is that the sentence says so in words.
+
+/// What the launcher answers a [`FileOp`] with: whether it was done, and what to say.
+///
+/// # Arguments
+/// * `op` - The operation, whose paths must all be absolute.
+#[cfg(unix)]
+fn do_file(op: &FileOp) -> (bool, String) {
+    // EVERY path, not the first. A walk names several and an empty list names none, and both
+    // were reachable before `paths()` existed.
+    let named = op.paths();
+    if named.is_empty() {
+        return (false, fmt!("A {} was asked for with no path to work on.", op.word()));
+    }
+    for p in named {
+        if !Path::new(p).is_absolute() {
+            return (false, fmt!(
+                "'{}' is not an absolute path, and the hand does not guess what a path is \
+                relative to.", p));
+        }
+    }
+    match op {
+        FileOp::Read { path, offset, limit } => read_op(path, *offset, *limit),
+        FileOp::Write { path, content }      => write_op(path, content),
+        FileOp::Edit { path, old, new }      => edit_op(path, old, new),
+        FileOp::Move { path, to }            => move_op(path, to),
+        FileOp::List { path }                => list_op(path),
+        FileOp::MkDir { path }               => mkdir_op(path),
+        FileOp::Search { paths, query, ci, glob, base, skip, budget, cap } =>
+            search_op(paths, query, *ci, glob, base, skip, *budget as usize, *cap as u64),
+        FileOp::Glob { paths, pattern, base, skip, budget } =>
+            glob_op(paths, pattern, base, skip, *budget as usize),
+    }
+}
+
+/// What one filesystem error means, in the words the model has to act on.
+///
+/// **A refusal and an absence are different answers and only one of them is true.**  A path
+/// the fence does not reach comes back from the kernel as `PermissionDenied`, which read
+/// bare says nothing about the fence at all -- and a model that reads it as "the file is
+/// protected" goes looking for `chmod` instead of asking the user to mark the folder in.
+///
+/// # Arguments
+/// * `what` - The verb, for the opening clause.
+/// * `path` - The path as the caller wrote it.
+/// * `e` - What the operating system said.
+#[cfg(unix)]
+fn fs_said(what: &str, path: &str, e: &std::io::Error) -> String {
+    match e.kind() {
+        std::io::ErrorKind::PermissionDenied => fmt!(
+            "The kernel refused to let this turn {} '{}'. That is the fence, not the file's \
+            own permissions: a file tool reaches exactly the folders a command reaches, and \
+            this path is outside them. Ask the user to mark the folder in.", what, path),
+        std::io::ErrorKind::NotFound => fmt!(
+            "There is no '{}' on this machine.", path),
+        // A DIRECTORY, SAID AS A DIRECTORY. The browser-storage arm of `file_read` has named
+        // `file_list` here since 2026-08-24, when a daimon spent three calls working out what
+        // the browser's `TypeMismatchError` meant; the machine arm answered `Is a directory
+        // (os error 21)` on its first measured run, 2026-08-25, and cost a call to the same
+        // question. The two doors say the same sentence or they are two doors.
+        std::io::ErrorKind::IsADirectory => fmt!(
+            "'{}' is a directory, not a file. file_list answers what is in it, and \
+            file_search looks inside everything under it.", path),
+        _ => fmt!("Could not {} '{}': {}.", what, path, e),
+    }
+}
+
+/// The text of a file, or the sentence saying why not.
+///
+/// The answer is three tab-separated numbers, a newline, and then the lines asked for: the
+/// lines the WHOLE file holds, the whole file's length in bytes, and how many lines follow
+/// here.  A private convention between two halves of one binary, and it exists because the
+/// caller pages a read and cannot say "lines 40-60 of 812" without being told the 812 by
+/// whoever held the whole file.
+///
+/// **The third number is `dev/BLOCKERS.md` B18.**  The answer used to carry the line count
+/// alone and then be cut to [`FILE_TEXT_MAX`] as one string, so a caller that asked for a
+/// 1.2 MB file was handed 512 KiB of it and counted the cut: `src/tools.rs` read as 9,304
+/// lines of 21,276, with the offset to continue from twelve thousand lines short of the end.
+/// Cutting on a line boundary and SAYING how many lines went is what makes the caller's
+/// arithmetic about the rest come out right.
+///
+/// # Arguments
+/// * `offset` - The 1-based line to start at; 0 is read as 1.
+/// * `limit` - How many lines to take; 0 means every line from `offset`.
+#[cfg(unix)]
+fn read_op(path: &str, offset: u32, limit: u32) -> (bool, String) {
+    let bytes = match std::fs::read(path) {
+        Ok(b)  => b,
+        Err(e) => return (false, fs_said("read", path, &e)),
+    };
+    let text = String::from_utf8_lossy(&bytes).to_string();
+    let lines: Vec<&str> = text.split('\n').collect();
+    // A file ending in a newline splits to a final empty piece that is not a line, and an
+    // empty file splits to one such piece and holds no lines at all.
+    let total = match lines.last() {
+        Some(&"") if lines.len() > 1 => lines.len() - 1,
+        Some(&"")                    => 0,
+        _                            => lines.len(),
+    };
+    let from = (offset.max(1) as usize) - 1;
+    let take = match limit {
+        0 => total.saturating_sub(from),
+        n => n as usize,
+    };
+    let mut sent = String::new();
+    let mut kept = 0usize;
+    for line in lines.iter().skip(from).take(take) {
+        // The newline that ends it, counted before it is spent, so the frame's ceiling is a
+        // ceiling on what is actually built.
+        if sent.len() + line.len() + 1 > FILE_TEXT_MAX {
+            break;
+        }
+        sent.push_str(line);
+        // EVERY line ends with one, the last of them included. Joining with newlines instead
+        // makes "a\n" mean either one line or two -- and a window whose last line is blank is
+        // then one line shorter than it says it is, which the caller checks and refuses.
+        sent.push('\n');
+        kept += 1;
+    }
+    // ONE LINE LONGER THAN THE WHOLE FRAME, which the loop above would answer with nothing at
+    // all.  A cut line is worth more than an empty answer, so it goes with the marker that
+    // says it is cut -- and it is the only place the hand puts words of its own among a
+    // file's characters.
+    if kept == 0 && from < total {
+        let line = lines[from];
+        let mut end = FILE_TEXT_MAX.min(line.len());
+        while end > 0 && !line.is_char_boundary(end) {
+            end -= 1;
+        }
+        sent.push_str(&line[..end]);
+        sent.push_str(&fmt!(
+            " …[{} further bytes on this line were not returned]\n", line.len() - end));
+        kept = 1;
+    }
+    let mut out = fmt!("{}\t{}\t{}\n", total, bytes.len(), kept);
+    out.push_str(&sent);
+    (true, out)
+}
+
+/// The whole of `path` replaced by `content`, with any parent it needs made first.
+#[cfg(unix)]
+fn write_op(path: &str, content: &str) -> (bool, String) {
+    if let Some(dir) = Path::new(path).parent() {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            return (false, fs_said("write", path, &e));
+        }
+    }
+    match std::fs::write(path, content.as_bytes()) {
+        Ok(())  => (true, String::new()),
+        Err(e)  => (false, fs_said("write", path, &e)),
+    }
+}
+
+/// `old` replaced by `new` in `path`, exactly once.
+///
+/// The count is the answer on both failures, because "which of my six edits landed" is the
+/// question a caller cannot ask afterwards and the one that cost 71 calls.
+#[cfg(unix)]
+fn edit_op(path: &str, old: &str, new: &str) -> (bool, String) {
+    let bytes = match std::fs::read(path) {
+        Ok(b)  => b,
+        Err(e) => return (false, fs_said("edit", path, &e)),
+    };
+    let data = match String::from_utf8(bytes) {
+        Ok(t)  => t,
+        Err(_) => return (false, fmt!(
+            "'{}' is not UTF-8 text, so replacing a string in it would rewrite the bytes it \
+            is not made of. Nothing was changed.", path)),
+    };
+    let count = data.matches(old).count();
+    if count == 0 {
+        return (false, fmt!("old_string was not found in '{}'. Nothing was changed.{}",
+            path, near_miss(&data, old)));
+    }
+    if count > 1 {
+        return (false, fmt!(
+            "old_string appears {} times in '{}'; make it unique. Nothing was changed.",
+            count, path));
+    }
+    let updated = data.replacen(old, new, 1);
+    match std::fs::write(path, updated.as_bytes()) {
+        Ok(())  => (true, String::new()),
+        Err(e)  => (false, fs_said("edit", path, &e)),
+    }
+}
+
+/// Where a failed `old_string` nearly matched, as the lines to copy instead.
+///
+/// **"Not found" says what is not there and nothing about what is, and a caller that
+/// mistyped one character has no way to converge.** Measured on the second live run of this
+/// door, 2026-08-25: a daimon building an `old_string` out of a `sed -n` slice wrote a
+/// straight `"` where `de.js` has a typographic one, met "was not found" four times,
+/// concluded the tool did not work, and went back to `sed -i` -- where it spent the next
+/// forty-eight calls on French quoting, which is the very failure `dev/BLOCKERS.md` B2 is
+/// measured on. The refusal was honest and it was a dead end.
+///
+/// So the LONGEST PREFIX of `old_string` that is in the file is found, and the answer is
+/// where it is and what the file actually holds from that line -- which is the text to copy,
+/// exactly, with nothing to guess at. A prefix and not the first line, because the character
+/// that was got wrong is as often in the first line as anywhere; the German quote that
+/// started this was.
+///
+/// Binary search is sound here and worth saying why: a prefix of length k is present only if
+/// every shorter prefix is, since each is a prefix of it, so presence is monotone in k.
+///
+/// # Arguments
+/// * `data` - The file's whole text.
+/// * `old` - The string that was not found.
+#[cfg(unix)]
+fn near_miss(data: &str, old: &str) -> String {
+    // Below this a "near miss" is a coincidence: any file holds a tab and a quote somewhere,
+    // and pointing at one would be worse than saying nothing.
+    const LEAST: usize = 12;
+
+    let bytes = old.as_bytes();
+    let (mut lo, mut hi) = (0usize, bytes.len());
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        let mut k = mid;
+        while k > 0 && !old.is_char_boundary(k) {
+            k -= 1;
+        }
+        if k <= lo {
+            break;
+        }
+        if data.contains(&old[..k]) { lo = k; } else { hi = k - 1; }
+    }
+    if lo < LEAST {
+        return fmt!(
+            " No part of it is in the file, so this is not a near miss: read the file and \
+            copy the text from what the read returns.");
+    }
+    let at = match data.find(&old[..lo]) {
+        Some(i) => i,
+        None    => return String::new(),	// unreachable while `lo` came from `contains`
+    };
+    let line = data[..at].matches('\n').count() + 1;
+    let want = old.split('\n').count().max(1) + 1;
+    let shown: Vec<String> = data.split('\n').skip(line - 1).take(want)
+        .enumerate()
+        .map(|(i, t)| fmt!("{}\t{}", line + i, t))
+        .collect();
+    fmt!(
+        " Its first {} characters ARE there, at line {}, and it stops matching after them. \
+        The file holds this from that line, which is the text to copy exactly:\n{}",
+        lo, line, shown.join("\n"))
+}
+
+/// `path` renamed to `to`, which must not already be something.
+#[cfg(unix)]
+fn move_op(path: &str, to: &str) -> (bool, String) {
+    if !Path::new(to).is_absolute() {
+        return (false, fmt!(
+            "'{}' is not an absolute path, and the hand does not guess what a path is \
+            relative to.", to));
+    }
+    if Path::new(to).symlink_metadata().is_ok() {
+        return (false, fmt!("'{}' already exists; nothing was moved.", to));
+    }
+    if let Some(dir) = Path::new(to).parent() {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            return (false, fs_said("move", to, &e));
+        }
+    }
+    match std::fs::rename(path, to) {
+        Ok(())  => (true, String::new()),
+        Err(e)  => (false, fs_said("move", path, &e)),
+    }
+}
+
+/// What is in the directory `path`, one entry a line, a directory marked with a slash.
+///
+/// A listing too big for one frame stops on a whole name and says how many of the directory's
+/// entries it is showing.  It used to be cut as one string with the note *"ask for the rest by
+/// line range"*, which is `read`'s advice: `list` takes no range, and a caller acting on that
+/// sentence has nowhere to go.
+#[cfg(unix)]
+fn list_op(path: &str) -> (bool, String) {
+    let rd = match std::fs::read_dir(path) {
+        Ok(r)  => r,
+        Err(e) => return (false, fs_said("list", path, &e)),
+    };
+    let mut names: Vec<String> = Vec::new();
+    for ent in rd {
+        let ent = match ent {
+            Ok(e)  => e,
+            Err(e) => return (false, fs_said("list", path, &e)),
+        };
+        let name = ent.file_name().to_string_lossy().to_string();
+        let dir = matches!(ent.file_type(), Ok(t) if t.is_dir());
+        names.push(match dir {
+            true  => fmt!("{}/", name),
+            false => name,
+        });
+    }
+    names.sort();
+    let total = names.len();
+    let mut out = String::new();
+    let mut shown = 0usize;
+    for name in &names {
+        if out.len() + name.len() + 1 > FILE_TEXT_MAX {
+            break;
+        }
+        if shown > 0 {
+            out.push('\n');
+        }
+        out.push_str(name);
+        shown += 1;
+    }
+    if shown < total {
+        out.push_str(&fmt!(
+            "\n[file_list] {} of {} entries; the rest would not fit in one message. A listing \
+            takes no range to page it with, so name what is wanted instead: file_glob with a \
+            pattern under this directory answers the same question for a fraction of it.",
+            shown, total));
+    }
+    (true, out)
+}
+
+/// `path` made, with any parent it needs.
+#[cfg(unix)]
+fn mkdir_op(path: &str) -> (bool, String) {
+    match std::fs::create_dir_all(path) {
+        Ok(())  => (true, String::new()),
+        Err(e)  => (false, fs_said("create", path, &e)),
+    }
+}
+
+// ── The two walks ───────────────────────────────────────────────────
+//
+// Both run in the launcher, behind the same ruleset as everything else in this section, and
+// both are bounded by an ENTRY budget rather than by a depth or a file count. A search that
+// matches nothing looks at every entry there is, and on a large enough folder it never comes
+// back; the page has had that budget since `WalkBudget` and it is the page that sets it here,
+// so the two ends cannot come to disagree about what a walk costs.
+//
+// **What comes back is deliberately not an answer.** The regex here is a FILTER -- it decides
+// which files are worth carrying -- and the page then runs its own scan over the ones it is
+// handed. Both compile the same `fe2o3_text` pattern from the same source, so the filter
+// cannot be narrower than the answer; and everything a reader actually sees, the context
+// lines and the paging and the notes, is composed in exactly one place.
+
+/// A directory entry, in the order a walk must see it.
+///
+/// Sorted by name, so a walk is a repeatable pre-order and the page's `offset` can page it
+/// honestly. Unsorted, two calls with the same arguments report different pages of the same
+/// tree and a reader paging through one of them silently skips files.
+#[cfg(unix)]
+fn sorted_entries(dir: &Path) -> Option<Vec<(String, PathBuf, bool)>> {
+    // `None`, NOT an empty listing. A directory the walk cannot open is not a directory with
+    // nothing in it, and `Err(_) => Vec::new()` is exactly the shape `dev/BLOCKERS.md` B1 is
+    // about: the walk answers about a place it never looked and nothing says so. Behind a
+    // fence it is the commonest case there is -- it is what the kernel's refusal looks like
+    // from in here -- so it is counted and named rather than swallowed.
+    let rd = match std::fs::read_dir(dir) {
+        Ok(r)  => r,
+        Err(_) => return None,
+    };
+    let mut out: Vec<(String, PathBuf, bool)> = Vec::new();
+    for ent in rd.flatten() {
+        let name = ent.file_name().to_string_lossy().to_string();
+        let is_dir = matches!(ent.file_type(), Ok(t) if t.is_dir());
+        out.push((name, ent.path(), is_dir));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Some(out)
+}
+
+/// What a walk did as well as what it found, so the page can say what was NOT looked at.
+///
+/// Every field is a count the page already has a sentence for; they travel as one line rather
+/// than as a shape, because the only reader is the other half of this build.
+#[cfg(unix)]
+#[derive(Default)]
+struct Walked {
+    spent:   usize,		// entries charged
+    stop:    String,	// the directory the budget ran out in, empty if it did not
+    queued:  usize,		// directories still waiting when it did
+    skipped: usize,		// directories passed over by name
+    filtered:usize,		// files the glob excluded
+    too_big: usize,		// files past the size cap
+    binary:  usize,		// files whose bytes are not text
+    files:   usize,		// files actually read and matched against
+    left:    usize,		// files that matched and did not fit in the answer
+    denied:  usize,		// directories the walk could not open at all
+}
+
+impl Walked {
+    /// The header line every walk answers with, before whatever it found.
+    fn line(&self) -> String {
+        fmt!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            self.spent, self.stop, self.queued, self.skipped, self.filtered,
+            self.too_big, self.binary, self.files, self.left, self.denied)
+    }
+}
+
+/// Charge one entry, answering whether the walk may look at it.
+///
+/// The first refusal records where the walk had got to and later ones are free, exactly as the
+/// page's own budget behaves -- a caller may keep asking without the record moving.
+#[cfg(unix)]
+fn afford(w: &mut Walked, budget: usize, here: &str) -> bool {
+    if w.spent >= budget {
+        if w.stop.is_empty() {
+            w.stop = here.to_string();
+        }
+        return false;
+    }
+    w.spent += 1;
+    true
+}
+
+/// Every file under `paths` the pattern matches in, with the lines it matched on.
+///
+/// The answer is the header line, then for each file a line of `<path>\t<byte length>` and
+/// exactly that many bytes of its matching lines.  Length-prefixed and not delimited, because
+/// a line of a file holds every character a delimiter could have been.
+///
+/// **The lines rather than the file: `dev/BLOCKERS.md` B17.**  See [`matching_lines`].
+///
+/// # Arguments
+/// * `query` - The regex source, already quoted by the caller where a literal was asked for.
+/// * `skip` - Directory names to pass over, decided by the page from its own rule.
+/// * `budget` - Entries the walk may look at.
+/// * `cap` - The largest file worth opening, in bytes.
+#[cfg(unix)]
+fn search_op(
+    paths:  &[String],
+    query:  &str,
+    ci:     bool,
+    glob:   &str,
+    base:   &str,
+    skip:   &[String],
+    budget: usize,
+    cap:    u64,
+)
+    -> (bool, String)
+{
+    let re = match Regex::with_case(query, ci) {
+        Ok(r)  => r,
+        Err(e) => return (false, fmt!(
+            "The search pattern could not be read by the hand: {}. Nothing was searched.",
+            e.msgs().join(" "))),
+    };
+    let filter = match glob.is_empty() {
+        true  => None,
+        false => match Glob::new(glob) {
+            Ok(g)  => Some(g),
+            Err(e) => return (false, fmt!(
+                "The search's glob could not be read by the hand: {}. Nothing was searched.",
+                e.msgs().join(" "))),
+        },
+    };
+    let mut w = Walked::default();
+    let mut out = String::new();
+    // Reversed so the first path is popped first: a walk over several marks should reach the
+    // one the caller named first before it spends its budget on the others.
+    let mut stack: Vec<PathBuf> = paths.iter().rev().map(PathBuf::from).collect();
+    'walk: while let Some(dir) = stack.pop() {
+        let here = fmt!("{}", dir.display());
+        let entries = match sorted_entries(&dir) {
+            Some(e) => e,
+            None    => { w.denied += 1; continue; },
+        };
+        // Pushed in reverse so they pop in name order, which is what makes the whole walk a
+        // repeatable pre-order.
+        for (name, p, is_dir) in entries.iter().rev() {
+            if !*is_dir {
+                continue;
+            }
+            // Charged before the skip test, and so charged for every entry the walk lays eyes
+            // on: what costs is reading the entry, not deciding to descend into it.
+            if !afford(&mut w, budget, &here) {
+                break;
+            }
+            if skip.iter().any(|d| d == name) {
+                w.skipped += 1;
+                continue;
+            }
+            stack.push(p.clone());
+        }
+        for (_, p, is_dir) in &entries {
+            if *is_dir {
+                continue;
+            }
+            if !afford(&mut w, budget, &here) {
+                break 'walk;
+            }
+            let disp = fmt!("{}", p.display());
+            if let Some(g) = &filter {
+                // Matched against the path AS THE CALLER SPELLS IT. See `GLOB_BASE_DOC`: a
+                // glob written `www/i18n/en.js` matched against `/home/.../repo/www/i18n/en.js`
+                // excludes every file there is, and says so in a note nobody acts on.
+                if !g.matches(under_base(&disp, base)) {
+                    w.filtered += 1;
+                    continue;
+                }
+            }
+            match std::fs::metadata(p) {
+                Ok(m) if m.len() > cap => { w.too_big += 1; continue; },
+                Ok(_)                  => (),
+                Err(_)                 => continue,
+            }
+            let bytes = match std::fs::read(p) {
+                Ok(b)  => b,
+                Err(_) => continue,
+            };
+            // Lossy-decoding a binary file lets its bytes match and be quoted back as though
+            // they were source. The page makes the same test and would drop it anyway; making
+            // it here is what stops the bytes crossing at all.
+            if looks_binary(&bytes) {
+                w.binary += 1;
+                continue;
+            }
+            w.files += 1;
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            let block = match matching_lines(&text, &re) {
+                Some(b) => b,
+                None    => continue,
+            };
+            if out.len() + block.len() > SEARCH_ANSWER_MAX {
+                w.left += 1;
+                continue;
+            }
+            out.push_str(&fmt!("{}\t{}\n", disp, block.len()));
+            out.push_str(&block);
+        }
+    }
+    w.queued = stack.len();
+    (true, fmt!("{}\n{}", w.line(), out))
+}
+
+/// The lines of `text` a search has to carry back, each with the number it has in the file.
+///
+/// **A search answers about LINES, and the hand used to send whole FILES.**  The page's answer
+/// is `path:line:text` with context around it, so what it needs is the lines that matched and
+/// their neighbours; sending the file made the answer's size a function of how big the file was
+/// rather than of how much of it matched, and a file over [`SEARCH_ANSWER_MAX`] could not be
+/// searched at any narrowing -- `dev/BLOCKERS.md` B17, measured on this repository's own
+/// `src/tools.rs` at 1,211,990 bytes against a 384 KiB ceiling, and answered *"No matches"*
+/// eight times in one turn for a name that is in it.
+///
+/// [`SEARCH_CONTEXT_LINES`] neighbours go with each match because the page's `before` and
+/// `after` reach that far and no further, so every line the page could be asked to print is
+/// here.  A line the matcher could not decide goes back too: the page counts those and names
+/// them, and dropping one here would have it counted as a line that did not match.
+///
+/// Each line is written as its 1-based number, a tab, and the line; `None` means the pattern
+/// matched nothing in this file at all.
+///
+/// # Arguments
+/// * `re` - The pattern, compiled from the same source the page compiled it from.
+#[cfg(unix)]
+fn matching_lines(text: &str, re: &Regex) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut want = vec![false; lines.len()];
+    let mut any = false;
+    for (i, l) in lines.iter().enumerate() {
+        let hit = match re.is_match(l) {
+            Ok(b)  => b,
+            // Undecided is not "no". It travels, and the page is what says so in words.
+            Err(_) => true,
+        };
+        if !hit {
+            continue;
+        }
+        any = true;
+        let lo = i.saturating_sub(SEARCH_CONTEXT_LINES);
+        let hi = (i + SEARCH_CONTEXT_LINES).min(lines.len().saturating_sub(1));
+        for w in want.iter_mut().take(hi + 1).skip(lo) {
+            *w = true;
+        }
+    }
+    if !any {
+        return None;
+    }
+    let mut out = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        if want[i] {
+            out.push_str(&fmt!("{}\t{}\n", i + 1, l));
+        }
+    }
+    Some(out)
+}
+
+/// Every path under `paths` matching `pattern`, and when it was last written.
+///
+/// The answer is the header line, then one line per hit: the path, a tab, and the modification
+/// time in nanoseconds since the epoch -- or `-` where the platform will not say, which the
+/// page reports as an absence rather than as 1970.
+#[cfg(unix)]
+fn glob_op(paths: &[String], pattern: &str, base: &str, skip: &[String], budget: usize)
+    -> (bool, String)
+{
+    let g = match Glob::new(pattern) {
+        Ok(g)  => g,
+        Err(e) => return (false, fmt!(
+            "The glob could not be read by the hand: {}. Nothing was walked.",
+            e.msgs().join(" "))),
+    };
+    let mut w = Walked::default();
+    let mut out = String::new();
+    let mut stack: Vec<PathBuf> = paths.iter().rev().map(PathBuf::from).collect();
+    'walk: while let Some(dir) = stack.pop() {
+        let here = fmt!("{}", dir.display());
+        let entries = match sorted_entries(&dir) {
+            Some(e) => e,
+            None    => { w.denied += 1; continue; },
+        };
+        for (name, p, is_dir) in entries {
+            if !afford(&mut w, budget, &here) {
+                break 'walk;
+            }
+            if is_dir {
+                if skip.iter().any(|d| *d == name) {
+                    w.skipped += 1;
+                    continue;
+                }
+                stack.push(p);
+                continue;
+            }
+            let disp = fmt!("{}", p.display());
+            if !g.matches(under_base(&disp, base)) {
+                continue;
+            }
+            w.files += 1;
+            let when = std::fs::metadata(&p).ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as u64);
+            let stamp = match when {
+                Some(n) => fmt!("{}", n),
+                None    => fmt!("-"),
+            };
+            if out.len() + disp.len() + 24 > SEARCH_ANSWER_MAX {
+                w.left += 1;
+                continue;
+            }
+            out.push_str(&fmt!("{}\t{}\n", disp, stamp));
+        }
+    }
+    w.queued = stack.len();
+    (true, fmt!("{}\n{}", w.line(), out))
+}
+
+/// A path with the caller's own prefix taken off, which is the spelling its glob is written in.
+///
+/// Returns the path WHOLE where it is not under the prefix, because a file silently excluded is
+/// the failure this exists to end: matching too much is a file the caller then sees and can
+/// ignore, and matching too little is a file nobody knows was there.
+///
+/// # Arguments
+/// * `abs` - The path as this walk found it.
+/// * `base` - The absolute prefix the caller strips, or empty for none.
+#[cfg(unix)]
+fn under_base<'a>(abs: &'a str, base: &str) -> &'a str {
+    if base.is_empty() {
+        return abs;
+    }
+    let cut = base.trim_end_matches('/');
+    match abs.strip_prefix(cut).and_then(|r| r.strip_prefix('/')) {
+        Some(r) => r,
+        None    => abs,
+    }
+}
+
+/// Does this look like a file of bytes rather than a file of text?
+///
+/// A NUL in the first few kilobytes, which is what every tool that has to make this decision
+/// without a type uses.  The page makes the same test with the same rule; making it here as
+/// well is not a second opinion but a way of not carrying the bytes at all.
+#[cfg(unix)]
+fn looks_binary(data: &[u8]) -> bool {
+    data.iter().take(8000).any(|b| *b == 0)
 }
 
 /// Reads one length-prefixed payload from standard input, and not one byte more.
@@ -3281,6 +4482,69 @@ pub(crate) fn encode_payload(p: &Payload) -> Outcome<Vec<u8>> {
     for d in &p.plan.dropped {
         res!(e.path(d));
     }
+    // The act, last, so that a reader of this function meets the fence before the thing the
+    // fence is for. Its own tag byte and then only the fields that arm has: an `Exec` costs
+    // one byte, which is what it should cost.
+    match &p.act {
+        Act::Exec => e.byte(0),
+        Act::File(op) => {
+            e.byte(1);
+            e.byte(match op {
+                FileOp::Read   { .. }	=> 0,
+                FileOp::Write  { .. }	=> 1,
+                FileOp::Edit   { .. }	=> 2,
+                FileOp::Move   { .. }	=> 3,
+                FileOp::List   { .. }	=> 4,
+                FileOp::MkDir  { .. }	=> 5,
+                FileOp::Search { .. }	=> 6,
+                FileOp::Glob   { .. }	=> 7,
+            });
+            // The walks carry a LIST of starts, so the single path every other op has is
+            // written as a one-element list and read back as one. Written this way rather than
+            // as two shapes, because a plan whose first field means two things is a plan a
+            // later edit reads wrongly.
+            let named = op.paths();
+            res!(e.len(named.len()));
+            for p in &named {
+                res!(e.text(p));
+            }
+            match op {
+                FileOp::Read { offset, limit, .. } => {
+                    res!(e.len(*offset as usize));
+                    res!(e.len(*limit as usize));
+                },
+                FileOp::Write { content, .. } => res!(e.text(content)),
+                FileOp::Edit { old, new, .. } => {
+                    res!(e.text(old));
+                    res!(e.text(new));
+                },
+                // `to` already travelled in the path list above.
+                FileOp::Move { .. } => (),
+                FileOp::List { .. } | FileOp::MkDir { .. } => (),
+                FileOp::Search { query, ci, glob, base, skip, budget, cap, .. } => {
+                    res!(e.text(query));
+                    e.byte(u8::from(*ci));
+                    res!(e.text(glob));
+                    res!(e.text(base));
+                    res!(e.len(skip.len()));
+                    for d in skip {
+                        res!(e.text(d));
+                    }
+                    res!(e.len(*budget as usize));
+                    res!(e.len(*cap as usize));
+                },
+                FileOp::Glob { pattern, base, skip, budget, .. } => {
+                    res!(e.text(pattern));
+                    res!(e.text(base));
+                    res!(e.len(skip.len()));
+                    for d in skip {
+                        res!(e.text(d));
+                    }
+                    res!(e.len(*budget as usize));
+                },
+            }
+        },
+    }
 
     let body = e.out;
     if body.len() > PAYLOAD_MAX {
@@ -3361,6 +4625,76 @@ fn decode_payload(b: &[u8]) -> Outcome<Payload> {
     for _ in 0..res!(d.len()) {
         dropped.push(res!(d.path()));
     }
+    let act = match res!(d.byte()) {
+        0 => Act::Exec,
+        1 => {
+            let kind = res!(d.byte());
+            let mut named: Vec<String> = Vec::new();
+            for _ in 0..res!(d.len()) {
+                named.push(res!(d.text()));
+            }
+            // One path where the op has one, and a refusal rather than a guess where the plan
+            // carried none: a `read` of nowhere is a plan this build did not write.
+            let one = |v: &Vec<String>| -> Outcome<String> {
+                match v.first() {
+                    Some(p) => Ok(p.clone()),
+                    None    => Err(err!(
+                        "The plan names a file operation with no path at all."; Invalid, Input)),
+                }
+            };
+            let names = |d: &mut Dec| -> Outcome<Vec<String>> {
+                let mut out = Vec::new();
+                for _ in 0..res!(d.len()) {
+                    out.push(res!(d.text()));
+                }
+                Ok(out)
+            };
+            Act::File(match kind {
+                0 => FileOp::Read {
+                    path:   res!(one(&named)),
+                    offset: res!(d.len()) as u32,
+                    limit:  res!(d.len()) as u32,
+                },
+                1 => FileOp::Write { path: res!(one(&named)), content: res!(d.text()) },
+                2 => FileOp::Edit {
+                    path: res!(one(&named)),
+                    old:  res!(d.text()),
+                    new:  res!(d.text()),
+                },
+                3 => FileOp::Move {
+                    path: res!(one(&named)),
+                    to:   match named.get(1) {
+                        Some(t) => t.clone(),
+                        None    => return Err(err!(
+                            "The plan names a move with nowhere to move to."; Invalid, Input)),
+                    },
+                },
+                4 => FileOp::List { path: res!(one(&named)) },
+                5 => FileOp::MkDir { path: res!(one(&named)) },
+                6 => FileOp::Search {
+                    paths:  named,
+                    query:  res!(d.text()),
+                    ci:     res!(d.byte()) != 0,
+                    glob:   res!(d.text()),
+                    base:   res!(d.text()),
+                    skip:   res!(names(&mut d)),
+                    budget: res!(d.len()) as u32,
+                    cap:    res!(d.len()) as u32,
+                },
+                7 => FileOp::Glob {
+                    paths:   named,
+                    pattern: res!(d.text()),
+                    base:    res!(d.text()),
+                    skip:    res!(names(&mut d)),
+                    budget:  res!(d.len()) as u32,
+                },
+                n => return Err(err!("The plan names file operation {}, which does not exist.", n;
+                    Invalid, Input)),
+            })
+        },
+        n => return Err(err!("The plan names act {}, which does not exist.", n;
+            Invalid, Input)),
+    };
     res!(d.done());
 
     Ok(Payload {
@@ -3369,6 +4703,7 @@ fn decode_payload(b: &[u8]) -> Outcome<Payload> {
         env,
         plan: Plan { abi, listing, base, reach, grants, sealed, dropped, net, waiver },
         tty,
+        act,
     })
 }
 
@@ -4764,6 +6099,295 @@ mod tests {
         Ok(())
     }
 
+    // ── The credential scanner a fence used to switch off in silence ────────
+
+    /// **A fenced commit that would run without the user's `pre-commit` hook is refused,
+    /// and one that can reach it is scanned.**
+    ///
+    /// Against a real git behind a real Landlock fence through the shipping binary, because
+    /// every layer between the configuration and the hook is one that could drop it.
+    ///
+    /// # What is silent here and what is not, measured rather than assumed
+    ///
+    /// Two of the three ways a fenced commit loses the user's hooks are LOUD on git 2.53,
+    /// and this test does not claim otherwise.  A fence that cannot reach `~/.gitconfig`
+    /// gives `fatal: unknown error occurred while reading the configuration files`; a fence
+    /// that reaches the configuration but not the hooks directory gives `fatal: cannot exec
+    /// '.../pre-commit': Permission denied`, because Landlock does not restrict `access`, so
+    /// git finds the hook and dies on `execve`.  Neither commits anything.  They are refused
+    /// here all the same -- ahead of the command, with a sentence naming the grant that
+    /// would fix it -- because those two messages describe a broken repository rather than a
+    /// missing permission, and because "loud" is a property of one git and one kernel: git's
+    /// own `find_hook` returns NULL on an `EACCES` from `access` and merely warns.
+    ///
+    /// The third is genuinely silent, reproduces here, and is the one this test RUNS: a
+    /// repository whose own `.git/config` sets `core.hooksPath` at a directory of its own.
+    /// `.git/config` is inside the fence and a command may write it, so a turn can point the
+    /// hooks at an empty folder it just made -- and the commit then succeeds, exit 0, no
+    /// message, the example key in the repository, scanner never run.  That command
+    /// is then handed to [`git_hooks_refusal`], which is what now stops it running at all.
+    ///
+    /// The last part is the same fence with the Git toolchain granted and no override: the
+    /// hooks directory goes into the fence, the hook runs, the commit fails with the hook's
+    /// own words, and nothing is committed.  The absence of the commit is the property; an
+    /// exit code is not, since a hook that refuses after the commit exists is not a scanner.
+    ///
+    /// The value the fixture stages is AWS's own published example access key, which is a
+    /// credential to nothing.  It is that one because it is what the machine's real scanner
+    /// looks for, and a fixture the scanner would ignore would prove nothing.
+    #[tokio::test]
+    async fn a_fenced_commit_without_the_users_hooks_is_refused() -> Outcome<()> {
+        let hand = res!(shipping_hand());
+        let base = res!(fixture("git-hooks"));
+        let hooks  = base.join("hooks");
+        let home   = base.join("home");
+        let silent = base.join("ws/silent");
+        let hooked = base.join("ws/hooked");
+        for d in [&hooks, &home, &silent, &hooked] {
+            res!(std::fs::create_dir_all(d));
+        }
+
+        // allowlist secret
+        let key = "AKIAIOSFODNN7EXAMPLE";
+        // The scanner, in miniature: it refuses a commit that stages the example key.
+        let hook = hooks.join("pre-commit");
+        res!(std::fs::write(&hook, fmt!(
+            "#!/bin/sh\n\
+             if grep -rq {} .; then\n\
+             \techo 'pre-commit: a credential is staged' >&2\n\
+             \texit 1\n\
+             fi\n\
+             exit 0\n", key)));
+        res!(std::fs::set_permissions(&hook,
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755)));
+
+        // The user's own global configuration, which is where `core.hooksPath` lives on the
+        // machine this was written on. Reached through `GIT_CONFIG_GLOBAL` so that nothing
+        // here touches the real one.
+        let cfg = home.join(".gitconfig");
+        res!(std::fs::write(&cfg, fmt!(
+            "[user]\n\tname = Fixture\n\temail = fixture@example.invalid\n\
+             [core]\n\thooksPath = {}\n", hooks.display())));
+        // What the hand reads the user's configuration WITH. In the hand this is empty and
+        // the real configuration answers; here it names the fixture.
+        let readenv: Vec<(String, String)> = vec![
+            (fmt!("GIT_CONFIG_GLOBAL"), fmt!("{}", cfg.display())),
+        ];
+        // What a command runs with WITHOUT the Git toolchain, which is the ordinary case:
+        // the app sets `HOME` for that toolkit and for no other, so a fenced git has no
+        // home to find a global configuration in and never learns `core.hooksPath` exists.
+        // It does not complain -- git skips a global configuration it cannot NAME in
+        // silence, and fails loudly only over one it was told to read and could not.
+        let barenv: Vec<(String, String)> = vec![
+            (fmt!("PATH"), fmt!("/usr/bin:/bin")),
+        ];
+        // And with it: `HOME` set, which is the whole of how git finds the user's own
+        // configuration.
+        let cmdenv: Vec<(String, String)> = vec![
+            (fmt!("HOME"),              fmt!("{}", home.display())),
+            (fmt!("PATH"),              fmt!("/usr/bin:/bin")),
+        ];
+
+        // Setting a repository up is done OUTSIDE the fence and stops short of a commit, so
+        // the only commits in this test are the fenced ones under test.
+        let git = |at: &Path, args: &[&str]| -> Outcome<()> {
+            let mut c = std::process::Command::new("git");
+            c.args(args).current_dir(at);
+            for (k, v) in &cmdenv { c.env(k, v); }
+            let out = res!(c.output());
+            if !out.status.success() {
+                return Err(err!("git {:?} failed: {}", args,
+                    String::from_utf8_lossy(&out.stderr); Test, IO));
+            }
+            Ok(())
+        };
+        let leak = fmt!("AWS_ACCESS_KEY_ID={}\n", key);
+        for repo in [&silent, &hooked] {
+            res!(git(repo, &["init", "-q", "-b", "main"]));
+            // A real clone carries its own identity, which is why a fenced commit that can
+            // read nothing global still had everything it needed to succeed.
+            res!(git(repo, &["config", "user.name", "Fixture"]));
+            res!(git(repo, &["config", "user.email", "fixture@example.invalid"]));
+            res!(std::fs::write(repo.join("config.env"), &leak));
+            res!(git(repo, &["add", "config.env"]));
+        }
+
+        let runner = Runner::with_launcher(Launcher::Explicit {
+            prog: hand,
+            args: vec![fmt!("{}", LAUNCH_ARG)],
+            env:  Vec::new(),
+        });
+        let commit = |id: &str, at: &Path, fence: &FenceSpec, kits: &[String],
+            env: &[(String, String)]| Req::Exec
+        {
+            id:         fmt!("{}", id),
+            argv:       vec![fmt!("/usr/bin/git"), fmt!("commit"), fmt!("-m"), fmt!("add config")],
+            cwd:        fmt!("{}", at.display()),
+            env:        env.to_vec(),
+            stdin:      None,
+            timeout_ms: 30_000,
+            capture:    Capture::Both,
+            fence:      fence.clone(),
+            toolkits:   kits.to_vec(),
+        };
+        let commits_in = |at: &Path| -> Outcome<String> {
+            let out = res!(std::process::Command::new("git")
+                .args(["log", "--oneline"]).current_dir(at).output());
+            Ok(fmt!("{}", String::from_utf8_lossy(&out.stdout).trim()))
+        };
+
+        // ── The silence, run rather than described ──────────────────────
+        //
+        // Everything granted: the Git toolchain, so `~/.gitconfig` is readable, and the
+        // hooks directory it names. The one thing wrong is inside the fence -- the
+        // repository's own configuration, which a command may write.
+        let kits = vec![fmt!("git")];
+        let mut spec = FenceSpec {
+            rw:   vec![fmt!("{}", base.join("ws").display())],
+            ro:   vec![fmt!("{}", home.display())],
+            deny: Vec::new(),
+            net:  false,
+        };
+        let granted = grant_git_hooks(&mut spec, &kits, &readenv);
+        assert_eq!(granted.as_deref(), Some(hooks.as_path()),
+            "the user's own hooks directory was not added to the fence: {:?}", spec.ro);
+
+        res!(std::fs::create_dir_all(silent.join("mine")));
+        res!(git(&silent, &["config", "core.hooksPath",
+            &fmt!("{}", silent.join("mine").display())]));
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Resp>(256);
+        res!(runner.spawn(commit("silent", &silent, &spec, &kits, &cmdenv), tx).await);
+        let rs = collect(&mut rx).await;
+        let (exit, ..) = match ended(&rs) {
+            Some(e) => e,
+            None    => return Err(err!("No Ended was sent: {:?}", rs; Test, Missing)),
+        };
+        assert_ne!(exit, EXIT_FENCE_FAILED,
+            "the fence could not be applied, so this proved nothing: {}",
+            text_of(&rs, Stream::Err));
+        assert_eq!(exit, 0,
+            "the fenced commit did not succeed, so the silence this test is about did not \
+             happen here and the refusal below would be measuring nothing: {}",
+            text_of(&rs, Stream::Err));
+        assert!(!res!(commits_in(&silent)).is_empty(),
+            "nothing was committed, so there is no silent commit to refuse");
+        assert_eq!(text_of(&rs, Stream::Err), "",
+            "git said something about the hook it did not run, so this was never silent");
+
+        // And that is the command the hand now refuses, before it runs, naming the
+        // directory the repository chose and the one the user configured.
+        let plan = res!(detected_fence().plan(&spec, &Unfenced::Refuse));
+        let said = match git_hooks_refusal(&plan,
+            &[fmt!("/usr/bin/git"), fmt!("commit"), fmt!("-m"), fmt!("x")],
+            &fmt!("{}", silent.display()), &readenv)
+        {
+            Some(s) => s,
+            None    => return Err(err!(
+                "the command that just committed the example key in silence was \
+                allowed"; Test, Missing)),
+        };
+        assert!(said.starts_with("Refused: "), "the refusal did not read as one: {}", said);
+        assert!(said.contains("mine"),
+            "the refusal did not name the directory the repository chose: {}", said);
+        assert!(said.contains(&fmt!("{}", hooks.display())),
+            "the refusal did not name the directory the user configured: {}", said);
+
+        // The two loud ones are refused as well, ahead of the command and with a better
+        // sentence than git's own. A fence reaching neither the configuration nor the hooks
+        // is the ordinary case: git needs no toolkit to commit, and the app sets `HOME` for
+        // that toolkit alone.
+        let bare = FenceSpec {
+            rw:   vec![fmt!("{}", base.join("ws").display())],
+            ro:   Vec::new(),
+            deny: Vec::new(),
+            net:  false,
+        };
+        let noconf = res!(detected_fence().plan(&bare, &Unfenced::Refuse));
+        let said = match git_hooks_refusal(&noconf,
+            &[fmt!("/usr/bin/git"), fmt!("commit")], &fmt!("{}", silent.display()), &readenv)
+        {
+            Some(s) => s,
+            None    => return Err(err!(
+                "a commit whose fence cannot reach the user's git configuration was \
+                allowed"; Test, Missing)),
+        };
+        assert!(said.contains(&fmt!("{}", cfg.display())),
+            "the refusal did not name the configuration git could not read: {}", said);
+        assert!(said.contains("Git toolchain"),
+            "the refusal did not say what would fix it: {}", said);
+        // The configuration reachable and the hooks directory not.
+        let halfway = FenceSpec {
+            rw:   vec![fmt!("{}", base.join("ws").display())],
+            ro:   vec![fmt!("{}", home.display())],
+            deny: Vec::new(),
+            net:  false,
+        };
+        let nohooks = res!(detected_fence().plan(&halfway, &Unfenced::Refuse));
+        let said = match git_hooks_refusal(&nohooks,
+            &[fmt!("/usr/bin/git"), fmt!("commit")], &fmt!("{}", hooked.display()), &readenv)
+        {
+            Some(s) => s,
+            None    => return Err(err!(
+                "a commit whose fence cannot reach the hooks directory was allowed";
+                Test, Missing)),
+        };
+        assert!(said.contains(&fmt!("{}", hooks.display())),
+            "the refusal did not name the hooks directory: {}", said);
+
+        // And one of the loud ones is RUN, once, so the paragraph above is a measurement
+        // rather than a claim: with nothing granted the same command dies inside git and
+        // leaves the repository where it was.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Resp>(256);
+        res!(runner.spawn(commit("loud", &hooked, &bare, &[], &barenv), tx).await);
+        let rs = collect(&mut rx).await;
+        let (exit, ..) = match ended(&rs) {
+            Some(e) => e,
+            None    => return Err(err!("No Ended was sent: {:?}", rs; Test, Missing)),
+        };
+        assert_ne!(exit, 0,
+            "a commit whose fence reaches no git configuration succeeded: {}",
+            text_of(&rs, Stream::Err));
+        assert_eq!(res!(commits_in(&hooked)), "",
+            "it committed anyway");
+
+        // A command that runs no hook is left alone: this refuses a commit, not git.
+        for harmless in [vec![fmt!("git"), fmt!("status")], vec![fmt!("git"), fmt!("log")],
+            vec![fmt!("git"), fmt!("push")], vec![fmt!("cargo"), fmt!("test")]]
+        {
+            assert!(git_hooks_refusal(&noconf, &harmless,
+                &fmt!("{}", silent.display()), &readenv).is_none(),
+                "{:?} was refused for a hook it does not run", harmless);
+        }
+        // `git -C <dir> commit` is still a commit: the verb is not always argv[1].
+        assert!(git_hooks_refusal(&noconf,
+            &[fmt!("git"), fmt!("-C"), fmt!("elsewhere"), fmt!("commit")],
+            &fmt!("{}", silent.display()), &readenv).is_some(),
+            "a commit spelled with -C was not seen as one");
+
+        // ── The same fence, and a repository that leaves the hooks alone ─
+        assert!(git_hooks_refusal(&plan,
+            &[fmt!("/usr/bin/git"), fmt!("commit")], &fmt!("{}", hooked.display()), &readenv)
+            .is_none(),
+            "a commit that can reach the user's hooks was refused anyway");
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Resp>(256);
+        res!(runner.spawn(commit("hooked", &hooked, &spec, &kits, &cmdenv), tx).await);
+        let rs = collect(&mut rx).await;
+        let (exit, ..) = match ended(&rs) {
+            Some(e) => e,
+            None    => return Err(err!("No Ended was sent: {:?}", rs; Test, Missing)),
+        };
+        let err = text_of(&rs, Stream::Err);
+        assert_ne!(exit, EXIT_FENCE_FAILED,
+            "the fence could not be applied, so this proved nothing: {}", err);
+        assert!(err.contains("a credential is staged"),
+            "the hook the user configured did not run: exit {}, stderr {:?}", exit, err);
+        assert_eq!(res!(commits_in(&hooked)), "",
+            "the credential was committed even though the hook ran");
+
+        Ok(())
+    }
+
     /// The plan reaches the launcher and is not visible to the command.
     ///
     /// The command's own view of itself is `/proc/self/cmdline` and
@@ -4857,6 +6481,645 @@ mod tests {
         Ok(())
     }
 
+    // ── The file door, proved through the kernel ────────────────────────────
+    //
+    // Every test below drives the SHIPPING launcher, not a stub, because the claim being
+    // made is about what the kernel does to a real child. A test that called `do_file`
+    // directly would prove that the code opens files, which nobody doubted; what is in
+    // question is whether a file tool reaching this machine is fenced exactly as a command
+    // is, and only a fenced process can answer that.
+
+    /// The answer one file op gives, or the refusal, driven through the real launcher.
+    #[cfg(unix)]
+    async fn filed(files: &Files, ws: &Path, op: FileOp) -> Outcome<(bool, String)> {
+        let req = Req::File {
+            id:    fmt!("f-{}", op.word()),
+            op,
+            cwd:   fmt!("{}", ws.display()),
+            fence: FenceSpec {
+                rw:   vec![fmt!("{}", ws.display())],
+                ro:   Vec::new(),
+                deny: Vec::new(),
+                net:  false,
+            },
+            toolkits: Vec::new(),
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Resp>(16);
+        res!(files.apply(req, tx).await);
+        let rs = collect(&mut rx).await;
+        for r in &rs {
+            match r {
+                Resp::Filed { ok, text, .. }	=> return Ok((*ok, text.clone())),
+                Resp::Refused { reason, .. }	=> return Ok((false, reason.clone())),
+                _				=> (),
+            }
+        }
+        Err(err!("Nothing came back from a file request: {:?}", rs; Test, Missing))
+    }
+
+    /// A door onto the real launcher.
+    #[cfg(unix)]
+    fn file_door() -> Outcome<Files> {
+        Ok(Files::with_launcher(Launcher::Explicit {
+            prog: res!(shipping_hand()),
+            args: vec![fmt!("{}", LAUNCH_ARG)],
+            env:  Vec::new(),
+        }))
+    }
+
+    /// A file inside the fence is read, changed and read back, with no command anywhere.
+    ///
+    /// This is the whole of what `dev/BLOCKERS.md` B2 says is missing, asserted at the layer
+    /// that would have to provide it: one exact-string replacement, applied by the hand,
+    /// with nothing quoted through a shell and nothing to escape.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_file_inside_the_fence_is_edited_without_a_command() -> Outcome<()> {
+        let base = res!(fixture("file-door-edit"));
+        let ws = base.join("ws");
+        let files = res!(file_door());
+
+        // The character that cost 71 calls, in the string being written, unescaped.
+        let target = ws.join("fr.js");
+        res!(std::fs::write(&target, "a\n'k': 'old',\nb\n"));
+
+        let (ok, said) = res!(filed(&files, &ws, FileOp::Edit {
+            path: fmt!("{}", target.display()),
+            old:  fmt!("'k': 'old',"),
+            new:  fmt!("'k': 'Enregistrer l\u{2019}\u{e9}crit dans {{place}}.',"),
+        }).await);
+        assert!(ok, "an edit inside the fence was refused: {}", said);
+        let after = res!(std::fs::read_to_string(&target).map_err(|e| err!(e,
+            "the edited file could not be read back"; Test, IO)));
+        assert!(after.contains("Enregistrer l\u{2019}\u{e9}crit dans {place}."),
+            "the edit did not land: {:?}", after);
+
+        // And the read door answers about the same file, so the two halves agree.
+        let (ok, text) = res!(filed(&files, &ws, FileOp::Read {
+            path:   fmt!("{}", target.display()),
+            offset: 2,
+            limit:  1,
+        }).await);
+        assert!(ok, "a read inside the fence was refused: {}", text);
+        let (head, body) = match text.split_once('\n') {
+            Some((a, b)) => (a.to_string(), b.to_string()),
+            None         => return Err(err!("A read answered without its numbers: {:?}",
+                text; Test, Invalid)),
+        };
+        let cols: Vec<&str> = head.split('\t').collect();
+        assert_eq!(cols.len(), 3,
+            "a read must open with the file's lines, its bytes and the lines sent: {:?}", head);
+        assert_eq!(cols[0], "3", "the read miscounted the file's lines");
+        assert_eq!(cols[2], "1", "the read did not say how many lines it was sending");
+        assert!(body.contains("Enregistrer"), "the read returned the wrong line: {:?}", body);
+        Ok(())
+    }
+
+    // ── The two answers a big file gets ─────────────────────────────────────
+    //
+    // The fixture is this repository's own `src/tools.rs`, and it is the fixture because it is
+    // what both blockers were measured on: 1.2 MB and 22,000-odd lines, larger than the read
+    // frame twice over and three times the whole search answer. A file made up for the
+    // occasion would be the same size only until someone changed the constant.
+
+    /// The repository this crate sits in, which holds the file both tests below are about.
+    #[cfg(unix)]
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+    }
+
+    /// **A read of a file bigger than one frame says how big the FILE is.**
+    ///
+    /// `dev/BLOCKERS.md` B18, at the end that knows the answer: the hand held the whole file
+    /// and the page did not, so a count taken after the cut was a count of the cut.
+    /// `src/tools.rs` came back as *"lines 1-200 of 9304 (524403 bytes)"* -- 524,403 being
+    /// [`FILE_TEXT_MAX`] and a note, not a file -- and the offset the answer named to continue
+    /// from was twelve thousand lines short of the end.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_read_of_a_file_bigger_than_one_frame_says_how_big_the_file_is() -> Outcome<()> {
+        let root = repo_root();
+        let big = root.join("src/tools.rs");
+        let text = res!(std::fs::read_to_string(&big).map_err(|e| err!(e,
+            "this crate's own repository must hold src/tools.rs"; Test, IO)));
+        assert!(text.len() > FILE_TEXT_MAX * 2,
+            "the fixture must be bigger than one frame twice over: {} bytes", text.len());
+        let lines = text.lines().count();
+        let files = res!(file_door());
+
+        let (ok, said) = res!(filed(&files, &root, FileOp::Read {
+            path:   fmt!("{}", big.display()),
+            offset: 1,
+            limit:  2_000,
+        }).await);
+        assert!(ok, "a read of this repository's own source was refused: {}", said);
+        let (head, body) = match said.split_once('\n') {
+            Some(p) => p,
+            None    => return Err(err!("A read answered without its numbers"; Test, Invalid)),
+        };
+        let cols: Vec<&str> = head.split('\t').collect();
+        assert_eq!(cols.len(), 3, "a read must open with three numbers: {:?}", head);
+        assert_eq!(cols[0], fmt!("{}", lines),
+            "the read counted the answer's lines rather than the file's: {:?}", head);
+        assert_eq!(cols[1], fmt!("{}", text.len()),
+            "the read gave the answer's length as the file's: {:?}", head);
+        assert_eq!(cols[2], "2000", "2,000 lines were asked for: {:?}", head);
+        // Split INCLUSIVE, because every line the hand sends ends with its own newline: that is
+        // what makes a window whose last line is blank countable at all.
+        assert_eq!(body.split_inclusive('\n').count(), 2_000,
+            "the answer does not hold the lines it says it holds");
+
+        // AND THE END OF THE FILE IS REACHABLE, which is the half that cost the run. Every line
+        // past the frame used not to exist to be asked for: the whole file was asked for, cut,
+        // and paged over its own truncation.
+        let want = 10;
+        let (ok, said) = res!(filed(&files, &root, FileOp::Read {
+            path:   fmt!("{}", big.display()),
+            offset: (lines - want + 1) as u32,
+            limit:  want as u32,
+        }).await);
+        assert!(ok, "a read of the file's last lines was refused: {}", said);
+        let (head, body) = match said.split_once('\n') {
+            Some(p) => p,
+            None    => return Err(err!("A read answered without its numbers"; Test, Invalid)),
+        };
+        let cols: Vec<&str> = head.split('\t').collect();
+        assert_eq!(cols[0], fmt!("{}", lines), "the file's length changed between two reads");
+        assert_eq!(cols[2], fmt!("{}", want), "the last lines of the file did not come back");
+        let last = match text.lines().last() {
+            Some(l) => l,
+            None    => return Err(err!("the fixture has no last line"; Test, Invalid)),
+        };
+        assert!(body.ends_with(&fmt!("{}\n", last)),
+            "the last line of the file is not the last line of a read that asked for it");
+        Ok(())
+    }
+
+    /// **A listing too big for one frame says how much of the directory it is showing.**
+    ///
+    /// The family the two blockers belong to: an answer that was cut has to say so in a number
+    /// the caller can act on. A listing used to be cut as one string and end with `read`'s
+    /// advice -- *"ask for the rest by line range"* -- which `list` does not take, so a caller
+    /// following it had nowhere to go.
+    ///
+    /// `list_op` directly, and not through the launcher as the tests above are: what is in
+    /// question here is a sentence, not a fence, and ten thousand files is a slow way to prove
+    /// nothing about the kernel.
+    #[cfg(unix)]
+    #[test]
+    fn a_listing_too_big_for_one_frame_says_how_much_of_it_is_shown() -> Outcome<()> {
+        let base = res!(fixture("file-door-listing"));
+        let dir = base.join("many");
+        res!(std::fs::create_dir_all(&dir));
+        // Enough names to outgrow one frame, each long enough that the count is not the cost.
+        let each = 60;
+        let want = (FILE_TEXT_MAX / each) + 200;
+        for i in 0..want {
+            res!(std::fs::write(dir.join(fmt!("{:0w$}", i, w = each)), b""));
+        }
+        let (ok, said) = list_op(&fmt!("{}", dir.display()));
+        assert!(ok, "a listing was refused: {}", said);
+        assert!(said.len() <= FILE_TEXT_MAX + 400,
+            "the listing outgrew what one frame carries: {} bytes", said.len());
+        assert!(said.contains(&fmt!("of {} entries", want)),
+            "the listing does not say how many entries the directory holds: {:?}",
+            said.chars().rev().take(300).collect::<String>());
+        assert!(said.contains("file_glob"),
+            "the listing says it was cut and names nothing that would answer instead");
+        assert!(!said.contains("line range"),
+            "the listing offers a range, which file_list does not take");
+        Ok(())
+    }
+
+    /// **A line the matcher could not decide travels with the lines that matched.**
+    ///
+    /// The hand decides what to leave behind now, and "did not match" and "could not be
+    /// decided" are different answers with the same shape. A line the matcher gave up on has to
+    /// cross, or the page counts it as a line that did not match and a pattern that decides
+    /// nothing answers "No matches" with nothing beside it. The page names such lines in its
+    /// notes, and it can only name what it was sent.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_line_the_matcher_could_not_decide_travels_with_the_rest() -> Outcome<()> {
+        let base = res!(fixture("file-door-undecided"));
+        let ws = base.join("ws");
+        let files = res!(file_door());
+        res!(std::fs::create_dir_all(&ws));
+        // A backtracker, so this stays true of a matcher whose limits change.
+        let hay = fmt!("harmless\n{}c\n", "a".repeat(40));
+        res!(std::fs::write(ws.join("hard.txt"), &hay));
+
+        let (ok, said) = res!(filed(&files, &ws, FileOp::Search {
+            paths:  vec![fmt!("{}", ws.display())],
+            query:  fmt!("(a+)+b"),
+            ci:     false,
+            glob:   String::new(),
+            base:   String::new(),
+            skip:   Vec::new(),
+            budget: 5_000,
+            cap:    1_000_000,
+        }).await);
+        assert!(ok, "a search was refused: {}", said);
+        assert!(said.contains("hard.txt"),
+            "the file holding a line the matcher gave up on was passed over in silence: {:?}",
+            said);
+        assert!(said.contains(&"a".repeat(40)),
+            "the line itself did not travel, so nothing can say its answer is unknown: {:?}",
+            said);
+        Ok(())
+    }
+
+    /// **A search finds a name in a file no frame could carry.**
+    ///
+    /// `dev/BLOCKERS.md` B17. The answer used to be the whole TEXT of every matching file, so
+    /// its size was the size of the files rather than of what matched: `src/tools.rs` at
+    /// 1,211,990 bytes against a 384 KiB ceiling was passed over with the answer still empty,
+    /// and no `glob` or `path` a caller could write made one file smaller. Eight searches in one
+    /// turn, every one "No matches", for a name that is in it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_search_finds_a_name_in_a_file_too_big_to_carry_whole() -> Outcome<()> {
+        let root = repo_root();
+        let big = root.join("src/tools.rs");
+        let text = res!(std::fs::read_to_string(&big).map_err(|e| err!(e,
+            "this crate's own repository must hold src/tools.rs"; Test, IO)));
+        assert!(text.len() > SEARCH_ANSWER_MAX,
+            "the fixture must be bigger than one whole search answer: {} bytes", text.len());
+        // A name that is in that file and in no other, so finding it is finding THAT file.
+        let name = "test_the_search_agrees_with_grep_over_this_crates_own_source";
+        assert!(text.contains(name), "the fixture no longer holds the name it is searched for");
+        let files = res!(file_door());
+
+        let (ok, said) = res!(filed(&files, &root, FileOp::Search {
+            paths:  vec![fmt!("{}", root.join("src").display())],
+            query:  fmt!("{}", name),
+            ci:     false,
+            glob:   String::new(),
+            base:   String::new(),
+            skip:   Vec::new(),
+            budget: 20_000,
+            cap:    2_000_000,
+        }).await);
+        assert!(ok, "a search of this repository's own source was refused: {}", said);
+        assert!(said.contains("tools.rs"),
+            "THE SEARCH PASSED OVER THE ONE FILE HOLDING THE NAME: {:?}",
+            said.chars().take(400).collect::<String>());
+        assert!(said.contains(name),
+            "the search named the file and carried no line of it: {:?}",
+            said.chars().take(400).collect::<String>());
+        let cols: Vec<&str> = match said.split('\n').next() {
+            Some(h) => h.split('\t').collect(),
+            None    => return Err(err!("a search answered nothing at all"; Test, Missing)),
+        };
+        assert_eq!(cols[8], "0",
+            "a file was left out of the answer for want of room, which over a search for one \
+            name means the lines are not what is being sent: {:?}", cols);
+        // The whole answer is a fraction of the one file it is about, which is what makes the
+        // ceiling a ceiling on the ANSWER rather than on the size of a file.
+        assert!(said.len() < text.len() / 4,
+            "the answer is {} bytes about a {} byte file, so whole texts are still crossing",
+            said.len(), text.len());
+        Ok(())
+    }
+
+    /// A search walks the fence and stops at its edge, and it never carries a byte from outside.
+    ///
+    /// The pair is the point. A walk that refused everything would satisfy a refusal on its own,
+    /// so the file INSIDE the fence must come back in the same call that proves the file outside
+    /// it does not -- and the one outside holds a nonce, so a leak would be unmistakable rather
+    /// than inferred from a count.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_search_reaches_the_fence_and_stops_at_its_edge() -> Outcome<()> {
+        let base = res!(fixture("file-door-search"));
+        let ws = base.join("ws");
+        let files = res!(file_door());
+        res!(std::fs::create_dir_all(ws.join("deep/er")));
+        res!(std::fs::write(ws.join("deep/er/hit.rs"), "fn main() {}\nlet NEEDLE_ONE = 1;\n"));
+        res!(std::fs::write(ws.join("deep/miss.rs"), "nothing of interest here\n"));
+        res!(std::fs::write(base.join("outside/secret.txt"), "NEEDLE_ONE lives here too\n"));
+
+        let (ok, text) = res!(filed(&files, &ws, FileOp::Search {
+            paths:  vec![fmt!("{}", ws.display())],
+            query:  fmt!("NEEDLE_ONE"),
+            ci:     false,
+            glob:   String::new(),
+            base:   String::new(),
+            skip:   Vec::new(),
+            budget: 5_000,
+            cap:    1_000_000,
+        }).await);
+        assert!(ok, "a search inside the fence was refused: {}", text);
+        assert!(text.contains("deep/er/hit.rs"),
+            "the search did not find the file it was pointed at: {:?}", text);
+        assert!(text.contains("let NEEDLE_ONE = 1;"),
+            "the search returned no text for the file it matched: {:?}", text);
+        assert!(!text.contains("miss.rs"),
+            "the search carried a file its pattern does not match: {:?}", text);
+        // ── AND POINTED STRAIGHT AT THE OUTSIDE, WHICH IS THE REAL CLAIM ──────
+        //
+        // The assertions above prove only that the walk starts where it was told: they stay
+        // green with the fence widened to the parent, which was measured before this block
+        // was written and is the reason it exists. A walk is fenced only if a walk AIMED at
+        // the far side comes back with nothing -- and the kernel's refusal, seen from inside
+        // the launcher, is `read_dir` failing, which is counted rather than swallowed.
+        let (ok, text) = res!(filed(&files, &ws, FileOp::Search {
+            paths:  vec![fmt!("{}", base.join("outside").display())],
+            query:  fmt!("NEEDLE_ONE"),
+            ci:     false,
+            glob:   String::new(),
+            base:   String::new(),
+            skip:   Vec::new(),
+            budget: 5_000,
+            cap:    1_000_000,
+        }).await);
+        assert!(ok, "a search aimed outside the fence errored instead of finding nothing: {}",
+            text);
+        assert!(!text.contains("lives here too"),
+            "THE SEARCH READ OUTSIDE ITS FENCE: {:?}", text);
+        assert!(!text.contains("secret.txt"),
+            "the search named a path outside its fence: {:?}", text);
+        let cols: Vec<&str> = match text.split('\n').next() {
+            Some(h) => h.split('\t').collect(),
+            None    => return Err(err!("a search answered nothing at all"; Test, Missing)),
+        };
+        assert_eq!(cols.len(), 10, "the header does not carry ten counts: {:?}", cols);
+        assert_eq!(cols[9], "1",
+            "the walk did not record that a directory could not be opened, so a fenced-off \
+            tree reads as an empty one: {:?}", cols);
+        Ok(())
+    }
+
+    /// A glob is matched against the path AS THE CALLER SPELLS IT, not against the machine's.
+    ///
+    /// The door's first live run, 2026-08-25: three searches in a row answered "No matches" with
+    /// "804 file(s) the glob excluded" beside them. The glob was `www/i18n/en.js`, written in
+    /// the workspace's paths; the walk matched it against `/home/.../repo/www/i18n/en.js` and
+    /// excluded every file there is. The note was right and the filter was upside down.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_glob_is_matched_against_the_path_the_caller_wrote_it_for() -> Outcome<()> {
+        let base = res!(fixture("file-door-base"));
+        let ws = base.join("ws");
+        let files = res!(file_door());
+        res!(std::fs::create_dir_all(ws.join("www/i18n")));
+        res!(std::fs::write(ws.join("www/i18n/en.js"), "'files.new_file_hint': 'x',\n"));
+        res!(std::fs::write(ws.join("www/i18n/de.js"), "'files.new_file_hint': 'y',\n"));
+
+        let (ok, text) = res!(filed(&files, &ws, FileOp::Search {
+            paths:  vec![fmt!("{}", ws.display())],
+            query:  fmt!("new_file_hint"),
+            ci:     false,
+            // The spelling a model writes, which names nothing on this machine.
+            glob:   fmt!("www/i18n/en.js"),
+            base:   fmt!("{}", ws.display()),
+            skip:   Vec::new(),
+            budget: 5_000,
+            cap:    1_000_000,
+        }).await);
+        assert!(ok, "a globbed search was refused: {}", text);
+        assert!(text.contains("www/i18n/en.js"),
+            "the glob excluded the one file it names, which is the 2026-08-25 fault: {:?}", text);
+        assert!(!text.contains("de.js"),
+            "the glob let through a file it does not name: {:?}", text);
+        // And the count of what the glob excluded is REAL, so the note beside a miss is worth
+        // reading rather than always saying everything.
+        let cols: Vec<&str> = match text.split('\n').next() {
+            Some(h) => h.split('\t').collect(),
+            None    => return Err(err!("a search answered nothing"; Test, Missing)),
+        };
+        assert_ne!(cols[4], "0",
+            "nothing was recorded as excluded, so the note beside a miss would say the glob \
+            did nothing: {:?}", cols);
+        assert_eq!(cols[7], "1",
+            "the glob let more than the one file it names be opened: {:?}", cols);
+        Ok(())
+    }
+
+    /// A walk stops at its entry budget and says where it had got to.
+    ///
+    /// A search that ran out and answered "no matches" has established nothing, and the caller
+    /// cannot tell that from a search that looked everywhere. So the budget's exhaustion is a
+    /// FACT in the answer, not an inference from a count.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_walk_that_runs_out_of_budget_says_where_it_stopped() -> Outcome<()> {
+        let base = res!(fixture("file-door-budget"));
+        let ws = base.join("ws");
+        let files = res!(file_door());
+        for i in 0..40 {
+            res!(std::fs::write(ws.join(fmt!("f{:02}.txt", i)), "nothing\n"));
+        }
+        res!(std::fs::write(ws.join("f99.txt"), "NEEDLE_TWO\n"));
+
+        let (ok, text) = res!(filed(&files, &ws, FileOp::Search {
+            paths:  vec![fmt!("{}", ws.display())],
+            query:  fmt!("NEEDLE_TWO"),
+            ci:     false,
+            glob:   String::new(),
+            base:   String::new(),
+            skip:   Vec::new(),
+            budget: 5,
+            cap:    1_000_000,
+        }).await);
+        assert!(ok, "a bounded search was refused: {}", text);
+        let head = match text.split('\n').next() {
+            Some(h) => h.to_string(),
+            None    => return Err(err!("a search answered nothing at all"; Test, Missing)),
+        };
+        let cols: Vec<&str> = head.split('\t').collect();
+        assert_eq!(cols.len(), 10, "the header does not carry ten counts: {:?}", head);
+        assert_eq!(cols[0], "5", "the walk spent more than its budget: {:?}", head);
+        assert!(!cols[1].is_empty(),
+            "the walk ran out and did not say where it had got to: {:?}", head);
+        assert!(!text.contains("NEEDLE_TWO"),
+            "the walk reached past its budget: {:?}", text);
+
+        // The control, without which the assertion above is satisfied by a walk that never
+        // works at all: the same search with room finds it.
+        let (ok, text) = res!(filed(&files, &ws, FileOp::Search {
+            paths:  vec![fmt!("{}", ws.display())],
+            query:  fmt!("NEEDLE_TWO"),
+            ci:     false,
+            glob:   String::new(),
+            base:   String::new(),
+            skip:   Vec::new(),
+            budget: 5_000,
+            cap:    1_000_000,
+        }).await);
+        assert!(ok && text.contains("NEEDLE_TWO"),
+            "with room, the same search must find it: {:?}", text);
+        Ok(())
+    }
+
+    /// A glob answers paths and reads nothing, and passes over the names it was told to.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_glob_answers_paths_and_skips_the_names_it_was_given() -> Outcome<()> {
+        let base = res!(fixture("file-door-glob"));
+        let ws = base.join("ws");
+        let files = res!(file_door());
+        res!(std::fs::create_dir_all(ws.join("src")));
+        res!(std::fs::create_dir_all(ws.join("target")));
+        res!(std::fs::write(ws.join("src/lib.rs"), "SECRET_TEXT\n"));
+        res!(std::fs::write(ws.join("target/built.rs"), "SECRET_TEXT\n"));
+
+        let (ok, text) = res!(filed(&files, &ws, FileOp::Glob {
+            paths:   vec![fmt!("{}", ws.display())],
+            pattern: fmt!("**/*.rs"),
+            base:    fmt!("{}", ws.display()),
+            skip:    vec![fmt!("target")],
+            budget:  5_000,
+        }).await);
+        assert!(ok, "a glob inside the fence was refused: {}", text);
+        assert!(text.contains("src/lib.rs"), "the glob missed the file: {:?}", text);
+        assert!(!text.contains("target/built.rs"),
+            "the glob walked a directory it was told to pass over: {:?}", text);
+        // It reads nothing, so no file's CONTENT may appear in the answer.
+        assert!(!text.contains("SECRET_TEXT"),
+            "a glob returned a file's text, which it has no business opening: {:?}", text);
+        Ok(())
+    }
+
+    /// An `old_string` that nearly matched is answered with the text to copy.
+    ///
+    /// The measurement is in `near_miss`'s own doc comment: four honest "was not found"
+    /// refusals in a row, over one typographic quote, and the daimon abandoned the file tools
+    /// for `sed` and spent forty-eight further calls there. A refusal that cannot be
+    /// converged on is a refusal that costs the run.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_old_string_that_nearly_matched_is_told_where_and_what_to_copy() -> Outcome<()> {
+        let base = res!(fixture("file-door-nearmiss"));
+        let ws = base.join("ws");
+        let files = res!(file_door());
+        let target = ws.join("de.js");
+        // The real line, with the typographic quotes `de.js` really carries.
+        res!(std::fs::write(&target,
+            "a\nb\n\t'files.no_match': 'Nichts passt zu \u{201e}{filter}\u{201c}.',\n\t'files.new_file_hint': 'x',\n"));
+
+        // What the daimon actually sent: a straight quote where the file has \u{201c}.
+        let (ok, said) = res!(filed(&files, &ws, FileOp::Edit {
+            path: fmt!("{}", target.display()),
+            old:  fmt!("\t'files.no_match': 'Nichts passt zu \u{201e}{{filter}}\".',\n\t'files.new_file_hint': 'x',"),
+            new:  fmt!("replaced"),
+        }).await);
+        assert!(!ok, "an old_string that is not in the file was applied");
+        assert!(said.contains("line 3"),
+            "the refusal does not say WHERE it nearly matched, so nothing can be converged \
+            on: {:?}", said);
+        assert!(said.contains('\u{201c}'),
+            "the refusal does not hand back the file's own text, which is the only thing that \
+            tells the caller which character it got wrong: {:?}", said);
+
+        // And a string that is nowhere near says so, rather than pointing at a line at random.
+        let (ok, said) = res!(filed(&files, &ws, FileOp::Edit {
+            path: fmt!("{}", target.display()),
+            old:  fmt!("nothing like this is in the file"),
+            new:  fmt!("x"),
+        }).await);
+        assert!(!ok);
+        assert!(said.contains("not a near miss"),
+            "a string that is nowhere near is dressed up as one: {:?}", said);
+        Ok(())
+    }
+
+    /// A directory read as a file is answered as a directory, not as an errno.
+    ///
+    /// Measured on the first live run of the door, 2026-08-25: a daimon's opening call was
+    /// `file_read` of `repo/www/i18n`, and the machine arm answered `Is a directory (os error
+    /// 21)` where the browser-storage arm has named `file_list` since the day before. One
+    /// wasted call, and the same wasted call the other door had already paid for.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_directory_read_as_a_file_is_told_to_use_file_list() -> Outcome<()> {
+        let base = res!(fixture("file-door-isdir"));
+        let ws = base.join("ws");
+        let files = res!(file_door());
+        let (ok, said) = res!(filed(&files, &ws, FileOp::Read {
+            path:   fmt!("{}", ws.display()),
+            offset: 1,
+            limit:  0,
+        }).await);
+        assert!(!ok, "a directory was read as a file: {:?}", said);
+        assert!(said.contains("file_list"),
+            "the refusal does not name the tool that answers this, so it costs a call: {:?}",
+            said);
+        assert!(!said.contains("os error"),
+            "the refusal hands back an errno, which is the browser arm's old fault at the \
+            other door: {:?}", said);
+        Ok(())
+    }
+
+    /// A file the fence does not reach is refused BY THE KERNEL, not by a check.
+    ///
+    /// The assertion is deliberately about the sentence as well as the verdict: a refusal a
+    /// model reads as "the file is protected" sends it to `chmod`, and the one thing this
+    /// door must never do is look like a permission bit.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_file_outside_the_fence_cannot_be_read_or_written() -> Outcome<()> {
+        let base = res!(fixture("file-door-outside"));
+        let ws = base.join("ws");
+        let outside = base.join("outside/other.txt");
+        let files = res!(file_door());
+
+        let (ok, said) = res!(filed(&files, &ws, FileOp::Read {
+            path:   fmt!("{}", outside.display()),
+            offset: 1,
+            limit:  0,
+        }).await);
+        assert!(!ok, "a file tool read outside its fence: {:?}", said);
+        assert!(said.contains("fence"),
+            "the refusal did not name the fence, so it reads as a permission bit: {:?}", said);
+
+        let (ok, said) = res!(filed(&files, &ws, FileOp::Write {
+            path:    fmt!("{}", outside.display()),
+            content: fmt!("clobbered"),
+        }).await);
+        assert!(!ok, "a file tool wrote outside its fence: {:?}", said);
+        let still = res!(std::fs::read_to_string(&outside).map_err(|e| err!(e,
+            "the file outside the fence could not be read back"; Test, IO)));
+        assert_eq!(still, "other", "a file tool changed a file outside its fence");
+        Ok(())
+    }
+
+    /// An `old_string` that is not unique is refused WITH ITS COUNT, and nothing changes.
+    ///
+    /// The count is the point. `dev/BLOCKERS.md` B2 names the absence of a partial-apply
+    /// signal as one of three missing things, and a run of six edits with no way to tell
+    /// which landed is what 71 calls were spent on.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_edit_that_is_not_unique_says_how_many_it_found_and_changes_nothing()
+        -> Outcome<()>
+    {
+        let base = res!(fixture("file-door-count"));
+        let ws = base.join("ws");
+        let files = res!(file_door());
+        let target = ws.join("twice.txt");
+        res!(std::fs::write(&target, "x\nx\n"));
+
+        let (ok, said) = res!(filed(&files, &ws, FileOp::Edit {
+            path: fmt!("{}", target.display()),
+            old:  fmt!("x"),
+            new:  fmt!("y"),
+        }).await);
+        assert!(!ok, "an ambiguous edit was applied");
+        assert!(said.contains('2'), "the refusal did not say how many it found: {:?}", said);
+        assert_eq!(res!(std::fs::read_to_string(&target).map_err(|e| err!(e, "read back";
+            Test, IO))), "x\nx\n", "an ambiguous edit changed the file anyway");
+
+        let (ok, said) = res!(filed(&files, &ws, FileOp::Edit {
+            path: fmt!("{}", target.display()),
+            old:  fmt!("zzz"),
+            new:  fmt!("y"),
+        }).await);
+        assert!(!ok, "an edit whose old_string is absent was applied");
+        assert!(said.contains("not found"), "the refusal did not say it was absent: {:?}", said);
+        Ok(())
+    }
+
     /// A payload survives the trip it is going to be sent on.
     #[test]
     fn a_payload_round_trips() -> Outcome<()> {
@@ -4879,7 +7142,8 @@ mod tests {
                 waiver:  None,
             },
             tty:  true,   // round-tripped as set, so the byte is proved to travel
-        };
+            act:  Act::Exec,
+        }; 
         let framed = res!(encode_payload(&p));
         let back = res!(decode_payload(&framed[4..]));
         assert_eq!(p, back);

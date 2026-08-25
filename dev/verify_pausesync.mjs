@@ -54,10 +54,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, scratch } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
+import { GW_PORT, GW_URL as GWURL } from './ports.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const GWDIR = path.resolve(HERE, '..', 'gateway');
-const GWURL = 'http://127.0.0.1:9002';
 
 let bad = 0, skipped = 0;
 const check = (pass, name, detail) => {
@@ -228,8 +228,8 @@ try {
 
 	// ── D. Two real devices, and a version that stops moving ────────
 	if (!(await gatewayUp())) {
-		skip('two real devices converge, both ways', 'no gateway on :9002');
-		skip('the mailbox version stops moving when both devices are idle', 'no gateway on :9002');
+		skip('two real devices converge, both ways', `no gateway on :${GW_PORT}`);
+		skip('the mailbox version stops moving when both devices are idle', `no gateway on :${GW_PORT}`);
 	} else {
 		// THE GATEWAY SESSION FIRST, AND ASKED FOR RATHER THAN ASSUMED.
 		//

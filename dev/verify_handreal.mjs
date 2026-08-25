@@ -734,8 +734,26 @@ try {
 	// means "no status" failed to parse and defaulted to ZERO, and a crashed
 	// build was handed to the model as a green one.
 	let r = await run(s, { argv: ['/bin/false'], timeout_ms: 30000 });
-	check('a turn that has read a command\'s output is asked before the next one may reach the network',
-		netAsked >= 1, 'the question was put ' + netAsked + ' time(s)');
+	// A COMMAND FENCED WHERE NOTHING UNTRUSTED LIVES KEEPS THE TURN'S NETWORK, and that is
+	// the owner's decision of 2026-08-24, not a defence being dropped.
+	//
+	// This check asserted the opposite until then, because every `run` tainted the turn
+	// unconditionally: the envelope round a command's output and the loss of the network
+	// were one call, and only the envelope was ever argued for. What that cost was measured
+	// on a real development run -- 26 of 30 tool results carried `[no network: …]`, 18.5% of
+	// the bytes the daimon read, and the turn lost its network to its own first `grep` of
+	// the owner's own source, while `egress_check` fired ZERO times because a daimon doing
+	// source work calls no web tool at all. The permission dialog was never the cost; the
+	// withheld network was.
+	//
+	// So the taint now follows the FENCE: a command whose fence could reach a stranger's
+	// words costs the turn its network, and one fenced to a folder the user marked does not.
+	// The fence here is that marked folder, so no question is right. The other half -- a
+	// fence with the mailbox in it still costing the network -- is held in Rust by
+	// `test_a_command_whose_fence_reaches_the_mailbox_still_takes_the_network_away`
+	// (src/tools.rs) and in the browser by `dev/verify_daimonreach.mjs`.
+	check('a command fenced where nothing untrusted lives does NOT cost the turn its network',
+		netAsked === 0, 'the question was put ' + netAsked + ' time(s)');
 	check('a real non-zero exit reaches the model as itself',
 		/\[exit code: 1\]/.test(r) && !/exit code: 0/.test(r), r.slice(-200));
 

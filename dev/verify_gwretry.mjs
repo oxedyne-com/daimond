@@ -28,6 +28,7 @@
 // reason: what they prove is that a path was DELIBERATELY LEFT OUT of the
 // retry, and the gateway will not produce the 401 that would show it. See (7).
 import { open } from './harness.mjs';
+import { GW_PORT, GW_URL } from './ports.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -72,13 +73,14 @@ async function drive(p, label, ms = 20000) {
 /// Is the gateway answering?
 async function gatewayUp() {
 	try {
-		const r = await fetch('http://127.0.0.1:9002/api/health', { signal: AbortSignal.timeout(2000) });
+		const r = await fetch(`${GW_URL}/api/health`, { signal: AbortSignal.timeout(2000) });
 		return r.ok;
 	} catch (e) { return false; }
 }
 
 if (!await gatewayUp()) {
-	console.log('SKIP verify_gwretry — no gateway on :9002 (build it: cd gateway && cargo build --release)');
+	console.log(`SKIP verify_gwretry — no gateway on :${GW_PORT}, this world's own `
+		+ `(build it: cd gateway && cargo build --release, then dev/devgw.sh)`);
 	process.exit(0);
 }
 

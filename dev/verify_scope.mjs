@@ -270,6 +270,13 @@ try {
 	fs.mkdirSync(dirB);
 	fs.writeFileSync(path.join(dirA, 'own.txt'), MINE + '\n');
 	fs.writeFileSync(path.join(dirB, 'secret.txt'), THEIRS + '\n');
+	// A THIRD folder, on the disk and marked into nothing. `walk_reach` sends a start under no
+	// mark to browser storage, which has never heard of this name, so it is the exact case
+	// `dev/BLOCKERS.md` B1 measures: a walk over a folder on this computer, answered by the
+	// other filesystem. Nothing in browser storage is ever made to match it.
+	const dirC = path.join(GRANT, 'work-c');
+	fs.mkdirSync(dirC);
+	fs.writeFileSync(path.join(dirC, 'unmarked.txt'), nonce('unmarked') + '\n');
 
 	// ── The fence the engine actually composes ──────────────────────
 	//
@@ -416,6 +423,11 @@ try {
 	const doors = await page.evaluate(async ({ id, mock, engine }) => {
 		const mod = await window.__mod(engine);
 		const free = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
+		// The folders first: a hand is paired and no folder is open, so a write that would
+		// INVENT one in browser storage is refused rather than landed in the filesystem
+		// nobody meant (`write_place`, src/tools.rs, 2026-08-24).
+		await free.run_tool('dir_create', JSON.stringify({ path: 'work-b' }));
+		await free.run_tool('dir_create', JSON.stringify({ path: '.daimond' }));
 		await free.run_tool('file_write', JSON.stringify({
 			path: 'work-b/secret.txt', content: 'THE OTHER DIAMONDS FILE\n' }));
 		await free.run_tool('file_write', JSON.stringify({
@@ -440,6 +452,226 @@ try {
 		doors.after.slice(0, 120));
 	check('while Daimond\'s own directory is refused BOTH ways, seeded so it is a denial and not an absence',
 		/Refused/.test(doors.own), doors.own.slice(0, 120));
+
+	// ── The FILE tools reaching this machine, and stopping where a command stops ──
+	//
+	// Since 2026-08-25 a file tool whose path is under a folder the user marked in
+	// changes the real file on this computer, through the hand, behind the fence
+	// `fence_spec` builds (`dev/BLOCKERS.md` B2). That is a second road to the disk
+	// and it has to be fenced like the first, so it is proved here, through the
+	// kernel, in the same world and against the same two nonces.
+	//
+	// The decoy is what makes the second check worth something. `work-b/secret.txt`
+	// exists TWICE — on disk holding Diamond B's nonce, and in browser storage
+	// holding "THE OTHER DIAMONDS FILE", written by the free app a moment ago. A
+	// door that leaked would answer with the nonce, which nothing could have faked;
+	// answering with the decoy is the door correctly reading the other filesystem.
+	const filedoor = await page.evaluate(async ({ id, mock, engine, mine }) => {
+		const mod = await window.__mod(engine);
+		const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
+		app.set_diamond_scope('diamonds/' + id, '["work-a"]', '[]', '[]');
+		const t = (n, a) => app.run_tool(n, JSON.stringify(a)).then(String);
+		return {
+			read:   await t('file_read', { path: 'work-a/own.txt' }),
+			edit:   await t('file_edit', {
+				path: 'work-a/own.txt', old_string: mine, new_string: mine + '-EDITED' }),
+			// A second file, so the ambiguous edit below cannot disturb the one just checked.
+			seed:   await t('file_write', { path: 'work-a/twice.txt', content: 'x\nx\n' }),
+			twice:  await t('file_edit', {
+				path: 'work-a/twice.txt', old_string: 'x', new_string: 'y' }),
+			theirs: await t('file_read', { path: 'work-b/secret.txt' }),
+			plant:  await t('file_write', {
+				path: 'work-b/planted.txt', content: 'planted by a file tool\n' }),
+		};
+	}, { id: ids.a, mock: MOCK, engine: ENGINE, mine: MINE });
+	check('a file tool in Diamond A reads the folder attached to Diamond A, off the disk',
+		filedoor.read.includes(MINE), filedoor.read.slice(0, 160));
+	check('and EDITS the real file on this computer, with no command anywhere',
+		fs.readFileSync(path.join(dirA, 'own.txt'), 'utf8').includes(MINE + '-EDITED'),
+		filedoor.edit.slice(0, 200));
+	check('and a file_write of a new file lands on the disk too',
+		fs.existsSync(path.join(dirA, 'twice.txt')), filedoor.seed.slice(0, 200));
+	check('and an old_string that is not unique is refused WITH ITS COUNT, changing nothing',
+		/appears 2 times/.test(filedoor.twice)
+			&& fs.readFileSync(path.join(dirA, 'twice.txt'), 'utf8') === 'x\nx\n',
+		filedoor.twice.slice(0, 200));
+	check('and the same file tool cannot see the folder attached to Diamond B',
+		!filedoor.theirs.includes(THEIRS), filedoor.theirs.slice(0, 200));
+	check('nor write into it: the disk is untouched and nothing was planted',
+		!fs.existsSync(path.join(dirB, 'planted.txt')), filedoor.plant.slice(0, 200));
+	// ── A relay that cannot carry a file operation SAYS SO, and does not hang ──
+	//
+	// Found by `dev/verify_chatfence.mjs` hanging for eight minutes on 2026-08-25. A
+	// `#[wasm_bindgen(method)]` import that is not on the object throws when it is
+	// called, and a throw out of a declared-infallible import does not become an
+	// `Err`: the promise is never made and the tool call waits for ever. Every relay
+	// older than the file door is that case, and so is every test stub written before
+	// the verb existed.
+	//
+	// The race is the check. A hang cannot be asserted by waiting for it, so the call
+	// is given eight seconds and losing the race IS the failure.
+	const stale = await page.evaluate(async ({ id, mock, engine }) => {
+		const keep = window.DaimondHand.file;
+		delete window.DaimondHand.file;
+		try {
+			const mod = await window.__mod(engine);
+			const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
+			app.set_diamond_scope('diamonds/' + id, '["work-a"]', '[]', '[]');
+			return await Promise.race([
+				app.run_tool('file_edit', JSON.stringify({
+					path: 'work-a/own.txt', old_string: 'x', new_string: 'y' })).then(String),
+				new Promise((r) => setTimeout(() => r('__HUNG__'), 8000)),
+			]);
+		} finally {
+			window.DaimondHand.file = keep;
+		}
+	}, { id: ids.a, mock: MOCK, engine: ENGINE });
+	check('a relay too old to carry a file operation answers a sentence rather than hanging',
+		stale !== '__HUNG__' && /older than this version/.test(stale), stale.slice(0, 200));
+	check('and it does NOT quietly write into browser storage instead',
+		!/Wrote|Edited/.test(stale), stale.slice(0, 160));
+
+	// ── The SEARCH door, which walks rather than opens one path ────────────
+	//
+	// A search is the one file operation whose reach is decided by a walk, so a
+	// fence that holds for `file_read` says nothing about it: the walk chooses its
+	// own paths as it goes. Diamond B's folder holds a nonce and Diamond A's holds
+	// another, and the same pattern is asked for in one call from a scope that has
+	// only A. Finding B's would be proof of a leak that nothing could have faked.
+	const searched = await page.evaluate(async ({ id, mock, engine }) => {
+		const mod = await window.__mod(engine);
+		const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
+		app.set_diamond_scope('diamonds/' + id, '["work-a"]', '[]', '[]');
+		const t = (n, a) => app.run_tool(n, JSON.stringify(a)).then(String);
+		// One file in the Diamond's OWN directory, which is browser storage by construction and
+		// is what a split walk has to report beside the disk.
+		await t('file_write', {
+			path: 'diamonds/' + id + '/own-note.txt', content: 'the Diamond\'s own side\n' });
+		return {
+			// No `path`: the walk starts at the turn's own marks, which is the
+			// default a daimon actually gets and the one that decides its reach.
+			mine:  await t('file_search', { query: 'mine-' }),
+			// And aimed straight at the other Diamond, which is the real claim.
+			far:   await t('file_search', { query: 'theirs-', path: 'work-b' }),
+			glob:  await t('file_glob',   { pattern: '**/*.txt' }),
+		};
+	}, { id: ids.a, mock: MOCK, engine: ENGINE });
+	check('a file_search from Diamond A finds the nonce in the folder attached to it',
+		searched.mine.includes(MINE), searched.mine.slice(0, 220));
+	check('and it reports a real path on the disk, not one in browser storage',
+		/own\.txt/.test(searched.mine), searched.mine.slice(0, 220));
+	check('and the same search never returns Diamond B\'s nonce',
+		!searched.mine.includes(THEIRS), searched.mine.slice(0, 300));
+	check('and a search AIMED at Diamond B comes back without it',
+		!searched.far.includes(THEIRS), searched.far.slice(0, 300));
+	check('and file_glob lists Diamond A\'s file and not Diamond B\'s',
+		/own\.txt/.test(searched.glob) && !/secret\.txt/.test(searched.glob),
+		searched.glob.slice(0, 300));
+	// A DEFAULT WALK SPANS BOTH FILESYSTEMS AND MUST REPORT BOTH. A scoped Diamond's marks
+	// always include its own directory, which is browser storage by construction, so every
+	// default `file_glob` in a Diamond with a folder attached is a split walk. `file_glob`'s
+	// machine arm composed its report and RETURNED, dropping the browser half on the floor;
+	// `file_search`'s falls through and merges. This is the check that tells the two apart.
+	check('and a default file_glob reports the Diamond\'s own storage as well as the disk',
+		/own\.txt/.test(searched.glob) && /own-note\.txt/.test(searched.glob),
+		searched.glob.slice(0, 400));
+
+	// ── AND WHEN A WALK FINDS NOTHING, WHICH WORLD IS THAT ABOUT? ──────────
+	//
+	// `dev/BLOCKERS.md` B1's open half. Both walking tools matched their directory read with a
+	// bare `continue`, so a start browser storage does not hold was walked as an empty tree and
+	// the answer came back `No matches for '<query>'.` -- true of browser storage, read as a
+	// statement about this computer, and said by the two tools a daimon reaches for FIRST.
+	//
+	// `work-c` is on the disk and under no mark, so the walk stays in browser storage, which has
+	// no such folder. The answer may still be empty; what it may not be is silent about where it
+	// looked.
+	const nowhere = await page.evaluate(async ({ id, mock, engine }) => {
+		const mod = await window.__mod(engine);
+		const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
+		app.set_diamond_scope('diamonds/' + id, '["work-a"]', '[]', '[]');
+		const t = (n, a) => app.run_tool(n, JSON.stringify(a)).then(String);
+		return {
+			search: await t('file_search', { query: 'unmarked-', path: 'work-c' }),
+			glob:   await t('file_glob',   { pattern: '*.txt', path: 'work-c' }),
+		};
+	}, { id: ids.a, mock: MOCK, engine: ENGINE });
+	check('a file_search over a folder browser storage does not hold says which filesystem answered',
+		/this browser's own storage/.test(nowhere.search), nowhere.search.slice(0, 400));
+	check('and it says the directory would not open rather than walking past it in silence',
+		/would not open/.test(nowhere.search), nowhere.search.slice(0, 400));
+	check('and it names the other filesystem and the tool that reaches it',
+		/on this computer/.test(nowhere.search) && /Reach it with run/.test(nowhere.search),
+		nowhere.search.slice(0, 400));
+	check('and file_glob answers the same way, being the other tool a daimon reaches for first',
+		/this browser's own storage/.test(nowhere.glob) && /would not open/.test(nowhere.glob),
+		nowhere.glob.slice(0, 400));
+	// THE CONTROL, without which every check above would pass on a note printed unconditionally.
+	// The same tools, over the folder that IS marked in, answer off the disk and say none of it.
+	check('while a search that really did reach this computer says none of that',
+		searched.mine.includes(MINE) && !/this browser's own storage/.test(searched.mine)
+			&& !/would not open/.test(searched.mine),
+		searched.mine.slice(0, 400));
+	check('nor does a glob that found something',
+		!/this browser's own storage/.test(searched.glob), searched.glob.slice(0, 400));
+
+	// ── And the KERNEL, not the app, is what makes that last one true ──────
+	//
+	// Every refusal above came from the engine deciding the path was not a machine
+	// path at all, which is the right first answer and is not the guarantee. The
+	// guarantee is one process further on: the fence `fence_spec` composed, sent
+	// down the real relay as a real `file` request naming Diamond B's file, with
+	// the engine's own decision taken out of the way. It reaches the same launcher
+	// a command reaches, applies the same Landlock ruleset, and the refusal comes
+	// back in the kernel's words.
+	const fsend = async (op, target, extra) => {
+		const raw = await page.evaluate(({ op, target, fence, extra }) =>
+			window.DaimondHand.file(JSON.stringify(Object.assign({
+				t: 'file', id: 'sf-' + Math.random().toString(36).slice(2, 8),
+				op, path: target, cwd: fence.rw[0], fence, toolkits: [],
+			}, extra || {}))).then((v) => ({ ok: v }), (e) => ({ err: (e && e.message) || String(e) })),
+			{ op, target, fence: fenced.req.fence, extra: extra || null });
+		if (raw.err) return { refused: raw.err };
+		try { return { out: JSON.parse(raw.ok) }; } catch (e) { return { refused: raw.ok }; }
+	};
+	const kread  = await fsend('read', path.join(dirB, 'secret.txt'), { offset: 1, limit: 0 });
+	const kwrite = await fsend('write', path.join(dirB, 'planted.txt'), { text: 'planted\n' });
+	const kmine  = await fsend('read', path.join(dirA, 'own.txt'), { offset: 1, limit: 0 });
+	check('the same file request, sent past the engine, is refused by the kernel for Diamond B',
+		!!kread.out && kread.out.ok === false && /fence/i.test(String(kread.out.text || '')),
+		JSON.stringify(kread).slice(0, 300));
+	check('and Diamond B\'s secret never came back at all, by that road either',
+		!JSON.stringify(kread).includes(THEIRS), JSON.stringify(kread).slice(0, 200));
+	check('nor could it write there, and nothing was planted',
+		!fs.existsSync(path.join(dirB, 'planted.txt')), JSON.stringify(kwrite).slice(0, 200));
+	// The permission beside the refusal, without which every refusal above would be
+	// satisfied by a door that had failed shut.
+	check('while the same road reads Diamond A\'s own file freely',
+		!!kmine.out && kmine.out.ok === true && String(kmine.out.text || '').includes(MINE),
+		JSON.stringify(kmine).slice(0, 200));
+
+	// The kernel, again, and by the same road as the read: past the engine's own
+	// decision, with the fence `fence_spec` composed, walking straight at Diamond B.
+	const kwalk = await fsend('search', path.join(dirB, 'x'), {
+		paths: [dirB], query: 'theirs-', ci: false, glob: '', skip: [],
+		budget: 5000, cap: 1000000,
+	});
+	check('the same walk, sent past the engine, brings nothing back from Diamond B',
+		!JSON.stringify(kwalk).includes(THEIRS), JSON.stringify(kwalk).slice(0, 260));
+	check('and it RECORDS that a directory could not be opened, so an empty answer is not read as an empty folder',
+		!!kwalk.out && String(kwalk.out.text || '').split('\n')[0].split('\t')[9] === '1',
+		JSON.stringify(kwalk).slice(0, 260));
+	const kmine2 = await fsend('search', path.join(dirA, 'x'), {
+		paths: [dirA], query: 'mine-', ci: false, glob: '', skip: [],
+		budget: 5000, cap: 1000000,
+	});
+	check('while the same road searches Diamond A\'s own folder freely',
+		!!kmine2.out && kmine2.out.ok === true && String(kmine2.out.text || '').includes(MINE),
+		JSON.stringify(kmine2).slice(0, 220));
+
+
+	// Put back, so the checks below read the fixture they were written against.
+	fs.writeFileSync(path.join(dirA, 'own.txt'), MINE + '\n');
 
 	// The control, without which every refusal above proves nothing: the same
 	// file, with the fence the code used to compose — the whole granted root.
@@ -494,9 +726,19 @@ try {
 	// account and asks the gateway for nothing. The two are the same absence
 	// seen from either side, and which one the page meets depends on whether
 	// somebody else on this machine happens to have a gateway up.
+	//
+	// 402 and 403 are the same absence at other endpoints, and they are named rather than
+	// left to make this file red on a machine where a lane happens to have a gateway up.
+	// Traced on 2026-08-25 rather than assumed: one conversation answers 401 for
+	// `/api/tools` and `/api/admin?view=whoami`, **402 for `/api/sync`** and **403 for
+	// `/api/account`**, each a poll that lands only in a run long enough to reach it.
+	// Nothing in this file signs in, so all four are the page correctly being told it is
+	// nobody -- and the detail line prints the URLs beside the statuses, which is what
+	// made tracing them possible rather than guessing.
 	const noise = s.errs.filter((e) =>
-		!/favicon|ERR_ABORTED|502|Bad Gateway|401 \(Unauthorized\)/i.test(e));
-	check('the page threw nothing along the way', noise.length === 0, noise.slice(0, 3).join(' | '));
+		!/favicon|ERR_ABORTED|502|Bad Gateway|401 \(Unauthorized\)|402 \(Payment Required\)|403 \(Forbidden\)/i.test(e));
+	check('the page threw nothing along the way', noise.length === 0,
+		JSON.stringify((s.net || []).filter((n) => n.status >= 400)).slice(0, 300));
 } finally {
 	await b.close().catch(() => {});
 	for (const p of started) { try { p.kill(); } catch (e) { /* already gone */ } }

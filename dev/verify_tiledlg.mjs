@@ -24,13 +24,19 @@
 // satisfies "no cross on any tile" for free, so the tile count is asserted
 // first and the run refuses to be quietly vacuous.
 //
+//   5. A Diamond tile's meter row draws the CONTEXT METER, first, and it is the
+//      chat tile's own -- the same last-prompt-over-window reading, from the
+//      same function. The row was built to carry it and never did: its guard
+//      asked about two counters a daimon's turn does not write.
+//
 //   node dev/verify_tiledlg.mjs
 //
-// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway; nothing spends.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs, which
+// section 7 steers a daimon against. No gateway; nothing spends real money.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { open, scratch } from './harness.mjs';
+import { open, scratch, connectMock, steerDiamond } from './harness.mjs';
 
 const OUT = path.join(os.homedir(), '.cache/daimond/tiledlg-shots');
 fs.mkdirSync(OUT, { recursive: true });
@@ -506,6 +512,88 @@ try {
 		'no control on a tile DESTROYS anything — everything a click removed is in the trash',
 		`${controls.length} control(s) pressed; ${vanished.length} tile(s) vanished `
 		+ `(${vanished.join(', ') || 'none'}); trash went ${trashBefore} → ${trashAfter}`);
+
+	// ── 7. A Diamond tile draws the CONTEXT METER its meter row was built for ──
+	//
+	// It never did. The row asked `promptTokens + completionTokens > 0` of the
+	// daimon's conversation, and NOTHING ON THAT PATH WRITES EITHER: a daimon's
+	// turn goes through `doSteer`, which sets `lastPrompt` from the engine and
+	// bills the turn to the Diamond through `meterDiamondTurn`, while those two
+	// cumulative counters are `runTurn`'s and `sendUserMessage` diverts a daimon
+	// away from `runTurn` before it can reach them. So the guard was false after
+	// every daimon turn ever run and the footer read `22h ago  $3.40` with a real
+	// reading available and unasked for.
+	//
+	// The property is that the meter measures THE SAME QUANTITY AS A CHAT'S: the
+	// last prompt the engine sent, over the window its model publishes. So the
+	// numerator is asserted against `lastPrompt` and the denominator against the
+	// pricing table, rather than against the percentage the tile happens to draw
+	// -- a check that only asked "is there a bar" would pass on a bar drawn from
+	// anything at all.
+	//
+	// The model is switched to one the pricing table publishes a window for,
+	// because a model with none has no denominator and `tileCtxBar` correctly
+	// draws nothing. `glm-5p2` is served by dev/mockllm.mjs AND is in the table,
+	// which is what makes it the one model that can be both run and measured here.
+	await connectMock(s, { model: 'accounts/fireworks/models/glm-5p2' });
+	await page.waitForTimeout(600);
+	await makeDiamond(page, 'Gamma');
+	await page.evaluate(() => {
+		const box = [...document.querySelectorAll('#diamond-list .session-box')]
+			.find((b) => (b.textContent || '').includes('Gamma'));
+		if (box) box.click();
+	});
+	await page.waitForTimeout(700);
+	const gammaId = await page.evaluate(() => (window.DaimondDiamond.current() || {}).id);
+	// `@usage` makes the mock report the provider figures a working conversation
+	// really carries. Nothing here writes the reading being measured: the meter's
+	// numerator is the engine's own `last_prompt_tokens`, read back below from the
+	// conversation record rather than from this constant.
+	const WANT_PROMPT = 231000;
+	await steerDiamond(s, `@usage ${WANT_PROMPT} 900 3.40`);
+	await page.waitForTimeout(6000);
+	await page.evaluate(() => window.DaimondView.set('max'));
+	await page.waitForTimeout(500);
+
+	const meter = await page.evaluate((id) => {
+		const conv = window.DaimondDiamond.conversation(id);
+		const box  = document.querySelector(`#diamond-list .session-box[data-id="${id}"]`);
+		const row  = box && box.querySelector('.diamond-meter');
+		const ctx  = box && box.querySelector('.tile-ctx');
+		return {
+			lastPrompt: conv ? conv.lastPrompt : null,
+			cumulative: conv ? ((conv.promptTokens || 0) + (conv.completionTokens || 0)) : null,
+			window: conv ? window.DaimondPricing.contextWindow(conv.model, conv.provider || '') : null,
+			rowFirst: row && row.firstElementChild ? row.firstElementChild.className : null,
+			pct:   ctx ? (ctx.querySelector('.tile-ctx-pct') || {}).textContent : null,
+			fold:  !!(ctx && ctx.querySelector('.tile-ctx-fold')),
+			title: ctx ? ctx.getAttribute('title') : null,
+			// The chat tile's own bar, by class, so the two cannot be two things.
+			sameClass: !!(ctx && ctx.querySelector('.tile-ctx-bar')),
+			text:  row ? row.textContent : null,
+		};
+	}, gammaId);
+
+	// The gate. Without a real turn and a published window every claim below is
+	// vacuous, and the old code's silence would look like a pass.
+	check(meter.lastPrompt === WANT_PROMPT && meter.window > 0,
+		'the daimon really ran a turn and its model publishes a window',
+		`lastPrompt=${meter.lastPrompt}, window=${meter.window}`);
+	check(meter.cumulative === 0,
+		'a daimon turn still writes NEITHER cumulative counter — the old guard\'s question',
+		`promptTokens+completionTokens=${meter.cumulative}`);
+	check(!!meter.pct, 'the Diamond tile draws a context meter at all', meter.text);
+	check(meter.rowFirst === 'tile-ctx',
+		'the meter is FIRST on the row, before the age and the spend', meter.rowFirst);
+	check(meter.sameClass && meter.fold,
+		'it is the chat tile\'s own bar, fold mark and all',
+		JSON.stringify({ bar: meter.sameClass, fold: meter.fold }));
+	const wantPct = meter.window
+		? Math.min(100, Math.round(meter.lastPrompt / meter.window * 100)) + '%' : null;
+	check(meter.pct === wantPct,
+		'the reading is the last prompt over the published window, as on a chat',
+		`tile says ${meter.pct}, ${meter.lastPrompt}/${meter.window} is ${wantPct}`);
+	await snap(page, 'diamond-tile-meter', `#diamond-list .session-box[data-id="${gammaId}"]`);
 
 	// 502 is the dev server proxying to a gateway that is not running, which is
 	// the ordinary state of a browser-only run and not a fault of the page.

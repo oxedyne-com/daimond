@@ -1618,6 +1618,27 @@
 				lastSyncedAt: lastSynced,
 				lastSynced:   lastSyncedLine(),
 				version:      serverVersion,
+				/// Is the engine doing nothing, and is nothing armed to start?
+				///
+				/// `inFlight` alone is not the question. A round that has FINISHED may have
+				/// left a debounce armed, and a caller that waited only for the flag to drop
+				/// would go on to act in the gap before the timer fires. All three, so "quiet"
+				/// means no round is running and none is coming.
+				///
+				/// Nothing in the app reads this; it is here for the same reason `wake()` is,
+				/// and for a defect it fixes. `dev/verify_mailfolders.mjs` deletes a mailbox
+				/// behind the app's back and pushes a census that no longer names it. If a
+				/// pull was already in flight when it did, that pull adopts the mail back
+				/// AFTER the fixture has checked -- correctly, since a file present at the
+				/// gateway and absent here is one this device has not seen. The fixture read
+				/// its own success and the run then measured the PREVIOUS run's mail. It cost
+				/// two failures in eight cold runs on 2026-08-24, each blamed on the product.
+				/// Waiting for this removes the race; polling for the mailbox to stay gone
+				/// only narrows it.
+				quiet:        !inFlight && !pushTimer && !focusTimer,
+				busyWith:     inFlight ? 'a round is running'
+					: (pushTimer ? 'a push is armed'
+						: (focusTimer ? 'a focus pull is armed' : '')),
 			};
 		},
 	};

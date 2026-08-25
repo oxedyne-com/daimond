@@ -35,6 +35,12 @@ const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
 import { fileURLToPath } from 'node:url';
+// Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
+// `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
+// run under `xvfb-run` still went to the compositor and opened a window on the owner's
+// desktop. Importing this strips the two variables from `process.env`, which is all a
+// launcher that spreads `process.env` needs. See dev/display.mjs.
+import './display.mjs';
 const ROOT	= path.join(path.dirname(fileURLToPath(import.meta.url)), '..');	// this checkout, not one developer's home
 const EXT	= `${ROOT}/ext`;
 // The SHIPPED manifest names one origin and it is not this test server. The dev
@@ -49,6 +55,15 @@ const SCRATCH	= process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/d
 // a hypothetical: it happened, and it looked like the relay dropping chunks. So
 // each run gets its own copy of the mock and its own pair of files. The copy is
 // made on every launch, so a change to hand/install/mock_host.py is picked up.
+// The extension's reload grace, read from the file rather than repeated here: a
+// wait that disagreed with the hold would pass or fail for a reason that is not
+// the property. See ext/hand.js, "The reload grace".
+const HOLD_MS = (() => {
+	const src = fs.readFileSync(`${ROOT}/ext/hand.js`, 'utf8');
+	const m = /const HOLD_MS = (\d+);/.exec(src);
+	if (!m) { console.error('ext/hand.js no longer names HOLD_MS; the waits below cannot be aimed'); process.exit(2); }
+	return Number(m[1]);
+})();
 const MOCKDIR	= path.join(SCRATCH, `verify-hand-mock-${process.pid}`);
 const MOCK	= path.join(MOCKDIR, 'mock_host.py');
 const CFG	= path.join(MOCKDIR, 'mock_cfg.json');
@@ -548,7 +563,7 @@ try {
 	// can be sure of, and each of them is refused before the host sees it.
 	{
 		// A fresh port, so the refusals are the only things on it.
-		await page.evaluate(() => { window.__port.disconnect(); });
+		await page.evaluate(() => { window.__say({ t: 'bye' }); window.__port.disconnect(); });
 		await sleep(400);
 		await page.evaluate(() => window.__open());
 		await sleep(300);
@@ -612,7 +627,7 @@ try {
 
 	// ── A gap is announced, not hidden ──────────────────────────────
 	register({ chunks: 3, gap: true });
-	await page.evaluate(() => { window.__port.disconnect(); });
+	await page.evaluate(() => { window.__say({ t: 'bye' }); window.__port.disconnect(); });
 	await sleep(400);
 	await page.evaluate(() => window.__open());
 	await page.evaluate(() => window.__exec('r2', ['make']));
@@ -629,7 +644,7 @@ try {
 
 	// ── Over Chrome's 1 MB cap ──────────────────────────────────────
 	register({ huge: true });
-	await page.evaluate(() => { window.__port.disconnect(); });
+	await page.evaluate(() => { window.__say({ t: 'bye' }); window.__port.disconnect(); });
 	await sleep(400);
 	await page.evaluate(() => window.__open());
 	await page.evaluate(() => window.__exec('r3', ['dump']));
@@ -644,7 +659,7 @@ try {
 
 	// ── A host that dies mid-command ────────────────────────────────
 	register({ crash: true });
-	await page.evaluate(() => { window.__port.disconnect(); });
+	await page.evaluate(() => { window.__say({ t: 'bye' }); window.__port.disconnect(); });
 	await sleep(400);
 	await page.evaluate(() => window.__open());
 	await page.evaluate(() => window.__exec('r4', ['boom']));
@@ -666,14 +681,25 @@ try {
 	const pid	= (running.find((m) => m.t === 'started') || {}).pid;
 	check('the run is really a process on this machine', !!pid && fs.existsSync(`/proc/${pid}`), String(pid));
 	await runner.close();
-	// The host dies when its port closes. Poll rather than guess: the mock is
-	// mid-sleep and only notices its stdin has gone when it comes back up.
+	// SINCE 2026-08-25 THERE ARE TWO FACTS HERE AND NOT ONE. A page that vanishes
+	// is held for the length of the grace, because the commonest way a page
+	// vanishes is a reload; what it left is stopped only when nothing comes back
+	// for it. So "no orphan" is still the promise and "at once" is no longer part
+	// of it, and BOTH halves are asserted -- a file that only waited long enough
+	// would pass with the grace deleted, and one that only checked the hold would
+	// pass with the teardown deleted.
+	await sleep(3000);
+	check('a page that goes away leaves what it was running alive for the grace',
+		fs.existsSync(`/proc/${pid}`), `pid ${pid}`);
+	// The host dies when the hold runs out and its port is closed. Poll rather
+	// than guess: the mock is mid-sleep and only notices its stdin has gone when
+	// it comes back up.
 	let alive = true;
-	for (let i = 0; i < 60 && alive; i++) {
+	for (let i = 0; i < (HOLD_MS + 20000) / 200 && alive; i++) {
 		await sleep(200);
 		alive = fs.existsSync(`/proc/${pid}`);
 	}
-	check('a page that goes away leaves no orphan behind', !alive, `pid ${pid}`);
+	check('and when nothing comes back for it, leaves no orphan behind', !alive, `pid ${pid}`);
 
 	// And it says so rather than merely dropping the pipe. A host that is
 	// between commands is sitting in a read, which is where a `bye` can actually
@@ -687,17 +713,17 @@ try {
 	await until(idle, 'hello', 6000);
 	await idle.close();
 	let log = '';
-	for (let i = 0; i < 30; i++) {
+	for (let i = 0; i < (HOLD_MS + 20000) / 200; i++) {
 		await sleep(200);
 		log = fs.existsSync(MOCKLOG) ? fs.readFileSync(MOCKLOG, 'utf8') : '';
 		if (/"bye"/.test(log)) break;
 	}
-	check('the relay says bye on the way out', /"bye"/.test(log),
+	check('the relay says bye on the way out, once the hold has run out', /"bye"/.test(log),
 		log.split('\n').slice(-3).join(' | '));
 
 	// ── The host is not installed ───────────────────────────────────
 	unregister();
-	await page.evaluate(() => { try { window.__port.disconnect(); } catch (e) {} });
+	await page.evaluate(() => { try { window.__say({ t: 'bye' }); window.__port.disconnect(); } catch (e) {} });
 	await sleep(400);
 	await page.evaluate(() => window.__open());
 	await page.evaluate(() => window.__say({ t: 'hello', proto: 1, client: 'verify_hand' }));

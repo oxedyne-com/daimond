@@ -1011,7 +1011,7 @@ impl DaimondApp {
     /// it wants [`Self::run_tool_outcome`], which states what became of the call instead of
     /// leaving it to be read out of the prose.
     pub async fn run_tool(&self, name: String, args_json: String) -> String {
-        self.registry.dispatch(&name, &args_json).await.as_text().into_owned()
+        self.registry.dispatch_unbilled(&name, &args_json).await.as_text().into_owned()
     }
 
     /// The same call as [`Self::run_tool`], answering with BOTH halves of what happened:
@@ -1038,7 +1038,7 @@ impl DaimondApp {
     /// apart.  Built with `Reflect::set` for the same reason [`event_to_js`] is -- the JS side
     /// receives a structured object, not a string it must re-parse.
     pub async fn run_tool_outcome(&self, name: String, args_json: String) -> js_sys::Object {
-        let text = self.registry.dispatch(&name, &args_json).await.as_text().into_owned();
+        let text = self.registry.dispatch_unbilled(&name, &args_json).await.as_text().into_owned();
         let outcome = crate::tools::call_outcome(&text);
         let obj = js_sys::Object::new();
         let set = |k: &str, v: &JsValue| {
@@ -1703,6 +1703,13 @@ impl DaimondApp {
 /// tokens, twelve per cent, all of it the viewer's own formatting.  The figure quoted from this
 /// band has been reasoned from in a handover, so it is the sent bytes or it is nothing.  It is the
 /// same `len()` [`Agent::run_tool_loop`] budgets the window with, so the band and the fold agree.
+///
+/// BYTES, and a reader in the page has to convert to compare.  A Rust `len()` counts UTF-8; the
+/// same array measured with JavaScript's `String.length` counts UTF-16 code units, which for the
+/// browser toolbelt is 41,964 against this figure's 41,998.  Thirty-four bytes is nothing until
+/// it straddles a rounding step, and on 2026-08-25 it straddled 10,500: one number drew "11k" and
+/// the other "10k", and a release lane read that as the band having drifted from the request.  It
+/// had not.  A page comparing the two must encode first.
 fn wire_json(
     agent:    &Agent,
     registry: &ToolRegistry,
@@ -1879,7 +1886,12 @@ impl DaimondApp {
         // and the file tools agree: a daimon told "here is the crystal" and left to find out where
         // it lives has to guess a name, and the name changed under it.
         let before = diamond::read_crystal_data(id).await.unwrap_or_default();
-        let standing = Role::Daimon.compose(&self.daimon_prompt.borrow());
+        // COMPOSED FOR THE MODEL THAT WILL CARRY THE REQUEST, read off the client rather than
+        // from a constant, exactly as `briefing` reads it: two of the notes are dropped for a
+        // model measured not to need them, and a model this build has not heard of is given all
+        // of them.  See `prompts::CONDITIONAL` and `dev/PROMPT_NOTES.md`.
+        let standing = Role::Daimon.compose_for(
+            &self.daimon_prompt.borrow(), &self.agent.llm.model);
         // Named apart from the standing text rather than pushed onto it, and the reason is the
         // question the Wire asks of every paragraph: WHOSE is it.  The role prompt above is one
         // constant every Diamond shares and its owner may rewrite; what follows is true of THIS
@@ -2254,6 +2266,19 @@ async fn open_command(msg: String) -> Opened {
             return Opened::Send(
                 crate::skills::compose_command(&sk.name, &path, &sk.body, &cmd.args));
         }
+    }
+    // NOTHING IN EITHER STORE, so the one this build carries -- and only now.
+    //
+    // `/handover` and `/pickup` are the pair that decides whether a day's work survives the
+    // tab, and a fresh workspace held neither: the first thing anybody had to do before they
+    // could carry work on was write the file that carries it on.  `resolve_skill` is the
+    // precedence, named and tested natively rather than left as the order of two branches in
+    // here, because the ordering IS the behaviour and nothing native could see it -- a user's
+    // own `.daimond/skills/pickup.md` wins, and this is reached only when there is none.
+    if let Some((path, text)) = crate::skills::resolve_skill(&cmd.name, None) {
+        let sk = crate::skills::parse_skill(&text, &cmd.name);
+        return Opened::Send(
+            crate::skills::compose_command(&sk.name, &path, &sk.body, &cmd.args));
     }
     Opened::Refuse(crate::skills::no_such_skill(&cmd.name, &looked_in))
 }

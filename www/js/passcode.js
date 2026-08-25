@@ -90,12 +90,30 @@
 	// card, Escape and a Tab that stays inside it, and the one cross every
 	// surface in this app wears.
 
+	// SAY THE CARD AGAIN WHERE IT STANDS, when the language changes under it.
+	//
+	// This is a question somebody is part-way through answering, so it is relabelled
+	// and never rebuilt: a redraw would take away the code they had half typed and
+	// the focus with it. Each state of the card leaves a function here that puts its
+	// own words right in place, and closing the card clears the slot.
+	//
+	// ONE registration, against whatever card is up, rather than one per opening --
+	// `DaimondI18n.surface` has no way to let go of a registration, and a card that
+	// registered on every open would leave one behind each time.
+	var relabelCard = null;
+	if (window.DaimondI18n) {
+		DaimondI18n.surface(
+			function () { return document.querySelector('.beta-scrim'); },
+			function () { if (relabelCard) relabelCard(); });
+	}
+
 	function overlay(build) {
 		var scrim = el('div', 'beta-scrim');
 		var box   = el('div', 'beta-box');
 		scrim.appendChild(box);
 		var prev = document.activeElement;			// where the keyboard was.
 		function close() {
+			relabelCard = null;
 			document.removeEventListener('keydown', onKey, true);
 			try { document.body.removeChild(scrim); } catch (e) { /* already gone */ }
 			if (prev && prev.focus && prev.getClientRects && prev.getClientRects().length) {
@@ -153,9 +171,12 @@
 		if (opts.reason) { s = Object.assign({}, s, { refused: opts.reason }); }
 
 		overlay(function (box, close) {
-			box.appendChild(el('h3', null, titleFor(s.refused)));
-			box.appendChild(el('p', null, leadFor(s)));
-			box.appendChild(el('p', null, t('beta.have_code')));
+			var h3   = el('h3', null, titleFor(s.refused));
+			var lead = el('p', null, leadFor(s));
+			var have = el('p', null, t('beta.have_code'));
+			box.appendChild(h3);
+			box.appendChild(lead);
+			box.appendChild(have);
 
 			var lab = el('label', 'beta-label', t('beta.code'));
 			lab.setAttribute('for', 'beta-code-input');
@@ -262,6 +283,23 @@
 
 			go.addEventListener('click', submit);
 			input.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
+
+			// Every word the card is built from, gathered where they can be said again.
+			// `go` is left alone while it is disabled: that is a redemption in flight,
+			// carrying "Redeeming…", and putting "Redeem" back over it would report a
+			// request as finished that has not been answered.
+			relabelCard = function () {
+				h3.textContent   = titleFor(s.refused);
+				lead.textContent = leadFor(s);
+				have.textContent = t('beta.have_code');
+				lab.textContent  = t('beta.code');
+				input.setAttribute('placeholder', t('beta.code_ph'));
+				not.textContent  = t('dlg.not_now');
+				if (again) again.textContent = t('beta.try_again');
+				if (!go.disabled) go.textContent = t('beta.redeem');
+				if (ask.firstChild) ask.firstChild.nodeValue = t('beta.no_code') + ' ';
+				a.textContent = t('beta.apply');
+			};
 		});
 	}
 
@@ -273,6 +311,9 @@
 	/// the credential is gone and telling somebody it did not work would leave
 	/// them with no way back in -- so that is said plainly and separately.
 	function done(box, close, r) {
+		// Nothing here is typed into, so this state's words are said again by drawing
+		// it over -- which is also the only way to reach the consent block's own.
+		relabelCard = function () { done(box, close, r); };
 		box.innerHTML = '';
 		box.appendChild(el('h3', null, t('beta.done_title')));
 		box.appendChild(el('p', null, r && r.pro ? t('beta.done_pro') : t('beta.done_plain')));

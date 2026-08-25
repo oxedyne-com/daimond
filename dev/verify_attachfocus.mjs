@@ -270,8 +270,14 @@ async function gotoRoot() {
 	const back = await page.$('[data-act="back"]');
 	if (back) { await back.click({ force: true }).catch(() => {}); await page.waitForTimeout(400); }
 	await page.fill('.files-filter-input', '').catch(() => {});
+	// SHORT TIMEOUT, and it is not a nicety. Until 2026-08-24 "up" was a button in
+	// the panel header, always present, so a press at the root found a control and
+	// did nothing. It is a `..` row at the top of the listing now, and the root has
+	// no `..` -- so the last presses here find NOTHING, which is the correct state
+	// and is what this helper is driving towards. At Playwright's default that is
+	// thirty seconds of waiting per press before the `catch`, several times over.
 	for (let i = 0; i < 4; i++) {
-		await page.click('[data-act="up"]', { force: true }).catch(() => {});
+		await page.click('[data-act="up"]', { force: true, timeout: 1500 }).catch(() => {});
 		await page.waitForTimeout(250);
 	}
 }
@@ -664,8 +670,17 @@ await page.evaluate(async (many) => {
 
 /// Everything the cap is about, in one read: the footer's own box, what is
 /// left of the conversation above it, and where the composer sits.
+// THE FOOTER'S SCROLLING BOX IS NAMED TWO WAYS in the three readers below, and
+// the pair is spelled out in each rather than hoisted: these run inside
+// `page.evaluate`, in the browser, where a constant declared in this process is
+// not defined. It was `.attach-body` while the chat footer had two groups and
+// the lower one was the ordinary list; since 2026-08-24 there is ONE list and it
+// is the workspace box, `.ws-body`. What they measure -- the footer caps and
+// scrolls rather than pushing the composer off the screen -- has not moved, so
+// the selector follows it rather than a check being dropped.
 const geom = () => page.evaluate(() => {
-	const body = document.querySelector('#chat-attachments .attach-body');
+	const body = document.querySelector(
+		'#chat-attachments .attach-body, #chat-attachments .ws-body');
 	const bar  = document.querySelector('.chat-input-bar');
 	const out  = document.querySelector('.chat-output');
 	const r = el => el ? el.getBoundingClientRect() : { height: 0, top: 0 };
@@ -707,7 +722,8 @@ check('AND IT SCROLLS: there is more inside the box than the box shows',
 // Not "there is a scrollbar" but "the last tile can be got to". Measured
 // against the box, twice: below it before scrolling, inside it after.
 const lastTilePos = () => page.evaluate(() => {
-	const body = document.querySelector('#chat-attachments .attach-body');
+	const body = document.querySelector(
+		'#chat-attachments .attach-body, #chat-attachments .ws-body');
 	const rows = [...body.querySelectorAll('.arte-row')];
 	const last = rows.find(r => /item-21\.md/.test(r.textContent));
 	if (!last) return null;
@@ -717,7 +733,8 @@ const lastTilePos = () => page.evaluate(() => {
 const before = await lastTilePos();
 check('the last tile starts out below the fold', !!before && before.below > 0, JSON.stringify(before));
 await page.evaluate(() => {
-	const body = document.querySelector('#chat-attachments .attach-body');
+	const body = document.querySelector(
+		'#chat-attachments .attach-body, #chat-attachments .ws-body');
 	body.scrollTop = body.scrollHeight;
 });
 await page.waitForTimeout(300);
@@ -842,9 +859,23 @@ check('and a footer drawn AFTER it comes back in the icon view, naming spec.md',
 	JSON.stringify(drawnAfterReload));
 await shot(s, 'attachfocus-9-view-after-reload');
 
-// 502s are the local gateway proxy (/api) not running in this world -- see
-// dev/verify_compact.mjs and dev/verify_credits.mjs for the same exclusion.
-const errs = errors(s).filter(e => !/502 \(Bad Gateway\)/.test(e));
+// 502s are the local gateway proxy (/api) not running in this world -- a world
+// is the browser tiers only, as dev/world.sh says in as many words.
+//
+// 401 IS NOT EXCLUDED, AND WAS. On 2026-08-24 this check went red four runs out
+// of six on an unchanged tree, naming a session the page had never had: every
+// world's `/api` was proxied to a fixed :9002, so whether the answer was 502 or
+// 401 depended on which OTHER lane had a gateway up at that moment. The 401 went
+// into the filter, which fixed the symptom in this file and in three others, and
+// left two files without it -- a per-file remedy for a fault in `dev/world.sh`.
+//
+// The gateway is a world's own now (9700 + N) and no other world's is reachable
+// from here, so a 401 on this page can only be a gateway THIS world started. That
+// is the app being refused by something it asked, which is exactly what "nothing
+// threw along the way" is for. Excluding it would now be a lie about what a 401
+// means.
+const GATEWAY_NOISE = /502 \(Bad Gateway\)/;
+const errs = errors(s).filter(e => !GATEWAY_NOISE.test(e));
 check('nothing threw along the way', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 console.log(`\n${ok} ok, ${bad} failed`);

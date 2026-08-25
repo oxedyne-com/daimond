@@ -62,12 +62,12 @@ import { fileURLToPath } from 'node:url';
 import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
 import { open, signInAs } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
+import { GW_PORT, GW_URL } from './ports.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT   = path.resolve(__dirname, '..');
 const WWW    = path.join(ROOT, 'www');
 const GWDIR  = path.join(ROOT, 'gateway');
-const GW_URL = 'http://127.0.0.1:9002';
 const SRC    = 'js/chunks.js';
 
 const ok = [], bad = [];
@@ -543,7 +543,7 @@ if (NO_GATEWAY) {
 	// child here is unreliable), otherwise start our own.
 	const alreadyUp = await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok, 800, 200);
 	if (alreadyUp) {
-		console.log('  ok   using the gateway already on :9002');
+		console.log(`  ok   using the gateway already on :${GW_PORT}`);
 		gw = null;	// not ours to kill.
 	} else {
 		check('gateway starts', await startGateway());

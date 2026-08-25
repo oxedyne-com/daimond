@@ -144,6 +144,43 @@ try {
 	check('the first agent\'s answer is in the chat', /ALPHA-SORTED-LIST/.test(transcript));
 	check('the second agent\'s answer is in the chat', /BETA-SORTED-LIST/.test(transcript));
 
+	// ── A fan-out the app decides NOT to start ──────────────────────────
+	//
+	// The chat's half of the property `dev/verify_gather.mjs` asserts for a daimon.
+	// `spawn_agent` tells the model its workers begin when the turn ends; the spend
+	// gate is asked AFTER the turn has ended, and a chat whose fan-out it declines
+	// used to get a line of red text on screen while the MODEL was told nothing. Read
+	// off the wire, because what matters is what the model is sent.
+	await page.evaluate(() => window.DaimondGovernor.observe({ t: Date.now(), u: 9 }));
+	clearMockLog();
+	await page.fill('#chat-input',
+		'@tools spawn_agent {"name":"sorter-c","task":"Say exactly: GAMMA-SORTED-LIST"} '
+		+ ';; spawn_agent {"name":"sorter-d","task":"Say exactly: DELTA-SORTED-LIST"}');
+	await page.keyboard.press('Enter');
+	await page.waitForSelector('.dlg-card .dlg-cancel', { timeout: 20000 });
+	await page.click('.dlg-card .dlg-cancel');
+	await page.waitForTimeout(2500);
+	const declined = mockLog();
+	check('a declined fan-out from a chat starts no worker',
+		!declined.some(m => {
+			const j = JSON.stringify(m.messages || []);
+			return j.includes('GAMMA-SORTED-LIST') && !j.includes('spawn_agent');
+		}), `${declined.length} request(s)`);
+
+	clearMockLog();
+	await page.fill('#chat-input', 'carry on then');
+	await page.keyboard.press('Enter');
+	await page.waitForTimeout(5000);
+	const next = mockLog();
+	check('and the chat\'s own agent is told they were NOT started',
+		next.some(m => JSON.stringify(m.messages || []).includes('WERE NOT STARTED')),
+		`${next.length} request(s) since`);
+	check('and told why, and that nothing was spent',
+		next.some(m => {
+			const j = JSON.stringify(m.messages || []);
+			return j.includes('told no') && j.includes('nothing was spent');
+		}));
+
 	// And it survives a reload, because it was written to the record rather than
 	// only painted. A report that lives in the DOM is a report a refresh loses.
 	await page.reload();

@@ -30,6 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open } from './harness.mjs';
+import { GW_PORT } from './ports.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -534,21 +535,24 @@ if (BREAK) {
 }
 
 // What this run measured UNDER, said out loud. Two runs of this file are only
-// comparable if they met the same app, and one input to that is NOT part of a
-// world: the gateway binds `:9002` and is shared between agents (dev/world.sh
-// says so in as many words). On 2026-08-15 another lane's gateway answered this
-// browser's registration mid-run with a closed-beta refusal; the app did the
-// right thing and put the passcode card on screen; and the sweep found three
-// contrast shortfalls in it that the next run could not reproduce, because by
-// then the gateway was gone. Nothing was wrong with either run -- they measured
-// two different applications -- and neither said so.
+// comparable if they met the same app, and until 2026-08-25 one input to that was
+// NOT part of a world: every world's `/api` went to a fixed `:9002`. On 2026-08-15
+// another lane's gateway answered this browser's registration mid-run with a
+// closed-beta refusal; the app did the right thing and put the passcode card on
+// screen; and the sweep found three contrast shortfalls in it that the next run
+// could not reproduce, because by then the gateway was gone. Nothing was wrong
+// with either run -- they measured two different applications -- and neither said
+// so.
+//
+// The gateway is a world's own now (`dev/world.sh`, 9700 + N), so the condition
+// below can only be this world's, and the line says which port it asked.
 {
 	const cond = await page.evaluate(() => {
 		const g = (window.DaimondGateway && DaimondGateway.state && DaimondGateway.state()) || {};
 		return { authed: !!g.authed, offline: !!g.offline, refused: g.refused || null };
 	}).catch(() => ({ authed: null, offline: null, refused: null }));
 	log(`\n  conditions: gateway authed=${cond.authed} offline=${cond.offline}`
-		+ ` refused=${cond.refused}  (a gateway on :9002 is shared between agents, not per-world)`);
+		+ ` refused=${cond.refused}  (this world's gateway port is :${GW_PORT})`);
 }
 
 // Escape, and nothing else. An earlier version REMOVED `.modal` nodes from the

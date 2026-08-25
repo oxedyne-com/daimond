@@ -5,7 +5,8 @@
    global `marked`).  Exposes:
 
        window.DaimondRender = { md, escapeHtml, sanitize,
-                                foldScan, foldSegments, summaryText }
+                                foldScan, foldSegments, summaryText,
+                                seamText, seamLine }
 
    `DaimondRender.md(text)` renders markdown to an HTML string with:
      - single-newline line breaks (marked `breaks: true`),
@@ -553,6 +554,121 @@
 			&& '<summary'.indexOf(r.split(/[\s>]/)[0]) === 0;
 	}
 
+	// ── The seam the APP places ────────────────────────────────
+	//
+	// Three wordings by three authors asked the model to write the `<details>`
+	// itself, and 5 answers in 76 carried one (dev/PROMPT_NOTES.md §5,
+	// dev/REGISTER_NOTES.md §11).  So the markup is the app's now and the model
+	// writes one line: `Fold:` and a sentence or two of what the working below it
+	// concludes.  Everything under `foldScan` is unchanged -- the line is expanded
+	// into exactly the element a model used to write, and the key, the strip and
+	// the drawing never learn that anything is different.
+	//
+	// **The app refuses more often than it folds, and that is the point.**  A
+	// length threshold applied blindly produces FOLD-ALL, which
+	// dev/CONTRACT_FOLD.md §5 calls worse than no control at all.  So the two
+	// failures a wording could never prevent are unreachable here instead: with
+	// too little above the line, or too few words in the summary, or too little
+	// below it, there is no fold and the sentence is left as prose.
+
+	// Enough above the seam to be an answer.  The same 40 characters
+	// `dev/probe_notes.mjs` calls FOLD-ALL below, measured the same way -- the
+	// whitespace collapsed and the ends trimmed -- because it is the same rule.
+	var SEAM_LEAD_MIN  = 40;
+	// Enough below it to be worth a control.  CONTRACT_FOLD.md §5's carve-out: an
+	// answer with no second depth opens on nothing.
+	var SEAM_BODY_MIN  = 240;
+	// A summary is a summary and not a label (§13).
+	var SEAM_WORDS_MIN = 6;
+
+	/// The summary a `Fold:` line carries, or `null` if the line is not one.
+	///
+	/// Generous in what it accepts, because a model that has understood the note
+	/// and reached for a heading or for bold should not lose its fold over the
+	/// decoration: `Fold:`, `**Fold:**`, `## Fold:` and `_Fold:_` all seam.  What
+	/// it will not accept is a line whose summary is empty.
+	function seamLine(line) {
+		var s = String(line == null ? '' : line);
+		if (/^ {4,}|^\t/.test(s)) return null;		// an indented code block
+		s = s.replace(/^ {0,3}/, '').replace(/^#{1,6}[ \t]+/, '');
+		var lead = /^(\*\*|__|\*|_)/.exec(s);
+		if (lead) s = s.slice(lead[1].length);
+		if (!/^Fold[ \t]*:/i.test(s)) return null;
+		var rest = s.slice(s.indexOf(':') + 1);
+		var shut = /^(\*\*|__|\*|_)/.exec(rest);
+		if (shut) rest = rest.slice(shut[1].length);
+		else if (lead) {
+			var tail = new RegExp('(\\*\\*|__|\\*|_)$').exec(rest);
+			if (tail) rest = rest.slice(0, rest.length - tail[1].length);
+		}
+		rest = rest.replace(/\s+/g, ' ').trim();
+		return rest ? rest : null;
+	}
+
+	/// How much of `t` a reader would actually see, measured as the ladder measures
+	/// the text above a fold.
+	function seamVisible(t) { return String(t == null ? '' : t).replace(/\s+/g, ' ').trim().length; }
+
+	/// `text` with the model's `Fold:` line turned into the element it stands for.
+	///
+	/// Four outcomes and only one of them is a fold:
+	///
+	/// - **no line, or the model wrote its own `<details>`** — the text is returned
+	///   untouched, so an answer that folded itself is never folded twice;
+	/// - **the line is there and the answer qualifies** — one top-level fold,
+	///   blank lines and all, exactly as CONTRACT_FOLD.md §1 wants it;
+	/// - **it does not qualify** — the line loses its `Fold:` and stays as prose.
+	///   Nothing is hidden and nothing is lost;
+	/// - **it does not qualify YET, mid-stream** — the line is held back, the way
+	///   `foldPending` holds back a half-written `<details>`, because a fold that
+	///   appears and then unwinds is worse than one that arrives late.
+	///
+	/// `settled` says no more text is coming, which is what tells the third case
+	/// from the fourth.
+	function seamText(src, settled) {
+		var s = String(src == null ? '' : src);
+		if (!/fold[ \t]*:/i.test(s)) return s;
+		// A model that wrote the markup itself has already placed its seam.
+		if (s.indexOf('<details') >= 0 && foldScan(s).length) return s;
+		// Every `Fold:` line outside a fence, with where it starts and what it says.
+		// A fenced one is a model showing the convention rather than using it, which
+		// is the rule `fencedRanges` already carries for `<details>`.
+		var fenced = fencedRanges(s), lines = s.split('\n'), at = 0, marks = [];
+		for (var i = 0; i < lines.length; i++) {
+			var got = inRanges(fenced, at) ? null : seamLine(lines[i]);
+			if (got !== null) marks.push({ line: i, at: at, len: lines[i].length, sum: got });
+			at += lines[i].length + 1;
+		}
+		if (!marks.length) return s;
+		// The later ones are prose: only the first is the seam, and a second would
+		// otherwise reach the reader with its marker still on it.
+		var bare = function (from) {
+			var keep = lines.slice(0);
+			for (var k = 0; k < marks.length; k++) {
+				if (marks[k].line >= from) keep[marks[k].line] = marks[k].sum;
+			}
+			return keep.join('\n');
+		};
+		var head = marks[0];
+		var above = s.slice(0, head.at);
+		var body  = s.slice(head.at + head.len + 1);
+		// A summary carrying the very tags this builds would close the element
+		// early and leave the rest of the answer outside it.
+		if (/<\/?(summary|details)/i.test(head.sum)
+			|| head.sum.split(/\s+/).length < SEAM_WORDS_MIN
+			|| seamVisible(above) < SEAM_LEAD_MIN) {
+			return bare(0);
+		}
+		if (seamVisible(body) < SEAM_BODY_MIN) {
+			return settled ? bare(0) : s.slice(0, head.at);
+		}
+		var rest = bare(head.line + 1).split('\n').slice(head.line + 1).join('\n');
+		return above.replace(/\s+$/, '')
+			+ '\n\n<details>\n<summary>' + head.sum + '</summary>\n\n'
+			+ rest.replace(/^\s+/, '').replace(/\s+$/, '')
+			+ '\n\n</details>';
+	}
+
 	/// `text` cut into the pieces the chat draws: runs of ordinary markdown, and
 	/// the TOP-LEVEL folds between them.
 	///
@@ -563,7 +679,9 @@
 	/// `foldPending`: a turn that died half way through a `<summary>` should show
 	/// the words that did arrive rather than wait for a frame that never comes.
 	function foldSegments(text, settled) {
-		var src = String(text == null ? '' : text);
+		// The app's own seam first, so everything below this line is looking at
+		// one kind of fold and not two.
+		var src = seamText(text, settled);
 		var all = foldScan(src), segs = [], at = 0;
 		for (var i = 0; i < all.length; i++) {
 			var f = all[i];
@@ -669,5 +787,6 @@
 	window.DaimondRender = {
 		md: md, escapeHtml: escapeHtml, sanitize: sanitize,
 		foldScan: foldScan, foldSegments: foldSegments, summaryText: summaryText,
+		seamText: seamText, seamLine: seamLine,
 	};
 })();

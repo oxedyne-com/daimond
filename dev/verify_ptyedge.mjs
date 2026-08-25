@@ -58,12 +58,28 @@
 // Needs tmux, python3 and a built www/pkg. Run it headed, under xvfb, because
 // the grant window is a real window and is really clicked:
 //	xvfb-run -a -s "-screen 0 1400x900x24" node dev/verify_ptyedge.mjs
+//
+// `xvfb-run` alone was NOT enough here until 2026-08-24, and this line said it
+// was. It sets `DISPLAY` and nothing else; Chromium picks its ozone platform by
+// autodetection and prefers Wayland whenever `WAYLAND_DISPLAY` is set, which it
+// is in every rc session on this machine -- so this file connected to the seat's
+// compositor and opened a real window on the owner's desktop while he was
+// working. `dev/display.mjs`, imported below, takes both variables out, so the
+// command above is now true as written.
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+// Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
+// `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
+// run under `xvfb-run` still went to the compositor and opened a window on the owner's
+// desktop, for two and a half minutes on 2026-08-24 while he was working. Importing this
+// strips the two variables from `process.env`, which is all a launcher that spreads
+// `process.env` into its options needs. See dev/display.mjs.
+import './display.mjs';
+import { whyStaleWasm, refuse } from './staleguard.mjs';
 
 const PW = process.env.DAIMOND_PW
 	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
@@ -292,9 +308,32 @@ console.log(`The hand under test was built from this tree: ${HAND}`);
 // them being newer than it is enough to say it is not this tree. Not rebuilt
 // here, because a wasm build is minutes and a surprise one in the middle of a
 // verifier is worse than a sentence saying what to run.
+//
+// ASKED OF `dev/staleguard.mjs`, WHICH IS WHERE THIS QUESTION LIVES NOW. What stood here was a
+// private copy of the guard that could only read the clock, and a clock is the wrong oracle in
+// a tree the bundle was not built in. `dev/gate.sh` checks a commit out into a frozen worktree
+// and builds or borrows a bundle for it; a later verifier then patches a `.rs` file and puts it
+// back, which leaves the CONTENT identical and the MTIME newer than the bundle. On the gate of
+// 2026-08-25 that was `src/tools.rs`, stamped 1,364 seconds after a bundle built from it, with
+// the tree still clean to `git status` -- and this file refused with its 2,400-second budget
+// untouched while `verify_handrun`, asking the shared guard the same question about the same
+// bundle, ran and passed. staleguard.mjs's own header names this file as one of the three it
+// was written for; it was the one that never started asking.
+//
+// The shared guard prefers the RECORD `gate.sh` writes beside the bundle -- every source file
+// rehashed against what the record names -- and falls back to the clock only where there is no
+// record, which is the case the clock is right about.
 const WASM_FILE = path.join(WWW, 'pkg/oxedyne_daimond_bg.wasm');
+refuse(whyStaleWasm(WASM_FILE, path.join(ROOT, 'src'), {
+	subject: 'The pty edge',
+	holds:   '`pty_request`',
+}));
+console.log(`and the engine under test was built from this tree: ${WASM_FILE}`);
 
 /// Every Rust source under `dir`, which is everything the bundle is built from.
+///
+/// Kept for the cached PROVED packages further down, which are asked a different question from
+/// the one above: not "is this bundle this source" but "is this package older than this source".
 function rustSources(dir) {
 	const out = [];
 	for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -305,23 +344,9 @@ function rustSources(dir) {
 	return out;
 }
 
-const wasmAt = fs.existsSync(WASM_FILE) ? fs.statSync(WASM_FILE).mtimeMs : 0;
-if (!wasmAt) {
-	console.error(`The pty edge cannot be verified, because there is no wasm bundle at `
-		+ `${WASM_FILE} and \`pty_request\` lives in it. Run \`dev/build-wasm.sh\` and try again.`);
-	process.exit(2);
-}
 const newestSrc = rustSources(path.join(ROOT, 'src'))
 	.map((f) => ({ f, t: fs.statSync(f).mtimeMs }))
 	.reduce((a, b) => (a && a.t >= b.t ? a : b), null);
-if (newestSrc && newestSrc.t > wasmAt) {
-	console.error(`The pty edge would have been verified against a stale engine, which proves `
-		+ `nothing about it in either direction: ${newestSrc.f} was last changed `
-		+ `${Math.round((newestSrc.t - wasmAt) / 1000)} second(s) after ${WASM_FILE} was built, `
-		+ `so that bundle is not this source. Run \`dev/build-wasm.sh\` and try again.`);
-	process.exit(2);
-}
-console.log(`and the engine under test was built from this tree: ${WASM_FILE}`);
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ The tmux oracle                                                │
@@ -514,7 +539,34 @@ function buildWasm(name) {
 					+ path.relative(ROOT, file));
 			}
 			fs.writeFileSync(file, orig.replace(from, to));
+		} else {
+			// The same bytes, written again on purpose. See the stamp below: the
+			// pristine build is the one that has nothing to change, and therefore
+			// the one cargo is most willing to skip.
+			fs.writeFileSync(file, orig);
 		}
+		// AND MAKE CARGO LOOK AT IT. The restore below puts the ORIGINAL mtime
+		// back, which the staleguard needs -- and which leaves the tree looking
+		// untouched to cargo, whose fingerprint is an mtime comparison. So the
+		// next build into this warm target directory finds a source no newer
+		// than the artefact already there and reuses it.
+		//
+		// That is not a slow build, it is a WRONG one. `whole` is built first and
+		// has no patch of its own, so what it reused was whatever was compiled
+		// last -- the final break of the previous run. Measured on 2026-08-24:
+		// `whole` and `w-argvkit` byte-identical at 18,867,059 bytes, and section
+		// 4 reporting `PROVED a toolkit is never inferred from argv (wasm) —
+		// broken=failed, correctly, whole=FAILED` on a tree with nothing whatever
+		// wrong with it. It bit only after `~/.cache/daimond/*/ptyedge-broken` was
+		// cleared while the cargo target directory beside it was left warm, which
+		// is why it survived every run before that one.
+		//
+		// The failure it produced is loud. The one it could produce is not: a
+		// break that reused the pristine artefact would go GREEN where it must go
+		// red, and `proved()` would report the check as blind. So the stamp is
+		// here rather than a note about clearing caches.
+		const now = new Date();
+		fs.utimesSync(file, now, now);
 		const env = Object.assign({}, process.env, {
 			CARGO_TARGET_DIR: TARGET_DIR,
 			RUSTFLAGS: `--remap-path-prefix=${os.homedir()}/.cargo=/cargo `
@@ -565,12 +617,15 @@ const pkgBuilt = (name) => {
 // directory further down — and worse, because those guards refuse while this
 // one certified.
 //
-// `newestSrc` is the same oracle the app's own bundle is held to above: every
-// `.rs` under `src/`, so a change anywhere below the pty edge counts. It is
-// already known to be no newer than `www/pkg`, or this file would have refused
-// at line one, so a package older than it is a package older than the engine
-// under test. `buildWasm` restores the mtime of every file it patches, so the
-// comparison does not drift by a build.
+// `newestSrc` is every `.rs` under `src/`, so a change anywhere below the pty
+// edge counts. It is NOT known to be older than `www/pkg`: the guard at the top
+// of this file judges the app's bundle on content now, and a bundle built in
+// another tree is legitimately older by the clock than the source it was built
+// from. So a package older than `newestSrc` is rebuilt rather than believed,
+// which in a frozen worktree means rebuilding all of them -- the safe direction,
+// and the one the 2,400-second budget in `slow_for` is sized for.
+// `buildWasm` restores the mtime of every file it patches, so the comparison
+// does not drift by a build.
 const staleFrom = newestSrc ? newestSrc.t : 0;
 const missing = PKGS.filter((n) => !pkgBuilt(n));
 const rotted = PKGS.filter((n) => pkgBuilt(n) && pkgBuilt(n) < staleFrom);
@@ -1106,14 +1161,27 @@ async function openReal(ask) {
 	}, ask);
 }
 
+// One counter behind every probe id in this file, so no two attempts can name
+// the same terminal.
+let probeSeq = 0;
+
 /// Opens a terminal by sending the wire message on the link directly, and
 /// reports what the relay handed to a subscriber watching that id.
 ///
 /// The low road, deliberately: `DaimondPty` is not in the way, so what is
 /// proved is hand.js's own multiplexing rather than the relay above it.
-async function probeOpen(id = 'probe-1', tries = 3) {
+///
+/// A FRESH ID EVERY TIME, and the session ended before the id is let go.  This
+/// took a fixed `probe-1`, and §4 runs it TWICE -- once against broken code and
+/// once against whole -- so the second attempt asked for a terminal whose id was
+/// still held by the first.  `hand/src/pty.rs:437` refuses a duplicate id, and
+/// rightly; what came back was that refusal rather than an answer about
+/// dispatch, and the proof read it as the whole code failing.  Two halves of one
+/// proof have to be two independent trials, which means neither may leave
+/// anything behind for the other to trip on.
+async function probeOpen(tag = 'probe', tries = 3) {
 	for (let n = 0; n < tries; n++) {
-		const said = await probeOnce(id);
+		const said = await probeOnce(tag + '-' + (++probeSeq));
 		// A link that would not open at all is not the property under test, and
 		// it happens: the previous host is still exiting and the next one
 		// cannot take the journal's lock yet. Retried, so that a red result
@@ -1142,6 +1210,11 @@ async function probeOnce(id) {
 				fence: { rw: [root], ro: [], deny: [], net: false },
 			}).then(() => '', (e) => 'send rejected: ' + ((e && e.message) || e));
 			await new Promise((r2) => setTimeout(r2, 2500));
+			// End the session before the id is let go. Best effort: a probe that
+			// never opened one has nothing to end, and the answer below is the
+			// same either way.
+			await DaimondHand.send({ t: 'signal', id: id, sig: 'term' }).catch(() => {});
+			await new Promise((r2) => setTimeout(r2, 300));
 			off();
 			return (sent ? sent + ' | ' : '') + window.__heard.join(',');
 		}, [GRANT, id]).catch((e) => 'evaluate threw: ' + e.message),
@@ -1166,6 +1239,65 @@ const opened = await Promise.all([openReal(ASK), grant('allow')]).then((r) => r[
 const allow = () => grant('allow', 4000);
 check('a real terminal opens on this machine, through the extension and the hand',
 	!!opened.id && opened.pid > 0, JSON.stringify(opened));
+
+// ── A granted toolchain, opened for real ────────────────
+//
+// The gap seq 150 shipped through, and the reason these are here rather than in
+// section 2. `pty_request` composes a fence naming the toolchain the user
+// granted -- `~/.gitconfig` for Git -- and that root is OUTSIDE the folder the
+// hand was granted, so the extension lets it through only where the SAME request
+// names the toolchain. Section 2 asks what was composed. Nothing, until now, ever
+// put one of those through the extension's own vetting to a real hand, so the
+// whole of what 7cfd538 restored -- that a Diamond with a toolchain ticked can
+// open a terminal at all -- was measured by nothing, and a relay that dropped the
+// field a second time would have gone green here exactly as it did the first.
+//
+// Two checks, because either alone proves nothing. The first says a granted
+// toolchain opens; the second says the identical fence with the toolchain NOT
+// named is refused, in the extension's own sentence -- so the first is not
+// passing because nobody is looking.
+const KIT_ASK = Object.assign({}, ASK, { toolkits: ['git'] });
+const kitreq  = await request(KIT_ASK);
+const KIT_ROOT = `${os.homedir()}/.gitconfig`;
+check('a granted toolchain travels in the fence the panel would send',
+	Array.isArray(kitreq.toolkits) && kitreq.toolkits.indexOf('git') >= 0
+	&& Array.isArray(kitreq.fence && kitreq.fence.ro)
+	&& kitreq.fence.ro.indexOf(KIT_ROOT) >= 0,
+	JSON.stringify({ toolkits: kitreq.toolkits, ro: kitreq.fence && kitreq.fence.ro }));
+
+// `openReal` puts its session in `window.__sid`, and everything below types at
+// that. So the one this opens is closed again and the earlier session put back,
+// or the rest of section 3 would be typing at a terminal this check had taken.
+const PRIOR_SID = await page.evaluate(() => window.__sid);
+const kitopen = await Promise.all([openReal(KIT_ASK), allow()]).then((r) => r[0]);
+check('and a terminal in a Diamond granted that toolchain really opens',
+	!!kitopen.id && kitopen.pid > 0, JSON.stringify(kitopen));
+await page.evaluate(async (prior) => {
+	if (window.__sid && window.__sid !== prior) {
+		try { await DaimondPty.close(window.__sid, 'term'); } catch (e) { /* already gone */ }
+	}
+	window.__sid = prior;
+}, PRIOR_SID);
+await sleep(800);
+
+/// The same fence with the toolchain unnamed, sent down the link itself, so what
+/// answers is the extension rather than anything this file believes about it.
+const stripped = await Promise.all([page.evaluate(async (req) => {
+	const bare = JSON.parse(JSON.stringify(req));
+	delete bare.toolkits;
+	bare.id = 'kit-stripped';
+	const heard = [];
+	const off = DaimondHand.subscribe(bare.id, (m) => heard.push(
+		m.t + (m.t === 'refused' || m.t === 'error' ? ': ' + (m.reason || m.message || '') : '')));
+	let sent = '';
+	try { await DaimondHand.send(bare); }
+	catch (e) { sent = 'send rejected: ' + ((e && e.message) || e); }
+	await new Promise((r) => setTimeout(r, 2500));
+	off();
+	return sent || heard.join(' | ');
+}, kitreq), allow()]).then((r) => r[0]);
+check('and the same fence with no toolchain named is refused, in the extension\'s words',
+	/granted no toolchain/.test(stripped), String(stripped).slice(0, 200));
 
 // ── §1.14, asked of the real hand, with nothing stood in for ────
 //
@@ -1219,6 +1351,46 @@ if (opened.id) {
 	check('and cannot read the folder the fence denies',
 		!/out of bounds/.test(SAW), JSON.stringify(SAW.slice(-200)));
 
+	// ── What a fenced terminal cannot reach, and what that costs ────
+	//
+	// `hand/src/pty.rs`'s own header says why this module exists: `sudo`, `ssh`,
+	// `vim`, `git commit` and a REPL, none of which works down a pipe. `ssh` is
+	// one of the five, and it is on the far side of the compartment -- and
+	// NOTHING said so. "The terminal works" was true of the pty and false of the
+	// terminal, and a request on 2026-08-24 for an ssh session that survives a
+	// dropout was read as a question about persistence when the connection
+	// cannot be made at all.
+	//
+	// Each is deliberate, and each is pinned HERE, in the sentence the kernel
+	// actually produces, so that loosening one turns this red and is a decision
+	// somebody takes rather than a side effect nobody notices:
+	//
+	//	~/.ssh		denied by every fence -- `Toolkit::Git` in src/tools.rs
+	//			names it and says the private keys are what is being
+	//			kept from a command.
+	//	AF_UNIX		refused unconditionally by `hand/src/seccomp.rs`, which
+	//			closes `REVIEW.md` §1.3 -- the session bus started a
+	//			process outside the fence. tmux and ssh-agent are both
+	//			on that socket, so both go with it.
+	//
+	// `screen` is left alone deliberately: it fails too, but by a different route
+	// on a different machine -- `/run/screen` under one fence, a silent nothing
+	// under this one -- and a check whose red is not the same red twice says less
+	// than no check.
+	//
+	// Together they say the thing worth writing down. A session that survives a
+	// dropout has to be held on the FAR machine -- `tmux` there is outside this
+	// filter and would work -- but nothing here can reach that machine, and no
+	// multiplexer can be started on this side either. A verifier that only ever
+	// ran `echo` could not have told anyone that.
+	SAW = await typed('ssh -o BatchMode=yes -o ConnectTimeout=3 127.0.0.1 true 2>&1 | tail -2\n', 6000);
+	check('ssh cannot read the keys, so a terminal cannot reach another machine',
+		/Host key verification failed|hostkeys_foreach failed/.test(SAW), JSON.stringify(SAW.slice(-200)));
+
+	SAW = await typed('tmux new-session -d -s edge 2>&1 | tail -1\n');
+	check('and tmux cannot open its socket, so nothing here can be made to persist',
+		/Operation not permitted/.test(SAW), JSON.stringify(SAW.slice(-200)));
+
 	// The renderer, fed the real bytes: this is the whole road, from a program
 	// on the machine to the grid a person reads.
 	const drawn = await page.evaluate(() => {
@@ -1234,7 +1406,7 @@ if (opened.id) {
 	check('one hand process, however many conversations are on the link',
 		hands() === 1, `${hands()} running`);
 
-	const heard = await probeOpen('probe-0');
+	const heard = await probeOpen('probe-live');
 	check('a wire message sent straight down the link is answered to its subscriber',
 		/opened/.test(heard), heard.slice(0, 220));
 

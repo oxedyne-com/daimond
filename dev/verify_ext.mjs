@@ -71,6 +71,12 @@ const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-li
 import { fileURLToPath } from 'node:url';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');	// this checkout, not one developer's home
 import { hashTree, bundleHash, coveredFiles, sha256, parseLog, nextEntry } from '../verify/lib.mjs';
+// Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
+// `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
+// run under `xvfb-run` still went to the compositor and opened a window on the owner's
+// desktop. Importing this strips the two variables from `process.env`, which is all a
+// launcher that spreads `process.env` needs. See dev/display.mjs.
+import './display.mjs';
 const EXT_SRC = `${ROOT}/verify/ext`;
 // Not /tmp -- see the SCRATCH note in harness.mjs.  Kept inline rather than
 // imported, so this stays standalone and does not load the harness.

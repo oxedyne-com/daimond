@@ -590,6 +590,12 @@ impl Agent {
         registry:   &ToolRegistry,
         on_event:   &mut impl FnMut(AgentEvent),
     ) -> Outcome<()> {
+        // THE TURN'S BYTE LEDGER STARTS HERE, and here is the only place it does. Every turn in
+        // the app arrives through this function -- the browser chat, a Diamond's daimon, a
+        // dispatched worker and `examples/devcycle_probe.rs` alike -- and a Diamond's daimon
+        // SHARES its `read_seen` with the chat that made it, so an allowance reset anywhere else
+        // would leak from one turn into the next. See `crate::tools::TurnState::spent`.
+        registry.ctx.begin_turn();
         // Append the user message to the persisted history.
         session.messages.push(ChatMessage::user(user_msg));
 
@@ -815,7 +821,8 @@ impl Agent {
             // streamed and end the turn cleanly, without an error.
             if resp.aborted {
                 session.messages.push(ChatMessage::Assistant {
-                    content: MessageContent::text(resp.content), tool_calls: Vec::new(),
+                    content: MessageContent::text(crate::llm::seamed(resp.content)),
+                    tool_calls: Vec::new(),
                 });
                 let ending = self.audit(TurnEnd::Stopped, rounds, &claims, Some(registry)).await;
                 self.ended(ending, on_event);
@@ -836,8 +843,13 @@ impl Agent {
                 } else {
                     TurnEnd::Answered
                 };
+                // THE SEAM, and only here. A run of prose with a tool call after it is
+                // working rather than an answer -- `demoteToWorking` in the page draws it as
+                // the model's own thinking -- so a `Fold:` line in one of those would build a
+                // control over something nobody is meant to read as a reply.
                 session.messages.push(ChatMessage::Assistant {
-                    content: MessageContent::text(resp.content), tool_calls: Vec::new(),
+                    content: MessageContent::text(crate::llm::seamed(resp.content)),
+                    tool_calls: Vec::new(),
                 });
                 let ending = self.audit(how, rounds, &claims, Some(registry)).await;
                 self.ended(ending, on_event);
@@ -857,6 +869,12 @@ impl Agent {
             };
             working.push(asked.clone());
             session.messages.push(asked);
+
+            // Whether this round put a question to the user, which is what ends the turn.  Set
+            // from the tool RESULT and not from the call, because a question can be refused --
+            // see [`ends_turn`], and see what happened the last time a rule like this read a
+            // name alone.
+            let mut asked = false;
 
             // Execute each requested tool call, recording every result in both
             // places for the same reason.
@@ -901,6 +919,10 @@ impl Agent {
                 // The paths come from the ARGUMENTS the model sent, which name the file it meant
                 // whatever the reply says about it.
                 claims.record(&tc.name, &tc.arguments, outcome);
+                // ASKED OF THE RESULT, and of every call in the round rather than of the first:
+                // a round may carry several, and the question may not be the one that came back
+                // first.
+                asked |= ends_turn(&tc.name, outcome);
                 on_event(AgentEvent::ToolResult {
                     name:   tc.name.clone(),
                     result: text,
@@ -927,15 +949,28 @@ impl Agent {
                 session.messages.push(reply);
             }
 
-            // NO TOOL ENDS A TURN ANY MORE. `say` was the one that did -- it folded a reply for
-            // the reader, so the loop stopped rather than buying a request for the model to
-            // repeat itself under the fold. Folding is written into the model's own prose now, so
-            // the turn ends where every other turn ends: at a reply with no tool calls in it.
+            // A QUESTION IS THE ANSWER, so the turn is over.  The model has just put a decision
+            // on the user's screen and cannot say anything useful until it is answered: going
+            // round again would buy a whole extra request whose only possible content is a
+            // paragraph restating the question, printed under a card that already asks it.
             //
-            // The rule that decided it read the tool RESULT and not the call's name, because a
-            // `say` had three ways to answer nothing and a turn ended on each of them. That
-            // reasoning is kept where it can still be used: [`crate::tools::call_outcome`] is the
-            // tool layer's own statement of what became of a call, and the fold's ledger reads it.
+            // **The turn ending is what makes an unanswered question free.**  Nothing is held --
+            // no promise, no engine, no slot -- so a question nobody answers for an hour costs
+            // exactly what a question nobody answers for a second does, and there is no timeout
+            // to invent because there is nothing to time out.  That is the difference between
+            // this and `parkConsent`, which holds a worker on a `resolve` in memory and loses it
+            // to a reload.
+            //
+            // Ended as `Answered` rather than under an ending of its own: this is a reply with
+            // nothing further to say, which is what that word means, and a sixth `TurnEnd` would
+            // be a word every locale and every reader of the ledger had to learn to draw a
+            // distinction nothing acts on.
+            if asked {
+                let ending = self.audit(TurnEnd::Answered, rounds, &claims, Some(registry)).await;
+                self.ended(ending, on_event);
+                on_event(AgentEvent::Done);
+                return Ok(());
+            }
 
             // THE SEAM. The tool replies are in, and the next request has not gone out,
             // so this is the one moment in a round where the conversation can grow by
@@ -1201,6 +1236,35 @@ impl Agent {
         }
         Ok(resp.content)
     }
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The tool that ends a turn                                      │
+// └───────────────────────────────────────────────────────────────┘
+
+/// Whether this tool result is the turn's answer, so the loop stops here.
+///
+/// **The rule is back and the tool under it is not the old one.**  It used to say `say`, which
+/// folded a reply for the reader -- one-way presentation that a model could simply decline, and
+/// that is now a convention in the model's own prose with no tool to call.  `ask` is the opposite
+/// shape: a round trip, whose whole point is that the model has stopped and is waiting.  Prose
+/// cannot return a tap, so there is no convention that could replace it.
+///
+/// **It reads the OUTCOME and never the name alone**, and that clause is the scar.  A refused
+/// `say` ended a worker's turn, so the report the refusal had just told it to write was never
+/// written and the whole errand came back as whatever prose accompanied the call -- work done,
+/// paid for and thrown away.  `ask` has as many ways to be refused as `say` had, each of them
+/// telling the model to put the question properly, and every one of those is advice the model
+/// must be given a round to take.  [`crate::tools::call_outcome`] is the tool layer's own
+/// statement of what became of a call; nothing here reads the wording again.
+///
+/// # Arguments
+/// * `name` - The tool the call named.
+/// * `outcome` - What the layer said became of it.
+fn ends_turn(name: &str, outcome: crate::tools::CallOutcome) -> bool {
+	name == crate::tools::Tool::Ask.name()
+		&& matches!(outcome, crate::tools::CallOutcome::Done)
 }
 
 
@@ -2003,6 +2067,28 @@ mod tests {
         }
     }
 
+    /// A turn's byte allowance starts AT THE TURN, wherever the turn came from.
+    ///
+    /// Nothing resets itself.  The ledger lives on a [`ToolContext`] that OUTLIVES the turn -- the
+    /// browser chat builds one for the life of the app, and a Diamond's daimon shares that very
+    /// one -- so if the reset sat anywhere but at the entry to a turn, a single long read would
+    /// narrow every turn after it for the rest of the session.
+    #[tokio::test]
+    async fn test_a_turn_starts_its_byte_allowance_at_the_turn() {
+        let a = dead_agent();
+        let registry = no_tools();
+        registry.ctx.charge_spend(500_000);
+        assert_eq!(0, registry.ctx.spend_left(), "the fixture did not spend the allowance");
+        let mut session = Session::new(fmt!("s1"), fmt!("budget"), fmt!("model"));
+        // The provider is a port nothing is listening on, so the turn fails at once -- which is
+        // the point: what is under test happens BEFORE the request goes out.
+        let _ = a.run_turn(&mut session, fmt!("read the file"), &registry, &mut |_| {}).await;
+        assert!(!registry.ctx.spend_is_short(),
+            "this turn began already short, having spent nothing of its own");
+        assert_eq!(crate::tools::TURN_SPEND_BUDGET, registry.ctx.spend_left(),
+            "the last turn's spending is still charged to this one");
+    }
+
     #[tokio::test]
     async fn test_a_refused_tool_is_not_a_completed_step_00() {
         // Three real calls: one that works, one the fence stops, one that is not registered. The
@@ -2395,6 +2481,38 @@ mod tests {
         assert!(reply.as_text().contains("smaller pieces"), "{}", reply);
         // Nothing was written: the arguments never reached the dispatcher.
         assert!(!reply.as_text().contains("Wrote"), "{}", reply);
+    }
+
+    // ── A question put to the user ends the turn; a refused one does not ──
+
+    /// **The rule the tool loop ends a turn by, in all four of its cases.**
+    ///
+    /// Two of them are the defect and two are the controls.  A question that was PUT must end the
+    /// turn, or the model is charged a whole extra request whose only content is a paragraph
+    /// restating the question under a card that already asks it.  A question that was REFUSED
+    /// must not, because every refusal `ask_step` composes is advice -- put the options back,
+    /// name the recommendation, ask one thing rather than six -- and advice the model is denied
+    /// the round to take is advice it never takes.
+    ///
+    /// **That second case is a scar and not a hypothesis.**  The rule stood here before, read a
+    /// tool's NAME alone, and named `say`; a worker refused the fold had its turn ended on the
+    /// refusal telling it to write a report, so the report was never written and the whole errand
+    /// came back as whatever prose accompanied the call.  Work done, paid for and thrown away, on
+    /// 2026-08-21.
+    #[test]
+    fn test_only_a_question_that_reached_the_screen_ends_the_turn_00() {
+        use crate::tools::CallOutcome;
+        assert!(ends_turn("ask", CallOutcome::Done),
+            "a question that is on the user's screen no longer ends the turn, so the model is \
+             charged a request to say it has asked");
+        assert!(!ends_turn("ask", CallOutcome::Refused),
+            "a refused question ended the turn, so the model never got the round in which to put \
+             it properly -- which is what `say` did to a worker's report");
+        assert!(!ends_turn("ask", CallOutcome::Failed),
+            "a question the page could not draw ended the turn, so the user is left with nothing \
+             on screen and the model with nothing to say");
+        assert!(!ends_turn("file_write", CallOutcome::Done),
+            "a tool that is not a question ended the turn");
     }
 
     // ── A refused tool call does not end the turn ───────────────────────

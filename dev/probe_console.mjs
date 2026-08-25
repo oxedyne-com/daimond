@@ -15,11 +15,11 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { requireFreshGateway, procLog } from './gwbin.mjs';
 import { signInFresh } from './session.mjs';
+import { GW_URL } from './ports.mjs';
 
 const HERE   = path.dirname(fileURLToPath(import.meta.url));
 const ROOT   = path.join(HERE, '..');
 const GWDIR  = path.join(ROOT, 'gateway');
-const GW_URL = 'http://127.0.0.1:9002';
 const GW_LOG = procLog('probe_console');
 const SERVE_LOG = procLog('probe_console', 'serve');
 const APP    = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;

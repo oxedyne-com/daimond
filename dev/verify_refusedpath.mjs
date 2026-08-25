@@ -107,6 +107,16 @@ const BREAKS = {
 	created: [[
 		`				// The result used to be thrown away, so a refused create opened an editor\n				// on a file that was never made.\n				if (!w || w.outcome !== 'done') {`,
 		`				// The result used to be thrown away, so a refused create opened an editor\n				// on a file that was never made.\n				if (false) {`, 1]],
+	// The empty-listing reader anchored at the END of the text, as it was before
+	// `two_places_note` put a second line under the answer. 1c goes red: the note becomes
+	// a file, in a census that still calls itself complete.
+	// TWO occurrences, and that is the honest count: the census reader and the Work panel's
+	// reader are the same line at two indents, so a substring anchor finds both -- and both
+	// were anchored at the end of the text before this change, so damaging both IS the world
+	// before it.
+	endanchor: [[
+		`		if (/ is empty\\.$/.test(String(text).split('\\n')[0].trim())) return out;`,
+		`		if (/ is empty\\.$/.test(String(text).trim())) return out;`, 2]],
 	bare: [],
 };
 if (BREAK && !BREAKS[BREAK]) {
@@ -305,6 +315,47 @@ try {
 	check(fenced.paths.indexOf('notes/keep.md') === -1 && fenced.paths.indexOf('rp-top.md') >= 0,
 		'and it still carries what it COULD read: the refused folder is missing, the rest is not',
 		JSON.stringify(fenced.paths.slice(0, 6)));
+
+	// ── 1c. An empty directory that also SAYS something ──────────
+	//
+	// `file_list` puts a second line under the empty answer when the file tools and a
+	// command are looking at two different filesystems (`two_places_note`, src/tools.rs,
+	// 2026-08-24). The reader here tested the END of the text, so the answer stopped being
+	// recognised — and an unrecognised listing is not read as "unknown", it is read as ONE
+	// FILE whose name is that sentence. In a census that calls itself COMPLETE, a phantom
+	// file is what the other device syncs, and the fix for §1b would have been undone by
+	// the fix for a different fault entirely.
+	await stamp([{
+		name: 'file_list', match: '"path":"notes"',
+		outcome: 'done',
+		text: "'notes' is empty.\n'notes' is empty in this browser's own storage, which is the "
+			+ 'only filesystem the file tools reach while no folder is open. The granted folder '
+			+ 'on this computer is a second one, which the run tool reaches and a file tool '
+			+ 'cannot.',
+	}]);
+	const noted = await census();
+	const hitN = await stamped();
+	check(hitN.length > 0, 'THE FIXTURE RAN: the census asked to list the folder that answers with a note',
+		JSON.stringify(hitN.slice(0, 3)));
+	// THE HEADLINE IS COMPLETENESS, and the ordering is what the break taught: with the reader
+	// anchored at the end of the text the note became an entry, the census then tried to READ
+	// that entry, the read failed, and the census went INCOMPLETE. So the phantom is caught one
+	// step upstream of where it would show, and a check that only looked at the file list would
+	// have stayed green while sync stopped working for every empty folder in the workspace.
+	check(noted.complete === true,
+		'AN EMPTY DIRECTORY THAT EXPLAINS ITSELF IS STILL A COMPLETE ANSWER — a note under the '
+			+ 'empty line does not cost the census its completeness, which is the one word that '
+			+ 'entitles the other device to act on absence',
+		`filesComplete=${noted.complete}`);
+	// The corollary, which the break above does NOT red on its own. Kept because it is the
+	// property a future reader will look for, and said to be a corollary rather than left to
+	// read as the evidence.
+	check(!noted.paths.some((x) => /browser|filesystem|is empty/.test(x)),
+		'and no sentence was carried as a file name',
+		JSON.stringify(noted.paths.slice(0, 6)));
+	check(!noted.paths.some((x) => x.indexOf('notes/') === 0),
+		'and nothing under it was invented either',
+		JSON.stringify(noted.paths.filter((x) => x.indexOf('notes/') === 0).slice(0, 4)));
 
 	// ── 2. A refused write is not an agreement ───────────────────
 	//

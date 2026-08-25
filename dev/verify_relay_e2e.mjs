@@ -78,7 +78,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
 
 // 9502: clear of the dev servers (8777+N), the mock providers (9099+N), the
-// shared gateway (9002) and verify_passcode's own (9402). A "spare" port inside
+// shared gateway (9002) and verify_passcode's own (9420). A "spare" port inside
 // one of those ranges answers a health probe with somebody else's process.
 //
 // DELIBERATELY NOT `DAIMOND_PORT` OR `DAIMOND_GW_PORT`, the same rule and for the
@@ -284,7 +284,8 @@ const GWORDS = 'thimble cartography ' + Math.random().toString(36).slice(2, 10);
 	if (await held(APP_PORT)) {
 		console.log(`  FAIL something is already serving on :${APP_PORT}. This run starts its own `
 			+ `dev server so it can point /api at :${GW_PORT}; a server started by `
-			+ `dev/world.sh proxies to :9002 instead, and the browser would then be `
+			+ `dev/world.sh proxies to that world's OWN gateway port instead, and the `
+			+ `browser would then be `
 			+ 'talking to a gateway this file did not start. Run `bash dev/world.sh 5 --down` '
 			+ 'first, or set DAIMOND_RELAY_PORT to a free port.');
 		process.exit(1);

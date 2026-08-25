@@ -246,6 +246,196 @@ pub const RUN_WHAT_MAX: usize = 160;
 /// dropped -- see [`Resp::Runs`]'s `more`.
 pub const RUNS_MAX: usize = 200;
 
+// ── Why a file edit is a message and not a command ──────────────────
+//
+// Everything below this line is the answer to one measured failure. A daimon asked to
+// restore one localisation key in eight files had no way to change a file on the machine
+// except by running a program that changes files, so it ran `sed -i`; call 20 put a French
+// apostrophe into a single-quoted JavaScript string, and 71 of the 91 remaining calls went
+// on repairing that one line, every attempt another `sed` whose own quoting had to survive
+// the argument vector and the JavaScript string at once.
+//
+// The missing thing was never a permission. `Req::Exec` already carries the fence, the
+// working directory and the whole compartment; what it does not carry is a VERB that says
+// "replace this text with that text", so the intent had to be spelled as a program, and a
+// program that edits text is a small language with its own escaping.
+//
+// So this is a request rather than a convention on top of `Exec`, for the same reason
+// `Req::Verify` is: there is no element of it a page can turn into a program. The op names
+// what to do, the paths are absolute and vetted, and the strings are DATA at both ends --
+// nothing here is ever parsed as syntax by anything.
+//
+// **It is fenced exactly as a command is, by the same kernel, from the same plan.** The
+// hand does not touch the file: it spawns the same launcher a command is spawned through,
+// which applies the same Landlock ruleset and the same system-call filter and only then
+// opens anything. A path the fence does not reach fails with the kernel's own refusal, not
+// with a check written here -- which is the whole reason the work happens in a child at all
+// rather than in the hand, whose own process is deliberately unfenced.
+
+/// The largest text one [`Resp::Filed`] carries back.
+///
+/// A read is paged by the caller, so this is the backstop rather than the budget: a read stops
+/// on the last whole line that fits and SAYS how many lines went, and a single line longer than
+/// this is cut with the count of what was left on it, because a frame that will not fit is
+/// dropped and silence is the one answer that lies.
+pub const FILE_TEXT_MAX: usize = 512 * 1024;
+
+/// The prefix a walk's glob is written against, and why one is needed.
+///
+/// **A glob is written by a MODEL, in the paths a model sees.**  `www/i18n/en.js` is the
+/// spelling in the workspace; on this machine the same file is
+/// `/home/…/granted/repo/www/i18n/en.js`, and a glob matched against the second excludes every
+/// file there is.  Measured on the door's first live run, 2026-08-25: three searches in a row
+/// answered *"No matches"* with *"804 file(s) the glob excluded"* beside them, which is the
+/// note doing its job and the filter doing the opposite of its job.
+///
+/// So the page sends the prefix it would strip off a result, and the hand matches the glob
+/// against what is left.  A path that is somehow not under it is matched whole, because a file
+/// silently excluded is the failure this exists to end.
+pub const GLOB_BASE_DOC: () = ();
+
+/// The largest answer a [`FileOp::Search`] builds before it stops adding files.
+///
+/// A search answers with the LINES its pattern matched on, so its size is set by how much
+/// matched rather than by how big the files are.  Below [`FILE_TEXT_MAX`] on purpose: an answer
+/// at the frame's own ceiling leaves nothing for the envelope.  What did not fit is COUNTED and
+/// named, never dropped in silence -- a search that stopped early and did not say so is a search
+/// that has established nothing.
+///
+/// **It answered with whole file texts until 2026-08-25**, which made this a ceiling on the SIZE
+/// OF A FILE rather than on the size of an answer: `src/tools.rs`, 1,211,990 bytes, was passed
+/// over with the answer still empty, and no `glob` or `path` a caller could write made one file
+/// smaller.  That is `dev/BLOCKERS.md` B17.
+pub const SEARCH_ANSWER_MAX: usize = 384 * 1024;
+
+/// How many neighbours of a matching line travel with it.
+///
+/// The page's own ceiling on `before` and `after` (`SEARCH_CONTEXT_MAX` in `src/tools.rs`), so
+/// every line the page could be asked to print is in the answer and none of the ones it could
+/// not are.  The two numbers are the same number and a search that sent fewer would silently
+/// print less context than it was asked for.
+pub const SEARCH_CONTEXT_LINES: usize = 20;
+
+/// What a [`Req::File`] is asking to be done to one file.
+///
+/// The shapes are the file tools' own, deliberately: the app already offers a page a read
+/// by line range, an overwrite, an exact-substring replacement, a rename and a listing, and
+/// a second editing model reaching the machine would be worse than one that only half
+/// works.  Nothing is added here that browser storage does not already do.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FileOp {
+    /// Text from `path`, from the 1-based line `offset`, at most `limit` lines.
+    Read {
+        path:   String,
+        offset: u32,
+        limit:  u32,
+    },
+    /// Replace the whole of `path` with `content`, creating it and its parents.
+    Write {
+        path:    String,
+        content: String,
+    },
+    /// Replace `old` with `new` in `path`, exactly once.
+    ///
+    /// The count is the answer, not a detail: an `old` occurring twice or not at all is
+    /// REFUSED with the number it found, so a caller is never left guessing which of six
+    /// edits landed.
+    Edit {
+        path: String,
+        old:  String,
+        new:  String,
+    },
+    /// Rename `path` to `to`, which must not already exist.
+    Move {
+        path: String,
+        to:   String,
+    },
+    /// What is in the directory `path`.
+    List {
+        path: String,
+    },
+    /// Create the directory `path` and any parent it needs.
+    MkDir {
+        path: String,
+    },
+    /// Walk `paths` and return the text of every file the pattern matches somewhere in.
+    ///
+    /// **A verb of its own, and not a `List` the page then walks.**  A search is the one file
+    /// operation whose cost is in the WALK rather than in the file, and a page that listed a
+    /// directory, then listed its children, then read each candidate would pay a round trip per
+    /// entry for a question whose answer is usually "no".  Measured 2026-08-25: with the editing
+    /// door open, 33 of a daimon's 45 calls were `run grep -n` for a line number.
+    ///
+    /// **The hand's match is a FILTER and the page's is the answer.**  Both ends compile the
+    /// same `fe2o3_text` regex from the same source, so what comes back is every file the page
+    /// would have found something in -- and the page then runs its own scan over those files
+    /// unchanged, which is what keeps the context lines, the paging and the report one
+    /// implementation rather than two that agree until they do not.
+    Search {
+        paths:  Vec<String>,	// absolute start directories, walked in this order
+        query:  String,		// the regex source, already quoted where the caller asked for a literal
+        ci:     bool,		// fold case
+        glob:   String,		// only consider paths matching this; empty for all
+        base:   String,		// the prefix the glob is written against; see below
+        skip:   Vec<String>,	// directory NAMES to pass over, decided by the page
+        budget: u32,		// entries the walk may look at before it stops and says where
+        cap:    u32,		// the largest file, in bytes, worth opening
+    },
+    /// Walk `paths` and return every path matching `pattern`, reading none of them.
+    Glob {
+        paths:   Vec<String>,
+        pattern: String,
+        base:    String,
+        skip:    Vec<String>,
+        budget:  u32,
+    },
+}
+
+impl FileOp {
+    /// The word this travels under.
+    pub fn word(&self) -> &'static str {
+        match self {
+            Self::Read  { .. }	=> "read",
+            Self::Write { .. }	=> "write",
+            Self::Edit  { .. }	=> "edit",
+            Self::Move  { .. }	=> "move",
+            Self::List  { .. }	=> "list",
+            Self::MkDir { .. }	=> "mkdir",
+            Self::Search { .. }	=> "search",
+            Self::Glob { .. }	=> "glob",
+        }
+    }
+
+    /// The path the op is about, which is the one a refusal must name.
+    ///
+    /// A walk names several, and answers the FIRST -- the place the caller asked about, which is
+    /// where a refusal is most useful and what the journal should record it under.
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Read  { path, .. } | Self::Write { path, .. } | Self::Edit { path, .. }
+            | Self::Move { path, .. } | Self::List { path } | Self::MkDir { path } => path,
+            Self::Search { paths, .. } | Self::Glob { paths, .. } =>
+                paths.first().map(|s| s.as_str()).unwrap_or(""),
+        }
+    }
+
+    /// Every path the op names, which is what a caller vetting them has to see.
+    pub fn paths(&self) -> Vec<&str> {
+        match self {
+            Self::Move { path, to } => vec![path.as_str(), to.as_str()],
+            Self::Search { paths, .. } | Self::Glob { paths, .. } =>
+                paths.iter().map(|s| s.as_str()).collect(),
+            other => vec![other.path()],
+        }
+    }
+
+    /// Does the op change anything on disk?
+    pub fn writes(&self) -> bool {
+        !matches!(self, Self::Read { .. } | Self::List { .. }
+            | Self::Search { .. } | Self::Glob { .. })
+    }
+}
+
 /// A message from the page to the hand.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Req {
@@ -343,6 +533,29 @@ pub enum Req {
         /// never having run, which is a worse result than a slow one and is
         /// meant to be.
         timeout_ms: u64,
+    },
+    /// Change one file on the machine, behind the same fence a command runs behind.
+    ///
+    /// **No program, no argument vector, no shell, and nothing to escape.**  That is the
+    /// whole of why it exists; the section above this enum has the measurement.
+    File {
+        /// Caller-chosen identifier, echoed on the response.
+        id:       String,
+        /// What to do, and to what.
+        op:       FileOp,
+        /// Absolute working directory, which must lie inside the fence.
+        ///
+        /// Carried for the same reason [`Req::Exec`] carries one -- it is the place the op
+        /// happens in, and the hand vets it against the fence before anything is opened --
+        /// though every path in an op is absolute, so nothing is resolved against it.
+        cwd:      String,
+        /// What the op may touch.  The same field, the same shape and the same clamp as
+        /// [`Req::Exec`]'s.
+        fence:    FenceSpec,
+        /// The toolchains the user granted this turn, carried for the same reason
+        /// [`Req::Exec`] carries them: the hand clamps the fence against them and will not
+        /// take a root on the page's word alone.
+        toolkits: Vec<String>,
     },
     /// Send a signal to a running command.
     Signal {
@@ -490,6 +703,21 @@ pub enum Resp {
         id:     String,
         /// The whole sentence.
         reason: String,
+    },
+    /// One [`Req::File`] finished, and this is what to tell the model.
+    ///
+    /// One blob and not a stream, because a file op has one answer.  `ok` false is a
+    /// refusal in the same voice as [`Resp::Refused`] -- the string was not found, it was
+    /// found twice, the kernel would not open the path -- and it is carried here rather
+    /// than as a `Refused` so that the caller can tell "the hand declined the request" from
+    /// "the request was carried out and this is what happened".
+    Filed {
+        /// The caller's identifier.
+        id:   String,
+        /// Whether anything was done.
+        ok:   bool,
+        /// The answer: the file's text, the listing, or the sentence explaining the refusal.
+        text: String,
     },
     /// A terminal is open and the command is attached to it.
     Opened {

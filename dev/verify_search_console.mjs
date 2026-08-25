@@ -98,11 +98,17 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { requireFreshGateway, GWCWD } from './gwbin.mjs';
 import { signInFresh } from './session.mjs';
+import { GW_PORT, GW_URL } from './ports.mjs';
 
+// Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
+// `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
+// run under `xvfb-run` still went to the compositor and opened a window on the owner's
+// desktop. Importing this strips the two variables from `process.env`, which is all a
+// launcher that spreads `process.env` needs. See dev/display.mjs.
+import './display.mjs';
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
 const GWDIR = path.join(ROOT, 'gateway');
-const GW_URL = 'http://127.0.0.1:9002';
 const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 
 const PW = process.env.DAIMOND_PW
@@ -1153,7 +1159,7 @@ try {
 		let stray = false;
 		try { stray = (await fetch(`${GW_URL}/api/health`)).ok; } catch (e) {}
 		if (stray) {
-			check('no gateway is already running on :9002', false,
+			check(`no gateway is already running on :${GW_PORT}`, false,
 				'stop it first (pkill -f release/daimond_gateway); this leg pins an owner');
 		} else {
 			check('the gateway starts', await startGateway(null));

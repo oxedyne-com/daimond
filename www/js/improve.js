@@ -665,6 +665,21 @@
 			'Your note is kept here and nothing tried again.');
 	}
 
+	/// Put one already-stored note on the wire and take the answer back into the
+	/// record. THE ONE DOOR a note leaves by, whether the press came from the box,
+	/// from a kept row, or from a daimon that was told yes -- so a fourth caller
+	/// cannot quietly acquire a different idea of what "sent" means.
+	async function through(rec, parts) {
+		var a = await post(parts);
+		if (a.ok) {
+			rec.sent = Date.now();
+			rec.n    = Math.max(0, whole(a.data && a.data.number));
+			save();
+			absorb(cleanProp(a.data), true);
+		}
+		return a;
+	}
+
 	async function send() {
 		var text = outgoing();
 		if (!text) { flash(tOr('social.nothing', 'Write something first.')); return null; }
@@ -677,13 +692,8 @@
 		var rec = store(text, 0);
 		clearBox();
 		render();
-		var a = await post(parts);
-		if (a.ok) {
-			rec.sent = Date.now();
-			rec.n    = Math.max(0, whole(a.data && a.data.number));
-			save();
-			absorb(cleanProp(a.data), true);
-		} else flash(keptAfter(a));
+		var a = await through(rec, parts);
+		if (!a.ok) flash(keptAfter(a));
 		render();
 		return rec;
 	}
@@ -698,13 +708,8 @@
 		var parts = split(rec.text);
 		if (!parts) { flash(tOr('social.no_title', 'The first line is the title. Write one, then what happened underneath.')); return false; }
 		if (!hasVoice()) { flash(tOr('social.as_novoice', 'You have no voice, so a note can only be kept here.')); return false; }
-		var a = await post(parts);
-		if (a.ok) {
-			rec.sent = Date.now();
-			rec.n    = Math.max(0, whole(a.data && a.data.number));
-			save();
-			absorb(cleanProp(a.data), true);
-		} else flash(keptAfter(a));
+		var a = await through(rec, parts);
+		if (!a.ok) flash(keptAfter(a));
 		render();
 		return a.ok;
 	}
@@ -1922,6 +1927,21 @@
 		/// Be told when a view is opened, by name. Called on every switch and on
 		/// every panel open, so a lane refreshes when somebody looks.
 		watch:  function (fn) { if (typeof fn === 'function') _watch.push(fn); },
+		/// THE DAIMON'S DOOR ONTO THIS PANEL, which the engine binds to by this
+		/// name (`src/wasm/social.rs`). Three methods and the split between them
+		/// is the point; the section above `socialRead` says why.
+		///
+		/// ON THE PANEL'S OWN OBJECT and not on a second global beside it. The
+		/// first draft of this lane installed `window.DaimondSocial` afresh and
+		/// clobbered everything above -- `Panels.show('social')` calls `onOpen()`
+		/// with no guard on the method, so the panel threw on its first open. A
+		/// surface has one object; what a model may do with it is part of it.
+		read:    socialRead,
+		compose: socialCompose,
+		commit:  socialCommit,
+		/// What is composed and not yet sent, for a verifier. A token nobody has
+		/// approved is a publication that has not happened.
+		drafts:  function () { return Object.keys(_drafts); },
 	};
 
 	/// References, for whatever renders a message. Kept here rather than in the
@@ -1945,6 +1965,332 @@
 		/// Forget what has been resolved, for a test that wants a cold cache.
 		forget: function () { _refs = {}; },
 	};
+
+	// ── The daimon's door onto this panel ──────────────────────
+	//
+	// WHY THIS EXISTS, WHICH IS NOT WHAT IT DOES. On 2026-08-24 two real daimons,
+	// on two accounts and two different models, were each asked to do one side of
+	// this panel's work -- one to report a defect in Daimond, one to find that
+	// report and agree with it. Neither could reach the panel, and neither said
+	// so. One told its user to go and open "Daimond's feedback/issue reporting
+	// interface (typically accessible from a menu in the app)", which is this
+	// panel, and which it had just failed to find. The other spent eighteen calls
+	// searching the workspace for "where the Social panel stores its reports" and
+	// finished by telling the user "The gateway isn't running." The gateway was
+	// running.
+	//
+	// A working surface the model cannot reach is a surface the model will deny.
+	// That rule is `Tool::FileShow`'s and it is written out in full in
+	// `src/tools.rs`; this file is its second instance.
+	//
+	// THREE METHODS AND THE SPLIT BETWEEN THEM IS THE POINT.
+	//
+	//   read     answers what is on a view, in prose. Nobody is asked anything:
+	//            the owner ruled on 2026-08-24 that seeing is immediate, because
+	//            it is information and because a daimon that can see the panel
+	//            stops denying the panel is there.
+	//   compose  works out exactly what one act would put on the wire, and mints
+	//            a token standing for those bytes. NOTHING IS SENT.
+	//   commit   sends what a token holds, and only what it holds.
+	//
+	// COMPOSE AND COMMIT ARE TWO CALLS SO THAT CONSENT IS BOUND TO BYTES. The
+	// user is shown what `compose` composed and answers about that; `commit`
+	// sends that same payload. One call taking the model's arguments and asking
+	// on the way past would mean the person approved a rendering and the app sent
+	// a rebuild of it -- and the two part company at exactly the field somebody
+	// would have wanted to see, the build identifier that travels with a note or
+	// the title of the proposal a vote lands on.
+	//
+	// A TOKEN IS SPENT ONCE. Left spendable, a yes about one publication would be
+	// a licence to publish it again, which is the per-host memory mistake this
+	// panel must not repeat: what is being approved here is a payload, not a
+	// destination.
+	//
+	// WHAT THIS FILE ANSWERS AND WHAT RUST ANSWERS. Every sentence about a
+	// RECORD is composed here -- which proposals exist, their tallies, their
+	// states, what a message says -- because this is where the record lives and
+	// because a second renderer in Rust would disagree with the screen the user
+	// is looking at the first time either changed. Every sentence that DECIDES
+	// something is composed in Rust: the refusals about arguments, the refusal a
+	// dispatched worker gets, and the question put to the user.
+
+	var _drafts = Object.create(null);	// tokens minted by compose(), spent by commit()
+	var _draftN = 0;
+	var DRAFT_LIFE = 300000;			// five minutes for a person to read and answer
+
+	/// Forget drafts nobody answered.
+	///
+	/// A DECLINED DRAFT IS NEVER TOLD SO. The engine discards the token when the
+	/// user says no and there is no message back to here, so without this a
+	/// refused publication would sit in memory with a live handle on it for as
+	/// long as the tab is open. Nothing can reach one -- the engine composes a
+	/// fresh draft each time -- but "nothing can reach it" is an argument about
+	/// today's callers, and the payload is a public post in somebody's name.
+	function sweepDrafts() {
+		var cut = Date.now() - DRAFT_LIFE;
+		Object.keys(_drafts).forEach(function (k) {
+			if (!_drafts[k] || _drafts[k].at < cut) delete _drafts[k];
+		});
+	}
+
+	/// The request, as the engine wrote it.
+	function req(json) {
+		try { return JSON.parse(String(json || '{}')) || {}; }
+		catch (e) { return {}; }
+	}
+
+	/// A refusal a model reads and acts on. The opening word is what the fold's
+	/// ledger reads (see `call_outcome` in src/tools.rs), so a refusal that did
+	/// not open with it would be booked as work that was done.
+	function no(why) { return 'Refused: ' + why; }
+
+	/// Why the forge would not, said for a model rather than for the screen.
+	///
+	/// The nine tokens are the contract's and are stable; `saying()` beside this
+	/// is prose for a person, translated eight ways and reworded whenever it
+	/// reads badly. A model branching on that would branch on a translation.
+	function whyNot(a) {
+		var w = (a && a.why) || 'gateway';
+		if (w === 'unvoiced') {
+			return 'this account has no voice on the forge, so it cannot write there. '
+				+ 'Tell the user: the Social panel has a control for setting one.';
+		}
+		if (w === 'unpermitted') {
+			return 'this account\'s voice is not allowed to do that on the forge.';
+		}
+		if (w === 'throttled') {
+			return 'the forge is rate-limiting this account'
+				+ (a.because ? ' (' + a.because + ')' : '') + '. Wait rather than retrying now.';
+		}
+		if (w === 'no_proposal' || w === 'absent') {
+			return 'the forge has no such proposal. Read the proposals again -- the number may '
+				+ 'have been wrong.';
+		}
+		if (w === 'offline')  return 'the request never reached the forge.';
+		if (w === 'gateway')  return 'Daimond\'s gateway would not carry it'
+			+ (a && a.status ? ' (' + a.status + ')' : '') + '.';
+		return 'the forge answered \'' + w + '\'.';
+	}
+
+	/// One proposal as a model should read it: the number first, because that is
+	/// what every later call is aimed with.
+	function sayProp(p, full) {
+		var out = '#' + p.n + '  ' + (p.title || '(no title)')
+			+ '  [' + p.state + ']';
+		if (p.votes) {
+			out += '  ' + p.votes.for + ' for, ' + p.votes.against + ' against';
+			if (p.asked && p.mine === 1)  out += ' (this account voted for it)';
+			if (p.asked && p.mine === -1) out += ' (this account voted against it)';
+		}
+		if (p.author)   out += '  by ' + p.author;
+		if (p.comments) out += '  ' + p.comments + ' comment' + (p.comments === 1 ? '' : 's');
+		if (full && p.body) out += '\n' + p.body;
+		if (full && p.discussion && p.discussion.length) {
+			out += '\n--- discussion ---';
+			p.discussion.forEach(function (d) {
+				out += '\n' + (d.author || 'somebody') + ': ' + d.said;
+			});
+		}
+		return out;
+	}
+
+	/// Read one view of the panel.
+	///
+	/// THE PANEL IS DRIVEN AND THEN READ, rather than a second request being made
+	/// beside it. What the model is told is therefore what is on the user's
+	/// screen -- which is the whole point of a daimon being able to see this at
+	/// all, and it is also why a listing here can never drift from the listing
+	/// somebody is looking at.
+	async function socialRead(reqJson) {
+		var r     = req(reqJson);
+		var view  = String(r.view || 'proposals');
+		var limit = Math.max(1, Math.min(50, r.limit | 0 || 12));
+		if (view === 'proposals') {
+			var ok = await loadList(false);
+			if (!ok) return no('nothing was read: ' + whyNot(_list.err));
+			// A PAGE IS NOT A LISTING, and the difference only shows on a busy
+			// repository. `loadList(false)` fetches PAGE records and the panel
+			// offers a button for the rest; a tool call has no button, so a
+			// daimon asking for 50 was answered with 25 and never saw the older
+			// ones at all -- while this tool's own description tells it to read
+			// the proposals first so it does not open a second one about
+			// something already there. It could not.
+			//
+			// The walk is the PANEL'S walk, called again rather than written
+			// again: every guard on it -- never `from=0`, stop on a short page,
+			// stop on a page that did not descend -- is why a client of this
+			// contract does not loop for ever, and a second walk here would be a
+			// second set of them to keep right. Bounded by the limit, which the
+			// schema caps at 50, so it is at most two more requests.
+			var steps = 0;
+			while (_order.length < limit && !_list.done && steps++ < 8) {
+				if (!(await loadList(true))) break;
+			}
+			var rows = _order.slice(0, limit).map(function (n) { return sayProp(_by[n], false); });
+			if (!rows.length) {
+				return 'Nobody has proposed anything about Daimond yet. Yours would be the '
+					+ 'first: social_send with act "propose".';
+			}
+			return 'What people have reported or asked for about Daimond, newest first '
+				+ '(' + _list.total + ' in all, ' + rows.length + ' shown). Read one in full '
+				+ 'with view "proposal" and its number; back one with social_send.\n\n'
+				+ rows.join('\n');
+		}
+		if (view === 'proposal') {
+			var n = r.n | 0;
+			var got = await loadOne(n);
+			if (!got) return no('nothing was read: ' + whyNot(_list.err));
+			var p = _by[n];
+			if (!p) return no('the forge answered about no proposal numbered ' + n + '.');
+			return sayProp(p, true);
+		}
+		if (view === 'notes') {
+			var notes = load().notes.slice(0, limit);
+			if (!notes.length) {
+				return 'This device has kept no notes about Daimond.';
+			}
+			return 'Notes kept on this device (' + notes.length + '):\n\n'
+				+ notes.map(function (rec) {
+					return (rec.sent ? ('sent as #' + rec.n) : 'NOT SENT') + '  ' + rec.text;
+				}).join('\n\n');
+		}
+		if (view === 'messages') {
+			if (!window.DaimondPost) return no('this build has no messaging.');
+			var msgs = (DaimondPost.list() || []).slice(0, limit);
+			var tray = (DaimondPost.tray() || []).length;
+			if (!msgs.length) {
+				return 'This account\'s message list is empty.'
+					+ (tray ? ' ' + tray + ' are waiting to be accepted, which only the user can do.' : '');
+			}
+			return 'Messages on this account (' + msgs.length + ' shown'
+				+ (tray ? ', ' + tray + ' more waiting to be accepted' : '') + '):\n\n'
+				+ msgs.map(function (m) {
+					return (m.dir === 'out' ? 'to ' : 'from ')
+						+ (m.dir === 'out' ? (m.to || m.gid || '?') : (m.from || '?'))
+						+ ': ' + String(m.body || '').slice(0, 400);
+				}).join('\n');
+		}
+		if (view === 'people') {
+			if (!window.DaimondPost) return no('this build has no messaging.');
+			var who = (DaimondPost.people() || []).slice(0, limit);
+			if (!who.length) {
+				return 'Nobody is in this account\'s directory yet, so there is nobody to write to.';
+			}
+			return 'People this account can reach (' + who.length + '):\n\n'
+				+ who.map(function (p) { return (p.label || '(unnamed)') + '  [' + p.state + ']'; }).join('\n');
+		}
+		return no('\'' + view + '\' is not one of this panel\'s views.');
+	}
+
+	/// Work out what one act would publish, and mint a token standing for it.
+	///
+	/// The characters in `shown` are what the user is asked about, so everything
+	/// that would travel is in them -- including the sealed build identifier,
+	/// which the user's own box carries and which a person approving a report in
+	/// their name is entitled to see before it goes.
+	async function socialCompose(reqJson) {
+		var r = req(reqJson);
+		var act = String(r.act || '');
+		if (!hasVoice()) {
+			return JSON.stringify({ refusal: no('nothing was composed: this account has no voice '
+				+ 'on the forge, so it cannot publish there. Tell the user, and say what you '
+				+ 'wanted to publish -- the Social panel has a control for setting a voice.') });
+		}
+		var shown = '', payload = null;
+		if (act === 'propose') {
+			// The build identifier travels with a note the user sends, so it travels
+			// with this one -- and it is therefore SHOWN. Consent to a report that
+			// silently also names the build would be consent to something the person
+			// did not read.
+			var build = contextOff() ? '' : _build;
+			payload = { act: 'propose', title: String(r.title || ''), body: String(r.body || ''), build: build };
+			shown = 'A NEW PROPOSAL at ' + FORGE_HOST + ', under this account\'s voice name.\n\n'
+				+ payload.title + '\n' + payload.body
+				+ (build ? '\n\nand the build identifier ' + build : '');
+		} else if (act === 'vote') {
+			var n = r.n | 0;
+			var p = _by[n];
+			if (!p) {
+				var got = await loadOne(n);
+				if (!got) return JSON.stringify({ refusal: no('nothing was composed: ' + whyNot(_list.err)) });
+				p = _by[n];
+			}
+			if (!p) return JSON.stringify({ refusal: no('there is no proposal numbered ' + n + '.') });
+			var d = (r.d | 0);
+			payload = { act: 'vote', n: n, d: d };
+			shown = (d === 1 ? 'A VOTE FOR' : d === -1 ? 'A VOTE AGAINST' : 'TAKING BACK THE VOTE ON')
+				+ ' proposal #' + n + ' at ' + FORGE_HOST + ', under this account\'s voice name.\n\n'
+				+ (p.title || '(no title)')
+				+ (p.votes ? '\n\nIt stands at ' + p.votes.for + ' for and ' + p.votes.against + ' against.' : '');
+		} else if (act === 'comment') {
+			var cn = r.n | 0;
+			payload = { act: 'comment', n: cn, said: String(r.said || '') };
+			shown = 'A COMMENT on proposal #' + cn + ' at ' + FORGE_HOST
+				+ ', under this account\'s voice name.\n\n' + payload.said;
+		} else {
+			return JSON.stringify({ refusal: no('\'' + act + '\' is not an act this panel has.') });
+		}
+		var token = 'd' + (++_draftN) + '-' + Math.random().toString(36).slice(2, 10);
+		_drafts[token] = { at: Date.now(), payload: payload };
+		sweepDrafts();
+		return JSON.stringify({ shown: shown, token: token });
+	}
+
+	/// Publish what a token holds. The token is spent whatever happens: a yes was
+	/// a yes to ONE publication, and a failed send does not license a second
+	/// attempt nobody was asked about.
+	async function socialCommit(token) {
+		sweepDrafts();
+		var held = _drafts[String(token || '')];
+		delete _drafts[String(token || '')];
+		var d = held && held.payload;
+		if (!d) {
+			return no('nothing was published: that draft is not one this panel composed, or it '
+				+ 'has already been sent. Compose it again, and the user will be asked again.');
+		}
+		if (d.act === 'propose') {
+			var text = d.body ? (d.title + '\n' + d.body) : d.title;
+			var rec  = store(text, 0);
+			render();
+			var a = await through(rec, { title: d.title, body: d.body, build: d.build });
+			render();
+			if (!a.ok) return no('nothing was published: ' + whyNot(a)
+				+ ' The note is kept on this device and nothing was retried.');
+			return 'Published as proposal #' + rec.n + ' on the Daimond forge. It is on the '
+				+ 'user\'s Social panel now, and other people can read and vote on it.';
+		}
+		if (d.act === 'vote') {
+			var body = voteBody(d.d);
+			if (!body) return no('nothing was published: ' + d.d + ' is not a vote.');
+			var av = await ask(route('n=' + d.n + '&vote=1'), {
+				method:  'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body:    body,
+			});
+			if (!av.ok) { _list.err = av; drawProps(); return no('nothing was published: ' + whyNot(av)); }
+			var pv = absorb(cleanProp(av.data));
+			_list.err = null;
+			drawProps();
+			return 'The vote is cast on proposal #' + d.n + '. It now stands at '
+				+ ((pv && pv.votes) ? (pv.votes.for + ' for and ' + pv.votes.against + ' against')
+					: 'whatever the forge reports') + '.';
+		}
+		if (d.act === 'comment') {
+			var f = new URLSearchParams();
+			f.set('said', d.said);
+			var ac = await ask(route('n=' + d.n), {
+				method:  'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body:    f.toString(),
+			});
+			if (!ac.ok) { _list.err = ac; drawProps(); return no('nothing was published: ' + whyNot(ac)); }
+			absorb(cleanProp(ac.data));
+			_list.err = null;
+			drawProps();
+			return 'The comment is on proposal #' + d.n + ', where everybody reading it can see it.';
+		}
+		return no('nothing was published: that draft names no act.');
+	}
 
 	window.DaimondImprove = {
 		onOpen:   onOpen,

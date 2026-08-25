@@ -22,6 +22,7 @@
 // IMAP fixture on 127.0.0.1:1143, and the `email` entitlement plus Pro on the
 // harness's fixed account. run_all's phase 2 provisions all of that.
 import { open, shot, scratch } from './harness.mjs';
+import { IMAP_PORT, SMTP_PORT } from './ports.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -48,41 +49,141 @@ const p = s.page;
 // left, so a green line proved nothing about this one. Nine generations of the
 // same message were on disk by the time it was measured.
 const wiped = await p.evaluate(async () => {
-	// BOTH copies. Deleting the local one alone is not a wipe: this mailbox's files
-	// are backed by cloud residency, and the next thing that asks for one pulls the
-	// old run's copy straight back down — under its ORIGINAL name, so it reads as a
-	// message that arrived rather than one that was restored.
-	let forgotten = 0;
-	try {
-		Object.keys(DaimondCloud.index() || {}).forEach((path) => {
-			if (path.indexOf('mail/alice@test.local/') === 0) {
-				DaimondCloud.forget(path); forgotten++;
-			}
-		});
-	} catch (e) { /* no cloud on this profile, which is also a clean slate */ }
-	const root = await DaimondCloud.opfsRoot();
-	let mail;
-	try { mail = await root.getDirectoryHandle('mail'); }
-	catch (e) { return 'no mail dir (' + forgotten + ' forgotten)'; }
-	try { await mail.removeEntry('alice@test.local', { recursive: true }); }
-	catch (e) { return 'no mailbox yet (' + forgotten + ' forgotten)'; }
-	// Prove it: a wipe that silently did nothing is what put this file wrong.
-	for await (const [n] of mail.entries()) if (n === 'alice@test.local') return 'STILL THERE';
-	return 'wiped (' + forgotten + ' forgotten)';
+	// BOTH copies. Deleting the local one alone is not a wipe: the account holds this
+	// mailbox on the server as well, and the next pull puts the old run's copy
+	// straight back — under its ORIGINAL name, so it reads as a message that arrived
+	// rather than one that was restored. A small message rides inline in the sync
+	// parcel and a large attachment is offloaded to cloud storage, so both have to go.
+	const wipeOnce = async () => {
+		let forgotten = 0;
+		try {
+			Object.keys(DaimondCloud.index() || {}).forEach((path) => {
+				if (path.indexOf('mail/alice@test.local/') === 0) {
+					DaimondCloud.forget(path); forgotten++;
+				}
+			});
+		} catch (e) { /* no cloud on this profile, which is also a clean slate */ }
+		const root = await DaimondCloud.opfsRoot();
+		let mail;
+		try { mail = await root.getDirectoryHandle('mail'); }
+		catch (e) { return { how: 'no mail dir', forgotten }; }
+		try { await mail.removeEntry('alice@test.local', { recursive: true }); }
+		catch (e) { return { how: 'no mailbox yet', forgotten }; }
+		// Prove it: a wipe that silently did nothing is what put this file wrong.
+		for await (const [n] of mail.entries()) if (n === 'alice@test.local') return { how: 'STILL THERE', forgotten };
+		return { how: 'wiped', forgotten };
+	};
+	const held = async () => {
+		try {
+			const root = await DaimondCloud.opfsRoot();
+			await (await root.getDirectoryHandle('mail')).getDirectoryHandle('alice@test.local');
+			return true;
+		} catch (e) { return false; }
+	};
+	// AND THE COPY ON THE SERVER, which is the half that was missing. Every Maildir
+	// message is a workspace file, and workspace files ride in the sync parcel; the
+	// gateway holds the last one this account pushed. So the pull that follows this
+	// wipe finds files the device no longer has and adopts them — `applyFiles` in
+	// daimond.js, "only remote: adopt" — under their ORIGINAL names, carrying the
+	// PREVIOUS run's uidValidity. That is right of the product: a file missing here
+	// and present there is a file this device has not seen yet, and there is no
+	// tombstone to say otherwise. It is only wrong of a fixture that deleted it
+	// behind the app's back.
+	//
+	// A push is what makes the deletion true on both sides: the census it carries is
+	// complete and no longer names the mailbox, so the parcel the gateway keeps stops
+	// holding it and no later pull can put it back. Looped, because a pull already in
+	// flight can restore between the wipe and the push, and because `push` declines
+	// while another is running rather than queueing.
+	//
+	// WITHOUT THIS the run reads the last run's mail: `selectFolder` correctly
+	// declines to fetch a folder that already has mail on screen, so Sent is never
+	// synced, its watermarks stay at zero, and the check below is read as a defect in
+	// the product. Measured on 2026-08-24: one run against a fresh profile passed
+	// 28/28, a second against the same profile failed on exactly that check.
+	// AND THE ENGINE IS QUIET BEFORE AND AFTER, WHICH IS WHAT CLOSES THE RACE.
+	//
+	// Sleeping 1200ms and asking whether the mailbox came back only NARROWS the window: a
+	// pull already in flight when the loop exits lands afterwards, adopts the previous
+	// run's mail back -- correctly, since a file the gateway holds and this device does
+	// not is one this device has not seen -- and every check below then reads it. Measured
+	// on 2026-08-24 over eight consecutive cold runs: six passed, and runs 4 and 5 failed
+	// with two and three uidValidity generations on disk. BOTH failures reported
+	// `wiped (0 forgotten)` with no `came back, wiping again`, so the loop was satisfied
+	// when it exited and the restore arrived after it. A wait cannot see a round it does
+	// not know about, so `DaimondSync.state().quiet` was added (www/js/sync.js) to say
+	// whether one is running OR armed, and this waits for it rather than for a clock.
+	const quiet = async (ms) => {
+		const until = Date.now() + ms;
+		for (;;) {
+			let st;
+			try { st = DaimondSync.state(); } catch (e) { return 'no sync here'; }
+			if (st.quiet) return '';
+			if (Date.now() > until) return 'still ' + (st.busyWith || 'busy');
+			await new Promise((r) => setTimeout(r, 100));
+		}
+	};
+	let last = { how: 'no mail dir', forgotten: 0 }, note = [];
+	// FIRST: nothing may be in flight when the wipe begins, or the wipe races the round
+	// that is already reading the mailbox it is about to delete.
+	const before = await quiet(20000);
+	if (before) note.push('did not go quiet before the wipe (' + before + ')');
+	// THE LOOP MAKES THE RESTORE HAPPEN RATHER THAN WAITING TO SEE IF IT WILL.
+	//
+	// Waiting for quiet is not enough and was measured not to be: 6 of 8 cold runs on
+	// 2026-08-24, with the two failures reporting `wiped (0 forgotten)` and no complaint
+	// from `quiet` at all. A pull can be BEGUN after this device went quiet -- the wake
+	// channel hears a version it has not got and starts one -- so "nothing is running"
+	// is not "nothing is coming", and no amount of waiting makes it so.
+	//
+	// So each turn of the loop deletes, pushes, and then PULLS ON PURPOSE. If the gateway
+	// still holds the mailbox, that pull adopts it back HERE, inside the loop, where the
+	// next turn deletes it again; if it does not, the mailbox stays gone and the loop ends
+	// on a device that has just pulled and still has no mail. That is a fixed point rather
+	// than a quiet moment, and a later pull can restore nothing because there is nothing
+	// at the far end to restore.
+	for (let i = 0; i < 6; i++) {
+		last = await wipeOnce();
+		if (last.how === 'STILL THERE') break;
+		if (!window.DaimondSync || !DaimondSync.push) { note.push('no sync here'); break; }
+		try { await DaimondSync.push(); } catch (e) { note.push('push threw'); }
+		const after = await quiet(20000);
+		if (after) note.push('did not go quiet after the push (' + after + ')');
+		// WHAT THE PUSH ACTUALLY SENT, recorded because it decides whether the far end may
+		// drop the mailbox at all: only a COMPLETE census entitles the receiver to delete by
+		// absence (`collectSync`, `applyFiles`). An incomplete one leaves the gateway holding
+		// what this device just deleted, and no number of pushes will take it away.
+		try {
+			const par = await DaimondSync.parcel();
+			if (par && par.filesComplete !== true) note.push('census INCOMPLETE at push ' + (i + 1));
+		} catch (e) { /* nothing to say about a parcel that could not be built */ }
+		// The restore, forced.
+		try { await DaimondSync.pull(); } catch (e) { note.push('pull threw'); }
+		const pulled = await quiet(20000);
+		if (pulled) note.push('did not go quiet after the pull (' + pulled + ')');
+		if (!await held()) break;
+		note.push('came back, wiping again');
+	}
+	const settled = await quiet(20000);
+	if (settled) note.push('did not settle (' + settled + ')');
+	const back = await held();
+	return last.how + ' (' + last.forgotten + ' forgotten'
+		+ (note.length ? '; ' + note.join('; ') : '') + ')'
+		+ (back ? ' — AND THE SERVER PUT IT BACK' : '');
 });
 check('the mailbox on disk is cleared before the run, in the root the app uses',
-	/^(wiped|no mail dir|no mailbox yet)/.test(wiped), wiped);
+	/^(wiped|no mail dir|no mailbox yet)/.test(wiped) && !/PUT IT BACK/.test(wiped), wiped);
 
 // Seed the account the way the add-dialog would, but pointed at the fixture:
 // the dialog infers security from the port and offers no plaintext, so a
 // loopback test server can only be reached by seeding the record.
-await p.evaluate(async () => {
+await p.evaluate(async (PORTS) => {
 	const pass = await window.DaimondIdentity.wrap('test-app-password');
 	localStorage.setItem('daimond-mail', JSON.stringify({
 		accounts: [{
 			address: 'alice@test.local',
-			host: '127.0.0.1', port: 1143, security: 'plain',
-			smtpHost: '127.0.0.1', smtpPort: 1587, smtpSecurity: 'plain',
+			host: '127.0.0.1', port: PORTS.imap, security: 'plain',
+			smtpHost: '127.0.0.1', smtpPort: PORTS.smtp, smtpSecurity: 'plain',
 			user: 'alice@test.local', pass,
 			folder: 'INBOX', folders: {}, lastSync: 0,
 		}],
@@ -91,7 +192,7 @@ await p.evaluate(async () => {
 	window.DaimondMail.reload();
 	window.DaimondPanels.show('mail');
 	window.DaimondMail.onOpen();
-});
+}, { imap: IMAP_PORT, smtp: SMTP_PORT });
 
 // ── A. The real wire ─────────────────────────────────────────────────
 
@@ -215,18 +316,25 @@ const marks = await p.evaluate(() => {
 // fixture mints a fresh `uidValidity` every time it starts — so a file stamped with
 // a generation this run never saw is a file from a previous run.
 //
-// That is not hypothetical. The wipe above is now correct and the directory IS
-// empty when this file starts, yet older generations reappear during the run:
-// they are restored from the account's CLOUD residency, which this file has never
-// cleared. Every check above was therefore reading whatever the last run left, and
-// a green line proved nothing about this one.
+// That is not hypothetical. The wipe above empties the directory, and older
+// generations reappeared during the run anyway: the pull that follows adopts every
+// mail file the gateway's parcel still held, which is why the wipe above now clears
+// the server's copy too. Every check above was otherwise reading whatever the last
+// run left, and a green line proved nothing about this one.
 //
 // Checked rather than tolerated, because the failure it caused was invisible: with
 // one stale message already in `Sent`, `selectFolder` correctly declines to fetch a
 // folder that has mail on screen — so Sent was never synced, its watermarks stayed
 // at zero, and the check below was read as a defect in the product for two
 // sessions running.
-const gens = new Set(disk.filter(f => /\.daimond:2,/.test(f))
+// `%3A`, NOT `:`. A colon is not a legal OPFS name, so `src/fsname.rs` escapes it
+// and every message on disk is `<uid>.<uidValidity>.daimond%3A2,`. This read
+// `\.daimond:2,` and therefore matched NOTHING, in every run this file has ever
+// had: it reported "0 uidValidity generations on disk" and passed while the check
+// three lines above was listing two of them. The one guard against a run reading
+// the last run's mail was inert for the whole of its life. Both spellings are
+// accepted because the tolerance in `diskNameIn` means either can be met.
+const gens = new Set(disk.filter(f => /\.daimond(?::|%3A)2,/.test(f))
 	.map(f => (f.split('/').pop() || '').split('.')[1]).filter(Boolean));
 check('the mail on disk is from THIS run, not restored from an earlier one',
 	gens.size <= 1,

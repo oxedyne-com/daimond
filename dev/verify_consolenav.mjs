@@ -32,6 +32,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+// Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
+// `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
+// run under `xvfb-run` still went to the compositor and opened a window on the owner's
+// desktop. Importing this strips the two variables from `process.env`, which is all a
+// launcher that spreads `process.env` needs. See dev/display.mjs.
+import './display.mjs';
 const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 const PW  = process.env.DAIMOND_PW
 	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');

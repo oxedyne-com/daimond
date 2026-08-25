@@ -444,6 +444,16 @@ async function startServer() {
 	check('the console recognises the owner', who.j && who.j.role === 'owner',
 		JSON.stringify(who.j));
 
+	// BUILD THE LISTING INDEXES ONCE, because the gateway no longer builds them itself.
+	// The owner's decision: a whole-store walk is off the request path, so an unbuilt
+	// listing answers `needs_build` immediately and walks nothing. The console is the only
+	// thing that builds one, by an operator pressing a button; this run does the same.
+	// Without it the passcode list reads "status 200 · 0 rows" and a working product is
+	// reported as broken. See dev/verify_applications.mjs for the whole reason.
+	for (const view of ['applications', 'passcodes', 'reports']) {
+		await call(boss.jar, 'GET', `/api/admin?view=${view}&build=1`);
+	}
+
 	// The gate bites before a browser is anywhere near it. Asserted here as well
 	// as through the app, because a client-side check that passed against a
 	// gateway which was never shut would be the worst kind of green.

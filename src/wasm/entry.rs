@@ -670,10 +670,107 @@ pub fn default_prompt(role: &str) -> String {
 /// done in the one place for every role rather than half here and half there.
 #[wasm_bindgen]
 pub fn compose_prompt(role: &str, text: &str) -> String {
+    compose_prompt_for(role, text, "")
+}
+
+/// The same, for a page that knows which model will carry the request.
+///
+/// **Two of the notes are composed on the model** -- `VERIFY_NOTE` and `QUIET_NOTE`, each
+/// measured to be worth its tokens on some models and not on others (see
+/// `prompts::CONDITIONAL` and `dev/PROMPT_NOTES.md`).  A model this build has no measurement
+/// for is given both, and so is the empty string, so a caller that does not know which client
+/// will carry the request loses nothing by saying so.
+///
+/// Kept apart from [`compose_prompt`] rather than added as a third argument to it, because a
+/// page that passed the WRONG model would drop a note the model needed -- and the failure of
+/// an absent note is a lost turn, while the cost of a needless one is about a hundred tokens.
+/// A caller with no model in hand should reach for the two-argument form and mean it.
+///
+/// # Arguments
+/// * `model` - The model as the client is configured with it, in the provider's own spelling.
+#[wasm_bindgen]
+pub fn compose_prompt_for(role: &str, text: &str, model: &str) -> String {
     match crate::prompts::Role::parse(role) {
-        Ok(r)  => r.compose(text),
+        Ok(r)  => r.compose_for(text, model),
         Err(_) => text.to_string(),
     }
+}
+
+/// The skills this build carries, one name per line, for the `/` menu to list beside the
+/// workspace's own.
+///
+/// A shipped skill has no file, so the menu -- which lists a directory -- cannot see it, and a
+/// command nobody can discover is a command nobody types. `skills::shipped_names` is the one
+/// table both this and `open_command` read, so the menu cannot offer a name that then refuses.
+#[wasm_bindgen]
+pub fn shipped_skills() -> String {
+    crate::skills::shipped_names().join("\n")
+}
+
+/// The subdirectory of a turn's own folder a drafted skill is written into.
+///
+/// The page lists it and the standing prompt names it, and neither carries its own spelling:
+/// a menu looking in one directory while a daimon is told to write in another is a draft
+/// nobody ever sees, and nothing anywhere would say so.
+#[wasm_bindgen]
+pub fn skill_drafts_dir() -> String {
+    crate::skills::DRAFTS_DIR.to_string()
+}
+
+/// Where a drafted skill of `name` is installed, or empty for a name a `/name` could not reach.
+///
+/// **Empty is a refusal and must be treated as one.** `.daimond/` is a denied subtree, and this
+/// is the one write into it the app makes -- at the person's own tap, and only ever at a path
+/// composed here from a bare identifier.
+///
+/// # Arguments
+/// * `name` - The skill's name, as it would be typed after the slash.
+#[wasm_bindgen]
+pub fn skill_install_path(name: &str) -> String {
+    crate::skills::install_path(name)
+}
+
+/// Why this draft is not worth offering to install, or empty where it is.
+///
+/// # Arguments
+/// * `name` - The name taken from the draft file's own stem.
+/// * `text` - The draft file's whole text.
+#[wasm_bindgen]
+pub fn skill_draft_refusal(name: &str, text: &str) -> String {
+    crate::skills::draft_refusal(name, text).unwrap_or_default()
+}
+
+/// The starter `DAIMOND.md` a store that has never held one is given, once.
+///
+/// The text lives in `prompts::INSTRUCTIONS_SEED` rather than in the page, for
+/// `shipped_skills`'s reason: it is checked natively against the skills this build really
+/// carries, so the file cannot tell a user to type a command that would refuse.
+#[wasm_bindgen]
+pub fn instructions_seed() -> String {
+    crate::prompts::INSTRUCTIONS_SEED.to_string()
+}
+
+/// Tell this build what has been measured about which models need which notes.
+///
+/// The shipped table is right on the day it ships and a new model appears every few weeks, so
+/// the findings are data rather than a release -- the same arrangement `set_locked_packs`
+/// uses.  Empty text restores the shipped default rather than clearing the table.
+///
+/// # Arguments
+/// * `text` - The table, in `prompts::NOTE_FINDINGS_SHIPPED`'s format: one model to a line,
+///   `<model>: <NOTE> <NOTE>`, `#` opening a comment.
+#[wasm_bindgen]
+pub fn set_note_findings(text: &str) {
+    crate::prompts::set_note_findings(text);
+}
+
+/// The findings table in force, which is the shipped one until a page replaces it.
+///
+/// Handed back as the text that is really running, so an operator console shows a person the
+/// table rather than this build's opinion of it.
+#[wasm_bindgen]
+pub fn note_findings() -> String {
+    crate::prompts::note_findings()
 }
 
 /// The rules appended to every tool-holding role, which a user's edit cannot

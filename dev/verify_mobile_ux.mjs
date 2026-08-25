@@ -124,7 +124,13 @@ check('update-chip: click gives feedback (not inert)', await page.evaluate(() =>
 await page.evaluate(() => { const b = [...document.querySelectorAll('#mnav button')].find(x => x.dataset.mp === 'work'); if (b) b.click(); });
 await sleep(400);
 check('files: toolbar icons are SVG, not emoji', await page.evaluate(() => {
-	const btns = ['new-file', 'new-dir', 'upload', 'up', 'refresh'];
+	// NO `up`. The parent-folder button is gone, at the owner's own request -- "I hate how
+	// the parent folder button in the workspace panel is right up the top away from the
+	// actual directory listing, and is such a button even needed when you could add a '..'
+	// entry?" (dev/HATES.md, 2026-08-24). There is a `..` row at the top of the listing
+	// instead, which is the universal convention, and not both. This list is the toolbar's
+	// icons, so a control that is no longer in the toolbar does not belong in it.
+	const btns = ['new-file', 'new-dir', 'upload', 'refresh'];
 	return btns.every(a => {
 		const b = document.querySelector(`[data-act="${a}"]`);
 		return b && b.querySelector('svg') && !b.textContent.trim();

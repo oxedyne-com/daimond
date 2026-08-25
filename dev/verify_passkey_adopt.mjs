@@ -24,6 +24,7 @@
 // the one part the platform does rather than us.
 
 import { open, errors, PASS } from './harness.mjs';
+import { GW_PORT } from './ports.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let failures = 0;
@@ -61,7 +62,7 @@ await page.waitForFunction(() => window.DaimondGateway
 const authed = await page.evaluate(() => !!(window.DaimondGateway && DaimondGateway.state().authed));
 check(authed, 'the signed-in account has a gateway session to store against');
 if (!authed) {
-	console.log('  (is the gateway running on :9002? this test needs it)');
+	console.log(`  (is the gateway running on :${GW_PORT}, this world's own? this test needs it)`);
 	await s.close();
 	process.exit(1);
 }

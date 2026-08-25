@@ -42,6 +42,140 @@ use crate::tools::{
 
 use oxedyne_fe2o3_core::prelude::*;
 
+// ┌───────────────────────────────────────────────────────────────────────────┐
+// │ NOTES COMPOSED ON THE MODEL                                               │
+// └───────────────────────────────────────────────────────────────────────────┘
+//
+// **A standing note is a tax on every request of every turn, and not every model is paying
+// for something.**  Measured 2026-08-24 and written up in `dev/PROMPT_NOTES.md`:
+//
+//   `VERIFY_NOTE`, 97 tokens.  With it stripped and `tools::verifier_refusal` left to carry
+//   the guidance, haiku-4.5 went straight to `verify` in one call on all three runs and never
+//   touched `run`; sonnet-4.5 the same.  deepseek-v4-pro fell from five passes in five at 1.4
+//   calls to four in six at 3.7, so it needs the note and they do not.
+//
+//   `QUIET_NOTE`, 134 tokens.  Running commentary on the first round, with the note and with
+//   it stripped: sonnet-4.5 0 characters against 96-98, haiku-4.5 0 against 53-71, glm-5.2 0
+//   against 51-55 -- and deepseek-v4-pro 0 EITHER WAY.  The one model that needs the verifier
+//   note is the one model that does not need this one, which is why neither can be decided for
+//   everybody.
+//
+// ── The default is to compose, and that is not a preference ─────────
+//
+// A note that is absent when it was needed costs a lost turn -- deepseek's two failures out of
+// six, and the forty-one calls that bought `VERIFY_NOTE` in the first place.  A note that is
+// present when it was not needed costs 97 or 134 tokens.  Those are not the same size of
+// mistake, so **a model this table has never heard of is given everything**, and a note is
+// dropped only where a measurement says so by name.
+//
+// ── Why a table and not an `if` ─────────────────────────────────────
+//
+// A new model appears every few weeks and the finding about it is a measurement somebody runs,
+// not a release.  So the findings are DATA: a shipped default that is right on the day it
+// ships, and `set_note_findings` for a page that has read a newer one -- the same arrangement
+// `tools::set_locked_packs` uses, and for the same reason the pack catalogue's names and
+// prices are the catalogue's rather than this build's.
+//
+// ── What may never be conditional ───────────────────────────────────
+//
+// [`CONDITIONAL`] is an allow-list and not a convenience.  `CRYSTAL_SCHEMA_NOTE` is
+// load-bearing on every model on the panel -- without it every one of six, sonnet-4.5
+// included, answers an empty crystal with keys `crystal.html` does not draw -- and
+// `SAFETY_CLAUSE` is the whole of the injection defence.  A findings table is data that
+// reaches this build from outside it, so a table naming either of those must do nothing at
+// all rather than turn them off.
+
+/// The notes that may be dropped for a model that was measured not to need them.
+///
+/// Everything else `Role::compose` appends is unconditional whatever any table says.
+pub const CONDITIONAL: &[(&str, &str)] = &[
+	("VERIFY_NOTE", VERIFY_NOTE),
+	("QUIET_NOTE",  QUIET_NOTE),
+];
+
+/// What each model was MEASURED not to need, as this build shipped knowing it.
+///
+/// One model to a line, `<model>: <NOTE> <NOTE>`; `#` opens a comment; a blank line is
+/// ignored.  The model is matched as a SUBSTRING of the configured model, case-folded, so one
+/// entry covers `claude-haiku-4.5`, `anthropic/claude-haiku-4.5` and a dated spelling of the
+/// same model -- which is what the provider strings really look like ([`model_note`]'s own
+/// tests carry a Fireworks path and a bare Anthropic name).  A key must therefore be a model
+/// identifier and never a family: `claude` would silently strip the note from everything.
+pub const NOTE_FINDINGS_SHIPPED: &str = "\
+	# Measured 2026-08-24; dev/PROMPT_NOTES.md has the runs and the numbers.\n\
+	# A model absent from this table is given every note.\n\
+	claude-haiku-4.5: VERIFY_NOTE\n\
+	claude-sonnet-4.5: VERIFY_NOTE\n\
+	deepseek-v4-pro: QUIET_NOTE\n";
+
+thread_local! {
+	// The findings a page has handed this build, or empty for the shipped default.  Held as
+	// the text rather than parsed, so `note_findings` can hand back exactly what is in force
+	// and the operator console can show a person the table it is really running.
+	static NOTE_FINDINGS: std::cell::RefCell<String> =
+		const { std::cell::RefCell::new(String::new()) };
+}
+
+/// Tell this build what has been measured about which models need which notes.
+///
+/// Called by the page, and by nothing else.  Empty text restores the shipped default rather
+/// than clearing the table, so a page that fails to load its copy composes what this build
+/// knows instead of composing everything for everybody or nothing for anybody.
+///
+/// # Arguments
+/// * `text` - The table, in [`NOTE_FINDINGS_SHIPPED`]'s format.
+pub fn set_note_findings(text: &str) {
+	NOTE_FINDINGS.with(|c| *c.borrow_mut() = text.trim().to_string());
+}
+
+/// The findings table in force, which is the shipped one until a page replaces it.
+pub fn note_findings() -> String {
+	let held = NOTE_FINDINGS.with(|c| c.borrow().clone());
+	if held.is_empty() { NOTE_FINDINGS_SHIPPED.to_string() } else { held }
+}
+
+/// Was this model measured not to need this note?
+///
+/// False for every model the table does not name, which is the safe answer: see the section
+/// note above on why an absent note and a needless one are not the same size of mistake.
+///
+/// # Arguments
+/// * `model` - The model as the client is configured with it, in the provider\'s own spelling.
+/// * `note` - The name of the note, as [`CONDITIONAL`] spells it.
+pub fn measured_spare(model: &str, note: &str) -> bool {
+	let model = model.trim().to_lowercase();
+	if model.is_empty() {
+		// NO MODEL IS AN UNMEASURED MODEL.  `compose` is reached from a JavaScript entry point
+		// that does not always know which client will carry the request, and answering "spare"
+		// there would drop a note on every path that had not been taught to pass one.
+		return false;
+	}
+	if !CONDITIONAL.iter().any(|(n, _)| *n == note) {
+		return false;
+	}
+	for line in note_findings().lines() {
+		let line = match line.split('#').next() {
+			Some(l) => l.trim(),
+			None    => continue,
+		};
+		let (key, notes) = match line.split_once(':') {
+			Some(pair) => pair,
+			None       => continue,
+		};
+		let key = key.trim().to_lowercase();
+		// A key too short to be a model identifier is refused rather than matched. `claude`
+		// would answer true for every Anthropic model at once, which is a table entry doing
+		// something nobody measured.
+		if key.len() < 8 || !model.contains(&key) {
+			continue;
+		}
+		if notes.split_whitespace().any(|n| n == note) {
+			return true;
+		}
+	}
+	false
+}
+
 /// Which agent a prompt belongs to.
 ///
 /// A concrete five-way choice rather than a string: an unknown role is then a
@@ -169,6 +303,21 @@ impl Role {
 	/// take the panel, its report goes to a machine, and `verify` refuses it for working
 	/// with nobody watching: see [`can_show`](Role::can_show).
 	pub fn compose(&self, text: &str) -> String {
+		self.compose_for(text, "")
+	}
+
+	/// The same, for a caller that knows which model will carry the request.
+	///
+	/// **Two of the notes are composed on the MODEL**, because measurement said neither could
+	/// honestly be kept or cut for everybody: see the section note above [`CONDITIONAL`], and
+	/// `dev/PROMPT_NOTES.md` for the runs. An unknown model -- and an empty one, which is every
+	/// caller that has not been taught to pass it -- is given everything.
+	///
+	/// # Arguments
+	/// * `text` - The user\'s own prompt for this role, or empty for the default.
+	/// * `model` - The model as the client is configured with it, or empty where the caller
+	///   does not know. Empty is treated as unmeasured and never as "needs nothing".
+	pub fn compose_for(&self, text: &str, model: &str) -> String {
 		let body = if text.trim().is_empty() { self.default_prompt() } else { text.trim() };
 		if matches!(self, Self::Reducer) {
 			return fmt!("{}\n\n{}", body, CRYSTAL_SCHEMA_NOTE);
@@ -176,12 +325,18 @@ impl Role {
 		if !self.has_tools() {
 			return body.to_string();
 		}
+		let spare = |note: &str| measured_spare(model, note);
 		let mut out = fmt!("{}\n\n{}", body, VISION_NOTE);
-		out.push_str(&fmt!("\n\n{}", QUIET_NOTE));
+		if !spare("QUIET_NOTE") {
+			out.push_str(&fmt!("\n\n{}", QUIET_NOTE));
+		}
 		if self.can_show() {
 			out.push_str(&fmt!("\n\n{}", SHOW_NOTE));
 			out.push_str(&fmt!("\n\n{}", FOLD_NOTE));
-			out.push_str(&fmt!("\n\n{}", VERIFY_NOTE));
+			if !spare("VERIFY_NOTE") {
+				out.push_str(&fmt!("\n\n{}", VERIFY_NOTE));
+			}
+			out.push_str(&fmt!("\n\n{}", SKILLS_NOTE));
 		}
 		out.push_str(&fmt!("\n\n{}\n\n{}", SEARCH_NOTE, SAFETY_CLAUSE));
 		out
@@ -193,6 +348,12 @@ impl Role {
 /// Composed in rather than written into each default prompt, for the same reason
 /// [`SAFETY_CLAUSE`] is: a user who edits their prompt would otherwise silently lose it, and an
 /// agent that does not know it can look will describe a screenshot from its filename.
+/// **65 tokens, measured 2026-08-24, and nothing on the panel needed it.**  haiku-4.5,
+/// sonnet-4.5, deepseek-v4-pro and glm-5.2 all read the PNG and looked at it with the note
+/// stripped, sixteen samples out of sixteen, and none of them denied it could see a picture.
+/// Kept all the same: the failure it names is a call NEVER MADE, so no error message can carry
+/// the guidance instead -- nothing fires.  `dev/PROMPT_NOTES.md` has the table; it is the
+/// cheapest cut in the composed prompt bar one if the prompt ever has to shrink.
 pub const VISION_NOTE: &str =
 	"## Looking at images\n\n\
 	 A PNG, JPEG, GIF or WebP read with file_read comes back as the picture itself, not as a \
@@ -219,6 +380,12 @@ pub const VISION_NOTE: &str =
 /// and is refused this one -- nobody is reading its transcript and the panel is not its to take.
 /// Telling it otherwise would spend a turn on a refusal and, worse, invite it to report to its
 /// conductor that it had shown the user something.
+/// **210 tokens, measured 2026-08-24, and it buys a round on the weaker half of the panel.**
+/// haiku-4.5, sonnet-4.5 and glm-5.2 called `file_show` with the note stripped, thirteen
+/// samples out of thirteen; deepseek-v4-pro spent a `file_glob` first on two turns of three.
+/// A round costs a whole extra request, which is far more than 210 tokens, so it stays.  The
+/// courteous denial this was written against did not happen once in twenty-two stripped
+/// samples -- which is a small sample and not a proof.  See `dev/PROMPT_NOTES.md`.
 pub const SHOW_NOTE: &str =
 	"## Showing the user a file\n\n\
 	 file_show puts a workspace file on their screen, in the document panel beside this \
@@ -253,6 +420,11 @@ pub const SHOW_NOTE: &str =
 /// **What it does NOT say is "explain less".** A turn that finds something the user needs to
 /// know says so at the end, at whatever length the finding is worth. What is forbidden is
 /// saying it BEFORE the work, and again DURING it, and again after.
+/// **134 tokens, measured 2026-08-24, and it works on three models of four.**  Running
+/// commentary on the first round of a tool-using turn, with the note and with it stripped:
+/// sonnet-4.5 0 characters against 96-98, haiku-4.5 0 against 53-71, glm-5.2 0 against 51-55,
+/// and deepseek-v4-pro 0 either way.  So it is the second candidate -- after [`VERIFY_NOTE`] --
+/// for being composed on the model rather than kept or cut for everybody.
 pub const QUIET_NOTE: &str =
 	"## Working quietly\n\n\
 	 Do not narrate. Between tool calls, say nothing: no plan before you start, no note that a \
@@ -308,6 +480,20 @@ pub const QUIET_NOTE: &str =
 /// universality clause, and the summary rule with its reason. Both are his, both are the thing
 /// that was wrong, and neither survives being compressed into the example alone -- the previous
 /// example said `a few words` and was followed exactly.
+/// **225 tokens, measured 2026-08-24, and it is the most expensive note here and not
+/// working.**  Two questions across five models: WITH the note, 5 folded answers out of 27;
+/// with it stripped, 0 out of 27.  The answers ran 1,000 to 4,800 characters -- several times
+/// the trigger -- and came back as plain markdown with `##` headings and no `<details>`
+/// anywhere.  The second question was deliberately the owner's own case of 2026-08-23, *which
+/// of these two openings is better*, and haiku-4.5 and sonnet-4.5 folded it 0 times in 6.
+///
+/// **It is kept because stripping it takes 5 to 0**, and takes qwen3.8-max from 2 out of 2 to
+/// 0 out of 3.  **One rewrite was tried and measured and was worse**: an opening that made the
+/// markup non-optional produced a fold 8 times out of 8 on both Anthropic models and NOTHING
+/// above it 8 times out of 8 -- `FOLD-ALL`, which the last paragraph here calls worse than not
+/// having the feature.  A stronger imperative moves these models from not folding at all to
+/// folding everything.  The next attempt has to beat both columns at once, and
+/// `dev/probe_notes.mjs --note FOLD_NOTE,FOLD_NOTE.owner` is what says whether it did.
 pub const FOLD_NOTE: &str =
 	"## Answering at two depths\n\n\
 	 Answer at two depths whenever you have more than a couple of sentences to say: the short \
@@ -359,6 +545,18 @@ pub const FOLD_NOTE: &str =
 /// it. What cannot be argued with is that the fence has no playwright in it and no network to
 /// fetch one. Cut the third sentence first if it must be cut; the cost is what makes the reason
 /// land, but the reason is what makes the rule true.
+/// **97 tokens -- not the 106 the `chars / 4` estimate gives -- measured 2026-08-24, and
+/// needed by one model of three.**  `dev/reflux.mjs --task verifymsg --strip VERIFY_NOTE` runs
+/// the whole turn with this gone and [`crate::tools::verifier_refusal`] left in place:
+/// haiku-4.5 went straight to `verify` in one call on all three runs and never touched `run`;
+/// sonnet-4.5 the same; deepseek-v4-pro fell from five passes in five at 1.4 calls to four in
+/// six at 3.7.
+///
+/// **So this is the clean case of the principle the refusal is built on -- a note is a tax on
+/// every turn and a message is paid only when it fires -- and the answer is neither keep nor
+/// cut.**  It is worth its tokens on the model that needs it and worth nothing on the two that
+/// do not, which is the shape of a note composed on the MODEL.  `compose` is handed a role and
+/// not a model, so that is not built; `dev/PROMPT_NOTES.md` §6 records what it would save.
 pub const VERIFY_NOTE: &str =
 	"## Checking your work\n\n\
 	 Where the work has verifiers of its own — the scripts in dev/ — verify is what runs one, and \
@@ -366,6 +564,77 @@ pub const VERIFY_NOTE: &str =
 	 fence, and inside it playwright is absent and a command has no network to fetch it. A daimon \
 	 that tried spent forty-one calls standing up a dev server and hunting for playwright, and its \
 	 turn ended with nothing verified.";
+
+// ┌───────────────────────────────────────────────────────────────────────────┐
+// │ THE FILE THAT MAKES DAIMOND KNOW HIM                                       │
+// └───────────────────────────────────────────────────────────────────────────┘
+//
+// `DAIMOND.md` is the mechanism, and it works: two layers -- the user's own from the store
+// and the project's from the open folder -- composed into every chat, every daimon, every
+// worker and the reducer, and re-read every turn.  What it was missing is a first line.  A
+// fresh workspace holds no such file, the chip that would say so is HIDDEN while the file is
+// empty, and the only way to make one was to know its exact name and type it into the New
+// file dialog.  So the app's answer to "does Daimond know me" was a blank nobody could see.
+//
+// The seed below is what a fresh store gets, once.  Three rules hold it to a size worth
+// paying for on every request of every turn:
+//
+// * **It is short.**  It rides in the standing instructions of every agent until the user
+//   rewrites it, so a paragraph of encouragement is a paragraph billed forever.
+// * **Every line is worth keeping even unedited.**  "How to answer me" is three rules that
+//   are true of nearly everybody, so the file earns its tokens on the first turn rather than
+//   after the user has been persuaded to fill it in.
+// * **It names actions**, for the reason every shipped skill does: measured on this codebase,
+//   a sentence naming an action changes what a model does and a sentence naming a prohibition
+//   does not.
+
+/// What a store that has never held a `DAIMOND.md` is given, once.
+///
+/// Exposed to the page through `crate::wasm::entry::instructions_seed`, so the text lives in
+/// one place and is testable natively -- the same arrangement `shipped_skills` uses.  A user
+/// who deletes it does not get it back: the page seeds on a flag it sets, because a file the
+/// app keeps putting back is exactly the class of snag `~/usr/OBJECTIVES.md` §1 is about.
+pub const INSTRUCTIONS_SEED: &str =
+	"# Standing instructions\n\n\
+	 This file goes to every agent Daimond runs -- every chat, every Diamond's daimon, and \
+	 every worker they dispatch -- and is read again each turn, so an edit takes effect on your \
+	 next message. Write here what you would otherwise say twice.\n\n\
+	 ## The work\n\n\
+	 Say in a line or two what you are building, what it is called, and where its files are. A \
+	 worker cannot see this conversation, so this is the only place it learns any of that.\n\n\
+	 ## How to answer me\n\n\
+	 - Lead with the answer, then the reason.\n\
+	 - Name the file and the line for anything said about code.\n\
+	 - Say in the same breath what you could not check.\n\n\
+	 Delete what is not true of you and add what is: Daimond reads exactly what this says. \
+	 Type /status for where the work stands, and /handover before you close the tab.\n";
+
+/// That skills exist, what the build already carries, and where to find the rest.
+///
+/// **A capability nothing mentions is a capability nobody uses**, and this one had no mention
+/// anywhere: `src/prompts.rs` did not contain the word *skill* at all, so no chat and no daimon
+/// was ever told that a `/name` resolves to a file's own instructions before the turn starts.
+/// The machinery has worked since seq 65 ([`crate::skills::parse_command`]) and the page has
+/// listed it on `/` since notes2; the model, which is who the user asks, knew none of it.
+///
+/// **It names actions and not a prohibition.**  Measured on this codebase and written up in
+/// `dev/PROMPT_NOTES.md`: a sentence naming an action changes what a model does and a sentence
+/// naming a prohibition does not.  So it does not say that the model cannot type a slash command
+/// -- true, and worth nothing -- it says what the model CAN do: read the directory, and name the
+/// command the user should type.
+///
+/// Composed for [`Role::can_show`] and not for every role with tools, for [`SHOW_NOTE`]'s reason
+/// in a different shape.  A skill reaches a turn through [`crate::wasm::app`]'s `open_command`,
+/// which reads what the USER typed; a dispatched worker is handed a task by a machine and there
+/// is nobody at a keyboard to type a `/name`, so the note would describe a door that is not in
+/// its wall.
+pub const SKILLS_NOTE: &str =
+	"## Skills\n\n\
+	 A skill is a saved instruction file the user runs by typing /name. handover, pickup, status \
+	 and decisions ship with Daimond; list .daimond/skills/ and read each SKILL.md for the ones \
+	 this workspace adds. Where a skill would do what is being asked, say which /name to type. \
+	 Draft a new one at skill-drafts/<name>.md in this conversation\'s own folder; the user \
+	 installs it from the / menu in one tap.";
 
 /// That the web can be searched, and whose choice the engine is, appended to every role that
 /// holds tools.
@@ -383,6 +652,11 @@ pub const VERIFY_NOTE: &str =
 /// because `compose` is handed a role and not a registry -- as [`SAFETY_CLAUSE`], which is also
 /// about pages, already is. The browser build is the product and always has them; the native
 /// build is a developer harness whose web tools refuse in plain English.
+/// **46 tokens, measured 2026-08-24, and the one note nothing could be told about.**  Four
+/// models reached for `web_search` with it stripped, twelve samples out of twelve, and none
+/// wrote a search URL by hand.  But that is ONE question over ONE round, and the harm it names
+/// -- an engine chosen on the user's behalf -- is silent when it happens.  It is also the
+/// cheapest thing in the composed prompt.  Kept, and recorded as untold rather than as proven.
 pub const SEARCH_NOTE: &str =
 	"## Searching the web\n\n\
 	 Use web_search to find a page whose address you do not already know — which search engine \
@@ -578,10 +852,20 @@ pub const DEFAULT_WORKER: &str =
 // * **Only when there is a hand.** Describing an absent capability is paid for on every request of
 //   every turn and buys nothing; where no hand is attached this is empty and nothing is appended.
 // * **Only what is true.** The folders come from `fence_spec`, which is the same function that
-//   builds the fence the command actually runs under, so the two cannot disagree. It therefore says
-//   the Diamond's own folders for a turn whose bounds name them, and the whole granted folder for a
-//   turn with no bounds -- which is what the user's own chat has, and what its file tools reach.
-//   Neither sentence is written here; both are read off the fence.
+//   builds the fence the command actually runs under, so the two cannot disagree. It says the
+//   Diamond's own folders for a turn whose bounds name them, and that sentence is not written
+//   here; it is read off the fence.
+//
+//   **The clause that used to follow it was "and the whole granted folder for a turn with no
+//   bounds -- which is what the user's own chat has, and what its file tools reach", and both
+//   halves are now wrong.** `scopeChatTo` in `www/js/daimond.js` fences every ordinary chat and
+//   refuses the turn where the scope did not take, so no turn in the browser is unbounded; and
+//   the file tools would NOT reach that fence if one were, because `mark_over` finds a path's
+//   mark in the same bound list and an unbounded turn has none -- it would be answered about
+//   browser storage while this paragraph told it the file tools reached the disk. That is
+//   `dev/BLOCKERS.md` B1 arriving through the sentence written to close it, and it is only
+//   latent because nothing reaches the `!scoped` branch. A caller that stops scoping is what
+//   makes it live.
 // * **No advice.** A model given rules about how to work spends tokens obeying them; a model given
 //   facts spends none.
 
@@ -655,12 +939,29 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) ->
 	// "not on this machine" alone reads as "out of reach", and a daimon that concluded THAT would
 	// stop writing crystals -- the same false generalisation the "to a command" clause above was
 	// added to prevent, one level along.
+	//
+	// AND IT NAMES THE SEARCH AS WELL AS THE EDIT, since 2026-08-25. With the editing door open
+	// the largest remaining cost in a turn was `run grep -n` for a line number -- 33 of a
+	// daimon's 45 calls, measured -- and a tool nothing names is a tool nothing reaches for. The
+	// clause it displaces ("there is no shell here to quote anything through") was true and is
+	// implied by "never grep or sed through run", which is shorter and tells the reader what to
+	// do rather than what is absent.
+	//
+	// AND THE SENTENCE ABOUT THE FILE TOOLS IS NOW A DIFFERENT SENTENCE. It read "your file tools
+	// are not fenced this way -- they read the whole workspace" until 2026-08-25, and lane H named
+	// it as actively unhelpful the day before that. It is now false as well as unhelpful: a file
+	// tool inside a marked folder reaches the real file, behind the same fence, and the whole of
+	// `dev/BLOCKERS.md` B2 -- 162 of 492 measured calls -- is a daimon spelling an edit as `sed`
+	// because nothing had told it otherwise. So the paragraph says the tools by name and says what
+	// to reach for, because a capability nothing names is a capability nothing uses.
 	let mut s = fmt!(
 		"## This computer\n\nCommands run on {} through Daimond's machine hand: only the paths \
-		below are reachable to a command, and every other path is refused. Your file tools are \
-		not fenced this way -- they read the whole workspace. And diamonds/, chats/ and mail/ are \
-		not on this machine but in the browser's own storage, which a file tool reaches and a \
-		command never can.", os);
+		below are reachable to a command, and every other path is refused. Your file tools reach \
+		those same paths and are fenced there the same way, changing the real file -- so search \
+		with file_search and edit with file_edit, never grep or sed through run. Anywhere else \
+		they read and write the browser's own storage, and diamonds/, chats/ and mail/ are not \
+		on this machine but in that storage, which a file tool reaches and a command never \
+		can.", os);
 	if !fence.rw.is_empty() {
 		s.push_str(&fmt!("\nRead and write: {}", fence.rw.join(", ")));
 	}
@@ -885,6 +1186,20 @@ pub const DEFAULT_REDUCER: &str =
 /// prompt forbids a fence AND [`crate::agent::compact::crystal_proposal`] strips one
 /// anyway.  A prompt is a request, and the fold is the one place where losing on the
 /// request costs the user their crystal.
+/// **211 tokens on every reducer call, measured 2026-08-24, and load-bearing on every model
+/// on the panel.**  Handed an EMPTY crystal and a delta, all six -- sonnet-4.5 included --
+/// answer with `goal`, `context`, `decisions` and `open_threads`, lifted straight out of
+/// [`DEFAULT_REDUCER`]'s own sentence, when `crystal.html` draws `title`, `summary`,
+/// `sections`, `facts`, `open` and `links`.  With the note: the right shape 17 times in 18.
+/// Without it: 0 in 18.  The proposal is well-formed JSON either way and renders as an empty
+/// crystal, which is why no test anyone would think to write catches it.
+///
+/// **Do not shorten this without re-running `dev/probe_notes.mjs --note
+/// CRYSTAL_SCHEMA_NOTE.empty`.**  One clause of it IS measurably ignored and harmlessly: the
+/// no-fence sentence is disobeyed by haiku-4.5 and sonnet-4.5 in fifteen replies out of
+/// fifteen with the note present, and obeyed by deepseek, glm and qwen -- so the paragraph
+/// below about saying it twice over is right, and it is the strip in
+/// [`crate::agent::compact::crystal_proposal`] that carries those two models.
 pub const CRYSTAL_SCHEMA_NOTE: &str =
 	"## What a crystal is\n\n\
 	 One JSON object. These are its core keys, in this order, and every one of them is \
@@ -1300,10 +1615,218 @@ mod tests {
 			"nothing says what ignoring this cost: {}", VERIFY_NOTE);
 	}
 
+	/// **A model measured not to need a note does not carry it, and an unmeasured one does.**
+	///
+	/// The two halves are the whole mechanism and each is asserted here, because either alone
+	/// passes for the wrong reason: a lookup that always answered "spare" would satisfy the
+	/// first, and one that always answered "needed" would satisfy the second.
+	///
+	/// The measurements are `dev/PROMPT_NOTES.md`'s. `VERIFY_NOTE` is dropped for haiku-4.5 and
+	/// sonnet-4.5, which reached `verify` in one call without it on every run; `QUIET_NOTE` is
+	/// dropped for deepseek-v4-pro, which narrated nothing either way -- and the two lists are
+	/// deliberately disjoint, which is the finding that made this table necessary rather than an
+	/// `if`.
+	#[test]
+	fn test_a_note_is_dropped_only_for_a_model_measured_not_to_need_it() {
+		// MEASURED, AND SPARE. The note the measurement says this model does not need is gone,
+		// and every other note is still there -- a mechanism that dropped the wrong one would
+		// pass a test that only looked for the right one's absence.
+		let haiku = Role::Chat.compose_for("", "anthropic/claude-haiku-4.5");
+		assert!(!haiku.contains(VERIFY_NOTE),
+			"haiku-4.5 was measured not to need the verify note and is carrying it");
+		assert!(haiku.contains(QUIET_NOTE),
+			"haiku-4.5 WAS measured to need the quiet note (0 chars against 53-71) and lost it");
+		for note in [VISION_NOTE, SHOW_NOTE, FOLD_NOTE, SEARCH_NOTE, SAFETY_CLAUSE] {
+			assert!(haiku.contains(note), "an unconditional note was dropped");
+		}
+		// THE OTHER WAY ROUND, on the one model whose findings are the mirror image. This is
+		// what a hardcoded list of "weak models" would have got wrong.
+		let deep = Role::Chat.compose_for("", "deepseek/deepseek-v4-pro");
+		assert!(deep.contains(VERIFY_NOTE),
+			"deepseek-v4-pro fell from 5 passes in 5 to 4 in 6 without the verify note");
+		assert!(!deep.contains(QUIET_NOTE),
+			"deepseek-v4-pro narrated nothing either way and is carrying the quiet note");
+		// AND THE SPELLING THE PROVIDERS REALLY USE. One entry has to cover the bare name, the
+		// prefixed one and a dated one, because `model_note`'s own tests carry three shapes.
+		for spelling in ["claude-haiku-4.5", "anthropic/claude-haiku-4.5",
+			"ANTHROPIC/Claude-Haiku-4.5", "claude-haiku-4.5-20260224"] {
+			assert!(!Role::Chat.compose_for("", spelling).contains(VERIFY_NOTE),
+				"{} is haiku-4.5 spelled another way and was not recognised", spelling);
+		}
+	}
+
+	/// **A model nobody has measured is given every note.**
+	///
+	/// Its own test rather than a clause of the one above, so that the red names this and not
+	/// whichever assertion happens to come first. The failure of an absent note is a lost turn
+	/// -- deepseek's two failures in six, and the forty-one calls that bought [`VERIFY_NOTE`] in
+	/// the first place -- and the cost of a needless one is about a hundred tokens. They are not
+	/// the same size of mistake, so silence means compose.
+	///
+	/// The empty model is in the list on purpose: [`Role::compose`] and
+	/// `entry::compose_prompt` both pass it, and every caller that has not been taught to say
+	/// which client will carry the request comes through here.
+	#[test]
+	fn test_a_model_nobody_has_measured_is_given_every_note() {
+		for model in ["some-provider/a-model-nobody-has-measured", "claude-haiku-9.9",
+			"glm-5.4", ""] {
+			let p = Role::Chat.compose_for("", model);
+			assert!(p.contains(VERIFY_NOTE),
+				"{} is not in the findings table and lost the verify note anyway", model);
+			assert!(p.contains(QUIET_NOTE),
+				"{} is not in the findings table and lost the quiet note anyway", model);
+		}
+		// And the plain `compose`, which is what every untaught caller reaches, is the same
+		// prompt as an unmeasured model's -- not a shorter one.
+		assert_eq!(Role::Chat.compose(""), Role::Chat.compose_for("", "a-model-never-measured"));
+	}
+
+	/// **A findings table may not turn off a note that is load-bearing on every model.**
+	///
+	/// The table is data reaching this build from outside it, so this is not a tidiness rule.
+	/// Without `CRYSTAL_SCHEMA_NOTE` every model on the panel -- sonnet-4.5 included -- answers
+	/// an empty crystal with keys `crystal.html` does not draw, and the proposal is well-formed
+	/// JSON either way. `SAFETY_CLAUSE` is the whole of the injection defence.
+	#[test]
+	fn test_a_findings_table_cannot_turn_off_a_note_that_is_never_conditional() {
+		set_note_findings("madeupmodel-1.0: CRYSTAL_SCHEMA_NOTE SAFETY_CLAUSE FOLD_NOTE \
+			VISION_NOTE SHOW_NOTE SEARCH_NOTE");
+		let chat = Role::Chat.compose_for("", "madeupmodel-1.0");
+		for note in [SAFETY_CLAUSE, FOLD_NOTE, VISION_NOTE, SHOW_NOTE, SEARCH_NOTE] {
+			assert!(chat.contains(note),
+				"a table naming a note that is not in CONDITIONAL took it away anyway");
+		}
+		assert!(Role::Reducer.compose_for("", "madeupmodel-1.0").contains(CRYSTAL_SCHEMA_NOTE),
+			"a table took away the note that is load-bearing on every model measured");
+		// And every name in CONDITIONAL is a note this file really holds, so an entry cannot
+		// name something nothing composes and read as though it had done anything.
+		for (name, text) in CONDITIONAL {
+			assert!(Role::Chat.compose("").contains(*text),
+				"{} is conditional but is not in a composed prompt at all", name);
+		}
+		set_note_findings("");
+	}
+
+	/// **The shipped table parses to the findings it was written from.**
+	///
+	/// Read through the same lookup the composition uses rather than by a second parser here:
+	/// a table that is right and a reader that is wrong compose the same as a table that is
+	/// wrong, and only one of them is fixed by editing the table.
+	#[test]
+	fn test_the_shipped_findings_say_what_was_measured() {
+		set_note_findings("");
+		assert!(measured_spare("claude-haiku-4.5", "VERIFY_NOTE"));
+		assert!(measured_spare("claude-sonnet-4.5", "VERIFY_NOTE"));
+		assert!(measured_spare("deepseek-v4-pro", "QUIET_NOTE"));
+		assert!(!measured_spare("claude-haiku-4.5", "QUIET_NOTE"));
+		assert!(!measured_spare("deepseek-v4-pro", "VERIFY_NOTE"));
+		assert!(!measured_spare("z-ai/glm-5.2", "VERIFY_NOTE"),
+			"glm-5.2 was never measured on the verify note and must be given it");
+		// A KEY TOO SHORT TO BE A MODEL IDENTIFIER IS REFUSED, because `claude` would answer
+		// true for every Anthropic model at once -- a table entry doing something nobody
+		// measured, from data this build did not write.
+		set_note_findings("claude: VERIFY_NOTE\nai: QUIET_NOTE");
+		assert!(!measured_spare("anthropic/claude-haiku-4.5", "VERIFY_NOTE"),
+			"a family-shaped key stripped a note from a whole vendor");
+		assert!(!measured_spare("z-ai/glm-5.2", "QUIET_NOTE"));
+		// A page that hands over nothing gets the shipped table back, not an empty one: a page
+		// that failed to load its copy must compose what this build knows.
+		set_note_findings("   ");
+		assert!(measured_spare("claude-haiku-4.5", "VERIFY_NOTE"));
+		assert_eq!(note_findings(), NOTE_FINDINGS_SHIPPED);
+		// And a page that hands over a newer one is believed, which is the whole point of the
+		// findings being data.
+		set_note_findings("# newer\nglm-5.3-turbo: QUIET_NOTE VERIFY_NOTE");
+		assert!(measured_spare("z-ai/glm-5.3-turbo", "VERIFY_NOTE"));
+		assert!(!measured_spare("claude-haiku-4.5", "VERIFY_NOTE"),
+			"the shipped table was still consulted after a page replaced it");
+		set_note_findings("");
+	}
+
+	/// What each standing note really costs, asked of the provider and not of a rule of thumb.
+	///
+	/// **`chars / 4` is what the two budget tests above use, and on 2026-08-24 it was measured
+	/// against `usage.prompt_tokens` for the first time.** It runs about 8% HIGH on prose and
+	/// about 8% LOW on [`CRYSTAL_SCHEMA_NOTE`], whose JSON keys and backticks tokenise badly --
+	/// so it is not a safe ceiling in both directions, and [`VERIFY_NOTE`] was being quoted at
+	/// 106 tokens when it is 97.
+	///
+	/// The figures are in `dev/PROMPT_NOTES.md` with what each note was found to buy.
+	/// `dev/prompt_cost.mjs` produces them; nothing here can, because nothing in this crate
+	/// holds a tokeniser.
+	///
+	/// **This is a summons and not a lock.** A note may be reworded; what may not happen is a
+	/// reword that leaves a measured price standing beside it. The band is ±10% of the length
+	/// the figure was measured at, which is about the accuracy the figure has -- so a rewrite
+	/// that keeps the note the same size keeps its price roughly true, and one that changes the
+	/// size reddens this with the command that produces a new one.
+	const MEASURED: &[(&str, &str, usize, usize)] = &[
+		("VISION_NOTE",		VISION_NOTE,		247,	65),
+		("SHOW_NOTE",		SHOW_NOTE,		913,	210),
+		("QUIET_NOTE",		QUIET_NOTE,		576,	134),
+		("FOLD_NOTE",		FOLD_NOTE,		972,	225),
+		("VERIFY_NOTE",		VERIFY_NOTE,		426,	97),
+		("SEARCH_NOTE",		SEARCH_NOTE,		196,	46),
+		("SKILLS_NOTE",	SKILLS_NOTE,		409,	105),
+		("SAFETY_CLAUSE",	SAFETY_CLAUSE,		462,	107),
+		("CRYSTAL_SCHEMA_NOTE",	CRYSTAL_SCHEMA_NOTE,	776,	211),
+	];
+
+	#[test]
+	fn test_no_note_has_been_reworded_out_from_under_its_measured_price() {
+		for (name, text, was, tokens) in MEASURED {
+			let now = text.chars().count();
+			let low  = was - was / 10;
+			let high = was + was / 10;
+			assert!(now >= low && now <= high,
+				"{} was {} chars when it was measured at {} tokens against the provider, and is 				 now {}. The price beside it in dev/PROMPT_NOTES.md is stale. Re-measure with 				 `node dev/prompt_cost.mjs --log <scratch>/reflux/reflux.log` and put the new 				 figures here.",
+				name, was, tokens, now);
+		}
+	}
+
+	/// What a chat or a daimon pays for the notes on EVERY request, and a worker on every
+	/// request of its own.
+	///
+	/// **The composed total is the number that matters and no test had it.** A turn makes one
+	/// request per round of tool calls, so a seven-call turn pays this eight times -- and the
+	/// notes are cheap one at a time and 884 tokens together, which is the figure a reader
+	/// deciding whether to add another one needs in front of them.
+	///
+	/// Asserted per ROLE, because `Role::can_show` keeps three of them away from a worker and
+	/// a test that only weighed the chat would report a worker's bill as the chat's.
+	#[test]
+	fn test_the_notes_a_role_carries_are_weighed_together_and_not_one_at_a_time() {
+		let toks = |names: &[&str]| -> usize {
+			names.iter().map(|n| MEASURED.iter().find(|m| m.0 == *n)
+				.map(|m| m.3).unwrap_or(0)).sum()
+		};
+		let person = toks(&["VISION_NOTE", "QUIET_NOTE", "SHOW_NOTE", "FOLD_NOTE",
+			"VERIFY_NOTE", "SKILLS_NOTE", "SEARCH_NOTE", "SAFETY_CLAUSE"]);
+		let worker = toks(&["VISION_NOTE", "QUIET_NOTE", "SEARCH_NOTE", "SAFETY_CLAUSE"]);
+		assert_eq!(person, 989, "the chat and daimon bill has moved");
+		assert_eq!(worker, 352, "the worker bill has moved");
+		// AND THE COMPOSITION AGREES WITH THE ARITHMETIC, so the sums above cannot go on being
+		// true of a set of notes `compose` has stopped appending.
+		for r in Role::all() {
+			let composed = r.compose("");
+			for (name, text, _, _) in MEASURED {
+				let want = match *name {
+					"CRYSTAL_SCHEMA_NOTE" => matches!(r, Role::Reducer),
+					"SHOW_NOTE" | "FOLD_NOTE" | "VERIFY_NOTE" | "SKILLS_NOTE" => r.can_show(),
+					_ => r.has_tools() && !matches!(r, Role::Reducer),
+				};
+				assert_eq!(composed.contains(text), want,
+					"role {} and note {}: the bill weighed above is not what compose appends",
+					r.name(), name);
+			}
+		}
+	}
+
 	/// The verifier note is short enough to ride on every request of every turn.
 	///
 	/// Four CHARACTERS to the token, as [`test_the_fold_note_stays_inside_its_budget`] measures
-	/// it and as [`crate::llm::CACHE_MIN_PREFIX_CHARS`] does.
+	/// it and as [`crate::llm::CACHE_MIN_PREFIX_CHARS`] does. **Measured against the provider on
+	/// 2026-08-24 it is 97 tokens, not the 106 the estimate gives**; see [`MEASURED`].
 	///
 	/// **The ceiling is 110, and what it bought over [`SEARCH_NOTE`]'s one sentence is the second
 	/// sentence.** The rule alone is advice; what makes it stick is that the fence has no
@@ -1314,6 +1837,150 @@ mod tests {
 		let n = VERIFY_NOTE.chars().count() / 4;
 		assert!(n <= 110, "the verify note is about {} tokens, over its budget: {}", n,
 			VERIFY_NOTE);
+	}
+
+	// ── That skills exist at all ─────────────────────────────────────────────
+
+	/// **The person who has to know a feature exists is the model, and nothing told it.**
+	///
+	/// `/handover` and `/pickup` have shipped with the build since `lane/at`, the page has
+	/// listed them under `/` since notes2, and this file did not contain the word *skill*.  A
+	/// daimon asked to carry work on from yesterday therefore answered from whatever it could
+	/// see, which is the transcript in front of it, and never named the one command that would
+	/// have read the handover.
+	#[test]
+	fn test_a_chat_and_a_daimon_are_told_that_skills_exist_and_a_worker_is_not() {
+		for r in [Role::Chat, Role::Daimon] {
+			let p = r.compose("");
+			assert!(p.contains(SKILLS_NOTE), "{} is never told skills exist", r.name());
+			assert!(p.contains("/name"), "{} is not told how one is reached", r.name());
+		}
+		// A worker is handed its task by a machine, so there is nobody at a keyboard to type a
+		// `/name` and the note would describe a door that is not in its wall.
+		assert!(!Role::Worker.compose("").contains(SKILLS_NOTE));
+		assert!(!Role::Reducer.compose("").contains(SKILLS_NOTE));
+		assert!(!Role::Compactor.compose("").contains(SKILLS_NOTE));
+	}
+
+	/// **The note names every skill the build carries, and the table is what it is checked
+	/// against.**
+	///
+	/// A shipped skill nothing mentions is the failure this note exists to end, arriving one
+	/// level down: adding a fifth to [`crate::skills::SHIPPED`] and leaving this sentence at
+	/// four would leave the new one discoverable only by the `/` menu, which is a list a person
+	/// opens and not a thing the model reads.
+	#[test]
+	fn test_the_skills_note_names_every_skill_the_build_carries() {
+		let names = crate::skills::shipped_names();
+		assert!(!names.is_empty(), "a loop over no skills proves nothing");
+		for name in &names {
+			assert!(SKILLS_NOTE.contains(name.as_str()),
+				"'{}' ships with the build and the standing note does not name it: {}",
+				name, SKILLS_NOTE);
+		}
+	}
+
+	/// The skills note is short enough to ride on every request of every turn.
+	///
+	/// **Measured against the provider twice, not estimated.**  At 312 characters it was 77
+	/// tokens on both Anthropic models; the drafting sentence took it to 409 characters and
+	/// **105 tokens**, and `chars / 4` runs -3% here rather than the +8% it runs on the longer
+	/// notes, so the estimate below is a floor and not a ceiling.
+	///
+	/// **The ceiling was 110 -- [`VERIFY_NOTE`]'s -- and is 130, raised once and on purpose.**
+	/// The note now carries two capabilities rather than one: reaching a skill, and making one.
+	/// The second is a whole feature that no other sentence anywhere tells the model about, and
+	/// its clause is 28 of the 105 tokens.  A budget raised to fit whatever the note has grown
+	/// into certifies nothing, so this is the last raise it gets without a measurement of what
+	/// the drafting clause BUYS -- `dev/PROMPT_NOTES.md` §9 says what that probe would ask.
+	#[test]
+	fn test_the_skills_note_stays_inside_its_budget() {
+		let n = SKILLS_NOTE.chars().count() / 4;
+		assert!(n <= 130, "the skills note is about {} tokens, over its budget: {}", n,
+			SKILLS_NOTE);
+	}
+
+	/// **No sentence of it merely forbids something.**
+	///
+	/// The rule `crate::skills::tests::test_no_step_of_a_shipped_skill_is_a_bare_prohibition`
+	/// applies to the shipped skills; this is the same rule where the standing prompt pays for
+	/// it every request of every turn.  A sentence naming an action changes what a model does
+	/// and a sentence naming a prohibition does not -- `dev/PROMPT_NOTES.md` has the runs -- so
+	/// a prohibition here is tokens bought and nothing had.
+	#[test]
+	fn test_no_sentence_of_the_skills_note_is_a_bare_prohibition() {
+		for sentence in SKILLS_NOTE.split(". ") {
+			let s = sentence.trim();
+			for opener in ["Never", "Do not", "Don't", "Avoid", "You cannot", "You must not"] {
+				assert!(!s.starts_with(opener),
+					"the skills note has a sentence that only forbids: {}", s);
+			}
+		}
+	}
+
+	// ── The file that makes Daimond know him ─────────────────────────────────
+
+	/// **A fresh workspace's `DAIMOND.md` is empty and nothing said so.**
+	///
+	/// The two-layer mechanism works and is read every turn; what it lacked was a first line,
+	/// and the chip that would have told the user was hidden precisely while the file was
+	/// empty.  The seed is what a store that has never held one is given.
+	#[test]
+	fn test_the_seeded_instructions_say_who_will_read_them() {
+		// Asked of the OPENING paragraph and not of the whole file. "worker" appears further
+		// down in the sentence about what a worker cannot see, so a `contains` over the whole
+		// text passed with the enumeration itself broken -- a check green for the wrong reason.
+		let opening = INSTRUCTIONS_SEED.split("## ").next().unwrap_or("");
+		for who in ["chat", "daimon", "worker"] {
+			assert!(opening.contains(who),
+				"the opening never says a {} reads this file, which is the whole reason to \
+				write in it: {}", who, opening);
+		}
+		// The sentence that makes the first section worth filling in: a worker cannot see the
+		// conversation, so this file is the only place it learns what the work is.
+		assert!(INSTRUCTIONS_SEED.contains("cannot see this conversation"));
+	}
+
+	/// **The seed names commands this build really carries**, so the first thing a user reads
+	/// about Daimond is two things they can type that will work.
+	#[test]
+	fn test_the_seeded_instructions_only_name_commands_the_build_carries() {
+		let ships = crate::skills::shipped_names();
+		assert!(!ships.is_empty(), "a loop over no skills proves nothing");
+		let mut named = 0usize;
+		for word in INSTRUCTIONS_SEED.split_whitespace() {
+			let name = match word.strip_prefix('/') {
+				Some(n) => n.trim_end_matches(|c: char| !c.is_ascii_alphanumeric()),
+				None    => continue,
+			};
+			if name.is_empty() {
+				continue;
+			}
+			assert!(ships.iter().any(|s| s == name),
+				"the seed tells the user to type '/{}' and nothing resolves it", name);
+			named += 1;
+		}
+		assert!(named >= 2, "the seed names {} commands, so it teaches nothing typeable", named);
+	}
+
+	/// The seed is paid for on every request of every turn until the user rewrites it.
+	///
+	/// **200 tokens is the ceiling**, which is about `FOLD_NOTE`'s -- and unlike a note this is
+	/// text the user is invited to replace, so anything spent here is spent on a placeholder.
+	/// Every line has to be worth keeping unedited: "How to answer me" is three rules true of
+	/// nearly everybody, which is what makes the file earn its tokens on turn one.
+	#[test]
+	fn test_the_seeded_instructions_stay_inside_a_budget() {
+		let n = INSTRUCTIONS_SEED.chars().count() / 4;
+		assert!(n <= 200, "the seeded instructions are about {} tokens, over budget: {}", n,
+			INSTRUCTIONS_SEED);
+	}
+
+	/// **It says it is the user's to delete**, because the app wrote it and the user did not.
+	#[test]
+	fn test_the_seeded_instructions_say_they_are_the_users_to_replace() {
+		assert!(INSTRUCTIONS_SEED.contains("Delete what is not true of you"),
+			"nothing tells the user this file is theirs to change: {}", INSTRUCTIONS_SEED);
 	}
 
 	// ── What the daimon is told about the machine ────────────────────────────
@@ -1630,6 +2297,33 @@ mod tests {
 		assert!(!machine_note(&machine(), &b, NetStep::Give, Mode::default()).contains("git push"));
 	}
 
+	/// **The briefing says the file tools change the real file, and names the tool to use.**
+	///
+	/// `dev/BLOCKERS.md` B2 is 162 of 492 measured tool calls spent editing machine files through
+	/// a program that edits files, because nothing said a file tool could. The door landed on
+	/// 2026-08-25; a door nothing names is a door nothing opens, so the sentence is asserted here
+	/// and its absence is a red test rather than a silent regression to the old cost.
+	#[test]
+	fn test_the_briefing_says_a_file_tool_changes_the_real_file_and_names_it() {
+		let b = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[]);
+		let s = machine_note(&machine(), &b, NetStep::Give, Mode::default());
+		assert!(s.contains("file_edit"),
+			"the briefing does not name the tool that edits a machine file, so a daimon reaches \
+			for sed and pays B2's 71 calls again: {}", s);
+		assert!(s.contains("file_search"),
+			"the briefing does not name the tool that SEARCHES a machine folder, which is where \
+			33 of a measured 45 calls went as `run grep -n`: {}", s);
+		assert!(s.contains("the real file"),
+			"the briefing does not say a file tool CHANGES the file on this computer: {}", s);
+		assert!(s.contains("fenced there the same way"),
+			"the briefing does not say the file door is fenced as a command is, so a reader \
+			cannot tell whether it widened anything: {}", s);
+		// And it says nothing where there is no hand: with no machine there is no second
+		// filesystem, no fence and nothing to name.
+		assert!(!machine_note(&Machine::default(), &b, NetStep::Give, Mode::default())
+			.contains("file_edit"));
+	}
+
 	#[test]
 	fn test_the_briefing_stays_short_enough_to_pay_for_every_turn() {
 		// It is sent on every request of every turn. The number is a ceiling, not a target: this
@@ -1640,10 +2334,18 @@ mod tests {
 		// concluding in its notes that its own Diamond was "invisible to run"; the headroom above
 		// what the briefing actually costs is unchanged, so the next addition is argued for on the
 		// same terms this one was.
+		//
+		// 840 -> 1000 on 2026-08-25, for the 157 bytes that say a file tool inside a marked folder
+		// changes the real file and is fenced there like a command. Bought with `dev/BLOCKERS.md`
+		// B2: 162 of 492 measured tool calls and $3.97 sat in runs whose primary cause was having
+		// no editing door onto the machine, and one run spent 71 of its 91 calls repairing a
+		// single `sed -i` whose apostrophe had to survive an argument vector and a JavaScript
+		// string at once. The door now exists; a capability nothing names is a capability nothing
+		// uses, so the sentence is what the door is worth. The headroom is unchanged again.
 		let mut b = diamond();
 		b.push(Toolkit::Rust.bound());
 		let s = machine_note(&machine(), &b, NetStep::Give, Mode::default());
-		assert!(s.len() < 840, "the machine briefing is {} bytes:\n{}", s.len(), s);
+		assert!(s.len() < 1000, "the machine briefing is {} bytes:\n{}", s.len(), s);
 	}
 
 	// ── Which rung the daimon is in ──────────────────────────────────────────
@@ -1750,7 +2452,7 @@ mod tests {
 					// with the store sentence, for the reason recorded on
 					// `test_the_briefing_stays_short_enough_to_pay_for_every_turn`, and by the
 					// same 138 bytes: the headroom over the real cost is unchanged.
-					assert!(s.len() < 1040, "the {} rung's briefing is {} bytes:\n{}",
+					assert!(s.len() < 1200, "the {} rung's briefing is {} bytes:\n{}",
 						rung.name(), s.len(), s);
 				}
 			}

@@ -1409,17 +1409,40 @@ mod tests {
 
 	// ── Images ───────────────────────────────────────────────────────────────
 
-	/// One of this repository's own screenshots, read off disk.
+	/// One of this repository's own screenshots, read off disk, carrying the path a
+	/// conversation would have read it from.
 	///
 	/// A real file rather than a synthesised one, because the numbers in [`image_tokens`]'s
-	/// documentation were measured against these two files: a test built on a fabricated header
-	/// would confirm the arithmetic and say nothing about whether the arithmetic describes a
-	/// screenshot.
+	/// documentation were measured against real screenshots: a test built on a fabricated
+	/// header would confirm the arithmetic and say nothing about whether the arithmetic
+	/// describes a screenshot.
+	///
+	/// THE BYTES AND THE LABEL ARE NOT THE SAME THING, and separating them is the whole of
+	/// this.  The label is each test's own fiction -- `shots/mobile-desktop-after.png` is a
+	/// path a model asked `file_read` for, and three tests below assert that the elision
+	/// notice names it -- so it need not be a file that exists.  The BYTES must be real, and
+	/// must therefore come from somewhere nothing rewrites.
+	///
+	/// They used to be one file, and `shots/` is neither committed (`.gitignore` line 52)
+	/// nor stable (`dev/verify_mobile.mjs` rewrites it on every mobile sweep).  So five
+	/// tests here and three in [`crate::tools`] could pass only in a tree that happened to
+	/// hold four untracked screenshots: not in a clone, and not in `dev/gate.sh`'s own
+	/// worktree, where they were eight standing reds that every brief had learnt to excuse.
+	/// `src/testdata/` is committed, crosses into the public mirror with the rest of `src/`,
+	/// and is written by no sweep and no harness -- see [`owned_shot`], which settled this
+	/// for one test and was never carried to the rest.
 	///
 	/// # Arguments
-	/// * `name` - The file under `shots/`.
+	/// * `name` - The path the conversation names.  Each maps to the committed fixture of
+	///   the same dimensions, since it is the dimensions the arithmetic is about.
 	fn shot(name: &str) -> ImagePart {
-		let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("shots").join(name);
+		let file = match name {
+			"mobile-desktop-after.png" => "screenshot-1500x950.png",
+			"mobile-sheet-web.png"     => "screenshot-390x844.png",
+			other => panic!("no committed fixture stands in for {}", other),
+		};
+		let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+			.join("src").join("testdata").join(file);
 		let data = std::fs::read(&path)
 			.unwrap_or_else(|e| panic!("the fixture {} must be readable: {}", path.display(), e));
 		let media = crate::protocol::ImageMedia::sniff(&data).expect("the fixture must be an image");
@@ -1428,9 +1451,9 @@ mod tests {
 
 	/// The screenshot this module owns, read off disk.
 	///
-	/// [`shot`] reads `shots/`, which is a SWEPT directory: `dev/verify_mobile.mjs` rewrites
-	/// those files on every mobile sweep, and `.gitignore` excludes them, so they are neither
-	/// stable across a run nor present in a clone at all.  On 2026-08-12 the sweep re-took
+	/// [`shot`] USED TO READ `shots/`, which is a SWEPT directory: `dev/verify_mobile.mjs`
+	/// rewrites those files on every mobile sweep, and `.gitignore` excludes them, so they are
+	/// neither stable across a run nor present in a clone at all.  On 2026-08-12 the sweep re-took
 	/// `mobile-desktop-after.png`, it compressed to half the size, and the overstatement in
 	/// [`test_an_image_is_not_priced_as_if_it_were_text`] fell from 29x to 15.3x.
 	///

@@ -8,14 +8,50 @@
 //! that could write the code could not check it.
 //!
 //! **The reframe this module is built on is about provenance, not sandboxing.**
-//! The fence exists to contain a command a MODEL wrote.  A verifier is tracked
-//! repository code, and the model supplies no part of it: it supplies a *name*
-//! that is looked up in the directory, and at most a *break* that is looked up
-//! in the file's own declarations.  So the verb is in the same trust class as
-//! `cargo test`, and it runs the script outside the command fence deliberately
-//! -- which is stated in the report, stated in the tool's description, and
-//! recorded in the journal as `fence:none` so that nobody has to take this
-//! paragraph's word for it.
+//! The fence exists to contain a command a MODEL wrote.  A verifier is the
+//! repository's own code, and the model supplies no part of it: it supplies a
+//! *name* that is looked up in the directory, and at most a *break* that is
+//! looked up in the file's own declarations.  So the verb is in the same trust
+//! class as `cargo test`, and it runs the script outside the command fence
+//! deliberately -- which is stated in the report, stated in the tool's
+//! description, and recorded in the journal as `fence:none` so that nobody has
+//! to take this paragraph's word for it.
+//!
+//! # And the reframe has to be enforced, not reported
+//!
+//! Until 2026-08-25 it was not.  `REVIEW.md` §1.21: the trustworthiness of a
+//! verifier was measured -- `git ls-files --error-unmatch` -- and its only use
+//! was a phrase in the report's first line.  A daimon writes `dev/verify_x.mjs`
+//! with `file_write`, which every turn may do because the granted root is
+//! writable, and the verb runs it with no fence on it at all.  Proved with a
+//! script whose whole body wrote a file outside the granted root, which appeared.
+//!
+//! **The question is content, not membership.**  Appending one comment to a
+//! tracked verifier leaves `git ls-files --error-unmatch` exiting 0 while
+//! `git diff --quiet HEAD` on the same file exits 1, so enforcing what was
+//! already measured would have narrowed the hole without closing it.
+//! [`provenance`] therefore asks whether the working file IS the commit, and
+//! [`unfenced_refusal`] is the gate; [`conduct`] passes it before anything runs
+//! and [`once`] before every spawn.
+//!
+//! **The refusal is a capability difference and not a dead end**, which matters
+//! because improving a verifier is exactly the self-development this app is for.
+//! A verifier the daimon has just written still runs -- through `run`, inside
+//! the same fence every command gets, which 253 of this tree's 282 verifiers
+//! need nothing more than.  What it cannot do fenced is drive a browser or open
+//! a port, and the refusal says so, so a fenced failure is not misread as the
+//! script being broken.
+//!
+//! **What this does not close, and cannot from here.**  `.git` is inside the
+//! granted root and every fence leaves it writable -- `src/tools.rs` says so in
+//! its own words where it explains why a push injects `core.hooksPath` -- so a
+//! daimon can commit its own verifier and then be told, truthfully, that the
+//! bytes are the commit's.  That is one `run` call away and no check on this
+//! side reaches it.  What changes is that the act is now a commit in the
+//! repository's history rather than a `file_write` nobody sees, and that the
+//! report's first line stops being false.  Closing it needs either `.git` out
+//! of the fence or the owner's consent bound to the bytes; both are the owner's
+//! to rule on, and the reasoning is in `REVIEW.md` §1.21.
 //!
 //! # The one thing this module exists to make impossible
 //!
@@ -133,6 +169,59 @@ pub const EXIT_FAILED: i32 = 1;
 /// The exit status of a clean run nothing has proved.
 pub const EXIT_UNPROVEN: i32 = 2;
 
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Nobody is at the keyboard for a verifier this verb runs        │
+// └───────────────────────────────────────────────────────────────┘
+//
+// A verifier is spawned with the hand's own environment, and the hand's own
+// environment is whatever started it.  Started by the browser as a native
+// messaging host, that is the browser's -- `DISPLAY=:0` and `WAYLAND_DISPLAY`
+// among it, because the browser is on the owner's screen.  Half the verifiers in
+// `dev/` drive a HEADED browser, and `dev/display.mjs` allowed `:0` on the stated
+// grounds that watching a headed run on one's own seat is a thing people do.
+//
+// It is.  Nobody is watching this one.  A model asked for it, and the window
+// would land in front of whoever happens to be at the machine, mid-sentence,
+// exactly as it did on 2026-08-24 -- the incident that file's header is written
+// about.  That fault was a check reading the display STRING and not the
+// environment; this is the same shape one layer up, a check reading the
+// environment and not knowing who asked.
+//
+// The hand knows who asked, and it is the only party that does.  So a verifier is
+// handed no display at all and is told that none is coming: it must start one of
+// its own, which `dev/verify_reflux.mjs` does and every other headed verifier is
+// free to.  Refusing loudly is the point.  A headed verifier reached this way
+// used to paint on the seat and now says it cannot, which is a capability this
+// verb never honestly had.
+
+/// The display names a verifier is never handed, whatever the hand was started with.
+pub const SEAT_VARS: &[&str] = &["DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE"];
+
+/// The name that tells `dev/display.mjs` nobody is at the keyboard for this run.
+pub const UNATTENDED_VAR: &str = "DAIMOND_UNATTENDED";
+
+/// The environment a verifier is spawned with, from the hand's own.
+///
+/// Separate and pure so a test can put an environment to it without spawning
+/// anything -- the mistake `dev/verify_harness.mjs` exists because of was a rule
+/// that had no test because testing it meant opening a window.
+///
+/// # Arguments
+/// * `env` - The hand's own environment, name to value.
+pub fn unattended_env(env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let mut out = env.clone();
+    for v in SEAT_VARS {
+        out.remove(*v);
+    }
+    out.insert(fmt!("{}", UNATTENDED_VAR), fmt!("1"));
+    out
+}
+
+/// The hand's own environment, as a map.
+fn own_env() -> BTreeMap<String, String> {
+    std::env::vars().collect()
+}
+
 /// Is this a name a verifier may be looked up by?
 ///
 /// Deliberately narrower than a file name.  Lower case, digits and underscore
@@ -149,29 +238,62 @@ pub fn name_ok(name: &str) -> bool {
         && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
-/// Whether the tree agrees that a file is under version control.
+/// Why a file is not the commit's.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Change {
+    Untracked,	// git has never heard of the path
+    Edited,		// git has, and the working copy is not what the commit holds
+    Linked,		// the path is a symlink, so its bytes are wherever it points
+}
+
+impl Change {
+    /// The clause the refusal and the report both put after the file's name.
+    pub fn phrase(&self) -> &'static str {
+        match self {
+            Self::Untracked	=> "git has never heard of it",
+            Self::Edited	=> "it is tracked, and the working copy is not what the commit \
+                holds -- staging a change is not committing it",
+            Self::Linked	=> "it is a symbolic link, so its bytes are wherever it points \
+                and the commit says nothing about them",
+        }
+    }
+}
+
+/// Whose bytes these are, as the repository can answer it.
+///
+/// **The question is content and not membership**, and the difference is the
+/// whole of `REVIEW.md` §1.21.  `git ls-files --error-unmatch` answers about the
+/// INDEX: append one comment to a tracked verifier and it still exits 0, while
+/// `git diff --quiet HEAD` on the same file exits 1.  The claim the unfenced run
+/// rests on is *these bytes came with the checkout*, and only the second question
+/// answers it.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Tracked {
-    /// `git ls-files` names it.
-    Yes,
-    /// `git ls-files` does not name it.
-    No,
+pub enum Provenance {
+    /// The working file is byte for byte what the commit holds.
+    Committed,
+    /// It is not, and this is how.
+    Changed(Change),
     /// Nothing could be asked, and this is why.
     ///
-    /// Reported rather than assumed either way.  Four verifiers were once
+    /// Refused rather than assumed either way.  Four verifiers were once
     /// promoted into `dev/` and left untracked, and `dev/gate.sh` builds its
     /// tree with `git worktree add` -- a clean checkout of a commit -- so the
     /// suite ran none of them while reporting a pass.
     Unknown(String),
 }
 
-impl Tracked {
+impl Provenance {
+    /// May a file of this provenance run outside the command fence?
+    pub fn committed(&self) -> bool {
+        matches!(self, Self::Committed)
+    }
+
     /// The phrase the report carries.
     pub fn phrase(&self) -> String {
         match self {
-            Self::Yes		=> fmt!("tracked"),
-            Self::No		=> fmt!("NOT TRACKED -- a clean checkout of this commit would not have it"),
-            Self::Unknown(w)	=> fmt!("trackedness unknown ({})", w),
+            Self::Committed	=> fmt!("byte for byte the commit's"),
+            Self::Changed(c)	=> fmt!("NOT THE COMMIT'S -- {}", c.phrase()),
+            Self::Unknown(w)	=> fmt!("provenance unknown ({})", w),
         }
     }
 }
@@ -187,8 +309,8 @@ pub struct Script {
     pub path:    PathBuf,
     /// Every break the file declares, in the order it declares them.
     pub breaks:  Vec<String>,
-    /// Whether git knows about it.
-    pub tracked: Tracked,
+    /// Whose bytes these are, as the repository can answer it.
+    pub prov:    Provenance,
 }
 
 /// Every break name a verifier's own source declares.
@@ -373,7 +495,7 @@ pub fn resolve(root: &Path, name: &str) -> Result<Script, String> {
     Ok(Script {
         name:    fmt!("{}", name),
         breaks:  declared_breaks(&src),
-        tracked: tracked_by_git(root, &file_str),
+        prov:    provenance(root, &file_str),
         file:    file_str,
         path,
     })
@@ -421,34 +543,116 @@ fn trim_for_message(s: &str) -> String {
     out
 }
 
-/// Whether git names this file, asked of git rather than assumed.
+/// Whose bytes `dev/<file>` holds, asked of git rather than assumed.
 ///
-/// `git ls-files --error-unmatch` answers with an exit status and nothing else,
-/// which is all that is wanted.  The argument vector is fixed and its one
-/// variable element is a directory entry's own name; there is no shell, so
-/// `--` before it is belt to the braces rather than the whole defence.
+/// Three questions and the order matters.  Is there a repository here at all --
+/// because a granted folder that is not one can vouch for nothing, and the
+/// permissive reading of that was half of `REVIEW.md` §1.21's reproduction.  Is
+/// the path a symlink -- because a committed link's target is an ordinary file
+/// inside the granted root that any command may rewrite, which is §1.1's shape
+/// wearing §1.21's clothes.  And last, does the working file differ from the
+/// commit: `git diff --quiet HEAD` compares the WORKING TREE with `HEAD`, so it
+/// catches a staged change and an unstaged one alike, and it applies the
+/// repository's own end-of-line and filter settings, which a hash of the bytes
+/// taken here would not.
+///
+/// Every argument vector is fixed but for one directory entry's own name, and
+/// there is no shell, so `--` before it is belt to the braces.
 ///
 /// # Arguments
 /// * `root` - The granted root, which is where git is asked.
 /// * `file` - The verifier's file name, from the directory entry.
-fn tracked_by_git(root: &Path, file: &str) -> Tracked {
+pub fn provenance(root: &Path, file: &str) -> Provenance {
     let git = match on_path("git") {
         Some(p) => p,
-        None    => return Tracked::Unknown(fmt!("git is not on this hand's PATH")),
+        None    => return Provenance::Unknown(fmt!(
+            "there is no git on this hand's PATH, so nothing here can say whose code this is")),
     };
-    let out = std::process::Command::new(git)
-        .arg("-C").arg(root)
-        .arg("ls-files").arg("--error-unmatch").arg("--")
-        .arg(fmt!("{}/{}", DEV_DIR, file))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    match out {
-        Ok(s) if s.success()	=> Tracked::Yes,
-        Ok(_)			=> Tracked::No,
-        Err(e)			=> Tracked::Unknown(fmt!("git could not be run: {}", e)),
+    let rel = fmt!("{}/{}", DEV_DIR, file);
+    let ask = |args: &[&str]| -> std::io::Result<std::process::ExitStatus> {
+        std::process::Command::new(&git)
+            .arg("-C").arg(root)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+    };
+    match ask(&["rev-parse", "--git-dir"]) {
+        Ok(s) if s.success()	=> (),
+        Ok(_)			=> return Provenance::Unknown(fmt!(
+            "the folder this hand was granted is not a git repository, so there is no commit \
+            to compare this file with")),
+        Err(e)			=> return Provenance::Unknown(fmt!("git could not be run: {}", e)),
     }
+    // Asked without following the link, which is the whole point: `metadata` above
+    // followed it and answered about the target.
+    match std::fs::symlink_metadata(root.join(&rel)) {
+        Ok(m) if m.file_type().is_symlink()	=> return Provenance::Changed(Change::Linked),
+        Ok(_)					=> (),
+        Err(e)					=> return Provenance::Unknown(fmt!(
+            "'{}' could not be looked at ({})", rel, e)),
+    }
+    match ask(&["ls-files", "--error-unmatch", "--", &rel]) {
+        Ok(s) if s.success()	=> (),
+        Ok(_)			=> return Provenance::Changed(Change::Untracked),
+        Err(e)			=> return Provenance::Unknown(fmt!("git could not be run: {}", e)),
+    }
+    // `git diff` says 0 for no difference and 1 for a difference; anything else is git
+    // failing to answer, and an unborn HEAD in a repository with no commits is exactly
+    // that.  A failure to answer is never read as agreement.
+    match ask(&["diff", "--quiet", "HEAD", "--", &rel]) {
+        Ok(s) if s.success()		=> Provenance::Committed,
+        Ok(s) if s.code() == Some(1)	=> Provenance::Changed(Change::Edited),
+        Ok(s)				=> Provenance::Unknown(fmt!(
+            "git could not compare '{}' with the commit (it exited {}); a repository with no \
+            commit in it yet is the usual reason", rel, match s.code() {
+                Some(c) => fmt!("{}", c),
+                None    => fmt!("on a signal"),
+            })),
+        Err(e)				=> Provenance::Unknown(fmt!("git could not be run: {}", e)),
+    }
+}
+
+/// The sentence a verifier that is not the commit's is refused with, or `None`.
+///
+/// **This is the gate `REVIEW.md` §1.21 was open for**, and it is asked fresh
+/// rather than read off the [`Script`] resolved earlier: a verifier sequence
+/// runs for minutes, a background command started by an earlier turn can rewrite
+/// a file while it does, and a check taken once at the start would be answering
+/// about bytes that are no longer there.  [`conduct`] asks before anything runs
+/// and [`once`] asks again before each spawn, so the window between the answer
+/// and the `execve` is as small as this side can make it.
+///
+/// **The sentence is written to be acted on in one call.**  A refusal a model
+/// cannot converge on costs the run anyway -- so it hands over the command that
+/// runs the same file INSIDE the fence, which is where a command a model wrote
+/// belongs and is enough for the nine verifiers in ten here that only read the
+/// tree; it says what that cannot do, so a fenced failure is not misread as the
+/// verifier being broken; and it names the two things that reach the unfenced
+/// run, one of which is a person.
+///
+/// # Arguments
+/// * `root` - The granted root.
+/// * `file` - The verifier's file name, from the directory entry.
+pub fn unfenced_refusal(root: &Path, file: &str) -> Option<String> {
+    let prov = provenance(root, file);
+    let why = match &prov {
+        Provenance::Committed	=> return None,
+        Provenance::Changed(c)	=> fmt!("{}", c.phrase()),
+        Provenance::Unknown(w)	=> fmt!("{}", w),
+    };
+    Some(fmt!(
+        "Refused: dev/{} is not this repository's committed code -- {}. Nothing was run. A \
+        verifier is the one thing this hand runs OUTSIDE the command fence, and the whole of \
+        the reason is that its bytes came with the checkout instead of from a model; this \
+        hand cannot tell your edit from anybody else's, so it will not run one unfenced. \
+        RUN IT YOURSELF INSTEAD: 'run' with [\"node\",\"dev/{}\"] runs this same file inside \
+        the fence every command gets, which is all a verifier that reads the tree needs. It \
+        is not enough for one that drives a browser or opens a port -- the fence refuses \
+        both, so a failure there is the fence and not your script. To get the unfenced run, \
+        commit the file and ask again, or ask the person to run it themselves.",
+        file, why, file))
 }
 
 /// The first entry on `PATH` that is a runnable file with this name.
@@ -1061,12 +1265,31 @@ async fn once(
         }
     }
 
+    // Asked again, as late as anything on this side can be. The sequence has been
+    // running for minutes by the time a late break starts, and a command an earlier turn
+    // left in the background can rewrite a file in that time.
+    if let Some(no) = unfenced_refusal(&job.root, &job.script.file) {
+        // The sentence opens with "Refused:" and every caller of `once` puts its own
+        // word in front of what comes back from here, so the word is said once.
+        let said = match no.strip_prefix("Refused: ") {
+            Some(t) => t,
+            None    => no.as_str(),
+        };
+        return Err(fmt!(
+            "it stopped being the commit's while the sequence was running. {}", said));
+    }
+
     let started = std::time::Instant::now();
     let mut cmd = Command::new(&job.node);
     for a in argv.iter().skip(1) {
         cmd.arg(a);
     }
     cmd.current_dir(&job.root);
+    // Cleared and rebuilt rather than trimmed, because `Command` has no way to
+    // ask what it inherited: the map is the hand's own environment with the seat
+    // taken out and the mark put in, which is the same thing said once.
+    cmd.env_clear();
+    cmd.envs(unattended_env(&own_env()));
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -1169,6 +1392,15 @@ async fn once(
 /// * `job` - The sequence.
 /// * `tx` - Where progress and the report are sent.
 pub async fn conduct(job: Job, tx: Sender<Resp>) -> Outcome<()> {
+    // BEFORE THE JOURNAL AND BEFORE THE FIRST PROCESS. `REVIEW.md` §1.21: everything
+    // below this line runs a script with no fence on it at all, and the only thing that
+    // makes that defensible is that the script is the commit's. Asked here rather than
+    // in `main.rs` because this function is the crate's public way in, and a gate in the
+    // dispatcher is a gate the reproduction walked straight past.
+    if let Some(no) = unfenced_refusal(&job.root, &job.script.file) {
+        let _ = tx.send(Resp::Refused { id: fmt!("{}", job.id), reason: no }).await;
+        return Ok(());
+    }
     let mut left  = job.budget;
     let mut seq_err = 0u64;
     let began     = std::time::SystemTime::now();
@@ -1295,11 +1527,12 @@ pub fn report(
         script.file,
         passes.len(),
         match passes.len() { 1 => "", _ => "s" },
-        script.tracked.phrase()));
+        script.prov.phrase()));
     s.push_str(
-        "Run OUTSIDE the command fence, because a verifier is tracked repository code and not \
-        a command anybody's model wrote. It reaches this machine as any script you run yourself \
-        would.\n\n");
+        "Run OUTSIDE the command fence, because these bytes are the commit's rather than a \
+        command anybody's model wrote -- that was checked against the commit before each run, \
+        and a verifier that differs from it is refused rather than reported. It reaches this \
+        machine as any script you run yourself would.\n\n");
     for (p, what) in passes.iter() {
         match what {
             None => {
@@ -1421,6 +1654,58 @@ mod tests {
             assert!(!name_ok(bad), "{:?} was accepted as a verifier name", bad);
         }
         assert!(!name_ok(&"a".repeat(NAME_MAX + 1)), "a name past the cap was accepted");
+    }
+
+    // ── Nobody is at the keyboard ───────────────────────────────────
+
+    #[test]
+    fn a_verifier_is_handed_no_display_however_the_hand_got_one() {
+        // The hand as the browser starts it: a native messaging host inherits the
+        // browser's environment, and the browser is on the owner's screen.
+        let mine: BTreeMap<String, String> = [
+            ("DISPLAY", ":0"),
+            ("WAYLAND_DISPLAY", "wayland-0"),
+            ("XDG_SESSION_TYPE", "wayland"),
+            ("HOME", "/home/jason"),
+            ("PATH", "/usr/bin"),
+        ].iter().map(|(k, v)| (fmt!("{}", k), fmt!("{}", v))).collect();
+        let out = unattended_env(&mine);
+        for v in SEAT_VARS {
+            assert!(!out.contains_key(*v),
+                "{} reached a verifier, so a headed one could paint on the seat", v);
+        }
+        assert_eq!(Some(&fmt!("1")), out.get(UNATTENDED_VAR),
+            "the run was not marked unattended, so dev/display.mjs would allow :0");
+        // Everything else is untouched: a verifier with no HOME dies on the first
+        // line of any script in dev/, which is B13's neighbour in the same file.
+        assert_eq!(Some(&fmt!("/home/jason")), out.get("HOME"));
+        assert_eq!(Some(&fmt!("/usr/bin")), out.get("PATH"));
+    }
+
+    #[test]
+    fn a_hand_with_no_display_still_says_nobody_is_looking() {
+        // The mark is not conditional on there having been something to strip. An
+        // absent DISPLAY and an unattended run are different sentences in
+        // `dev/display.mjs`, and only the second one names the seat.
+        let mine: BTreeMap<String, String> =
+            [(fmt!("HOME"), fmt!("/home/jason"))].into_iter().collect();
+        let out = unattended_env(&mine);
+        assert_eq!(Some(&fmt!("1")), out.get(UNATTENDED_VAR));
+        assert_eq!(2, out.len(), "something else was added: {:?}", out);
+    }
+
+    #[test]
+    fn a_verifier_cannot_ask_to_be_watched() {
+        // The mark WINS over an inherited one. Nothing sets this name today, and a
+        // day when something does is a day when the last word has to be the hand's.
+        let mine: BTreeMap<String, String> = [
+            (fmt!("{}", UNATTENDED_VAR), fmt!("")),
+            (fmt!("DISPLAY"), fmt!(":0")),
+        ].into_iter().collect();
+        let out = unattended_env(&mine);
+        assert_eq!(Some(&fmt!("1")), out.get(UNATTENDED_VAR),
+            "an inherited empty mark survived, and an empty mark is read as absent");
+        assert!(!out.contains_key("DISPLAY"));
     }
 
     // ── What a verifier declares ────────────────────────────────────
@@ -1751,6 +2036,424 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         assert_eq!(fmt!("verify:none"), cap(&bare));
         res!(put(&bare, "one", "//\n"));
         assert_eq!(fmt!("verify:dev"), cap(&bare));
+        Ok(())
+    }
+
+    // ── Whose code is this? ─────────────────────────────────────────
+    //
+    // `REVIEW.md` §1.21.  A verifier runs OUTSIDE the command fence, and the
+    // whole of the argument for that is that its bytes came with the checkout.
+    // These tests aim at the argument rather than at the code: the fixture
+    // verifier's entire body writes a file OUTSIDE the granted root, so the
+    // marker's existence is the measurement.  A provenance that may run gets
+    // its marker; every other provenance must not.
+
+    /// Runs one git command in a fixture tree.
+    ///
+    /// # Arguments
+    /// * `root` - The fixture.
+    /// * `args` - The argument vector after `git -C <root>`.
+    fn git(root: &Path, args: &[&str]) -> Outcome<()> {
+        let git = res!(on_path("git").ok_or_else(|| err!(
+            "These tests ask git what the repository holds, and there is no git on PATH.";
+            Test, Missing)));
+        let out = res!(std::process::Command::new(git)
+            .arg("-C").arg(root)
+            .args(args)
+            .output()
+            .map_err(|e| err!(e, "running git {:?}", args; Test, IO)));
+        if !out.status.success() {
+            return Err(err!("git {:?} failed in {:?}: {}",
+                args, root, String::from_utf8_lossy(&out.stderr); Test, IO));
+        }
+        Ok(())
+    }
+
+    /// A verifier whose whole body writes one file, at an absolute path.
+    ///
+    /// It prints a check line as well, so that a run which is allowed reports
+    /// something a `Pass` can be built from and the fixture exercises the real
+    /// path rather than an empty one.
+    ///
+    /// # Arguments
+    /// * `marker` - Where it writes, which the tests place outside the root.
+    fn escaper(marker: &Path) -> String {
+        fmt!(
+            "import fs from 'node:fs';\n\
+            fs.writeFileSync({:?}, 'the verifier ran unfenced\\n');\n\
+            console.log('  ok   it ran');\n",
+            fmt!("{}", marker.display()))
+    }
+
+    /// What one attempt at a fixture verifier did.
+    struct Attempt {
+        refused: Option<String>,	// the sentence, where the hand declined
+        escaped: bool,				// whether the marker outside the root appeared
+    }
+
+    /// Resolves and conducts a fixture verifier, and says what came of it.
+    ///
+    /// Deliberately the crate's own public API and not the dispatcher's: a gate
+    /// that lives in `main.rs` is a gate this function would walk past, and the
+    /// reproduction in `REVIEW.md` §1.21 walked past exactly that.
+    ///
+    /// # Arguments
+    /// * `root` - The fixture.
+    /// * `name` - The verifier's short name.
+    /// * `marker` - The path the verifier writes, outside `root`.
+    async fn attempt(root: &Path, name: &str, marker: &Path) -> Outcome<Attempt> {
+        if marker.exists() {
+            res!(fs::remove_file(marker).map_err(|e| err!(e, "clearing {:?}", marker; Test, IO)));
+        }
+        let node = res!(on_path("node").ok_or_else(|| err!(
+            "Every verifier is a Node script and there is no node on PATH, so this test would \
+            prove nothing about whether one ran.";
+            Test, Missing)));
+        let script = match resolve(root, name) {
+            Ok(s)  => s,
+            Err(w) => return Ok(Attempt { refused: Some(w), escaped: marker.exists() }),
+        };
+        let stem = match root.file_name().and_then(|n| n.to_str()) {
+            Some(n) => fmt!("{}", n),
+            None    => fmt!("{}", name),
+        };
+        let jdir = match root.parent() {
+            Some(p) => p.join(fmt!("{}-journal", stem)),
+            None    => root.join("journal"),
+        };
+        if jdir.exists() {
+            res!(fs::remove_dir_all(&jdir).map_err(|e| err!(e, "clearing {:?}", jdir; Test, IO)));
+        }
+        let jr = res!(Journal::open(crate::journal::Cfg::at(&jdir)));
+        let job = Job {
+            id:     fmt!("probe"),
+            root:   root.to_path_buf(),
+            script,
+            breaks: Vec::new(),
+            node,
+            budget: Duration::from_millis(60_000),
+            ledger: Ledger::new(Arc::new(Mutex::new(jr)), Arc::new(AtomicBool::new(true))),
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        // Boxed, so the whole sequence's future lives on the heap. Inlined, `conduct`
+        // holds `once` holds `drain`'s buffers, and a debug build of that overflows a
+        // test thread's stack before the first process starts.
+        res!(Box::pin(conduct(job, tx)).await);
+        let mut refused = None;
+        while let Some(r) = rx.recv().await {
+            if let Resp::Refused { reason, .. } = r {
+                refused = Some(reason);
+            }
+        }
+        Ok(Attempt { refused, escaped: marker.exists() })
+    }
+
+    #[tokio::test]
+    async fn a_verifier_the_checkout_brought_runs_outside_the_fence() -> Outcome<()> {
+        let root   = res!(tree("prov_committed"));
+        let marker = root.join("..").join("prov_committed.escaped");
+        let marker = PathBuf::from(fmt!("{}", marker.display()));
+        res!(git(&root, &["init", "-q"]));
+        res!(put(&root, "probe", &escaper(&marker)));
+        res!(git(&root, &["add", "dev/verify_probe.mjs"]));
+        res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
+            "commit", "-q", "--no-verify", "-m", "probe"]));
+        let a = res!(attempt(&root, "probe", &marker).await);
+        assert!(a.refused.is_none(), "the committed case must run: {:?}", a.refused);
+        // The half that keeps this pair honest. Without it a guard that refused
+        // everything would leave the three tests below green while making the verb
+        // useless, which is the failure `REVIEW.md` was written about.
+        assert!(a.escaped,
+            "a verifier that IS the commit runs outside the fence, and this one wrote nothing \
+            outside the root -- so the three tests below prove nothing about a fence");
+        Ok(())
+    }
+
+    /// The verb, over this very tree, driven by hand.
+    ///
+    /// `#[ignore]`d, so it is never part of a suite: it runs a real verifier from
+    /// the repository this crate sits in, which starts browsers and takes minutes.
+    /// It is here because the fixtures above cannot find what it finds.  Run over
+    /// `verify_reflux` on 2026-08-25 it turned up two defects in a file that had
+    /// passed standalone twelve times -- a break declared by a sentence that named
+    /// ANOTHER file's break, and an X server killed hard enough to keep its lock --
+    /// and neither is visible from a fixture, because a fixture has no header prose
+    /// and starts no X server.
+    ///
+    ///	LIVE=reflux cargo test --manifest-path hand/Cargo.toml --lib \
+    ///	  verify::tests::live_walk -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn live_walk_over_this_very_tree() -> Outcome<()> {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        let name = std::env::var("LIVE").unwrap_or(fmt!("harness"));
+        let script = match resolve(&root, &name) {
+            Ok(s)  => s,
+            Err(w) => { println!("REFUSED: {}", w); return Ok(()); },
+        };
+        println!("script  {:?}\nprov    {}\nbreaks  {:?}",
+            script.path, script.prov.phrase(), script.breaks);
+        let node = res!(on_path("node").ok_or_else(|| err!(
+            "Every verifier is a Node script and there is no node on PATH."; Test, Missing)));
+        let jdir = res!(tree("live_walk")).join("journal");
+        let jr = res!(Journal::open(crate::journal::Cfg::at(&jdir)));
+        let job = Job {
+            id: fmt!("live"), root: root.clone(), breaks: script.breaks.clone(), script,
+            node, budget: Duration::from_millis(1_800_000),
+            ledger: Ledger::new(Arc::new(Mutex::new(jr)), Arc::new(AtomicBool::new(true))),
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        res!(Box::pin(conduct(job, tx)).await);
+        while let Some(r) = rx.recv().await {
+            match r {
+                Resp::Chunk { data, .. }     => println!("{}", data),
+                Resp::Refused { reason, .. } => println!("REFUSED: {}", reason),
+                Resp::Ended { exit, .. }     => println!("exit {}", exit),
+                _                            => {},
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_spawn_itself_hands_on_no_display() -> Outcome<()> {
+        // The pure function above can be right and never called, which is this
+        // repository's own recorded failure shape -- `dev/BLOCKERS.md` keeps a list
+        // of things built and unreachable. So this one goes through `conduct`,
+        // `once` and a real `execve`, and asks the child what it was actually given.
+        let root   = res!(tree("prov_seat"));
+        let marker = root.join("..").join("prov_seat.saw");
+        let marker = PathBuf::from(fmt!("{}", marker.display()));
+        res!(git(&root, &["init", "-q"]));
+        res!(put(&root, "probe", &fmt!(
+            "import fs from 'node:fs';\n\
+            const e = process.env;\n\
+            fs.writeFileSync({:?}, `DISPLAY=${{e.DISPLAY ?? '<unset>'}} \
+            WAYLAND_DISPLAY=${{e.WAYLAND_DISPLAY ?? '<unset>'}} \
+            DAIMOND_UNATTENDED=${{e.DAIMOND_UNATTENDED ?? '<unset>'}} \
+            HOME=${{e.HOME ? 'set' : '<unset>'}}`);\n\
+            console.log('  ok   it ran');\n",
+            fmt!("{}", marker.display()))));
+        res!(git(&root, &["add", "dev/verify_probe.mjs"]));
+        res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
+            "commit", "-q", "--no-verify", "-m", "probe"]));
+        let mine = std::env::var("DISPLAY").unwrap_or_default();
+        let a = res!(attempt(&root, "probe", &marker).await);
+        assert!(a.refused.is_none(), "the committed case must run: {:?}", a.refused);
+        let saw = res!(fs::read_to_string(&marker)
+            .map_err(|e| err!(e, "the probe wrote nothing at {:?}", marker; Test, IO)));
+        assert!(saw.contains("DISPLAY=<unset>"),
+            "a verifier was handed a display. This process holds DISPLAY={:?}, and what \
+            reached the child was: {}", mine, saw);
+        assert!(saw.contains("WAYLAND_DISPLAY=<unset>"),
+            "a verifier was handed the compositor, which Chromium prefers over DISPLAY \
+            and which is the owner's own screen: {}", saw);
+        assert!(saw.contains("DAIMOND_UNATTENDED=1"),
+            "the run was not marked unattended, so dev/display.mjs would allow :0: {}", saw);
+        // The half that keeps the three above honest: an environment cleared and not
+        // rebuilt would satisfy every one of them and break every verifier in dev/.
+        assert!(saw.contains("HOME=set"),
+            "the environment was cleared and not rebuilt, so every script under dev/ \
+            dies on its first line: {}", saw);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_verifier_git_has_never_heard_of_does_not_run() -> Outcome<()> {
+        let root   = res!(tree("prov_untracked"));
+        let marker = PathBuf::from(fmt!("{}", root.join("..").join("prov_untracked.escaped").display()));
+        res!(git(&root, &["init", "-q"]));
+        res!(put(&root, "probe", &escaper(&marker)));
+        let a = res!(attempt(&root, "probe", &marker).await);
+        assert!(!a.escaped, "an untracked verifier ran and wrote outside the granted root");
+        let no = res!(a.refused.ok_or_else(|| err!(
+            "nothing was refused, so the run happened"; Test, Invalid)));
+        assert!(no.contains("dev/verify_probe.mjs"), "the refusal must name the file: {}", no);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_tracked_verifier_the_model_has_edited_does_not_run() -> Outcome<()> {
+        let root   = res!(tree("prov_edited"));
+        let marker = PathBuf::from(fmt!("{}", root.join("..").join("prov_edited.escaped").display()));
+        res!(git(&root, &["init", "-q"]));
+        res!(put(&root, "probe", "console.log('  ok   it ran');\n"));
+        res!(git(&root, &["add", "dev/verify_probe.mjs"]));
+        res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
+            "commit", "-q", "--no-verify", "-m", "probe"]));
+        // Now the model edits it. `git ls-files --error-unmatch` goes on saying yes.
+        res!(put(&root, "probe", &escaper(&marker)));
+        let a = res!(attempt(&root, "probe", &marker).await);
+        assert!(!a.escaped, "an edited verifier ran and wrote outside the granted root");
+        assert!(a.refused.is_some(), "nothing was refused, so the run happened");
+        // And the whole of §1.21's second half: staging it is not committing it.
+        res!(git(&root, &["add", "dev/verify_probe.mjs"]));
+        let b = res!(attempt(&root, "probe", &marker).await);
+        assert!(!b.escaped,
+            "'git add' bought the model an unfenced run, so the check is about the index and \
+            not about the bytes");
+        assert!(b.refused.is_some(), "a staged edit was accepted");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_folder_with_no_git_in_it_cannot_vouch_for_anything() -> Outcome<()> {
+        let root   = res!(tree("prov_nogit"));
+        let marker = PathBuf::from(fmt!("{}", root.join("..").join("prov_nogit.escaped").display()));
+        res!(put(&root, "probe", &escaper(&marker)));
+        let a = res!(attempt(&root, "probe", &marker).await);
+        assert!(!a.escaped,
+            "a granted folder with no repository in it ran a verifier outside the fence, and \
+            nothing there could have said whose code it was");
+        assert!(a.refused.is_some(), "nothing was refused, so the run happened");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_refusal_hands_the_daimon_the_fenced_route() -> Outcome<()> {
+        let root   = res!(tree("prov_sentence"));
+        let marker = PathBuf::from(fmt!("{}", root.join("..").join("prov_sentence.escaped").display()));
+        res!(git(&root, &["init", "-q"]));
+        res!(put(&root, "probe", &escaper(&marker)));
+        let a = res!(attempt(&root, "probe", &marker).await);
+        let no = res!(a.refused.ok_or_else(|| err!("nothing was refused"; Test, Invalid)));
+        // A refusal a model cannot converge on costs the run anyway. Each of these is a
+        // thing the daimon must be able to DO next, and the sentence is asserted for
+        // meaning rather than for length.
+        // The argv form and not a command line, because that is what 'run' takes: a
+        // refusal that hands a model a shell string teaches it the one spelling the
+        // tool refuses.
+        assert!(no.contains(r#"["node","dev/verify_probe.mjs"]"#),
+            "the refusal must hand over the argv that runs it fenced: {}", no);
+        assert!(no.contains("'run'"),
+            "the refusal must name the tool that command goes to: {}", no);
+        assert!(no.contains("commit"),
+            "the refusal must say what makes the unfenced run available: {}", no);
+        assert!(no.contains("browser"),
+            "the refusal must say what the fenced route cannot do, or a daimon will read the \
+            fenced run's failure as the verifier being broken: {}", no);
+        Ok(())
+    }
+
+    #[test]
+    fn a_verifier_that_is_a_symlink_is_not_the_commit_whatever_git_says() -> Outcome<()> {
+        let root = res!(tree("prov_link"));
+        res!(git(&root, &["init", "-q"]));
+        // The target is an ordinary file inside the granted root, which every fenced
+        // command may rewrite. Committing the LINK commits the name and not the bytes.
+        let target = root.join("notes.mjs");
+        res!(fs::write(&target, "console.log('  ok   it ran');\n")
+            .map_err(|e| err!(e, "writing {:?}", target; Test, IO)));
+        #[cfg(unix)]
+        res!(std::os::unix::fs::symlink("../notes.mjs",
+            root.join(DEV_DIR).join("verify_probe.mjs"))
+            .map_err(|e| err!(e, "linking"; Test, IO)));
+        res!(git(&root, &["add", "-A"]));
+        res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
+            "commit", "-q", "--no-verify", "-m", "probe"]));
+        assert_eq!(Provenance::Changed(Change::Linked),
+            provenance(&root, "verify_probe.mjs"),
+            "a committed symlink read as the commit's own bytes");
+        let no = res!(unfenced_refusal(&root, "verify_probe.mjs").ok_or_else(|| err!(
+            "a committed symlink was allowed to run unfenced"; Test, Invalid)));
+        assert!(no.contains("symbolic link"), "{}", no);
+        Ok(())
+    }
+
+    #[test]
+    fn membership_is_not_content_and_this_is_where_the_two_part() -> Outcome<()> {
+        let root = res!(tree("prov_parts"));
+        res!(git(&root, &["init", "-q"]));
+        res!(put(&root, "probe", "console.log('  ok   one');\n"));
+        res!(git(&root, &["add", "dev/verify_probe.mjs"]));
+        res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
+            "commit", "-q", "--no-verify", "-m", "probe"]));
+        assert_eq!(Provenance::Committed, provenance(&root, "verify_probe.mjs"));
+        assert!(unfenced_refusal(&root, "verify_probe.mjs").is_none());
+
+        // One appended comment. This is the case `REVIEW.md` §1.21 turns on: the index
+        // goes on saying yes, and the bytes are the model's.
+        res!(put(&root, "probe", "console.log('  ok   one');\n// and now mine\n"));
+        let git_path = res!(on_path("git").ok_or_else(|| err!("no git"; Test, Missing)));
+        let listed = res!(std::process::Command::new(&git_path)
+            .arg("-C").arg(&root)
+            .args(["ls-files", "--error-unmatch", "--", "dev/verify_probe.mjs"])
+            .stdout(Stdio::null()).stderr(Stdio::null())
+            .status().map_err(|e| err!(e, "ls-files"; Test, IO)));
+        assert!(listed.success(),
+            "the premise of this test is that git goes on naming an edited file");
+        assert_eq!(Provenance::Changed(Change::Edited), provenance(&root, "verify_probe.mjs"),
+            "the check followed the index rather than the bytes");
+        Ok(())
+    }
+
+    #[test]
+    fn the_report_says_whose_bytes_it_ran() -> Outcome<()> {
+        let script = Script {
+            name:   fmt!("probe"),
+            file:   fmt!("verify_probe.mjs"),
+            path:   PathBuf::from("/w/dev/verify_probe.mjs"),
+            breaks: Vec::new(),
+            prov:   Provenance::Committed,
+        };
+        let clean = pass_of("clean", "  ok   one\n");
+        let txt = report(&script, &[(clean, None)],
+            &Verdict::Unproven { passed: 1, failed: 0, declared: Vec::new() }, &[]);
+        let first = res!(txt.lines().next().ok_or_else(|| err!("empty report"; Test, Invalid)));
+        assert!(first.contains("byte for byte the commit's"),
+            "the report's first line must say whose bytes ran: {}", first);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_verifier_that_rewrites_itself_gets_no_second_run() -> Outcome<()> {
+        let root = res!(tree("prov_swap"));
+        // Committed, and what it does when it runs is append to its own source. So the
+        // clean run is the commit's and the break run is not, which is the race the
+        // re-ask before every spawn exists for: no test can hold a file still for the
+        // minutes a real sequence takes, and a verifier that changes itself is the same
+        // event arriving on schedule.
+        let src = "//   node dev/verify_probe.mjs --break swap    # 1: the break\n\
+            import fs from 'node:fs';\n\
+            console.log('  ok   it ran');\n\
+            fs.appendFileSync('dev/verify_probe.mjs', '// and now it is mine\\n');\n";
+        res!(git(&root, &["init", "-q"]));
+        res!(put(&root, "probe", src));
+        res!(git(&root, &["add", "dev/verify_probe.mjs"]));
+        res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
+            "commit", "-q", "--no-verify", "-m", "probe"]));
+        let script = res!(resolve(&root, "probe").map_err(|w| err!("{}", w; Test, Invalid)));
+        assert_eq!(vec![fmt!("swap")], script.breaks);
+        assert_eq!(Provenance::Committed, script.prov);
+        let node = res!(on_path("node").ok_or_else(|| err!("no node"; Test, Missing)));
+        let jdir = root.join("..").join("prov_swap-journal");
+        let jdir = PathBuf::from(fmt!("{}", jdir.display()));
+        if jdir.exists() {
+            res!(fs::remove_dir_all(&jdir).map_err(|e| err!(e, "clearing"; Test, IO)));
+        }
+        let jr = res!(Journal::open(crate::journal::Cfg::at(&jdir)));
+        let job = Job {
+            id:     fmt!("swap"),
+            root:   root.clone(),
+            script,
+            breaks: vec![fmt!("swap")],
+            node,
+            budget: Duration::from_millis(60_000),
+            ledger: Ledger::new(Arc::new(Mutex::new(jr)), Arc::new(AtomicBool::new(true))),
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        res!(Box::pin(conduct(job, tx)).await);
+        let mut out = String::new();
+        while let Some(r) = rx.recv().await {
+            if let Resp::Chunk { stream: Stream::Out, data, .. } = r {
+                out.push_str(&data);
+            }
+        }
+        assert!(out.contains("BREAK swap"), "the break is not in the report: {}", out);
+        assert!(out.contains("NEVER RAN"),
+            "the break ran against a file the clean run had rewritten: {}", out);
+        assert!(out.contains("stopped being the commit's"),
+            "the report does not say why the break never ran: {}", out);
         Ok(())
     }
 }

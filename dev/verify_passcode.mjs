@@ -86,11 +86,17 @@ const ROOT = path.join(HERE, '..');
 // and an EMPTY store. The store being empty is not only politeness: the checks
 // below count passcodes, and counting them in a store somebody else has been
 // writing to would measure their afternoon.
-// 9402, deliberately clear of everything the harness already numbers: the dev
+// 9420, deliberately clear of everything the harness already numbers: the dev
 // servers run at 8777+N and the mock providers at 9099+N, so a "spare" port in
 // the nine-thousand-one-hundreds is somebody's world, and picking one answers a
 // health probe with a mock LLM's 404 rather than with nothing.
-const PORT    = Number(process.env.DAIMOND_GW_PORT || 9402);
+//
+// IT WAS 9402, WHICH IS INSIDE `DAIMOND_REDEEM_GW_PORT`'s 9400 + N. Under
+// GATE_WORLD=2 that is verify_redeem's gateway and this one, on one port, and it
+// survived only because `dev/run_all.sh` runs a verifier at a time. The register
+// in `dev/world.sh` held both rows and neither reader saw the overlap; the check
+// in `dev/verify_worldports.mjs` reads the register and found it on its first run.
+const PORT    = Number(process.env.DAIMOND_GW_PORT || 9420);
 const GW      = `http://127.0.0.1:${PORT}`;
 const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
 const WORK    = path.join(SCRATCH, 'verify_passcode-gw');
@@ -319,6 +325,16 @@ async function waitFor(fn, ms = 20000, gap = 250) {
 	const who = await call(boss.jar, 'GET', '/api/admin?view=whoami');
 	check('the console recognises the owner', who.j && who.j.role === 'owner',
 		JSON.stringify(who.j));
+
+	// BUILD THE LISTING INDEXES ONCE, because the gateway no longer builds them itself.
+	// The owner's decision: a whole-store walk is off the request path, so an unbuilt
+	// listing answers `needs_build` immediately and walks nothing. The console is the only
+	// thing that builds one, by an operator pressing a button; this run does the same.
+	// Without it the passcode list reads "status 200 · 0 rows" and a working product is
+	// reported as broken. See dev/verify_applications.mjs for the whole reason.
+	for (const view of ['applications', 'passcodes', 'reports']) {
+		await call(boss.jar, 'GET', `/api/admin?view=${view}&build=1`);
+	}
 
 	/// Mint a passcode from the console, as the operator does.
 	///

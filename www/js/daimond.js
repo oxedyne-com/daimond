@@ -113,6 +113,7 @@ import init, {
 	set_workspace_dir,
 	use_opfs_workspace,
 	compose_prompt,
+	compose_prompt_for,
 	default_prompt,
 	safety_clause,
 } from '../pkg/oxedyne_daimond.js';
@@ -231,7 +232,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// SYSTEM_PROMPT is what a chat is told, composed from that file plus those
 	// rules. It is a function, not a constant, because the file can change under
 	// a running app.
-	function SYSTEM_PROMPT() { return Prompts.role('chat'); }
+	// TAKES THE MODEL, because two of the notes are composed on it. `VERIFY_NOTE` and
+	// `QUIET_NOTE` were each measured worth their tokens on some models and not on others
+	// (dev/PROMPT_NOTES.md), and `prompts::measured_spare` drops one only where a measurement
+	// says so by name. A caller with no model in hand passes nothing and gets every note,
+	// which is the safe answer: an absent note costs a turn, a needless one costs about a
+	// hundred tokens.
+	function SYSTEM_PROMPT(model) { return Prompts.role('chat', model); }
 
 	// ── Settings (BYOK, localStorage) ──────────────────────────
 	var CFG_KEY = 'daimond-byok';
@@ -2676,7 +2683,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// which is closed over there).
 	function parseSyncListing(text) {
 		var out = [];
-		if (/ is empty\.$/.test(String(text).trim())) return out;
+		// THE FIRST LINE, not the end of the text. `file_list` can now put a second line
+		// under this one saying which filesystem it looked in (`two_places_note`,
+		// src/tools.rs), and a test anchored at the end stopped recognising the answer --
+		// which does not read as "unknown", it reads as ONE FILE whose name is that
+		// sentence. In a census that calls itself complete, a phantom file is what the
+		// other device syncs. Anchored here so that any later note is inert as well.
+		if (/ is empty\.$/.test(String(text).split('\n')[0].trim())) return out;
 		String(text).split('\n').forEach(function (line) {
 			if (!line) return;
 			if (line.charAt(line.length - 1) === '/') { out.push({ name: line.slice(0, -1), dir: true, size: 0 }); return; }
@@ -2802,6 +2815,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the caller then recorded the path as agreed by both devices.
 	async function writeSyncFile(app, path, content) {
 		try {
+			// The folder first, and ASKED FOR rather than relied upon. `file_write` refuses a
+			// write that would invent a folder in browser storage while a hand is paired and no
+			// folder is open (`write_place`, src/tools.rs), because a daimon in that state
+			// cannot tell which filesystem its bytes went to. A pull from the other device
+			// CAN: this is the app writing what another device holds, into the storage it is
+			// held in, so it says which folder it means and the refusal has nothing to refuse.
+			var cut = String(path).lastIndexOf('/');
+			if (cut > 0) {
+				try {
+					await app.run_tool_outcome('dir_create',
+						JSON.stringify({ path: path.slice(0, cut) }));
+				} catch (e) { /* it may already be there, which is the state wanted */ }
+			}
 			var r = await app.run_tool_outcome('file_write',
 				JSON.stringify({ path: path, content: content }));
 			return !!r && r.outcome === 'done';
@@ -4233,8 +4259,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		DaimondI18n.surface(
 			function () { return document.querySelector('#chat-output .empty-state.pending-centre'); },
 			function () { if (pendingCentreChat) renderPendingCentre(pendingCentreChat); });
+		// The document on the Doc panel. It is the one surface that must not be
+		// rebuilt to be repainted -- rebuilding it throws away an edit in progress --
+		// so what it registers puts its own words right in place. Before this, a
+		// document opened in one language kept that language's Save, Cancel and
+		// Download for as long as it stayed open, and after the panel gained a
+		// document at cold start that was every session from its first paint.
+		DaimondI18n.surface(function () { return document.getElementById('doc-view'); },
+			function () { try { Files.relabelDoc(); } catch (e) { /* nothing open */ } });
 		DaimondI18n.surface(agentsList,                                function () { Workers.render(); });
 		DaimondI18n.surface(document.getElementById('pending-list'),   function () { Pending.render(); });
+		// The standing-instructions chip in the Workspace head. Its label is the
+		// FILE NAME, which is the same word in every language, and its whole
+		// sentence is in the tooltip -- so nothing on screen changed when the
+		// language did and the only thing that was wrong was the one thing a
+		// reader had to hover to find. It is redrawn rather than relabelled
+		// because which of its three sentences applies depends on how many
+		// layers are in force, and only `render` knows that.
+		DaimondI18n.surface(function () { return document.getElementById('instructions-chip'); },
+			function () { try { Instructions.render(); } catch (e) { /* no rules yet */ } });
 	}
 
 	// ── Telemetry, if a beta tester agreed to it ───────────────
@@ -4466,6 +4509,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				b.classList.toggle('on', b.dataset.mp === 'ai');
 			});
 			DaimondSheet.open(name);
+			// A guest rising as a sheet returns HERE and never reaches the hooks at the
+			// foot of this function, so a phone would meet the blank Doc panel the
+			// desktop no longer has.
+			if (name === 'doc') Files.onDocOpen();
 			return;
 		}
 		// The rail is reached through the hamburger drawer, not the bar.
@@ -5776,6 +5823,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			markUsed(id);
 			apply();
 			if (id === 'work') Files.onOpen();
+			// The Doc panel had no hook at all, so the chip opened a panel holding a
+			// close button and nothing else. Asked for with nothing to show, it now
+			// offers a new document. AFTER `apply()`, like every hook here: `openFile`
+			// focuses a textarea, and one in a panel not yet seated is laid out at
+			// nothing.
+			if (id === 'doc') Files.onDocOpen();
 			if (id === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); Badge.seen('mail'); }
 			if (id === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
 			// The terminal is built on the first open and started there: a pty is a
@@ -7356,11 +7409,306 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return true;
 	}
 
+
+	// ── A question the model put, answered with one tap ─────────
+	//
+	// THE ONE THING A MODEL COULD NOT DO. It could write a question in prose and
+	// stop, which is a question answered by TYPING, and a decision answered by
+	// typing is a decision put off. `ask` (src/tools.rs) is the tool; this is the
+	// card.
+	//
+	// DRAWN FROM THE CALL'S OWN ARGUMENTS, which is what makes it work on both
+	// paths for free -- the live turn and a reload both arrive here through
+	// `renderToolCall`, exactly as `renderSaid` does for a stored fold. It is
+	// also the whole of the durability story: the buttons need NOTHING left over
+	// from the turn that asked, because answering is only sending a message. So
+	// a question survives an hour, a reload and a closed tab, and there is
+	// nothing to expire -- which is the opposite of `parkConsent`, whose tiles
+	// hold a `resolve` in memory and are marked expired when the page comes back.
+	//
+	// THE SHAPE IS CHECKED HERE AS WELL AS IN RUST, and not out of distrust: the
+	// card is drawn from the ToolCall event, which fires BEFORE `ask_step` has
+	// seen the arguments. A malformed question would otherwise flash on screen
+	// and be taken away again. What Rust refuses that this cannot see -- a second
+	// question in one turn, a dispatched worker -- is caught by `renderToolResult`
+	// taking the card down when the outcome is not `done`.
+
+	/// The card most recently drawn, so a refused call can take it away again and
+	/// so a reload can mark one that was already answered.
+	var _askCard = null;
+
+	/// Set by `renderToolCall` when the call it drew was a question, so its RESULT
+	/// -- a sentence written for the model about what it just did -- is not drawn
+	/// underneath the card.
+	var _askJust = false;
+
+	/// The two words an answer travels under, which are NOT translated.
+	///
+	/// This is a wire format between the page and the model, in the way
+	/// `allow-net` is one between the page and the engine: the tool's description
+	/// tells the model that an answer opens with one of exactly these, and that is
+	/// how it tells "he chose the option I recommended" from "he rejected every
+	/// option I offered". A translated marker would be a different marker in eight
+	/// languages, and the model reads one. What the USER reads is the part after
+	/// it, which is the label the model itself wrote, in the conversation's own
+	/// language.
+	var ASK_CHOSE = 'Chose: ';
+	var ASK_OTHER = 'Other: ';
+
+	/// Is this something the card can actually draw?
+	///
+	/// The same shape `ask_step` requires, asked of the raw arguments. Anything
+	/// else falls through to the ordinary tool block, which is honest: a question
+	/// nobody can read is not a question.
+	///
+	/// # Arguments
+	/// * `o` - The parsed arguments, or the checked payload; they carry the same fields.
+	function askDrawable(o) {
+		if (!o || typeof o.question !== 'string' || !o.question.trim()) return false;
+		if (!Array.isArray(o.options) || o.options.length < 2 || o.options.length > 4) return false;
+		for (var i = 0; i < o.options.length; i++) {
+			var op = o.options[i];
+			if (!op || typeof op.label !== 'string' || !op.label.trim()) return false;
+			if (typeof op.means !== 'string' || !op.means.trim()) return false;
+		}
+		// A recommendation that names none of the options cannot be marked, and an
+		// unmarked recommendation is the failure the field exists to stop.
+		return o.options.some(function (op) {
+			return op.recommended === true || (typeof o.recommend === 'string'
+				&& op.label.trim() === o.recommend.trim());
+		});
+	}
+
+	/// Send one answer, as the composer would send it.
+	///
+	/// THROUGH `sendUserMessage` AND NOTHING ELSE. That is the one door a message
+	/// leaves by: it knows whether this is a chat or a Diamond, whether a turn is
+	/// already running (in which case the answer is queued rather than dropped),
+	/// and which engine to hand it to. A second send written here would be a
+	/// second answer to all of those questions, and the two would part company.
+	///
+	/// # Arguments
+	/// * `card` - The card being answered, which is marked and closed.
+	/// * `text` - The message, already carrying its `Chose: ` or `Other: ` marker.
+	/// * `shown` - What to tell the reader they answered.
+	function askAnswer(card, text, shown) {
+		if (!card || card.dataset.answered) return;
+		askClose(card, shown);
+		try {
+			chatInput.value = text;
+			chatInput.style.height = 'auto';
+		} catch (e) { /* no composer: the send below will refuse and say nothing */ }
+		sendUserMessage();
+	}
+
+	/// Mark a card answered: the buttons stop being buttons, and everything stays.
+	///
+	/// NOTHING IS REMOVED BUT THE WAY IN. A thread where the question vanished the
+	/// moment it was answered cannot be read back -- and neither can one that keeps
+	/// the question and throws the alternatives away, which is the more insidious
+	/// half: "You answered: On the device" over an empty card says what was decided
+	/// and hides what it was decided AGAINST, which is the part somebody comes back
+	/// to a month later to check.
+	///
+	/// The chosen option is marked as well as named, so the answer is legible from
+	/// the card alone rather than only from the sentence under it.
+	///
+	/// # Arguments
+	/// * `card` - The card being closed.
+	/// * `shown` - What the reader is told they answered: a label, or their own words.
+	function askClose(card, shown) {
+		card.dataset.answered = '1';
+		card.classList.add('answered');
+		[].forEach.call(card.querySelectorAll('.ask-opt'), function (b) {
+			b.disabled = true;
+			var lab = b.querySelector('.ask-label');
+			if (lab && lab.textContent.trim() === String(shown).trim()) b.classList.add('chosen');
+		});
+		var other = card.querySelector('.ask-other');
+		if (other) other.remove();
+		var done = document.createElement('div');
+		done.className = 'ask-done';
+		done.textContent = t('ask.answered', { what: shown });
+		card.appendChild(done);
+	}
+
+	/// A replayed answer closes the question it was an answer to.
+	///
+	/// # Arguments
+	/// * `text` - The user message just drawn.
+	function askMarkAnswered(text) {
+		if (!_askCard || _askCard.dataset.answered) return;
+		var s = String(text || '');
+		if (s.indexOf(ASK_CHOSE) === 0)      askClose(_askCard, s.slice(ASK_CHOSE.length).trim());
+		else if (s.indexOf(ASK_OTHER) === 0) askClose(_askCard, s.slice(ASK_OTHER.length).trim());
+		else return;
+		_askCard = null;
+	}
+
+	/// Draw one question, with its options as buttons.
+	///
+	/// Returns whether it drew one; false falls through to the ordinary tool block.
+	///
+	/// # Arguments
+	/// * `args` - The call's arguments, as JSON.
+	function renderAsk(args) {
+		var o;
+		try { o = JSON.parse(args || '{}'); } catch (e) { return false; }
+		if (!askDrawable(o)) return false;
+		finalizeAssistant();
+		var card = document.createElement('div');
+		card.className = 'ask-card';
+		// A GROUP AND NOT A DIALOG. `role="dialog"` is what a permission prompt is,
+		// and the two must not read alike to anybody -- least of all to a screen
+		// reader, where the difference between "may I do this" and "which of these
+		// do you want" is the whole of the meaning. Nothing here is modal, nothing
+		// takes focus, and the thread stays scrollable behind it.
+		card.setAttribute('role', 'group');
+		card.setAttribute('aria-label', String(o.question));
+
+		var n = Number(o.n) || 0, of = Number(o.of) || 0;
+		if (n > 0 && of >= n) {
+			var count = document.createElement('div');
+			count.className = 'ask-count';
+			count.textContent = t('ask.of', { n: String(n), of: String(of) });
+			card.appendChild(count);
+		}
+		var q = document.createElement('div');
+		q.className = 'ask-q';
+		q.textContent = String(o.question);		// escaped via textContent
+		card.appendChild(q);
+
+		var opts = document.createElement('div');
+		opts.className = 'ask-opts';
+		o.options.forEach(function (op) {
+			var rec = op.recommended === true || (typeof o.recommend === 'string'
+				&& String(op.label).trim() === o.recommend.trim());
+			var b = document.createElement('button');
+			b.type = 'button';
+			b.className = 'ask-opt' + (rec ? ' recommended' : '');
+			var head = document.createElement('span');
+			head.className = 'ask-label';
+			head.textContent = String(op.label);
+			b.appendChild(head);
+			if (rec) {
+				// NAMED, not merely first. A recommendation implied by ordering is
+				// not one, which is the rule `ask_step` refuses a call for breaking;
+				// drawing it as position alone here would break the same rule on the
+				// one surface the user actually reads.
+				var badge = document.createElement('span');
+				badge.className = 'ask-rec';
+				badge.textContent = t('ask.recommended');
+				b.appendChild(badge);
+			}
+			var means = document.createElement('span');
+			means.className = 'ask-means';
+			means.textContent = String(op.means);
+			b.appendChild(means);
+			b.addEventListener('click', function () {
+				askAnswer(card, ASK_CHOSE + String(op.label).trim(), String(op.label).trim());
+			});
+			opts.appendChild(b);
+		});
+		card.appendChild(opts);
+
+		if (typeof o.why === 'string' && o.why.trim()) {
+			var why = document.createElement('div');
+			why.className = 'ask-why';
+			why.textContent = t('ask.why', { why: o.why.trim() });
+			card.appendChild(why);
+		}
+		if (typeof o.if_silent === 'string' && o.if_silent.trim()) {
+			// WHAT HAPPENS IF HE SAYS NOTHING, on the card and not only in the
+			// model's context. Saying nothing is an answer people give, and it is
+			// only a knowing one if the consequence is on the screen beside the
+			// buttons.
+			var sil = document.createElement('div');
+			sil.className = 'ask-silent';
+			sil.textContent = t('ask.silent', { what: o.if_silent.trim() });
+			card.appendChild(sil);
+		}
+
+		// OTHER IS ALWAYS THERE. He may reject every option, and an answer he types
+		// has to reach the model as THE ANSWER rather than as a fresh remark -- so
+		// it travels under its own marker and the model is told to expect it.
+		var other = document.createElement('div');
+		other.className = 'ask-other';
+		var open = document.createElement('button');
+		open.type = 'button';
+		open.className = 'ask-other-open';
+		open.textContent = t('ask.other');
+		var row = document.createElement('div');
+		row.className = 'ask-other-row';
+		row.style.display = 'none';
+		var box = document.createElement('input');
+		box.type = 'text';
+		box.className = 'ask-other-box';
+		box.placeholder = t('ask.other_ph');
+		box.setAttribute('aria-label', t('ask.other_ph'));
+		var go = document.createElement('button');
+		go.type = 'button';
+		go.className = 'ask-other-go';
+		go.textContent = '➤';
+		go.title = t('ask.send');
+		go.setAttribute('aria-label', t('ask.send'));
+		var send = function () {
+			var said = box.value.trim();
+			if (!said) return;
+			askAnswer(card, ASK_OTHER + said, said);
+		};
+		go.addEventListener('click', send);
+		box.addEventListener('keydown', function (e) {
+			if (e.key === 'Enter') { e.preventDefault(); send(); }
+		});
+		open.addEventListener('click', function () {
+			row.style.display = '';
+			open.style.display = 'none';
+			try { box.focus(); } catch (e) { /* no focus to take */ }
+		});
+		row.appendChild(box); row.appendChild(go);
+		other.appendChild(open); other.appendChild(row);
+		card.appendChild(other);
+
+		chatOutput.appendChild(card);
+		_askCard = card;
+		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+		return true;
+	}
+
+	/// The question card's whole surface to the engine: `window.DaimondAsk`.
+	///
+	/// It draws nothing. `renderToolCall` has already drawn the card by the time
+	/// this is called, on the ToolCall event that precedes the dispatch -- so what
+	/// is left for this to do is the one thing Rust cannot find out for itself:
+	/// whether this page has a card renderer at all. A native build has none, and
+	/// so does a page served from a bundle older than this one; both must fail
+	/// LOUDLY, or the model tells the user it has asked a question that nobody
+	/// can see.
+	///
+	/// It does not wait for the answer and holds nothing. See src/wasm/ask.rs.
+	window.DaimondAsk = {
+		put: function (payload) {
+			var o = null;
+			try { o = JSON.parse(String(payload || '{}')); } catch (e) { o = null; }
+			// Answered from the SHAPE and not from `_askCard`, deliberately. A
+			// daimon steered from a gather round asks while its own thread is not
+			// on screen, so no card was drawn here -- and the question is still
+			// recorded in the conversation and still drawn the moment the user
+			// opens it. "Was a card painted just now" would report that as a
+			// failure and send the model back to prose.
+			return Promise.resolve(JSON.stringify({ drawn: !!(o && askDrawable(o)) }));
+		},
+	};
+
 	function renderToolCall(name, args, callId) {
 		// The answer, not a step. Only ever a STORED call -- see `renderSaid`, which says
 		// why the reader outlives the tool.
 		if (name === 'say' && renderSaid(args, callId)) { _saidJust = true; return; }
 		_saidJust = false;
+		// The QUESTION, not a step. A tool block would put the thing the turn is
+		// waiting on behind a debugging view that is off by default.
+		if (name === 'ask' && renderAsk(args)) { _askJust = true; return; }
+		_askJust = false;
 		// Not `finalizeAssistant`: prose with a tool call after it is working, not an answer.
 		// See `demoteToWorking`.
 		demoteToWorking();
@@ -7416,6 +7764,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// first tool call instead of going green.
 	function renderToolResult(name, result, outcome) {
 		if (name === 'say' && _saidJust) { _saidJust = false; return; }
+		// The result of a question is a sentence written for the model about what it
+		// has just done, so it is not drawn under the card the user is reading.
+		//
+		// EXCEPT WHEN THE QUESTION WAS NOT PUT. `ask_step` refuses things this page
+		// cannot see -- a second question in one turn, a dispatched worker -- and the
+		// card was drawn from the call rather than from the answer. So a card whose
+		// call came back anything but `done` is taken away again: leaving it would
+		// offer buttons for a question the model was told it never asked.
+		if (name === 'ask' && _askJust) {
+			_askJust = false;
+			if (outcome !== 'done' && _askCard) {
+				_askCard.remove();
+				_askCard = null;
+			}
+			return;
+		}
 		var refused = outcome === 'refused';
 		var failed  = !refused && outcome !== 'done';
 		if (lastToolBlock) {
@@ -8365,6 +8729,60 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { DaimondHandMode.setStandingNet('allow'); } catch (e) { /* asked again, no worse */ }
 			}
 			return okNet ? 'allow-net' : 'deny';
+		}
+		// PUBLISHING IN THE USER'S NAME, WHERE OTHER PEOPLE READ IT.
+		//
+		// The Social panel reaches the forge through OUR OWN gateway, so the URL
+		// this door is built around resolves same-origin and the shortcut below
+		// would answer `allow` outright, with nobody asked. That is the same fault
+		// `web_search` had, and it is answered the same way: HERE, above the URL
+		// work, and with a yes that is a word no other path through this function
+		// can say — `allow-publish`. An old bundle, a missing branch and the
+		// shortcut all say `allow`, and all three correctly mean NO here.
+		//
+		// `url` CARRIES THE TEXT AND NOT AN ADDRESS. The address is not the
+		// question. What is being approved is what other people will read, so what
+		// is shown is what would be published — composed by the panel, which is the
+		// half that knows what the wire will actually carry, and passed through
+		// unchanged. An approval given without sight of the content is not consent,
+		// and this is the user's name on a public post.
+		//
+		// NOT CUT, for the reason `web_type` is not cut: this is the one string a
+		// person is being asked to authorise SENDING, and a sentence past the cut
+		// would be approved unseen by somebody who was told they had read it. The
+		// card scrolls already.
+		//
+		// NEVER REMEMBERED, and that is a decision rather than an omission.
+		//
+		// The two answers this door DOES remember are remembered for reasons that
+		// do not apply. `_egressOk[host]` remembers a DESTINATION, because reaching
+		// a documentation site twice is the same act twice. `run_net` and
+		// `web_search` were both made standing on a COUNT — one ordinary question
+		// fanned out to eight searches and therefore eight dialogs, and a gate
+		// answered by tapping through is a gate that protects nobody.
+		//
+		// Neither holds here. Each publication is its own act with its own content,
+		// exactly as each `web_type` is — and that one is marked `never remembered`
+		// beside the same reasoning. And there is no count: a turn publishes once,
+		// perhaps twice. So the yes is spent on the payload it was given for, and
+		// the panel spends the token with it.
+		//
+		// A DISPATCHED WORKER NEVER ARRIVES HERE. `social_send_step` in
+		// src/tools.rs refuses one outright rather than parking the question, so
+		// there is no `alone` branch below and there must not be: a public post in
+		// somebody's name is not a question to leave on a tile for whoever passes.
+		if (req.tool === 'social_send') {
+			var what = String(req.url || '');
+			if (!what.trim()) return 'deny';		// nothing to show, so nothing to authorise.
+			var okPub = await confirmDialog(
+				tOr('social.publish_body',
+					'Daimond wants to publish this, in your name, where other people can read it. '
+						+ 'It cannot be taken back.\n\n{what}\n\nIf you did not expect this, decline. '
+						+ 'Nothing is lost but this one publication.',
+					{ what: what }),
+				tOr('social.publish_ok', 'Publish it'),
+				{ title: tOr('social.publish_title', 'Publish this?'), danger: true });
+			return okPub ? 'allow-publish' : 'deny';	// never remembered: every time means every time.
 		}
 		// A search is a destination this door cannot see. The wasm posts
 		// `/api/web/search`, which is OUR path and resolves same-origin — and the
@@ -10309,6 +10727,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	function clearChat() {
 		chatOutput.innerHTML = ''; curAsstDiv = null; curAsstText = '';
+		// The card went with the thread. A reference left standing here would have the
+		// next conversation's first answer close a question drawn in the last one.
+		_askCard = null; _askJust = false;
 		// The turns belonged to the thread that has just been thrown away. Numbering them from
 		// scratch is what keeps a turn number meaning "the nth question in THIS chat", which is
 		// the assumption the fold relies on when it maps a ticked turn back to a message.
@@ -10342,7 +10763,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// not a turn of its own here, so it is drawn where it landed rather than
 			// as the question that started something.
 			if (m.role === 'user' && m.interject) appendInterjected(m.content);
-			else if (m.role === 'user') appendUserMessage(m.content);
+			else if (m.role === 'user') {
+				appendUserMessage(m.content);
+				// A question already answered is drawn as answered. The record of the
+				// answer is the message itself -- it opens with the marker the card
+				// sent it under -- so nothing extra has to be stored for a reload to
+				// know, and a card the user has already dealt with does not come back
+				// offering the buttons again.
+				askMarkAnswered(m.content);
+			}
 			else if (m.role === 'assistant') {
 				appendAssistantText(m.content || '');
 				var div = curAsstDiv;
@@ -13790,6 +14219,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return { window: cw || 0, foldAt: at };
 	}
 
+	/// The window a DAIMON'S conversation is folding against.
+	///
+	/// `chatWindow` reads the record's own agent, and a daimon's record has none by
+	/// design — it runs on `diamondApp`, shared by every Diamond on that model. So the
+	/// built client is looked up rather than made: a tile is redrawn on every list
+	/// render, and calling `diamondApp` to draw a bar would mint an agent per Diamond,
+	/// and note a model as used, on the strength of a repaint. Where none has been built
+	/// yet the published window stands, which is where `chatWindow` ends up anyway.
+	function daimonWindow(dc) {
+		var app = null;
+		try {
+			var a = appCfgFor({ provider: dc.provider, model: dc.model });
+			app = _diamondApps[diamondAppKey(a)] || null;
+		} catch (e) { /* nothing built, or no model list: the published figure stands */ }
+		return chatWindow({ app: app, model: dc.model, provider: dc.provider });
+	}
+
 	// The context bar alone: window fraction, fold mark, percentage. Factored out
 	// of `tileMeter` when the Diamond tile wanted the bar without the tokens and
 	// cost that ride beside it on a chat -- one implementation, two callers, so
@@ -14132,7 +14578,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// retry and is not persisted.
 		chat.app = new DaimondApp(a.baseUrl, a.apiKey, a.model,
 			chat._capTry || maxOutFor(a.model, a.provider),
-			Instructions.compose(SYSTEM_PROMPT(), ''), cfg.tools !== false);
+			Instructions.compose(SYSTEM_PROMPT(a.model), ''), cfg.tools !== false);
 		// The user's own chat may send workers out; a worker may not. `Tool::browser`
 		// in src/tools.rs is the list BOTH are built from, so the dispatch tool is not
 		// in it and is added here, by the one caller that builds a chat. A worker that
@@ -14468,7 +14914,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// `heapBytes` can see, and therefore the only kind that can explain a
 		/// phone reaching 235 MB across `connectGateway`.
 		newApp:          function (base, key, model) {
-			return new DaimondApp(base, key, model, 256, SYSTEM_PROMPT(), true);
+			return new DaimondApp(base, key, model, 256, SYSTEM_PROMPT(model), true);
 		},
 		/// Grow the wasm heap on purpose, so the gauge can be PROVED rather than
 		/// trusted. A diagnostic nobody has watched working is a diagnostic whose
@@ -14715,6 +15161,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			n = String(n || '').trim().replace(/\/$/, '');
 			if (/\.md$/i.test(n)) names[n.replace(/\.md$/i, '')] = 1;
 		}
+		// THE ONES THIS BUILD CARRIES, which have no file for the two listings below to
+		// find. `/handover` and `/pickup` resolve in a workspace nobody has written a skill
+		// into (`skills::resolve_skill`), and a command nobody can discover is a command
+		// nobody types -- so the menu asks the wasm for the same table `open_command` reads.
+		// Through the namespace, not a named import: a stale `www/pkg` without this export
+		// must cost the menu two rows, not the whole app.
+		try {
+			String((Sbj.shipped_skills && Sbj.shipped_skills()) || '').split('\n')
+				.forEach(function (n) { if (n.trim()) names[n.trim()] = 1; });
+		} catch (e) { /* an engine that predates them simply lists what is on disk */ }
 		// TWO FORMATS, and they are not the same. `store_list` is this app's own
 		// door and returns `name<TAB>kind<TAB>bytes`; `file_list` is the MODEL's
 		// tool and returns `name (n bytes)`. Parsing one with the other's reader
@@ -14738,15 +15194,128 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return Object.keys(names).sort();
 	}
 
+	// ── A daimon drafts; the owner installs ────────────────────────
+	//
+	// `.daimond/` is denied to every fenced turn and stays denied: it holds the rules a
+	// skill is trusted BY, and anything that can write there can rewrite them. So a daimon
+	// writes a DRAFT with the file tools it already has, into `skill-drafts/` inside its own
+	// folder -- the one place every turn may write, which survives the tab and which belongs
+	// to the conversation that produced it.
+	//
+	// The install is the person's, in one tap, and it follows `social_send`'s shape rather
+	// than inventing a second: the draft's EXACT BYTES go on the screen, they answer, and
+	// what is written is what they were shown. Nothing is remembered. There is no "always
+	// install drafts", because a standing yes to a class of writes into `.daimond/` is this
+	// boundary given away under another name.
+
+	/// The folder this conversation's drafts are in, or '' where there is no conversation.
+	function draftsDir() {
+		var f = null;
+		try { f = (window.DaimondAttach && window.DaimondAttach.focus()) || null; } catch (e) { f = null; }
+		if (!f) return '';
+		var own = (f.kind === 'diamond') ? ('diamonds/' + f.id) : chatScratchDir(f.id);
+		var sub = '';
+		try { sub = String((Wasm.skill_drafts_dir && Wasm.skill_drafts_dir()) || ''); }
+		catch (e) { return ''; }		// an engine without it lists no drafts, and no more
+		return sub ? (own + '/' + sub) : '';
+	}
+
+	/// Every draft waiting in this conversation, as `{ name, path, text }`.
+	///
+	/// Read from the STORE, because a chat's own folder and a Diamond's both live in browser
+	/// storage whatever folder is open -- the same reason `Wasm.store_write` is what writes a
+	/// Diamond's files and `write_file` is not.
+	async function listDrafts() {
+		var dir = draftsDir();
+		if (!dir) return [];
+		var names = [];
+		try {
+			String(await Wasm.store_list(dir) || '').split('\n').forEach(function (line) {
+				if (!line) return;
+				var n = String(line.split('\t')[0] || '').trim();
+				if (/\.md$/i.test(n)) names.push(n.replace(/\.md$/i, ''));
+			});
+		} catch (e) { return []; }		// no drafts folder yet is the ordinary case
+		var out = [];
+		for (var i = 0; i < names.length; i++) {
+			// The NAME loses its extension and the PATH keeps it. Composed from `names[i]`
+			// alone this read a file called `brief` that was never there, and the catch below
+			// turned that into an empty menu -- a draft written, listed, and silently not
+			// offered.
+			var path = dir + '/' + names[i] + '.md', text = '';
+			try { text = String(await Wasm.store_read(path) || ''); } catch (e) { continue; }
+			if (text.trim()) out.push({ name: names[i], path: path, text: text });
+		}
+		out.sort(function (a, b) { return a.name < b.name ? -1 : 1; });
+		return out;
+	}
+
+	/// Put one draft to the user, exactly as it stands, and install it if they say so.
+	///
+	/// The bytes shown and the bytes written are ONE STRING, read once: a second read between
+	/// the question and the write is a window in which what they approved and what they get
+	/// are different files.
+	async function offerDraft(d) {
+		var why = '';
+		try { why = String((Wasm.skill_draft_refusal && Wasm.skill_draft_refusal(d.name, d.text)) || ''); }
+		catch (e) { why = ''; }
+		if (why) { await confirmDialog(why, t('dlg.ok'), { title: t('skills.draft_bad'), danger: false }); return false; }
+		var into = '';
+		try { into = String((Wasm.skill_install_path && Wasm.skill_install_path(d.name)) || ''); }
+		catch (e) { into = ''; }
+		// Empty is a refusal from the one place that composes this path, and the only write
+		// this app makes into the denied subtree. Nothing here second-guesses it.
+		if (!into) return false;
+		var ok = await confirmDialog(
+			t('skills.draft_ask', { name: d.name, into: into }) + '\n\n' + d.text,
+			t('skills.draft_install'), { title: t('skills.draft_title', { name: d.name }), danger: false });
+		if (!ok) return false;
+		try { await Wasm.store_write(into, d.text); }
+		catch (e) { await confirmDialog(String(e), t('dlg.ok'), { title: t('skills.draft_bad'), danger: false }); return false; }
+		// The draft has become the skill, so it stops being a draft. Left in place it would be
+		// offered again on the next `/`, and installing it twice is the same file written twice
+		// -- harmless, and it reads as the tap not having worked.
+		//
+		// `file_delete` and not a store verb, because there is no exported one: the path is a
+		// store path (`chats/<id>/work/...`, `diamonds/<id>/...`), and `opfs::resolve_root`
+		// sends a store path to the store whatever folder is open. Emptying it is the fallback,
+		// since a draft with nothing in it is one `listDrafts` already skips.
+		try {
+			var gone = await tools().run_tool_outcome('file_delete', JSON.stringify({ path: d.path }));
+			if (!gone || gone.outcome !== 'done') await Wasm.store_write(d.path, '');
+		} catch (e) {
+			try { await Wasm.store_write(d.path, ''); } catch (e2) { /* it lists as empty and is skipped */ }
+		}
+		try { Files.refresh(); } catch (e) { /* the tree redraws on its own next time */ }
+		return true;
+	}
+
 	/// Show the list under the composer, or say there is nothing to show.
 	async function openSkillMenu() {
 		closeSkillMenu();
 		var names = await listSkills();
+		var drafts = await listDrafts();
 		var menu = document.createElement('div');
 		menu.className = 'skill-menu';
 		menu.setAttribute('role', 'listbox');
 		menu.setAttribute('aria-label', t('skills.menu'));
-		if (!names.length) {
+		// Drafts first, and marked as drafts: a daimon has written one and it is waiting on
+		// the person, so it is the row with something to answer rather than a row to type.
+		drafts.forEach(function (d) {
+			var b = document.createElement('button');
+			b.type = 'button';
+			b.className = 'skill-item skill-draft';
+			b.setAttribute('role', 'option');
+			b.setAttribute('data-draft', d.name);
+			b.textContent = '/' + d.name + '  ' + t('skills.draft_badge');
+			b.title = d.path;
+			b.addEventListener('click', function () {
+				closeSkillMenu();
+				offerDraft(d);
+			});
+			menu.appendChild(b);
+		});
+		if (!names.length && !drafts.length) {
 			var none = document.createElement('div');
 			none.className = 'skill-none';
 			none.textContent = t('skills.none', { dir: CONCISE_DIR });
@@ -15919,7 +16488,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// which is precisely what the user cannot see from here.
 		if (dispatched.length && !(sawError || threw)) {
 			var gate = await governorClearsDispatch(dispatched.length, '', chat.id);
-			if (gate) {
+			if (!gate.ok) {
+				// The chat's own half of `Workers.tellDaimon`. A chat's agent object
+				// lives for the whole conversation rather than being handed its history
+				// per turn, so the message goes straight into it and `captureSession`
+				// on the next turn persists it. Free either way: nothing is spent.
+				var said = notStartedWords(dispatched.length, gate.why);
+				try { if (app.append_message) app.append_message('user', said); }
+				catch (e) { /* an older engine cannot be told; the transcript still says it */ }
+				chat.messages.push({ role: 'error_log', content: said,
+					mid: newMid(), ts: Date.now() });
+				captureSession(chat, app);
+				touchChat(chat); persistChats();
+				if (current && current.id === chat.id) appendError(said);
+			} else {
 				var chatTainted = false;
 				try { chatTainted = !!(app.is_tainted && app.is_tainted()); }
 				catch (e) { chatTainted = false; }
@@ -16116,6 +16698,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		+ 'image again with file_read and "as":"image", then carry on. Do not repeat work '
 		+ 'already done above.';
 
+	/// What a daimon -- or a chat -- is told when the workers it asked for were never
+	/// started.  One wording for both surfaces, because it is one fact.
+	///
+	/// It says the three things a model needs and a status line says to nobody: that
+	/// nothing is running, that nothing was spent, and that waiting is pointless.  The
+	/// last sentence is the one that turns a lost turn into a finished one.
+	///
+	/// # Arguments
+	/// * `n` - How many workers were asked for.
+	/// * `why` - The reason, as a clause that finishes "because ...".
+	function notStartedWords(n, why) {
+		return 'The ' + (n === 1 ? 'worker' : n + ' workers') + ' you asked for '
+			+ (n === 1 ? 'WAS' : 'WERE') + ' NOT STARTED, because ' + (why || 'the app '
+			+ 'stopped the fan-out') + '. Nothing is running and nothing was spent on '
+			+ (n === 1 ? 'it' : 'them') + '. No report will come back, so there is nothing '
+			+ 'to wait for. Do the work yourself.';
+	}
+
 	// The predictive spend gate on a fan-out. The cost of dispatching N
 	// workers is known BEFORE any of them runs — N times what a worker
 	// typically costs — so a batch that would run this burst past its
@@ -16125,8 +16725,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// merely notes, and it exists for exactly the "fifty agents in a
 	// blink" case. It fails open: if the governor is somehow absent, the
 	// dispatch proceeds as it always did.
+	/// **The answer is `{ ok, why }`, and `why` is the half that was missing.** This used
+	/// to return a bare boolean, so the two callers below knew that a fan-out had not been
+	/// started and could not say why -- and each wrote a line of status text and returned.
+	/// The daimon that asked for those workers reads no status text. See `Workers.tellDaimon`.
 	async function governorClearsDispatch(n, diamondId, chatId) {
-		if (!window.DaimondGovernor) return true;
+		var yes = { ok: true, why: '' };
+		if (!window.DaimondGovernor) return yes;
 		var a;
 		try {
 			// The node the fan-out would spend against, so the gate can refuse a
@@ -16137,8 +16742,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			a = DaimondGovernor.assessDispatch(n, chatId
 				? DaimondPause.id('root', 'chats', chatId)
 				: DaimondPause.id('root', 'diamonds', diamondId, 'self'));
-		} catch (e) { return true; }
-		if (!a) return true;
+		} catch (e) { return yes; }
+		if (!a) return yes;
 		// A REFUSAL comes first and is not a spend question. Shown through the
 		// fan-out confirm it would read as "this will cost you, carry on?" — the
 		// opposite of what happened, since nothing was dispatched and nothing was
@@ -16146,15 +16751,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (a.refused) {
 			noticeDialog(t('pause.refused_title'), a.refusal || t('pause.refused.dispatch',
 				{ node: DaimondPause.label(a.node || '') }));
-			return false;
+			return { ok: false, why: 'the user has paused spending on it' };
 		}
-		if (!a.needsConfirm) return true;
+		if (!a.needsConfirm) return yes;
 		var msg = tn('gov.fanout_body', n,
 				{ total: fmtUsd(a.predicted), each: fmtUsd(a.perWorker) })
 			+ (a.runSpent > 0 ? ' ' + t('gov.burst_spent', { spent: fmtUsd(a.runSpent) }) : '')
 			+ ' ' + t('gov.would_pass', { budget: fmtUsd(a.budget) });
-		return await confirmDialog(msg, tn('gov.run_n', n),
+		var said = await confirmDialog(msg, tn('gov.run_n', n),
 			{ title: t('gov.faster'), danger: false });
+		return said ? yes
+			: { ok: false, why: 'the spend gate asked the user whether to run them and was '
+				+ 'told no' };
 	}
 
 	var Workers = {
@@ -16509,17 +17117,44 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				return;
 			}
 
-			if (workersHeld()) return;			// the pump is held: no new spending
+			// ── The four ways a Diamond's round does not run ───────────
+			//
+			// Each of these is a good reason not to SPEND a round and none of them is a
+			// reason to leave the daimon believing its workers are still out there. The
+			// reports exist -- they are on their tiles -- so what is handed over here is
+			// the reports themselves, put into the daimon's own conversation at no cost,
+			// to be read at the top of whatever turn runs next. See `tellDaimon`.
+			var one  = mine.length === 1;
+			var held = 'The ' + (one ? 'worker' : mine.length + ' workers')
+				+ ' you asked for ' + (one ? 'HAS' : 'HAVE') + ' FINISHED, and no round was'
+				+ ' run to report ' + (one ? 'it' : 'them') + ' at the time: ';
+			if (workersHeld()) {			// the pump is held: no new spending
+				this.tellDaimon(b.diamondId, held + 'the worker pump was paused.'
+					+ ' Their reports follow.\n\n' + parts.join('\n\n'));
+				return;
+			}
 			if (b.depth >= this.MAX_GATHER_DEPTH) {
 				setCrystalStatus('Agents finished. Dispatch stops at '
 					+ this.MAX_GATHER_DEPTH + ' rounds, so there is no report back.');
+				this.tellDaimon(b.diamondId, held + 'dispatch stops at '
+					+ this.MAX_GATHER_DEPTH + ' rounds and this was the last of them, so do'
+					+ ' not ask for more workers. Their reports follow.\n\n'
+					+ parts.join('\n\n'));
 				return;
 			}
 			// The Diamond must still exist and still be the one on screen. A gather
 			// round steers a Diamond, and steering one the user has navigated away
 			// from would spend on a surface they are not looking at.
-			if (!currentDiamond || currentDiamond.id !== b.diamondId) return;
-			if (!diamondCanRun(b.diamondId)) return;
+			if (!currentDiamond || currentDiamond.id !== b.diamondId) {
+				this.tellDaimon(b.diamondId, held + 'the user was looking at something else.'
+					+ ' Their reports follow.\n\n' + parts.join('\n\n'));
+				return;
+			}
+			if (!diamondCanRun(b.diamondId)) {
+				this.tellDaimon(b.diamondId, held + 'this Diamond has no model it can run on.'
+					+ ' Their reports follow.\n\n' + parts.join('\n\n'));
+				return;
+			}
 
 			setCrystalStatus(mine.length === 1
 				? 'Agent finished; reporting back.'
@@ -16528,6 +17163,55 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// doSteer sets crystalBusy, and re-entering the pump from under it is how
 			// a turn ends up racing its own bookkeeping.
 			setTimeout(function () { doSteer(instruction, b.depth + 1); }, 0);
+		},
+
+		/// Put the app's own word about a fan-out into the daimon's own conversation.
+		///
+		/// **THE PROMISE `spawn_agent` MAKES IS KEPT HERE OR NOWHERE.** The tool answers
+		/// "every worker a turn asks for begins when the turn ends … their reports come
+		/// back to you as a later turn", and the daimon then stops, which is exactly what
+		/// it is told to do. Everything that decides otherwise decides it AFTER the turn
+		/// has ended -- the spend gate declining, a paused node refusing, a turn that died
+		/// before it stopped, a gather round the guards below will not run -- and every one
+		/// of those used to write a line of grey status text on the crystal and return.
+		/// A status line is not addressed to the model. So a daimon that delegated ended
+		/// its turn believing eight workers were running when none was, and nothing it
+		/// could read would ever say otherwise: measured 2026-08-25 as AA-4, 25 tool calls
+		/// and no work done. That is the worst shape in `dev/BLOCKERS.md`'s own terms --
+		/// the turn ended, and the daimon believed it had done something it had not.
+		///
+		/// `rec.session.msgs` is the conversation `doSteer` hands to `steer_crystal` as
+		/// `prior`, so a message put here is read by the model at the top of its next turn.
+		/// **It costs nothing.** No round is run, no key is minted, nothing is spent -- which
+		/// is what makes this safe to do when the reason the workers did not start was
+		/// that the user paused the node or declined the spend. The one place a round IS
+		/// spent is `gather`'s happy path, and that is unchanged.
+		///
+		/// It goes in as `user` rather than `assistant`, because it is the app speaking to
+		/// the daimon and not the daimon speaking: an assistant message would be read back
+		/// as something the daimon itself had concluded. `error_log` is the transcript's
+		/// half, so a person scrolling the thread sees the same fact.
+		///
+		/// # Arguments
+		/// * `diamondId` - The Diamond whose daimon asked for the workers.
+		/// * `text` - What to tell it. Written as a statement of what did NOT happen.
+		tellDaimon: function (diamondId, text) {
+			if (!diamondId || !text) return false;
+			var f = diamonds.find(function (x) { return x.id === diamondId; });
+			if (!f) return false;
+			var rec = daimonChat(f);
+			if (!rec) return false;
+			if (!rec.session || !Array.isArray(rec.session.msgs)) {
+				rec.session = { v: 1, msgs: [], upto: '', uptoTs: 0 };
+			}
+			rec.session.msgs.push({ role: 'user', content: text });
+			rec.messages.push({ role: 'error_log', content: text, mid: newMid(), ts: Date.now() });
+			touchChat(rec);
+			persistChats();
+			// Only where the reader is actually looking, for the reason `deliverToChat`
+			// gives: `appendError` writes into whatever thread is on screen.
+			if (current && current.id === rec.id) appendError(text);
+			return true;
 		},
 
 		/// Put a chat batch's reports where the person who asked for them will see
@@ -16693,7 +17377,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (!s || !s.key) throw new Error('This worker has no key to run on.');
 					run._gen = s.gen;
 					run.app = new DaimondApp(s.url, s.key, run.model, maxOutFor(run.model, DaimondModels.CREDITS),
-						Instructions.compose(Prompts.role('worker'), crystal), true);
+						Instructions.compose(Prompts.role('worker', run.model), crystal), true);
 					window_(run.model, DaimondModels.CREDITS);
 					try { DaimondModels.noteUse(DaimondModels.CREDITS, run.model); } catch (e) { /* never block a run */ }
 					if (run.tainted && run.app.set_tainted) run.app.set_tainted();
@@ -16701,7 +17385,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var a = appCfgFor(run);
 					run._gen = creditsGen();
 					run.app = new DaimondApp(a.baseUrl, a.apiKey, run.model, maxOutFor(run.model, a.provider || run.provider),
-						Instructions.compose(Prompts.role('worker'), crystal), true);
+						Instructions.compose(Prompts.role('worker', run.model), crystal), true);
 					window_(run.model, a.provider || run.provider);
 					try { DaimondModels.noteUse(a.provider || run.provider, run.model); } catch (e) { /* never block a run */ }
 					if (run.tainted && run.app.set_tainted) run.app.set_tainted();
@@ -17413,8 +18097,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function tools() {
 		if (toolsApp) return toolsApp;
 		var base = cfg.baseUrl || 'http://127.0.0.1/v1/chat/completions';
-		try { toolsApp = new DaimondApp(base, cfg.apiKey || '', cfg.model || 'none', 256, SYSTEM_PROMPT(), true); }
-		catch (e) { toolsApp = new DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, SYSTEM_PROMPT(), true); }
+		try { toolsApp = new DaimondApp(base, cfg.apiKey || '', cfg.model || 'none', 256, SYSTEM_PROMPT(cfg.model), true); }
+		catch (e) { toolsApp = new DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, SYSTEM_PROMPT(''), true); }
 		return toolsApp;
 	}
 
@@ -17432,6 +18116,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// What the file was called before the app was named Daimond. Kept only so
 	// that an existing workspace can be carried across; nothing else reads it.
 	var INSTRUCTIONS_FILE_WAS = 'RED.md';
+	// ── The file was the mechanism and it started empty ──────────────
+	//
+	// `DAIMOND.md` is what makes Daimond know the person using it, and a fresh store held
+	// none: the chip below was HIDDEN precisely while the file was empty, and the only way
+	// to make one was to know its exact name and type it into the New file dialog. So the
+	// app's answer to "does it know me" was a blank nobody could see.
+	//
+	// A store that has never held one is given a starter, ONCE, and the flag is what makes
+	// it once: a user who deletes the file does not get it back, because a file the app
+	// keeps putting back is exactly the class of snag OBJECTIVES §1 is about.
+	//
+	// The TEXT is the wasm's (`prompts::INSTRUCTIONS_SEED`), not this file's, so it can be
+	// checked natively against the skills the build really carries -- a starter telling the
+	// user to type a command that would refuse is worse than a starter with nothing in it.
+	// Asked through the namespace, so a stale `www/pkg` without the export costs the seed
+	// and not the app.
+	var INSTRUCTIONS_SEEDED_KEY = 'daimond.instructions.seeded';
+	function instructionsSeed() {
+		try { return String((Wasm.instructions_seed && Wasm.instructions_seed()) || ''); }
+		catch (e) { return ''; }
+	}
 	// ── Two layers, because there are two authors ────────────────────
 	//
 	// `dev/ROOT_SEPARATION.md` §2.5(d) specifies this and seq 65 deferred it. The
@@ -17468,6 +18173,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		mine: '',
 		/// The open folder's, or '' when there is no folder or it carries none.
 		theirs: '',
+		/// What opens a workspace file, handed over by the Files panel when it is built.
+		/// Null until then, and a chip clicked before that writes the file and draws.
+		opener: null,
 
 		/// Carry a pre-rename `RED.md` over to `DAIMOND.md`, once, in whichever
 		/// workspace is active.
@@ -17479,19 +18187,79 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// folder the app has never seen before. If `DAIMOND.md` is already there it
 		/// wins and the old file is left untouched; the user's current rules are
 		/// never clobbered by their old ones.
+		///
+		/// **A file that is the STARTER, to the byte, does not count as already there.**
+		/// `seedOnce` below writes one into the store on its first load, so from the day
+		/// the starter shipped there is ALWAYS a `DAIMOND.md` standing in the way, and
+		/// "if it is there it wins" stopped meaning "if the user has rules of their own".
+		/// A `RED.md` that reaches a root after that first load — carried in by sync, or
+		/// sitting in a folder opened later — was then never carried over, and the user's
+		/// house rules sat unread beside a starter nobody wrote. The starter is this
+		/// build's own text and the one thing here that is safe to overwrite unasked.
 		migrate: async function () {
 			try {
-				var cur = await tools().run_tool_outcome('file_read', JSON.stringify({ path: INSTRUCTIONS_FILE }));
-				if (cur && cur.outcome === 'done') return;    // already renamed, or never named
-				var old = await tools().run_tool_outcome('file_read', JSON.stringify({ path: INSTRUCTIONS_FILE_WAS }));
-				if (!old || old.outcome !== 'done') return;   // nothing to carry
-				await tools().run_tool_outcome('file_move',
-					JSON.stringify({ path: INSTRUCTIONS_FILE_WAS, to: INSTRUCTIONS_FILE }));
+				// `readBytes` and NOT the `file_read` TOOL: the tool numbers every line,
+				// so its answer could not be compared with the starter. See the note on
+				// `readBytes` — the tool is for asking whether a file EXISTS, and this
+				// now has to ask what is IN it.
+				var cur = null;
+				try { cur = await readBytes(INSTRUCTIONS_FILE); } catch (e) { cur = null; }
+				if (typeof cur === 'string' && cur !== instructionsSeed()) return;  // theirs, and it wins
+				var old = null;
+				try { old = await readBytes(INSTRUCTIONS_FILE_WAS); } catch (e) { old = null; }
+				if (typeof old !== 'string') return;          // nothing to carry
+				// Written before the old file is dropped, so a failure anywhere in here
+				// leaves the rules on disk under one name or the other and never neither.
+				await Wasm.write_file(INSTRUCTIONS_FILE, old);
+				await tools().run_tool_outcome('file_delete',
+					JSON.stringify({ path: INSTRUCTIONS_FILE_WAS }));
 			} catch (e) {
 				// A workspace we cannot read is a workspace we cannot migrate. The
 				// refresh below will find no rules and the app carries on as it does
 				// for any folder without them.
 			}
+		},
+
+		/// Put a starter in the STORE, once, where the store has never held one.
+		///
+		/// Resolves to the text written, or `''` where nothing was: a store that already has
+		/// rules, a build too old to carry the seed, a browser with no local storage, or a
+		/// write that failed. Every one of those is the ordinary case somewhere, so none of
+		/// them is an error -- the app carries on with no rules, exactly as it did before.
+		///
+		/// Written to the store and never to an open folder. The user's own layer is the one
+		/// that is always in force; a starter written into the project would arrive in their
+		/// repository, under their name, saying things they did not write.
+		seedOnce: async function () {
+			var done = true;
+			try { done = localStorage.getItem(INSTRUCTIONS_SEEDED_KEY) === '1'; }
+			catch (e) { return ''; }		// no storage means no way to do this once
+			if (done) return '';
+			var text = instructionsSeed();
+			if (!text.trim()) return '';
+			try { await Wasm.store_write(INSTRUCTIONS_FILE, text); }
+			catch (e) { return ''; }		// the flag is set on the write and not before
+			try { localStorage.setItem(INSTRUCTIONS_SEEDED_KEY, '1'); } catch (e) { /* once more, then */ }
+			return text;
+		},
+
+		/// The path the chip opens, having made sure there is something at it.
+		///
+		/// Through the FILE TOOLS and not `store_write`, deliberately: `openFile` resolves
+		/// against the active root, so creating it any other way would write one file and open
+		/// another. With a folder open that means the project's copy, which is the right file
+		/// to be making when a project has no rules of its own.
+		open: async function () {
+			if (this.md.trim()) return INSTRUCTIONS_FILE;
+			var text = instructionsSeed();
+			if (text.trim()) {
+				try {
+					var w = await tools().run_tool_outcome('file_write',
+						JSON.stringify({ path: INSTRUCTIONS_FILE, content: text }));
+					if (w && w.outcome === 'done') await this.refresh();
+				} catch (e) { /* the editor says why, and says it where the user is looking */ }
+			}
+			return INSTRUCTIONS_FILE;
 		},
 
 		/// Re-read DAIMOND.md from the ACTIVE workspace root (a real folder when one
@@ -17508,6 +18276,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var own = await Wasm.store_read(INSTRUCTIONS_FILE);
 				if (typeof own === 'string') this.mine = own;
 			} catch (e) { /* nothing written yet */ }
+			// A store that has never held one gets a starter, once, so the FIRST turn in a
+			// fresh workspace is already better than nothing and the shape to extend is on
+			// the screen rather than in a document nobody opens.
+			if (!this.mine.trim()) this.mine = await this.seedOnce();
 			// The project's, from the folder — and only when there IS one. With no
 			// folder open both paths resolve to the same file, and reading it twice
 			// would put the user's own rules into the prompt twice over.
@@ -17574,8 +18346,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		render: function () {
 			var el = document.getElementById('instructions-chip');
 			if (!el) return;
-			if (!this.md.trim()) { el.style.display = 'none'; return; }
+			// BOUND HERE AND NOT WHERE THE PANEL IS BUILT.  `addEventListener` at build time
+			// binds to the element that was there then, and this one is redrawn -- so the
+			// listener was on a node no longer in the document and the chip did nothing at
+			// all.  An `onclick` set wherever the chip is drawn cannot come apart from it: it
+			// is a property of the node being drawn, replaced with the node.
+			//
+			// `opener` and not `openFile`: the editor lives inside the Files module's closure
+			// and this object does not, so naming it here threw a ReferenceError from inside
+			// a promise -- the file was written, the chip redrew, and nothing opened, which is
+			// the half-working shape a `catch` around it would have hidden completely.
+			el.onclick = function () {
+				Instructions.open().then(function (path) {
+					if (typeof Instructions.opener === 'function') Instructions.opener(path);
+				});
+			};
 			el.style.display = '';
+			// EMPTY IS THE STATE THAT NEEDED SAYING, and it was the one state the chip hid
+			// in. A user whose Daimond knew nothing about them saw exactly what a user whose
+			// rules were in force saw: nothing. It now says so, and opening it writes the
+			// starter.
+			if (!this.md.trim()) {
+				el.textContent = '\u2726 ' + INSTRUCTIONS_FILE;
+				el.title = t('instructions.chip_empty');
+				el.setAttribute('data-empty', '1');
+				return;
+			}
+			el.removeAttribute('data-empty');
 			// Two layers get a chip that says two, because "your rules are in force" and
 			// "your rules AND this project's are in force" are different facts and the
 			// second is the one people are surprised by.
@@ -17637,9 +18434,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		/// The whole system prompt for `id`: the user's text or the default,
 		/// plus the rules their edit cannot remove.
-		role: function (id) {
-			try { return compose_prompt(id, this.md[id] || ''); }
-			catch (e) { return default_prompt(id); }
+		/// `model` is the model that will carry the request, where the caller knows it.
+		/// Absent means unmeasured, which composes every note rather than none.
+		role: function (id, model) {
+			try { return compose_prompt_for(id, this.md[id] || '', model || ''); }
+			catch (e) {
+				// An engine without the three-argument entry point still composes; it simply
+				// composes every note, which is what this build did before the findings existed.
+				try { return compose_prompt(id, this.md[id] || ''); }
+				catch (e2) { return default_prompt(id); }
+			}
 		},
 
 		/// What the shipped default says, for seeding a file and for the "restore"
@@ -18484,8 +19288,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// about, and a PDF answering "no lines" for a Markdown file still open
 		// beside it would be the split's first bug.
 		var curFile = null, curContent = '';
+		// Set while this module is showing the Doc panel BECAUSE IT HAS SOMETHING TO
+		// PUT IN IT. `DaimondPanels.show('doc')` calls `onDocOpen`, whose whole job is
+		// the empty case, and a caller one line from filling the panel is not the empty
+		// case -- `showCloudView` clears `curFile` before it shows, so a guess at the
+		// timing would put a new document on top of the billing report. A counter and
+		// not a flag, so a nested show cannot clear an outer one's claim.
+		var docFilling = 0;
 		var editing = false;   // a file is open in the editor with unsaved changes possible
 		var listed = false;
+		// SAY THE OPEN DOCUMENT'S TOOLBAR AGAIN, in whatever language is now on.
+		//
+		// The head is written once, as markup, by whichever of the three views is
+		// showing -- so its captions, its tooltips and its spoken names are fixed at
+		// the moment the file was opened. Nothing rebuilt them, because nothing rebuilds
+		// a document somebody is reading: `Files.relabel` deliberately refuses to relist
+		// while a file is open, since relisting closes it. The panel was therefore stuck
+		// in the language it was opened in for as long as the document stayed, and once
+		// the Doc panel gained a document at cold start, that was from the first paint.
+		//
+		// A slot rather than a redraw. A card is answered, not rebuilt: re-running
+		// `openFile` would throw away an edit in progress, so each view leaves behind a
+		// function that puts its own words right in place, and clearing the slot is how
+		// a closed view says it has none.
+		var docRelabel = null;
 		var showLineNos = localStorage.getItem('daimond-files-lineno') !== '0';
 		// The active FSA real-folder handle, or null for the OPFS sandbox.
 		// The wasm override is a single global (a thread-local, wasm being
@@ -18558,6 +19384,45 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function goDir(target) {
 			if (diamondScope() && target && !withinDiamond(target)) { list(''); return; }
 			list(target);
+		}
+
+		/// One step up: out of an open file first, then out of the folder.
+		///
+		/// Two different meanings of "up" that a person makes no distinction between,
+		/// which is why they are one function rather than two controls.
+		function goUp() {
+			if (curFile) { closeView(); return; }
+			if (!curDir) return;
+			var parts = curDir.split('/').filter(Boolean); parts.pop();
+			// goDir stops at a Diamond's own boundary the same way the breadcrumb
+			// above the tree does -- see its comment.
+			goDir(parts.join('/'));
+		}
+
+		/// The `..` row, at the top of a listing that has somewhere to go.
+		///
+		/// Built as a `files-row` and carrying `data-act="up"`, because it IS the
+		/// control the header button was: the same action, in the place people look
+		/// for it. Absent at the root, where a row that does nothing would teach
+		/// people to distrust the ones that do.
+		function upRow() {
+			if (!curDir && !curFile) return null;
+			var row = document.createElement('div');
+			row.className = 'files-row dir files-up';
+			row.dataset.act = 'up';
+			var name = document.createElement('span');
+			name.className = 'files-name';
+			name.textContent = '\u{1F4C1} ..';
+			row.appendChild(name);
+			row.tabIndex = 0;
+			row.setAttribute('role', 'button');
+			row.title = t('work.parent');
+			row.setAttribute('aria-label', t('work.parent'));
+			row.addEventListener('click', goUp);
+			row.addEventListener('keydown', function (ev) {
+				if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); goUp(); }
+			});
+			return row;
 		}
 
 		/// The path line as a trail of clickable folder names, not a string.
@@ -19244,6 +20109,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			lastEntries = entries;
 			entries = entries.filter(function (e) { return e.name.charAt(0) !== '.'; });
 			entries.sort(function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); });
+			var upD = upRow();
+			if (upD) treeEl.appendChild(upD);
 			entries.forEach(function (e) {
 				treeEl.appendChild(diamondOwnRow(e, own));
 			});
@@ -19415,8 +20282,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (dirBtn) dirBtn.addEventListener('click', newDir);
 			var upBtn = panel.querySelector('[data-act="upload"]');
 			if (upBtn) upBtn.addEventListener('click', uploadFiles);
-			var chip = document.getElementById('instructions-chip');
-			if (chip) chip.addEventListener('click', function () { openFile(INSTRUCTIONS_FILE); });
+			// The editor, handed over so the chip can open what it writes: `render` draws the
+			// chip and this module owns `openFile`.
+			Instructions.opener = openFile;
+			// DRAWN NOW, not only when the rules next change.  `Instructions.refresh`
+			// runs at boot, before this panel exists, so `render` found no element and the
+			// chip kept the `display:none` the markup gives it.  While the chip only ever
+			// SAID "your rules are in force" that was invisible-when-absent and looked
+			// deliberate; now that it also says the file is empty, the state it reports most
+			// often is the one it was never drawn for.
+			Instructions.render();
 			filterEl = panel.querySelector('.files-filter-input');
 			if (filterEl) filterEl.addEventListener('input', function () {
 				filter = filterEl.value.trim().toLowerCase();
@@ -19425,14 +20300,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 			// "Open a folder" is not bound here: it lives in the mode row, beside the chip that
 			// says which files the agent is touching (see renderMode).
-			panel.querySelector('[data-act="up"]').addEventListener('click', function () {
-				if (curFile) { closeView(); return; }
-				if (!curDir) return;
-				var parts = curDir.split('/').filter(Boolean); parts.pop();
-				// goDir stops at a Diamond's own boundary the same way the
-				// breadcrumb above the tree does -- see its comment.
-				goDir(parts.join('/'));
-			});
+			// The parent-folder BUTTON used to live up here in the panel's header,
+			// three controls away from the listing it acts on, and the owner said so
+			// on 2026-08-24: "is such a button even needed when you could add a '..'
+			// entry?" It is not, and the `..` entry is what every file listing since
+			// Norton Commander has offered, so the button is gone and `upRow` puts the
+			// action at the top of the rows instead. This stays a named function
+			// because the row calls it, and because "up" from an open FILE closes the
+			// view rather than walking the tree -- which a row alone would not say.
 			// The scope row is about the open Diamond, and in Diamond scope so is
 			// every row of the tree; attaching or detaching changes what is in it.
 			document.addEventListener('daimond-diamond-changed', onDiamondChanged);
@@ -19810,8 +20685,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// and the user saw nothing happen at all. This is the billing
 			// disclosure, so a silent one is the worst of the three.
 			DaimondPanels.markUsed('doc');
-			DaimondPanels.show('doc');
+			docFilling++;
+			try { DaimondPanels.show('doc'); } finally { docFilling--; }
 			DaimondPanels.reflow();
+			// Nothing here is typed into, so this view's words are said again by
+			// drawing the whole report -- which also puts the figures in the reader's
+			// own currency, and those move with the language too.
+			docRelabel = showCloudView;
 			var s  = await DaimondCloud.summary();
 			var ix = DaimondCloud.index();
 			var away = DaimondCloud.awayPaths();
@@ -20224,7 +21104,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// holding; an empty directory yields "<path> is empty.".
 		function parseListing(text) {
 			var out = [];
-			if (/ is empty\.$/.test(text.trim())) return out;
+			// The first line, for `parseSyncListing`'s reason: the panel would otherwise
+			// draw the note under the empty answer as a file row.
+			if (/ is empty\.$/.test(String(text).split('\n')[0].trim())) return out;
 			text.split('\n').forEach(function (line) {
 				if (!line) return;
 				if (line.charAt(line.length - 1) === '/') {
@@ -20326,7 +21208,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var byKind = function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); };
 			mine.sort(byKind); rest.sort(byKind);
 			treeEl.innerHTML = '';
-			if (!mine.length && !rest.length) { treeEl.innerHTML = '<div class="files-empty">empty</div>'; return; }
+			// Before the emptiness check: a folder with nothing in it still has
+			// somewhere to go back to, and that was the one way out of it.
+			var up = upRow();
+			if (up) treeEl.appendChild(up);
+			if (!mine.length && !rest.length) {
+				var none = document.createElement('div');
+				none.className = 'files-empty';
+				none.textContent = 'empty';
+				treeEl.appendChild(none);
+				return;
+			}
 			mine.forEach(function (e) { treeEl.appendChild(treeRow(e)); });
 			// Last: the user's own work reads down from the top of the panel, and what
 			// they did not put there themselves is one row underneath it.
@@ -20381,6 +21273,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var n = document.createElement('span');
 			n.className = 'files-rest-count';
 			n.textContent = tn('files.rest_count', rest.length);
+			// The number, kept beside the row that shows it. `relabelListing` says this
+			// count again in a new language and must not go back to the store to learn
+			// what it was: a plural form differs by language, so the WORDS have to be
+			// rebuilt even though the number has not moved.
+			head.dataset.n = rest.length;
 			head.appendChild(n);
 			var body = document.createElement('div');
 			body.className = 'files-rest-body';
@@ -20401,6 +21298,66 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			wrap.appendChild(head);
 			wrap.appendChild(body);
 			return wrap;
+		}
+
+		/// Say a listing that is ALREADY DRAWN over again, in whatever language is now on.
+		///
+		/// Not `list()`, and that is the whole reason this exists. Relisting sets
+		/// `curFile = null` and hides the document view with it, so `Files.relabel` guards
+		/// its relist with `!curFile` -- and the guard held from the moment the Doc panel
+		/// gained a document at cold start. The breadcrumb, the shut row at the foot of
+		/// the tree and the tree's spoken name were then fixed in the language the panel
+		/// was first painted in, for as long as any document stayed open.
+		///
+		/// Only the words the panel writes itself. File and folder names are the user's
+		/// and do not translate.
+		function relabelListing() {
+			if (!listed) return;
+			renderCrumbs(pathEl, diamondScope() ? t('dws.title') : t('panel.work'), curDir, goDir);
+			var head = document.getElementById('files-rest-head');
+			if (!head) return;
+			head.title = t('files.rest_help');
+			var lbl = head.querySelector('.files-rest-label');
+			if (lbl) lbl.textContent = t('files.rest');
+			var n = head.querySelector('.files-rest-count');
+			if (n) n.textContent = tn('files.rest_count', parseInt(head.dataset.n, 10) || 0);
+			relabelRows();
+		}
+
+		/// Every file row's controls, said again where they stand.
+		///
+		/// `relabel` can only put a row right by relisting, and it declines to
+		/// relist while a document is open because `list` closes one. From the day
+		/// the Doc panel gained a document at cold start that condition was never
+		/// met, so a language change left every ✎ and × in the tree speaking the
+		/// language the panel was opened in -- and they say what they do ONLY in
+		/// their tooltip, so nothing visible changed to give it away.
+		///
+		/// Each control's words are a function of state the row already carries, so
+		/// this needs no listing and closes nothing.
+		function relabelRows() {
+			if (!treeEl) return;
+			var rows = treeEl.querySelectorAll('.files-row');
+			for (var i = 0; i < rows.length; i++) {
+				var r = rows[i], b;
+				if ((b = r.querySelector('.files-get'))) {
+					b.title = t('files.get_help', { size: fmtBytes(parseInt(b.dataset.size, 10) || 0) });
+				}
+				if ((b = r.querySelector('.files-pin'))) {
+					b.title = t(b.classList.contains('on') ? 'files.pinned_help' : 'files.pin_help');
+				}
+				if ((b = r.querySelector('.files-free'))) b.title = t('files.free_help');
+				// Through the painter and not by hand: the paperclip's name depends on
+				// what is in focus and on whether the row is a grant, and one copy of
+				// that reasoning is enough.
+				if ((b = r.querySelector('.attach-btn'))) {
+					paintAttachBtn(b, b.dataset.path || '', b.dataset.dir === '1');
+				}
+				if ((b = r.querySelector('.files-ren'))) b.title = t('files.rename_move');
+				// `.files-ren` carries `.files-del` too, so the delete button is the
+				// one that is NOT the rename button.
+				if ((b = r.querySelector('.files-del:not(.files-ren)'))) b.title = t('files.delete');
+			}
 		}
 
 		/// Whether this row may be renamed or deleted from where it is being shown.
@@ -20426,6 +21383,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (e.cloud) {
 				var get = document.createElement('button');
 				get.className = 'files-res files-get'; get.textContent = '⤓';
+				// The size is kept on the node because the tooltip names it and a
+				// repaint has no entry to read it back off.
+				get.dataset.size = String(e.size || 0);
 				get.title = t('files.get_help', { size: fmtBytes(e.size || 0) });
 				get.addEventListener('click', function (ev) { ev.stopPropagation(); fetchEntry(full, e.size || 0); });
 				row.appendChild(get);
@@ -20459,6 +21419,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			attach.type = 'button';
 			attach.dataset.act = 'attach';
 			attach.dataset.path = full;
+			attach.dataset.dir = e.dir ? '1' : '';
 			attach.textContent = '📎';
 			attach.addEventListener('click', function (ev) {
 				ev.stopPropagation();
@@ -20715,6 +21676,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// the editor, so the next read, conflict check or save went to the wrong
 			// root.
 			var store = !!(opts && opts.store);
+			// A document that is not on disk yet. Nothing is probed and nothing is
+			// read: there is no file to ask about, and `readRaw` would throw. The path
+			// is a PROPOSAL -- the file is made by the first Save, through the same
+			// `file_write` every other save goes through, so a fence that would refuse
+			// it refuses it there rather than here.
+			var blank = !!(opts && opts.blank);
 			// ASK WHAT THE FILE IS BEFORE DECODING IT AS CHARACTERS.
 			//
 			// What was here asked `DaimondCloud.fileAt`, which resolves through the
@@ -20731,7 +21698,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// `file_probe` reads 512 bytes and answers with the format, from the magic
 			// bytes AND the name, saying so when the two disagree.
 			var info = null;
-			try { info = await DaimondViewer.probe(path, { store: store }); }
+			try { if (!blank) info = await DaimondViewer.probe(path, { store: store }); }
 			catch (e) {
 				// A missing file falls through to the text path, which reports it
 				// properly -- but the failure is SAID before it does. This catch used
@@ -20764,14 +21731,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// answer at all the honest move is the text path, whose own read reports
 			// why the file could not be opened. The viewer would draw a header naming
 			// no format over a dump of nothing.
-			if (info && !DaimondViewer.editable(info)) {
+			if (!blank && info && !DaimondViewer.editable(info)) {
 				await showViewedFile(path, info, store);
 				return;
 			}
 			// Only now: this open is the document's, so the door it came through is
 			// the door the editor, the conflict check and the save must all use.
 			storeFile = store;
-			var content = await readRaw(path);
+			var content = blank ? '' : await readRaw(path);
 			curFile = path; curContent = content; editing = false;
 			viewEl.style.display = '';
 			var isTypst = /\.typ$/i.test(path);
@@ -20803,7 +21770,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (nameEl) nameEl.textContent = path;                 // escaped
 			renderFileBody();
 			DaimondPanels.markUsed('doc');       // it now has something to hold
-			DaimondPanels.show('doc');
+			docFilling++;
+			try { DaimondPanels.show('doc'); } finally { docFilling--; }
 			DaimondPanels.reflow();
 			viewEl.querySelector('[data-act="back"]').addEventListener('click', closeView);
 			// ── Attaching a file to the open Diamond ──────────────────────
@@ -20854,6 +21822,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// every later one.
 			sayEditBtn('edit');
 			var cancelBtn = viewEl.querySelector('[data-act="cancel-edit"]');
+			// Every word this head is built from, gathered where they can be said
+			// again. `sayEditBtn` already owns the one button whose caption moves with
+			// the state, so it is called with the state rather than with a guess:
+			// relabelling mid-save must not put "Save" back over "Saving…".
+			docRelabel = function () {
+				sayEditBtn(editBtn.disabled ? 'saving' : (editing ? 'save' : 'edit'));
+				cancelBtn.title = t('files.stop_editing');
+				cancelBtn.setAttribute('aria-label', t('files.stop_editing'));
+				cancelBtn.textContent = '\u2715 ' + t('common.cancel');
+				var dl = viewEl.querySelector('[data-act="download"]');
+				if (dl) dl.title = t('files.download');
+				var bk = viewEl.querySelector('[data-act="back"]');
+				if (bk) bk.textContent = '\u2190 ' + t('files.back');
+			};
 
 			/// Leave edit mode without writing, putting the read view back.
 			function stopEditing() {
@@ -20931,6 +21913,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 							return;
 						}
 						curContent = content; editing = false;
+						// It is a file now, so the two controls that act on one come back.
+						['download', 'attach'].forEach(function (a) {
+							var b = viewEl.querySelector('[data-act="' + a + '"]');
+							if (b) b.style.display = '';
+						});
 						var pre = document.createElement('pre'); pre.className = 'files-view-body';
 						ta2.replaceWith(pre);
 						renderFileBody();
@@ -20951,6 +21938,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				viewEl.querySelector('[data-act="compile"]').addEventListener('click', function () {
 					compileTypst(path, this);
 				});
+			}
+			// A NEW DOCUMENT OPENS IN THE EDITOR, because a blank read view is a blank
+			// panel and a blank panel is the whole defect. Through the button rather
+			// than beside it, so the caret, the Cancel that backs out and the Save that
+			// writes are the ones every other edit gets, and there is no second way in
+			// to keep in step with the first.
+			if (blank) {
+				editBtn.click();
+				// DOWNLOAD AND ATTACH ACT ON A FILE, and until the first Save there is
+				// not one: the arrow would hand over an empty blob and the paperclip
+				// would write a Diamond a link to a path that does not exist. They come
+				// back the moment the document does -- see the save branch above.
+				['download', 'attach'].forEach(function (a) {
+					var b = viewEl.querySelector('[data-act="' + a + '"]');
+					if (b) b.style.display = 'none';
+				});
+				// SAID ONCE, ON THE ROW THIS PANEL ALREADY TALKS ON: not a second
+				// heading and not a second button. It says only what the title a line
+				// above cannot -- which of the two filesystems this lands in, and that
+				// it is Save and not time that puts it there. The place is the
+				// Workspace panel's own word for it, because two surfaces calling one
+				// place by two names is how a user comes to believe there are three.
+				fileMsg(t('files.new_doc_here', { place: placeName() }));
 			}
 		}
 
@@ -21054,6 +22064,63 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return curDir;
 		}
 
+		/// Where a write lands right now, in the mode row's own words.
+		///
+		/// Borrowed rather than restated: the Workspace panel's Machine chip already
+		/// carries the folder's name and its Browser chip already carries the word for
+		/// the sandbox, and two surfaces naming one place differently is how a reader
+		/// comes to believe there are three.
+		function placeName() {
+			return folderHandle ? folderHandle.name : t('files.mode_browser');
+		}
+
+		/// A name for a new document that can be found again tomorrow.
+		///
+		/// Dated, so a folder of them sorts into the order they were written, and
+		/// numbered from the second of a day onwards so opening the panel twice cannot
+		/// put one document on top of another. It is a PROPOSAL: nothing is on disk
+		/// until Save, and Save's own conflict check guards the case where something
+		/// arrived at the path in between.
+		async function freeNotePath() {
+			var into = writeDir();
+			var d = new Date();
+			var stamp = d.getFullYear() + '-'
+				+ String(d.getMonth() + 1).padStart(2, '0') + '-'
+				+ String(d.getDate()).padStart(2, '0');
+			var here = [];
+			try {
+				var res = await tools().run_tool_outcome('file_list',
+					JSON.stringify({ path: into || '.' }));
+				if (res && res.outcome === 'done') {
+					here = parseListing(res.text).map(function (e) { return e.name; });
+				}
+			} catch (e) { /* an unreadable folder is not a reason to refuse a name */ }
+			for (var n = 1; n < 1000; n++) {
+				var name = 'notes-' + stamp + (n === 1 ? '' : '-' + n) + '.md';
+				if (here.indexOf(name) === -1) return joinPath(into, name);
+			}
+			return joinPath(into, 'notes-' + stamp + '-' + Date.now() + '.md');
+		}
+
+		/// What the Doc panel shows when it is asked for and holds nothing.
+		///
+		/// It held NOTHING AT ALL: `#doc-view` starts empty and `display:none`, and
+		/// `DaimondPanels.show` carried a hook for the Workspace, Mail, Spending, the
+		/// Terminal, the Trash and Social and none for this one -- so the chip opened a
+		/// rectangle with a close button in it and no other mark. Worse after a
+		/// document had been closed, since `closeView` empties the body and leaves the
+		/// title naming the file that is no longer there.
+		///
+		/// A document already up is left alone: this is the EMPTY case and nothing
+		/// else. `curFile` is the panel's own record of what it holds and `closeView`
+		/// clears it, so a panel closed and reopened is empty again and gets another
+		/// new document rather than the last one silently back.
+		async function onDocOpen() {
+			if (docFilling > 0 || curFile) return;
+			try { await openFile(await freeNotePath(), { blank: true }); }
+			catch (e) { fileMsg(t('files.create_failed', { reason: friendlyError(e) }), true); }
+		}
+
 		// Create a new empty file in the current directory and open it to edit.
 		async function newFile() {
 			var into = writeDir();
@@ -21064,14 +22131,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (name === null) return;
 			name = name.trim(); if (!name) return;
 			var p = joinPath(into, name);
-			var seed = '';
-			if (p === INSTRUCTIONS_FILE) {
-				seed = '# Standing instructions\n\n'
-					+ 'Everything written here goes to every agent Daimond runs: chats, the\n'
-					+ 'daimon of each Diamond, and every worker it dispatches.\n\n'
-					+ '## House rules\n\n'
-					+ '- \n';
-			}
+			// ONE seed text, from the wasm, so the file a user makes by hand and the file the
+			// app seeds are the same file. They were two strings saying different things.
+			var seed = (p === INSTRUCTIONS_FILE) ? instructionsSeed() : '';
 			try {
 				var w = await tools().run_tool_outcome('file_write',
 					JSON.stringify({ path: p, content: seed }));
@@ -21290,6 +22352,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			viewEl.style.display = 'none';
 			curFile = null; editing = false;
+			docRelabel = null;                   // no view, no words of its own to put right
 			syncLineNo();                        // after the file is let go, not before
 			DaimondPanels.hide('doc');
 		}
@@ -21447,6 +22510,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return {
 			init:          bind,
 			onOpen:        onOpen,
+			/// The DOC panel was asked for. Its own hook, not `onOpen`: that one is the
+			/// WORKSPACE panel's, and the two panels are opened separately.
+			onDocOpen:     onDocOpen,
 			refresh:       refresh,
 			// Repaint what the Cloud chip claims, after a sync has moved residency.
 			refreshResidency: refreshResidency,
@@ -21527,8 +22593,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// buttons beside them are built from strings once, and they are on
 				// screen for as long as the panel is.
 				renderMode(modeReconnect);
+				// The relist is still refused while a document is open -- `list` closes
+				// one -- but the tree's OWN words no longer wait for it. That guard is
+				// why the breadcrumb stayed in the language the panel was opened in from
+				// the moment there was a document at cold start to hold it there.
+				relabelListing();
 				if (listed && !curFile) list(curDir);
 			},
+			// The open document's toolbar, said again where it stands. Registered
+			// through `DaimondI18n.surface` rather than called from `relabel`, so the
+			// "is it on screen" half is the engine's and not a second guess here.
+			relabelDoc:    function () { if (docRelabel) docRelabel(); },
 			// Which tree the panel is showing: 'all' or 'diamond'.
 			scope:         function () { return diamondScope() ? 'diamond' : 'all'; },
 			/// What the open Diamond's workspace is made of, as the three lists
@@ -22945,22 +24020,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// And whose key it runs on. A ledger entry without it cannot be attributed to a provider, and
 	// a live rate captured from that provider cannot be preferred over the baked-in table.
 	var _diamondAppProvider = new Map(); // DaimondApp -> the provider id
+	/// How a built daimon client is filed: by the provider and model it runs on rather
+	/// than by the Diamond, because two Diamonds on one model share one client. Its own
+	/// function so a reader of the cache and its writer cannot spell the key differently.
+	function diamondAppKey(a) { return (a.provider || '') + '\u0000' + (a.model || ''); }
+
 	function diamondApp(diamondId, pick) {
 		var m = pick && pick.model ? pick : diamondModel(diamondId);
 		var a = appCfgFor(m);
-		var k = (a.provider || '') + ' ' + (a.model || '');
+		var k = diamondAppKey(a);
 		if (_diamondApps[k]) return _diamondApps[k];
 
 		var app;
 		var base = a.baseUrl || 'http://127.0.0.1/v1/chat/completions';
 		try {
 			app = new DaimondApp(base, a.apiKey || '', a.model || 'none',
-				maxOutFor(a.model, a.provider), SYSTEM_PROMPT(), true);
+				maxOutFor(a.model, a.provider), SYSTEM_PROMPT(a.model), true);
 			// A Diamond's daimon, likewise.
 			try { DaimondModels.noteUse(a.provider, a.model); } catch (e) { /* never block a turn */ }
 		} catch (e) {
 			app = new DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none',
-				AUTO_MAX, SYSTEM_PROMPT(), true);
+				AUTO_MAX, SYSTEM_PROMPT(''), true);
 		}
 		// The conductor's and the reducer's system prompts are composed in Rust,
 		// so the house rules are handed across rather than baked into the ctor.
@@ -23979,9 +25059,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// caller does not invent a placeholder.
 		var meterRow = document.createElement('div');
 		meterRow.className = 'diamond-meter';
-		var spent = dc && ((dc.promptTokens || 0) + (dc.completionTokens || 0)) > 0;
-		var bar = null;
-		if (dc && spent) bar = tileCtxBar(dc, chatWindow(dc));
+		// THE GUARD USED TO ASK ABOUT TWO COUNTERS NOTHING ON THIS PATH WRITES, so the
+		// bar this row was built to carry was never once drawn on a Diamond. A daimon's
+		// turn goes through `doSteer`, which sets `rec.lastPrompt` from the engine and
+		// bills the turn to the Diamond through `meterDiamondTurn`; `promptTokens` and
+		// `completionTokens` are maintained only by `runTurn`, and `sendUserMessage`
+		// diverts a daimon's conversation away from it. So the tile read
+		// `22h ago  ~A$3.40` with a real reading available and unasked for.
+		//
+		// Nothing takes its place: `tileCtxBar` already refuses when the window is
+		// unpublished or the daimon has never spoken, and asking IT is the whole of the
+		// question. The bar is the chat tile's own, so the two cannot come to mean
+		// slightly different things.
+		var bar = dc ? tileCtxBar(dc, daimonWindow(dc)) : null;
 		if (bar) meterRow.appendChild(bar);
 		if (f.updated) {
 			var upd = document.createElement('span');
@@ -27728,7 +28818,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			add.className = 'attach-add' + (grants ? ' grants' : '');
 			add.dataset.act = 'attach-add';
 			add.dataset.grants = grants ? '1' : '';
-			add.textContent = '+ ' + t(grants ? 'attach.add_mark' : 'attach.add');
+			if (o.icon) {
+				add.textContent = '+';
+			} else {
+				add.textContent = '+ ' + t(grants ? 'attach.add_mark' : 'attach.add');
+			}
 			add.title = grants ? t('attach.ws_add') : t('attach.add');
 			add.setAttribute('aria-label', add.title);
 			add.addEventListener('click', function (ev) {
@@ -27857,46 +28951,59 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		box.style.display = '';
 		box.innerHTML = '';
-		// Two groups on screen share the room one group used to have -- see the cap
-		// note in variables.css. This class is what that arithmetic reads.
-		box.classList.toggle('two', noted.length > 0);
 
-		// ── The workspace ──────────────────────────────────────────────
+		// ── One list ───────────────────────────────────────────────────
+		//
+		// Two sections, and a heading over each, is what the owner objected to on
+		// 2026-08-24: "apparently separated folder and file inclusion between
+		// 'WORKSPACE MACHINE' and 'IN FRONT OF THE MODEL'. I hate that." He is
+		// right, and the reason is in the tiles rather than in his taste. Every row
+		// already says which claim it is making -- `Note` or `Read` for the cost,
+		// and a `Workspace` pill, pressed or not, on a folder -- so a heading over
+		// each half restated the rows and charged him a split list for it.
+		//
+		// WHAT A HEADING SAID AND A ROW DOES NOT is one thing only: which
+		// workspace, browser or machine, the marks belong to. That is not lost --
+		// the account strip says it in the same words (`astat.workspace_*`) and a
+		// tile that lives in the OTHER one already says so on itself, through
+		// `attach.not_here`. So it is said once now instead of twice.
+		//
+		// The head band stays, without a title in it: the `+` lives there, and the
+		// lesson of 4216383 is that the control which ends the empty state must be
+		// reachable FROM the empty state.
+		//
+		// The view toggle KEEPS its place on that band. It governed the lower group
+		// alone before, and it governs the one list now -- with marked folders
+		// staying full-width rows either way, through the per-tile `view` that
+		// `attachTile` already reads. An 88px icon cell has no room for the
+		// `Workspace` pill, and the pill is the whole of what tells the fence from
+		// the prompt now that the headings are gone.
 		var ws = document.createElement('section');
 		ws.className = 'attach-group ws-group';
-		// The `+` lives HERE, in the group that is always drawn, so the route to
-		// marking the first folder is never behind the state it is meant to end.
 		ws.appendChild(attachFooterHead({
-			title: workspaceTitle(),
 			help:  t('attach.ws_help'),
-			view:  false,
 			mark:  true,
+			// A `+` here reads as a `+` and nothing else. The two buttons that
+			// could be confused are in different places, and it is the crystal
+			// footer's that grants -- see `attachFooterHead`.
+			icon:  true,
 		}));
-		var wsBody = attachBody(marked.map(toTile),
-			{ cls: 'ws-body', stack: true, label: workspaceTitle() });
+		// Marked first, because the fence is the more consequential claim and a
+		// reader scanning for "what can this chat reach" should not have to sort.
+		var body = attachBody(marked.concat(noted).map(toTile),
+			{ cls: 'ws-body', label: workspaceTitle() });
 		if (!marked.length) {
-			// The sentence the empty state exists to say. Not a hint about a button:
-			// what the chat can reach, which is nothing of the user's.
+			// The sentence the empty state exists to say, and it is said whenever
+			// NOTHING IS MARKED IN -- not merely when the list is empty. A footer
+			// holding three attached files and no mark is exactly the state that
+			// reads as "the chat has my files" and is not.
 			var none = document.createElement('div');
 			none.className = 'rail-note ws-empty';
 			none.textContent = t('attach.ws_empty');
-			wsBody.appendChild(none);
+			body.appendChild(none);
 		}
-		ws.appendChild(wsBody);
+		ws.appendChild(body);
 		box.appendChild(ws);
-
-		// ── What has been put in front of the model ────────────────────
-		if (noted.length) {
-			var at = document.createElement('section');
-			at.className = 'attach-group at-group';
-			at.appendChild(attachFooterHead({
-				title: t('attach.group_prompt'),
-				help:  t('attach.group_prompt_help'),
-				add:   false,
-			}));
-			at.appendChild(attachBody(noted.map(toTile)));
-			box.appendChild(at);
-		}
 	}
 
 	/// The `+`: attach files and folders without leaving what you are reading.
@@ -29277,14 +30384,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// is precisely what the user cannot see from here.
 		if (sawError && dispatched.length) {
 			setCrystalStatus(t('crystal.dispatch_after_error'));
+			Workers.tellDaimon(diamondId, notStartedWords(dispatched.length,
+				'the turn that asked for them ended badly'));
 		} else if (dispatched.length) {
 			// The spend gate: a large fan-out pauses here for a look before
 			// a single worker is enqueued. A normal dispatch clears silently.
 			var cleared = await governorClearsDispatch(dispatched.length, diamondId);
-			if (!cleared) {
+			if (!cleared.ok) {
 				setCrystalStatus(dispatched.length === 1
 					? 'Agent not started.'
 					: 'Agents not started.');
+				// AND THE DAIMON IS TOLD, because it is the one that asked. It has
+				// already stopped -- `spawn_agent` told it to -- believing its workers
+				// begin the moment it does. Nothing else it can read would ever
+				// contradict that, so a status line here is a fact kept from the only
+				// reader who acts on it.
+				Workers.tellDaimon(diamondId, notStartedWords(dispatched.length, cleared.why));
 			} else {
 				setCrystalStatus(dispatched.length === 1
 					? 'Dispatched 1 agent.'
@@ -32864,11 +33979,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				DaimondModels.fillSelect(scratch, cfg.foldProvider || '', cfg.foldModel || '');
 				while (scratch.firstChild) sel.appendChild(scratch.firstChild);
 			}
-			var want = (cfg.foldProvider || '') + ' ' + (cfg.foldModel || '');
+			var want = (cfg.foldProvider || '') + '\u0000' + (cfg.foldModel || '');
 			var hit = false;
 			for (var i = 0; i < sel.options.length; i++) {
 				var o = sel.options[i];
-				if (((o.dataset.provider || '') + ' ' + o.value) === want) {
+				if (((o.dataset.provider || '') + '\u0000' + o.value) === want) {
 					sel.selectedIndex = i; hit = true; break;
 				}
 			}
@@ -33409,9 +34524,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// chat is switched mid-await, and the older one must not insert a second band under the newer.
 	var _wireSeq = 0;
 
-	/// Roughly how many tokens a string is. Four characters, which is wrong for code and for CJK
+	/// Roughly how many tokens a band is: four bytes each, which is wrong for code and for CJK
 	/// and close enough for a size the reader is using to decide whether to look.
-	function wireTok(s) { return Math.round(String(s || '').length / 4); }
+	///
+	/// BYTES AND NOT CHARACTERS, and the difference is the whole point. A request body is
+	/// UTF-8, and every size the engine keeps is a Rust `.len()` over that encoding --
+	/// `compact::msg_bytes`, the fold's own budget, and the `schemas_len` the schema band
+	/// below is drawn from. A JavaScript string's `.length` is UTF-16 code units, so one em
+	/// dash is three there and one here. Measured that way, the five text bands were drawn in
+	/// characters, the schema band beside them in bytes, and the headline added the two
+	/// together and called the sum tokens. The gap is small -- 50 bytes in 8,455 of system
+	/// message -- and it is not the size of it that matters: a band whose claim is that it is
+	/// the sent bytes has to be measuring bytes, or the claim is decoration.
+	var _wireEnc = new TextEncoder();
+	function wireTok(s) { return Math.round(_wireEnc.encode(String(s || '')).length / 4); }
 
 	/// One band of the system message, with whose it is said in the same breath as how big it is.
 	///

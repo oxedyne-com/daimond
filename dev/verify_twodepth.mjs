@@ -193,6 +193,22 @@ const BREAKS = {
 		with: 'details.md-fold > summary {\n\tpadding: 4px 0;\n\tcolor: var(--text-muted);'
 			+ '\n\tfont-size: var(--fs-sm);',
 	}],
+	// The seam placed on ANY answer long enough, which is FOLD-ALL by another
+	// route: the reader is handed a closed control and nothing to read beside it.
+	// dev/PROMPT_NOTES.md §5 measured a wording that did this 8 times in 8.
+	seamall: [{
+		file: 'js/render.js',
+		find: '\tvar SEAM_LEAD_MIN  = 40;',
+		with: '\tvar SEAM_LEAD_MIN  = 0;',
+	}],
+	// The blank line after the summary dropped. CONTRACT_FOLD.md §1: without it the
+	// element is one block of raw HTML and every heading inside it reaches the
+	// reader as literal hashes. Invisible from anywhere but the fixture.
+	seamblank: [{
+		file: 'js/render.js',
+		find: "'\\n\\n<details>\\n<summary>' + head.sum + '</summary>\\n\\n'",
+		with: "'\\n\\n<details>\\n<summary>' + head.sum + '</summary>\\n'",
+	}],
 	// Prose before a tool call left as an ANSWER, at full weight in the thread. This is the
 	// state the owner met on 2026-08-23: twenty paragraphs of "let me pin the line numbers"
 	// and "de.js is done cleanly", each a sentence or two and so each exempt from FOLD_NOTE
@@ -314,6 +330,10 @@ async function serveBreaks(page) {
 // copies the cases into its own source has stopped testing the pin.
 const FIXTURE = path.join(HERE, 'fixtures', 'fold_keys.json');
 const fixture = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
+// The SEAM's own fixture, the pin on the other thing the two languages must agree on:
+// what a `Fold:` line becomes. dev/CONTRACT_FOLD.md §15.
+const SEAMFIX = path.join(HERE, 'fixtures', 'fold_seam.json');
+const seamfix = JSON.parse(fs.readFileSync(SEAMFIX, 'utf8'));
 
 // ── What the model is told to stream ─────────────────────────────────
 //
@@ -353,6 +373,19 @@ const NASTY    = 'Careful now.\n\n<details>\n<summary>Mind '
 	+ '<script>window.__pwned=1;<\/script> '
 	+ '<a href="javascript:window.__pwned=1">the</a> gap</summary>\n\n'
 	+ 'The body.\n\n</details>\n';
+
+// ── What the model writes now, which is one line ─────────────────────
+//
+// Three wordings by three authors asked for the `<details>` and got it 5 times in
+// 76 (dev/PROMPT_NOTES.md §5, dev/REGISTER_NOTES.md §11). The markup is the app's
+// now. `SEAMED` is what a complying model sends; `SEAMBARE` is the same line with
+// nothing in front of it, which must NOT fold, or the app has reproduced the one
+// verdict CONTRACT_FOLD.md §5 calls worse than no control at all.
+const SEAMED   = 'The cache was cold, and it is warm again now.\n\n'
+	+ 'Fold: The deploy dropped the warmed image and the replacement came up empty, so the '
+	+ 'first request after a cutover pays for the fill.\n\n' + BODY + '\n';
+const SEAMBARE = 'Fold: The deploy dropped the warmed image and the replacement came up '
+	+ 'empty, so the first request pays.\n\n' + BODY + '\n';
 
 // A fold inside a fold. The renderer nests correctly for free, because the
 // browser's parser does; what has to be proved is that the KEY does not, since a
@@ -790,6 +823,102 @@ try {
 	check('12d and it hides with the tool steps, which is the switch for the working',
 		hidden === false, String(hidden));
 
+	// ── 13. The seam the APP places ───────────────────────────────────
+	//
+	// Everything above this point tests a fold the MODEL wrote, and 5 answers in 76
+	// carried one. The app places the seam now: the model writes a line beginning
+	// `Fold:` and the app builds the element, keys it, strips it and draws it. So
+	// what has to be proved is the expansion -- character for character, because
+	// the engine builds the same string in Rust and a key the two disagree about is
+	// a fold the reader opens that never leaves the payload -- and the refusals,
+	// which are the half that keeps a length rule from becoming FOLD-ALL.
+	const seamed = await page.evaluate((cases) => cases.map((c) => {
+		const got = window.DaimondRender.seamText(c.input, true);
+		return { out: got === c.input ? null : got,
+			keys: window.DaimondRender.foldScan(got).map(f => f.key) };
+	}), seamfix.cases);
+	check('13 the seam fixture on disk was actually read',
+		Array.isArray(seamfix.cases) && seamfix.cases.length >= 14
+			&& seamed.length === seamfix.cases.length,
+		`${seamfix.cases.length} case(s) from ${path.relative(path.join(HERE, '..'), SEAMFIX)}`);
+	const seamwrong = [];
+	seamfix.cases.forEach((c, i) => {
+		const want = c.seamed === null || c.seamed === undefined ? null : c.seamed;
+		if (seamed[i].out !== want) {
+			seamwrong.push(`${c.name}: got ${JSON.stringify(String(seamed[i].out).slice(0, 90))}`);
+		} else if (JSON.stringify(seamed[i].keys) !== JSON.stringify(c.keys)) {
+			seamwrong.push(`${c.name}: keys ${JSON.stringify(seamed[i].keys)}`);
+		}
+	});
+	check(`13a every seam case expands as the contract says (${seamfix.cases.length})`,
+		seamwrong.length === 0, seamwrong.slice(0, 2).join(' | '));
+
+	// A LINE THAT WOULD FOLD EVERYTHING FOLDS NOTHING, on screen and not in a unit
+	// test: the words the model wrote are all still there, and there is no control
+	// over them. This is the check the whole design turns on.
+	await chat(s, '@text ' + SEAMBARE);
+	const headless = await page.evaluate(() => {
+		const b = [...document.querySelectorAll('#chat-output .chat-msg-assistant')].pop();
+		if (!b) return { why: 'no bubble' };
+		return {
+			folds: b.querySelectorAll('details.md-fold').length,
+			marker: /(^|\n)\s*Fold:/.test(b.innerText),
+			kept: b.innerText.indexOf('the replacement came up empty') >= 0,
+			shown: b.innerText.length,
+		};
+	});
+	check('13b a seam with nothing above it folds NOTHING, and keeps every word',
+		headless.folds === 0 && headless.kept === true && headless.marker === false,
+		JSON.stringify(headless));
+
+	// AND THE QUALIFYING ONE FOLDS, or 13b would pass on a build where the seam
+	// never fired at all.
+	await chat(s, '@text ' + SEAMED);
+	const made = await page.evaluate(() => {
+		const b = [...document.querySelectorAll('#chat-output .chat-msg-assistant')].pop();
+		const d = b && b.querySelector('details.md-fold');
+		if (!d) return { why: 'no fold', text: b ? b.innerText.slice(0, 80) : null };
+		const sum = d.querySelector('summary');
+		const above = [...b.querySelectorAll('p')].find(x => !d.contains(x));
+		return {
+			key:   d.dataset.foldKey,
+			open:  d.open,
+			label: sum ? sum.textContent.trim() : null,
+			above: above ? above.textContent.trim() : null,
+			// The body is inside the control and not beside it: a seam that cut in
+			// the wrong place would leave the working in the bubble either way.
+			inside: d.textContent.indexOf('the warmer runs after the cutover') >= 0,
+			beside: b.innerText.indexOf('the warmer runs after the cutover') >= 0,
+			marker: /(^|\n)\s*Fold:/.test(b.innerText),
+		};
+	});
+	check('13c a qualifying seam becomes one real fold, keyed as the contract says',
+		made.key === '0:' + made.label && /deploy dropped the warmed image/.test(made.label || ''),
+		JSON.stringify(made).slice(0, 200));
+	check('13d with the answer above it and the working inside it, shut',
+		made.above === 'The cache was cold, and it is warm again now.'
+			&& made.inside === true && made.beside === false && made.marker === false,
+		JSON.stringify(made).slice(0, 200));
+
+	// MID-STREAM, the one outcome the engine cannot have: a seam whose body has not
+	// arrived yet is held back rather than drawn and then unwound. `foldPending`
+	// makes the same argument for a half-written `<details>` and 1c proves it there.
+	const holding = await page.evaluate(() => {
+		const half = 'The cache was cold, and it is warm again now.\n\n'
+			+ 'Fold: The deploy dropped the warmed image and the replacement came up empty.\n\nSo f';
+		const seg = (a) => a.map(x => x.kind + ':' + (x.kind === 'fold' ? x.key : x.text));
+		return { live: seg(window.DaimondRender.foldSegments(half, false)),
+			done: seg(window.DaimondRender.foldSegments(half, true)) };
+	});
+	check('13e a seam whose body is still arriving shows neither a fold nor the marker',
+		holding.live.length === 1
+			&& holding.live[0] === 'text:The cache was cold, and it is warm again now.\n\n',
+		JSON.stringify(holding.live).slice(0, 160));
+	check('13f and a turn that died before the body arrived still shows what did',
+		holding.done.length === 1 && /Fold:/.test(holding.done[0]) === false
+			&& /came up empty/.test(holding.done[0]),
+		JSON.stringify(holding.done).slice(0, 160));
+
 	// ── 11. The label is legible ──────────────────────────────────────
 	//
 	// A fold nobody finds is a fold nobody opens, and every check above this one
@@ -845,6 +974,24 @@ try {
 	});
 	await page.waitForTimeout(400);
 	await shot(s, 'twodepth' + (BREAK ? '-' + BREAK : ''));
+	// THE SEAM ON SCREEN, both ways round, because four claims about this product
+	// have been made from source alone and every one was wrong. One picture of an
+	// answer the app folded and one of an answer it refused to fold.
+	await page.evaluate(() => {
+		const d = [...document.querySelectorAll('#chat-output details.md-fold')]
+			.find(x => /deploy dropped the warmed image/.test(
+				(x.querySelector('summary') || {}).textContent || ''));
+		if (d) { d.open = false; d.scrollIntoView({ block: 'center' }); }
+	});
+	await page.waitForTimeout(400);
+	await shot(s, 'twodepth-seam-folded' + (BREAK ? '-' + BREAK : ''));
+	await page.evaluate(() => {
+		const b = [...document.querySelectorAll('#chat-output .chat-msg-assistant')]
+			.filter(x => x.querySelectorAll('details.md-fold').length === 0).pop();
+		if (b) b.scrollIntoView({ block: 'center' });
+	});
+	await page.waitForTimeout(400);
+	await shot(s, 'twodepth-seam-refused' + (BREAK ? '-' + BREAK : ''));
 } catch (e) {
 	check('the run got to the end of itself', false,
 		String(e && e.message ? e.message : e).split('\n')[0]);

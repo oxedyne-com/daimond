@@ -111,6 +111,21 @@
 //      `from=0` is never sent — and against a forge that reads `from` the wrong
 //      way round the walk still ENDS rather than offering to show more for ever.
 //
+//   8h. A DAIMON REACHES THIS PANEL THROUGH THE PANEL'S OWN DOOR.
+//      `social_read` and `social_send` are B9's Improve half, and they are not a
+//      second client of `/api/improve`: `socialRead` drives `loadList`, and
+//      `socialCommit`'s propose arm goes through `through()`, which the panel's
+//      own Send calls and whose comment names it "THE ONE DOOR a note leaves by,
+//      whether the press came from the box, from a kept row, or from a daimon
+//      that was told yes". Asserted here rather than believed, because a tool
+//      that LOOKS like the panel and is not would be a surface a daimon reaches
+//      that means something different from what the user's own button means.
+//      Four things: that a listing reaches every proposal and not merely the
+//      first page; that composing puts NOTHING on the wire; that committing puts
+//      exactly one request on it with the same field set the button produces; and
+//      that a token is spent once, so a yes to one publication is not a licence
+//      to repeat it.
+//
 //   9. THE PANEL'S WORDS ARE THE GUIDE'S WORDS. `www/guide/social.html` is
 //      the only contract this panel was handed, so it is checked mechanically:
 //      every `<span class="ui">` label in its §"The Social panel" must be
@@ -155,6 +170,10 @@
 //   node dev/verify_improve.mjs --break pagezero       # 8f from=0 goes on the wire
 //   node dev/verify_improve.mjs --break nowrap         # 8g the walk never ends
 //   node dev/verify_improve.mjs --break nolive         # 9b the change-feed line goes
+//   node dev/verify_improve.mjs --break toolonepage    # 8h a daimon sees one page only
+//   node dev/verify_improve.mjs --break eagercompose   # 8h composing publishes
+//   node dev/verify_improve.mjs --break toolsecond     # 8h the tool builds its own request
+//   node dev/verify_improve.mjs --break tokenreuse     # 8h one yes, published twice
 //   node dev/verify_improve.mjs --break renamechip     # 9  the panel and the guide disagree
 //   node dev/verify_improve.mjs                        # and then, clean
 //
@@ -188,6 +207,12 @@
 //                either. `i18ngap` is what establishes that the language check
 //                is not merely echoing the wording check — it leaves the English
 //                exactly right and takes one language away.
+//   `eagercompose` 2 — "composing puts nothing on the wire" and "committing
+//                opens exactly one proposal". The second is downstream of the
+//                first: a compose that published leaves the commit publishing a
+//                second one. `toolsecond` is what establishes that the field-set
+//                check is not merely echoing the count -- it leaves the count
+//                exactly right and changes only what is in the request.
 //   `minesame`   2 — the record and the drawing. The drawing is downstream of
 //                the record, which is why `minedraw` exists: it leaves the
 //                record right and breaks only what is drawn, so the drawing
@@ -447,6 +472,45 @@ const BREAKS = {
 		file: 'js/improve.js',
 		find: '\t\treturn { title: title, body: body, build: contextOff() ? \'\' : _build };',
 		with: '\t\treturn { title: title, body: body, build: _build };',
+	}],
+	// ── 8h. The tool pair, and the door it goes through ──────────────
+	//
+	// A daimon reads the listing with `social_read`, and a page is not a listing:
+	// `loadList(false)` fetches PAGE records and the panel offers a button for
+	// the rest, which a tool call cannot press. This is that world.
+	toolonepage: [{
+		file: 'js/improve.js',
+		find: '\t\t\tvar steps = 0;\n\t\t\twhile (_order.length < limit && !_list.done && steps++ < 8) {',
+		with: '\t\t\tvar steps = 0;\n\t\t\twhile (false) {',
+	}],
+	// Composing publishes. The consent question is then about a payload that has
+	// already gone, which is the whole of what compose-then-commit exists to stop.
+	eagercompose: [{
+		file: 'js/improve.js',
+		find: "\t\tvar token = 'd' + (++_draftN) + '-' + Math.random().toString(36).slice(2, 10);",
+		with: "\t\tif (act === 'propose') { await through(store(payload.title + (payload.body ? '\\n' + payload.body : ''), 0), payload); }\n"
+			+ "\t\tvar token = 'd' + (++_draftN) + '-' + Math.random().toString(36).slice(2, 10);",
+	}],
+	// The tool builds its own request instead of going through the panel's one
+	// door. The proposal still opens and the panel's own Send is untouched, so
+	// every check but the field set stays green -- which is exactly the shape of
+	// the defect: a surface a daimon reaches that means something slightly
+	// different from what the user's button means.
+	toolsecond: [{
+		file: 'js/improve.js',
+		find: '\t\t\tvar a = await through(rec, { title: d.title, body: d.body, build: d.build });',
+		with: "\t\t\tvar tf = new URLSearchParams();\n"
+			+ "\t\t\ttf.set('title', d.title); tf.set('body', d.body); tf.set('tool', '1');\n"
+			+ "\t\t\tvar a = await ask(route(''), { method: 'POST', "
+			+ "headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: tf.toString() });",
+	}],
+	// A token left spendable. A yes about one publication becomes a licence to
+	// publish it again, which is the per-host memory mistake this panel must not
+	// repeat: what is approved here is a payload, not a destination.
+	tokenreuse: [{
+		file: 'js/improve.js',
+		find: "\t\tvar held = _drafts[String(token || '')];\n\t\tdelete _drafts[String(token || '')];",
+		with: "\t\tvar held = _drafts[String(token || '')];",
 	}],
 	// A failed note is queued and tried again. This is the failure the whole
 	// design refuses, and it is invisible from the panel.
@@ -1395,7 +1459,71 @@ try {
 		`done=${wrapped.done}, ${firstPage} then ${wrapped.shown.length}`);
 	check('and it stops offering to show more',
 		await page.locator('#improve-props [data-act="improve-more"]').count() === 0);
+	// ── 8h. The tool pair goes through the panel's own door ──────
+	//
+	// B9's Improve half. `Tool::SocialRead` and `Tool::SocialSend` reach this
+	// panel through `window.DaimondSocial`, and the whole claim worth making
+	// about them is that they are the SAME door the user's own button is: a
+	// surface a daimon reaches that meant something slightly different from what
+	// the button means would be B9's fault shape inverted.
+	//
+	// A LISTING IS NOT A PAGE. Still against the fifty-proposal forge, because
+	// the difference only exists on a repository with more than one page of them
+	// -- and this tool's own description tells a daimon to read the proposals
+	// first so it does not open a second one about something already there.
+	forge = FORGE.pages;
+	await page.evaluate(() => { window.DaimondImprove.reset(); });
+	const toolSaw = await page.evaluate(
+		() => window.DaimondSocial.read(JSON.stringify({ view: 'proposals', limit: 50 })));
+	const toolRows = String(toolSaw).split('\n').filter((l) => /^#\d+\s/.test(l));
+	check('a daimon reading the proposals reaches every one of them, not merely the first page',
+		toolRows.length === 50, `${toolRows.length} of 50 — ${String(toolSaw).slice(0, 140)}`);
+
 	forge = FORGE.main;
+
+	// COMPOSING PUTS NOTHING ON THE WIRE. The user is shown what would be
+	// published and answers about THAT; a call that took the model's arguments
+	// and asked on the way past would mean the person approved a rendering and
+	// the app sent a rebuild of it.
+	const beforeTool = opens().length;
+	const draftRaw = await page.evaluate(() => window.DaimondSocial.compose(JSON.stringify({
+		act:   'propose',
+		title: 'The tool pair opens a proposal through the panel',
+		body:  'Composed by social_send and not yet published. quokka-marker-tool',
+	})));
+	await page.waitForTimeout(400);
+	const draft = (() => { try { return JSON.parse(draftRaw); } catch (e) { return {}; } })();
+	check('composing what a daimon would publish puts nothing whatever on the wire',
+		opens().length === beforeTool,
+		`${opens().length - beforeTool} request(s) — ${String(draftRaw).slice(0, 160)}`);
+	check('and what it hands back to be shown carries the characters that would go',
+		typeof draft.shown === 'string' && draft.shown.indexOf('quokka-marker-tool') >= 0
+			&& typeof draft.token === 'string' && draft.token.length > 0,
+		String(draftRaw).slice(0, 200));
+
+	// AND COMMITTING GOES THROUGH `through()`, which is the panel's own one door.
+	// Asserted on the FIELD SET, exactly as check 2 asserts it of the button: a
+	// second door that happened to send the right two fields as well would be a
+	// second place to keep right.
+	const toolSaid = await page.evaluate((tok) => window.DaimondSocial.commit(tok), draft.token);
+	await page.waitForTimeout(1200);
+	check('and committing it opens exactly one proposal',
+		opens().length === beforeTool + 1,
+		`${opens().length - beforeTool} request(s) — ${String(toolSaid).slice(0, 140)}`);
+	const toolSent = opens()[opens().length - 1] || { body: '' };
+	check('through the panel\'s own door: the same field set the user\'s own button produces',
+		Object.keys(fields(toolSent.body)).sort().join(',') === 'body,build,title',
+		Object.keys(fields(toolSent.body)).sort().join(',') || '(none)');
+
+	// A TOKEN IS SPENT ONCE. A yes about one publication left spendable is a
+	// licence to publish it again, which is a memory of consent -- and consent
+	// here is bound to the bytes, never remembered.
+	const beforeAgain = opens().length;
+	const again = await page.evaluate((tok) => window.DaimondSocial.commit(tok), draft.token);
+	await page.waitForTimeout(800);
+	check('and the yes is spent: the same token publishes nothing a second time',
+		opens().length === beforeAgain && /^Refused:/.test(String(again)),
+		`${opens().length - beforeAgain} request(s) — ${String(again).slice(0, 140)}`);
 
 	// ── 9. The panel's words are the guide's words ───────────────
 	await page.evaluate(() => { window.DaimondImprove.reset(); return window.DaimondImprove.load(false); });

@@ -46,7 +46,14 @@ pub mod wire;
 /// Sent in the opening [`wire::Req::Hello`] and answered in
 /// [`wire::Resp::Hello`], so a hand and a page that have drifted say so on the
 /// first exchange rather than at the first command that needs the difference.
-pub const PROTO: u32 = 1;
+///
+/// **2 since 2026-08-25**, when the two answers a walk and a read come back with
+/// both changed shape: a read now opens with three numbers rather than one --
+/// the whole file's lines, its bytes, and how many lines this answer holds --
+/// and a search sends the LINES its pattern matched rather than whole file
+/// texts.  Either read by the older parser is wrong in silence rather than
+/// loudly, which is exactly what this number exists to stop.
+pub const PROTO: u32 = 2;
 
 /// The name this build reports to the page, for the device roster.
 pub const HOST_NAME: &str = "daimond-hand";

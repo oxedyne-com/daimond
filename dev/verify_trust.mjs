@@ -31,6 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, errors } from './harness.mjs';
+import { GW_PORT, GW_URL } from './ports.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -67,7 +68,7 @@ async function device(name) {
 /// Was there a gateway to lean on at all? The answer wanted is "no".
 let gatewayUp = false;
 try {
-	const r = await fetch('http://127.0.0.1:9002/', { signal: AbortSignal.timeout(800) });
+	const r = await fetch(`${GW_URL}/`, { signal: AbortSignal.timeout(800) });
 	gatewayUp = !!r;
 } catch (e) { gatewayUp = false; }
 
@@ -80,7 +81,8 @@ const S = await device('trust8');			// "trust8" folds onto "trustb": 8 → b
 try {
 	console.log(`\n── A. Two devices, no server ${'─'.repeat(40)}`);
 	check('the gateway was not running for any of this', !gatewayUp,
-		gatewayUp ? 'something answered on :9002 — the wire checks below still hold' : 'nothing on :9002');
+		gatewayUp ? `something answered on :${GW_PORT} — the wire checks below still hold`
+			: `nothing on :${GW_PORT}`);
 
 	// The cards cross through this script and through nothing else. Neither
 	// browser was asked to fetch anything to obtain the other's key.

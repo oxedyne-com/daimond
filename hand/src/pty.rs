@@ -105,6 +105,7 @@ use crate::{
         signal_group,
         vet_cwd,
         vet_program,
+        Act,
         Launcher,
         Payload,
         Scratch,
@@ -516,6 +517,7 @@ impl PtySessions {
             env:  env.clone(),
             plan: plan.clone(),
             tty:  true,
+            act:  Act::Exec,
         }));
 
         let mut cmd = Command::new(res!(self.launcher.prog()));

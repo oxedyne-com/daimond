@@ -30,6 +30,12 @@ const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.m
 const { chromium } = await import(pathToFileURL(PW).href);
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 import { fileURLToPath } from 'node:url';
+// Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
+// `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
+// run under `xvfb-run` still went to the compositor and opened a window on the owner's
+// desktop. Importing this strips the two variables from `process.env`, which is all a
+// launcher that spreads `process.env` needs. See dev/display.mjs.
+import './display.mjs';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');	// this checkout, not one developer's home
 const EXT = `${ROOT}/ext`;
 // The SHIPPED manifest names one origin, and it is not this dev server, so the

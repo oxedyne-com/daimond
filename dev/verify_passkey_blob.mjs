@@ -17,8 +17,8 @@
 
 import crypto from 'node:crypto';
 import { requireFreshGateway, SUITE_GW_LOG } from './gwbin.mjs';
+import { GW_URL as GW } from './ports.mjs';
 
-const GW = 'http://127.0.0.1:9002';
 let failures = 0;
 const check = (cond, msg, detail) => {
 	console.log((cond ? '  ok   ' : '  FAIL ') + msg + (detail != null ? ' — ' + detail : ''));

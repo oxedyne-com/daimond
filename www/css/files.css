@@ -202,6 +202,12 @@
 	font-size: var(--fs-3xs-2xs); color: var(--text-secondary);
 }
 
+/* The step out of this folder, at the top of the listing where every file
+   manager has put it. Dimmer than a real entry, because it is navigation and
+   not a thing in the folder, and it carries none of the controls a real row
+   does. It replaced a button in the panel's header on 2026-08-24. */
+.files-row.files-up .files-name { color: var(--text-secondary); }
+
 /* A row for something attached from elsewhere in the workspace. It is a
    pointer, not a copy: the file lives where it always did, and every other
    Diamond holding it goes on holding it. */
@@ -356,8 +362,13 @@
 /* The row itself is now a control (`sysRowAsButton`), so it says so as well.
    Inset, because a row is flush with the panel and an outset ring would be
    clipped by the tree's own scroller -- which the desktop sweep already reports
-   for the Diamond rail. */
-.files-row:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+   for the Diamond rail.
+   `:focus-visible` here, where the three buttons above keep `:focus`: a row is
+   opened by pointer far more often than by Tab, so a bare `:focus` left a ring
+   standing on the row of every file anyone clicked. Nothing is lost to the
+   keyboard -- `verify_a11y_keyboard` presses Tab before it focuses anything, so
+   modality is established and a script focus matches this too. */
+.files-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* The rename pencil borrows `.files-del` for its shape and needs a size of its
    own: '✎' is drawn well inside its em box where '×' fills it, so at the same
    nominal 15px the pencil carried about half the ink of the cross beside it and
@@ -460,9 +471,14 @@
    only. The two measures must agree -- the gutter is the .ln width plus its
    margin. */
 .files-view-body .lnrow { display: block; padding-left: 4em; text-indent: -4em; }
+/* `--text-muted` at full strength, and NOT `--text-secondary` behind an
+   `opacity: 0.55`. The alpha composited the gutter towards the page until it
+   sat at 2.28:1 on Light -- half the 4.5:1 floor, on 13px digits that are the
+   only way to say which line anything is on. Muted is the token for exactly
+   this: the quietest text in the app, and quiet is not the same as faint. */
 .files-view-body .ln {
 	display: inline-block; width: 3.2em; margin-right: 0.8em;
-	text-align: right; color: var(--text-secondary); opacity: 0.55;
+	text-align: right; color: var(--text-muted);
 	user-select: none; -webkit-user-select: none;
 }
 

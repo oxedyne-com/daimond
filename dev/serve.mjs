@@ -1,18 +1,26 @@
 // dev/serve.mjs — a local launcher for Daimond.
 //
 // Serves www/ on http://localhost:8777 (a secure context, so OPFS works) and
-// reverse-proxies /api and /webhook to the gateway on 127.0.0.1:9002 — exactly
-// what Steel does in production, so the session cookie is same-origin and every
-// gateway-backed feature (read, credits, email) works locally. If the gateway
-// is not running, those calls simply fail and the browser-only tiers carry on.
+// reverse-proxies /api and /webhook to THIS WORLD'S gateway — exactly what Steel
+// does in production, so the session cookie is same-origin and every
+// gateway-backed feature (read, credits, email) works locally. If this world has
+// no gateway, those calls are REFUSED and the browser-only tiers carry on.
 //
 //   node dev/serve.mjs            # from the app root
 //
 // The port is `DAIMOND_PORT`, default 8777, and the gateway it proxies to is
-// `DAIMOND_GW_PORT`, default 9002.  Both are settable so that several agents can
+// `DAIMOND_GW_PORT`.  Both are settable so that several agents can
 // each hold a whole world -- server, mock provider and browser profile -- at once;
 // with one fixed port only one browser harness could run at a time, and no agent
-// could see its own work.  `dev/world.sh N` prints a matching set.
+// could see its own work.  `dev/world.sh N` prints a matching set, and its
+// gateway row is 9700 + N: a port of the world's own that nothing binds unless
+// the world asked for a gateway.
+//
+// THE DEFAULT IS ONLY FOR A SERVER STARTED BY HAND. Under a world the variable is
+// always set, and it is set to something that is not 9002 -- because 9002 is where
+// a stray `devgw.sh` lands, and until 2026-08-25 every world proxied there, so
+// which lane's account state a verifier read was whichever lane had a gateway up.
+// `dev/world.sh` carries the measurement.
 //
 // No dependencies; plain Node http.
 
@@ -50,9 +58,15 @@ function proxy(req, res) {
 		res.writeHead(u.statusCode || 502, u.headers);
 		u.pipe(res);
 	});
+	// THE REFUSAL NAMES THE PORT AND SAYS WHOSE IT IS. A caller that reads "the
+	// gateway is not running" and knows only the phrase cannot tell an absent
+	// gateway from one it was never entitled to reach, and the whole point of the
+	// world's own port is that the second case no longer exists.
 	up.on('error', () => {
 		res.writeHead(502, { 'content-type': 'application/json' });
-		res.end(JSON.stringify({ error: 'The gateway is not running on :9002. Start it, or use the browser-only features.' }));
+		res.end(JSON.stringify({ error: `No gateway is running on 127.0.0.1:${GATEWAY.port}, `
+			+ `which is this world's own. No other world's gateway is reachable from here: `
+			+ `start one on this port (DAIMOND_GW_PORT), or use the browser-only features.` }));
 	});
 	req.pipe(up);
 }

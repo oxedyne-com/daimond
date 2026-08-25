@@ -2987,6 +2987,184 @@ fn fenced_spans(text: &str) -> Vec<(usize, usize)> {
     out
 }
 
+// ── The seam the APP places ─────────────────────────────────────────────────────────────────
+//
+// Three wordings by three authors asked the model to write the `<details>` itself, and 5 answers
+// in 76 carried one -- `dev/PROMPT_NOTES.md` §5 and `dev/REGISTER_NOTES.md` §11, across two
+// register kinds on the shape of question the note exists for.  So the markup is the app's now
+// and the model writes one line: `Fold:` and a sentence or two of what the working below it
+// concludes.  [`seam_text`] turns that line into exactly the element a model used to write, and
+// [`folds`] below never learns that anything is different.
+//
+// **The refusals are the point, not the fold.**  A length threshold applied blindly produces
+// FOLD-ALL, which `dev/CONTRACT_FOLD.md` §5 calls worse than no control at all.  Here the two
+// failures no wording could prevent are unreachable instead: too little above the line, too few
+// words in the summary, or too little below it, and there is no fold -- the sentence is left as
+// prose and nothing is hidden.
+//
+// `www/js/render.js`'s `seamText` is the other half and the two must agree character for
+// character, for `Fold::key`'s reason: the page names the fold the reader opened and this side
+// matches the name.  `dev/fixtures/fold_seam.json` is what both are tested against.
+
+/// Enough above the seam to be an answer.  The same forty characters `dev/probe_notes.mjs` calls
+/// FOLD-ALL below, counted the same way -- whitespace collapsed, ends trimmed -- because it is
+/// the same rule and not a second opinion about it.
+const SEAM_LEAD_MIN:  usize = 40;
+/// Enough below it to be worth a control, which is `dev/CONTRACT_FOLD.md` §5's carve-out.
+const SEAM_BODY_MIN:  usize = 240;
+/// A summary is a summary and not a label -- §13.
+const SEAM_WORDS_MIN: usize = 6;
+
+/// The summary a `Fold:` line carries, or `None` if the line is not one.
+///
+/// Generous in what it accepts, because a model that has understood the note and reached for a
+/// heading or for bold should not lose its fold over the decoration: `Fold:`, `**Fold:**`,
+/// `## Fold:` and `_Fold:_` all seam.  What it will not accept is an indented line, which is a
+/// code block, or one whose summary is empty.
+fn seam_line(line: &str) -> Option<String> {
+    let raw = line.trim_end_matches(['\n', '\r']);
+    if raw.starts_with("    ") || raw.starts_with('\t') {
+        return None;
+    }
+    let mut s = raw.trim_start_matches(' ');
+    // A heading marker, then at least one space, or `#Fold:` would seam as a heading.
+    let hashes = s.bytes().take_while(|&b| b == b'#').count();
+    if (1..=6).contains(&hashes) && s[hashes..].starts_with(' ') {
+        s = s[hashes..].trim_start_matches(' ');
+    }
+    let lead = emphasis_at(s);
+    s = &s[lead.len()..];
+    if s.len() < 4 || !s[..4].eq_ignore_ascii_case("fold") {
+        return None;
+    }
+    let after = s[4..].trim_start_matches([' ', '\t']);
+    let mut rest = match after.strip_prefix(':') {
+        Some(r) => r,
+        None    => return None,
+    };
+    let shut = emphasis_at(rest);
+    if !shut.is_empty() {
+        rest = &rest[shut.len()..];
+    } else if !lead.is_empty() {
+        let t = rest.trim_end();
+        let tail = emphasis_end(t);
+        if !tail.is_empty() {
+            rest = &t[..t.len() - tail.len()];
+        }
+    }
+    let sum = rest.split_whitespace().collect::<Vec<_>>().join(" ");
+    if sum.is_empty() { None } else { Some(sum) }
+}
+
+/// The emphasis run a markdown span opens with, longest first.
+fn emphasis_at(s: &str) -> &str {
+    for m in ["**", "__", "*", "_"] {
+        if s.starts_with(m) {
+            return &s[..m.len()];
+        }
+    }
+    ""
+}
+
+/// The emphasis run a markdown span closes with, longest first.
+fn emphasis_end(s: &str) -> &str {
+    for m in ["**", "__", "*", "_"] {
+        if s.ends_with(m) {
+            return &s[s.len() - m.len()..];
+        }
+    }
+    ""
+}
+
+/// How much of `t` a reader would actually see, counted as the page counts it.
+///
+/// UTF-16 units rather than characters, because the other half of this is JavaScript and a
+/// boundary the two halves disagreed on would fold on one side and not the other.
+fn seam_visible(t: &str) -> usize {
+    t.split_whitespace().collect::<Vec<_>>().join(" ").encode_utf16().count()
+}
+
+/// `text` with the model's `Fold:` line turned into the element it stands for, or `None` where
+/// there is nothing to do.
+///
+/// Four outcomes and only one of them is a fold: no line at all, or a model that wrote its own
+/// `<details>`, leaves the text alone; a line on a qualifying answer becomes one top-level fold,
+/// blank lines and all; a line on an answer that does not qualify loses its `Fold:` and stays as
+/// prose, so nothing is hidden and nothing is lost.  The page has a fourth, which this side
+/// cannot have: mid-stream it holds the line back rather than showing a fold that might unwind.
+pub fn seam_text(text: &str) -> Option<String> {
+    if !text.to_ascii_lowercase().contains("fold") {
+        return None;
+    }
+    // A model that wrote the markup itself has already placed its seam.
+    if text.contains("<details") && !folds(text).is_empty() {
+        return None;
+    }
+    let fenced = fenced_spans(text);
+    let hidden = |p: usize| fenced.iter().any(|&(a, b)| p >= a && p < b);
+    // Every `Fold:` line outside a fence: where it starts, how long it is, and what it says.
+    let mut marks: Vec<(usize, usize, String)> = Vec::new();
+    let mut at = 0usize;
+    for line in text.split_inclusive('\n') {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        if !hidden(at) {
+            if let Some(sum) = seam_line(bare) {
+                marks.push((at, bare.len(), sum));
+            }
+        }
+        at += line.len();
+    }
+    let (start, len, sum) = match marks.first() {
+        Some(m) => (m.0, m.1, m.2.clone()),
+        None    => return None,
+    };
+    // Only the first line is the seam.  A second would otherwise reach the reader with its
+    // marker still on it, so every later one loses the marker and stays where it is.
+    let bare_from = |from: usize| -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut cut = from;
+        for &(a, n, ref s) in &marks {
+            if a < from {
+                continue;
+            }
+            out.push_str(&text[cut..a]);
+            out.push_str(s);
+            cut = a + n;
+        }
+        out.push_str(&text[cut..]);
+        out
+    };
+    let above = &text[..start];
+    // The line's own newline goes with the line.
+    let rest_at = (start + len + 1).min(text.len());
+    let body = &text[rest_at..];
+    // A summary carrying the very tags this builds would close the element early and leave the
+    // rest of the answer outside it.
+    let tagged = sum.to_ascii_lowercase();
+    if tagged.contains("<summary") || tagged.contains("</summary")
+        || tagged.contains("<details") || tagged.contains("</details")
+        || sum.split_whitespace().count() < SEAM_WORDS_MIN
+        || seam_visible(above) < SEAM_LEAD_MIN
+        || seam_visible(body) < SEAM_BODY_MIN
+    {
+        return Some(bare_from(0));
+    }
+    Some(fmt!("{}\n\n<details>\n<summary>{}</summary>\n\n{}\n\n</details>",
+        above.trim_end(), sum, bare_from(rest_at).trim()))
+}
+
+/// [`seam_text`] applied, for a caller that only wants the text back.
+///
+/// The answer is stored seamed rather than seamed on the way out, so the element exists exactly
+/// once and everything downstream -- the strip, the compactor, a reload of the thread a year
+/// later -- meets an ordinary fold and nothing has to know about a marker line.
+pub fn seamed(text: String) -> String {
+    match seam_text(&text) {
+        Some(t) => t,
+        None    => text,
+    }
+}
+
 /// Every real fold in one assistant message's text, in document order.
 ///
 /// Four shapes are deliberately NOT folds, and each one is a case in the fixture.  A `<details>`
@@ -4075,6 +4253,96 @@ pub mod tests {
                      it.\n  in:  {:?}\n  out: {:?}", name, input, got),
             }
         }
+    }
+
+    /// The fixture the two halves of the SEAM are both tested against.
+    const SEAM_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/dev/fixtures/fold_seam.json");
+
+    /// **Every case in `dev/fixtures/fold_seam.json`, driven from the file itself.**
+    ///
+    /// Three assertions a case, and the second is the one with the risk in it. The expansion has
+    /// to be exactly the text `www/js/render.js` builds, because a character between the two is a
+    /// key the page and the engine disagree about and a fold the reader opens that never leaves
+    /// the payload. `null` means the seam must leave the text exactly as it found it, which is
+    /// what a seam that fires on a fenced line or on `Folder:` fails. And the keys are read off
+    /// the RESULT, so a case proves the fold that comes out of the expansion and not just the
+    /// string.
+    #[test]
+    fn test_every_case_in_the_shared_seam_fixture() {
+        let json = match std::fs::read_to_string(SEAM_FIXTURE) {
+            Ok(s)  => s,
+            Err(e) => panic!("the shared fixture must be readable at {}: {}", SEAM_FIXTURE, e),
+        };
+        let cases = match extract_json_objects(&json, "cases") {
+            Some(c) => c,
+            None    => panic!("the fixture has no `cases` array: {}", SEAM_FIXTURE),
+        };
+        // A fixture that stopped being read would pass every case it no longer had.
+        assert!(cases.len() >= 14, "only {} cases read from {}", cases.len(), SEAM_FIXTURE);
+        for c in &cases {
+            let name = extract_json_string(c, "name").unwrap_or_default();
+            let input = match extract_json_string(c, "input") {
+                Some(i) => i,
+                None    => panic!("case '{}' has no input", name),
+            };
+            let got = seam_text(&input);
+            match extract_json_string(c, "seamed") {
+                Some(w) => assert_eq!(got.as_deref(), Some(w.as_str()),
+                    "case '{}': the seam", name),
+                None    => assert!(got.is_none(),
+                    "case '{}': the seam rewrote a text it must leave exactly as it found \
+                     it.\n  in:  {:?}\n  out: {:?}", name, input, got),
+            }
+            let after = got.unwrap_or(input.clone());
+            let keys: Vec<String> = folds(&after).iter().map(|f| f.key()).collect();
+            let want: Vec<String> = extract_json_string_array(c, "keys").unwrap_or_default();
+            assert_eq!(keys, want, "case '{}': the keys of what came out", name);
+        }
+    }
+
+    /// **The seam refuses the two failures no wording could prevent.**
+    ///
+    /// `dev/PROMPT_NOTES.md` §5 measured a candidate wording that folded 8 answers in 8 and put
+    /// nothing above the fold in 8 of 8 -- FOLD-ALL, which `dev/CONTRACT_FOLD.md` §5 calls worse
+    /// than no control at all. A length threshold applied blindly does the same thing by another
+    /// route. So the refusals are asserted as behaviour rather than left to the fixture's
+    /// examples: below the lead, below the summary's words, below the body, nothing folds, and
+    /// the reader still gets every word the model wrote.
+    #[test]
+    fn test_the_seam_refuses_rather_than_folding_everything() {
+        let body = "x. ".repeat(120);
+        let sum  = "The store wins on scans and loses on isolation, so I take the file.";
+        let lead = "Take one file per Diamond: isolation is worth more here than scan speed.";
+        for (what, text) in [
+            ("nothing above the seam",  fmt!("Fold: {}\n\n{}", sum, body)),
+            ("a lead of a few words",   fmt!("Short.\n\nFold: {}\n\n{}", sum, body)),
+            ("a label, not a summary",  fmt!("{}\n\nFold: Reasoning\n\n{}", lead, body)),
+            ("nothing below the seam",  fmt!("{}\n\nFold: {}\n\nTiny.", lead, sum)),
+        ] {
+            let got = seam_text(&text).unwrap_or_else(|| text.clone());
+            assert!(folds(&got).is_empty(), "{}: it folded anyway: {:?}", what, got);
+            assert!(!got.contains("<details"), "{}: it built an element: {:?}", what, got);
+            // Refused is not lost: every word the model wrote is still there, marker aside.
+            for line in text.lines().filter(|l| !l.trim().is_empty()) {
+                let want = line.trim_start_matches("Fold: ");
+                assert!(got.contains(want), "{}: {:?} went missing from {:?}", what, want, got);
+            }
+        }
+        // And the one that does qualify folds, or the four above would pass on a seam that never
+        // fires at all.
+        let good = fmt!("{}\n\nFold: {}\n\n{}", lead, sum, body);
+        let got = match seam_text(&good) {
+            Some(g) => g,
+            None    => panic!("a qualifying answer did not seam"),
+        };
+        let found = folds(&got);
+        assert_eq!(found.len(), 1, "one fold, from {:?}", got);
+        assert_eq!(found[0].key(), fmt!("0:{}", sum));
+        // The blank lines CONTRACT_FOLD.md §1 calls mandatory, without which `marked` never
+        // parses the markdown inside the element.
+        assert!(got.contains(&fmt!("<summary>{}</summary>\n\n", sum)), "no blank line after the \
+            summary: {:?}", got);
+        assert!(got.contains("\n\n</details>"), "no blank line before the close: {:?}", got);
     }
 
     /// **A `<details>` inside a fenced region is markup being SHOWN, not a fold.**

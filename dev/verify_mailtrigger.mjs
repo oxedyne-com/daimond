@@ -63,6 +63,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, connectMock, shot, scratch, errors, mockLog } from './harness.mjs';
+import { IMAP_PORT, SMTP_PORT } from './ports.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -333,12 +334,12 @@ try {
 	await page.waitForTimeout(900);
 
 	// The mailbox, seeded the way the add-dialog would but pointed nowhere real.
-	await page.evaluate(async (box) => {
+	await page.evaluate(async ([box, PORTS]) => {
 		const pass = await window.DaimondIdentity.wrap('test-app-password');
 		localStorage.setItem('daimond-mail', JSON.stringify({
 			accounts: [{
-				address: box, host: '127.0.0.1', port: 1143, security: 'plain',
-				smtpHost: '127.0.0.1', smtpPort: 1587, smtpSecurity: 'plain',
+				address: box, host: '127.0.0.1', port: PORTS.imap, security: 'plain',
+				smtpHost: '127.0.0.1', smtpPort: PORTS.smtp, smtpSecurity: 'plain',
 				user: box, pass, folder: 'INBOX', folders: {}, lastSync: 0, touched: 1,
 			}],
 			sel: box,
@@ -346,7 +347,7 @@ try {
 		window.DaimondMail.reload();
 		window.DaimondPanels.show('mail');
 		window.DaimondMail.onOpen();
-	}, BOX);
+	}, [BOX, { imap: IMAP_PORT, smtp: SMTP_PORT }]);
 	await page.waitForTimeout(1500);
 
 	logBase = mockLog().length;

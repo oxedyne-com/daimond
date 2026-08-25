@@ -12,8 +12,16 @@
 // about the implementation and not about the reader. Worse, opening a file hid
 // the tree to make room, so reading cost you your bearings.
 //
+// And what the panel does when it is ASKED FOR with nothing to show, which until
+// now was nothing at all: no hook, a blank title and an empty `display:none`
+// body. It offers a new document instead, and the checks below require it to
+// name itself, to name which of the two filesystems Save will write it to, and
+// then to write exactly the bytes typed and no others.
+//
 //   node dev/verify_doc.mjs
 
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +36,22 @@ const check = (name, pass, detail) => {
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/// A screenshot of one element, PROVEN to exist. `H.shot` swallows a failed
+/// capture, and a clean run is otherwise no evidence that anything was taken.
+async function shotOf(page, name, sel) {
+	const dir = path.join(os.homedir(), '.cache/daimond/lane-v-shots');
+	const out = path.join(dir, name + '.png');
+	try {
+		fs.mkdirSync(dir, { recursive: true });
+		const el = await page.$(sel);
+		if (!el) { console.log(`  note  no ${sel} to photograph`); return null; }
+		await el.screenshot({ path: out, timeout: 8000 });
+	} catch (e) { console.log(`  note  screenshot ${name} failed: ${String(e).split('\n')[0]}`); return null; }
+	if (!fs.existsSync(out) || fs.statSync(out).size < 500) { console.log(`  note  ${name} is not on disk`); return null; }
+	console.log('  shot  ' + out);
+	return out;
+}
 const procs = [];
 async function waitFor(fn, ms = 15000, gap = 300) {
 	const t0 = Date.now();
@@ -193,6 +217,110 @@ let s = null;
 	const closed = await surfaces(page);
 	check('closing the document closes Doc', !closed.docOpen, JSON.stringify(closed));
 	check('and the tree is untouched', closed.workOpen && closed.treeShown);
+
+	// ── The panel asked for with nothing to show ───────────────────────
+	//
+	// It held NOTHING. `#doc-view` starts empty and `display:none`, the title
+	// starts blank, and `DaimondPanels.show` carried an onOpen hook for the
+	// Workspace, Mail, Spending, the Terminal, the Trash and Social -- and none
+	// for this panel. So the Doc chip opened a rectangle with a close button in
+	// it and no other mark, which reads as broken rather than as empty.
+	//
+	// What it does now is offer a NEW DOCUMENT, and the three things a new
+	// document must not leave unsaid are each asserted rather than admired:
+	// what it is called, that it is Save and not time that writes it, and WHICH
+	// FILESYSTEM it lands in -- the last being the confusion this project has
+	// paid most for, so the sentence is required to name the place in the same
+	// words the Workspace panel's own mode chip uses.
+	const coldPath = 'notes-' + new Date().toISOString().slice(0, 10) + '.md';
+	// It must not exist BEFORE the panel is opened, or "Save created it" is a
+	// claim about a file that was already there.
+	const existedBefore = await page.evaluate(async (rel) => {
+		try { const m = await import('/pkg/oxedyne_daimond.js'); await m.read_file(rel); return true; }
+		catch (e) { return false; }
+	}, coldPath);
+	check('the document this will propose is not on disk yet', !existedBefore, coldPath);
+
+	await page.evaluate(() => {
+		window.DaimondPanels.markUsed('doc');
+		window.DaimondPanels.show('doc');
+		window.DaimondPanels.reflow();
+	});
+	await sleep(1500);
+	const cold = await page.evaluate(() => {
+		const view = document.getElementById('doc-view');
+		const shown = (sel) => {
+			const e = view && view.querySelector(sel);
+			return !!e && e.getClientRects().length > 0;
+		};
+		return {
+			name:    (document.getElementById('doc-name') || {}).textContent || '',
+			editing: !!(view && view.querySelector('.files-edit')),
+			said:    ((view && view.querySelector('.files-view-msg')) || {}).textContent || '',
+			saidShown: shown('.files-view-msg'),
+			// The Browser chip's own word, read off the mode row rather than
+			// restated here: the check is that the two agree, and hard-coding the
+			// word would let them drift apart while it went on passing.
+			place:   ((document.querySelector('#panel-work .files-mode-chip.active')) || {}).textContent || '',
+			saveBtn: ((view && view.querySelector('[data-act="edit"]')) || {}).textContent || '',
+			download: shown('[data-act="download"]'),
+			attach:   shown('[data-act="attach"]'),
+		};
+	});
+	check('opening Doc cold puts an editable document in it, not nothing',
+		cold.editing, JSON.stringify(cold));
+	check('and it is named, so it can be found again', cold.name === coldPath, cold.name);
+	check('the panel says where the document will land, in the mode row\'s own word',
+		cold.saidShown && !!cold.place.trim() && cold.said.includes(cold.place.trim()),
+		JSON.stringify({ said: cold.said, place: cold.place }));
+	check('the button says which state it is in: there are edits to write',
+		/Save/i.test(cold.saveBtn), cold.saveBtn);
+	// The picture, because the checks above say the panel is not empty and only a
+	// picture says whether what replaced the emptiness is worth looking at.
+	await shotOf(page, 'doc-cold', '#panel-doc');
+	check('nothing that acts on a file is offered before there is one',
+		cold.editing && !cold.download && !cold.attach,
+		JSON.stringify({ editing: cold.editing, download: cold.download, attach: cold.attach }));
+
+	// And it really saves, at the name it showed, with the bytes that were typed
+	// and no others -- the property `verify_docroundtrip` asserts for a file that
+	// already exists, asserted here for the one this panel invents.
+	const NEW_BODY = '# Cold open\n\nTyped into a document that did not exist.\n';
+	await page.evaluate((text) => {
+		const ta = document.querySelector('#doc-view .files-edit');
+		if (ta) { ta.value = text; ta.dispatchEvent(new Event('input', { bubbles: true })); }
+	}, NEW_BODY);
+	await page.evaluate(() => {
+		const b = document.querySelector('#doc-view [data-act="edit"]');
+		if (b) b.click();
+	});
+	await sleep(2500);
+	const saved = await page.evaluate(async (rel) => {
+		const view = document.getElementById('doc-view');
+		let onDisk = null;
+		try { const m = await import('/pkg/oxedyne_daimond.js'); onDisk = await m.read_file(rel); }
+		catch (e) { onDisk = 'READ FAILED: ' + e; }
+		const shown = (sel) => {
+			const e = view && view.querySelector(sel);
+			return !!e && e.getClientRects().length > 0;
+		};
+		return {
+			onDisk,
+			said:   ((view && view.querySelector('.files-view-msg')) || {}).textContent || '',
+			editBtn: ((view && view.querySelector('[data-act="edit"]')) || {}).textContent || '',
+			download: shown('[data-act="download"]'),
+			attach:   shown('[data-act="attach"]'),
+		};
+	}, coldPath);
+	check('Save writes exactly what was typed, at the name the panel showed',
+		saved.onDisk === NEW_BODY, JSON.stringify(saved.onDisk));
+	check('and the button flips back, so the user can tell it is written',
+		/Edit/i.test(saved.editBtn) && /Saved/i.test(saved.said),
+		JSON.stringify({ btn: saved.editBtn, said: saved.said }));
+	check('the file controls come back now that there is a file',
+		saved.download && saved.attach,
+		JSON.stringify({ download: saved.download, attach: saved.attach }));
+	await shotOf(page, 'doc-cold-saved', '#panel-doc');
 
 	// The gateway is not running for this suite, and the app is meant to work
 	// without one, so its 502s are the expected answer rather than a fault.

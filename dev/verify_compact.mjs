@@ -33,7 +33,30 @@ const WORLD = Number(process.env.DAIMOND_PORT || 8777) - 8777;
 const LOG   = process.env.DAIMOND_CTX_LOG
 	|| path.join(HERE, WORLD ? `ctxmock-${WORLD}.log` : 'ctxmock.log');
 const PORT  = Number(process.env.DAIMOND_CTX_PORT || 9188 + WORLD);
-const LIMIT = 12000;
+// THE WINDOW IS MEASURED, NOT WRITTEN DOWN, and that is the whole of this file's
+// calibration. It was `const LIMIT = 12000`, chosen when the fixed cost of a request --
+// the system prompt plus every tool's schema -- sat just under it, so a short
+// conversation crossed the line and had to be folded back.
+//
+// That cost is not a constant and nobody owns it. It was 11,719 tokens on 2026-08-24
+// with 29 tools, and 12,652 with 31 by the end of the same day: a lane adding a tool or
+// lengthening a description moves it, and none of them is doing anything wrong. The day
+// it passed 12,000 this file stopped being able to pass AT ALL -- an EMPTY conversation
+// was already over the window, so there was nothing left to fold, and seven checks went
+// red saying things like "the conversation was actually made smaller -- peak 12714 ->
+// last 12714". None of that was about compaction.
+//
+// So the floor is probed first, against a mock that never refuses, and the real window is
+// set just above what was measured. The test then always asks its own question: a
+// conversation that grows past the window is folded back under it.
+const PROBE_LIMIT = 10_000_000;   // a mock that refuses nothing, for the probe
+// Tokens above the floor. It has to clear the FOLD NOTICE, not just a message or two:
+// folding replaces the conversation with a summary that is itself sent every turn, so a
+// window only a hair above the floor leaves the folded conversation still over it --
+// measured at 120, where the fold shrank a turn from 12,799 to 12,797 and refused
+// anyway. The equivalent figure was 281 on 2026-08-24, when this last worked.
+const HEADROOM    = 400;
+let LIMIT = 0;                    // set from the probe, below
 const MOCK  = `http://127.0.0.1:${PORT}/v1/chat/completions`;
 const MODEL = 'mock/fast';
 
@@ -97,8 +120,8 @@ const say = async (s, text, waitMs = 6000) => {
 };
 
 /// Start the mock and wait for it to answer, so a slow start is not read as a refusal.
-async function startMock() {
-	const child = spawn('node', [path.join(HERE, 'ctxmock.mjs'), String(PORT), String(LIMIT)],
+async function startMock(limit) {
+	const child = spawn('node', [path.join(HERE, 'ctxmock.mjs'), String(PORT), String(limit)],
 		{ stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, DAIMOND_CTX_LOG: LOG } });
 	for (let i = 0; i < 50; i++) {
 		try {
@@ -113,11 +136,43 @@ async function startMock() {
 
 // ── go ───────────────────────────────────────────────────────────────────────
 try { fs.writeFileSync(LOG, ''); } catch {}
-const mock = await startMock();
+let mock = await startMock(PROBE_LIMIT);
 
 const s = await open({ name: 'compact', connect: false });
 const cfg = await connectMock(s, { baseUrl: MOCK, model: MODEL });
 log('connected:', JSON.stringify(cfg));
+await newChat(s);
+
+// ── The probe: what does a conversation cost before anybody has said anything? ──
+//
+// Read off the mock's own log, which is what the model was really sent -- the same rule
+// every check below follows. One short message is enough: the floor is the system prompt
+// and the tool schemas, and neither depends on what was said.
+await say(s, 'hello', 4000);
+const probed = (() => {
+	try {
+		const rows = fs.readFileSync(LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+		return rows.length ? rows[0].used : 0;
+	} catch (e) { return 0; }
+})();
+if (!probed) {
+	log('FAIL  the probe never reached the mock, so the window cannot be calibrated');
+	process.exit(1);
+}
+LIMIT = probed + HEADROOM;
+log(`floor ${probed} tokens (system prompt + ${(() => {
+	try {
+		const rows = fs.readFileSync(LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+		return rows[0].tools;
+	} catch (e) { return '?'; }
+})()} tool schemas), so the window for this run is ${LIMIT}`);
+
+// The real mock, at the measured window, and a fresh log so the probe's own rows are not
+// read as refusals that never happened.
+mock.kill();
+await new Promise((r) => setTimeout(r, 300));
+try { fs.writeFileSync(LOG, ''); } catch {}
+mock = await startMock(LIMIT);
 await newChat(s);
 
 line('1. do some work worth remembering');

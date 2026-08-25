@@ -38,6 +38,7 @@
 //      true whatever the session is doing, so it is still the thing said first.
 import { open, chat } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
+import { GW_PORT, GW_URL } from './ports.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -51,13 +52,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 /// Is the gateway answering?
 async function gatewayUp() {
 	try {
-		const r = await fetch('http://127.0.0.1:9002/api/health', { signal: AbortSignal.timeout(2000) });
+		const r = await fetch(`${GW_URL}/api/health`, { signal: AbortSignal.timeout(2000) });
 		return r.ok;
 	} catch (e) { return false; }
 }
 
 if (!await gatewayUp()) {
-	console.log('SKIP verify_sessionrenew — no gateway on :9002 (build it: cd gateway && cargo build --release)');
+	console.log(`SKIP verify_sessionrenew — no gateway on :${GW_PORT}, this world's own `
+		+ `(build it: cd gateway && cargo build --release, then dev/devgw.sh)`);
 	process.exit(0);
 }
 

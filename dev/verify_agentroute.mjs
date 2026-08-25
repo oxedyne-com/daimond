@@ -235,11 +235,11 @@ try {
 		'beta reported its own task, which ran longer',
 		beta ? beta.text.slice(-24).trim() : 'absent');
 
-	// A world is the dev server and the mock, and deliberately NOT the gateway --
-	// it holds one account store and one :9002 binding, so the browser-only tiers
-	// run without it and the page's account poll answers 502. That is the world
-	// being a world, not this flow going wrong, so it is named and skipped rather
-	// than left to fail every run and train the eye past the line.
+	// A world is the dev server and the mock, and deliberately no gateway -- it
+	// owns a gateway PORT (9700 + N) and starts nothing on it, so the browser-only
+	// tiers run without one and the page's account poll answers 502. That is the
+	// world being a world, not this flow going wrong, so it is named and skipped
+	// rather than left to fail every run and train the eye past the line.
 	const thrown = errors(s).filter(e => !/502 \(Bad Gateway\)/.test(e));
 	check(thrown.length === 0, 'and nothing threw on the way',
 		thrown.slice(0, 2).join(' | ') || 'clean (gateway 502s aside: no gateway in a world)');

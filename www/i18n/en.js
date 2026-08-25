@@ -154,6 +154,11 @@
 	'panel.pending': 'Pending',
 	'skills.menu':   'Skills you can call',
 	'skills.none':   'No skills yet. Put a markdown file in {dir} and its name becomes a command.',
+	'skills.draft_badge':   '· draft',
+	'skills.draft_title':   'Install /{name}?',
+	'skills.draft_ask':     'Daimond drafted this skill. Installing it writes exactly the text below to {into}, where typing /{name} will run it.',
+	'skills.draft_install': 'Install',
+	'skills.draft_bad':     'This draft cannot be installed',
 	'panel.mail':    'Email',
 	'panel.work':    'Workspace',
 	'panel.spend':   'Spending',
@@ -785,6 +790,17 @@
 	'say.less':             'hide the detail',
 	'rail.dupes_trashed':   'Removed {n} duplicate copies of the built-in Diamonds — an old sync made them. They are in the Trash if you want one back.',
 	'rail.dupes_kept':      'There are {n} more duplicate built-in Diamonds, but you have worked in them, so nothing was removed. Delete the ones you do not want.',
+	// A question the model put, answered with one tap. `Chose: ` and `Other: ` are
+	// NOT here: they are the wire markers the answer travels under, read by the model
+	// and not by a person, so they are the same in every language on purpose.
+	'ask.of': 'Decision {n} of {of}',
+	'ask.recommended': 'Recommended',
+	'ask.why': 'Why: {why}',
+	'ask.silent': 'If you say nothing: {what}',
+	'ask.other': 'Something else…',
+	'ask.other_ph': 'Answer in your own words',
+	'ask.send': 'Send this answer',
+	'ask.answered': 'You answered: {what}',
 	'say.more_help':      'About {n} tokens, kept on this device. Closed, they are not sent to the model; open the fold and they are.',
 	'say.less_help':      'About {n} tokens. While this is open the model sees them too, on every turn until you close it.',
 	'wire.role_help':     'Your role prompt. Edit it in prompts/ — this is the part of the system message you own.',
@@ -1650,10 +1666,11 @@
 		// `capOf` returns for a function nobody has placed. A pack landing with a
 		// new capability lands here or the panel names it `tools.cap.x.name`.
 		// i18n-family: tools.cap. = files.name files.blurb cloud.name cloud.blurb
-		// i18n-family: tools.cap. = work.name work.blurb show.name show.blurb
+		// i18n-family: tools.cap. = work.name work.blurb show.name show.blurb asking.name asking.blurb
 		// i18n-family: tools.cap. = checking.name checking.blurb machine.name machine.blurb reading.name reading.blurb
 		// i18n-family: tools.cap. = browsing.name browsing.blurb typeset.name typeset.blurb
 		// i18n-family: tools.cap. = dispatch.name dispatch.blurb graph.name graph.blurb
+		// i18n-family: tools.cap. = social.name social.blurb
 		// i18n-family: tools.cap. = other.name other.blurb
 		'tools.cap.files.name':      'Your files',
 		'tools.cap.files.blurb':     'Daimond reads, writes and edits the files in your workspace — a spreadsheet’s cells and a document’s words included — finds things across all of them at once, and tidies up after itself.',
@@ -1661,10 +1678,14 @@
 		'tools.cap.cloud.blurb':     'A file this device is not holding is brought down from your cloud storage at the moment Daimond needs to read it, rather than everything being kept everywhere.',
 		'tools.cap.work.name':       'Keeping the work together',
 		'tools.cap.work.blurb':      'Daimond records which files belong to a piece of work, so something you made yourself is listed with it instead of sitting unremarked in a folder.',
+		'tools.cap.asking.name':       'Asking you a question',
+		'tools.cap.asking.blurb':      'Daimond puts one decision to you at a time, as answers you tap: each option says what it would concretely mean, one of them is named as the recommendation with the reason for it, and you can always answer in your own words instead.',
 		'tools.cap.show.name':       'Showing you a file',
 		'tools.cap.show.blurb':      'Daimond puts a file on your screen beside the chat — a PDF as its typeset pages, a picture drawn, a table as a table — rather than only describing it to you.',
 		'tools.cap.checking.name':   'Checking its own work',
 		'tools.cap.checking.blurb':  'Daimond runs one of this project’s own checks and reports what passed, what failed, and which of the check’s own break tests proved nothing.',
+		'tools.cap.social.name':     'Talking to other people about Daimond',
+		'tools.cap.social.blurb':    'Daimond reads what people have reported or asked for about Daimond itself, and — with your say-so each time, and after showing you exactly what would go out — reports or backs something on your behalf.',
 		'tools.cap.machine.name':    'Your computer',
 		'tools.cap.machine.blurb':   'With Daimond’s machine hand installed, Daimond builds, tests and runs command-line tools inside the folder you granted it, and nowhere else.',
 		'tools.cap.reading.name':    'Reading the web',
@@ -2118,6 +2139,7 @@
 	'agents.clear_diamond_filter': 'Clear the Diamond filter',
 	'agents.clear_chat_filter':    'Clear the chat filter',
 	'instructions.chip_help':     'Your standing instructions, given to every agent. Click to open.',
+	'instructions.chip_empty':    'Nothing here yet. This file goes to every agent Daimond runs. Click to write it.',
 	'instructions.chip_two':      'Two layers are in force, yours and this project’s. Click to open yours.',
 
 	// ── The System section: Daimond's own store ────────────────
@@ -2220,6 +2242,7 @@
 	'files.err_name':        'Enter a name.',
 	'files.rename_failed':   'Could not rename: {reason}',
 	'files.no_match':        'Nothing matches "{filter}".',
+	'files.new_doc_here':    'New document. Save writes it into {place}.',
 	'files.new_file_hint':   'Name it DAIMOND.md to write standing instructions every agent will follow.',
 	'files.create_failed':   'Could not create file: {reason}',
 	'files.create_folder_failed': 'Could not create the folder: {reason}',
@@ -3493,6 +3516,9 @@
 	// `{host}` is the forge's address, filled in by js/improve.js: keep it as it
 	// is rather than typing the address out, and do not name the repository,
 	// which is a constant in the code and would strand eight files if it moved.
+	'social.publish_body': 'Daimond wants to publish this, in your name, where other people can read it. It cannot be taken back.\n\n{what}\n\nIf you did not expect this, decline. Nothing is lost but this one publication.',
+	'social.publish_ok': 'Publish it',
+	'social.publish_title': 'Publish this?',
 	'social.public_note':  'Sending publishes this note at {host}, with your voice name on it. Anyone can read it there without an account. A note you keep stays on this device.',
 	'social.title_hint':   'The first line is the title of the proposal. What happened goes underneath it.',
 	'social.no_title':     'The first line is the title. Write one, then what happened underneath.',

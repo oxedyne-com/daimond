@@ -10,6 +10,7 @@
 // stand-in, and the `email` entitlement granted to the harness's account.
 import fs from 'node:fs';
 import { open, shot, scratch } from './harness.mjs';
+import { IMAP_PORT, SMTP_PORT } from './ports.mjs';
 
 const SENT = process.env.SENT_EML || '/tmp/sent.eml';
 const ok = [], bad = [];
@@ -41,13 +42,13 @@ await p.evaluate(async () => {
 // ── Seed the mailbox the way the add-dialog would, but pointed at the fixture.
 // The dialog infers security from the port and offers no plaintext, so a loopback
 // test server can only be reached by seeding the record (a known gotcha).
-await p.evaluate(async () => {
+await p.evaluate(async (PORTS) => {
 	const pass = await window.DaimondIdentity.wrap('test-app-password');
 	localStorage.setItem('daimond-mail', JSON.stringify({
 		accounts: [{
 			address: 'alice@test.local',
-			host: '127.0.0.1', port: 1143, security: 'plain',
-			smtpHost: '127.0.0.1', smtpPort: 1587, smtpSecurity: 'plain',
+			host: '127.0.0.1', port: PORTS.imap, security: 'plain',
+			smtpHost: '127.0.0.1', smtpPort: PORTS.smtp, smtpSecurity: 'plain',
 			user: 'alice@test.local', pass,
 			uidValidity: 0, lastUid: 0, lastSync: 0,
 		}],
@@ -56,7 +57,7 @@ await p.evaluate(async () => {
 	window.DaimondMail.reload();
 	window.DaimondPanels.show('mail');
 	window.DaimondMail.onOpen();
-});
+}, { imap: IMAP_PORT, smtp: SMTP_PORT });
 await p.waitForTimeout(1200);
 
 // ── Sync, so there is something to reply to.

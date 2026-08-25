@@ -35,6 +35,7 @@ use crate::wire::{
     Breaks,
     Capture,
     FenceSpec,
+    FileOp,
     PtySize,
     Req,
     Resp,
@@ -775,6 +776,86 @@ fn tag_of(obj: &Dat) -> Outcome<String> {
 ///
 /// # Arguments
 /// * `v` - The strings.
+/// The start directories of a walk, which must be at least one.
+///
+/// A walk with no start would walk nothing and answer as though it had looked, which is the one
+/// shape of answer that lies.  An absent list falls back to the single `path` every message
+/// carries, so a caller that sends one start need not send it twice.
+///
+/// # Arguments
+/// * `obj` - The decoded `file` request.
+/// * `path` - The message's own `path`, used where no list came.
+fn walk_paths(obj: &Dat, path: &str) -> Outcome<Vec<String>> {
+    let listed = res!(opt_strs_field(obj, "file", "paths"));
+    let out = match listed.is_empty() {
+        false => listed,
+        true  => vec![path.to_string()],
+    };
+    if out.iter().all(|p| p.is_empty()) {
+        return Err(Fault::WrongShape.raise(
+            "A walk was asked for with nowhere to start. It would look at nothing and answer \
+            as though it had looked everywhere."));
+    }
+    Ok(out)
+}
+
+/// The [`FileOp`] an object carries, refused rather than guessed at.
+///
+/// **A word chosen from a closed set, never a free string.**  The op decides which of the
+/// object's fields are read at all, so an unknown word cannot reach a branch that would
+/// interpret `path` or `text` as anything -- it is refused by name, in the same shape
+/// [`breaks_of`] refuses a break the verifier does not declare.
+///
+/// # Arguments
+/// * `obj` - The decoded `file` request.
+fn fileop_of(obj: &Dat) -> Outcome<FileOp> {
+    let word = res!(str_field(obj, "file", "op"));
+    let path = res!(str_field(obj, "file", "path"));
+    let text = |k: &str| -> Outcome<String> {
+        match res!(opt_str_field(obj, "file", k)) {
+            Some(t) => Ok(t),
+            None    => Err(Fault::WrongShape.raise(&fmt!(
+                "A file request to {} needs a {:?} and carried none.", word, k))),
+        }
+    };
+    match word.as_str() {
+        "read"  => Ok(FileOp::Read {
+            path,
+            offset: res!(u32_field(obj, "file", "offset")),
+            limit:  res!(u32_field(obj, "file", "limit")),
+        }),
+        "write" => Ok(FileOp::Write { path, content: res!(text("text")) }),
+        "edit"  => Ok(FileOp::Edit {
+            path,
+            old: res!(text("text")),
+            new: res!(text("text2")),
+        }),
+        "move"  => Ok(FileOp::Move { path, to: res!(text("to")) }),
+        "list"  => Ok(FileOp::List { path }),
+        "mkdir" => Ok(FileOp::MkDir { path }),
+        "search" => Ok(FileOp::Search {
+            paths:  res!(walk_paths(obj, &path)),
+            query:  res!(str_field(obj, "file", "query")),
+            ci:     res!(bool_field(obj, "file", "ci")),
+            glob:   res!(opt_str_field(obj, "file", "glob")).unwrap_or_default(),
+            base:   res!(opt_str_field(obj, "file", "base")).unwrap_or_default(),
+            skip:   res!(opt_strs_field(obj, "file", "skip")),
+            budget: res!(u32_field(obj, "file", "budget")),
+            cap:    res!(u32_field(obj, "file", "cap")),
+        }),
+        "glob"  => Ok(FileOp::Glob {
+            paths:   res!(walk_paths(obj, &path)),
+            pattern: res!(str_field(obj, "file", "query")),
+            base:    res!(opt_str_field(obj, "file", "base")).unwrap_or_default(),
+            skip:    res!(opt_strs_field(obj, "file", "skip")),
+            budget:  res!(u32_field(obj, "file", "budget")),
+        }),
+        other   => Err(Fault::UnknownTag.raise(&fmt!(
+            "There is no file operation called {:?}. The hand does read, write, edit, \
+            move, list, mkdir, search and glob, and nothing else.", other))),
+    }
+}
+
 fn strs(v: &[String]) -> Dat {
     Dat::List(v.iter().map(|s| Dat::Str(s.clone())).collect())
 }
@@ -1100,6 +1181,73 @@ fn req_dat(req: &Req) -> Dat {
             },
             "timeout_ms"	=> *timeout_ms,
         },
+        Req::File { id, op, cwd, fence, toolkits } => omapdat!{
+            "t"			=> "file",
+            "id"		=> Dat::Str(id.clone()),
+            "op"		=> Dat::Str(op.word().to_string()),
+            "path"		=> Dat::Str(op.path().to_string()),
+            // A walk names several starts; every other op names one, and writes it here as a
+            // list of one so that the field means the same thing in every message.
+            "paths"		=> strs(&op.paths().iter().map(|p| p.to_string()).collect::<Vec<_>>()),
+            "query"		=> match op {
+                FileOp::Search { query, .. }	=> Dat::Str(query.clone()),
+                FileOp::Glob { pattern, .. }	=> Dat::Str(pattern.clone()),
+                _				=> Dat::Opt(Box::new(None)),
+            },
+            "ci"		=> match op {
+                FileOp::Search { ci, .. }	=> *ci,
+                _				=> false,
+            },
+            "glob"		=> match op {
+                FileOp::Search { glob, .. }	=> Dat::Str(glob.clone()),
+                _				=> Dat::Opt(Box::new(None)),
+            },
+            "base"		=> match op {
+                FileOp::Search { base, .. } | FileOp::Glob { base, .. }	=> Dat::Str(base.clone()),
+                _							=> Dat::Opt(Box::new(None)),
+            },
+            "skip"		=> match op {
+                FileOp::Search { skip, .. } | FileOp::Glob { skip, .. }	=> strs(skip),
+                _							=> strs(&[]),
+            },
+            "budget"	=> match op {
+                FileOp::Search { budget, .. } | FileOp::Glob { budget, .. }	=> *budget,
+                _								=> 0u32,
+            },
+            "cap"		=> match op {
+                FileOp::Search { cap, .. }	=> *cap,
+                _				=> 0u32,
+            },
+            "to"		=> match op {
+                FileOp::Move { to, .. }	=> Dat::Str(to.clone()),
+                _			=> Dat::Opt(Box::new(None)),
+            },
+            "text"		=> match op {
+                FileOp::Write { content, .. }	=> Dat::Str(content.clone()),
+                FileOp::Edit  { old, .. }	=> Dat::Str(old.clone()),
+                _				=> Dat::Opt(Box::new(None)),
+            },
+            "text2"		=> match op {
+                FileOp::Edit { new, .. }	=> Dat::Str(new.clone()),
+                _				=> Dat::Opt(Box::new(None)),
+            },
+            "offset"	=> match op {
+                FileOp::Read { offset, .. }	=> *offset,
+                _				=> 0u32,
+            },
+            "limit"		=> match op {
+                FileOp::Read { limit, .. }	=> *limit,
+                _				=> 0u32,
+            },
+            "cwd"		=> Dat::Str(cwd.clone()),
+            "fence"		=> omapdat!{
+                "rw"	=> strs(&fence.rw),
+                "ro"	=> strs(&fence.ro),
+                "deny"	=> strs(&fence.deny),
+                "net"	=> fence.net,
+            },
+            "toolkits"	=> strs(toolkits),
+        },
         Req::Signal { id, sig } => omapdat!{
             "t"		=> "signal",
             "id"	=> Dat::Str(id.clone()),
@@ -1213,6 +1361,13 @@ pub fn req_of_json(txt: &str) -> Outcome<Req> {
             breaks:     res!(breaks_of(&obj)),
             timeout_ms: res!(safe_int_field(&obj, "verify", "timeout_ms")),
         }),
+        "file" => Ok(Req::File {
+            id:       res!(str_field(&obj, "file", "id")),
+            op:       res!(fileop_of(&obj)),
+            cwd:      res!(str_field(&obj, "file", "cwd")),
+            fence:    res!(fence_field(&obj, "file", "fence")),
+            toolkits: res!(opt_strs_field(&obj, "file", "toolkits")),
+        }),
         "signal" => Ok(Req::Signal {
             id:  res!(str_field(&obj, "signal", "id")),
             sig: res!(sig_of(&res!(str_field(&obj, "signal", "sig")))),
@@ -1286,6 +1441,12 @@ fn resp_dat(resp: &Resp) -> Dat {
             "t"			=> "refused",
             "id"		=> Dat::Str(id.clone()),
             "reason"	=> Dat::Str(reason.clone()),
+        },
+        Resp::Filed { id, ok, text } => omapdat!{
+            "t"		=> "filed",
+            "id"	=> Dat::Str(id.clone()),
+            "ok"	=> *ok,
+            "text"	=> Dat::Str(text.clone()),
         },
         Resp::Opened { id, pid } => omapdat!{
             "t"		=> "opened",
@@ -1424,6 +1585,11 @@ pub fn resp_of_json(txt: &str) -> Outcome<Resp> {
         "refused" => Ok(Resp::Refused {
             id:     res!(str_field(&obj, "refused", "id")),
             reason: res!(str_field(&obj, "refused", "reason")),
+        }),
+        "filed" => Ok(Resp::Filed {
+            id:   res!(str_field(&obj, "filed", "id")),
+            ok:   res!(bool_field(&obj, "filed", "ok")),
+            text: res!(str_field(&obj, "filed", "text")),
         }),
         "opened" => Ok(Resp::Opened {
             id:  res!(str_field(&obj, "opened", "id")),

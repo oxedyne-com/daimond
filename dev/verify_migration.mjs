@@ -9,6 +9,14 @@
 // So the test seeds a workspace exactly as the old code would have left one, boots the app on it
 // the way a user does, and then asks the questions a user would: is my Diamond there, is its
 // history there, and can I still read the delta of a fold I made before the rename?
+//
+// The seed below lands AFTER a boot, and that is the harder of the two orders on purpose.
+// `open()` signs in, which draws the app, which runs `Instructions.refresh()` -- and since the
+// starter shipped that refresh puts a `DAIMOND.md` in the store before this file has written a
+// line. So the pre-rename `RED.md` here arrives beside a starter, exactly as one carried in by
+// sync or found in a folder opened later does, and the migration has to beat a file that is
+// already sitting at its destination. The easy order -- `RED.md` alone, no starter anywhere --
+// is the one that never needed a check.
 import { open, signInAs, shot } from './harness.mjs';
 
 const ok = [], bad = [];
@@ -158,6 +166,32 @@ const stillThere = await p.evaluate(async ({ id }) => {
 }, { id: ID });
 check('a second boot migrates nothing and breaks nothing',
 	/An old pursuit/.test(again) && !!stillThere);
+
+// ── The other side of it: rules the user WROTE are not overwritten ──────
+//
+// `migrate` carries `RED.md` over a `DAIMOND.md` that is the starter to the byte. This is the
+// check that keeps that from becoming "carries it over anything": edit the file the way a user
+// would, put an old `RED.md` back beside it, and the edit must still be there afterwards. Break
+// the byte comparison and this goes red while the check above stays green, which is the only
+// arrangement in which either of them is worth reading.
+const MINE = 'MY OWN RULES: answer in Latin.';
+await p.evaluate(async ({ mine, rule }) => {
+	const mod = await import('../pkg/oxedyne_daimond.js');
+	await mod.write_file('DAIMOND.md', mine);
+	await mod.write_file('RED.md', rule);
+}, { mine: MINE, rule: RULE });
+await p.reload({ waitUntil: 'domcontentloaded' });
+await signInAs(s, 'migrate');
+await p.waitForTimeout(2500);
+const kept = await p.evaluate(async () => {
+	const mod = await import('../pkg/oxedyne_daimond.js');
+	const read = async (path) => { try { return await mod.read_file(path); } catch (e) { return null; } };
+	return { mine: await read('DAIMOND.md'), old: await read('RED.md') };
+});
+check('rules the user wrote are not replaced by their old ones',
+	kept.mine === MINE, JSON.stringify(kept.mine));
+check('and the old file is left where it was, not silently dropped',
+	kept.old === RULE, JSON.stringify(kept.old));
 
 await shot(s, 'migration');
 const errs = s.errs.filter(e => !/favicon|404|net::ERR/.test(e));

@@ -57,7 +57,7 @@
 	/// The wire protocol this page speaks. The hand answers with its own and the
 	/// two settle it between them; a mismatch is the hand's sentence to write,
 	/// not ours, because it is the end that knows both numbers.
-	var PROTO = 1;
+	var PROTO = 2;
 
 	var state = {
 		transport: 'none',   // 'none' | 'machine' | 'cloud'
@@ -95,6 +95,41 @@
 	// extension sends one when the link itself has failed, and neither leaves an
 	// answer coming.
 	var runsWait = [];       // [{ resolve, reject, timer }, ...], oldest first
+
+	// ── What the reload grace left behind ───────────────────────────
+	//
+	// A page that goes away no longer takes the machine hand with it at once:
+	// the extension parks the pair for thirty seconds and the same tab, reloaded,
+	// adopts it. Two messages arrive out of that, and this page is the only place
+	// either can be turned into something a daimon reads.
+	//
+	//   `resumed`  this page has taken over a hand that was held for it, and what
+	//              arrived while nothing was attached follows.
+	//   `lapsed`   the hold ran out before this page arrived, and what it was
+	//              holding was stopped.
+	//
+	// NEITHER IS A RUN OF THIS PAGE'S. The turn that started them ended with the
+	// page that ended, so there is no promise to settle and no `live` record to
+	// absorb into. The output would therefore be dropped at the run switch, which
+	// is the lie the grace exists to avoid: a daimon that re-attaches and silently
+	// misses thirty seconds of a build is worse off than one whose build was
+	// honestly killed. So it is kept HERE, by id, and `runs` is where a reader
+	// meets it.
+
+	/// The sentence about the last grace, or ''. Read once by `runs` and cleared:
+	/// it is news about one gap, not a standing condition.
+	var gapNews = '';
+
+	/// Output that arrived for a run this page did not start, by id.
+	/// `{ out: [], err: [], bytes, ended }`.
+	var carried = {};
+
+	/// The most this page keeps of it, over every id at once. A `cargo build`
+	/// outruns any buffer worth holding in a tab, and the extension's own hold is
+	/// bounded for the same reason; what is let go is COUNTED and said.
+	var CARRIED_MAX = 256 * 1024;
+	var carriedBytes = 0;
+	var carriedLost  = 0;
 
 	/// Whether a hand has ever answered in this page. It is the difference
 	/// between "you have not installed it" and "it stopped", and those are
@@ -183,6 +218,13 @@
 	/// It mirrors `Tool::RUN_TIMEOUT_DEFAULT_MS`; the page never enforces it, it
 	/// only decides how long to believe in an answer.
 	var TIMEOUT_DEFAULT = 120000;
+
+	/// How long a file operation is given to answer.
+	///
+	/// The hand gives the fenced child sixty seconds and then stops it, so this is that
+	/// plus room for the round trip: a page that gave up FIRST would report a file
+	/// unchanged while the child was still writing it.
+	var FILE_WAIT = 75000;
 
 	/// The longest the page waits for the hand to say what it is still running.
 	///
@@ -387,12 +429,27 @@
 			greeted(rec);
 			return;
 		}
+		// The two the reload grace produces. Neither carries an id and neither is
+		// about a run of this page's, so both are taken above the run switch for
+		// the same reason `runs` is.
+		if (msg.t === 'resumed') { resumed(msg); return; }
+		if (msg.t === 'lapsed')  { lapsed(msg); return; }
 		// What the hand is still running. No id, by design (see `runsWait`), so it
 		// is taken HERE, above the run switch that would otherwise drop it.
 		if (msg.t === 'runs') {
+			var news = gapNews;
+			gapNews = '';
 			settleRuns('resolve', {
 				runs: Array.isArray(msg.runs) ? msg.runs : [],
 				more: Number(msg.more) || 0,
+				// The two the grace adds. `carried` names WHICH runs left output
+				// behind and how much, so the listing can point at it without
+				// putting a build's whole output in every answer.
+				note: news,
+				carried: Object.keys(carried).map(function (id) {
+					return { id: id, bytes: carried[id].bytes, ended: !!carried[id].ended };
+				}),
+				lost: carriedLost,
 			});
 			return;
 		}
@@ -420,7 +477,13 @@
 		if (msg.id) toSubs(msg.id, msg);
 
 		var run = msg.id ? live[msg.id] : null;
-		if (!run) return;   // about a run that is over, or one that was never ours
+		if (!run) {
+			// About a run that is over, or one that was never ours -- which after
+			// a reload is exactly the shape of a run THIS PAGE INHERITED. Kept
+			// rather than dropped; see the note on `carried`.
+			carry(msg);
+			return;
+		}
 
 		if (msg.t === 'started') {
 			// The one timer change there is: the wait stops being "acknowledge
@@ -446,6 +509,13 @@
 			settle(run, 'resolve', JSON.stringify({ refused: msg.reason }));
 			return;
 		}
+		// A file operation has one answer and no lifecycle: no `started`, no chunks, no
+		// `ended`. It settles the wait outright, which is why `file` below arms one timer
+		// rather than the two a command needs.
+		if (msg.t === 'filed') {
+			settle(run, 'resolve', JSON.stringify({ ok: !!msg.ok, text: String(msg.text || '') }));
+			return;
+		}
 		if (msg.t === 'ended') {
 			if (deps.onEnd) { try { deps.onEnd(msg.id, msg.exit); } catch (e) {} }
 			settle(run, 'resolve', JSON.stringify({
@@ -459,6 +529,78 @@
 				note:      run.note,
 			}));
 		}
+	}
+
+	/// Keep one message about a run this page did not start.
+	///
+	/// Only output and endings: an error or a refusal about a stranger's run
+	/// says nothing a reader can act on without the output it belongs to.
+	function carry(msg) {
+		if (!msg.id) return;
+		if (msg.t !== 'chunk' && msg.t !== 'ended') return;
+		var rec = carried[msg.id];
+		if (!rec) { rec = carried[msg.id] = { out: [], err: [], bytes: 0, ended: null }; }
+		if (msg.t === 'ended') {
+			rec.ended = { exit: msg.exit, killed: !!msg.killed, timed_out: !!msg.timed_out };
+			return;
+		}
+		var d = String(msg.data || '');
+		if (!d) return;
+		(msg.stream === 'err' ? rec.err : rec.out).push(d);
+		rec.bytes    += d.length;
+		carriedBytes += d.length;
+		// Over the bound the OLDEST goes, and it is counted. The end of a build
+		// is what a reader wants; the beginning is what they already saw.
+		while (carriedBytes > CARRIED_MAX) {
+			var ids = Object.keys(carried);
+			if (!ids.length) break;
+			var oldest = carried[ids[0]];
+			var gone = oldest.out.length ? oldest.out.shift() : oldest.err.shift();
+			if (gone === undefined) { delete carried[ids[0]]; continue; }
+			oldest.bytes -= gone.length;
+			carriedBytes -= gone.length;
+			carriedLost  += gone.length;
+		}
+	}
+
+	/// This page has taken over a hand that was held for it across a reload.
+	///
+	/// The sentence says how long the gap was and whether anything was let go in
+	/// it, because a re-attach that is short of output has to say how short. What
+	/// follows this message is the replay, and it lands in `carried`.
+	function resumed(msg) {
+		var away = Math.round(Math.max(0, Number(msg.away_ms) || 0) / 1000);
+		var ids  = Array.isArray(msg.ids) ? msg.ids.filter(function (x) { return typeof x === 'string' && x; }) : [];
+		var lost = Number(msg.dropped) || 0;
+		gapNews = 'This page reloaded and picked the machine hand back up after ' + away
+			+ ' second(s). Nothing it was running was stopped'
+			+ (ids.length ? ', and ' + ids.join(', ') + ' ' + (ids.length === 1 ? 'was' : 'were') + ' still going' : '')
+			+ '. Output that arrived while the page was away was held and is readable '
+			+ 'with runs and a "read".'
+			+ (lost ? ' ' + lost + ' message(s) of it were let go to keep the hold bounded, so '
+				+ 'the held output starts part way through.' : '');
+		if (deps.note) { try { deps.note(gapNews); } catch (e) {} }
+	}
+
+	/// This page arrived after the hold had run out.
+	///
+	/// The one sentence this whole mechanism owes a reader: something was stopped,
+	/// when, and what. A process killed at thirty seconds must SAY so, on the same
+	/// rule that made the teardown report a failed kill instead of swallowing it.
+	function lapsed(msg) {
+		var hold = Math.round(Math.max(0, Number(msg.hold_ms) || 0) / 1000);
+		var ids  = Array.isArray(msg.ids) ? msg.ids.filter(function (x) { return typeof x === 'string' && x; }) : [];
+		gapNews = 'The page before this one went away and did not come back within ' + hold
+			+ ' seconds, so everything the machine hand was running for it was STOPPED'
+			+ (msg.why ? ' (' + msg.why + ')' : '')
+			+ '. ' + (ids.length
+				? ids.length + ' were stopped: ' + ids.join(', ') + '.'
+				: (msg.unknown
+					? 'The hand did not answer in time, so what was stopped is not known here.'
+					: 'Nothing was still running by then.'))
+			+ ' Anything the user needs is not running now, so start it again rather than '
+			+ 'assuming it is there.';
+		if (deps.note) { try { deps.note(gapNews); } catch (e) {} }
 	}
 
 	/// Record what a paired hand told us about itself, from its `hello`.
@@ -766,6 +908,49 @@
 		});
 	}
 
+	/// Change or read one file on the machine. `specJson` is the wire's own `file`
+	/// request, built by the wasm side, and this function interprets it no further than
+	/// `run` interprets an `exec`: the request is composed in the one place that holds
+	/// the fence, and the relay carries it.
+	///
+	/// One timer, not two. A command announces itself with `started` and then runs for as
+	/// long as it was given, so its wait changes shape half-way; a file operation answers
+	/// once or not at all.
+	function file(specJson) {
+		var spec;
+		try { spec = JSON.parse(specJson); }
+		catch (e) {
+			return Promise.reject(new Error('The file request could not be read: ' + e.message));
+		}
+
+		return open().then(function (rec) {
+			return new Promise(function (resolve, reject) {
+				var id = spec.id || 'file';
+				var r = {
+					id:      id,
+					link:    rec,
+					resolve: resolve,
+					reject:  reject,
+					seq:     { out: null, err: null },
+					out:     stream(),
+					err:     stream(),
+					gap:     false,
+					note:    '',
+					started: true,
+					done:    false,
+					timer:   null,
+					limit:   FILE_WAIT,
+				};
+				live[id] = r;
+				arm(r, FILE_WAIT, 'The machine hand did not answer a file request. It may have '
+					+ 'stopped; ask the user to check it is still running. Do not assume the file '
+					+ 'is unchanged.');
+				try { rec.port.postMessage(spec); }
+				catch (e) { endWith(r, met ? HAND_GONE : NO_HAND); }
+			});
+		});
+	}
+
 	// ── One message, on the one link ────────────────────────────────
 	//
 	// `run` is the shape a command has: send one thing, wait for its whole
@@ -847,6 +1032,38 @@
 				}, RUNS_WAIT);
 				runsWait.push(w);
 			});
+		});
+	}
+
+	/// Hand over the output kept for one run this page inherited across a reload.
+	///
+	/// SPENT ON READING. What is handed over is dropped here, because the whole
+	/// of it has gone to the reader and a second copy in a tab is a second copy of
+	/// a build's output nobody will ever look at again. A run that is still going
+	/// goes on collecting after this.
+	///
+	/// # Arguments
+	/// * `id` - The run's identifier, as the listing carries it.
+	///
+	/// # Returns
+	/// `{ found, out, err, bytes, ended, exit }`, never a rejection: a reader
+	/// asking about an id nothing was held for is owed an answer, not an error.
+	/// `ended` is flat rather than an object, so the Rust side reads it with the
+	/// same two extractors it reads everything else with.
+	function held(id) {
+		var rec = carried[String(id || '')];
+		if (!rec) {
+			return Promise.resolve({ found: false, out: '', err: '', bytes: 0, ended: false, exit: 0 });
+		}
+		delete carried[String(id || '')];
+		carriedBytes = Math.max(0, carriedBytes - rec.bytes);
+		return Promise.resolve({
+			found: true,
+			out:   rec.out.join(''),
+			err:   rec.err.join(''),
+			bytes: rec.bytes,
+			ended: !!rec.ended,
+			exit:  rec.ended ? rec.ended.exit : 0,
 		});
 	}
 
@@ -1011,16 +1228,40 @@
 	}
 
 	/// Let go of the link, without forgetting that a hand was ever there.
-	function close() {
-		if (link) drop(link, 'The page let go of the machine hand.');
+	///
+	/// SAYS GOODBYE FIRST, and that word is the whole of the difference between
+	/// this and a page that merely went away. `ext/hand.js` parks the relay and
+	/// its host for a grace when a page port dies, so the same tab reloaded
+	/// re-attaches to the run it left going; `bye` is the wire's word for "I am
+	/// finished with this host", and it is what makes the extension end the pair
+	/// at once instead (ext/hand.js, `park`).
+	///
+	/// It was not sent, from the day `close` was written until 2026-08-25, so
+	/// `closing` could not be set from the shipped page at all and that branch of
+	/// `park` was unreachable. A page that let go of the hand and asked for it
+	/// again silently ADOPTED THE SAME HOST PROCESS, still holding the folder it
+	/// had been granted -- measured in `dev/verify_handrun.mjs`, where thirteen
+	/// consecutive cases each registered a fresh mock host and every one of them
+	/// was answered by the first.
+	function letGo(sayBye) {
+		if (!link) return;
+		if (sayBye) {
+			try { link.port.postMessage({ t: 'bye' }); } catch (e) { /* already gone */ }
+		}
+		drop(link, 'The page let go of the machine hand.');
 	}
+	function close() { letGo(true); }
 
 	detect();
 
-	// A tab that goes away should take its host with it rather than leave a
-	// process holding the machine. The extension does this on its own when the
-	// port dies, and saying `bye` first is the orderly half of the same thing.
-	window.addEventListener('pagehide', close);
+	// A TAB THAT GOES AWAY IS NOT A PAGE THAT SAID GOODBYE, and this one must not
+	// say it. `pagehide` fires on a reload as well as on a close, and a reload
+	// inside the grace is meant to find its command still running on the same
+	// hand -- the owner's decision of 2026-08-25, asserted in
+	// `dev/verify_handreload.mjs`. Saying `bye` here would end the host at once
+	// and take that grace away from every F5. The extension ends the pair on its
+	// own when the grace runs out and nothing has come back for it.
+	window.addEventListener('pagehide', function () { letGo(false); });
 
 	window.DaimondHand = {
 		init: function (d) {
@@ -1033,7 +1274,9 @@
 		close: close,
 		status: status,
 		run: run,
+		file: file,
 		runs: runs,
+		held: held,
 		signal: signal,
 		send: send,
 		subscribe: subscribe,

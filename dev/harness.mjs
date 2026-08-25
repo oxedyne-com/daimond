@@ -50,7 +50,13 @@ import { extDev, isExtSource } from './extdev.mjs';
 
 // playwright-core lives outside the repo, so it is resolved by path, not by
 // package name — nothing here is installed into the app.
-const PW = process.env.DAIMOND_PW
+/// Where playwright-core is, since it lives outside the repo and is resolved by
+/// path rather than by package name.
+///
+/// Exported because a file that launches a browser of its own -- rather than
+/// through `open()` -- would otherwise write this path down a second time, and a
+/// second copy of a path is a second thing to move.
+export const PW = process.env.DAIMOND_PW
 	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const { chromium } = await import(pathToFileURL(PW).href);
 
@@ -180,31 +186,17 @@ export const contentText = (content) => {
 ///
 /// `name` seeds a distinct identity so parallel sessions never share state;
 /// each gets its own browser profile, so OPFS and localStorage are its own.
-/// Why this DISPLAY must not be handed to a headed browser, or `null` where it may be.
-///
-/// Separate and pure so `dev/verify_harness.mjs` can put the cases to it without launching
-/// anything -- a check that had to start a browser to test where a browser would appear is a
-/// check nobody runs.
-///
-/// # Arguments
-/// * `display` - The `DISPLAY` a headed launch would inherit, or undefined where there is none.
-export function displayFault(display) {
-	const d = (display || '').trim();
-	if (!d) {
-		return 'A headed run needs a display and DISPLAY is unset. Start it under '
-			+ '`xvfb-run -a -s "-screen 0 1500x950x24"`, which is what every headed verifier '
-			+ 'in this tree expects.';
-	}
-	// Everything before the colon. X puts the host there, and only there.
-	const host = d.slice(0, d.indexOf(':') < 0 ? d.length : d.indexOf(':'));
-	if (host) {
-		return `DISPLAY is "${d}", which names the host "${host}" -- a display on another `
-			+ 'machine, forwarded over SSH. A headed browser started with it PAINTS ITSELF '
-			+ 'THERE, on somebody else\'s screen, across the network. Refused. Start this under '
-			+ '`xvfb-run -a -s "-screen 0 1500x950x24"` so it renders on a virtual display here.';
-	}
-	return null;
-}
+// Where a headed browser is allowed to paint lives in `dev/display.mjs`, which
+// has no imports so that the twelve headed launchers in this directory which do
+// NOT import this file can have it for nothing. Re-exported here because this is
+// where it was, and `dev/verify_harness.mjs` puts the cases to it through this
+// door.
+//
+// The import is what strips `WAYLAND_DISPLAY` and `XDG_SESSION_TYPE` from this
+// process, so it is load-bearing even where nothing below names it.
+export { displayFault, cleanDisplayEnv, WAYLAND_VARS, INHERITED_ENV,
+	UNATTENDED_VAR, OWNED_VAR, SEAT_DISPLAY } from './display.mjs';
+import { displayFault, cleanDisplayEnv, INHERITED_ENV } from './display.mjs';
 
 export async function open(opts = {}) {
 	const {
@@ -282,11 +274,17 @@ export async function open(opts = {}) {
 	// launch refuses a display carrying a host part rather than quietly using it.
 	// Watching a headed run on argonaut's own seat still works -- that is `:0`,
 	// which has no host part and is allowed.
-	const env = { ...process.env };
+	// The Wayland variables go for a headless run as well as a headed one. A
+	// headless Chromium that finds a compositor still talks to it, and the frame
+	// stalls this comment is about are the same stalls in a different costume.
+	const env = cleanDisplayEnv(process.env);
 	if (!headed) {
 		delete env.DISPLAY;
 	} else {
-		const shown = displayFault(env.DISPLAY);
+		// `INHERITED_ENV` and not `env`: the question is what this run was
+		// STARTED with, and both the strip above and the one at import time have
+		// taken the answer out of everything else.
+		const shown = displayFault(INHERITED_ENV);
 		if (shown) {
 			throw new Error(shown);
 		}

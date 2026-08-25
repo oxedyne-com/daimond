@@ -45,6 +45,7 @@
 //   node dev/verify_wire.mjs --break dropshow   # the band drops one tool from its list
 //   node dev/verify_wire.mjs --break splice     # a band spliced out of two distant pieces
 //   node dev/verify_wire.mjs --break pretty     # the schemas counted as the band prints them
+//   node dev/verify_wire.mjs --break chars      # the schemas counted in characters, not bytes
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs (dev/world.sh N --up gives both).
 import fs from 'node:fs';
@@ -113,6 +114,17 @@ const BREAKS = {
 		{ file: 'js/daimond.js',
 		  find: "\t\tvar schemaTok = Math.round((w.schemas_len || 0) / 4);",
 		  with: "\t\tvar schemaTok = wireTok(schemas);" },
+	],
+	// The schemas counted in CHARACTERS rather than in the bytes the body carries. Not the
+	// same mistake as `pretty`: this copy is the compact array, the one the request really
+	// holds, measured with `String.length` -- UTF-16 code units, so 41,964 where the body
+	// carries 41,998. Thirty-four bytes, and on 2026-08-25 they straddled the 10,500-token
+	// rounding step, so the band drew "11k" and a run measuring the same array in characters
+	// drew "10k" and reported the band as having drifted from the request. It had not.
+	chars: [
+		{ file: 'js/daimond.js',
+		  find: "\t\tvar schemaTok = Math.round((w.schemas_len || 0) / 4);",
+		  with: "\t\tvar schemaTok = Math.round(JSON.stringify(w.schemas || []).length / 4);" },
 	],
 	// One tool quietly missing from what the band draws, and present in the
 	// request. Here to prove check 1 has teeth: a check that only ever reads a
@@ -252,7 +264,17 @@ const sysOf = (row) => {
 };
 
 /// The app's own arithmetic, so a figure can be checked rather than admired.
-const tok = (s) => Math.round(String(s || '').length / 4);
+///
+/// BYTES, because that is what the band claims to be reporting and what the engine budgets
+/// with. `String.length` is UTF-16 code units: for the browser toolbelt it says 41,964 where
+/// the body carries 41,998, and on 2026-08-25 those two straddled the 10,500-token rounding
+/// step and drew "10k" and "11k". This run then reported a band that had drifted from the
+/// request, and it had not -- the two figures were the same array in two encodings. Measuring
+/// characters and calling them bytes is the defect this file exists to catch, made by the
+/// file itself.
+const ENC = new TextEncoder();
+const bytes = (s) => ENC.encode(String(s || '')).length;
+const tok = (s) => Math.round(bytes(s) / 4);
 const fmtTok = (n) => (n % 1024 === 0) ? (n / 1024) + 'k'
 	: (n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'
 		: (n >= 1000 ? Math.round(n / 1000) + 'k' : '' + n));
@@ -358,19 +380,45 @@ try {
 	const compact = sentTools ? JSON.stringify(sentTools) : '';
 	check(!!compact && raw.includes(compact),
 		'the compact serialisation IS the engine\'s own bytes, character for character',
-		compact ? `${compact.length} chars, found in the body` : 'no body captured');
+		compact ? `${bytes(compact)} bytes, found in the body` : 'no body captured');
 	const pretty = sentTools ? JSON.stringify(sentTools, null, 1) : '';
-	check(pretty.length > compact.length * 1.05,
+	check(bytes(pretty) > bytes(compact) * 1.05,
 		'and the printed form is materially bigger, so the two figures are distinguishable',
-		`${compact.length} sent vs ${pretty.length} printed`);
+		`${bytes(compact)} sent vs ${bytes(pretty)} printed`);
 	const schemaBand = band(w, 'Tool schemas') || {};
-	check(schemaBand.tok === fmtTok(Math.round(compact.length / 4)),
+	check(schemaBand.tok === fmtTok(tok(compact)),
 		'THE SCHEMA FIGURE IS THE BYTES THE REQUEST CARRIES',
-		`band says ${schemaBand.tok}, sent is ${fmtTok(Math.round(compact.length / 4))}, `
-		+ `printed would be ${fmtTok(Math.round(pretty.length / 4))}`);
-	check(schemaBand.tok !== fmtTok(Math.round(pretty.length / 4))
-		|| fmtTok(Math.round(pretty.length / 4)) === fmtTok(Math.round(compact.length / 4)),
+		`band says ${schemaBand.tok}, sent is ${fmtTok(tok(compact))}, `
+		+ `printed would be ${fmtTok(tok(pretty))}`);
+	check(schemaBand.tok !== fmtTok(tok(pretty)) || fmtTok(tok(pretty)) === fmtTok(tok(compact)),
 		'and not the size of the indenting the band added itself');
+	// The chat's headline as a NUMBER, kept for the daimon's half. The headline itself is
+	// printed to a thousand tokens, and a comparison made on the printed form cannot tell two
+	// threads apart when their true totals fall inside one rounding step -- see the daimon's
+	// half below, which is where that cost a red.
+	const chatTotalTok = tok((band(w, 'Role prompt') || {}).text) + tok((band(w, 'Safety clause') || {}).text)
+		+ tok((band(w, 'Standing instructions') || {}).text) + tok((band(w, 'Tool names') || {}).text)
+		+ tok((band(w, 'This computer') || {}).text) + tok(compact);
+	// THE THIRD WAY OF BEING WRONG, and the one that fooled this file: the array measured in
+	// UTF-16 code units. It is neither the indented copy nor the sent bytes -- 41,964 against
+	// 41,998 for the browser toolbelt -- and the two draw different headlines whenever they
+	// fall either side of a rounding step, which on 2026-08-25 they did, at 10,500 tokens.
+	// Asserted apart from the `pretty` check above, so a band that regressed to counting
+	// characters cannot pass on the strength of merely not being the indented copy.
+	check(bytes(compact) !== compact.length,
+		'the sent array holds multi-byte characters, so bytes and characters CAN disagree',
+		`${bytes(compact)} bytes over ${compact.length} UTF-16 units`);
+	// They do not always round apart, and a run that pretended otherwise would be claiming a
+	// distinction it had not drawn. So it says which kind of run it is.
+	const charTok = fmtTok(Math.round(compact.length / 4));
+	if (charTok === fmtTok(tok(compact))) {
+		console.log('  ..   bytes and characters round alike today (' + charTok
+			+ '), so this run cannot tell those two apart');
+	} else {
+		check(schemaBand.tok !== charTok,
+			'and it is not the count of CHARACTERS, which rounds elsewhere today',
+			`characters would say ${charTok}`);
+	}
 	await shot(s, 'chat-wire');
 
 	// ══ 2. A daimon thread ════════════════════════════════════════════
@@ -385,9 +433,22 @@ try {
 	const dReq = lastReq();
 	check(!!dReq, 'the steering turn reached the provider');
 	const dSent = dReq ? (dReq.tools || []).slice().sort() : [];
-	check(dSent.length > 0 && !dSent.includes('say') && !dSent.some(n => n.startsWith('web_')),
-		'and the daimon really holds neither `say` nor a web tool',
+	// THE DAIMON HOLDS THE WEB TOOLS NOW, and this check used to say it must not.
+	//
+	// `Tool::daimon()` never called `Tool::web()`, so a Diamond built for research held no
+	// way to search, fetch or read a page while a chat beside it held nine. The owner
+	// decided on 2026-08-24 that it should, and what stops a tainted turn reaching the
+	// network is the egress gate rather than withholding the tools -- see the comment above
+	// the grant in `src/tools.rs` and `dev/verify_daimonreach.mjs`, which holds that half.
+	//
+	// `say` is still absent, and that has not changed: it was removed outright, and what it
+	// used to enforce moved rather than went.
+	check(dSent.length > 0 && !dSent.includes('say'),
+		'and the daimon does not hold `say`, which no longer exists',
 		`${dSent.length} tools`);
+	check(dSent.some(n => n.startsWith('web_')),
+		'and it DOES hold the web tools, which is the grant of 2026-08-24',
+		dSent.filter(n => n.startsWith('web_')).join(',') || 'none');
 	check(dSent.includes('file_show'),
 		'though it does hold `file_show`, so the check above is not simply an empty belt');
 
@@ -404,8 +465,12 @@ try {
 	check(!!dShown && !dShown.includes('say'),
 		'the band does not offer him `say` on a daimon thread',
 		dShown && dShown.includes('say') ? 'it does' : '');
-	check(!!dShown && !dShown.some(n => n.startsWith('web_')),
-		'nor any of the nine web tools',
+	// The band's own half of the grant of 2026-08-24: a daimon holds the web tools, so the
+	// band must SHOW them. The check above already asserts the band's list is the registry
+	// character for character; this says which way that agreement now falls, so a band that
+	// silently stopped drawing them would not pass on the strength of matching an empty belt.
+	check(!!dShown && dShown.some(n => n.startsWith('web_')),
+		'and the band shows the nine web tools the daimon now holds',
 		dShown ? `[${dShown.filter(n => n.startsWith('web_'))}]` : '');
 
 	const dSys = dReq ? sysOf(dReq) : '';
@@ -422,17 +487,16 @@ try {
 		'the daimon\'s schema count is the daimon\'s tool count',
 		`${(dShown || []).length} vs ${dSent.length}`);
 	const dTitle = w ? w.title : '';
-	check(!!dTitle && dTitle !== chatTitle,
-		'the total the band reports is not the chat\'s',
-		`daimon "${dTitle}" vs chat "${chatTitle}"`);
+	// The claim that the daimon's headline is the daimon's own is asserted below, on the
+	// numbers, once both are in hand.
 	// The daimon's own schemas, off the daimon's own request. `__wireRaw` holds the
 	// last body the page sent, which after the steer is the steering turn's.
 	const dRaw = await p.evaluate(() => window.__wireRaw || '');
 	const dCompact = dRaw ? JSON.stringify(JSON.parse(dRaw).tools) : '';
-	check(!!dCompact && dRaw.includes(dCompact) && dCompact.length < compact.length,
+	check(!!dCompact && dRaw.includes(dCompact) && bytes(dCompact) < bytes(compact),
 		'the daimon sent its own, smaller, schema array',
-		`${dCompact.length} chars against the chat's ${compact.length}`);
-	const dSchemaTok = Math.round(dCompact.length / 4);
+		`${bytes(dCompact)} bytes against the chat's ${bytes(compact)}`);
+	const dSchemaTok = tok(dCompact);
 	check((band(w, 'Tool schemas') || {}).tok === fmtTok(dSchemaTok),
 		'and the band reports THAT, in the daimon\'s figure',
 		`band says ${(band(w, 'Tool schemas') || {}).tok}, sent is ${fmtTok(dSchemaTok)}`);
@@ -447,6 +511,21 @@ try {
 	check(dTitle.includes(want),
 		'and the headline is those bands plus those bytes',
 		`says "${dTitle}", computed ${want}`);
+	// AND THE TWO THREADS REALLY DO CARRY DIFFERENT TOTALS, which is what keeps the check
+	// above from being satisfiable by a headline carried over from the chat.
+	//
+	// COMPARED AS NUMBERS, NOT AS THE STRINGS THEY ARE PRINTED AS. This read
+	// `dTitle !== chatTitle` until 2026-08-25, and `fmtTok` prints anything over a thousand
+	// tokens to the nearest thousand -- so the moment the daimon's total and the chat's fell
+	// in the same thousand, two correctly measured figures drew the same sentence and this
+	// went red about the app. On the gate of that morning both said "about 13k tokens" while
+	// the arrays behind them were 41,993 and 44,437 bytes: 611 tokens apart, and printed
+	// identically. A check that cannot tell a collision from a carry-over is measuring the
+	// rounding, not the band.
+	const dTotalTok = sysTok + dSchemaTok;
+	check(!!dTitle && dTotalTok !== chatTotalTok,
+		'and it is the daimon\'s own total, not the chat\'s carried across',
+		`daimon ${dTotalTok} tok "${dTitle}" vs chat ${chatTotalTok} tok "${chatTitle}"`);
 
 	// ══ 4. The per-turn paragraph, drawn ══════════════════════════════
 	const local = band(w, 'This Diamond');

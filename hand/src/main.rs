@@ -812,6 +812,7 @@ fn id_of(resp: &Resp) -> Option<String> {
         Resp::Opened  { id, .. }	=> Some(id.clone()),
         Resp::Output  { id, .. }	=> Some(id.clone()),
         Resp::Closed  { id, .. }	=> Some(id.clone()),
+        Resp::Filed   { id, .. }	=> Some(id.clone()),
         // A listing is about every run at once, so it is about no single one.
         Resp::Runs    { .. }		=> None,
         Resp::Hello   { .. }		=> None,
@@ -996,6 +997,29 @@ fn cut(resp: &Resp) -> Outcome<Option<(Resp, String)>> {
         // fit is COUNTED in `more` rather than cut here. Trimming it would drop
         // a run silently, which is the one thing a listing must never do.
         Resp::Runs { .. } => Ok(None),
+        // A file's text, cut like a refusal's sentence: what fits is sent and the marker says
+        // how much did not. The launcher caps it at `wire::FILE_TEXT_MAX` already, so reaching
+        // here means an enormous path or a very long refusal, not an ordinary read.
+        Resp::Filed { id, ok, text } => {
+            let keep = res!(largest_fit(text, |t| Resp::Filed {
+                id:   id.clone(),
+                ok:   *ok,
+                text: t.to_string(),
+            }));
+            if keep == usize::MAX {
+                return Ok(None);
+            }
+            let keep = snap(text, keep.saturating_sub(MARKER_RESERVE));
+            Ok(Some((
+                Resp::Filed {
+                    id:   id.clone(),
+                    ok:   *ok,
+                    text: fmt!("{}{}", &text[..keep], marker(text.len() - keep)),
+                },
+                fmt!("The answer to file request '{}' was too long for one message and was \
+                    cut.", id),
+            )))
+        },
         Resp::Hello { .. } | Resp::Started { .. } | Resp::Ended { .. }
         | Resp::Opened { .. } | Resp::Closed { .. } => Ok(None),
     }
@@ -1047,6 +1071,7 @@ fn kind_of(resp: &Resp) -> &'static str {
         Resp::Output  { .. }	=> "output",
         Resp::Closed  { .. }	=> "closed",
         Resp::Runs    { .. }	=> "runs",
+        Resp::Filed   { .. }	=> "filed",
     }
 }
 
@@ -1201,6 +1226,19 @@ where
 /// Held together in one place so that the handlers take one argument rather
 /// than nine, and so that the two lines to the writer cannot be confused with
 /// each other.
+/// Which of the three doors a gated request came in by.
+///
+/// A boolean said "terminal or not" while there were two, and a third door would have made it
+/// say "not a terminal" of a thing that is not a command either.  An enum makes the dispatch at
+/// the end of [`Desk::exec`] exhaustive, so a fourth door cannot be added without the compiler
+/// asking what it dispatches to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Door {
+    Command,
+    Terminal,
+    File,
+}
+
 struct Desk {
     /// What this machine can enforce with Landlock.
     fence:  Fence,
@@ -1219,6 +1257,7 @@ struct Desk {
     runner: Runner,
     /// Live terminal sessions.
     ptys:   daimond_hand::pty::PtySessions,
+    files:  daimond_hand::exec::Files,	// the file door, which has nothing live to hold
     /// The record.
     jr:     Arc<Mutex<Journal>>,
     /// Whether the record is still being written.
@@ -1434,11 +1473,20 @@ impl Desk {
         // gate 1 -- because it IS a command, differing only in how the conversation is shaped.
         // Written once so the two cannot drift: a second copy of this would eventually be the
         // copy that forgot to check something.
-        let (id, mut spec, kits, terminal) = match &req {
-            Req::Exec { id, fence, toolkits, .. } =>
-                (id.clone(), fence.clone(), toolkits.clone(), false),
-            Req::Open { id, fence, toolkits, .. } =>
-                (id.clone(), fence.clone(), toolkits.clone(), true),
+        let (id, mut spec, kits, argv, cwd, door) = match &req {
+            Req::Exec { id, fence, toolkits, argv, cwd, .. } =>
+                (id.clone(), fence.clone(), toolkits.clone(), argv.clone(), cwd.clone(),
+                    Door::Command),
+            Req::Open { id, fence, toolkits, argv, cwd, .. } =>
+                (id.clone(), fence.clone(), toolkits.clone(), argv.clone(), cwd.clone(),
+                    Door::Terminal),
+            // A file op has no `argv`, and that is the whole of what it is for. An empty one is
+            // handed to the gates below on purpose rather than a synthetic line: `git_hooks_
+            // refusal` and `vet_roots` both read it, and a made-up command line is a thing
+            // written to be read as real.
+            Req::File { id, fence, toolkits, cwd, .. } =>
+                (id.clone(), fence.clone(), toolkits.clone(), Vec::new(), cwd.clone(),
+                    Door::File),
             _ => return Ok(()),
         };
 
@@ -1478,6 +1526,15 @@ impl Desk {
         // noise. The list comes back so that a caller who wants it has it.
         let _dropped = daimond_hand::exec::drop_absent_kit_roots(&mut spec, &kits);
 
+        // The directory git runs `pre-commit` from, which on this machine holds the
+        // credential scanner. Read here rather than in the page, because the page cannot
+        // see `core.hooksPath` and the model must not be the one who chooses it. Read-only,
+        // which carries execute, which is what a hook needs. Nothing is added where the user
+        // granted no Git toolchain: without it the fenced git cannot read the configuration
+        // that names the directory either, so the grant would buy nothing -- and the
+        // refusal below is what covers that case instead.
+        let _hooks = daimond_hand::exec::grant_git_hooks(&mut spec, &kits, &[]);
+
         // A fence that reaches the journal is a fence over the record of what
         // the fence was used for.  And denied outright as well, in case a root
         // is widened later or reached through a link.
@@ -1501,6 +1558,16 @@ impl Desk {
         };
         if !plan.is_fenced() {
             self.refuse(&id, self.fence.refusal("This command"));
+            return Ok(());
+        }
+
+        // Release gate 1's companion: a commit runs the user's hooks or it does not run.
+        // Asked of the PLAN and not of the spec, because the plan is what the kernel will
+        // enforce -- and asked after it, because a command refused for its fence should say
+        // so about the fence. See `exec::git_hooks_refusal` for what each sentence means and
+        // for the one spelling this cannot see.
+        if let Some(s) = daimond_hand::exec::git_hooks_refusal(&plan, &argv, &cwd, &[]) {
+            self.refuse(&id, s);
             return Ok(());
         }
 
@@ -1530,11 +1597,12 @@ impl Desk {
         let ptys   = self.ptys.clone();
         let bulk   = self.bulk.clone();
         let ctl    = self.ctl.clone();
+        let files  = self.files.clone();
         tokio::spawn(async move {
-            let out = if terminal {
-                ptys.open(req, bulk).await.map(|_| ())
-            } else {
-                runner.spawn(req, bulk).await.map(|_| ())
+            let out = match door {
+                Door::Terminal	=> ptys.open(req, bulk).await.map(|_| ()),
+                Door::Command	=> runner.spawn(req, bulk).await.map(|_| ()),
+                Door::File	=> files.apply(req, bulk).await,
             };
             if let Err(e) = out {
                 let _ = ctl.send(Resp::Error {
@@ -1722,6 +1790,10 @@ impl Desk {
                     },
                     Req::Exec { .. } => res!(self.exec(req).await),
                     Req::Open { .. } => res!(self.exec(req).await),
+                    // The same gates, the same order, the same function. A file op is a write
+                    // to this machine and is journalled, fence-guarded and gate-1 refused
+                    // exactly as a command is; only what happens at the far end differs.
+                    Req::File { .. } => res!(self.exec(req).await),
                     // Keystrokes and resizes are answered synchronously and are never
                     // journalled -- see `Event::from_req`, which refuses to write down the
                     // message a password is typed into.
@@ -1805,6 +1877,17 @@ fn with_fence(req: Req, spec: daimond_hand::wire::FenceSpec) -> Req {
             cwd,
             env,
             size,
+            fence: spec,
+            toolkits,
+        },
+        // The third door, and it is here for the reason the paragraph above records: this
+        // function once knew about `Exec` alone, and a `Req::Open` fell through `other => other`
+        // carrying the fence that ARRIVED rather than the one the journal guard hardened. A file
+        // op writes to disc; leaving it out would be the same defect in the same place.
+        Req::File { id, op, cwd, toolkits, .. } => Req::File {
+            id,
+            op,
+            cwd,
             fence: spec,
             toolkits,
         },
@@ -1909,6 +1992,7 @@ where
         os,
         runner: Runner::with_launcher(cfg.launcher.clone()),
         ptys:   daimond_hand::pty::PtySessions::with_launcher(cfg.launcher.clone()),
+        files:  daimond_hand::exec::Files::with_launcher(cfg.launcher.clone()),
         jr:     Arc::clone(&jr),
         sound:  Arc::clone(&sound),
         alive:  Arc::clone(&alive),

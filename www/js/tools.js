@@ -132,6 +132,13 @@
 		// is written at two depths in the model's own prose now, so there is no function
 		// to list and nothing for a person to grant or withhold.
 		{ id: 'show',     fns: ['file_show'] },
+		// A CAPABILITY OF ITS OWN, and not a member of `show`. Both reach the person
+		// rather than the workspace, and there the likeness stops: `file_show` hands
+		// something over and this asks for something back. It is also the one row on
+		// this panel a reader might want to withhold for a reason nothing else here
+		// covers -- being interrupted -- so folding it into `show` would offer them a
+		// grant that does not match the thing they are granting.
+		{ id: 'asking',   fns: ['ask'] },
 		// `runs` is here and not in a capability of its own: it says what the machine hand
 		// is still running and stops one of them, and a person who granted the starting of
 		// commands has already granted this. Withholding it would not stop a command being
@@ -142,6 +149,14 @@
 		// a command the model wrote. That is a different thing to grant from `run`, so it is
 		// a different thing to withhold.
 		{ id: 'checking', fns: ['verify'] },
+		// ONE ROW FOR BOTH, and the reason is that they reach the same place: the Social
+		// panel and the forge behind it.  Reading it and publishing on it are not the same
+		// ACT -- one asks nobody anything and the other is put to the user every time --
+		// but this panel's rows are about what Daimond can REACH, and a person granting or
+		// withholding "the Social panel" is deciding about one surface.  The publishing
+		// half's own gate is not a setting and is not here: it cannot be turned off, so
+		// there is nothing for a reader to be offered.
+		{ id: 'social',   fns: ['social_read', 'social_send'] },
 		{ id: 'reading',  fns: ['web_fetch', 'web_search'] },
 		{ id: 'browsing', fns: ['web_open', 'web_snapshot', 'web_read', 'web_click',
 		                        'web_type', 'web_scroll', 'web_close'] },

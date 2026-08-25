@@ -41,6 +41,7 @@
 // Needs dev/serve.mjs and dev/mockllm.mjs (DAIMOND_PORT / DAIMOND_MOCK_PORT).
 import fs from 'node:fs';
 import { open, signInAs, shot, scratch, errors, MOCK } from './harness.mjs';
+import { IMAP_PORT, SMTP_PORT } from './ports.mjs';
 
 const PROFILE = scratch('pw', 'pausespend');
 fs.rmSync(PROFILE, { recursive: true, force: true });
@@ -287,12 +288,12 @@ try {
 	await playLeaf(page, 'root');
 
 	// ── 5. Mail ──────────────────────────────────────────────────
-	await page.evaluate(async (addr) => {
+	await page.evaluate(async ([addr, PORTS]) => {
 		const pass = await window.DaimondIdentity.wrap('test-app-password');
 		localStorage.setItem('daimond-mail', JSON.stringify({
 			accounts: [{
-				address: addr, host: '127.0.0.1', port: 1143, security: 'plain',
-				smtpHost: '127.0.0.1', smtpPort: 1587, smtpSecurity: 'plain',
+				address: addr, host: '127.0.0.1', port: PORTS.imap, security: 'plain',
+				smtpHost: '127.0.0.1', smtpPort: PORTS.smtp, smtpSecurity: 'plain',
 				user: addr, pass, folder: 'INBOX', folders: {}, lastSync: 0,
 			}],
 			sel: addr,
@@ -300,7 +301,7 @@ try {
 		window.DaimondMail.reload();
 		window.DaimondPanels.show('mail');
 		window.DaimondMail.onOpen();
-	}, MAILBOX);
+	}, [MAILBOX, { imap: IMAP_PORT, smtp: SMTP_PORT }]);
 	await page.waitForTimeout(1200);
 
 	const INBOX = `root/mail/${MAILBOX}/INBOX`;

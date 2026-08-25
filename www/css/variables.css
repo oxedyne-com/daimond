@@ -158,13 +158,6 @@
 	--attach-row-h:      calc(23px * var(--fs-scale) + 9px);
 	--attach-cap:        6;
 	--attach-peek:       14px;
-	/* The workspace group's own cap, in the same tile unit. Three rather than
-	   six because a workspace is a handful of folders where an attachment list
-	   is a pile of files, and because this group is drawn ABOVE the attachments
-	   rather than instead of them: the two together must still leave the
-	   conversation most of the panel. With both groups on screen the arithmetic
-	   tightens again -- `#chat-attachments.two` in app.css. */
-	--ws-cap:            3;
 	/* One icon cell, sized so two rows of them come to the same 192px that six
 	   tiles do: one cap, one footer height, whichever view is showing. */
 	--attach-icon-h:     84px;

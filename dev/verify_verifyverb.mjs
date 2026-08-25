@@ -35,17 +35,21 @@
 //   node dev/verify_verifyverb.mjs --break liveinstrument 7 fails: the dead break is made to bite
 //   node dev/verify_verifyverb.mjs --break silentdead  8 fails: the dead break prints an extra line
 //   node dev/verify_verifyverb.mjs --break noshot      9 fails: the fixture writes no picture
-//   node dev/verify_verifyverb.mjs --break tracked     10 fails: the untracked fixture is added to git
-//   node dev/verify_verifyverb.mjs --break untrack     10b fails: the tracked fixture is taken out of git
+//   node dev/verify_verifyverb.mjs --break committed   10 fails: the untracked fixture is committed
+//   node dev/verify_verifyverb.mjs --break slander     10b fails: the committed fixture is edited after its commit
+//   node dev/verify_verifyverb.mjs --break noedit      10c fails: the edited fixture is left as the commit wrote it
 //   node dev/verify_verifyverb.mjs --break nodev       1 fails: the dev directory is out of the way at the handshake
 //   node dev/verify_verifyverb.mjs --break deadlive    7d fails: the control verifier's second break is made dead
 //   node dev/verify_verifyverb.mjs --break ghost       12 fails: the fixture leaves no trace on disk
 //   node dev/verify_verifyverb.mjs --break wrongjournal 14 fails: the journal is read from an empty directory
 //
-// Each break damages ONE thing and reddens the check named beside it. TWO checks
+// Each break damages ONE thing and reddens the check named beside it. THREE checks
 // have no break, and it is worth saying which rather than leaving a reader to
 // count. Check 11 -- that the report says it ran outside the command fence -- is a
-// constant in `hand/src/verify.rs` and nothing out here can reach it. Check 1a --
+// constant in `hand/src/verify.rs` and nothing out here can reach it. Check 1b --
+// that `ext/hand.js` and the hand agree on the protocol version -- reads both
+// shipped numbers, and damaging either of them is damaging the tree rather than
+// this file. Check 1a --
 // that the binary being driven is this source and not an older build -- has been
 // demonstrated by hand (`DAIMOND_HAND_BIN=hand/target/release/daimond-hand` turns
 // eighteen checks red against a binary from three days before the verb existed)
@@ -71,7 +75,7 @@ const BI    = process.argv.indexOf('--break');
 const BEQ   = process.argv.find(a => a.startsWith('--break='));
 const BREAK = BEQ ? BEQ.split('=')[1] : (BI >= 0 ? (process.argv[BI + 1] || '') : '');
 const KNOWN = ['nodev', 'realname', 'declaredbreak', 'proveclean', 'liveinstrument', 'deadlive',
-	'silentdead', 'noshot', 'ghost', 'tracked', 'untrack', 'wrongjournal'];
+	'silentdead', 'noshot', 'ghost', 'committed', 'slander', 'noedit', 'wrongjournal'];
 if (BREAK && !KNOWN.includes(BREAK)) {
 	console.error(`unknown break '${BREAK}'; known: ${KNOWN.join(', ')}`);
 	process.exit(2);
@@ -143,12 +147,37 @@ ${BREAK === 'ghost' ? '' : "fs.writeFileSync('dev/ran-' + (BRK || 'clean') + '.t
 ${shotBody}
 `);
 
-// Present in the tree and NOT in git, which is the case that once let four
-// verifiers be promoted into dev/ and never run by a gate that builds its tree
-// with `git worktree add`.
+// ── The three provenance fixtures ───────────────────────────────────
+//
+// REVIEW.md 1.21. A verifier runs OUTSIDE the command fence and the whole of the
+// reason is that its bytes came with the checkout; until 2026-08-25 nothing
+// enforced that, so a daimon could write `dev/verify_x.mjs` with `file_write` --
+// every turn may, the granted root is writable -- and have it run unfenced.
+//
+// Each of these three is used by ONE check and by nothing else, so the break
+// aimed at that check damages one thing. Reusing `fixlive` would refuse every run
+// of the control verifier and redden half this file, which is the shape of
+// instrument this whole file exists to warn against.
+
+// NOT in git. Once that only meant a gate building its tree with `git worktree
+// add` would never run it; now it means the verb refuses it.
 fs.writeFileSync(path.join(DEV, 'verify_fixloose.mjs'), `// A fixture that is not tracked.
 import fs from 'node:fs';
 ${HELPER}say('the loose fixture ran', true);
+`);
+
+// Committed and left alone: the file that IS the commit, which must still run.
+fs.writeFileSync(path.join(DEV, 'verify_fixclean.mjs'), `// A fixture that is committed.
+import fs from 'node:fs';
+${HELPER}say('the committed fixture ran', true);
+`);
+
+// Committed and then edited, below, after the commit. `git ls-files
+// --error-unmatch` goes on exiting 0 for this file while `git diff --quiet HEAD`
+// exits 1, which is the whole of why the question is content and not membership.
+fs.writeFileSync(path.join(DEV, 'verify_fixedit.mjs'), `// A fixture that is edited after its commit.
+import fs from 'node:fs';
+${HELPER}say('the edited fixture ran', true);
 `);
 
 const git = (...args) => spawnSync('git', ['-C', GRANT, ...args],
@@ -156,10 +185,20 @@ const git = (...args) => spawnSync('git', ['-C', GRANT, ...args],
 git('init', '-q');
 git('config', 'user.email', 'fixture@example.invalid');
 git('config', 'user.name', 'Fixture');
-git('add', 'dev/verify_fixlive.mjs', 'dev/verify_fixdead.mjs', 'dev/nonce.txt');
-if (BREAK === 'tracked') git('add', 'dev/verify_fixloose.mjs');
+git('add', 'dev/verify_fixlive.mjs', 'dev/verify_fixdead.mjs', 'dev/verify_fixclean.mjs',
+	'dev/verify_fixedit.mjs', 'dev/nonce.txt');
+// COMMITTED and not merely added, because the check this damages is about the
+// bytes and not about the index -- `git add` alone leaves the file refused, so a
+// break that only staged it would damage nothing and read as green.
+if (BREAK === 'committed') {
+	git('add', 'dev/verify_fixloose.mjs');
+}
 git('commit', '-q', '-m', 'fixtures');
-if (BREAK === 'untrack') git('rm', '-q', '--cached', 'dev/verify_fixlive.mjs');
+const editLine = '// and now it is mine\n';
+// Unconditional: `fixedit` is the edited case, and 'noedit' takes the edit away.
+if (BREAK !== 'noedit') fs.appendFileSync(path.join(DEV, 'verify_fixedit.mjs'), editLine);
+// And the one that damages 10b, by making the unslandered file slanderable.
+if (BREAK === 'slander') fs.appendFileSync(path.join(DEV, 'verify_fixclean.mjs'), editLine);
 
 // ── The hand ────────────────────────────────────────────────────────
 
@@ -297,7 +336,37 @@ function talk(messages, ms = 60000) {
 	});
 }
 
-const HELLO = { t: 'hello', proto: 1, client: 'verify_verifyverb' };
+/// The protocol version the PAGE announces, read out of the page's own relay.
+///
+/// Written down here as `1` until 2026-08-25, when `hand/src/lib.rs` went to 2 and
+/// `ext/hand.js` went with it. Every exchange below then met `proto_refusal` and
+/// twenty-three checks went red at once, none of them about anything this file
+/// measures. A constant restated in a third place is a third place to forget.
+///
+/// It is read from `ext/hand.js` rather than from the hand, deliberately: this file
+/// STANDS IN FOR THE PAGE, and a stand-in that asked the hand what to say could not
+/// be wrong about it. Reading the page's own number means the two shipped halves
+/// have to agree, and check 1b below says so in one line when they do not.
+function pageProto() {
+	const src = fs.readFileSync(path.join(ROOT, 'ext/hand.js'), 'utf8');
+	const m = /^\s*const PROTO\s*=\s*(\d+)\s*;/m.exec(src);
+	return m ? Number(m[1]) : null;
+}
+
+/// What the hand itself says it speaks, from the mode a person runs.
+function handProto(bin) {
+	const r = spawnSync(bin, ['--report'], { encoding: 'utf8', timeout: 30000 });
+	const m = /^protocol (\d+)$/m.exec((r.stdout || '') + (r.stderr || ''));
+	return m ? Number(m[1]) : null;
+}
+
+const PAGE_PROTO = pageProto();
+const HAND_PROTO = handProto(HAND);
+check('1b the hand and the page agree on what protocol they speak',
+	PAGE_PROTO !== null && PAGE_PROTO === HAND_PROTO,
+	`ext/hand.js says ${PAGE_PROTO}, ${path.basename(HAND)} --report says ${HAND_PROTO}`);
+
+const HELLO = { t: 'hello', proto: PAGE_PROTO, client: 'verify_verifyverb' };
 
 /// One verify request, and everything the hand said about it.
 async function verify(req, ms) {
@@ -430,18 +499,42 @@ const trailerOf = (out) =>
 		!!r.ended && r.ended.exit === 0, r.ended ? `exit ${r.ended.exit}` : 'no ending');
 }
 
-// ── 10. Trackedness is asked of git, not assumed ────────────────────
+// ── 10. Whose code is this -- ENFORCED, not merely reported ─────────
+//
+// REVIEW.md 1.21, and three checks because one would not do it. 10 is the
+// untracked case. 10c is the edited case, which membership cannot see at all:
+// `git ls-files --error-unmatch` exits 0 for a file with a comment appended while
+// `git diff --quiet HEAD` exits 1. And 10b is what keeps both honest -- a file
+// that IS the commit must still run, so a verb that refused everything would go
+// red here rather than reading as a pass.
 
 {
 	const r = await verify({ name: 'fixloose', breaks: 'none' });
-	check('10 a verifier git does not know is reported as NOT TRACKED',
-		/NOT TRACKED/.test(r.out), (r.out.split('\n')[0] || '').slice(0, 160));
+	const why = r.refused ? r.refused.reason : '';
+	check('10 a verifier git does not know is REFUSED, not run',
+		!!r.refused && /not this repository's committed code/.test(why),
+		r.refused ? why.slice(0, 140)
+			: `no refusal; report=${(r.out.split('\n')[0] || '').slice(0, 120)}`);
+	// A refusal a model cannot converge on costs the run anyway, so the sentence
+	// has to carry the fenced route, the tool that takes it, and what fenced
+	// running cannot do -- or a daimon reads the fence as its script being broken.
+	check('10a and the refusal hands over the fenced way to run it anyway',
+		/\["node","dev\/verify_fixloose\.mjs"\]/.test(why) && /'run'/.test(why)
+			&& /browser/.test(why) && /commit the file/.test(why),
+		why.slice(0, 220) || 'no refusal');
 }
 {
-	const r = await verify({ name: 'fixlive', breaks: 'none' });
-	check('10b and a tracked one is not slandered',
-		/tracked/.test(r.out) && !/NOT TRACKED/.test(r.out),
-		(r.out.split('\n')[0] || '').slice(0, 160));
+	const r = await verify({ name: 'fixclean', breaks: 'none' });
+	check('10b and one that IS the commit is not slandered',
+		!r.refused && /byte for byte the commit's/.test(r.out),
+		r.refused ? r.refused.reason.slice(0, 140) : (r.out.split('\n')[0] || '').slice(0, 160));
+}
+{
+	const r = await verify({ name: 'fixedit', breaks: 'none' });
+	check('10c an edit made after the commit is seen, which the index cannot show',
+		!!r.refused && /not what the commit holds/.test(r.refused.reason || ''),
+		r.refused ? r.refused.reason.slice(0, 140)
+			: `RAN -- the check followed the index; report=${(r.out.split('\n')[0] || '').slice(0, 100)}`);
 }
 
 // ── 14. The journal holds the node command, not a verb ──────────────

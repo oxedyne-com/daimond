@@ -59,6 +59,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, scratch, errors } from './harness.mjs';
+import { IMAP_PORT, SMTP_PORT } from './ports.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -268,18 +269,18 @@ await page.waitForTimeout(2000);
 try {
 	// Two mailboxes, seeded the way the add-dialog would but pointed nowhere
 	// real: every route they use is stubbed above.
-	await page.evaluate(async ([a, b]) => {
+	await page.evaluate(async ([a, b, PORTS]) => {
 		const pass = await window.DaimondIdentity.wrap('test-app-password');
 		const mk = (address) => ({
-			address, host: '127.0.0.1', port: 1143, security: 'plain',
-			smtpHost: '127.0.0.1', smtpPort: 1587, smtpSecurity: 'plain',
+			address, host: '127.0.0.1', port: PORTS.imap, security: 'plain',
+			smtpHost: '127.0.0.1', smtpPort: PORTS.smtp, smtpSecurity: 'plain',
 			user: address, pass, folder: 'INBOX', folders: {}, lastSync: 0, touched: 1,
 		});
 		localStorage.setItem('daimond-mail', JSON.stringify({ accounts: [mk(a), mk(b)], sel: a }));
 		window.DaimondMail.reload();
 		window.DaimondPanels.show('mail');
 		window.DaimondMail.onOpen();
-	}, [BOX_A, BOX_B]);
+	}, [BOX_A, BOX_B, { imap: IMAP_PORT, smtp: SMTP_PORT }]);
 	await page.waitForTimeout(1500);
 
 	const INBOX_A = `root/mail/${BOX_A}/INBOX`;

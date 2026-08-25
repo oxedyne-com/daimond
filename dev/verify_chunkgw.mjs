@@ -39,10 +39,10 @@ import { fileURLToPath } from 'node:url';
 import { requireFreshGateway, GWBIN, procLog, GWCWD } from './gwbin.mjs';
 import { open } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
+import { GW_PORT, GW_URL } from './ports.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GWDIR  = path.resolve(__dirname, '..', 'gateway');
-const GW_URL = 'http://127.0.0.1:9002';
 const SRC    = path.resolve(__dirname, '..', 'www', 'js', 'chunks.js');
 /// What the gateway says while this runs. Half of what is measured below is a
 /// sweep the gateway declines, and the reason it declined is logged there and
@@ -86,7 +86,7 @@ requireFreshGateway();
 let gw = null;
 const alreadyUp = await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok, 800, 200);
 if (alreadyUp) {
-	console.log('  ok   using the gateway already on :9002');
+	console.log(`  ok   using the gateway already on :${GW_PORT}`);
 } else {
 	gw = spawn(GWBIN, [], { cwd: GWCWD, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: GW_LOG.stdio });
 	check('gateway starts', await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok), GWBIN);

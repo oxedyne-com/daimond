@@ -49,6 +49,10 @@ extern "C" {
     #[wasm_bindgen(method)]
     fn runs(this: &Relay) -> js_sys::Promise;
 
+    /// The output a page reload left this page holding for one run.
+    #[wasm_bindgen(method)]
+    fn held(this: &Relay, id: &str) -> js_sys::Promise;
+
     /// Signal one run by the identifier it was given, resolving when the
     /// message has been handed over.
     #[wasm_bindgen(method)]
@@ -111,6 +115,39 @@ async fn settle(promise: js_sys::Promise) -> Outcome<String> {
     }
 }
 
+/// Whether a machine hand is present.
+///
+/// AUTHORED BY A DAIMON, `dev/reflux.mjs --task opfssay`, 2026-08-24, comment included.  It is
+/// asked by [`crate::tools::two_places_note`] and by [`crate::tools::write_place`] to decide
+/// whether there is a second filesystem worth naming; [`status`] answers more and costs a round
+/// trip, on a path that has already failed.
+///
+/// **It was `relay().is_ok()` until 2026-08-24 and that was the wrong question.**  `hand.js`
+/// installs `window.DaimondHand` on EVERY page, paired or not -- it is the shim that answers
+/// "no hand is installed", so its presence is not evidence of one.  So the two-filesystems note
+/// was appearing for a user with no hand at all, telling them about a granted folder on their
+/// computer that did not exist.  `hasHand()` is the relay's own answer, `transport !== 'none'`,
+/// and is what "present" always meant.
+///
+/// A relay that cannot answer is taken as no hand.  Silence loses a hint; the other direction
+/// invents a second filesystem, which is the fault being fixed.
+pub fn present() -> bool {
+    let r = match relay() {
+        Ok(r)  => r,
+        Err(_) => return false,
+    };
+    let obj: &JsValue = r.as_ref();
+    let f = match js_sys::Reflect::get(obj, &JsValue::from_str("hasHand")) {
+        Ok(v)  => v,
+        Err(_) => return false,
+    };
+    let f: js_sys::Function = match f.dyn_into() {
+        Ok(f)  => f,
+        Err(_) => return false,
+    };
+    matches!(f.call0(obj), Ok(v) if v.is_truthy())
+}
+
 /// Whether a hand is paired, which machine it is, and what it can enforce.
 pub async fn status() -> Outcome<String> {
     let r = res!(relay());
@@ -137,6 +174,65 @@ pub async fn run(spec_json: &str) -> Outcome<String> {
     }
 }
 
+/// Carry out one file operation and return the answer as JSON.
+///
+/// **Reached reflectively, not through a `#[wasm_bindgen(method)]` declaration, and the
+/// reason is a hang.**  A declared method that is not on the object throws when it is called,
+/// and a throw out of a declared-infallible import does not become an `Err` -- the promise is
+/// never made, nothing resolves, and the tool call waits for ever.  A relay older than this
+/// build is exactly that case, and so is every test stub written before the verb existed:
+/// `dev/verify_chatfence.mjs`'s stub answers `hasHand`, `status` and `run`, and its first
+/// `file_write` to a marked folder hung the whole verifier.
+///
+/// So the function is looked up, and its absence is a SENTENCE.  Never a fall back to browser
+/// storage: a write that lands in the other filesystem while the daimon believes it changed
+/// the machine is the failure `write_place` exists to refuse, and doing it here silently would
+/// be that failure with a new door on it.
+///
+/// A rejection is handed on as a refusal for exactly the reason [`run`] gives: every one of
+/// them is a whole sentence written for the model to act on, and an `Err` would wrap it in an
+/// fe2o3 chain carrying colour and a `src/*.rs:line` frame around the one sentence that
+/// matters.
+///
+/// # Arguments
+/// * `spec_json` - The `file` request, already rendered as the wire's JSON.
+pub async fn file(spec_json: &str) -> Outcome<String> {
+    let r = res!(relay());
+    let obj: &JsValue = r.as_ref();
+    let f = match js_sys::Reflect::get(obj, &JsValue::from_str("file")) {
+        Ok(v)  => v,
+        Err(_) => return Ok(no_file_door()),
+    };
+    let f: js_sys::Function = match f.dyn_into() {
+        Ok(f)  => f,
+        Err(_) => return Ok(no_file_door()),
+    };
+    let p = match f.call1(obj, &JsValue::from_str(spec_json)) {
+        Ok(p)  => p,
+        Err(e) => return Ok(fmt!(r#"{{"refused":"{}"}}"#,
+            crate::llm::json_escape(&refusal(&e)))),
+    };
+    let p: js_sys::Promise = match p.dyn_into() {
+        Ok(p)  => p,
+        Err(_) => return Ok(no_file_door()),
+    };
+    match JsFuture::from(p).await {
+        Ok(v)  => stringify(&v),
+        Err(e) => Ok(fmt!(r#"{{"refused":"{}"}}"#, crate::llm::json_escape(&refusal(&e)))),
+    }
+}
+
+/// What to say when the relay attached to this page cannot carry a file operation.
+///
+/// It names the two things the reader can do about it, because "the hand is old" is not an
+/// instruction: update it, or reach the file with `run`, which every hand has always had.
+fn no_file_door() -> String {
+    fmt!(r#"{{"refused":"{}"}}"#, crate::llm::json_escape(
+        "The machine hand attached to this page cannot change files directly -- it is older \
+        than this version of Daimond. Nothing was read or changed. Tell the user to update \
+        the hand, and meanwhile reach the file with run, which every hand can do."))
+}
+
 /// What this hand is still running, as the relay's JSON.
 ///
 /// Two things a caller must not read into it.  The listing is a MEASUREMENT
@@ -146,6 +242,19 @@ pub async fn run(spec_json: &str) -> Outcome<String> {
 pub async fn runs() -> Outcome<String> {
     let r = res!(relay());
     settle(r.runs()).await
+}
+
+/// The output held for one run across a page reload, as the relay's JSON.
+///
+/// **Handed over once.**  The relay lets go of what it answers with, because the whole of it has
+/// gone to the reader and a second copy of a build's output in a tab is one nobody will look at
+/// again.  So a caller that discards this answer has discarded the output.
+///
+/// # Arguments
+/// * `id` - The run's identifier, as the listing carries it.
+pub async fn held(id: &str) -> Outcome<String> {
+    let r = res!(relay());
+    settle(r.held(id)).await
 }
 
 /// Signal one run this hand started, by the identifier the run was given.

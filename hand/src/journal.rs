@@ -183,6 +183,7 @@
 use crate::wire::{
     Capture,
     FenceSpec,
+    FileOp,
     Req,
     Resp,
     Sig,
@@ -786,6 +787,32 @@ impl Event {
                     mechs:       mechs.to_vec(),
                 })
             },
+            // A FILE OP IS AN ACT and is written down as one, in the same `Exec` shape a
+            // command gets -- because from the record's point of view it is the same thing: a
+            // fence was applied and a file on this machine changed inside it. What is NOT
+            // written down is the text. A `write` carries the whole new content and an `edit`
+            // carries both sides of the replacement, and either may hold whatever the file
+            // holds; the journal keeps the size, which is the half that can be checked against
+            // what is on disk, and never the bytes.
+            Req::File { id, op, cwd, fence, toolkits: _ } => {
+                let (safe, cut) = redact_argv(&[
+                    fmt!("file"),
+                    fmt!("{}", op.word()),
+                    fmt!("{}", op.path()),
+                ]);
+                Some(Self::Exec {
+                    id:          id.clone(),
+                    argv:        safe,
+                    redactions:  cut,
+                    cwd:         cwd.clone(),
+                    env_keys:    Vec::new(),
+                    stdin_bytes: op_bytes(op),
+                    timeout_ms:  0,
+                    capture:     Capture::Out,
+                    fence:       fence.clone(),
+                    mechs:       mechs.to_vec(),
+                })
+            },
             // Asking what is running is a question and not an act, so it is not written down --
             // and every run it can name was journalled when it started. The SIGNAL that follows
             // is recorded, which is the half a reader would want.
@@ -852,6 +879,18 @@ impl Event {
             Resp::Error { id, message } => Some(Self::Failed {
                 id:      id.clone(),
                 message: message.clone(),
+            }),
+            // The file op ended, recorded exactly as a command's end is: `exit` 0 where it was
+            // carried out and 1 where it was refused, so a reader counting failed acts counts
+            // this one too. The text is measured and not kept, for the reason the request arm
+            // gives.
+            Resp::Filed { id, ok, text } => Some(Self::Ended {
+                id:        id.clone(),
+                exit:      match ok { true => 0, false => 1 },
+                timed_out: false,
+                killed:    false,
+                out_bytes: text.len() as u64,
+                err_bytes: 0,
             }),
             // A listing is a measurement of what the journal already records the
             // starting of. Writing it down again would put a reader's question
@@ -5374,5 +5413,23 @@ mod tests {
             "a malformed predecessor must be refused");
         res!(build_line(0, 0, "exec", "{}", GENESIS));
         Ok(())
+    }
+}
+
+/// How many bytes of text one file op carries, which is what the journal keeps of it.
+///
+/// # Arguments
+/// * `op` - The operation, whose text is measured and never recorded.
+fn op_bytes(op: &FileOp) -> u64 {
+    match op {
+        FileOp::Write { content, .. }	=> content.len() as u64,
+        FileOp::Edit { old, new, .. }	=> (old.len() + new.len()) as u64,
+        FileOp::Read { .. } | FileOp::Move { .. }
+        | FileOp::List { .. } | FileOp::MkDir { .. }	=> 0,
+        // A walk carries a pattern rather than a payload. It is measured all the same, so a
+        // reader of the record can tell a search of eight files from a search of eight thousand
+        // by what came back rather than by what went out.
+        FileOp::Search { query, glob, .. }		=> (query.len() + glob.len()) as u64,
+        FileOp::Glob { pattern, .. }			=> pattern.len() as u64,
     }
 }

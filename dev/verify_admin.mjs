@@ -20,12 +20,12 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { signInFresh } from './session.mjs';
 import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
+import { GW_PORT, GW_URL } from './ports.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
 const GWDIR = path.join(ROOT, 'gateway');
 const SHOTS = path.join(HERE, 'shots');
-const GW_URL = 'http://127.0.0.1:9002';
 /// What the gateway says while this runs. An admin view answering 500 says only
 /// that something went wrong; `app_main` logs the reason beside it, and this is
 /// where that reason is kept.
@@ -211,7 +211,7 @@ async function adminRaw() {
 			// AddrInUse while every check goes on passing against the process
 			// that has no owner configured. That failure reads as "the owner
 			// pin does not work", which is a long way from the truth.
-			check('port 9002 is free for the restart',
+			check(`port ${GW_PORT} is free for the restart`,
 				await waitFor(async () => {
 					try { await fetch(`${GW_URL}/api/health`); return false; }
 					catch (e) { return true; }

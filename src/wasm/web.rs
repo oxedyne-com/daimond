@@ -418,6 +418,26 @@ pub async fn egress_allowed_net(cmd: &str, cwd: &str) -> Option<Verdict> {
         crate::tools::RUN_NET_ALLOW_WORD).await
 }
 
+/// Ask whether one publication on the Social panel may go out.
+///
+/// The same door, the same payload and the same dialog machinery as every other question here.
+/// Three things differ, and each is a decision rather than a shape:
+///
+/// * the word a yes comes back as (see [`crate::tools::PUBLISH_ALLOW_WORD`]), because the forge
+///   is reached through our own gateway and the page's gate waves same-origin addresses through;
+/// * `url` carries the exact characters that would be published rather than an address, because
+///   the address is not the question -- what the user is approving is the text;
+/// * `alone` is always false, because a dispatched worker never gets here: it is refused by
+///   [`crate::tools::social_send_step`] before anything is composed.  Publishing in somebody's
+///   name is not a question to be parked on a tile for whoever passes.
+///
+/// # Arguments
+/// * `shown` - Exactly what would be published, as the panel composed it.
+pub async fn egress_allowed_publish(shown: &str) -> Option<Verdict> {
+    egress_ask_js(crate::tools::SOCIAL_SEND_TOOL, shown, "", false,
+        crate::tools::PUBLISH_ALLOW_WORD).await
+}
+
 /// Put one question to the page's gate and read its answer.
 ///
 /// # Arguments

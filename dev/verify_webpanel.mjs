@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, errors } from './harness.mjs';
+import { GW_URL } from './ports.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WEBJS = path.join(HERE, '..', 'www', 'js', 'web.js');
@@ -40,7 +41,7 @@ if (BREAK && !['keepoverlay', 'framehost'].includes(BREAK)) {
 const s = await open({ name: 'webpanel' });
 if (BREAK) console.log(`\n*** RUNNING UNDER --break ${BREAK}: failures below are the point ***\n`);
 
-const r = await s.page.evaluate(async (brk) => {
+const r = await s.page.evaluate(async ([brk, GW_URL]) => {
 	const W = window.DaimondWeb;
 	const out = { hasDriver: !!W };
 	if (!W) return out;
@@ -70,14 +71,14 @@ const r = await s.page.evaluate(async (brk) => {
 
 	// Loopback must be refused (not framed). Under `framehost` the same question
 	// is asked of a page the panel is entitled to frame.
-	const probe = brk === 'framehost' ? blob : 'http://127.0.0.1:9002/api/balance';
+	const probe = brk === 'framehost' ? blob : `${GW_URL}/api/balance`;
 	out.probe = brk === 'framehost' ? 'our own blob' : probe;
 	try {
 		const res = await W.open(probe);
 		out.loopback = { framed: res.framed, driver: res.driver };
 	} catch (e) { out.loopbackErr = e.message; }
 	return out;
-}, BREAK);
+}, [BREAK, GW_URL]);
 console.log(JSON.stringify(r, null, 2));
 await shot(s, 'webpanel-after');
 

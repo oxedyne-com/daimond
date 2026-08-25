@@ -118,8 +118,8 @@
 // its own, with an EMPTY store — the empty-queue check counts on that, and
 // counting rows in a store somebody else has been writing to would measure
 // their afternoon. Both ports are numbered off the world, so several lanes can
-// run this at once; neither is :9002, which is a single binding six lanes
-// compete for and which this run could not share in any case.
+// run this at once, and neither is the world's own gateway port -- a store this
+// run counts rows in cannot be one anything else is allowed to write to.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -136,15 +136,19 @@ const ROOT = path.join(HERE, '..');
 
 // A gateway AND a dev server of their own, both numbered off the world.
 //
-// The console needs a server that proxies `/api` to a gateway, and the world's
-// own dev server proxies to :9002 -- which is a single exclusive binding that
-// six lanes are competing for. This run pins an owner in configuration and
-// counts rows in an empty store, so it cannot share a gateway with anybody; and
-// waiting for :9002 to be free means running only when nobody else is working,
-// which is how somebody ends up killing another lane's half-finished run. So it
+// The console needs a server that proxies `/api` to a gateway, and this run pins
+// an owner in configuration and counts rows in an EMPTY store, so it cannot share
+// a gateway with anybody -- not the world's, and not another lane's. So it
 // numbers both ports off the world it was given and starts both itself.
+//
+// DELIBERATELY NOT `DAIMOND_GW_PORT`, the rule dev/verify_redeem.mjs and
+// dev/verify_relay_e2e.mjs already state and this file was the last to break.
+// It read the shared variable, and `dev/run_all.sh` exports one -- so inside a
+// suite run this verifier quietly abandoned its own 9400 + N row and started its
+// gateway on the world's gateway port instead, which is the one port in the
+// register it must not be on. Its knob is its own now.
 const WORLD    = Math.max(0, Number(process.env.DAIMOND_PORT || 8777) - 8777);
-const PORT     = Number(process.env.DAIMOND_GW_PORT || (9400 + WORLD));
+const PORT     = Number(process.env.DAIMOND_APPL_GW_PORT || (9440 + WORLD));
 const APP_PORT = Number(process.env.DAIMOND_APP_PORT || (8500 + WORLD));
 // The loopback SMTP server this run points the gateway at. Numbered off the
 // world like the other two, and deliberately NOT 587 or 465 — a gateway will
@@ -762,6 +766,39 @@ async function enterConsole(page) {
 		return !!(l && (l.children.length || (h && h.textContent)));
 	}), 25000, 200);
 	await sleep(250);
+	await buildIndex(page);
+	return true;
+}
+
+/// Press "Build it now" if the gateway has never built this listing index.
+///
+/// **The gateway does not walk its own store unless a person asks it to** — the owner's
+/// decision, and `drawNeedsBuild` in `www/console/admin.js` says why: `beta_standing` used
+/// to build the index on a device's UNLOCK, a request is cut off long before a whole-store
+/// walk can finish, so the half-built table was thrown away every time and every beta
+/// tester was answered "no intake". The console is the only thing that builds it now.
+///
+/// So a check that wants rows has to do what an operator does. Without this the panel is
+/// perfectly correct and perfectly empty, and the four console verifiers read "status 200 ·
+/// 0 rows" and report a product that is working as a product that is broken.
+///
+/// Aimed at `data-act="build-index"` rather than at the button's words, which would put
+/// this file's assertions at the mercy of somebody rewording a button.
+async function buildIndex(page) {
+	const btn = await page.$('[data-act="build-index"]');
+	if (!btn) return false;                       // already built, which is the ordinary case
+	// VISIBLE, not merely present. The run builds the index through the API before it opens
+	// the console, so this button is normally gone; when a panel that is still hidden holds
+	// a stale one, clicking it waits thirty seconds and then fails the whole run for
+	// something that did not need doing. Asked of the element, and the click is allowed to
+	// fail without taking the run with it.
+	if (!(await btn.isVisible().catch(() => false))) return false;
+	await btn.click({ timeout: 5000 }).catch(() => {});
+	// The build holds the console for the length of a whole-store walk. It is small here --
+	// a fixture store, not a real one -- but it is waited for rather than slept through.
+	await waitFor(async () => await page.evaluate(
+		() => !document.querySelector('[data-act="build-index"]')), 60000, 500);
+	await sleep(250);
 	return true;
 }
 
@@ -790,7 +827,7 @@ async function enterConsole(page) {
 	if (stray) {
 		die(`something is already answering on :${PORT}. This run pins an owner in `
 			+ 'configuration and counts an empty store, so it cannot share a gateway; '
-			+ 'set DAIMOND_GW_PORT to a free port, or run it in a world of its own.');
+			+ 'set DAIMOND_APPL_GW_PORT to a free port, or run it in a world of its own.');
 	}
 	try { stray = (await fetch(`${APP}/console/`)).ok; } catch (e) { stray = false; }
 	if (stray) {
@@ -821,9 +858,9 @@ async function enterConsole(page) {
 	const posted = () => mail.messages.length;
 
 	// The dev server that serves the console, pointed at THIS gateway. Started
-	// rather than borrowed: a world's server proxies to :9002, and the whole
-	// reason this run is on a port of its own is that :9002 belongs to whoever
-	// got there first.
+	// rather than borrowed: a world's server proxies to the world's own gateway
+	// port, and the whole reason this run is on a port of its own is that it must
+	// meet an EMPTY store that nobody else is writing to.
 	procs.push(spawn('node', ['dev/serve.mjs'], {
 		cwd: ROOT,
 		env: { ...process.env, DAIMOND_PORT: String(APP_PORT), DAIMOND_GW_PORT: String(PORT) },
@@ -871,6 +908,26 @@ async function enterConsole(page) {
 		/// The queue as the GATEWAY reports it. The oracle for everything the
 		/// panel claims: a console agreeing with itself proves nothing.
 		const served = async () => (await call(jar, 'GET', '/api/admin?view=applications')).j;
+
+		// BUILD THE LISTING INDEX ONCE, because the gateway no longer builds it on its own.
+		//
+		// The owner's decision: a whole-store walk is off the request path, so an unbuilt
+		// listing answers `needs_build` immediately and walks nothing (`handlers/admin.rs`,
+		// `drawNeedsBuild` in `www/console/admin.js`). `beta_standing` used to build it on a
+		// device's UNLOCK, a request is cut off long before such a walk can finish, and the
+		// half-built table was discarded every time -- so every beta tester was answered
+		// "no intake". The console is the only thing that builds it now, and an operator
+		// presses a button to do it.
+		//
+		// So this run does what an operator does, once, before it asks anything. Without it
+		// `served()` answers `{needs_build:true}` with no `total`, and every check below
+		// reads a product that is working as a product that is broken.
+		// All three, because this file reads all three. `Listing` has Applications, Passcodes
+		// and Reports, and each carries its own index: building the queue alone left every
+		// later check about a minted code reading "the passcode list grew by 0".
+		for (const view of ['applications', 'passcodes', 'reports']) {
+			await call(jar, 'GET', `/api/admin?view=${view}&build=1`);
+		}
 
 		// ── An empty queue ──────────────────────────────────────
 		{

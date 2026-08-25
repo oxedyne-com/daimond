@@ -73,10 +73,24 @@ try {
 	await page.evaluate(() => {
 		window.__hand = { runs: [] };
 		window.DaimondHand = {
+			// The question `hand::present()` asks (src/wasm/hand.rs). `hand.js` installs a
+			// relay on every page, paired or not, so its mere presence says nothing and a
+			// stub that leaves this out is an UNPAIRED page however much else it answers.
+			hasHand: () => true,
 			status: async () => ({
 				paired: true, os: 'linux (stub)', root: '/home/tester/granted',
 				home: '/home/tester', caps: ['fence:linux'],
 			}),
+			// The file door (`Req::File`, 2026-08-25). A file tool whose path is under a
+			// mark goes through the hand now, so a stub without this is a hand that cannot
+			// carry one -- which the engine answers with a refusal, correctly, and which
+			// would make every write below red for a reason that is not this file's subject.
+			file: async (specJson) => {
+				const spec = JSON.parse(specJson);
+				window.__hand.files = window.__hand.files || [];
+				window.__hand.files.push(spec);
+				return JSON.stringify({ ok: true, text: '' });
+			},
 			run: async (specJson) => {
 				const spec = JSON.parse(specJson);
 				window.__hand.runs.push(spec);
@@ -87,9 +101,18 @@ try {
 
 	// Lay down two files the worker never had attached, and one folder it did.
 	// Written through an UNSCOPED app, which is what the user's own chat is.
+	//
+	// THE FOLDERS ARE MADE FIRST, and that is not tidiness. A hand is paired above and no
+	// folder is open, so `file_write` refuses a write that would INVENT a folder in browser
+	// storage rather than landing it silently in the wrong filesystem (`write_place`,
+	// src/tools.rs, 2026-08-24). A user reaches this state by attaching a folder that
+	// EXISTS; a fixture reaches it by saying so. `dev/verify_writeplace.mjs` is the same two
+	// calls asserted rather than assumed.
 	await page.evaluate(async () => {
 		const mod = await import('../pkg/oxedyne_daimond.js');
 		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
+		await app.run_tool('dir_create', JSON.stringify({ path: 'elsewhere' }));
+		await app.run_tool('dir_create', JSON.stringify({ path: 'papers' }));
 		await app.run_tool('file_write', JSON.stringify({ path: 'elsewhere/notes.md', content: 'the user own note\n' }));
 		await app.run_tool('file_write', JSON.stringify({ path: 'papers/spec.md', content: 'attached spec\n' }));
 		window.__seed = true;
