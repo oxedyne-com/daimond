@@ -2170,6 +2170,10 @@
 
 	// ── The terminal ───────────────────────────────────────────
 	'term.label':            '终端',
+	'term.menu_copy': '复制',
+	'term.menu_paste': '粘贴',
+	'term.menu_select_all': '全选',
+	'term.clipboard_denied': '浏览器没有交出剪贴板。请使用 Ctrl-V，它始终有效。',
 	'term.hint':             '直接输入即可把按键送给程序。Ctrl-Shift-C 复制所选内容，Ctrl-Shift-V 粘贴，Ctrl-Shift-A 全选，按住 Shift 再按 Page Up 或 Page Down 可翻看已经滚过去的内容。',
 	'term.screen_label':     '终端屏幕的文字版本',
 	'term.screen_now':       '屏幕现在显示：',

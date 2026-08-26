@@ -2177,6 +2177,10 @@
 
 	// ── The terminal ───────────────────────────────────────────
 	'term.label':            'ターミナル',
+	'term.menu_copy': 'コピー',
+	'term.menu_paste': '貼り付け',
+	'term.menu_select_all': 'すべて選択',
+	'term.clipboard_denied': 'ブラウザがクリップボードを渡しませんでした。常に使える Ctrl-V をお使いください。',
 	'term.hint':             '入力するとキーがそのままプログラムに送られます。Ctrl-Shift-C で選択範囲をコピー、Ctrl-Shift-V で貼り付け、Ctrl-Shift-A ですべて選択、Shift を押しながら Page Up / Page Down で流れていった表示をさかのぼれます。',
 	'term.screen_label':     'ターミナル画面のテキスト',
 	'term.screen_now':       '画面には現在こう表示されています:',

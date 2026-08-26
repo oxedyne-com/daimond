@@ -1149,10 +1149,15 @@
 		paste.className = 'term-paste';
 		paste.hidden = true;
 
+		var menu = document.createElement('div');	// what a right-click offers
+		menu.className = 'term-menu';
+		menu.hidden = true;
+
 		root.appendChild(canvas);
 		root.appendChild(input);
 		root.appendChild(chip);
 		root.appendChild(paste);
+		root.appendChild(menu);
 		root.appendChild(hint);
 		root.appendChild(say);
 		root.appendChild(mirror);
@@ -1539,6 +1544,31 @@
 				if (kk === 'v') return;
 				if (kk === 'a') { ev.preventDefault(); selectAll(); return; }
 			}
+			// PLAIN Ctrl-C AND Ctrl-V, which is what people reach for. Ctrl-Shift-C and
+			// Ctrl-Shift-V still work and are what the hint names, because they are what
+			// every other terminal on the machine uses.
+			//
+			// Ctrl-C COPIES ONLY WHERE THERE IS A SELECTION. With none it is the
+			// interrupt, and the interrupt is not negotiable: it is the only way to stop
+			// a program that is not going to stop by itself, and a terminal that had
+			// taken it away would be broken in the one situation where being broken
+			// costs the most. Typing clears the selection (see below), so the selection
+			// under a Ctrl-C is one the person made deliberately and just now.
+			if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey) {
+				var ck = ev.key.toLowerCase();
+				if (ck === 'c' && sel && selectionText()) {
+					ev.preventDefault();
+					copy();
+					sel = null; schedule();
+					return;
+				}
+				// NOT prevented, and that is the whole mechanism: the field under the
+				// pointer is focused, so the browser's own paste fires and the `paste`
+				// listener below gets it -- including the multi-line question. Preventing
+				// it here would send \x16, readline's quoted-insert, which is what this
+				// key used to do and what nobody was reaching for.
+				if (ck === 'v') return;
+			}
 			if (ev.shiftKey && (ev.key === 'PageUp' || ev.key === 'PageDown')) {
 				ev.preventDefault();
 				scrollLines(ev.key === 'PageUp' ? -(screen.rows - 1) : (screen.rows - 1));
@@ -1641,6 +1671,77 @@
 		// what a finger touches. Focus is given here, inside the gesture, or a phone
 		// would have a terminal with no soft keyboard. Passive: nothing is prevented.
 		canvas.addEventListener('touchstart', function () { input.focus(); }, { passive: true });
+
+		// ── what a right-click offers ───────────────────────
+		//
+		// A canvas's own context menu is the browser's, and on a terminal it offers
+		// "Save image as" -- an answer to a question nobody asked, in place of the
+		// three a person wants. Reported on 2026-08-26: "right click ... currently
+		// copy/saves the terminal as an image".
+		//
+		// Paste is offered rather than done, because a right-click paste into a shell
+		// runs whatever was on the clipboard, and the multi-line question below is no
+		// use to someone who did not mean to paste at all.
+
+		function closeMenu() {
+			if (menu.hidden) return;
+			menu.hidden = true;
+			menu.innerHTML = '';
+			input.focus();
+		}
+
+		function openMenu(ev) {
+			var box  = canvas.getBoundingClientRect();
+			var text = selectionText();
+			menu.hidden = false;
+			menu.innerHTML = '';
+			menu.style.left = Math.max(0, Math.min(box.width  - 8, ev.clientX - box.left)) + 'px';
+			menu.style.top  = Math.max(0, Math.min(box.height - 8, ev.clientY - box.top))  + 'px';
+			var first = null;
+			function item(label, enabled, fn) {
+				var b = document.createElement('button');
+				b.type = 'button';
+				b.className = 'term-menu-item';
+				b.textContent = label;
+				b.disabled = !enabled;
+				b.addEventListener('click', function () { closeMenu(); fn(); });
+				menu.appendChild(b);
+				if (enabled && !first) first = b;
+				return b;
+			}
+			item(t('term.menu_copy'), !!text, function () { copy(); });
+			item(t('term.menu_paste'), true, function () { pasteFromClipboard(); });
+			item(t('term.menu_select_all'), true, function () { selectAll(); });
+			menu.addEventListener('keydown', function (e) {
+				if (e.key === 'Escape') { e.stopPropagation(); closeMenu(); }
+			});
+			if (first) first.focus();
+		}
+
+		canvas.addEventListener('contextmenu', function (ev) {
+			ev.preventDefault();
+			openMenu(ev);
+		});
+		// Any other press dismisses it, the way every menu does.
+		window.addEventListener('mousedown', function (ev) {
+			if (!menu.hidden && !menu.contains(ev.target)) closeMenu();
+		}, true);
+
+		/// The clipboard, asked for rather than waited for.
+		///
+		/// A `paste` event only arrives when the browser's own paste fires, and a menu
+		/// item is not that. `readText` needs a secure context and the user's
+		/// permission; where it is refused the person is told to use the key, which
+		/// always works because it IS the browser's paste.
+		function pasteFromClipboard() {
+			if (!navigator.clipboard || !navigator.clipboard.readText) {
+				announce(t('term.clipboard_denied'));
+				return;
+			}
+			navigator.clipboard.readText().then(function (text) {
+				if (text) pasteText(text);
+			}, function () { announce(t('term.clipboard_denied')); });
+		}
 
 		canvas.addEventListener('mousedown', function (ev) {
 			if (ev.button !== 0) return;

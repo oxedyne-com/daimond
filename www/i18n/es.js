@@ -2136,6 +2136,10 @@
 
 	// ── The terminal ───────────────────────────────────────────
 	'term.label':            'Terminal',
+	'term.menu_copy': 'Copiar',
+	'term.menu_paste': 'Pegar',
+	'term.menu_select_all': 'Seleccionar todo',
+	'term.clipboard_denied': 'El navegador no entregó el portapapeles. Usa Ctrl-V, que siempre funciona.',
 	'term.hint':             'Escribe para enviar las teclas directamente al programa. Ctrl-Mayús-C copia la selección, Ctrl-Mayús-V pega, Ctrl-Mayús-A lo selecciona todo, y Mayús con Re Pág o Av Pág recorre lo que ya ha pasado.',
 	'term.screen_label':     'Pantalla del terminal, como texto',
 	'term.screen_now':       'La pantalla dice ahora:',

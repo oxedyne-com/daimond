@@ -2176,6 +2176,10 @@
 
 	// ── The terminal ───────────────────────────────────────────
 	'term.label':            '터미널',
+	'term.menu_copy': '복사',
+	'term.menu_paste': '붙여넣기',
+	'term.menu_select_all': '모두 선택',
+	'term.clipboard_denied': '브라우저가 클립보드를 넘겨주지 않았습니다. 언제나 동작하는 Ctrl-V를 사용하세요.',
 	'term.hint':             '입력하면 키가 프로그램으로 그대로 전달됩니다. Ctrl-Shift-C는 선택 영역 복사, Ctrl-Shift-V는 붙여넣기, Ctrl-Shift-A는 전체 선택이며, Shift와 함께 Page Up 또는 Page Down을 누르면 지나간 내용을 볼 수 있습니다.',
 	'term.screen_label':     '터미널 화면의 텍스트',
 	'term.screen_now':       '화면에는 지금 이렇게 표시되어 있습니다:',

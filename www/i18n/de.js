@@ -2142,6 +2142,10 @@
 
 	// ── The terminal ───────────────────────────────────────────
 	'term.label':            'Terminal',
+	'term.menu_copy': 'Kopieren',
+	'term.menu_paste': 'Einfügen',
+	'term.menu_select_all': 'Alles auswählen',
+	'term.clipboard_denied': 'Der Browser hat die Zwischenablage nicht herausgegeben. Nutze Strg-V, das immer funktioniert.',
 	'term.hint':             'Tippe, um Tasten direkt an das Programm zu senden. Strg-Umschalt-C kopiert die Auswahl, Strg-Umschalt-V fügt ein, Strg-Umschalt-A wählt alles aus, und Umschalt mit Bild-auf oder Bild-ab bewegt sich durch das, was nach oben gelaufen ist.',
 	'term.screen_label':     'Terminal-Bildschirm als Text',
 	'term.screen_now':       'Auf dem Bildschirm steht jetzt:',

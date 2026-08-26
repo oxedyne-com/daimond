@@ -2149,6 +2149,10 @@
 
 	// ── The terminal ───────────────────────────────────────────
 	'term.label':            'Terminal',
+	'term.menu_copy': 'Copier',
+	'term.menu_paste': 'Coller',
+	'term.menu_select_all': 'Tout sélectionner',
+	'term.clipboard_denied': 'Le navigateur n\'a pas donné le presse-papiers. Utilise Ctrl-V, qui marche toujours.',
 	'term.hint':             'Tapez pour envoyer les touches directement au programme. Ctrl-Maj-C copie la sélection, Ctrl-Maj-V colle, Ctrl-Maj-A tout sélectionne, et Maj avec Page précédente ou Page suivante parcourt ce qui a défilé.',
 	'term.screen_label':     'Écran du terminal, en texte',
 	'term.screen_now':       'L’écran indique maintenant :',

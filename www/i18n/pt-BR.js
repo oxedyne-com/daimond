@@ -2135,6 +2135,10 @@
 
 	// ── The terminal ───────────────────────────────────────────
 	'term.label':            'Terminal',
+	'term.menu_copy': 'Copiar',
+	'term.menu_paste': 'Colar',
+	'term.menu_select_all': 'Selecionar tudo',
+	'term.clipboard_denied': 'O navegador não entregou a área de transferência. Use Ctrl-V, que sempre funciona.',
 	'term.hint':             'Digite para enviar as teclas direto ao programa. Ctrl-Shift-C copia a seleção, Ctrl-Shift-V cola, Ctrl-Shift-A seleciona tudo, e Shift com Page Up ou Page Down percorre o que já subiu.',
 	'term.screen_label':     'Tela do terminal, como texto',
 	'term.screen_now':       'A tela agora diz:',

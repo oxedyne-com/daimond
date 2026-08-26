@@ -2988,7 +2988,11 @@
 
 	// ── The terminal ───────────────────────────────────────────
 	'term.label':            'Terminal',
-	'term.hint':             'Type to send keys straight to the program. Ctrl-Shift-C copies the selection, Ctrl-Shift-V pastes, Ctrl-Shift-A selects everything, and Shift with Page Up or Page Down moves through what has scrolled past.',
+	'term.menu_copy':          'Copy',
+	'term.menu_paste':         'Paste',
+	'term.menu_select_all':    'Select all',
+	'term.clipboard_denied':   'The browser would not hand over the clipboard. Use Ctrl-V, which always works.',
+	'term.hint':             'Type to send keys straight to the program. With text selected, Ctrl-C copies it; with none, Ctrl-C interrupts the program. Ctrl-V pastes, Ctrl-Shift-A selects everything, and right-click offers the same three. Shift with Page Up or Page Down moves through what has scrolled past.',
 	'term.screen_label':     'Terminal screen, as text',
 	'term.screen_now':       'The screen now reads:',
 	'term.nothing_selected': 'Nothing is selected.',

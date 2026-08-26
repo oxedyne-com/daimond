@@ -423,8 +423,11 @@ await page.waitForTimeout(60);
 const firstOnly = await page.evaluate(() => window.__sentRaw.flat().map(b => String.fromCharCode(b)).join(''));
 check(firstOnly === 'echo one', `"paste the first line" sends the first line and no newline: ${JSON.stringify(firstOnly)}`);
 
-// Ctrl-Shift-V must reach the BROWSER: preventing it stops the paste event ever firing,
-// and the shortcut the hint tells people about would silently do nothing.
+// BOTH paste keys must reach the BROWSER: preventing either stops the paste event ever
+// firing, and the shortcut would silently do nothing. Plain Ctrl-V used to be prevented and
+// sent \x16 -- readline's quoted-insert -- which is what this check pinned until the owner
+// asked for the key people actually reach for on 2026-08-26. Quoted-insert is the cost, and
+// it is a real one: it is no longer reachable from this terminal.
 await reset();
 const shortcuts = await page.evaluate(async () => {
 	const ta = document.querySelector('.term-input');
@@ -433,11 +436,44 @@ const shortcuts = await page.evaluate(async () => {
 		ta.dispatchEvent(e);
 		return e.defaultPrevented;
 	};
-	return { pasteShortcut: fire('V', true, true), quotedInsert: fire('v', false, true) };
+	return { pasteShortcut: fire('V', true, true), plainPaste: fire('v', false, true) };
 });
-check(shortcuts.pasteShortcut === false && shortcuts.quotedInsert === true,
-	`Ctrl-Shift-V is left to the browser so the paste event fires, while plain Ctrl-V is the `
-	+ `terminal's own quoted-insert: prevented? shift=${shortcuts.pasteShortcut} plain=${shortcuts.quotedInsert}`);
+check(shortcuts.pasteShortcut === false && shortcuts.plainPaste === false,
+	`both Ctrl-Shift-V and plain Ctrl-V are left to the browser, so the paste event fires for `
+	+ `either: prevented? shift=${shortcuts.pasteShortcut} plain=${shortcuts.plainPaste}`);
+
+// Ctrl-C IS THE INTERRUPT UNLESS SOMETHING IS SELECTED, and the order matters more than
+// either half: a terminal that copied instead of interrupting would be broken exactly when
+// a program is running away, which is the one moment the key is worth having.
+await reset();
+await write('alpha bravo\r\n');
+const ctrlC = await page.evaluate(() => {
+	const t = window.__term, ta = document.querySelector('.term-input');
+	const fire = () => {
+		window.__sentRaw = [];
+		const e = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true, cancelable: true });
+		ta.dispatchEvent(e);
+		return { prevented: e.defaultPrevented,
+			sent: (window.__sentRaw || []).flat().map(b => String.fromCharCode(b)).join('') };
+	};
+	t.clearSelection();
+	const withNone = fire();
+	t.selectAll();
+	const withSel = fire();
+	t.clearSelection();
+	return { withNone, withSel };
+});
+check(ctrlC.withNone.sent === '\x03',
+	`Ctrl-C with nothing selected still sends the interrupt: ${JSON.stringify(ctrlC.withNone.sent)}`);
+check(ctrlC.withSel.sent === '' && ctrlC.withSel.prevented === true,
+	`Ctrl-C with a selection copies instead, and sends the program nothing: `
+	+ `${JSON.stringify(ctrlC.withSel.sent)}`);
+// A copy ANNOUNCES, and the live-region checks further down read every announcement the
+// panel has made. Left behind, "33 lines copied." is counted as the terminal reciting its
+// output and two honest checks go red for a reason that is this check's doing.
+await page.evaluate(() => {
+	document.querySelectorAll('[role="log"] p').forEach(p => p.remove());
+});
 
 await reset();
 await pasteEvent('one line only');
