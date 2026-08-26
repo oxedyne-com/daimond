@@ -2094,9 +2094,15 @@ pub enum Toolkit {
 
 impl Toolkit {
 
-    /// Every toolkit, in the order they are offered to the user.
-    pub fn all() -> [Self; 6] {
-        [Self::Rust, Self::Node, Self::Python, Self::Go, Self::Git, Self::Remote]
+    /// Every toolkit a user can grant a Diamond, in the order they are offered.
+    ///
+    /// [`Toolkit::Remote`] is deliberately NOT among them, and that absence is the whole of its
+    /// scope: it is not a thing a Diamond holds, so there is no name for a Diamond to record, no
+    /// chip to press and nothing for [`Toolkit::parse`] to answer.  A terminal gets it from the
+    /// COMPUTER -- see [`Toolkit::terminal_only`] -- and every list built from this one is
+    /// therefore a list a daimon may legitimately be told about.
+    pub fn all() -> [Self; 5] {
+        [Self::Rust, Self::Node, Self::Python, Self::Go, Self::Git]
     }
 
     /// The toolkit's name, which is what a Diamond records.
@@ -2145,8 +2151,8 @@ impl Toolkit {
                 return Ok(k);
             }
         }
-        Err(err!("'{}' is not a toolkit. Known toolkits: rust, node, python, go, git, remote.",
-            name; Invalid, Input))
+        Err(err!("'{}' is not a toolkit a Diamond can be granted. Known toolkits: rust, node, \
+            python, go, git.", name; Invalid, Input))
     }
 
     /// This toolkit as a rule in a turn's bounds.
@@ -2332,7 +2338,29 @@ impl Toolkit {
     /// run it would not be fenced, and the grant belongs to the trust class where a person
     /// opened the surface and is typing into it.
     ///
-    /// Enforced in three places, none of which trusts the other two.  [`toolkit_bounds`] drops
+    /// # Whose grant it is
+    ///
+    /// **The user's, and per COMPUTER.**  It was a grant given to one Diamond at a time until
+    /// 2026-08-26, and the owner's objection to that is `dev/BLOCKERS.md` B12: *"permissions
+    /// should be a global posture setting, not for individual chats and daimons"*.  A Terminal
+    /// is not tied to a Diamond, so neither is what one may reach.
+    ///
+    /// It is held in the one place it cannot drift from: the key and the wrapper themselves.
+    /// `hand/install/install.sh --remote` makes them, `exec::remote_ready` in the hand reads
+    /// them back, and the hand says `remote:ready` in `hello` beside `home:`, `host:` and
+    /// `shell:` -- which is where [`Machine::remote`] gets it.  So there is no fourth store
+    /// for a permission to live in, nothing to migrate, and no setting that could still say
+    /// yes after the key is deleted.  A machine where the installer never ran says nothing,
+    /// and silence is read as off: turning it on is the user running that script.
+    ///
+    /// It is therefore NOT in [`Toolkit::all`], does not answer to [`Toolkit::parse`], is not
+    /// a name `crate::diamond_meta::normalise_kits` keeps, and has no chip in the page's
+    /// `KITS` row.  A Diamond cannot record it, so nothing about a Diamond can turn it on.
+    ///
+    /// # Where the boundary is
+    ///
+    /// Unchanged by any of that.  Enforced in three places, none of which trusts the other two.
+    /// [`toolkit_bounds`] drops
     /// it, so a daimon's turn never carries the rule and [`fence_spec`] never sees it.  Only
     /// [`terminal_toolkit_bounds`] keeps it, and only `crate::wasm::pty::pty_request` calls
     /// that.  And the hand refuses a fence naming these folders unless the request came in by
@@ -2396,6 +2424,10 @@ pub struct Machine {
     /// The user's login shell, absolute, where the hand said it.  Carried in `caps` as
     /// `shell:<path>`.
     pub shell: Option<String>,
+    // Whether Daimond's own ssh is set up on this computer, from `remote:ready` in `caps`.
+    // The Remote toolchain's whole permission, and the user's rather than a Diamond's: see
+    // [`Toolkit::terminal_only`].
+    pub remote: bool,
 }
 
 impl Machine {
@@ -2434,6 +2466,11 @@ impl Machine {
             // `PATH` the page cannot see, and a terminal opening on a refusal is worse than
             // one opening on `/bin/sh`.
             shell: cap_value(&caps, "shell").filter(|p| p.starts_with('/')),
+            // Affirmative, and only ever this one spelling: an older hand says nothing, and
+            // silence is "not set up" rather than "probably fine". The posture is the user's
+            // act on this machine and the hand reads it off the key and the wrapper
+            // themselves -- `exec::remote_ready` in `hand/src/exec.rs`.
+            remote: caps.iter().any(|c| c == "remote:ready"),
             caps,
         }
     }
@@ -2446,10 +2483,11 @@ impl Machine {
         Self {
             os:    String::new(),
             root:  root.to_string(),
-            home:  None,
-            host:  None,
-            shell: None,
-            caps:  Vec::new(),
+            home:   None,
+            host:   None,
+            shell:  None,
+            remote: false,
+            caps:   Vec::new(),
         }
     }
 
@@ -2526,7 +2564,11 @@ pub fn toolkit_names_json(bounds: &[Bound]) -> String {
 /// # Arguments
 /// * `names` - The recorded toolkit names, as [`Toolkit::name`] spells them.
 pub fn toolkit_bounds(names: &[String]) -> Vec<Bound> {
-    terminal_toolkit_bounds(names).into_iter()
+    // `true` asks for the WIDEST list this build can compose and then drops the terminal-only
+    // part of it, rather than asking for a narrow one. That is deliberate: the filter below is
+    // the rule that matters, and a filter reached only by a branch nothing takes is a rule
+    // nothing tests. This way every call through this door exercises it.
+    terminal_toolkit_bounds(names, true).into_iter()
         // The one narrowing between the two doors, and the whole of it. A toolkit marked
         // [`Toolkit::terminal_only`] is a grant to a surface the USER opened; a command is a
         // surface a daimon reaches, so the rule is dropped here and can never enter a turn's
@@ -2543,9 +2585,19 @@ pub fn toolkit_bounds(names: &[String]) -> Vec<Bound> {
 /// **`crate::wasm::pty::pty_request` is the only caller there should ever be**, and a second
 /// one is a decision about trust rather than a convenience: see [`Toolkit::terminal_only`].
 ///
+/// **The two arguments come from different people and that is the point.**  `names` is what the
+/// USER lent this Diamond and it is per Diamond; `remote` is what the user did to this COMPUTER
+/// and it is per machine.  [`Toolkit::Remote`] cannot arrive through `names` at all -- it is not
+/// in [`Toolkit::all`], so [`Toolkit::parse`] does not answer to it and no Diamond can record it
+/// -- which is why moving its scope needed no new store and left the three refusals where they
+/// were.
+///
 /// # Arguments
 /// * `names` - The recorded toolkit names, as [`Toolkit::name`] spells them.
-pub fn terminal_toolkit_bounds(names: &[String]) -> Vec<Bound> {
+/// * `remote` - [`Machine::remote`]: whether Daimond's own ssh is set up on this computer.  Never
+///   taken from the ask, for the reason no toolkit ever is -- a caller that could name its own
+///   grant would be choosing its own fence.
+pub fn terminal_toolkit_bounds(names: &[String], remote: bool) -> Vec<Bound> {
     let mut out: Vec<Bound> = Vec::new();
     for n in names {
         if let Ok(k) = Toolkit::parse(n) {
@@ -2553,6 +2605,12 @@ pub fn terminal_toolkit_bounds(names: &[String]) -> Vec<Bound> {
             if !out.contains(&b) {
                 out.push(b);
             }
+        }
+    }
+    if remote {
+        let b = Toolkit::Remote.bound();
+        if !out.contains(&b) {
+            out.push(b);
         }
     }
     out
@@ -14591,6 +14649,18 @@ mod tests {
         m
     }
 
+    /// A hand that says Daimond's own ssh is set up on this computer.
+    ///
+    /// The posture is per MACHINE and the user's own act -- `install.sh --remote` writes the
+    /// key and the wrapper, and `exec::remote_ready` in `hand/src/exec.rs` reads them back --
+    /// so here it is one entry in `caps` and nothing else anywhere.
+    fn machine_with_remote(home: &str) -> Machine {
+        let mut m = machine(home);
+        m.caps.push(fmt!("remote:ready"));
+        m.remote = true;
+        m
+    }
+
     /// The ssh key reaches a terminal and never a command, at THIS end.
     ///
     /// B11 is the owner's own request -- an ssh to another machine that survives a dropout --
@@ -14602,14 +14672,19 @@ mod tests {
     /// The hand refuses it a second time, at its own door, because the fence travels through
     /// the page and the page is not the app -- see `a_fence_may_only_name_roots_the_grant_
     /// implies` in `hand/src/exec.rs`.  This is the first of the two, and it must hold on its
-    /// own: a Diamond that recorded the grant hands the same list of names to both doors, and
-    /// only the door decides.
+    /// own.
+    ///
+    /// **The SCOPE moved on 2026-08-26 and the boundary did not.**  It was a grant a user gave
+    /// one Diamond at a time; it is now a posture the user sets on the computer, and this test
+    /// says so by granting the Diamond NOTHING and expecting the terminal to have it anyway.
     #[test]
     fn test_the_remote_toolkit_is_a_terminals_and_not_a_commands_00() {
-        let names = vec![fmt!("remote"), fmt!("rust")];
-        let m = machine("/home/u");
+        // Nothing the Diamond recorded. `rust` is here only so that dropping one grant can be
+        // seen not to drop the others with it.
+        let names = vec![fmt!("rust")];
+        let m = machine_with_remote("/home/u");
 
-        // The command door: the name is recorded, and it grants nothing.
+        // The command door: the machine is set up, and it grants nothing.
         let cmd = toolkit_bounds(&names);
         assert!(!cmd.contains(&Bound::Toolkit(Toolkit::Remote)),
             "a command's bounds carry the Remote grant: {:?}", cmd);
@@ -14628,12 +14703,12 @@ mod tests {
                 "a command's fence names '{}', which is the ssh key's own directory", p);
         }
 
-        // The terminal door: granted, and the key is readable.
-        let term = terminal_toolkit_bounds(&names);
+        // The terminal door: granted by the COMPUTER, and the key is readable.
+        let term = terminal_toolkit_bounds(&names, m.remote);
         assert!(term.contains(&Bound::Toolkit(Toolkit::Remote)),
-            "the terminal was not given what the user granted it: {:?}", term);
+            "the terminal was not given what the machine is set up for: {:?}", term);
         let mut tb = diamond_bounds("diamonds/d1", &[fmt!("proj")], &[]);
-        tb.extend(terminal_toolkit_bounds(&names));
+        tb.extend(terminal_toolkit_bounds(&names, m.remote));
         let tf = fence_spec(&tb, &m, false);
         assert!(tf.ro.contains(&fmt!("/home/u/.config/oxedyne/daimond-hand/ssh")),
             "the terminal cannot read the key it was granted: ro={:?}", tf.ro);
@@ -14662,6 +14737,72 @@ mod tests {
                 path),
             None => panic!("the wrapper is not on PATH: {}", path),
         }
+    }
+
+    /// A Terminal reaches ssh in a Diamond that was granted nothing, and in no Diamond at all.
+    ///
+    /// The owner's sentence, on being shown the per-Diamond chip: *"The terminal is tied to a
+    /// diamond?  No, it should be a generic tool."*  A Diamond is a place work is kept; a
+    /// terminal is a person at a keyboard, and what the person may reach is not a property of
+    /// the folder they happen to have open.
+    ///
+    /// Asserted against a Diamond with an empty grant list AND against bounds carrying no
+    /// Diamond's toolkits at all, because those are the two shapes a user actually meets: a
+    /// fresh Diamond, and one they never thought about.
+    #[test]
+    fn test_a_terminal_reaches_ssh_in_a_diamond_granted_nothing_00() {
+        let m = machine_with_remote("/home/u");
+        for names in [Vec::new(), vec![fmt!("node")]] {
+            let term = terminal_toolkit_bounds(&names, m.remote);
+            assert!(term.contains(&Bound::Toolkit(Toolkit::Remote)),
+                "a Terminal in a Diamond granted {:?} cannot ssh, so the posture is still tied \
+                to the Diamond: {:?}", names, term);
+            let mut tb = diamond_bounds("diamonds/d1", &[fmt!("proj")], &[]);
+            tb.extend(terminal_toolkit_bounds(&names, m.remote));
+            let tf = fence_spec(&tb, &m, false);
+            assert!(tf.ro.contains(&fmt!("/home/u/.config/oxedyne/daimond-hand/ssh")),
+                "the key is unreadable to a Terminal in a Diamond granted {:?}: ro={:?}",
+                names, tf.ro);
+        }
+    }
+
+    /// An absent posture is off, and no Diamond can turn it on.
+    ///
+    /// Two halves of the same rule.  A computer where nobody ran `install.sh --remote` says
+    /// nothing in `caps`, and silence has to read as "not set up" rather than "probably fine" --
+    /// otherwise a machine that never had ssh configured would silently gain it.  And the name
+    /// must not be recordable anywhere, or the old per-Diamond grant would still exist under a
+    /// store nobody was watching.
+    #[test]
+    fn test_a_machine_that_never_set_ssh_up_does_not_gain_it_00() {
+        // Silence.
+        let quiet = r#"{"paired":true,"os":"linux","root":"/home/u/ws","caps":["fence:linux","home:/home/u"]}"#;
+        assert!(!Machine::from_status(quiet).remote,
+            "a hand that said nothing about ssh was read as having it set up");
+        // Said, and exactly.
+        let said = r#"{"paired":true,"os":"linux","root":"/home/u/ws","caps":["fence:linux","remote:ready"]}"#;
+        assert!(Machine::from_status(said).remote);
+        // A near miss is not a yes: the cap is one spelling and not a prefix match.
+        let near = r#"{"paired":true,"os":"linux","root":"/home/u/ws","caps":["fence:linux","remote:none"]}"#;
+        assert!(!Machine::from_status(near).remote,
+            "a hand that said its ssh was NOT set up was read as saying it was");
+
+        // A machine that is not set up gets nothing at the terminal door either, whatever a
+        // Diamond recorded and however the name is spelled.
+        let off = machine("/home/u");
+        assert!(!off.remote);
+        let term = terminal_toolkit_bounds(&[fmt!("remote"), fmt!("rust")], off.remote);
+        assert!(!term.contains(&Bound::Toolkit(Toolkit::Remote)),
+            "a terminal on a machine with no ssh set up was granted the key: {:?}", term);
+
+        // And the name is not one a Diamond can record: it is not offered, it does not parse,
+        // and it is not a toolkit a daimon is ever told about.
+        assert!(!Toolkit::all().contains(&Toolkit::Remote),
+            "Remote is offered as a per-Diamond grant again");
+        assert!(Toolkit::parse("remote").is_err(),
+            "'remote' still parses as a toolkit a Diamond can be granted");
+        assert!(crate::diamond_meta::normalise_kits(&[fmt!("remote")]).is_empty(),
+            "the store still keeps 'remote' as a Diamond's grant");
     }
 
     /// A terminal opens on the shell the user's own session uses.
@@ -21956,7 +22097,7 @@ mod tests {
     fn test_the_git_toolkit_grants_the_configuration_and_denies_every_credential() {
         let m = Machine {
             os: fmt!("linux"), root: fmt!("/home/u/work"),
-            home: Some(fmt!("/home/u")), host: None, shell: None,
+            home: Some(fmt!("/home/u")), host: None, shell: None, remote: false,
             caps: vec![fmt!("fence:linux")],
         };
         let kit = Kit::resolve(&[Toolkit::Git.bound()], &m).expect("git resolves");
@@ -21993,7 +22134,7 @@ mod tests {
     fn homed() -> Machine {
         Machine {
             os: fmt!("linux"), root: fmt!("/home/u/usr"), home: Some(fmt!("/home/u")),
-            host: None, shell: None, caps: vec![fmt!("fence:linux")],
+            host: None, shell: None, remote: false, caps: vec![fmt!("fence:linux")],
         }
     }
 
@@ -22077,7 +22218,7 @@ mod tests {
     fn test_a_machine_with_no_home_grants_no_toolchain_root() {
         let m = Machine {
             os: fmt!("linux"), root: fmt!("/home/u/usr"), home: None,
-            host: None, shell: None, caps: vec![fmt!("fence:linux")],
+            host: None, shell: None, remote: false, caps: vec![fmt!("fence:linux")],
         };
         let bounds: Vec<Bound> = Toolkit::all().iter().map(|k| k.bound()).collect();
         let f = fence_spec(&bounds, &m, false);

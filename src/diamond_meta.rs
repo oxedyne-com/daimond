@@ -134,7 +134,7 @@ impl Meta {
 /// exactly what it is for, against a list that was one name short. Add a toolkit here whenever one
 /// is added there, and see `test_every_toolkit_the_engine_knows_is_a_name_the_store_keeps`, which
 /// fails when they disagree.
-const KNOWN_KITS: [&str; 6] = ["rust", "node", "python", "go", "git", "remote"];
+const KNOWN_KITS: [&str; 5] = ["rust", "node", "python", "go", "git"];
 
 /// Normalise a caller's toolkit grants into the form the store holds.
 ///

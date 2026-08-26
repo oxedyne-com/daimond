@@ -2836,6 +2836,42 @@ const TOOLKIT_ROOTS: &[KitRoot] = &[
         write: true,  term: true },
 ];
 
+/// Has the user set Daimond's own ssh up on this computer?
+///
+/// The Remote toolchain's posture, and it is READ rather than stored.  `install.sh --remote`
+/// makes the key and writes the wrapper; a machine where nobody ran it has neither.  So there
+/// is no setting anywhere that could disagree with what it describes, and nothing new to
+/// forget, migrate or leave switched on -- the answer IS the two files ssh cannot work
+/// without.  A machine that never had ssh set up therefore never gains it by itself, which is
+/// the whole of why the posture is not a default.
+///
+/// Both files, not either.  A wrapper with no key behind it is an `ssh` on `PATH` that
+/// connects to nothing; a key with no wrapper is a key nothing would ever pass to OpenSSH,
+/// which takes its home directory from the passwd entry and not from `HOME`.  Announcing
+/// "ready" for half of it would put a grant in a terminal's fence for a toolchain that cannot
+/// work.
+///
+/// Said to the page in `hello`'s `caps` as `remote:ready`, beside `home:`, `host:` and
+/// `shell:`, and for the same reason as all three: the page cannot read this machine.
+pub fn remote_ready() -> bool {
+    match home_dir() {
+        Some(h) => remote_ready_at(Path::new(&h)),
+        None    => false,
+    }
+}
+
+/// As [`remote_ready`], against a named home directory.
+///
+/// Split out so the answer can be tested without touching the environment: `HOME` is process
+/// state and a test that set it would decide what every other test on the same process saw.
+///
+/// # Arguments
+/// * `home` - The home directory to look under.
+fn remote_ready_at(home: &Path) -> bool {
+    let base = home.join(".config/oxedyne/daimond-hand");
+    base.join("bin/ssh").is_file() && base.join("ssh/id_daimond").is_file()
+}
+
 /// One folder a named toolchain may reach, and at what level.
 ///
 /// Mirrors one row of `Toolkit::grants` in the app's `src/tools.rs`.  The
@@ -8637,6 +8673,54 @@ mod tests {
     /// `REVIEW.md` §1.5.  Both halves matter equally and the second is the one
     /// that decides whether this ships: a clamp that refuses `/etc` and also
     /// refuses `~/.cargo` is a clamp that stops `cargo` working, and a security
+    /// The Remote posture is the key and the wrapper, and neither half alone.
+    ///
+    /// This is where the whole of B12's answer sits for the Remote grant: the permission is not
+    /// stored anywhere, it is READ off the two files `install.sh --remote` writes.  So there is
+    /// no fourth place a permission lives, nothing to migrate, and no setting that could go on
+    /// saying yes after the key is deleted.
+    ///
+    /// Both halves are required because neither half connects to anything.  A wrapper with no
+    /// key behind it is an `ssh` on `PATH` that fails; a key with no wrapper is a key nothing
+    /// would ever pass to OpenSSH, which takes its home from the passwd entry and not from
+    /// `HOME`.  Announcing "ready" for either would put a toolchain in a terminal's fence that
+    /// cannot work.
+    #[test]
+    fn the_remote_posture_is_the_key_and_the_wrapper() -> Outcome<()> {
+        let home = res!(fixture("remote_posture"));
+        let base = home.join(".config/oxedyne/daimond-hand");
+        res!(std::fs::create_dir_all(base.join("bin")));
+        res!(std::fs::create_dir_all(base.join("ssh")));
+
+        // A machine where the installer never ran.
+        assert!(!remote_ready_at(&home),
+            "a home with no Daimond ssh in it was read as set up");
+
+        // The wrapper alone: an `ssh` on PATH with nothing behind it.
+        res!(std::fs::write(base.join("bin/ssh"), "#!/bin/sh\n"));
+        assert!(!remote_ready_at(&home),
+            "a wrapper with no key behind it was read as set up");
+
+        // The key alone: nothing on PATH would ever hand it to OpenSSH.
+        res!(std::fs::remove_file(base.join("bin/ssh")));
+        res!(std::fs::write(base.join("ssh/id_daimond"), "k"));
+        assert!(!remote_ready_at(&home),
+            "a key with no wrapper in front of it was read as set up");
+
+        // Both, which is what the installer leaves behind.
+        res!(std::fs::write(base.join("bin/ssh"), "#!/bin/sh\n"));
+        assert!(remote_ready_at(&home),
+            "the installer ran and the hand still says the machine is not set up");
+
+        // A directory is not a wrapper. `is_file` and not `exists`, because a fence naming a
+        // folder where a program should be is a terminal that opens on a refusal.
+        res!(std::fs::remove_file(base.join("bin/ssh")));
+        res!(std::fs::create_dir_all(base.join("bin/ssh")));
+        assert!(!remote_ready_at(&home),
+            "a DIRECTORY called ssh was read as the wrapper");
+        Ok(())
+    }
+
     /// The user's own shell files reach a terminal and never a command.
     ///
     /// Lane U's third refusal was `bash: ~/.bashrc: Permission denied`, and the repair is

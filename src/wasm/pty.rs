@@ -394,8 +394,15 @@ pub async fn pty_request(ask_json: String) -> String {
     // another machine that nothing here fences. A person opened this surface and is typing into
     // it; a daimon's `run` never can, because `toolkit_bounds` -- which is what every other
     // caller uses -- drops the rule. See `Toolkit::terminal_only`.
+    //
+    // The second argument is the MACHINE's answer and not this Diamond's. `ssh` is not a thing a
+    // Diamond holds -- a terminal is not tied to one either -- so the posture is the user's act
+    // on this computer, `install.sh --remote`, reported in `hello` as `remote:ready` and read
+    // here off `Machine`. No Diamond grants it, and one that never had it granted opens a
+    // terminal that can ssh exactly like every other.
     bounds.extend(crate::tools::terminal_toolkit_bounds(
-        &extract_json_string_array(ask, "toolkits").unwrap_or_default()));
+        &extract_json_string_array(ask, "toolkits").unwrap_or_default(),
+        machine.remote));
 
     // A tainted session loses the network, the same rule `egress_check` applies
     // to a URL -- and now the same rule the user's PERMISSION MODE governs. The

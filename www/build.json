@@ -1,1 +1,1 @@
-{"build":"8f82d9ae3a6a","note":"The Terminal says why it will not start, in a person's words, and can ssh to a session that survives a dropout."}
+{"build":"5aeebae6d413","note":"Any Terminal you open reaches ssh; no Diamond needs granting anything, and no command can."}

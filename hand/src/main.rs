@@ -1426,6 +1426,22 @@ impl Desk {
             Ok(sh) if sh.starts_with('/') && !sh.contains('\0') => caps.push(fmt!("shell:{}", sh)),
             _ => {},
         }
+        // WHETHER DAIMOND'S OWN SSH IS SET UP HERE, which is the whole of the Remote
+        // toolchain's permission.
+        //
+        // It used to be a grant the user gave a Diamond, one Diamond at a time, and the owner's
+        // objection to that is the entry `dev/BLOCKERS.md` calls B12: a terminal is not tied to
+        // a Diamond, so neither is what a terminal may reach. The posture is the USER'S and it
+        // is per COMPUTER -- `install.sh --remote` on this machine, or nothing.
+        //
+        // Saying it here rather than storing it in the app means there is no fourth place a
+        // permission lives: the answer is read from the key and the wrapper themselves, so it
+        // cannot drift from them, cannot be left on after the key is deleted, and cannot be
+        // turned on by anything but the user running the installer. See
+        // `exec::remote_ready`, and `Machine::remote` at the other end.
+        if daimond_hand::exec::remote_ready() {
+            caps.push(fmt!("remote:ready"));
+        }
         if !self.say(Resp::Hello {
             proto:   daimond_hand::PROTO,
             host:    fmt!("{}", daimond_hand::HOST_NAME),

@@ -19892,6 +19892,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// The same five names `Toolkit::all` gives, and they are names rather than labels
 		/// because the name is what is STORED and what reaches `Toolkit::parse`. The label is
 		/// only ever how it is written on a button.
+		///
+		/// `remote` is NOT here and must not be added back. A Terminal's ssh is a posture the
+		/// user sets on the COMPUTER -- `hand/install/install.sh --remote`, which makes the
+		/// key and writes the wrapper -- and the hand reports it in `hello` as `remote:ready`.
+		/// It was a per-Diamond chip until 2026-08-26 and the owner's objection to that is
+		/// `dev/BLOCKERS.md` B12: a Terminal is not tied to a Diamond, so neither is what one
+		/// may reach. There is nothing to press here because there is nothing per Diamond to
+		/// decide.
 		var KITS = [
 			{ name: 'rust',   label: 'Rust' },
 			{ name: 'node',   label: 'Node' },
@@ -19903,13 +19911,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// and an unreadable hooks directory is indistinguishable from an empty one,
 			// so the credential-scanning pre-commit hook silently does not run.
 			{ name: 'git',    label: 'Git' },
-			// THE ONE GRANT A DAIMON CANNOT USE, and the row says so in its own tooltip:
-			// it lends an ssh key of Daimond's own to a Terminal the user opened, and an
-			// ssh reaches a shell on another machine that no fence here binds. A command
-			// is refused it at both ends -- `toolkit_bounds` in the engine, and the hand's
-			// own TOOLKIT_ROOTS. Not offered as a per-command capability, because it is
-			// not one.
-			{ name: 'remote', label: 'Remote' },
 		];
 
 		/// Draw the toolchain grants for the open Diamond.

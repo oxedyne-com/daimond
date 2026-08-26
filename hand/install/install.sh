@@ -731,6 +731,12 @@ fi
 # The Remote toolkit puts this directory first on a Terminal's `PATH`, read-only,
 # so nothing a fenced command does can add a second program to it.
 #
+# RUNNING THIS IS THE PERMISSION.  It was a grant given to one Diamond at a time
+# until 2026-08-26, and the owner's objection is `dev/BLOCKERS.md` B12 -- a
+# Terminal is not tied to a Diamond, so neither is what one may reach.  The hand
+# reads the key and the wrapper back (`exec::remote_ready`) and tells the page
+# `remote:ready`; a machine where this never ran says nothing and gets nothing.
+#
 # NOTHING HERE INSTALLS THE KEY ANYWHERE.  Which machines Daimond may reach is a
 # decision, and it stays one: the public key is printed, with the line to add and
 # the `restrict,pty` in front of it that says a shell and nothing else.
@@ -795,9 +801,10 @@ WRAPPER
 	echo
 	echo "  restrict,pty $(cat "$RDIR/ssh/id_daimond.pub")"
 	echo
-	echo "Then grant the Remote toolchain to a Diamond, and open its Terminal. A Diamond"
-	echo "without it cannot reach the key, and neither can any command -- the grant is"
-	echo "lent to a terminal you opened by hand and to nothing a daimon can ask for."
+	echo "Then open a Terminal in Daimond -- in any Diamond, or none -- and ssh. Nothing"
+	echo "has to be granted to a Diamond: this is a setting on THIS computer, and running"
+	echo "this script is what turns it on. No command a daimon runs can reach the key,"
+	echo "whatever it asks for -- the grant is lent to a terminal you opened by hand."
 	echo
 fi
 
