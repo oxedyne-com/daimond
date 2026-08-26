@@ -4231,6 +4231,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The search row's five option labels: one of them is a phrase this app
 			// made up, and the kinds beside all of them are ours too.
 			try { SearchRow.render(); } catch (e) { /* the section is not up yet */ }
+			try { TermRootRow.render(); } catch (e) { /* no hand has answered yet */ }
 			// Both attachment footers. Their chrome carries three words of ours --
 			// the view the toggle offers, "Attach", and the name of the scrolling
 			// region -- and a footer stands on screen for as long as anything is
@@ -22942,6 +22943,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// in a Diamond granted Rust met `cargo` as a refusal, because the fence
 				// never named the toolchain and the hand clamps to what it was told.
 				toolkits:  b.toolkits || [],
+				// The folder the user chose for a terminal on this computer, or '' for the
+				// granted root. Validated in `pty_request` against what the MACHINE offered,
+				// so a value this page invented is ignored rather than honoured.
+				terminal_root: (function () {
+					var m = TermRootRow.machine;
+					if (!m) return '';
+					return m.pinned || terminalRootFor(m.ws) || '';
+				})(),
 				cwd:       b.own_dir,
 				cols:      size.cols,
 				rows:      size.rows,
@@ -22992,6 +23001,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var st = {};
 				try { st = JSON.parse(await DaimondPty.status()); } catch (x) { st = {}; }
 				if (!st.paired) { refuse(st.reason || t('term.not_paired')); return; }
+				// What this computer offers, taken from the answer already in hand. The
+				// settings row is a choice among these and cannot name a third, so it has to
+				// be told what they are -- and this is the one place they arrive without a
+				// second native host being launched to ask.
+				try {
+					var caps = st.caps || [];
+					var val  = function (p) {
+						for (var i = 0; i < caps.length; i++) {
+							if (caps[i].indexOf(p) === 0) return caps[i].slice(p.length);
+						}
+						return '';
+					};
+					TermRootRow.learn({
+						root:     st.root || val('root:'),
+						ws:       val('ws:'),
+						pinned:   val('terminal-root:'),
+						ceilings: caps.filter(function (c) { return c.indexOf('terminal-ceiling:') === 0; })
+							.map(function (c) { return c.slice('terminal-ceiling:'.length); }),
+					});
+				} catch (x) { /* the settings panel is not up; the terminal still opens */ }
 				var req = await request();
 				if (!req || req.refused) { refuse((req && req.refused) || t('term.no_composer')); return; }
 				var live = await DaimondPty.open(req, subs())
@@ -33315,6 +33344,117 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// than falling back to the balance — which is the whole shape of this row,
 	// because the alternative is a user paying us for a resale that can stop
 	// working on somebody else's decision.
+	// ── The Terminal's folder ───────────────────────────────────
+	//
+	// A terminal you open is YOU, not a daimon, so it may be given more than the folder a
+	// model is fenced to. The owner asked for that on 2026-08-26 -- "I want it to be able to
+	// roam over the browser and machine workspaces of the user" -- and then asked the better
+	// question: why should the choice live in the installer, where it gets forgotten?
+	//
+	// So it lives here. What it may NOT do is invent a folder: the options are written by the
+	// machine and arrive in the hand's `hello` as `terminal-ceiling:` entries, and this row is
+	// a choice among them. That is the rule a toolkit already follows -- a fixed row the user
+	// ticks -- applied to the root itself, and it is the line that actually holds, because
+	// ticking Rust already grants `~/.cargo` from this same panel.
+	var TERMROOT_KEY = 'daimond-terminal-root';
+
+	/// The folder chosen for a terminal on THIS computer, or '' for the granted root.
+	///
+	/// Keyed by the workspace identity the hand reports, so two computers -- or one computer
+	/// with two granted folders -- do not inherit each other's answer.
+	function terminalRootFor(wsId) {
+		if (!wsId) return '';
+		var all = readJson(TERMROOT_KEY, {}) || {};
+		var v = all[wsId];
+		return (typeof v === 'string') ? v : '';
+	}
+
+	function setTerminalRootFor(wsId, path) {
+		if (!wsId) return;
+		var all = readJson(TERMROOT_KEY, {}) || {};
+		if (!path) delete all[wsId]; else all[wsId] = path;
+		try { localStorage.setItem(TERMROOT_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
+	}
+
+	var TermRootRow = {
+		/// What the hand last said about this computer, or null before it has said anything.
+		machine: null,
+
+		/// Remember the hand's answer, and repaint if the panel is on screen.
+		///
+		/// Called from wherever `status()` lands rather than asking again: the hand is asked
+		/// once per connection and a second ask would be a second native host.
+		learn: function (m) {
+			TermRootRow.machine = m || null;
+			try { TermRootRow.render(); } catch (e) { /* the section is not up yet */ }
+		},
+
+		wire: function () {
+			var sel = document.getElementById('set-terminal-root');
+			if (!sel || sel._termRootWired) return !!sel;
+			sel._termRootWired = true;
+			sel.addEventListener('change', function () {
+				var m = TermRootRow.machine;
+				setTerminalRootFor(m && m.ws, sel.value);
+				TermRootRow.render();
+			});
+			return true;
+		},
+
+		render: function () {
+			var sec = document.getElementById('termroot-section');
+			if (!sec || !TermRootRow.wire()) return;
+			var m = TermRootRow.machine;
+			// No hand, or a hand that offered nothing beyond what it granted: there is no
+			// choice to put on screen, and a pulldown with one item is a question with one
+			// answer.
+			if (!m || !m.root || !(m.ceilings || []).length) { sec.style.display = 'none'; return; }
+			sec.style.display = '';
+			var head = document.getElementById('termroot-head');
+			if (head) head.textContent = tOr('termroot.head', 'Terminal folder');
+			var lab = document.querySelector('label[for="set-terminal-root"]');
+			if (lab) lab.textContent = tOr('termroot.label', 'Where a terminal may reach');
+			var note = document.getElementById('termroot-note');
+			if (note) note.textContent = tOr('termroot.note',
+				'A terminal you open is you, not a daimon: it may be given more than the folder '
+				+ 'a model is fenced to. Only folders this computer offers appear here.');
+
+			var sel = document.getElementById('set-terminal-root');
+			var pin = document.getElementById('termroot-pinned');
+			sel.innerHTML = '';
+			var add = function (value, label) {
+				var o = document.createElement('option');
+				o.value = value;
+				o.textContent = label;
+				sel.appendChild(o);
+			};
+			add('', tOr('termroot.same', 'The same folder Daimond was granted') + ' \u2014 ' + m.root);
+			(m.ceilings || []).forEach(function (p) { add(p, p); });
+
+			// PINNED at a shell is a decision already made, and re-asking it here would be
+			// this panel offering to overrule the machine -- which is exactly what it may
+			// not do. Shown, so it is not a mystery, and disabled.
+			if (m.pinned) {
+				sel.value = m.pinned;
+				sel.disabled = true;
+				if (pin) {
+					pin.style.display = '';
+					pin.textContent = tOr('termroot.pinned',
+						'Set on this computer with install.sh --terminal-workspace, so it is not '
+						+ 'changed from here.');
+				}
+				return;
+			}
+			sel.disabled = false;
+			if (pin) pin.style.display = 'none';
+			var cur = terminalRootFor(m.ws);
+			// A folder the machine has stopped offering falls back rather than being kept:
+			// a stored answer to a question nobody is asking any more is a fence nobody chose.
+			if (cur && (m.ceilings || []).indexOf(cur) < 0) { cur = ''; setTerminalRootFor(m.ws, ''); }
+			sel.value = cur;
+		},
+	};
+
 	var SearchRow = {
 		/// Wire the two controls, once. Returns whether there was anything to wire:
 		/// a page without the section (the harness's stripped shells) is not a

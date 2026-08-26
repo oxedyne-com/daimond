@@ -439,6 +439,27 @@
 								<p class="search-engine-note" id="search-key-warn" data-warn="1" style="display:none"></p>
 							</div>
 						</div>
+
+						<!-- The Terminal's folder. A terminal is the user at a keyboard and a
+						     command is a daimon, so the two may be different sizes -- and the
+						     choice is made HERE rather than only in install.sh, because a
+						     setting nobody can find is a setting that gets forgotten.
+
+						     The options are written by the MACHINE and read out of the hand's
+						     hello as `terminal-ceiling:` entries. The page chooses among them
+						     and cannot name a folder the machine did not offer, which is the
+						     same rule a toolkit follows. Where the user pinned one at a shell
+						     with `install.sh --terminal-workspace`, the row says so and the
+						     select is disabled: a decision already made is not re-asked. -->
+						<div class="settings-section" id="termroot-section" style="display:none">
+							<h3 id="termroot-head" data-i18n="termroot.head">Terminal folder</h3>
+							<div class="search-engine-row">
+								<label class="cfg-fieldlabel" for="set-terminal-root" data-i18n="termroot.label">Where a terminal may reach</label>
+								<select id="set-terminal-root" class="settings-select"></select>
+								<p class="search-engine-note" id="termroot-note" data-i18n="termroot.note">A terminal you open is you, not a daimon: it may be given more than the folder a model is fenced to. Only folders this computer offers appear here.</p>
+								<p class="search-engine-note" id="termroot-pinned" style="display:none"></p>
+							</div>
+						</div>
 					</div>
 
 					<!-- Credits: reached from the "Credits" status row. -->

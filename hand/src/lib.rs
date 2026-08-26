@@ -67,6 +67,21 @@ pub const HOST_NAME: &str = "daimond-hand";
 /// and nothing else is one the hand made, and may be tightened to 0700.
 pub const ROOT_FILE: &str = "root.txt";
 
+/// The file, beside the journal, naming the widest a TERMINAL may ever reach.
+///
+/// A terminal is the user at a keyboard and a command is a daimon, and the two
+/// deserve different sizes: the owner asked for exactly that on 2026-08-26, having
+/// picked `~/usr` for the one root he had "for no reason other than I saw no need to
+/// go higher".
+///
+/// It is a CEILING and not the working value.  The page may name a terminal's folder
+/// within it and may never widen past it, which is the whole reason this lives on the
+/// machine and is written by the installer: a page that could name its own root could
+/// name a wider one, and every other rule here rests on its not being able to.
+///
+/// Absent, and a terminal gets [`ROOT_FILE`] exactly as before.
+pub const TERMINAL_ROOT_FILE: &str = "terminal-root.txt";
+
 /// The version string this build reports, taken from the manifest at compile time.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

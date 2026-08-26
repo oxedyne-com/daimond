@@ -159,9 +159,13 @@ const MARKER_RESERVE: usize = 128;
 /// In `lib.rs` because [`journal`] needs it too, to tell its own directory from
 /// somebody else's.
 use daimond_hand::ROOT_FILE;
+use daimond_hand::TERMINAL_ROOT_FILE;
 
 /// The variable that names the granted root, which takes precedence over the file.
 const ROOT_VAR: &str = "DAIMOND_HAND_ROOT";
+
+/// The terminal ceiling's variable, for the same reason [`ROOT_VAR`] exists.
+const TERMINAL_ROOT_VAR: &str = "DAIMOND_HAND_TERMINAL_ROOT";
 
 /// Daimond's own directory inside a workspace.
 ///
@@ -197,6 +201,14 @@ struct Serve {
     fence:    Fence,
     /// The absolute folder this hand may work in.
     root:     PathBuf,
+    /// The folders this machine will let a TERMINAL be fenced to, widest last.
+    ///
+    /// Always at least the granted root. See [`terminal_ceilings`]: the page chooses
+    /// between them and cannot name a third, which is the Toolkit rule applied to the
+    /// root itself.
+    term_ceilings: Vec<PathBuf>,
+    /// Whether `terminal-root.txt` pinned that list, which is a decision the user already made.
+    term_pinned: bool,
     /// What is re-executed to apply the fence before a command exists.
     ///
     /// [`Launcher::SelfExe`] everywhere but in a test, where `/proc/self/exe`
@@ -598,7 +610,70 @@ fn tighten(path: &Path) {
 /// # Arguments
 /// * `dir` - The journal directory.
 fn root_from_file(dir: &Path) -> Option<String> {
-    let txt = match fs::read_to_string(dir.join(ROOT_FILE)) {
+    named_in_file(dir, ROOT_FILE)
+}
+
+/// The terminal ceiling, where the installer wrote one.
+///
+/// Resolved the same way and to the same rules as [`granted_root`], and it is a
+/// CEILING: what a terminal may never reach past, not where one opens. A ceiling that
+/// is not an absolute directory is treated as absent rather than refused -- the hand
+/// still has a granted root to work from, and refusing to start over a file the user
+/// may not know exists would take the machine away over an optional setting.
+///
+/// # Arguments
+/// * `dir` - The journal directory, which is where the file lives.
+fn terminal_ceilings(dir: &Path, root: &Path) -> Vec<PathBuf> {
+    // Pinned: an installer that named a ceiling has made the decision, and the browser is offered
+    // that and nothing else.
+    if let Some(p) = terminal_ceiling(dir) {
+        return vec![p];
+    }
+    // Otherwise the two folders this machine can honestly offer: what it was granted, and the
+    // account it runs as. Both come from the machine, which is the property that matters -- the
+    // page CHOOSES between them and cannot invent a third.
+    let mut out = vec![root.to_path_buf()];
+    if let Ok(h) = std::env::var("HOME") {
+        let p = PathBuf::from(&h);
+        if p.is_absolute() {
+            if let Ok(c) = fs::canonicalize(&p) {
+                if c.is_dir() && c != root {
+                    out.push(c);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The ceiling the installer pinned, where it pinned one.
+fn terminal_ceiling(dir: &Path) -> Option<PathBuf> {
+    let raw = match std::env::var(TERMINAL_ROOT_VAR) {
+        Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => match named_in_file(dir, TERMINAL_ROOT_FILE) {
+            Some(s) => s,
+            None    => return None,
+        },
+    };
+    let p = PathBuf::from(&raw);
+    if !p.is_absolute() {
+        eprintln!("daimond-hand: the terminal ceiling '{}' is not an absolute path, so it was \
+            ignored and a terminal gets the granted root.", raw);
+        return None;
+    }
+    match fs::canonicalize(&p) {
+        Ok(c) if c.is_dir() => Some(c),
+        _ => {
+            eprintln!("daimond-hand: the terminal ceiling '{}' is not a directory on this \
+                machine, so it was ignored and a terminal gets the granted root.", raw);
+            None
+        },
+    }
+}
+
+/// The first line of `name` beside the journal that is neither blank nor a comment.
+fn named_in_file(dir: &Path, name: &str) -> Option<String> {
+    let txt = match fs::read_to_string(dir.join(name)) {
         Ok(t)  => t,
         Err(_) => return None,
     };
@@ -1245,6 +1320,10 @@ struct Desk {
     sys:    Seccomp,
     /// The folder this hand may work in.
     root:   PathBuf,
+    /// The folders a terminal may be fenced to, widest last. Never empty.
+    term_ceilings: Vec<PathBuf>,
+    /// Whether the installer PINNED that list to one folder, rather than offering a choice.
+    term_pinned: bool,
     /// What the page can check that folder's identity against.
     ws:     Identity,
     /// The operating system, in the wire's own vocabulary.
@@ -1370,6 +1449,23 @@ impl Desk {
         }
         caps.extend(self.sys.caps());
         caps.push(fmt!("root:{}", self.root.display()));
+        // The CEILING, not where a terminal opens. Said only where it differs from the
+        // granted root, so a page reading no `terminal-root:` gets the behaviour every
+        // build before this one had rather than a second name for the same folder.
+        // OFFERS and a PIN are different statements and the page acts on them differently. An
+        // offer is a folder this machine is willing to fence a terminal to, and the user chooses
+        // among them; a pin is a choice the user already made at a shell, and the page follows it
+        // rather than offering anything. Only the machine writes either.
+        for c in &self.term_ceilings {
+            if c != &self.root {
+                caps.push(fmt!("terminal-ceiling:{}", c.display()));
+            }
+        }
+        if self.term_pinned {
+            if let Some(c) = self.term_ceilings.last() {
+                caps.push(fmt!("terminal-root:{}", c.display()));
+            }
+        }
         caps.push(self.ws.cap());
         // Whether this folder holds verifiers at all. A page that knows the answer can say
         // "not on this computer" once, instead of letting a model find it out one refusal at
@@ -1543,7 +1639,17 @@ impl Desk {
         // the journal test, because "you may not fence a command around /etc" is a
         // better sentence than "your fence reaches my journal", and before anything
         // is written down, because a refused command is still recorded as refused.
-        if let Some(s) = daimond_hand::exec::vet_roots(&self.root, &spec, &kits, door) {
+        // A TERMINAL IS VETTED AGAINST ITS CEILING, where the installer named one. The
+        // ceiling lives on the machine and is written by `install.sh`, so this is still
+        // the hand checking an arriving fence against a grant the page could not have
+        // chosen -- which is the whole property `vet_roots` exists to keep. A command
+        // and a file operation are vetted against the granted root exactly as before.
+        // The WIDEST folder this machine offered. The page composes the fence and may make it
+        // narrower -- that is what the user's choice in the UI does -- but it cannot reach past
+        // what the machine put on the list.
+        let widest = self.term_ceilings.last().map(|p| p.as_path());
+        let against = daimond_hand::exec::vet_against(&self.root, widest, door);
+        if let Some(s) = daimond_hand::exec::vet_roots(against, &spec, &kits, door) {
             self.refuse(&id, s);
             return Ok(());
         }
@@ -2031,6 +2137,8 @@ where
         fence:  cfg.fence.clone(),
         sys:    Seccomp::detect(),
         root:   cfg.root.clone(),
+        term_ceilings: cfg.term_ceilings.clone(),
+        term_pinned: cfg.term_pinned,
         ws,
         os,
         runner: Runner::with_launcher(cfg.launcher.clone()),
@@ -2295,10 +2403,16 @@ fn journal_note() -> Option<String> {
 fn configure() -> Outcome<Serve> {
     let dir  = res!(journal::default_dir());
     let root = res!(granted_root(&dir));
+    // Optional, and read AFTER the granted root: a hand with no ceiling is every hand
+    // built before 2026-08-26, and it serves exactly as it did.
+    let term_pinned   = terminal_ceiling(&dir).is_some();
+    let term_ceilings = terminal_ceilings(&dir, &root);
     Ok(Serve {
         journal:  JournalCfg::at(dir),
         fence:    Fence::detect(),
         root,
+        term_ceilings,
+        term_pinned,
         launcher: Launcher::SelfExe,
     })
 }
@@ -2810,6 +2924,8 @@ mod tests {
                 journal:  JournalCfg::at(&jdir),
                 fence,
                 root:     res!(fs::canonicalize(&root)),
+                term_ceilings: vec![res!(fs::canonicalize(&root))],
+                term_pinned: false,
                 launcher: res!(test_launcher()),
             },
             jdir,
@@ -3559,6 +3675,8 @@ mod tests {
             journal:  JournalCfg::at(&jdir),
             fence:    Fence::detect(),
             root:     res!(fs::canonicalize(&root)),
+            term_ceilings: vec![res!(fs::canonicalize(&root))],
+            term_pinned: false,
             launcher: res!(test_launcher()),
         };
         let (w, _r) = tokio::io::duplex(1 << 16);

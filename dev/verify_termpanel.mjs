@@ -917,6 +917,78 @@ try {
 		check('a screenshot was taken in a dark and a light palette', true);
 	}
 
+	// ── The Terminal folder row ─────────────────────────────────────
+	//
+	// A terminal is the user at a keyboard and may be given more than a daimon's fence. What
+	// the row may NOT do is invent a folder: the options are written by the machine and arrive
+	// as `terminal-ceiling:` entries in the hand's own answer. Asserted on the OPTIONS and on
+	// what reaches the ask, because a row that rendered beautifully and sent nothing would look
+	// exactly the same on screen.
+	{
+		await installLink({ caps: ['fence:linux', 'landlock:abi-8', 'ws:abc123',
+			'terminal-ceiling:/home/u', 'terminal-ceiling:/srv/shared'] });
+		await installComposer();
+		await p.click('#panel-term [data-act="term-start"]', { force: true });
+		await sleep(300);
+		const row = await p.evaluate(() => {
+			const sec = document.getElementById('termroot-section');
+			const sel = document.getElementById('set-terminal-root');
+			return {
+				shown:   !!sec && sec.style.display !== 'none',
+				options: sel ? [...sel.options].map((o) => o.value) : null,
+				disabled: sel ? sel.disabled : null,
+			};
+		});
+		check('the Terminal folder row offers what the MACHINE offered, and the granted root',
+			row.shown && JSON.stringify(row.options) === JSON.stringify(['', '/home/u', '/srv/shared']),
+			JSON.stringify(row));
+
+		// Choosing one has to REACH the request, or the row is decoration.
+		await p.evaluate(() => {
+			const sel = document.getElementById('set-terminal-root');
+			sel.value = '/home/u';
+			sel.dispatchEvent(new Event('change', { bubbles: true }));
+		});
+		await p.click('#panel-term [data-act="term-stop"]', { force: true });
+		await sleep(120);
+		await p.click('#panel-term [data-act="term-start"]', { force: true });
+		await sleep(300);
+		const asked = await p.evaluate(() => (window.__asked || {}).terminal_root);
+		check('and the chosen folder reaches the request the wire carries',
+			asked === '/home/u', JSON.stringify(asked));
+
+		// A folder the machine never offered is not honoured, however the page came by it.
+		await p.evaluate(() => {
+			const all = JSON.parse(localStorage.getItem('daimond-terminal-root') || '{}');
+			all.abc123 = '/etc';
+			localStorage.setItem('daimond-terminal-root', JSON.stringify(all));
+		});
+		await p.click('#panel-term [data-act="term-stop"]', { force: true });
+		await sleep(120);
+		await p.click('#panel-term [data-act="term-start"]', { force: true });
+		await sleep(300);
+		const stray = await p.evaluate(() => (window.__asked || {}).terminal_root);
+		check('a stored folder the machine no longer offers falls back rather than being sent',
+			stray === '' || stray === undefined, JSON.stringify(stray));
+
+		// PINNED at a shell: shown, and not re-asked here.
+		await p.click('#panel-term [data-act="term-stop"]', { force: true });
+		await installLink({ caps: ['fence:linux', 'landlock:abi-8', 'ws:abc123',
+			'terminal-ceiling:/home/u', 'terminal-root:/home/u'] });
+		await p.click('#panel-term [data-act="term-start"]', { force: true });
+		await sleep(300);
+		const pinned = await p.evaluate(() => {
+			const sel = document.getElementById('set-terminal-root');
+			return { disabled: sel ? sel.disabled : null, value: sel ? sel.value : null,
+				said: (document.getElementById('termroot-pinned') || {}).style
+					? document.getElementById('termroot-pinned').style.display !== 'none' : null };
+		});
+		check('a ceiling pinned at a shell is shown and not re-asked in the panel',
+			pinned.disabled === true && pinned.value === '/home/u' && pinned.said === true,
+			JSON.stringify(pinned));
+		await p.click('#panel-term [data-act="term-stop"]', { force: true });
+	}
+
 	const noise = s.errs.filter((e) => !/favicon|ERR_ABORTED|502|Bad Gateway|net::ERR/i.test(e));
 	check('the app threw nothing while all that happened', noise.length === 0, noise.slice(0, 3).join(' | '));
 } finally {

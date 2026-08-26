@@ -2954,6 +2954,25 @@ pub struct KitRoot {
 ///
 /// # Returns
 /// The refusal, or `None` where every root is one the grant could imply.
+/// Which folder an arriving fence is checked against: the terminal's ceiling, or the grant.
+///
+/// A terminal is the user at a keyboard and a command is a daimon, so the two are allowed
+/// different sizes.  The ceiling is written on the machine by `hand/install/install.sh` and
+/// never by a page, so checking a terminal against it is still the hand holding an arriving
+/// fence to a grant the page could not have chosen -- which is the whole of what
+/// [`vet_roots`] is for.
+///
+/// # Arguments
+/// * `root` - The folder this hand was granted.
+/// * `ceiling` - The widest a terminal may reach, where the installer named one.
+/// * `door` - Which surface the request came in by.
+pub fn vet_against<'a>(root: &'a Path, ceiling: Option<&'a Path>, door: Door) -> &'a Path {
+    match (ceiling, door.is_terminal()) {
+        (Some(c), true) => c,
+        _               => root,
+    }
+}
+
 pub fn vet_roots(root: &Path, fence: &FenceSpec, kits: &[String], door: Door) -> Option<String> {
     // Allowed at either level: the workspace, and the hand's own scratch, which the hand appends
     // to every fence itself and must therefore accept back.
@@ -5638,6 +5657,28 @@ mod tests {
             other => return Err(err!(
                 "Expected a refusal, got {:?}.", other; Test, Mismatch)),
         }
+        Ok(())
+    }
+
+    /// **A terminal is vetted against its ceiling; a command never is.**
+    ///
+    /// The ceiling is the whole of the owner's ruling of 2026-08-26: a terminal is the user at
+    /// a keyboard and may reach further than a daimon's command. Both halves are asserted,
+    /// because only asserting the first would pass on code that gave the wider folder to
+    /// everything -- which is the mistake this split exists to avoid.
+    #[test]
+    fn a_terminal_is_vetted_against_its_ceiling_and_a_command_is_not() -> Outcome<()> {
+        let root    = Path::new("/home/u/usr");
+        let ceiling = Path::new("/home/u");
+        assert_eq!(ceiling, vet_against(root, Some(ceiling), Door::Terminal),
+            "a terminal was not vetted against its ceiling");
+        assert_eq!(root, vet_against(root, Some(ceiling), Door::Command),
+            "a COMMAND was given the terminal's ceiling, which is the whole thing this splits");
+        assert_eq!(root, vet_against(root, Some(ceiling), Door::File),
+            "a file operation was given the terminal's ceiling");
+        // No ceiling is every build before this one, and it must behave as one.
+        assert_eq!(root, vet_against(root, None, Door::Terminal),
+            "with no ceiling a terminal should get the granted root, as it always did");
         Ok(())
     }
 

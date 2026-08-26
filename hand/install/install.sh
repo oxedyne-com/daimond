@@ -15,6 +15,7 @@
 #
 #	./install.sh                       # find the built binary, register it
 #	./install.sh --workspace ~/work    # ...and grant that folder, in the same run
+#	./install.sh --terminal-workspace ~  # ...and let a TERMINAL reach the whole account
 #	./install.sh --remote              # ...and set up the ssh a Terminal may use
 #	./install.sh --check               # diagnose an install, changing nothing
 #	./install.sh /path/to/daimond-hand # register a particular binary
@@ -133,6 +134,9 @@ LIST_ONLY=0
 CHECK_ONLY=0
 PATHS_ONLY=0
 WORKSPACE=''
+# The widest a TERMINAL may ever reach. Empty and a terminal gets the granted
+# folder, which is what every build before 2026-08-26 did.
+TERM_WORKSPACE=''
 BINARY=''
 REMOTE=0
 
@@ -141,6 +145,10 @@ while [ $# -gt 0 ]; do
 	--dir)	ONLY_DIR="${2:?--dir needs a directory}"; shift 2 ;;
 	--workspace|-w)
 		WORKSPACE="${2:?--workspace needs a folder}"; shift 2 ;;
+	--terminal-workspace|-t)
+		TERM_WORKSPACE="${2:?--terminal-workspace needs a folder}"; shift 2 ;;
+	--terminal-workspace=*)
+		TERM_WORKSPACE="${1#*=}"; shift ;;
 	--list)	LIST_ONLY=1; shift ;;
 	--check) CHECK_ONLY=1; shift ;;
 	# Daimond's own ssh key, its own host list, and the wrapper that puts both on
@@ -712,6 +720,38 @@ if [ -n "$WORKSPACE" ]; then
 	chmod 600 "$JDIR/root.txt"
 fi
 
+# ── The terminal's ceiling ───────────────────────────────────────────
+#
+# A terminal is the user at a keyboard and a command is a daimon, so the two may
+# have different sizes. This writes the widest a TERMINAL may ever reach; it is a
+# CEILING and not where one opens, and the page may choose a folder within it and
+# may never widen past it.
+#
+# Written here, on the machine, and never by a page: a page that could name its own
+# root could name a wider one, and every other grant in this program rests on its
+# not being able to.
+#
+# The home directory IS allowed here, unlike --workspace, and that is the point of
+# the flag. What protects the secrets inside it is no longer where the line happens
+# to be drawn: ALWAYS_DENIED in src/tools.rs refuses .ssh, .gnupg, .aws, .netrc and
+# the credential files on every fence, whatever root is granted.
+if [ -n "$TERM_WORKSPACE" ]; then
+	if [ ! -d "$TERM_WORKSPACE" ]; then
+		echo "install.sh: '$TERM_WORKSPACE' does not exist, so it cannot be a terminal's ceiling" >&2
+		exit 2
+	fi
+	TERM_WORKSPACE="$(cd "$TERM_WORKSPACE" && pwd -P)"
+	if [ "$TERM_WORKSPACE" = / ]; then
+		echo "install.sh: refusing '/'. A terminal's ceiling is a folder, not the machine." >&2
+		exit 2
+	fi
+	mkdir -p "$JDIR"
+	chmod 700 "$JDIR"
+	printf '# The widest a Daimond TERMINAL may reach. Not where one opens.\n%s\n' \
+		"$TERM_WORKSPACE" > "$JDIR/terminal-root.txt"
+	chmod 600 "$JDIR/terminal-root.txt"
+fi
+
 # ── The Remote toolchain: an ssh key that is Daimond's own ───────────
 #
 # The owner asked for one sentence: an ssh to another machine, from a Terminal
@@ -816,6 +856,9 @@ echo "  extension              chrome-extension://$EXT_ID/"
 if [ -n "$WORKSPACE" ]; then
 	echo "  granted folder         $WORKSPACE"
 	echo "  journal                $JDIR"
+fi
+if [ -n "$TERM_WORKSPACE" ]; then
+	echo "  terminal ceiling       $TERM_WORKSPACE"
 fi
 echo
 

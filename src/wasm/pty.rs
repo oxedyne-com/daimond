@@ -440,7 +440,31 @@ pub async fn pty_request(ask_json: String) -> String {
     // a dialog over their own keystrokes would be the app asking permission to
     // do what they are in the middle of doing.
     let tainted = extract_json_bool(ask, "tainted") == Some(true);
-    let fence = fence_spec(&bounds, &machine, crate::tools::mode().withholds_net(tainted));
+    // THE TERMINAL'S OWN ROOT: the ceiling the installer named where there is one, and the
+    // granted root where there is not. A terminal is the user at a keyboard and a command is a
+    // daimon, and the owner asked for the two to be different sizes on 2026-08-26.
+    //
+    // The ceiling lives on the machine, written by `hand/install/install.sh` and never by a page,
+    // so a fence expressed against it is still one the hand's own grant could have produced --
+    // which is what `vet_roots` checks and the reason this is not a field the page fills in.
+    // The order is the whole of the policy. A PIN is a decision the user made at a shell and the
+    // app follows it. Otherwise the app may choose among the folders the MACHINE offered -- and
+    // an `ask` naming anything else is ignored rather than refused, because a page proposing a
+    // folder the machine never offered is a page proposing nothing at all.
+    let asked_root = extract_json_string(ask, "terminal_root").unwrap_or_default();
+    let root = machine.terminal_root.clone()
+        .or_else(|| machine.terminal_ceilings.iter()
+            .find(|c| c.trim_end_matches('/') == asked_root.trim_end_matches('/'))
+            .cloned())
+        .unwrap_or_else(|| machine.root.clone())
+        .trim_end_matches('/').to_string();
+    // `fence_spec` resolves every workspace-relative path against `Machine::root`, so handing it
+    // the machine unchanged would express the fence against the GRANTED root while the session ran
+    // under the ceiling -- two different folders, and the hand would refuse the difference. The
+    // home is untouched: the standing credential denies are home-relative and must not move.
+    let mut tm = machine.clone();
+    tm.root = root.clone();
+    let fence = fence_spec(&bounds, &tm, crate::tools::mode().withholds_net(tainted));
     if fence.rw.is_empty() && fence.ro.is_empty() {
         // Two states arrive here and a person can only act on one of them, so they are told
         // apart. A Diamond that named itself and nothing else is the ORDINARY case -- a fresh
@@ -458,7 +482,7 @@ pub async fn pty_request(ask_json: String) -> String {
             opened. Re-run 'hand/install/install.sh --check', which lists what has to be true.");
     }
 
-    let root = machine.root.trim_end_matches('/').to_string();
+
     // Where the session starts, by the same rule a command starts by: `tools::start_dir`, which
     // both edges now share. The panel sends the Diamond's own directory as the `cwd`, because
     // that is what a Diamond IS to it -- and that directory is in the browser's storage and not

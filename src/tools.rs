@@ -1946,6 +1946,47 @@ const CREDS: &[Grant] = &[
             workspace on purpose" },
 ];
 
+/// Denied on EVERY fence, whether or not a toolkit was granted.
+///
+/// [`CREDS`] above says the hazard out loud -- *"a user whose workspace root IS their home
+/// directory has already granted them by granting the workspace"* -- and then applies the answer
+/// only where [`Kit::resolve`] runs, which is only where a toolkit was granted.  So the user's
+/// private key was safe because it happened to sit outside their workspace root, and for no other
+/// reason.  Checked on 2026-08-26: `.ssh` appears at `Level::Deny` in exactly two places, both
+/// inside a toolkit's own grant list, and nothing in [`fence_spec`] mentions it at all.
+///
+/// **A guarantee that holds by accident of a setting is not a guarantee.**  The owner asked that
+/// evening whether he should simply point the workspace root at `$HOME` -- he had chosen `~/usr`
+/// for no reason beyond seeing no need to go higher -- and the honest answer was that the setting
+/// he picked arbitrarily was the only thing standing between a daimon and his private key.  So the
+/// rule is written down here instead, and the setting is free to move.
+///
+/// A deny costs nothing where the path is not granted anyway, and a denied path that does not exist
+/// is tolerated (`hand/src/fence.rs`, `canonical`), so this is applied unconditionally rather than
+/// worked out.
+const ALWAYS_DENIED: &[Grant] = &[
+    Grant { tail: ".ssh", level: Level::Deny,
+        why: "the user's private keys and known hosts, which Daimond reaches another machine \
+            as itself or not at all" },
+    Grant { tail: ".gnupg", level: Level::Deny,
+        why: "the signing keys, and a directory whose entire contents are secrets" },
+    Grant { tail: ".aws", level: Level::Deny,
+        why: "the credentials file every AWS tool reads without being asked" },
+    Grant { tail: ".git-credentials", level: Level::Deny,
+        why: "the passwords git's credential.helper store writes in plain text" },
+    Grant { tail: ".config/git/credentials", level: Level::Deny,
+        why: "the same passwords, where XDG puts them" },
+    Grant { tail: ".npmrc", level: Level::Deny,
+        why: "the registry token npm writes on login" },
+    Grant { tail: ".pypirc", level: Level::Deny,
+        why: "the upload password twine reads" },
+    Grant { tail: ".netrc", level: Level::Deny,
+        why: "the password file cargo, pip, npm and go all read for a private registry" },
+    Grant { tail: ".config/oxedyne", level: Level::Deny,
+        why: "the Stripe keys, the DKIM signing key and the mail password, kept out of the \
+            workspace on purpose" },
+];
+
 /// A named toolchain a Diamond may be granted, so that a build can reach its compiler.
 ///
 /// Three things about this are deliberate, and none of them is negotiable.
@@ -2424,6 +2465,20 @@ pub struct Machine {
     /// The user's login shell, absolute, where the hand said it.  Carried in `caps` as
     /// `shell:<path>`.
     pub shell: Option<String>,
+    /// The ceiling the user PINNED at a shell, from `terminal-root:<path>` in `caps`.
+    ///
+    /// A decision already made: the page follows it and offers nothing.  Absent, and the choice
+    /// is the user's to make in the app from [`Machine::terminal_ceilings`].
+    pub terminal_root: Option<String>,
+    /// The folders this machine is willing to fence a TERMINAL to, from `terminal-ceiling:<path>`
+    /// entries in `caps`.  Never includes [`Machine::root`], which is always available.
+    ///
+    /// A terminal is the user at a keyboard and a command is a daimon, so the two may be
+    /// different sizes.  **The machine writes this list and the app chooses from it.**  That is
+    /// the same rule a [`Toolkit`] follows -- a fixed row with a written reason, ticked by the
+    /// user -- applied to the root itself, and it is the line that matters: the app may choose
+    /// among folders the machine sanctioned and may never invent one.
+    pub terminal_ceilings: Vec<String>,
     // Whether Daimond's own ssh is set up on this computer, from `remote:ready` in `caps`.
     // The Remote toolchain's whole permission, and the user's rather than a Diamond's: see
     // [`Toolkit::terminal_only`].
@@ -2461,6 +2516,12 @@ impl Machine {
             os:   extract_json_string(status, "os").unwrap_or_default(),
             root: extract_json_string(status, "root").unwrap_or_default(),
             home: cap_value(&caps, "home").filter(|h| abs_dir(h)),
+            terminal_root: cap_value(&caps, "terminal-root").filter(|h| abs_dir(h)),
+            terminal_ceilings: caps.iter()
+                .filter_map(|c| c.strip_prefix("terminal-ceiling:"))
+                .map(|p| p.to_string())
+                .filter(|p| abs_dir(p))
+                .collect(),
             host: cap_value(&caps, "host").filter(|h| !h.trim().is_empty()),
             // Absolute or nothing. A relative name would be resolved by the hand against a
             // `PATH` the page cannot see, and a terminal opening on a refusal is worse than
@@ -2484,6 +2545,8 @@ impl Machine {
             os:    String::new(),
             root:  root.to_string(),
             home:   None,
+            terminal_root: None,
+            terminal_ceilings: Vec::new(),
             host:   None,
             shell:  None,
             remote: false,
@@ -3164,6 +3227,20 @@ pub fn fence_spec(bounds: &[Bound], m: &Machine, tainted: bool) -> FenceSpec {
     let own = abs(DAIMOND_DIR);
     if !deny.contains(&own) {
         deny.push(own);
+    }
+    // The user's own secrets, denied on every fence and not only on one that happened to grant a
+    // toolkit. See [`ALWAYS_DENIED`]: until 2026-08-26 these were out of reach because the
+    // workspace root was narrower than the home directory, which is a property of a setting the
+    // user picked arbitrarily rather than a rule anything enforced.
+    if let Some(h) = &m.home {
+        if abs_dir(h) {
+            let home = h.trim_end_matches('/');
+            for g in ALWAYS_DENIED {
+                if let Some(p) = home_path(home, g.tail) {
+                    if !deny.contains(&p) { deny.push(p); }
+                }
+            }
+        }
     }
     // The toolchain the user granted, if any, and nothing else: `Kit::resolve` reads the grant out
     // of these same bounds, so there is no second path by which a toolkit could arrive -- and in
@@ -22097,7 +22174,7 @@ mod tests {
     fn test_the_git_toolkit_grants_the_configuration_and_denies_every_credential() {
         let m = Machine {
             os: fmt!("linux"), root: fmt!("/home/u/work"),
-            home: Some(fmt!("/home/u")), host: None, shell: None, remote: false,
+            home: Some(fmt!("/home/u")), terminal_root: None, terminal_ceilings: Vec::new(), host: None, shell: None, remote: false,
             caps: vec![fmt!("fence:linux")],
         };
         let kit = Kit::resolve(&[Toolkit::Git.bound()], &m).expect("git resolves");
@@ -22133,7 +22210,7 @@ mod tests {
     /// A machine with a home directory, which is what a toolkit resolves against.
     fn homed() -> Machine {
         Machine {
-            os: fmt!("linux"), root: fmt!("/home/u/usr"), home: Some(fmt!("/home/u")),
+            os: fmt!("linux"), root: fmt!("/home/u/usr"), home: Some(fmt!("/home/u")), terminal_root: None, terminal_ceilings: Vec::new(),
             host: None, shell: None, remote: false, caps: vec![fmt!("fence:linux")],
         }
     }
@@ -22217,7 +22294,7 @@ mod tests {
     #[test]
     fn test_a_machine_with_no_home_grants_no_toolchain_root() {
         let m = Machine {
-            os: fmt!("linux"), root: fmt!("/home/u/usr"), home: None,
+            os: fmt!("linux"), root: fmt!("/home/u/usr"), home: None, terminal_root: None, terminal_ceilings: Vec::new(),
             host: None, shell: None, remote: false, caps: vec![fmt!("fence:linux")],
         };
         let bounds: Vec<Bound> = Toolkit::all().iter().map(|k| k.bound()).collect();
@@ -22247,6 +22324,72 @@ mod tests {
     /// let it open.  What this pins is the half that IS this file's: a marked folder is granted
     /// whole, `.git` and all, the command starts inside it, and the only path denied
     /// unconditionally is Daimond's own directory.
+    /// **A terminal ceiling is chosen from what the machine offered, never named by the app.**
+    ///
+    /// This is the Toolkit rule applied to the root: a [`Toolkit`] is a fixed row with a written
+    /// reason that the user ticks, and the app may not invent one.  The owner asked on
+    /// 2026-08-26 why the ceiling should not simply be editable in the UI, and the honest answer
+    /// was that his own app already lets the UI widen machine access -- ticking Rust grants
+    /// `~/.cargo`, outside the granted root -- so the line that actually holds is not "the page
+    /// may not widen" but "the page may not INVENT".
+    #[test]
+    fn test_a_machine_offers_terminal_ceilings_and_the_app_can_only_choose_among_them() {
+        let m = Machine::from_status(
+            r#"{"os":"linux","root":"/home/u/usr","caps":["home:/home/u",
+            "terminal-ceiling:/home/u"]}"#);
+        assert_eq!(vec![fmt!("/home/u")], m.terminal_ceilings,
+            "the offer the machine made was not read: {:?}", m.caps);
+        assert_eq!(None, m.terminal_root,
+            "an offer was read as a pin, which would take the choice away from the user");
+
+        // A pin is a different statement: the user decided at a shell and the app follows.
+        let p = Machine::from_status(
+            r#"{"os":"linux","root":"/home/u/usr","caps":["home:/home/u",
+            "terminal-ceiling:/home/u","terminal-root:/home/u"]}"#);
+        assert_eq!(Some(fmt!("/home/u")), p.terminal_root,
+            "a pinned ceiling was not read as pinned");
+    }
+
+    /// **A workspace root that IS the home directory still cannot reach the private key.**
+    ///
+    /// This is the hazard [`CREDS`] named and did not close: its denies are applied by
+    /// [`Kit::resolve`], which runs only where a toolkit was granted, so until 2026-08-26 a
+    /// turn with no toolkit and a root of `$HOME` was handed `~/.ssh` read-write by the
+    /// unscoped fallback. It was never reached in practice because the owner's root happened to
+    /// be `~/usr` -- a setting he had chosen for no reason beyond seeing no need to go higher.
+    ///
+    /// No toolkit is granted here ON PURPOSE. Granting one would make the old code pass, and
+    /// the whole point is the fence a turn gets when nothing was granted at all.
+    #[test]
+    fn test_a_root_that_is_the_home_directory_still_denies_the_users_secrets() {
+        let m = Machine {
+            os: fmt!("linux"), root: fmt!("/home/u"), home: Some(fmt!("/home/u")), terminal_root: None, terminal_ceilings: Vec::new(),
+            host: None, shell: None, remote: false, caps: vec![fmt!("fence:linux")],
+        };
+        // The unscoped turn: no allow-list, no toolkit, so `rw` is the whole granted root.
+        let f = fence_spec(&[], &m, false);
+        assert!(f.rw.contains(&fmt!("/home/u")),
+            "the unscoped fallback did not grant the root, so this proves nothing: {:?}", f.rw);
+        for tail in [".ssh", ".gnupg", ".aws", ".netrc", ".git-credentials", ".npmrc",
+            ".pypirc", ".config/oxedyne", ".config/git/credentials"] {
+            assert!(f.deny.contains(&fmt!("/home/u/{}", tail)),
+                "{} is reachable from a root that is the home directory: {:?}", tail, f.deny);
+        }
+    }
+
+    /// The same, for a turn that IS scoped: a Diamond attached to the home directory itself.
+    #[test]
+    fn test_a_diamond_attached_to_the_home_directory_still_denies_the_users_secrets() {
+        let m = Machine {
+            os: fmt!("linux"), root: fmt!("/home/u"), home: Some(fmt!("/home/u")), terminal_root: None, terminal_ceilings: Vec::new(),
+            host: None, shell: None, remote: false, caps: vec![fmt!("fence:linux")],
+        };
+        let b = diamond_bounds("diamonds/d1", &[fmt!("")], &[]);
+        let f = fence_spec(&b, &m, false);
+        assert!(f.deny.contains(&fmt!("/home/u/.ssh")),
+            "a Diamond attached at the home directory reaches the private key: {:?}", f.deny);
+    }
+
     #[test]
     fn test_a_diamond_attached_to_a_repository_reaches_its_own_git_directory() {
         let m = homed();
@@ -22259,8 +22402,14 @@ mod tests {
         // `index.lock` and `COMMIT_EDITMSG` with it.
         assert!(!f.ro.iter().any(|p| p.contains("/.git")),
             "the repository was made read-only, so no commit could be written: {:?}", f.ro);
-        assert_eq!(vec![fmt!("/home/u/usr/.daimond")], f.deny,
-            "something other than Daimond's own directory is denied: {:?}", f.deny);
+        // Daimond's own directory, then the standing credential denies and NOTHING else. Written
+        // as an exact list rather than a `contains`, so a stray deny arriving from somewhere new
+        // still fails this: attaching a repository must not quietly take anything else away.
+        let mut want = vec![fmt!("/home/u/usr/.daimond")];
+        want.extend(ALWAYS_DENIED.iter().map(|g| fmt!("/home/u/{}", g.tail)));
+        assert_eq!(want, f.deny,
+            "the deny list is not Daimond's own directory plus the standing credential denies: \
+            {:?}", f.deny);
         // And the command starts in the marked folder, which is what puts the repository above it
         // rather than out of reach: from the granted root there is no `.git` to find at all.
         assert_eq!("code/app", start_dir(&b),
