@@ -896,6 +896,11 @@ impl Event {
             // starting of. Writing it down again would put a reader's question
             // in a record of a machine's acts.
             Resp::Runs {..} => None,
+            // A fault is written before the journal exists -- it is the sentence saying the
+            // hand could not open one -- so there is nowhere to record it and nothing that
+            // could. It reaches the record only in the sense that the next hand to start
+            // finds the same fault still there.
+            Resp::Fault {..} => None,
             Resp::Hello {..} | Resp::Chunk {..} => None,
         }
     }
@@ -2480,9 +2485,10 @@ fn take_lock(dir: &Path) -> Outcome<File> {
             write a record it cannot claim sole authorship of.", path.display();
             IO, Lock, File)),
         None => Err(err!(
-            "Another hand is already writing the journal at '{}'. Two writers \
-            would interleave their entries and the chain would stop meaning what \
-            it says, so this one will not start.", dir.display();
+            "Daimond is already open in another browser window on this computer, and only one \
+            of them can keep the machine hand's record at a time -- two writers would \
+            interleave their entries and the record would stop meaning what it says. Close the \
+            other window and try again. The record is at '{}'.", dir.display();
             Conflict, Lock, File)),
     }
 }
@@ -4838,7 +4844,13 @@ mod tests {
                 "A second journal on one directory must be refused."; Bug)),
             Err(e) => {
                 let s = fmt!("{}", e);
-                assert!(s.contains("Another hand is already writing"), "message was: {}", s);
+                // The reader of this one is a PERSON: it is the sentence a browser gets
+                // when the Terminal will not open, so it has to say what happened and what
+                // to do rather than describe the record's invariant.
+                assert!(s.contains("already open in another browser window"),
+                    "the refusal does not say what happened: {}", s);
+                assert!(s.contains("Close the other window and try again"),
+                    "the refusal names nothing to do about it: {}", s);
             },
         }
         drop(first);

@@ -451,10 +451,12 @@ try {
 	check('and the sentence is hand.js\'s own, word for word',
 		!!s.closed && s.closed.reason === HAND_GONE && HAND_GONE.length > 40,
 		(s.closed || {}).reason);
-	// The sentence HAND_GONE writes is "Do not tell the user to install it",
-	// which is the opposite instruction and must not be mistaken for the other
-	// one. So this asks the question that actually matters: it is not the
-	// never-installed sentence, and it does not say the hand is not installed.
+	// HAND_GONE now says the hand "is installed and does not need installing
+	// again" -- it used to instruct a daimon not to tell the user to install it,
+	// which was the same fact addressed to the wrong reader, and the Terminal
+	// panel shows this sentence to the user. Either way the question that matters
+	// is unchanged: it is not the never-installed sentence, and it does not say
+	// the hand is not installed.
 	check('so it does NOT tell the user to install what they have already installed',
 		!!s.closed && s.closed.reason !== NO_HAND && !/is not installed/i.test(s.closed.reason || ''),
 		(s.closed || {}).reason);

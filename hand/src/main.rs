@@ -44,6 +44,7 @@ use daimond_hand::{
     },
     exec::{
         launch_main,
+        Door,
         Launcher,
         Runner,
         Signalled,
@@ -815,6 +816,9 @@ fn id_of(resp: &Resp) -> Option<String> {
         Resp::Filed   { id, .. }	=> Some(id.clone()),
         // A listing is about every run at once, so it is about no single one.
         Resp::Runs    { .. }		=> None,
+        // Sent before the greeting, when there is no run to name and no conversation
+        // to name one in.
+        Resp::Fault   { .. }		=> None,
         Resp::Hello   { .. }		=> None,
     }
 }
@@ -1022,6 +1026,10 @@ fn cut(resp: &Resp) -> Outcome<Option<(Resp, String)>> {
         },
         Resp::Hello { .. } | Resp::Started { .. } | Resp::Ended { .. }
         | Resp::Opened { .. } | Resp::Closed { .. } => Ok(None),
+        // Composed by this binary from its own refusal, so it is a sentence and not a
+        // transcript. Nothing here is long enough to need cutting, and a cut one would be
+        // the reason a hand will not start, truncated.
+        Resp::Fault { .. } => Ok(None),
     }
 }
 
@@ -1072,6 +1080,7 @@ fn kind_of(resp: &Resp) -> &'static str {
         Resp::Closed  { .. }	=> "closed",
         Resp::Runs    { .. }	=> "runs",
         Resp::Filed   { .. }	=> "filed",
+        Resp::Fault   { .. }	=> "fault",
     }
 }
 
@@ -1226,19 +1235,6 @@ where
 /// Held together in one place so that the handlers take one argument rather
 /// than nine, and so that the two lines to the writer cannot be confused with
 /// each other.
-/// Which of the three doors a gated request came in by.
-///
-/// A boolean said "terminal or not" while there were two, and a third door would have made it
-/// say "not a terminal" of a thing that is not a command either.  An enum makes the dispatch at
-/// the end of [`Desk::exec`] exhaustive, so a fourth door cannot be added without the compiler
-/// asking what it dispatches to.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Door {
-    Command,
-    Terminal,
-    File,
-}
-
 struct Desk {
     /// What this machine can enforce with Landlock.
     fence:  Fence,
@@ -1416,6 +1412,20 @@ impl Desk {
             Some(h) => caps.push(fmt!("host:{}", h)),
             None    => {},
         }
+        // WHICH SHELL THE USER USES, so a terminal opens on the one they know.
+        //
+        // The page cannot read an environment; it defaulted to `/bin/sh`, which is the one
+        // program POSIX promises is there and on this machine is `dash` -- no prompt worth
+        // the name, no history, no completion, and none of the user's own aliases. Rides in
+        // `caps` beside `home:` and `host:`, with the same apology about the wire.
+        //
+        // From `SHELL`, which is what the login session set and therefore what every other
+        // terminal on this machine opens. Absent or relative, nothing is said and the page
+        // keeps its own default -- a guessed shell is a terminal that opens on a refusal.
+        match std::env::var("SHELL") {
+            Ok(sh) if sh.starts_with('/') && !sh.contains('\0') => caps.push(fmt!("shell:{}", sh)),
+            _ => {},
+        }
         if !self.say(Resp::Hello {
             proto:   daimond_hand::PROTO,
             host:    fmt!("{}", daimond_hand::HOST_NAME),
@@ -1508,7 +1518,7 @@ impl Desk {
         // the journal test, because "you may not fence a command around /etc" is a
         // better sentence than "your fence reaches my journal", and before anything
         // is written down, because a refused command is still recorded as refused.
-        if let Some(s) = daimond_hand::exec::vet_roots(&self.root, &spec, &kits) {
+        if let Some(s) = daimond_hand::exec::vet_roots(&self.root, &spec, &kits, door) {
             self.refuse(&id, s);
             return Ok(());
         }
@@ -1534,6 +1544,14 @@ impl Desk {
         // that names the directory either, so the grant would buy nothing -- and the
         // refusal below is what covers that case instead.
         let _hooks = daimond_hand::exec::grant_git_hooks(&mut spec, &kits, &[]);
+
+        // The user's own shell configuration, lent to a TERMINAL and to nothing else.
+        // Read here rather than in the page for the reason the hooks directory is: the page
+        // cannot see which of the three files this machine has, and `fence::canonical`
+        // refuses a root it cannot resolve -- so a page naming `~/.inputrc` on a machine
+        // without one would refuse the whole terminal. `grant_user_dotfiles` adds nothing at
+        // the other two doors, which are the two a daimon reaches.
+        let _dots = daimond_hand::exec::grant_user_dotfiles(&mut spec, door);
 
         // A fence that reaches the journal is a fence over the record of what
         // the fence was used for.  And denied outright as well, in case a root
@@ -2283,6 +2301,15 @@ fn host() -> Outcome<()> {
 /// writes the sentence instead.
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Whether a browser is on the other end of standard output, which decides where a
+    // refusal can be READ.  A person at a terminal reads standard error; a browser
+    // discards it, so for a browser the refusal has to go down the pipe as a frame.
+    let piped = match args.first().map(|s| s.as_str()) {
+        Some(a) if a == LAUNCH_ARG                                    => false,
+        Some("--report") | Some("-r") | Some("--version") | Some("-V") => false,
+        Some(a)                                                       => is_browser_arg(a),
+        None                                                          => true,
+    };
     let done = match args.first().map(|s| s.as_str()) {
         // The launcher, and the first thing this binary looks at.
         //
@@ -2308,8 +2335,65 @@ fn main() {
         None => host(),
     };
     if let Err(e) = done {
+        // Down the pipe FIRST, because that is the end with a reader who can act on it.
+        // A native messaging host's standard error is discarded by the browser, so every
+        // refusal here -- no granted root, a journal that will not open, a second hand
+        // already holding the record -- reached the page as the browser's own "Native host
+        // has exited" and nothing else. The page then guessed, in a paragraph, at which of
+        // two causes it was; the hand knew all along.
+        if piped {
+            say_fault(&fault_line(&e));
+        }
         refuse(&e);
         std::process::exit(1);
+    }
+}
+
+/// The one sentence a browser is told when the hand will not start.
+///
+/// [`refuse`] writes three lines, which is right for a person at a terminal and is the
+/// right ORDER too -- the cause before the symptom, because a journal directory that
+/// cannot be reached makes every other refusal downstream of it.  A frame carries one
+/// sentence, so the same ordering picks which one it is.
+///
+/// # Arguments
+/// * `e` - What stopped the hand.
+fn fault_line(e: &Error<ErrTag>) -> String {
+    match journal_note() {
+        Some(n) => n,
+        None    => e.plain(),
+    }
+}
+
+/// The framed bytes of one [`Resp::Fault`], or nothing where it will not encode.
+///
+/// Separate from [`say_fault`] so the frame can be read back in a test: the whole
+/// point of it is that a browser can read it, and a test that only proved the
+/// function ran would prove nothing about that.
+///
+/// # Arguments
+/// * `reason` - The sentence, as [`fault_line`] composed it.
+fn fault_frame(reason: &str) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    match FRAMING.write_resp(&mut buf, &Resp::Fault { reason: fmt!("{}", reason) }) {
+        Ok(())  => Some(buf),
+        Err(_)  => None,
+    }
+}
+
+/// Writes one [`Resp::Fault`] to the pipe, best effort.
+///
+/// Best effort by construction: the hand is on its way out either way, and a failure
+/// here has no reader left to tell.
+///
+/// # Arguments
+/// * `reason` - The sentence, as [`fault_line`] composed it.
+fn say_fault(reason: &str) {
+    use std::io::Write;
+    if let Some(buf) = fault_frame(reason) {
+        let mut out = std::io::stdout();
+        let _ = out.write_all(&buf);
+        let _ = out.flush();
     }
 }
 
@@ -2358,6 +2442,62 @@ mod tests {
 
     /// The line libtest writes as it enters the launcher entry point.
     const HARNESS_LINE: &str = "test tests::launcher_child_entry ... ";
+
+    /// A hand that will not start says so down the pipe, where a browser can read it.
+    ///
+    /// The owner opened a Terminal on 2026-08-26 and was told the hand "disconnected without
+    /// finishing", that it had either crashed or sent a message over the browser's 1 MB frame
+    /// limit, and to "tell the user to check the hand's journal" -- to a reader who WAS the
+    /// user, about a record that held nothing, because the hand had exited before opening it.
+    /// It had a whole sentence for him and wrote it to a standard error the browser discards.
+    ///
+    /// So the sentence goes down the pipe as a frame first.  Read back through the codec here
+    /// rather than merely counted, because "a browser can read it" is the entire claim.
+    #[test]
+    fn a_hand_that_will_not_start_says_why_on_the_pipe() -> Outcome<()> {
+        let said = "Daimond is already open in another browser window on this computer.";
+        let buf = match fault_frame(said) {
+            Some(b) => b,
+            None    => return Err(err!("a refusal of {} bytes did not fit a frame", said.len(); Bug)),
+        };
+        let mut cur = Cursor::new(buf);
+        match res!(FRAMING.read_resp(&mut cur)) {
+            Some(Resp::Fault { reason }) => assert_eq!(said, reason,
+                "the sentence did not survive the frame"),
+            other => return Err(err!(
+                "the pipe carried {:?} where the hand's own refusal was wanted", other; Bug)),
+        }
+        Ok(())
+    }
+
+    /// Only a browser is sent one, because only a browser cannot read standard error.
+    ///
+    /// The launcher is the arm that matters: it re-executes this binary to become a fenced
+    /// command, and its standard output is the COMMAND'S.  A frame written there would arrive
+    /// in the middle of a program's output as unexplained bytes.
+    #[test]
+    fn the_pipe_is_told_and_a_person_at_a_terminal_is_not() {
+        for (arg, piped) in [
+            (Some(LAUNCH_ARG),                          false),
+            (Some("--report"),                          false),
+            (Some("-r"),                                false),
+            (Some("--version"),                         false),
+            (Some("-V"),                                false),
+            (Some("chrome-extension://abc/"),           true),
+            (Some("moz-extension://abc/"),              true),
+            (Some("--parent-window=1"),                 true),
+            (Some("nonsense"),                          false),
+            (None,                                      true),
+        ] {
+            let got = match arg {
+                Some(a) if a == LAUNCH_ARG => false,
+                Some("--report") | Some("-r") | Some("--version") | Some("-V") => false,
+                Some(a) => is_browser_arg(a),
+                None    => true,
+            };
+            assert_eq!(piped, got, "argument {:?} was read as piped={}", arg, got);
+        }
+    }
 
     /// The hardened fence reaches a terminal, not only a command.
     ///

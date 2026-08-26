@@ -185,10 +185,11 @@
 	/// Kept apart from `NO_HAND` on purpose. Every disconnect used to be reported
 	/// as "not installed", so a host that crashed, was killed, or blew Chrome's
 	/// 1 MB cap made the daimon tell the user to install what they already had.
-	var HAND_GONE = 'The machine hand answered earlier and has now gone. It is installed; '
-		+ 'something stopped it — a crash, the user quitting it, or a message too large for '
-		+ 'the browser to carry. Do not tell the user to install it. Say it stopped, and try '
-		+ 'again once; if it stops a second time, ask them to look at the hand\'s journal.';
+	var HAND_GONE = 'The machine hand answered earlier and has now gone, so it is installed and '
+		+ 'does not need installing again. Something stopped it — a crash, a quit, or a message '
+		+ 'too large for the browser to carry. Try once more; if it stops a second time, close '
+		+ 'any other browser window that has Daimond open, because only one of them at a time '
+		+ 'can hold the hand.';
 
 	/// The longest the page waits for an acknowledgement of a command it has sent.
 	///
@@ -303,9 +304,9 @@
 		rec.timer = setTimeout(function () {
 			// Nobody answered the question, or nobody answered the port. Either
 			// way the daimon is owed a sentence rather than a hang.
-			drop(rec, rec.note || 'The machine hand was asked to start and did not answer. '
-				+ 'The user may not have seen the approval window — the Daimond Hands icon carries '
-				+ 'the question until it is answered. Ask them to allow it, and try again.');
+			drop(rec, rec.note || 'The machine hand was asked to start and did not answer. The '
+				+ 'approval window may still be waiting — the Daimond Hands toolbar icon carries the '
+				+ 'question until it is answered. Answer it and try again.');
 		}, HELLO_WAIT);
 
 		try {

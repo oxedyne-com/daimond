@@ -238,7 +238,7 @@
 	const NOT_INSTALLED =
 		`Daimond's machine hand is not installed on this computer, so no command can be run here. `
 		+ `Chrome could not find the native messaging host "${HOST_NAME}". `
-		+ `The user must build the hand and register it: from the Daimond repository, `
+		+ `To install it: from the Daimond repository, `
 		+ `run "cargo build --release --manifest-path hand/Cargo.toml" and then `
 		+ `"hand/install/install.sh --workspace <the folder Daimond may work in>" -- naming the folder `
 		+ `in that same command is what saves a second pass, because the hand refuses to serve a page `
@@ -246,7 +246,23 @@
 		+ `Then restart the browser, which reads the registration only at startup. `
 		+ `"hand/install/install.sh --check" says what is still wrong, one line each. `
 		+ `hand/install/README.md is the whole procedure. `
-		+ `Tell them that, and work in the browser instead until it is done.`;
+		+ `Until it is installed, Daimond works in the browser and cannot touch this computer.`;
+
+	// The sentence for a disconnect the hand said nothing about.
+	//
+	// Written for a PERSON, because a person is who reads it: the Terminal panel puts
+	// this line on the screen where the terminal would have been. It used to offer two
+	// causes -- a crash, or a message over the browser's 1 MB frame limit -- which
+	// nobody at the keyboard can tell apart, and then instructed a daimon to "tell the
+	// user to check the hand's journal", to a reader who WAS the user.
+	//
+	// One line, and the one thing worth doing. The second clause names what has been
+	// the real cause on this machine every time it has been chased: one hand per page
+	// port, one record, and a second Daimond window takes the record's lock first.
+	const GONE_UNSAID =
+		`Daimond's machine hand stopped without saying why, so nothing can run on this computer until it is back. `
+		+ `Reload the page to start it again -- and if it stops a second time, close any other browser window that has Daimond open, `
+		+ `because only one of them at a time can hold the hand.`;
 
 	const FORBIDDEN =
 		`Daimond's machine hand is installed but will not talk to this extension. `
@@ -255,13 +271,14 @@
 		+ `manifest was written for a different build. Re-running hand/install/install.sh repairs it.`;
 
 	const DECLINED_SENTENCE =
-		`The user declined: Daimond may not run commands on this computer. Do not ask for it again. `
-		+ `Tell them what you wanted to run and why, and do the rest in the browser or in the workspace files.`;
+		`Daimond was refused permission to run commands on this computer, so it will not ask again. `
+		+ `To change that, reload the page and allow it when the Daimond Hands window asks; `
+		+ `until then the work has to happen in the browser or in the workspace files.`;
 
 	const DISMISSED_SENTENCE =
 		`The approval window for running commands on this computer was closed before it was answered, `
 		+ `so nothing may be run. The user may not have seen it -- the Daimond Hands icon carries the `
-		+ `question until it is answered. Ask them to allow it and try again, or do the work another way.`;
+		+ `question until it is answered. Answer it and try again, or do the work another way.`;
 
 	const NOT_OURS =
 		`This page is not one Daimond Hands answers, so it cannot be given the machine hand. `
@@ -555,6 +572,14 @@
 		/// The largest message the host has sent. Only used to make the report
 		/// after a silent disconnect more useful than "it went away".
 		let biggest = 0;
+		/// The sentence the hand sent on its way out, where it sent one.
+		///
+		/// A hand that will not start -- no granted root, a record it cannot open,
+		/// a second hand already holding one -- knows exactly why, and used to
+		/// write it to a standard error the browser discards. It now sends it as a
+		/// `fault` frame before it exits, so `hostGone` has the hand's own answer
+		/// instead of a guess between two causes it cannot tell apart.
+		let lastFault = '';
 		/// What the page said before the host was up.
 		///
 		/// A page connects and greets in the same breath, and between those two
@@ -854,7 +879,7 @@
 		/// the one property the page cannot check for itself.
 		function fromHost(m) {
 			if (!m || typeof m !== 'object' || typeof m.t !== 'string') {
-				fail(null, 'The machine hand sent something that is not a wire message. Treat this hand as unusable and tell the user to reinstall it.');
+				fail(null, 'The machine hand sent something that is not a wire message, so it cannot be used. Reinstall it with hand/install/install.sh and reload the page.');
 				return;
 			}
 
@@ -862,6 +887,15 @@
 				const size = JSON.stringify(m).length;
 				if (size > biggest) biggest = size;
 			} catch (e) { /* unmeasurable; the forward still happens */ }
+
+			if (m.t === 'fault') {
+				// The hand's own last word, and the only message that arrives before
+				// the greeting. It is a whole sentence written for a PERSON, so it is
+				// passed on unchanged rather than wrapped in this file's vocabulary.
+				lastFault = typeof m.reason === 'string' ? m.reason : '';
+				stop(lastFault || GONE_UNSAID);
+				return;
+			}
 
 			if (m.t === 'hello') {
 				// What the hand can enforce, and the folder it says the grant
@@ -960,18 +994,23 @@
 				return;
 			}
 
-			// Everything else is a crash or the 1 MB cap, and Chrome does not
-			// say which -- the cap produces exactly this disconnect and nothing
-			// else. So both are named, with the evidence we have.
+			// The hand's own last word, where it managed to send one. Always better
+			// than anything composable here: it knows which reason it was, and this
+			// end can only guess between reasons Chrome reports identically.
+			if (lastFault) {
+				stop(lastFault);
+				return;
+			}
+
+			// Nothing said. A crash and a message over the browser's frame limit
+			// arrive as the same disconnect, so the two are not handed over as a
+			// choice the reader cannot make: what is said is the thing to do, and the
+			// measurement only where it actually points at the limit.
 			const n	= runs.size;
 			const big = biggest > FROM_HOST_MAX / 2;
-			stop(
-				`The machine hand disconnected without finishing${why ? ` (${why})` : ''}. `
-				+ `Either it crashed, or it sent a message larger than Chrome's 1 MB limit for a native `
-				+ `messaging host, which makes Chrome drop the connection silently. `
-				+ (big ? `The largest message it sent was ${biggest} bytes, close enough to the limit that this is the likely cause. ` : '')
-				+ (n ? `${n} command(s) were running and their output is incomplete; their results are lost. ` : '')
-				+ `Reconnect and run them again, and if it keeps happening tell the user to check the hand's journal.`);
+			stop(GONE_UNSAID
+				+ (big ? ` The largest message it sent was ${biggest} bytes, near the ${FROM_HOST_MAX} byte limit a browser drops a connection over, so a narrower command may get through.` : '')
+				+ (n ? ` ${n} command(s) were running; their results are lost.` : ''));
 		}
 
 		/// The page sent something. Check what a malformed frame would cost,

@@ -15,6 +15,7 @@
 #
 #	./install.sh                       # find the built binary, register it
 #	./install.sh --workspace ~/work    # ...and grant that folder, in the same run
+#	./install.sh --remote              # ...and set up the ssh a Terminal may use
 #	./install.sh --check               # diagnose an install, changing nothing
 #	./install.sh /path/to/daimond-hand # register a particular binary
 #	./install.sh --dir /some/profile/NativeMessagingHosts /path/to/binary
@@ -133,6 +134,7 @@ CHECK_ONLY=0
 PATHS_ONLY=0
 WORKSPACE=''
 BINARY=''
+REMOTE=0
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -141,6 +143,10 @@ while [ $# -gt 0 ]; do
 		WORKSPACE="${2:?--workspace needs a folder}"; shift 2 ;;
 	--list)	LIST_ONLY=1; shift ;;
 	--check) CHECK_ONLY=1; shift ;;
+	# Daimond's own ssh key, its own host list, and the wrapper that puts both on
+	# an `ssh` command line without the user typing them. See "The Remote
+	# toolchain" below for what it writes and what it deliberately does not.
+	--remote) REMOTE=1; shift ;;
 	# Every native messaging directory this script knows about, one per line,
 	# found or not. `uninstall.sh` reads it, so the table of browsers lives in
 	# exactly one file rather than in two that drift.
@@ -704,6 +710,95 @@ if [ -n "$WORKSPACE" ]; then
 	chmod 700 "$JDIR"
 	printf '# The one folder Daimond'"'"'s machine hand may work in.\n%s\n' "$WORKSPACE" > "$JDIR/root.txt"
 	chmod 600 "$JDIR/root.txt"
+fi
+
+# ── The Remote toolchain: an ssh key that is Daimond's own ───────────
+#
+# The owner asked for one sentence: an ssh to another machine, from a Terminal
+# in Daimond, with a session that survives a network dropout.  Three refusals
+# stood in the way, and the first was `~/.ssh/known_hosts: Permission denied`.
+#
+# The tempting repair is to lend `~/.ssh`.  It is the wrong one: that directory
+# holds the keys the rest of a person's life runs on.  So Daimond gets a key of
+# its OWN, here, and a host list of its own beside it -- and revoking Daimond's
+# reach to any machine is then one line removed from that machine's
+# `authorized_keys`, which is not true of a grant of the user's own key.
+#
+# THE WRAPPER IS WHY `ssh argonaut` WORKS TYPED EXACTLY LIKE THAT.  OpenSSH takes
+# the home directory from the passwd entry and not from `HOME`, so there is no
+# environment variable that could point it at another key or another host list --
+# the flags have to be on the command line, and something has to put them there.
+# The Remote toolkit puts this directory first on a Terminal's `PATH`, read-only,
+# so nothing a fenced command does can add a second program to it.
+#
+# NOTHING HERE INSTALLS THE KEY ANYWHERE.  Which machines Daimond may reach is a
+# decision, and it stays one: the public key is printed, with the line to add and
+# the `restrict,pty` in front of it that says a shell and nothing else.
+
+if [ "$REMOTE" = 1 ]; then
+	RDIR="$HOME/.config/oxedyne/daimond-hand"
+	SSH_BIN="$(command -v ssh || true)"
+	if [ -z "$SSH_BIN" ]; then
+		echo "install.sh: there is no ssh on this machine, so there is nothing for the" >&2
+		echo "Remote toolchain to wrap. Install openssh-client and run this again." >&2
+		exit 2
+	fi
+	mkdir -p "$RDIR/ssh" "$RDIR/bin"
+	chmod 700 "$HOME/.config/oxedyne" "$RDIR" "$RDIR/ssh"
+	chmod 755 "$RDIR/bin"
+	if [ ! -f "$RDIR/ssh/id_daimond" ]; then
+		# No passphrase: nothing can type one into a fenced terminal, and a key
+		# that cannot be used is not a safer key but an unused one. What bounds
+		# it is `restrict,pty` at the far end and the fence at this one.
+		ssh-keygen -q -t ed25519 -N '' -C "daimond@$(hostname)" -f "$RDIR/ssh/id_daimond"
+	fi
+	chmod 600 "$RDIR/ssh/id_daimond"
+	chmod 644 "$RDIR/ssh/id_daimond.pub"
+	# Daimond's own, and never the user's: a `known_hosts` has to be WRITTEN to
+	# learn a host, and a writable `~/.ssh` is a way to add an authorized key.
+	[ -f "$RDIR/known_hosts" ] || : > "$RDIR/known_hosts"
+	chmod 600 "$RDIR/known_hosts"
+
+	cat > "$RDIR/bin/ssh" <<WRAPPER
+#!/bin/sh
+# Daimond's ssh. Written by hand/install/install.sh; edit that, not this.
+#
+# The paths are absolute because a fenced terminal has no HOME unless something
+# granted it one, and because OpenSSH would not read HOME anyway.
+#
+# With ONE argument -- \`ssh argonaut\` -- the far end is a tmux attached if it is
+# already there and started if it is not. That is what survives a network
+# dropout: the programs keep running on the other machine, and the next
+# \`ssh argonaut\` walks back into them mid-sentence. Anything else is passed
+# straight through, so \`ssh argonaut uptime\` is still one line and one answer.
+set -eu
+KEY='$RDIR/ssh/id_daimond'
+KH='$RDIR/known_hosts'
+OPT_ID='-oIdentitiesOnly=yes'
+OPT_KH="-oUserKnownHostsFile=\$KH"
+OPT_SHK='-oStrictHostKeyChecking=accept-new'
+FAR='if command -v tmux >/dev/null 2>&1; then exec tmux new -A -s daimond; else exec "\${SHELL:-/bin/sh}" -l; fi'
+if [ \$# -eq 1 ]; then
+	exec '$SSH_BIN' -i "\$KEY" "\$OPT_ID" "\$OPT_KH" "\$OPT_SHK" -t "\$1" "\$FAR"
+fi
+exec '$SSH_BIN' -i "\$KEY" "\$OPT_ID" "\$OPT_KH" "\$OPT_SHK" "\$@"
+WRAPPER
+	chmod 755 "$RDIR/bin/ssh"
+
+	echo "Daimond's ssh"
+	echo "  key                    $RDIR/ssh/id_daimond"
+	echo "  host list              $RDIR/known_hosts"
+	echo "  wrapper                $RDIR/bin/ssh -> $SSH_BIN"
+	echo
+	echo "On every machine Daimond may reach, add this one line to ~/.ssh/authorized_keys."
+	echo "'restrict,pty' is a shell and nothing else: no port forwarding, no agent, no X11."
+	echo
+	echo "  restrict,pty $(cat "$RDIR/ssh/id_daimond.pub")"
+	echo
+	echo "Then grant the Remote toolchain to a Diamond, and open its Terminal. A Diamond"
+	echo "without it cannot reach the key, and neither can any command -- the grant is"
+	echo "lent to a terminal you opened by hand and to nothing a daimon can ask for."
+	echo
 fi
 
 # ── Writing ──────────────────────────────────────────────────────────

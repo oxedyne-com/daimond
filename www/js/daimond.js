@@ -19903,6 +19903,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// and an unreadable hooks directory is indistinguishable from an empty one,
 			// so the credential-scanning pre-commit hook silently does not run.
 			{ name: 'git',    label: 'Git' },
+			// THE ONE GRANT A DAIMON CANNOT USE, and the row says so in its own tooltip:
+			// it lends an ssh key of Daimond's own to a Terminal the user opened, and an
+			// ssh reaches a shell on another machine that no fence here binds. A command
+			// is refused it at both ends -- `toolkit_bounds` in the engine, and the hand's
+			// own TOOLKIT_ROOTS. Not offered as a per-command capability, because it is
+			// not one.
+			{ name: 'remote', label: 'Remote' },
 		];
 
 		/// Draw the toolchain grants for the open Diamond.

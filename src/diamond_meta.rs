@@ -134,7 +134,7 @@ impl Meta {
 /// exactly what it is for, against a list that was one name short. Add a toolkit here whenever one
 /// is added there, and see `test_every_toolkit_the_engine_knows_is_a_name_the_store_keeps`, which
 /// fails when they disagree.
-const KNOWN_KITS: [&str; 5] = ["rust", "node", "python", "go", "git"];
+const KNOWN_KITS: [&str; 6] = ["rust", "node", "python", "go", "git", "remote"];
 
 /// Normalise a caller's toolkit grants into the form the store holds.
 ///
@@ -473,6 +473,39 @@ mod tests {
 				writes nothing and the chip cannot light -- add it to KNOWN_KITS", name);
 		}
 		assert!(normalise_kits(&[fmt!("")]).is_empty());
+	}
+
+	/// ...and a name the page will draw a chip for.
+	///
+	/// The fourth copy of the same list, and the one nothing was watching. `KITS` in
+	/// `www/js/daimond.js` is hand-written, so a toolkit that reaches the enum, the store and
+	/// both fences and not that array is a grant with no way to give it: the row simply does
+	/// not hold a chip, and nothing on the screen says the question exists. That is the exact
+	/// failure the test above this one was written for, one copy further out.
+	///
+	/// Read from the file rather than mirrored here, because a mirror is a fifth copy.
+	#[test]
+	fn test_every_toolkit_the_engine_knows_has_a_chip_the_page_draws() {
+		let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("www/js/daimond.js");
+		let src = match std::fs::read_to_string(&path) {
+			Ok(s)  => s,
+			// Read from the tree, so a build without it proves nothing either way rather
+			// than failing on somebody's packaging.
+			Err(_) => return,
+		};
+		let list = match src.find("var KITS = [") {
+			Some(i) => match src[i..].find("];") {
+				Some(j) => &src[i..i + j],
+				None    => panic!("the KITS array in www/js/daimond.js has no end"),
+			},
+			None => panic!("www/js/daimond.js no longer holds a `var KITS = [`"),
+		};
+		for kit in crate::tools::Toolkit::all() {
+			let want = fmt!("name: '{}'", kit.name());
+			assert!(list.contains(&want),
+				"the engine offers the toolkit '{}' and the Workspace panel draws no chip 				for it, so nobody can grant it -- add {} to KITS in www/js/daimond.js",
+				kit.name(), want);
+		}
 	}
 
 	#[test]

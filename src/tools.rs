@@ -2059,13 +2059,44 @@ pub enum Toolkit {
     /// One thing not to widen for: a repository initialised `--mirror` has Ore shell out to `git
     /// fast-import`.  There is no mirror in this tree, so that path does not run here.
     Git,
+    /// `ssh`, with a key that is Daimond's own -- and only from a terminal the user opened.
+    ///
+    /// # Why it is not the user's `~/.ssh`
+    ///
+    /// The three refusals that made this necessary were captured through the real hand in a real
+    /// pty, and the first of them is `hostkeys_foreach failed for ~/.ssh/known_hosts: Permission
+    /// denied`.  The tempting repair is to lend `~/.ssh`, and it is the wrong one: that directory
+    /// holds the keys the user's own life runs on, and [`Toolkit::Git`] denies it by name for
+    /// exactly that reason.  So Daimond has a keypair of its OWN, made by the hand's installer,
+    /// under `~/.config/oxedyne/daimond-hand/ssh`, installed on the machines the user chose with
+    /// `restrict,pty` against each one's `authorized_keys`.  Revoking Daimond's reach is then one
+    /// line removed from one file, on the machine that wants it back -- which is not true of a
+    /// grant of the user's own key.
+    ///
+    /// The host list is Daimond's own for the same reason and a second one: a `known_hosts` the
+    /// user owns would have to be WRITTEN to learn a host, and a writable `~/.ssh` is a way to
+    /// add an `authorized_keys` entry.
+    ///
+    /// # Why the terminal and not a command
+    ///
+    /// **This is the one toolkit a daimon can never be granted**, and [`Toolkit::terminal_only`]
+    /// is where that is enforced in this end.  An `ssh` that reaches another machine reaches it
+    /// UNFENCED -- the far end is a login shell under sshd, and nothing this repository can do
+    /// binds it -- so a fenced command that could run `ssh` would not be fenced at all.  A
+    /// terminal is a different trust class: a person opened it, a person is typing into it, and
+    /// what they reach is what they could reach from any other terminal on their own machine.
+    ///
+    /// Deliberately excluded: `~/.ssh` in every part, denied by name; and
+    /// `~/.config/oxedyne/daimond-hand/openrouter.key`, which is the daimon's own budget and
+    /// happens to sit in the same directory.
+    Remote,
 }
 
 impl Toolkit {
 
     /// Every toolkit, in the order they are offered to the user.
-    pub fn all() -> [Self; 5] {
-        [Self::Rust, Self::Node, Self::Python, Self::Go, Self::Git]
+    pub fn all() -> [Self; 6] {
+        [Self::Rust, Self::Node, Self::Python, Self::Go, Self::Git, Self::Remote]
     }
 
     /// The toolkit's name, which is what a Diamond records.
@@ -2076,6 +2107,7 @@ impl Toolkit {
             Self::Python => "python",
             Self::Go     => "go",
             Self::Git    => "git",
+            Self::Remote => "remote",
         }
     }
 
@@ -2087,6 +2119,7 @@ impl Toolkit {
             Self::Python => "Python",
             Self::Go     => "Go",
             Self::Git    => "Git",
+            Self::Remote => "Remote",
         }
     }
 
@@ -2098,6 +2131,7 @@ impl Toolkit {
             Self::Python => "python, pip and what pip installed for the user",
             Self::Go     => "the go command",
             Self::Git    => "git, with the user's own name, email and hooks",
+            Self::Remote => "ssh, from a terminal the user opened and never from a command",
         }
     }
 
@@ -2111,8 +2145,8 @@ impl Toolkit {
                 return Ok(k);
             }
         }
-        Err(err!("'{}' is not a toolkit. Known toolkits: rust, node, python, go, git.", name;
-            Invalid, Input))
+        Err(err!("'{}' is not a toolkit. Known toolkits: rust, node, python, go, git, remote.",
+            name; Invalid, Input))
     }
 
     /// This toolkit as a rule in a turn's bounds.
@@ -2204,6 +2238,23 @@ impl Toolkit {
                     why: "the private keys, which nothing here needs and which pushing does not \
                         use" },
             ],
+            Self::Remote => &[
+                Grant { tail: ".config/oxedyne/daimond-hand/bin", level: Level::Ro,
+                    why: "the ssh the hand's installer wrote, which supplies the key, the host \
+                        list and the session that survives a dropout" },
+                Grant { tail: ".config/oxedyne/daimond-hand/ssh", level: Level::Ro,
+                    why: "the keypair the installer made for this computer's Daimond, which is \
+                        all that directory holds" },
+                Grant { tail: ".config/oxedyne/daimond-hand/known_hosts", level: Level::Rw,
+                    why: "the hosts ssh has learned -- Daimond's own list, written when it \
+                        learns one, and never the user's" },
+                Grant { tail: ".config/oxedyne/daimond-hand/openrouter.key", level: Level::Deny,
+                    why: "the daimon's own budget, which happens to sit in the same directory \
+                        and is no part of reaching another machine" },
+                Grant { tail: ".ssh",                 level: Level::Deny,
+                    why: "the user's own keys and host list, which this never reads: Daimond \
+                        reaches another machine as itself or not at all" },
+            ],
         }
     }
 
@@ -2221,6 +2272,14 @@ impl Toolkit {
             Self::Go     => &["go/bin"],
             // git is in `/usr/bin`, which `PATH_BASE` already carries.
             Self::Git    => &[],
+            // AHEAD of `/usr/bin`, which is what makes `ssh argonaut` -- typed exactly like
+            // that -- reach the wrapper rather than the system's own ssh. OpenSSH takes the
+            // home directory from the passwd entry and not from `HOME`, so there is no
+            // environment variable that could point it at Daimond's key and Daimond's host
+            // list; a wrapper on `PATH` is the only place those flags can come from without
+            // the user typing them. It is granted READ-ONLY, so nothing a fenced command does
+            // can put a second program in there.
+            Self::Remote => &[".config/oxedyne/daimond-hand/bin"],
         }
     }
 
@@ -2239,6 +2298,9 @@ impl Toolkit {
             // git finds its global configuration through `HOME` and nothing else; see
             // [`Toolkit::needs_home`], which is where that exception is made and argued.
             Self::Git    => &[],
+            // Nothing: the wrapper on `PATH` carries the absolute paths, written into it by
+            // the installer, so there is no name for a caller to get wrong.
+            Self::Remote => &[],
         }
     }
 
@@ -2260,6 +2322,24 @@ impl Toolkit {
     /// of the two this user has.  Setting `HOME` lets git do its own looking.
     pub fn needs_home(&self) -> bool {
         matches!(self, Self::Git)
+    }
+
+    /// Is this toolkit reachable only from a terminal the user opened by hand?
+    ///
+    /// Yes for exactly one, [`Toolkit::Remote`], and the reason is not that ssh is dangerous
+    /// but that it is a **way out of the fence**: the shell at the far end is sshd's child on
+    /// another machine, under nothing this repository applies.  So a fenced command that could
+    /// run it would not be fenced, and the grant belongs to the trust class where a person
+    /// opened the surface and is typing into it.
+    ///
+    /// Enforced in three places, none of which trusts the other two.  [`toolkit_bounds`] drops
+    /// it, so a daimon's turn never carries the rule and [`fence_spec`] never sees it.  Only
+    /// [`terminal_toolkit_bounds`] keeps it, and only `crate::wasm::pty::pty_request` calls
+    /// that.  And the hand refuses a fence naming these folders unless the request came in by
+    /// its terminal door -- see `TOOLKIT_ROOTS` in `hand/src/exec.rs`, which is the copy that
+    /// matters, because the fence travels through the page and the page is not the app.
+    pub fn terminal_only(&self) -> bool {
+        matches!(self, Self::Remote)
     }
 }
 
@@ -2313,6 +2393,9 @@ pub struct Machine {
     pub caps: Vec<String>,
     /// This computer's name, where the hand said it.  Carried in `caps` as `host:<name>`.
     pub host: Option<String>,
+    /// The user's login shell, absolute, where the hand said it.  Carried in `caps` as
+    /// `shell:<path>`.
+    pub shell: Option<String>,
 }
 
 impl Machine {
@@ -2347,6 +2430,10 @@ impl Machine {
             root: extract_json_string(status, "root").unwrap_or_default(),
             home: cap_value(&caps, "home").filter(|h| abs_dir(h)),
             host: cap_value(&caps, "host").filter(|h| !h.trim().is_empty()),
+            // Absolute or nothing. A relative name would be resolved by the hand against a
+            // `PATH` the page cannot see, and a terminal opening on a refusal is worse than
+            // one opening on `/bin/sh`.
+            shell: cap_value(&caps, "shell").filter(|p| p.starts_with('/')),
             caps,
         }
     }
@@ -2356,7 +2443,14 @@ impl Machine {
     /// # Arguments
     /// * `root` - The absolute folder the hand's grant covers.
     pub fn at(root: &str) -> Self {
-        Self { os: String::new(), root: root.to_string(), home: None, host: None, caps: Vec::new() }
+        Self {
+            os:    String::new(),
+            root:  root.to_string(),
+            home:  None,
+            host:  None,
+            shell: None,
+            caps:  Vec::new(),
+        }
     }
 
     /// Whether the granted root is a path a fence can be expressed against.
@@ -2432,6 +2526,26 @@ pub fn toolkit_names_json(bounds: &[Bound]) -> String {
 /// # Arguments
 /// * `names` - The recorded toolkit names, as [`Toolkit::name`] spells them.
 pub fn toolkit_bounds(names: &[String]) -> Vec<Bound> {
+    terminal_toolkit_bounds(names).into_iter()
+        // The one narrowing between the two doors, and the whole of it. A toolkit marked
+        // [`Toolkit::terminal_only`] is a grant to a surface the USER opened; a command is a
+        // surface a daimon reaches, so the rule is dropped here and can never enter a turn's
+        // bounds by this route. Dropped rather than refused, exactly as an unknown name is:
+        // the Diamond legitimately records the grant, and what this door does with it is
+        // grant nothing.
+        .filter(|b| !matches!(b, Bound::Toolkit(k) if k.terminal_only()))
+        .collect()
+}
+
+/// The toolchains a Diamond recorded, for a terminal the user opened by hand.
+///
+/// The same list as [`toolkit_bounds`] plus the grants that belong to this door alone.
+/// **`crate::wasm::pty::pty_request` is the only caller there should ever be**, and a second
+/// one is a decision about trust rather than a convenience: see [`Toolkit::terminal_only`].
+///
+/// # Arguments
+/// * `names` - The recorded toolkit names, as [`Toolkit::name`] spells them.
+pub fn terminal_toolkit_bounds(names: &[String]) -> Vec<Bound> {
     let mut out: Vec<Bound> = Vec::new();
     for n in names {
         if let Ok(k) = Toolkit::parse(n) {
@@ -14477,6 +14591,92 @@ mod tests {
         m
     }
 
+    /// The ssh key reaches a terminal and never a command, at THIS end.
+    ///
+    /// B11 is the owner's own request -- an ssh to another machine that survives a dropout --
+    /// and the whole of its danger is in one sentence: the shell at the far end of an ssh is
+    /// sshd's child on another computer, fenced by nothing here.  So a fenced command able to
+    /// reach the key would not be fenced at all, and the grant belongs to the surface a person
+    /// opened and is typing into.
+    ///
+    /// The hand refuses it a second time, at its own door, because the fence travels through
+    /// the page and the page is not the app -- see `a_fence_may_only_name_roots_the_grant_
+    /// implies` in `hand/src/exec.rs`.  This is the first of the two, and it must hold on its
+    /// own: a Diamond that recorded the grant hands the same list of names to both doors, and
+    /// only the door decides.
+    #[test]
+    fn test_the_remote_toolkit_is_a_terminals_and_not_a_commands_00() {
+        let names = vec![fmt!("remote"), fmt!("rust")];
+        let m = machine("/home/u");
+
+        // The command door: the name is recorded, and it grants nothing.
+        let cmd = toolkit_bounds(&names);
+        assert!(!cmd.contains(&Bound::Toolkit(Toolkit::Remote)),
+            "a command's bounds carry the Remote grant: {:?}", cmd);
+        assert!(cmd.contains(&Bound::Toolkit(Toolkit::Rust)),
+            "dropping one toolkit dropped the others with it: {:?}", cmd);
+        assert!(!toolkit_names_json(&cmd).contains("remote"),
+            "a command told the hand it had been granted the Remote toolchain: {}",
+            toolkit_names_json(&cmd));
+
+        // And no path of it reaches the fence a command runs under.
+        let mut cb = diamond_bounds("diamonds/d1", &[fmt!("proj")], &[]);
+        cb.extend(toolkit_bounds(&names));
+        let cf = fence_spec(&cb, &m, false);
+        for p in cf.rw.iter().chain(cf.ro.iter()) {
+            assert!(!p.contains("daimond-hand"),
+                "a command's fence names '{}', which is the ssh key's own directory", p);
+        }
+
+        // The terminal door: granted, and the key is readable.
+        let term = terminal_toolkit_bounds(&names);
+        assert!(term.contains(&Bound::Toolkit(Toolkit::Remote)),
+            "the terminal was not given what the user granted it: {:?}", term);
+        let mut tb = diamond_bounds("diamonds/d1", &[fmt!("proj")], &[]);
+        tb.extend(terminal_toolkit_bounds(&names));
+        let tf = fence_spec(&tb, &m, false);
+        assert!(tf.ro.contains(&fmt!("/home/u/.config/oxedyne/daimond-hand/ssh")),
+            "the terminal cannot read the key it was granted: ro={:?}", tf.ro);
+        assert!(tf.rw.contains(&fmt!("/home/u/.config/oxedyne/daimond-hand/known_hosts")),
+            "ssh cannot learn a host, so every connection stops on a prompt: rw={:?}", tf.rw);
+        // The user's own keys, denied by name at both doors.
+        assert!(tf.deny.contains(&fmt!("/home/u/.ssh")),
+            "the user's own keys were not denied: deny={:?}", tf.deny);
+        // And the daimon's budget, which shares the directory and is no part of this.
+        assert!(tf.deny.contains(&fmt!("/home/u/.config/oxedyne/daimond-hand/openrouter.key")),
+            "the daimon's own key was left readable: deny={:?}", tf.deny);
+        // The wrapper is ahead of the system's own ssh, which is what makes `ssh argonaut`
+        // -- typed exactly like that -- reach Daimond's key.
+        let kit = match Kit::resolve(&tb, &m) {
+            Some(k) => k,
+            None    => panic!("the terminal resolved no toolkit at all"),
+        };
+        let path = kit.env.iter().find(|(n, _)| n == "PATH").map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        assert!(path.starts_with("/home/u/.config/oxedyne/daimond-hand/bin:")
+                || path.contains(":/home/u/.config/oxedyne/daimond-hand/bin:"),
+            "the wrapper is not on PATH: {}", path);
+        match path.find("/home/u/.config/oxedyne/daimond-hand/bin") {
+            Some(i) => assert!(path[..i].find("/usr/bin").is_none(),
+                "the system's own ssh comes first, so `ssh argonaut` never sees the key: {}",
+                path),
+            None => panic!("the wrapper is not on PATH: {}", path),
+        }
+    }
+
+    /// A terminal opens on the shell the user's own session uses.
+    #[test]
+    fn test_a_terminal_opens_on_the_users_own_shell_00() {
+        let said = r#"{"paired":true,"os":"linux","root":"/home/u/ws","caps":["fence:linux","home:/home/u","shell:/bin/bash"]}"#;
+        assert_eq!(Some(fmt!("/bin/bash")), Machine::from_status(said).shell);
+        // An older hand says nothing, and nothing is guessed.
+        let quiet = r#"{"paired":true,"os":"linux","root":"/home/u/ws","caps":["fence:linux","home:/home/u"]}"#;
+        assert_eq!(None, Machine::from_status(quiet).shell);
+        // A relative name would be resolved against a PATH the page cannot see.
+        let rel = r#"{"paired":true,"os":"linux","root":"/home/u/ws","caps":["fence:linux","shell:bash"]}"#;
+        assert_eq!(None, Machine::from_status(rel).shell);
+    }
+
     #[test]
     fn test_a_granted_toolkit_reaches_the_toolchain_00() {
         // With a folder attached, because the Diamond's own directory is in the browser's storage
@@ -21756,7 +21956,8 @@ mod tests {
     fn test_the_git_toolkit_grants_the_configuration_and_denies_every_credential() {
         let m = Machine {
             os: fmt!("linux"), root: fmt!("/home/u/work"),
-            home: Some(fmt!("/home/u")), host: None, caps: vec![fmt!("fence:linux")],
+            home: Some(fmt!("/home/u")), host: None, shell: None,
+            caps: vec![fmt!("fence:linux")],
         };
         let kit = Kit::resolve(&[Toolkit::Git.bound()], &m).expect("git resolves");
         assert!(kit.ro.contains(&fmt!("/home/u/.gitconfig")), "{:?}", kit.ro);
@@ -21792,7 +21993,7 @@ mod tests {
     fn homed() -> Machine {
         Machine {
             os: fmt!("linux"), root: fmt!("/home/u/usr"), home: Some(fmt!("/home/u")),
-            host: None, caps: vec![fmt!("fence:linux")],
+            host: None, shell: None, caps: vec![fmt!("fence:linux")],
         }
     }
 
@@ -21876,7 +22077,7 @@ mod tests {
     fn test_a_machine_with_no_home_grants_no_toolchain_root() {
         let m = Machine {
             os: fmt!("linux"), root: fmt!("/home/u/usr"), home: None,
-            host: None, caps: vec![fmt!("fence:linux")],
+            host: None, shell: None, caps: vec![fmt!("fence:linux")],
         };
         let bounds: Vec<Bound> = Toolkit::all().iter().map(|k| k.bound()).collect();
         let f = fence_spec(&bounds, &m, false);

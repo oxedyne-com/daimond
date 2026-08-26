@@ -502,9 +502,9 @@
 			s.timer = setTimeout(function () {
 				settle(s, {
 					id: id, exit: -1, killed: false, gaps: s.gaps,
-					refusal: 'The machine hand was asked for a terminal and did not open one. The user '
-						+ 'may not have seen the approval window — the Daimond Hands icon carries the '
-						+ 'question until it is answered. Ask them to allow it, and try again.',
+					refusal: 'Daimond asked for a terminal and the machine hand did not open one. The '
+						+ 'approval window may still be waiting — the Daimond Hands toolbar icon carries '
+						+ 'the question until it is answered. Answer it and try again.',
 				});
 			}, OPEN_WAIT);
 			hand().send(msg).catch(function (e) {

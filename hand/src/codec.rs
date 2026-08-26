@@ -1484,6 +1484,10 @@ fn resp_dat(resp: &Resp) -> Dat {
             },
             "message"	=> Dat::Str(message.clone()),
         },
+        Resp::Fault { reason } => omapdat!{
+            "t"			=> "fault",
+            "reason"	=> Dat::Str(reason.clone()),
+        },
     }
 }
 
@@ -1612,6 +1616,9 @@ pub fn resp_of_json(txt: &str) -> Outcome<Resp> {
         "error" => Ok(Resp::Error {
             id:      res!(opt_str_field(&obj, "error", "id")),
             message: res!(str_field(&obj, "error", "message")),
+        }),
+        "fault" => Ok(Resp::Fault {
+            reason: res!(str_field(&obj, "fault", "reason")),
         }),
         other => Err(Fault::UnknownTag.raise(&fmt!(
             "There is no response called {:?}. This hand is answering with \

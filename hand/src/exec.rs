@@ -2758,36 +2758,56 @@ fn resolve(prefix: &str) -> PathBuf {
 /// So each entry names the toolkit that implies it and whether the fence may
 /// name it WRITABLE, and both are checked.  A `ro` root may sit under any tail of
 /// a granted toolkit; an `rw` root only under one marked writable.
+/// Which of the three doors a gated request came in by.
+///
+/// Lives here rather than beside the dispatcher because the clamp reads it: one toolkit,
+/// [`TOOLKIT_ROOTS`]'s `remote` rows, is granted to a terminal the user opened and to nothing
+/// a daimon can reach.  An enum rather than a boolean so that a fourth door cannot be added
+/// without the compiler asking what it means here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Door {
+    Command,
+    Terminal,
+    File,
+}
+
+impl Door {
+    /// Is this the surface a person opened and is typing into?
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Terminal)
+    }
+}
+
 const TOOLKIT_ROOTS: &[KitRoot] = &[
     // rust
-    KitRoot { kit: "rust",   tail: ".cargo/bin",           write: false },
-    KitRoot { kit: "rust",   tail: ".rustup",              write: false },
-    KitRoot { kit: "rust",   tail: ".cargo/registry",      write: true  },
-    KitRoot { kit: "rust",   tail: ".cargo/git",           write: true  },
-    KitRoot { kit: "rust",   tail: ".cargo/.package-cache", write: true  },
+    KitRoot { kit: "rust",   tail: ".cargo/bin",           write: false, term: false },
+    KitRoot { kit: "rust",   tail: ".rustup",              write: false, term: false },
+    KitRoot { kit: "rust",   tail: ".cargo/registry",      write: true, term: false  },
+    KitRoot { kit: "rust",   tail: ".cargo/git",           write: true, term: false  },
+    KitRoot { kit: "rust",   tail: ".cargo/.package-cache", write: true, term: false  },
     // The target directory this repository's own convention puts a build in, one
     // named subdirectory per agent slot. Without the row the clamp refuses the
     // whole command, so the grant the app now sends makes a fenced build WORSE
     // than none at all. `~/.cache` is never granted: only this tail is, and only
     // to a request that named the Rust toolkit.
-    KitRoot { kit: "rust",   tail: ".cache/cargo-targets", write: true  },
+    KitRoot { kit: "rust",   tail: ".cache/cargo-targets", write: true, term: false  },
     // node
-    KitRoot { kit: "node",   tail: ".nvm",                 write: false },
-    KitRoot { kit: "node",   tail: ".npm",                 write: true  },
+    KitRoot { kit: "node",   tail: ".nvm",                 write: false, term: false },
+    KitRoot { kit: "node",   tail: ".npm",                 write: true, term: false  },
     // Where a world's dev server and mock provider keep their pid files, their
     // output and their scratch root. Same reasoning as the row above, and the
     // same narrowness: the tail and not `~/.cache`.
-    KitRoot { kit: "node",   tail: ".cache/daimond",       write: true  },
+    KitRoot { kit: "node",   tail: ".cache/daimond",       write: true, term: false  },
     // python
-    KitRoot { kit: "python", tail: ".pyenv",               write: false },
-    KitRoot { kit: "python", tail: ".local/bin",           write: false },
-    KitRoot { kit: "python", tail: ".local/lib",           write: false },
-    KitRoot { kit: "python", tail: ".cache/pip",           write: true  },
+    KitRoot { kit: "python", tail: ".pyenv",               write: false, term: false },
+    KitRoot { kit: "python", tail: ".local/bin",           write: false, term: false },
+    KitRoot { kit: "python", tail: ".local/lib",           write: false, term: false },
+    KitRoot { kit: "python", tail: ".cache/pip",           write: true, term: false  },
     // go
-    KitRoot { kit: "go",     tail: "sdk",                  write: false },
-    KitRoot { kit: "go",     tail: "go/bin",               write: false },
-    KitRoot { kit: "go",     tail: "go/pkg/mod",           write: true  },
-    KitRoot { kit: "go",     tail: ".cache/go-build",      write: true  },
+    KitRoot { kit: "go",     tail: "sdk",                  write: false, term: false },
+    KitRoot { kit: "go",     tail: "go/bin",               write: false, term: false },
+    KitRoot { kit: "go",     tail: "go/pkg/mod",           write: true, term: false  },
+    KitRoot { kit: "go",     tail: ".cache/go-build",      write: true, term: false  },
     // git -- the CONFIGURATION and not the program, which is in `/usr/bin` and therefore already in
     // this hand's own read-only base. Without these two rows the app's Git toolkit cannot be
     // granted at all: `vet_roots` refuses the fence, loudly and safely, and a fenced git then runs
@@ -2795,8 +2815,25 @@ const TOOLKIT_ROOTS: &[KitRoot] = &[
     // pre-commit hook that reads every staged line looking for a credential. An unreadable hooks
     // directory is indistinguishable from an empty one, so refusing `--no-verify` while the hook
     // cannot run would be a guard protecting nothing.
-    KitRoot { kit: "git",    tail: ".gitconfig",           write: false },
-    KitRoot { kit: "git",    tail: ".config/git",          write: false },
+    KitRoot { kit: "git",    tail: ".gitconfig",           write: false, term: false },
+    KitRoot { kit: "git",    tail: ".config/git",          write: false, term: false },
+    // remote -- THE ONE TOOLKIT A COMMAND CANNOT HAVE, whatever the page says it was granted.
+    //
+    // An `ssh` that reaches another machine reaches it UNFENCED: the shell at the far end is
+    // sshd's child, under nothing this binary applies. So a fenced command able to run it
+    // would not be fenced at all, and `term: true` is what makes that a property of the HAND
+    // rather than of the page -- the app drops the grant for a command (`toolkit_bounds` in
+    // `src/tools.rs`), and this refuses it even if a page were made to send it anyway.
+    //
+    // Read-only, all three, with one exception: the host list ssh writes when it learns a
+    // host. None of them is the user's own `~/.ssh`, which is denied by name in the app's
+    // table and is never lent to anything.
+    KitRoot { kit: "remote", tail: ".config/oxedyne/daimond-hand/bin",
+        write: false, term: true },
+    KitRoot { kit: "remote", tail: ".config/oxedyne/daimond-hand/ssh",
+        write: false, term: true },
+    KitRoot { kit: "remote", tail: ".config/oxedyne/daimond-hand/known_hosts",
+        write: true,  term: true },
 ];
 
 /// One folder a named toolchain may reach, and at what level.
@@ -2812,6 +2849,8 @@ pub struct KitRoot {
     pub tail:  &'static str,
     /// Whether a fence may name it as WRITABLE, and not merely readable.
     pub write: bool,
+    /// Whether only a terminal the user opened may name it.
+    pub term:  bool,
 }
 
 /// Whether an arriving fence names only roots this hand's grant could imply.
@@ -2851,10 +2890,13 @@ pub struct KitRoot {
 /// * `kits` - The toolkit names the request carried.  Never read from `argv`: a
 ///   fence that widened itself to fit the requested binary would be a fence the
 ///   model chooses.
+/// * `door` - Which surface the request came in by.  A [`TOOLKIT_ROOTS`] row marked `term`
+///   is reachable from a terminal the user opened and from nothing else, however the request
+///   spells its grant.
 ///
 /// # Returns
 /// The refusal, or `None` where every root is one the grant could imply.
-pub fn vet_roots(root: &Path, fence: &FenceSpec, kits: &[String]) -> Option<String> {
+pub fn vet_roots(root: &Path, fence: &FenceSpec, kits: &[String], door: Door) -> Option<String> {
     // Allowed at either level: the workspace, and the hand's own scratch, which the hand appends
     // to every fence itself and must therefore accept back.
     let mut any: Vec<PathBuf> = vec![root.to_path_buf()];
@@ -2867,13 +2909,24 @@ pub fn vet_roots(root: &Path, fence: &FenceSpec, kits: &[String]) -> Option<Stri
     // "it grants nothing".
     let mut ro_only: Vec<PathBuf> = Vec::new();
     let mut writable: Vec<PathBuf> = Vec::new();
+    // Folders a granted toolkit names that THIS door may not have. Kept rather than
+    // discarded so the refusal can say which of the two mistakes it is: "nobody granted
+    // that" is false here and would send the reader to the wrong fix.
+    let mut term_only: Vec<PathBuf> = Vec::new();
     if let Ok(h) = std::env::var("HOME") {
         if !h.is_empty() && Path::new(&h).is_absolute() {
             for k in TOOLKIT_ROOTS {
                 if !kits.iter().any(|n| n == k.kit) {
                     continue;
                 }
+                // The trust boundary, enforced at the hand and not merely at the page: a
+                // grant marked for the terminal is not available to a command or to a file
+                // operation, which are the two doors a daimon reaches.
                 let p = Path::new(&h).join(k.tail);
+                if k.term && !door.is_terminal() {
+                    term_only.push(p);
+                    continue;
+                }
                 if k.write { writable.push(p); } else { ro_only.push(p); }
             }
         }
@@ -2905,6 +2958,18 @@ pub fn vet_roots(root: &Path, fence: &FenceSpec, kits: &[String]) -> Option<Stri
                     The caches a build genuinely has to write are granted separately and by name.",
                     r));
             }
+            // Named by a toolkit the request really did carry, and refused all the same for
+            // the door it came in by. The whole of the Remote grant's reason is in the
+            // sentence, because the reader's next move depends on believing it.
+            if term_only.iter().any(|a| under(&p, a)) {
+                return Some(fmt!(
+                    "Refused: this command's fence names '{}', which is part of the Remote \
+                    toolchain -- an ssh key of Daimond's own and the host list that goes with \
+                    it. That grant is lent to a terminal the user opened by hand and to \
+                    nothing else, because an ssh reaches a shell on another machine that no \
+                    fence on this one binds. A command does not get it, whatever this Diamond \
+                    was granted.", r));
+            }
             return Some(fmt!(
                 "Refused: this command's fence grants '{}' access to '{}', which is not inside \
                 the folder this hand was granted ('{}'), is not this hand's own temporary \
@@ -2918,6 +2983,74 @@ pub fn vet_roots(root: &Path, fence: &FenceSpec, kits: &[String]) -> Option<Stri
         }
     }
     None
+}
+
+/// The user's own files a terminal they opened is lent, read-only, by name.
+///
+/// **Three, and no more.**  A shell started under the fence could not read a single one of
+/// them, so the terminal opened on `bash: /home/…/.bashrc: Permission denied` and then on a
+/// prompt belonging to nobody -- no aliases, no functions, no history search, none of the key
+/// bindings that are in every other terminal on the machine.  A person opening a terminal
+/// expects their own terminal.
+///
+/// * `.bashrc` -- what an interactive shell reads: the prompt, the aliases, the functions.
+/// * `.profile` -- what a login shell reads, and on many machines the file that reaches
+///   `.bashrc` at all.
+/// * `.inputrc` -- readline's, so the keys do what the user's fingers expect.
+///
+/// **Read-only, named one at a time, and never the home directory.**  That is the difference
+/// between lending three files and granting `$HOME`, which holds `.ssh`, `.aws`, `.netrc` and
+/// every browser profile.  A file `.bashrc` sources that is not in this list is refused and
+/// says so on the screen, which is honest and is a line the user can act on.
+pub const USER_DOTFILES: &[&str] = &[".bashrc", ".profile", ".inputrc"];
+
+/// Lends those files to a terminal, and to nothing else.
+///
+/// # Which end decides, and why it is this one
+///
+/// The page composes the fence and this does not change that: what the page cannot do is
+/// know which of the three files EXIST.  `fence::canonical` refuses a root it cannot resolve
+/// -- correctly, since a marked folder that has gone is a fence that would not cover what the
+/// user marked -- so a page naming `~/.inputrc` on a machine without one would take the whole
+/// terminal down with it.  The same argument [`grant_git_hooks`] is here for.
+///
+/// A denial already in the fence is left alone.  A deny is a decision somebody made, and
+/// widening one from here would be the fence quietly disagreeing with it.
+///
+/// # Arguments
+/// * `fence` - The fence as it arrived; the files that are there are added read-only.
+/// * `door` - Which surface the request came in by.  Nothing is added for a command or a file
+///   operation, which are the two doors a daimon reaches: the user's own shell configuration
+///   runs code, and a `.bashrc` read by a program the model chose is a program that ran the
+///   user's aliases with the model's arguments.
+///
+/// # Returns
+/// What was lent, so a caller that wants to say so can.
+pub fn grant_user_dotfiles(fence: &mut FenceSpec, door: Door) -> Vec<String> {
+    if !door.is_terminal() {
+        return Vec::new();
+    }
+    let home = match home_dir() {
+        Some(h) => PathBuf::from(h),
+        None    => return Vec::new(),
+    };
+    let mut lent = Vec::new();
+    for tail in USER_DOTFILES {
+        let p = home.join(tail);
+        if !p.is_file() {
+            continue;
+        }
+        if fence.deny.iter().any(|d| under(&p, &resolve(d))) {
+            continue;
+        }
+        if fence.rw.iter().chain(fence.ro.iter()).any(|r| under(&p, &resolve(r))) {
+            continue;
+        }
+        let named = fmt!("{}", p.display());
+        fence.ro.push(named.clone());
+        lent.push(named);
+    }
+    lent
 }
 
 /// Drops the toolchain folders this machine does not have.
@@ -7966,7 +8099,7 @@ mod tests {
         };
         // The clamp accepts it -- it is a root the grant implies -- and the fence
         // would then refuse the command for a path that is simply not there.
-        assert_eq!(None, vet_roots(&ws, &spec, &kits),
+        assert_eq!(None, vet_roots(&ws, &spec, &kits, Door::Command),
             "the clamp refused a toolchain root, so this test is measuring the wrong thing");
         assert!(detected_fence().plan(&spec, &Unfenced::Refuse).is_err(),
             "a fence naming {} resolved, so this machine cannot show the failure",
@@ -8480,21 +8613,21 @@ mod tests {
 
         let targets = home.join(".cache/cargo-targets");
         let worlds  = home.join(".cache/daimond");
-        assert_eq!(None, vet_roots(&ws, &rw(&targets), &kits(&["rust"])),
+        assert_eq!(None, vet_roots(&ws, &rw(&targets), &kits(&["rust"]), Door::Command),
             "the Rust toolkit cannot write the target directory this repository builds into");
-        assert_eq!(None, vet_roots(&ws, &rw(&worlds), &kits(&["node"])),
+        assert_eq!(None, vet_roots(&ws, &rw(&worlds), &kits(&["node"]), Door::Command),
             "the Node toolkit cannot write a world's own scratch root");
 
         // Each belongs to ONE toolkit, and a grant of the other does not reach it.
-        assert!(vet_roots(&ws, &rw(&targets), &kits(&["node"])).is_some(),
+        assert!(vet_roots(&ws, &rw(&targets), &kits(&["node"]), Door::Command).is_some(),
             "a target directory was granted to a request that named only Node");
-        assert!(vet_roots(&ws, &rw(&worlds), &kits(&["rust"])).is_some(),
+        assert!(vet_roots(&ws, &rw(&worlds), &kits(&["rust"]), Door::Command).is_some(),
             "a world's scratch root was granted to a request that named only Rust");
 
         // And the folder above them is never granted, however many toolkits are
         // in play. `~/.cache` holds the pip and go caches as well.
         assert!(vet_roots(&ws, &rw(&home.join(".cache")),
-                &kits(&["rust", "node", "python", "go", "git"])).is_some(),
+                &kits(&["rust", "node", "python", "go", "git"]), Door::Command).is_some(),
             "the whole of ~/.cache was granted");
         Ok(())
     }
@@ -8504,6 +8637,69 @@ mod tests {
     /// `REVIEW.md` §1.5.  Both halves matter equally and the second is the one
     /// that decides whether this ships: a clamp that refuses `/etc` and also
     /// refuses `~/.cargo` is a clamp that stops `cargo` working, and a security
+    /// The user's own shell files reach a terminal and never a command.
+    ///
+    /// Lane U's third refusal was `bash: ~/.bashrc: Permission denied`, and the repair is
+    /// three named files lent read-only.  The half that has to hold is the other one: a
+    /// `.bashrc` runs code, so a command the model chose reading it would be the model
+    /// running the user's own aliases with the model's arguments.  Both doors are asked here,
+    /// because a grant that is correct at one and silent at the other is the whole point.
+    #[test]
+    fn the_users_shell_files_reach_a_terminal_and_no_command() -> Outcome<()> {
+        let home = match home_dir() {
+            Some(h) => PathBuf::from(h),
+            None    => return Ok(()), // Nowhere to resolve them against.
+        };
+        let there: Vec<&str> = USER_DOTFILES.iter()
+            .filter(|t| home.join(t).is_file())
+            .copied()
+            .collect();
+        let bare = || FenceSpec { rw: Vec::new(), ro: Vec::new(), deny: Vec::new(), net: false };
+
+        for shut in [Door::Command, Door::File] {
+            let mut f = bare();
+            let lent = grant_user_dotfiles(&mut f, shut);
+            assert!(lent.is_empty(), "a {:?} was lent {:?}", shut, lent);
+            assert!(f.ro.is_empty(), "a {:?}'s fence grew {:?}", shut, f.ro);
+        }
+
+        let mut f = bare();
+        let lent = grant_user_dotfiles(&mut f, Door::Terminal);
+        assert_eq!(there.len(), lent.len(),
+            "the terminal was lent {:?} where {:?} are on this machine", lent, there);
+        for t in there.iter() {
+            let want = fmt!("{}", home.join(t).display());
+            assert!(lent.contains(&want), "{} was not lent to the terminal", want);
+            assert!(f.ro.contains(&want), "{} did not reach the fence", want);
+        }
+        // READ-ONLY, which is the difference between lending a file and lending the shell
+        // that could rewrite it.
+        assert!(f.rw.is_empty(), "the terminal was given WRITE on {:?}", f.rw);
+        // And never the home directory itself, which is what "named one at a time" means.
+        let h = fmt!("{}", home.display());
+        assert!(!f.ro.contains(&h), "the whole home directory was lent");
+        Ok(())
+    }
+
+    /// A denial already in the fence is not widened from here.
+    #[test]
+    fn a_denied_shell_file_stays_denied() -> Outcome<()> {
+        let home = match home_dir() {
+            Some(h) => PathBuf::from(h),
+            None    => return Ok(()),
+        };
+        let mut f = FenceSpec {
+            rw:   Vec::new(),
+            ro:   Vec::new(),
+            deny: vec![fmt!("{}", home.display())],
+            net:  false,
+        };
+        let lent = grant_user_dotfiles(&mut f, Door::Terminal);
+        assert!(lent.is_empty(),
+            "a deny somebody put on the home directory was widened from here: {:?}", lent);
+        Ok(())
+    }
+
     /// check that breaks the build is a security check somebody turns off.
     #[test]
     fn a_fence_may_only_name_roots_the_grant_implies() -> Outcome<()> {
@@ -8520,23 +8716,41 @@ mod tests {
         let kits = |names: &[&str]| -> Vec<String> {
             names.iter().map(|n| fmt!("{}", n)).collect()
         };
-        let all = kits(&["rust", "node", "python", "go", "git"]);
+        let all = kits(&["rust", "node", "python", "go", "git", "remote"]);
 
         // The workspace itself, and anything under it, with no toolkit in play at all.
-        assert_eq!(None, vet_roots(&ws, &spec(one(&ws), Vec::new()), &[]));
-        assert_eq!(None, vet_roots(&ws, &spec(one(&ws.join("sub")), Vec::new()), &[]));
+        assert_eq!(None, vet_roots(&ws, &spec(one(&ws), Vec::new()), &[], Door::Command));
+        assert_eq!(None, vet_roots(&ws, &spec(one(&ws.join("sub")), Vec::new()), &[], Door::Command));
 
-        // Every toolchain a granted toolkit can name, at the level that toolkit lends it.
+        // Every toolchain a granted toolkit can name, at the level that toolkit lends it --
+        // and at the DOOR it lends it to. A row marked `term` is the Remote toolchain: an ssh
+        // key, lent to a terminal the user opened, and refused to a command however the
+        // request spells its grant, because the shell at the far end of an ssh is fenced by
+        // nothing on this machine.
         for k in TOOLKIT_ROOTS {
             let p = home.join(k.tail);
             let named = kits(&[k.kit]);
-            assert_eq!(None, vet_roots(&ws, &spec(one(&ws), one(&p)), &named),
+            let door = match k.term { true => Door::Terminal, false => Door::Command };
+            if k.term {
+                for shut in [Door::Command, Door::File] {
+                    let said = vet_roots(&ws, &spec(one(&ws), one(&p)), &named, shut);
+                    match said {
+                        Some(s) => assert!(s.contains("terminal the user opened by hand"),
+                            "the refusal must say WHY the door decides it: {}", s),
+                        None => return Err(err!(
+                            "{} reached a {:?}, and an ssh key must not: a command that could \
+                            run ssh is a command with a shell on another machine that nothing \
+                            here fences.", k.tail, shut; Bug)),
+                    }
+                }
+            }
+            assert_eq!(None, vet_roots(&ws, &spec(one(&ws), one(&p)), &named, door),
                 "the {} toolchain root was refused as readable", k.tail);
             // And a path inside one, which is how the app actually names them:
             // `~/.cargo/registry/cache`, not `~/.cargo`.
-            assert_eq!(None, vet_roots(&ws, &spec(one(&ws), one(&p.join("inner"))), &named),
+            assert_eq!(None, vet_roots(&ws, &spec(one(&ws), one(&p.join("inner"))), &named, door),
                 "a path inside the {} toolchain was refused", k.tail);
-            let writing = vet_roots(&ws, &spec(one(&p), Vec::new()), &named);
+            let writing = vet_roots(&ws, &spec(one(&p), Vec::new()), &named, door);
             if k.write {
                 assert_eq!(None, writing,
                     "the {} cache must be writable or the build it exists for cannot run", k.tail);
@@ -8557,24 +8771,25 @@ mod tests {
         // for a request that named no toolkit, and for one that named a different toolkit.
         for k in TOOLKIT_ROOTS {
             let p = home.join(k.tail);
-            assert!(vet_roots(&ws, &spec(one(&ws), one(&p)), &[]).is_some(),
+            let door = match k.term { true => Door::Terminal, false => Door::Command };
+            assert!(vet_roots(&ws, &spec(one(&ws), one(&p)), &[], door).is_some(),
                 "{} was reachable with no toolkit granted", k.tail);
-            assert!(vet_roots(&ws, &spec(one(&p), Vec::new()), &[]).is_some(),
+            assert!(vet_roots(&ws, &spec(one(&p), Vec::new()), &[], door).is_some(),
                 "{} was WRITABLE with no toolkit granted", k.tail);
-            let others: Vec<String> = ["rust", "node", "python", "go", "git"].iter()
+            let others: Vec<String> = ["rust", "node", "python", "go", "git", "remote"].iter()
                 .filter(|n| **n != k.kit).map(|n| fmt!("{}", n)).collect();
-            assert!(vet_roots(&ws, &spec(one(&ws), one(&p)), &others).is_some(),
+            assert!(vet_roots(&ws, &spec(one(&ws), one(&p)), &others, door).is_some(),
                 "{} was reachable to a request that granted only {:?}", k.tail, others);
         }
 
         // A name this build does not know grants nothing rather than refusing everything.
-        assert_eq!(None, vet_roots(&ws, &spec(one(&ws), Vec::new()), &kits(&["zig"])));
-        assert!(vet_roots(&ws, &spec(one(&ws), one(&home.join(".cargo/bin"))), &kits(&["zig"]))
+        assert_eq!(None, vet_roots(&ws, &spec(one(&ws), Vec::new()), &kits(&["zig"]), Door::Command));
+        assert!(vet_roots(&ws, &spec(one(&ws), one(&home.join(".cargo/bin"))), &kits(&["zig"]), Door::Command)
             .is_some(), "an unknown toolkit name granted a toolchain");
 
         // The hand's own scratch, which the hand appends to every fence itself.
         if let Ok(s) = scratch_base() {
-            assert_eq!(None, vet_roots(&ws, &spec(one(&s.join("run-1")), Vec::new()), &[]));
+            assert_eq!(None, vet_roots(&ws, &spec(one(&s.join("run-1")), Vec::new()), &[], Door::Command));
         }
 
         // And everything else, even with every toolkit granted. `/etc` is the measured one:
@@ -8591,9 +8806,9 @@ mod tests {
             home.join(".cargo"),          // the folder itself: 2.2 GB, and the crates.io token
             base.join("outside"),
         ] {
-            let said = vet_roots(&ws, &spec(one(&bad), Vec::new()), &all);
+            let said = vet_roots(&ws, &spec(one(&bad), Vec::new()), &all, Door::Command);
             assert!(said.is_some(), "rw:[{}] was accepted", bad.display());
-            let said = vet_roots(&ws, &spec(one(&ws), one(&bad)), &all);
+            let said = vet_roots(&ws, &spec(one(&ws), one(&bad)), &all, Door::Command);
             assert!(said.is_some(), "ro:[{}] was accepted", bad.display());
             // The refusal names the path and where to fix it, or it is not a
             // refusal somebody can act on.
@@ -8613,7 +8828,7 @@ mod tests {
             ro:   Vec::new(),
             deny: vec![fmt!("/etc"), fmt!("{}", home.join(".ssh").display())],
             net:  false,
-        }, &[]));
+        }, &[], Door::Command));
         Ok(())
     }
 
@@ -8647,10 +8862,10 @@ mod tests {
             deny: vec![at(".cargo/credentials.toml"), at(".cargo/credentials"), at(".netrc")],
             net: true,
         };
-        assert_eq!(None, vet_roots(&ws, &spec, &[fmt!("rust")]),
+        assert_eq!(None, vet_roots(&ws, &spec, &[fmt!("rust")], Door::Command),
             "the fence the app composes for the Rust toolkit was refused by the hand's clamp");
         // And the same fence with the grant absent is refused outright.
-        assert!(vet_roots(&ws, &spec, &[]).is_some(),
+        assert!(vet_roots(&ws, &spec, &[], Door::Command).is_some(),
             "the Rust toolchain was reachable to a request that granted no toolkit");
 
         // And the same for git, which is the toolkit whose absence from this table is quiet rather
@@ -8665,9 +8880,9 @@ mod tests {
                        at(".netrc")],
             net:  true,
         };
-        assert_eq!(None, vet_roots(&ws, &spec, &[fmt!("git")]),
+        assert_eq!(None, vet_roots(&ws, &spec, &[fmt!("git")], Door::Command),
             "the fence the app composes for the Git toolkit was refused by the hand's clamp");
-        assert!(vet_roots(&ws, &spec, &[]).is_some(),
+        assert!(vet_roots(&ws, &spec, &[], Door::Command).is_some(),
             "the user's git configuration was reachable with no toolkit granted");
         // Read-only in the table means read-only at the clamp.
         assert!(vet_roots(&ws, &FenceSpec {
@@ -8675,7 +8890,7 @@ mod tests {
             ro:   Vec::new(),
             deny: Vec::new(),
             net:  false,
-        }, &[fmt!("git")]).is_some(), "the git configuration was accepted as writable");
+        }, &[fmt!("git")], Door::Command).is_some(), "the git configuration was accepted as writable");
         Ok(())
     }
 

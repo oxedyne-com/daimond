@@ -764,6 +764,23 @@ pub enum Resp {
         /// What happened.
         message: String,
     },
+    /// The hand will not start, and this is the sentence saying why.
+    ///
+    /// The one response sent before the opening exchange, and the only one that names no
+    /// run, because there is no conversation yet to name anything in.  A hand that cannot
+    /// configure itself -- no granted root, a journal it cannot open, a second hand already
+    /// holding the record -- has always had a whole sentence for the reader and has always
+    /// written it to standard error, where a browser discards it.  What reached the page was
+    /// the browser's own "Native host has exited", from which nothing can be worked out and
+    /// nothing can be done.
+    ///
+    /// So the sentence goes down the pipe first and the process exits after it.  It is
+    /// written for a PERSON: whoever has to fix a hand that will not start is at the keyboard,
+    /// not in a turn.
+    Fault {
+        /// The whole sentence: what happened, and the one thing that fixes it.
+        reason: String,
+    },
 }
 
 /// Whether a page speaking `proto` can talk to this hand.

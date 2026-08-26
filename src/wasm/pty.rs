@@ -46,7 +46,6 @@ use crate::tools::{
     fence_spec,
     normalise,
     refusal_line,
-    toolkit_bounds,
     Bound,
     Kit,
     Machine,
@@ -245,12 +244,18 @@ pub async fn close(id: &str, sig: &str) -> Outcome<String> {
 // a person at a keyboard running programs of their own choosing, which is the
 // case for keeping that fence rather than relaxing it.
 
-/// The terminal a person is given when nobody named a program.
+/// The terminal a person is given when nobody named a program and the hand did not say.
 ///
-/// `/bin/sh` and not a login shell of the machine's choosing: the page cannot
-/// read `SHELL`, `/bin/sh` is the one program POSIX promises is there, and a
-/// guess that is wrong is a terminal that opens on a refusal.  A caller who
-/// wants `bash`, a REPL or anything else says so in `argv`.
+/// `/bin/sh` is the one program POSIX promises is there, so it is what a terminal falls back
+/// to -- but it is a FALLBACK now and no longer the answer.  On this machine `/bin/sh` is
+/// `dash`: no prompt worth the name, no history, no completion, and none of the user's own
+/// aliases, so a person opening a terminal in Daimond met a shell belonging to nobody.
+///
+/// The page still cannot read an environment.  The HAND can, and now says so: `shell:<path>`
+/// rides in its `hello` beside `home:` and `host:`, taken from the `SHELL` the login session
+/// set, which is what every other terminal on that machine opens.  Where it said nothing --
+/// an older hand, a `SHELL` that is unset or relative -- this is what is left, because a
+/// guessed shell is a terminal that opens on a refusal.
 const SHELL: &str = "/bin/sh";
 
 /// The largest terminal this edge will ask for, in cells each way.
@@ -384,7 +389,13 @@ pub async fn pty_request(ask_json: String) -> String {
     // come from what they decided, never from `argv`: a fence that widened
     // itself to fit the program asked for would be a fence the caller chooses,
     // and the whole arrangement rests on its not being one.
-    bounds.extend(toolkit_bounds(&extract_json_string_array(ask, "toolkits").unwrap_or_default()));
+    // `terminal_toolkit_bounds` and not `toolkit_bounds`, and the difference is the whole of
+    // the trust boundary: the Remote toolkit lends an ssh key, and an ssh reaches a shell on
+    // another machine that nothing here fences. A person opened this surface and is typing into
+    // it; a daimon's `run` never can, because `toolkit_bounds` -- which is what every other
+    // caller uses -- drops the rule. See `Toolkit::terminal_only`.
+    bounds.extend(crate::tools::terminal_toolkit_bounds(
+        &extract_json_string_array(ask, "toolkits").unwrap_or_default()));
 
     // A tainted session loses the network, the same rule `egress_check` applies
     // to a URL -- and now the same rule the user's PERMISSION MODE governs. The
@@ -445,7 +456,11 @@ pub async fn pty_request(ask_json: String) -> String {
 
     let argv = match extract_json_string_array(ask, "argv") {
         Some(v) if !v.is_empty() && !v[0].trim().is_empty() => v,
-        _ => vec![SHELL.to_string()],
+        // The user's own login shell where the hand named one, and [`SHELL`] where it did
+        // not. Taken from the machine and never from the ask, exactly as the fence is: a page
+        // that could name the program could name one outside the fence and be refused two
+        // layers down in a sentence about a path nobody chose.
+        _ => vec![machine.shell.clone().unwrap_or_else(|| SHELL.to_string())],
     };
     let argv_json: Vec<String> = argv.iter().map(|a| fmt!("\"{}\"", json_escape(a))).collect();
 
