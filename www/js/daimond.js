@@ -9454,6 +9454,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				&& homeView.contains(document.activeElement)
 				? (document.activeElement.textContent || '').trim() : '';
 			renderHomeBody();
+			// The Terminal's folder. A machine setting belongs where a person looks for one --
+			// the same reason the sync switch and the doorbell are on this panel and not
+			// behind the settings form. It shipped inside the MODELS view first and the owner
+			// could not find it, which is the whole argument made once more.
+			//
+			// Appended after the body because `renderHomeBody` clears the view, and KEPT as a
+			// node reference because that clearing detaches it: the markup stays in
+			// index.html so it is translated and greppable like every other row.
+			try {
+				var tr = TermRootRow.kept || document.getElementById('termroot-section');
+				if (tr) {
+					TermRootRow.kept = tr;
+					homeView.appendChild(tr);
+					TermRootRow.render();
+				}
+			} catch (e) { /* no hand has answered yet */ }
 			if (!hadFocus) return;
 			var again = null;
 			var all = homeView.querySelectorAll('button, [role="button"], input, select, textarea');
@@ -33379,6 +33395,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var TermRootRow = {
 		/// What the hand last said about this computer, or null before it has said anything.
 		machine: null,
+		/// The section element, held across repaints: the settings home clears itself.
+		kept: null,
 
 		/// Remember the hand's answer, and repaint if the panel is on screen.
 		///

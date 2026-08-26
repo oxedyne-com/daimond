@@ -930,11 +930,18 @@ try {
 		await installComposer();
 		await p.click('#panel-term [data-act="term-start"]', { force: true });
 		await sleep(300);
+		// The settings panel has to have been PAINTED once for the row to be in the home
+		// view -- and where it lands is the point: it shipped inside the Models view first
+		// and the owner could not find it.
+		await p.evaluate(() => { try { DaimondAdmin.home(); } catch (e) { try { DaimondAdmin.status(); } catch (x) {} } });
+		await sleep(200);
 		const row = await p.evaluate(() => {
 			const sec = document.getElementById('termroot-section');
+			const home = document.getElementById('admin-home');
 			const sel = document.getElementById('set-terminal-root');
 			return {
 				shown:   !!sec && sec.style.display !== 'none',
+				inHome:  !!(sec && home && home.contains(sec)),
 				options: sel ? [...sel.options].map((o) => o.value) : null,
 				disabled: sel ? sel.disabled : null,
 			};
@@ -942,6 +949,10 @@ try {
 		check('the Terminal folder row offers what the MACHINE offered, and the granted root',
 			row.shown && JSON.stringify(row.options) === JSON.stringify(['', '/home/u', '/srv/shared']),
 			JSON.stringify(row));
+		// WHERE it is, not merely that it renders: it shipped inside the Models view and was
+		// unfindable, which is the same defect as not existing.
+		check('and it sits on the settings home, where a machine setting is looked for',
+			row.inHome === true, JSON.stringify(row));
 
 		// Choosing one has to REACH the request, or the row is decoration.
 		await p.evaluate(() => {
