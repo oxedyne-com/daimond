@@ -384,7 +384,28 @@ pub async fn pty_request(ask_json: String) -> String {
     let own_dir   = extract_json_string(ask, "own_dir").unwrap_or_default();
     let attached  = extract_json_string_array(ask, "attached").unwrap_or_default();
     let read_only = extract_json_string_array(ask, "read_only").unwrap_or_default();
-    let mut bounds = diamond_bounds(&own_dir, &attached, &read_only);
+    // A TERMINAL IS THE USER AT A KEYBOARD, NOT A DAIMON, so its fence is the machine grant
+    // and not this Diamond's attachments. The owner asked for it in those words on 2026-08-26:
+    // *"I don't really want the terminal to be daimon and chat workspace bound, I want it to be
+    // able to roam over the browser and machine workspaces of the user"*.
+    //
+    // Nothing is handed to a model by it. No `Tool` opens a terminal or types into one, so a
+    // daimon cannot reach this surface at all -- which is the whole reason the widening is safe
+    // here and would not be in `Tool::Run`. The boundary that remains is the one the user
+    // actually chose: the folder they granted the hand.
+    //
+    // ONLY THE ALLOW-LIST GOES. A folder the user marked read-only keeps its `Bound::NoWrite`,
+    // and every standing denial `fence_spec` applies -- the hand's journal, `~/.ssh`, the
+    // daimon's own key -- is untouched. With no allow-list left, `fence_spec` reads the turn as
+    // unscoped and grants the granted root, which is exactly the ask.
+    //
+    // `Bound::Nowhere` goes with them: it means "no Diamond at all", and a terminal that
+    // belongs to no Diamond is now an ordinary terminal rather than a refusal.
+    let mut bounds: Vec<Bound> = diamond_bounds(&own_dir, &attached, &read_only)
+        .into_iter()
+        .filter(|b| !matches!(b,
+            Bound::OnlyUnder(_) | Bound::OnlyWriteUnder(_) | Bound::Nowhere))
+        .collect();
     // The toolchains the user granted this Diamond, and nothing else. The names
     // come from what they decided, never from `argv`: a fence that widened
     // itself to fit the program asked for would be a fence the caller chooses,
@@ -427,15 +448,14 @@ pub async fn pty_request(ask_json: String) -> String {
         // say what to do about it, or the user meets a wall with no door in it. A scope naming
         // nowhere at all is the panel having no Diamond to ask for, which is a different
         // situation and no amount of attaching would fix.
-        return refused(if bounds.iter().any(|b| matches!(b, Bound::Nowhere)) {
-            "there is no Diamond here for a terminal to belong to, so there is nothing to say \
-            what one may touch. Open a Diamond and try again."
-        } else {
-            "this Diamond has no folder on this computer attached to it, so there is nowhere for \
-            a terminal to run. A Diamond's own files live in Daimond's storage, which is not a \
-            place on this computer. Attach a folder in the Workspace panel, then open the \
-            terminal again."
-        });
+        // Since a terminal no longer declares an allow-list, this is no longer a Diamond with
+        // nothing attached -- that case now opens an ordinary terminal at the granted root. What
+        // is left is a machine whose grant cannot be expressed at all, and no amount of attaching
+        // would change it.
+        return refused(
+            "the folder this computer's hand was granted cannot be expressed as a fence, so there \
+            is nothing to say what a terminal may touch. It is not safe to guess, so none was \
+            opened. Re-run 'hand/install/install.sh --check', which lists what has to be true.");
     }
 
     let root = machine.root.trim_end_matches('/').to_string();

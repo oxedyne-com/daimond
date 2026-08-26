@@ -3481,6 +3481,23 @@ pub(crate) fn vet_cwd(cwd: &str, fence: &FenceSpec) -> Vetted {
             "Refused: '{}' cannot be resolved to a directory on this machine. A command's working \
             directory has to exist before it can run in it.", cwd)),
     };
+    // A FILE RESOLVES PERFECTLY WELL, and every check below it passes: it is absolute, it exists,
+    // and it sits inside the fence. The failure then surfaces at the spawn as `Os { code: 20,
+    // kind: NotADirectory }` wrapped in two error layers, which names no path the caller chose and
+    // tells the user nothing they can act on. On 2026-08-26 a terminal opened for a Diamond whose
+    // one attachment was `writing_spec.md` produced exactly that.
+    //
+    // Refused rather than climbed: the parent of a file is a directory the caller did not ask for,
+    // and a working directory quietly widened by one level is not a thing a fence should do on its
+    // own. The sentence names the folder, so the fix is a copy and paste away.
+    if !dir.is_dir() {
+        let parent = dir.parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| fmt!("the folder it is in"));
+        return Vetted::Refused(fmt!(
+            "Refused: '{}' is a file, not a folder, and nothing can be run inside a file. Ask for \
+            '{}' instead.", cwd, parent));
+    }
 
     for d in &fence.deny {
         if under(&dir, &resolve(d)) {
@@ -5560,6 +5577,41 @@ mod tests {
             Some(Resp::Refused { reason, .. }) => {
                 assert!(reason.starts_with("Refused: "));
                 assert!(reason.contains("outside this command's fence"));
+            },
+            other => return Err(err!(
+                "Expected a refusal, got {:?}.", other; Test, Mismatch)),
+        }
+        Ok(())
+    }
+
+    /// A working directory that names a FILE is refused, and the refusal names the folder.
+    ///
+    /// A file passes every other test in `vet_cwd` -- absolute, resolvable, inside the fence --
+    /// so before this the failure surfaced at the spawn as `Os { code: 20, kind: NotADirectory }`
+    /// wrapped in two error layers, naming a path the caller never wrote. The assertion is on the
+    /// SENTENCE and on the parent it offers, because "it refused" was already true of the broken
+    /// version by accident, two layers further down and in words nobody could act on.
+    #[tokio::test]
+    async fn a_cwd_that_names_a_file_is_refused_and_the_folder_is_named() -> Outcome<()> {
+        let file = fmt!("{}/Cargo.toml", root());
+        let req = match exec("e10", &["/bin/echo", "hi"]) {
+            Req::Exec { id, argv, env, stdin, timeout_ms, capture, fence, .. } =>
+                Req::Exec {
+                    id, argv, env, stdin, timeout_ms, capture, fence,
+                    cwd: file.clone(),
+                    toolkits: Vec::new(),
+                },
+            other => other,
+        };
+        let rs = res!(run(req).await);
+        match rs.first() {
+            Some(Resp::Refused { reason, .. }) => {
+                assert!(reason.contains("is a file, not a folder"),
+                    "the refusal did not say what was wrong: {}", reason);
+                assert!(reason.contains(&root()),
+                    "the refusal did not name the folder to use instead: {}", reason);
+                assert!(!reason.contains("NotADirectory"),
+                    "a system error reached the user: {}", reason);
             },
             other => return Err(err!(
                 "Expected a refusal, got {:?}.", other; Test, Mismatch)),

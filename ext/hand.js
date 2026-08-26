@@ -932,6 +932,15 @@
 				return;
 			}
 
+			// A HANDSHAKE REFUSAL IS THE HAND'S LAST WORD, and it is followed by an
+			// exit. Held here so `hostGone` says what the hand said rather than
+			// composing a guess over the top of it: on 2026-08-26 the one sentence
+			// that ended the hunt was produced, delivered, and then overwritten by
+			// `GONE_UNSAID` before anyone could read it.
+			if (m.t === 'refused' && m.id === 'hello' && typeof m.reason === 'string') {
+				lastFault = m.reason;
+			}
+
 			if (m.t === 'started' || m.t === 'opened') {
 				runs.set(m.id, { out: null, err: null });
 				breathe();

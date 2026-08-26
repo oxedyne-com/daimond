@@ -791,13 +791,25 @@ pub fn proto_ok(proto: u32) -> bool {
     proto == PROTO
 }
 
-/// The sentence a version mismatch produces, which names both ends.
+/// The sentence a version mismatch produces, which names both ends and the
+/// executable that is actually running.
+///
+/// The path is there because a mismatch is nearly always a mismatch of BUILDS,
+/// and the manifest a browser reads can name something other than the checkout
+/// a reader is looking at. Without it the sentence states a contradiction --
+/// the source says 2, the hand says 1 -- and leaves the reader to guess which
+/// of a dozen target directories answered. On 2026-08-26 that guess cost an
+/// afternoon.
 ///
 /// # Arguments
 /// * `proto` - The version the page announced.
 pub fn proto_refusal(proto: u32) -> String {
+    let exe = match std::env::current_exe() {
+        Ok(p)  => p.display().to_string(),
+        Err(e) => fmt!("<a path this hand cannot name: {}>", e),
+    };
     fmt!(
-        "This hand speaks protocol {} and the page speaks {}. Update whichever \
+        "This hand, at '{}', speaks protocol {} and the page speaks {}. Update whichever \
         is older; they cannot agree on what a command is until you do.",
-        PROTO, proto)
+        exe, PROTO, proto)
 }
