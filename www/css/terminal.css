@@ -154,6 +154,19 @@
 	font: inherit;
 	/* Behind the paste question, which must be clickable. */
 	z-index: 1;
+	/* AND IT MUST NOT TAKE THE MOUSE. Stretched over the canvas at `inset: 0`, this
+	   field was the topmost thing under the pointer everywhere on the screen, so a
+	   real drag hit the textarea and the canvas `mousedown` -- the whole of
+	   selection -- never ran. Reported as "dragging doesn't select at all" on
+	   2026-08-26; selection had been built, painted and tested since the panel
+	   shipped. `dev/verify_terminal.mjs` could not see it, because dispatching a
+	   MouseEvent AT the canvas bypasses hit-testing: the check that catches this
+	   asks `elementFromPoint` what is actually on top.
+
+	   The keyboard is unaffected -- focus is given by the canvas's own handlers,
+	   which call `input.focus()` on mousedown and on touchstart, so a soft keyboard
+	   still comes up on a phone. */
+	pointer-events: none;
 }
 .term-input::selection { background: transparent; }
 

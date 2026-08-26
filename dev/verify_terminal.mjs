@@ -517,6 +517,40 @@ const selText = await page.evaluate(() => {
 check(selText === 'alpha bravo charlie\ndelta echo foxtrot',
 	`a drag selects what lies between the two cells: ${JSON.stringify(selText)}`);
 
+// AND A REAL MOUSE MUST REACH THE CANVAS TO DO IT. The check above dispatches a
+// MouseEvent AT the canvas element, which bypasses hit-testing entirely -- so it
+// passed for months while a person dragging with an actual mouse selected nothing,
+// because `.term-input` is stretched over the canvas at `inset: 0` and was the
+// topmost thing under the pointer everywhere on the screen. Reported on 2026-08-26
+// as "dragging doesn't select at all", with 111 checks green.
+//
+// `elementFromPoint` is the question the other check cannot ask: not "does the
+// handler work" but "does the pointer get there". Four corners and the middle,
+// because an overlay that covered only part of the screen would be the same bug
+// with a smaller blast radius.
+const onTop = await page.evaluate(() => {
+	const cv = document.querySelector('.term-canvas');
+	const b = cv.getBoundingClientRect();
+	const spots = [
+		['middle',       b.left + b.width / 2, b.top + b.height / 2],
+		['top-left',     b.left + 4,           b.top + 4],
+		['top-right',    b.right - 4,          b.top + 4],
+		['bottom-left',  b.left + 4,           b.bottom - 4],
+		['bottom-right', b.right - 4,          b.bottom - 4],
+	];
+	return spots.map(([name, x, y]) => {
+		const el = document.elementFromPoint(x, y);
+		return { name, tag: el ? el.tagName.toLowerCase() : 'none',
+			cls: el ? String(el.className || '') : '', isCanvas: el === cv };
+	});
+});
+const blocked = onTop.filter(s => !s.isCanvas);
+check(blocked.length === 0,
+	blocked.length === 0
+		? `a real pointer reaches the canvas at all five spots, so a drag can select`
+		: `a real pointer does NOT reach the canvas: ${blocked.map(s =>
+			`${s.name} hits <${s.tag} class="${s.cls}">`).join('; ')}`);
+
 // A line the TERMINAL wrapped is one line, and copying it must not invent a newline that
 // would break the path or the command it holds.
 await reset();

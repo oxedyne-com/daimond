@@ -1637,6 +1637,11 @@
 			};
 		}
 
+		// The field that takes the keyboard is `pointer-events: none`, so the canvas is
+		// what a finger touches. Focus is given here, inside the gesture, or a phone
+		// would have a terminal with no soft keyboard. Passive: nothing is prevented.
+		canvas.addEventListener('touchstart', function () { input.focus(); }, { passive: true });
+
 		canvas.addEventListener('mousedown', function (ev) {
 			if (ev.button !== 0) return;
 			input.focus();

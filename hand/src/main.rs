@@ -1359,6 +1359,15 @@ impl Desk {
         // Both layers, because the window's wording is chosen from this list and a
         // compartment made of two mechanisms cannot be described by one of them.
         let mut caps = self.fence.caps();
+        // A TERMINAL IS PLANNED AGAINST ITS OWN CARVE DECISION, so one `carve:` cap standing for
+        // both doors would be a capability that is true of a command and false of a terminal --
+        // and a cap the page cannot rely on is worse than one it does not have. See
+        // `exec::detected_terminal_fence`.
+        for c in daimond_hand::exec::detected_terminal_fence().caps() {
+            if let Some(rest) = c.strip_prefix("carve:") {
+                caps.push(fmt!("terminal-carve:{}", rest));
+            }
+        }
         caps.extend(self.sys.caps());
         caps.push(fmt!("root:{}", self.root.display()));
         caps.push(self.ws.cap());

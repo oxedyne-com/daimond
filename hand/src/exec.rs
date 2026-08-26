@@ -2319,6 +2319,28 @@ pub(crate) fn detected_fence() -> &'static Fence {
     FENCE.get_or_init(Fence::detect)
 }
 
+/// The same machine, planned for a TERMINAL, where a carved directory may be listed.
+///
+/// [`Listing::Sealed`] is right for a command and wrong for a terminal, and the difference is
+/// who is at the other end.  A carved directory cannot be listed at all under `Sealed` -- that is
+/// the documented cost of it -- and a terminal's working directory is now the granted root, which
+/// always holds `.daimond`.  So `ls` in the folder the terminal opens in failed, with nothing on
+/// screen to say why: measured on 2026-08-26, `ls` answering "cannot open directory '.'" in a
+/// terminal whose fence granted that very directory read and write.
+///
+/// [`Listing::Names`] costs exactly what the enum says it costs: entry NAMES inside the denied
+/// subtree become visible, never contents, because reading a file still needs `READ_FILE`.  The
+/// person typing owns those names -- it is their machine and their workspace -- and no daimon can
+/// reach this surface: no tool opens a terminal or types into one, which is the same reason
+/// `terminal_toolkit_bounds` may lend it an ssh key and `toolkit_bounds` may not.
+///
+/// A command keeps [`detected_fence`] and its seal.  The choice is the hand's, never the page's:
+/// a caller that could name its own listing could name the laxer one.
+pub fn detected_terminal_fence() -> &'static Fence {
+    static FENCE: OnceLock<Fence> = OnceLock::new();
+    FENCE.get_or_init(|| Fence::detect_with(Listing::Names, SysBase::Minimal))
+}
+
 /// What this machine can refuse at the system-call layer, asked once.
 ///
 /// Cached for the same reason [`detected_fence`] is, and with one extra reason:

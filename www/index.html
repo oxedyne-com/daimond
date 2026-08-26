@@ -880,6 +880,13 @@
 					</div>
 					<!-- The way back out. A terminal takes nearly every key, so the one
 					     that leaves it has to be said in writing rather than guessed at. -->
+					<!-- Selection, copy and paste were BUILT and invisible: drag, double-click,
+					     triple-click, Ctrl-Shift-C, Ctrl-Shift-V and Ctrl-Shift-A have all worked
+					     since the panel shipped, and the only line naming them was `term.hint`,
+					     rendered screen-reader-only. The owner reported copy and paste as a
+					     missing feature on 2026-08-26. It is the same string, in every locale
+					     already, put where a sighted reader meets it. -->
+					<p class="termp-foot" id="termp-keys" data-i18n="term.hint">Type to send keys straight to the program. Ctrl-Shift-C copies the selection, Ctrl-Shift-V pastes, Ctrl-Shift-A selects everything, and Shift with Page Up or Page Down moves through what has scrolled past.</p>
 					<p class="termp-foot" id="termp-foot" data-i18n="term.leave_hint">Press F6 to move the keyboard out of the terminal.</p>
 				</div>
 			</aside>

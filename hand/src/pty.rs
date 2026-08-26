@@ -98,7 +98,7 @@
 use crate::{
     exec::{
         add_defaults,
-        detected_fence,
+        detected_terminal_fence,
         encode_payload,
         screen_env,
         screen_scratch,
@@ -500,7 +500,12 @@ impl PtySessions {
         fence.rw.push(fmt!("{}", term.path.display()));
         fence.rw.push(fmt!("/dev/tty"));
 
-        let plan = match detected_fence().plan(&fence, &Unfenced::Refuse) {
+        // `detected_terminal_fence` and not `detected_fence`: a terminal's carved directories may
+        // be LISTED, because a terminal opens in the granted root and the granted root always
+        // holds `.daimond`. Sealed, `ls` there fails with nothing on screen to explain it. See
+        // `exec::detected_terminal_fence` for what the difference costs and why a terminal is
+        // where it can be afforded.
+        let plan = match detected_terminal_fence().plan(&fence, &Unfenced::Refuse) {
             Ok(p)  => p,
             Err(e) => return self.refuse(&id, &tx, fmt!(
                 "Refused: {}", e.msgs().join(" "))).await,
