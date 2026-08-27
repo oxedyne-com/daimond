@@ -568,3 +568,15 @@
 	font-size: var(--fs-2xs);
 	word-break: break-all;
 }
+
+/* The folder a terminal will open in, stated rather than offered in a list: a
+   pulldown of somebody's particular directories is a guess, not a choice. */
+.termroot-now {
+	display: block;
+	margin: 2px 0 6px;
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	color: var(--text-primary);
+	word-break: break-all;
+}
+.termroot-now[data-default="1"] { color: var(--text-secondary); }

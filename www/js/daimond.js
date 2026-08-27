@@ -33421,36 +33421,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { TermRootRow.render(); } catch (e) { /* the section is not up yet */ }
 		},
 
-		/// The Browse button, and the folder chooser behind it.
-		///
-		/// A REAL chooser showing real folders with real paths, because the browser's own
-		/// `showDirectoryPicker` answers with a handle carrying a name and no path -- and a
-		/// fence needs the path. The listing comes from the hand, which is on the machine and
-		/// bounds it to the folders it would fence a terminal to.
-		///
-		/// Inline rather than a modal: the answer belongs beside the row it sets, and a folder
-		/// walk is several steps, which is a poor fit for a dialog that asks one question.
-		browseBtn: function (m) {
-			var row = document.querySelector('#termroot-section .search-engine-row');
-			if (!row) return;
-			var btn = document.getElementById('termroot-browse');
-			if (!btn) {
-				btn = document.createElement('button');
-				btn.type = 'button';
-				btn.id = 'termroot-browse';
-				btn.className = 'admin-item';
-				btn.addEventListener('click', function () {
-					var m2 = TermRootRow.machine;
-					TermRootRow.walk(terminalRootFor(m2 && m2.ws) || (m2 && m2.root) || '');
-				});
-				row.appendChild(btn);
-			}
-			btn.textContent = tOr('termroot.browse', 'Choose a folder\u2026');
-			// Only where the hand offers the browser. An older hand says nothing, and a button
-			// that answers with a refusal is worse than no button.
-			btn.style.display = (m && m.browse) ? '' : 'none';
-		},
-
 		/// Ask the hand what is inside `path`, and draw it.
 		walk: async function (path) {
 			var box = TermRootRow.panel();
@@ -33515,14 +33485,43 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		},
 
 		wire: function () {
-			var sel = document.getElementById('set-terminal-root');
-			if (!sel || sel._termRootWired) return !!sel;
-			sel._termRootWired = true;
-			sel.addEventListener('change', function () {
+			var row = document.querySelector('#termroot-section .search-engine-row');
+			if (!row) return false;
+			if (row._termRootWired) return true;
+			row._termRootWired = true;
+
+			var now = document.createElement('code');
+			now.id = 'termroot-now';
+			now.className = 'termroot-now';
+			row.appendChild(now);
+
+			var browse = document.createElement('button');
+			browse.type = 'button';
+			browse.id = 'termroot-browse';
+			browse.className = 'admin-item';
+			browse.textContent = tOr('termroot.browse', 'Choose a folder\u2026');
+			browse.addEventListener('click', function () {
+				if (TermRootRow.open) { TermRootRow.close(); return; }
 				var m = TermRootRow.machine;
-				setTerminalRootFor(m && m.ws, sel.value);
+				TermRootRow.walk(terminalRootFor(m && m.ws) || (m && m.root) || '');
+			});
+			row.appendChild(browse);
+
+			// Back to the folder Daimond was granted, which is the only named folder worth a
+			// button: it is what the fence is otherwise, not one directory among someone's
+			// several.
+			var reset = document.createElement('button');
+			reset.type = 'button';
+			reset.id = 'termroot-reset';
+			reset.className = 'admin-item';
+			reset.textContent = tOr('termroot.reset', 'Back to the granted folder');
+			reset.addEventListener('click', function () {
+				var m = TermRootRow.machine;
+				setTerminalRootFor(m && m.ws, '');
+				TermRootRow.close();
 				TermRootRow.render();
 			});
+			row.appendChild(reset);
 			return true;
 		},
 
@@ -33530,60 +33529,59 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var sec = document.getElementById('termroot-section');
 			if (!sec || !TermRootRow.wire()) return;
 			var m = TermRootRow.machine;
-			// No hand, or a hand that offered nothing beyond what it granted: there is no
-			// choice to put on screen, and a pulldown with one item is a question with one
-			// answer.
-			if (!m || !m.root || !(m.ceilings || []).length) { sec.style.display = 'none'; return; }
+			// No hand, or a hand that offered nothing beyond what it granted: there is nothing
+			// to choose and nothing to say.
+			if (!m || !m.root || !((m.ceilings || []).length || m.browse)) {
+				sec.style.display = 'none';
+				return;
+			}
 			sec.style.display = '';
 			var head = document.getElementById('termroot-head');
 			if (head) head.textContent = tOr('termroot.head', 'Terminal folder');
-			var lab = document.querySelector('label[for="set-terminal-root"]');
-			if (lab) lab.textContent = tOr('termroot.label', 'Where a terminal may reach');
 			var note = document.getElementById('termroot-note');
 			if (note) note.textContent = tOr('termroot.note',
 				'A terminal you open is you, not a daimon: it may be given more than the folder '
 				+ 'a model is fenced to. Only folders this computer offers appear here.');
 
-			var sel = document.getElementById('set-terminal-root');
-			var pin = document.getElementById('termroot-pinned');
-			sel.innerHTML = '';
-			var add = function (value, label) {
-				var o = document.createElement('option');
-				o.value = value;
-				o.textContent = label;
-				sel.appendChild(o);
-			};
-			add('', tOr('termroot.same', 'The same folder Daimond was granted') + ' \u2014 ' + m.root);
-			(m.ceilings || []).forEach(function (p) { add(p, p); });
-			// A folder the user BROWSED to is a real path this list never contained, so it is
-			// added when it is the current answer. Without this the select would silently fall
-			// back to the granted root the moment a browsed folder was chosen.
-			var picked = terminalRootFor(m.ws);
-			if (picked && (m.ceilings || []).indexOf(picked) < 0) add(picked, picked);
+			// THE FOLDER, AND A BUTTON TO CHANGE IT. There is no pulldown, and there was one
+			// twice: a list of somebody's particular directories is not a choice, it is a
+			// guess about which two folders a person might want. The walk is the chooser and
+			// the current answer is a fact, so this row shows the fact and offers the walk.
+			var cur = m.pinned || terminalRootFor(m.ws) || '';
+			var now = document.getElementById('termroot-now');
+			now.textContent = cur || m.root;
+			now.setAttribute('data-default', cur ? '0' : '1');
 
-			// PINNED at a shell is a decision already made, and re-asking it here would be
-			// this panel offering to overrule the machine -- which is exactly what it may
-			// not do. Shown, so it is not a mystery, and disabled.
+			var pin = document.getElementById('termroot-pinned');
+			var browse = document.getElementById('termroot-browse');
+			var reset  = document.getElementById('termroot-reset');
+			// PINNED at a shell is a decision already made, and offering to overrule the
+			// machine from the page is exactly what this row may not do.
 			if (m.pinned) {
-				sel.value = m.pinned;
-				sel.disabled = true;
 				if (pin) {
 					pin.style.display = '';
 					pin.textContent = tOr('termroot.pinned',
 						'Set on this computer with install.sh --terminal-workspace, so it is not '
 						+ 'changed from here.');
 				}
+				if (browse) browse.style.display = 'none';
+				if (reset)  reset.style.display = 'none';
+				TermRootRow.close();
 				return;
 			}
-			sel.disabled = false;
 			if (pin) pin.style.display = 'none';
-			var cur = terminalRootFor(m.ws);
-			// A stored folder is kept only while it is still one of the machine's offers OR
-			// still sits under one of them: a browsed path is neither invented by the page nor
-			// listed in the offers, and the hand vets it again anyway.
-			if (cur && !offered(m, cur)) { cur = ''; setTerminalRootFor(m.ws, ''); }
-			sel.value = cur;
-			TermRootRow.browseBtn(m);
+			// A stored folder is kept only while it is still inside something the machine
+			// offers: an offer withdrawn is a fence nobody chose.
+			if (cur && !offered(m, cur)) { setTerminalRootFor(m.ws, ''); cur = ''; now.textContent = m.root; }
+			if (browse) browse.style.display = m.browse ? '' : 'none';
+			if (reset)  reset.style.display = cur ? '' : 'none';
+		},
+
+		/// Put the walk away.
+		close: function () {
+			var box = document.getElementById('termroot-walk');
+			if (box) { box.style.display = 'none'; box.textContent = ''; }
+			TermRootRow.open = false;
 		},
 	};
 
