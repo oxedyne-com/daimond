@@ -1286,6 +1286,10 @@ fn req_dat(req: &Req) -> Dat {
         Req::Runs => omapdat!{
             "t"	=> "runs",
         },
+        Req::Dirs { path } => omapdat!{
+            "t"		=> "dirs",
+            "path"	=> Dat::Str(path.clone()),
+        },
         Req::Bye => omapdat!{
             "t"	=> "bye",
         },
@@ -1390,6 +1394,9 @@ pub fn req_of_json(txt: &str) -> Outcome<Req> {
             size: res!(size_field(&obj, "resize", "size")),
         }),
         "runs" => Ok(Req::Runs),
+        "dirs" => Ok(Req::Dirs {
+            path: res!(str_field(&obj, "dirs", "path")),
+        }),
         "bye" => Ok(Req::Bye),
         other => Err(Fault::UnknownTag.raise(&fmt!(
             "There is no request called {:?}. This page is asking for something \
@@ -1458,6 +1465,13 @@ fn resp_dat(resp: &Resp) -> Dat {
             "id"	=> Dat::Str(id.clone()),
             "seq"	=> *seq,
             "data"	=> Dat::Str(data.clone()),
+        },
+        Resp::Dirs { path, up, dirs, roots } => omapdat!{
+            "t"		=> "dirs",
+            "path"	=> Dat::Str(path.clone()),
+            "up"	=> Dat::Str(up.clone()),
+            "dirs"	=> Dat::List(dirs.iter().map(|d| Dat::Str(d.clone())).collect()),
+            "roots"	=> Dat::List(roots.iter().map(|d| Dat::Str(d.clone())).collect()),
         },
         Resp::Runs { runs, more } => omapdat!{
             "t"		=> "runs",
@@ -1608,6 +1622,12 @@ pub fn resp_of_json(txt: &str) -> Outcome<Resp> {
             id:     res!(str_field(&obj, "closed", "id")),
             exit:   res!(i32_field(&obj, "closed", "exit")),
             killed: res!(bool_field(&obj, "closed", "killed")),
+        }),
+        "dirs" => Ok(Resp::Dirs {
+            path:  res!(str_field(&obj, "dirs", "path")),
+            up:    res!(str_field(&obj, "dirs", "up")),
+            dirs:  res!(strs_field(&obj, "dirs", "dirs")),
+            roots: res!(strs_field(&obj, "dirs", "roots")),
         }),
         "runs" => Ok(Resp::Runs {
             runs: res!(runs_field(&obj)),
@@ -2190,6 +2210,10 @@ mod tests {
                 proto:  1,
                 client: fmt!("daimond/60"),
             },
+            // A folder walk, and the ask that means "where do you start?" -- an empty path is a
+            // question and not a malformed one, so both shapes round trip.
+            Req::Dirs { path: fmt!("/home/u/usr") },
+            Req::Dirs { path: fmt!("") },
             Req::Exec {
                 id:         fmt!("run-1"),
                 argv:       vec![fmt!("cargo"), fmt!("test")],
@@ -2291,6 +2315,21 @@ mod tests {
                 caps:    vec![fmt!("exec")],
             },
             Resp::Started { id: fmt!("run-1"), pid: 1234 },
+            // The folder browser. An EMPTY listing and a full one are different shapes on the
+            // wire -- an absent list and a list of nothing -- and a decoder that muddled them
+            // would show a folder with no folders in it as a folder that could not be read.
+            Resp::Dirs {
+                path:  fmt!("/home/u"),
+                up:    fmt!(""),
+                dirs:  vec![fmt!("work"), fmt!(".config")],
+                roots: vec![fmt!("/home/u"), fmt!("/home/u/usr")],
+            },
+            Resp::Dirs {
+                path:  fmt!("/home/u/empty"),
+                up:    fmt!("/home/u"),
+                dirs:  Vec::new(),
+                roots: Vec::new(),
+            },
             Resp::Chunk {
                 id:     fmt!("run-1"),
                 stream: Stream::Out,

@@ -23033,6 +23033,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						root:     st.root || val('root:'),
 						ws:       val('ws:'),
 						pinned:   val('terminal-root:'),
+						browse:   caps.indexOf('browse:dirs') >= 0,
 						ceilings: caps.filter(function (c) { return c.indexOf('terminal-ceiling:') === 0; })
 							.map(function (c) { return c.slice('terminal-ceiling:'.length); }),
 					});
@@ -33392,6 +33393,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { localStorage.setItem(TERMROOT_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 	}
 
+	/// Whether `path` is a folder this machine said a terminal may be fenced to.
+	///
+	/// Either one of the offers exactly, or something INSIDE one: a folder browsed to is a real
+	/// path the offer list never held, and the hand bounds the browser to the same folders, so
+	/// "under an offer" is the honest test rather than "in the list".
+	function offered(m, path) {
+		var list = (m && m.ceilings) || [];
+		for (var i = 0; i < list.length; i++) {
+			if (path === list[i] || path.indexOf(list[i] + '/') === 0) return true;
+		}
+		return false;
+	}
+
 	var TermRootRow = {
 		/// What the hand last said about this computer, or null before it has said anything.
 		machine: null,
@@ -33405,6 +33419,99 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		learn: function (m) {
 			TermRootRow.machine = m || null;
 			try { TermRootRow.render(); } catch (e) { /* the section is not up yet */ }
+		},
+
+		/// The Browse button, and the folder chooser behind it.
+		///
+		/// A REAL chooser showing real folders with real paths, because the browser's own
+		/// `showDirectoryPicker` answers with a handle carrying a name and no path -- and a
+		/// fence needs the path. The listing comes from the hand, which is on the machine and
+		/// bounds it to the folders it would fence a terminal to.
+		///
+		/// Inline rather than a modal: the answer belongs beside the row it sets, and a folder
+		/// walk is several steps, which is a poor fit for a dialog that asks one question.
+		browseBtn: function (m) {
+			var row = document.querySelector('#termroot-section .search-engine-row');
+			if (!row) return;
+			var btn = document.getElementById('termroot-browse');
+			if (!btn) {
+				btn = document.createElement('button');
+				btn.type = 'button';
+				btn.id = 'termroot-browse';
+				btn.className = 'admin-item';
+				btn.addEventListener('click', function () {
+					var m2 = TermRootRow.machine;
+					TermRootRow.walk(terminalRootFor(m2 && m2.ws) || (m2 && m2.root) || '');
+				});
+				row.appendChild(btn);
+			}
+			btn.textContent = tOr('termroot.browse', 'Choose a folder\u2026');
+			// Only where the hand offers the browser. An older hand says nothing, and a button
+			// that answers with a refusal is worse than no button.
+			btn.style.display = (m && m.browse) ? '' : 'none';
+		},
+
+		/// Ask the hand what is inside `path`, and draw it.
+		walk: async function (path) {
+			var box = TermRootRow.panel();
+			if (!box) return;
+			box.textContent = tOr('termroot.browse_wait', 'Asking this computer\u2026');
+			var got;
+			try { got = await DaimondHand.dirs(path); }
+			catch (e) { box.textContent = (e && e.message) || String(e || ''); return; }
+			// Nowhere to start from is a hand that has not been granted anything, and there is
+			// no folder walk to offer.
+			if (!got.path && (got.roots || []).length) {
+				box.textContent = '';
+				(got.roots || []).forEach(function (r) { TermRootRow.rowFor(box, r, r); });
+				return;
+			}
+			box.textContent = '';
+			var head = document.createElement('div');
+			head.className = 'admin-note';
+			head.textContent = got.path;
+			box.appendChild(head);
+			var use = document.createElement('button');
+			use.type = 'button';
+			use.className = 'admin-item';
+			use.textContent = tOr('termroot.browse_use', 'Use this folder');
+			use.addEventListener('click', function () {
+				var m = TermRootRow.machine;
+				setTerminalRootFor(m && m.ws, got.path);
+				TermRootRow.open = false;
+				TermRootRow.render();
+			});
+			box.appendChild(use);
+			if (got.up) TermRootRow.rowFor(box, got.up, '\u2191 ' + got.up);
+			(got.dirs || []).forEach(function (d) {
+				TermRootRow.rowFor(box, got.path.replace(/\/$/, '') + '/' + d, d + '/');
+			});
+		},
+
+		/// One folder in the walk.
+		rowFor: function (box, path, label) {
+			var b = document.createElement('button');
+			b.type = 'button';
+			b.className = 'admin-item';
+			b.textContent = label;
+			b.addEventListener('click', function () { TermRootRow.walk(path); });
+			box.appendChild(b);
+		},
+
+		/// Where the walk is drawn, made once and emptied between walks.
+		panel: function () {
+			var sec = document.getElementById('termroot-section');
+			if (!sec) return null;
+			var box = document.getElementById('termroot-walk');
+			if (!box) {
+				box = document.createElement('div');
+				box.id = 'termroot-walk';
+				box.className = 'termroot-walk';
+				sec.appendChild(box);
+			}
+			TermRootRow.open = true;
+			box.style.display = '';
+			return box;
 		},
 
 		wire: function () {
@@ -33448,6 +33555,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			};
 			add('', tOr('termroot.same', 'The same folder Daimond was granted') + ' \u2014 ' + m.root);
 			(m.ceilings || []).forEach(function (p) { add(p, p); });
+			// A folder the user BROWSED to is a real path this list never contained, so it is
+			// added when it is the current answer. Without this the select would silently fall
+			// back to the granted root the moment a browsed folder was chosen.
+			var picked = terminalRootFor(m.ws);
+			if (picked && (m.ceilings || []).indexOf(picked) < 0) add(picked, picked);
 
 			// PINNED at a shell is a decision already made, and re-asking it here would be
 			// this panel offering to overrule the machine -- which is exactly what it may
@@ -33466,10 +33578,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			sel.disabled = false;
 			if (pin) pin.style.display = 'none';
 			var cur = terminalRootFor(m.ws);
-			// A folder the machine has stopped offering falls back rather than being kept:
-			// a stored answer to a question nobody is asking any more is a fence nobody chose.
-			if (cur && (m.ceilings || []).indexOf(cur) < 0) { cur = ''; setTerminalRootFor(m.ws, ''); }
+			// A stored folder is kept only while it is still one of the machine's offers OR
+			// still sits under one of them: a browsed path is neither invented by the page nor
+			// listed in the offers, and the hand vets it again anyway.
+			if (cur && !offered(m, cur)) { cur = ''; setTerminalRootFor(m.ws, ''); }
 			sel.value = cur;
+			TermRootRow.browseBtn(m);
 		},
 	};
 

@@ -540,3 +540,31 @@
 }
 .term-menu-item:hover:not(:disabled) { background: var(--bg-hover); }
 .term-menu-item:disabled { color: var(--text-secondary); cursor: default; }
+
+/* ── The folder walk in Settings ─────────────────────────────── */
+
+/* Real folders with real paths, listed by the hand. The browser's own picker
+   cannot serve this: it answers with a handle carrying a name and no path, and
+   a fence needs the path. */
+
+.termroot-walk {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: 320px;
+	overflow-y: auto;
+	margin-top: 8px;
+	padding: 6px;
+	border: 1px solid var(--border-2);
+	border-radius: var(--radius);
+	background: var(--bg-secondary);
+}
+.termroot-walk .admin-note {
+	position: sticky;
+	top: -6px;
+	padding: 4px 6px;
+	background: var(--bg-secondary);
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	word-break: break-all;
+}

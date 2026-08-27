@@ -1160,11 +1160,20 @@
 			// 2026-08-23 and this end went on denying it.
 			case 'runs':
 				break;
+			// A folder browser: directory NAMES, so a person can choose a folder and get its
+			// real path. Nothing is run and nothing is read, and the hand bounds it to what it
+			// would fence a terminal to -- so this end checks the shape and forwards.
+			case 'dirs':
+				if (m.path !== undefined && typeof m.path !== 'string') {
+					fail(m.id, 'A folder listing takes a path as a string, or nothing at all to ask where to start.');
+					return;
+				}
+				break;
 			case 'bye':
 				closing = true;
 				break;
 			default:
-				fail(m.id, `The machine hand does not know the message "${m.t}". It understands hello, exec, open, file, verify, input, resize, signal, runs and bye.`);
+				fail(m.id, `The machine hand does not know the message "${m.t}". It understands hello, exec, open, file, verify, input, resize, signal, runs, dirs and bye.`);
 				return;
 			}
 

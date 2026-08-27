@@ -817,6 +817,10 @@ impl Event {
             // and every run it can name was journalled when it started. The SIGNAL that follows
             // is recorded, which is the half a reader would want.
             Req::Runs => None,
+            // Nothing was run and nothing was read: a folder browser reports directory NAMES so
+            // a person can choose one. The journal is a record of what this hand DID to the
+            // machine, and listing a directory is not a thing done to it.
+            Req::Dirs { .. } => None,
             // A VERIFY IS NOT ITSELF AN ACT, and writing it down as one would put a verb in the
             // record where a reader expects a process. Every run it makes is journalled as the
             // `Exec` it really is -- the node command line, the granted root, and `fence:none` in
@@ -896,6 +900,7 @@ impl Event {
             // starting of. Writing it down again would put a reader's question
             // in a record of a machine's acts.
             Resp::Runs {..} => None,
+            Resp::Dirs {..} => None,
             // A fault is written before the journal exists -- it is the sentence saying the
             // hand could not open one -- so there is nowhere to record it and nothing that
             // could. It reaches the record only in the sense that the next hand to start

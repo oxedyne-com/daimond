@@ -614,6 +614,25 @@ pub enum Req {
     /// selector, and the one selector this message must not grow is one that
     /// names a process the hand did not start.
     Runs,
+    /// The directories inside `path`, so a person can CHOOSE a folder and get its real path.
+    ///
+    /// The browser's own `showDirectoryPicker` cannot serve this: it hands the page a handle
+    /// with a name and no path, which is why the granted root is written on the machine at
+    /// install time in the first place.  A fence needs `/home/u/work` and a handle cannot say
+    /// it, so the only end that can offer a folder browser is this one.
+    ///
+    /// **Names of directories, and nothing else.**  No files, no contents, no sizes.  It is
+    /// bounded by what this hand would be willing to fence a terminal to -- the user's own
+    /// home, and the granted root -- and refused anywhere else, so it is not a way to
+    /// enumerate the machine.
+    ///
+    /// **No daimon can send it.**  There is no `Tool` that reaches this surface, exactly as
+    /// there is none that opens a terminal, which is why a person browsing their own home
+    /// directory is not the model browsing it.
+    Dirs {
+        /// Absolute path to list.  Empty asks for the places this hand will start from.
+        path: String,
+    },
     /// The page is going away; stop everything and exit.
     Bye,
 }
@@ -756,6 +775,13 @@ pub enum Resp {
     Runs {
         runs: Vec<Run>,
         more: u32,	// how many did not fit, past [`RUNS_MAX`]
+    },
+    /// The answer to [`Req::Dirs`]: where it looked, what is above it, and the directories in it.
+    Dirs {
+        path:  String,		// the directory listed, canonical and absolute
+        up:    String,		// its parent, or empty where the bound stops here
+        dirs:  Vec<String>,	// the directory NAMES inside it, sorted, dotted ones last
+        roots: Vec<String>,	// the places this hand will start from, when `path` was empty
     },
     /// Something went wrong that is nobody's fault in particular.
     Error {

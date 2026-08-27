@@ -891,6 +891,8 @@ fn id_of(resp: &Resp) -> Option<String> {
         Resp::Filed   { id, .. }	=> Some(id.clone()),
         // A listing is about every run at once, so it is about no single one.
         Resp::Runs    { .. }		=> None,
+        // A folder listing is about no run at all.
+        Resp::Dirs    { .. }		=> None,
         // Sent before the greeting, when there is no run to name and no conversation
         // to name one in.
         Resp::Fault   { .. }		=> None,
@@ -1076,6 +1078,10 @@ fn cut(resp: &Resp) -> Outcome<Option<(Resp, String)>> {
         // fit is COUNTED in `more` rather than cut here. Trimming it would drop
         // a run silently, which is the one thing a listing must never do.
         Resp::Runs { .. } => Ok(None),
+        // A folder listing has nothing that can be cut in half and still mean anything: half a
+        // list of directory names reads as a folder with fewer folders in it. The bound keeps
+        // it small -- one directory's immediate children, names only.
+        Resp::Dirs { .. } => Ok(None),
         // A file's text, cut like a refusal's sentence: what fits is sent and the marker says
         // how much did not. The launcher caps it at `wire::FILE_TEXT_MAX` already, so reaching
         // here means an enormous path or a very long refusal, not an ordinary read.
@@ -1154,6 +1160,7 @@ fn kind_of(resp: &Resp) -> &'static str {
         Resp::Output  { .. }	=> "output",
         Resp::Closed  { .. }	=> "closed",
         Resp::Runs    { .. }	=> "runs",
+        Resp::Dirs    { .. }	=> "dirs",
         Resp::Filed   { .. }	=> "filed",
         Resp::Fault   { .. }	=> "fault",
     }
@@ -1456,6 +1463,10 @@ impl Desk {
         // offer is a folder this machine is willing to fence a terminal to, and the user chooses
         // among them; a pin is a choice the user already made at a shell, and the page follows it
         // rather than offering anything. Only the machine writes either.
+        // That a folder BROWSER is available, and where it will start. A page that cannot see
+        // this cap falls back to the two-item choice, which is what every build before this one
+        // had.
+        caps.push(fmt!("browse:dirs"));
         for c in &self.term_ceilings {
             if c != &self.root {
                 caps.push(fmt!("terminal-ceiling:{}", c.display()));
@@ -1898,6 +1909,87 @@ impl Desk {
     ///
     /// Not journalled: a question is not an act, and every run it can name was
     /// written down when it started.  See `Event::from_req`.
+    /// The directories inside `path`, so a person can choose a folder and get its real path.
+    ///
+    /// **Bounded by what this hand would fence a terminal to**, which is the granted root and
+    /// the account it runs as. Anywhere else is refused, so this is a folder chooser and not a
+    /// way to enumerate the machine. Names of DIRECTORIES only: no files, no contents, no
+    /// sizes, and dotted directories last rather than hidden, because a person looking for
+    /// `.config` should be able to find it.
+    ///
+    /// An empty `path` asks where to start, and the answer is the same bound.
+    async fn dirs(&self, path: &str) -> Outcome<()> {
+        let roots: Vec<PathBuf> = self.term_ceilings.clone();
+        if path.trim().is_empty() {
+            let said = Resp::Dirs {
+                path:  fmt!(""),
+                up:    fmt!(""),
+                dirs:  Vec::new(),
+                roots: roots.iter().map(|p| fmt!("{}", p.display())).collect(),
+            };
+            let _ = self.ctl.send(said).await;
+            return Ok(());
+        }
+        let asked = PathBuf::from(path);
+        let here = match std::fs::canonicalize(&asked) {
+            Ok(p) if p.is_dir() => p,
+            _ => {
+                let _ = self.ctl.send(Resp::Error {
+                    id:      None,
+                    message: fmt!("'{}' is not a folder on this computer.", path),
+                }).await;
+                return Ok(());
+            },
+        };
+        // The bound, checked on the CANONICAL path: a symlink out of the grant is the whole
+        // reason this is not a string comparison on what arrived.
+        if !roots.iter().any(|r| here.starts_with(r)) {
+            let _ = self.ctl.send(Resp::Error {
+                id:      None,
+                message: fmt!(
+                    "'{}' is outside the folders this computer will offer a terminal, so it is \
+                    not browsable from here. Those are: {}.",
+                    here.display(),
+                    roots.iter().map(|p| fmt!("'{}'", p.display()))
+                        .collect::<Vec<_>>().join(", ")),
+            }).await;
+            return Ok(());
+        }
+        let mut dirs: Vec<String> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&here) {
+            for e in rd.flatten() {
+                // `file_type` rather than `metadata`: a symlink to a directory is followed by
+                // the latter, and a listing that walked into one would leave the bound by
+                // showing a name that is somewhere else entirely.
+                match e.file_type() {
+                    Ok(t) if t.is_dir() => {},
+                    _ => continue,
+                }
+                if let Some(n) = e.file_name().to_str() {
+                    dirs.push(fmt!("{}", n));
+                }
+            }
+        }
+        dirs.sort_by(|a, b| {
+            let da = a.starts_with('.');
+            let db = b.starts_with('.');
+            da.cmp(&db).then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
+        });
+        // Up, but never past the bound: the parent of a root is not this hand's to show.
+        let up = here.parent()
+            .filter(|p| roots.iter().any(|r| p.starts_with(r)))
+            .map(|p| fmt!("{}", p.display()))
+            .unwrap_or_default();
+        let said = Resp::Dirs {
+            path: fmt!("{}", here.display()),
+            up,
+            dirs,
+            roots: roots.iter().map(|p| fmt!("{}", p.display())).collect(),
+        };
+        let _ = self.ctl.send(said).await;
+        Ok(())
+    }
+
     async fn runs(&self) -> Outcome<()> {
         // Also off the loop. The listing walks `/proc` once per standing group,
         // which is quick and is still not the dispatcher's work to do.
@@ -1959,6 +2051,7 @@ impl Desk {
                     Req::Verify { .. } => res!(self.verify(req).await),
                     Req::Signal { .. } => res!(self.signal(&req).await),
                     Req::Runs => res!(self.runs().await),
+                    Req::Dirs { path } => res!(self.dirs(&path).await),
                     Req::Bye => {
                         // Written down before anything is stopped.
                         if let Some(ev) = Event::from_req(&req, &[]) {
@@ -2998,6 +3091,50 @@ mod tests {
     }
 
     /// The handshake answers with the protocol, the build, the caps and the root.
+    /// **A folder browser is BOUNDED, and the bound survives `..`.**
+    ///
+    /// This exists because the browser's own `showDirectoryPicker` cannot serve a fence: it
+    /// answers with a handle carrying a name and no path. So the hand offers the chooser, and
+    /// the moment it does it is a thing that lists directories on somebody's machine -- which
+    /// is only safe while the bound is the bound. Checked on the CANONICAL path, so a walk up
+    /// through `..` leaves by the same door it came in.
+    #[tokio::test]
+    async fn a_folder_walk_is_bounded_and_says_where_it_will_start() -> Outcome<()> {
+        let (cfg, _jdir) = res!(setup("dirs", Fence::detect()));
+        let outside = fmt!("{}/..", cfg.root.display());
+        let mut input = res!(framed(&hello()));
+        input.extend_from_slice(&res!(framed(&Req::Dirs { path: fmt!("") })));
+        input.extend_from_slice(&res!(framed(&Req::Dirs { path: outside.clone() })));
+        input.extend_from_slice(&res!(framed(&Req::Bye)));
+
+        let (w, mut r) = tokio::io::duplex(1 << 20);
+        let task = tokio::spawn(serve(Cursor::new(input), w, cfg.clone()));
+        let mut bytes = Vec::new();
+        res!(r.read_to_end(&mut bytes).await.map_err(|e| err!(e, "read"; IO)));
+        let _ = res!(res!(task.await.map_err(|e| err!(e, "join"; IO))));
+        let rs = res!(responses(&bytes));
+
+        // An empty ask says where it will start, and that is the granted root and no more.
+        let start = rs.iter().find_map(|r| match r {
+            Resp::Dirs { path, roots, .. } if path.is_empty() => Some(roots.clone()),
+            _ => None,
+        });
+        let roots = res!(start.ok_or_else(|| err!(
+            "the hand did not say where a folder walk starts: {:?}", rs; Test, Missing)));
+        assert!(roots.iter().any(|r| r == &fmt!("{}", cfg.root.display())),
+            "the granted root is not among the places a walk may start: {:?}", roots);
+
+        // And a walk out through `..` is refused, naming what it would allow.
+        let refused = rs.iter().any(|r| matches!(r,
+            Resp::Error { message, .. } if message.contains("outside the folders")));
+        assert!(refused, "a walk up out of the grant was not refused: {:?}", rs);
+        // Belt and braces: it must not have ANSWERED with the parent's listing.
+        assert!(!rs.iter().any(|r| matches!(r, Resp::Dirs { path, .. }
+            if !path.is_empty() && !path.starts_with(&fmt!("{}", cfg.root.display())))),
+            "a listing outside the grant came back: {:?}", rs);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn handshake_answers_with_caps_and_the_granted_root() -> Outcome<()> {
         let (cfg, jdir) = res!(setup("handshake", Fence::detect()));

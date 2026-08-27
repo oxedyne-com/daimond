@@ -95,6 +95,7 @@
 	// extension sends one when the link itself has failed, and neither leaves an
 	// answer coming.
 	var runsWait = [];       // [{ resolve, reject, timer }, ...], oldest first
+	var dirsWait = [];       // the same, for the folder browser
 
 	// ── What the reload grace left behind ───────────────────────────
 	//
@@ -411,6 +412,13 @@
 	/// Settle every outstanding `runs` question at once, for a link that died.
 	function dropRuns(why) {
 		while (settleRuns('reject', why)) { /* until the queue is empty */ }
+		// The folder browser's waiters go with them: a question left hanging on a dead link is
+		// how a caller waits out a timeout for a sentence it could have had at once.
+		while (dirsWait.length) {
+			var dq = dirsWait.shift();
+			if (dq.timer) clearTimeout(dq.timer);
+			try { dq.reject(new Error(why)); } catch (e) { /* the caller's problem */ }
+		}
 	}
 
 	// ── What the hand says ──────────────────────────────────────────
@@ -437,6 +445,22 @@
 		if (msg.t === 'lapsed')  { lapsed(msg); return; }
 		// What the hand is still running. No id, by design (see `runsWait`), so it
 		// is taken HERE, above the run switch that would otherwise drop it.
+		// The folder browser's answer. Settled oldest-first exactly as `runs` is, and for the
+		// same reason: the message carries no id, because there is nothing about it that a
+		// second browser window could confuse with the first.
+		if (msg.t === 'dirs') {
+			var dw = dirsWait.shift();
+			if (dw) {
+				if (dw.timer) clearTimeout(dw.timer);
+				dw.resolve({
+					path:  String(msg.path || ''),
+					up:    String(msg.up || ''),
+					dirs:  Array.isArray(msg.dirs) ? msg.dirs : [],
+					roots: Array.isArray(msg.roots) ? msg.roots : [],
+				});
+			}
+			return;
+		}
 		if (msg.t === 'runs') {
 			var news = gapNews;
 			gapNews = '';
@@ -1036,6 +1060,34 @@
 		});
 	}
 
+	/// The directories inside `path`, so a person can CHOOSE a folder and be given its real
+	/// path.
+	///
+	/// The browser's own `showDirectoryPicker` cannot serve this -- it answers with a handle
+	/// carrying a name and no path -- so the only end that can offer a folder chooser is the
+	/// hand, which is on the machine. Bounded there to what it would fence a terminal to.
+	///
+	/// # Arguments
+	/// * `path` - Absolute, or '' to ask where this hand will start from.
+	///
+	/// # Returns
+	/// A promise for `{ path, up, dirs, roots }`.
+	function dirs(path) {
+		return send({ t: 'dirs', path: String(path || '') }).then(function () {
+			return new Promise(function (resolve, reject) {
+				var w = { resolve: resolve, reject: reject, timer: null };
+				w.timer = setTimeout(function () {
+					var i = dirsWait.indexOf(w);
+					if (i < 0) return;
+					dirsWait.splice(i, 1);
+					reject(new Error('The machine hand did not answer with a folder listing. It may '
+						+ 'have stopped; ask the user to check it is still there.'));
+				}, RUNS_WAIT);
+				dirsWait.push(w);
+			});
+		});
+	}
+
 	/// Hand over the output kept for one run this page inherited across a reload.
 	///
 	/// SPENT ON READING. What is handed over is dropped here, because the whole
@@ -1277,6 +1329,7 @@
 		run: run,
 		file: file,
 		runs: runs,
+		dirs: dirs,
 		held: held,
 		signal: signal,
 		send: send,
