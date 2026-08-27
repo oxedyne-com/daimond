@@ -988,6 +988,30 @@ try {
 			browse: (document.getElementById('termroot-browse') || {}).style
 				? document.getElementById('termroot-browse').style.display : null,
 		}));
+		// ── The folder the hand may work in at all ─────────────────
+		//
+		// Until 2026-08-27 this was changeable only by editing `root.txt` at a shell, so a new
+		// user picked a folder before knowing what the app did with one and had nowhere to go
+		// on finding they had picked wrongly. It is a second row over the SAME walk, and what
+		// is checked is that it exists, states the granted folder, and is a different question
+		// from the terminal's.
+		const grantRow = await p.evaluate(() => {
+			const sec  = document.getElementById('grantroot-section');
+			const home = document.getElementById('admin-home');
+			return {
+				shown:  !!sec && sec.style.display !== 'none',
+				inHome: !!(sec && home && home.contains(sec)),
+				now:    (document.getElementById('grantroot-now') || {}).textContent,
+				browse: !!document.getElementById('grantroot-browse'),
+				// Its own walk panel, so the folders are drawn under the question they answer.
+				ownWalk: !!(sec && sec.querySelector('#grantroot-walk')),
+			};
+		});
+		check('the granted folder can be changed from Settings, over the same walk',
+			grantRow.shown && grantRow.inHome && grantRow.browse === true
+				&& grantRow.now === '/nowhere/ws' && grantRow.ownWalk === true,
+			JSON.stringify(grantRow));
+
 		check('a folder pinned at a shell is stated and the walk is withdrawn',
 			pinned.said === true && pinned.now === '/home/u' && pinned.browse === 'none',
 			JSON.stringify(pinned));

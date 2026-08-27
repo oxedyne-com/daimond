@@ -547,6 +547,15 @@ pub enum Event {
         /// Why, in a phrase.
         reason: String,
     },
+    /// The folder this hand may work in was changed.
+    ///
+    /// Written because it changes what every LATER command may touch, and a record that did
+    /// not carry it would leave a reader unable to say which fence any earlier line was
+    /// written under.
+    Granted {
+        /// The folder now named in `root.txt`.
+        path: String,
+    },
 }
 
 impl Event {
@@ -568,6 +577,7 @@ impl Event {
             Self::Gap       {..} => "gap",
             Self::Stray     {..} => "stray",
             Self::Closed    {..} => "closed",
+            Self::Granted   {..} => "granted",
         }
     }
 
@@ -721,6 +731,13 @@ impl Event {
                     "redactions" => Dat::U32(s.cut),
                 }
             },
+            Self::Granted { path } => {
+                let path = s.one(path);
+                mapdat!{
+                    "path"       => path,
+                    "redactions" => Dat::U32(s.cut),
+                }
+            },
         };
         Ok(res!(d.json_canonical()))
     }
@@ -821,6 +838,9 @@ impl Event {
             // a person can choose one. The journal is a record of what this hand DID to the
             // machine, and listing a directory is not a thing done to it.
             Req::Dirs { .. } => None,
+            // A grant IS a thing done to the machine -- it changes what every later command
+            // may touch -- so it is written down, and written down as the folder it names.
+            Req::Grant { path } => Some(Self::Granted { path: path.clone() }),
             // A VERIFY IS NOT ITSELF AN ACT, and writing it down as one would put a verb in the
             // record where a reader expects a process. Every run it makes is journalled as the
             // `Exec` it really is -- the node command line, the granted root, and `fence:none` in
@@ -901,6 +921,7 @@ impl Event {
             // in a record of a machine's acts.
             Resp::Runs {..} => None,
             Resp::Dirs {..} => None,
+            Resp::Granted {..} => None,
             // A fault is written before the journal exists -- it is the sentence saying the
             // hand could not open one -- so there is nowhere to record it and nothing that
             // could. It reaches the record only in the sense that the next hand to start

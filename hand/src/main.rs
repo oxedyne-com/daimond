@@ -893,6 +893,7 @@ fn id_of(resp: &Resp) -> Option<String> {
         Resp::Runs    { .. }		=> None,
         // A folder listing is about no run at all.
         Resp::Dirs    { .. }		=> None,
+        Resp::Granted { .. }		=> None,
         // Sent before the greeting, when there is no run to name and no conversation
         // to name one in.
         Resp::Fault   { .. }		=> None,
@@ -1082,6 +1083,8 @@ fn cut(resp: &Resp) -> Outcome<Option<(Resp, String)>> {
         // list of directory names reads as a folder with fewer folders in it. The bound keeps
         // it small -- one directory's immediate children, names only.
         Resp::Dirs { .. } => Ok(None),
+        // One path and one sentence; there is nothing in it to cut.
+        Resp::Granted { .. } => Ok(None),
         // A file's text, cut like a refusal's sentence: what fits is sent and the marker says
         // how much did not. The launcher caps it at `wire::FILE_TEXT_MAX` already, so reaching
         // here means an enormous path or a very long refusal, not an ordinary read.
@@ -1161,6 +1164,7 @@ fn kind_of(resp: &Resp) -> &'static str {
         Resp::Closed  { .. }	=> "closed",
         Resp::Runs    { .. }	=> "runs",
         Resp::Dirs    { .. }	=> "dirs",
+        Resp::Granted { .. }	=> "granted",
         Resp::Filed   { .. }	=> "filed",
         Resp::Fault   { .. }	=> "fault",
     }
@@ -1909,6 +1913,81 @@ impl Desk {
     ///
     /// Not journalled: a question is not an act, and every run it can name was
     /// written down when it started.  See `Event::from_req`.
+    /// Write the folder this hand may work in, as the installer writes it.
+    ///
+    /// **This does not make the grant; it records the one the user made.** They walked the
+    /// machine's own folders through [`Self::dirs`], which is bounded, and chose one. What is
+    /// replaced is a step that otherwise happens at a shell before a person knows what the app
+    /// does with a folder -- and, on discovering they chose wrongly, by editing `root.txt` by
+    /// hand.
+    ///
+    /// **Three refusals, and each is a fence rule rather than a preference.** `/` is the
+    /// machine and not a workspace. A path that is not a directory cannot bound anything. And
+    /// a folder CONTAINING this hand's journal would let a fenced command rewrite the record of
+    /// itself, which is the rule [`journal::check_fence_at`] applies on every command -- caught
+    /// here, where the sentence can name the fix, rather than on every later run.
+    ///
+    /// **It takes effect when the hand next starts**, and the answer says so. A running hand
+    /// reads its root once; re-reading it here would move the fence under commands already
+    /// running.
+    async fn grant(&self, path: &str) -> Outcome<()> {
+        let say = |m: String| async move { let _ = self.ctl.send(Resp::Error { id: None, message: m }).await; };
+        let asked = PathBuf::from(path);
+        if !asked.is_absolute() {
+            say(fmt!("'{}' is not an absolute path, and a fence written against a relative one \
+                fences whatever the hand happens to be standing in.", path)).await;
+            return Ok(());
+        }
+        let here = match std::fs::canonicalize(&asked) {
+            Ok(p) if p.is_dir() => p,
+            _ => {
+                say(fmt!("'{}' is not a folder on this computer, so there is nothing for it to \
+                    bound.", path)).await;
+                return Ok(());
+            },
+        };
+        if here == Path::new("/") {
+            say(fmt!("'/' is the machine, not a workspace. Everything any command could reach \
+                would be everything there is.")).await;
+            return Ok(());
+        }
+        let jdir = {
+            let g = lock_mutex!(self.jr);
+            g.dir().to_path_buf()
+        };
+        if journal::check_fence_at(&jdir, &daimond_hand::wire::FenceSpec {
+            rw: vec![fmt!("{}", here.display())], ro: Vec::new(), deny: Vec::new(), net: false,
+        }).is_err() {
+            say(fmt!(
+                "'{}' contains this hand's own record, at '{}', so a command fenced to it could \
+                rewrite the record of what it did. Move the record outside the folder first: set \
+                DAIMOND_HAND_JOURNAL_DIR to somewhere the folder does not contain.",
+                here.display(), jdir.display())).await;
+            return Ok(());
+        }
+        let file = jdir.join(daimond_hand::ROOT_FILE);
+        let txt  = fmt!("# The one folder Daimond's machine hand may work in.\n{}\n", here.display());
+        if let Err(e) = std::fs::write(&file, txt) {
+            say(fmt!("'{}' could not be written ({}), so the folder was not changed.",
+                file.display(), e)).await;
+            return Ok(());
+        }
+        let _ = std::fs::set_permissions(&file, std::os::unix::fs::PermissionsExt::from_mode(0o600));
+        // Written down: it changes what every LATER command may touch, and a record without it
+        // leaves a reader unable to say which fence an earlier line was written under.
+        if let Some(ev) = Event::from_req(&Req::Grant { path: fmt!("{}", here.display()) }, &[]) {
+            if let Err(e) = self.record(&ev) {
+                eprintln!("daimond-hand: the grant was not journalled: {}", e);
+            }
+        }
+        let _ = self.ctl.send(Resp::Granted {
+            path: fmt!("{}", here.display()),
+            note: fmt!("The folder is written down. This hand is still working in '{}' until it \
+                is restarted, which happens when the page is reloaded.", self.root.display()),
+        }).await;
+        Ok(())
+    }
+
     /// The directories inside `path`, so a person can choose a folder and get its real path.
     ///
     /// **Bounded by what this hand would fence a terminal to**, which is the granted root and
@@ -2052,6 +2131,7 @@ impl Desk {
                     Req::Signal { .. } => res!(self.signal(&req).await),
                     Req::Runs => res!(self.runs().await),
                     Req::Dirs { path } => res!(self.dirs(&path).await),
+                    Req::Grant { path } => res!(self.grant(&path).await),
                     Req::Bye => {
                         // Written down before anything is stopped.
                         if let Some(ev) = Event::from_req(&req, &[]) {
@@ -3091,6 +3171,50 @@ mod tests {
     }
 
     /// The handshake answers with the protocol, the build, the caps and the root.
+    /// **A grant is refused where it would swallow the record of what it did.**
+    ///
+    /// The one rule that is not a preference: [`journal::check_fence_at`] refuses any fence
+    /// reaching the journal, so a folder CONTAINING the journal would be refused on every
+    /// command afterwards. Caught at the grant, where the sentence can name the fix, rather
+    /// than as a mystery on the next run. `/` and a path that is not a directory are checked
+    /// beside it because all three answer the same question: can this folder bound anything.
+    #[tokio::test]
+    async fn a_grant_that_would_swallow_the_record_is_refused() -> Outcome<()> {
+        let (cfg, jdir) = res!(setup("grant", Fence::detect()));
+        let swallows = res!(jdir.parent().ok_or_else(|| err!(
+            "the journal has no parent"; Test, Missing))).to_path_buf();
+        let mut input = res!(framed(&hello()));
+        input.extend_from_slice(&res!(framed(&Req::Grant {
+            path: fmt!("{}", swallows.display()) })));
+        input.extend_from_slice(&res!(framed(&Req::Grant { path: fmt!("/") })));
+        input.extend_from_slice(&res!(framed(&Req::Grant {
+            path: fmt!("{}/not-a-folder-at-all", swallows.display()) })));
+        input.extend_from_slice(&res!(framed(&Req::Bye)));
+
+        let (w, mut r) = tokio::io::duplex(1 << 20);
+        let task = tokio::spawn(serve(Cursor::new(input), w, cfg.clone()));
+        let mut bytes = Vec::new();
+        res!(r.read_to_end(&mut bytes).await.map_err(|e| err!(e, "read"; IO)));
+        let _ = res!(res!(task.await.map_err(|e| err!(e, "join"; IO))));
+        let rs = res!(responses(&bytes));
+
+        assert!(!rs.iter().any(|x| matches!(x, Resp::Granted { .. })),
+            "one of three refusable grants was written: {:?}", rs);
+        let said: Vec<String> = rs.iter().filter_map(|x| match x {
+            Resp::Error { message, .. } => Some(message.clone()),
+            _ => None,
+        }).collect();
+        assert_eq!(3, said.len(), "expected three refusals, got {:?}", said);
+        assert!(said.iter().any(|m| m.contains("record")),
+            "the swallowed-record refusal does not name the record: {:?}", said);
+        assert!(said.iter().any(|m| m.contains("the machine")),
+            "'/' was not refused as the machine: {:?}", said);
+        let after = std::fs::read_to_string(jdir.join(daimond_hand::ROOT_FILE)).unwrap_or_default();
+        assert!(!after.contains(&fmt!("{}", swallows.display())),
+            "a refused grant reached root.txt: {:?}", after);
+        Ok(())
+    }
+
     /// **A folder browser is BOUNDED, and the bound survives `..`.**
     ///
     /// This exists because the browser's own `showDirectoryPicker` cannot serve a fence: it

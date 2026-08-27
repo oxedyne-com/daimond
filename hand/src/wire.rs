@@ -633,6 +633,21 @@ pub enum Req {
         /// Absolute path to list.  Empty asks for the places this hand will start from.
         path: String,
     },
+    /// Set the folder this hand may work in, writing it where the installer writes it.
+    ///
+    /// **The grant is a decision and this does not make it one.**  It writes what the user
+    /// chose, having walked the machine's own folders through [`Req::Dirs`]; the choosing is
+    /// theirs and the walk is bounded.  It exists because the alternative is what a new user
+    /// meets today: pick a folder at a shell before knowing what the app does with one, and
+    /// then edit `root.txt` by hand on discovering it was wrong.
+    ///
+    /// **It takes effect when the hand next starts.**  A running hand's root is read once, and
+    /// re-reading it mid-conversation would move a fence under commands already running.
+    Grant {
+        /// Absolute path to the folder.  Refused if it is not a directory, if it is `/`, or if
+        /// it would contain this hand's own journal.
+        path: String,
+    },
     /// The page is going away; stop everything and exit.
     Bye,
 }
@@ -775,6 +790,11 @@ pub enum Resp {
     Runs {
         runs: Vec<Run>,
         more: u32,	// how many did not fit, past [`RUNS_MAX`]
+    },
+    /// The answer to [`Req::Grant`]: what was written, and that a restart is what applies it.
+    Granted {
+        path: String,		// the folder now named in `root.txt`, canonical
+        note: String,		// what the user still has to do, in a sentence
     },
     /// The answer to [`Req::Dirs`]: where it looked, what is above it, and the directories in it.
     Dirs {

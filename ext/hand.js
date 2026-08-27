@@ -612,6 +612,14 @@
 		/// copy of that table here would be a second answer to the same question,
 		/// free to drift from the one that is enforced.
 		let hostHome = '';
+		/// The folders this machine will let a TERMINAL be fenced to, from `terminal-ceiling:`
+		/// in the hand's own `hello`.
+		///
+		/// A terminal is the user at a keyboard and a command is a daimon, so the two are
+		/// allowed different sizes -- and the list comes from the MACHINE, never from the page,
+		/// which is what keeps this a clamp rather than a formality. Empty on an older hand,
+		/// and then a terminal is held to the granted root exactly as it always was.
+		let hostCeilings = [];
 		/// Waiting for the hand to say what it can enforce, before the user is
 		/// asked. Null once that is settled, one way or another.
 		let capsWait = null;
@@ -907,6 +915,10 @@
 				for (const c of (Array.isArray(m.caps) ? m.caps : [])) {
 					if (typeof c === 'string' && c.indexOf('root:') === 0) hostRoot = c.slice(5);
 					if (typeof c === 'string' && c.indexOf('home:') === 0) hostHome = c.slice(5);
+					if (typeof c === 'string' && c.indexOf('terminal-ceiling:') === 0) {
+						const cp = c.slice('terminal-ceiling:'.length);
+						if (cp && hostCeilings.indexOf(cp) < 0) hostCeilings.push(cp);
+					}
 				}
 				if (typeof m.root === 'string' && m.root) hostRoot = m.root;
 				if (capsWait) {
@@ -1163,6 +1175,16 @@
 			// A folder browser: directory NAMES, so a person can choose a folder and get its
 			// real path. Nothing is run and nothing is read, and the hand bounds it to what it
 			// would fence a terminal to -- so this end checks the shape and forwards.
+			// Recording the folder the user chose after walking the machine's own. The page
+			// proposes; the HAND refuses `/`, a non-directory, and any folder containing its
+			// own record -- a fenced command able to reach the record could rewrite the record
+			// of what it did.
+			case 'grant':
+				if (typeof m.path !== 'string' || !m.path) {
+					fail(m.id, 'A grant needs the folder as an absolute path.');
+					return;
+				}
+				break;
 			case 'dirs':
 				if (m.path !== undefined && typeof m.path !== 'string') {
 					fail(m.id, 'A folder listing takes a path as a string, or nothing at all to ask where to start.');
@@ -1173,7 +1195,7 @@
 				closing = true;
 				break;
 			default:
-				fail(m.id, `The machine hand does not know the message "${m.t}". It understands hello, exec, open, file, verify, input, resize, signal, runs, dirs and bye.`);
+				fail(m.id, `The machine hand does not know the message "${m.t}". It understands hello, exec, open, file, verify, input, resize, signal, runs, dirs, grant and bye.`);
 				return;
 			}
 
@@ -1421,7 +1443,7 @@
 			const env = wrongEnv(m.env);
 			if (env) return env;
 
-			return wrongFence(m.fence, m.cwd, m.toolkits);
+			return wrongFence(m.fence, m.cwd, m.toolkits, true);
 		}
 
 		/// What is wrong with an exec's environment.
@@ -1455,7 +1477,7 @@
 		/// # Arguments
 		/// * `f` - The `fence` the page sent, if it sent one.
 		/// * `cwd` - The working directory, which has to be inside it.
-		function wrongFence(f, cwd, kits) {
+		function wrongFence(f, cwd, kits, terminal) {
 			if (!f || typeof f !== 'object' || Array.isArray(f)) {
 				return 'exec needs a fence saying what the command may touch: {rw, ro, deny, net}. A command with no fence is a command '
 					+ 'with no compartment, and this hand does not run one.';
@@ -1476,7 +1498,7 @@
 					return `The fence's ${field} must be a list of absolute paths, even where it is empty.`;
 				}
 				for (const p of list) {
-					const bad = wrongRoot(p, field, kits);
+					const bad = wrongRoot(p, field, kits, terminal);
 					if (bad) return bad;
 				}
 			}
@@ -1498,7 +1520,7 @@
 		/// * `field` - Which list it came from, for the sentence.
 		/// * `kits` - The toolkit names the same request carried, which is what
 		///   lets a root outside the grant be a toolchain rather than a mistake.
-		function wrongRoot(p, field, kits) {
+		function wrongRoot(p, field, kits, terminal) {
 			if (!p) {
 				return `The fence's ${field} has an empty path in it. An empty root is not "nothing", it is a prefix of every path on `
 					+ `the machine, so it is refused rather than interpreted.`;
@@ -1523,6 +1545,12 @@
 			// AND the root is inside the home directory the hand reported -- and
 			// the home directory ITSELF does not pass, because `~` is not a
 			// toolchain, it is everything the user owns.
+			// A TERMINAL may be fenced to a folder the machine offered as a ceiling, which is
+			// wider than the grant on purpose. The list is the hand's, arriving in its `hello`,
+			// so this is still the page being held to something it could not choose.
+			if (field !== 'deny' && terminal && hostCeilings.some((c) => under(p, c))) {
+				return null;
+			}
 			if (field !== 'deny' && hostRoot && !under(p, hostRoot)) {
 				const granted = Array.isArray(kits) && kits.length > 0;
 				const inHome = hostHome && under(p, hostHome) && !under(hostHome, p);

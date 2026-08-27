@@ -617,6 +617,38 @@ try {
 			return !/bad-nofence|bad-root|bad-env|LD_PRELOAD/.test(log);
 		})(), 'the mock host logs everything it is sent');
 
+		// ── A TERMINAL may be fenced wider than a command ──────────────
+		//
+		// The hand offers `terminal-ceiling:` folders in its own hello, and this end lets a
+		// TERMINAL be fenced to one of them. Both halves are checked, because letting the
+		// wider folder through for everything would pass the first on its own -- and that is
+		// the difference between a terminal being the user and the fence being a formality.
+		//
+		// `/var/tmp` is the same folder the exec check above is refused for, so the two
+		// answers are about the same path and differ only in which door asked.
+		register({ chunks: 1, caps: ['fence:linux', 'root:/tmp', 'terminal-ceiling:/var/tmp'] });
+		await page.evaluate(() => window.__open());
+		await page.evaluate(() => window.__say({ t: 'hello', proto: 2, client: 'harness' }));
+		await sleep(300);
+		await page.evaluate(() => window.__say({
+			t: 'open', id: 'term-wide', argv: ['/bin/bash'], cwd: '/var/tmp',
+			env: [], size: { cols: 80, rows: 24 },
+			fence: { rw: ['/var/tmp'], ro: [], deny: [], net: false },
+		}));
+		await page.evaluate(() => window.__say({
+			t: 'exec', id: 'cmd-wide', argv: ['/bin/echo', 'hi'], cwd: '/var/tmp',
+			env: [], timeout_ms: 5000, capture: 'both',
+			fence: { rw: ['/var/tmp'], ro: [], deny: [], net: false },
+		}));
+		await sleep(600);
+		const termWide = await refusalFor(page, 'term-wide');
+		const cmdWide  = await refusalFor(page, 'cmd-wide');
+		check('a TERMINAL may be fenced to a folder the machine offered as a ceiling',
+			!termWide, JSON.stringify(termWide && termWide.reason).slice(0, 160));
+		check('and a COMMAND with the same fence is still refused, which is the whole difference',
+			!!cmdWide && /outside/.test(cmdWide.reason),
+			JSON.stringify(cmdWide && cmdWide.reason).slice(0, 160));
+
 		// And a well-formed one still runs, so none of the above is a blanket no.
 		await page.evaluate(() => window.__exec('good', ['cargo', 'test']));
 		const done = await until(page, 'ended');

@@ -96,6 +96,7 @@
 	// answer coming.
 	var runsWait = [];       // [{ resolve, reject, timer }, ...], oldest first
 	var dirsWait = [];       // the same, for the folder browser
+	var grantWait = [];      // and for recording the folder chosen
 
 	// ── What the reload grace left behind ───────────────────────────
 	//
@@ -419,6 +420,11 @@
 			if (dq.timer) clearTimeout(dq.timer);
 			try { dq.reject(new Error(why)); } catch (e) { /* the caller's problem */ }
 		}
+		while (grantWait.length) {
+			var gq = grantWait.shift();
+			if (gq.timer) clearTimeout(gq.timer);
+			try { gq.reject(new Error(why)); } catch (e) { /* the caller's problem */ }
+		}
 	}
 
 	// ── What the hand says ──────────────────────────────────────────
@@ -448,6 +454,15 @@
 		// The folder browser's answer. Settled oldest-first exactly as `runs` is, and for the
 		// same reason: the message carries no id, because there is nothing about it that a
 		// second browser window could confuse with the first.
+		// The grant's answer. One outstanding at a time, like the walk's.
+		if (msg.t === 'granted') {
+			var gw = grantWait.shift();
+			if (gw) {
+				if (gw.timer) clearTimeout(gw.timer);
+				gw.resolve({ path: String(msg.path || ''), note: String(msg.note || '') });
+			}
+			return;
+		}
 		if (msg.t === 'dirs') {
 			var dw = dirsWait.shift();
 			if (dw) {
@@ -1088,6 +1103,32 @@
 		});
 	}
 
+	/// Record the folder this hand may work in, having walked to it with `dirs`.
+	///
+	/// The page proposes and the HAND decides: it refuses `/`, anything that is not a
+	/// directory, and any folder containing its own record. It takes effect when the hand
+	/// next starts, and the answer says so.
+	///
+	/// # Arguments
+	/// * `path` - Absolute path to the folder.
+	///
+	/// # Returns
+	/// A promise for `{ path, note }`, or a rejection carrying the hand's own sentence.
+	function grant(path) {
+		return send({ t: 'grant', path: String(path || '') }).then(function () {
+			return new Promise(function (resolve, reject) {
+				var w = { resolve: resolve, reject: reject, timer: null };
+				w.timer = setTimeout(function () {
+					var i = grantWait.indexOf(w);
+					if (i < 0) return;
+					grantWait.splice(i, 1);
+					reject(new Error('The machine hand did not say whether it wrote the folder down.'));
+				}, RUNS_WAIT);
+				grantWait.push(w);
+			});
+		});
+	}
+
 	/// Hand over the output kept for one run this page inherited across a reload.
 	///
 	/// SPENT ON READING. What is handed over is dropped here, because the whole
@@ -1330,6 +1371,7 @@
 		file: file,
 		runs: runs,
 		dirs: dirs,
+		grant: grant,
 		held: held,
 		signal: signal,
 		send: send,

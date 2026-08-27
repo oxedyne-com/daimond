@@ -4231,7 +4231,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The search row's five option labels: one of them is a phrase this app
 			// made up, and the kinds beside all of them are ours too.
 			try { SearchRow.render(); } catch (e) { /* the section is not up yet */ }
-			try { TermRootRow.render(); } catch (e) { /* no hand has answered yet */ }
+			try { TermRootRow.render(); TermRootRow.renderGrant(); } catch (e) { /* no hand yet */ }
 			// Both attachment footers. Their chrome carries three words of ours --
 			// the view the toggle offers, "Attach", and the name of the scrolling
 			// region -- and a footer stands on screen for as long as anything is
@@ -9466,7 +9466,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var tr = TermRootRow.kept || document.getElementById('termroot-section');
 				if (tr) {
 					TermRootRow.kept = tr;
+					var gr = TermRootRow.keptGrant || document.getElementById('grantroot-section');
+					if (gr) { TermRootRow.keptGrant = gr; homeView.appendChild(gr); }
 					homeView.appendChild(tr);
+					TermRootRow.renderGrant();
 					TermRootRow.render();
 				}
 			} catch (e) { /* no hand has answered yet */ }
@@ -33409,8 +33412,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var TermRootRow = {
 		/// What the hand last said about this computer, or null before it has said anything.
 		machine: null,
-		/// The section element, held across repaints: the settings home clears itself.
+		/// The section elements, held across repaints: the settings home clears itself.
 		kept: null,
+		keptGrant: null,
+		/// Which row started the walk: 'terminal' or 'grant'.
+		at: 'terminal',
 
 		/// Remember the hand's answer, and repaint if the panel is on screen.
 		///
@@ -33422,7 +33428,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		},
 
 		/// Ask the hand what is inside `path`, and draw it.
-		walk: async function (path) {
+		///
+		/// # Arguments
+		/// * `path` - Where to look, or '' to ask the hand where it will start.
+		/// * `take` - What "Use this folder" does with the answer. Passed rather than assumed,
+		///   because two rows walk the same folders for different reasons: one sets where a
+		///   terminal opens, the other records what the hand may work in at all.
+		walk: async function (path, take) {
 			var box = TermRootRow.panel();
 			if (!box) return;
 			box.textContent = tOr('termroot.browse_wait', 'Asking this computer\u2026');
@@ -33433,7 +33445,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// no folder walk to offer.
 			if (!got.path && (got.roots || []).length) {
 				box.textContent = '';
-				(got.roots || []).forEach(function (r) { TermRootRow.rowFor(box, r, r); });
+				(got.roots || []).forEach(function (r) { TermRootRow.rowFor(box, r, r, take); });
 				return;
 			}
 			box.textContent = '';
@@ -33445,37 +33457,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			use.type = 'button';
 			use.className = 'admin-item';
 			use.textContent = tOr('termroot.browse_use', 'Use this folder');
-			use.addEventListener('click', function () {
-				var m = TermRootRow.machine;
-				setTerminalRootFor(m && m.ws, got.path);
-				TermRootRow.open = false;
-				TermRootRow.render();
-			});
+			use.addEventListener('click', function () { take(got.path); });
 			box.appendChild(use);
-			if (got.up) TermRootRow.rowFor(box, got.up, '\u2191 ' + got.up);
+			if (got.up) TermRootRow.rowFor(box, got.up, '\u2191 ' + got.up, take);
 			(got.dirs || []).forEach(function (d) {
-				TermRootRow.rowFor(box, got.path.replace(/\/$/, '') + '/' + d, d + '/');
+				TermRootRow.rowFor(box, got.path.replace(/\/$/, '') + '/' + d, d + '/', take);
 			});
 		},
 
 		/// One folder in the walk.
-		rowFor: function (box, path, label) {
+		rowFor: function (box, path, label, take) {
 			var b = document.createElement('button');
 			b.type = 'button';
 			b.className = 'admin-item';
 			b.textContent = label;
-			b.addEventListener('click', function () { TermRootRow.walk(path); });
+			b.addEventListener('click', function () { TermRootRow.walk(path, take); });
 			box.appendChild(b);
 		},
 
 		/// Where the walk is drawn, made once and emptied between walks.
 		panel: function () {
-			var sec = document.getElementById('termroot-section');
+			// Whichever row asked. `TermRootRow.at` is set by the button that started the walk,
+			// so the folders are drawn under the question they answer rather than under
+			// whichever section happens to be first in the markup.
+			var id = TermRootRow.at === 'grant' ? 'grantroot-walk' : 'termroot-walk';
+			var sec = document.getElementById(
+				TermRootRow.at === 'grant' ? 'grantroot-section' : 'termroot-section');
 			if (!sec) return null;
-			var box = document.getElementById('termroot-walk');
+			var box = document.getElementById(id);
 			if (!box) {
 				box = document.createElement('div');
-				box.id = 'termroot-walk';
+				box.id = id;
 				box.className = 'termroot-walk';
 				sec.appendChild(box);
 			}
@@ -33503,7 +33515,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			browse.addEventListener('click', function () {
 				if (TermRootRow.open) { TermRootRow.close(); return; }
 				var m = TermRootRow.machine;
-				TermRootRow.walk(terminalRootFor(m && m.ws) || (m && m.root) || '');
+				TermRootRow.at = 'terminal';
+				TermRootRow.walk(terminalRootFor(m && m.ws) || (m && m.root) || '',
+					TermRootRow.takeTerminal);
 			});
 			row.appendChild(browse);
 
@@ -33577,10 +33591,59 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (reset)  reset.style.display = cur ? '' : 'none';
 		},
 
+		/// "Use this folder" for the TERMINAL row: remembered on this device, per workspace.
+		takeTerminal: function (path) {
+			var m = TermRootRow.machine;
+			setTerminalRootFor(m && m.ws, path);
+			TermRootRow.close();
+			TermRootRow.render();
+		},
+
+		/// "Use this folder" for the GRANT row: written by the hand into `root.txt`.
+		///
+		/// The hand refuses `/`, a non-directory, and any folder containing its own record, so
+		/// this reports what it said rather than deciding anything.
+		takeGrant: async function (path) {
+			var box = document.getElementById('grantroot-walk');
+			try {
+				var got = await DaimondHand.grant(path);
+				TermRootRow.close();
+				TermRootRow.render();
+				await noticeDialog(tOr('grantroot.head', 'Folder Daimond may work in'),
+					got.path + '\n\n' + got.note);
+			} catch (e) {
+				if (box) box.textContent = (e && e.message) || String(e || '');
+			}
+		},
+
+		/// The GRANT row: the folder the hand may work in at all.
+		renderGrant: function () {
+			var sec = document.getElementById('grantroot-section');
+			if (!sec) return;
+			var m = TermRootRow.machine;
+			if (!m || !m.root || !m.browse) { sec.style.display = 'none'; return; }
+			sec.style.display = '';
+			var now = document.getElementById('grantroot-now');
+			if (now) now.textContent = m.root;
+			var btn = document.getElementById('grantroot-browse');
+			if (btn && !btn._wired) {
+				btn._wired = true;
+				btn.addEventListener('click', function () {
+					if (TermRootRow.open) { TermRootRow.close(); return; }
+					TermRootRow.at = 'grant';
+					TermRootRow.walk(TermRootRow.machine && TermRootRow.machine.root || '',
+						TermRootRow.takeGrant);
+				});
+			}
+			if (btn) btn.textContent = tOr('termroot.browse', 'Choose a folder\u2026');
+		},
+
 		/// Put the walk away.
 		close: function () {
-			var box = document.getElementById('termroot-walk');
-			if (box) { box.style.display = 'none'; box.textContent = ''; }
+			['termroot-walk', 'grantroot-walk'].forEach(function (id) {
+				var box = document.getElementById(id);
+				if (box) { box.style.display = 'none'; box.textContent = ''; }
+			});
 			TermRootRow.open = false;
 		},
 	};

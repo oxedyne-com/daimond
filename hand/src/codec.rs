@@ -1290,6 +1290,10 @@ fn req_dat(req: &Req) -> Dat {
             "t"		=> "dirs",
             "path"	=> Dat::Str(path.clone()),
         },
+        Req::Grant { path } => omapdat!{
+            "t"		=> "grant",
+            "path"	=> Dat::Str(path.clone()),
+        },
         Req::Bye => omapdat!{
             "t"	=> "bye",
         },
@@ -1397,6 +1401,9 @@ pub fn req_of_json(txt: &str) -> Outcome<Req> {
         "dirs" => Ok(Req::Dirs {
             path: res!(str_field(&obj, "dirs", "path")),
         }),
+        "grant" => Ok(Req::Grant {
+            path: res!(str_field(&obj, "grant", "path")),
+        }),
         "bye" => Ok(Req::Bye),
         other => Err(Fault::UnknownTag.raise(&fmt!(
             "There is no request called {:?}. This page is asking for something \
@@ -1465,6 +1472,11 @@ fn resp_dat(resp: &Resp) -> Dat {
             "id"	=> Dat::Str(id.clone()),
             "seq"	=> *seq,
             "data"	=> Dat::Str(data.clone()),
+        },
+        Resp::Granted { path, note } => omapdat!{
+            "t"		=> "granted",
+            "path"	=> Dat::Str(path.clone()),
+            "note"	=> Dat::Str(note.clone()),
         },
         Resp::Dirs { path, up, dirs, roots } => omapdat!{
             "t"		=> "dirs",
@@ -1622,6 +1634,10 @@ pub fn resp_of_json(txt: &str) -> Outcome<Resp> {
             id:     res!(str_field(&obj, "closed", "id")),
             exit:   res!(i32_field(&obj, "closed", "exit")),
             killed: res!(bool_field(&obj, "closed", "killed")),
+        }),
+        "granted" => Ok(Resp::Granted {
+            path: res!(str_field(&obj, "granted", "path")),
+            note: res!(str_field(&obj, "granted", "note")),
         }),
         "dirs" => Ok(Resp::Dirs {
             path:  res!(str_field(&obj, "dirs", "path")),
@@ -2214,6 +2230,7 @@ mod tests {
             // question and not a malformed one, so both shapes round trip.
             Req::Dirs { path: fmt!("/home/u/usr") },
             Req::Dirs { path: fmt!("") },
+            Req::Grant { path: fmt!("/home/u/work") },
             Req::Exec {
                 id:         fmt!("run-1"),
                 argv:       vec![fmt!("cargo"), fmt!("test")],
@@ -2323,6 +2340,10 @@ mod tests {
                 up:    fmt!(""),
                 dirs:  vec![fmt!("work"), fmt!(".config")],
                 roots: vec![fmt!("/home/u"), fmt!("/home/u/usr")],
+            },
+            Resp::Granted {
+                path: fmt!("/home/u/work"),
+                note: fmt!("written; it applies when the hand next starts"),
             },
             Resp::Dirs {
                 path:  fmt!("/home/u/empty"),

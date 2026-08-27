@@ -451,6 +451,28 @@
 						     same rule a toolkit follows. Where the user pinned one at a shell
 						     with `install.sh --terminal-workspace`, the row says so and the
 						     select is disabled: a decision already made is not re-asked. -->
+						<!-- The folder the hand may work in AT ALL, which is what bounds every
+						     command a daimon runs. Written at install time with
+						     `install.sh --workspace`, and until 2026-08-27 changeable only by
+						     editing root.txt by hand -- so a new user picked at a shell before
+						     knowing what the app does with a folder, and had nowhere to go on
+						     finding they had picked wrongly.
+
+						     The walk is the hand's, over the machine's own directories. The
+						     HAND refuses `/`, anything that is not a directory, and any folder
+						     containing its own record: a fenced command able to reach the
+						     record could rewrite the record of what it did. -->
+						<div class="settings-section" id="grantroot-section" style="display:none">
+							<h3 id="grantroot-head" data-i18n="grantroot.head">Folder Daimond may work in</h3>
+							<div class="search-engine-row">
+								<span class="cfg-fieldlabel" data-i18n="grantroot.label">What every command is bounded to</span>
+								<code class="termroot-now" id="grantroot-now"></code>
+								<button type="button" class="admin-item" id="grantroot-browse" data-i18n="termroot.browse">Choose a folder…</button>
+								<p class="search-engine-note" id="grantroot-note" data-i18n="grantroot.note">This bounds every command a daimon can run. Changing it takes effect when the page is reloaded, and Daimond will ask you to confirm the folder again.</p>
+							</div>
+							<div id="grantroot-walk" class="termroot-walk" style="display:none"></div>
+						</div>
+
 						<div class="settings-section" id="termroot-section" style="display:none">
 							<h3 id="termroot-head" data-i18n="termroot.head">Terminal folder</h3>
 							<div class="search-engine-row">
