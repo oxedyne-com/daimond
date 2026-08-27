@@ -953,6 +953,29 @@
 				lastFault = m.reason;
 			}
 
+			// A GRANT CHANGES THE FOLDER THE NEXT HAND WILL WORK IN, and a hand reads its
+			// root once at startup -- so the change is invisible until one actually starts.
+			// A page reload does not do it: the relay parks its host for the grace and the
+			// returning page adopts the SAME process, so the folder went on being the old one
+			// and the settings row went on showing it. That read exactly like a grant that had
+			// not worked, which is what the owner reported on 2026-08-27 with `root.txt`
+			// already correct on disk.
+			//
+			// So the host is let go here, after the answer has been forwarded. The next thing
+			// the page asks for launches a hand that reads the file.
+			if (m.t === 'granted') {
+				say(m);
+				// `hostGone` fires on the disconnect below, and without a sentence of its own it
+				// would tell the page the hand stopped without saying why -- which is the one
+				// thing that did not happen. `lastFault` is the seam that already exists for
+				// "the hand's own last word", and this is one.
+				lastFault = 'The folder was changed, so the machine hand was let go. It starts '
+					+ 'again with the new folder the next time anything needs it.';
+				try { host.disconnect(); } catch (e) { /* already gone */ }
+				hostGone();
+				return;
+			}
+
 			if (m.t === 'started' || m.t === 'opened') {
 				runs.set(m.id, { out: null, err: null });
 				breathe();

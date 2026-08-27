@@ -33441,7 +33441,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		walk: async function (path, take) {
 			var box = TermRootRow.panel();
 			if (!box) return;
-			box.textContent = tOr('termroot.browse_wait', 'Asking this computer\u2026');
+			box.textContent = tOr('termroot.browse_wait', 'Asking\u2026');
 			var got;
 			try { got = await DaimondHand.dirs(path); }
 			catch (e) { box.textContent = (e && e.message) || String(e || ''); return; }
@@ -33459,12 +33459,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			box.appendChild(head);
 			var use = document.createElement('button');
 			use.type = 'button';
-			use.className = 'admin-item';
+			use.className = 'termroot-btn';
 			// NAMED, not "this folder". The walk opens AT the current folder and this button
 			// sits above the list, so "Use this folder" takes where you started -- which is
 			// what happened on 2026-08-27: the owner meant `usr` one level down and wrote the
 			// folder he was already in. A button that says the path cannot be mis-read.
-			use.textContent = tOr('termroot.browse_use', 'Use this folder') + ': ' + got.path;
+			use.textContent = tOr('termroot.browse_use', 'Use') + ' ' + got.path;
 			use.addEventListener('click', function () { take(got.path); });
 			box.appendChild(use);
 			if (got.up) TermRootRow.rowFor(box, got.up, '\u2191 ' + got.up, take);
@@ -33513,13 +33513,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var now = document.createElement('code');
 			now.id = 'termroot-now';
 			now.className = 'termroot-now';
-			row.appendChild(now);
+			row.insertBefore(now, row.firstChild);
+			var acts = document.createElement('div');
+			acts.className = 'termroot-acts';
+			now.insertAdjacentElement('afterend', acts);
 
 			var browse = document.createElement('button');
 			browse.type = 'button';
 			browse.id = 'termroot-browse';
 			browse.className = 'admin-item';
-			browse.textContent = tOr('termroot.browse', 'Choose a folder\u2026');
+			browse.textContent = tOr('termroot.browse', 'Change\u2026');
 			browse.addEventListener('click', function () {
 				if (TermRootRow.open) { TermRootRow.close(); return; }
 				var m = TermRootRow.machine;
@@ -33527,7 +33530,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				TermRootRow.walk(terminalRootFor(m && m.ws) || (m && m.root) || '',
 					TermRootRow.takeTerminal);
 			});
-			row.appendChild(browse);
+			acts.appendChild(browse);
 
 			// Back to the folder Daimond was granted, which is the only named folder worth a
 			// button: it is what the fence is otherwise, not one directory among someone's
@@ -33535,15 +33538,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var reset = document.createElement('button');
 			reset.type = 'button';
 			reset.id = 'termroot-reset';
-			reset.className = 'admin-item';
-			reset.textContent = tOr('termroot.reset', 'Back to the granted folder');
+			reset.className = 'termroot-btn';
+			reset.textContent = tOr('termroot.reset', 'Granted folder');
 			reset.addEventListener('click', function () {
 				var m = TermRootRow.machine;
 				setTerminalRootFor(m && m.ws, '');
 				TermRootRow.close();
 				TermRootRow.render();
 			});
-			row.appendChild(reset);
+			acts.appendChild(reset);
 			return true;
 		},
 
@@ -33562,8 +33565,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (head) head.textContent = tOr('termroot.head', 'Terminal folder');
 			var note = document.getElementById('termroot-note');
 			if (note) note.textContent = tOr('termroot.note',
-				'A terminal you open is you, not a daimon: it may be given more than the folder '
-				+ 'a model is fenced to. Only folders this computer offers appear here.');
+				'A terminal is you, so it may reach further than a daimon.');
 
 			// THE FOLDER, AND A BUTTON TO CHANGE IT. There is no pulldown, and there was one
 			// twice: a list of somebody's particular directories is not a choice, it is a
@@ -33582,9 +33584,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (m.pinned) {
 				if (pin) {
 					pin.style.display = '';
-					pin.textContent = tOr('termroot.pinned',
-						'Set on this computer with install.sh --terminal-workspace, so it is not '
-						+ 'changed from here.');
+					pin.textContent = tOr('termroot.pinned', 'Set on this computer at a shell.');
 				}
 				if (browse) browse.style.display = 'none';
 				if (reset)  reset.style.display = 'none';
@@ -33617,7 +33617,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var got = await DaimondHand.grant(path);
 				TermRootRow.close();
 				TermRootRow.render();
-				await noticeDialog(tOr('grantroot.head', 'Folder Daimond may work in'),
+				await noticeDialog(tOr('grantroot.head', "Daimond's folder"),
 					got.path + '\n\n' + got.note);
 			} catch (e) {
 				if (box) box.textContent = (e && e.message) || String(e || '');
@@ -33643,7 +33643,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						TermRootRow.takeGrant);
 				});
 			}
-			if (btn) btn.textContent = tOr('termroot.browse', 'Choose a folder\u2026');
+			if (btn) btn.textContent = tOr('termroot.browse', 'Change\u2026');
 		},
 
 		/// Put the walk away.

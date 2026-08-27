@@ -541,7 +541,40 @@
 .term-menu-item:hover:not(:disabled) { background: var(--bg-hover); }
 .term-menu-item:disabled { color: var(--text-secondary); cursor: default; }
 
-/* ── The folder walk in Settings ─────────────────────────────── */
+/* ── The folder rows in Settings ─────────────────────────────── */
+
+/* The app's own control box -- the one `.settings-select` wears -- rather than
+   `.admin-item`, which is a full-width borderless list row and read as a
+   misplaced menu entry beside a pulldown. */
+
+.termroot-btn {
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	padding: 9px 12px;
+	font-size: var(--fs-base);
+	cursor: pointer;
+	text-align: left;
+}
+.termroot-btn:hover { background: var(--bg-hover); }
+.termroot-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+
+.termroot-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* The folder a terminal will open in, stated rather than offered in a list: a
+   pulldown of somebody's particular directories is a guess, not a choice. */
+.termroot-now {
+	display: block;
+	margin: 0 0 8px;
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	color: var(--text-primary);
+	word-break: break-all;
+}
+.termroot-now[data-default="1"] { color: var(--text-secondary); }
+
+/* ── The folder walk ─────────────────────────────────────────── */
 
 /* Real folders with real paths, listed by the hand. The browser's own picker
    cannot serve this: it answers with a handle carrying a name and no path, and
@@ -555,28 +588,21 @@
 	overflow-y: auto;
 	margin-top: 8px;
 	padding: 6px;
-	border: 1px solid var(--border-2);
-	border-radius: var(--radius);
-	background: var(--bg-secondary);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	background: var(--bg-tertiary);
 }
 .termroot-walk .admin-note {
 	position: sticky;
 	top: -6px;
 	padding: 4px 6px;
-	background: var(--bg-secondary);
+	background: var(--bg-tertiary);
+	color: var(--text-secondary);
 	font-family: var(--font-mono);
 	font-size: var(--fs-2xs);
 	word-break: break-all;
 }
-
-/* The folder a terminal will open in, stated rather than offered in a list: a
-   pulldown of somebody's particular directories is a guess, not a choice. */
-.termroot-now {
-	display: block;
-	margin: 2px 0 6px;
-	font-family: var(--font-mono);
-	font-size: var(--fs-2xs);
-	color: var(--text-primary);
-	word-break: break-all;
-}
-.termroot-now[data-default="1"] { color: var(--text-secondary); }
+/* The rows ARE a list, so they keep the list idiom; only the buttons beside a
+   field wear the field's box. */
+.termroot-walk .admin-item { font-family: var(--font-mono); font-size: var(--fs-xs); }
+.termroot-walk .termroot-btn { margin: 4px 0 6px; }
