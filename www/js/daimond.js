@@ -33460,7 +33460,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var use = document.createElement('button');
 			use.type = 'button';
 			use.className = 'admin-item';
-			use.textContent = tOr('termroot.browse_use', 'Use this folder');
+			// NAMED, not "this folder". The walk opens AT the current folder and this button
+			// sits above the list, so "Use this folder" takes where you started -- which is
+			// what happened on 2026-08-27: the owner meant `usr` one level down and wrote the
+			// folder he was already in. A button that says the path cannot be mis-read.
+			use.textContent = tOr('termroot.browse_use', 'Use this folder') + ': ' + got.path;
 			use.addEventListener('click', function () { take(got.path); });
 			box.appendChild(use);
 			if (got.up) TermRootRow.rowFor(box, got.up, '\u2191 ' + got.up, take);
