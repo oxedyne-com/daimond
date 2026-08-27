@@ -23019,11 +23019,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// relay or the hand already wrote for exactly this moment.
 				var st = {};
 				try { st = JSON.parse(await DaimondPty.status()); } catch (x) { st = {}; }
-				if (!st.paired) { refuse(st.reason || t('term.not_paired')); return; }
-				// What this computer offers, taken from the answer already in hand. The
-				// settings row is a choice among these and cannot name a third, so it has to
-				// be told what they are -- and this is the one place they arrive without a
-				// second native host being launched to ask.
+				// BEFORE the paired check, and that is the whole of it: a hand whose folder
+				// disagrees with the page's is NOT paired, so learning after the check left the
+				// settings row invisible in the one situation it exists for -- the folder being
+				// wrong. `status` carries the caps either way.
+				//
+				// The settings row is a choice among what this computer offers and cannot name
+				// a third, so it has to be told what they are, and this is the one place they
+				// arrive without launching a second native host to ask.
 				try {
 					var caps = st.caps || [];
 					var val  = function (p) {
@@ -23041,6 +23044,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 							.map(function (c) { return c.slice('terminal-ceiling:'.length); }),
 					});
 				} catch (x) { /* the settings panel is not up; the terminal still opens */ }
+				if (!st.paired) { refuse(st.reason || t('term.not_paired')); return; }
 				var req = await request();
 				if (!req || req.refused) { refuse((req && req.refused) || t('term.no_composer')); return; }
 				var live = await DaimondPty.open(req, subs())

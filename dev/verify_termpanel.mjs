@@ -1007,6 +1007,36 @@ try {
 				ownWalk: !!(sec && sec.querySelector('#grantroot-walk')),
 			};
 		});
+		// AND IT MUST APPEAR WHEN THE FOLDER IS WRONG, which is the only time anyone needs it.
+		// A hand whose folder disagrees with the page's is not `paired`, and the row was learned
+		// after that check -- so it was invisible in exactly the situation it exists for.
+		{
+			await p.evaluate(() => {
+				const s = window.DaimondPty.status;
+				window.__savedStatus = s;
+				window.DaimondPty.status = async () => JSON.stringify({
+					paired: false, reason: 'the folders disagree', transport: 'machine',
+					root: '/nowhere/ws',
+					caps: ['fence:linux', 'ws:abc123', 'browse:dirs', 'terminal-ceiling:/home/u'],
+				});
+			});
+			await p.click('#panel-term [data-act="term-start"]', { force: true });
+			await sleep(300);
+			const whenWrong = await p.evaluate(() => {
+				const sec = document.getElementById('grantroot-section');
+				return { shown: !!sec && sec.style.display !== 'none',
+					now: (document.getElementById('grantroot-now') || {}).textContent };
+			});
+			check('and it appears even when the hand is NOT paired, which is when it is needed',
+				whenWrong.shown === true && whenWrong.now === '/nowhere/ws',
+				JSON.stringify(whenWrong));
+			await p.evaluate(() => { window.DaimondPty.status = window.__savedStatus; });
+			await p.click('#panel-term [data-act="term-stop"]', { force: true });
+			await sleep(120);
+			await p.click('#panel-term [data-act="term-start"]', { force: true });
+			await sleep(300);
+		}
+
 		check('the granted folder can be changed from Settings, over the same walk',
 			grantRow.shown && grantRow.inHome && grantRow.browse === true
 				&& grantRow.now === '/nowhere/ws' && grantRow.ownWalk === true,
