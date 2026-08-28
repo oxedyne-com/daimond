@@ -563,6 +563,24 @@ pub fn permission_mode() -> String {
     crate::tools::mode().name().to_string()
 }
 
+/// Did the command behind this tool result run with the network refused?
+///
+/// The user-facing half of a thing that had only ever had a model-facing one.  `Tool::run`
+/// writes a note into the result so the MODEL knows why a fetch, install or clone failed and
+/// does not report the project as broken; the person watching the build stop halfway was told
+/// nothing at all, in any language, and learned the reason only if the model chose to relay a
+/// bracketed English note written for itself.
+///
+/// Answered from the result rather than from the chat's state: the chat's state says what the
+/// next command would get, and a line drawn under one command has to say what that one got.
+///
+/// # Arguments
+/// * `result` - The tool result, as the page received it.
+#[wasm_bindgen]
+pub fn ran_without_net(result: &str) -> bool {
+    crate::tools::ran_without_net(result)
+}
+
 /// Move to a permission mode, returning the one it replaced.
 ///
 /// This is the ONLY way the mode moves. No tool reaches it, and nothing derived

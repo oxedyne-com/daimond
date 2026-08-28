@@ -88,6 +88,8 @@
 	'pal.close':           'Close the Go to box',
 	'common.dismiss': 'Dismiss',
 	'agents.read': 'Read',
+	'agents.read_help': 'Open this agent’s transcript as a file in the Doc panel',
+	'agents.read_nothing': 'This agent has not said anything yet.',
 	'common.close_panel':  'Close panel',
 	'common.refresh':      'Refresh',
 	'common.copy':         'Copy',
@@ -390,6 +392,9 @@
 	'egress.reach_title': 'Reach {host}?',
 	'egress.reach_body':  'This turn has read a web page or a message from outside your workspace, and something in it may be steering Daimond.\n\nIt now wants to reach {host}, which it has not visited before. Anything it knows could ride in that address.\n\nAllow this only if you expected it.',
 	'egress.reach_ok':    'Allow {host}',
+	'egress.any_title':  'Let Daimond reach any website?',
+	'egress.any_body':   'This conversation has read a web page or a message written by somebody else, and something in it may be steering Daimond.\n\nIt now wants to reach {host}.\n\nSaying yes lets it reach any website at all for the rest of this conversation, not only this one, and you will not be asked here again. Anything Daimond knows can be written into a web address, so a page it reaches can carry your words away with it.\n\nA new chat asks again, and so does a fresh daimon. An unusually long address is always put to you on its own, whatever you say now.',
+	'egress.any_ok':     'Allow any website here',
 	// A search, where the thing leaving is the QUERY rather than an address.
 	// {query} is the user's own search text, already truncated, and it stands
 	// alone in its own paragraph -- never wrapped in quotation marks, because
@@ -808,7 +813,7 @@
 	'wire.tools_help':    'Written from the tools this conversation actually holds, so it cannot promise one that is not there.',
 	'wire.machine_help':  'Written from the same fence that enforces it, so the description and the rule cannot disagree.',
 	'wire.schemas_help':  'The full JSON schema of every tool, sent on every single request. Usually the largest thing in the payload.',
-	'wire.diamond_help':  'Composed for this turn alone: the Diamond\'s own folder, what the paperclip has attached, and its crystal as it stands now.',
+	'wire.diamond_help':  'Composed for this turn alone: the Diamond\'s own folder, what the paperclip has attached, and its memory — crystal.json — as it stands. The capp beside it is named, never carried.',
 	'wire.standing_help': 'Your DAIMOND.md, appended to the system message of every turn in every conversation.',
 	'chat.copy_all_aria':   'Copy the conversation',
 	'wire.chip':          'Wire',
@@ -852,7 +857,14 @@
 	'chat.busy':           'Thinking…',
 	'chat.busy_tool':      'Running {tool}, step {n}…',
 	'chat.busy_next':      'Step {n} done, thinking…',
+	// The road went under a tool call, not the far end. Said while the ladder climbs,
+	// because two minutes of silent retrying looks exactly like a hung turn.
+	'chat.busy_road':      'The connection dropped — trying {name} again ({n} of {of})…',
 	'chat.busy_writing':   'Writing the answer…',
+	// One command's own line, when the turn's fence withheld the network from it.
+	// `src/tools.rs`'s NO_NET_NOTE says the same thing to the model; this is the
+	// half a person can read. A statement of what happened, not a failure.
+	'chat.tool_no_net':    'This ran with no network, because Daimond had read something written by somebody else. Anything in it that tried to fetch, install or clone got nothing. The permissions button gives it back.',
 	'chat.answered': 'Daimond answered, {n} words',
 	'chat.answer_failed': 'Daimond could not answer',
 	'chat.collapse': 'Collapse every answer',
@@ -888,6 +900,10 @@
 	'chat.thinking':       'Thinking',
 	'chat.compacted':         'Conversation folded',
 	'chat.compacted_help':    'Daimond replaced the earlier part with a summary so the conversation fits the model’s context window.',
+	'chat.fold_boundary':    'The model no longer has what is above this line as it was written — it has the summary in this note instead, plus the {kept} most recent messages. Everything above stays on your screen, so you can still read it and quote from it.',
+	'chat.shortened':         'Answers shortened for the model',
+	'chat.shortened_help':    'Daimond sent the older answers shortened so the conversation fits the model’s context window. Every word of them stays on your screen and in your record.',
+	'chat.working_more':    '+{n} characters',
 	// The same thing said on the chat's TILE, for a queue left on a conversation
 	// the user has walked away from: the bubbles are only drawn in the chat on
 	// screen, and money about to be spent should not depend on remembering.
@@ -1305,10 +1321,6 @@
 	'work.breadcrumb': 'Folder path',
 
 	// ── The phone shell ────────────────────────────────────────
-	'mnav.chat':     'Chat',
-	'mnav.mail':     'Email',
-	'mnav.files':    'Files',
-	'mnav.agents':   'Agents',
 	'sheet.panel':   'Panel',
 	'sheet.ask':     'Ask',
 	'sheet.ask_ph':  'Ask about this…',
@@ -1385,6 +1397,11 @@
 	// nothing else on screen would look any different.
 	'sync.diamonds_left.one':   '{n} Diamond did not fit in this device’s sync parcel and will not reach your other devices until it is smaller: {names}',
 	'sync.diamonds_left.other': '{n} Diamonds did not fit in this device’s sync parcel and will not reach your other devices until they are smaller: {names}',
+	// A file the parcel had no room for, named the way a Diamond that did not fit is
+	// named. The same news in the same shape; not an error -- the budget is doing what
+	// it is for, and nothing at the far end is deleted.
+	'sync.files_left.one':      '{n} file did not fit in this device’s sync parcel and will not reach your other devices until there is room for it: {names}',
+	'sync.files_left.other':    '{n} files did not fit in this device’s sync parcel and will not reach your other devices until there is room for them: {names}',
 	// A session that has ended and could not be taken again. Same label as the
 	// two below for the same reason: what the user needs to know is that this
 	// device's work is not travelling, and the difference is in the hover.
@@ -1782,12 +1799,22 @@
 	// site that knows which kind of name it is holding could.
 	'pause.act_pause':       'Pause {name}',
 	'pause.act_play':        'Resume {name}',
-	// The three answers `pause.js:138` can give for a node: no leaf paused, every
-	// leaf paused, or some of them.
-	// i18n-family: pause.state_ = play pause mixed
+	// The four answers `pause.js`'s `stateOf` can give for a node. They are
+	// counted over the ARMED leaves -- the ones with something set up to spend
+	// without being asked -- and not over every leaf: a control whose subject is
+	// entirely manual has nothing to be running, and used to read green.
+	// i18n-family: pause.state_ = play pause mixed idle
 	'pause.state_play':      'running',
 	'pause.state_pause':     'paused',
 	'pause.state_mixed':     'partly paused',
+	// The fourth, and it is RED like `pause` while meaning something else. It
+	// covers both "you have set nothing up" and "what is here cannot fire" -- an
+	// action switched off, or one missing its mailbox or its instruction -- so the
+	// words must be true of all three. "Nothing set up" was not: the Optimiser
+	// ships WITH an action, switched off, and that light would have said there was
+	// none. The colour cannot make the distinction and this does not pretend to;
+	// what it states is the question the light answers.
+	'pause.state_idle':      'nothing here will act on its own',
 	'pause.this':            'this',
 	'pause.workers':         'Workers',
 	'pause.mail':            'Mail',
@@ -1895,6 +1922,8 @@
 	'fold.nothing_new':      'Nothing new to fold',
 	'fold.nothing_new_body': '"{chat}" has not changed since it was folded into "{diamond}".',
 	'fold.proposing':        'Proposing fold…',
+	'fold.busy_title':       'That Diamond is working',
+	'fold.busy_body':        '“{diamond}” has a turn in flight, and a fold rewrites the same crystal. Wait for it to finish, then fold.',
 	'fold.diamond_gone':     'Diamond is gone',
 	'fold.diamond_gone_body': 'The Diamond that dispatched this agent no longer exists.',
 	'fold.diamond_gone_chat_body': 'The Diamond you chose no longer exists; it may have been deleted in another tab. Nothing was folded.',
@@ -2696,6 +2725,9 @@
 	'settings.max_rounds_auto':    'Default',
 	'settings.steps':              'steps',
 	'settings.max_rounds_note':    'How many times an agent may use a tool before one turn stops. It says so when it stops, and you can tell it to carry on.',
+	'settings.fold_at':    'Fold the conversation at',
+	'settings.fold_at_auto':    'Default',
+	'settings.fold_at_note':    'How full the context window gets before Daimond replaces the earlier part of a chat with a summary. It says so in the thread when it does. Lower folds sooner and more often; higher keeps more of the conversation word for word.',
 	'settings.fold_model':         'Fold with',
 	'settings.fold_model_own':     'The conversation’s own model',
 	'settings.fold_model_group':   'Fold with instead',
@@ -2728,7 +2760,14 @@
 	// The words are the four `DaimondApp::net_state` returns, and they are read by four
 	// literal `t()` calls in a switch rather than a composed key, because `i18ncheck`
 	// cannot follow a key it has to build.
-	'permmode.net_head':    'The network',
+	'permmode.net_head':    'Commands and the network',
+	// What this section is NOT, said beside the choice. It answers whether a
+	// COMMAND keeps its network; a page Daimond fetches is a different door, asked
+	// once in each conversation. The old head said "The network" and was read as
+	// covering both, and the sentence here said "once for each site" -- true when it
+	// was written, and false a day later, when the owner ruled that asking about
+	// every new site was itself the defect. Both halves are now what the code does.
+	'permmode.net_not_fetch': 'This is about commands. A page Daimond fetches for itself is a separate question, asked once in each conversation, and a yes there covers every site until that conversation ends.',
 	'permmode.net_open':     'Nothing has been read from outside, so nothing is withheld.',
 	'permmode.net_cut':      'Something written by somebody else has been read, so commands run with no network.',
 	'permmode.net_allowed':  'Commands may reach the network.',
@@ -2749,7 +2788,7 @@
 	// `permmode.` that nobody declares is not reported.
 	// i18n-family: permmode. = one-way ask ask_blurb guarded guarded_blurb bypass bypass_blurb -- the prefix is a namespace, not a set: thirty-five keys sit under it and six are rungs
 	'permmode.ask':          'Ask every time',
-	'permmode.ask_blurb':    'Every command and every page fetch is put to you first.',
+	'permmode.ask_blurb':    'Every command is put to you first. So is reaching the web, once in each conversation.',
 	'permmode.guarded':      'Guarded',
 	'permmode.guarded_blurb': 'Commands run. Once something written by somebody else has been read, Daimond asks before reaching out.',
 	'permmode.bypass':       'Bypass',
@@ -2774,9 +2813,10 @@
 	// expected to be asked again next message was told something untrue by the one
 	// sentence in it that was meant to be reassuring. It now says which conversation it
 	// covers, and points at the control that can change it afterwards.
-	'permmode.net_title':    'Let this chat reach the network?',
-	'permmode.net_body':     'Daimond has read something written by somebody else, so commands are running with no network. Whatever it read could choose where this one goes.\n\n{cmd}\n\nin {cwd}\n\nYes, and Daimond stops asking — the permissions button takes it back. No runs the command anyway, with no network — and so does saying nothing.',
+	'permmode.net_title':    'Let this command reach the network?',
+	'permmode.net_body':     'Daimond has read something written by somebody else, so commands are running with no network. Whatever it read could choose where this one goes.\n\n{cmd}\n\nin {cwd}\n\nYes lets this one command through. No runs it anyway, with no network — and so does saying nothing.',
 	'permmode.net_ok':       'Allow the network',
+	'permmode.net_remember':   'Allow this in every chat, and stop asking',
 
 	// A dispatched worker asking to act on a page. Nobody is reading its
 	// transcript, so the app puts the question for it — and every clause here is
@@ -3557,11 +3597,19 @@
 	// The voice: a per-person secret the forge looks the writer up by. It is
 	// held here encrypted under the passphrase, and it never goes in an address.
 	'social.voice_held':        'A voice is held on this device, encrypted under your passphrase.',
-	'social.voice_none':        'No voice is held here, so a note can only be kept.',
-	'social.voice_set':         'Set a voice',
+	'social.voice_none':        'You have no voice, so you can read what other people have written here but not add to it. Keep is all a note of your own can do.',
+	// WHAT IT IS, WHY YOU HAVEN'T GOT ONE, AND WHAT TO DO. The empty state said
+	// "Set a voice", helped by "The line the forge printed for you", and the owner
+	// -- who wrote the app -- asked what a voice was and how he was meant to set
+	// one. Both presumed something the reader has not got. Nothing in Daimond can
+	// mint one and nothing here can ask for one, so the true instruction is to ask
+	// for an invitation.
+	'social.voice_how':         'A voice is the credential that lets you write on Daimond\u2019s public tracker at {host}. Reading it needs nothing; writing, replying and voting all need one, and they are given out by invitation rather than signed up for. Ask Oxedyne for an invitation link. Following it shows you who invited you and what you may do, and the tracker makes your voice in front of you and shows it once \u2014 43 characters, never shown again. Paste those here.',
+	'social.voice_set':         'Paste your voice',
 	'social.voice_replace':     'Replace the voice',
-	'social.voice_help':        'The line the forge printed for you. It is kept encrypted here and never put in an address.',
-	'social.voice_ph':          'Paste the line the forge printed for you',
+	'social.voice_help':        'The 43 characters the tracker showed you. Kept encrypted here and never put in an address.',
+	'social.voice_help_none':   'The 43 characters the tracker showed you when you accepted your invitation.',
+	'social.voice_ph':          'Paste the 43 characters the tracker showed you',
 	'social.voice_save':        'Save the voice',
 	'social.voice_saved':       'Your voice is held here, encrypted.',
 	'social.voice_failed':      'That voice could not be stored.',
@@ -3619,6 +3667,44 @@
 	'social.tally':        '{yes} for, {no} against',
 	'social.do':           'Do this',
 	'social.not':          'Not this',
+	// Revising one's own proposal. Dark until the forge answers the per-asker flag;
+	// see `drawAmendControl` in improve.js.
+	'social.amend':             'Revise this',
+	'social.amend_help':        'Replace what this proposal says. Everybody who reads it sees the new words.',
+	'social.amend_title_ph':    'The one line this proposal is about',
+	'social.amend_body_ph':     'What happened, and what was expected instead',
+	'social.amend_save':        'Publish the revision',
+	'social.amend_save_help':   'Send exactly what is in these two boxes. Nothing else goes with them.',
+	'social.revised_n.one':     'revised once',
+	'social.revised_n.other':   'revised {n} times',
+	// Drafting from the whole list of kept notes at once (www/js/triage.js).
+	'social.triage_run': 'Draft from all {n} notes',
+	'social.triage_run_help': 'Reads every kept note and the proposals already on the forge, and writes a plan. Nothing leaves this device until you press Send on one of the drafts.',
+	'social.triage_running': 'Reading your notes…',
+	'social.triage_cost': 'Reads all {n} notes on {model}, on your own key: about {in} tokens in and at most {out} out, so at most {usd} — usually much less.',
+	'social.triage_cost_unknown': 'Reads all {n} notes on {model}, on your own key: about {in} tokens in and at most {out} out. Nothing here prices that model, so the cost is not known before it runs.',
+	'social.triage_cost_stop': 'Nothing is sent to the forge until you press Send on a draft.',
+	'social.triage_nomodel': 'Set a model in AI before drafting from your notes.',
+	'social.triage_nonotes': 'There are no kept notes to draft from.',
+	'social.triage_unread': 'The model did not answer with a plan this panel could read. Nothing was sent, and your notes are untouched.',
+	'social.triage_failed': 'The drafting did not finish: {why}',
+	'social.triage_plan': '{n} drafts, written by {model} from your notes. Read each one, change it if it is wrong, and send the ones you want. Nothing here has left this device.',
+	'social.triage_dropped': '{n} more were answered in a shape this panel could not read, and are not shown.',
+	'social.triage_left': '{n} notes are in no draft:',
+	'social.triage_clear': 'Forget this plan',
+	'social.triage_clear_help': 'Take the drafts off the screen. Nothing is sent and no note is changed.',
+	'social.triage_drop': 'Not this one',
+	'social.triage_drop_help': 'Take this draft off the plan. Nothing is sent.',
+	'social.triage_send_help': 'Send exactly the characters in the box above. Nothing else goes with them.',
+	'social.triage_kept': 'Nothing was sent and nothing tried again. Your notes are untouched.',
+	'social.triage_from': 'from {n} notes',
+	'social.triage_from_one': 'from 1 note',
+	'social.triage_kind_new': 'New proposal',
+	'social.triage_kind_comment': 'Comment on #{n}',
+	'social.triage_kind_revision': 'Revision of #{n}',
+	'social.triage_opened': 'Opened as proposal #{n}.',
+	'social.triage_said': 'Said on proposal #{n}.',
+	'social.triage_revised': 'Proposal #{n} is revised.',
 	'social.vote_novoice': 'Set a voice to vote on this.',
 	'social.vote_off':     'Press again to take your vote back off.',
 	'social.reply':        'Say it',
@@ -3641,6 +3727,7 @@
 	'social.err_unvoiced':  'The forge was given no voice, so it refused.',
 	'social.err_unknown':   'The forge does not recognise your voice. Set it again from the line the forge printed for you.',
 	'social.err_unpermitted': 'Your voice may not do that here.',
+	'social.err_amend_unpermitted': 'Only the person who opened this proposal may revise it.',
 	'social.err_throttled': 'Too many requests just now. Wait a little, then try again.',
 	'social.err_throttled_address': 'Too many requests from this address just now. Wait a little, then try again.',
 	'social.err_throttled_failing': 'Too many failing requests just now. Wait a little, then try again.',

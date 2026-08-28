@@ -518,6 +518,22 @@ mod tests {
 		assert_eq!(MAX_NOTE_LEN, normalise_note(&"x".repeat(MAX_NOTE_LEN + 500)).chars().count());
 	}
 
+	#[test]
+	fn test_the_note_cap_is_two_thousand_characters_and_that_is_the_promise() {
+		// THE ONE PLACE THE FIGURE IS WRITTEN DOWN, and it is written down on purpose.
+		// The line above says `MAX_NOTE_LEN` on both sides, which is a sentence about
+		// itself: move the constant to 200 and it stays green while every note a user
+		// writes is cut to a tenth.  That is not hypothetical -- `dev/mutate.mjs` did
+		// exactly that on 2026-08-28 and all 857 tests passed.
+		//
+		// So the symbolic form stays, because it is the right way to say "capped by
+		// characters, not bytes", and this stands beside it holding the figure the
+		// product actually promises.  A cap that changes must change here too, which is
+		// the point: the edit becomes visible instead of silent.
+		assert_eq!(2_000, MAX_NOTE_LEN, "the note cap is part of what the app promises");
+		assert_eq!(2_000, normalise_note(&"x".repeat(3_000)).chars().count());
+	}
+
 	// ── Revising a link: the same claim, said better ─────────────────
 
 	#[test]

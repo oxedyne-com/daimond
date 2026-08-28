@@ -217,6 +217,23 @@
 	/// tool call that hangs for ever.
 	var HELLO_WAIT = 60000;
 
+	/// How long the extension is given to say where the grant stands.
+	///
+	/// A question with no window behind it and no host to launch, so it is quick or
+	/// it is not coming. An extension too old to know the command answers nothing
+	/// and this expires, which is the same as it not being there: the page connects
+	/// as it always did.
+	var STATUS_WAIT = 5000;
+
+	/// The extra time given once `hand_status` says the approval window is the thing
+	/// being waited for.
+	///
+	/// Spent on somebody READING rather than on a program replying, and what they
+	/// are reading is the strongest permission Daimond asks for. Granted once and
+	/// not repeatedly: a question nobody ever answers still has to end as a sentence
+	/// the model can act on.
+	var GRANT_WAIT  = 120000;
+
 	/// What a command's timeout is taken to be when the request does not say.
 	/// It mirrors `Tool::RUN_TIMEOUT_DEFAULT_MS`; the page never enforces it, it
 	/// only decides how long to believe in an answer.
@@ -292,31 +309,105 @@
 		}
 		if (!hasExt()) return Promise.reject(new Error(NO_HAND));
 
+		var rec = { port: null, greeted: false, waiters: [], note: '', timer: null, dead: false };
+		link = rec;
+		var p = new Promise(function (resolve, reject) { rec.waiters.push({ resolve: resolve, reject: reject }); });
+		connect(rec);
+		return p;
+	}
+
+	/// Ask the extension one question, on the message channel rather than the port.
+	///
+	/// Bounded, because an extension that never answers must still end as a
+	/// sentence rather than a hang; a late answer is dropped, which is the same
+	/// arrangement `web.js` makes with the same channel.
+	///
+	/// # Arguments
+	/// * `cmd` - The handler's name in `ext/background.js`'s table.
+	/// * `wait` - How long to believe an answer is coming, in milliseconds.
+	function askExt(cmd, wait) {
+		return new Promise(function (resolve) {
+			var done = false;
+			var settle = function (v) { if (!done) { done = true; resolve(v); } };
+			var t = setTimeout(function () { settle(null); }, wait);
+			try {
+				chrome.runtime.sendMessage(state.extId, { cmd: cmd }, function (reply) {
+					clearTimeout(t);
+					// A missing extension, or one too old to know this command, surfaces
+					// here rather than as a throw, and is answered with null: the caller
+					// then behaves exactly as it did before this existed.
+					if (chrome.runtime.lastError || !reply) { settle(null); return; }
+					settle(reply);
+				});
+			} catch (e) { clearTimeout(t); settle(null); }
+		});
+	}
+
+	/// Open the port and say hello on it.
+	///
+	/// CONNECTING IS WHAT PUTS THE APPROVAL WINDOW ON SCREEN, and that is the right
+	/// way round rather than an accident: by then the hand has spoken, so the window
+	/// can name what this computer can actually enforce and which folder it was
+	/// granted. `hand_grant` would ask before any of that is known, and the window
+	/// then falls back to "did not say what it can limit them to, so treat a command
+	/// as reaching everything you can reach" -- a worse disclosure at the one moment
+	/// that matters. It is not called from here for that reason.
+	function connect(rec) {
 		var port;
 		try { port = chrome.runtime.connect(state.extId, { name: 'daimond-hand' }); }
-		catch (e) { return Promise.reject(new Error(NO_HAND)); }
-
-		var rec = { port: port, greeted: false, waiters: [], note: '', timer: null, dead: false };
-		link = rec;
+		catch (e) { drop(rec, NO_HAND); return; }
+		rec.port = port;
 
 		port.onMessage.addListener(function (msg) { fromHand(rec, msg); });
 		port.onDisconnect.addListener(function () { gone(rec); });
 
-		var p = new Promise(function (resolve, reject) { rec.waiters.push({ resolve: resolve, reject: reject }); });
-		rec.timer = setTimeout(function () {
-			// Nobody answered the question, or nobody answered the port. Either
-			// way the daimon is owed a sentence rather than a hang.
-			drop(rec, rec.note || 'The machine hand was asked to start and did not answer. The '
-				+ 'approval window may still be waiting — the Daimond Hands toolbar icon carries the '
-				+ 'question until it is answered. Answer it and try again.');
-		}, HELLO_WAIT);
+		rec.timer = setTimeout(function () { helloLate(rec); }, HELLO_WAIT);
 
 		try {
 			port.postMessage({ t: 'hello', proto: PROTO, client: deps.client || 'daimond-web' });
 		} catch (e) {
 			drop(rec, NO_HAND);
 		}
-		return p;
+	}
+
+	/// The greeting has not come. Find out WHY before saying anything about it.
+	///
+	/// The extension holds the greeting behind the approval window, so this deadline
+	/// is spent on a person reading a consent screen as often as on anything going
+	/// wrong -- and until now the two were told apart by guessing. The daimon was
+	/// handed "the approval window may still be waiting" whatever had happened, and
+	/// a person who took longer than a minute to read the strongest permission
+	/// Daimond asks for had their command fail on a question they then said yes to.
+	///
+	/// `hand_status` answers it: it is a question with no window behind it and no
+	/// host to launch, and it says whether THIS ORIGIN holds the grant. Not granted
+	/// means somebody is still being asked, so the wait is extended once -- bounded,
+	/// because a question nobody ever answers still has to end as a sentence.
+	/// Granted means the window is not the reason and the sentence says so instead
+	/// of blaming a window nobody can see.
+	///
+	/// An extension too old to know `hand_status` answers nothing, `askExt` resolves
+	/// null, and the sentence is exactly the one that was given before.
+	function helloLate(rec) {
+		if (rec.dead || rec.greeted) return;
+		askExt('hand_status', STATUS_WAIT).then(function (st) {
+			if (rec.dead || rec.greeted) return;
+			var asking = !!(st && st.ok && st.granted === false);
+			if (asking && !rec.waited) {
+				rec.waited = true;
+				rec.timer = setTimeout(function () { helloLate(rec); }, GRANT_WAIT);
+				return;
+			}
+			if (rec.note) { drop(rec, rec.note); return; }
+			drop(rec, asking
+				? 'The machine hand was asked to start and the approval window has not been '
+					+ 'answered. It is still waiting — the Daimond Hands toolbar icon carries the '
+					+ 'question until somebody answers it. Ask the user to answer it, and try again.'
+				: 'The machine hand was asked to start and did not answer. It has been allowed on '
+					+ 'this computer, so this is not a question waiting to be answered: the hand '
+					+ 'itself said nothing. Ask the user to check it is installed and running, and '
+					+ 'carry on with the file tools meanwhile.');
+		});
 	}
 
 	/// Settle everyone waiting on the handshake, one way or the other.
@@ -1390,8 +1481,14 @@
 			if (o.grace > 0) REPLY_GRACE = o.grace;
 			if (o.slack > 0) REPLY_SLACK = o.slack;
 			if (o.hello > 0) HELLO_WAIT  = o.hello;
+			// The two the handshake's own deadline now leans on. Without these a test
+			// that shortened `hello` still waited out the extension's question and the
+			// two minutes behind it, which is the whole of what this door is for.
+			if (o.status > 0) STATUS_WAIT = o.status;
+			if (o.grant  > 0) GRANT_WAIT  = o.grant;
 			if (o.keep  > 0) { KEEP_HEAD = o.keep; KEEP_TAIL = o.keep; }
-			return { grace: REPLY_GRACE, slack: REPLY_SLACK, hello: HELLO_WAIT, keep: KEEP_HEAD };
+			return { grace: REPLY_GRACE, slack: REPLY_SLACK, hello: HELLO_WAIT,
+				status: STATUS_WAIT, grant: GRANT_WAIT, keep: KEEP_HEAD };
 		},
 	};
 })();

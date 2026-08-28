@@ -475,7 +475,7 @@ check('mail arriving while you are elsewhere is counted',
 	await page.evaluate(() => window.DaimondBadge.count('mail')) === 3);
 
 const drawn = await page.evaluate(() => {
-	const hosts = [...document.querySelectorAll('#panel-tags .ptag[data-panel="mail"], #mnav button[data-mp="mail"]')];
+	const hosts = [...document.querySelectorAll('#panel-tags .ptag[data-panel="mail"]')];
 	return hosts.map((h) => {
 		const b = h.querySelector('.dock-count');
 		if (!b) return { where: h.className, badge: null };
@@ -497,7 +497,7 @@ await page.evaluate(() => window.DaimondPanels.reflow());
 await sleep(350);
 check('and it survives the chip row being rebuilt',
 	await page.evaluate(() => {
-		const b = document.querySelector('#panel-tags .ptag[data-panel="mail"] .dock-count, #mnav button[data-mp="mail"] .dock-count');
+		const b = document.querySelector('#panel-tags .ptag[data-panel="mail"] .dock-count');
 		return !!b && b.textContent === '3';
 	}));
 

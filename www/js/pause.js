@@ -74,8 +74,10 @@
 	// fetch spends and had nowhere to be charged: without it the enforcement had
 	// to fall back to the global control, which means a page fetch was held only
 	// when EVERYTHING was — and on a new account, whose tree has no leaves at all,
-	// the global control reads green, so it was never held. A spend with no node
-	// is a spend with no pause.
+	// the global control read green, so it was never held. A spend with no node
+	// is a spend with no pause. (That account's control reads RED now, since the
+	// light counts armed leaves; the argument for the node is unchanged, because
+	// it was never about the colour.)
 	//
 	// A node that both spends and has children is modelled as a
 	// branch with a `self` leaf, so the "only leaves hold state"
@@ -129,15 +131,64 @@
 		return null;
 	}
 
-	/// The three states, derived. `paused` is a set-like object whose
+	/// Every leaf id at or under `node` that is ARMED -- that is, that has
+	/// something set up to spend WITHOUT ANYBODY ASKING.
+	///
+	/// ── WHAT THE LIGHT IS ABOUT, WHICH CHANGED ─────────────────
+	///
+	/// It used to be about whether anything had been PAUSED, so a node nobody had
+	/// touched read green and green was taken to mean "running". The owner read
+	/// the Email panel exactly that way and said so: it "shows green when all
+	/// mailboxes are updated manually", which is to say green while no automation
+	/// existed at all, and "in the default case, the light should show red, since
+	/// there is no automation running".
+	///
+	/// He is right, and the old reading has a second fault the first hides. A
+	/// triggered action turned OFF is not paused, so its leaf read green and its
+	/// light said running -- while `DaimondTriggers.ready` refused to fire it. The
+	/// light reported a surface flag; the thing that decides is `allowed()`, which
+	/// is `ready(t) && !paused(leaf)`. Two of the three colours were being drawn
+	/// from half of that expression.
+	///
+	/// So a leaf now counts towards the light only when it is armed, and the light
+	/// says the whole of `allowed()`: red where nothing under here can go off on
+	/// its own, green where everything that can, will, amber in between.
+	///
+	/// `armed` is a field on the tree node and its ABSENCE MEANS ARMED. A leaf
+	/// added later without thinking about this behaves exactly as it did before
+	/// rather than silently dropping out of every light above it.
+	function armedUnder(node) {
+		if (!node) return [];
+		if (!node.children) return (node.armed === false) ? [] : [node.id];
+		var out = [];
+		for (var i = 0; i < node.children.length; i++) {
+			out = out.concat(armedUnder(node.children[i]));
+		}
+		return out;
+	}
+
+	/// The four states, derived. `paused` is a set-like object whose
 	/// own keys are the paused leaf ids.
 	///
-	/// A branch with no leaves under it is 'play': an empty mailbox is
-	/// not a paused one, and calling it red would make the global
-	/// control red for a new account that has done nothing wrong.
+	///   idle    nothing under here runs on its own. RED.
+	///   pause   everything that could is held. RED.
+	///   mixed   some are held. AMBER, and only ever arrived at.
+	///   play    everything that could, will. GREEN.
+	///
+	/// `idle` and `pause` are both red and are not the same fact, which is why
+	/// they are not one value: "there is no automation here" and "the automation
+	/// here is stopped" are different things to say to somebody, and the widget
+	/// says them differently. They offer the same two buttons.
+	///
+	/// A branch with no ARMED leaf under it is `idle`, and that replaces the old
+	/// rule that made it green. The argument for green was that calling an empty
+	/// mailbox red "would make the global control red for a new account that has
+	/// done nothing wrong" -- but red here is not an accusation and never was. It
+	/// is the answer to "is anything running by itself?", and on a new account the
+	/// honest answer is no.
 	function stateOf(node, paused) {
-		var leaves = leavesUnder(node);
-		if (!leaves.length) return 'play';
+		var leaves = armedUnder(node);
+		if (!leaves.length) return 'idle';
 		var n = 0;
 		for (var i = 0; i < leaves.length; i++) {
 			if (paused && paused[leaves[i]]) n++;
@@ -163,6 +214,12 @@
 	/// What clicking a node does. A branch showing amber resumes —
 	/// the alternative is a click that pauses the leaves already
 	/// playing, which reads as the control fighting the user.
+	///
+	/// `idle` resumes too, and that is deliberate rather than incidental: a node
+	/// with nothing armed may still hold leaves somebody paused before they turned
+	/// the automation off, and play is the way to let those go. It is the only
+	/// press on this control that can look like it did nothing, which is why the
+	/// state word says "nothing set up" rather than "paused".
 	function clickWould(node, paused) {
 		return stateOf(node, paused) === 'play' ? 'pause' : 'play';
 	}
@@ -413,6 +470,7 @@
 		// Pure core, exposed for tests and for reuse.
 		_core: {
 			leavesUnder:   leavesUnder,
+			armedUnder:    armedUnder,
 			findNode:      findNode,
 			stateOf:       stateOf,
 			applySet:      applySet,

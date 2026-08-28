@@ -724,6 +724,65 @@ check('every event says what its number means and what question it answers',
 check('no two events share a code or a name',
 	new Set(client.EVENTS.map((e) => e.code)).size === client.EVENTS.length
 		&& new Set(client.EVENTS.map((e) => e.name)).size === client.EVENTS.length);
+
+// ── 1b. And the TOOL table is the registry's, not somebody's memory ──
+//
+// `TOOLS` turns a tool's name into the integer that goes on the wire, and a name
+// that is not in it becomes 0 -- 'other'. So a tool missing from the list is not
+// a gap in the data: it is a WRONG NUMBER, reported under a heading that says
+// something else was run. Half the table went missing once and was corrected by
+// hand; twelve names went missing again -- ask, the Social pair, the spreadsheet
+// and document tools, the links, runs and verify -- and by 2026-08-28 a third of
+// the tool surface reported as 'other', which is exactly the evidence a decision
+// about what to sell in a tool pack would rest on.
+//
+// READ OUT OF THE REGISTRY, `Tool::name` in `src/tools.rs`, because the two ways
+// this was kept true before both depended on somebody remembering. A variant
+// added there adds an arm here, and this goes red the same day.
+//
+// ONE DIRECTION ONLY, deliberately. Every registry name must be in the table; a
+// name in the table that the registry no longer has is NOT a failure -- a tool
+// that is removed keeps its position for ever, or every number already gathered
+// under the ones after it changes meaning.
+const SRC_TOOLS = path.join(ROOT, 'src/tools.rs');
+
+/// Every tool's wire name, read off `Tool::name`'s match arms.
+///
+/// Two shapes of arm, because one name is a constant: `Tool::SocialSend =>
+/// SOCIAL_SEND_TOOL`, which is resolved by finding the constant's own value. An
+/// arm whose right-hand side is neither is reported rather than skipped, or a
+/// third shape would quietly shrink the list this checks against.
+function registryToolNames() {
+	const rs = fs.readFileSync(SRC_TOOLS, 'utf8');
+	// FROM THE FIRST ARM, not from the signature: several enums in that file have a
+	// `name(&self)`, and the first of them is a build system's. The arms end at the
+	// match's own closing brace.
+	const first = rs.match(/Tool::FileRead\s*=>\s*"file_read",/);
+	if (!first) return { names: [], odd: ['Tool::name\'s arms were not found at all'] };
+	const arms = rs.slice(first.index, rs.indexOf('\n        }', first.index));
+	const out = [], odd = [];
+	for (const m of arms.matchAll(/Tool::[A-Za-z]+\s*=>\s*([^,\n]+),/g)) {
+		const rhs = m[1].trim();
+		if (rhs.startsWith('"')) { out.push(rhs.slice(1, -1)); continue; }
+		const c = rs.match(new RegExp('const ' + rhs + ': &str = "([a-z_]+)"'));
+		if (c) out.push(c[1]); else odd.push(rhs);
+	}
+	return { names: out, odd };
+}
+
+const registry = registryToolNames();
+check('the tool registry was actually read out of src/tools.rs',
+	registry.names.length > 20 && registry.odd.length === 0,
+	`${registry.names.length} tools, unreadable arms: ${registry.odd.join(', ') || 'none'}`);
+const unnamed = registry.names.filter((n) => client.TOOLS.indexOf(n) === -1);
+check('EVERY TOOL THE REGISTRY HAS IS NAMED IN THE CLIENT\'S TABLE',
+	unnamed.length === 0,
+	unnamed.length ? `${unnamed.length} would report as 'other': ${unnamed.join(', ')}` : '');
+// 'other' is position 0 and is not a tool; nothing else may repeat, or two tools
+// share a number and the operator cannot tell which ran.
+check('and no tool shares a number with another',
+	new Set(client.TOOLS).size === client.TOOLS.length,
+	client.TOOLS.filter((n, i) => client.TOOLS.indexOf(n) !== i).join(', '));
 // ┌───────────────────────────────────────────────────────────────────┐
 // │ 1c. The consent moment, and the three things that must come with  │
 // │     it. Written as implications, so they hold today and bite on    │

@@ -25,6 +25,7 @@
 // (DAIMOND_MOCK_PORT, default 9099). Starts its own second provider on :9300 and stops
 // it at the end.
 
+import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +35,20 @@ import { open, clearMockLog, mockLog, shot, errors, MOCK } from './harness.mjs';
 // `harness.mjs` derives it, since it does not export the path itself.
 const MOCK_LOG_PATH = process.env.DAIMOND_MOCK_LOG
 	|| path.join(path.dirname(fileURLToPath(import.meta.url)), 'mockllm.log');
+
+// THE PARCEL CEILING, READ FROM daimond.js RATHER THAN RESTATED.
+//
+// This was `10 * 1024 * 1024` written out here, under a check that read "still far
+// inside its 10 MiB ceiling" -- a sentence that stayed green and stopped being true
+// the day `SYNC_PARCEL_MAX` moved. A restated constant is right only until somebody
+// changes the real one; `dev/verify_crystalcap.mjs` reads its two the same way.
+const PARCEL_MAX = (() => {
+	const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)),
+		'..', 'www', 'js', 'daimond.js'), 'utf8');
+	const m = /var\s+SYNC_PARCEL_MAX\s*=\s*(\d+)\s*\*\s*(\d+)\s*\*\s*(\d+)\s*;/.exec(src);
+	if (!m) throw new Error('verify_workermodel: SYNC_PARCEL_MAX not found in www/js/daimond.js');
+	return Number(m[1]) * Number(m[2]) * Number(m[3]);
+})();
 
 // Offset by the world, so two worlds do not fight over one second provider.
 //
@@ -393,8 +408,8 @@ check('the parcel\'s CHAT section carries the chat\'s worker model',
 check('the parcel\'s DIAMOND section carries the Diamond\'s worker model',
 	parcel.diaWorker === MODEL2 && parcel.diaProv === 'mock2',
 	parcel.diaWorker + ' / ' + parcel.diaProv);
-check('the parcel is still far inside its 10 MiB ceiling',
-	parcel.bytes < 10 * 1024 * 1024, parcel.bytes + ' bytes');
+check('the parcel is still far inside the ceiling daimond.js sets itself',
+	parcel.bytes < PARCEL_MAX, parcel.bytes + ' of ' + PARCEL_MAX + ' bytes');
 
 // ── A Diamond cut from a chat inherits both ─────────────────────────
 //

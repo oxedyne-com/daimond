@@ -328,6 +328,21 @@ slow_for() {
 		# has been closed" as six ordinary-looking sync failures. The 2026-08-10
 		# gate spent its whole red budget on those six, all of which were this.
 		verify_sync)                      echo 1200 ;;
+		# Two real browser profiles, a gateway, and two waits measured in the
+		# engine's own constants: the catch-up (20s) and the focus throttle. It
+		# spends most of its time NOT touching the second device, which is the
+		# whole point of it -- a check that hurried would be testing something
+		# else. MEASURED at 220s on a quiet box (2026-08-28); 480 on the same
+		# reasoning as verify_raildialogs, since those waits stretch when the
+		# box is busy and a killed verifier does not say it was killed.
+		verify_syncviews)                 echo 480 ;;
+		# Eight reloads, each waited out past the push debounce so that a push
+		# which is coming has come -- and a check that hurried one of them would
+		# report a push as absent when it was merely late, which is the exact
+		# false pass this file is written to avoid. Two of those reloads carry a
+		# second real device. MEASURED at 470s on a quiet box (2026-08-28), so
+		# 900 on the same reasoning as the row above it.
+		verify_reloadpush)                echo 900 ;;
 		# Sixteen dialogs at four skin/theme/width cells, and it was killed by the
 		# 180s default on the 2026-08-11 gate -- the same accident as the two above,
 		# read as an unexplained exit 124. MEASURED at 250s on a quiet box
@@ -365,6 +380,15 @@ slow_for() {
 		# the first time it ever reaches a gateway (see verify_look above: it has
 		# never run either). Unmeasured, for the same reason.
 		verify_wakerearm)                 echo 420 ;;
+		# Twelve turns of a mock provider, three chats, two fan-outs and a reload,
+		# then the same audit again. MEASURED at 41s on a quiet box (2026-08-28),
+		# which the 180s default covers comfortably -- and the default is not what
+		# it would be killed by. Every turn carries a 40s timeout, so a mock that
+		# has gone slow turns 41s into eight minutes without anything being wrong
+		# with the app, and `timeout` cuts the browser out from under it and reports
+		# the result as six ordinary-looking failures (see verify_sync above). 480
+		# is the sum of those timeouts, which is what the file can honestly cost.
+		verify_sweep_used)                echo 480 ;;
 		*)                                echo 180 ;;
 	esac
 }

@@ -87,15 +87,32 @@
 	}
 
 	// ── The chip row ────────────────────────────────────────────────────
+	//
+	// ONE ROW, TWO BARS. On a desktop it is in the header; on a phone
+	// `placeChips` (js/mobile.js) moves the same element into the footer, where
+	// it scrolls sideways. What changes with it is what a chip MEANS, in two
+	// places below: what "filled" says, and what a press does.
 
 	var tagsEl;
 
+	/// The phone shell, when this width has one.
+	function shell() {
+		var s = window.DaimondShell;
+		return (s && s.isPhone && s.isPhone()) ? s : null;
+	}
+
 	function chip(p) {
+		var sh = shell();
+		// A FILLED CHIP SAYS "THIS IS WHAT YOU ARE LOOKING AT", and on a phone that
+		// is not the same question as `p.open`. One thing is on screen there: an
+		// Email panel the engine calls open, sitting behind a Terminal sheet, is
+		// not where the user is, and two filled chips would be two answers.
+		var lit = sh ? (sh.here() === p.id) : p.open;
 		var b = document.createElement('button');
-		b.className = 'ptag ptag-' + p.zone + (p.open ? ' on' : '') + (p.evicts ? ' will-evict' : '');
+		b.className = 'ptag ptag-' + p.zone + (lit ? ' on' : '') + (p.evicts && !sh ? ' will-evict' : '');
 		b.textContent = p.label;
 		b.dataset.panel = p.id;
-		b.setAttribute('aria-pressed', p.open ? 'true' : 'false');
+		b.setAttribute('aria-pressed', lit ? 'true' : 'false');
 		if (p.full) {
 			b.disabled = true;
 			b.title = t('chip.dock_full');
@@ -108,7 +125,16 @@
 		} else {
 			b.title = t('chip.open', { name: p.label });
 		}
-		b.addEventListener('click', function () { P().activate(p.id); });
+		// A PRESS IS "TAKE ME THERE" ON A PHONE, never "close what I am on". The
+		// desktop chip is a toggle and can be, because a filled chip and the panel
+		// it names are on screen together; on a phone the thing it would close is
+		// the whole screen, and for the rail it would close the drawer's own
+		// element and leave the hamburger opening nothing. See `goTo` in
+		// js/mobile.js.
+		b.addEventListener('click', function () {
+			var s = shell();
+			if (s) s.goTo(p.id); else P().activate(p.id);
+		});
 		return b;
 	}
 
@@ -137,7 +163,13 @@
 		// narrow window instead of crowding the controls beside it. Only the TAIL
 		// moves, and only into the menu: the order never changes, so a chip is
 		// either where it was or one click away, never somewhere else.
-		var squeezed = fitRow();
+		//
+		// A PHONE DOES NOT FIT, IT SCROLLS. The footer's strip is its own scroller
+		// (css/mobile.css) and every chip keeps the width of its own word, so
+		// there is no room to run out of -- and dropping the tail would take the
+		// three or four panels a phone reaches least often and hide them behind a
+		// second tap for no gain at all.
+		var squeezed = shell() ? 0 : fitRow();
 
 		var hidden = spare.length + squeezed;
 		if (hidden) {
@@ -151,8 +183,8 @@
 			more.addEventListener('click', function (e) { e.stopPropagation(); toggleGallery(more); });
 			tagsEl.appendChild(more);
 			// Adding the button costs width of its own, so anything it pushed out
-			// has to leave as well.
-			squeezed += fitRow();
+			// has to leave as well. Not on a phone, where nothing was pushed out.
+			if (!shell()) squeezed += fitRow();
 			var total = spare.length + squeezed;
 			var n = more.querySelector('.n');
 			if (n) n.textContent = String(total);

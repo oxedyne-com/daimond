@@ -335,6 +335,21 @@
 					<!-- The real folder, when the browser can open one. Its size is not a thing the
 					     browser will tell us, so it is asked for rather than assumed. -->
 					<div class="astat-row" id="astat-store-native" style="display:none"></div>
+					<!-- Whether this device's work has travelled, which was a pill in the
+					     top bar until 2026-08-28. It sat in the row of icon buttons, so
+					     it moved every one of them 86px each time a round started and
+					     again when it finished; and it faded 1.8s after saying "Synced",
+					     so the answer to "did that reach my other machine" was gone
+					     before it was asked. Here it is a status row like its neighbours
+					     -- one question, answered without opening anything -- and the row
+					     is PERMANENT: `js/sync.js` puts its chip in when there is
+					     something happening or something standing, and when there is
+					     not, `#sync-rest` says when a sync last worked. Nothing above or
+					     below it moves either way. -->
+					<div class="astat-row astat-sync" id="astat-sync">
+						<span class="astat-dot" id="sync-rest-dot" aria-hidden="true"></span>
+						<span class="astat-val" id="sync-rest"></span>
+					</div>
 					<!-- Global spend readout: session / week / month, priced per model. -->
 					<div class="spend-row" id="spend-row" style="display:none"></div>
 				</div>
@@ -619,11 +634,18 @@
 						     once; this turns on the parts of it that are normally invisible —
 						     the composed system message, whose it is, and the tool schemas
 						     nobody has ever seen. -->
-						<button class="chip-btn icon-chip" id="wire-btn" aria-pressed="false"
+						<!-- THE ONE WORD IN A ROW OF DRAWINGS. Copy, Steps and Concise are
+						     verbs and draw as verbs; "wire" is not a picture of anything, and
+						     the glyph it had -- five stacked rules -- is the same shape as the
+						     Concise glyph beside it and read as a second Concise. The owner
+						     asked for the word back, and only for this one.
+						     `.label-chip` is what keeps the row's height: the word takes the
+						     26px box the icon chips set rather than the row growing to a
+						     word's padding. See css/app.css. -->
+						<button class="chip-btn label-chip" id="wire-btn" aria-pressed="false"
 							title="Show what is actually sent to the model"
-							aria-label="Wire" data-i18n-aria-label="wire.chip"
-							data-i18n-title="wire.chip_help"><svg class="ic" viewBox="0 0 24 24"
-							aria-hidden="true"><path d="M4 7h6M14 7h6M4 12h16M4 17h6M14 17h6"/></svg></button>
+							data-i18n="wire.chip"
+							data-i18n-title="wire.chip_help">Wire</button>
 						<button class="chip-btn icon-chip" id="chat-copy-btn"
 							title="Copy the whole conversation to the clipboard"
 							aria-label="Copy the conversation" data-i18n-aria-label="chat.copy_all_aria"
@@ -722,6 +744,19 @@
 					</div>
 				</div>
 				<div class="web-body" id="web-body">
+					<!-- WHY THERE ARE TWO OF THEM. With Daimond Hands installed the page
+					     is a real browser tab -- that is the only way it can carry the
+					     user's own sign-ins and the only way it can be driven at all --
+					     and this panel shows a picture of that tab. The app has always
+					     said so, in `web.opening`, and then wiped it the moment the page
+					     arrived (`adoptPage` calls `note('')`): the sentence was on
+					     screen only while the user was waiting, and gone by the time they
+					     were looking at a window and a panel at once and wondering why.
+					     A STRIP, not the `.web-note` overlay, for exactly that reason --
+					     an overlay cannot stay up over a live picture. Same shape as
+					     `.web-readonly`, which is this panel's other standing
+					     disclosure. -->
+					<div class="web-live" id="web-live" hidden></div>
 					<!-- A frame is a Tab stop, and an untitled one is announced as
 					     "frame" and nothing else. -->
 					<iframe class="web-frame" id="web-frame" title="Web" data-i18n-title="panel.web" referrerpolicy="no-referrer"
@@ -1156,6 +1191,16 @@
 					     and read side by side against the top bar's own mark. The mark
 					     brings its own circle, so it is given no second one, which is
 					     exactly how About and the guide "?" are drawn. -->
+				</span>
+				<!-- THE HEAD'S OWN CONTROLS, OUT OF THE CHIP GROUP. They were inside
+				     `.imp-chips`, which wraps, so on a 390px dock they wrapped with
+				     it: the closer sat 248px left of the panel's right edge and 47px
+				     down, alone at the FOOT of the head, while every other panel in
+				     the app holds its cross within 15px of the top-right corner.
+				     Measured 2026-08-28; the census is in dev/lane_closer_audit.mjs.
+				     Ordered ahead of the chips (see app.css) so this row is the head's
+				     first line and the chips take the second. -->
+				<span class="railhead-acts">
 					<button type="button" class="icon-btn imp-info" id="social-info"
 						title="What this panel is, in the guide" data-i18n-title="social.info"
 						aria-label="What this panel is, in the guide" data-i18n-aria-label="social.info">
@@ -1224,6 +1269,10 @@
 					</div>
 					<div class="imp-say" id="improve-say" role="status" aria-live="polite"></div>
 				</div>
+				<!-- js/triage.js OWNS the inside of this row and clears it on every
+				     draw: the one control whose object is the WHOLE list of notes,
+				     and the plan it produces. Empty in a build without that file. -->
+				<div class="imp-triage" id="improve-triage"></div>
 				<div class="imp-notes" id="improve-list"></div>
 			</div>
 
@@ -1234,15 +1283,19 @@
 		</aside>
 	</div>
 
-	<!-- Mobile: the dwellable destinations. The chat is the floor; "things"
-	     (Web, Doc, Message, Compose, Tools) rise as a sheet over it, and the
-	     rail (Diamonds/Chats/Admin) is the left drawer behind the hamburger. -->
-	<nav class="mnav" id="mnav">
-		<button data-mp="ai" class="on"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H9l-4 4v-4H4z"/></svg><span data-i18n="mnav.chat">Chat</span></button>
-		<button data-mp="mail"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v12H3z"/><path d="M3 7l9 6 9-6"/></svg><span data-i18n="mnav.mail">Email</span></button>
-		<button data-mp="work"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg><span data-i18n="mnav.files">Files</span></button>
-		<button data-mp="agents"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="2.5"/><path d="M12 4v4"/><circle cx="12" cy="4" r="0.6"/><path d="M9 13v1.5M15 13v1.5"/><path d="M2 12v3M22 12v3"/></svg><span data-i18n="mnav.agents">Agents</span></button>
-	</nav>
+	<!-- Mobile: the panel chip row, which is the DESKTOP header's row moved down
+	     here (js/mobile.js, `placeChips`) and scrolled sideways. It held four
+	     hard-wired destinations -- Chat, Email, Files, Agents -- until 2026-08-28,
+	     which named four of seventeen panels and left the other thirteen behind a
+	     drawer. The owner's verdict on that bar: "the footer in mobile view is
+	     currently useless to me".
+	     The row is MOVED, not copied: `#panel-tags` is the one row the layout
+	     engine renders, the one the unseen counts are painted on, and the one the
+	     gallery asks whether a panel is on. Two of it would be two to keep in
+	     step. The chat is still the floor; a "thing" (Web, Doc, Message, Compose,
+	     Tools) rises as a sheet over it, and the rail is still the left drawer
+	     behind the hamburger. -->
+	<nav class="mnav" id="mnav" aria-label="Panels" data-i18n-aria-label="gallery.title"></nav>
 </div>
 
 <!-- Phone shell: the scrim behind the drawer, and the sheet that raises a
@@ -1453,7 +1506,15 @@
      this holds it. Before identity.js is fine — it reaches DaimondIdentity only
      inside a call, never while loading. -->
 <script src="js/voice.js"></script>
+<!-- drafts.js BEFORE every module that owns a text box — improve.js is the
+     first of them, daimond.js's composer is the largest. It holds what somebody
+     is half-way through typing so a reload does not take it, and it is loaded
+     early because a box binds to it as it is drawn. It sends nothing and
+     reaches no network: see the header, which says why that is not the send
+     queue dev/IMPROVE_CONTRACT.md §4 forbids. -->
+<script src="js/drafts.js"></script>
 <script src="js/improve.js"></script>
+<script src="js/triage.js"></script>
 <script src="js/triggers.js"></script>
 <script src="js/verify.js"></script>
 <!-- wordlist.js before identity.js: the create screen generates a passphrase

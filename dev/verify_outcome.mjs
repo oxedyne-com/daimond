@@ -26,6 +26,14 @@
 //   5. AND STORED WITH THE TOOL LOG, so the one prose reader left —
 //      `outcomeOfStoredText`, for conversations written before the field existed —
 //      serves a set that stops growing rather than one that grows for ever.
+//   7. AND THE WRITE-AHEAD JOURNAL STORES IT TOO. Added 2026-08-28. §4's promise
+//      that the exception stops growing was not kept: `journal.js`'s `toolDone`
+//      took a BOOLEAN, and the crash-recovery path rebuilt the third value out of
+//      the result text — the quarantined reader, on the live path, in the journal
+//      of the build running today. A refusal recovered after an interrupted turn
+//      came back as a FAILURE. The fixture is a refusal whose words read like a
+//      success, because a result beginning "Refused" recovers correctly even from
+//      the text and would prove nothing.
 //
 // WHY THE FIXTURE LIES ON PURPOSE. Turn A is truthful: three tool calls whose
 // outcomes are what their text says. Every check would pass on turn A alone with
@@ -59,6 +67,7 @@
 //   node dev/verify_outcome.mjs --break friendly # 1 fails: the refusal's own sentence is prettified away
 //   node dev/verify_outcome.mjs --break alarm    # 1 fails: a call that completed is drawn as broken
 //   node dev/verify_outcome.mjs --break swap     # 1 fails: a failure is drawn as a refusal
+//   node dev/verify_outcome.mjs --break flatten  # 7 fails: the journal takes a boolean again
 //   node dev/verify_outcome.mjs                  # and then, clean but for check 0
 //
 //   eval "$(bash dev/world.sh 6 --up)"
@@ -88,8 +97,8 @@ const BREAKS = {
 	sniff: [
 		["if (ev.outcome !== 'done') tel('tool.fail'",
 		 "if (outcomeOfStoredText(ev.content || '') !== 'done') tel('tool.fail'", 1],
-		["ev.content || '', ev.outcome !== 'done');",
-		 "ev.content || '', outcomeOfStoredText(ev.content || '') !== 'done');", 1],
+		["ev.content || '', ev.outcome || '');",
+		 "ev.content || '', outcomeOfStoredText(ev.content || ''));", 1],
 		["DaimondSignals.noteTool(ev.name || '', ev.outcome === 'done');",
 		 "DaimondSignals.noteTool(ev.name || '', outcomeOfStoredText(ev.content || '') === 'done');", 1],
 		["renderToolResult(ev.name || '', ev.content || '', ev.outcome);",
@@ -98,7 +107,7 @@ const BREAKS = {
 	// Refused and failed collapse back into one state, as they were when nothing
 	// could tell them apart.
 	flat:    [["var refused = outcome === 'refused';", "var refused = false;", 1]],
-	journal: [["ev.content || '', ev.outcome !== 'done');", "ev.content || '', false);", 1]],
+	journal: [["ev.content || '', ev.outcome || '');", "ev.content || '', 'done');", 1]],
 	tel:     [["if (ev.outcome !== 'done') tel('tool.fail'", "if (false) tel('tool.fail'", 1]],
 	signals: [["DaimondSignals.noteTool(ev.name || '', ev.outcome === 'done');",
 	           "DaimondSignals.noteTool(ev.name || '', true);", 1]],
@@ -121,25 +130,55 @@ const BREAKS = {
 	alarm:   [["var failed  = !refused && outcome !== 'done';", "var failed  = !refused;", 1]],
 	// The two non-done states collapse the other way: a failure is drawn as a refusal.
 	swap:    [["var refused = outcome === 'refused';", "var refused = outcome !== 'done';", 1]],
+	// THE SEAM AS IT STOOD IN THE WRITE-AHEAD JOURNAL, both halves. `toolDone` took a
+	// BOOLEAN, so a recovered turn could say that a call did not complete but not
+	// which of the two ways -- and the recovery path rebuilt the third value by
+	// reading the result TEXT, through the reader §4 quarantines for conversations
+	// written before the field existed. A refusal whose words do not begin "Refused"
+	// came back as a FAILURE, which is what check 7 reads back. It reddens the two
+	// journal checks with it, and honestly: the recorder in `arm()` keeps the fifth
+	// argument verbatim, so under this break it records `"true"` and `"false"` --
+	// which is the flattening itself, seen at the call site rather than after the
+	// round trip.
+	flatten: [
+		["result: result, outcome: String(outcome || '') }), true);",
+		 "result: result, failed: !!outcome }), true);", 1, 'js/journal.js'],
+		["c.tools[i].outcome = String(e.outcome || ''); c.tools[i].failed = !!e.failed;",
+		 "c.tools[i].outcome = ''; c.tools[i].failed = !!e.failed;", 1, 'js/journal.js'],
+		["ev.content || '', ev.outcome || '');", "ev.content || '', ev.outcome !== 'done');", 1],
+		["\t\t\t\t\t: tl.outcome ? tl.outcome\n\t\t\t\t\t: !tl.failed ? 'done'\n",
+		 "\t\t\t\t\t: !tl.failed ? 'done'\n", 1],
+	],
 };
 if (BREAK && !BREAKS[BREAK]) {
 	console.error(`unknown break '${BREAK}'; one of: ${Object.keys(BREAKS).join(', ')}`);
 	process.exit(2);
 }
 
-const APP_SRC  = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
 const GLUE_SRC = fs.readFileSync(path.join(WWW, 'pkg/oxedyne_daimond.js'), 'utf8');
 
-let damaged = APP_SRC;
+// A break entry is `[find, replace, count]` and patches `js/daimond.js`, which is
+// where all but one of them live. A fourth element names another served file
+// instead: the seam has two halves and `flatten` restores BOTH, because the call
+// site flattening and the journal storing a boolean are one defect and a break
+// that put back half of it would be a fixture nobody wrote.
+const DEFAULT_FILE = 'js/daimond.js';
+const damaged = new Map();
+const sourceOf = (f) => {
+	if (!damaged.has(f)) damaged.set(f, fs.readFileSync(path.join(WWW, f), 'utf8'));
+	return damaged.get(f);
+};
+sourceOf(DEFAULT_FILE);
 if (BREAK) {
-	for (const [find, repl, want] of BREAKS[BREAK]) {
-		const got = damaged.split(find).length - 1;
+	for (const [find, repl, want, file] of BREAKS[BREAK]) {
+		const f   = file || DEFAULT_FILE;
+		const got = sourceOf(f).split(find).length - 1;
 		if (got !== want) {
-			console.error(`--break ${BREAK}: expected ${want} occurrence(s) of\n  ${find}\nbut found ${got}; `
+			console.error(`--break ${BREAK}: expected ${want} occurrence(s) in ${f} of\n  ${find}\nbut found ${got}; `
 				+ 'the anchor has moved and this break would patch nothing');
 			process.exit(2);
 		}
-		damaged = damaged.split(find).join(repl);
+		damaged.set(f, sourceOf(f).split(find).join(repl));
 	}
 }
 
@@ -179,9 +218,11 @@ const s = await open({
 		await page.route('**/pkg/oxedyne_daimond.js', (r) => r.fulfill({
 			status: 200, contentType: 'application/javascript', body: GLUE_SRC + SHIM,
 		}));
-		if (BREAK) await page.route('**/js/daimond.js', (r) => r.fulfill({
-			status: 200, contentType: 'application/javascript', body: damaged,
-		}));
+		if (BREAK) for (const [file, body] of damaged) {
+			await page.route('**/' + file, (r) => r.fulfill({
+				status: 200, contentType: 'application/javascript', body,
+			}));
+		}
 	},
 });
 const { page: p } = s;
@@ -200,8 +241,11 @@ const arm = (plan) => p.evaluate((plan) => {
 	// inside `tel`), so wrapping them here is enough and nothing has to be reloaded.
 	if (window.DaimondJournal && !window.DaimondJournal.__wrapped) {
 		const orig = window.DaimondJournal.toolDone;
-		window.DaimondJournal.toolDone = function (turnId, chatId, callId, result, failed) {
-			globalThis.__jrn.push(!!failed);
+		// THE FIFTH ARGUMENT, verbatim. It was `!!failed` here, which is what the call
+		// site passed and is exactly the flattening check 7 is about: recorded as a
+		// boolean, a check on it could not tell a refusal from a failure either.
+		window.DaimondJournal.toolDone = function (turnId, chatId, callId, result, outcome) {
+			globalThis.__jrn.push(outcome === undefined ? null : String(outcome));
 			return orig.apply(this, arguments);
 		};
 		window.DaimondJournal.__wrapped = true;
@@ -327,9 +371,9 @@ try {
 		a.length === 3 ? JSON.stringify(a[1].text.slice(0, 70)) : '');
 
 	// ── 2, 3, 4. Journalled, telemetered, reported ───────────────
-	check(JSON.stringify(ar.jrn) === JSON.stringify([false, true, true]),
-		'AND JOURNALLED AS ONE — the refusal is written down as a call that did not complete',
-		`toolDone(failed) = ${JSON.stringify(ar.jrn)}`);
+	check(JSON.stringify(ar.jrn) === JSON.stringify(['done', 'refused', 'failed']),
+		'AND JOURNALLED AS ONE — the refusal is written down as a refusal, in the engine’s own word',
+		`toolDone(outcome) = ${JSON.stringify(ar.jrn)}`);
 	const failsA = ar.tel.filter((e) => e.indexOf('tool.fail:') === 0);
 	check(failsA.length === 2,
 		'AND TELEMETERED AS ONE — tool.fail fires for the refusal and the failure, not the write',
@@ -371,9 +415,9 @@ try {
 	check(b.length === 3 && !b[1].refused && !b[1].failed && !b[2].refused && !b[2].failed,
 		'and a "Refused:" and an "Error:" the engine called done are drawn as done',
 		b.length === 3 ? `${JSON.stringify(b[1].cls)} / ${JSON.stringify(b[2].cls)}` : '');
-	check(JSON.stringify(br.jrn) === JSON.stringify([true, false, false]),
+	check(JSON.stringify(br.jrn) === JSON.stringify(['refused', 'done', 'done']),
 		'the journal follows the engine, not the words',
-		`toolDone(failed) = ${JSON.stringify(br.jrn)}`);
+		`toolDone(outcome) = ${JSON.stringify(br.jrn)}`);
 	const failsB = br.tel.filter((e) => e.indexOf('tool.fail:') === 0);
 	check(failsB.length === 1,
 		'telemetry follows the engine: one failure reported, and it is the one that reads as a success',
@@ -447,6 +491,68 @@ try {
 		&& /line one/.test(c[1].text) && /line two/.test(c[1].text),
 		"but the tool's own words are left alone — friendlyError is for a STATED failure",
 		c.length === 2 ? JSON.stringify(c[1].text.slice(0, 60)) : `${c.length} tool block(s)`);
+
+	// ── 7. A REFUSAL SURVIVES AN INTERRUPTED TURN AS A REFUSAL ───
+	//
+	// §4 GRANTS ONE EXCEPTION AND SAYS IT STOPS GROWING: *"Going forward the outcome
+	// is STORED with the tool log."* It was not. `journal.js`'s `toolDone` took
+	// `(turnId, chatId, callId, result, failed)` -- a BOOLEAN where the contract
+	// requires the outcome -- and the crash-recovery path in daimond.js then rebuilt
+	// the third value out of the RESULT TEXT, through `outcomeOfStoredText`, whose
+	// own doc says calling it on a live path puts back the defect the field was added
+	// to remove. This is the write-ahead journal of the build running today, so the
+	// exception grew by one every time a tab died mid-turn.
+	//
+	// THE FIXTURE IS A REFUSAL WHOSE WORDS READ LIKE A SUCCESS, and it has to be:
+	// a result beginning "Refused" recovers correctly even from the text, so a
+	// natural-looking fixture would pass against the defect and prove nothing. The
+	// engine called it refused; the prose says a file was written. Only the stored
+	// field can get this right, which is the whole of §3.
+	//
+	// DRIVEN THROUGH THE JOURNAL'S OWN API AND A REAL RELOAD, not by calling the
+	// recovery function: what is under test is the round trip, and half of it is
+	// what `toolDone` chose to write down.
+	await newChat(s);
+	await chat(s, '@text a turn that will be interrupted', { timeout: 60000 });
+	const icid = await p.evaluate(() => {
+		const f = window.DaimondAttach && window.DaimondAttach.focus();
+		return (f && f.kind === 'chat') ? String(f.id) : '';
+	});
+	const iturn = 'vo-interrupted-' + Date.now();
+	// Opened and never closed, which is what an interrupted turn IS: `recover()`
+	// returns a turn only when no `turn_close` landed for it.
+	const wrote = await p.evaluate(async ({ cid, tid }) => {
+		const J = window.DaimondJournal;
+		if (!J) return false;
+		await J.turnOpen(tid, cid, 'write the fixture file', null);
+		await J.toolOpen(tid, cid, 'vo-call-1', 'file_write', '{"path":"vo-interrupted.txt"}');
+		await J.toolDone(tid, cid, 'vo-call-1', 'Wrote 8 bytes to vo-interrupted.txt', 'refused');
+		await J.flush();
+		return true;
+	}, { cid: icid, tid: iturn });
+	check(!!icid && wrote,
+		'a turn is journalled and never closed — an interrupted turn, as the journal records one',
+		`chat=${JSON.stringify(icid)} written=${wrote}`);
+
+	await p.reload({ waitUntil: 'domcontentloaded' });
+	await p.waitForTimeout(1200);
+	await signInAs(s, 'outcome');
+	await p.waitForTimeout(3000);
+	const rec = await (async () => {
+		const chats = await storedChats(s);
+		for (const c of chats) {
+			for (const m of (c.messages || [])) {
+				if (m.role === 'tool_log' && /vo-interrupted\.txt/.test(String(m.args || ''))) return m;
+			}
+		}
+		return null;
+	})();
+	check(!!rec,
+		'and it is recovered into the conversation after the reload',
+		rec ? '' : 'no recovered tool_log for the interrupted turn');
+	check(!!rec && rec.outcome === 'refused',
+		'A REFUSED TOOL RECOVERED FROM THE JOURNAL COMES BACK AS REFUSED, not as a failure',
+		`outcome=${JSON.stringify(rec && rec.outcome)} result=${JSON.stringify(String((rec && rec.content) || '').slice(0, 44))}`);
 
 	const errs = errors(s);
 	if (errs.length) console.log(`  note  ${errs.length} console error(s): ${errs.slice(0, 3).join(' | ')}`);

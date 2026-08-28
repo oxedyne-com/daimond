@@ -22,6 +22,9 @@ pub mod executor;
 /// gated out of the wasm target.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod handler;
+/// Crystal version history as a delta log: when a version stores a full copy
+/// and when it stores splices, and which stored files rebuild any one version.
+pub mod diamond_delta;
 /// The pure core of a Diamond's `meta.json` — its shape, its parse/serialise
 /// pair, and tag normalisation.  Target-agnostic, so it is tested natively
 /// while the OPFS edge over it stays in [`wasm::diamond`].

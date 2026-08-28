@@ -9,7 +9,7 @@ use oxedyne_fe2o3_core::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use crate::llm::LlmClient;
+use crate::llm::{Delta, LlmClient};
 use crate::prompts::Role;
 use crate::protocol::{AgentEvent, ChatMessage, Dropped, MessageContent, Session};
 use crate::tools::ToolRegistry;
@@ -20,6 +20,13 @@ use crate::tools::ToolRegistry;
 /// compaction is part of running a turn and has no caller outside this one.
 #[path = "compact.rs"]
 pub mod compact;
+
+/// Which of a round's tool calls may run at the same time.
+///
+/// Declared here for the same reason `compact` is: deciding what a round dispatches together is
+/// part of running a turn, and nothing outside this module asks.
+#[path = "batch.rs"]
+pub mod batch;
 
 use crate::agent::compact::{Gauge, Limits};
 
@@ -421,6 +428,22 @@ impl Agent {
         }
     }
 
+    /// Set the fraction of the window at which this agent folds.
+    ///
+    /// Held inside [`compact::FOLD_AT_MIN`]..[`compact::FOLD_AT_MAX`] here rather than only in
+    /// [`compact::Limits::budget`], so `Agent::limits` reports the figure that is actually in
+    /// force -- a control that draws itself from the getter would otherwise show a number the
+    /// arithmetic never used.  Zero, or anything below it, leaves the default alone, which is
+    /// how a caller says "the user has not chosen".
+    ///
+    /// # Arguments
+    /// * `f` - The fraction, between 0 and 1; zero or less is ignored.
+    pub fn set_fold_at(&self, f: f64) {
+        if f > 0.0 {
+            self.limits.borrow_mut().fold_at = f.clamp(compact::FOLD_AT_MIN, compact::FOLD_AT_MAX);
+        }
+    }
+
     /// Fold this agent's conversations with a different model from the one it chats with.
     ///
     /// Empty -- the default -- means the chat's own model.  A summary becomes the session's
@@ -647,19 +670,27 @@ impl Agent {
             rounds += 1;
             let result = self.llm.chat_stream(
                 &working,
-                &mut |token| {
-                    full.push_str(token);
-                    on_event(AgentEvent::Text(token.to_string()));
+                &mut |d| match d {
+                    Delta::Text(token) => {
+                        full.push_str(token);
+                        on_event(AgentEvent::Text(token.to_string()));
+                    }
+                    // THE WORKING GOES OUT WHILE IT IS STILL BEING DONE, which is the whole
+                    // point of reading it: a reasoning model spends most of a round thinking,
+                    // and a page that waits for the round to end shows a blank spinner for all
+                    // of it. Its own event, never `Text`, so `full` -- which becomes the
+                    // assistant's message -- cannot pick it up.
+                    Delta::Reasoning(think) => on_event(AgentEvent::Thinking(think.to_string())),
                 },
             ).await;
             match result {
                 Ok(resp) => {
-                    // BEFORE the answer is settled, so the working reaches the page ahead of
-                    // the reply it produced. Reasoning that arrived afterwards would read as
-                    // an explanation invented to fit, which is the opposite of what it is.
-                    if !resp.thinking.trim().is_empty() {
-                        on_event(AgentEvent::Thinking(resp.thinking.clone()));
-                    }
+                    // The working is NOT emitted here. It went out delta by delta while the
+                    // round was running (the `Delta::Reasoning` arm above), which is the only
+                    // way it can do the job it is drawn for: a reasoning model spends most of
+                    // a round thinking, and working delivered after the round is over arrives
+                    // at the one moment it no longer explains the wait. `resp.thinking` still
+                    // carries the whole of it for a caller that wants it in one piece.
                     let content = if resp.content.is_empty() { full } else { resp.content };
                     // A TURN MUST NEVER END IN SILENCE. Both empty means the provider
                     // returned a final message with nothing in it -- which happens on a
@@ -721,6 +752,177 @@ impl Agent {
     /// session, so a later turn still sees what this agent did.  Persisting
     /// only the final text once left the model amnesiac: asked a follow-up, it
     /// had no record of its own tool calls and could not say what it had done.
+    /// Run one tool call, retrying it while the failure is the ROAD rather than an answer.
+    ///
+    /// **THE LADDER GUARDS THE CALL TO THE MODEL; THIS GUARDS THE CALLS THE MODEL MAKES.**  The
+    /// provider retry in [`crate::llm::LlmClient::stream_turn`] has always survived a laptop
+    /// waking or a phone coming back, and that was read as the problem being solved.  It was not.
+    /// A `web_fetch` that dies because the page was frozen is handed back to the model AS A TOOL
+    /// RESULT SAYING IT FAILED, and the model then does the reasonable thing with a failed tool:
+    /// it apologises and answers around it.  The owner met that on a real iPhone on 2026-08-28 --
+    /// "I can't get through to the web right now to look this up" -- and the sentence is now a
+    /// permanent turn in the conversation.
+    ///
+    /// **`self.llm.retry`, not a schedule of its own.**  The same eight attempts, the same
+    /// jittered backoff, the same total bound, and the same object -- so a test client's fast
+    /// policy governs this ladder too and the suite does not grow two minutes per road failure.
+    ///
+    /// Only a READ is climbed: see [`crate::tools::Tool::road_retryable`].  Anything else fails
+    /// on the first attempt, which still means the model is told nothing -- it simply means the
+    /// turn ends sooner rather than after eight tries.
+    ///
+    /// # Arguments
+    /// * `name` - The tool's wire name, as the model spelled it.
+    /// * `args` - The raw argument object.
+    async fn over_the_road(
+        &self,
+        registry: &ToolRegistry,
+        name:     &str,
+        args:     &str,
+        on_event: &mut impl FnMut(AgentEvent),
+    )
+        -> Outcome<MessageContent>
+    {
+        let again = crate::tools::Tool::from_name(name)
+            .map(|t| t.road_retryable())
+            .unwrap_or(false);
+        let mut waited  = 0u64;
+        let mut retries = 0u32;
+        loop {
+            match registry.try_dispatch(name, args).await {
+                Ok(c)  => return Ok(c),
+                Err(e) => {
+                    if !again {
+                        return Err(e);
+                    }
+                    let delay = match self.llm.retry.next_delay(retries, waited, None) {
+                        Some(d) => d,
+                        None    => return Err(e),
+                    };
+                    waited  += delay;
+                    retries += 1;
+                    // SAID WHILE IT HAPPENS, and said by the APP. A tool call quietly retrying
+                    // for up to two minutes looks exactly like a hung turn, which is the one
+                    // thing a spinner cannot tell a user. It is a `Roading` event and not
+                    // assistant text for the reason a fold is not assistant text: this is
+                    // something Daimond is doing, the model neither said it nor will read it.
+                    on_event(AgentEvent::Roading {
+                        name:    name.to_string(),
+                        attempt: retries + 1,
+                        of:      self.llm.retry.max_attempts,
+                        wait_ms: delay,
+                    });
+                    crate::llm::sleep_ms(delay).await;
+                    // AND THEN WAIT FOR THE PAGE, which is the half a backoff cannot do. On iOS
+                    // the page is frozen for as long as the user is in another app, so a ladder
+                    // that only sleeps spends all eight attempts into a dead page and reports
+                    // failure the moment the user comes back. Charged to the same budget, so
+                    // being backgrounded cannot extend a turn without bound.
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        waited += crate::wasm::await_restored(waited).await;
+                    }
+                }
+            }
+        }
+    }
+
+    /// The event that tells the page a call has started.
+    ///
+    /// The ID travels with it. A stored conversation's `say` fold is opened and closed on the
+    /// page, and the page has to be able to name WHICH call it is talking about when it tells the
+    /// engine what is open -- see `set_open_folds`. Nothing else reads it.
+    ///
+    /// One function because a batch announces its first call before it runs and the rest as their
+    /// results are recorded, and two spellings of the same event would eventually differ.
+    fn announce(tc: &crate::protocol::ToolCall) -> AgentEvent {
+        AgentEvent::ToolCall {
+            id:   tc.id.clone(),
+            name: tc.name.clone(),
+            args: tc.arguments.clone(),
+        }
+    }
+
+    /// One tool call, from the model's arguments to a result the conversation can carry.
+    ///
+    /// # Arguments
+    /// * `truncated` - Whether the reply these calls were parsed out of hit the output limit.
+    async fn one_call(
+        &self,
+        registry:  &ToolRegistry,
+        tc:        &crate::protocol::ToolCall,
+        truncated: bool,
+        on_event:  &mut impl FnMut(AgentEvent),
+    )
+        -> Outcome<MessageContent>
+    {
+        // A call cut at the output limit is not a call. Its arguments are a JSON object that
+        // stops in the middle, and dispatching it yields a parse error -- which reads to the
+        // model as its own mistake, so it writes the same thing again and is cut in the same
+        // place. Told what actually happened, it splits the work instead.
+        if cut_short(truncated, &tc.arguments) {
+            // The cap that was SENT, not the one configured. The note says the number so the
+            // model can size its next call by it, and telling a model its reply was cut at 4,096
+            // when it was cut at 32,000 sends it splitting the work eight times finer than it
+            // needs to.
+            return Ok(MessageContent::text(truncated_call_note(self.reply_cap())));
+        }
+        self.over_the_road(registry, &tc.name, &tc.arguments, on_event).await
+    }
+
+    /// [`Self::one_call`] with its events put in a buffer instead of on the wire.
+    ///
+    /// The one thing a batch cannot share is the `&mut` event closure, so each call in a batch
+    /// gets a `Vec` of its own and the round drains them in the model's order.  A method rather
+    /// than a closure at the call site because the borrow of the sink has to outlive the future,
+    /// which a closure built inside a `map` cannot arrange.
+    async fn call_buffered(
+        &self,
+        registry:  &ToolRegistry,
+        tc:        &crate::protocol::ToolCall,
+        truncated: bool,
+        sink:      &mut Vec<AgentEvent>,
+    )
+        -> Outcome<MessageContent>
+    {
+        let mut into = |e: AgentEvent| sink.push(e);
+        self.one_call(registry, tc, truncated, &mut into).await
+    }
+
+    /// Leave a round whose tool call died on the road, with nothing false left behind.
+    ///
+    /// The assistant turn that asked for the tools is already in the session -- it has to be,
+    /// because the API requires it to precede the replies -- and abandoning the round leaves its
+    /// unanswered calls dangling.  A conversation in that state is rejected WHOLE by every
+    /// provider, so it cannot simply be left.
+    ///
+    /// **[`crate::protocol::pair_up`], and deliberately not a rollback.**  Dropping the whole
+    /// assistant turn would also discard the prose the model wrote before deciding to call the
+    /// tool -- text the user has already read and already paid for, and exactly what
+    /// `continueTurn` (www/js/daimond.js) works to preserve when a PROVIDER call dies.  A road
+    /// failure during a tool call and a road failure during a provider call would then leave
+    /// different things behind, which reads as a bug to whoever meets it.  `pair_up` keeps the
+    /// prose and the answered calls and drops only the unanswered ones, which is what the
+    /// restore path has always done to the same conversation coming back out of the store.
+    ///
+    /// **It is needed for the SITTING, not for the reload.**  Press Continue, or reload, and
+    /// `restore_session` runs `pair_up` anyway.  Ignore the badge and simply type again, and the
+    /// live session is the one holding the dangling call -- which is the case nothing else
+    /// covers.
+    ///
+    /// # Arguments
+    /// * `working` - This turn's own message list, repaired alongside the session's.
+    fn abandon_round(
+        &self,
+        session: &mut Session,
+        working: &mut Vec<ChatMessage>,
+    ) {
+        let msgs = std::mem::take(&mut session.messages);
+        session.messages = crate::protocol::pair_up(msgs);
+        let work = std::mem::take(working);
+        *working = crate::protocol::pair_up(work);
+    }
+
     async fn run_tool_loop(
         &self,
         session:    &mut Session,
@@ -758,7 +960,10 @@ impl Agent {
                 match self.llm.chat_stream_tools(
                     &working,
                     tools_json.as_deref(),
-                    &mut |token| on_event(AgentEvent::Text(token.to_string())),
+                    &mut |d| match d {
+                        Delta::Text(token)  => on_event(AgentEvent::Text(token.to_string())),
+                        Delta::Reasoning(t) => on_event(AgentEvent::Thinking(t.to_string())),
+                    },
                 ).await {
                     Ok(r) => break r,
                     Err(e) => {
@@ -780,13 +985,10 @@ impl Agent {
                     }
                 }
             };
-            // FIRST, so the working reaches the page ahead of the tool calls it decided on
-            // and ahead of the text it produced. A tool loop runs many rounds and each one
-            // may think, so this is per ROUND rather than per turn -- the page gets one tile
-            // for each round that reasoned, in the order they happened.
-            if !resp.thinking.trim().is_empty() {
-                on_event(AgentEvent::Thinking(resp.thinking.clone()));
-            }
+            // The working is NOT emitted here either; see the note in `run_streaming`. It
+            // streamed while the round ran, and a tool loop is where that matters most --
+            // this is the path that runs many rounds, each of which may think for a minute
+            // before it says a word.
             // The endpoint has just been caught refusing pictures, mid-turn, having taken
             // them a moment ago. Said out loud rather than left in the client: it is the one
             // moment the app knows it is on the wrong model, and `stream_turn` has already
@@ -876,77 +1078,134 @@ impl Agent {
             // name alone.
             let mut asked = false;
 
-            // Execute each requested tool call, recording every result in both
-            // places for the same reason.
-            for tc in &resp.tool_calls {
-                // The ID travels with it. A stored conversation's `say` fold is opened and closed
-                // on the page, and the page has to be able to name WHICH call it is talking about
-                // when it tells the engine what is open -- see `set_open_folds`. Nothing else
-                // reads it.
-                on_event(AgentEvent::ToolCall {
-                    id:   tc.id.clone(),
-                    name: tc.name.clone(),
-                    args: tc.arguments.clone(),
-                });
-                // A call cut at the output limit is not a call. Its arguments are a JSON
-                // object that stops in the middle, and dispatching it yields a parse
-                // error -- which reads to the model as its own mistake, so it writes the
-                // same thing again and is cut in the same place. Told what actually
-                // happened, it splits the work instead.
-                let result = if cut_short(resp.truncated, &tc.arguments) {
-                    // The cap that was SENT, not the one configured. The note says the number so
-                    // the model can size its next call by it, and telling a model its reply was
-                    // cut at 4,096 when it was cut at 32,000 sends it splitting the work eight
-                    // times finer than it needs to.
-                    MessageContent::text(truncated_call_note(self.reply_cap()))
+            // Execute the round's tool calls, recording every result in both places for the
+            // same reason.  WHAT MAY RUN TOGETHER, AND WHY SO LITTLE MAY, IS `batch`'s RULE --
+            // read it there rather than inferring it from here.  Everything this loop does with
+            // a result it does in the model's own order, whatever ran together underneath.
+            let names: Vec<&str> = resp.tool_calls.iter().map(|t| t.name.as_str()).collect();
+            for span in batch::batches(&names) {
+                let group = &resp.tool_calls[span];
+                // THE EVENTS STAY STRICTLY ALTERNATING: one `ToolCall`, then its `ToolResult`,
+                // then the next.  `www/js/daimond.js` keeps ONE `pendingTool` and ONE
+                // `pendingCallId` -- in the chat, in the worker dock and in the daimon alike --
+                // and files a result against whichever call was announced last.  Announce two
+                // calls back to back and the first result is filed under the second call while
+                // every result after it is dropped, in the transcript and in the write-ahead
+                // journal both.  So a batch is invisible on the wire and shows only as the round
+                // being quicker.
+                //
+                // The FIRST call is announced BEFORE the batch runs rather than after, so
+                // "Running <tool>, step n…" names something that is actually running for as long
+                // as the batch is in flight, exactly as it does for a batch of one.
+                on_event(Self::announce(&group[0]));
+                // A sink per call while a batch runs, drained into `on_event` in the model's
+                // order as each result is recorded.  Empty for a batch of one, which keeps its
+                // events live.  Today it is provably empty for a batch of several as well --
+                // only `over_the_road` writes to it, and nothing in `batch::may_run_beside` is
+                // `road_retryable` -- but a tool that later becomes both would otherwise have its
+                // caption emitted from inside a concurrent poll, against a `&mut` closure that
+                // cannot be shared.
+                let mut sinks: Vec<Vec<AgentEvent>> = Vec::new();
+                let outs: Vec<Outcome<MessageContent>> = if group.len() == 1 {
+                    vec![self.one_call(registry, &group[0], resp.truncated, on_event).await]
                 } else {
-                    registry.dispatch(&tc.name, &tc.arguments).await
+                    sinks = group.iter().map(|_| Vec::new()).collect();
+                    let futs: Vec<_> = group.iter().zip(sinks.iter_mut())
+                        .map(|(tc, sink)| self.call_buffered(registry, tc, resp.truncated, sink))
+                        .collect();
+                    batch::all_of(futs).await
                 };
-                // The event carries the TEXT of the result and not the image. Everything
-                // downstream of it -- the panel, the journal's write-ahead log, the transcript on
-                // screen -- renders a string, and an image inside that string would be a base64
-                // wall in a tile. The image travels in the message instead, where the model is
-                // the only reader of it.
-                //
-                // WHAT THE CALL CAME TO IS DECIDED HERE, ONCE. This is the only place the event is
-                // built, so it is the only place the outcome is set; every reader downstream asks
-                // rather than re-reading the prose. Four readers used to guess it back out of the
-                // text, and one of them did not know that a refusal opens "Refused" rather than
-                // "Error" -- so a write the fence had just stopped was drawn as a completed step.
-                let text    = result.as_text().into_owned();
-                let outcome = crate::tools::call_outcome(&text);
-                // AND THE AUDIT IS KEPT FROM THE SAME VERDICT, not from a second reading of it.
-                // The paths come from the ARGUMENTS the model sent, which name the file it meant
-                // whatever the reply says about it.
-                claims.record(&tc.name, &tc.arguments, outcome);
-                // ASKED OF THE RESULT, and of every call in the round rather than of the first:
-                // a round may carry several, and the question may not be the one that came back
-                // first.
-                asked |= ends_turn(&tc.name, outcome);
-                on_event(AgentEvent::ToolResult {
-                    name:   tc.name.clone(),
-                    result: text,
-                    outcome,
-                });
-                // A PICTURE FOR A MODEL THAT WILL NOT TAKE ONE NEVER ENTERS THE SESSION.
-                //
-                // `sighted()` takes it out of every request anyway, so the model sees the same
-                // words either way -- but stored, the picture is folded around, reloaded, and
-                // re-stripped for the life of the conversation. That is what bricked a real
-                // Diamond on 2026-08-13. Left out here it costs one elision that names the file,
-                // and the act is announced once instead of being invisible.
-                let result = if result.has_image() && !self.llm.can_take_images() {
-                    on_event(AgentEvent::Unseeable {
-                        images: result.images().count(),
-                        model:  self.llm.model.clone(),
+                for (n, (tc, out)) in group.iter().zip(outs).enumerate() {
+                    // Announced here for every call after the first, whose announcement went out
+                    // before the batch started.
+                    if n > 0 {
+                        on_event(Self::announce(tc));
+                    }
+                    if let Some(sink) = sinks.get_mut(n) {
+                        for e in std::mem::take(sink) {
+                            on_event(e);
+                        }
+                    }
+                    let result = match out {
+                        Ok(c) => c,
+                        // THE ROAD IS SPENT, SO THE TURN IS OVER, and the model is told nothing.
+                        //
+                        // This is the whole point of the exercise. Handing the model an
+                        // exhausted ladder produces the same apology the first failure would
+                        // have produced, ninety seconds later and for more money -- and that
+                        // apology is a durable assistant turn, re-sent on every turn after it.
+                        // So nothing is written for it to read. The app says what happened
+                        // instead, in its own voice, and offers the turn back.
+                        //
+                        // `Error` then `Err`, in that order, because that is the pair the page
+                        // is already built around: `runTurn`'s error handler recognises a road
+                        // failure and declines to write a line for it, and its catch classifies
+                        // the same failure a second time and hands the turn back badged with a
+                        // Continue. Both live in www/js/daimond.js and neither needed changing.
+                        //
+                        // A SIBLING THAT RAN BESIDE THIS ONE AND SUCCEEDED IS DROPPED WITH IT,
+                        // and that is deliberate: serially it would never have run at all, so
+                        // keeping its result would put something in the conversation that
+                        // today's behaviour does not. The calls BEFORE it in the model's order
+                        // are already recorded, exactly as they are serially, and `abandon_round`
+                        // pairs off what is left.
+                        Err(e) => {
+                            self.abandon_round(session, &mut working);
+                            on_event(AgentEvent::Error(e.plain()));
+                            let ending = self.audit(
+                                TurnEnd::Failed, rounds, &claims, Some(registry)).await;
+                            self.ended(ending, on_event);
+                            return Err(e);
+                        }
+                    };
+                    // The event carries the TEXT of the result and not the image. Everything
+                    // downstream of it -- the panel, the journal's write-ahead log, the
+                    // transcript on screen -- renders a string, and an image inside that string
+                    // would be a base64 wall in a tile. The image travels in the message instead,
+                    // where the model is the only reader of it.
+                    //
+                    // WHAT THE CALL CAME TO IS DECIDED HERE, ONCE. This is the only place the
+                    // event is built, so it is the only place the outcome is set; every reader
+                    // downstream asks rather than re-reading the prose. Four readers used to
+                    // guess it back out of the text, and one of them did not know that a refusal
+                    // opens "Refused" rather than "Error" -- so a write the fence had just
+                    // stopped was drawn as a completed step.
+                    let text    = result.as_text().into_owned();
+                    let outcome = crate::tools::call_outcome(&text);
+                    // AND THE AUDIT IS KEPT FROM THE SAME VERDICT, not from a second reading of
+                    // it. The paths come from the ARGUMENTS the model sent, which name the file
+                    // it meant whatever the reply says about it.
+                    claims.record(&tc.name, &tc.arguments, outcome);
+                    // ASKED OF THE RESULT, and of every call in the round rather than of the
+                    // first: a round may carry several, and the question may not be the one that
+                    // came back first.
+                    asked |= ends_turn(&tc.name, outcome);
+                    on_event(AgentEvent::ToolResult {
+                        name:   tc.name.clone(),
+                        result: text,
+                        outcome,
                     });
-                    result.without_images(Dropped::Unseeable)
-                } else {
-                    result
-                };
-                let reply = ChatMessage::tool(tc.id.clone(), result);
-                working.push(reply.clone());
-                session.messages.push(reply);
+                    // A PICTURE FOR A MODEL THAT WILL NOT TAKE ONE NEVER ENTERS THE SESSION.
+                    //
+                    // `sighted()` takes it out of every request anyway, so the model sees the
+                    // same words either way -- but stored, the picture is folded around,
+                    // reloaded, and re-stripped for the life of the conversation. That is what
+                    // bricked a real Diamond on 2026-08-13. Left out here it costs one elision
+                    // that names the file, and the act is announced once instead of being
+                    // invisible.
+                    let result = if result.has_image() && !self.llm.can_take_images() {
+                        on_event(AgentEvent::Unseeable {
+                            images: result.images().count(),
+                            model:  self.llm.model.clone(),
+                        });
+                        result.without_images(Dropped::Unseeable)
+                    } else {
+                        result
+                    };
+                    let reply = ChatMessage::tool(tc.id.clone(), result);
+                    working.push(reply.clone());
+                    session.messages.push(reply);
+                }
             }
 
             // A QUESTION IS THE ANSWER, so the turn is over.  The model has just put a decision
@@ -1146,37 +1405,78 @@ impl Agent {
             }
         }
 
+        // SHORTENED ON THE WAY OUT, AND NOWHERE ELSE. This edited `session.messages` until
+        // 2026-08-28, and that list is the one `crate::wasm::app::DaimondApp::export_session`
+        // hands the browser to store, to back up and to put in the sync parcel -- so a
+        // thousand-word answer became four hundred characters in the user's own record,
+        // permanently, with nothing said and no way back. A model's window is a property of the
+        // REQUEST; a lossy form of the conversation is therefore the request's and is built here,
+        // from a record that stays whole. The owner's ruling: the model gets the shortened
+        // version, his transcript keeps every word.
+        //
         // Two passes, and the second is what makes the guarantee hold: the first leaves the
-        // newest messages alone, and if the conversation is STILL too big it is because
-        // those are the bulky ones, so the second reaches them too. The user's own words
-        // are never touched by either.
-        let mut elided = compact::elide_bulk(&mut session.messages, ceiling,
+        // newest messages alone, and if the conversation is STILL too big it is because those
+        // are the bulky ones, so the second reaches them too. The user's own words are never
+        // touched by either.
+        //
+        // IT ALSO SETTLES WHAT THE FOLD READS. `render_for_fold` above summarises
+        // `session.messages`, and while the elision edited that list a later fold summarised
+        // whatever an earlier elision had left of it -- a summary of four-hundred-character
+        // stubs, which is a second silent loss standing behind the first. Nothing clips that
+        // list now, so there is no arrangement of turns in which it can happen.
+        let mut sent = session.messages.clone();
+        let mut elided = compact::elide_bulk(&mut sent, ceiling,
             compact::MIN_KEEP_MESSAGES, &open);
-        elided += compact::elide_bulk(&mut session.messages, ceiling, 1, &open);
+        elided += compact::elide_bulk(&mut sent, ceiling, 1, &open);
         let changed = folded > 0 || elided > 0;
         if !changed {
+            // And `working` is left exactly as it was, elisions and all. Rebuilding it from the
+            // session on the way out of a fold that changed nothing would throw away an earlier
+            // round's shortening and hand the caller a request over the budget again.
             return false;
         }
+        // Measured on what will be SENT, since that is what the sentence below is about.
+        let after = compact::conversation_bytes(&sent, &open);
 
         // Rebuild the turn's list: the system prompt this turn was built with, then the
-        // conversation as it now stands. The two are kept in lockstep for the whole turn,
-        // so anything else would leave the model reading a history the session no longer
-        // holds.
+        // conversation as it now stands, shortened to fit. The two are kept in lockstep for
+        // the whole turn, so anything else would leave the model reading a history the session
+        // no longer holds.
         let sys = match working.first() {
             Some(m @ ChatMessage::System { .. }) => Some(m.clone()),
             _ => None,
         };
         working.clear();
         if let Some(s) = sys { working.push(s); }
-        working.extend(session.messages.iter().cloned());
+        working.extend(sent);
 
         // Told, not done quietly. A fold is lossy, and a user who is not shown one has no
         // way to tell a model that forgot from a model that never knew.
-        let after = compact::conversation_bytes(&session.messages, &open);
-        let mut said = fmt!(
-            "Folded {} earlier messages and shortened {} tool results: {} tokens of \
-             conversation became about {}.",
-            folded, elided, self.gauge.tokens(before), self.gauge.tokens(after));
+        //
+        // "TOOL RESULTS" WAS NOT TRUE. `compact::elide_bulk` shrinks a long ASSISTANT turn on
+        // exactly the same rule it shrinks a tool reply on, and a pure chat has no tool replies
+        // at all -- so a user whose own answers had just been clipped to 400 characters was told
+        // the app had shortened some tool output. That is the fold telling them the one thing
+        // they would not go looking for.
+        //
+        // AND IT SAYS WHERE THE SHORTENING APPLIES, which is four words and the whole of the
+        // second half of the ruling. The sentence was true of a record that no longer changes:
+        // a reader who is told his answers were shortened, and is looking at them in full on
+        // the screen above, has been handed a contradiction to resolve on his own.
+        //
+        // AND IT NAMES ONLY WHAT HAPPENED. One sentence covered both mechanisms and reported the
+        // one that did not fire as a zero, so a conversation that was merely shortened opened
+        // with "Folded 0 earlier messages and", under a heading that had just said the opposite.
+        // A count of nothing is not information; it is a reader working out which half to ignore.
+        let did = match (folded, elided) {
+            (0, n) => fmt!("Shortened {} long tool results and answers on the way to the model",
+                n),
+            (f, 0) => fmt!("Folded {} earlier messages", f),
+            (f, n) => fmt!("Folded {} earlier messages and shortened {} long tool results and \
+                answers on the way to the model", f, n),
+        };
+        let mut said = fmt!("{}: {} tokens of conversation became about {}.",
+            did, self.gauge.tokens(before), self.gauge.tokens(after));
         if !trouble.is_empty() {
             said.push_str(&fmt!(" The summary could not be written ({}), so only the record \
                 of what was read and written was kept.", trouble));
@@ -2011,6 +2311,145 @@ mod tests {
         }
     }
 
+
+    // ── The round's dispatch: what runs together, and in what order ──────
+    //
+    // The rule itself is `agent::batch`, and its own tests cover which tools may share a batch.
+    // What is covered HERE is the round loop around it: that batching changes nothing a reader of
+    // the event stream or of the conversation can see, and in particular that it does not change
+    // the one thing the page depends on.
+
+    /// A registry over a scratch workspace holding three small files, with the file tools a batch
+    /// is made of and the write tool that breaks one.
+    fn batch_tools() -> crate::tools::ToolRegistry {
+        let dir = match oxedyne_fe2o3_test::scratch::scratch_dir("daimond_agent_batch") {
+            Ok(d)  => d,
+            Err(e) => panic!("a scratch directory: {}", e),
+        };
+        for (name, body) in [("one.txt", "first"), ("two.txt", "second"), ("three.txt", "third")] {
+            if let Err(e) = std::fs::write(dir.join(name), body) {
+                panic!("the fixture file '{}' could not be written: {}", name, e);
+            }
+        }
+        let ws = match crate::workspace::Workspace::new(dir) {
+            Ok(w)  => w,
+            Err(e) => panic!("a scratch workspace: {}", e),
+        };
+        let mut r = crate::tools::ToolRegistry::new(Vec::new(), crate::tools::ToolContext {
+            workspace:   ws,
+            executor:    crate::executor::Executor::local_default(),
+            cwd:         String::new(),
+            path_prefix: String::new(),
+            root:        crate::tools::FileRoot::Workspace,
+            read_seen:   crate::tools::new_read_cache(),
+            no_write:    Vec::new(),
+            daimon_of:   String::new(),
+        });
+        r.tools = vec![crate::tools::Tool::FileRead, crate::tools::Tool::FileWrite];
+        r
+    }
+
+    /// Every tool call and tool result in a run, in the order they reached the page, as
+    /// `("call"|"result", name)`.
+    fn call_stream(events: &[AgentEvent]) -> Vec<(&'static str, String)> {
+        events.iter().filter_map(|e| match e {
+            AgentEvent::ToolCall   { name, .. } => Some(("call",   name.clone())),
+            AgentEvent::ToolResult { name, .. } => Some(("result", name.clone())),
+            _ => None,
+        }).collect()
+    }
+
+    /// Run one turn of the given tool calls against a scripted provider, and hand back every
+    /// event it produced.
+    async fn round_of(
+        calls:    &[(&str, &str)],
+        registry: &ToolRegistry,
+    )
+        -> Vec<AgentEvent>
+    {
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            tool_round(calls),
+            plain_answer(),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(2);
+        let mut session = Session::new(fmt!("s1"), fmt!("batch"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("do the work"), registry,
+            &mut |ev| events.push(ev)).await;
+        events
+    }
+
+    /// A batch of reads answers in the order the MODEL gave, not the order the reads finished.
+    ///
+    /// The three files hold different words, so an answer that came back out of order is caught
+    /// by its content and not merely by its position.
+    #[tokio::test]
+    async fn test_a_batch_of_reads_answers_in_the_models_order_00() {
+        let registry = batch_tools();
+        let events = round_of(&[
+            ("file_read", "{\"path\":\"one.txt\"}"),
+            ("file_read", "{\"path\":\"two.txt\"}"),
+            ("file_read", "{\"path\":\"three.txt\"}"),
+        ], &registry).await;
+
+        let got = tool_results(&events);
+        assert_eq!(3, got.len(), "three reads went out and {} results came back", got.len());
+        for (i, word) in ["first", "second", "third"].iter().enumerate() {
+            assert!(got[i].2.contains(word),
+                "result {} is not the answer to call {}: {}", i, i, got[i].2);
+        }
+    }
+
+    /// ONE CALL ANNOUNCED, THEN ITS RESULT, WHATEVER RAN TOGETHER UNDERNEATH.
+    ///
+    /// This is the page's contract and not a tidiness: `www/js/daimond.js` keeps one
+    /// `pendingTool` and one `pendingCallId` for the chat, the worker dock and the daimon alike,
+    /// and files each result against whichever call was announced last.  Announce a whole batch
+    /// up front and the first result is filed under the last call while the rest are dropped --
+    /// out of the transcript and out of the write-ahead journal both.
+    #[tokio::test]
+    async fn test_a_round_announces_one_call_at_a_time_00() {
+        let registry = batch_tools();
+        let events = round_of(&[
+            ("file_read", "{\"path\":\"one.txt\"}"),
+            ("file_read", "{\"path\":\"two.txt\"}"),
+            ("file_read", "{\"path\":\"three.txt\"}"),
+        ], &registry).await;
+
+        let stream = call_stream(&events);
+        assert_eq!(6, stream.len(), "three calls did not produce three pairs: {:?}", stream);
+        for (i, (kind, _)) in stream.iter().enumerate() {
+            let want = if i % 2 == 0 { "call" } else { "result" };
+            assert_eq!(want, *kind, "the stream stopped alternating at {}: {:?}", i, stream);
+        }
+    }
+
+    /// A WRITE KEEPS ITS PLACE AMONG THE READS AROUND IT.
+    ///
+    /// The order the model gave is the order it intended, and a write is what separates the reads
+    /// before it from the reads after it.  Asserted on the stream the page sees rather than on the
+    /// batching, so it holds however the batching is later rewritten.
+    #[tokio::test]
+    async fn test_a_write_keeps_its_place_among_the_reads_00() {
+        let registry = batch_tools();
+        let events = round_of(&[
+            ("file_read",  "{\"path\":\"one.txt\"}"),
+            ("file_read",  "{\"path\":\"two.txt\"}"),
+            ("file_write", "{\"path\":\"four.txt\",\"content\":\"fourth\"}"),
+            ("file_read",  "{\"path\":\"three.txt\"}"),
+        ], &registry).await;
+
+        let names: Vec<String> = call_stream(&events).into_iter()
+            .filter(|(kind, _)| *kind == "call")
+            .map(|(_, name)| name)
+            .collect();
+        assert_eq!(vec!["file_read", "file_read", "file_write", "file_read"], names,
+            "the round did not run the calls in the order the model gave them");
+    }
+
     // ── The claims audit, and how a turn says it ended ──────────────────
 
     /// A registry over its own scratch workspace, holding the tools named.
@@ -2701,36 +3140,47 @@ mod tests {
         // fraction ceiling is the lower of the two and wins anyway, so nothing shows; on a window
         // learned from a refusal -- the mechanism that exists to recover from the first one -- the
         // prompt is legal by the app's arithmetic and refused by the provider, over and over.
-        let window = 100_000;
+        //
+        // THE WINDOW IS 80,000 BECAUSE `FOLD_AT` MOVED. At 0.8 the two figures parted on a
+        // 100,000 window; at 0.65 the fraction ceiling is 65,000 there, which is below the honest
+        // reserve ceiling of 66,976 -- so both budgets come out at 65,000 and this test could see
+        // nothing to compare. The reserve binds where the fraction does not, which above 64,000 is
+        // any window under 94,354; 80,000 sits inside it with room to spare.
+        let window = 80_000;
 
         // Told the truth, the fold fits first time and the learned window is left alone.
         let fixed = thinking_agent(4_096);
         fixed.set_context_window(window);
         assert_eq!(32_000, fixed.reply_cap());
-        assert_eq!(Some((0, 66_976)), recovery(&fixed, window, fixed.reply_cap()),
+        assert_eq!(Some((0, 46_976)), recovery(&fixed, window, fixed.reply_cap()),
             "the budget must leave room for the reply the client asks for");
         assert_eq!(window, fixed.limits().window, "and must not have to learn anything");
 
-        // Blind, it sends 80,000 against a 100,000 window with 32,000 of reply behind it, is
+        // Blind, it sends the fold fraction of the window with 32,000 of reply behind it, is
         // refused, and pays for the mistake twice: a wasted round trip, and a window permanently
-        // taught to be 60,000 -- `learn_from_refusal` never revises upward, so every later fold in
-        // this session is made against a model 40% smaller than the real one.
+        // taught to be 39,000 -- `learn_from_refusal` never revises upward, so every later fold in
+        // this session is made against a model half the size of the real one.
         let blind = thinking_agent(4_096);
         blind.set_context_window(window);
-        assert_eq!(Some((1, 48_000)), recovery(&blind, window, blind.llm.max_tokens),
+        assert_eq!(Some((1, 25_350)), recovery(&blind, window, blind.llm.max_tokens),
             "the old figure must cost a refusal it did not need to");
-        assert_eq!(60_000, blind.limits().window, "and mis-teach the window for the rest of the run");
-        // And the conversation pays: the fold that finally goes out is a third smaller than the
+        assert_eq!(39_000, blind.limits().window, "and mis-teach the window for the rest of the run");
+        // And the conversation pays: the fold that finally goes out is little more than half the
         // one the honest figure would have sent, on the same model, for no reason.
-        assert!(48_000 < 66_976);
+        assert!(25_350 < 46_976);
     }
 
     #[test]
-    fn test_a_small_learned_window_recovers_in_one_refusal_rather_than_three_00() {
+    fn test_a_small_learned_window_recovers_in_one_refusal_rather_than_several_00() {
         // The case the fix is really for. At 40,000 the reply is most of the window, so a budget
         // that ignores it is wrong by a factor of eight and the grinding-down is visible: the
-        // blind figure is refused three times and lands on a 2,366-token conversation, the honest
-        // one is refused once and keeps two and a half times that.
+        // blind figure is refused twice and lands on a 4,386-token conversation, the honest one is
+        // refused once and keeps forty per cent more.
+        //
+        // It was THREE refusals and 2,366 tokens while `FOLD_AT` was 0.8. Lowering it to 0.65
+        // makes the blind figure smaller from the start, so it crosses under the real window one
+        // round sooner -- the blind path is still worse on both counts, which is the whole claim,
+        // and the counts themselves are a property of the fraction rather than of the fix.
         let honest = thinking_agent(4_096);
         honest.set_context_window(40_000);
         let (h_rounds, h_prompt) = recovery(&honest, 40_000, honest.reply_cap())
@@ -2742,9 +3192,226 @@ mod tests {
             .expect("the blind figure converges too, eventually");
 
         assert_eq!((1, 6_092), (h_rounds, h_prompt));
-        assert_eq!((3, 2_366), (b_rounds, b_prompt));
+        assert_eq!((2, 4_386), (b_rounds, b_prompt));
         assert!(h_rounds < b_rounds, "the fix must cost fewer round trips");
         assert!(h_prompt > b_prompt, "and leave more of the conversation standing");
+    }
+
+    #[test]
+    fn test_a_user_moves_where_their_conversation_folds_00() {
+        // The setting exists so the person watching the meter can decide, so what is asserted is
+        // that the BUDGET moves -- not that a field was written. A window of 100,000 makes the
+        // arithmetic readable: two thirds of it against four fifths of it is a difference of
+        // 15,000 tokens of conversation, which is several exchanges.
+        let a = make_test_agent();
+        a.set_context_window(100_000);
+        let cap = 0u32;   // no reply reserve in the way, so the fraction is the only ceiling
+        let shipped = a.limits().budget(cap);
+        assert_eq!(compact::FOLD_AT, a.limits().fold_at,
+            "a fresh agent must fold at the shipped figure");
+
+        a.set_fold_at(0.8);
+        let later = a.limits().budget(cap);
+        assert!(later > shipped,
+            "folding at 0.8 must leave more room than the shipped {}: {} against {}",
+            compact::FOLD_AT, later, shipped);
+
+        // Zero is how a caller says "the user has not chosen". It must leave the figure alone
+        // rather than fold the conversation to nothing, because that is what the browser passes
+        // for every chat nobody has set a fraction on.
+        a.set_fold_at(0.0);
+        assert_eq!(later, a.limits().budget(cap),
+            "zero must leave the agent's own figure standing");
+
+        // Held at the band, and asserted through the GETTER: a control that draws itself from
+        // `fold_at` would otherwise show a figure the arithmetic never used.
+        a.set_fold_at(9.0);
+        assert_eq!(compact::FOLD_AT_MAX, a.limits().fold_at);
+        a.set_fold_at(0.001);
+        assert_eq!(compact::FOLD_AT_MIN, a.limits().fold_at);
+    }
+
+    #[tokio::test]
+    async fn test_the_fold_does_not_call_a_shortened_answer_a_tool_result_00() {
+        // A PURE CHAT HAS NO TOOL RESULTS AT ALL, and `compact::elide_bulk` shrinks a long
+        // assistant turn on the same rule it shrinks a tool reply on. The sentence used to say
+        // "shortened N tool results" either way, so the one user whose own answers had just been
+        // clipped to 400 characters was told about tool output they never had.
+        //
+        // Built too short to fold -- six messages is `MIN_KEEP_MESSAGES`, so `tail_start` answers
+        // zero -- and too big to send, which is the only shape where eliding does all the work.
+        let a = dead_thinking_agent();
+        a.set_context_window(20_000);
+        let mut session = Session::new(fmt!("s2"), fmt!("bulky"), fmt!("claude-opus-5"));
+        for i in 0..2 {
+            session.messages.push(ChatMessage::user(fmt!("ask {}", i)));
+            session.messages.push(ChatMessage::Assistant {
+                content: MessageContent::text("y".repeat(30_000)), tool_calls: Vec::new(),
+            });
+        }
+        // COUNTED AS THE TURN WILL SEE IT. `run_turn` pushes the user's own message first, so a
+        // fixture measured before that push is one message short -- which is how the first draft
+        // of this test built five messages, watched `run_turn` make it six, and folded when it
+        // meant to elide.
+        let mut as_sent = session.messages.clone();
+        as_sent.push(ChatMessage::user(fmt!("carry on")));
+        assert_eq!(0, compact::tail_start(&as_sent,
+            1_000, compact::MIN_KEEP_MESSAGES, 1_000, &a.llm.open_folds()),
+            "the fixture must be too short to fold, or this tests the other half");
+
+        let registry = no_tools();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("carry on"), &registry,
+            &mut |ev| events.push(ev)).await;
+        let note = events.iter().find_map(|e| match e {
+            AgentEvent::Compacted { note, .. } => Some(note.clone()),
+            _ => None,
+        }).expect("a conversation many times its window must have been compacted");
+        assert!(note.starts_with("Shortened "),
+            "the fixture must have elided rather than folded: {}", note);
+        assert!(!note.contains("tool results:"),
+            "the fold called an answer a tool result: {}", note);
+        assert!(note.contains("tool results and answers"),
+            "the fold must name both kinds, since it shortens both: {}", note);
+        // AND WHERE, which is the second half of the 2026-08-28 ruling. A sentence saying the
+        // answers were shortened, read beside those answers sitting in full on the screen above,
+        // is a contradiction handed to the reader to resolve.
+        assert!(note.contains("on the way to the model"),
+            "the notice does not say the shortening is the request's and not the record's: {}",
+            note);
+
+        // And the claim behind the wording: an ANSWER really was the thing that shrank. Asked of
+        // the COUNT rather than of the stored text, because since 2026-08-28 the stored text is
+        // exactly what it was -- see `test_an_answer_shortened_to_fit_stays_whole_in_the_record_00`,
+        // which reads the request body a stub provider really received and is where the claim
+        // that something shrank on the wire now lives.
+        let shrank = note.split("hortened ").nth(1)
+            .and_then(|s| s.split(' ').next())
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(0);
+        assert!(shrank > 0,
+            "nothing was shortened at all, so the wording is not what this is about: {}", note);
+        // THE RECORD IS UNTOUCHED, and this is the assertion that was the other way round until
+        // the ruling. A conversation with no fold and no room has had its request shortened; the
+        // session it was built from still holds every character of both answers.
+        for m in session.messages.iter() {
+            assert!(!m.text().contains("folded away to fit the context window"),
+                "the engine's own elision note was written into the stored conversation");
+        }
+        assert_eq!(2, session.messages.iter()
+            .filter(|m| matches!(m, ChatMessage::Assistant { .. }) && m.text().len() >= 30_000)
+            .count(),
+            "an answer the model was sent a clipped copy of came back short in the record");
+    }
+
+    /// A conversation that is too short to fold and too big to send, with a word past the cap.
+    ///
+    /// The marker sits a thousand characters into each answer, which is well past
+    /// [`compact::TOOL_ELISION_CAP`], so it survives only where the whole answer survives.  Both
+    /// tests below turn on that one word being somewhere and not somewhere else.
+    fn bulky_session(mark: &str) -> Session {
+        let mut session = Session::new(fmt!("s"), fmt!("bulky"), fmt!("model"));
+        for i in 0..2 {
+            session.messages.push(ChatMessage::user(fmt!("ask {}", i)));
+            session.messages.push(ChatMessage::Assistant {
+                content: MessageContent::text(
+                    fmt!("{}{}{}", "y".repeat(1_000), mark, "y".repeat(30_000))),
+                tool_calls: Vec::new(),
+            });
+        }
+        session
+    }
+
+    #[tokio::test]
+    async fn test_an_answer_shortened_to_fit_stays_whole_in_the_record_00() {
+        // THE OWNER'S RULING OF 2026-08-28: the model gets the shortened version, his transcript
+        // keeps every word. `compact::elide_bulk` edited `session.messages` in place, and that
+        // list is the one `DaimondApp::export_session` hands the browser to store, to back up and
+        // to sync -- so a thousand-word answer became four hundred characters in the user's own
+        // record, permanently, with nothing said and no way back.
+        //
+        // Both halves are asked of an artefact rather than of the app. What the model got is read
+        // out of the request body a stub provider really received; what the user kept is read out
+        // of the session the turn was run against.
+        const MARK: &str = "MARKER-PAST-THE-CAP";
+        let (port, seen) = crate::llm::tests::start_stub(vec![plain_answer()]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = bulky_session(MARK);
+        // Six messages is `MIN_KEEP_MESSAGES`, and `run_turn` adds the user's own before any of
+        // this runs -- so a fixture measured before that push is one short, which is how an
+        // earlier test in this file folded when it meant to elide.
+        let mut as_sent = session.messages.clone();
+        as_sent.push(ChatMessage::user(fmt!("carry on")));
+        assert_eq!(0, compact::tail_start(&as_sent,
+            1_000, compact::MIN_KEEP_MESSAGES, 1_000, &a.llm.open_folds()),
+            "the fixture must be too short to fold, or this tests the other half");
+
+        let registry = no_tools();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("carry on"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let bodies = match seen.lock() {
+            Ok(g)  => g.bodies.clone(),
+            Err(e) => panic!("the stub's log: {}", e),
+        };
+        assert!(!bodies.is_empty(), "the stub was never called, so nothing was sent to read");
+        let wire = bodies.join("\n");
+        // The fixture reached the branch: something really was shortened on the way out.
+        assert!(wire.contains("folded away to fit the context window"),
+            "nothing was shortened for the model, so this proves nothing about what was kept");
+        // COUNTED, not looked for. `elide_bulk` stops the moment the conversation fits, so with
+        // two long answers it may clip one and leave the other -- and an assertion that the
+        // marker is absent from the wire would then be red for a reason that is the elision
+        // working. What must be true is that the model saw FEWER whole answers than the record
+        // holds, and that is what is asked.
+        let on_wire   = wire.matches(MARK).count();
+        let in_record = session.messages.iter().filter(|m| m.text().contains(MARK)).count();
+        assert_eq!(2, in_record,
+            "the stored conversation lost the words past the cap -- the record is still the wire");
+        assert!(on_wire < in_record,
+            "the model was sent {} whole answers of the {} the record holds, so nothing was \
+             shortened on the wire", on_wire, in_record);
+
+        // AND THE RECORD IS WHOLE, which is the ruling. Red before it: the two lists were one.
+        for m in session.messages.iter() {
+            assert!(!m.text().contains("folded away to fit the context window"),
+                "the engine's own elision note was written into the stored conversation");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_a_later_fold_summarises_the_words_and_not_the_stubs_00() {
+        // THE SECOND LOSS, which stood behind the first and was quieter. `fold_if_needed` renders
+        // `session.messages` for the summarising model (`compact::render_for_fold`) and then, in
+        // the same function, used to clip that same list. So the FIRST fold read the words and
+        // every fold after it read whatever the elision had left -- four hundred characters and a
+        // note, per message. A conversation folded twice was summarised from stubs, and the
+        // summary is the only thing that survives a fold.
+        //
+        // Asked of `render_for_fold` itself, over the session a real turn left behind, because
+        // that is the call the fold makes and the input it makes it on.
+        const MARK: &str = "MARKER-PAST-THE-CAP";
+        let (port, _seen) = crate::llm::tests::start_stub(vec![plain_answer()]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = bulky_session(MARK);
+        let registry = no_tools();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("carry on"), &registry,
+            &mut |ev| events.push(ev)).await;
+        // The turn really did shorten something, or there is no "afterwards" to test.
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::Compacted { .. })),
+            "the conversation was sent unshortened, so no later fold could read a stub");
+
+        let rendered = compact::render_for_fold(&session.messages, compact::FOLD_INPUT_CAP);
+        assert!(rendered.contains(MARK),
+            "the next fold would summarise clipped stubs: {} bytes rendered, no marker in them",
+            rendered.len());
+        assert!(!rendered.contains("folded away to fit the context window"),
+            "the next fold would be handed the engine's own elision notes as if they were the \
+             conversation");
     }
 
     /// A dead-endpoint agent whose dialect and model are the ones the client raises the output cap
@@ -2760,14 +3427,16 @@ mod tests {
     #[tokio::test]
     async fn test_whether_to_fold_is_decided_by_the_reply_that_will_be_sent_00() {
         // The two arithmetics above are only worth anything if the fold ASKS them, so this pins
-        // the call site rather than the function. The window is 100,000; the honest budget is
-        // 66,976 and the blind one 80,000, so a conversation sitting between the two folds under
+        // the call site rather than the function. The window is 80,000; the honest budget is
+        // 46,976 and the blind one 52,000, so a conversation sitting between the two folds under
         // the figure that will be sent and does not fold under the figure that was configured --
+        // the window was 100,000 while `FOLD_AT` was 0.8, and at 0.65 the fraction wins there and
+        // closes the gap, so the fixture moved down with the constant --
         // and not folding is a prompt the provider refuses.
         let a = dead_thinking_agent();
-        a.set_context_window(100_000);
+        a.set_context_window(80_000);
         let mut session = Session::new(fmt!("s1"), fmt!("long"), fmt!("claude-opus-5"));
-        for i in 0..70 {
+        for i in 0..46 {
             session.messages.push(ChatMessage::user(fmt!("step {}", i)));
             session.messages.push(ChatMessage::Assistant {
                 content: MessageContent::text("x".repeat(4_000)), tool_calls: Vec::new(),
@@ -2805,7 +3474,11 @@ mod tests {
         a.set_context_window(40_000);
         let honest = a.limits().budget(a.reply_cap());
         let blind  = a.limits().budget(a.llm.max_tokens);
-        assert_eq!(32_000, blind, "blind, the fold fraction was left untouched");
+        // As the FRACTION, not as the figure it happened to come to. That is what the sentence
+        // beside it claims, and writing it as 32,000 made a test about the reply reserve go red
+        // when the fold fraction moved.
+        assert_eq!((40_000.0 * compact::FOLD_AT) as u64, blind,
+            "blind, the fold fraction was left untouched");
         assert_eq!(18_976, honest, "honest, the clamped reserve of 20,000 is taken out");
         assert!(honest + 20_000 <= 40_000, "the clamped reserve must at least be honoured");
         assert!(honest + (a.reply_cap() as u64) > 40_000,

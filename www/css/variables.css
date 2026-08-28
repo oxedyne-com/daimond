@@ -166,7 +166,15 @@
 	--rail-w:            220px;
 	--agents-w:          240px;
 	--work-w:            260px;
-	--mnav-h:            54px;
+	/* The phone's bottom bar, WITHOUT the home indicator's inset, which the bar
+	   adds to its own padding. It was 54px here and 58px in fact, and nothing
+	   read it: css/mobile.css and js/mobile.js each carried their own copy of the
+	   real number, and the sheet's foot is placed from one and its height from the
+	   other. Both read this now, and mobile.js measures the bar rather than
+	   trusting any of the three. 62 is a 44px chip -- the AAA target the row of
+	   destinations before it met -- plus the strip's own 8 and 9 and the bar's
+	   1px rule. */
+	--mnav-h:            62px;
 }
 
 /* Lollypop — an inviting candy theme. A soft multicolour glow (pink, lavender, mint) washes the

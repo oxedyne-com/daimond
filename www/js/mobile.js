@@ -30,6 +30,112 @@
 	function closeDrawer() { document.body.classList.remove('drawer-open'); }
 	function toggleDrawer() { document.body.classList.toggle('drawer-open'); }
 
+	// ── The footer: the chip row ───────────────────────────────
+	//
+	// The bar carried four hard-wired destinations -- Chat, Email, Files, Agents
+	// -- and named four of the seventeen panels there are. It carries the chip
+	// row now, which is the row the desktop header carries, MOVED here rather
+	// than copied: `#panel-tags` is the one row the layout engine renders, the
+	// one `Badge.paint` marks with unseen counts, and the one the gallery asks
+	// whether a panel is on. A second copy would be a second thing to keep in
+	// step with all three, and the first to drift.
+
+	/// Put the chip row where this width wants it: the footer on a phone, the
+	/// top bar otherwise.
+	function placeChips() {
+		var row  = document.getElementById('panel-tags');
+		var bar  = document.getElementById('mnav');
+		var acts = document.querySelector('.top-actions');
+		if (!row || !bar || !acts) return;
+		var want = isPhone() ? bar : acts;
+		if (row.parentNode === want) return;
+		// FIRST in the top bar, which is where the markup has it: the icon buttons
+		// after it are what the row's left edge is measured against.
+		if (want === acts) acts.insertBefore(row, acts.firstChild);
+		else bar.appendChild(row);
+		bindScroll(row);
+		if (window.DaimondPanels) DaimondPanels.reflow();
+		markHere();
+	}
+
+	/// Which panel the user is actually looking at, or '' if that is the chat
+	/// floor with nothing over it.
+	///
+	/// Three surfaces can be the answer and the phone shows one of them at a
+	/// time: the drawer (the rail), the sheet (a guest), and the destination on
+	/// the floor. Exported because the chip row's renderer has to fill in the
+	/// same chip this marks, and two answers to "where am I" would show as two
+	/// chips filled at once.
+	function here() {
+		if (document.body.classList.contains('drawer-open')) return 'rail';
+		if (guest) return guest;
+		return document.body.dataset.mpanel || '';
+	}
+
+	/// Fill in the chip for wherever we are, and scroll it into view.
+	///
+	/// On a desktop a filled chip means "this panel is open", which is legible
+	/// because you can see the panel. On a phone one thing is on screen, so the
+	/// only useful meaning is "this is it" -- an `open` Email panel behind a
+	/// Terminal sheet is not where the user is.
+	var _here = null;
+	function markHere() {
+		if (!isPhone()) return;
+		var row = document.getElementById('panel-tags');
+		if (!row) return;
+		var id = here(), on = null;
+		row.querySelectorAll('.ptag[data-panel]').forEach(function (c) {
+			var is = c.dataset.panel === id;
+			c.classList.toggle('on', is);
+			c.setAttribute('aria-pressed', is ? 'true' : 'false');
+			if (is) on = c;
+		});
+		// SCROLLED TO ONLY WHEN IT CHANGES. This runs on every attribute change to
+		// `body` -- and `class` alone carries `resizing`, `sheet-open` and
+		// `drawer-open` -- so a scroll on every call would drag the strip back to
+		// wherever the user already is each time anything at all happened, while
+		// their thumb was on it looking for something else.
+		if (on && id !== _here && on.scrollIntoView) {
+			try { on.scrollIntoView({ inline: 'nearest', block: 'nearest' }); } catch (e) { /* old engine */ }
+		}
+		_here = id;
+		markScroll(row);
+	}
+
+	/// Say which way there is more of the row, so the fade at its ends is true.
+	function markScroll(row) {
+		var more = row.scrollWidth - row.clientWidth;
+		if (more <= 1) { row.removeAttribute('data-more'); return; }
+		var atStart = row.scrollLeft <= 1;
+		var atEnd   = row.scrollLeft >= more - 1;
+		row.dataset.more = atStart ? 'end' : (atEnd ? 'start' : 'both');
+	}
+
+	function bindScroll(row) {
+		if (row._moreBound) return;
+		row._moreBound = true;
+		row.addEventListener('scroll', function () { markScroll(row); }, { passive: true });
+		if (typeof ResizeObserver !== 'undefined') {
+			new ResizeObserver(function () { markScroll(row); }).observe(row);
+		}
+	}
+
+	/// What a footer chip means: take me there.
+	///
+	/// NOT the desktop row's toggle. A chip there is filled while its panel is
+	/// open and clicking it puts the panel away, which reads correctly because
+	/// you can see both states at once. Here the thing it would put away is the
+	/// whole screen -- and for the rail it is worse than that: `hide('rail')`
+	/// sets `display: none` on the element the drawer IS, and the hamburger only
+	/// toggles a class, so the drawer would never open again. See the capture
+	/// handler further down, which exists for the same trap on the rail's own
+	/// closer.
+	function goTo(id) {
+		if (guest && guest !== id) close();		// one thing up at a time
+		if (window.DaimondPanels) DaimondPanels.show(id);
+		markHere();
+	}
+
 	// ── The sheet ──────────────────────────────────────────────
 	// Guests that default to full (a thing you mostly read or write)
 	// versus half (a thing you glance at while talking to the daimon).
@@ -61,12 +167,29 @@
 		return (el && el.getAttribute('data-label')) || id;
 	}
 
-	// The bar (~58px) and the top bar (~50px) bound the room the sheet may take.
-	var BAR = 58, TOPBAR = 50, PEEK = 56;
+	// The top bar (~50px) and the bottom bar bound the room the sheet may take.
+	var BAR_FALLBACK = 62, TOPBAR = 50, PEEK = 56;
+
+	/// How tall the bottom bar actually is, home indicator included.
+	///
+	/// MEASURED, not written down. This was the constant 58 while css/mobile.css
+	/// drew the bar from its own 58 and variables.css declared 54 -- three copies
+	/// of one number, and the sheet's foot is placed from one of them while its
+	/// height is worked out from another. A bar that changes (it did, on
+	/// 2026-08-28, when the four destinations became the chip row) then puts the
+	/// sheet's foot over it, which is what `dev/verify_sweep_mobile.mjs` measures
+	/// at every phone width and with a notch inset posed. The fallback is for a
+	/// call before the bar is laid out, and errs LARGE, which errs towards a
+	/// shorter sheet.
+	function barH() {
+		var b = document.getElementById('mnav');
+		var h = b ? Math.round(b.getBoundingClientRect().height) : 0;
+		return h > 0 ? h : BAR_FALLBACK;
+	}
 
 	/// The most a sheet may grow to: from just under the top bar to just above
 	/// the bottom bar. `full` stops a touch short so a sliver of chat stays.
-	function maxH() { return Math.max(PEEK, window.innerHeight - TOPBAR - BAR); }
+	function maxH() { return Math.max(PEEK, window.innerHeight - TOPBAR - barH()); }
 
 	/// The HEIGHT of the sheet at each detent (it is anchored to the bottom, so
 	/// a taller sheet reveals more of the thing and less of the chat).
@@ -301,6 +424,18 @@
 			if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); }
 		});
 
+		// The chip row belongs to whichever bar this width uses.
+		placeChips();
+
+		// WHERE WE ARE IS WATCHED, NOT REPORTED. Six or more paths change it --
+		// `mshow`, the sheet opening and closing, the drawer, a panel closing
+		// itself, a saved layout being restored -- and every one of them ends in
+		// one of these two attributes. Watching them covers the paths nobody
+		// remembered to call from, which is exactly how the old bar's four buttons
+		// came to be marked in two places and not in the others.
+		var watch = new MutationObserver(markHere);
+		watch.observe(document.body, { attributes: true, attributeFilter: ['data-mpanel', 'class'] });
+
 		// The hamburger and the scrim.
 		var burger = document.getElementById('drawer-btn');
 		if (burger) burger.addEventListener('click', toggleDrawer);
@@ -384,6 +519,9 @@
 		modeTimer = setTimeout(onMode, 60);
 	}
 	function onMode() {
+		// Either way the chip row has to be in the bar this width uses, so this
+		// comes before the desktop-only restore below it.
+		placeChips();
 		if (window.innerWidth <= 760) return;
 		closeDrawer();
 		if (guest) teardown();
@@ -413,6 +551,10 @@
 	};
 	window.DaimondShell = {
 		openDrawer: openDrawer, closeDrawer: closeDrawer, toggleDrawer: toggleDrawer,
+		/// What a footer chip does, and where the chip row's renderer asks which
+		/// chip to fill in. See `goTo` and `here`.
+		goTo: goTo, here: here, markHere: markHere,
+		isPhone: isPhone,
 	};
 
 	if (document.readyState === 'loading') {

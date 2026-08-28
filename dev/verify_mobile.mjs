@@ -154,9 +154,64 @@ check('boot: shell present', await page.evaluate(() => !!window.DaimondSheet && 
 check('boot: hamburger visible', await page.evaluate(() => {
 	const b = document.getElementById('drawer-btn'); return b && getComputedStyle(b).display !== 'none';
 }));
-check('boot: bar has 4 destinations', await page.evaluate(() =>
-	document.querySelectorAll('#mnav button').length === 4));
+// THE BAR IS THE CHIP ROW NOW, and this asked for the four hard-wired
+// destinations it replaced -- Chat, Email, Files, Agents, four of the seventeen
+// panels there are. The count is asserted UP rather than merely changed: what
+// the footer holds must be the whole pinned row, and the four the old bar named
+// must all still be in it, or "replaced the bar" would be a way of losing three
+// of them quietly.
+{
+	const bar = await page.evaluate(() => {
+		const row = document.getElementById('panel-tags');
+		return {
+			inBar:  !!(row && row.closest('#mnav')),
+			ids:    row ? [...row.querySelectorAll('.ptag[data-panel]')].map(c => c.dataset.panel) : [],
+			labelled: row ? [...row.querySelectorAll('.ptag[data-panel]')].every(c => (c.textContent || '').trim().length > 0) : false,
+			scrolls: row ? row.scrollWidth > row.clientWidth : false,
+			more:    row ? (row.dataset.more || '') : '',
+		};
+	});
+	check('boot: the footer is the panel chip row', bar.inBar);
+	check('boot: it holds more than the four the old bar named',
+		bar.ids.length > 4, bar.ids.length + ': ' + bar.ids.join(','));
+	check('boot: and it still holds all four of them',
+		['ai', 'mail', 'work', 'agents'].every(id => bar.ids.indexOf(id) !== -1), bar.ids.join(','));
+	check('boot: every chip carries its word', bar.labelled);
+	check('boot: the strip scrolls, and says which way there is more of it',
+		bar.scrolls && /^(start|end|both)$/.test(bar.more), 'more=' + bar.more);
+}
 check('boot: floor is the chat', await page.evaluate(() => document.body.dataset.mpanel === 'ai'));
+
+// ── 1b. The strip's chips reach, and say where you are ─────
+// A strip that scrolls is only useful if the chip you press comes to you: the
+// last four panels are off the end of a 390px screen, and a chip you have to
+// find again after every tap is a chip you stop using.
+{
+	await page.evaluate(() => { const r = document.getElementById('panel-tags'); r.scrollLeft = 0; r.dispatchEvent(new Event('scroll')); });
+	await sleep(250);
+	const before = await page.evaluate(() => {
+		const r = document.getElementById('panel-tags');
+		const c = r.querySelector('.ptag[data-panel="social"]');
+		return { left: Math.round(r.scrollLeft), off: c.getBoundingClientRect().right > window.innerWidth };
+	});
+	await page.evaluate(() => document.querySelector('#panel-tags .ptag[data-panel="social"]').click());
+	await sleep(600);
+	const after = await page.evaluate(() => {
+		const r = document.getElementById('panel-tags');
+		const c = r.querySelector('.ptag[data-panel="social"]');
+		const b = c.getBoundingClientRect();
+		return { left: Math.round(r.scrollLeft), onScreen: b.left >= 0 && b.right <= window.innerWidth,
+			lit: [...r.querySelectorAll('.ptag.on')].map(x => x.dataset.panel) };
+	});
+	check('strip: the last chip starts off the end of the screen', before.off);
+	check('strip: pressing it brings it into view', after.onScreen && after.left > before.left,
+		JSON.stringify(after));
+	check('strip: and it is the only chip filled in — where you are, not what is open',
+		after.lit.length === 1 && after.lit[0] === 'social', after.lit.join(','));
+	// Back to the floor, so the sections below start where they expect to.
+	await page.evaluate(() => document.querySelector('#panel-tags .ptag[data-panel="ai"]').click());
+	await sleep(500);
+}
 
 // ── 2. The drawer ──────────────────────────────────────────
 await page.evaluate(() => document.getElementById('drawer-btn').click());

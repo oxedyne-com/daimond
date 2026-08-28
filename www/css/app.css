@@ -136,7 +136,18 @@ svg { display: block; }
 :root[data-ink="dark"] .brand-wordmark.wm-on-light { display: block; }
 .top-meter { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-secondary); overflow: hidden; white-space: nowrap; }
 .top-meter .sep { color: var(--text-muted); }
-.top-actions { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; }
+/* NOTHING IN THIS GROUP MAY MOVE ITS NEIGHBOURS. The bar distributes its three
+   children with space-between, so while this box shrank to its contents it sat
+   flush right and every pixel that appeared inside it pushed the chip row left:
+   measured at 1440px, a "Syncing..." pill arriving moved all thirteen chips
+   86px, the pairing button another 122, and a held-back sweep 98. That is a row
+   of targets that jumps while a thumb is on its way to one.
+   `flex: 1 1 auto` here, and on `.panel-tags` below, fixes both ends instead:
+   the row starts where the wordmark leaves off and the icons end at the bar's
+   own edge, whatever is or is not between them. `justify-content: flex-end`
+   is for the phone, where the chip row is not in this box at all (it is the
+   footer there) and the icons would otherwise pack to the left. */
+.top-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; flex: 1 1 auto; }
 
 .icon-btn { display: flex; align-items: center; justify-content: center; background: none; border: none; color: var(--text-secondary); font-size: var(--fs-xl); padding: 5px 7px; border-radius: var(--radius-sm); }
 .icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
@@ -183,7 +194,19 @@ svg { display: block; }
    flex` on it. The phone sheet does exactly that (`#msheet .panel`), and the
    panel's head and its body then laid out side by SIDE: a stranded "SPENDING"
    column on the left and the figures squeezed into what was left. */
-.rail, .agents, .work, .mail, .spend { flex: none; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+/* Social belongs here for the same reason, and was left out in the same way.
+   As a block it made `.imp-view { flex: 1 }` and `.imp-notes { flex: 1;
+   overflow-y: auto }` (css/improve.css) both inert: a flex child of nothing is
+   a block that takes its content's height, so `overflow-y: auto` never had an
+   overflow to engage on. Measured 2026-08-28 with twenty notes kept: the panel
+   was clipped at 434px and the list ran to 2606px, so NOT ONE note was on the
+   screen and nothing would scroll to them. */
+.rail, .agents, .work, .mail, .spend, .social { flex: none; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+/* The `gap: 6px` above falls between the head and the body and NOWHERE ELSE
+   here, which is why this panel needs no correction for it: every other child
+   of `.social` is an `.imp-view`, and `.imp-view[hidden]` is `display: none`,
+   so exactly one of the five is ever in the flow. Measured after the change:
+   the note box starts 6px lower than it did and nothing else moved. */
 /* Now that the panel is a flex column, the view is its flexible child: its own
    `height: 100%` would otherwise sit BESIDE the head in the height budget and
    push its own last rows out under the clip. */
@@ -244,8 +267,20 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 	font-variant-numeric: tabular-nums;
 }
 .dock-count[hidden] { display: none; }
-/* On a top-bar chip it follows the label on the same line. */
-.ptag .dock-count { margin-left: 5px; }
+/* ON A CHIP IT IS OVER THE CHIP, NOT ON THE LINE. It followed the label with a
+   5px margin, so a chip grew by ~21px the moment something arrived for it and
+   every chip left of it moved -- measured 2026-08-28 at 1440px, nine of thirteen
+   shifted 21px when three messages landed in the mailbox, which is the least
+   predictable moment there is to be reaching for one. Out of the chip's flow
+   instead, over its top-right corner, which is where a badge is looked for and
+   what `.mnav button .dock-count` (responsive.css) has always done. */
+.ptag { position: relative; }
+.ptag .dock-count {
+	position: absolute;
+	top: -6px;
+	right: -4px;
+	pointer-events: none;
+}
 .addbtn { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1; }
 .addbtn:hover { color: var(--text-primary); }
 .addbtn:disabled { opacity: 0.4; cursor: default; }
@@ -410,6 +445,37 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .astat-dot.off { background: var(--border-2); }
 .astat-lock { flex: none; font-size: var(--fs-3xs); color: var(--text-muted); }
 
+/* The sync row. Its chip (`#sync-chip`, built by js/sync.js) and its resting
+   line share one row and exactly one of them is ever showing, so the row's
+   height never changes and nothing in the strip moves under a thumb.
+   These rules were injected by sync.js while the chip was a pill in the top
+   bar; they are here now because the row they draw is in the markup, and
+   because this is where the strip's other ten rows are drawn. */
+.astat-sync { position: relative; }
+#sync-chip {
+	display: none;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	color: var(--text-secondary);
+}
+#sync-chip .stext { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sync-chip[data-state="syncing"] { color: var(--accent); }
+#sync-chip[data-state="synced"]  { color: var(--ok); }
+#sync-chip[data-state="off"]     { color: var(--text-secondary); cursor: pointer; }
+/* A stall is not an error and not a success: something is wrong that the user
+   can fix, which is what --warn is for in the rest of the app. */
+#sync-chip[data-state="stalled"] { color: var(--warn); }
+/* The dot is the strip's dot, taking its colour from the state above it rather
+   than from a class, since the state is already on the element. */
+#sync-chip .sdot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+#sync-chip[data-state="syncing"] .sdot { animation: syncpulse 1s ease-in-out infinite; }
+@keyframes syncpulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+	#sync-chip[data-state="syncing"] .sdot { animation: none; opacity: 1; }
+}
+
 /* The setup prompt. Until Daimond has a model it cannot answer anything, so the model row is
    the one thing to do — it glows gently, on a slow cycle so it draws the eye without nagging.
    Respects a user who has asked the OS for less motion. */
@@ -439,7 +505,26 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 	margin-bottom: 6px;
 	display: none;
 	flex-direction: column;
-	max-height: min(70vh, 540px);
+	/* BOUNDED BY THE RAIL, NOT BY A NUMBER. This was `min(70vh, 540px)`, and 540
+	   is the room above the Status strip on the window it was written on -- so on
+	   any shorter one the drawer grew straight past the rail's top edge, and the
+	   rail clips its overflow, so the drawer's own head went with it. Hit-tested
+	   on 2026-08-28, sweeping the window from 640px to 1200px: at 840px and below
+	   the drawer's × was not on the screen at all, and this is the one surface in
+	   the app that covers the whole rail and has no other way out. At 640px the
+	   drawer stood 157px above the rail's top.
+	   `--admin-room` is that distance, measured by `boundDrawer` in js/daimond.js
+	   whenever the rail or the strip changes size. It is also what makes the
+	   strip's own height safe to change at all: a taller strip now makes the
+	   drawer SHORTER instead of pushing it up into the rail's head, which is what
+	   `#new-diamond-btn` was 14px from when the spend row was made permanent.
+
+	   THE COMFORT CAPS ARE GONE WITH IT. `70vh` and `540px` both put the top edge
+	   wherever the arithmetic landed, and at 940px of window that was inside
+	   `#new-diamond-btn` -- half the button covered, its centre not, which is a
+	   control that looks pressable and is not. One bound, at a structural
+	   boundary, is what makes the top edge the same place at every height. */
+	max-height: var(--admin-room, 540px);
 	background: var(--bg-secondary);
 	border: 1px solid var(--border);
 	border-radius: 12px;
@@ -875,6 +960,36 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 	font-size: var(--fs-xs);
 	line-height: 1.5;
 	white-space: pre-wrap;
+}
+
+/* THE FOLD IS A BOUNDARY, NOT A MESSAGE.
+ *
+ * A tester read a long chat as losing its history. Nothing was: the conversation had folded,
+ * the app said so, and the sentence sat at the bottom of a transcript that still showed every
+ * earlier message in full. See `appendCompacted` in www/js/daimond.js for the whole reasoning.
+ *
+ * So it is drawn as a rule across the thread. The rule is the signal; the ink above it is
+ * NOT reduced, because dimming the words would be the app hiding a conversation it has just
+ * been accused of losing. What marks them is a line down the side, in the same border the
+ * notice wears, so the eye can follow the region back to the rule that names it. */
+.chat-fold-line { position: relative; padding-top: 14px; }
+.chat-fold-line::before {
+	content: '';
+	position: absolute;
+	top: 4px; left: 0; right: 0;
+	border-top: 1px dashed var(--border-2);
+}
+.chat-fold-boundary {
+	margin-top: 6px;
+	padding: 0 2px;
+	color: var(--text-secondary);
+	font-size: var(--fs-xs);
+	line-height: 1.5;
+}
+.chat-above-fold {
+	border-left: 2px solid var(--border-2);
+	padding-left: 8px;
+	margin-left: -10px;
 }
 
 /* How the turn ended — FURNITURE, and the styling is the whole of the
@@ -1499,18 +1614,35 @@ span.arte-open { cursor: default; }
 .tool-args, .tool-result { margin: 0; padding: 8px 12px; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: var(--fs-xs); border-top: 1px solid var(--border); max-height: 260px; overflow: auto; }
 .tool-args { color: var(--text-secondary); }
 .tool-result { color: var(--text-primary); }
+/* Why a command in this block could not reach anything. NOT a failure -- the fence
+   did what the user asked -- so the warning colour the refusals use and never the
+   danger one, and prose rather than the monospace the tool's own output is in. */
+.tool-nonet { padding: 8px 12px; border-top: 1px solid var(--border); color: var(--warn); font-size: var(--fs-xs); }
 /* Collapsed by default: hide the (often long) args JSON, keep the result. */
 .tool-block.collapsed .tool-args { display: none !important; }
 .chat-output.hide-tools .tool-block { display: none; }
-/* The model thinking out loud on its way to a tool call. It hides with the steps
-   because it is one: the reader who turned the working off meant this too. */
-.chat-output.hide-tools .chat-msg-working { display: none; }
+/* The model thinking out loud on its way to a tool call, and IT DOES NOT HIDE WITH THE
+   STEPS. It did until 2026-08-28, on the reasoning that a reader who turned the working
+   off meant this too, and what that actually did was take the model's own sentences off
+   the screen: a turn of twenty calls kept nothing but its last paragraph. The switch is
+   called Steps and it hides the steps. See `demoteToWorking` in www/js/daimond.js. */
 .chat-msg-working { margin: 4px 0 4px 2px; }
 .chat-working-line {
 	color: var(--text-muted);
 	font-size: var(--fs-sm);
 	font-style: italic;
 	opacity: 0.72;
+}
+/* How much of the model's working went behind the control. Quieter than the summary
+   it sits after, because it is a measurement and not a sentence -- but it is THERE,
+   which is the point: a summary alone reads as text that went away rather than as a
+   control that opens on it. See `demoteToWorking` in www/js/daimond.js. */
+.chat-working-more {
+	margin-left: 6px;
+	color: var(--text-muted);
+	font-size: var(--fs-xs);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
 }
 
 /* Context-window meter (session boxes + agent tiles) */
@@ -2188,6 +2320,16 @@ span.arte-open { cursor: default; }
 .dlg-select optgroup { font-family: var(--font); font-style: normal; font-weight: 600; color: var(--text-secondary); }
 .dlg-select option { font-family: var(--font-mono); color: var(--text-primary); }
 .dlg-select option:disabled { color: var(--text-muted); }
+/* A dialog's own tick: one thing the user turns ON, above the buttons. It is a
+   `label` wrapping the box, so the words are part of the target -- a consent
+   control whose only hit area is a 13px square is one people miss and then say
+   they never chose. Unticked at every open, because the dialog is built fresh
+   each time and a remembered tick would be the standing answer arriving by the
+   back door again. */
+.dlg-tick { display: flex; align-items: flex-start; gap: 9px; margin: 2px 0 14px; cursor: pointer;
+	font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.4; }
+.dlg-tick-box { margin: 1px 0 0; flex: none; accent-color: var(--accent); }
+.dlg-tick:hover { color: var(--text-primary); }
 .dlg-ok { background: var(--accent); color: var(--on-fill, #fff); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 8px 16px; font-size: var(--fs-base); }
 .dlg-ok:hover { filter: brightness(1.08); }
 .dlg-err { min-height: 16px; font-size: var(--fs-xs); color: var(--danger); margin-bottom: 8px; }
@@ -2967,7 +3109,18 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
    reach it: a same-origin page we serve ourselves, or a real tab under
    Daimond Hands. A cross-origin iframe is opaque to us — that is the
    same-origin policy, not a gap to be worked around. */
-.web-body { position: relative; flex: 1; min-height: 0; display: flex; }
+/* A COLUMN, so a standing strip can sit above the picture rather than beside
+   it. It held one flexible child until `.web-live` arrived, so the direction
+   made no difference before and makes one now; the three things that cover this
+   body -- the note, the blindfold and the read-only text copy -- are all
+   `position: absolute; inset: 0` and are unaffected either way. */
+.web-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* Why there are two of them: a real browser tab, and this panel's picture of
+   it. Dressed as `.web-readonly` because it is the same kind of sentence --
+   a standing fact about what you are looking at, said quietly and never
+   dismissed. */
+.web-live { flex: none; padding: 7px 14px; font-size: var(--fs-2xs-xs); color: var(--text-muted); background: var(--bg-tertiary); border-bottom: 1px solid var(--border); }
+.web-live[hidden] { display: none; }
 .web-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
 .web-mirror { flex: 1; min-height: 0; width: 100%; object-fit: contain; object-position: top; background: #fff; }
 .web-url { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-secondary); }
@@ -3001,7 +3154,17 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
    from its own header. Measured at three widths; 300 and 250 were still inside.
    A row that drops is a row you can still press. */
 .web .chead, .doc .chead, .msg .chead { gap: 8px; flex-wrap: wrap; row-gap: 4px; }
-.web .ctitle, .doc .ctitle, .msg .ctitle { flex: 1 1 auto; min-width: 0; }
+/* AND THE BASIS IS ZERO, NOT `auto`, WHICH IS WHAT MAKES THE ROW ABOVE A LAST
+   RESORT RATHER THAN THE USUAL CASE. A wrapping flex container breaks its lines
+   on each item's flex BASE size, before any shrinking -- so with `auto` a title
+   whose text is 800px wide claimed a line of its own at any panel width, and
+   pushed the button row onto a third. Measured 2026-08-28 in a 413px Web panel:
+   an ordinary URL took the head from 53px to 102px and left the closer at 229px
+   from the panel's right edge and 65px down, which is the fault reported as "the
+   cross should be at a fixed position in the top right corner". With a basis of
+   zero the title never forces a break, ellipsises as it was always meant to, and
+   the row still drops at the 205px seat the comment above measured. */
+.web .ctitle, .doc .ctitle, .msg .ctitle { flex: 1 1 0; min-width: 0; }
 /* The Doc panel holds the file as characters. The Preview panel holds what it
    looks like: a PDF in `.doc-embed`, anything else the viewer draws in
    `#pv-view`, and the live typeset pages in front of both. Each fills its
@@ -3501,6 +3664,21 @@ body.resizing { cursor: col-resize; user-select: none; }
 	padding: 0;
 }
 .chip-btn.icon-chip .ic { width: 14px; height: 14px; }
+
+/* A WORD AMONG THE DRAWINGS, AT THE DRAWINGS' HEIGHT. One chip in this row keeps
+   its label -- "Wire", which is not a picture of anything -- and a `.chip-btn`'s
+   own padding would draw it two pixels taller than the 26px boxes either side of
+   it, so the row would grow rather than the chip fitting. The height is taken
+   from `.icon-chip` above, deliberately, so the two cannot drift apart. */
+.chip-btn.label-chip {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	height: 26px;
+	min-height: 26px;
+	padding: 0 9px;
+	line-height: 1;
+}
 /* Pressed reads as pressed. Without this an icon toggle has no state at all,
    where a word one at least changed weight. */
 .chip-btn.icon-chip[aria-pressed="true"] {

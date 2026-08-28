@@ -811,17 +811,34 @@ try {
 		!!split && split.leaked === false, JSON.stringify(split));
 	check('12c while the reply after the last call is still an answer',
 		!!split && split.answered === true, JSON.stringify(split));
-	// The reader who turned the working off meant this too.
-	const hidden = await page.evaluate(() => {
+	// AND IT DOES NOT HIDE WITH THE TOOL STEPS, WHICH IS A REVERSAL.
+	//
+	// This check read `hidden === false` from the day the working tile was written until
+	// 2026-08-28, on the 2026-08-23 reasoning that a reader who turned the working off meant
+	// this too. What the rule actually did was take the MODEL'S OWN SENTENCES off the screen:
+	// a turn of twenty tool calls drew one final answer and nothing else, which is note 05 of
+	// the 2026-08-27 round arriving by its other door. The owner reversed it. The switch is
+	// called Steps and it hides the steps; the working is collapsed, not hidden.
+	//
+	// The tool step is measured in the same breath, because the reversal must not have taken
+	// the switch's real job with it. `dev/verify_visible.mjs` measures both as ink on a real
+	// screen; this pins the rule.
+	const underSwitch = await page.evaluate(() => {
 		const out = document.querySelector('#chat-output');
 		out.classList.add('hide-tools');
 		const w = out.querySelector('.chat-msg-working');
-		const shown = w ? getComputedStyle(w).display !== 'none' : null;
+		const t = out.querySelector('.tool-block');
+		const seen = {
+			working: w ? getComputedStyle(w).display !== 'none' : null,
+			step:    t ? getComputedStyle(t).display !== 'none' : null,
+		};
 		out.classList.remove('hide-tools');
-        return shown;
+		return seen;
 	});
-	check('12d and it hides with the tool steps, which is the switch for the working',
-		hidden === false, String(hidden));
+	check('12d the working does NOT hide with the tool steps — it is the model\'s own prose',
+		underSwitch.working === true, JSON.stringify(underSwitch));
+	check('12e while the tool step still does, which is what the switch is for',
+		underSwitch.step === false, JSON.stringify(underSwitch));
 
 	// ── 13. The seam the APP places ───────────────────────────────────
 	//

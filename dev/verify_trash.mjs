@@ -56,6 +56,7 @@
 //   node dev/verify_trash.mjs --break nodialogless  # 1: deleting asks again
 //   node dev/verify_trash.mjs --break notrashed     # 1: deleting destroys
 //   node dev/verify_trash.mjs --break emptyrestore  # 2: restore loses the transcript
+//   node dev/verify_trash.mjs --break earlyrestore  # 2: the undo repaints before it lands
 //   node dev/verify_trash.mjs --break silentpurge   # 3: "Delete permanently" asks nothing
 //   node dev/verify_trash.mjs --break countless     # 3: "Empty trash" drops the count
 //   node dev/verify_trash.mjs --break stolenview    # 1: the shared tile ignores the
@@ -127,6 +128,21 @@ const BREAKS = {
 		with: '\t\tdetachChat(chat);\n'
 			+ '\t\tmsgTombstone((chat.messages || []).map(function (m) { return m.mid; }));\n'
 			+ '\t\ttry { DaimondTrash.put(chat.id, \'chat\'); }',
+	}],
+	// THE UNDO REPAINTS BEFORE THE RESTORE HAS LANDED. One `await` off the
+	// restore and the panel is drawn from a trash list read while the item was
+	// still in it, so the thing the user just put back is still sitting in the
+	// bin they are looking at. It settles on the next repaint, which is what
+	// makes it the worst shape a defect has: it is a race, so it fails some of
+	// the time, and Undo is a daily press.
+	//
+	// Found by dev/mutations.mjs (`js-trash-await`) as a mutation NOTHING here
+	// killed: fifty seconds of checks over this surface and no reading was taken
+	// close enough to the press to see it.
+	earlyrestore: [{
+		file: 'js/trash.js',
+		find: '\t\tawait core().trashRestore(it.id);\n\t\tawait render();',
+		with: '\t\tcore().trashRestore(it.id);\n\t\tawait render();',
 	}],
 	// "Delete permanently" destroys without asking — the one place in this flow
 	// where a question is owed.
@@ -460,9 +476,59 @@ try {
 	await shot(a, 'trash-one' + (BREAK ? '-' + BREAK : ''));
 
 	// ── 2. A restore brings the CONVERSATION back ───────────────────
+	//
+	// THE PRESS IS TIMED, because the thing this is proved against is a race.
+	// `restore()` awaits the restore and only then repaints; take that one
+	// `await` off and the repaint is drawn from a trash list read while the item
+	// was still in it, so the thing the user has just put back is still sitting
+	// in the bin in front of them. Some later repaint tidies it, which is why
+	// fifty seconds of checks over this surface never saw it: every reading was
+	// taken long after the moment that goes wrong. dev/mutations.mjs found it as
+	// `js-trash-await`, a mutation nothing here killed.
+	//
+	// WHAT MASKS IT, AND WHY THE TWO STORE READS ARE BOTH SLOWED. `DaimondTrash`
+	// announces when the item leaves it, and this panel redraws on that — so a
+	// stale paint is normally tidied a tick later and nobody sees anything. Not
+	// when the two overlap: `render()` takes one at a time (`drawing`), so the
+	// repaint the announcement asks for while a paint is in flight is DROPPED,
+	// not queued, and the stale one is the one that lands. That is the shape a
+	// user meets on a slow read — a big trash, a busy device — and it is why the
+	// defect is intermittent.
+	//
+	// Both reads are given a known duration so the overlap is certain rather
+	// than lucky: the restore lands at 200 ms, inside a list read that runs to
+	// 600 ms. Correct code starts its paint AFTER the restore and paints the
+	// truth. Code that started first paints what it read before, and the
+	// announcement that would have corrected it was refused. Proved by
+	// `--break earlyrestore`.
+	const SLOW = { restore: 200, list: 600 };
+	await A.evaluate((ms) => {
+		const c = window.DaimondCore;
+		window.__real = { restore: c.trashRestore.bind(c), list: c.trashList.bind(c) };
+		// A WRITE that takes a while to happen.
+		const slowWrite = (t, f) => (...a) =>
+			new Promise((ok) => setTimeout(ok, t)).then(() => f(...a));
+		// And a READ that happens now and answers late — which is the whole
+		// point. Delaying the read itself would let it see the restore, and a
+		// list read that sees the restore is not the read this is about.
+		const slowRead = (t, f) => (...a) => Promise.resolve(f(...a))
+			.then((v) => new Promise((ok) => setTimeout(() => ok(v), t)));
+		c.trashRestore = slowWrite(ms.restore, window.__real.restore);
+		c.trashList    = slowRead(ms.list,     window.__real.list);
+	}, SLOW);
 	await A.evaluate(() => {
 		const r = document.querySelector('#trash-list .trash-restore');
 		if (r) r.click();
+	});
+	await A.waitForTimeout(SLOW.list + SLOW.restore + 600);
+	const atLanding = await panelTiles(A);
+	check('THE UNDO REPAINTS AFTER THE RESTORE HAS LANDED — what was just put back is not '
+		+ 'still sitting in the bin the user is looking at',
+		atLanding.every((x) => x.label !== 'Ledger'), JSON.stringify(atLanding));
+	await A.evaluate(() => {
+		if (!window.__real) return;
+		window.DaimondCore.trashRestore = window.__real.restore;
+		window.DaimondCore.trashList    = window.__real.list;
 	});
 	await A.waitForTimeout(1500);
 	const railAfterRestore = await railChats(A);

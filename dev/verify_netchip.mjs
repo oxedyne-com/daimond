@@ -26,7 +26,7 @@
 // looking for it. It was made answerable, not answered. The standing choice is
 // what actually removes the interruption, and check 7 is the one that proves it.
 //
-// SIX PROPERTIES:
+// NINE PROPERTIES:
 //
 //   1. THE HOVER NAMES THE RUNG. Asserted as the pair — it carries the rung's own
 //      word AND is not the old category sentence — because a tooltip that merely
@@ -51,6 +51,20 @@
 //      reports `allowed` while marked has had the question answered before it could
 //      be put. Watching for a dialog instead would also pass on a chat that simply
 //      never got as far as a command.
+//   8. AND THE DIALOG CAN END THE ASKING IN ONE GESTURE -- a TICK the person makes,
+//      clicked on the card that is actually up.
+//   9. WHILE A YES NOBODY TICKED CHANGES NOTHING ELSE. Added 2026-08-28, and it is
+//      the one that matters most. Until then ANY yes here called
+//      `setStandingNet('allow')`, which writes the app-wide standing answer and
+//      pushes `allow` into every engine that exists. A NO said in one chat was
+//      silently overwritten by a YES said in another about a DIFFERENT command:
+//      the first chat's next command reached the network, nobody was asked, and the
+//      permissions button read "Always" -- a setting the user never chose, standing
+//      through every reload. The reasoning in the code argued that only a yes should
+//      become standing because refusing once is not refusing for ever, which is true
+//      and points the wrong way: the direction being made permanent and global was
+//      the PERMISSIVE one. `src/tools.rs` says of `override_net_consent`, where that
+//      path ends, that NOTHING IN THE TOOL LOOP MAY CALL IT.
 //
 // PROVED AGAINST BROKEN CODE FIRST, each break chosen to survive every check but
 // the ones under test:
@@ -60,6 +74,10 @@
 //   node dev/verify_netchip.mjs --break stuck    # 4-5: the choice is stored and never applied
 //   node dev/verify_netchip.mjs --break perchat  # 7:   the answer dies with the chat
 //   node dev/verify_netchip.mjs --break nosection# 8 checks, crudely
+//   node dev/verify_netchip.mjs --break stickyyes# 9:   every yes becomes standing again
+//   node dev/verify_netchip.mjs --break notick   # 8-9: no control to press at all
+//   node dev/verify_netchip.mjs --break yesnotsticky # 8: the tick is drawn and does nothing
+//   node dev/verify_netchip.mjs --break deafnote # 10:   a command with no network says nothing
 //   node dev/verify_netchip.mjs                  # and then, clean
 //
 // `perchat` is the SHARP one: it restores the reported defect exactly -- the
@@ -67,6 +85,13 @@
 // the next one -- and it reddens check 7 and NOTHING ELSE. Every check before it
 // passes, because everything before it was working the day the defect was
 // reported. That is what makes 7 a test of its own and not a rider on the others.
+//
+// `stickyyes` is the SHARPEST, and it is sharp in the other direction: it restores
+// the consent defect exactly -- every yes made standing, whatever the box says --
+// and reddens check 9 and nothing else. Everything before it passes, because
+// everything before it is a property the standing answer is supposed to have and
+// still has. A defect that leaves every existing check green is what this file is
+// for; the previous one sat here for a week.
 //
 // `stuck` is its sibling one layer up: the choice recorded and never pushed into
 // any engine. A Rust break exists for the write-once rule that sits under both --
@@ -130,11 +155,31 @@ const BREAKS = {
 		with: "\t\tif (false) {",
 	},
 	// The dialog's yes answering this chat's engine and nothing else -- exactly
-	// what it did through three reports.
+	// what it did through three reports. The tick is on screen and does nothing.
 	yesnotsticky: {
 		file: 'js/daimond.js',
-		find: "\t\t\tif (okNet && window.DaimondHandMode && DaimondHandMode.setStandingNet) {",
+		find: "\t\t\tif (netStanding && window.DaimondHandMode && DaimondHandMode.setStandingNet) {",
 		with: "\t\t\tif (false) {",
+	},
+	// THE SHARP ONE FOR CHECK 9, and the defect it restores is the worst this file
+	// has held: EVERY yes becomes the app-wide standing answer, whatever the box
+	// says. That is what the code did until 2026-08-28 -- `setStandingNet('allow')`
+	// on any yes, which writes `daimond-net-standing` AND pushes `allow` into every
+	// engine that exists (`netApplyAll`). A no said in one chat was overwritten by a
+	// yes said in another about a different command, with nothing on screen to say
+	// so. It reddens 9 and NOTHING ELSE: everything before it is a property the
+	// standing answer is supposed to have, and it still has them.
+	stickyyes: {
+		file: 'js/daimond.js',
+		find: "\t\t\tnetStanding = !!netAns.standing;",
+		with: "\t\t\tnetStanding = true;",
+	},
+	// And the other way: no control at all, so "one yes is enough" has no way to be
+	// said. Reddens 8, and 9's first check with it.
+	notick: {
+		file: 'js/daimond.js',
+		find: "\t\t\t\t\trow.appendChild(box);",
+		with: "\t\t\t\t\tif (false) row.appendChild(box);",
 	},
 	// Stored, applied to the engines that exist, and forgotten by the next one. The
 	// exact defect reported: an answer whose lifetime is one chat.
@@ -142,6 +187,14 @@ const BREAKS = {
 		file: 'js/daimond.js',
 		find: "\t\t\tvar st = window.DaimondHandMode ? DaimondHandMode.standingNet() : '';",
 		with: "\t\t\tvar st = '';",
+	},
+	// The line saying a command had no network, drawn from a result that says it
+	// had none. Nothing else in this file touches that block, so it reddens 9 and
+	// only 9.
+	deafnote: {
+		file: 'js/daimond.js',
+		find: "\t\t\treturn !!(Wasm && Wasm.ran_without_net",
+		with: "\t\t\treturn false && !!(Wasm && Wasm.ran_without_net",
 	},
 	// No chat can be asked, so the whole section goes.
 	nosection: {
@@ -378,13 +431,18 @@ try {
 		'and nothing on screen interrupts it',
 		`net-cut=${fresh.marked}, dialog=${fresh.dialog}`);
 
-	// ── 8. A YES IN THE DIALOG IS THE LAST ONE ───────────────────
+	// ── 8. A YES *THE USER MAKES STANDING* IS THE LAST ONE ───────
 	//
 	// The standing choice above is only reachable by somebody who went looking for
 	// it in a menu. Nobody did: three reports came from a person answering the
 	// DIALOG, whose yes went to the chat's own engine and died with it. A person who
 	// has said yes has consented, and asking again in the next chat treats that
 	// answer as though it had never been given.
+	//
+	// SO THE DIALOG STILL ENDS IT IN ONE GESTURE -- it is now a TICK the person
+	// makes rather than something that happens to them for saying yes once. The box
+	// is ticked here, and check 9 is the other half: a yes with the box left alone
+	// changes nothing outside the command it was given about.
 	//
 	// DRIVEN THROUGH THE APP'S OWN GATE, `window.__daimondEgressAllowed` -- the
 	// global the wasm calls when a command wants the network -- and the dialog it
@@ -402,6 +460,21 @@ try {
 		tool: 'run_net', url: 'cargo build --release', detail: '/home/jason/usr/code',
 	})));
 	await p.waitForSelector('.dlg-card', { timeout: 8000 });
+	// THE TICK, then OK. Clicked as a person clicks it, on the box in the card that
+	// is actually up: a `standing: true` posted into the handler from here would
+	// prove the recorder works and say nothing about whether any control on screen
+	// reaches it, which is the same fault `--break yesnotsticky` was written to
+	// catch the first time.
+	const tickable = await p.evaluate(() => {
+		const card = [...document.querySelectorAll('.dlg-card')].filter(c => c.getClientRects().length).pop();
+		const box  = card && card.querySelector('.net-standing-box');
+		if (!box) return false;
+		box.click();
+		return !!box.checked;
+	});
+	check(tickable,
+		'THE DIALOG OFFERS A CONTROL THE USER PRESSES to make an answer standing',
+		tickable ? '' : 'no .net-standing-box in the card, or it would not tick');
 	await p.evaluate(() => {
 		const card = [...document.querySelectorAll('.dlg-card')].filter(c => c.getClientRects().length).pop();
 		card.querySelector('.dlg-ok').click();
@@ -416,8 +489,172 @@ try {
 	await p.evaluate(() => DaimondCore.markRead());
 	const after = await p.evaluate(() => DaimondCore.netState());
 	check(after === 'allowed',
-		'A YES IN THE DIALOG IS THE LAST ONE — a later chat is never asked',
+		'A YES THE USER TICKED IS THE LAST ONE — a later chat is never asked',
 		`engine=${after}`);
+
+	// ── 9. AND A YES NOBODY TICKED CHANGES NOTHING ELSE ──────────
+	//
+	// THE CHECK THAT MATTERS, and the one nothing above it could have caught. Until
+	// 2026-08-28 ANY yes in this dialog called `setStandingNet('allow')`, which
+	// writes `daimond-net-standing` -- the app-wide standing answer -- and pushes
+	// `allow` into every chat that already has an engine. So:
+	//
+	//   two chats open; in one the user is asked about a command and says NO; in the
+	//   other they are asked about a DIFFERENT command and say yes; and the first
+	//   chat's refusal is gone. Its next command reaches the network, nobody is
+	//   asked, nothing says the answer was reversed, and the permissions button
+	//   reads "Always" -- a setting they never chose, surviving every reload.
+	//
+	// src/tools.rs says of `override_net_consent`, which that path ends at, that
+	// NOTHING IN THE TOOL LOOP MAY CALL IT. This dialog is the tool loop.
+	//
+	// TWO ASSERTIONS AND NOT ONE, because either alone is satisfied by half a fix:
+	// the stored policy is untouched, AND the other chat's engine still refuses. A
+	// build that stopped writing the key but went on calling `netApplyAll` would
+	// pass the first and reverse the user's no all the same.
+	//
+	// HOW THE REFUSING CHAT IS PUT IN THAT STATE: the popover's own "Never" chip,
+	// and then the stored key removed from under it. `setStanding` writes the key
+	// AND every engine, so taking the key away afterwards leaves exactly what a no
+	// in the dialog leaves -- one engine holding a refusal, and no stored policy.
+	// There is no other way in from a served page: a no at the dialog is answered to
+	// the WASM, which is not in the loop when the gate is driven from here.
+	const focusId = () => p.evaluate(() => {
+		try {
+			const f = window.DaimondAttach && window.DaimondAttach.focus();
+			return (f && f.kind === 'chat') ? String(f.id) : '';
+		} catch (e) { return ''; }
+	});
+	const goTo = async (id) => {
+		await p.evaluate((cid) => {
+			const esc = (window.CSS && CSS.escape) ? CSS.escape(cid) : cid;
+			const box = document.querySelector('.session-box[data-id="' + esc + '"]');
+			if (box) box.click();
+		}, id);
+		await p.waitForTimeout(800);
+	};
+
+	// Cleared BEFORE the chat is made: `ensureApp` reads the standing answer into
+	// each new engine, so a chat born under check 8's "always" would start granted.
+	await p.evaluate(() => { try { localStorage.removeItem('daimond-net-standing'); } catch (e) {} });
+	await newChat(s);
+	const chatNo = await focusId();
+	await p.fill('#chat-input', '@text the chat that says no');
+	await p.click('#chat-send');
+	await p.waitForTimeout(3500);
+	await p.evaluate(() => DaimondCore.markRead());
+	await popOpen();
+	await pick(NEVER);
+	await popClose();
+	await p.evaluate(() => { try { localStorage.removeItem('daimond-net-standing'); } catch (e) {} });
+	const noBefore = await p.evaluate(() => DaimondCore.netState());
+	check(noBefore === 'refused' && !!chatNo,
+		'a chat has said no, and nothing is stored — the state a no in the dialog leaves',
+		`engine=${noBefore} id=${JSON.stringify(chatNo)}`);
+
+	// The OTHER chat, a different command, and OK with the box LEFT ALONE.
+	await newChat(s);
+	await p.fill('#chat-input', '@text the chat that says yes');
+	await p.click('#chat-send');
+	await p.waitForTimeout(3500);
+	const gate2 = p.evaluate(() => window.__daimondEgressAllowed(JSON.stringify({
+		tool: 'run_net', url: 'curl https://elsewhere.test/x', detail: '/home/jason/usr',
+	})));
+	await p.waitForSelector('.dlg-card', { timeout: 8000 });
+	const untouched = await p.evaluate(() => {
+		const card = [...document.querySelectorAll('.dlg-card')].filter(c => c.getClientRects().length).pop();
+		const box  = card && card.querySelector('.net-standing-box');
+		return !!card && (!box || box.checked === false);
+	});
+	await shot(s, 'netchip-oneoff');
+	await p.evaluate(() => {
+		const card = [...document.querySelectorAll('.dlg-card')].filter(c => c.getClientRects().length).pop();
+		card.querySelector('.dlg-ok').click();
+	});
+	const verdict2 = await gate2;
+	check(untouched && verdict2 === 'allow-net',
+		'the box starts UNTICKED and a plain yes is still a yes for this command',
+		`unticked=${untouched} verdict=${verdict2}`);
+	const stored = await p.evaluate(() => {
+		try { return localStorage.getItem('daimond-net-standing'); } catch (e) { return 'unreadable'; }
+	});
+	check(!stored,
+		'A ONE-OFF YES WRITES NO STANDING POLICY',
+		`daimond-net-standing=${JSON.stringify(stored)}`);
+	await goTo(chatNo);
+	const noAfter = await p.evaluate(() => DaimondCore.netState());
+	check(noAfter === 'refused',
+		"AND THE OTHER CHAT'S NO IS STILL A NO",
+		`engine=${noAfter}`);
+	// ── 10. AND THE COMMAND THAT RAN WITHOUT IT SAYS SO ──────────
+	//
+	// Everything above is about the CHAT's state, on a button in the header. None
+	// of it is what a person meets: they watch a `cargo build` stop halfway with
+	// "failed to fetch" and nothing anywhere says why. `src/tools.rs` writes a note
+	// into the result for exactly that reason -- and wrote it FOR THE MODEL, in
+	// English, inside brackets, so the person learned the reason only if the model
+	// chose to relay it. A capability with a model-facing surface and no
+	// user-facing one, recorded on 2026-08-13 and still standing on 2026-08-28.
+	//
+	// THE FIXTURE IS THE CONTRACT ITSELF. `NO_NET_MARK` is read out of the Rust,
+	// so this cannot go green against a mark the engine no longer writes; that the
+	// mark opens the note it stands for is held in Rust by
+	// `test_the_no_network_mark_opens_the_note_and_finds_it_in_a_result`, and the
+	// whole path -- a real command, a real hand, a real fence -- by
+	// `dev/verify_handrun.mjs`. What is asked here is the half neither of those
+	// can see: whether the person is told.
+	const MARK = (() => {
+		const rs = fs.readFileSync(path.join(WWW, '..', 'src/tools.rs'), 'utf8');
+		const m  = rs.match(/pub const NO_NET_MARK: &str = "([^"]+)"/);
+		return m ? m[1] : '';
+	})();
+	check(!!MARK, 'the engine\'s own mark for a command that had no network was read',
+		JSON.stringify(MARK));
+
+	const said = await p.evaluate((mark) => {
+		const out = {};
+		DaimondCore.drawToolResult('run',
+			'error: failed to fetch `serde`\n[exit code: 101]\n' + mark + ' the turn read outside '
+				+ 'content, so this command ran without it.]', 'done');
+		// The LAST block, by position rather than by `:last-of-type`, which is about
+		// element type and would answer about whatever div happens to be last.
+		const last = () => [...document.querySelectorAll('.tool-block')].pop();
+		out.blocks   = document.querySelectorAll('.tool-block').length;
+		let line = last() ? last().querySelector('.tool-nonet') : null;
+		out.withNote = line ? (line.textContent || '').trim() : '';
+		out.shown    = !!(line && line.getClientRects().length);
+		DaimondCore.drawToolResult('run', 'Compiling daimond v0.1.0\n[exit code: 0]', 'done');
+		line = last() ? last().querySelector('.tool-nonet') : null;
+		out.without = line ? (line.textContent || '').trim() : '';
+		out.sentence = window.DaimondI18n ? DaimondI18n.t('chat.tool_no_net') : '';
+		return out;
+	}, MARK);
+	check(!!said.withNote && said.shown,
+		'A COMMAND THAT RAN WITH NO NETWORK SAYS SO ON ITS OWN BLOCK, to the person',
+		`${said.blocks} block(s) drawn — ${JSON.stringify(said.withNote.slice(0, 80))}`);
+	// In the app's own words and not the model's: the bracketed note is written for
+	// a model to act on, and a person reading it is reading somebody else's post.
+	check(said.withNote === said.sentence && said.sentence.length > 40
+		&& !said.withNote.includes(MARK),
+		'and in the app\'s own sentence, from the catalogue, not the model\'s note',
+		JSON.stringify(said.sentence.slice(0, 80)));
+	// The other half, and it is what stops the line becoming noise: a command that
+	// HAD the network says nothing at all.
+	check(said.without === '',
+		'and a command that had the network says nothing about it',
+		JSON.stringify(said.without));
+
+	// The sentence exists in all eight catalogues. `tOr` draws correct English when
+	// a key is in no table, so a missing translation looks exactly like a finished
+	// one and nothing reports it.
+	const LOCALES = ['en', 'es', 'de', 'fr', 'pt-BR', 'zh-Hans', 'ja', 'ko'];
+	const gaps = LOCALES.filter((code) => {
+		const src = fs.readFileSync(path.join(WWW, 'i18n', code + '.js'), 'utf8');
+		return !/'chat\.tool_no_net':\s*'[^']{20,}'/.test(src);
+	});
+	check(gaps.length === 0,
+		'and it is in all eight catalogues, not in English only',
+		gaps.join(', '));
 } finally {
 	await s.close();
 }

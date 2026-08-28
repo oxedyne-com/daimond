@@ -3,7 +3,8 @@
  *
  * One setting, three rungs, and the axis is what Daimond does WITHOUT ASKING:
  *
- *   ask       every command is put to you before it runs, and every fetch
+ *   ask       every command is put to you before it runs, and reaching the web
+ *             is put to you once in each conversation
  *   guarded   commands run; a turn that has read outside content loses the
  *             network and Daimond asks before reaching a page it chose
  *   bypass    nothing is asked
@@ -284,6 +285,23 @@
 		// thing and is never corrected. It names the subject instead, and the choices
 		// say their own scope -- "Ask once per chat" is a rule about chats, not a
 		// state of one.
+		//
+		// AND THEN IT SAID "The network", WHICH IS WIDER THAN WHAT IT GOVERNS. This
+		// section answers ONE question: whether a COMMAND run on the user's machine
+		// keeps its network after the turn has read something written by somebody
+		// else. `daimond.js`'s `run_net` branch is the only reader of the standing
+		// answer, `net_step` in src/tools.rs is the only thing that consults it, and
+		// neither is on the path a page fetch takes. Every sentence under this head
+		// already said "Commands"; the head did not, and a reader who set it to
+		// "Always allow" was reasonably surprised to be asked about the next
+		// `web_fetch` anyway. Reported by the owner in those words.
+		//
+		// The label was one bug and the behaviour was another. The head is right and
+		// stays: this section really is about commands, and naming it for the whole
+		// network was how a reader came to expect it to answer for page fetches too.
+		// The rest of that report was answered on 2026-08-27, at the other door: a
+		// page fetch is now asked once per conversation instead of once per site.
+		// See the note beside `permmode.net_not_fetch` below.
 		head.textContent = t('permmode.net_head');
 		pop.appendChild(head);
 		var line = document.createElement('p');
@@ -315,6 +333,30 @@
 			row.appendChild(b);
 		});
 		pop.appendChild(row);
+		// AND WHAT THIS IS NOT, said here rather than left to be discovered by
+		// being asked. A page Daimond fetches for itself is a different act with a
+		// different door -- `egressAllowed`, and `web_step` in src/tools.rs, which
+		// ask ONCE IN EACH CONVERSATION and then cover every site until that
+		// conversation ends.
+		//
+		// THE SENTENCE THAT STOOD HERE SAID "asks per SITE and remembers a yes for
+		// that site only", and it was true when it was written and false a day
+		// later. The owner ruled on 2026-08-27 that asking about every new site was
+		// the defect rather than the label: "I should only be asked once in a
+		// session ... for permission to access ANY (not a specific website)." The
+		// note is kept because a line here that describes the other door is exactly
+		// the kind of line that goes quietly out of date, and this one already has
+		// once.
+		//
+		// What has NOT changed is that this control does not govern that door. It
+		// answers one question -- whether a COMMAND on the user's machine keeps its
+		// network after the turn has read a stranger's words -- and a yes here is
+		// still not a yes there. `net_step` reads `net_consent` and nothing else;
+		// `web_step` reads `web_consent` and nothing else.
+		var also = document.createElement('p');
+		also.className = 'pop-note';
+		also.textContent = t('permmode.net_not_fetch');
+		pop.appendChild(also);
 	}
 
 	function open(anchor) {

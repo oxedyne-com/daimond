@@ -351,31 +351,30 @@ pub async fn close() -> Outcome<String> {
 /// half that answers it owns the user's standing decisions rather than the browser driver.
 const EGRESS_GLOBAL: &str = "__daimondEgressAllowed";
 
-/// Read a resolved answer, deferring to [`crate::tools::verdict_of`] so the rule that decides it
-/// is pure, native and tested -- this half only reaches into the `JsValue` for the string.
+/// Ask the JavaScript half whether this conversation may reach `url`, and how far its answer
+/// reaches.
 ///
-/// # Arguments
-/// * `v` - What the promise resolved with.
-/// * `word` - The one string that means yes to this question.
-fn verdict(v: &JsValue, word: &str) -> Verdict {
-    crate::tools::verdict_of(v.as_string().as_deref(), word)
-}
-
-/// Ask the JavaScript half whether this turn may reach `url`, returning `None` when it cannot be
-/// asked at all.
+/// The payload is a JSON string, per the contract:
+/// `{"tool":"web_fetch","url":"…","detail":"","alone":false,"granted":false}`.
 ///
-/// The payload is a JSON string, per the contract: `{"tool":"web_fetch","url":"…"}`.  The
-/// JavaScript side owns the remembering -- it resolves `allow` without prompting for a destination
-/// the user already approved -- so this asks every time and caches nothing.
+/// `granted` is the whole of what this adds, and it flows one way only.  The SCOPE of the answer
+/// is decided in Rust ([`crate::tools::web_step`]); the WORDING of the question lives on the page,
+/// with the dialogs and the translations.  So the page is told whether the conversation has
+/// already said yes, and answers either the wide question or the one about a single overlong
+/// address -- and says which, in the word it answers with (see [`crate::tools::EgressWord`]).
+///
+/// `None` from the door is not a verdict, so it is read as a refusal spent on this one call.
 ///
 /// # Arguments
 /// * `tool` - The wire name of the tool asking.
 /// * `url` - The destination it wants.
-pub async fn egress_allowed(tool: &str, url: &str) -> Option<Verdict> {
-    egress_allowed_detail(tool, url, "").await
+/// * `granted` - Whether the conversation has already granted the web.
+pub async fn egress_reach(tool: &str, url: &str, granted: bool) -> crate::tools::EgressWord {
+    let answer = egress_ask_raw(tool, url, "", false, granted).await;
+    crate::tools::egress_word(answer.as_deref())
 }
 
-/// As [`egress_allowed`], with a `detail` the user should see -- the text about to be typed into a
+/// As [`egress_reach`], with a `detail` the user should see -- the text about to be typed into a
 /// page, say, which is the thing being sent and therefore the thing to look at.
 ///
 /// # Arguments
@@ -449,6 +448,24 @@ pub async fn egress_allowed_publish(shown: &str) -> Option<Verdict> {
 async fn egress_ask_js(tool: &str, url: &str, detail: &str, alone: bool, word: &str)
     -> Option<Verdict>
 {
+    let answer = egress_ask_raw(tool, url, detail, alone, false).await;
+    answer.map(|s| crate::tools::verdict_of(Some(s.as_str()), word))
+}
+
+/// Put one question to the page's gate and read its answer back as the string the page resolved
+/// with, or `None` where the question could not be put at all.
+///
+/// The one place the payload is composed, so the two callers above cannot spell it differently.
+///
+/// # Arguments
+/// * `tool` - The wire name of the tool asking.
+/// * `url` - The destination it wants, or the command it wants to run.
+/// * `detail` - What is being sent, when the tool sends something other than the address.
+/// * `alone` - Whether the agent asking has nobody watching it.
+/// * `granted` - Whether the conversation has already granted the web (reaching questions only).
+async fn egress_ask_raw(tool: &str, url: &str, detail: &str, alone: bool, granted: bool)
+    -> Option<String>
+{
     let win = match web_sys::window() {
         Some(w) => w,
         None    => return None,
@@ -462,8 +479,8 @@ async fn egress_ask_js(tool: &str, url: &str, detail: &str, alone: bool, word: &
     }
     let f = f.unchecked_into::<js_sys::Function>();
     let payload = fmt!(
-        "{{\"tool\":\"{}\",\"url\":\"{}\",\"detail\":\"{}\",\"alone\":{}}}",
-        json_escape(tool), json_escape(url), json_escape(detail), alone);
+        "{{\"tool\":\"{}\",\"url\":\"{}\",\"detail\":\"{}\",\"alone\":{},\"granted\":{}}}",
+        json_escape(tool), json_escape(url), json_escape(detail), alone, granted);
     let ret = match f.call1(&JsValue::NULL, &JsValue::from_str(&payload)) {
         Ok(v)  => v,
         Err(_) => return None,
@@ -472,10 +489,10 @@ async fn egress_ask_js(tool: &str, url: &str, detail: &str, alone: bool, word: &
     // on a technicality, since it is still an answer.
     let promise = match ret.dyn_into::<js_sys::Promise>() {
         Ok(p)  => p,
-        Err(v) => return Some(verdict(&v, word)),
+        Err(v) => return v.as_string(),
     };
     match JsFuture::from(promise).await {
-        Ok(v)  => Some(verdict(&v, word)),
+        Ok(v)  => v.as_string(),
         Err(_) => None,
     }
 }

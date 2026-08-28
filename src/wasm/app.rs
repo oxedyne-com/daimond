@@ -258,22 +258,43 @@ impl DaimondApp {
         Some(q.remove(index))
     }
 
-    /// Whether this app's turn has taken in content from outside the user — a fetched page, a
-    /// mail message, a command's output.
+    /// Whether one conversation on this client has taken in content from outside the user — a
+    /// fetched page, a mail message, a command's output.
     ///
     /// The daimon reads this after a steering turn to find out whether the tasks it is about to
     /// hand out derive from a stranger's words.
-    pub fn is_tainted(&self) -> bool {
-        self.registry.ctx.is_tainted()
+    ///
+    /// A DIAMOND MUST NAME ITSELF, because the client is shared: `diamondApp` in
+    /// www/js/daimond.js caches one per provider and model, so a Diamond that asked this without
+    /// an argument was reading the shared client's own conversation and not its own — which is how
+    /// a Research Diamond's page came to mark an Accounts Diamond's workers.  A chat and a worker
+    /// each have a client to themselves and pass nothing.
+    ///
+    /// # Arguments
+    /// * `who` - The Diamond whose conversation is being asked about, or nothing for this client's
+    ///   own.
+    pub fn is_tainted(&self, who: Option<String>) -> bool {
+        match who {
+            Some(id) => self.registry.ctx.is_tainted_for(&id),
+            None     => self.registry.ctx.is_tainted(),
+        }
     }
 
-    /// Mark this app's turn as carrying content from outside the user, without reading any.
+    /// Mark a conversation on this client as carrying content from outside the user, without
+    /// reading any.
     ///
     /// One-way, like the flag itself.  A worker starts with a clean flag, so instructions absorbed
     /// from a stranger could be laundered through a worker that does not know it is carrying them;
     /// the daimon closes that by setting this on each worker it starts.
-    pub fn set_tainted(&self) {
-        self.registry.ctx.set_tainted();
+    ///
+    /// # Arguments
+    /// * `who` - The Diamond being marked, or nothing for this client's own conversation.  See
+    ///   [`DaimondApp::is_tainted`] for why a Diamond has to say.
+    pub fn set_tainted(&self, who: Option<String>) {
+        match who {
+            Some(id) => self.registry.ctx.set_tainted_for(&id),
+            None     => self.registry.ctx.set_tainted(),
+        }
     }
 
     /// Mark this agent as acting ALONE: a dispatched worker, with nobody reading its transcript
@@ -353,6 +374,27 @@ impl DaimondApp {
         };
         self.registry.ctx.override_net_consent(v);
         self.net_state()
+    }
+
+    /// Forget what one conversation said about reaching websites, so the next question is put
+    /// again.
+    ///
+    /// FOR "FRESH DAIMON", which discards a daimon's conversation and starts another.  The grant
+    /// is scoped to a conversation ([`crate::tools::web_step`]), and ending one has to end it, or
+    /// the new conversation would inherit a yes that was given in a conversation the user has just
+    /// thrown away.
+    ///
+    /// A DIAMOND'S CLIENT IS SHARED, which is the whole reason this takes an argument: `diamondApp`
+    /// in www/js/daimond.js caches one client per provider and model, so every Diamond on the same
+    /// model reads and writes one of these caches.  The caller does not know which client holds the
+    /// Diamond it is clearing, and does not have to: clearing a key that is not there does nothing,
+    /// so it may be offered to all of them.
+    ///
+    /// # Arguments
+    /// * `diamond` - The Diamond whose daimon is being started afresh, or the empty string for a
+    ///   chat's own conversation.
+    pub fn forget_web_consent(&self, diamond: &str) {
+        self.registry.ctx.forget_web_consent(diamond);
     }
 
     /// Offer this agent the dispatch tool, so the user's own chat can send workers out.
@@ -782,7 +824,7 @@ impl DaimondApp {
                 restored.push(m);
             }
         }
-        let whole = pair_up(restored);
+        let whole = crate::protocol::pair_up(restored);
         let n = whole.len();
         let mut session = self.session.borrow_mut();
         session.messages           = whole;
@@ -864,6 +906,21 @@ impl DaimondApp {
     /// * `bytes` - The ceiling; zero restores the default.
     pub fn set_crystal_page_cap(&self, bytes: usize) {
         crate::tools::set_crystal_page_cap(bytes);
+    }
+
+    /// Fold this conversation at a different fraction of the window from the shipped one.
+    ///
+    /// `f64` for the reason [`DaimondApp::set_context_window`] gives, and because the figure
+    /// is a fraction: zero, or anything below it, means the user has not chosen and the
+    /// engine's own default stands.  Anything outside
+    /// [`crate::agent::compact::FOLD_AT_MIN`]..[`crate::agent::compact::FOLD_AT_MAX`] is held
+    /// at the band rather than refused -- the control is a pulldown, so a figure off the
+    /// ladder can only arrive from a stored setting an older build wrote.
+    ///
+    /// # Arguments
+    /// * `fraction` - Where to fold, as a share of the window; zero leaves the default.
+    pub fn set_fold_at(&self, fraction: f64) {
+        self.agent.set_fold_at(fraction);
     }
 
     /// Fold this agent's conversations with a different model from the one it chats
@@ -2044,7 +2101,7 @@ impl DaimondApp {
                 seeded.push(m);
             }
         }
-        session.messages = pair_up(seeded);
+        session.messages = crate::protocol::pair_up(seeded);
 
         let mut sink = |ev: AgentEvent| {
             let js = event_to_js(&ev);
@@ -2449,74 +2506,6 @@ fn js_to_message(item: &JsValue) -> Option<ChatMessage> {
     }
 }
 
-/// Make a restored conversation legal: every tool call answered, every tool reply
-/// answering something.
-///
-/// The provider's rule is not a preference.  An assistant turn bearing `tool_calls`
-/// must be followed by one `tool` message per call, and a `tool` message must follow
-/// the assistant turn that asked for it; a conversation that breaks either is
-/// rejected WHOLE, so one lost reply from one turn last Tuesday takes every turn
-/// after it with it.  A store merged across tabs, synced between devices and
-/// restored from backups will eventually hand over such a list, so it is repaired
-/// here rather than trusted.
-///
-/// Two edits, and only these two: a call with no reply in the run of `tool` messages
-/// directly after it is dropped from the assistant turn (its prose stays), and a
-/// reply that answers no call in the assistant turn directly before it is dropped
-/// entirely.  Nothing is reordered and nothing is invented — a call that lost its
-/// result is a call the model must be allowed to make again, not one to answer with
-/// a guess.
-///
-/// # Arguments
-/// * `msgs` - The restored conversation, oldest first.
-fn pair_up(msgs: Vec<ChatMessage>) -> Vec<ChatMessage> {
-    let mut out: Vec<ChatMessage> = Vec::with_capacity(msgs.len());
-    let mut i = 0usize;
-    while i < msgs.len() {
-        match &msgs[i] {
-            ChatMessage::Assistant { content, tool_calls } if !tool_calls.is_empty() => {
-                // The run of tool replies that directly follows, which is the only
-                // place a reply to this turn may legally sit.
-                let mut answered: Vec<String> = Vec::new();
-                let mut j = i + 1;
-                while j < msgs.len() {
-                    match &msgs[j] {
-                        ChatMessage::Tool { tool_call_id, .. } => {
-                            answered.push(tool_call_id.clone());
-                            j += 1;
-                        }
-                        _ => break,
-                    }
-                }
-                let kept: Vec<ToolCall> = tool_calls.iter()
-                    .filter(|tc| answered.iter().any(|id| id == &tc.id))
-                    .cloned()
-                    .collect();
-                out.push(ChatMessage::Assistant {
-                    content:    content.clone(),
-                    tool_calls: kept.clone(),
-                });
-                // Then the replies, keeping only those that answer a call we kept.
-                for k in (i + 1)..j {
-                    if let ChatMessage::Tool { tool_call_id, content } = &msgs[k] {
-                        if kept.iter().any(|tc| &tc.id == tool_call_id) {
-                            out.push(ChatMessage::Tool {
-                                tool_call_id: tool_call_id.clone(),
-                                content:      content.clone(),
-                            });
-                        }
-                    }
-                }
-                i = j;
-            }
-            // A tool reply reached here without an asking turn in front of it.
-            ChatMessage::Tool { .. } => { i += 1; }
-            other => { out.push(other.clone()); i += 1; }
-        }
-    }
-    out
-}
-
 /// Convert an [`AgentEvent`] to a plain JS object mirroring
 /// [`AgentEvent::to_datmap`]: a `type` discriminator plus the variant's
 /// fields.  Built directly with `Reflect::set` so the JS side receives a
@@ -2576,6 +2565,13 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("type", &JsValue::from_str("unseeable"));
             set("images", &JsValue::from_f64(*images as f64));
             set("model", &JsValue::from_str(model));
+        }
+        AgentEvent::Roading { name, attempt, of, wait_ms } => {
+            set("type",    &JsValue::from_str("roading"));
+            set("name",    &JsValue::from_str(name));
+            set("attempt", &JsValue::from_f64(*attempt as f64));
+            set("of",      &JsValue::from_f64(*of      as f64));
+            set("wait_ms", &JsValue::from_f64(*wait_ms as f64));
         }
         AgentEvent::Truncated => {
             set("type", &JsValue::from_str("truncated"));

@@ -76,6 +76,14 @@ async fn run() -> Outcome<()> {
             AgentEvent::Compacted { folded, kept, note } =>
                 println!("\n[compacted] folded {} kept {} — {}", folded, kept, note),
             AgentEvent::Truncated => println!("\n[truncated] the provider cut the reply short"),
+            // A tool call being made again because the road went, which a smoke run has
+            // to see: a turn that spent its whole ladder into a dead page and one that
+            // answered first time otherwise print the same thing.  The model is never
+            // told this -- that is the point of the mechanism -- so the only place it
+            // can be read is here.
+            AgentEvent::Roading { name, attempt, of, wait_ms } =>
+                println!("\n[roading] {} again, attempt {} of {}, after {}ms",
+                    name, attempt, of, wait_ms),
             AgentEvent::Interjected(text) => println!("\n[interjected] {}", text),
             AgentEvent::Unseeable { images, model } =>
                 println!("\n[unseeable] {} image(s) withheld from {}", images, model),

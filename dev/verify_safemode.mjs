@@ -155,7 +155,7 @@ check(await p.evaluate(() => !!(window.DaimondSafe && DaimondSafe.on && DaimondS
 		};
 	});
 	check(!!chip && chip.state === 'off' && /safe/i.test(chip.text),
-		'the top bar says sync is off, so a safe start is never a silent one',
+		'the rail says sync is off, so a safe start is never a silent one',
 		JSON.stringify(chip));
 	check(!!chip && chip.pointer === 'pointer' && /click/i.test(chip.title),
 		'and the thing that says it is the thing that undoes it',

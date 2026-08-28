@@ -43,8 +43,8 @@
    this client does with that, and why it does not simply say yes.
 
    AND WHAT IT LEAVES STANDING IS NOW SOMETHING A PERSON CAN ANSWER. The
-   chip in the top bar is a button: it asks, and then re-sends the parked
-   commit with its token. The parked commit is written to localStorage,
+   notice in the rail's status strip is a button: it asks, and then re-sends
+   the parked commit with its token. The parked commit is written to localStorage,
    because only the gateway can mint that token and a reload used to throw
    it away — leaving chunks nobody refers to in a store nobody sweeps, on
    an account that is billed for them.
@@ -609,8 +609,11 @@
 	/// that could carry the deletion out. `confirmHeldSweep` — the only code that
 	/// re-sends the body with its token — had no production caller at all, so the
 	/// notice was the whole feature. The chip is where the fact already lives and
-	/// the top bar is where this app already puts standing facts a person can act
-	/// on (`#update-chip` is a button in the same row), so the control goes here.
+	/// the rail's status strip is where this app already puts the state of the
+	/// machine "at a glance and without asking", one row per question, each row
+	/// that can be acted on a button that goes there. So the control goes here.
+	/// It was in the TOP BAR until 2026-08-28, beside `#update-chip`; that row
+	/// turned out to be a row of targets a standing notice must not appear in.
 	///
 	/// The Credits drawer was the other candidate — it is where the app answers
 	/// "what account have I got and what does it cost me", and cloud storage is
@@ -626,20 +629,43 @@
 	var _chip = null;
 	function chip() {
 		if (_chip) return _chip;
-		var actions = document.getElementById('top-actions') || document.querySelector('.top-actions');
-		if (!actions) return null;
+		// IN THE SYNC ROW, and for the same reason sync itself moved out of the top
+		// bar on 2026-08-28: there this was a pill that appeared among the icon
+		// buttons and pushed the whole chip row 98px sideways when it did. A notice
+		// nobody asked for must not move what somebody is reaching for.
+		//
+		// IN THAT ROW AND NOT BESIDE IT. A row of its own at the end of the strip
+		// was the first answer and it was the same fault one surface over: the
+		// strip grew when the notice arrived and the rail's own controls moved with
+		// it -- caught by `dev/verify_sweep_seen.mjs`'s ANCHOR family, which asks
+		// exactly this question of every transient it can find. `#astat-sync` is
+		// permanent and always holds one line of text, so a second occupant sharing
+		// it costs no height at all. It is the right row on the merits too: this
+		// notice "is sync's chip in everything but ownership", as the comment below
+		// says, and what it is about is whether this account's work is travelling.
+		var host = document.getElementById('astat-sync')
+			|| document.getElementById('admin-status') || document.querySelector('.admin-status');
+		if (!host) return null;
 		if (!document.getElementById('chunk-status-styles')) {
 			var st = document.createElement('style');
 			st.id = 'chunk-status-styles';
 			st.textContent =
-				'#chunk-chip{display:none;align-items:center;gap:5px;font-size:var(--fs-xs);padding:3px 9px;' +
-				'border-radius:999px;border:1px solid var(--border,#333);background:var(--bg-tertiary);' +
+				// `flex: 0 1 auto`, not a width: it SHARES the sync row, so when both
+				// have something to say each takes what it needs and ellipsises,
+				// and the row is one line either way.
+				'#chunk-chip{display:none;flex:0 1 auto;min-width:0;align-items:center;gap:6px;text-align:left;' +
+				// NO PADDING OF ITS OWN. It is an occupant of `#astat-sync`, not a row:
+				// its 3px top and bottom made that row 36px where every other row in
+				// the strip is 30, and the six pixels moved ten controls above it.
+				'font:inherit;font-size:var(--fs-xs);padding:0;border:none;background:none;' +
+				'border-radius:var(--radius-sm);min-width:0;' +
 				// A deletion that did not happen is not an error and not a success:
 				// something is standing that the operator can act on, which is what
 				// --warn is for everywhere else in the app.
-				'color:var(--warn);white-space:nowrap;cursor:pointer;font:inherit;font-size:var(--fs-xs)}' +
-				'#chunk-chip:hover,#chunk-chip:focus-visible{border-color:var(--warn)}' +
-				'#chunk-chip .cdot{width:6px;height:6px;border-radius:50%;background:currentColor}';
+				'color:var(--warn);cursor:pointer}' +
+				'#chunk-chip:hover,#chunk-chip:focus-visible{background:var(--bg-hover)}' +
+				'#chunk-chip .ctext{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+				'#chunk-chip .cdot{flex:none;width:7px;height:7px;border-radius:50%;background:currentColor}';
 			document.head.appendChild(st);
 		}
 		var c = document.createElement('button');
@@ -648,9 +674,7 @@
 		c.setAttribute('aria-live', 'polite');
 		c.innerHTML = '<span class="cdot" aria-hidden="true"></span><span class="ctext"></span>';
 		c.addEventListener('click', function () { onChipClick(); });
-		var sib = document.getElementById('sync-chip');
-		if (sib && sib.parentNode === actions) actions.insertBefore(c, sib);
-		else actions.appendChild(c);
+		host.appendChild(c);
 		_chip = c;
 		return c;
 	}
@@ -686,7 +710,7 @@
 				c.querySelector('.ctext').textContent = text;
 				c.title = title;
 				c.setAttribute('aria-label', text + '. ' + title);
-				c.style.display = 'inline-flex';
+				c.style.display = 'flex';
 			}
 		}
 		try {
@@ -699,7 +723,7 @@
 	///
 	/// ASKED, ALWAYS. `confirmHeldSweep` deletes on a person's word rather than on
 	/// the engine's, so the word has to be given here rather than assumed from a
-	/// tap on a pill in a top bar. With no dialog to ask through — a stripped build,
+	/// tap on a status row. With no dialog to ask through — a stripped build,
 	/// or this script running without the module — nothing is deleted: a
 	/// destructive act with no way to put the question is not carried out. It is
 	/// not escalated to `window.confirm` either, which is an OS box with the origin
@@ -961,7 +985,8 @@
 		chunkSizeFor:      chunkSizeFor,
 		commit:            commit,				// ({path: manifest}, version) -> {swept,...}|null
 		/// A deletion this client declined to confirm, carried out on a person's
-		/// word. Reached from the chip in the top bar, which asks first; exported
+		/// word. Reached from the notice in the rail's status strip, which asks
+		/// first; exported
 		/// as well so a verifier can drive the act without driving a dialog.
 		confirmHeldSweep:  confirmHeldSweep,
 		state:             state,

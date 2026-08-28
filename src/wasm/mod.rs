@@ -84,3 +84,87 @@ pub(crate) fn js_prop(obj: &JsValue, key: &str) -> Option<String> {
 pub(crate) fn to_js_err(e: Error<ErrTag>) -> JsValue {
     JsValue::from_str(&fmt!("{}", e))
 }
+
+/// Is the page on screen, so a request sent now has somewhere to arrive?
+///
+/// `document.visibilityState`, and nothing cleverer.  A frozen tab reports `hidden`; there is no
+/// API that says "you are about to be frozen", which is the whole difficulty.
+///
+/// Read through `Reflect` rather than through `web_sys::Document`, which would need two more
+/// `web-sys` features turned on in `Cargo.toml` for one string.  The same route
+/// [`web::driver`](crate::wasm::web) takes to `window.DaimondWeb`.
+///
+/// **Anything it cannot read counts as visible.**  A worker has no document at all, and waiting
+/// there for a page that does not exist would hang the turn for the whole restore budget; an
+/// unreadable property is the same case with a different cause.  So the fallback is to proceed,
+/// which is what the code did before this existed.
+pub(crate) fn page_is_visible() -> bool {
+    let win = match web_sys::window() {
+        Some(w) => w,
+        None    => return true,
+    };
+    let doc = match js_sys::Reflect::get(&win, &JsValue::from_str("document")) {
+        Ok(d) if !d.is_undefined() && !d.is_null() => d,
+        _ => return true,
+    };
+    match js_sys::Reflect::get(&doc, &JsValue::from_str("visibilityState")) {
+        Ok(v)  => v.as_string().map(|s| s == "visible").unwrap_or(true),
+        Err(_) => true,
+    }
+}
+
+/// The most the tool ladder will wait for a backgrounded page to come back.
+///
+/// Beyond this it gives up waiting and tries anyway.  A bound rather than a promise: the page may
+/// never come back at all -- the user may have put the phone down -- and a turn that waits for
+/// ever is a turn nobody can stop.
+const RESTORE_WAIT_MS: u64 = 30_000;
+
+/// How long after a restore to leave it before sending, in milliseconds.
+///
+/// **A cited number, not a guess.**  Apple Developer Forums 771127 (reported 2024-12, confirmed
+/// by a second developer 2025-03, no Apple response as of 2026-08-28) documents a live WebKit
+/// fault of exactly this shape: a `fetch` started immediately after `visibilitychange` fails
+/// after 20-40 seconds with `TypeError: Load failed`, while the same fetch started after a short
+/// delay succeeds.  Firing the instant the page is visible is therefore firing into the one
+/// window that is known to be broken.
+const SETTLE_AFTER_RESTORE_MS: u64 = 500;
+
+/// Park until the page is back on screen and has settled, or until the wait is spent.
+///
+/// **THIS IS AS CLOSE TO SUSPENDING A TURN AS THE PLATFORM ALLOWS, and the limit is worth
+/// stating plainly.**  A request already in flight cannot be parked: the `Promise` belongs to the
+/// browser, the page's JavaScript is not running while the page is frozen, so nothing of ours can
+/// observe the freeze while it is happening, and by the time anything of ours runs again the
+/// request has already been rejected -- or the connection torn down with the process.  There is
+/// no event that arrives in time and no handle to hold.
+///
+/// What CAN be parked is the moment BEFORE a request.  That turns "fire into a frozen page and
+/// collect a corpse" into "wait for the page, then fire", which is what makes the retry ladder
+/// above this worth having at all: without it, all eight attempts are spent into a frozen page
+/// while the user is in another app, and the ladder is an expensive way to arrive at the same
+/// failure.
+///
+/// # Arguments
+/// * `waited` - Milliseconds this call has already slept, so the park is charged to the same
+///   budget as the backoff and a turn cannot be extended indefinitely by being backgrounded.
+pub(crate) async fn await_restored(waited: u64) -> u64 {
+    if page_is_visible() {
+        return 0;
+    }
+    let mut spent = 0u64;
+    let budget = RESTORE_WAIT_MS.saturating_sub(waited.min(RESTORE_WAIT_MS));
+    // Polled rather than driven by `visibilitychange`, because a listener registered while the
+    // page is frozen is a listener that has to survive the freeze to be any use, and polling is
+    // the one thing that cannot be missed: the loop simply does not run while the page is frozen,
+    // and resumes on the tick after it wakes.
+    while spent < budget {
+        crate::llm::sleep_ms(250).await;
+        spent += 250;
+        if page_is_visible() {
+            crate::llm::sleep_ms(SETTLE_AFTER_RESTORE_MS).await;
+            return spent + SETTLE_AFTER_RESTORE_MS;
+        }
+    }
+    spent
+}

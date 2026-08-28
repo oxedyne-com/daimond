@@ -1,11 +1,20 @@
 // verify_pausewidget.mjs — the PPTW, searched for its properties rather than
 // walked down a happy path.
 //
-// The rule the whole control rests on (dev/NOTES2_PLAN.md §1.1):
+// The rule the whole control rests on (dev/NOTES2_PLAN.md §1.1, with the
+// denominator corrected):
 //
-//   A leaf is binary. A branch shows green when every leaf under it plays, red
-//   when none does, and amber otherwise. AMBER IS DERIVED AND CAN NEVER BE SET.
-//   Pausing a branch pauses all its leaves; resuming it resumes them all.
+//   A leaf is binary. A branch shows green when every ARMED leaf under it plays,
+//   red when none does, and amber otherwise. AMBER IS DERIVED AND CAN NEVER BE
+//   SET. Pausing a branch pauses all its leaves; resuming it resumes them all.
+//
+// `ARMED` is the word notes2 did not have and the reason it did not need one:
+// when the plan was written every leaf was something that could act on its own,
+// so "every leaf" and "every armed leaf" were the same set. They stopped being
+// the same set once mail folders (which may be manual), a Diamond's own turns
+// and loose chats became leaves, and the light then said "running" about things
+// nobody had automated. Pausing is unchanged: it still writes every leaf,
+// armed or not, which is what keeps "pause Everything" meaning everything.
 //
 // THE CONTROL IS THREE THINGS, IN THE ORDER ITS NAME GIVES. notes2.txt line 3:
 // "Pause/Play/Traffic light widgets (PPTWs) for all spendable functions. Green
@@ -111,13 +120,65 @@ function leavesOf(node) {
 	return node.children.flatMap(leavesOf);
 }
 
+/// Every ARMED leaf id at or under a node: the ones with something set up to
+/// spend WITHOUT BEING ASKED. `armed` is put on our own tree by `expectedTree`,
+/// from the rail's DOM and the mail store, so this stays an independent reading.
+///
+/// An absent `armed` is armed, which is the module's own default and is here for
+/// the same reason: a leaf added later without thinking about it behaves as it
+/// did rather than silently dropping out of every light above it.
+function armedOf(node) {
+	if (!node.children) return node.armed === false ? [] : [node.id];
+	return node.children.flatMap(armedOf);
+}
+
 /// The rule, stated once, in this file.
+///
+/// COUNTED OVER THE ARMED LEAVES, which is what changed. It used to count every
+/// leaf, so a node nobody had paused read green -- and green is read as
+/// "running". The owner read the Email panel exactly that way and said so: it
+/// "shows green when all mailboxes are updated manually", green with nothing
+/// automated at all, and "in the default case, the light should show red, since
+/// there is no automation running". A node with no armed leaf under it is
+/// `idle`: red, and told apart from `pause` in the WORD rather than the colour,
+/// because "there is no automation here" and "the automation here is stopped"
+/// are different things to say to somebody.
 function ruleFor(node, paused) {
-	const leaves = leavesOf(node);
-	if (!leaves.length) return 'play';			// an empty mailbox is not a paused one
+	const leaves = armedOf(node);
+	if (!leaves.length) return 'idle';			// nothing here runs on its own
 	const n = leaves.filter((l) => paused.has(l)).length;
 	return n === 0 ? 'play' : n === leaves.length ? 'pause' : 'mixed';
 }
+
+/// Which of the two verbs a state offers, in DOM order — play, pause, light — so
+/// a mixed branch reads `['play','pause']`. `idle` offers what `pause` offers:
+/// there is nothing running to stop, so play is live and pause is greyed.
+const VERBS = { play: ['pause'], pause: ['play'], idle: ['play'], mixed: ['play', 'pause'] };
+
+/// Is every leaf under this node held?
+const heldAll = (node, paused) => {
+	const ls = leavesOf(node);
+	return ls.length > 0 && ls.every((l) => paused.has(l));
+};
+
+/// The verbs a node offers, which is not always the verbs its LIGHT would offer.
+///
+/// A `stoppable` node arms nothing — so its light is red whether it is held or
+/// not — while holding it still stops something. `root/web` is the only one:
+/// the app answers a page fetch with 423 while that leaf is held, so the pause
+/// verb has work to do on a control the light calls idle. Everything else takes
+/// its verbs from the light, which is the owner's rule.
+const verbsFor = (node, paused) =>
+	node.stoppable ? (heldAll(node, paused) ? ['play'] : ['pause'])
+		: VERBS[ruleFor(node, paused)];
+
+/// FOUR STATES, THREE COLOURS. `idle` and `pause` are both red, so a paint is
+/// compared through the same collapse the widget makes rather than to the raw
+/// state. Written as one function rather than as `!== 'idle'` at each site, so a
+/// fifth state cannot arrive without this file having an opinion about it — and
+/// `data-armed` is separately asserted, so the collapse cannot hide a light that
+/// stopped tracking one of the two.
+const colourOf = (st) => (st === 'idle' ? 'pause' : st);
 
 /// Walk our tree, node by node.
 function* walk(node) {
@@ -132,9 +193,26 @@ async function expectedTree(p) {
 		try {
 			const j = JSON.parse(localStorage.getItem('daimond-mail') || '{}');
 			mail = (Array.isArray(j.accounts) ? j.accounts : []).filter((a) => a && a.address)
-				.map((a) => ({ address: a.address, folders: Object.keys(a.folders || {}), sel: a.folder || 'INBOX' }));
+				.map((a) => ({
+					address: a.address,
+					folders: Object.keys(a.folders || {}),
+					sel:     a.folder || 'INBOX',
+					// SECONDS PER FOLDER, and zero means manual only. `mail.js`'s
+					// `refreshOf` reads the same map; read here off the store rather
+					// than asked of the module, so this stays an oracle.
+					refresh: (a.refresh && typeof a.refresh === 'object') ? a.refresh : {},
+				}));
+		} catch (e) { /* none */ }
+		// Is the worker pump running anything? Off the same store `Workers.load`
+		// reads, not off `Workers.runs`, for the reason `idOf` is reimplemented.
+		let busyWorkers = false;
+		try {
+			const w = JSON.parse(localStorage.getItem('daimond-workers') || '[]');
+			const runs = Array.isArray(w) ? w : ((w && w.runs) || []);
+			busyWorkers = runs.some((r) => r && (r.status === 'running' || r.status === 'queued'));
 		} catch (e) { /* none */ }
 		return {
+			busyWorkers,
 			// Each Diamond with the triggered actions it holds. Phase H made a
 			// Diamond a branch with more than one leaf under it -- `pause.js`
 			// documented that shape long before there were any -- so a file that
@@ -145,8 +223,23 @@ async function expectedTree(p) {
 				id: e.dataset.id,
 				triggers: (() => {
 					try {
+						// The whole record, not merely the id: whether a TA is ARMED is
+						// whether it would actually fire, and that is `on` AND the fields
+						// its kind cannot go without AND an instruction. Judged below by
+						// this file's own copy of the test rather than by asking
+						// `DaimondTriggers.ready`, exactly as `idOf` reimplements the
+						// escaping: a TA switched on with no mailbox is one the trigger
+						// module already refuses, and a light that counted it would be
+						// reporting a thing that cannot happen.
 						return (window.DaimondTriggersOf ? DaimondTriggersOf(e.dataset.id) : [])
-							.map((t) => t.id);
+							.map((t) => ({
+								id: t.id,
+								armed: t.on !== false
+									&& String(t.instruction || '').trim() !== ''
+									&& (t.kind === 'activity' ? !!t.minutes
+										: t.kind === 'mail' ? (!!t.mailbox && !!t.folder)
+										: false),
+							}));
 					} catch (x) { return []; }
 				})(),
 			// EVERY Diamond is in the tree, automated or not. Its TILE may draw no
@@ -161,25 +254,36 @@ async function expectedTree(p) {
 	return {
 		id: 'root',
 		children: [
+			// A DIAMOND'S OWN TURNS ARE NOT AUTOMATION, so `self` is a leaf the
+			// global control still writes and the light does not count. Its daimon
+			// answers because somebody typed; notes2's "Daimon Prompted" trigger was
+			// removed for exactly that reason, and this is the same fact stated in
+			// the tree.
 			{ id: 'root/diamonds', children: seen.diamonds.map((d) => ({
 				id: idOf('root', 'diamonds', d.id),
-				children: [{ id: idOf('root', 'diamonds', d.id, 'self') }].concat(
-					(d.triggers || []).map((tid) =>
-						({ id: idOf('root', 'diamonds', d.id, 'triggers', tid) }))),
+				children: [{ id: idOf('root', 'diamonds', d.id, 'self'), armed: false }].concat(
+					(d.triggers || []).map((t) =>
+						({ id: idOf('root', 'diamonds', d.id, 'triggers', t.id), armed: t.armed }))),
 			})) },
-			{ id: 'root/chats', children: seen.chats.map((c) => ({ id: idOf('root', 'chats', c) })) },
+			{ id: 'root/chats', children: seen.chats.map((c) => ({ id: idOf('root', 'chats', c), armed: false })) },
 			{ id: 'root/mail', children: seen.mail.map((a) => {
 				const names = a.folders.includes(a.sel) ? a.folders.slice() : a.folders.concat([a.sel]);
+				const scheduled = (n) => typeof a.refresh[n] === 'number' && a.refresh[n] > 0;
 				return { id: idOf('root', 'mail', a.address), children:
-					[{ id: idOf('root', 'mail', a.address, 'self') }]
-						.concat(names.sort().map((n) => ({ id: idOf('root', 'mail', a.address, n) }))) };
+					[{ id: idOf('root', 'mail', a.address, 'self'), armed: names.some(scheduled) }]
+						.concat(names.sort().map((n) =>
+							({ id: idOf('root', 'mail', a.address, n), armed: scheduled(n) }))) };
 			}) },
-			{ id: 'root/workers' },
-			// Not a placement of the widget — the Web panel is phase C's surface —
-			// but a leaf all the same, because a page fetch spends. Without it the
-			// enforcement falls back to the root, and on an account with no
-			// Diamonds the root has no leaves and reads green.
-			{ id: 'root/web' },
+			{ id: 'root/workers', armed: seen.busyWorkers },
+			// A leaf because a page fetch spends; without it the enforcement would
+			// fall back to the root. NOT ARMED — it is fetched during a turn somebody
+			// started — and STOPPABLE, because the Web panel does place the widget on
+			// it (`mountPause(web, PAUSE_WEB, …)`, 2026-08-10) and holding it stops a
+			// real spend. The two facts were read as one on 2026-08-28 and the pause
+			// verb on that control could not act for a day; the line above this one
+			// used to say the Web panel was not a placement, and it was that sentence
+			// the arming decision was made against.
+			{ id: 'root/web', armed: false, stoppable: true },
 		],
 	};
 }
@@ -424,7 +528,13 @@ const sweep = await p.evaluate(({ leaves, nodeIds }) => {
 				if (b) b.click();
 				rows.push({
 					m, node, act, shown, wasDisabled,
+					// `after` is what the LIGHT shows and `said` is what the module
+					// answers, both read after the press. They are not the same
+					// alphabet: four states, three colours, so `idle` shows as `pause`.
+					// The pair is compared through `colourOf` below rather than
+					// directly, and `armed` is what says which of the two reds it is.
 					after:   g.dataset.state,
+					armed:   g.dataset.armed,
 					said:    DaimondPause.state(node),
 					beforeL: before,
 					afterL:  leaves.map((l) => DaimondPause.isPaused(l)),
@@ -447,15 +557,39 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 		'NO press of either verb, from any of the leaf states, leaves that control amber',
 		amber.length ? `${amber.length} did, e.g. ${JSON.stringify(amber[0])}` : null);
 
-	const disagree = sweep.filter((r) => r.after !== r.said);
+	const disagree = sweep.filter((r) => r.after !== colourOf(r.said));
 	check(ran && disagree.length === 0,
 		'the light always draws what the module says the node is',
 		disagree.length ? JSON.stringify(disagree[0]) : null);
+	// AND THE TWO REDS ARE DISTINGUISHED ON THE ELEMENT, not merely in the module,
+	// or the collapse above would hide a light that had stopped tracking one of
+	// them. `data-armed` is what the accessible name is chosen from.
+	const misarmed = sweep.filter((r) => r.armed !== (r.said === 'idle' ? '0' : '1'));
+	check(ran && misarmed.length === 0,
+		'and the control says WHICH red it is, so the two are never one fact',
+		misarmed.length ? JSON.stringify(misarmed[0]) : null);
+	// AND THE TWO RED STATES ARE TOLD APART IN THE WORD. A colour cannot say
+	// "nothing is set up here"; the accessible name has to, or the two facts are
+	// indistinguishable to everybody and not merely to a screen reader.
+	const words = await p.evaluate(() => {
+		const o = {};
+		for (const st of ['play', 'pause', 'mixed', 'idle']) {
+			o[st] = window.DaimondI18n ? DaimondI18n.t('pause.state_' + st) : '';
+		}
+		return o;
+	});
+	check(words.idle && words.pause && words.idle !== words.pause,
+		'and idle and paused are DIFFERENT WORDS, since they are the same colour',
+		JSON.stringify(words));
 
 	// The leaves under the pressed node come out uniform, and everything else
 	// is left exactly as it was.
+	// A DISABLED VERB IS EXCLUDED HERE AND CHECKED SEPARATELY BELOW. It does
+	// nothing by design, so a node it left non-uniform is the page working. The
+	// property that a disabled verb really changes nothing is `ghostPress`, which
+	// is the stronger statement and is asserted over the same sweep.
 	const smeared = [], bled = [];
-	for (const r of sweep) {
+	for (const r of sweep.filter((x) => !x.wasDisabled)) {
 		const under = new Set(leavesOf(byId.get(r.node)));
 		const inSet  = leaves.filter((l) => under.has(l));
 		const outSet = leaves.map((l, i) => [l, i]).filter(([l]) => !under.has(l));
@@ -472,10 +606,22 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 
 	// THE VERB, NOT THE STATE, DECIDES. Pause leaves it red and play leaves it
 	// green, from wherever it started — which is what one button could not say.
-	const wrongWay = sweep.filter((r) => r.after !== (r.act === 'pause' ? 'pause' : 'play'));
+	//
+	// EXCEPT ON A NODE WITH NOTHING ARMED, where play cannot make it green because
+	// there is nothing to be running: it releases every leaf under it, exactly as
+	// on any other node, and the light stays `idle`. That is stated here rather
+	// than excluded, because "play sometimes leaves it red" is the kind of licence
+	// that swallows a real regression: the press is still asserted to have RELEASED
+	// its leaves, by `smeared`/`bled` above, which is the property that matters.
+	const wrongWay = sweep.filter((r) => r.said !== 'idle'
+		&& r.after !== (r.act === 'pause' ? 'pause' : 'play'));
 	check(ran && wrongWay.length === 0,
 		'pause always ends paused and play always ends playing, from every state',
 		wrongWay.length ? JSON.stringify(wrongWay[0]) : null);
+	const idlePress = sweep.filter((r) => r.said === 'idle');
+	check(ran && idlePress.length > 0 && idlePress.every((r) => r.after === 'pause' && r.armed === '0'),
+		`a node with nothing armed stays red whichever verb is pressed (${idlePress.length} presses)`,
+		JSON.stringify(idlePress.find((r) => !(r.after === 'pause' && r.armed === '0')) || null));
 
 	// A verb the page had greyed out changed nothing — which is the same thing
 	// as saying the disabled attribute is real rather than cosmetic.
@@ -506,7 +652,7 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 			for (const node of live) {
 				const g = grpFor(node);
 				rows.push({
-					node, state: g.dataset.state,
+					m, node, state: g.dataset.state,
 					live: [...g.querySelectorAll('.pptw-act')].filter((b) => !b.disabled).map((b) => b.dataset.act),
 				});
 			}
@@ -514,9 +660,13 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 		return rows;
 	}, { leaves, nodeIds: nodes.map((n) => n.id) });
 
-	// In DOM order — play, pause, light — so a mixed branch reads ['play','pause'].
-	const want = { play: ['pause'], pause: ['play'], mixed: ['play', 'pause'] };
-	const wrong = offered.filter((r) => JSON.stringify(r.live) !== JSON.stringify(want[r.state]));
+	// Judged against THIS file's tree and THIS file's rule, not against the state
+	// the widget painted on itself: a light and a verb drawn from one wrong answer
+	// agree with each other. `m` is the leaf pattern that row was taken under.
+	const byId = new Map(nodes.map((n) => [n.id, n]));
+	const pausedAt = (m) => new Set(leaves.filter((l, i) => m & (1 << i)));
+	const wrong = offered.filter((r) =>
+		JSON.stringify(r.live) !== JSON.stringify(verbsFor(byId.get(r.node), pausedAt(r.m))));
 	check(offered.length > 0 && wrong.length === 0,
 		'the verb offered is the one that can be done: pause when running, play when paused',
 		wrong.length ? `${wrong.length} wrong, e.g. ${JSON.stringify(wrong[0])}` : `${offered.length} node-states`);
@@ -589,7 +739,7 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 			if (row.said[n.id] !== want && !wrongSaid) {
 				wrongSaid = { node: n.id, want, got: row.said[n.id], paused: [...paused] };
 			}
-			if (row.painted[n.id] !== undefined && row.painted[n.id] !== want && !wrongPainted) {
+			if (row.painted[n.id] !== undefined && row.painted[n.id] !== colourOf(want) && !wrongPainted) {
 				wrongPainted = { node: n.id, want, got: row.painted[n.id], paused: [...paused] };
 			}
 		}
@@ -602,18 +752,21 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 		wrongPainted ? JSON.stringify(wrongPainted) : `${ctl.length} controls`);
 	check(mixedSeen > 0, `amber really was reached by setting leaves directly (${mixedSeen} node-states)`);
 
-	// The empty branch. `root/mail` has no mailbox on this profile, and an empty
-	// section reads green: calling it red would open a new account's rail red.
+	// The empty branch. `root/mail` has no mailbox on this profile. It used to read
+	// GREEN, on the argument that calling it red would open a new account's rail
+	// red — but green is read as "running", and nothing was. It reads `idle` now:
+	// red, and named in words as nothing being set up, which is not an accusation
+	// and is the honest answer.
 	const empties = nodes.filter((n) => n.children && n.children.length === 0);
 	const emptySaid = await p.evaluate((ids) => {
-		DaimondPause.set('root', false);		// everything paused, so green here means the RULE
+		DaimondPause.set('root', false);		// everything paused, so the answer here is the RULE
 		const o = {};
 		for (const id of ids) o[id] = DaimondPause.state(id);
 		return o;
 	}, empties.map((n) => n.id));
 	check(empties.length > 0, `there is an empty branch to test (${empties.map((n) => n.id).join(', ')})`);
-	check(empties.every((n) => emptySaid[n.id] === 'play'),
-		'an empty branch reads green even with everything else paused',
+	check(empties.every((n) => emptySaid[n.id] === 'idle'),
+		'an empty branch reads IDLE, not green — there is nothing there to be running',
 		JSON.stringify(emptySaid));
 	// And it holds no flag of its own: an empty branch emitted as a LEAF would
 	// take one, and nothing could ever resume it.
@@ -661,10 +814,24 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 		const b = document.querySelector('#pptw-global .pptw-play');
 		if (!b) return null;
 		b.click();
-		return { ids: DaimondPause.pausedIds(), tiles: [...document.querySelectorAll('.pptw')].map((x) => x.dataset.state) };
+		return {
+			ids:   DaimondPause.pausedIds(),
+			tiles: [...document.querySelectorAll('.pptw')].map((x) => x.dataset.state),
+			armed: [...document.querySelectorAll('.pptw')].map((x) => x.dataset.armed),
+		};
 	});
-	check(!!back && back.ids.length === 0 && back.tiles.length > 0 && back.tiles.every((x) => x === 'play'),
-		'and its play verb resumes everything', JSON.stringify(back));
+	// THE PROPERTY IS THE FLAGS, and it is asserted on the flags: not one leaf is
+	// left paused. What the lights then show is a second question with a second
+	// answer, because a control governing nothing armed goes on reading red after
+	// a release that did release everything -- it has nothing to be running. So
+	// the tiles are judged per control, against what that control governs.
+	check(!!back && back.ids.length === 0,
+		'and its play verb resumes everything — not one leaf is left paused',
+		JSON.stringify(back && back.ids));
+	check(!!back && back.tiles.length > 0
+		&& back.tiles.every((st, i) => (back.armed[i] === '0' ? st === 'pause' : st === 'play')),
+		'and every control shows it: green where it governs something armed, red where it governs nothing',
+		JSON.stringify(back));
 }
 
 // ── F (continued). Enter and Space ──────────────────────────────────

@@ -14,17 +14,27 @@
 //! ```text
 //! diamonds/<id>/crystal.json              the memory (agent writes, user may edit)
 //! diamonds/<id>/crystal.html              the page that renders it
-//! diamonds/<id>/versions/NNNN.json        a data snapshot per version (0-padded), EVERY version
-//! diamonds/<id>/versions/NNNN.html        a page snapshot, ONLY where the page changed
+//! diamonds/<id>/versions/NNNN.json        a data KEYFRAME (0-padded): the memory in full
+//! diamonds/<id>/versions/NNNN.jpatch      a data DELTA: the splices from the version before it
+//! diamonds/<id>/versions/NNNN.html        a page KEYFRAME, ONLY where the page changed
+//! diamonds/<id>/versions/NNNN.hpatch      a page DELTA against the last version that changed it
 //! diamonds/<id>/versions/NNNN.md          pre-migration history: read-only, never written again
 //! diamonds/<id>/.daimond/meta.json        { name, crystal_version, updated, touched, tags }
 //! diamonds/<id>/.daimond/log              append-only, one JSON record per line
 //! diamonds/<id>/.daimond/deltas/NNNN.md   the raw delta a fold consumed, referenced by delta_ref
 //! ```
 //!
-//! One version counter, shared by both files.  A `versions/NNNN.html` exists only at the versions
-//! where the page actually changed, so the page as at version N is the highest `M <= N` that has
-//! one -- see [`read_version_page`].
+//! One version counter, shared by both files.  A page snapshot exists only at the versions where
+//! the page actually changed, so the page as at version N is the highest `M <= N` that has one --
+//! see [`read_version_page`].
+//!
+//! **Every version stores a keyframe or a patch, and nothing is ever pruned.**  A full copy at
+//! every version cost 101,834 bytes per page edit of the shipped Log Life capp, against a
+//! per-Diamond share of 4 MiB; a hundred edits of it now cost 628 KiB rather than 10.1 MB.  When
+//! a keyframe is due, what a patch may be recorded against, and which files rebuild version N are
+//! [`crate::diamond_delta`]'s, which is portable and is tested against that page.  This module is
+//! the OPFS edge over it: it reads the directory, reads the chain, and refuses to let a version
+//! stand until the file it just wrote has been read back and shown to rebuild it.
 //!
 //! Each log record is a single-line JSON object:
 //! `{ id, ts, kind, agent, task, parent_crystal_version, crystal_version,
@@ -47,6 +57,7 @@ use crate::diamond_link::{
 	update_link_in,
 	write_links,
 };
+use crate::diamond_delta::{self, Snap};
 use crate::diamond_meta::{Meta, normalise_tags};
 use crate::llm::{extract_json_string, json_escape};
 use crate::protocol::generate_session_id;
@@ -55,6 +66,7 @@ use crate::wasm::{js_prop, js_str, opfs};
 
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_core::wasm::{console_log, now_ms};
+use oxedyne_fe2o3_ore::diff;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
@@ -129,13 +141,17 @@ fn version_data_path(id: &str, version: u64) -> String {
     fmt!("{}/{:04}.json", versions_dir(id), version)
 }
 
-/// A page snapshot, `diamonds/<id>/versions/NNNN.html`.
-///
-/// Written only at the versions where the page actually changed, because a page is presentation
-/// and does not move on most edits: copying it into every snapshot would multiply the one file in
-/// a Diamond that nothing folds and nothing reduces.
-fn version_page_path(id: &str, version: u64) -> String {
-    fmt!("{}/{:04}.html", versions_dir(id), version)
+// What a snapshot of each file is called.  A version holds the keyframe extension or the patch
+// one and never both; where it somehow holds both, the keyframe wins, because that is the one
+// that stands on its own -- see [`snapshot_chain`].
+const DATA_KEYFRAME_EXT: &str = ".json";
+const DATA_PATCH_EXT:    &str = ".jpatch";
+const PAGE_KEYFRAME_EXT: &str = ".html";
+const PAGE_PATCH_EXT:    &str = ".hpatch";
+
+/// One version's snapshot of one file, whichever of the two it is.
+fn snapshot_path(id: &str, version: u64, ext: &str) -> String {
+    fmt!("{}/{:04}{}", versions_dir(id), version, ext)
 }
 
 /// A snapshot from before the crystal became data, `diamonds/<id>/versions/NNNN.md`.
@@ -466,7 +482,13 @@ async fn migrate(id: &str) -> Outcome<bool> {
 /// markdown it is: the caller renders what it is given rather than being told which it got, which
 /// is what "the history view renders that as it always did" costs.
 pub async fn read_version(id: &str, version: u64) -> Outcome<String> {
-    if let Ok(bytes) = opfs::read_file(FileRoot::Opfs, &version_data_path(id, version)).await {
+    let snaps = snapshot_chain(id, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await;
+    if snaps.iter().any(|(n, _)| *n == version) {
+        // A version that HAS a snapshot and cannot be rebuilt from it is a fault to report.
+        // Reaching for the pre-migration file of the same number here would answer a question
+        // about a version that no longer exists with one from a Diamond that no longer does.
+        let chain = res!(diamond_delta::plan_at(&snaps, version));
+        let bytes = res!(follow(id, &chain, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await);
         return Ok(String::from_utf8_lossy(&bytes).to_string());
     }
     let bytes = res!(opfs::read_file(FileRoot::Opfs, &version_legacy_path(id, version)).await);
@@ -494,19 +516,109 @@ pub async fn read_version_page(id: &str, version: u64) -> Outcome<String> {
     // One directory walk rather than a read per version stepping backwards.  A Diamond at version
     // 300 whose page never changed would otherwise cost 300 failed OPFS reads to answer "none",
     // on the device least able to afford them.
-    let at = snapshot_versions(id, ".html").await
-        .into_iter()
-        .filter(|n| *n <= version)
-        .max();
-    let n = match at {
-        Some(n) => n,
-        None    => return Ok(String::new()),
+    let snaps = snapshot_chain(id, PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT).await;
+    Ok(res!(page_at(id, version, &snaps).await).unwrap_or_default())
+}
+
+/// The page as at the newest version at or before `version`, or `None` where none was ever
+/// stored at or before it.
+///
+/// The difference from [`read_version_page`] is the difference between "the page was empty" and
+/// "there was no page", which the caller that is about to RECORD a version has to be able to
+/// tell: a version recorded against a parent that does not exist is exactly the fault the whole
+/// chain is built to refuse.
+async fn page_at(id: &str, version: u64, snaps: &[(u64, Snap)])
+    -> Outcome<Option<String>>
+{
+    let chain = match res!(diamond_delta::plan_upto(snaps, version)) {
+        Some((_, c)) => c,
+        None         => return Ok(None),
     };
-    let bytes = res!(opfs::read_file(FileRoot::Opfs, &version_page_path(id, n)).await);
-    Ok(String::from_utf8_lossy(&bytes).to_string())
+    let bytes = res!(follow(id, &chain, PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT).await);
+    Ok(Some(String::from_utf8_lossy(&bytes).to_string()))
+}
+
+/// Every snapshot a Diamond holds for one file, with what each one is.
+///
+/// One directory walk answers both extensions, because a reader needs them together: whether a
+/// version is a full copy or splices over the one before it decides what has to be read next.
+/// A version that holds both -- which is what a patch abandoned by a failed verification would
+/// leave, if the delete after it did not land -- is taken as the full copy.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `kf_ext` - The extension a full copy carries, including its dot.
+/// * `patch_ext` - The extension splices carry, including its dot.
+async fn snapshot_chain(id: &str, kf_ext: &str, patch_ext: &str) -> Vec<(u64, Snap)> {
+    classify(&version_entries(id).await, kf_ext, patch_ext)
+}
+
+/// The `versions/` listing, once, for a caller that is going to classify it twice.
+///
+/// A missing directory is no snapshots and not a failure: a Diamond older than they are, or
+/// one that has been emptied.
+async fn version_entries(id: &str) -> Vec<(String, bool, u64)> {
+    match opfs::list_dir(FileRoot::Opfs, &versions_dir(id)).await {
+        Ok(e)  => e,
+        Err(_) => Vec::new(),
+    }
+}
+
+/// One listing read as one file's snapshots.  See [`snapshot_chain`] for the rules.
+fn classify(entries: &[(String, bool, u64)], kf_ext: &str, patch_ext: &str) -> Vec<(u64, Snap)> {
+    let mut out: Vec<(u64, Snap)> = Vec::new();
+    for (name, is_dir, _size) in entries {
+        if *is_dir {
+            continue;
+        }
+        let found = match name.strip_suffix(kf_ext).and_then(|s| s.parse::<u64>().ok()) {
+            Some(n) => Some((n, Snap::Keyframe)),
+            None    => name.strip_suffix(patch_ext)
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|n| (n, Snap::Patch)),
+        };
+        let (n, kind) = match found {
+            Some(f) => f,
+            None    => continue,        // somebody else's file, passed over rather than guessed at
+        };
+        match out.iter_mut().find(|(m, _)| *m == n) {
+            Some(seen) => if kind == Snap::Keyframe {
+                seen.1 = Snap::Keyframe;
+            },
+            None => out.push((n, kind)),
+        }
+    }
+    out
+}
+
+/// Read one version's chain off the disk and rebuild the file from it.
+///
+/// `chain` is what [`crate::diamond_delta::plan_at`] or
+/// [`crate::diamond_delta::plan_upto`] gave: the keyframe first, then every patch over it in
+/// order.  A missing file is an error and not a shorter chain -- a rebuild that stopped early
+/// would return an older version wearing this one's number.
+async fn follow(id: &str, chain: &[u64], kf_ext: &str, patch_ext: &str)
+    -> Outcome<Vec<u8>>
+{
+    let head = match chain.first() {
+        Some(n) => *n,
+        None    => return Err(err!(
+            "Diamond '{}' asked for a version with no chain to rebuild it from.", id;
+        Bug, Missing)),
+    };
+    let kf = res!(opfs::read_file(FileRoot::Opfs, &snapshot_path(id, head, kf_ext)).await);
+    let mut patches: Vec<Vec<u8>> = Vec::with_capacity(chain.len().saturating_sub(1));
+    for n in &chain[1..] {
+        patches.push(res!(
+            opfs::read_file(FileRoot::Opfs, &snapshot_path(id, *n, patch_ext)).await));
+    }
+    diamond_delta::materialise(kf, &patches)
 }
 
 /// Every version a Diamond holds a snapshot for with the given extension, unordered.
+///
+/// For the pre-migration `.md` snapshots, which have no chain: nothing writes one again, so a
+/// version either has one or does not.  [`snapshot_chain`] is what the two live files use.
 ///
 /// A name that does not parse is somebody else's file and is passed over rather than guessed at.
 /// A missing `versions/` directory is no snapshots, not a failure: a Diamond older than they are,
@@ -514,7 +626,7 @@ pub async fn read_version_page(id: &str, version: u64) -> Outcome<String> {
 ///
 /// # Arguments
 /// * `id` - The Diamond.
-/// * `ext` - The extension including its dot: `.json`, `.html` or `.md`.
+/// * `ext` - The extension including its dot.
 async fn snapshot_versions(id: &str, ext: &str) -> Vec<u64> {
     let entries = match opfs::list_dir(FileRoot::Opfs, &versions_dir(id)).await {
         Ok(e)  => e,
@@ -1036,7 +1148,7 @@ pub async fn read_crystal_data(id: &str) -> Outcome<String> {
     if let Ok(bytes) = opfs::read_file(FileRoot::Opfs, &crystal_data_path(id)).await {
         return Ok(String::from_utf8_lossy(&bytes).to_string());
     }
-    if let Some((n, json)) = res!(newest_version(id, ".json").await) {
+    if let Some((n, json)) = res!(newest_data_version(id).await) {
         console_log(&fmt!(
             "Diamond '{}' has no crystal.json; read version {} instead.", id, n));
         return Ok(json);
@@ -1050,7 +1162,7 @@ pub async fn read_crystal_data(id: &str) -> Outcome<String> {
         let md = String::from_utf8_lossy(&bytes).to_string();
         return Ok(crate::tools::crystal_from_markdown(&md).to_json());
     }
-    if let Some((n, md)) = res!(newest_version(id, ".md").await) {
+    if let Some((n, md)) = res!(newest_legacy_version(id).await) {
         console_log(&fmt!(
             "Diamond '{}' has no crystal at all; markdown version {} is read as data instead.",
             id, n));
@@ -1081,7 +1193,18 @@ pub async fn read_crystal_page(id: &str) -> Outcome<String> {
         Ok(m)  => m.version,
         Err(_) => return Ok(String::new()),
     };
-    read_version_page(id, at).await
+    // And nor is a chain that cannot be walked.  The next write mends it: a version whose parent
+    // could not be read is recorded as a full copy, so the Diamond heals rather than staying
+    // unopenable -- see [`write_snapshot`].
+    match read_version_page(id, at).await {
+        Ok(page) => Ok(page),
+        Err(e)   => {
+            console_log(&fmt!(
+                "Diamond '{}' has no page file and its snapshots at version {} could not be \
+                 rebuilt: {}. It opens on the built-in page.", id, at, e));
+            Ok(String::new())
+        },
+    }
 }
 
 /// The page a Diamond has on disk right now, with no fallback of any kind.
@@ -1096,32 +1219,147 @@ async fn page_on_disk(id: &str) -> String {
     }
 }
 
-/// The highest-numbered snapshot a Diamond holds with the given extension, with its text.
+/// The newest pre-migration snapshot a Diamond holds, `versions/NNNN.md`, with its text.
 ///
 /// The numbering is zero-padded and monotonic, so the highest that PARSES is the newest.
-///
-/// # Arguments
-/// * `id` - The Diamond.
-/// * `ext` - The extension including its dot: `.json` for data, `.md` for pre-migration history.
-async fn newest_version(id: &str, ext: &str) -> Outcome<Option<(u64, String)>> {
-    let n = match snapshot_versions(id, ext).await.into_iter().max() {
+async fn newest_legacy_version(id: &str) -> Outcome<Option<(u64, String)>> {
+    let n = match snapshot_versions(id, ".md").await.into_iter().max() {
         Some(n) => n,
         None    => return Ok(None),
     };
-    let path = fmt!("{}/{:04}{}", versions_dir(id), n, ext);
+    let path = fmt!("{}/{:04}.md", versions_dir(id), n);
     let bytes = res!(opfs::read_file(FileRoot::Opfs, &path).await);
     Ok(Some((n, String::from_utf8_lossy(&bytes).to_string())))
+}
+
+/// The newest data version a Diamond can actually REBUILD, with its text.
+///
+/// Descending rather than the highest alone, because this is the store's own redundancy and is
+/// reached only when `crystal.json` is already gone.  A Diamond whose newest chain is broken is
+/// precisely the case the fallback exists for, and stopping at it would hand an agent an empty
+/// crystal to write over work it never saw.
+async fn newest_data_version(id: &str) -> Outcome<Option<(u64, String)>> {
+    let snaps = snapshot_chain(id, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await;
+    let mut ns: Vec<u64> = snaps.iter().map(|(n, _)| *n).collect();
+    ns.sort_unstable();
+    for n in ns.into_iter().rev() {
+        let chain = match diamond_delta::plan_at(&snaps, n) {
+            Ok(c)  => c,
+            Err(_) => continue,
+        };
+        if let Ok(bytes) = follow(id, &chain, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await {
+            return Ok(Some((n, String::from_utf8_lossy(&bytes).to_string())));
+        }
+    }
+    Ok(None)
+}
+
+/// Write one version's snapshot of one file, and prove it before the version is allowed to stand.
+///
+/// **This is what makes it impossible to record a delta that cannot be reconstructed.**  Three
+/// gates, in this order, and the last is the only one that has seen the disk:
+///
+/// 1. [`crate::diamond_delta::record`] returns a patch only from
+///    [`oxedyne_fe2o3_ore::diff::make_patch`], which decodes and applies what it has just encoded
+///    and refuses to hand back anything whose reconstruction is not the bytes it was given.
+/// 2. The patch is written, then READ BACK OFF THE DISK and applied to the parent in hand.  The
+///    version stands only if THAT gives the bytes it was told to record, so a short write, a
+///    truncated file or a storage layer that returned success without storing anything is caught
+///    here rather than by the person who wanted the version back.
+/// 3. A full copy is read back and compared as well, which is the base case the whole chain rests
+///    on: every version is a keyframe plus patches each proved against the one under it, so if
+///    the base holds and each step holds, the version holds.
+///
+/// Every failure ends in the same place -- the full copy the store wrote before this existed --
+/// so the cost of any fault in the diff, the encoding, the decoding or the write is space, and
+/// never history.  A full copy that will not read back is the one thing there is no fallback
+/// from, and it is an error rather than a silently missing version.
+///
+/// # Arguments
+/// * `parent` - The file as at the snapshot before this one, or `None` where there is none or it
+///   could not be rebuilt.  `None` forces the full copy.
+/// * `want` - The file as this version holds it.
+/// * `snaps` - Every snapshot this file already has, which is what says whether a keyframe is due.
+async fn write_snapshot(
+    id:        &str,
+    version:   u64,
+    parent:    Option<&str>,
+    want:      &str,
+    snaps:     &[(u64, Snap)],
+    kf_ext:    &str,
+    patch_ext: &str,
+)
+    -> Outcome<Snap>
+{
+    let rec = diamond_delta::record(parent.map(|p| p.as_bytes()), want.as_bytes(), snaps);
+    if let diamond_delta::Recorded::Patch(p) = &rec {
+        let at = snapshot_path(id, version, patch_ext);
+        res!(opfs::write_file(FileRoot::Opfs, &at, p).await);
+        let proved = match (opfs::read_file(FileRoot::Opfs, &at).await, parent) {
+            (Ok(back), Some(par)) => match diff::apply_patch(par.as_bytes(), &back) {
+                Ok(got) => got == want.as_bytes(),
+                Err(_)  => false,
+            },
+            _ => false,
+        };
+        if proved {
+            return Ok(Snap::Patch);
+        }
+        // Taken away before the full copy is written, so no version is ever left holding two
+        // snapshots for a reader to choose between.
+        let _ = opfs::delete_entry(FileRoot::Opfs, &at, false).await;
+        console_log(&fmt!(
+            "Diamond '{}' version {}: the '{}' just written does not read back as the version it \
+             records, so a full copy is written instead.", id, version, patch_ext));
+    }
+    let kf_at = snapshot_path(id, version, kf_ext);
+    res!(opfs::write_file(FileRoot::Opfs, &kf_at, want.as_bytes()).await);
+    let back = res!(opfs::read_file(FileRoot::Opfs, &kf_at).await);
+    if back != want.as_bytes() {
+        return Err(err!(
+            "Diamond '{}' version {}: '{}' reads back as {} bytes and not the {} it was given, \
+             so the version is not recorded.", id, version, kf_at, back.len(), want.len();
+        Invalid, Data, Mismatch));
+    }
+    Ok(Snap::Keyframe)
+}
+
+/// The memory as at `version`, or `None` with a console line where it cannot be rebuilt.
+///
+/// A parent that cannot be read is not a reason to refuse the write in front of the user.  It is
+/// a reason to record this version as a full copy, which is both the safe answer and the one that
+/// mends the Diamond: the version after it has a keyframe to build on again.
+async fn parent_data(id: &str, version: u64, snaps: &[(u64, Snap)]) -> Option<String> {
+    let chain = match diamond_delta::plan_at(snaps, version) {
+        Ok(c)  => c,
+        Err(_) => return None,      // no snapshot at all, which is an ordinary new Diamond
+    };
+    match follow(id, &chain, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await {
+        Ok(bytes) => Some(String::from_utf8_lossy(&bytes).to_string()),
+        Err(e)    => {
+            console_log(&fmt!(
+                "Diamond '{}': the memory at version {} could not be rebuilt ({}), so the next \
+                 version records a full copy of it.", id, version, e));
+            None
+        },
+    }
 }
 
 /// Snapshot a new crystal version and return its number.
 ///
 /// **The two files are snapshotted on different rules, and that asymmetry is the design.**  The
-/// data is written at every version, so `versions/NNNN.json` exists for every N from the migration
-/// onward and the history is complete without a walk.  The page is written only where its bytes
-/// differ from the page as at the PARENT version -- not from the file on disk, which the daimon
-/// may already have overwritten during the turn being recorded.  Most edits do not touch the page,
-/// and copying it into every snapshot would multiply the one file in a Diamond that nothing folds
-/// and nothing reduces.
+/// data is written at every version, so the history is complete without a walk.  The page is
+/// written only where its bytes differ from the page as at the PARENT version -- not from the
+/// file on disk, which the daimon may already have overwritten during the turn being recorded.
+/// Most edits do not touch the page, and snapshotting it at every version would multiply the one
+/// file in a Diamond that nothing folds and nothing reduces.
+///
+/// **Each half is written as splices where that is smaller, and the delta costs no read.**  Both
+/// parents are read here anyway: the data's because a version is recorded against it, the page's
+/// because the boolean deciding whether the page moved at all is a comparison with it.  This is
+/// the funnel every write comes through -- `write_crystal_data`, `write_crystal_page`,
+/// `write_crystal_both`, `record_steer`, `record_model_change` and the fold -- so putting the
+/// delta log here reaches all of them and reaches nothing twice.
 ///
 /// The other door on the two ceilings.  `Tool::FileWrite` and `Tool::FileEdit` catch a daimon
 /// growing either file past its cap; this catches a hand edit and a fold, which reach the files
@@ -1149,17 +1387,39 @@ async fn snapshot(id: &str, data: &str, page: Option<&str>, now: u64) -> Outcome
 
     let mut meta = res!(read_meta(id).await);
     let next = meta.version + 1;
+
+    // Each half's parent: what the new version is recorded against, and -- for the page -- the
+    // answer to whether it moved at all.  A parent that cannot be rebuilt is `None` rather than a
+    // failure, which records this version as a full copy and mends the Diamond on the spot.
+    // One directory walk read twice, because the two files live in the same directory and the
+    // walk is the expensive half.  What this adds over what the boolean already cost is the read
+    // of the memory's chain, which the boolean never needed.
+    let entries = version_entries(id).await;
+    let data_snaps = classify(&entries, DATA_KEYFRAME_EXT, DATA_PATCH_EXT);
+    let parent_data = parent_data(id, meta.version, &data_snaps).await;
+    let page_snaps = classify(&entries, PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT);
+    let parent_page = match page_at(id, meta.version, &page_snaps).await {
+        Ok(p)  => p,
+        Err(e) => {
+            console_log(&fmt!(
+                "Diamond '{}': the page at version {} could not be rebuilt ({}), so version {} \
+                 records a full copy of it.", id, meta.version, e, next));
+            None
+        },
+    };
     // Against the parent version rather than against the file, so a page the daimon wrote itself
     // during the turn is still recognised as a change and still gets its snapshot.
-    let changed = want != res!(read_version_page(id, meta.version).await);
+    let changed = want != parent_page.clone().unwrap_or_default();
 
     res!(opfs::write_file(FileRoot::Opfs, &crystal_data_path(id), data.as_bytes()).await);
-    res!(opfs::write_file(FileRoot::Opfs, &version_data_path(id, next), data.as_bytes()).await);
+    res!(write_snapshot(id, next, parent_data.as_deref(), data, &data_snaps,
+        DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await);
     if want != disk {
         res!(opfs::write_file(FileRoot::Opfs, &crystal_page_path(id), want.as_bytes()).await);
     }
     if changed {
-        res!(opfs::write_file(FileRoot::Opfs, &version_page_path(id, next), want.as_bytes()).await);
+        res!(write_snapshot(id, next, parent_page.as_deref(), want, &page_snaps,
+            PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT).await);
     }
 
     meta.version = next;
@@ -1730,8 +1990,13 @@ fn is_safe_rel(rel: &str) -> bool {
 /// Diamond *is* lives under its directory -- the crystal, every version
 /// snapshot, the metadata, the log, the retained deltas, the link sidecar -- so
 /// a per-Diamond file added later travels with it and nothing carrying a
-/// Diamond about has to learn the new file's name.  Every file is read as text,
-/// which is what all of them are.
+/// Diamond about has to learn the new file's name.
+///
+/// NOT ALL OF THEM ARE TEXT ANY MORE.  A version's `.jpatch` and `.hpatch` carry two
+/// checksums in their header, so most are not valid UTF-8; they travel base64 in the pack's
+/// `binary` map, and [`crate::protocol::pack_diamond`] decides which map a file goes in by
+/// asking the bytes rather than the name.  Both routes are lossless and
+/// `diamond_delta::tests::test_a_patch_survives_the_pack_a_sync_carries_it_in` holds them to it.
 ///
 /// The paths come out sorted, so two exports of an unchanged Diamond are the
 /// same bytes and a caller comparing states sees no change where there is none.
@@ -1753,9 +2018,17 @@ fn is_safe_rel(rel: &str) -> bool {
 /// what an iPhone's tab is killed for. `list_dir` already reports each entry's
 /// size, so the answer costs a directory walk and not one byte of content.
 ///
-/// An OVER-estimate by design: the JSON envelope and escaping only ever add to
-/// it, so a Diamond this says fits might still be trimmed by the caller, and one
-/// it says does not fit certainly does not.
+/// EVERY FILE WAS WEIGHED AS THOUGH IT TRAVELLED BASE64, four bytes for three, and most of a
+/// Diamond does not: valid UTF-8 goes into the pack as itself, and what JSON escaping adds to a
+/// page is a few per cent.  Measured, that over-estimate cost real syncs -- thirteen Diamonds at
+/// the page ceiling with five edits each were admitted five where the pack itself admits seven, so
+/// two were refused a parcel they would have fitted and the user was told they had been left
+/// behind.  [`crate::protocol::packed_weight`] weighs each file by what its kind actually costs,
+/// and keeps the heavy figure for JSON, for the log and for anything unrecognised.
+///
+/// It is an estimate rather than a bound, and the direction it has to be right about is a
+/// REFUSAL: a Diamond this says will not fit is never built, so that answer has to hold, while one
+/// it lets through is weighed again exactly against the pack that travels.
 pub async fn export_size(id: &str) -> Outcome<u64> {
     let root = diamond_dir(id);
     if !res!(opfs::exists(FileRoot::Opfs, &root).await) {
@@ -1774,12 +2047,11 @@ pub async fn export_size(id: &str) -> Outcome<u64> {
             if is_dir {
                 todo.push(child);
             } else {
-                // The path travels in the envelope too, and a Diamond with many
-                // version files carries a lot of path.  A binary file travels as base64, which is
-                // four bytes for every three, so the allowance is made for every file: it keeps this
-                // an over-estimate without a second directory walk to find out which are which.
-                let weight = size.saturating_mul(4) / 3;
-                total = total.saturating_add(weight).saturating_add(child.len() as u64);
+                // The path travels in the envelope too, and a Diamond with many version files
+                // carries a lot of path, so `packed_weight` counts it and the entry's own
+                // punctuation as well as the content.
+                total = total.saturating_add(
+                    crate::protocol::packed_weight(&child, size));
             }
         }
     }

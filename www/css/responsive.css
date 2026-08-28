@@ -73,9 +73,9 @@
 	   the surface. The click is caught in mobile.js and closes the drawer, not
 	   the panel. */
 	.panel.rail .panel-close { display: flex !important; }
-	/* The header tags are how a DESKTOP grows its layout; a phone reaches the
-	   rail through the hamburger and raises a thing as a sheet instead. */
-	.panel-tags { display: none !important; }
+	/* The chip row is not in the header here -- it IS the footer (see .mnav in
+	   css/mobile.css, and `placeChips` in js/mobile.js, which moves the one row
+	   between the two). It used to be hidden on a phone altogether. */
 
 	/* One DESTINATION at a time, full width. The dwellable panels — Chat, Email,
 	   Files, Agents — take the whole screen and are chosen from the bottom bar.
@@ -92,52 +92,16 @@
 	body[data-mpanel="mail"]   .main .mail   { display: flex !important; }
 	body[data-mpanel="work"]   .main .work   { display: flex !important; }
 
-	/* Bottom nav. */
+	/* The bottom bar. Its contents are the chip row, and its rules are in
+	   css/mobile.css with the rest of the phone shell; what stays here is the
+	   band itself, because the layout above depends on its height. */
 	.mnav {
 		display: flex;
 		align-items: stretch;
-		gap: 4px;
 		flex: none;
 		border-top: 1px solid var(--border);
 		background: var(--bg-primary);
-		padding: 6px 4px calc(6px + var(--safe-b));
 		margin: 0 -8px;
-	}
-	.mnav button {
-		flex: 1;
-		/* The count badge is placed over the icon rather than added to the
-		   column: this button is a two-row stack of icon and label, and a third
-		   row would grow the bar for every reader whether or not anything is
-		   waiting. */
-		position: relative;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: 3px;
-		padding: 5px 0 3px;
-		background: none;
-		border: none;
-		border-radius: var(--radius);
-		color: var(--text-muted);
-		font-size: var(--fs-2xs);
-	}
-	.mnav button .ic { width: 19px; height: 19px; }
-	/* --accent-text, not --accent: at 11px this is small text and needs 4.5,
-	   and the accent on its own soft ground managed 3.60-4.33 on seven of the
-	   eleven palettes -- making the destination you are ON the least legible
-	   label on the bar. */
-	.mnav button.on { color: var(--accent-text); background: var(--accent-soft); }
-	/* Over the icon's top-right corner, where a badge is looked for. It hangs
-	   past the icon so it does not sit on the glyph it is about. The colours are
-	   app.css's and are NOT restated here: `--accent-text` on `--accent-soft` is
-	   the one small-text pairing measured across all eleven palettes, and the
-	   phone bar is where the type is smallest. */
-	.mnav button .dock-count {
-		position: absolute;
-		top: 2px;
-		left: 50%;
-		margin-left: 5px;
 	}
 
 	/* ── The header's controls SCROLL ─────────────────────────────
@@ -257,7 +221,13 @@
 	   own close 21 square. Dense is right on a desktop, where these are read with
 	   a pointer over them; in a drawer they need a finger's worth of height.
 	   (The drawer scrolls, so the extra height costs nothing that matters.) */
-	.astat-row.astat-btn { padding-top: 9px; padding-bottom: 9px; }
+	/* `.astat-sync` is here because its chip is pressable in the one state the
+	   user can lift -- "Sync off" opens Credits, and a safe start turns syncing
+	   back on -- so it is a target and needs a finger's worth of height like the
+	   rows around it. Without it the sync row sat 12px shorter than its
+	   neighbours and read as a caption rather than a row. */
+	.astat-row.astat-btn,
+	.astat-row.astat-sync { padding-top: 9px; padding-bottom: 9px; }
 	.astat-id .user-row { padding: 9px 4px; }
 	.astat-id #settings-btn { min-width: 40px; min-height: 40px; }
 	.admin-item { padding-top: 10px; padding-bottom: 10px; }

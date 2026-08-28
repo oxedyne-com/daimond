@@ -36,6 +36,10 @@ environment is not the test runner's to set.
     noise_ms  send an unrecognised message this often and NOTHING else -- no
               "started", no output, no end.  A page that treats any message as
               proof of life waits for ever on it
+    mute      never answer "hello".  The port opens, the host is there, and the
+              greeting the page is waiting for never comes -- which is what the
+              page's handshake deadline exists for, and what it SAYS when that
+              deadline passes is the thing under test
 
 Everything it receives and sends is appended to ``mock_host.log`` beside it, so
 a test can prove the relay sent ``bye`` when the page went away rather than
@@ -67,7 +71,7 @@ def note(what, msg):
 def cfg():
     """The behaviour asked for, or the plain default."""
     out = {'chunks': 3, 'gap': False, 'huge': False, 'crash': False, 'delay_ms': 0,
-           'caps': ['mock'], 'exit': 0, 'quiet_ms': 0, 'noise_ms': 0}
+           'caps': ['mock'], 'exit': 0, 'quiet_ms': 0, 'noise_ms': 0, 'mute': False}
     try:
         with open(CFG, encoding='utf-8') as fh:
             out.update(json.load(fh))
@@ -174,6 +178,11 @@ def main():
 
         t = req.get('t')
         if t == 'hello':
+            # A host that is there and never greets.  Nothing is sent back at all,
+            # so the page's handshake deadline is the only thing that can end it.
+            if c['mute']:
+                note('--', {'mute': True})
+                continue
             send({'t': 'hello', 'proto': PROTO, 'host': 'daimond-hand (mock)',
                   'version': '0.0.0-mock', 'os': 'linux', 'caps': c['caps']})
         elif t == 'exec':

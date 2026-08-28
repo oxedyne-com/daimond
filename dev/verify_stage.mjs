@@ -131,8 +131,8 @@ const BREAKS = {
 	// reloaded, which is the failure a check that only drags cannot see.
 	seatsave: [{
 		file: 'js/daimond.js',
-		find: '\t\t\t\t\twidths: widths, split: split, railSplit: railSplit, seats: seats,',
-		with: '\t\t\t\t\twidths: widths, split: split, railSplit: railSplit,',
+		find: '\t\t\t\t\twidths: widths, split: split, railH: railPin(), seats: seats,',
+		with: '\t\t\t\t\twidths: widths, split: split, railH: railPin(),',
 	}],
 	// The seat under the hand gains exactly what it should, and what it gains is
 	// taken from the far end of the stage instead of from its neighbour. Sharpened

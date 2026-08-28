@@ -88,6 +88,17 @@
    crosses that channel is one integer, the new version, and the
    device answers it with the pull it would have run on focus. See
    the wake channel below.
+
+   AND WHERE THE GATEWAY CANNOT SAY, THE DEVICE ASKS. The channel is
+   a WebSocket, or a parked request, through whatever front door the
+   account is reached by, and a door that carries neither shuts it for
+   the life of the page. What was left then was the triggers of the
+   first kind again -- and a second browser open on a desk raises none
+   of them, so it sat on state from whenever it was last touched. Two
+   reports, one cause: turns taken in one browser did not appear in the
+   other, and two views of one account showed two different spend
+   tallies. So there is a catch-up now, gated on the channel being
+   quiet: a device that will be told pays nothing for it. See catchUp.
    ============================================================ */
 (function () {
 	'use strict';
@@ -102,10 +113,17 @@
 	var MAX_CONFLICT_RETRIES = 4;	// Bound the pull-merge-retry loop.
 	// Focus arrives in bursts -- a click into the window raises focus on the
 	// window and a visibilitychange with it -- so the pull is debounced into one,
-	// and then rate-limited: returning to a window every few seconds is normal
-	// behaviour and must not become a request every few seconds.
+	// and then rate-limited.
 	var FOCUS_DEBOUNCE_MS = 400;
-	var FOCUS_PULL_MIN_MS = 30000;
+	// THIRTY SECONDS WAS TOO LONG, AND THE NUMBER WAS THE WHOLE DEFECT. Working in
+	// one browser and glancing at the other is something people do all afternoon,
+	// and a glance that landed inside the window showed whatever the previous one
+	// had left -- which is indistinguishable from sync not working, and was
+	// reported as exactly that. What a throttle is for here is a click storm, and
+	// the debounce above already deals with one; what is left is a single small
+	// GET per return to a window, which is cheap, and a return to a window is
+	// precisely when its owner expects to see the other device's work.
+	var FOCUS_PULL_MIN_MS = 3000;
 	// A push with nothing to send asks anyway, at most this often. See push().
 	var IDLE_PULL_MIN_MS  = 5000;
 	// ── Wake channel ───────────────────────────────────────────
@@ -135,12 +153,61 @@
 	// in or not, entitled or not. Cheap, and it means no other file has to raise
 	// an event this one listens for.
 	var WAKE_WATCH_MS     = 10000;
+	// ── The catch-up ───────────────────────────────────────────
+	// Every trigger above is either something that happened on THIS device or the
+	// gateway's own tap, and the tap is a WebSocket -- or a parked request --
+	// through whatever front door the account is reached by. Where that door
+	// carries neither, `wakeMode` goes to 'off' for the life of the page, and the
+	// second device is back to triggers of the first kind. A window nobody is
+	// typing at has none of them: no turn ends there, nothing is renamed, nobody
+	// comes back to it. It converged when somebody touched it, and not before.
+	//
+	// That was reported twice from one real account and read as two faults --
+	// turns taken in one desktop browser not appearing in the other, and two views
+	// of one account showing two different token cost tallies. Both are the one
+	// thing: the reading device never asked.
+	//
+	// So a device that cannot be TOLD, asks. Only then: a channel that is carrying
+	// makes this cost nothing, which is why it is gated on the channel rather than
+	// run unconditionally -- a pull on every open tab on a timer is a real bill on
+	// a real account, and the wake channel exists so that nobody pays it.
+	var CATCHUP_MS      = 20000;	// How stale a device with no channel may get.
+	// How often that is checked, which is NOT the same number: a tick equal to the
+	// threshold puts the real ceiling at twice it.
+	var CATCHUP_TICK_MS = 5000;
 	var K_VERSION = 'daimond-sync-version';		// Per-account (accounts.js prefixes it).
 	var K_LAST    = 'daimond-sync-last';		// When a sync last succeeded, for the chip.
+	// The digest of the parcel this device last got into the mailbox, so the FIRST
+	// push of a new page can tell that it has nothing to say. Same `daimond-`
+	// prefix as the two above and for the same reason: accounts.js namespaces
+	// every one of these, so a second account answers its own question.
+	var K_SIG     = 'daimond-sync-sig';
+	// What this build writes into it. A stored value that does not say this is
+	// from another format and reads as no fixed point at all -- which sends.
+	var SIG_V     = 1;
 
 	// ── State ──────────────────────────────────────────────────
 	var serverVersion = 0;		// The version this device last saw on the server.
 	var lastPushed    = null;	// JSON of the state last pushed, to skip no-op pushes.
+	// THE SAME FACT, CARRIED ACROSS A RELOAD, and consulted by the first push of a
+	// page and by nothing else.
+	//
+	// `lastPushed` above is memory, so it begins every page as null and the guard
+	// in push() could not match after a refresh -- the whole parcel went up
+	// whether or not a byte had changed. The owner saw it as the sync chip cycling
+	// twice a couple of seconds apart after a hard refresh: the boot pull, and
+	// then a push with nothing in it to send. Measured at 163 KB on an account
+	// holding one chat, on every reload.
+	//
+	// DELIBERATELY ONLY THE FIRST PUSH. Once this page has sent something,
+	// `lastPushed` is the exact answer and this is not consulted again -- so
+	// nothing about the steady state of a running tab is changed by it, and the
+	// digest is computed once per page rather than once per push. A wider version
+	// of this cost six checks in dev/verify_sync.mjs's park-fallback section: the
+	// guard reached pushes it had never reached before, and a device that skipped
+	// one left the mailbox where it was and the other device's parked request
+	// unanswered.
+	var bootSig       = '';		// '' means no fixed point, which always sends.
 	var entitled      = true;	// Cleared to false on a 402; stops pointless pushes.
 	var tooLarge      = false;	// Set on a 413; the parcel will not fit as it stands.
 	// Set on a 401 that a fresh session could not clear. Standing, like the two
@@ -163,6 +230,7 @@
 	var lastPullAt    = 0;
 	var inFlight      = false;	// One sync operation at a time.
 	var started       = false;	// The engine has attached its listeners.
+	var catchupTimer  = null;	// The catch-up supervisor, for a device with no channel.
 	// This device has read the mailbox and knows what is in it -- a parcel it
 	// merged, or an empty mailbox. Only then may it publish an account-wide fact
 	// nobody has told it, which at the moment means the look and nothing else.
@@ -204,6 +272,11 @@
 	var wakeProbeGen = -1;
 	var wakeTarget  = 0;		// The highest version the channel has heard about.
 	var wakeSoon    = null;		// The coalescing timer for the pull a wake asks for.
+	// Whether the channel was shut ON PURPOSE, which is a different fact from
+	// `wakeMode === 'off'`. The road refusing to carry a channel is exactly what
+	// the catch-up is for; somebody asking for this device to go quiet is exactly
+	// what it must not talk over. See `wakeVia` and `catchUp`.
+	var wakeShut    = false;
 	var wakes       = 0;		// Wakes acted on, for the verifier and for debugging.
 
 	function log(/* ...args */) {
@@ -461,38 +534,42 @@
 	}
 
 	// ── Status indicator ───────────────────────────────────────
-	// A small, transient chip in the top bar: "Syncing…" while a push or pull is
-	// in flight, "Synced" briefly after, "Sync off" if the tier is not held. It
-	// injects itself, so there is no bespoke markup to keep in step.
+	// The rail's status strip carries one row for sync: "Syncing…" while a push
+	// or pull is in flight, "Synced" briefly after, "Sync off" if the tier is not
+	// held, and a standing refusal for as long as one stands. When there is none
+	// of that, the row says when a sync last worked (see `paintRest`), so the row
+	// is never empty and never has to be waited for.
+	//
+	// IT WAS A PILL IN THE TOP BAR, and it moved everything beside it. The bar's
+	// right-hand group shrank to its contents, so a chip appearing there took
+	// 86px out of the chip row and out of the icon buttons -- measured 2026-08-28
+	// at 1440px -- twice a round, at moments nobody controls. A status that
+	// arrives and departs does not belong among things people press. The strip is
+	// where this app already puts "the state of the machine, at a glance and
+	// without asking", and every row in it is the answer to one question.
+	//
+	// The element keeps its id, its `data-state`, its `.sdot`/`.stext` children,
+	// its hover title and its click: what changed is where it hangs and how it is
+	// drawn. Its rules are with the other status rows in css/app.css rather than
+	// injected here, now that there is a row in the markup for it to sit in.
 	var _statusChip = null, _statusTimer = null;
+	/// The row the chip lives in, and the resting line it shares the row with.
+	function statusRow() {
+		return document.getElementById('astat-sync');
+	}
 	function statusChip() {
 		if (_statusChip) return _statusChip;
-		var actions = document.getElementById('top-actions') || document.querySelector('.top-actions');
-		if (!actions) return null;
-		if (!document.getElementById('sync-status-styles')) {
-			var st = document.createElement('style');
-			st.id = 'sync-status-styles';
-			st.textContent =
-				'#sync-chip{display:none;align-items:center;gap:5px;font-size:var(--fs-xs);padding:3px 9px;' +
-				'border-radius:999px;border:1px solid var(--border,#333);color:var(--text-secondary,#9aa);' +
-				// --surface has never been a token in variables.css, so this always
-				// fell through to the literal and the chip was a near-black pill on
-				// the light and lollypop themes. --bg-tertiary is the raised surface
-				// the rest of the app uses, and it is defined in all three.
-				'background:var(--bg-tertiary);white-space:nowrap}' +
-				'#sync-chip[data-state="syncing"]{color:var(--accent)}' +
-				'#sync-chip[data-state="synced"]{color:var(--ok)}' +
-				'#sync-chip[data-state="off"]{color:var(--text-secondary,#888);cursor:pointer}' +
-				// A stall is not an error and not a success: something is wrong that
-				// the user can fix, which is what --warn is for in the rest of the app.
-				'#sync-chip[data-state="stalled"]{color:var(--warn)}' +
-				'#sync-chip .sdot{width:6px;height:6px;border-radius:50%;background:currentColor}' +
-				'#sync-chip[data-state="syncing"] .sdot{animation:syncpulse 1s ease-in-out infinite}' +
-				'@keyframes syncpulse{0%,100%{opacity:.35}50%{opacity:1}}';
-			document.head.appendChild(st);
-		}
+		var host = statusRow() || document.getElementById('admin-status')
+			|| document.querySelector('.admin-status');
+		if (!host) return null;
 		var c = document.createElement('div');
 		c.id = 'sync-chip';
+		// The INLINE style carries "is it saying anything", because that is what
+		// six verifiers read (`c.style.display !== 'none'`). The stylesheet's
+		// `display: none` would leave it empty until the first `setStatus`, so a
+		// chip built at boot and asked before it had anything to report would
+		// answer that it was showing.
+		c.style.display = 'none';
 		// It goes syncing -> synced -> stalled -> off on its own, with nothing the
 		// user pressed to cause it. `role="status"` is enough here: it changes
 		// rarely and says one short thing, which is the case a polite live region
@@ -517,12 +594,35 @@
 			}
 			if (window.DaimondAdmin && DaimondAdmin.credits) DaimondAdmin.credits(t('sync.off_pitch'));
 		});
-		var pair = document.getElementById('pair-link-btn');
-		if (pair && pair.parentNode === actions) actions.insertBefore(c, pair);
-		else actions.appendChild(c);
+		host.appendChild(c);
 		_statusChip = c;
 		return c;
 	}
+
+	/// Say when a sync last worked, in the row, while the chip has nothing to say.
+	///
+	/// The chip used to fade 1.8 seconds after "Synced" and leave the bar with no
+	/// sync state on it at all, which is fine for a pill nobody was looking at and
+	/// no use as an answer to "has my work travelled". The row cannot fade -- it
+	/// would take its neighbours up the strip with it -- so what it does instead is
+	/// fall back to the fact that is always true and always worth having.
+	function paintRest(show) {
+		var row = statusRow();
+		if (!row) return;
+		var dot  = document.getElementById('sync-rest-dot');
+		var text = document.getElementById('sync-rest');
+		if (dot) {
+			dot.style.display = show ? '' : 'none';
+			// Green once something has actually travelled; grey until it has. The
+			// same three classes the rows above this one use.
+			dot.className = 'astat-dot' + (lastSynced ? ' ok' : ' off');
+		}
+		if (text) {
+			text.style.display = show ? '' : 'none';
+			if (show) text.textContent = lastSyncedLine();
+		}
+	}
+
 	/// Show the chip. `title` is the hover explanation, cleared unless given --
 	/// carried here because the chip is the only place a state like "off" is
 	/// reported, so its reason has to travel with it rather than into a dialog.
@@ -532,7 +632,11 @@
 		var c = statusChip();
 		if (!c) return;
 		if (_statusTimer) { clearTimeout(_statusTimer); _statusTimer = null; }
-		if (!state) { c.style.display = 'none'; return; }
+		// `style.display` still carries "is the chip saying anything", because that
+		// is what six verifiers read and what `restStatus` means by an empty state.
+		// What is new is the other half of the row taking over when it is not.
+		if (!state) { c.style.display = 'none'; paintRest(true); return; }
+		paintRest(false);
 		c.dataset.state = state;
 		c.querySelector('.stext').textContent = text;
 		// The hover text always ends with when a sync last worked. On a stall that
@@ -540,8 +644,11 @@
 		// knowing whether the last good sync was a minute or a fortnight ago -- and
 		// on a good one it costs a line nobody has to read.
 		c.title = [title || '', lastSyncedLine()].filter(Boolean).join('\n');
-		c.style.display = 'inline-flex';
-		if (holdMs) _statusTimer = setTimeout(function () { c.style.display = 'none'; }, holdMs);
+		c.style.display = 'flex';
+		if (holdMs) _statusTimer = setTimeout(function () {
+			c.style.display = 'none';
+			paintRest(true);
+		}, holdMs);
 	}
 
 	/// A short relative age, in the app's own language.
@@ -902,7 +1009,13 @@
 			for (var attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt++) {
 				var state = await collectParcel();
 				var plain = JSON.stringify(state);
-				if (plain === lastPushed && serverVersion > 0) {
+				// `lastPushed === null` is "this page has not sent anything yet",
+				// which is the only moment the carried digest is asked about. Note
+				// the short-circuit: on every push after the first, `sigOf` is
+				// never called at all.
+				var known = (plain === lastPushed)
+					|| (lastPushed === null && !!bootSig && (await sigOf(plain)) === bootSig);
+				if (known && serverVersion > 0) {
 					// Nothing new to send -- but the round is not wasted, and this
 					// is the trigger that has to catch up.
 					//
@@ -939,6 +1052,13 @@
 					serverVersion = res.json.version | 0;
 					lastPushed = plain;
 					saveVersion();
+					// Beside the version, and only here: this is the one place a
+					// parcel is known to have reached the mailbox. A parcel the
+					// gateway refused is not one this device has sent, so the 413
+					// arm below deliberately does not write it -- storing that
+					// digest would have the next page skip a push that never
+					// happened.
+					saveSig(await sigOf(plain));
 					// The pushed state is now the shared fork point for the file merge.
 					try { if (DaimondCore.syncCommitBaseline) await DaimondCore.syncCommitBaseline(); }
 					catch (e) { /* baseline advances next time */ }
@@ -1308,6 +1428,29 @@
 					// and served an ordinary pull. That is a property of the road,
 					// not of the moment, so this one does end the channel -- one
 					// such answer per page load is the whole cost of finding out.
+					//
+					// AND IT IS THE ONLY DOOR OUT OF THIS CHANNEL THAT DOES NOT
+					// COME BACK. Everything else recovers: a socket that had
+					// opened and went away is waited out, two that never opened
+					// fall through to parking, a 401 takes a fresh session and a
+					// 5xx from a restarting gateway backs off and asks again.
+					// `wakeMode = 'off'` alone makes `wakeWanted()` false, and
+					// with it the supervisor, the retry and `onAuthed`'s own
+					// `wakeStart()` all decline -- so nothing but a reload or
+					// `wakeVia` re-arms it. That is right for a road that strips
+					// queries and wrong for a 200 that was not a park for some
+					// passing reason, and the catch-up below is what now bounds
+					// the second case at twenty seconds instead of the session.
+					//
+					// OXEDYNE'S OWN ROAD DOES CARRY IT, checked 2026-08-28 rather
+					// than assumed: jarrah's `daimond.oxedyne.com` vhost reaches
+					// the gateway through a Steel `proxy_route` on `/api/`, which
+					// re-appends the query verbatim on the plain hop and on the
+					// upgrade, and tunnels the WebSocket. It is Steel's OTHER
+					// shape that would break this -- an `api_route` in proxy mode
+					// forwards a configured path and never reads the query at all
+					// -- so a front door moved onto one would take every device's
+					// channel with it and say nothing.
 					log('wake channel: this gateway does not park requests; channel off');
 					wakeMode = 'off';
 					break;
@@ -1337,6 +1480,17 @@
 		if (wakeTimer) { clearTimeout(wakeTimer); wakeTimer = null; }
 		if (wakeSoon)  { clearTimeout(wakeSoon);  wakeSoon  = null; }
 		if (wakeSock)  { try { wakeSock.close(); } catch (e) { /* already gone */ } wakeSock = null; }
+	}
+
+	/// Is the channel in a position to be told when the mailbox moves?
+	///
+	/// One rule, one copy: `wake()` reports it and `catchUp()` stands down on it,
+	/// and a second copy of it is a second thing to fall out of step with this
+	/// one. A park that belongs to a torn-down generation is not this channel
+	/// being open, however long the gateway goes on holding it.
+	function wakeOpen() {
+		return !!(wakeSock && wakeSock.readyState === 1)
+			|| (wakePolling && wakePollGen === wakeGen);
 	}
 
 	/// Whether a park or a probe of the CURRENT generation is outstanding.
@@ -1396,6 +1550,29 @@
 		finally { inFlight = false; }
 	}
 
+	/// Ask the gateway what it is holding, on a device nothing else will prompt.
+	///
+	/// Measured against the last pull of ANY kind rather than against its own last
+	/// go -- the same rule the idle branch of `push()` keeps, and for the same
+	/// reason: a device that pulled a second ago because its window was focused
+	/// has nothing to learn from asking again, and a second reason to ask is not a
+	/// second thing to know.
+	async function catchUp() {
+		if (!ready() || !entitled) return;
+		if (wakeShut) return;			// somebody asked this device to be quiet
+		// The gateway will say. Asking as well only spends the account's money on
+		// news it is already going to be given.
+		if (wakeOpen() || wakeLive()) return;
+		if (inFlight) return;			// a round is running, and it is fresher than this one
+		if (Date.now() - lastPullAt < CATCHUP_MS) return;
+		// Held for the duration, exactly as the focus pull holds it, so a push
+		// arriving mid-pull waits its turn rather than sending state that is
+		// halfway through being replaced.
+		inFlight = true;
+		try { await pull(); }
+		finally { inFlight = false; }
+	}
+
 	/// A stored thing changed outside a turn: push it soon.
 	///
 	/// The two triggers above are a turn ENDING and the tab going AWAY, and most
@@ -1445,6 +1622,12 @@
 	/// genuinely sends, and ask for that push.
 	function resealAfterRekey() {
 		lastPushed = null;
+		// On disk as well. The blob in the mailbox is sealed under a key nobody
+		// has any more, and a digest that survived the reload would have the next
+		// page agree there was nothing to send -- leaving the account's cloud copy
+		// dead and silent, which is the whole failure this participation exists to
+		// prevent.
+		saveSig('');
 		schedule();
 		return { failed: [] };
 	}
@@ -1462,6 +1645,57 @@
 	function loadVersion() {
 		serverVersion = parseInt(localStorage.getItem(K_VERSION) || '0', 10) || 0;
 		lastSynced    = parseInt(localStorage.getItem(K_LAST) || '0', 10) || 0;
+		loadSig();
+	}
+
+	// ── The carried fixed point ────────────────────────────────
+	//
+	// EVERY PATH HERE FAILS TOWARDS SENDING, and that is the whole rule. A digest
+	// that cannot be taken, cannot be read, or was written by a build that did not
+	// mean this one reads as '' -- no fixed point -- and '' never matches, so the
+	// parcel goes. Sending one that was not needed costs bytes, which is the
+	// behaviour this replaces; skipping one that WAS needed leaves the user's work
+	// on this device with nothing anywhere saying so.
+	//
+	// AND IT IS READ BY THE PUSH AND BY NOTHING ELSE. `pullOnce` fetches and merges
+	// unconditionally and must go on doing so: a device that consulted a stored
+	// fixed point before deciding whether to LOOK would conclude it need not, and
+	// sit on its own stale copy while another device's work waited in the mailbox.
+	// That failure was hypothesised and disproved on 2026-08-27; it must not be
+	// introduced by the cure for a different one.
+
+	/// The digest of a parcel, or '' where one could not be taken.
+	///
+	/// `DaimondCloud.sha256` rather than a fourth copy of six lines that already
+	/// exist in cloud.js and chunks.js. A build without cloud.js therefore carries
+	/// no fixed point and pushes on every reload, which is what this file did
+	/// before there was one.
+	async function sigOf(plain) {
+		try {
+			if (!window.DaimondCloud || !DaimondCloud.sha256) return '';
+			return await DaimondCloud.sha256(plain);
+		} catch (e) { log('could not digest the parcel', e); return ''; }
+	}
+
+	/// Write the carried fixed point down, or clear it when given ''.
+	function saveSig(sig) {
+		bootSig = sig || '';
+		try {
+			if (bootSig) localStorage.setItem(K_SIG, JSON.stringify({ v: SIG_V, sig: bootSig }));
+			else localStorage.removeItem(K_SIG);
+		} catch (e) { /* private mode: this page keeps its own copy and that is all */ }
+	}
+
+	/// Take up the one a previous page left, if it is one this build wrote.
+	function loadSig() {
+		bootSig = '';
+		try {
+			var raw = localStorage.getItem(K_SIG);
+			if (!raw) return;
+			var rec = JSON.parse(raw);
+			if (!rec || rec.v !== SIG_V || typeof rec.sig !== 'string') return;
+			bootSig = rec.sig;
+		} catch (e) { /* unreadable is the same as absent, and absent sends */ }
 	}
 
 	// ── Lifecycle ──────────────────────────────────────────────
@@ -1486,6 +1720,19 @@
 		if (started) return;
 		started = true;
 		loadVersion();
+		// The row is in the markup and empty until something writes to it, and on a
+		// device that never syncs nothing ever would: the honest admission that
+		// nothing has travelled is itself the answer.
+		//
+		// The chip is built HERE rather than on the first status it has to report.
+		// It cost nothing to defer while it was injecting a stylesheet and finding
+		// a place in the top bar; now that it has a row waiting for it, deferring
+		// only means a device that never reaches a gateway has no `#sync-chip` in
+		// the DOM at all -- and `dev/verify_sweep_seen.mjs` says in as many words
+		// that it could not test the one element the owner actually reported,
+		// because a world with no gateway never holds one.
+		statusChip();
+		paintRest(true);
 		// Before anything this session pulls: a cursor that is already here can
 		// only have been left by this device reading this account's mailbox on an
 		// earlier visit. See `knownDevice`.
@@ -1520,13 +1767,18 @@
 		window.addEventListener('pagehide', wakeStop);
 		// Keep the channel matching the app. See wakeWatch.
 		wakeWatcher = setInterval(wakeWatch, WAKE_WATCH_MS);
+		// And the one trigger that needs neither this device nor the gateway to
+		// raise anything. See catchUp: it stands down whenever the channel is
+		// carrying, which on a device that can reach the gateway is always.
+		catchupTimer = setInterval(catchUp, CATCHUP_TICK_MS);
 		// If we booted already authed (a returning unlocked tab), reconcile now.
 		if (ready()) onAuthed();
 		askHandle();
 		// A safe start reaches nothing that would paint the chip -- `ready()` is
 		// false, so every path above returns before `restStatus`. Say it here, or
 		// the one state the user has to be told about is the one state that never
-		// appears. Deferred a tick because the top bar is built by daimond.js.
+		// appears. Deferred a tick because the rail's status strip is built by
+		// daimond.js.
 		if (window.DaimondSafe && DaimondSafe.on()) setTimeout(restStatus, 0);
 		log('started');
 	}
@@ -1578,8 +1830,7 @@
 				// channel being open, however long the gateway goes on holding
 				// it -- reporting it as open is how a device with no live park
 				// looked exactly like one that had just made a fresh one.
-				open:      !!(wakeSock && wakeSock.readyState === 1)
-					|| (wakePolling && wakePollGen === wakeGen),
+				open:      wakeOpen(),
 				probing:   wakeProbing && wakeProbeGen === wakeGen,
 				heard:     wakeTarget,				// highest version the channel reported
 				wakes:     wakes,					// pulls this channel has caused
@@ -1595,6 +1846,10 @@
 		wakeVia: function (mode) {
 			wakeStop();
 			wakeMode    = (mode === 'poll' || mode === 'off') ? mode : '';
+			// 'off' here is a request, not a diagnosis, so the catch-up honours it:
+			// this verb is what a test asserts the absence of convergence against,
+			// and a timer that went on asking would answer that test itself.
+			wakeShut    = wakeMode === 'off';
 			wakeFails   = 0;
 			wakeWorked  = false;
 			wakeBackoff = WAKE_RETRY_MIN_MS;

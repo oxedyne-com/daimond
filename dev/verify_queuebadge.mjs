@@ -66,8 +66,8 @@ const BREAKS = {
 	swallow: {
 		what: 'a message typed into a busy daimon is dropped, as it was before',
 		edit: (src) => src.replace(
-			'\t\t\tif (crystalBusy) { enqueueMessage(current, text); return; }',
-			'\t\t\tif (crystalBusy) return;'),
+			'\t\t\tif (diamondBusy(current.diamondId)) { enqueueMessage(current, text); return; }',
+			'\t\t\tif (diamondBusy(current.diamondId)) return;'),
 	},
 	meterrow: {
 		what: 'the badge kept on the meter row, which Simple hides outright',

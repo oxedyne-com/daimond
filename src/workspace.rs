@@ -159,6 +159,50 @@ mod tests {
     }
 
     #[test]
+    fn test_no_path_a_caller_can_write_ever_resolves_outside_the_root() {
+        // A PROPERTY, where the three tests above are outcomes, and the difference was
+        // measured rather than argued.  On 2026-08-28 `dev/mutate.mjs` deleted the final
+        // `starts_with` guard from `resolve` and all 857 tests stayed green: the named
+        // cases above are each caught earlier, in the loop, so nothing was left holding
+        // the guarantee the guard exists for.  What the fence promises is not "these two
+        // strings are refused" but "nothing a caller can write comes back pointing
+        // outside the root", so that is what is asserted, over everything a model or a
+        // user has plausibly typed.
+        //
+        // Note what this does NOT claim.  It does not kill that mutation, because the
+        // loop really does catch every one of these before the guard is reached; the
+        // guard is defence in depth against a future edit to the loop, and no test can
+        // pin an unreachable line.  What this pins is the loop's own guarantee, so that
+        // an edit which relaxes it is caught here instead of nowhere.
+        let ws = tmp_ws();
+        let hostile = [
+            "..",
+            "../",
+            "../..",
+            "../etc/passwd",
+            "a/../..",
+            "a/b/../../..",
+            "./../..",
+            "a/./../../b",
+            "/../etc/passwd",
+            "//../..",
+            "a//..//..//b",
+            "....//",
+            "a/../a/../a/../..",
+        ];
+        for rel in hostile {
+            match ws.resolve(rel) {
+                Ok(p) => assert!(p.starts_with(ws.root()),
+                    "'{}' resolved to '{}', which is outside '{}'",
+                    rel, p.display(), ws.root().display()),
+                // A refusal is the other correct answer; this asks only that a
+                // SUCCESS is always inside.
+                Err(_) => {}
+            }
+        }
+    }
+
+    #[test]
     fn test_display_rel() {
         let ws = tmp_ws();
         let p = ws.resolve("x/y.rs").expect("resolve");

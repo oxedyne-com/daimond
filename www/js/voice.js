@@ -157,27 +157,73 @@
 	/// Separate from `set()` so a form can say what is wrong as it is typed
 	/// without a throw. The sentences NEVER quote the value: an error message
 	/// carrying a credential is a credential in a screenshot.
+	///
+	/// Asked of `tidy()`'s answer and never of the raw field, because `set()`
+	/// stores `tidy()`'s answer: a check that judged something other than what is
+	/// kept would refuse a paste the store would have accepted, or the reverse.
 	function check(secret) {
-		var s = String(secret == null ? '' : secret).trim();
+		var s = tidy(secret);
 		if (!s) return tOr('voice.err.empty',
 			'A voice is needed to write on the forge.');
 		// The alphabet first, so that `length` below is a count of BYTES: every
 		// character admitted here is one byte, which is what the gateway measures.
 		if (!GRAPHIC.test(s)) return tOr('voice.err.shape',
-			'That does not look like a voice. Copy the whole line the forge printed.');
+			'That does not look like a voice. It is one run of 43 characters with no spaces in it.');
 		if (s.length < MIN) return tOr('voice.err.short',
-			'That is shorter than any voice the forge issues. Copy the whole line.');
+			'That is shorter than any voice the forge issues. Copy all 43 characters.');
 		if (s.length > MAX) return tOr('voice.err.long',
 			'That is longer than a voice can be.');
 		return '';
 	}
 
-	/// The secret as it will be stored and sent: trimmed, exactly as the gateway
-	/// trims it and exactly as the forge digests it. Stored trimmed so that what
-	/// is at rest is what goes on the wire, with no step in between that could
-	/// disagree.
+	/// Exactly how long a minted voice is, in characters.
+	///
+	/// The forge mints `SECRET_BYTES` = 32 bytes of operating-system randomness and
+	/// prints them in the Hematite64 alphabet (`oregami/src/voice.rs:67`, through
+	/// `ore_store::keys::text_of`). Six bits a character, unpadded, so 32 bytes is
+	/// ceil(256 / 6) = 43 characters. Used ONLY by `tidy` below, to decide whether
+	/// a paste carrying whitespace is a labelled secret or a damaged one; every
+	/// other bound stays the loose pair, because whether the secret is the RIGHT
+	/// secret is the forge's question and this file does not answer it.
+	var LEN = 43;
+
+	/// The secret as it will be stored and sent: what was pasted, trimmed, and with
+	/// a LABEL taken off the front where the paste plainly carried one.
+	///
+	/// A trim was not enough, and the reason is that the forge prints the credential
+	/// in a two-column line:
+	///
+	///     secret   6yYbW…                         (`oregami voice`, src/main.rs:529)
+	///
+	/// A person told to "copy the whole line the forge printed" -- which is what
+	/// this app's own help text said -- copies both columns, and `GRAPHIC` then
+	/// fails on the space in the middle. The instruction and the validator
+	/// disagreed, and the app took the validator's side with a sentence that
+	/// repeated the instruction. That is the dead end the owner hit.
+	///
+	/// THE TAIL IS TAKEN ONLY WHEN IT IS EXACTLY A VOICE LONG, and that condition is
+	/// the whole safety of this. The looser rule -- always take the last field --
+	/// rescues the labelled paste and also swallows a DAMAGED one: a real secret
+	/// with a space knocked into the middle of it would store its second half, be
+	/// refused by the forge as `unknown`, and tell the tester nothing about which
+	/// of the two things went wrong. Splitting a 43-character secret cannot leave a
+	/// 43-character tail, so the two cases are separated exactly rather than by
+	/// judgement, and a damaged paste is still refused by `GRAPHIC` below.
+	///
+	/// The alternative -- keep refusing and word the refusal better -- was rejected
+	/// as the WHOLE fix, because the field is `type=password`: it asks a person to
+	/// make an exact edit to characters they cannot see, which is the worst place in
+	/// the app to demand precision. It is kept as HALF the fix, for every paste this
+	/// cannot rescue: the sentences in `check` now say what to copy -- one run of 43
+	/// characters with no spaces -- rather than repeating the instruction that
+	/// caused the mistake.
 	function tidy(secret) {
-		return String(secret == null ? '' : secret).trim();
+		var s = String(secret == null ? '' : secret).trim();
+		if (!s) return s;
+		var parts = s.split(/\s+/);
+		if (parts.length < 2) return s;
+		var tail = parts[parts.length - 1];
+		return tail.length === LEN ? tail : s;
 	}
 
 	/// Hold a voice for this account, wrapped under the user's passphrase.
@@ -362,6 +408,11 @@
 		/// The bounds, for a form that wants to say them before it refuses.
 		MIN:    MIN,
 		MAX:    MAX,
+		/// How long a minted voice is, so a form and a test name one number.
+		LEN:    LEN,
+		/// What would be stored for this paste, for a test that wants to see the
+		/// label come off without storing anything.
+		tidy:   tidy,
 		has:    has,
 		at:     at,
 		/// What is wrong with a secret, or '' — for validating as it is typed.

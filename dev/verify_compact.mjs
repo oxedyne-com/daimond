@@ -49,6 +49,12 @@ const PORT  = Number(process.env.DAIMOND_CTX_PORT || 9188 + WORLD);
 // So the floor is probed first, against a mock that never refuses, and the real window is
 // set just above what was measured. The test then always asks its own question: a
 // conversation that grows past the window is folded back under it.
+//
+// AND THE FLOOR IS NOT THE WINDOW. `Limits::budget` folds at a FRACTION of the window
+// (`compact::FOLD_AT`), so a window set to the floor plus a little leaves a budget a third
+// BELOW the floor and the same seven checks go red for the same non-reason. That is what
+// happened on 2026-08-28, when the owner moved the fraction from 0.8 to 0.65 -- so the
+// fraction is read from `compact.rs` and divided out, and this file stops caring what it is.
 const PROBE_LIMIT = 10_000_000;   // a mock that refuses nothing, for the probe
 // Tokens above the floor. It has to clear the FOLD NOTICE, not just a message or two:
 // folding replaces the conversation with a summary that is itself sent every turn, so a
@@ -56,6 +62,13 @@ const PROBE_LIMIT = 10_000_000;   // a mock that refuses nothing, for the probe
 // measured at 120, where the fold shrank a turn from 12,799 to 12,797 and refused
 // anyway. The equivalent figure was 281 on 2026-08-24, when this last worked.
 const HEADROOM    = 400;
+/// Where the engine folds, as a fraction of the window: the one authority is `compact.rs`.
+const FOLD_AT = (() => {
+	const m = /pub const FOLD_AT:\s*f64\s*=\s*([0-9.]+)/.exec(
+		fs.readFileSync(path.join(ROOT, 'src', 'compact.rs'), 'utf8'));
+	if (!m) throw new Error('compact.rs no longer declares FOLD_AT; this file cannot calibrate');
+	return Number(m[1]);
+})();
 let LIMIT = 0;                    // set from the probe, below
 const MOCK  = `http://127.0.0.1:${PORT}/v1/chat/completions`;
 const MODEL = 'mock/fast';
@@ -159,13 +172,14 @@ if (!probed) {
 	log('FAIL  the probe never reached the mock, so the window cannot be calibrated');
 	process.exit(1);
 }
-LIMIT = probed + HEADROOM;
+// The window whose BUDGET clears the floor, not the window that clears it itself.
+LIMIT = Math.ceil((probed + HEADROOM) / FOLD_AT);
 log(`floor ${probed} tokens (system prompt + ${(() => {
 	try {
 		const rows = fs.readFileSync(LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
 		return rows[0].tools;
 	} catch (e) { return '?'; }
-})()} tool schemas), so the window for this run is ${LIMIT}`);
+})()} tool schemas), folding at ${FOLD_AT}, so the window for this run is ${LIMIT}`);
 
 // The real mock, at the measured window, and a fresh log so the probe's own rows are not
 // read as refusals that never happened.

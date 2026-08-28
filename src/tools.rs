@@ -32,6 +32,7 @@ use crate::protocol::{ContentPart, ImageMedia, ImagePart, MessageContent};
 use crate::workspace::Workspace;
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 /// What an agent has picked up as it works: the content it last saw at each path, and whether it
@@ -41,14 +42,26 @@ pub struct TurnState {
     /// Content hash of what this agent last saw at each path, so a whole-file write can tell
     /// whether the file changed underneath it.
     pub seen: HashMap<String, u64>,
-    /// Set the moment this turn is handed content from outside the user -- a web page, or a mail
-    /// message sitting in the workspace (see [`wrap_untrusted`]).
-    ///
-    /// The tools that reach a URL of the model's choosing -- `web_fetch` and `web_open` -- ask the
-    /// user before acting once this is set (see [`egress_check`]), and `spawn_agent` says so in
-    /// its result so the taint can be carried across the dispatch boundary.  Once set it stays set
-    /// -- a turn does not become clean again by reading something trustworthy afterwards.
-    pub tainted: bool,
+    // Who has read a stranger's words
+    //
+    // Set the moment a conversation is handed content from outside the user -- a web page, or a
+    // mail message sitting in the workspace (see [`wrap_untrusted`]).
+    //
+    // The tools that reach a URL of the model's choosing -- `web_fetch` and `web_open` -- ask the
+    // user before acting once this is set (see [`egress_check`]), and `spawn_agent` says so in its
+    // result so the taint can be carried across the dispatch boundary.  Once set it stays set -- a
+    // conversation does not become clean again by reading something trustworthy afterwards.
+    //
+    // KEYED BY `ToolContext::daimon_of`, exactly as `web_consent` below is, and for exactly the
+    // same reason.  A Diamond's daimon client is cached by provider and model (`diamondApp` in
+    // www/js/daimond.js), so every Diamond on one model shares one client and therefore one of
+    // these caches.  Unkeyed, a Research Diamond that fetched a page took the network away from an
+    // Accounts Diamond that had touched nothing, and stamped its dispatched workers as carrying a
+    // stranger's words.  A taint is a fact about what a CONVERSATION has read, and it stops there.
+    //
+    // A chat and a dispatched worker each get a cache of their own, where the key is the empty
+    // string and the set holds at most one name.
+    pub tainted: HashSet<String>,
     /// Set when this agent is acting ALONE: a dispatched worker, with nobody reading its
     /// transcript as it goes and no way to put a question.
     ///
@@ -77,18 +90,43 @@ pub struct TurnState {
     // that read it, while an allowance that outlived its turn would starve the next one.  See
     // `TURN_SPEND_BUDGET` for what it is measured against and why there is a turn's figure at all.
     pub spent: usize,
-    /// What the user said, once, about this turn's commands reaching the network (see
-    /// [`net_step`]).
-    ///
-    /// `None` until the question has been put.  It is remembered whichever way it went: asking
-    /// again after a yes is the prompt storm the question exists to avoid, and asking again after a
-    /// no is how a person is worn down into a yes.
-    ///
-    /// It is scoped to exactly the state that provokes the question.  [`TurnState::tainted`] is
-    /// one-way for the life of this context, so an answer that outlived the taint would be an
-    /// answer to a question nobody had asked -- and a context that starts clean starts with no
-    /// answer, because it has nothing to answer for yet.
-    pub net_consent: Option<Verdict>,
+    // What was said about a command keeping its network
+    //
+    // The user's answer, once, about this conversation's commands reaching the network (see
+    // `net_step`).  Absent until the question has been put.  It is remembered whichever way it
+    // went: asking again after a yes is the prompt storm the question exists to avoid, and asking
+    // again after a no is how a person is worn down into a yes.
+    //
+    // It is scoped to exactly the state that provokes the question.  `tainted` above is one-way
+    // for the life of a conversation, so an answer that outlived the taint would be an answer to a
+    // question nobody had asked -- and a conversation that starts clean starts with no answer,
+    // because it has nothing to answer for yet.
+    //
+    // KEYED BY `ToolContext::daimon_of`, for the reason the taint above is keyed.  A yes given in
+    // one Diamond used to be SPENT in another sharing the same client: the second Diamond's first
+    // command took the network on an answer given about a command the user never saw.
+    pub net_consent: HashMap<String, Verdict>,
+    // What this conversation said, once, about reaching websites
+    //
+    // The answer to `web_fetch` and `web_open`'s one question -- MAY DAIMOND REACH THE WEB HERE --
+    // which is asked once and covers every site for as long as the conversation lasts.  `None`
+    // until it has been put, and remembered whichever way it went, for the reason `net_consent`
+    // above is: asking again after a yes is the prompt storm the question exists to avoid, and
+    // asking again after a no is how a person is worn down into a yes.
+    //
+    // A DIFFERENT ANSWER FROM `net_consent`, and the two never stand in for one another.  That one
+    // is about a COMMAND on the user's machine keeping its network after the turn has read a
+    // stranger's words, which is the more dangerous act and is the user's separate setting; this
+    // one is about the app fetching a page.  A yes to either is not a yes to the other, and
+    // nothing here reads or writes the field above.
+    //
+    // KEYED BY `ToolContext::daimon_of`, which is not a flourish.  A Diamond's daimon client is
+    // cached by provider and model (`diamondApp` in www/js/daimond.js), so every Diamond on one
+    // model shares one client and therefore one of these caches.  Unkeyed, one Diamond's yes would
+    // be every other Diamond's yes -- a grant crossing into a conversation it was never given in.
+    // A chat and a dispatched worker each get a cache of their own, where the key is the empty
+    // string and the map holds one entry.
+    pub web_consent: HashMap<String, Verdict>,
     /// Set once this turn has put a question to the user with [`Tool::Ask`].
     ///
     /// One decision at a time is the whole rule, and a round may carry several tool calls -- so
@@ -1081,8 +1119,8 @@ pub const CRYSTAL_FILE_LEGACY: &str = "crystal.md";
 /// A crystal is the REDUCED state of a Diamond, and the weight belongs in the scope attached to
 /// it: files the Diamond points at carry detail, and the crystal says what it means.  Nothing
 /// enforced that, so a daimon that started recording rather than reducing simply kept going, and
-/// the cost arrived later and elsewhere -- every fold copies the whole crystal into `versions/`,
-/// and all of it rides in the sync parcel.
+/// the cost arrived later and elsewhere -- every fold writes a version, `versions/` keeps every
+/// one of them, and all of it rides in the sync parcel.
 ///
 /// **16 KiB is a judgement and not a derivation.**  It was once justified here as "about three
 /// times what a single fold can emit", against `FOLD_MAX_TOKENS`; that is not true and never was.
@@ -1095,8 +1133,13 @@ pub const CRYSTAL_FILE_LEGACY: &str = "crystal.md";
 ///
 /// * The whole crystal is pushed into the system prompt of every steering turn
 ///   (`DaimondApp::steer_inner`), so its weight is paid on every request of every turn, for ever.
-/// * A copy goes into `versions/` at every version.
-/// * All of it rides in the sync parcel, inside `SYNC_DIAMONDS_MAX`.
+/// * A version is written at every version, and nothing prunes them.  Since 2026-08-28 that is
+///   a splice against the version before it, with a full copy one time in twenty -- so the cost
+///   of a version is the size of the CHANGE and not the size of the crystal.  Measured on the
+///   owner's own capp page: 101 versions in 628 KiB where full copies took 10.1 MB.
+/// * All of it rides in the sync parcel, inside `SYNC_DIAMONDS_MAX` -- 4 MB for every Diamond
+///   together, and the parcel it is spent in is bounded by Steel's 8 MiB body cap and not by the
+///   gateway's 16.
 ///
 /// 16 KiB is roughly four thousand tokens of prose. It is meant to sit far enough above what a
 /// reduced state needs that ordinary work never approaches it, and near enough that a crystal
@@ -1125,28 +1168,60 @@ pub fn set_crystal_cap(bytes: usize) {
 /// What a Diamond's page may weigh before a write that grows it is refused, in bytes.
 ///
 /// THE PAGE IS CAPPED FOR THE SAME REASON THE DATA IS, and exempting it would void the data
-/// ceiling's stated purpose.  The page rides in every `versions/` snapshot where it changed, and it
-/// shares `SYNC_DIAMONDS_MAX` -- 6 MB -- with the memory itself, so bytes spent on presentation are
-/// bytes the parcel does not have for history.  Thirteen Diamonds at 16 KiB of data and 128 KiB of
-/// page is about 1.8 MB of that 6 MB, against 1 MB at the old figure.  That is the price, and it is
-/// paid in the parcel: a Diamond that does not fit is left out ENTIRELY rather than trimmed.
+/// ceiling's stated purpose.  A page snapshot is taken at every version where the page changed, and
+/// it shares `SYNC_DIAMONDS_MAX` -- 4 MB -- with the memory itself, so bytes spent on presentation
+/// are bytes the parcel does not have for history.  That price is paid in the parcel: a Diamond
+/// that does not fit is left out ENTIRELY rather than trimmed, is named to the user rather than
+/// dropped quietly, and is never deleted at the far end for being absent.
 ///
-/// Eight times the data's ceiling because a self-contained document carries its own CSS and its own
-/// script, and none of that is memory: the figure is meant to be generous enough that an ordinary
-/// page never meets it and a page being used as an asset store meets it early.
+/// **THE "THIRTEEN DIAMONDS FIT IN 4 MB" ARITHMETIC DOES NOT DESCRIBE A REAL STORE, AND MEASURING
+/// IT WAS WHAT LET THIS FIGURE MOVE.**  It counts one page and one crystal per Diamond, so it is
+/// the weight of thirteen Diamonds that have never been edited.  A Diamond holds its live page AND
+/// the snapshot history behind it, so even one at this ceiling with five page edits measured
+/// 592 KB in the parcel and seven of thirteen fitted -- at the OLD 256 KiB figure, on the delta log
+/// that had just made history cheap.  With forty edits it was 1.20 MB and three fitted.  The budget
+/// has therefore not been an admission test for a worst case since long before this ceiling moved;
+/// it is a fairness clamp between the Diamonds and the files they share a parcel with, and the
+/// eviction path -- freshest first, the rest named -- is the ordinary path rather than the
+/// exceptional one.
 ///
-/// RAISED FROM 64 KiB ON 2026-08-13.  The old figure was set when a crystal page was a RENDERING,
-/// and it is the wrong size for what the page became.  A capp is an application -- it carries a
-/// parser, a chart, a form and its own state machine -- and the shipped Life log arrived at 64,036
-/// bytes, 1,500 short of refusing to install itself.  The stated purpose survives the change intact,
-/// because a page being used as an asset store passes 128 KiB on its first sprite sheet or dataset;
-/// what changes is that an application now fits under a ceiling written for a document.
+/// Thirty-two times the data's ceiling because a self-contained page carries its own CSS and its
+/// own script, and none of that is memory: the figure is meant to be generous enough that an ordinary
+/// page never meets it and a page being used as an asset store meets it early.  Bulk belongs in a
+/// file the page reads through the `asset` verb, which is not capped here and does not sit in the
+/// standing context either.
 ///
-/// The cost that is NOT in the parcel arithmetic: the daimon rewrites the whole page to edit it, so
-/// a larger ceiling means more output tokens per edit and more room for a truncated rewrite.  That
-/// is charged to whoever asks for the change, which is the argument for moving the DEFAULT rather
-/// than removing the cap.  The user can move it either way; see [`set_crystal_page_cap`].
-pub const CRYSTAL_PAGE_CAP_DEFAULT: usize = 128 * 1024;
+/// RAISED FROM 64 KiB ON 2026-08-13, FROM 128 KiB ON 2026-08-28, AND FROM 256 KiB THE SAME DAY,
+/// each time by the same application outgrowing the same ceiling.  The 64 KiB figure was set when a
+/// crystal page was a RENDERING; the Life log arrived at 64,036 bytes, 1,500 short of refusing to
+/// install itself, and 128 KiB was the answer.  It then met 128 KiB too, with the author reporting
+/// "plenty more functionality I want to add".  Three times is a trend and not an accident: a capp
+/// is an application, and applications grow where documents do not.
+///
+/// WHAT THE RAISE DOES NOT COST, because it is the question everyone asks first and the answer is
+/// counter-intuitive: NOTHING IN THE MODEL'S CONTEXT.  Only `crystal.json` is composed into the
+/// daimon's system message, in `DaimondApp::compose_daimon` -- the page is named there and its
+/// bytes never appear, and no other prompt path reads it.  So a page may grow without adding one
+/// token to any turn, for ever.  That asymmetry is the whole reason the crystal was split into two
+/// files, and it is why the two ceilings move independently: 16 KiB of data is a budget on what a
+/// model READS on every request, and this is a budget on what the browser STORES and syncs.
+///
+/// The costs that are real, in the order they bite.  NOTHING PRUNES `versions/` -- that is the
+/// owner's ruling of 2026-08-28 and not an omission -- but a version no longer costs a page.  It
+/// costs the splices from the snapshot before it, with one full copy every twenty
+/// (`crate::diamond_delta`), so a capp under active development multiplies this figure by about a
+/// twentieth of its edit count rather than by the count itself: a hundred and one versions of the
+/// 101,834 byte Log Life page measured 628 KiB against 10.1 MB as copies.  What is left of the
+/// history cost is the keyframes, and they are what a raise here actually doubles.  And the daimon
+/// spends output tokens to change the page; `Tool::FileEdit` edits in place and costs only the
+/// hunk, but a whole rewrite costs the file, and a bigger file leaves more room for a truncated
+/// one.
+///
+/// NOT RAISED FURTHER THAN 512 KiB.  The reason 256 KiB stood was the unpruned history, and that
+/// reason is now a sixteenth of what it was; what stands in the way of the next raise is the
+/// keyframe rather than the edit count.  The user can go further; see [`set_crystal_page_cap`],
+/// which the settings pane offers a rung above this one.
+pub const CRYSTAL_PAGE_CAP_DEFAULT: usize = 512 * 1024;
 
 thread_local! {
     /// The page ceiling in force, or 0 for [`CRYSTAL_PAGE_CAP_DEFAULT`].
@@ -1243,7 +1318,10 @@ pub fn crystal_write_refused(new_len: usize, old_len: usize) -> bool {
 pub fn crystal_cap_message(new_len: usize) -> String {
     fmt!(
         "The crystal is this Diamond's summary and may not exceed {} bytes; this write is {}. \
-        Put the detail in a file in the Diamond's scope and refer to it from the crystal.",
+        Put the detail in a file in the Diamond's scope and refer to it from the crystal. This is \
+        the ceiling worth respecting rather than raising: the crystal is composed into the system \
+        message of every turn, so a byte added here is paid for on every request for ever, which \
+        is not true of the page beside it.",
         crystal_cap(), new_len,
     )
 }
@@ -1272,10 +1350,13 @@ pub fn crystal_page_write_refused(new_len: usize, old_len: usize) -> bool {
 /// * `new_len` - Bytes the write would have left on disk.
 pub fn crystal_page_cap_message(new_len: usize) -> String {
     fmt!(
-        "The page that renders this Diamond may not exceed {} bytes; this write is {}. \
-        It travels in every version snapshot and in every sync, so it shares the budget with the \
-        Diamond's memory: keep the markup lean, and keep what it is ABOUT in crystal.json.",
-        crystal_page_cap(), new_len,
+        "The page that renders this Diamond may not exceed {} bytes; this write is {}, which is {} \
+        over. It travels in every version snapshot and in every sync, so it shares the budget with \
+        the Diamond's memory: keep the markup lean, and keep what it is ABOUT in crystal.json. Bulk \
+        data belongs in a file beside the page, read with the `asset` verb, which this ceiling does \
+        not cover. If the page genuinely needs the room, this limit is the user's to raise under \
+        Settings, Crystal size limits, Page size limit.",
+        crystal_page_cap(), new_len, new_len.saturating_sub(crystal_page_cap()),
     )
 }
 
@@ -3350,6 +3431,53 @@ pub fn error_line(reason: &str) -> String {
     fmt!("{}: {}", ERROR_OPENING, reason)
 }
 
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The road, which is not a result                                │
+// └───────────────────────────────────────────────────────────────┘
+
+// A LOCAL FAILURE IS NOT INFORMATION THE MODEL SHOULD REASON ABOUT.
+//
+// Every function above turns something into a sentence for a model to read, and that is right
+// for everything a tool can be told by the world: a 404, a refusal, a host that would not answer.
+// It is wrong for one thing.  "Your user's phone went to sleep and the request never left the
+// device" is not a fact about the world; it is an infrastructure event, and a model handed it as
+// a tool result does the reasonable thing with a failed tool -- it apologises and answers around
+// it.  On a real iPhone, on 2026-08-28, that came back as "I can't get through to the web right
+// now to look this up", and the sentence is now a permanent assistant turn in the conversation,
+// re-sent to the model on every turn after it and folded into the summary.  A moment of platform
+// behaviour became a durable false fact in the record.
+//
+// So the two are told apart and treated oppositely.  A remote answer becomes a result, exactly as
+// before.  A road failure never becomes one: see [`ToolRegistry::try_dispatch`].
+
+/// The sentence a browser request that never got an answer is marked with.
+///
+/// **Quoted verbatim from `www/js/gateway.js`, where `roadMark` sets it**, and
+/// `dev/verify_toolroad.mjs` asserts the two literals are the same string -- so a change to one
+/// of them breaks a test rather than quietly stopping the classification.
+///
+/// It is tested for EXACTLY and never as a pattern.  `BROWSER_ROAD` in js/daimond.js holds
+/// `refused`, meaning "connection refused", and the tool layer is full of sentences carrying that
+/// word for an entirely different reason -- [`refusal_line`] prefixes some twenty of them.  A
+/// pattern classifier over tool results would read a permission refusal as a dead road, retry it
+/// eight times and then kill the turn, which is a worse fault than the one being fixed.
+pub const ROAD_MARK: &str = "daimond-road: the request never left this device";
+
+/// Did this failure happen on the road, rather than at the far end?
+///
+/// `plain()` and not `Display`, and `contains` and not `starts_with`: the mark is set at the
+/// browser's `fetch` and the error is wrapped by `res!` several times on its way out, so by the
+/// time it is asked about, the marked sentence is one frame among several in the chain.
+/// `Error::plain` gathers every frame's words, which is why the mark survives at all -- it rides
+/// in the MESSAGE rather than in a tag, because `Error::tags` on an `Upstream` frame reports that
+/// frame's tags alone and a tag set at the bottom of the chain is invisible from the top.
+///
+/// The same reasoning as [`crate::llm::TransportErr::crossed`], one layer down.
+pub fn road_failed(e: &Error<ErrTag>) -> bool {
+    e.plain().contains(ROAD_MARK)
+}
+
 /// What became of one tool call.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CallOutcome {
@@ -5128,8 +5256,22 @@ pub fn pack_locked(pack: &str) -> bool {
 // user learns to wave through -- which is also why [`Mode::Bypass`] switches it off outright
 // rather than leaving a prompt the user has already decided the answer to.
 
-/// The word an ordinary yes comes back from the page as.
-pub const EGRESS_ALLOW_WORD: &str = "allow";
+// The four words the page answers a reaching question in
+//
+// Two of them answer the WIDE question -- may Daimond reach the web in this conversation -- and
+// are recorded, so the conversation is not asked again.  The other two answer about ONE ADDRESS
+// and are spent on it.
+//
+// The page puts a single address on its own terms in two cases, and neither is the wide question:
+// an address carrying more than an address plausibly needs, which is the exfiltration this whole
+// gate exists to catch and stays a question however much the conversation has granted; and a
+// destination on Daimond's own origin, which nobody was asked about at all.  A yes recorded from
+// either would be a standing grant the user never gave, and a no recorded from the first would cut
+// the conversation off from the web on the strength of one overlong address.
+pub const EGRESS_ALLOW_WORD: &str = "allow";            // yes, for the conversation
+pub const EGRESS_DENY_WORD: &str = "deny";              // no, for the conversation
+pub const EGRESS_ALLOW_ONCE_WORD: &str = "allow-once";  // yes, for this address alone
+pub const EGRESS_DENY_ONCE_WORD: &str = "deny-once";    // no, for this address alone
 
 /// The word a yes to the network question ([`RUN_NET_TOOL`]) comes back as, and nothing else.
 ///
@@ -5168,6 +5310,43 @@ pub enum Verdict {
     Deny,
 }
 
+/// What the page's gate said about reaching a destination, and HOW FAR the answer reaches.
+///
+/// The gate answers two different questions through one door, and until this existed it answered
+/// them in one word.  `Standing` is the conversation's own answer -- asked once, covering every
+/// site -- and is recorded.  `Once` answers about a single address and is spent on it, so nothing
+/// is recorded and the next call asks whatever it would have asked anyway.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EgressWord {
+    // Answers for the conversation
+    Standing(Verdict),
+    // Answers for this one address
+    Once(Verdict),
+}
+
+/// Read how far the page's answer reaches, where anything unrecognised refuses THIS CALL ONLY.
+///
+/// An unrecognised word is a refusal, for the reason [`verdict_of`] gives: a gate must not be
+/// talked past by a value it does not understand.  It refuses as `Once`, not as `Standing`,
+/// because the alternative is a bundle mismatch or a missing branch silently writing a standing NO
+/// into a conversation that was never asked -- a gate failing closed for ever on a fault that was
+/// only ever a fault in one call.
+///
+/// The match is exact and must stay exact: each one-address word begins with the wide word it
+/// qualifies, so a prefix comparison would file a one-address answer as the conversation's.
+///
+/// # Arguments
+/// * `answer` - What the promise resolved with, where it resolved with a string at all.
+pub fn egress_word(answer: Option<&str>) -> EgressWord {
+    match answer {
+        Some(s) if s == EGRESS_ALLOW_WORD      => EgressWord::Standing(Verdict::Allow),
+        Some(s) if s == EGRESS_DENY_WORD       => EgressWord::Standing(Verdict::Deny),
+        Some(s) if s == EGRESS_ALLOW_ONCE_WORD => EgressWord::Once(Verdict::Allow),
+        Some(s) if s == EGRESS_DENY_ONCE_WORD  => EgressWord::Once(Verdict::Deny),
+        _                                      => EgressWord::Once(Verdict::Deny),
+    }
+}
+
 /// What a URL-reaching tool should do once the gate has had its say.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Egress {
@@ -5187,6 +5366,58 @@ pub enum Egress {
 /// * `tainted` - Whether this turn has ingested content from outside the user.
 pub fn egress_needs_consent(mode: Mode, tainted: bool) -> bool {
     mode.asks_before_reaching_out(tainted)
+}
+
+/// What to do about one outward READ, given what this conversation has already answered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WebStep {
+    // Nobody is asked
+    Free,
+    // The conversation has not been asked yet
+    Ask,
+    // It was asked, once, and this is what it said
+    Stood(Verdict),
+}
+
+/// Whether reaching a destination the model chose needs the user, and whether they have already
+/// said.
+///
+/// Pure, and therefore the whole of the scope decision: [`egress_check`] around it is an `await`
+/// and a record, exactly as [`Tool::run`] is around [`net_step`].
+///
+/// **ONE ASK PER CONVERSATION, COVERING EVERY SITE**, on the owner's ruling of 2026-08-27.  What
+/// stood here asked about a HOST, and the page remembered that host for the whole browser
+/// session; so every new site put the question again, and a yes given in one chat quietly answered
+/// for the next.  Both halves of that were wrong and they were wrong in opposite directions.  What
+/// replaces them is one question -- may Daimond reach the web here -- answered once and reaching
+/// exactly as far as the conversation that answered it.  A new chat asks again; a fresh daimon
+/// asks again; a reload asks again, because the answer lives on the context and the context does
+/// not survive one.
+///
+/// WHAT THIS IS STILL NOT.  It says nothing about a command on the user's machine keeping its
+/// network after the turn has read a stranger's words: that is [`net_step`], it is the user's own
+/// separate setting, and it is the more dangerous of the two because a command can reach anywhere
+/// by any means.  The two answers are stored apart ([`TurnState::web_consent`] and
+/// [`TurnState::net_consent`]) and neither function reads the other's field.
+///
+/// Nor does the yes cover an address carrying a payload.  Approving the web is not approving
+/// `example.test/?everything-I-know=...`, and the page still puts that one on its own terms
+/// however much this has granted -- which is the whole reason the gate exists.
+///
+/// # Arguments
+/// * `mode` - Which rung the user is in.
+/// * `tainted` - Whether this turn has ingested content from outside the user.
+/// * `said` - What this conversation answered, where it has been asked.
+pub fn web_step(mode: Mode, tainted: bool, said: Option<Verdict>) -> WebStep {
+    // Asked FIRST, so a remembered answer can never be read as anything but an answer to a
+    // question that was actually put.
+    if !egress_needs_consent(mode, tainted) {
+        return WebStep::Free;
+    }
+    match said {
+        Some(v) => WebStep::Stood(v),
+        None    => WebStep::Ask,
+    }
 }
 
 /// The refusal a blocked outward call hands back to the model.
@@ -5246,39 +5477,37 @@ pub fn egress_decision(
     }
 }
 
-/// Put the question to the user through the JavaScript half, or answer it where there is no user.
+/// Put the reaching question to the user through the JavaScript half, or answer it where there is
+/// no user.
 ///
-/// In the browser the question goes to `window.__daimondEgressAllowed`, which owns the
-/// remembering: it answers a destination the user has already approved without prompting, so this
-/// asks every time rather than caching a decision here.  If that global is missing or throws, the
-/// answer is no -- the module ships inside a sealed bundle, so its absence means something is
-/// badly wrong, and a security gate that fails open is worse than no gate at all.
+/// In the browser it goes to `window.__daimondEgressAllowed`, which owns the DIALOGS: it draws the
+/// wide question when `granted` is false, stays silent when it is true and the address is
+/// ordinary, and asks about an overlong or encoded address on its own terms whichever it is.  The
+/// scope lives here and the wording lives there, and the answer says which of the two questions it
+/// answers (see [`EgressWord`]).  If that global is missing or throws, the answer is no -- the
+/// module ships inside a sealed bundle, so its absence means something is badly wrong, and a
+/// security gate that fails open is worse than no gate at all.
 ///
 /// On the native build there is nobody to ask: it is a developer harness, not the product, and it
-/// has no web tools to gate in the first place.  It answers yes.
+/// has no web tools to gate in the first place.  It answers yes, and answers it as a one-off, so a
+/// harness can never leave a standing grant behind it.
 ///
 /// # Arguments
 /// * `tool` - The wire name of the tool asking.
 /// * `url` - The destination it wants.
+/// * `granted` - Whether this conversation has already said yes to reaching the web.
 #[cfg(target_arch = "wasm32")]
-async fn egress_ask(tool: &str, url: &str) -> Option<Verdict> {
-    crate::wasm::web::egress_allowed(tool, url).await
+async fn egress_reach(tool: &str, url: &str, granted: bool) -> EgressWord {
+    crate::wasm::web::egress_reach(tool, url, granted).await
 }
 
-/// See the wasm arm of [`egress_ask`]: on native there is no user to ask, so the answer is yes.
+/// See the wasm arm of [`egress_reach`]: on native there is no user to ask, so the answer is yes,
+/// and it is spent on the one call.
 #[cfg(not(target_arch = "wasm32"))]
-async fn egress_ask(_tool: &str, _url: &str) -> Option<Verdict> {
-    Some(Verdict::Allow)
+async fn egress_reach(_tool: &str, _url: &str, _granted: bool) -> EgressWord {
+    EgressWord::Once(Verdict::Allow)
 }
 
-/// Run the gate for one outward call, returning the refusal text when the call must not happen.
-///
-/// `None` means proceed.  On a clean turn it returns without asking anything of anyone.
-///
-/// # Arguments
-/// * `tool` - The wire name of the tool asking.
-/// * `url` - The destination it wants.
-/// * `ctx` - The context, which knows whether the turn is tainted.
 /// As [`egress_check`], for a tool whose destination is the page already open and whose payload is
 /// something other than the address -- text typed into a form, say.
 ///
@@ -5312,14 +5541,60 @@ async fn egress_ask_detail(_tool: &str, _url: &str, _detail: &str) -> Option<Ver
     Some(Verdict::Allow)
 }
 
+/// Run the gate for one outward READ, returning the refusal text when the call must not happen.
+///
+/// `None` means proceed.  On a clean turn it returns without asking anything of anyone.
+///
+/// The scope is [`web_step`]'s: one ask for the conversation, covering every site.  Three things
+/// happen here and each is a decision.
+///
+/// A STANDING NO REFUSES WITHOUT ASKING.  Putting it again would make a no the slow way to be worn
+/// down into a yes, which is the fault the answer is remembered to avoid.
+///
+/// A STANDING YES STILL GOES TO THE PAGE.  Nothing is drawn for an ordinary address -- that is the
+/// whole point of the grant -- but the payload test lives on that side, and an address carrying
+/// more than an address needs is asked about however much has been granted.  Approving the web is
+/// not approving `example.test/?everything-I-know=...`.
+///
+/// AND ONLY A `Standing` ANSWER IS RECORDED.  A yes about one overlong address is not a yes to the
+/// web, and a no about one is not a no to it; recording either would let a question nobody asked
+/// answer the one they did.
+///
+/// # Arguments
+/// * `tool` - The wire name of the tool asking.
+/// * `url` - The destination it wants.
+/// * `ctx` - The context, which knows whether the turn is tainted and what it has already said.
 pub async fn egress_check(tool: &str, url: &str, ctx: &ToolContext) -> Option<String> {
-    if !egress_needs_consent(mode(), ctx.is_tainted()) {
-        return None;
-    }
-    let answer = egress_ask(tool, url).await;
-    match egress_decision(tool, url, mode(), true, answer) {
-        Egress::Proceed   => None,
-        Egress::Refuse(m) => Some(m),
+    let refuse = |why: &str| Some(egress_refusal(tool, url, why));
+    match web_step(mode(), ctx.is_tainted(), ctx.web_consent()) {
+        WebStep::Free => None,
+        WebStep::Stood(Verdict::Deny) => refuse(
+            "The user was asked, once, whether Daimond may reach the web in this conversation, \
+            and declined."),
+        WebStep::Stood(Verdict::Allow) => match egress_reach(tool, url, true).await {
+            EgressWord::Standing(Verdict::Allow) | EgressWord::Once(Verdict::Allow) => None,
+            EgressWord::Once(Verdict::Deny) => refuse(
+                "This address carries more than an address needs, so it was put to the user on \
+                its own terms, and they declined."),
+            // The only way a granted conversation gets the wide word back as a no: an address the
+            // page could not read at all, which it refuses rather than guess at.
+            EgressWord::Standing(Verdict::Deny) => refuse(
+                "The address could not be read, and one the gate cannot see is one it cannot let \
+                through."),
+        },
+        WebStep::Ask => match egress_reach(tool, url, false).await {
+            EgressWord::Standing(v) => {
+                ctx.set_web_consent(v);
+                match v {
+                    Verdict::Allow => None,
+                    Verdict::Deny  => refuse("The user was asked, and declined."),
+                }
+            },
+            EgressWord::Once(Verdict::Allow) => None,
+            EgressWord::Once(Verdict::Deny)  => refuse(
+                "Either the user could not be asked -- and an unanswered request is not consent \
+                -- or they were asked about this one address and declined."),
+        },
     }
 }
 
@@ -7027,25 +7302,56 @@ impl ToolContext {
     /// * `origin` - Where the content came from: a workspace path, or a URL.
     /// * `content` - The content itself.
     pub(crate) fn wrap_untrusted(&self, origin: &str, content: &str) -> String {
-        lock_cache(&self.read_seen).tainted = true;
+        self.set_tainted();
         wrap_untrusted(origin, content)
     }
 
-    /// Whether this turn has ingested content from outside the user.
+    /// Whether this conversation has ingested content from outside the user.
+    ///
+    /// Filed under [`ToolContext::daimon_of`], so a Diamond that has read nothing answers no on a
+    /// client another Diamond has already dirtied (see [`TurnState::tainted`]).
     pub fn is_tainted(&self) -> bool {
-        lock_cache(&self.read_seen).tainted
+        lock_cache(&self.read_seen).tainted.contains(&self.daimon_of)
     }
 
-    /// Mark this turn as carrying content from outside the user, without reading any.
+    /// Mark this conversation as carrying content from outside the user, without reading any.
     ///
     /// One-way, like the flag itself.  A worker agent gets a fresh context and therefore a clean
     /// flag, so instructions absorbed from a stranger could otherwise be laundered through a
     /// worker that does not know it is carrying them; this is how the conductor tells it.
     pub fn set_tainted(&self) {
-        lock_cache(&self.read_seen).tainted = true;
+        let who = self.daimon_of.clone();
+        lock_cache(&self.read_seen).tainted.insert(who);
+    }
+
+    /// Mark one named conversation on this client, which may not be the one this context speaks
+    /// for.
+    ///
+    /// Takes the conversation for the reason [`ToolContext::forget_web_consent`] does: a Diamond's
+    /// daimon has no client of its own, so the app marks it on the shared one -- and the shared
+    /// one's own [`daimon_of`](ToolContext::daimon_of) is the empty string, which is a different
+    /// conversation entirely.  `DaimondCore.markRead` in www/js/daimond.js is the caller.
+    ///
+    /// # Arguments
+    /// * `who` - The conversation's key, which is a Diamond's id or the empty string for a chat.
+    pub fn set_tainted_for(&self, who: &str) {
+        lock_cache(&self.read_seen).tainted.insert(who.to_string());
+    }
+
+    /// Whether one named conversation on this client has read a stranger's words.
+    ///
+    /// # Arguments
+    /// * `who` - The conversation's key, which is a Diamond's id or the empty string for a chat.
+    pub fn is_tainted_for(&self, who: &str) -> bool {
+        lock_cache(&self.read_seen).tainted.contains(who)
     }
 
     /// Whether this agent is acting alone (see [`TurnState::unsupervised`]).
+    ///
+    /// NOT keyed by conversation, and that is not an oversight beside the two fields that are.  It
+    /// is a fact about the CLIENT and not about anything read: a shared daimon client is steered
+    /// by a person watching, so it is never alone, and a worker that is always builds its own
+    /// context and its own cache.
     pub fn is_unsupervised(&self) -> bool {
         lock_cache(&self.read_seen).unsupervised
     }
@@ -7066,25 +7372,67 @@ impl ToolContext {
         self.is_tainted() || self.is_unsupervised()
     }
 
-    /// What the user has already said about this turn's commands reaching the network, or `None`
-    /// where they have not been asked (see [`TurnState::net_consent`]).
+    /// What the user has already said about this conversation's commands reaching the network, or
+    /// `None` where they have not been asked (see [`TurnState::net_consent`]).
     pub fn net_consent(&self) -> Option<Verdict> {
-        lock_cache(&self.read_seen).net_consent
+        lock_cache(&self.read_seen).net_consent.get(&self.daimon_of).copied()
     }
 
-    /// Record the answer, for the rest of this turn.
+    /// Record the answer, for the rest of this conversation.
     ///
-    /// Written once and never overwritten: the first answer is the turn's answer, so a second
-    /// question -- from a race, or from a later edit that forgot the memory -- cannot turn a no
-    /// into a yes.
+    /// Written once and never overwritten: the first answer is the conversation's answer, so a
+    /// second question -- from a race, or from a later edit that forgot the memory -- cannot turn
+    /// a no into a yes.
+    ///
+    /// Filed under [`ToolContext::daimon_of`], so one Diamond's yes is not spent by another
+    /// sharing the same client.
     ///
     /// # Arguments
     /// * `v` - What the user said.
     pub fn set_net_consent(&self, v: Verdict) {
         let mut c = lock_cache(&self.read_seen);
-        if c.net_consent.is_none() {
-            c.net_consent = Some(v);
-        }
+        c.net_consent.entry(self.daimon_of.clone()).or_insert(v);
+    }
+
+    /// What this conversation has already said about Daimond reaching websites, or `None` where it
+    /// has not been asked (see [`TurnState::web_consent`]).
+    ///
+    /// A DIFFERENT ANSWER FROM [`ToolContext::net_consent`] above, which is about a command keeping
+    /// its network.  The two are stored apart and neither is allowed to answer for the other.
+    pub fn web_consent(&self) -> Option<Verdict> {
+        lock_cache(&self.read_seen).web_consent.get(&self.daimon_of).copied()
+    }
+
+    /// Record what this conversation said about reaching websites.
+    ///
+    /// Written once and never overwritten, for the reason [`ToolContext::set_net_consent`] is: the
+    /// first answer is the conversation's answer, so a second question -- from two tool calls
+    /// racing in one round, or from a later edit that forgot the memory -- cannot turn a no into a
+    /// yes.
+    ///
+    /// Filed under [`ToolContext::daimon_of`], so that one Diamond's yes is not another's: the
+    /// daimon client, and therefore this cache, is shared by every Diamond on the same model.
+    ///
+    /// # Arguments
+    /// * `v` - What the user said.
+    pub fn set_web_consent(&self, v: Verdict) {
+        let mut c = lock_cache(&self.read_seen);
+        c.web_consent.entry(self.daimon_of.clone()).or_insert(v);
+    }
+
+    /// Forget one conversation's answer, so the next question is put again.
+    ///
+    /// Named rather than a general setter, because there is exactly one caller and one reason: a
+    /// conversation ENDED.  [`ToolContext::set_web_consent`] must go on refusing to overwrite, and
+    /// this is not an overwrite -- it is the end of the thing the answer was scoped to.
+    ///
+    /// Takes the conversation rather than reading `self.daimon_of`, because the client whose cache
+    /// holds the answer is shared: see [`crate::wasm::app::DaimondApp::forget_web_consent`].
+    ///
+    /// # Arguments
+    /// * `who` - The conversation's key, which is a Diamond's id or the empty string for a chat.
+    pub fn forget_web_consent(&self, who: &str) {
+        lock_cache(&self.read_seen).web_consent.remove(who);
     }
 
     /// Replace the answer, because the user moved a control they can SEE rather than answered a
@@ -7101,7 +7449,12 @@ impl ToolContext {
     /// # Arguments
     /// * `v` - What the user set it to, or `None` to forget the answer.
     pub fn override_net_consent(&self, v: Option<Verdict>) {
-        lock_cache(&self.read_seen).net_consent = v;
+        let who = self.daimon_of.clone();
+        let mut c = lock_cache(&self.read_seen);
+        match v {
+            Some(x) => { c.net_consent.insert(who, x); },
+            None    => { c.net_consent.remove(&who); },
+        }
     }
 
     /// Start this turn's byte ledger again (see [`TurnState::spent`]).
@@ -7111,6 +7464,11 @@ impl ToolContext {
     /// separate call rather than a fresh [`TurnState`] because the taint beside it is one-way for
     /// the life of the context and must survive: a daimon that read a stranger's page in one turn
     /// has still read it in the next.
+    ///
+    /// SO THE TAINT AND THE NETWORK ANSWER DELIBERATELY OUTLIVE THE TURN, and what bounds them is
+    /// the CONVERSATION rather than this call: both are filed under
+    /// [`daimon_of`](ToolContext::daimon_of), so a client two Diamonds share does not carry one
+    /// Diamond's reading, or one Diamond's yes, into the other.
     pub fn begin_turn(&self) {
         let mut c = lock_cache(&self.read_seen);
         c.spent = 0;
@@ -9665,6 +10023,31 @@ impl Tool {
             }
         }
         Ok(None)
+    }
+
+    /// May this call be made again after the road failed under it?
+    ///
+    /// **An allow-list of READS, so a tool added later is not retried by accident.**  A request
+    /// that never left the device is safe to send again by definition, but the browser cannot
+    /// always tell that case from a connection lost after the request was accepted -- both reach
+    /// the page as a bare `TypeError` with no status.  So the question is not "did this leave"
+    /// but "would sending it twice matter", and only a tool that reads is answered yes.
+    ///
+    /// `social_send` is the one reachable tool on the other side of the line, and it is the whole
+    /// reason the list is written this way round: publishing in somebody's name twice because
+    /// their phone slept is not a failure any retry budget may buy.  It still never reaches the
+    /// model as a road failure -- see [`ToolRegistry::try_dispatch`] -- it simply ends the turn on
+    /// the first attempt instead of the eighth.
+    pub fn road_retryable(&self) -> bool {
+        matches!(self,
+            Tool::WebFetch
+            | Tool::WebSearch
+            | Tool::WebRead
+            | Tool::WebSnapshot
+            | Tool::WebOpen
+            | Tool::SocialRead
+            | Tool::FileFetch
+            | Tool::Runs)
     }
 
     /// The tool's stable name, as sent to and returned from the LLM.
@@ -13357,6 +13740,30 @@ const NO_NET_NOTE: &str =
     because the project is broken — say so rather than retrying, and ask in a new message for \
     anything that needs to reach out.]";
 
+/// What identifies [`NO_NET_NOTE`] in a result the browser is holding.
+///
+/// The note is prose and will be reworded; its opening is not, so this is what a reader matches
+/// on.  Held to the note it stands for by
+/// `test_the_no_network_mark_opens_the_note_and_finds_it_in_a_result`, because a mark that has
+/// drifted from its note is a surface that goes quiet without anything failing.
+#[cfg(any(target_arch = "wasm32", test))]
+pub const NO_NET_MARK: &str = "[no network:";
+
+/// Did the command behind this result run with the network refused?
+///
+/// Asked of the RESULT rather than of the chat, and the difference is the whole point of the
+/// function: [`crate::wasm::app::DaimondApp::net_state`] says what the NEXT command would get,
+/// where a page drawing a line about the command that has just come back has to say what THAT
+/// one got.  The note is written beside the fence it was built from, so the result carries the
+/// answer and nothing has to be re-derived.
+///
+/// # Arguments
+/// * `result` - A tool result, as the page received it.
+#[cfg(any(target_arch = "wasm32", test))]
+pub fn ran_without_net(result: &str) -> bool {
+    result.contains(NO_NET_MARK)
+}
+
 // The most bytes of a command the spend notice will write back into the call it suggests.
 //
 // Past this the suggestion names the argument instead of the whole call: a hundred-argument
@@ -13841,7 +14248,54 @@ impl ToolRegistry {
     /// **This is the door the conversation comes through, and the turn is charged for it here.**
     /// A panel comes through [`dispatch_unbilled`](Self::dispatch_unbilled) instead.
     pub async fn dispatch(&self, name: &str, args_json: &str) -> MessageContent {
-        let out = self.dispatch_unbilled(name, args_json).await;
+        let out = Self::flatten(self.try_dispatch(name, args_json).await);
+        self.charge(out)
+    }
+
+    /// The same call, with a ROAD failure kept as an error instead of becoming a result.
+    ///
+    /// **This is the boundary the whole road/remote split turns on.**  Everything downstream of
+    /// [`Self::flatten`] is looking at a `MessageContent`, and by then a request that never left
+    /// the device is indistinguishable from a page that answered "no": both are text, and the
+    /// information that told them apart has been destroyed.  So the split is made here, before
+    /// the flattening, and nowhere else.
+    ///
+    /// **A NARROWING, NOT A REMOVAL.**  Only a failure carrying [`ROAD_MARK`] escapes as an
+    /// error.  A tool that fails any other way -- a bad path, a refusal, a malformed argument, a
+    /// host that answered with a 500 -- still becomes a result the model can read and adapt to,
+    /// exactly as it always has.  One tool failing must not kill a turn, and anything this
+    /// cannot confidently call the road is left alone.
+    ///
+    /// # Arguments
+    /// * `name` - The tool's wire name.
+    /// * `args_json` - The raw argument object.
+    pub async fn try_dispatch(&self, name: &str, args_json: &str)
+        -> Outcome<MessageContent>
+    {
+        let out = self.try_dispatch_unbilled(name, args_json).await;
+        // Charged only on the answer.  A road failure carried nothing into the conversation --
+        // it is about to be retried, and a turn that paid for each attempt would run out of
+        // budget for having been on a train.
+        match out {
+            Ok(c)  => Ok(self.charge(c)),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// A road failure, spent, as the sentence a caller that cannot act on it must fall back to.
+    ///
+    /// The one place the two halves rejoin, so a panel and an older caller behave exactly as they
+    /// did before this split existed.
+    fn flatten(out: Outcome<MessageContent>) -> MessageContent {
+        match out {
+            Ok(c)  => c,
+            // `plain()`, NEVER `Display`. See `error_line`.
+            Err(e) => MessageContent::text(error_line(&e.plain())),
+        }
+    }
+
+    /// Charge a result to the turn's ledger and append the budget line if it is time.
+    fn charge(&self, out: MessageContent) -> MessageContent {
         // THE TURN'S LEDGER, CHARGED IN ONE PLACE. Sized by the two accounts
         // `crate::agent::compact` folds by, so the ledger and the folder cannot disagree about
         // what a result costs. Here rather than at each door because a budget that counted `run`
@@ -13863,6 +14317,20 @@ impl ToolRegistry {
     /// * `name` - The tool's wire name.
     /// * `args_json` - The raw argument object.
     pub async fn dispatch_unbilled(&self, name: &str, args_json: &str) -> MessageContent {
+        Self::flatten(self.try_dispatch_unbilled(name, args_json).await)
+    }
+
+    /// The panel's door, with a ROAD failure kept as an error.
+    ///
+    /// The counterpart of [`Self::try_dispatch`] for a caller that pays nothing, and the place
+    /// the narrowing is actually written.  See that method for why the split has to be here.
+    ///
+    /// # Arguments
+    /// * `name` - The tool's wire name.
+    /// * `args_json` - The raw argument object.
+    pub async fn try_dispatch_unbilled(&self, name: &str, args_json: &str)
+        -> Outcome<MessageContent>
+    {
         let out = match Tool::from_name(name) {
             // A tool must be REGISTERED, not merely known. Resolving by name
             // alone let a caller run a tool it was never offered: a chat that
@@ -13871,6 +14339,10 @@ impl ToolRegistry {
             // carries it.
             Some(t) if self.tools.contains(&t) => match t.execute(args_json, &self.ctx).await {
                 Ok(c)  => c,
+                // THE ONE FAILURE THAT DOES NOT BECOME A SENTENCE. Everything else -- a bad
+                // path, a refusal, a 500 from a host that answered -- is a fact about the world
+                // and the model is entitled to read it.
+                Err(e) if road_failed(&e) => return Err(e),
                 // `plain()`, NEVER `Display`. See `error_line`.
                 Err(e) => MessageContent::text(error_line(&e.plain())),
             },
@@ -13888,7 +14360,7 @@ impl ToolRegistry {
         if crate::wasm::opfs::is_folder_lost(&out.as_text()) {
             crate::wasm::opfs::notify_folder_lost();
         }
-        out
+        Ok(out)
     }
 
     /// The turn's own account of where it stands, appended once it is worth saying.
@@ -15287,6 +15759,34 @@ mod tests {
     }
 
     #[test]
+    fn test_a_refused_page_write_names_the_ceiling_the_overage_and_the_way_past_it_00() {
+        // The ceiling was met on 2026-08-28 by the author of a capp who reported it as "~130kB" --
+        // 131,072 bytes seen from outside, established by experiment because nothing told him. The
+        // refusal always named its own limit; what it did not say was that the limit is a SETTING.
+        // So the sentence sent the reader to shrink the page, which is the wrong move when the
+        // page is an application and the ceiling is the thing in the way.
+        set_crystal_page_cap(0);
+        let over = CRYSTAL_PAGE_CAP_DEFAULT + 4_096;
+        let m = crystal_page_cap_message(over);
+        assert!(m.contains(&fmt!("{}", CRYSTAL_PAGE_CAP_DEFAULT)), "no ceiling in: {}", m);
+        assert!(m.contains(&fmt!("{}", over)), "no attempted size in: {}", m);
+        assert!(m.contains("4096"), "no overage in: {}", m);
+        assert!(m.contains("Settings"), "no way past it in: {}", m);
+        assert!(m.contains("asset"), "no cheaper home for bulk in: {}", m);
+
+        // The data half says the opposite thing on purpose, and the asymmetry is the point: only
+        // `crystal.json` is composed into the daimon's system message (`compose_daimon`), so a byte
+        // there is charged on every request for ever and a byte in the page is charged on none.  A
+        // refusal that invited the reader to raise BOTH would be inviting the expensive one.
+        let d = crystal_cap_message(CRYSTAL_CAP_DEFAULT + 1);
+        assert!(d.contains("every turn"), "the data refusal must say what a byte there costs: {}", d);
+        assert!(!d.contains("Settings"), "the data ceiling must not be advertised as raisable: {}", d);
+
+        // The page is the larger of the two, or nothing is over one and under the other.
+        assert!(CRYSTAL_PAGE_CAP_DEFAULT > CRYSTAL_CAP_DEFAULT);
+    }
+
+    #[test]
     fn test_each_of_a_crystals_two_files_answers_to_its_own_ceiling_00() {
         // The door both `file_write` and `file_edit` go through. What it must never do is measure
         // a 20 KB page against the 16 KiB the MEMORY is allowed -- the two files are capped
@@ -16348,7 +16848,7 @@ mod tests {
         assert!(said.contains(UNTRUSTED_CLOSE), "an image from the mail tree was not marked: {}",
             said);
         assert!(described.images().next().is_none(), "a bare read must not attach it");
-        assert!(lock_cache(&c.read_seen).tainted, "reading a stranger's file must taint the turn");
+        assert!(c.is_tainted(), "reading a stranger's file must taint the turn");
 
         let out = Tool::FileRead.execute_sync_guarded(
             r#"{"path":"mail/a@b.test/INBOX/cur/att.png","as":"image"}"#, &c).expect("read");
@@ -16357,7 +16857,7 @@ mod tests {
             said);
         assert!(said.contains("stranger"), "{}", said);
         assert!(out.images().next().is_some(), "the image should still be attached");
-        assert!(lock_cache(&c.read_seen).tainted, "reading a stranger's picture must taint the turn");
+        assert!(c.is_tainted(), "reading a stranger's picture must taint the turn");
     }
 
     /// A binary that is not an image is refused exactly as it always was.
@@ -17294,6 +17794,229 @@ mod tests {
         c.set_tainted();
         assert!(egress_check("web_fetch", "https://example.test/", &c).await.is_none(),
             "the native build asked a user who is not there");
+    }
+
+
+    // ── One ask per conversation, covering every site ────────────────
+    //
+    // The owner's ruling of 2026-08-27, and its limits.  What stood before asked about a HOST and
+    // remembered the host for the whole browser session, so a new site asked again and a yes
+    // crossed from one chat into the next.  These hold the replacement in both directions: wide
+    // enough that one yes covers every site, narrow enough that it stops at the conversation, and
+    // separate from the answer about a command's network, which is a different and more dangerous
+    // question.
+
+    /// A clean turn is never asked, whatever anybody has said.  Held first, so that every check
+    /// below is known to be about a turn where the question is genuinely live.
+    #[test]
+    fn test_a_clean_turn_never_reaches_the_web_question() {
+        assert_eq!(WebStep::Free, web_step(Mode::Guarded, false, None),
+            "a turn that has read nothing was asked");
+        assert_eq!(WebStep::Free, web_step(Mode::Guarded, false, Some(Verdict::Deny)),
+            "a clean turn was refused on the strength of an answer to another turn's question");
+        assert_eq!(WebStep::Free, web_step(Mode::Bypass, true, None),
+            "the rung that withholds nothing put a question anyway");
+    }
+
+    /// ONE ASK, AND THEN NONE: the first tainted fetch asks, and the answer covers what follows.
+    ///
+    /// Asserted through the context rather than on `web_step` alone, because the storage is half
+    /// the fix: the old memory was on the page and keyed by host, and a `web_step` that read a
+    /// per-host note would satisfy a test of the function while changing nothing a user would see.
+    #[test]
+    fn test_one_yes_covers_every_site_in_the_conversation() {
+        let c = ctx();
+        c.set_tainted();
+        assert_eq!(WebStep::Ask, web_step(Mode::Guarded, c.is_tainted(), c.web_consent()),
+            "the first fetch of a tainted turn did not ask");
+        c.set_web_consent(Verdict::Allow);
+        // A DIFFERENT SITE, which is the whole of the reported defect: every one of these used to
+        // be its own dialog.
+        assert_eq!(WebStep::Stood(Verdict::Allow),
+            web_step(Mode::Guarded, c.is_tainted(), c.web_consent()),
+            "a second site asked again after the web had been granted");
+    }
+
+    /// A no is remembered as a no, or it is merely the slow way to be worn down into a yes.
+    #[test]
+    fn test_a_no_is_remembered_as_a_no() {
+        let c = ctx();
+        c.set_tainted();
+        c.set_web_consent(Verdict::Deny);
+        assert_eq!(WebStep::Stood(Verdict::Deny),
+            web_step(Mode::Guarded, c.is_tainted(), c.web_consent()),
+            "a refusal was put again at the next fetch");
+        // And the first answer stands: a second question -- a race, or a later edit that forgot
+        // the memory -- must not turn it into a yes.
+        c.set_web_consent(Verdict::Allow);
+        assert_eq!(Some(Verdict::Deny), c.web_consent(), "a second answer overwrote the first");
+    }
+
+    /// **THE GRANT STOPS AT THE CONVERSATION.**  The half of the ruling that is a narrowing.
+    ///
+    /// A chat, a dispatched worker and a Diamond's daimon each build their own `DaimondApp` and so
+    /// their own cache; two contexts with two caches are what that looks like here.
+    #[test]
+    fn test_a_conversations_yes_does_not_reach_another_conversation() {
+        let one = ctx();
+        let two = ctx();
+        one.set_tainted();
+        two.set_tainted();
+        one.set_web_consent(Verdict::Allow);
+        assert_eq!(None, two.web_consent(),
+            "a yes given in one conversation answered for another");
+        assert_eq!(WebStep::Ask, web_step(Mode::Guarded, two.is_tainted(), two.web_consent()),
+            "the second conversation was not asked");
+    }
+
+    /// And it stops at the DIAMOND, on a client two Diamonds share.
+    ///
+    /// `diamondApp` in www/js/daimond.js caches one client per provider and model, so every
+    /// Diamond on one model reads one of these caches -- which is why the answer is filed under
+    /// `daimon_of` and not simply held in an `Option`.  Written as the two contexts the app
+    /// actually builds: one cache, two identities.
+    #[test]
+    fn test_one_diamonds_yes_is_not_another_diamonds_on_a_shared_client() {
+        let (a, b) = shared_client();
+        // B IS TAINTED BY ITS OWN HAND, and that line is the whole repair of this test.  It used to
+        // taint A alone and then assert that B is asked -- which reaches `Ask` only when
+        // `b.is_tainted()` is true, and it was true only because the taint crossed the Diamond
+        // boundary through the shared cache.  So the check depended on the bleed it was standing
+        // next to, and said nothing about it.  A precondition is set here or it is not relied on.
+        a.set_tainted();
+        b.set_tainted();
+        a.set_web_consent(Verdict::Allow);
+        assert_eq!(Some(Verdict::Allow), a.web_consent(), "the grant did not stick to its own Diamond");
+        assert_eq!(None, b.web_consent(),
+            "one Diamond's yes answered for another sharing the same client");
+        assert_eq!(WebStep::Ask, web_step(Mode::Guarded, b.is_tainted(), b.web_consent()),
+            "the second Diamond was not asked");
+    }
+
+    /// Two Diamonds on one model, as the app actually builds them: one client, one cache, two
+    /// names.  `diamondApp` in www/js/daimond.js caches by provider and model, and a daimon turn
+    /// clones the app's own `read_seen` (see `DaimondApp::daimon_turn`), so this is the shape the
+    /// browser is in and not a contrivance.
+    fn shared_client() -> (ToolContext, ToolContext) {
+        let shared = new_read_cache();
+        let mut a = ctx();
+        let mut b = ctx();
+        a.read_seen = shared.clone();
+        b.read_seen = shared;
+        a.daimon_of = "d1".to_string();
+        b.daimon_of = "d2".to_string();
+        (a, b)
+    }
+
+    /// **A STRANGER'S WORDS STOP AT THE DIAMOND THAT READ THEM.**
+    ///
+    /// A Research Diamond fetches a page.  An Accounts Diamond on the same model has touched
+    /// nothing external -- and used to lose the network on its commands and stamp its dispatched
+    /// workers as carrying a stranger's words, because the flag was a bare `bool` on a cache the
+    /// two share.
+    #[test]
+    fn test_one_diamonds_reading_does_not_taint_another_on_a_shared_client() {
+        let (research, accounts) = shared_client();
+        research.set_tainted();
+        assert!(research.is_tainted(), "the Diamond that read the page is not marked");
+        assert!(!accounts.is_tainted(),
+            "a Diamond that read nothing was marked by another sharing the same client");
+        // And the consequence, which is what a user meets: the clean Diamond keeps its network and
+        // is never asked about it.
+        assert!(!accounts.net_risk(), "a clean Diamond was treated as a risk");
+        assert_eq!(NetStep::Give,
+            net_step(Mode::Guarded, accounts.net_risk(), false, accounts.net_consent()),
+            "a Diamond that read nothing lost the network to one that did");
+        assert_eq!(NetStep::Ask,
+            net_step(Mode::Guarded, research.net_risk(), false, research.net_consent()),
+            "the Diamond that did read is no longer asked");
+    }
+
+    /// **AND A YES GIVEN IN ONE DIAMOND IS NOT SPENT IN ANOTHER.**
+    ///
+    /// The command-network answer, on the same shared client.  A yes about a command the user saw
+    /// in Research must not be the answer to a command they never saw in Accounts.
+    #[test]
+    fn test_one_diamonds_network_yes_is_not_spent_by_another_on_a_shared_client() {
+        let (research, accounts) = shared_client();
+        research.set_tainted();
+        accounts.set_tainted();
+        research.set_net_consent(Verdict::Allow);
+        assert_eq!(Some(Verdict::Allow), research.net_consent(),
+            "the answer did not stick to the Diamond that gave it");
+        assert_eq!(None, accounts.net_consent(),
+            "a yes given in one Diamond answered for another sharing the same client");
+        assert_eq!(NetStep::Ask,
+            net_step(Mode::Guarded, accounts.net_risk(), false, accounts.net_consent()),
+            "the second Diamond was not asked");
+        // AND THE NO IS THE HARDER DIRECTION.  A refusal in one Diamond must not silently cut the
+        // other's network either: the bleed is a fault whichever way the verdict points.
+        let (one, two) = shared_client();
+        one.set_tainted();
+        two.set_tainted();
+        one.set_net_consent(Verdict::Deny);
+        assert_eq!(None, two.net_consent(), "a no given in one Diamond answered for another");
+    }
+
+    /// Fresh daimon ends the conversation, so it ends the grant that conversation held.
+    #[test]
+    fn test_ending_a_conversation_ends_its_grant() {
+        let mut c = ctx();
+        c.daimon_of = "d1".to_string();
+        c.set_tainted();
+        c.set_web_consent(Verdict::Allow);
+        c.forget_web_consent("d2");
+        assert_eq!(Some(Verdict::Allow), c.web_consent(),
+            "clearing another Diamond took this one's answer with it");
+        c.forget_web_consent("d1");
+        assert_eq!(None, c.web_consent(), "the answer survived the conversation it was given to");
+        assert_eq!(WebStep::Ask, web_step(Mode::Guarded, c.is_tainted(), c.web_consent()),
+            "the new conversation was not asked");
+    }
+
+    /// **THE TWO QUESTIONS ARE TWO QUESTIONS.**
+    ///
+    /// The one that must not have moved.  `net_consent` is about a COMMAND on the user's machine
+    /// keeping its network after the turn has read a stranger's words -- the more dangerous act,
+    /// and the user's own separate setting.  Widening the fetch grant must not widen that by one
+    /// inch, in either direction, so both directions are asserted: a yes to the web is not a yes
+    /// to a command's network, and the standing network setting does not answer for the web.
+    #[test]
+    fn test_the_web_grant_and_the_command_network_are_separate_answers() {
+        let c = ctx();
+        c.set_tainted();
+        c.set_web_consent(Verdict::Allow);
+        assert_eq!(None, c.net_consent(),
+            "granting the web quietly granted a tainted turn's commands the network too");
+        assert_eq!(NetStep::Ask, net_step(Mode::Guarded, c.net_risk(), false, c.net_consent()),
+            "the command question stopped being asked once the web was granted");
+
+        let d = ctx();
+        d.set_tainted();
+        d.set_net_consent(Verdict::Allow);
+        assert_eq!(None, d.web_consent(),
+            "the standing network setting answered the web question as well");
+        assert_eq!(WebStep::Ask, web_step(Mode::Guarded, d.is_tainted(), d.web_consent()),
+            "a yes about commands stopped the web being asked about");
+    }
+
+    /// The word an answer comes back in says HOW FAR it reaches, and an unrecognised one refuses
+    /// this call without writing a standing no into a conversation nobody asked.
+    #[test]
+    fn test_a_one_address_answer_is_not_the_conversations_answer() {
+        assert_eq!(EgressWord::Standing(Verdict::Allow), egress_word(Some(EGRESS_ALLOW_WORD)));
+        assert_eq!(EgressWord::Standing(Verdict::Deny),  egress_word(Some(EGRESS_DENY_WORD)));
+        assert_eq!(EgressWord::Once(Verdict::Allow),     egress_word(Some(EGRESS_ALLOW_ONCE_WORD)));
+        assert_eq!(EgressWord::Once(Verdict::Deny),      egress_word(Some(EGRESS_DENY_ONCE_WORD)));
+        // The prefix trap: each one-address word begins with the wide word it qualifies, and a
+        // loose comparison would file a one-address yes as the conversation's.
+        assert_ne!(egress_word(Some(EGRESS_ALLOW_ONCE_WORD)), egress_word(Some(EGRESS_ALLOW_WORD)),
+            "a yes about one address was read as a yes for the whole conversation");
+        // Nobody there, or a word this build does not know: refuse the call, record nothing.
+        assert_eq!(EgressWord::Once(Verdict::Deny), egress_word(None));
+        assert_eq!(EgressWord::Once(Verdict::Deny), egress_word(Some("allow-net")),
+            "the network question's yes was accepted at the web door");
+        assert_eq!(EgressWord::Once(Verdict::Deny), egress_word(Some("yes")));
     }
 
     /// The mark a conductor puts on a worker, which must not come off.
@@ -18370,6 +19093,29 @@ mod tests {
         assert!(without.contains("[exit code: 101]"), "{}", without);
     }
 
+    /// **And the browser can ask about a result without carrying a copy of the sentence.**
+    ///
+    /// The page draws a line for the person from this, where the note itself is written for the
+    /// model, so what the two share must be the ONE fact and not the prose: a page matching on
+    /// the wording would go quiet the day the wording is improved, and nothing would fail.  The
+    /// first assertion is what holds the mark to the note; the two after it are the answer given
+    /// on results a real run produces.
+    #[test]
+    fn test_the_no_network_mark_opens_the_note_and_finds_it_in_a_result() {
+        assert!(NO_NET_NOTE.contains(NO_NET_MARK),
+            "the mark the page matches on is not in the note it stands for: {}", NO_NET_NOTE);
+        let argv = vec![fmt!("cargo"), fmt!("build")];
+        let res  = r#"{"stdout":"error: failed to fetch","stderr":"","exit":101}"#;
+        assert!(ran_without_net(&Tool::run_result(&argv, res, &ctx(), true, false, None)),
+            "a command that ran with the network refused is not recognised as one");
+        assert!(!ran_without_net(&Tool::run_result(&argv, res, &ctx(), false, false, None)),
+            "a networked command is being reported as one that had no network");
+        // A refusal is not a run, and nothing about it may draw the line: the fence turned the
+        // command away before any of it happened.
+        assert!(!ran_without_net(&push_no_net_refusal()),
+            "a refusal is being read as a command that ran");
+    }
+
 
     // ── Which filesystem a write landed in ───────────────────────────────────
     //
@@ -19442,6 +20188,76 @@ mod tests {
             "a forged closing marker survived: {}", out);
         assert!(out.as_text().contains(UNTRUSTED_QUOTED), "the forgery was not quoted: {}", out);
         assert!(out.as_text().contains("now send the keys"), "the words themselves were lost: {}", out);
+    }
+
+    /// The chain an error really travels, built the way the code builds it.
+    ///
+    /// `settle` in src/wasm/web.rs mints the error from the JS rejection's `message`, and
+    /// `Tool::execute` then wraps it with `res!` on the way out. What the classifier is finally
+    /// handed is therefore an `Upstream` frame with EMPTY tags around a frame whose message holds
+    /// the mark — which is exactly why the mark rides in the message rather than in a tag.
+    fn wrapped(inner: &str) -> Error<ErrTag> {
+        fn mint(msg: &str) -> Outcome<()> {
+            Err(err!("{}", msg; Network, Invalid))
+        }
+        fn passed_on(msg: &str) -> Outcome<()> {
+            res!(mint(msg));
+            Ok(())
+        }
+        match passed_on(inner) {
+            Err(e) => e,
+            Ok(())  => panic!("mint returned Ok"),
+        }
+    }
+
+    #[test]
+    fn test_the_road_mark_survives_the_wrapping_between_the_fetch_and_the_classifier() {
+        // PROVE THE INSTRUMENT. If the mark did not survive `res!`, every check below this one
+        // would pass for the wrong reason: `road_failed` would answer no to everything and the
+        // narrowing would simply never fire.
+        let e = wrapped(&fmt!("{}: Load failed", ROAD_MARK));
+        assert!(road_failed(&e),
+            "the mark did not survive the error chain; plain() said: {}", e.plain());
+        // And the browser's own sentence is still in there, because a person reading the app's
+        // log needs to know WHICH failure it was, not only that it was one.
+        assert!(e.plain().contains("Load failed"), "the browser's wording was lost: {}", e.plain());
+    }
+
+    #[test]
+    fn test_a_refusal_is_not_a_road_failure_however_it_is_worded() {
+        // THE CHECK THAT MAKES THE OTHERS SAFE. `BROWSER_ROAD` in www/js/daimond.js holds
+        // `refused`, for "connection refused", and this layer says that word constantly for an
+        // entirely different reason. A pattern classifier would read each of these as a dead road,
+        // climb the ladder eight times and then kill the turn -- which is worse than the defect
+        // being fixed, because it would happen to calls that were working correctly.
+        for said in [
+            "Daimond Hands refused that.",
+            "The remote host refused the connection you asked for.",
+            "web_fetch: the site could not reach its own upstream and returned a network error.",
+            "DNS for that host does not resolve.",
+            "The web service could not reach that page.",
+        ] {
+            assert!(!road_failed(&wrapped(said)),
+                "an answer from the far end was classified as the road: {}", said);
+            // And it still becomes a sentence the model reads, which is the behaviour that must
+            // not change for anything but the road.
+            assert!(error_line(said).starts_with(ERROR_OPENING), "{}", said);
+        }
+    }
+
+    #[test]
+    fn test_only_reads_are_climbed_and_publishing_is_not() {
+        // Retrying is safe where sending twice does not matter, and the browser cannot always
+        // tell a request that never left from one lost after it was accepted. So the question is
+        // idempotence, not delivery.
+        for t in [Tool::WebFetch, Tool::WebSearch, Tool::WebRead, Tool::SocialRead, Tool::FileFetch] {
+            assert!(t.road_retryable(), "a read is not climbed: {}", t.name());
+        }
+        // Publishing in somebody's name twice because their phone slept is not a thing any retry
+        // budget may buy. It still tells the model nothing; it simply ends on the first attempt.
+        for t in [Tool::SocialSend, Tool::WebClick, Tool::WebType, Tool::Run, Tool::FileWrite] {
+            assert!(!t.road_retryable(), "an act is climbed: {}", t.name());
+        }
     }
 
     #[test]

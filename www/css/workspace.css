@@ -22,11 +22,23 @@
    was two vertical arcs -- the same "border that stopped at the corners"
    signature as the selected chat tile and the selected tag chip before it. The
    padding is cancelled by negative margins so the top bar does not grow. */
+/* A TRANSIENT ELEMENT MUST NEVER SIT IN THE FLOW OF CLICKABLE TARGETS. Either
+   it lives outside that flow, or the space it occupies is reserved whether or
+   not it is showing. That is the rule this row is laid out to, and it is the
+   general form of the two notes below it: a chip that appears where a chip did
+   not, or a glyph that widens the chip it is on, both move somebody's target
+   while they are reaching for it.
+   `flex: 1 1 auto` is what enforces it here. The row used to shrink to its own
+   contents inside a right-anchored group, so anything that appeared to its
+   RIGHT -- the sync pill, the pairing button, a held-sweep notice -- moved every
+   chip in it. Taking the room instead fixes the row's left edge at the wordmark,
+   and nothing that happens further along the bar can reach it. */
 .panel-tags {
 	display: flex;
 	align-items: center;
 	gap: 5px;
 	min-width: 0;
+	flex: 1 1 auto;
 	overflow: hidden;
 	padding: 4px;
 	margin: -4px 2px -4px -4px;
@@ -368,10 +380,16 @@
 .pal-item[aria-selected="true"] .hint { color: var(--accent-text); }
 .pal-empty { padding: 20px; text-align: center; color: var(--text-muted); font-size: var(--fs-sm); }
 
-/* Below the phone breakpoint the drawer and the bottom nav own panel access,
-   so none of this appears: a chip row on a 380px screen is a scrolling mess,
-   and the mobile shell already answers the question it would answer. */
+/* Below the phone breakpoint the row is the FOOTER. It used to be hidden here,
+   on the reasoning that "a chip row on a 380px screen is a scrolling mess" and
+   that the drawer and the four-destination bottom bar answered the question it
+   would answer. The owner's verdict on that bar, 2026-08-27: "the footer in
+   mobile view is currently useless to me". Four seats named four panels out of
+   seventeen, and the other thirteen were reachable only through a drawer.
+   So the row moves into the bar rather than being hidden from it -- one row,
+   still `#panel-tags`, moved by `placeChips` in js/mobile.js -- and it scrolls
+   sideways, which is what a phone does with a list too long for its width.
+   Its rules are in css/mobile.css, with the rest of the phone shell. */
 @media (max-width: 760px) {
-	.panel-tags, .ptag-more { display: none; }
 	.pal-scrim { padding-top: 6vh; }
 }

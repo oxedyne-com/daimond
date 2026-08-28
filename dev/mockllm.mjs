@@ -21,6 +21,24 @@
 //   @tools <name> <json> ;; <name> <json>   several tool calls in one turn
 //   @chain <name> <json>     tool call, then a second call, then text
 //   @narrate <words> ;; <name> <json>
+//   @reason <working> ;; <answer>
+//                           the model THINKS before it answers, on the wire the way
+//                           OpenRouter sends it: `delta.reasoning` with the same words
+//                           repeated in `delta.reasoning_details`, and `content` empty
+//                           until the working is done. A client that reads both fields
+//                           shows every word twice, which is what this is for.
+//   @reasonslow <working> ;; <answer>
+//                           the same as @reason, paced the way a real reasoning round
+//                           is paced, so a check can look at the page while the model
+//                           is still thinking rather than only after.
+//   @reasonc <working> ;; <answer>
+//                           the same, spelled `delta.reasoning_content` -- which is
+//                           what DeepSeek's own endpoint calls it, and the reason the
+//                           accumulator reads two field names.
+//   @reasontool <working> ;; <name> <json>
+//                           working, then a tool call and no text at all: the round
+//                           that spends a minute and a half thinking and then says one
+//                           word, which is the round this was all built for.
 //                            PROSE AND THEN A TOOL CALL, in one assistant message,
 //                            then a text reply once the tool returns. Every other
 //                            directive here emits `content: null` beside its calls,
@@ -59,6 +77,20 @@
 //                            leg would carry no picture, and a verifier could not
 //                            tell a correct re-route from a broken one.
 //
+// ── Two roles are answered by their SYSTEM prompt, not by a directive ─────
+//
+// A reducer and a triage both have a fixed ANSWER SHAPE that the app parses, so
+// a mock replying with prose could not drive either feature at all.  Both are
+// recognised the way a real one is -- by the role they were given -- and both
+// still lose to `@text`, so a test that wants a malformed answer can ask for one.
+//
+//   reducer   system prompt mentions "crystal"; answered with a crystal whose
+//             summary is the delta's own words.
+//   triage    system prompt opens "triaging one person's notes"; answered with a
+//             plan for www/js/triage.js.  `MOCK_TRIAGE_PLAN=<file>` answers with
+//             that file, so a test can replay a real model's clustering; without
+//             it, one draft per note id found in the brief.
+//
 // Anything else gets a short generic reply.  Every request is appended to
 // dev/mockllm.log as JSON lines, so a test can assert on what the model was
 // actually shown — the system prompt, the tool results, the whole transcript.
@@ -85,6 +117,7 @@
 // what a re-route looks like from outside.
 
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,6 +127,36 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // assertion that reads it see another agent's traffic.  See dev/world.sh.
 const LOG  = process.env.DAIMOND_MOCK_LOG || path.join(HERE, 'mockllm.log');
 const PORT = Number(process.argv[2] || process.env.DAIMOND_MOCK_PORT || 9099);
+
+// ── WHICH REVISION OF THIS FILE IS ANSWERING ────────────────────────────────
+//
+// A port is not evidence of anything, and neither is a log path. `world.sh --up`
+// deliberately ADOPTS a mock it finds already listening, and `requireOwnMock` in
+// dev/harness.mjs then asks it which file it writes -- which settles whether it is
+// this WORLD'S mock and says nothing about whether it is this TREE'S.
+//
+// Those two questions came apart on 2026-08-28. A world was brought up, the tree
+// under it was then merged forward, and the mock from before the merge kept
+// answering: same port, same log path, so every existing guard passed. It did not
+// know the directives the merge had added, so it fell through to `Mock reply to:
+// <the whole directive line>` -- and `dev/verify_thinking.mjs` went red on twelve
+// checks, one of which reported that the model's reasoning had been stored as its
+// answer. Nothing of the sort had happened. The mock had echoed the prompt, the
+// prompt contained the markers the check looks for, and the most alarming message
+// the suite can print was produced by a fixture rather than by the product.
+//
+// The exact-source question is the one that catches it, and it catches every other
+// version of it at the same time -- a directive whose meaning changed, a bug fixed
+// in the fixture, an argument parsed differently -- where a capability list would
+// only catch a name that was missing.
+//
+// `directives` rides along because a hash cannot say WHAT is different. It is read
+// out of this file's own `case` labels rather than written down beside them, so it
+// cannot drift from what the switch actually answers to.
+const SELF = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+const SHA  = crypto.createHash('sha256').update(SELF).digest('hex');
+const DIRECTIVES = [...new Set(
+	[...SELF.matchAll(/^\t\tcase '([a-z0-9]+)':/gm)].map(m => m[1]))].sort();
 
 const MODELS = [
 	'mock/fast',
@@ -197,6 +260,35 @@ const parseDirective = (text) => {
 	return { kind: verb, rest };
 };
 
+// A directive argument that cannot be read is REFUSED, never defaulted.
+//
+// This was `Number(d.rest)`, and `d.rest` is the whole of the line after the verb.
+// So `@slow 9000 A-ANSWER` was `Number('9000 A-ANSWER')` -- NaN -- and the `|| 2000`
+// beside it turned that into the two-second default. A check that asked for a nine
+// second delay got two, silently, and went green for a reason unconnected to what it
+// was testing. `dev/verify_daimonconc.mjs` lost an afternoon to it and left a comment
+// warning the next reader off the label rather than fixing the mock.
+//
+// A trailing label is legitimate and stays legal: it is how a caller makes one prompt
+// distinguishable from the next in the mock's log. So the FIRST token is the number,
+// and the rest is the caller's business.
+//
+// What is not legal is an argument that is not a number. That throws, becomes a 400,
+// and reddens the run. A harness that fails quietly is worse than one that fails
+// loudly, because it launders a broken check into a green result.
+class DirectiveError extends Error {}
+
+const numArg = (rest, dflt, verb) => {
+	const head = String(rest == null ? '' : rest).trim().split(/\s+/)[0];
+	if (head === '') return dflt;
+	const n = Number(head);
+	if (!Number.isFinite(n)) {
+		throw new DirectiveError(
+			`@${verb} wants a number as its first word, got ${JSON.stringify(head)}`);
+	}
+	return n;
+};
+
 // A fresh tool-call id, unique for the life of this mock.
 //
 // It used to mint `call_1` on every turn, which meant two separate turns of one
@@ -255,6 +347,42 @@ const crystalReply = (words) => JSON.stringify({
 	summary: String(words || '').slice(0, 400),
 }, null, 2);
 
+/// Whether this request is a triage of somebody's notes into proposals.
+///
+/// The Social panel's drafting (`www/js/triage.js`) has a fixed answer shape --
+/// one JSON object holding `drafts` and `left` -- which the panel then parses,
+/// so a mock answering it with prose could not drive the feature at all. Matched
+/// on the system prompt's own opening sentence, which is the role.
+const isTriage = (messages) => (messages || []).some((m) =>
+	m && m.role === 'system' && /triaging one person's notes/i.test(String(m.content || '')));
+
+/// A plan, as `www/js/triage.js` parses one.
+///
+/// `MOCK_TRIAGE_PLAN` names a file holding the plan to answer with, and a test
+/// that wants to assert on a REAL model's clustering points it at one that a
+/// real model produced. Without it, a draft per note id found in the brief --
+/// which asserts nothing about clustering and everything about the notes having
+/// reached the model at all, the way `crystalReply` echoes the delta's words
+/// rather than answering a fixed string.
+const triageReply = (brief) => {
+	const named = process.env.MOCK_TRIAGE_PLAN;
+	if (named) {
+		try { return fs.readFileSync(named, 'utf8'); }
+		catch { /* fall through to the derived plan, which says so in its titles */ }
+	}
+	const ids = [...String(brief || '').matchAll(/^id (\S+)$/gm)].map(m => m[1]);
+	return JSON.stringify({
+		drafts: ids.map((id) => ({
+			kind:  'new',
+			title: `Mock draft from ${id}`,
+			body:  'Derived by dev/mockllm.mjs from the brief it was given.',
+			from:  [id],
+			why:   'One draft per note, because no plan file was named.',
+		})),
+		left: [],
+	}, null, 2);
+};
+
 const plan = (messages) => {
 	const d      = parseDirective(lastUser(messages));
 	const rounds = toolRounds(messages);
@@ -294,12 +422,21 @@ const plan = (messages) => {
 		return { text: crystalReply(d.text || d.rest || '') };
 	}
 
+	// And a triage answered with prose is a plan the Social panel cannot read.
+	// Recognised by ROLE, exactly as the reducer above is and for the same
+	// reason: a real triage is recognisable the same way, and every test that
+	// drafts from a list of notes needs the same answer. `@text` still wins, so
+	// a test that wants an unreadable plan -- and one does -- can ask for one.
+	if (isTriage(messages) && d.kind === 'plain') {
+		return { text: triageReply(lastUser(messages)) };
+	}
+
 	switch (d.kind) {
 		case 'text':
 			return { text: d.rest || 'Right.' };
 
 		case 'long': {
-			const n = Math.max(1, Number(d.rest) || 40);
+			const n = Math.max(1, numArg(d.rest, 40, 'long'));
 			return { text: Array.from({ length: n }, (_, i) => `chunk-${i + 1}`).join(' ') , slowChunks: true };
 		}
 
@@ -316,19 +453,19 @@ const plan = (messages) => {
 		}
 
 		case 'err':
-			return { httpError: Number(d.rest) || 500 };
+			return { httpError: numArg(d.rest, 500, 'err') };
 
 		// A connection that dies mid-answer. `n` words arrive first so the partial
 		// reply is a real one -- a drop before the first token is a different and
 		// much easier case, and the app retries THAT one on its own.
 		case 'drop': {
-			const n = Math.max(1, Number(d.rest) || 3);
+			const n = Math.max(1, numArg(d.rest, 3, 'drop'));
 			return { text: Array.from({ length: n }, (_, i) => `word-${i + 1}`).join(' '),
 				dropAfter: n };
 		}
 
 		case 'slow':
-			return { text: 'Eventually.', delayMs: Number(d.rest) || 2000 };
+			return { text: 'Eventually.', delayMs: numArg(d.rest, 2000, 'slow') };
 
 		case 'tool': {
 			if (rounds > 0) return { text: 'Tool done.' };
@@ -343,6 +480,38 @@ const plan = (messages) => {
 				return toolCall(nextCallId(), name, args);
 			});
 			return { calls };
+		}
+
+		// ── The model's own working ──────────────────────────────────────
+		//
+		// `reasoning` is streamed BEFORE any content, which is the order every
+		// reasoning provider sends it in and the order that makes a round look like
+		// a hang: the wire is busy for the whole of it and the page has nothing.
+		case 'reason':
+		case 'reasonc':
+		case 'reasonslow': {
+			const [think, said] = d.rest.split(';;');
+			return {
+				think:      (think || 'Let me work this out.').trim(),
+				thinkKey:   d.kind === 'reasonc' ? 'reasoning_content' : 'reasoning',
+				text:       (said || 'Done thinking.').trim(),
+				// A REAL ROUND SPENDS MINUTES HERE. A check that wants to look at the
+				// page WHILE the model is thinking cannot do it at five milliseconds a
+				// word, so the slow form exists to be looked at.
+				slowChunks: d.kind === 'reasonslow',
+			};
+		}
+
+		case 'reasontool': {
+			if (rounds > 0) return { text: 'Reasoned and done.' };
+			const [think, call] = d.rest.split(';;');
+			const { name, args } = splitCall((call || 'file_list {"path":"."}').trim());
+			return {
+				think:    (think || 'I should look first.').trim(),
+				thinkKey: 'reasoning',
+				text:     '',
+				calls:    [toolCall(nextCallId(), name, args)],
+			};
 		}
 
 		// Prose, then a call, in ONE message. See the directive list.
@@ -426,6 +595,30 @@ const stream = async (res, model, p) => {
 
 	send(frame({ role: 'assistant', content: '' }));
 
+	// The working first, word by word, with `content` empty throughout -- which is
+	// exactly what a real provider sends and exactly what used to reach the page as
+	// nothing at all. `reasoning_details` carries the same words a second time, as
+	// OpenRouter's does, so a client reading both is caught here rather than in front
+	// of a user.
+	if (p.think) {
+		const key = p.thinkKey || 'reasoning';
+		let at = 0;
+		for (const w of p.think.split(' ').filter(Boolean)) {
+			if (res.writableEnded || res.destroyed) return;
+			const piece = w + ' ';
+			const delta = { content: '', role: 'assistant' };
+			delta[key] = piece;
+			if (key === 'reasoning') {
+				delta.reasoning_details = [
+					{ type: 'reasoning.text', text: piece, format: 'unknown', index: at++ }];
+			}
+			send(frame(delta));
+			await sleep(p.slowChunks ? 120 : 5);
+		}
+		// And the null the providers send once the working is over.
+		send(frame({ content: '', role: 'assistant', [key]: null }));
+	}
+
 	if (p.calls) {
 		// The preamble, word by word, BEFORE the call frames -- which is the order a
 		// provider sends it in and the order the app has to cope with.
@@ -490,7 +683,11 @@ const server = http.createServer((req, res) => {
 	// "nothing in the mock log", about turns that had in fact been answered
 	// perfectly well by a mock writing to a path nobody was reading.
 	if (req.method === 'GET' && req.url.startsWith('/__world')) {
-		return sendJson(res, { log: LOG, port: PORT, pid: process.pid });
+		// `sha` and `directives` say which REVISION is answering; see the note beside
+		// them. `log` says which world. A caller needs both and they are different
+		// questions.
+		return sendJson(res, { log: LOG, port: PORT, pid: process.pid,
+			sha: SHA, directives: DIRECTIVES });
 	}
 
 	if (req.method === 'GET' && req.url.startsWith('/v1/models')) {
@@ -547,7 +744,24 @@ const server = http.createServer((req, res) => {
 			} }, 400);
 		}
 
-		const p = plan(messages);
+		// A directive the mock cannot read is a fault in the CHECK, not in the app,
+		// and it is reported where a lane will actually see it: on stderr, which
+		// world.sh keeps in the world's `mock.out`, and as a 400 that fails the turn.
+		// The old behaviour -- substitute the default and carry on -- is what made
+		// `@slow 9000 A-ANSWER` a two-second delay for weeks.
+		let p;
+		try {
+			p = plan(messages);
+		} catch (e) {
+			if (e instanceof DirectiveError) {
+				console.error(`mockllm: REFUSED a directive it could not read -- ${e.message}`);
+				return sendJson(res, { error: {
+					message: `mockllm: ${e.message}`,
+					type:    'invalid_request_error',
+				} }, 400);
+			}
+			throw e;
+		}
 
 		if (p.httpError) {
 			return sendJson(res, { error: { message: 'mock: as requested' } }, p.httpError);

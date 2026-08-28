@@ -338,7 +338,8 @@
 		                railhead and chead
 		    closer      common.close_named. js/closer.js is the whole control
 		    cog         tile.settings, on the button that opens it
-		    light       pause.state_play, pause.state_pause, pause.state_mixed
+		    light       pause.state_play, pause.state_pause, pause.state_mixed,
+		                pause.state_idle
 		    divider     layout.handle
 		    row         astat.tools_of and the rest of astat
 		    spend row   spend.period_day, spend.period_week, spend.period_month
@@ -405,7 +406,7 @@
 			<div class="term" id="term-light">
 				<h3 id="s12">light</h3>
 				<img src="shots/vocab-everything.png" alt="A row reading Everything, with a play arrow, a pause symbol and a round amber light before it, and a closer at the far right." loading="lazy">
-				<p>The round light beside a play and a pause, saying whether that part of Daimond is running. Green for running, red for paused, amber for partly paused, in that order, like a traffic light.</p>
+				<p>The round light beside a play and a pause, saying whether that part of Daimond is going to act on its own. Green for everything set up and running, amber for some of it held, red for none of it running — either held, or nothing set up in the first place. Hover it and it says which.</p>
 				<p>Every light in the app hangs off the one on the <span class="ui">Everything</span> row, which speaks for the lot.</p>
 				<p class="say">Say: the light on the <span class="ui">Everything</span> row is amber.</p>
 			</div>
@@ -530,9 +531,11 @@
 
 		<h3 id="s27">Your voice</h3>
 
-		<p>Anything that leaves this device goes under a <strong>voice</strong>. A voice is a line of text the forge prints for you once: a secret belonging to one person, which the forge looks you up by. It is the whole of your identity there. No name, no handle and no address travels with what you write, and this browser is never told what your voice is called.</p>
+		<p>Anything that leaves this device goes under a <strong>voice</strong>. A voice is a run of 43 characters the forge makes for you once: a secret belonging to one person, which the forge looks you up by. It is the whole of your identity there. No name, no handle and no address travels with what you write, and this browser is never told what your voice is called.</p>
 
-		<p>You set it in the panel. Press <span class="ui">Set a voice</span>, paste the line in, and press <span class="ui">Save the voice</span>. Daimond holds it on this device, encrypted under your passphrase, and the gateway it passes through on its way out stores nothing. <span class="ui">Forget it</span> removes the copy on this device; the forge showed that line once and cannot show it again, so keep it where you can find it.</p>
+		<p>You cannot make one and neither can Daimond. Voices are given out by invitation, one person at a time, by whoever runs the repository — so if you have not got one, ask Oxedyne for an invitation link. Following that link shows you who invited you and what you would be allowed to do; you accept, and the forge makes your voice in front of you and shows it once. Copy it then. It is never shown again, and losing it means asking for another invitation.</p>
+
+		<p>Then you put it in the panel. Press <span class="ui">Paste your voice</span>, paste those 43 characters in, and press <span class="ui">Save the voice</span>. If what you copied brought the word <strong translate="no">secret</strong> along in front of it, Daimond takes that off and keeps the 43 characters. If it will not take what you pasted, the secret has been broken somewhere in the middle: copy it again in one piece. Daimond holds it on this device, encrypted under your passphrase, and the gateway it passes through on its way out stores nothing. <span class="ui">Forget it</span> removes the copy on this device.</p>
 
 		<p>Without a voice, <span class="ui">Keep</span> is all there is: the panel does not offer <span class="ui">Send</span>, and it does not offer voting or a reply either.</p>
 
@@ -682,7 +685,7 @@
 
 		<p>The relay carries a sealed envelope of at most 64 KB, so the carrier is decided by size rather than asked of you, and the panel says which happened and how big the share was.</p>
 
-		<p>Over that size Daimond writes the share out as a file with the extension <code translate="no">.dshare</code> &mdash; always that extension &mdash; names it after the share and its address, and tells you what it was called. Give them that file. A capp page is around 64 KB on its own, so a share carrying a capp always travels this way; so does one going onto a memory stick, or to somebody who has no account here. A <code translate="no">.dshare</code> is not more trusted than a message for having been a file: the bytes are the same sealed envelope, sealed to that one person, and opening it asks the same question.</p>
+		<p>Over that size Daimond writes the share out as a file with the extension <code translate="no">.dshare</code> &mdash; always that extension &mdash; names it after the share and its address, and tells you what it was called. Give them that file. A capp page is around 100 KB on its own, so a share carrying a capp always travels this way; so does one going onto a memory stick, or to somebody who has no account here. A <code translate="no">.dshare</code> is not more trusted than a message for having been a file: the bytes are the same sealed envelope, sealed to that one person, and opening it asks the same question.</p>
 
 		<div class="note"><strong>The file is the route that lands.</strong> A share small enough for the relay is sent through it, and the sender is told it went. The receiving side of that route is not finished: there is no control that opens it, and it turns up under their <span class="ui">Messages</span> as a message their device could not read. Until that is done, save the file and hand it over &mdash; which is what a share of any size can do.</div>
 

@@ -397,6 +397,57 @@
 		});
 	}
 
+	// ── A LOCAL FAILURE IS NOT INFORMATION ABOUT THE WORLD ─────
+	//
+	// A tool's network call can fail two ways and they are opposite things. "The remote host
+	// refused you", "that page is 404", "the API returned an error" are RESULTS: facts about the
+	// world, and a model should read them and adapt. "Your user's phone went to sleep and the
+	// request never left the device" is not a result at all — it is an infrastructure event, and
+	// handing it to a model as though it were a fact is what makes the model apologise for the
+	// platform. On iOS a home-screen PWA is put in the back/forward cache on every app switch, so
+	// every in-flight request dies; the owner watched a turn come back "I can't get through to the
+	// web right now to look this up", and that sentence is now a permanent assistant turn in his
+	// transcript, re-sent to the model on every turn after it.
+	//
+	// THE DISTINCTION IS MADE HERE BECAUSE THIS IS WHERE IT IS KNOWN. A rejected `fetch` is the
+	// road; a reply that arrived and said no is the remote. One line further out the two are
+	// indistinguishable, and a page away they are two sentences that have to be told apart by
+	// their prose — which cannot be done safely. `BROWSER_ROAD` in js/daimond.js holds `refused`,
+	// for "connection refused", and the tool layer is full of sentences containing that word for
+	// an entirely different reason (`refusal_line` in src/tools.rs prefixes some twenty of them).
+	// A prose classifier over tool results would read a permission refusal as a dead road, retry
+	// it eight times and then kill the turn. So the mark is POSITIVE and is set at the only point
+	// that cannot be wrong about it.
+	//
+	// It rides on the error as a property AND as a sentence in front of the message. The property
+	// is for JavaScript; the sentence is for the engine, because a JS `Error` crosses the wasm
+	// boundary as its `message` and nothing else — the same reason `TransportErr::crossed`
+	// (src/llm.rs) puts its reason in front of the error rather than beside it.
+
+	/// The sentence that marks a request which never got an answer.
+	///
+	/// QUOTED VERBATIM in `src/tools.rs` as `ROAD_MARK`, and `dev/verify_toolroad.mjs` asserts the
+	/// two are the same string. It is deliberately a sentence nothing else in this application
+	/// says: the engine tests for it EXACTLY, not by pattern, so a phrase that happened to appear
+	/// in a page's error body cannot be mistaken for one of these.
+	var ROAD_MARK = 'daimond-road: the request never left this device';
+
+	/// Mark a rejected `fetch` as a road failure, and hand back the same rejection.
+	///
+	/// A `TypeError` is the whole of what a page gets when a request dies before its headers —
+	/// no status, no response, and a message that is the vendor's own (`Failed to fetch` in
+	/// Chromium, `Load failed` in WebKit). What it is NOT is an answer, and this says so.
+	function roadMark(e) {
+		try {
+			if (e && e.daimondRoad) return e;			// already marked; do not say it twice.
+			var was = (e && e.message) ? String(e.message) : String(e);
+			var out = (e instanceof Error) ? e : new Error(was);
+			out.daimondRoad = true;
+			out.message = ROAD_MARK + ': ' + was;
+			return out;
+		} catch (e2) { return e; }			// a frozen or exotic rejection: unchanged, so unmarked.
+	}
+
 	/// The last point before a request leaves the page, for the two callers that
 	/// hold their own `fetch` rather than coming through `gwFetch`: the Web
 	/// panel's `gw()` (web.js) and anything added beside it. Narrow on purpose —
@@ -425,7 +476,7 @@
 				var r = spendRefusal(p, init || (typeof input === 'object' ? input : null));
 				if (r) return Promise.resolve(refusedReply(r));
 			}
-			return real.apply(window, arguments);
+			return real.apply(window, arguments).catch(function (e) { throw roadMark(e); });
 		};
 		wrapped.__daimondPause = true;
 		window.fetch = wrapped;
@@ -1352,6 +1403,17 @@
 		/// caller that holds its own `fetch` and would rather show the sentence
 		/// in its own panel than read it off a 423.
 		spendRefusal:   spendRefusal,
+		/// The sentence a request that never left the device is marked with, so a
+		/// reader can test for it rather than quoting it a second time.
+		ROAD_MARK:      ROAD_MARK,
+		/// Is this rejection the road rather than an answer? Reads the mark
+		/// `guardFetch` set, and never the prose.
+		isRoad:         function (e) {
+			if (!e) return false;
+			if (e.daimondRoad) return true;
+			var s = (e && e.message) ? String(e.message) : String(e);
+			return s.indexOf(ROAD_MARK) === 0;
+		},
 	};
 
 	guardFetch();

@@ -6,8 +6,9 @@
 // The divider: Diamonds accumulate, and the list grew with them until the chat
 // tiles were off the bottom of the rail — with the only handle in the rail
 // belonging to the Admin pane, which no longer splits anything. So the boundary
-// between the two lists moves now, and the proportion is saved with the rest of
-// the layout.
+// between the two lists moves now, and A HEIGHT IN PIXELS is saved with the rest
+// of the layout. It was a share until 2026-08-28, and a share is spent against a
+// room that the Status strip below changes on its own: see section 4.
 //
 // The face: the AI panel shows either a conversation or a Diamond's crystal, and
 // nothing said which. The crystal takes the mark beside its name and squares its
@@ -44,7 +45,10 @@ const rail = () => p.evaluate(() => {
 			&& (kids[kids.indexOf(h) + 1] || {}).className === 'railhead',
 		list:     list ? Math.round(list.getBoundingClientRect().height) : 0,
 		sess:     sess ? Math.round(sess.getBoundingClientRect().height) : 0,
-		saved:    (() => { try { return JSON.parse(localStorage.getItem('daimond-layout') || '{}').railSplit; } catch (e) { return null; } })(),
+		// What is on disk, both formats, so the check can say the old one has gone
+		// rather than only that the new one is there.
+		saved:    (() => { try { return JSON.parse(localStorage.getItem('daimond-layout') || '{}').railH; } catch (e) { return null; } })(),
+		share:    (() => { try { return JSON.parse(localStorage.getItem('daimond-layout') || '{}').railSplit; } catch (e) { return null; } })(),
 	};
 });
 /// The Admin drawer is an overlay that rises over the rail, and unlocking opens
@@ -104,25 +108,89 @@ const r3 = await rail();
 check('dragged hard down, the Chats list keeps one too',
 	r3.sess >= 60, `${r3.sess}px`);
 
-// ── 4. The proportion is remembered ──────────────────────────────────
-await drag(-260);
+// ── 4. The height is remembered, in pixels ───────────────────────────
+// A HEIGHT, not a share, since 2026-08-28. A share is spent against the room the
+// two lists have, and that room changes for reasons that have nothing to do with
+// the divider: the Status strip below them is a stack of rows that come and go,
+// and one row appearing took 28px out of the pane and carried the Chats head 14
+// further. `applyRailSplit` in js/daimond.js holds the reasoning, and
+// dev/verify_frame.mjs holds the check that the class is fixed rather than the
+// instance.
+// Back up the pane rather than hard against its floor: a divider at 72px comes
+// back at 72px however it is stored, so the reload below would prove nothing.
+await drag(-150);
 const r4 = await rail();
-check('the drag is saved with the rest of the layout',
-	typeof r4.saved === 'number' && r4.saved >= 0 && r4.saved <= 1, String(r4.saved));
+check('the drag is saved with the rest of the layout, as a height in pixels',
+	typeof r4.saved === 'number' && r4.saved > 60 && Math.abs(r4.saved - r4.list) <= 2,
+	`stored ${r4.saved}, drawn ${r4.list}px`);
+check('and no share is written any more, so there is one format on disk',
+	r4.share === undefined, JSON.stringify(r4.share));
 await p.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'railface');
 await sleep(1800);
 await closeAdmin();
 const r5 = await rail();
-// The PROPORTION is what is saved, not the pixels: the furniture below the two
-// lists (the status strip) is a different height on an unlocked session than on
-// a freshly created one, so the same share is a different number of pixels.
-const share = x => x.list / (x.list + x.sess);
-check('and the divider comes back at the share it was left at',
-	Math.abs(share(r5) - share(r4)) <= 0.03,
-	`${share(r4).toFixed(3)} → ${share(r5).toFixed(3)} (${r4.list}px → ${r5.list}px)`);
+// THE PIXELS, and this check used to compare shares. The furniture below the two
+// lists is a different height on an unlocked session than on a freshly created
+// one, so the same share came back as a different number of pixels -- which is
+// exactly the movement the height was introduced to stop.
+check('and the divider comes back at the height it was left at',
+	Math.abs(r5.list - r4.list) <= 2, `${r4.list}px → ${r5.list}px`);
 
-// ── 5. Double-click puts it back to even ─────────────────────────────
+// ── 5. A height made on a tall window survives a short one ───────────
+// He drags the divider low on a large screen and then opens Daimond on a laptop.
+// A raw pixel figure could push the Chats list off the bottom of the rail, so
+// what is APPLIED is held inside the room in force -- and what is STORED is his
+// gesture, left alone, so the large screen gives it back exactly. The clamp is on
+// read; nothing rewrites the figure to fit a window he is only passing through.
+await p.setViewportSize({ width: 1440, height: 1100 });
+await sleep(700);
+await drag(220);
+const tall = await rail();
+await p.setViewportSize({ width: 1440, height: 820 });
+await sleep(700);
+const short = await rail();
+check('a divider dragged low on a tall window leaves the Chats list usable on a short one',
+	short.sess >= 60 && short.list >= 60, `diamonds ${short.list}px, chats ${short.sess}px`);
+check('and the short window does not rewrite what he chose',
+	typeof tall.saved === 'number' && short.saved === tall.saved,
+	`${tall.saved} → ${short.saved}`);
+await p.setViewportSize({ width: 1440, height: 1100 });
+await sleep(700);
+const again = await rail();
+check('so the tall window gives the divider back where he put it',
+	Math.abs(again.list - tall.list) <= 1, `${tall.list}px → ${short.list}px → ${again.list}px`);
+
+// ── 6. A layout saved before the divider was a height ────────────────
+// Every layout ever saved holds a `railSplit`, because it was written whether or
+// not anybody had touched the handle. One holding a share somebody chose is spent
+// once, at the size in force, and written back as a height. Not left readable for
+// ever, and not silently discarded either.
+await p.evaluate(() => {
+	const j = JSON.parse(localStorage.getItem('daimond-layout') || '{}');
+	delete j.railH;
+	j.railSplit = 0.78;
+	localStorage.setItem('daimond-layout', JSON.stringify(j));
+});
+await p.reload({ waitUntil: 'domcontentloaded' });
+await signInAs(s, 'railface');
+await sleep(1800);
+await closeAdmin();
+const mig = await rail();
+const share = x => x.list / (x.list + x.sess);
+// TO THE PIXEL, and it took `railPin` to get there. The first layout runs before
+// the Status strip's rows exist, in a pane some 130px taller than the one that
+// settles, so converting the share THERE pinned the divider well below where it
+// was left -- measured at 0.869 for a stored 0.78, and the clamp then made that
+// permanent. The share goes on cutting instead, and what is written down is the
+// cut, taken from a room that had settled.
+check('a share saved by an older build is honoured, at the size in force',
+	Math.abs(share(mig) - 0.78) <= 0.02, share(mig).toFixed(3));
+check('and is written back as a height, the share gone from the layout',
+	typeof mig.saved === 'number' && mig.saved >= mig.list && mig.share === undefined,
+	`railH ${mig.saved}, drawn ${mig.list}px, railSplit ${JSON.stringify(mig.share)}`);
+
+// ── 7. Double-click puts it back to even, and unpins it ──────────────
 // Guarded, so this file can be RUN against the code before the divider existed:
 // a hard dblclick on a missing element aborts the pass instead of failing the
 // check that is meant to catch its absence.
@@ -131,8 +199,19 @@ await sleep(500);
 const r6 = await rail();
 check('a double-click resets the divider to an even split',
 	Math.abs(r6.list - r6.sess) <= 24, `${r6.list}px vs ${r6.sess}px`);
+// An even split is not a choice, so it goes on following the window -- which is
+// what keeps every user who has never touched the handle on the behaviour they
+// have always had. The reset undoes the pinning as well as the position.
+await p.setViewportSize({ width: 1440, height: 820 });
+await sleep(700);
+const r7 = await rail();
+check('and a reset divider follows the window again, rather than staying pinned',
+	Math.abs(r7.list - r7.sess) <= 24 && r7.list < r6.list - 40,
+	`${r6.list}px at 1100 → ${r7.list}px vs ${r7.sess}px at 820`);
+await p.setViewportSize({ width: 1440, height: 900 });
+await sleep(600);
 
-// ── 6. The crystal face, in every theme and both skins ───────────────
+// ── 8. The crystal face, in every theme and both skins ───────────────
 const face = () => p.evaluate(() => {
 	const ai = document.getElementById('panel-ai');
 	const m  = document.getElementById('chead-mark');
@@ -202,7 +281,7 @@ await selectDiamond('Two');
 const acc = await face();
 check('the mark is decoration, not a second heading, to a screen reader', acc.hidden === true);
 
-// ── 7. The phone drawer is not divided ───────────────────────────────
+// ── 9. The phone drawer is not divided ───────────────────────────────
 await p.setViewportSize({ width: 390, height: 844 });
 await sleep(700);
 const phone = await rail();
@@ -211,6 +290,40 @@ check('on a phone the drawer scrolls as one column, with no divider in it',
 const inline = await p.$eval('#diamond-list', e => e.style.height);
 check('and no height is imposed on either list there', inline === '', JSON.stringify(inline));
 await shot(s, 'railface-phone');
+
+// ── 10. A phone must not eat an old share on its way past ────────────
+// The layout is one of the keys pairing copies between devices, and the phone
+// draws no divider -- so there is no room to convert a share against and nothing
+// to write down. It is carried instead of dropped, and the desktop spends it.
+await p.evaluate(() => {
+	const j = JSON.parse(localStorage.getItem('daimond-layout') || '{}');
+	delete j.railH;
+	j.railSplit = 0.34;
+	localStorage.setItem('daimond-layout', JSON.stringify(j));
+});
+await p.reload({ waitUntil: 'domcontentloaded' });
+await signInAs(s, 'railface');
+await sleep(1800);
+const onPhone = await rail();
+check('a phone-only session leaves an old share where it found it',
+	onPhone.share === 0.34 && (onPhone.saved === null || onPhone.saved === undefined),
+	`railSplit ${onPhone.share}, railH ${JSON.stringify(onPhone.saved)}`);
+// RELOADED ON THE PHONE, and the order matters. The share is still in memory
+// after the step above, so a desktop viewport set first would cut a divider from
+// there whether or not anything survived the write -- and the check would pass on
+// code that had just eaten it. Reloading before the window widens makes the disk
+// the only source there is.
+await p.reload({ waitUntil: 'domcontentloaded' });
+await signInAs(s, 'railface');
+await sleep(1800);
+await p.setViewportSize({ width: 1440, height: 1000 });
+await sleep(1400);
+await closeAdmin();
+const offPhone = await rail();
+check('and the next desktop spends it, as a height, the share gone',
+	typeof offPhone.saved === 'number' && offPhone.share === undefined
+		&& Math.abs(share(offPhone) - 0.34) <= 0.03,
+	`railH ${offPhone.saved}, share ${share(offPhone).toFixed(3)}`);
 
 // 402 as well as 502: the unlock path asks the account service what this account
 // is entitled to, and with no gateway running that question is answered by

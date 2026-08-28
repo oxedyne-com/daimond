@@ -338,7 +338,8 @@
 		                railhead and chead
 		    closer      common.close_named. js/closer.js is the whole control
 		    cog         tile.settings, on the button that opens it
-		    light       pause.state_play, pause.state_pause, pause.state_mixed
+		    light       pause.state_play, pause.state_pause, pause.state_mixed,
+		                pause.state_idle
 		    divider     layout.handle
 		    row         astat.tools_of and the rest of astat
 		    spend row   spend.period_day, spend.period_week, spend.period_month
@@ -405,7 +406,7 @@
 			<div class="term" id="term-light">
 				<h3 id="s12">Licht</h3>
 				<img src="../shots/vocab-everything.png" alt="Eine Zeile mit Alles, davor ein Abspielpfeil, ein Pausenzeichen und ein rundes bernsteinfarbenes Licht, und ganz rechts ein Schließer." loading="lazy">
-				<p>Das runde Licht neben einem Abspielen und einer Pause, das sagt, ob dieser Teil von Daimond läuft. Grün für läuft, rot für angehalten, bernstein für teilweise angehalten, in dieser Reihenfolge, wie eine Verkehrsampel.</p>
+				<p>Das runde Licht neben einem Play und einer Pause, das sagt, ob dieser Teil von Daimond von selbst tätig wird. Grün, wenn alles Eingerichtete läuft; bernstein, wenn ein Teil davon angehalten ist; rot, wenn nichts läuft — entweder angehalten oder gar nicht erst eingerichtet. Fahre darüber, und es sagt, was von beidem.</p>
 				<p>Jedes Licht in der App hängt an dem in der Zeile <span class="ui">Alles</span> , das für alle spricht.</p>
 				<p class="say">Sagen Sie: das Licht in der Zeile <span class="ui">Alles</span> ist bernsteinfarben.</p>
 			</div>
@@ -530,9 +531,11 @@
 
 		<h3 id="s27">Ihre Stimme</h3>
 
-		<p>Alles, was dieses Gerät verlässt, geht unter einer <strong>Stimme</strong>. Eine Stimme ist eine Textzeile, die die Schmiede einmal für Sie ausgibt: ein Geheimnis, das einer Person gehört und unter dem die Schmiede Sie nachschlägt. Sie ist Ihre ganze Identität dort. Kein Name, kein Handle und keine Adresse reist mit dem, was Sie schreiben, und diesem Browser wird nie gesagt, wie Ihre Stimme heißt.</p>
+		<p>Alles, was dieses Gerät verlässt, geht unter einer <strong>Stimme</strong>. A voice is a run of 43 characters the forge makes for you once: a secret belonging to one person, which the forge looks you up by. It is the whole of your identity there. No name, no handle and no address travels with what you write, and this browser is never told what your voice is called.</p>
 
-		<p>Sie setzen sie im Feld. Drücken Sie <span class="ui">Eine Stimme setzen</span>, fügen Sie die Zeile ein und drücken Sie <span class="ui">Stimme speichern</span>. Daimond hält sie auf diesem Gerät, verschlüsselt unter Ihrer Passphrase, und das Gateway, durch das sie hinausgeht, speichert nichts. <span class="ui">Vergessen</span> entfernt die Kopie auf diesem Gerät; die Schmiede hat diese Zeile einmal gezeigt und kann sie nicht wieder zeigen — bewahren Sie sie also dort, wo Sie sie finden.</p>
+		<p>You cannot make one and neither can Daimond. Voices are given out by invitation, one person at a time, by whoever runs the repository — so if you have not got one, ask Oxedyne for an invitation link. Following that link shows you who invited you and what you would be allowed to do; you accept, and the forge makes your voice in front of you and shows it once. Copy it then. It is never shown again, and losing it means asking for another invitation.</p>
+
+		<p>Then you put it in the panel. Press <span class="ui">Paste your voice</span>, paste those 43 characters in, and press <span class="ui">Stimme speichern</span>. If what you copied brought the word <strong translate="no">secret</strong> along in front of it, Daimond takes that off and keeps the 43 characters. If it will not take what you pasted, the secret has been broken somewhere in the middle: copy it again in one piece. Daimond holds it on this device, encrypted under your passphrase, and the gateway it passes through on its way out stores nothing. <span class="ui">Vergessen</span> removes the copy on this device.</p>
 
 		<p>Ohne Stimme gibt es nur <span class="ui">Behalten</span> : das Feld bietet kein <span class="ui">Senden</span>— und es bietet auch kein Abstimmen und keine Antwort an.</p>
 
@@ -682,7 +685,7 @@
 
 		<p>Das Relais trägt einen versiegelten Umschlag von höchstens 64 KB, der Träger wird also nach der Größe entschieden und nicht von Ihnen erfragt, und das Feld sagt, was passiert ist und wie groß die Freigabe war.</p>
 
-		<p>Über dieser Größe schreibt Daimond die Freigabe als Datei mit der Endung <code translate="no">.dshare</code> hinaus — immer diese Endung —, benennt sie nach der Freigabe und ihrer Adresse und sagt Ihnen, wie sie heißt. Geben Sie ihr diese Datei. Eine Capp-Seite ist allein schon etwa 64 KB groß, eine Freigabe, die eine Capp trägt, reist also immer so; ebenso eine, die auf einen Stick geht, oder eine an jemanden, der hier kein Konto hat. Eine <code translate="no">.dshare</code> ist nicht vertrauenswürdiger als eine Nachricht, weil sie eine Datei war: die Bytes sind derselbe versiegelte Umschlag, auf diese eine Person versiegelt, und das Öffnen stellt dieselbe Frage.</p>
+		<p>Über dieser Größe schreibt Daimond die Freigabe als Datei mit der Endung <code translate="no">.dshare</code> hinaus — immer diese Endung —, benennt sie nach der Freigabe und ihrer Adresse und sagt Ihnen, wie sie heißt. Geben Sie ihr diese Datei. Eine Capp-Seite ist allein schon etwa 100 KB groß, eine Freigabe, die eine Capp trägt, reist also immer so; ebenso eine, die auf einen Stick geht, oder eine an jemanden, der hier kein Konto hat. Eine <code translate="no">.dshare</code> ist nicht vertrauenswürdiger als eine Nachricht, weil sie eine Datei war: die Bytes sind derselbe versiegelte Umschlag, auf diese eine Person versiegelt, und das Öffnen stellt dieselbe Frage.</p>
 
 		<div class="note"><strong>Die Datei ist der Weg, der ankommt.</strong> Eine Freigabe, die klein genug für das Relais ist, wird durch es gesendet, und dem Absender wird gesagt, dass sie gegangen ist. Die Empfangsseite dieses Weges ist nicht fertig: es gibt kein Bedienelement, das sie öffnet, und sie taucht unter <span class="ui">Nachrichten</span> der Empfängerin auf, als Nachricht, die ihr Gerät nicht lesen konnte. Bis das erledigt ist, speichern Sie die Datei und geben Sie sie weiter — und das kann eine Freigabe jeder Größe.</div>
 

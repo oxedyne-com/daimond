@@ -1069,6 +1069,18 @@ does not. The same flag also arms `egress_check`, so `web_fetch` and `web_open`
 start asking for consent from that point on -- which is untouched by any of this
 and is still true.
 
+*What did change there, on 2026-08-27, and what did not.* Those two now ask ONCE
+per conversation and the answer covers every site, rather than asking about each
+host and remembering the host for as long as the page lives (`web_step` and
+`TurnState::web_consent` in `src/tools.rs`). The owner ruled the old scope a
+defect after a tester reported being asked about every new address. It does not
+touch this section: the question here is whether a COMMAND keeps its network
+after the turn is tainted, it is answered by `net_step` from `net_consent`, and
+neither function reads the other's field. An address carrying more than an
+address needs is still put to the user on its own terms, whatever the
+conversation has granted, which is what keeps the widening from reopening the
+channel §7 closes.
+
 *What it costs.* `cargo fetch` then `cargo build`; `npm install` then `npm test`;
 `git fetch` then `git pull` — in each pair the second command runs with no
 network and fails with the toolchain's own offline error. The model reads a

@@ -456,9 +456,13 @@
 	//
 	// That matters more here than anywhere else in the app, because of who wrote
 	// the page: a model that may itself have been steered by a web page it read a
-	// moment ago. A line it was talked into leaving behind is exempt from the cap,
-	// absent from the standing context, unseen by the reducer and unseen by the
-	// fold diff — and it syncs to every device. `ask()` was dropped from the verb
+	// moment ago. A line it was talked into leaving behind is absent from the
+	// standing context, unseen by the reducer and unseen by the fold diff — and it
+	// syncs to every device. (This list used to open with "exempt from the cap",
+	// which stopped being true on 2026-08-09 when the page got a ceiling of its
+	// own. Dropping it costs the argument nothing: what makes a line durable is
+	// that nothing READS the page, not that nothing weighs it.) `ask()` was
+	// dropped from the verb
 	// list over exactly that shape, so leaving the same hole open in the transport
 	// would be inconsistent. The daimon can exfiltrate too, but only through the
 	// egress gate, where a person sees it and says yes once; a page would do it

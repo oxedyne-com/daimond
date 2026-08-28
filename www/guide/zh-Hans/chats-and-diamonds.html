@@ -105,11 +105,51 @@
 	<p>一个 Diamond 有 <strong>两副面孔</strong>，头部的一个开关在它们之间切换。 <span class="ui">晶体</span> 是这个 Diamond 所知道的。 <span class="ui">聊天</span> 是它自己的对话，和别的对话一样会留存下来，并带着一个 <span class="ui">折叠</span> 按钮，因为折叠是在做事的过程中完成的，不是在配置什么的时候。在侧栏里点一个聊天，普通的对话就回来了 —— 只要舞台本来会空着，它都会回来。</p>
 
 	<h3 id="s12">Diamond 做什么，不做什么</h3>
-	<p>Diamond 只保留，不运行。没有任何东西会执行一块晶体：没有工作流引擎，没有排期，没有把一个 Diamond 串到另一个上的链条，也没有存着等着触发的任务。回到一个 Diamond 不会让它跑起来，放着不管也一样。</p>
+	<p>A Diamond retains; on its own it does not run. Nothing executes a crystal: there is no workflow engine and no chain from one Diamond to another. Returning to a Diamond does not set it going, and neither does leaving it alone. A Diamond you have not automated answers when you prompt it and at no other time — which is what its panel says when you look: <em>Nothing set. This Diamond answers when you prompt it and at no other time.</em></p>
 
 	<p>所以 <em>重新拿起它</em> 就是重新引导它，而它已经学到的一切都还在手边。晶体是散文，散文正是模型最会读的东西；你经营这个 Diamond 时，它交给 daimon，也交给从它派出的每一个工人。你想明白过一次的东西，不用重新打一遍就再次抵达工作，也不用你记得应该这么做。</p>
 
-	<h2 id="s13">晶体和它的历史</h2>
+	<p>The one way a Diamond acts without you is the one you set up yourself, described next.</p>
+
+	<h2 id="s13">Triggered actions</h2>
+	<p>A <strong>triggered action</strong> is a standing arrangement for a Diamond to do something <em>without being asked</em>. You write it, you switch it on, and from then on the Diamond acts when the thing you named happens. It is the only part of Daimond that spends money with nobody at the keyboard, so it is worth reading this section before you set one.</p>
+
+	<p>They live under <span class="ui">When this Diamond acts</span> on a Diamond's crystal. <span class="ui">Add an action</span> makes one; a pulldown selects it for editing when there is more than one. Two things can set an action off:</p>
+	<ul>
+		<li><strong>Minutes of my activity.</strong> A timer that only counts while you are actually working. A tab left open overnight counts none of them, so a Diamond set to thirty minutes fires after half an hour of your work, not half an hour of wall clock.</li>
+		<li><strong>Mail arriving.</strong> Mail landing in a folder you name, in a mailbox you have already set up. Nothing fires until there is mail.</li>
+	</ul>
+
+	<p>Each action carries two pieces of writing. The <strong>instruction</strong> is what the Diamond is asked to do when it fires, and it is sent every time. The <strong>context</strong> is background it needs the first time only: it goes in front of the first instruction and then stops going, until you change it, at which point it is sent once more. That is what changing it means.</p>
+
+	<p>Actions are ordinary files. They sit in the Diamond's own directory as <strong translate="no">triggers.json</strong>, in the open, where you can read them in the Workspace panel and where the Diamond itself can read and edit them with the file tools it already has. Nothing about them is hidden from you or from it.</p>
+
+	<h3 id="s14">The play, the pause and the light</h3>
+	<p>Every triggered action wears the same three-part control the rest of the app uses: a <strong>play</strong>, a <strong>pause</strong> and a round <strong>light</strong>. The Diamond carries one that speaks for all of its actions, and the <span class="ui">全部</span> row at the top of the rail carries one that speaks for the whole app.</p>
+
+	<p><strong>The light says whether anything is going to happen on its own.</strong> Not whether you have pressed pause — whether something is actually armed and free to fire:</p>
+	<ul>
+		<li><strong>Red.</strong> Nothing here will act by itself — because you have set nothing up, or because what is here is switched off, held, or missing something it cannot fire without.</li>
+		<li><strong>Amber.</strong> Some of what is set up will act, and some is held.</li>
+		<li><strong>Green.</strong> Everything that is set up will act.</li>
+	</ul>
+
+	<p>A Diamond you have not automated therefore shows <strong>red</strong>, and so does the <span class="ui">全部</span> row on a fresh account. That is not a warning. It is the honest answer to "is anything running by itself?", and on a new account the answer is no.</p>
+
+	<p>The two buttons follow the light, so you never have to work out which one would do something:</p>
+	<ul>
+		<li>Red: <strong>play</strong> is live and <strong>pause</strong> is greyed. There is nothing running to stop.</li>
+		<li>Amber: <strong>both</strong> are live. You can release what is held or hold the rest.</li>
+		<li>Green: <strong>pause</strong> is live and <strong>play</strong> is greyed. There is nothing held to release.</li>
+	</ul>
+
+	<div class="note"><strong>An action that cannot fire is not counted.</strong> An action switched on but missing its mailbox, its folder or its instruction would never go off, so the light does not report it as though it would. Fill in what it is missing and the light changes on its own.</div>
+
+	<p>Pressing pause on a Diamond holds every action under it; pressing it on the <span class="ui">全部</span> row holds the lot. Nothing is spent by a held action — it is refused before the turn starts, so a pause costs nothing but the wait. Amber can only be arrived at, never set: there is no button that makes a light amber, which is what stops the colour from meaning whatever somebody last clicked.</p>
+
+	<p>The same light rides on your mailboxes, and it reads the same way. A mailbox whose folders you refresh by hand is <strong>red</strong>: pressing refresh yourself is not automation, it is you. Give a folder an interval and it goes green.</p>
+
+	<h2 id="s15">晶体和它的历史</h2>
 	<p>The crystal is two real files in the Diamond's own directory: <strong translate="no">crystal.json</strong>，是这个 Diamond 所知道的，而 <strong translate="no">crystal.html</strong>, the page that draws it. That directory is always in the Diamond's workspace, so both can be opened in the Workspace panel, read, and edited by hand. It is not inside the folder you have open as your workspace, though: a Diamond is kept in the browser's own storage, apart from your work.</p>
 
 	<p>每一次写入都会存下一个版本，所以晶体有历史，没有东西被盖掉。历史把每一个版本都列出来，最新的在前，每一条都标明是什么产生了它：</p>
@@ -121,7 +161,7 @@
 
 	<div class="note"><strong>恢复不会毁掉东西。</strong> 当前的文本会先存进历史，所以恢复一个旧版本是往历史里添一笔，而不是替换它 —— 一次并非本意的恢复，自己也能撤销。</div>
 
-	<h2 id="s14">产物</h2>
+	<h2 id="s16">产物</h2>
 	<p>一个 Diamond 还会记下它的工作碰过什么：写出来的文件，以及你做它的时候打开过的页面。这些都不用你来记。Daimond 本来就记着智能体用过的每一个工具，所以这份清单是从发生过的事里读出来的，并且在你接受一次折叠的那一刻收集。</p>
 
 	<p>只被 <em>读过</em> 的文件是故意不收进来的。智能体为了找一样东西，可能打开四十个文件，四十个都列出来，会把真正要紧的那一个埋掉。留下的是这件工作产出的东西，以及你要求看的页面。</p>
@@ -135,14 +175,14 @@
 
 	<div class="note">一个你后来改了名或删掉的文件 <strong>会明说</strong> —— 在你试着打开它的时候，而不是悄无声息地什么都不做。一份装作没事的死链清单，比没有清单更糟。</div>
 
-	<h2 id="s15">Diamond 的工作区</h2>
+	<h2 id="s17">Diamond 的工作区</h2>
 	<p>每个 Diamond 都有一个 <strong>工作区</strong>：你和它一起存放的文件和文件夹。放进去的人是你。daimon 不能往自己的工作区里添东西，所以它只用手上已有的东西做事，不够的时候会问你。</p>
 
 	<p><strong>它是你文件的一个视图，不是装着文件的盒子。</strong> 你附加东西时什么都不会被复制：文件还在原处，Diamond 只是指向它。把同一个文件夹附加到两个 Diamonds 上，文件夹仍然只有一个，从任何一边做的修改，都是另一边读到的那个文件。把东西从一个 Diamond 的工作区里拿走，只是解除附加；文件本身毫发无损，只有你有意删除才会真的删掉。 <em>工作区</em> 这个词让人以为会有一份副本，其实没有。</p>
 
 	<p>每个 Diamond 还有一个自己的目录，始终在它的工作区里，始终可写，这样在你还没附加任何东西之前，它的 daimon 就已经有地方干活了；晶体就住在那里。一个文件夹可以附加成 <strong>只供查阅、不供编辑</strong>，这样 daimon 能读它，而一切写入都会被拒绝。而 <a href="email-web-files.html">工作区</a> 面板既可以显示你的全部文件，也可以只显示这个 Diamond 持有的那些，看眼前的活需要哪一种。</p>
 
-	<h3 id="s16">用回形针附加</h3>
+	<h3 id="s18">用回形针附加</h3>
 	<p> <strong>📎</strong> 在工作区面板的每一行上都有 —— 文件和文件夹一样有 —— 文档面板的头部也有，它叫 <span class="ui">附加到当前焦点</span>。一个控制项，它的效果跟着当前的焦点走，而不是跟着它所在的那一行走。没有焦点时，它根本不出现。</p>
 	<ul>
 		<li><strong>焦点是一个 Diamond。</strong> 这个文件或文件夹加入那个 Diamond 的工作区，一直待到你把它取下来。它的 daimon 从此可以打开它。</li>
@@ -152,17 +192,17 @@
 	<p>不管哪一种，它生成的那句话（<em>记下 …</em>，或者 <em>完整读取 …。</em>）会写进输入框里，排在你的消息前面，发送前可以改，也可以删。应用自己写了又藏起来的提示词，是没人能跟它争辩的提示词。</p>
 	<p>这条页脚上有一个 <strong>+</strong> ，用来连着附加几样东西而不必离开你正在读的内容；还有一个开关，在小卡片 <span class="ui">堆叠</span> 和一行行更大的 <span class="ui">图标</span>之间切换。超过六张小卡片 —— 窗口矮的时候是四张 —— 它就滚动而不再长高，输入区因此不动。在不是当前打开的那个工作区里做的附加，会说明它住在哪里，而不是读起来像个空文件夹；它也不会进入生成的那句话里：一条模型打不开的路径，只会换来一轮道歉。</p>
 
-	<h3 id="s17">daimon 能打开什么</h3>
+	<h3 id="s19">daimon 能打开什么</h3>
 	<p><strong>daimon 只能打开它所属 Diamond 的工作区里的文件。</strong> 工作区之外的东西读不了也写不了，daimon 不行，它派出的任何工人也不行。这不是提示词里一条模型可能遵守、也可能不遵守的指令：这道检查在编译后的代码里，在每个文件工具都必经的那一扇门上；那份代码就在已发布的构建包里，而构建包是可复现地构建出来的。所以这是一个你可以自己核对的说法，不是一个你只能选择相信的说法。</p>
 
 	<p>它管不到的地方，也要一并说清楚。它决定的是 daimon 能够到哪里，不是它读到的东西最后去哪里：它打开的一切，都会连同这一轮的其余内容一起发给你的模型提供商。它确实防得住一个被人说动了的智能体 —— 一轮对话刚在网页或邮件里读完一个陌生人的指令，转而替那个陌生人去找东西，它仍然够不到这个工作区之外的任何东西。它防不了滥用你所发内容的提供商，也防不了一份不是我们发布的构建；回答这两件事的是 <a href="accounts.html">离开浏览器的东西</a> 以及 <a href="interface.html">每一次构建的封存记录</a>.</p>
 
-	<h2 id="s18">派出工人</h2>
+	<h2 id="s20">派出工人</h2>
 	<p>有些任务要的是把活干了，而不只是记下来。对这些任务，Diamond 的 daimon 会派出一个 <strong>工人智能体</strong>。每个工人在自己的上下文里运行，带着工作区的文件工具，并拿到常设指令和这个 Diamond 的晶体。那块晶体就是它对你这项追求所知的全部：工人看不到你的对话，所以交给它的任务必须把其余需要的东西都说清楚。</p>
 
 	<p>最多 <strong>八个</strong> 工人同时运行，其余的排队。daimon 把它们派出去，它这一轮就到此为止，不接收它们的输出。每个工人回报一份摘要，值得留下的由你亲手折叠进去，这正是让“什么能进晶体”始终归你决定的地方。正在跑的运行出现在停靠区的 <strong>智能体</strong> 面板里。</p>
 
-	<h3 id="s19">按住和停掉智能体</h3>
+	<h3 id="s21">按住和停掉智能体</h3>
 	<p>智能体面板的头部有三个控制项，一次作用于 <em>每一个</em> 智能体；同样的三个也挂在每一张卡片上，好让你只对其中一个动手：</p>
 	<ul>
 		<li><strong>暂停</strong> <span class="ui">⏸</span>：把正在跑的挂起来，把队列按住。正在跑的智能体保留它已经做出来的东西；在等的那个不会开始。在你恢复之前，不会有新的启动。这是给一次花钱比你想的还快的扇出准备的刹车。</li>
@@ -175,7 +215,7 @@
 
 	<p>有两条限制。工人不能再派工人，所以委派只走一层就停。而且同一时间只引导一个 Diamond，所以不会有第二个 Diamond 在你没看着的时候自顾自地干活。</p>
 
-	<h2 id="s20">标签</h2>
+	<h2 id="s22">标签</h2>
 	<p>Diamonds 会越积越多，所以可以给它们打标签。标签就是你自己定的一个短词，在 Diamond 的晶体上从 <span class="ui">标签</span> 里编辑。有四个起步的建议（<strong>person</strong>, <strong>project</strong>, <strong>topic</strong> 和 <strong>org</strong>），但 Daimond 不强加任何分类法，你可以打任何顺手的词。</p>
 
 	<p>你打的字会被理一遍：标签会转成小写、去掉两头的空白、去重；一个 Diamond 上最多 <strong>8</strong> 个标签，每个最多 <strong>24</strong> 个字符。标签和别的东西一样，存在这个 Diamond 自己的元数据里，就在这台设备上。</p>
@@ -186,7 +226,7 @@
 
 	<p>在侧栏里， <span class="ui">按标签筛选</span> 会打开可以用来收窄的标签，按钮上带着它们的数目。点一个标签，只显示带它的 Diamonds；再点一次，改成把它们藏起来。选了不止一个时， <span class="ui">全部标签</span> 和 <span class="ui">任一标签</span> 决定它们怎么组合，而 <span class="ui">清除</span> 把筛选清空。这里没有单独的搜索框：一个 Diamond 是靠它归在什么名下找到的，而给一份短列表配两种收窄方式，就多了一种。列表按最近碰过的顺序排，所以你最后做的那个排在最上面。</p>
 
-	<h2 id="s21">回收站</h2>
+	<h2 id="s23">回收站</h2>
 	<p>删掉一场聊天或一个 Diamond，并不会毁掉它。它是被 <strong>扔进了回收站</strong>：仍然存着，仍然同步，从侧栏里消失，从图谱和标签筛选里消失，也不在任何 daimon 够得着的地方，列在停靠区的 <strong>回收站</strong> 面板里，旁边有一个“恢复”按钮。它会保留 <strong>三十天</strong> ，然后销毁；每一行都写着日期。</p>
 
 	<p>因为这个动作可以收回，所以事前什么都不问。那两个该问的问题，挪到了它们成立的地方： <span class="ui">永久删除</span> 作用于单个条目，还有 <span class="ui">清空回收站</span>，它会说出条目的数目。两个都不可逆，而且两个都是从每一台设备上消失。在一个可以撤回的动作前面放对话框，教会的是人们一路点过去，然后连那个不可逆的也一起点过去了。</p>

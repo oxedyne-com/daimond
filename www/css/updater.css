@@ -27,6 +27,16 @@
 	stroke-linejoin: round;
 }
 
+/* SILENT, AND STILL 32px WIDE. `hidden` did nothing at all here: an author rule
+   setting `display: flex` beats the browser's own `[hidden] { display: none }`,
+   so the one state that asks for silence -- no version stamp deployed, updater.js
+   `init` -- drew a faint refresh mark anyway. Answered with `visibility` rather
+   than `display` because this chip stands in a row of targets: taking its box
+   away would move About, the guide and the appearance menu 32px while the user
+   is reaching for one of them, which is the fault the row was just laid out to
+   prevent (see .panel-tags in workspace.css). */
+.update-chip[hidden] { visibility: hidden; }
+
 /* Two glyphs, one shown at a time: a refresh mark for every state but "done", a tick for it. */
 .update-chip .ic-check { display: none; }
 .update-chip[data-state="done"] .ic-refresh { display: none; }

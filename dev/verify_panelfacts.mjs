@@ -252,6 +252,7 @@ try {
 				help:  window.DaimondI18n.t('agents.act_pause_help'),
 				run:   window.DaimondI18n.t('agents.status_running'),
 				tally: window.DaimondI18n.t('agents.tally_running', { n: 1 }),
+				read:  window.DaimondI18n.t('agents.read'),
 			},
 		};
 	});
@@ -266,8 +267,16 @@ try {
 		await new Promise((r) => setTimeout(r, 300));
 	});
 	const en = await readTile();
-	check('a running agent has its two controls on screen', en.labels.length === 2,
+	// THREE, and the third is named. Pause and Stop were the whole of a running
+	// agent's tile until Read was offered for one -- its transcript is a file that
+	// grows, so there is something to read before it has finished. A bare count
+	// would pass a build that had dropped Read and grown something else, which is
+	// the failure this file is written against, so the label is asserted too.
+	check('a running agent has its three controls on screen', en.labels.length === 3,
 		JSON.stringify(en.labels));
+	check('and one of them is Read, which is what opens its transcript',
+		en.labels.some((l) => l === en.says.read),
+		JSON.stringify(en.labels) + ' against ' + JSON.stringify(en.says.read));
 
 	const loaded = await p.evaluate((c) => window.DaimondI18n.setLocale(c), 'de');
 	await p.evaluate(async () => {

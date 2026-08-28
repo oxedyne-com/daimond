@@ -800,7 +800,12 @@
 				l.title = t('pair.link_another');
 				l.setAttribute('aria-label', l.title);
 			}
-			l.style.display = 'none';
+			// HIDDEN, NOT ABSENT. It waits for a session and then appears, and while
+			// it appeared out of nothing it took 32px of the top bar with it and
+			// moved every chip and every icon left of it -- measured at 122px on a
+			// 1440px window. Its space is reserved from the first paint instead; see
+			// the rule in css/workspace.css.
+			l.style.visibility = 'hidden';
 			l.addEventListener('click', function () {
 				if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return;
 				showLink();
@@ -812,7 +817,7 @@
 		// Reveal the link button once a session exists.
 		window.addEventListener('daimond:authed', function () {
 			var lb = document.getElementById('pair-link-btn');
-			if (lb) lb.style.display = '';
+			if (lb) lb.style.visibility = '';
 		});
 	}
 

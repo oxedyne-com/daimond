@@ -4,9 +4,13 @@
 // The page is the first thing in this app that runs code the user never saw,
 // written by a model that may itself have been steered by a web page it read a
 // moment ago — and unlike every other injection surface here, this one PERSISTS.
-// A hostile line in a page is exempt from the cap, absent from the standing
-// context, unseen by the reducer and unseen by the fold diff: the one injection
-// in Daimond that survives a turn, and it syncs to every device the user owns.
+// A hostile line in a page is absent from the standing context, unseen by the
+// reducer and unseen by the fold diff: the one injection in Daimond that survives
+// a turn, and it syncs to every device the user owns. It is NOT exempt from a cap,
+// which this list said until 2026-08-28 -- `dev/verify_crystalcap.mjs` enforces
+// `CRYSTAL_PAGE_CAP_DEFAULT` on it and has since 2026-08-09. The clause was never
+// carrying the argument: a line survives because nothing here reads the page, not
+// because nothing weighs it.
 //
 // TWO mechanisms hold it, and they close different halves of the problem.
 //

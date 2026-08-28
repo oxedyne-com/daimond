@@ -43,6 +43,7 @@
 // need real rendering — and run those under xvfb, never on the user's display.
 
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -121,6 +122,47 @@ export function scratch(...parts) {
 /// is made to name the file it writes, and a mock that names another one -- or
 /// that cannot answer the question, which is what an older mockllm from another
 /// tree does -- stops the run before a single check has been made.
+///
+/// AND IT IS ASKED WHICH REVISION IT IS, which is a different question from which
+/// world it belongs to, and the two came apart on 2026-08-28. `world.sh --up`
+/// adopts a mock already listening -- correctly, so a person can share a world --
+/// and a world brought up BEFORE a merge keeps answering after it. Same port, same
+/// log path, so every guard above passed; a directive the merge had added meant
+/// nothing to it, so it fell through to `Mock reply to: <the directive line>`.
+///
+/// That is worse than a mock that is not there. `dev/verify_thinking.mjs` went red
+/// on twelve checks, and one of them said the model's reasoning had been stored as
+/// its answer -- the most serious thing this suite can report. It had not been. The
+/// echo put the check's own markers into the assistant message, so a fixture
+/// produced a data-defect report about a product that was working.
+///
+/// This is the workflow that manufactures it: bring a world up, run the gate, merge,
+/// run the gate again. A release lane does exactly that, all day.
+
+/// The SHA-256 of THIS tree's mock, or '' when it cannot be read.
+///
+/// Empty rather than fatal: running the harness from somewhere its mock's source is
+/// not is a thing that works today, and this check must not be why it stops.
+let _mockSha = null;
+function mockSha() {
+	if (_mockSha === null) {
+		try {
+			_mockSha = crypto.createHash('sha256')
+				.update(fs.readFileSync(path.join(HERE, 'mockllm.mjs'))).digest('hex');
+		} catch (e) { _mockSha = ''; }
+	}
+	return _mockSha;
+}
+
+/// The directive names this tree's mock switches on, read the way the mock reads them
+/// of itself, so the two lists cannot drift apart.
+function ourDirectives() {
+	try {
+		const src = fs.readFileSync(path.join(HERE, 'mockllm.mjs'), 'utf8');
+		return [...new Set([...src.matchAll(/^\t\tcase '([a-z0-9]+)':/gm)].map(m => m[1]))].sort();
+	} catch (e) { return []; }
+}
+
 let mockIdentity = null;
 async function requireOwnMock() {
 	if (mockIdentity) return mockIdentity;
@@ -138,6 +180,35 @@ async function requireOwnMock() {
 			+ ' mockLog() is reading a file nothing is writing');
 		mockIdentity = { log: null };
 		return mockIdentity;
+	}
+	// WHICH REVISION, asked before which world: a mock from another tree can name the
+	// right log by nothing but a shared directory layout, and then every answer it
+	// gives is a revision behind and nothing says so.
+	const ours = mockSha();
+	if (ours && said.sha !== ours) {
+		const knows   = Array.isArray(said.directives);
+		const missing = knows ? ourDirectives().filter(d => !said.directives.includes(d)) : [];
+		// Three cases, and they are not the same diagnosis. It listed its directives and
+		// some are absent; it listed them and none are, so a directive's MEANING moved;
+		// or it is old enough not to list them at all, in which case nothing is known
+		// about what it understands and the sha is the whole of the evidence.
+		const what = !knows
+			? '  it does not say which directives it knows, so nothing can be said about\n'
+				+ '  what it understands -- only that it is not this file.\n'
+			: missing.length
+				? `  it does not answer to: ${missing.map(d => '@' + d).join(', ')}\n`
+				: '  it answers to the same directive names, so what differs is what they MEAN.\n';
+		throw new Error(
+			`the provider on ${MOCK} is not built from this tree's dev/mockllm.mjs.\n`
+			+ `  it is:   ${said.sha || '(no sha in its /__world — a mockllm from before this '
+				+ 'check existed)'}\n`
+			+ `  we want: ${ours}\n`
+			+ what
+			+ '  A world adopts a mock already listening, so one started before a merge keeps\n'
+			+ '  answering after it -- same port, same log, silently a revision behind. Each\n'
+			+ '  directive it does not know becomes `Mock reply to: <the line>`, which is the\n'
+			+ '  fixture echoing the prompt and reads exactly like the product being broken.\n'
+			+ '  Restart it: dev/world.sh N --down && dev/world.sh N --up');
 	}
 	if (said.log !== MOCK_LOG) {
 		throw new Error(
@@ -630,6 +701,18 @@ export async function newChat(s, { reuse = false } = {}) {
 /// its own relay mints, so the provider key never enters the page's storage at all.
 export async function connectMock(s, { baseUrl = MOCK, model = MODEL, apiKey = 'mock-key' } = {}) {
 	const { page } = s;
+	// THE OTHER DOOR ONTO A MOCK, and until 2026-08-28 the guard was only on the first
+	// one. `open()` asks `requireOwnMock` when it is told `connect: true` -- and 142 of
+	// the 305 verifiers pass `connect: false` and reach a provider through here instead,
+	// which is the ordinary pattern rather than an unusual one. So the check written
+	// after the 2026-08-17 incident could not see the majority of the runs it was
+	// written for, and `dev/verify_thinking.mjs` met the 2026-08-28 one with nothing
+	// between it and a stale mock. Asked at whichever door is used.
+	//
+	// Only for THIS WORLD'S mock. This function is also how a probe points the app at a
+	// real provider (`dev/probe_thinking_live.mjs` hands it an OpenRouter URL), and
+	// openrouter.ai is quite properly not built from dev/mockllm.mjs.
+	if (baseUrl === MOCK) await requireOwnMock();
 	await page.evaluate(async ({ baseUrl, model, apiKey }) => {
 		// Drive the form the user drives, so its own save path is exercised.
 		const open = document.getElementById('settings-btn')

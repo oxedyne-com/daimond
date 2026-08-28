@@ -101,14 +101,32 @@
    same characters the row's first item shows. There is no third
    state and nothing is gathered silently.
 
-   ── VOTES ARE BUILT DARK ────────────────────────────────────
-   Contract §9 puts voting on the forge, and the forge's vote route
-   is not built yet. So the control is here and DRAWS ONLY WHEN THE
-   ANSWER CARRIES `votes`. A visible control that reaches nothing is
-   the defect this file was rewritten to remove; adding a second one
-   while removing the first would be a poor trade. When the forge
-   starts answering `votes`, the control appears on its own with no
-   edit here.
+   ── A CONTROL DRAWS FROM THE ANSWER, NOT FROM A DATE ────────
+   Contract §9 puts voting on the forge, and the forge answers it:
+   `views/proposals.rs` dispatches `proposals/<n>/vote`, and both
+   the listing and the whole record carry `votes`, checked against
+   the deployed host on 2026-08-27. So the control DRAWS, and it
+   draws for the reason it was built to -- BECAUSE THE ANSWER
+   CARRIES `votes`, never because a comment here said the day had
+   come. A visible control that reaches nothing is the defect this
+   file was rewritten to remove, and a control gated on the answer
+   cannot become one.
+
+   That is the whole point of the shape, and it has now been paid
+   off once: nothing in this file changed when the forge started
+   answering. The three sentences that said otherwise -- here, at
+   `cleanProp`, and in the contract's §9 -- were prose that had gone
+   stale while the code stayed right, which is the failure mode a
+   dated claim has and a derived one does not.
+
+   AMENDMENT IS THE SAME SHAPE AGAIN, and it has now paid off
+   twice. The forge answers `POST proposals/<n>/amend` and carries
+   `mine_to_amend` beside `mine`; the gateway's door was already
+   open (`&amend=1`), and `drawAmendControl` below draws only when
+   that flag is PRESENT. Absent is not false -- see `cleanProp`.
+   The whole proposal also carries `revisions`, a LIST oldest
+   first and EMPTY rather than absent, which is not the count
+   `comments` beside it is.
 
    Attaches two globals, `window.DaimondSocial` (the panel
    shell) and `window.DaimondImprove` (notes and proposals).
@@ -182,7 +200,14 @@
 
 	var KEY = 'daimond-improve';
 	var MAX_NOTES = 200;			// past this the oldest KEPT note goes; sent ones stay
-	var MAX_CHARS = 20000;			// what one note may be, matching the gateway's cap
+	// What one note may be. NOT the gateway's cap, which is what this said until
+	// 2026-08-28: the improve route forwards at most 64 KiB (`MAX_BODY`,
+	// gateway/src/handlers/improve.rs:227) and no 20000 exists anywhere under
+	// `gateway/src/`. This is a client-side choice and a defensible one -- 20,000
+	// characters is a long report and well inside the door, so a note trimmed here
+	// is never a note the hop refuses -- but it was justified by a number nobody
+	// wrote, and the next reader would have moved it to match a cap it does not track.
+	var MAX_CHARS = 20000;
 
 	var _st = null;
 
@@ -210,7 +235,36 @@
 			/// tester who sent something and was told only "Sent" has no way back
 			/// to what happened to it.
 			n:    Math.max(0, whole(r.n)),
+			// Folded, which is not sent
+			//
+			// NOT `n`, and the difference is this panel's only copy of somebody's
+			// words. `n` is the proposal this note BECAME: the forge holds these
+			// exact characters, so what is here is a second copy. `into` is a
+			// proposal that js/triage.js DRAFTED from this note, usually beside
+			// others -- the forge holds the drafting, which is not what this
+			// person wrote, and where several notes were folded together it holds
+			// a fragment of each. A folded note is therefore still the only copy
+			// of what somebody wrote, and `save()` must never evict one.
+			//
+			// A LIST, because one note holding two faults is drafted into two
+			// proposals. This tree has lost user data once already to a field
+			// doing double duty; `n` doing this one as well would be the same
+			// mistake with the same consequence.
+			into: intoList(r.into),
 		};
+	}
+
+	/// The proposal numbers on a stored note's `into`, cleaned. Whole numbers
+	/// above zero, no repeats, and capped: a record that arrived from anywhere
+	/// but this file's own `fold()` is still only a list of numbers.
+	function intoList(v) {
+		if (!Array.isArray(v)) return [];
+		var out = [];
+		for (var i = 0; i < v.length && out.length < 32; i++) {
+			var n = Math.max(0, whole(v[i]));
+			if (n > 0 && out.indexOf(n) === -1) out.push(n);
+		}
+		return out;
 	}
 
 	function load() {
@@ -226,6 +280,23 @@
 		return _st;
 	}
 
+	/// Does the forge hold this note's own characters?
+	///
+	/// The one question `save()`'s cap turns on, and the reason it is a function
+	/// with a name. `sent` says these exact characters went to the forge as a
+	/// proposal, so a second copy here is spare. `into` says a DRAFT written from
+	/// this note went instead -- the forge holds the drafting, and where several
+	/// notes were folded into one proposal it holds a fragment of each. So a
+	/// folded note is still the only copy of what somebody wrote and is never
+	/// spare, whatever else is true of it.
+	///
+	/// Both are tested rather than only `sent`, although no path here sets both:
+	/// a rule this file cannot afford to get wrong should not also depend on a
+	/// rule kept somewhere else.
+	function delivered(rec) {
+		return !!(rec && rec.sent && !(rec.into && rec.into.length));
+	}
+
 	function save() {
 		var s = load();
 		// Newest first on disk as well as on screen, so a person reading the raw
@@ -238,14 +309,18 @@
 		// make room for a note that has already been delivered is losing the one
 		// that mattered. Kept notes are dropped only if there is nothing else
 		// left to drop, and then oldest first like anything else.
+		//
+		// A FOLDED NOTE IS NOT A DELIVERED ONE, and `delivered()` is where that
+		// is decided rather than here, so the one question this rule turns on is
+		// asked in one place and can be proved on its own.
 		if (s.notes.length > MAX_NOTES) {
 			var over = s.notes.length - MAX_NOTES;
 			for (var i = s.notes.length - 1; i >= 0 && over > 0; i--) {
-				if (s.notes[i].sent) { s.notes.splice(i, 1); over--; }
+				if (delivered(s.notes[i])) { s.notes.splice(i, 1); over--; }
 			}
 			if (over > 0) s.notes.length = MAX_NOTES;
 		}
-		try { localStorage.setItem(KEY, JSON.stringify({ v: 2, notes: s.notes })); }
+		try { localStorage.setItem(KEY, JSON.stringify({ v: 3, notes: s.notes })); }
 		catch (e) { log('could not write the notes', e); }
 	}
 
@@ -322,11 +397,28 @@
 	/// row is still on screen, the text that row is showing -- read off the node,
 	/// not rebuilt, so a line the user cannot see cannot be in it. `send()` calls
 	/// this, `split()` cuts the result in two, and nothing else contributes.
+	///
+	/// THE ROW IS REDRAWN FIRST, in the same breath as the read. The line names
+	/// the palette and the panels that are open, and both of those change under a
+	/// panel that is already on screen: on a desktop the Social panel stays put
+	/// while somebody switches palette or opens something else, and a row rendered
+	/// when the panel opened then describes a screen they have left behind. Notes
+	/// went out for weeks naming a palette nobody was looking at. Redrawing here,
+	/// rather than listening for every way the app can move, is what makes that a
+	/// closed class instead of two patched instances -- there is no signal left to
+	/// forget, because the line is computed at the moment of the press, shown, and
+	/// then read off the node exactly as before. Still a read of the screen: the
+	/// characters returned are the characters the row is showing when it returns.
+	///
+	/// CLOSING THE ROW STILL TAKES THE LINE OFF THE WIRE. The `contextOff()` line
+	/// below returns before the redraw is reached, and `drawContext()` leaves a
+	/// closed row shut in any case.
 	function outgoing() {
 		var box = el('improve-box');
 		var body = box ? String(box.value || '').trim() : '';
 		if (!body) return '';
 		if (contextOff()) return body;
+		drawContext();
 		var line = el('improve-with-text');
 		var ctx  = line ? String(line.textContent || '').trim() : '';
 		return ctx ? (body + '\n\n' + ctx) : body;
@@ -417,14 +509,51 @@
 		line.id = 'improve-voice-say';
 		line.textContent = hasVoice()
 			? tOr('social.voice_held', 'A voice is held on this device, encrypted under your passphrase.')
-			: tOr('social.voice_none', 'No voice is held here, so a note can only be kept.');
+			: tOr('social.voice_none', 'You have no voice, so you can read what other people have written here but not add to it. Keep is all a note of your own can do.');
 		host.appendChild(line);
+
+		// WHAT IT IS, WHY YOU HAVEN'T GOT ONE, AND WHAT TO DO -- three sentences, on
+		// the empty state only.
+		//
+		// It said "Set a voice", helped by "The line the forge printed for you", and
+		// the owner -- who wrote this app -- asked what a voice was and what he was
+		// supposed to do to set one. Every word of the old pair presumed something
+		// the reader has not got: a forge they have never heard of, and a line
+		// nobody gave them. A control whose author cannot use it is not opaque to
+		// some users, it is opaque.
+		//
+		// The instruction has to be the TRUE one, and it is not "paste the line".
+		// Nothing in Daimond can mint a voice and nothing here can ask for one: the
+		// forge issues them by invitation (`views/invite.rs`), an admin on the
+		// repository issues the link, and following it mints the secret in front of
+		// the person and shows it once (`views/claim.rs`). So the honest instruction
+		// is to ask for an invitation, and the honest promise about what happens next
+		// is what that page actually does.
+		//
+		// It is NOT said to somebody who already holds a voice, for the reason
+		// `drawPublic` is not said to somebody who cannot send: an instruction for
+		// getting something you have is noise.
+		if (!hasVoice()) {
+			var how = document.createElement('span');
+			how.className = 'imp-as';
+			how.id = 'improve-voice-how';
+			how.textContent = tOr('social.voice_how',
+				'A voice is the credential that lets you write on Daimond\u2019s public tracker at {host}. '
+				+ 'Reading it needs nothing; writing, replying and voting all need one, and they are given out '
+				+ 'by invitation rather than signed up for. Ask Oxedyne for an invitation link. Following it '
+				+ 'shows you who invited you and what you may do, and the tracker makes your voice in front of '
+				+ 'you and shows it once \u2014 43 characters, never shown again. Paste those here.',
+				{ host: FORGE_HOST });
+			host.appendChild(how);
+		}
 
 		if (!_voiceOpen) {
 			host.appendChild(button('imp-note-copy', 'improve-voice-open',
 				hasVoice() ? tOr('social.voice_replace', 'Replace the voice')
-					: tOr('social.voice_set', 'Set a voice'),
-				tOr('social.voice_help', 'The line the forge printed for you. It is kept encrypted here and never put in an address.')));
+					: tOr('social.voice_set', 'Paste your voice'),
+				hasVoice()
+					? tOr('social.voice_help', 'The 43 characters the tracker showed you. Kept encrypted here and never put in an address.')
+					: tOr('social.voice_help_none', 'The 43 characters the tracker showed you when you accepted your invitation.')));
 			if (hasVoice()) {
 				host.appendChild(button('imp-note-copy', 'improve-voice-forget',
 					tOr('social.voice_forget', 'Forget it'),
@@ -439,8 +568,8 @@
 		input.id = 'improve-voice-in';
 		input.autocomplete = 'off';
 		input.spellcheck = false;
-		input.placeholder = tOr('social.voice_ph', 'Paste the line the forge printed for you');
-		input.setAttribute('aria-label', tOr('social.voice_ph', 'Paste the line the forge printed for you'));
+		input.placeholder = tOr('social.voice_ph', 'Paste the 43 characters the tracker showed you');
+		input.setAttribute('aria-label', tOr('social.voice_ph', 'Paste the 43 characters the tracker showed you'));
 		host.appendChild(input);
 		host.appendChild(button('imp-send', 'improve-voice-save', tOr('social.voice_save', 'Save the voice')));
 		host.appendChild(button('imp-keep', 'improve-voice-cancel', t('common.cancel')));
@@ -612,15 +741,43 @@
 			text: String(text).slice(0, MAX_CHARS),
 			sent: ms(sentAt),
 			n:    0,
+			into: [],
 		};
 		s.notes.unshift(rec);
 		save();
 		return rec;
 	}
 
+	/// Mark the notes a draft was written from as folded into proposal `n`.
+	///
+	/// WHAT THIS DOES NOT DO IS SET `sent`, and that is the whole of it. These
+	/// characters did not leave: a drafting of them did, and this panel is still
+	/// holding the only copy of what the person actually wrote. `delivered()`
+	/// reads the difference, so a folded note survives the cap that a sent one
+	/// does not.
+	///
+	/// Called by js/triage.js after the forge took a draft, and by nothing else.
+	function fold(ids, n) {
+		var num = Math.max(0, whole(n));
+		if (!num || !Array.isArray(ids) || !ids.length) return 0;
+		var s = load(), hit = 0;
+		ids.forEach(function (id) {
+			var rec = s.notes.find(function (x) { return x.id === String(id); });
+			if (!rec) return;
+			if (rec.into.indexOf(num) === -1) rec.into.push(num);
+			hit++;
+		});
+		if (hit) save();
+		return hit;
+	}
+
 	function clearBox() {
 		var box = el('improve-box');
 		if (box) box.value = '';
+		// AT ONCE, not on the settle timer. This runs when a note has been kept or
+		// sent, and a draft of a note that has already gone is words the user would
+		// find sitting in the box afterwards looking unsent.
+		try { if (drafts()) drafts().drop(draftKey('note')); } catch (e) { /* storage blocked */ }
 		var row = el('improve-with');
 		if (row) delete row.dataset.off;		// the next note starts with its details on
 		drawContext();
@@ -827,6 +984,17 @@
 		return { ok: false, why: 'gateway', status: r.status };
 	}
 
+	/// Tag a refusal with the act it refused, so `saying()` can say the sentence
+	/// that act needs. A copy, because the caller's record is what is drawn and a
+	/// tag written onto it in place would outlive the request that earned it.
+	function onAmend(a) {
+		if (!a || a.ok) return a;
+		var out = {};
+		Object.keys(a).forEach(function (k) { out[k] = a[k]; });
+		out.on = 'amend';
+		return out;
+	}
+
 	/// What a refusal says on the screen.
 	///
 	/// EVERY ONE OF THE NINE IS SAID. A refusal a panel swallows is a panel that
@@ -855,6 +1023,13 @@
 		case 'unknown':
 			return tOr('social.err_unknown', 'The forge does not recognise your voice. Set it again from the line the forge printed for you.');
 		case 'unpermitted':
+			// The one route where this refusal has a single cause worth naming. The
+			// forge refuses a stranger's revision with `unpermitted` and writes
+			// nothing, so the honest sentence is who may, not that somebody may not.
+			if (a.on === 'amend') {
+				return tOr('social.err_amend_unpermitted',
+					'Only the person who opened this proposal may revise it.');
+			}
 			return tOr('social.err_unpermitted', 'Your voice may not do that here.');
 		case 'throttled':
 			if (a.because === 'address') {
@@ -920,6 +1095,29 @@
 	/// for.
 	var STATES = { open: 1, accepted: 1, declined: 1, done: 1 };
 
+	/// What the forge calls its per-asker "you may amend this" flag.
+	///
+	/// SETTLED, AND READ OFF THE DEPLOYED FORGE rather than guessed. Two lanes
+	/// built this half against a forge that did not answer the flag yet, and each
+	/// picked its own spelling -- `amend` and `may_amend` -- because a name nobody
+	/// has published is a name everybody invents. Neither was right. The forge
+	/// answers `mine_to_amend`, carried in `shared_dat` so it sits on the listing
+	/// entry and on the whole proposal alike, and an unvoiced read of
+	/// `/oxedyne/ore/proposals/20?format=json` carries no such key at all --
+	/// confirmed against the deployed host on 2026-08-28.
+	//
+	// It is spelled beside `mine`, which is what it is a second of: `mine` is this
+	// asker's vote and `mine_to_amend` is whether this proposal is this asker's to
+	// revise. The gateway's own words are DIFFERENT WORDS on purpose -- `&amend=1`
+	// in the query, `/amend` as the forge's route segment -- because those name the
+	// ACT and this names a fact about the record.
+	//
+	// Held once so that the next rename is one line here rather than a search. The
+	// fixtures do not get their own copy: dev/verify_triage.mjs takes the spelling
+	// from this file, because a fixture answering the old key would keep a broken
+	// client green.
+	var AMEND_FLAG = 'mine_to_amend';
+
 	/// One proposal as it arrived, defended against a shape this build does not
 	/// know.
 	///
@@ -939,15 +1137,31 @@
 			author:     (typeof p.author === 'string') ? p.author : '',
 			comments:   Math.max(0, whole(p.comments)),
 			opened:     Math.max(0, whole(p.opened)),
-			changed:    Math.max(0, whole(p.changed)),
+			// PRESENCE FIRST, NUMBER SECOND, and null where the answer was silent.
+			// `whole()` would have turned an absent `changed` into 0, and a 0 here
+			// is a real reading: "revised at the epoch", which is older than every
+			// proposal there is. A panel that compared it would find either every
+			// tile stale for ever or none of them ever, and both look exactly like a
+			// cache that is not being invalidated -- which is the week somebody
+			// spends before finding this line. Same rule as `mine`/`asked` and as
+			// `mine_to_amend`/`askedAmend` below.
+			changed:    (typeof p.changed === 'number') ? Math.max(0, whole(p.changed)) : null,
 			mark:       (typeof p.mark === 'string') ? p.mark : '',
 			build:      (typeof p.build === 'string') ? p.build : '',
 			body:       (typeof p.body === 'string') ? p.body : '',
 			discussion: null,
+			// NULL WHERE THE ANSWER CARRIED NONE, and `[]` where it carried an empty
+			// one, which are different facts: the listing does not answer this field
+			// at all and the whole proposal always does, so `[]` means "read, and
+			// never revised" and `null` means "not read yet". `absorb` keeps the
+			// list across a listing record for the reason it keeps the body.
+			revisions:  null,
 			detail:     false,
-			votes:      null,		// null: this forge does not answer votes yet
+			votes:      null,		// null: the answer carried no tally at all
 			asked:      false,		// whether the answer carried `mine` at all
 			mine:       null,
+			askedAmend: false,		// whether the answer carried the amend flag at all
+			amendable:  false,		// and, if it did, whether this asker may amend
 		};
 		if (Array.isArray(p.discussion)) {
 			rec.detail = true;
@@ -958,6 +1172,20 @@
 					// not the `said` of a refusal. One word, two contracts.
 					said:   (d && typeof d.said === 'string') ? d.said : '',
 					when:   Math.max(0, whole(d && d.when)),
+				};
+			});
+		}
+		// A LIST, NOT A COUNT, and that is the whole of the care this needs. `comments`
+		// beside it IS a count on both routes, so a reader working by analogy reaches
+		// for `whole()` and gets `NaN` from an array -- or worse, a length that looks
+		// like an answer. The forge answers `revisions` on the WHOLE PROPOSAL ONLY,
+		// oldest first, EMPTY rather than absent where nothing has been amended.
+		if (Array.isArray(p.revisions)) {
+			rec.revisions = p.revisions.map(function (r) {
+				return {
+					title: (r && typeof r.title === 'string') ? r.title : '',
+					body:  (r && typeof r.body  === 'string') ? r.body  : '',
+					when:  Math.max(0, whole(r && r.when)),
 				};
 			});
 		}
@@ -972,7 +1200,32 @@
 			rec.asked = true;
 			rec.mine  = (p.mine === 1 || p.mine === -1) ? p.mine : null;
 		}
+		// PRESENCE FIRST, BOOLEAN SECOND, and the two are kept apart for the same
+		// reason `mine` and `asked` are. The flag is ABSENT when no voice asked --
+		// not `false` -- so a reader that tested only its truth would draw "you
+		// may not amend this" at a person who was never asked, and would go on
+		// drawing it after they set a voice. `hasOwnProperty`, so a `false` that
+		// really was answered is still an answer.
+		//
+		// NOTHING ABOVE COERCES IT. Every other field on this record has a
+		// defaulting cast, which is right for a value whose absence means
+		// nothing; it is wrong for one whose absence IS the fact.
+		if (Object.prototype.hasOwnProperty.call(p, AMEND_FLAG)) {
+			rec.askedAmend = true;
+			rec.amendable  = (p[AMEND_FLAG] === true);
+		}
 		return rec;
+	}
+
+	/// May this asker revise that proposal?
+	///
+	/// ONE PREDICATE FOR THE THREE PLACES THAT ASK, because the two halves have to
+	/// be read together and any reader that forgets one of them is wrong in a way
+	/// nothing shows: `amendable` alone offers the control to a proposal nobody was
+	/// asked about, and `askedAmend` alone offers it to a voice that was told no.
+	/// The exported `forge.mayAmend` is this same question by proposal number.
+	function canAmend(rec) {
+		return !!(rec && rec.askedAmend && rec.amendable);
 	}
 
 	/// Take one record in, keeping what a listing does not carry.
@@ -986,6 +1239,7 @@
 		if (cur && !rec.detail) {
 			rec.body       = cur.body;
 			rec.discussion = cur.discussion;
+			rec.revisions  = cur.revisions;
 			rec.detail     = cur.detail;
 		}
 		if (!cur) _order.push(rec.n);
@@ -1100,6 +1354,71 @@
 		return true;
 	}
 
+	// ── Revising one's own proposal ────────────────────────────
+	//
+	// THE SECOND DOOR ON THE SAME SEAM, and it was built dark for the reason the
+	// vote control was: `drawAmendControl` draws only when the answer carried the
+	// flag. The forge answers it now, and NOTHING IN THIS FILE CHANGED WHEN IT DID
+	// -- which is the second time that shape has paid off here, and the argument for
+	// gating a control on the answer rather than on a comment about a date.
+	//
+	// TWO QUESTIONS, KEPT APART. The forge's flag answers ONE thing -- is this
+	// asker the person who opened the proposal -- and deliberately does not fold in
+	// whether the proposal is still open. That second half is a UI opinion, it is
+	// reversible, and this panel already holds `state`; asking the forge to answer
+	// the combined question would entangle a decision anybody may change with a
+	// fold rule that is replicated and cannot be. So the test is written as two:
+	// `canAmend(rec) && rec.state === 'open'`.
+
+	var _amending = {};			// proposal number -> the row is in amend mode
+
+	/// Cut a proposal's own characters back into the two boxes an amendment is.
+	///
+	/// The inverse of `split()` and the same rule: what goes back on the wire is
+	/// what is on the screen, so the boxes must open holding exactly what the
+	/// record holds and nothing composed on the way in.
+	function amendBoxes(n) {
+		var row = document.querySelector('.imp-prop[data-prop="' + n + '"]');
+		if (!row) return null;
+		var title = row.querySelector('.imp-amend-title');
+		var body  = row.querySelector('.imp-amend-body');
+		if (!title || !body) return null;
+		return { title: title, body: body };
+	}
+
+	/// Publish a revision of one's own proposal.
+	///
+	/// The same one rule as a note and a comment: what leaves is exactly the
+	/// characters in those two boxes at the moment the button is pressed, and a
+	/// refusal is SAID rather than queued -- the boxes keep their words so a person
+	/// can read and copy them.
+	///
+	/// The field set is `title` and `body`, and that is the whole of it. Asserted
+	/// rather than intended, for the reason `post` states: a fifth field must have
+	/// to defeat a check.
+	async function amend(n) {
+		var rec = _by[n];
+		if (!canAmend(rec)) return false;
+		var box = amendBoxes(n);
+		if (!box) return false;
+		var title = String(box.title.value || '').trim();
+		var body  = String(box.body.value || '');
+		if (!title) { _list.err = null; flash(tOr('social.nothing', 'Write something first.')); return false; }
+		if (!hasVoice()) { _list.err = { why: 'unvoiced' }; drawProps(); return false; }
+		// THROUGH THE SAME DOOR THE TRIAGE PLAN USES. Two callers with their own idea
+		// of the request shape is how two halves of a feature stop meeting, which is
+		// what §0 of the contract records -- and this file had exactly that, twice
+		// over, until the two `amend`s were found colliding.
+		var a = await revise(n, { title: title, body: body });
+		if (!a.ok) { _list.err = a; drawProps(); return false; }
+		delete _amending[String(n)];
+		try { if (drafts()) drafts().dropUnder(draftKey('amend', n)); } catch (e) { /* storage blocked */ }
+		absorb(cleanProp(a.data));
+		_list.err = null;
+		drawProps();
+		return true;
+	}
+
 	// ── Saying something on a proposal ─────────────────────────
 
 	/// Add one comment to a proposal.
@@ -1115,19 +1434,67 @@
 		var text = String(box.value || '').trim();
 		if (!text) { _list.err = null; flash(tOr('social.nothing', 'Write something first.')); return false; }
 		if (!hasVoice()) { _list.err = { why: 'unvoiced' }; drawProps(); return false; }
-		var f = new URLSearchParams();
-		f.set('said', text);
-		var a = await ask(route('n=' + n), {
-			method:  'POST',
-			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-			body:    f.toString(),
-		});
+		var a = await say(n, text);
 		if (!a.ok) { _list.err = a; drawProps(); return false; }
 		box.value = '';
+		try { if (drafts()) drafts().drop(draftKey('reply', n)); } catch (e) { /* storage blocked */ }
 		absorb(cleanProp(a.data));
 		_list.err = null;
 		drawProps();
 		return true;
+	}
+
+	/// Put one comment on the wire. THE ONE DOOR a comment leaves by, whichever
+	/// box it was read out of -- the reply box under an open proposal, or a
+	/// drafted comment in the Notes view. A second caller with its own idea of
+	/// the request shape is how two halves of a feature stop meeting, which is
+	/// the fault §0 of the contract exists to record.
+	///
+	/// It takes the CHARACTERS and never the element: what leaves is decided by
+	/// whoever read the screen, and that reading happens once, at the press.
+	async function say(n, text) {
+		var f = new URLSearchParams();
+		f.set('said', text);
+		return await ask(route('n=' + n), {
+			method:  'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body:    f.toString(),
+		});
+	}
+
+	/// Put a revision of one proposal on the wire. THE ONE DOOR a revision leaves
+	/// by, whichever screen read it -- the boxes under an open proposal, or a
+	/// revision draft in the triage plan. `post` and `say` are its siblings and it
+	/// is named apart from them for the same reason they are named apart from
+	/// `send` and `comment`: a door takes CHARACTERS somebody else read, and the
+	/// panel action that read them is `amend` below.
+	///
+	/// IT WAS CALLED `amend` AND THAT WAS A DEFECT. Two lanes built the two halves
+	/// of this seam a fortnight apart, each declared `async function amend` in this
+	/// one closure, and a function declaration does not collide -- it wins. The
+	/// later one silently replaced the earlier, so pressing "Publish the revision"
+	/// called this with no `parts` at all and threw on the first line. Nothing in
+	/// either lane's own tests could see it, because each half was right.
+	///
+	/// The fields are a proposal's own: a revision restates the proposal, so it
+	/// carries what opening one carries and the same cut applies -- `title` is the
+	/// characters before the first newline, `body` the characters after it.
+	async function revise(n, parts) {
+		var f = new URLSearchParams();
+		f.set('title', parts.title);
+		f.set('body',  parts.body);
+		var a = await ask(route('n=' + n + '&amend=1'), {
+			method:  'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body:    f.toString(),
+		});
+		// A REFUSAL IS NAMED WHERE IT HAPPENED, AT THE DOOR, so both callers get the
+		// sentence without either of them remembering to ask for it. `unpermitted` on
+		// this route has one cause and only one -- somebody else opened this proposal
+		// -- and `saying()` cannot know that from the token alone. Untagged it reads
+		// "Your voice may not do that here", which is true of nine routes and useless
+		// on this one.
+		return a.ok ? a : onAmend(a);
 	}
 
 	// ── Drawing ────────────────────────────────────────────────
@@ -1183,12 +1550,23 @@
 
 			var state = document.createElement('span');
 			state.className = 'imp-note-state';
-			state.dataset.state = n.sent ? 'sent' : 'kept';
+			// THREE STATES, BECAUSE THERE ARE THREE FACTS. `sent` is these
+			// characters at the forge; `folded` is a drafting of them there and
+			// these characters still only here, which is why the row goes on
+			// offering Send; `kept` is neither. A folded note drawn as sent would
+			// tell somebody their words had been delivered when a paraphrase of
+			// them had.
+			state.dataset.state = n.sent ? 'sent' : (n.into.length ? 'folded' : 'kept');
 			state.textContent = n.sent
 				? (n.n
 					? tOr('social.state_sent_n', 'Sent {date}, and is proposal {n}', { date: fmtDate(n.sent), n: n.n })
 					: tOr('social.state_sent', 'Sent {date}', { date: fmtDate(n.sent) }))
-				: tOr('social.state_kept', 'Kept here');
+				: (n.into.length
+					? tnOr('social.state_folded', n.into.length,
+						'Kept here. A draft written from it went to proposal {list}.',
+						'Kept here. Drafts written from it went to proposals {list}.',
+						{ list: n.into.map(function (k) { return '#' + k; }).join(', ') })
+					: tOr('social.state_kept', 'Kept here'));
 			foot.appendChild(state);
 
 			if (!n.sent && hasVoice()) {
@@ -1230,17 +1608,25 @@
 
 	/// The vote control, which draws ONLY when the answer carried a tally.
 	///
-	/// DARK UNTIL THE FORGE ANSWERS. The vote route is not built there yet, so a
-	/// record arrives with no `votes` at all and nothing is drawn -- not a
-	/// disabled button, not a zero. The day the forge starts answering it, this
-	/// lights up on its own with no edit here.
+	/// DARK UNTIL THE ANSWER CARRIES A TALLY, which it now does. The forge dispatches
+	/// `proposals/<n>/vote` and both the listing and the whole record carry `votes`,
+	/// checked against the deployed host on 2026-08-27 -- so this control draws, and it
+	/// draws BECAUSE THE ANSWER CARRIES `votes` rather than because a date arrived.
+	/// Nothing here changed when the forge started answering, which is the whole point
+	/// of gating a control on the answer. This comment said "the vote route is not built
+	/// there yet" until 2026-08-28: it was the FOURTH site of the claim the file header
+	/// records correcting three of, and it was missed because it reads as a note about
+	/// the branch below rather than as a claim about the forge.
+	///
+	/// The branch below is still right and still cheap. A record with no `votes` key at
+	/// all draws nothing -- not a disabled button, not a zero.
 	///
 	/// This is NOT the test §9 warns a client off. That warning is against
 	/// treating an UNVOTED proposal as one with no tally: `votes` on a proposal
 	/// nobody has voted on is `{"for":0,"against":0}`, the zero object, and it is
 	/// drawn like any other. What is tested here is the key's ABSENCE, which
-	/// under §9 cannot happen at all -- so the day §9 ships this branch stops
-	/// being reachable and stops costing anything.
+	/// under §9 cannot happen at all -- so the branch is unreachable against a
+	/// conforming forge and costs nothing against one that stops being conforming.
 	///
 	/// `mine` ABSENT and `mine` NULL are different and are drawn differently: the
 	/// first says the request carried no voice, so the buttons are not offered at
@@ -1280,6 +1666,60 @@
 				box.appendChild(b);
 			});
 		into.appendChild(box);
+	}
+
+	/// The amend control, which draws ONLY when the answer carried the flag.
+	///
+	/// DARK UNTIL THE FORGE ANSWERS, exactly as the vote control was until it did.
+	/// The test is `=== true` and never `!p.amendable`, and the difference is the
+	/// whole reason the forge leaves the field OUT rather than answering `false`:
+	/// absent means no voice asked, `false` means a voice asked and is not the
+	/// author, and a reader with no voice at all must never be shown a control that
+	/// belongs to somebody. `null` cannot be read as an answer; a coerced `false`
+	/// can, and would be the same bug wearing the right shape.
+	///
+	/// A SETTLED PROPOSAL IS THIS SIDE'S JUDGEMENT and is asked separately. The
+	/// forge answers who the author is, which is a replicated fact; whether a
+	/// declined proposal may still be revised is an opinion about a screen, and
+	/// folding the two into one flag would put a reversible decision inside a fold
+	/// rule that cannot be reversed.
+	function drawAmendControl(p, into) {
+		if (!canAmend(p)) return;
+		if (p.state !== 'open') return;
+		if (!_amending[String(p.n)]) {
+			var acts = document.createElement('div');
+			acts.className = 'imp-acts';
+			acts.appendChild(button('imp-note-copy', 'improve-amend-open',
+				tOr('social.amend', 'Revise this'),
+				tOr('social.amend_help', 'Replace what this proposal says. Everybody who reads it sees the new words.')));
+			into.appendChild(acts);
+			return;
+		}
+		var title = document.createElement('input');
+		title.type = 'text';
+		title.className = 'imp-box imp-amend-title';
+		title.value = p.title;
+		title.setAttribute('aria-label', tOr('social.amend_title_ph', 'The one line this proposal is about'));
+		title.placeholder = tOr('social.amend_title_ph', 'The one line this proposal is about');
+		into.appendChild(title);
+		try { if (drafts()) drafts().bind(title, draftKey('amend', p.n, 'title')); } catch (e) { /* storage blocked */ }
+
+		var body = document.createElement('textarea');
+		body.className = 'imp-box imp-amend-body';
+		body.rows = 4;
+		body.value = p.body;
+		body.setAttribute('aria-label', tOr('social.amend_body_ph', 'What happened, and what was expected instead'));
+		body.placeholder = tOr('social.amend_body_ph', 'What happened, and what was expected instead');
+		into.appendChild(body);
+		try { if (drafts()) drafts().bind(body, draftKey('amend', p.n, 'body')); } catch (e) { /* storage blocked */ }
+
+		var row = document.createElement('div');
+		row.className = 'imp-acts';
+		row.appendChild(button('imp-send', 'improve-amend-save',
+			tOr('social.amend_save', 'Publish the revision'),
+			tOr('social.amend_save_help', 'Send exactly what is in these two boxes. Nothing else goes with them.')));
+		row.appendChild(button('imp-keep', 'improve-amend-cancel', t('common.cancel')));
+		into.appendChild(row);
 	}
 
 	/// One proposal, as a row that opens what it names: a coloured dot, the
@@ -1390,6 +1830,15 @@
 			if (p.author) parts.push(tOr('social.by', 'from {who}', { who: p.author }));
 			if (p.opened) parts.push(fmtWhen(p.opened));
 			parts.push(tnOr('social.said_n', p.comments, '{n} reply', '{n} replies', { n: p.comments }));
+			// AN EMPTY LIST SAYS NOTHING HERE, and that is not the same as saying
+			// nothing about it: `[]` is the forge's answer that this proposal has
+			// never been revised, `null` is a listing record that was never asked.
+			// Drawing "revised 0 times" would be reporting a fact nobody wanted; the
+			// two silences differ where it matters, in `revisions` itself.
+			if (p.revisions && p.revisions.length) {
+				parts.push(tnOr('social.revised_n', p.revisions.length,
+					'revised once', 'revised {n} times', { n: p.revisions.length }));
+			}
 			if (p.build) parts.push(tOr('social.built_on', 'written on build {build}', { build: p.build }));
 			if (p.mark)  parts.push(tOr('social.closed_by', 'closed by mark {mark}', { mark: p.mark }));
 			facts.textContent = parts.join(' · ');
@@ -1429,6 +1878,20 @@
 			}
 
 			drawVoteControl(p, body);
+			// A REVISION CHANGES ITS TILE IN PLACE AND NEVER FLOATS TO THE TOP, and
+			// nothing here sorts. `_order` is the walk's order, which is the forge's:
+			// proposal number descending, with `from` a CEILING on the number rather
+			// than a since-cursor, because an offset does not stay stable while new
+			// proposals arrive. `changed` orders nothing, filters nothing and pages
+			// nothing -- the forge never consults it and neither does this.
+			//
+			// Anybody minded to add "recently revised first" here should not: a
+			// re-sort inside a page is right within the page and wrong across pages,
+			// and the symptom is indistinguishable from a stale cache. It would also
+			// be the wrong behaviour -- a revision is a correction to something
+			// already said, not new news, so a triage pass that revised eight
+			// proposals would bury everything genuinely new underneath them.
+			drawAmendControl(p, body);
 
 			// Saying something back. Offered only with a voice, because the forge
 			// refuses a comment without one and a box that cannot be sent is a box
@@ -1441,6 +1904,12 @@
 				reply.setAttribute('aria-label', tOr('social.reply_ph', 'Say something about this proposal.'));
 				if (typed[String(p.n)]) reply.value = typed[String(p.n)];
 				body.appendChild(reply);
+				// The redraw is already survived by `typed` above. THE RELOAD is what
+				// this adds, and it is the same words and the same loss: a reply
+				// three sentences in, and a refresh takes it. Bound after the row is
+				// in the tree so a restored value is on screen rather than on a node
+				// nobody has attached.
+				try { if (drafts()) drafts().bind(reply, draftKey('reply', p.n)); } catch (e) { /* storage blocked */ }
 				var acts = document.createElement('div');
 				acts.className = 'imp-acts';
 				acts.appendChild(button('imp-send', 'improve-comment',
@@ -1469,11 +1938,46 @@
 	}
 
 	function render() {
+		bindNoteBox();
 		drawContext();
 		drawAs();
 		drawVoice();
 		drawNotes();
+		// The verb whose object is the whole list, drawn by js/triage.js into its
+		// own host under the note box. Called rather than imported: a build
+		// without that file draws the panel it has always drawn, and this file
+		// keeps working when the drafting half is not there.
+		try { if (window.DaimondTriage) DaimondTriage.draw(); } catch (e) { log('the triage row would not draw', e); }
 		drawProps();
+	}
+
+	// ── WHAT IS HALF-WRITTEN SURVIVES A RELOAD ─────────────────
+	//
+	// A screen refresh used to empty the note box, and the words were gone with
+	// nothing anywhere saying anything had been lost. Reported by the owner:
+	// "I would expect all live text input to persist."
+	//
+	// THIS IS NOT THE QUEUE §4 FORBIDS, and the reasoning is in `drafts.js`'s
+	// header rather than restated here. In one line: nothing is kept for later
+	// SENDING, because nothing here sends -- `outgoing()` still reads the box at
+	// the moment of the press, and restoring the box is what puts the words in
+	// front of the person who has to press it. The draft is dropped by every
+	// path that empties the box, so a sent note is never also a draft of itself.
+
+	function drafts() { return window.DaimondDrafts || null; }
+
+	/// The key one box's draft is kept under. Namespaced by SURFACE, so that
+	/// `dropUnder` can forget everything belonging to one proposal when it is
+	/// gone without knowing how many boxes that proposal drew.
+	function draftKey() {
+		var parts = ['social'];
+		for (var i = 0; i < arguments.length; i++) parts.push(String(arguments[i]));
+		return parts.join('/');
+	}
+
+	function bindNoteBox() {
+		var d = drafts(), box = el('improve-box');
+		if (d && box) d.bind(box, draftKey('note'));
 	}
 
 	// ── A REFERENCE, DRAWN AS A CHIP ───────────────────────────
@@ -1867,16 +2371,46 @@
 			}
 			if (act === 'improve-vote')    { e.preventDefault(); vote(n, b.dataset.dir); return; }
 			if (act === 'improve-comment') { e.preventDefault(); comment(n); return; }
+			if (act === 'improve-amend-open')   { e.preventDefault(); _amending[String(n)] = 1; drawProps(); return; }
+			if (act === 'improve-amend-cancel') {
+				e.preventDefault();
+				delete _amending[String(n)];
+				// Cancelling is a decision not to revise, so the revision goes with it.
+				// A draft that survived Cancel would reappear the next time the control
+				// was opened, which is the app arguing with a person who said no.
+				try { if (drafts()) drafts().dropUnder(draftKey('amend', n)); } catch (err) { /* storage blocked */ }
+				drawProps();
+				return;
+			}
+			if (act === 'improve-amend-save')   { e.preventDefault(); amend(n); return; }
 		}
 	});
 
-	// The row that says what goes with a note is redrawn as the app moves around
-	// it: open a panel, change the palette, turn the phone, and the line has to
-	// say what is true when Send is pressed rather than what was true when the
-	// panel was opened.
-	['resize', 'daimond:layout', 'daimond:theme'].forEach(function (ev) {
-		try { window.addEventListener(ev, function () { if (!contextOff()) drawContext(); }); }
-		catch (e) { /* no window */ }
+	// The row that says what goes with a note is a PREVIEW of the line, kept in
+	// step while somebody is looking at it. What travels is redrawn and read at
+	// the press, in `outgoing()`, so being late here costs a stale preview and
+	// never a stale note.
+	//
+	// `daimond:layout` and `daimond:theme` used to be in this list and NOTHING IN
+	// THE TREE HAS EVER DISPATCHED EITHER -- `setTheme` in daimond.js writes the
+	// palette and says nothing, and the layout engine's `apply()` runs on every
+	// panel open with no announcement. So the two facts most likely to move under
+	// an open panel were the two this row never heard about, which is the defect
+	// the redraw in `outgoing()` closes.
+	try { window.addEventListener('resize', function () { if (!contextOff()) drawContext(); }); }
+	catch (e) { /* no window */ }
+
+	// And on the way to the button. A hand coming back to this panel to press Send
+	// passes through it, so the last state of the preview a person can read is the
+	// state that was in force when they pressed.
+	['pointerdown', 'focusin'].forEach(function (ev) {
+		try {
+			document.addEventListener(ev, function (e) {
+				var t = e.target;
+				if (!t || typeof t.closest !== 'function' || !t.closest('#panel-social')) return;
+				if (!contextOff()) drawContext();
+			}, true);
+		} catch (err) { /* no document */ }
 	});
 
 	// Another tab wrote a note, or an account switch emptied the store.
@@ -2056,6 +2590,10 @@
 				+ 'Tell the user: the Social panel has a control for setting one.';
 		}
 		if (w === 'unpermitted') {
+			if (a && a.on === 'amend') {
+				return 'only the person who opened that proposal may revise it, and this '
+					+ 'account did not open it. The forge wrote nothing.';
+			}
 			return 'this account\'s voice is not allowed to do that on the forge.';
 		}
 		if (w === 'throttled') {
@@ -2315,12 +2853,56 @@
 		vote:     vote,
 		comment:  comment,
 		voteBody: voteBody,
+		/// Revising one's own proposal: the PANEL ACTION, which reads the two boxes
+		/// under the open row. `forge.amend` below is the door it sends through.
+		amend:    amend,
 		/// What is drawn, for a verifier that wants the record rather than the
 		/// pixels.
 		proposal: function (n) { return _by[n] ? JSON.parse(JSON.stringify(_by[n])) : null; },
 		listing:  function () { return { total: _list.total, shown: _order.slice(), done: _list.done, err: _list.err ? _list.err.why : '' }; },
 		/// The store, for a verifier and for an account switch.
 		notes:    function () { return load().notes.slice(); },
-		reset:    function () { _st = null; _by = {}; _order = []; _open = {}; _list = { total: 0, lowest: null, done: false, loading: false, err: null, read: false }; },
+		/// Whether the forge holds this note's own characters, which is the one
+		/// question the cap in `save()` turns on. Published so a verifier asks it
+		/// rather than inferring it from which note survived.
+		delivered: delivered,
+		/// Mark notes as folded into a proposal a draft was written from. What
+		/// js/triage.js calls after the forge took a draft, and nothing else.
+		fold:     fold,
+		/// THE FORGE, AS THIS PANEL REACHES IT, for the module that drafts from the
+		/// whole list of notes at once.
+		///
+		/// One door and one copy of it. `route()`, `ask()` and `saying()` live
+		/// here; the nine refusal wordings exist once, and a second module holding
+		/// its own copy of them is a second copy to get wrong -- which is the same
+		/// argument `DaimondRefs` is kept in this file by. Every function here
+		/// takes CHARACTERS and returns the panel's own `{ ok, data }` or
+		/// `{ ok: false, why }`.
+		forge: {
+			/// Open a proposal from a draft's own characters, already cut in two.
+			open:    post,
+			/// Say something on one proposal.
+			say:     say,
+			/// Revise one proposal, from characters somebody else read. The door
+			/// `amend` sends through as well, so the panel and the triage plan
+			/// cannot drift apart about what a revision is.
+			amend:   revise,
+			/// What a refusal says on the screen, in the reader's language.
+			saying:  saying,
+			/// The proposals as they are drawn, newest first. A copy, so nothing
+			/// outside this file can move the record the panel is showing.
+			props:   function () { return _order.map(function (n) { return _by[n] ? JSON.parse(JSON.stringify(_by[n])) : null; }).filter(Boolean); },
+			/// Read the listing, and walk downwards through it.
+			list:    loadList,
+			/// Whether the forge has said this asker may revise proposal `n`.
+			/// ABSENT is not false: a proposal nobody asked about answers `false`
+			/// here and `false` from `askedAmend`, and the control is drawn on
+			/// neither.
+			mayAmend: function (n) { return canAmend(_by[n]); },
+		},
+		// `_amending` with the rest: a row left in amend mode across an account
+		// switch would offer somebody else's proposal with this account's boxes
+		// already open on it.
+		reset:    function () { _st = null; _by = {}; _order = []; _open = {}; _amending = {}; _list = { total: 0, lowest: null, done: false, loading: false, err: null, read: false }; },
 	};
 })();

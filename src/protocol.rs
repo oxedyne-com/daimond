@@ -858,6 +858,82 @@ impl UserConfig {
 }
 
 
+/// Make a restored conversation legal: every tool call answered, every tool reply
+/// answering something.
+///
+/// The provider's rule is not a preference.  An assistant turn bearing `tool_calls`
+/// must be followed by one `tool` message per call, and a `tool` message must follow
+/// the assistant turn that asked for it; a conversation that breaks either is
+/// rejected WHOLE, so one lost reply from one turn last Tuesday takes every turn
+/// after it with it.  A store merged across tabs, synced between devices and
+/// restored from backups will eventually hand over such a list, so it is repaired
+/// here rather than trusted.
+///
+/// Two edits, and only these two: a call with no reply in the run of `tool` messages
+/// directly after it is dropped from the assistant turn (its prose stays), and a
+/// reply that answers no call in the assistant turn directly before it is dropped
+/// entirely.  Nothing is reordered and nothing is invented — a call that lost its
+/// result is a call the model must be allowed to make again, not one to answer with
+/// a guess.
+///
+///
+/// **TWO CALLERS SINCE 2026-08-28, and that is why it lives here rather than beside the restore.**
+/// [`crate::wasm::app::DaimondApp::restore_session`] repairs a conversation coming back from the
+/// store, and [`crate::agent::Agent`] repairs the round it is abandoning when a tool call dies on
+/// the road: same rule, same edits, and the two must not be allowed to differ.  They did differ
+/// for as long as only the first existed -- a live session held whatever the turn left in it, and
+/// only a reload put it right.
+///
+/// # Arguments
+/// * `msgs` - The conversation to repair, oldest first.
+pub fn pair_up(msgs: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    let mut out: Vec<ChatMessage> = Vec::with_capacity(msgs.len());
+    let mut i = 0usize;
+    while i < msgs.len() {
+        match &msgs[i] {
+            ChatMessage::Assistant { content, tool_calls } if !tool_calls.is_empty() => {
+                // The run of tool replies that directly follows, which is the only
+                // place a reply to this turn may legally sit.
+                let mut answered: Vec<String> = Vec::new();
+                let mut j = i + 1;
+                while j < msgs.len() {
+                    match &msgs[j] {
+                        ChatMessage::Tool { tool_call_id, .. } => {
+                            answered.push(tool_call_id.clone());
+                            j += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                let kept: Vec<ToolCall> = tool_calls.iter()
+                    .filter(|tc| answered.iter().any(|id| id == &tc.id))
+                    .cloned()
+                    .collect();
+                out.push(ChatMessage::Assistant {
+                    content:    content.clone(),
+                    tool_calls: kept.clone(),
+                });
+                // Then the replies, keeping only those that answer a call we kept.
+                for k in (i + 1)..j {
+                    if let ChatMessage::Tool { tool_call_id, content } = &msgs[k] {
+                        if kept.iter().any(|tc| &tc.id == tool_call_id) {
+                            out.push(ChatMessage::Tool {
+                                tool_call_id: tool_call_id.clone(),
+                                content:      content.clone(),
+                            });
+                        }
+                    }
+                }
+                i = j;
+            }
+            // A tool reply reached here without an asking turn in front of it.
+            ChatMessage::Tool { .. } => { i += 1; }
+            other => { out.push(other.clone()); i += 1; }
+        }
+    }
+    out
+}
+
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Agent events                                                   │
 // └───────────────────────────────────────────────────────────────┘
@@ -902,6 +978,20 @@ pub enum AgentEvent {
     /// worker that is re-routed by it needs to name the model it left, and a conversation that
     /// cannot be re-routed at all needs to name the model that would not look.
     Unseeable { images: usize, model: String },
+    /// A tool call is being made again because the ROAD failed under it, not the far end.
+    ///
+    /// Its own variant and not [`Text`](Self::Text), for the reason [`Compacted`](Self::Compacted)
+    /// is: this is something the APP is doing.  The model did not say it and -- the whole point
+    /// of the mechanism -- will never read it.  A road failure that reached the model as a tool
+    /// result is what produced "I can't get through to the web right now to look this up" on a
+    /// real iPhone, so nothing about one may enter the conversation.
+    ///
+    /// It exists because the alternative is silence.  The ladder can climb for up to two minutes,
+    /// and a turn retrying quietly is indistinguishable from a turn that has hung -- which is the
+    /// one thing a spinner cannot say.  The provider ladder already prints its own banner
+    /// (`[daimond: …; retrying in …]`, src/llm.rs); this is the same courtesy one layer down, in
+    /// a form the page can draw as furniture rather than as prose.
+    Roading { name: String, attempt: u32, of: u32, wait_ms: u64 },
     /// The provider stopped generating because the reply reached the output limit.
     ///
     /// Said outright rather than inferred.  A tool call cut at the limit arrives as
@@ -919,11 +1009,18 @@ pub enum AgentEvent {
     /// for these tokens and they decide the answer, so drawing none of them was the app
     /// holding something back that was already bought.
     ///
-    /// Delivered WHOLE, at the end of the round that produced it, from
-    /// [`ChatOnceResponse::thinking`] -- not streamed.  The tile is shut by default, so
-    /// there is nothing for a stream to fill: chunking it would be work whose only visible
-    /// effect is on a surface nobody is looking at.  It arrives before the round's text is
-    /// finished being read, so the order on screen is still working-then-answer.
+    /// Delivered as it ARRIVES, one delta per event, from the moment the model starts
+    /// thinking.  It used to be sent whole at the end of the round, on the reasoning that a
+    /// shut tile has nothing for a stream to fill -- which was true of the tile and wrong
+    /// about the wait.  A GLM round measured on 2026-08-28 spent 230 of its 300 output
+    /// tokens reasoning, and a DeepSeek round spent 84 seconds and 1.8 MB on it; all of
+    /// that was time the page had nothing to show, because the one thing happening was the
+    /// thing being held back.  So the tile opens as the first delta lands and fills while
+    /// the round runs.  A reader who wants none of it collapses it, and it stays collapsed.
+    ///
+    /// Consecutive events belong to ONE tile.  The page appends them to the tile it is
+    /// filling and closes it off when anything else is drawn, so a round's working is one
+    /// disclosure and not four hundred.
     ///
     /// Empty for every endpoint that does not return reasoning, which is most of them.  The
     /// tokens are billed either way, so a provider that thinks and says nothing costs the
@@ -1010,6 +1107,13 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("unseeable"));
                 m.insert(dat!("images"), Dat::U64(*images as u64));
                 m.insert(dat!("model"), dat!(model.clone()));
+            }
+            Self::Roading { name, attempt, of, wait_ms } => {
+                m.insert(dat!("type"),    dat!("roading"));
+                m.insert(dat!("name"),    dat!(name.clone()));
+                m.insert(dat!("attempt"), Dat::U64(*attempt as u64));
+                m.insert(dat!("of"),      Dat::U64(*of      as u64));
+                m.insert(dat!("wait_ms"), Dat::U64(*wait_ms));
             }
             Self::Truncated => {
                 m.insert(dat!("type"), dat!("truncated"));
@@ -1199,6 +1303,108 @@ fn pack(
 
 /// The key the files that are not text travel under.
 pub const PACK_BINARY: &str = "binary";
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ What a pack will weigh, without building it                    │
+// └───────────────────────────────────────────────────────────────┘
+
+// The JSON an entry costs beyond its path and its content: two pairs of quotes,
+// a colon and a comma.
+pub const PACK_ENTRY_OVERHEAD: u64 = 6;
+
+/// How one file's bytes are weighed when a pack is estimated ahead of being
+/// built.
+///
+/// Not a guess about content -- a guess about PUNCTUATION, which is the only
+/// thing [`json_escape`](crate::llm::json_escape) charges for. A quote, a
+/// backslash, a newline, a tab or a return costs two bytes instead of one, and a
+/// control character six. Everything else, multibyte included, travels as
+/// itself.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Weigh {
+	Base64,		// not text, so `ceil(n/3) * 4` exactly -- an arithmetic fact, not an estimate
+	Quoted,		// three for two: JSON, where every quote doubles
+	Markup,		// five for four: attribute-dense but newline-broken
+	Prose,		// nine for eight: punctuation is rare in it
+}
+
+/// How a file with this path will be carried, judged from its extension alone.
+///
+/// **Unknown means [`Weigh::Quoted`]**, the heaviest of the four, so a file kind
+/// nobody has classified is never weighed lighter than it might travel.
+fn weigh(path: &str) -> Weigh {
+	let ext = match path.rfind('.') {
+		// A dot in a directory name is not this file's extension.
+		Some(at) if !path[at..].contains('/')	=> &path[at + 1..],
+		_					=> return Weigh::Quoted,
+	};
+	match ext {
+		"html" | "htm"					=> Weigh::Markup,
+		"md" | "txt"					=> Weigh::Prose,
+		// A Diamond's own patches, and the shapes a worker leaves beside them.
+		// Anything not named here that is nonetheless binary is weighed as
+		// quoted text instead, which is heavier than base64 and so still safe.
+		"jpatch" | "hpatch"				=> Weigh::Base64,
+		"png" | "jpg" | "jpeg" | "gif" | "webp"		=> Weigh::Base64,
+		"pdf" | "zip" | "docx" | "xlsx" | "pptx"	=> Weigh::Base64,
+		"wasm" | "woff" | "woff2" | "ttf" | "otf"	=> Weigh::Base64,
+		"mp3" | "mp4" | "m4a" | "webm" | "mov"		=> Weigh::Base64,
+		// `.json`, `.jsonl`, the extensionless log, and everything unrecognised.
+		_						=> Weigh::Quoted,
+	}
+}
+
+/// What one file will weigh inside a pack, from its path and its size on disk.
+///
+/// **This is the estimate `export_size` spends a sync budget against, and every
+/// file used to be weighed at four bytes for three as though it travelled
+/// base64.** That figure was wrong in both directions at once, which is why it
+/// is now four figures and not one.
+///
+/// TOO HEAVY FOR MARKUP, WHICH IS THE BULK OF A DIAMOND. Valid UTF-8 travels as
+/// ITSELF through JSON, so what escaping adds to a page is a few per cent, not
+/// thirty-three. Over the 78 HTML files in this repository the cost runs from
+/// 1.025x to 1.126x, median 1.056x; over its markdown, at most 1.026x. The cost
+/// of the old figure was not theoretical: thirteen Diamonds at the page ceiling
+/// with five edits each, weighed that way, admitted five where the pack itself
+/// admitted seven -- two Diamonds refused a sync they would have fitted, and
+/// told the user they had been left behind.
+///
+/// FIVE-FOR-FOUR AND NOT NINE-FOR-EIGHT, because nine-for-eight was tried and
+/// fails: `www/console/index.html` escapes at 1.1262x and comes out twenty-nine
+/// bytes short of what the pack charges for it, which is the one direction this
+/// may not be wrong in. The margin over the worst real file is the price of the
+/// answer being safe, and it is why the estimate still reads high for a page
+/// that escapes as lightly as a capp's.
+///
+/// TOO LIGHT FOR JSON, WHICH NOBODY HAD NOTICED. A JSON file is dense in quotes
+/// and every one of them doubles. `lanes/diet.json` in the shipped capp measures
+/// 1.302x and `{"a":"b"}` measures 1.47x, so four-for-three was never a margin
+/// there -- it was an under-estimate, and the test that found it is
+/// `test_json_is_weighed_heavier_than_base64_because_every_quote_doubles`.
+/// Three-for-two covers both.
+///
+/// AND NOT ACTUALLY BASE64 EITHER, because base64 rounds up to a multiple of
+/// four and pads: eight bytes cost twelve, where four-for-three said ten. The
+/// binary figure is now the arithmetic rather than a ratio.
+///
+/// AN ESTIMATE, NOT A PROOF. What it has to be right about is the direction a
+/// REFUSAL points: a Diamond this says will not fit is never built, so that
+/// answer has to hold. One it lets through is measured again exactly, against
+/// the pack that actually travels, so an over-optimistic answer costs one
+/// Diamond materialised and dropped -- which is what every Diamond cost before
+/// this existed -- and never a parcel over the door.
+pub fn packed_weight(path: &str, size: u64) -> u64 {
+	let bytes = match weigh(path) {
+		// `ceil(n / 3) * 4`, which is what base64 of n bytes is.
+		Weigh::Base64	=> size.saturating_add(2) / 3 * 4,
+		Weigh::Quoted	=> size.saturating_mul(3) / 2,
+		Weigh::Markup	=> size.saturating_mul(5) / 4,
+		Weigh::Prose	=> size.saturating_mul(9) / 8,
+	};
+	bytes.saturating_add(path.len() as u64).saturating_add(PACK_ENTRY_OVERHEAD)
+}
+
 
 /// The bytes of one file from a pack's `binary` map.
 ///
@@ -1582,6 +1788,172 @@ mod content_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── What a pack will weigh, without building it ──
+
+    /// The shipped Log Life capp page, and the heaviest-escaping HTML in this
+    /// repository -- 1.126x, against a median of 1.056x over its 78 HTML files.
+    /// A factor that holds for the worst one holds for the rest.
+    const CAPP_PAGE:  &str = include_str!("../www/capps/lifelog/crystal.html");
+    const DENSE_HTML: &str = include_str!("../www/console/index.html");
+
+    /// What a pack really charges for one file: the pack with it, less the pack
+    /// without it.
+    ///
+    /// Measured through [`pack_diamond`] rather than by a second copy of its
+    /// rules, because a test that re-implements the thing it is checking agrees
+    /// with the bug as readily as with the code.
+    fn charged(path: &str, body: &[u8]) -> u64 {
+        let with = pack_diamond("d", 1, &[(path.to_string(), body.to_vec())]);
+        let without = pack_diamond("d", 1, &[]);
+        (with.len() - without.len()) as u64
+    }
+
+    /// **The property the sync budget rests on.** A file the estimate weighs is
+    /// never weighed lighter than the pack will charge for it -- so a Diamond
+    /// the estimate refuses really would not have fitted, and that Diamond is
+    /// the one that is never built.
+    #[test]
+    fn test_no_file_is_weighed_lighter_than_the_pack_charges_for_it() {
+        let log = b"{\"id\":\"a\",\"ts\":1,\"kind\":\"fold\",\"note\":\"a \\\"quoted\\\" thing\"}\n";
+        let cases: Vec<(&str, &[u8])> = vec![
+            ("crystal.html",              CAPP_PAGE.as_bytes()),
+            ("versions/0021.html",        DENSE_HTML.as_bytes()),
+            ("crystal.json",              br#"{"title":"A crystal","notes":["one","two"]}"#),
+            ("crystal.md",                b"# A crystal\n\nWords, a \"quote\", and a tab\there.\n"),
+            (".daimond/log",              log),
+            (".daimond/links.jsonl",      br#"{"from":"a","to":"b","rel":"cites"}"#),
+            ("versions/0022.hpatch",      &[0u8, 0xff, 0x41, 0x0a, 0x22, 0x5c, 0x7f, 0x80]),
+            ("notes.txt",                 b"plain words, and a newline\n"),
+            ("worker/shot.png",           &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+            ("worker/no_extension",       b"could be anything at all"),
+            ("worker/asset.png",          &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]),
+            ("odd.dir.name/inside.html",  b"<p>a dot in the directory is not the file's</p>"),
+        ];
+        for (path, body) in cases {
+            let want = charged(path, body);
+            let got = packed_weight(path, body.len() as u64);
+            assert!(
+                got >= want,
+                "'{}' is weighed at {} and the pack charges {}, so a Diamond holding it could be \
+                refused a parcel it would have fitted", path, got, want);
+        }
+    }
+
+    /// **The consequence, stated as the thing the user loses.** A capp Diamond at
+    /// the page ceiling, weighed the old way, was refused parcels it would have
+    /// fitted. The test is not how close the estimate is; it is how many
+    /// Diamonds a 4 MiB budget admits.
+    #[test]
+    fn test_more_diamonds_fit_the_parcel_than_the_old_weighing_admitted() {
+        // A Diamond at the page ceiling with a handful of edits: the live page,
+        // two keyframes, the patches between them, the memory and its snapshots.
+        let page = CAPP_PAGE.len() as u64 * 5;               // roughly the 512 KiB ceiling
+        let mut files: Vec<(String, u64)> = vec![
+            ("crystal.html".to_string(),      page),
+            ("versions/0001.html".to_string(), page),
+            ("crystal.json".to_string(),      15_000),
+            ("versions/0001.json".to_string(), 15_000),
+            (".daimond/log".to_string(),      4_000),
+        ];
+        for v in 2..=6u64 {
+            files.push((fmt!("versions/{:04}.hpatch", v), 900));
+            files.push((fmt!("versions/{:04}.jpatch", v), 300));
+        }
+        let one_new: u64 = files.iter().map(|(p, n)| packed_weight(p, *n)).sum();
+        let one_old: u64 = files.iter()
+            .map(|(p, n)| n.saturating_mul(4) / 3 + p.len() as u64).sum();
+        // What the pack really charges for the same set, measured through it.
+        let bodies: Vec<(String, Vec<u8>)> = files.iter().map(|(p, n)| {
+            let body = if p.ends_with(".html") {
+                CAPP_PAGE.as_bytes().iter().cycle().take(*n as usize).cloned().collect()
+            } else if p.ends_with("patch") {
+                (0..*n).map(|i| (i % 251) as u8).collect()
+            } else {
+                let mut b = Vec::new();
+                while (b.len() as u64) < *n { b.extend_from_slice(br#"{"k":"v","j":"w"},"#); }
+                b.truncate(*n as usize);
+                b
+            };
+            (p.clone(), body)
+        }).collect();
+        let one_real = (pack_diamond("d", 1, &bodies).len()
+            - pack_diamond("d", 1, &[]).len()) as u64;
+        let budget = 4u64 * 1024 * 1024;
+        let fits = |each: u64| if each == 0 { 0 } else { budget / each };
+        assert!(
+            one_new >= one_real,
+            "the new weighing is optimistic: {} against a real {}", one_new, one_real);
+        assert!(
+            fits(one_new) > fits(one_old),
+            "the same store admits {} Diamonds under the new weighing and {} under the old, so \
+            nothing was recovered (real {})", fits(one_new), fits(one_old), fits(one_real));
+        assert_eq!(
+            fits(one_new), fits(one_real),
+            "the new weighing admits {} where the pack itself admits {}",
+            fits(one_new), fits(one_real));
+    }
+
+    /// **The half nobody had noticed.** Four-for-three was not a margin for
+    /// JSON, it was an under-estimate: every quote doubles, so a quote-dense
+    /// object costs more than base64 of the same bytes would.
+    #[test]
+    fn test_json_is_weighed_heavier_than_base64_because_every_quote_doubles() {
+        let dense = br#"{"a":"b","c":"d","e":"f","g":"h","i":"j","k":"l"}"#;
+        let want = charged("crystal.json", dense);
+        let base64ish = dense.len() as u64 * 4 / 3 + "crystal.json".len() as u64;
+        assert!(
+            want > base64ish,
+            "quote-dense JSON was expected to cost more than four for three; it charged {} where \
+            four for three is {}", want, base64ish);
+        assert!(
+            packed_weight("crystal.json", dense.len() as u64) >= want,
+            "weighed {} against a charge of {}",
+            packed_weight("crystal.json", dense.len() as u64), want);
+    }
+
+    /// Base64 rounds up to a multiple of four and pads, so four-for-three is
+    /// short for every length that is not a multiple of three.
+    #[test]
+    fn test_a_patch_is_weighed_by_the_arithmetic_of_base64_and_not_by_a_ratio() {
+        for n in 1..=64usize {
+            let body: Vec<u8> = (0..n).map(|i| if i == 0 { 0xff } else { (i % 251) as u8 }).collect();
+            let want = charged("versions/0002.hpatch", &body);
+            let got = packed_weight("versions/0002.hpatch", n as u64);
+            assert!(got >= want, "{} bytes weighed {} against a charge of {}", n, got, want);
+        }
+    }
+
+    /// A file kind nobody has classified is weighed heavily, so a new one
+    /// arriving in a Diamond cannot quietly be under-weighed.
+    ///
+    /// The two roads to that answer are both walked: an extension the match
+    /// does not know, and a name with no extension for it to read at all. The
+    /// first list here was all of the second kind, which left the arm that
+    /// actually decides an unknown EXTENSION covered by nothing -- found by
+    /// `dev/breakproof_deltalog.sh`, which changed that arm and watched this
+    /// test stay green.
+    #[test]
+    fn test_an_unknown_kind_is_weighed_at_the_heavy_figure() {
+        let n = 30_000u64;
+        let heavy = n * 4 / 3;
+        let paths = [
+            // An extension the match does not know.
+            "worker/data.sqlite", "worker/thing.bin", "crystal.json",
+            ".daimond/links.jsonl", "worker/notes.rtf",
+            // And no extension to read.
+            "worker/thing", ".daimond/log", "a.b/c",
+            // A known-binary kind, which must still not come out under base64.
+            "worker/thing.wasm",
+        ];
+        for path in paths {
+            let got = packed_weight(path, n);
+            assert!(
+                got >= heavy,
+                "'{}' is weighed at {} and an unclassified file must be weighed at least {}",
+                path, got, heavy);
+        }
+    }
 
     #[test]
     fn test_chat_message_roundtrip() {

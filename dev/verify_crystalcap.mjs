@@ -14,7 +14,7 @@
 // file rather than restated — because a page is bigger than a summary and NEITHER
 // IS EXEMPT. This file pinned one ceiling on one file, so a page could be any size
 // at all and nothing here would have noticed: the page rides in every `versions/` snapshot where it changed and
-// shares SYNC_DIAMONDS_MAX (6 MB) with the memory, so exempting presentation
+// shares SYNC_DIAMONDS_MAX (4 MB) with the memory, so exempting presentation
 // voids the cap's stated purpose. Worse, the page is written by a MODEL, which
 // is the one author in this app with no sense of how big a file is.
 //
@@ -97,6 +97,83 @@ if (!(DATA_CAP < PAGE_CAP)) {
 		+ 'These are meant to be different numbers for different jobs; see src/tools.rs.');
 	process.exit(2);
 }
+// AND THE FIGURE THE SETTINGS PANE SHOWS, read the same way and for the same reason.
+//
+// `DEFAULT_CRYSTAL_KB` and `DEFAULT_CRYSTAL_PAGE_KB` in `daimond.js` are a hand-kept copy of the
+// two constants above, used to label the "Default" row of each pulldown. Nothing set them from the
+// engine and nothing checked them, so when the page ceiling was raised to 128 KiB on 2026-08-13 the
+// label went on saying 64 KB and kept saying it for a fortnight. That is worse than having no label:
+// the one place in the product that names the ceiling named half of it, and the author of a capp
+// that met the real ceiling had to establish it by experiment. This runs before the browser does,
+// because a number that disagrees with the engine is wrong whatever the app then does with it.
+const labelOf = (name) => {
+	const src = fs.readFileSync(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8');
+	const m = new RegExp('var\\s+' + name + '\\s*=\\s*(\\d+)\\s*;').exec(src);
+	if (!m) throw new Error('verify_crystalcap: ' + name + ' not found in www/js/daimond.js');
+	return Number(m[1]) * 1024;
+};
+for (const [label, cap, engine] of [
+	['DEFAULT_CRYSTAL_KB',      labelOf('DEFAULT_CRYSTAL_KB'),      DATA_CAP],
+	['DEFAULT_CRYSTAL_PAGE_KB', labelOf('DEFAULT_CRYSTAL_PAGE_KB'), PAGE_CAP],
+]) {
+	if (cap !== engine) {
+		console.error('verify_crystalcap: ' + label + ' in www/js/daimond.js says ' + cap
+			+ ' bytes, and the engine enforces ' + engine + '. The settings pane would tell the '
+			+ 'user a ceiling that is not the one refusing their writes; see src/tools.rs.');
+		process.exit(2);
+	}
+}
+
+// AND THE FIGURE THE GUIDE SHOWS, which is the copy a non-technical reader meets.
+//
+// `www/guide/capps.html` gives the page ceiling a card of its own, headed with the number, and
+// `dev/guide-i18n/_source.json` carries that heading as a translatable run. The block above was
+// written after the settings label had spent a fortnight naming half the real ceiling; the guide
+// was a THIRD copy of the same number, it was left at 128 KB when the engine went to 512 KiB, and
+// nothing here read it. A reader who trusts the guide over the refusal has no way to find out.
+// Both are checked, because a corrected page with a stale bank entry ships the old figure to
+// seven other languages.
+const guideCap = (label, file, rel, text) => {
+	const m = /(\d+)\s*(K|M)i?B/i.exec(text);
+	if (!m) {
+		console.error('verify_crystalcap: ' + label + ' names no size in ' + rel + '. The guide\'s '
+			+ 'page-ceiling card is how a reader learns the number; see www/guide/capps.html.');
+		process.exit(2);
+	}
+	return Number(m[1]) * (m[2].toUpperCase() === 'M' ? 1024 * 1024 : 1024);
+};
+{
+	// The card is found by the control it names rather than by its heading id, so renumbering the
+	// page's anchors does not silently take the check with it.
+	const rel  = path.join('www', 'guide', 'capps.html');
+	const html = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+	const card = /<div class="card">\s*<h3[^>]*>([^<]*)<\/h3>\s*<p>(?:(?!<\/div>)[\s\S])*?Page size limit[\s\S]*?<\/div>/i.exec(html);
+	if (!card) {
+		console.error('verify_crystalcap: no card in ' + rel + ' names "Page size limit", so the '
+			+ 'guide either stopped naming the page ceiling or renamed the setting it points at.');
+		process.exit(2);
+	}
+	const heading = card[1];
+	const shown   = guideCap('the guide\'s page-ceiling card', rel, rel, heading);
+	if (shown !== PAGE_CAP) {
+		console.error('verify_crystalcap: ' + rel + ' heads its page-ceiling card "' + heading.trim()
+			+ '" (' + shown + ' bytes), and the engine enforces ' + PAGE_CAP + '. This is the one '
+			+ 'place a non-technical reader is told the ceiling; see src/tools.rs.');
+		process.exit(2);
+	}
+	// And the translatable run behind it, which is what the seven locale pages are built from.
+	const bankRel = path.join('dev', 'guide-i18n', '_source.json');
+	const bank    = JSON.parse(fs.readFileSync(path.join(ROOT, bankRel), 'utf8'));
+	const runs    = (bank['capps.html'] || []).filter((s) => /^\s*\d+\s*(K|M)i?B\s*$/i.test(s));
+	if (runs.length !== 1 || guideCap('the bank\'s copy', bankRel, bankRel, runs[0]) !== PAGE_CAP) {
+		console.error('verify_crystalcap: ' + bankRel + ' holds ' + JSON.stringify(runs) + ' where '
+			+ 'the guide\'s page-ceiling heading should be, and the engine enforces ' + PAGE_CAP
+			+ '. Run `node dev/guide_i18n.mjs extract` after editing the English page, or the '
+			+ 'translations keep shipping the old figure.');
+		process.exit(2);
+	}
+}
+
 const KIB     = (n) => (n / 1024) + ' KiB';
 const MID_LEN = DATA_CAP + Math.floor((PAGE_CAP - DATA_CAP) / 2);	// over memory, under page
 const BIG_LEN = PAGE_CAP + 16 * 1024;								// over page as well

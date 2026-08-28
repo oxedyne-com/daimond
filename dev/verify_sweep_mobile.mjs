@@ -362,6 +362,9 @@ function PROBE(arg) {
 		bodySW: document.body.scrollWidth,
 		topbar: rectOf('.topbar'),
 		mnav: rectOf('#mnav'),
+		// The bar's buttons are the panel chips since 2026-08-28; `#mnav button`
+		// still names them, which is why the target-size and contrast checks below
+		// needed no change when the four destinations went.
 		mnavBtns: [...document.querySelectorAll('#mnav button')].filter(b => shown(b)).map(b => {
 			const r = b.getBoundingClientRect();
 			return { t: (b.textContent || '').trim(), w: Math.round(r.width), h: Math.round(r.height) };
@@ -593,7 +596,7 @@ async function setState(page, state) {
 	await sleep(150);
 	switch (state) {
 		case 'chat':
-			await page.evaluate(() => { const b = document.querySelector('#mnav button[data-mp="ai"]'); if (b) b.click(); });
+			await page.evaluate(() => { const b = document.querySelector('#mnav .ptag[data-panel="ai"]'); if (b) b.click(); });
 			break;
 		case 'drawer':
 			if (BREAK !== 'drawer') {
@@ -623,13 +626,13 @@ async function setState(page, state) {
 			await page.evaluate(() => { DaimondPanels.hide('tools'); DaimondPanels.show('tools'); });
 			break;
 		case 'files':
-			await page.evaluate(() => { const b = document.querySelector('#mnav button[data-mp="work"]'); if (b) b.click(); });
+			await page.evaluate(() => { const b = document.querySelector('#mnav .ptag[data-panel="work"]'); if (b) b.click(); });
 			break;
 		case 'mail':
-			await page.evaluate(() => { const b = document.querySelector('#mnav button[data-mp="mail"]'); if (b) b.click(); });
+			await page.evaluate(() => { const b = document.querySelector('#mnav .ptag[data-panel="mail"]'); if (b) b.click(); });
 			break;
 		case 'agents':
-			await page.evaluate(() => { const b = document.querySelector('#mnav button[data-mp="agents"]'); if (b) b.click(); });
+			await page.evaluate(() => { const b = document.querySelector('#mnav .ptag[data-panel="agents"]'); if (b) b.click(); });
 			break;
 		case 'desktop':
 			break;
@@ -1063,7 +1066,7 @@ for (const a of safeArea) {
 	if (!a.sheet || !a.mnav || !a.topbar) continue;
 	if (a.sheet.t < a.topbar.b) {
 		safeFindings.push(`${a.width} ${a.skin}: with a ${INSET}px bottom inset the FULL sheet's top is ${a.sheet.t}px, `
-			+ `under the top bar (bottom ${a.topbar.b}px) — mobile.js maxH() spends 58px for the bar but the bar is ${a.mnav.h}px with the inset.`);
+			+ `under the top bar (bottom ${a.topbar.b}px) — mobile.js maxH() should be spending ${a.mnav.h}px for the bar, which is what it measures.`);
 	}
 	if (a.sheet.b > a.mnav.t + 1) {
 		safeFindings.push(`${a.width} ${a.skin}: with a ${INSET}px inset the sheet foot (${a.sheet.b}) overlaps the bar top (${a.mnav.t}).`);

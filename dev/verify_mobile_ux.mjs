@@ -121,7 +121,8 @@ check('update-chip: click gives feedback (not inert)', await page.evaluate(() =>
 }), await page.evaluate(() => document.getElementById('update-chip').title));
 
 // ── 8. Files toolbar: real icons, and a new-file dialog with a ≥16px field ──
-await page.evaluate(() => { const b = [...document.querySelectorAll('#mnav button')].find(x => x.dataset.mp === 'work'); if (b) b.click(); });
+// The footer is the chip row since 2026-08-28; a destination is its chip.
+await page.evaluate(() => { const b = document.querySelector('#mnav .ptag[data-panel="work"]'); if (b) b.click(); });
 await sleep(400);
 check('files: toolbar icons are SVG, not emoji', await page.evaluate(() => {
 	// NO `up`. The parent-folder button is gone, at the owner's own request -- "I hate how

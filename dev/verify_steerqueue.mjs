@@ -58,8 +58,8 @@ const BREAKS = {
 	// The defect, restored exactly: busy means do nothing at all.
 	swallow: [{
 		file: 'js/daimond.js',
-		find: '\t\tif (crystalBusy) {',
-		with: '\t\tif (crystalBusy) { return; } if (false) {',
+		find: '\t\tif (diamondBusy(currentDiamond.id)) {',
+		with: '\t\tif (diamondBusy(currentDiamond.id)) { return; } if (false) {',
 	}],
 	// THERE IS NO `queueall` BREAK, AND THAT IS A FINDING RATHER THAN A GAP.
 	//

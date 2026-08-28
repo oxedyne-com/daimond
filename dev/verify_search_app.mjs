@@ -655,7 +655,11 @@ const trySearch = (q, opts) => p.evaluate(async ({ q, opts }) => {
 	check(d1.hasNo && /\S/.test(d1.ok),
 		'and it offers both answers, each with words on it', JSON.stringify(d1.ok));
 
-	await p.evaluate(() => document.querySelector('.modal.dlg .dlg-cancel').click());
+	// PRESSED IF IT IS THERE. The dialog is the thing under test, so it is absent
+	// exactly when this section is failing -- and a bare `.click()` on the missing
+	// card threw, which took the whole run down at the point it had most to say.
+	// `--unbuilt` could not finish for that reason and reported nothing.
+	await p.evaluate(() => { const b = document.querySelector('.modal.dlg .dlg-cancel'); if (b) b.click(); });
 	await p.waitForTimeout(300);
 	check(await p.evaluate(() => window.__settled) === 'deny',
 		'declining refuses the search');
@@ -666,7 +670,7 @@ const trySearch = (q, opts) => p.evaluate(async ({ q, opts }) => {
 	await ask(Q);
 	await p.waitForTimeout(400);
 	check((await dialogNow()).shown, 'a second search asks again rather than riding the first yes');
-	await p.evaluate(() => document.querySelector('.modal.dlg .dlg-ok').click());
+	await p.evaluate(() => { const b = document.querySelector('.modal.dlg .dlg-ok'); if (b) b.click(); });
 	await p.waitForTimeout(300);
 	check(await p.evaluate(() => window.__settled) === 'allow', 'and allowing lets it through');
 
@@ -676,7 +680,7 @@ const trySearch = (q, opts) => p.evaluate(async ({ q, opts }) => {
 	check(d3.shown, 'and the one after THAT asks too — consent is per search, not per host');
 	check(d3.body.indexOf('a third, quite different question') !== -1,
 		'showing the new query and not the one already answered for');
-	await p.evaluate(() => document.querySelector('.modal.dlg .dlg-cancel').click());
+	await p.evaluate(() => { const b = document.querySelector('.modal.dlg .dlg-cancel'); if (b) b.click(); });
 	await p.waitForTimeout(300);
 
 	// An empty query is nothing to authorise and nothing to show, so it is refused
@@ -878,6 +882,51 @@ out.push('--- self-test: breaking each property in the live page');
 	red(!!r && !claimsFree(r.honest, r.general) && claimsFree(r.forged, r.general),
 		'an engine with no figure that is told it is free IS caught, while the general '
 		+ 'sentence about vendors in the same paragraph is not mistaken for one');
+}
+
+// (h) THE PAUSE VERB, AND WHAT KEEPS IT ALIVE. §4 above presses pause on the Web
+// control and watches `root/web` go into the paused set. That only works because
+// the leaf is marked `stoppable` in `pauseTree`, and nothing but a comment said
+// so until this ran: on 2026-08-28 the light started counting ARMED leaves, and
+// `root/web` arms nothing — a page is fetched because a turn asked for one — so
+// its control read `idle`, which greys the pause verb. The leaf could be released
+// from its own control and never held from it, for a day, with the light saying
+// nothing was wrong because the light was not what broke.
+//
+// The mark is taken off HERE, in the live page, by hiding it from the one reader
+// — `paintPause` asks `DaimondPause._core.findNode` — and the verb must die with
+// it. Then it is put back, so this proves the mark and not the patch.
+{
+	const r = await p.evaluate(async () => {
+		try { DaimondPanels.show('web'); DaimondPanels.reflow(); } catch (e) { /* no panels */ }
+		const core = DaimondPause._core, real = core.findNode;
+		const verb = () => {
+			const b = document.querySelector('#panel-web .pptw[data-pause-node="root/web"] .pptw-pause');
+			return b ? { there: true, disabled: !!b.disabled, press: () => b.click() } : { there: false };
+		};
+		// A repaint without a change of state: set() announces only when the set
+		// really moves, so the leaf is held and released to bring the paint round.
+		const repaint = () => { DaimondPause.set('root/web', false); DaimondPause.set('root/web', true); };
+		DaimondPause.set('root', true);
+		const live = verb().disabled;
+		core.findNode = function (tree, id) {
+			const n = real(tree, id);
+			if (!n || id !== 'root/web') return n;
+			const copy = {}; for (const k in n) if (k !== 'stoppable') copy[k] = n[k];
+			return copy;
+		};
+		repaint();
+		const dead = verb();
+		if (dead.press) dead.press();		// absent under --unbuilt, where nothing is mounted
+		const after = DaimondPause.pausedIds().slice();
+		core.findNode = real;
+		repaint();
+		const back = verb().disabled;
+		return { there: dead.there, live, dead: dead.disabled, after, back };
+	});
+	red(!!r && r.there && r.live === false && r.dead === true && r.after.length === 0 && r.back === false,
+		'a `root/web` that is no longer marked stoppable loses its pause verb, and pressing '
+		+ 'it holds nothing — which is what §4 above is standing on');
 }
 
 await s.close();

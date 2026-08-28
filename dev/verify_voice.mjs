@@ -433,6 +433,45 @@ try {
 		good.why === '' && good.set === 'ok', good.why || good.set);
 	await page.evaluate(() => DaimondVoice.clear());
 
+	// ── 6b. THE LABELLED PASTE, which the forge itself produces.
+	//
+	// `oregami voice` prints `secret   <token>` in two columns, and this app's own
+	// help text used to say "copy the whole line the forge printed" -- so a person
+	// who did exactly as told hit "That does not look like a voice." The
+	// instruction and the validator disagreed and the app took the validator's
+	// side. The owner, who wrote the app, could not get past it.
+	//
+	// THE LABEL COMES OFF ONLY WHEN THE TAIL IS EXACTLY A VOICE LONG, which is what
+	// keeps this from swallowing a DAMAGED paste: the cases above prove a secret
+	// with whitespace knocked into the middle of it is still refused, and it must
+	// stay refused, because storing its second half would earn an `unknown` from
+	// the forge that says nothing about which of the two things went wrong.
+	//
+	// Asked of `tidy` as well as of `check`: a rule that merely ACCEPTED the paste
+	// while storing the label with it would pass a check that only looked at the
+	// refusal, and would then send the label on the header.
+	const MINTED = 'V'.repeat(43);				// exactly what the forge mints: 32 bytes in Hematite64
+	const labelled = [
+		['the forge\'s own two-column line', 'secret   ' + MINTED],
+		['it with a trailing newline',        'secret   ' + MINTED + '\n'],
+		['a tab between the columns',         'secret\t' + MINTED],
+		['leading and trailing space',        '   ' + MINTED + '  '],
+	];
+	for (const [what, value] of labelled) {
+		const r = await page.evaluate(async (v) => ({
+			why:   DaimondVoice.check(v),
+			tidy:  DaimondVoice.tidy(v),
+		}), value);
+		check('A LABELLED PASTE IS ACCEPTED: ' + what, r.why === '', r.why);
+		check('and what would be stored is the SECRET alone: ' + what,
+			r.tidy === MINTED, JSON.stringify(r.tidy).slice(0, 60));
+	}
+	// And the length is the forge's, named once on both sides rather than typed
+	// twice: a build that changed it here and not there would fold nothing and
+	// nobody would find out until somebody pasted a labelled line.
+	const len = await page.evaluate(() => DaimondVoice.LEN);
+	check('the length it folds on is the length the forge mints (43)', len === 43, String(len));
+
 } catch (e) {
 	check('the run completed', false, String(e && e.message || e));
 } finally {

@@ -27,9 +27,12 @@
 //   :8438  fifty proposals — paging, which needs more than one page
 //   :8439  fifty, `--break fromascends` — a forge that reads `from` as a LOWER
 //          bound, which is the shape that makes a paging client loop for ever
-//   :8440  `--break novotes` — the listing carries no tally, which is what the
-//          real forge does TODAY, and is what "the vote control ships dark"
-//          means
+//   :8440  `--break novotes` — the listing carries no tally. NOT what the real
+//          forge does any more: it answers `votes` on both shapes, confirmed
+//          against the deployed host on 2026-08-27. This stand-in is kept, and
+//          deliberately, because it is what proves the control is gated on the
+//          ANSWER rather than on somebody's belief about the calendar — the
+//          belief is what went stale, three times, while the code stayed right
 //   :8441  `--refuse unsupported` — the one refusal token no path the panel
 //          takes can reach naturally, and a token nobody has met is a token
 //          nobody has handled
@@ -90,12 +93,16 @@
 //      right. And no request ever sends a vote with no `d` at all, which the
 //      forge reads as malformed and which nothing may read as a withdrawal.
 //
-//   7. THE VOTE CONTROL SHIPS DARK. Against a forge whose listing carries no
-//      tally — which is the forge as it stands today — nothing is drawn: not a
-//      disabled button, not a zero. And `mine` ABSENT is drawn differently from
-//      `mine` NULL, because "I was not asked" and "I have not voted" are
-//      different facts and a panel that confused them would offer an unvoted
-//      button to somebody who cannot vote.
+//   7. THE VOTE CONTROL IS DRAWN FROM THE ANSWER. Against a forge whose listing
+//      carries no tally nothing is drawn: not a disabled button, not a zero.
+//      Against one that carries a tally it is drawn, cast, moved and withdrawn,
+//      which the checks above 7 do — and both forges are met in one run, which
+//      is the pair that says the control is reading the record rather than a
+//      constant. And `mine` ABSENT is drawn differently from `mine` NULL,
+//      because "I was not asked" and "I have not voted" are different facts and
+//      a panel that confused them would offer an unvoted button to somebody who
+//      cannot vote. The AMEND flag is under the same rule and is `cleanProp`'s
+//      to keep; the forge does not answer it yet, so nothing here can drive it.
 //
 //   8. A PROPOSAL ROW SAYS ITS OWN STATE AND ITS OWN TALLY. By NAME: the row
 //      for a named proposal reads Being done and its own numbers, not "there
@@ -152,6 +159,7 @@
 //   node dev/verify_improve.mjs --break cappgap        # 1f a neighbour's string in seven of eight
 //   node dev/verify_improve.mjs --break hidden         # 2a a line nobody saw
 //   node dev/verify_improve.mjs --break smuggle        # 2b a fifth field
+//   node dev/verify_improve.mjs --break stalecontext  # 2c the palette it named has gone
 //   node dev/verify_improve.mjs --break stickycontext  # 3a closed, and still sent
 //   node dev/verify_improve.mjs --break buildsticky    # 3b closed, and the build still sent
 //   node dev/verify_improve.mjs --break retry          # 4a a failed note is retried
@@ -161,6 +169,7 @@
 //   node dev/verify_improve.mjs --break votequeue      # 6b a refused vote is drawn as cast
 //   node dev/verify_improve.mjs --break alwaysvote     # 7a a control with nothing behind it
 //   node dev/verify_improve.mjs --break minesame       # 7b not-asked READ as not-voted
+//   node dev/verify_improve.mjs --break coercechanged  # 7d absent `changed` READ as the epoch
 //   node dev/verify_improve.mjs --break minedraw       # 7c not-asked DRAWN as not-voted
 //   node dev/verify_improve.mjs --break flatstate      # 8a every proposal drawn Open
 //   node dev/verify_improve.mjs --break closeonvote    # 8b voting shuts what you were reading
@@ -284,8 +293,10 @@ const FORGE = {
 	// both implementations of this contract wrote first, and it is the shape
 	// that makes the obvious paging loop never terminate.
 	wrong: { port: 8439, args: ['--count', '50', '--break', 'fromascends'] },
-	// A listing with no tally on it, which is the forge as it stands today: §9's
-	// vote route is still in flight.
+	// A listing with no tally on it. NOT the forge as it stands -- it answers
+	// `votes` now, on both shapes -- and kept for exactly that reason: run beside
+	// the tallied forge above, the pair is what proves the control reads the
+	// RECORD and not a constant somebody will forget to change.
 	dark:  { port: 8440, args: ['--break', 'novotes'] },
 	// The one token no path the panel takes can reach naturally.
 	unsup: { port: 8441, args: ['--refuse', 'unsupported'] },
@@ -458,6 +469,15 @@ const BREAKS = {
 		find: '\t\tif (parts.build) f.set(\'build\', parts.build);',
 		with: '\t\tif (parts.build) f.set(\'build\', parts.build);\n\t\tf.set(\'via\', navigator.userAgent);',
 	}],
+	// The line is built when the panel opens and never again. Every OTHER check
+	// stays green under it -- the row is still on the screen, still on the wire,
+	// still gone when the row is closed -- and 2c reddens on its own, which is
+	// what makes it a check about staleness rather than about the row existing.
+	stalecontext: [{
+		file: 'js/improve.js',
+		find: '\t\tif (contextOff()) return body;\n\t\tdrawContext();',
+		with: '\t\tif (contextOff()) return body;',
+	}],
 	// The row is closed, and the line goes anyway: off the screen, on the wire.
 	stickycontext: [{
 		file: 'js/improve.js',
@@ -567,6 +587,18 @@ const BREAKS = {
 		file: 'js/improve.js',
 		find: '\t\tif (Object.prototype.hasOwnProperty.call(p, \'mine\')) {\n\t\t\trec.asked = true;',
 		with: '\t\tif (true) {\n\t\t\trec.asked = true;',
+	}],
+	// ABSENT READ AS ZERO. `changed` is coerced like every other number, so an
+	// answer that said nothing about when a proposal was last revised becomes
+	// "revised at the epoch" -- older than every proposal there is. The record
+	// looks perfectly ordinary and the panel draws identically; what is lost is
+	// the difference between "not answered" and "answered, and it is old", which
+	// is the difference anything comparing the field would rest on. Written to
+	// match `minesame` above, because it is the same rule on a different field.
+	coercechanged: [{
+		file: 'js/improve.js',
+		find: '\t\t\tchanged:    (typeof p.changed === \'number\') ? Math.max(0, whole(p.changed)) : null,',
+		with: '\t\t\tchanged:    Math.max(0, whole(p.changed)),',
 	}],
 	// The drawing half of the same rule, on its own. `minesame` breaks the
 	// RECORD and the drawing goes with it, because the drawing is downstream;
@@ -715,6 +747,10 @@ build();
 /// different forge would. The panel stays honest and every refusal stays
 /// reachable.
 let forge = FORGE.main;
+/// What the `changed` hop in `improveRoute` does, or null for nothing:
+/// `{ n, to }`, where a `to` of `undefined` takes the field off and a number
+/// puts that number there.
+let changedHop = null;
 let asRepo = '';				// '' means "whatever the panel asked for"
 
 const NAME = /^[A-Za-z0-9_-]+$/;
@@ -792,6 +828,29 @@ async function improveRoute(r) {
 	} catch (e) {
 		return r.fulfill({ status: 502, contentType: 'application/json',
 			body: JSON.stringify({ ok: false, error: 'The forge could not be reached just now.' }) });
+	}
+	// ── THE ONE FIELD THIS FILE CHANGES ON THE WAY PAST ──────────────
+	//
+	// The forge always answers `changed`, so the case `cleanProp` is written for
+	// — an answer that says NOTHING about it — cannot be had by asking a forge
+	// for it, and a check driven only against the real shape proves nothing
+	// about the line that matters. `absorb` keeps a record across a listing, so
+	// this hop is the only way the panel can be handed a silent answer at all.
+	//
+	// Confined to one field on one proposal, and named, so a reader can see the
+	// whole of what is not the forge's own bytes. Everything else stays verbatim.
+	if (changedHop) {
+		try {
+			const j = JSON.parse(text);
+			const list = Array.isArray(j.proposals) ? j.proposals
+				: (j.proposal ? [j.proposal] : []);
+			for (const one of list) {
+				if (Number(one.number) !== changedHop.n) continue;
+				if (changedHop.to === undefined) delete one.changed;
+				else one.changed = changedHop.to;
+			}
+			text = JSON.stringify(j);
+		} catch (e) { /* not JSON: there is nothing to take off */ }
 	}
 	// Verbatim, status and body. The forge answers canonical JSON precisely so
 	// that two ends agreeing on the value agree on the bytes.
@@ -1068,6 +1127,67 @@ try {
 	check('the note now says it went, and names the proposal it became',
 		/sent/i.test(sentRow) && /\b13\b/.test(sentRow), sentRow.slice(0, 90));
 
+	// ── 2c. And that line is true AT THE PRESS ───────────────────
+	//
+	// The two facts in it that MOVE under a panel that is already open are the
+	// palette and the set of panels open, and on a desktop neither disturbs the
+	// Social panel: somebody switches palette from the appearance menu, opens
+	// something else from a chip, and the row goes on saying what was true when
+	// the panel opened. Eighteen notes went out in one day carrying that line.
+	//
+	// Driven through the app's own doors -- `DaimondTheme.set` is what the
+	// appearance menu calls and `DaimondPanels.show` is what a chip presses --
+	// and then `outgoing()` is asked IN THE SAME EVALUATE, with no click, no
+	// focus and no resize in between. That is the point of asking it this way: a
+	// row kept in step by listeners cannot answer this one, because nothing this
+	// check does is a thing a listener could have heard. What passes it is the
+	// line being COMPUTED at the moment of the press.
+	await page.fill('#improve-box', 'The palette in the line is not the palette on the screen\n'
+		+ 'quokka-marker-context');
+	await page.waitForTimeout(300);
+	const moved = await page.evaluate(() => {
+		const wasTheme = DaimondTheme.get();
+		const other    = DaimondTheme.list().find(t => t !== wasTheme);
+		DaimondTheme.set(other);
+		const shut = DaimondPanels.panels().find(p => p.id !== 'social' && !DaimondPanels.isOpen(p.id));
+		let opened = '', openedId = '';
+		if (shut) {
+			DaimondPanels.show(shut.id);
+			if (DaimondPanels.isOpen(shut.id)) { opened = shut.label; openedId = shut.id; }
+		}
+		const line = document.getElementById('improve-with-text');
+		return {
+			was:      wasTheme,
+			theme:    other,
+			panel:    opened,
+			panelId:  openedId,
+			// The read is LAST, so everything above it happened first.
+			out:      window.DaimondImprove.outgoing(),
+			row:      line ? (line.textContent || '').trim() : '',
+		};
+	});
+	check('the line that would go names the palette that is in force NOW',
+		moved.out.includes('palette ' + moved.theme) && !moved.out.includes('palette ' + moved.was),
+		`${JSON.stringify(moved.out)} — was ${moved.was}, now ${moved.theme}`);
+	check('and the panel opened since the row was drawn is named in it',
+		!!moved.panel && moved.out.includes(moved.panel),
+		`${JSON.stringify(moved.out)} — opened ${JSON.stringify(moved.panel)}`);
+	// And the screen agrees with the wire, which is the property the redraw must
+	// not have bought at the cost of: a line computed for the request and never
+	// shown would be exactly the `hidden` break above.
+	check('and the row on the screen is showing those same characters',
+		moved.row.length > 10 && moved.out.endsWith(moved.row),
+		`${JSON.stringify(moved.row)}`);
+
+	// Put the screen back the way the later checks expect to find it.
+	await page.evaluate((prev) => {
+		try { DaimondTheme.set(prev.was); } catch (e) { /* no theme service */ }
+		try { if (prev.panelId) DaimondPanels.hide(prev.panelId); } catch (e) { /* no panels */ }
+		try { DaimondPanels.show('social'); } catch (e) { /* no panels */ }
+	}, moved);
+	await page.fill('#improve-box', '');
+	await page.waitForTimeout(300);
+
 	// ── 3. Closing the row takes the line off the wire ───────────
 	const NOTE_3 = 'The divider above the admin panel will not go back\n'
 		+ 'A double-click does nothing to it. quokka-marker-three';
@@ -1181,6 +1301,51 @@ try {
 		await voteBtns.count() === 2
 			&& await seven.locator('.imp-vote.on').count() === 0,
 		`${await voteBtns.count()} buttons, ${await seven.locator('.imp-vote.on').count()} pressed`);
+
+	// 7d. `changed` ABSENT IS NOT `changed` ZERO.
+	//
+	// The same rule as `mine`/`asked` above, on the field that says when a
+	// proposal was last revised, and it is worth its own three readings because
+	// nothing on the screen would show it going wrong. `whole()` turns an absent
+	// number into 0, and a 0 here is a real reading -- revised at the epoch,
+	// which is older than every proposal there is. Anything that compared the
+	// field would then find every tile stale for ever, or, with the comparison
+	// the other way, none of them ever; and both look exactly like a cache that
+	// is not being invalidated, which is the week somebody spends before finding
+	// the line.
+	//
+	// THREE READINGS, because two would not separate the facts. A forge that
+	// answers the field, a forge silent about it, and a forge answering a real
+	// zero: the first two must differ, and the last two must differ, and it is
+	// the second pair that the coercion destroys.
+	{
+		const reload = async () => {
+			await page.evaluate(() => { window.DaimondImprove.reset(); return window.DaimondImprove.load(false); });
+			await page.waitForTimeout(1200);
+			return page.evaluate(() => window.DaimondImprove.proposal(7));
+		};
+		changedHop = null;
+		const said = await reload();
+		check('a forge that answers `changed` is read as the number it sent',
+			!!said && typeof said.changed === 'number' && said.changed > 0,
+			JSON.stringify(said && said.changed));
+
+		changedHop = { n: 7, to: undefined };		// the field taken off entirely
+		const silent = await reload();
+		check('AND AN ANSWER SILENT ABOUT IT IS NULL, not the epoch — "never told" is not a date',
+			!!silent && silent.changed === null, JSON.stringify(silent && silent.changed));
+
+		changedHop = { n: 7, to: 0 };			// a real zero, which is a different fact
+		const zero = await reload();
+		check('while a forge that really answers 0 is read as 0, so the two stay apart',
+			!!zero && zero.changed === 0, JSON.stringify(zero && zero.changed));
+		check('and the two are not the same record',
+			!!silent && !!zero && silent.changed !== zero.changed,
+			`${JSON.stringify(silent && silent.changed)} vs ${JSON.stringify(zero && zero.changed)}`);
+
+		changedHop = null;
+		await reload();
+	}
 
 	// 6. The vote itself.
 	//

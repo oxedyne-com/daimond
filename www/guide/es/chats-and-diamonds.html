@@ -105,11 +105,51 @@
 	<p>Un Diamond tiene <strong>dos caras</strong>, y un conmutador de la cabecera pasa de una a otra. <span class="ui">Cristal</span> es lo que el Diamond sabe. <span class="ui">Chat</span> es su propia conversación, que persiste como cualquier otra y lleva un botón <span class="ui">Plegar</span> puesto que plegar se hace sobre la marcha y no mientras se configura algo. Elige un chat en la barra lateral y vuelve la conversación corriente, como vuelve siempre que el escenario quedaría vacío.</p>
 
 	<h3 id="s12">Qué hace un Diamond, y qué no</h3>
-	<p>Un Diamond retiene; no ejecuta. Nada ejecuta un cristal: ni motor de flujos, ni horario, ni cadena de un Diamond a otro, ni tarea guardada esperando a dispararse. Volver a un Diamond no lo pone en marcha, y dejarlo en paz tampoco.</p>
+	<p>A Diamond retains; on its own it does not run. Nothing executes a crystal: there is no workflow engine and no chain from one Diamond to another. Returning to a Diamond does not set it going, and neither does leaving it alone. A Diamond you have not automated answers when you prompt it and at no other time — which is what its panel says when you look: <em>Nothing set. This Diamond answers when you prompt it and at no other time.</em></p>
 
 	<p>Así que <em>retomarlo</em> significa volver a dirigirlo con todo lo que ya ha aprendido en la mano. El cristal es prosa, que es lo que mejor lee un modelo, y se le entrega al daimon cuando trabajas el Diamond y a cada trabajador que se despacha desde él. Lo que averiguaste una vez vuelve a llegar al trabajo sin que lo reescribas, ni te acuerdes de que deberías.</p>
 
-	<h2 id="s13">El cristal y su historial</h2>
+	<p>The one way a Diamond acts without you is the one you set up yourself, described next.</p>
+
+	<h2 id="s13">Triggered actions</h2>
+	<p>A <strong>triggered action</strong> is a standing arrangement for a Diamond to do something <em>without being asked</em>. You write it, you switch it on, and from then on the Diamond acts when the thing you named happens. It is the only part of Daimond that spends money with nobody at the keyboard, so it is worth reading this section before you set one.</p>
+
+	<p>They live under <span class="ui">When this Diamond acts</span> on a Diamond's crystal. <span class="ui">Add an action</span> makes one; a pulldown selects it for editing when there is more than one. Two things can set an action off:</p>
+	<ul>
+		<li><strong>Minutes of my activity.</strong> A timer that only counts while you are actually working. A tab left open overnight counts none of them, so a Diamond set to thirty minutes fires after half an hour of your work, not half an hour of wall clock.</li>
+		<li><strong>Mail arriving.</strong> Mail landing in a folder you name, in a mailbox you have already set up. Nothing fires until there is mail.</li>
+	</ul>
+
+	<p>Each action carries two pieces of writing. The <strong>instruction</strong> is what the Diamond is asked to do when it fires, and it is sent every time. The <strong>context</strong> is background it needs the first time only: it goes in front of the first instruction and then stops going, until you change it, at which point it is sent once more. That is what changing it means.</p>
+
+	<p>Actions are ordinary files. They sit in the Diamond's own directory as <strong translate="no">triggers.json</strong>, in the open, where you can read them in the Workspace panel and where the Diamond itself can read and edit them with the file tools it already has. Nothing about them is hidden from you or from it.</p>
+
+	<h3 id="s14">The play, the pause and the light</h3>
+	<p>Every triggered action wears the same three-part control the rest of the app uses: a <strong>play</strong>, a <strong>pause</strong> and a round <strong>light</strong>. The Diamond carries one that speaks for all of its actions, and the <span class="ui">Todo</span> row at the top of the rail carries one that speaks for the whole app.</p>
+
+	<p><strong>The light says whether anything is going to happen on its own.</strong> Not whether you have pressed pause — whether something is actually armed and free to fire:</p>
+	<ul>
+		<li><strong>Red.</strong> Nothing here will act by itself — because you have set nothing up, or because what is here is switched off, held, or missing something it cannot fire without.</li>
+		<li><strong>Amber.</strong> Some of what is set up will act, and some is held.</li>
+		<li><strong>Green.</strong> Everything that is set up will act.</li>
+	</ul>
+
+	<p>A Diamond you have not automated therefore shows <strong>red</strong>, and so does the <span class="ui">Todo</span> row on a fresh account. That is not a warning. It is the honest answer to "is anything running by itself?", and on a new account the answer is no.</p>
+
+	<p>The two buttons follow the light, so you never have to work out which one would do something:</p>
+	<ul>
+		<li>Red: <strong>play</strong> is live and <strong>pause</strong> is greyed. There is nothing running to stop.</li>
+		<li>Amber: <strong>both</strong> are live. You can release what is held or hold the rest.</li>
+		<li>Green: <strong>pause</strong> is live and <strong>play</strong> is greyed. There is nothing held to release.</li>
+	</ul>
+
+	<div class="note"><strong>An action that cannot fire is not counted.</strong> An action switched on but missing its mailbox, its folder or its instruction would never go off, so the light does not report it as though it would. Fill in what it is missing and the light changes on its own.</div>
+
+	<p>Pressing pause on a Diamond holds every action under it; pressing it on the <span class="ui">Todo</span> row holds the lot. Nothing is spent by a held action — it is refused before the turn starts, so a pause costs nothing but the wait. Amber can only be arrived at, never set: there is no button that makes a light amber, which is what stops the colour from meaning whatever somebody last clicked.</p>
+
+	<p>The same light rides on your mailboxes, and it reads the same way. A mailbox whose folders you refresh by hand is <strong>red</strong>: pressing refresh yourself is not automation, it is you. Give a folder an interval and it goes green.</p>
+
+	<h2 id="s15">El cristal y su historial</h2>
 	<p>The crystal is two real files in the Diamond's own directory: <strong translate="no">crystal.json</strong>, lo que el Diamond sabe, y <strong translate="no">crystal.html</strong>, the page that draws it. That directory is always in the Diamond's workspace, so both can be opened in the Workspace panel, read, and edited by hand. It is not inside the folder you have open as your workspace, though: a Diamond is kept in the browser's own storage, apart from your work.</p>
 
 	<p>Cada escritura guarda una instantánea, así que un cristal tiene historial y nada se sobrescribe. El historial enumera todas las versiones, de la más nueva a la más vieja, cada una con lo que la produjo:</p>
@@ -121,7 +161,7 @@
 
 	<div class="note"><strong>Restaurar no destruye nada.</strong> El texto que era el actual se guarda antes en el historial, así que restaurar una versión más vieja añade al historial en lugar de sustituirlo: una restauración que no querías se puede deshacer a su vez.</div>
 
-	<h2 id="s14">Artefactos</h2>
+	<h2 id="s16">Artefactos</h2>
 	<p>Un Diamond también lleva la cuenta de lo que tocó su trabajo: los archivos escritos y las páginas abiertas mientras trabajabas en él. Nada de eso te toca anotarlo a ti. Daimond ya apunta cada herramienta que usa un agente, así que la lista se lee de lo que pasó, y se reúne en el momento en que aceptas un pliegue.</p>
 
 	<p>Los archivos que solo se <em>leyeron</em> quedan fuera a propósito. Un agente puede abrir cuarenta archivos buscando una cosa, y los cuarenta en la lista enterrarían el que importaba. Lo que se conserva es lo que produjo el trabajo, y las páginas que pediste ver.</p>
@@ -135,14 +175,14 @@
 
 	<div class="note">Un archivo que hayas renombrado o borrado desde entonces <strong>lo dice</strong> cuando intentas abrirlo, en vez de no hacer nada en silencio. Una lista de enlaces muertos que finge lo contrario es peor que no tener lista.</div>
 
-	<h2 id="s15">El espacio de trabajo de un Diamond</h2>
+	<h2 id="s17">El espacio de trabajo de un Diamond</h2>
 	<p>Un Diamond tiene un <strong>espacio de trabajo</strong>: los archivos y las carpetas que guardas con él. Los pones tú. Un daimon no puede añadir nada a su propio espacio de trabajo, así que trabaja con lo que se le ha dado y te pide más cuando lo necesita.</p>
 
 	<p><strong>Es una vista de tus archivos, no una caja que los contiene.</strong> No se copia nada cuando adjuntas algo: el archivo se queda donde está y el Diamond lo señala. Adjunta la misma carpeta a dos Diamonds y sigue habiendo una sola carpeta, y una edición hecha desde cualquiera de los dos es el archivo que lee el otro. Sacar algo del espacio de trabajo de un Diamond solo lo desadjunta; el archivo en sí queda intacto, y solo un borrado deliberado lo quita. La palabra <em>espacio de trabajo</em> te invita a esperar una copia, y no la hay.</p>
 
 	<p>Un Diamond también tiene un directorio propio, siempre en su espacio de trabajo y siempre escribible, para que su daimon tenga dónde trabajar antes de que hayas adjuntado nada; ahí vive el cristal. Una carpeta se puede adjuntar para ser <strong>consultada en vez de editada</strong>, lo que deja que un daimon la lea y rechaza toda escritura. Y el panel <a href="email-web-files.html">Espacio</a> muestra o todos tus archivos o solo los que tiene este Diamond, según convenga al trabajo que tienes delante.</p>
 
-	<h3 id="s16">Adjuntar, con el clip</h3>
+	<h3 id="s18">Adjuntar, con el clip</h3>
 	<p>El <strong>📎</strong> de cada fila del panel Espacio — tanto en archivos como en carpetas — y de la cabecera del panel Doc dice <span class="ui">Adjuntar al foco actual</span>. Un solo control, cuyo efecto sigue a lo que está en foco y no a la fila en la que se encuentra. Sin nada en foco no se ofrece siquiera.</p>
 	<ul>
 		<li><strong>Hay un Diamond en foco.</strong> El archivo o la carpeta entra en el espacio de trabajo de ese Diamond y se queda hasta que lo quites. Su daimon puede abrirlo a partir de entonces.</li>
@@ -152,17 +192,17 @@
 	<p>En cualquier caso, el texto que genera (<em>Anota …</em>, o <em>Lee … por completo.</em>) se escribe en la caja delante de tu mensaje, para editarlo o borrarlo antes de enviar. Un prompt que la aplicación escribe y esconde es un prompt con el que nadie puede discutir.</p>
 	<p>El pie lleva un <strong>+</strong> para adjuntar varias cosas sin dejar lo que estás leyendo, y un conmutador entre los mosaicos en <span class="ui">Pila</span> y las filas más grandes en <span class="ui">Iconos</span>. Pasados seis mosaicos — cuatro cuando la ventana es baja — se desplaza en vez de crecer, así que la caja de redacción no se mueve. Un adjunto hecho en un espacio de trabajo que no es el abierto dice dónde vive en lugar de leerse como una carpeta vacía, y se deja fuera del texto generado: una ruta que un modelo no puede abrir compra un turno gastado en disculpas.</p>
 
-	<h3 id="s17">Qué puede abrir un daimon</h3>
+	<h3 id="s19">Qué puede abrir un daimon</h3>
 	<p><strong>Un daimon solo puede abrir los archivos del espacio de trabajo de su Diamond.</strong> Nada de fuera se puede leer ni escribir, ni por el daimon ni por ningún trabajador que despache. Esto no es una instrucción en un prompt que un modelo puede honrar o no: la comprobación está en el código compilado, en la única puerta por la que pasa toda herramienta de archivos, y ese código está en el paquete publicado, que se compila de forma reproducible. Así que es una afirmación que puedes comprobar y no una que haya que creer.</p>
 
 	<p>Lo que no cubre hay que decirlo en el mismo aliento. Fija hasta dónde llega un daimon, no dónde acaba lo que lee: todo lo que abre va a tu proveedor de modelos con el resto del turno. Sí protege frente a un agente al que han convencido de algo — un turno que acaba de leer las instrucciones de un desconocido en una página o un correo, y ha ido a buscar en su nombre, sigue sin llegar a nada de fuera de este espacio de trabajo. No protege frente a un proveedor que use mal lo que le envías, ni frente a una compilación que no sea la que publicamos; de eso responden <a href="accounts.html">lo que sale del navegador</a> y el <a href="interface.html">registro sellado de cada compilación</a>.</p>
 
-	<h2 id="s18">Despachar trabajadores</h2>
+	<h2 id="s20">Despachar trabajadores</h2>
 	<p>Algunas tareas quieren trabajo hecho y no solo registrado. Para esas, el daimon del Diamond despacha un <strong>agente trabajador</strong>. Cada trabajador corre en su propio contexto con las herramientas de archivo del espacio de trabajo, y recibe las instrucciones permanentes y el cristal de este Diamond. Ese cristal es todo lo que sabe de tu empeño: un trabajador no puede ver tu conversación, así que la tarea que se le entrega debe decir todo lo demás que necesite.</p>
 
 	<p>Hasta <strong>ocho</strong> trabajadores corren a la vez; el resto hace cola. El daimon los despacha y su turno acaba ahí, sin recibir lo que produzcan. Cada uno informa con un resumen, y los que merezcan la pena los pliegas tú a mano, que es lo que mantiene tuya la decisión de qué entra en un cristal. Las ejecuciones en vivo aparecen en el panel <strong>Agentes</strong> del dock.</p>
 
-	<h3 id="s19">Retener y parar agentes</h3>
+	<h3 id="s21">Retener y parar agentes</h3>
 	<p>La cabecera del panel Agentes lleva tres controles que actúan sobre <em>todos</em> los agentes a la vez, y los mismos tres van en cada mosaico para que puedas actuar sobre uno solo:</p>
 	<ul>
 		<li><strong>Pausar</strong> <span class="ui">⏸</span>: cuelga lo que está corriendo y retiene la cola. Un agente en marcha conserva lo que había producido; uno que espera no arranca. No se lanza nada nuevo hasta que reanudes. Este es el freno para un despliegue que gasta más rápido de lo que querías.</li>
@@ -175,7 +215,7 @@
 
 	<p>Rigen dos límites. Un trabajador no puede despachar a otro trabajador, así que la delegación baja un nivel y para. Y se dirige un Diamond cada vez, así que ningún segundo Diamond trabaja a tus espaldas.</p>
 
-	<h2 id="s20">Etiquetas</h2>
+	<h2 id="s22">Etiquetas</h2>
 	<p>Los Diamonds se acumulan, así que se pueden etiquetar. Una etiqueta es un rótulo corto que eliges tú, y se edita desde <span class="ui">Etiquetas</span> en el cristal de un Diamond. Se sugieren cuatro para empezar (<strong>person</strong>, <strong>project</strong>, <strong>topic</strong> y <strong>org</strong>), pero Daimond no impone ninguna taxonomía, y puedes escribir lo que convenga a tu trabajo.</p>
 
 	<p>Lo que escribes se asea: una etiqueta se pasa a minúsculas, se recorta y se quitan las repetidas, con hasta <strong>8</strong> etiquetas en un Diamond y <strong>24</strong> caracteres en cada una. Las etiquetas se guardan en los metadatos propios del Diamond, en este dispositivo, como todo lo demás.</p>
@@ -186,7 +226,7 @@
 
 	<p>En la barra lateral, <span class="ui">Filtrar por etiqueta</span> abre las etiquetas por las que puedes acotar, con la cuenta de ellas en el botón. Pulsa una etiqueta para ver solo los Diamonds que la llevan; púlsala otra vez para ocultarlos. Con más de una elegida, <span class="ui">Todas</span> y <span class="ui">Alguna</span> deciden cómo se combinan, y <span class="ui">Limpiar</span> vacía el filtro. No hay una caja de búsqueda aparte: un Diamond se encuentra por dónde está archivado, y dos maneras de acotar una lista corta son una de más. La lista se ordena por lo tocado más recientemente, así que lo último que trabajaste queda arriba.</p>
 
-	<h2 id="s21">La papelera</h2>
+	<h2 id="s23">La papelera</h2>
 	<p>Borrar un chat o un Diamond no lo destruye. Va <strong>a la papelera</strong>: sigue guardado, sigue sincronizándose, fuera de la barra lateral, fuera del grafo y del filtro por etiqueta, y fuera del alcance de cualquier daimon, y aparece en el panel <strong>Papelera</strong> del dock con un botón «Restaurar» al lado. Se guarda <strong>treinta días</strong> y luego se destruye, y cada fila dice la fecha.</p>
 
 	<p>Como el acto se puede deshacer, nada pregunta antes. Las dos preguntas viven, en cambio, donde son ciertas: <span class="ui">Borrar para siempre</span> en un solo elemento, y <span class="ui">Vaciar la papelera</span>, que dice cuántos son. Los dos son irreversibles y los dos se van de todos tus dispositivos. Un diálogo delante de un acto reversible enseña a la gente a pasar de los diálogos, y luego el irreversible también se pasa de largo.</p>

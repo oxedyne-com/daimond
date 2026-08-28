@@ -29,8 +29,20 @@
 //      on screen and the Continue button with it.
 //   2. AND THE WORDS THAT ARRIVED SURVIVE. A turn handed back empty is barely
 //      better than one thrown away; the partial answer is read off the message.
-//   3. AND CONTINUE RUNS IT AGAIN, from the prompt the user typed — which they
-//      never have to retype, and which is the whole point of keeping it.
+//   3. AND CONTINUE CONTINUES IT. The words that arrived STAY, and the model is asked
+//      to carry on from them.
+//
+//      IT USED TO RE-RUN THE PROMPT, tombstoning the partial reply first. Two costs, and
+//      the second is the one that was reported: output tokens already billed were thrown
+//      away and bought again, and THE ANSWER THE USER WAS READING WAS REPLACED BY A
+//      DIFFERENT ONE. They watched text appear, pressed the button the app offered them,
+//      and the text became something else with no way back to it. A tester described
+//      exactly that shape — "I see some response text from a model, then later it is
+//      superceded by a final answer and I can't see what was there before".
+//
+//      A turn that died BEFORE THE FIRST TOKEN still re-runs the prompt, and that is
+//      right: there is nothing to carry on from and nothing was billed. That case is
+//      dev/verify_predrop.mjs.
 //   4. BUT A PROVIDER REFUSAL IS STILL TERMINAL. This is the check that makes the
 //      other three mean something: if everything became recoverable then nothing
 //      was classified, and a 500 from the provider would sit there offering a
@@ -40,11 +52,15 @@
 //
 //   node dev/verify_dropped.mjs --break terminal   # 1-3 fail: every death is terminal again
 //   node dev/verify_dropped.mjs --break everything # 4 fails: a 500 is offered back too
+//   node dev/verify_dropped.mjs --break rerun      # 3 fails: Continue throws the partial away
 //   node dev/verify_dropped.mjs                    # and then, clean
 //
 // `--break terminal` restores the old condition — `_unloading` alone — which is
 // the state the defect was reported from. `--break everything` widens it to every
 // error, which is the plausible over-correction and the reason check 4 exists.
+// `--break rerun` sends every Continue down the path meant for a turn that produced
+// nothing, which is `continueTurn` exactly as it stood on 2026-08-27: tombstone the
+// turn and ask the question again.
 //
 // WAITING FOR THE TURN TO END, RATHER THAN FOR A FIXED FIVE SECONDS. Check 4 sends
 // `@err 500` and used to look at the thread 5,000 ms later. A 500 is RETRYABLE —
@@ -71,7 +87,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, newChat, scratch, shot } from './harness.mjs';
+import { open, newChat, scratch, shot, storedChats } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -81,13 +97,17 @@ const BREAK = (() => {
 	return i > 0 ? String(process.argv[i + 1] || '') : '';
 })();
 
-// The one line that decides it, and the two ways of getting it wrong.
+// The two lines that decide it, and the three ways of getting them wrong. Each break
+// names the line it patches, so an anchor that has moved is caught rather than skipped.
 const COND = '\t\t\t\t} else if (offline(e)) {';
+const PART = '\t\tif (!partial.trim()) {';
 const BREAKS = {
 	// The state before the fix: only a closing page keeps its turn.
-	terminal:   '\t\t\t\t} else if (false) {',
+	terminal:   [COND, '\t\t\t\t} else if (false) {'],
 	// The over-correction: everything is recoverable, so nothing is classified.
-	everything: '\t\t\t\t} else if (true) {',
+	everything: [COND, '\t\t\t\t} else if (true) {'],
+	// Continue as it was before it continued anything.
+	rerun:      [PART, '\t\tif (true) {'],
 };
 if (BREAK && !BREAKS[BREAK]) {
 	console.error(`unknown break '${BREAK}'; one of: ${Object.keys(BREAKS).join(', ')}`);
@@ -101,10 +121,12 @@ const check = (pass, name, detail) => {
 };
 
 const SRC = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
-if (SRC.split(COND).length !== 2) {
-	console.error('the branch this file measures is not in js/daimond.js exactly once; '
-		+ 'the anchor has moved and the breaks below would patch nothing');
-	process.exit(2);
+for (const anchor of [COND, PART]) {
+	if (SRC.split(anchor).length !== 2) {
+		console.error(`the line ${JSON.stringify(anchor.trim())} is not in js/daimond.js `
+			+ 'exactly once; the anchor has moved and the breaks below would patch nothing');
+		process.exit(2);
+	}
 }
 
 const s = await open({
@@ -114,7 +136,7 @@ const s = await open({
 	// the shipped page with one line changed and not a copy of it. Registered
 	// before `goto`, which is what `route` is for.
 	route:   BREAK ? (async (page) => {
-		const body = SRC.replace(COND, BREAKS[BREAK]);
+		const body = SRC.replace(BREAKS[BREAK][0], BREAKS[BREAK][1]);
 		await page.route('**/js/daimond.js', (r) => r.fulfill({
 			status: 200, contentType: 'application/javascript', body,
 		}));
@@ -180,23 +202,43 @@ try {
 		`last message class ${JSON.stringify(dropped.lastClass)}`);
 	check(dropped.continues,
 		'and the turn is offered back with a Continue button',
-		dropped.interrupted ? 'no button in .turn-interrupted' : 'nothing was marked interrupted');
+		dropped.continues ? '' : (dropped.interrupted ? 'no button in .turn-interrupted'
+			: 'nothing was marked interrupted'));
 	// The words that DID arrive. Asserted on a word the mock only sends in this
 	// mode, so a generic reply cannot satisfy it.
 	check(/word-1/.test(dropped.text),
 		'AND THE WORDS THAT ARRIVED SURVIVE — the partial answer is still there',
 		JSON.stringify(dropped.text.slice(0, 80)));
 
-	// ── 3. Continue re-runs it from the prompt ───────────────────
+	// ── 3. Continue CONTINUES it ───────────────────────────────
 	//
-	// The user must not have to retype. Pressing Continue drops the interrupted
-	// turn's messages and sends the original prompt again -- which, since the
-	// prompt IS `@drop 3`, drops again. That is what makes this a clean test of
-	// REPLACEMENT: what must be true afterwards is one question and one interrupted
-	// answer, not two of each. A turn that completed would prove nothing about
-	// whether the old one had been cleared away.
+	// The words the user was reading must still be there afterwards. Pressing Continue
+	// keeps the partial as an ordinary answer and asks the model to carry on from it, so
+	// what must be true afterwards is: the same question once, `word-1` still on screen,
+	// nothing badged interrupted any more, and MORE messages than before rather than the
+	// same ones rewritten.
+	//
+	// THE ASSERTION THAT MATTERS IS `word-1` SURVIVING. The count and the badge are
+	// bookkeeping; the text is the complaint.
 	const before = await p.evaluate(() =>
 		document.querySelectorAll('#chat-output .chat-msg').length);
+	// THE PARTIAL'S OWN ID, off the disk. Text alone cannot answer this question: the
+	// prompt is `@drop 3`, so a Continue that RE-RUNS it produces `word-1 word-2` a
+	// second time and a check on the words passes while the user's answer has in fact
+	// been thrown away and bought again. The `mid` is the only thing that tells a kept
+	// message from an identical new one.
+	const midOf = async () => {
+		const chats = await storedChats(s);
+		for (const c of chats) {
+			for (const m of (c.messages || [])) {
+				if (m.role === 'assistant' && m.interrupted && /word-1/.test(m.content || '')) {
+					return m.mid;
+				}
+			}
+		}
+		return '';
+	};
+	const partialMid = await midOf();
 	if (dropped.continues) {
 		await p.evaluate(() => {
 			const inter = [...document.querySelectorAll('#chat-output .chat-msg.interrupted')].pop();
@@ -206,21 +248,49 @@ try {
 	}
 	const after = await p.evaluate(() => ({
 		count: document.querySelectorAll('#chat-output .chat-msg').length,
-		// The interrupted turn is REPLACED, not added to: its messages are
-		// tombstoned so a reload cannot resurrect them beside the retry.
+		// Nothing is left badged: the partial has become an ordinary answer, and the
+		// continuation finished cleanly.
 		interruptedCount: document.querySelectorAll('#chat-output .chat-msg.interrupted').length,
 		user: [...document.querySelectorAll('#chat-output .chat-msg-user .chat-msg-content')]
 			.map(e => e.textContent).join('|'),
+		// Every assistant word on screen, so "is what I was reading still here?" is asked
+		// of the thread rather than of one element.
+		said: [...document.querySelectorAll('#chat-output .chat-msg-assistant .chat-msg-content')]
+			.map(e => e.textContent).join(' '),
 	}));
-	check(dropped.continues && after.interruptedCount === 1,
-		'CONTINUE RE-RUNS THE TURN and the interrupted one is replaced rather than piled on',
+	// The same record, still there, still holding the same words, no longer badged.
+	const kept = await (async () => {
+		const chats = await storedChats(s);
+		for (const c of chats) {
+			for (const m of (c.messages || [])) {
+				if (m.mid && m.mid === partialMid) {
+					return { there: true, said: /word-1/.test(m.content || ''),
+						badged: !!m.interrupted };
+				}
+			}
+		}
+		return { there: false, said: false, badged: false };
+	})();
+	check(!!partialMid && kept.there && kept.said && !kept.badged && /word-1/.test(after.said),
+		'CONTINUE KEEPS WHAT THE USER WAS READING — the same message, not a fresh copy',
+		kept.there ? (kept.badged
+				? 'the message with that id is still badged interrupted, so what is on screen '
+					+ 'is a fresh turn beside it: the turn was re-run, not continued'
+				: (kept.said ? '' : 'the id survived but the words did not'))
+			: `no message ${JSON.stringify(partialMid)} survives: the answer the user was `
+				+ 'reading was thrown away and generated again');
+	check(dropped.continues && after.interruptedCount === 0 && after.count > before,
+		'and the turn carries on from it rather than starting again',
 		`${before} messages before, ${after.count} after, ${after.interruptedCount} interrupted`);
 	// One question, not two. This is the assertion that caught the first version of
-	// the fix: the prompt was left untagged, so Continue removed the answer, sent
-	// the question again, and the thread held it twice.
-	check(after.user.split('|').filter(Boolean).length === 1,
-		'from the prompt the user typed, once, which they never had to type again',
-		JSON.stringify(after.user.slice(0, 80)));
+	// the offline branch: the prompt was left untagged, so Continue removed the answer,
+	// sent the question again, and the thread held it twice. It still holds, and it is
+	// what tells a continuation apart from a re-run: the app's own "carry on" line is
+	// the second user message, and the user's question is never sent twice.
+	const asked = after.user.split('|').filter(Boolean);
+	check(asked.filter(u => /@drop 3/.test(u)).length === 1,
+		'and the prompt the user typed was never sent again',
+		JSON.stringify(after.user.slice(0, 110)));
 
 	// ── 4. A provider refusal is still terminal ──────────────────
 	//

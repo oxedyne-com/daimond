@@ -1128,6 +1128,13 @@
 			: state.mode === 'agent'
 				? t('web.who_daimond_help')
 				: hasExt() ? t('web.who_ready_help') : t('web.who_view_only_help');
+		// WHY THERE ARE TWO OF THEM, said for as long as there are two of them.
+		// Only under the extension: with a frame there is no second window to
+		// explain, and a panel that claimed one would be lying.
+		if (els.live) {
+			els.live.hidden = state.driver !== 'ext';
+			if (!els.live.hidden) els.live.textContent = t('web.real_tab');
+		}
 		paintBack();                        // shown only where it can act
 		els.blind.style.display = (state.mode === 'user') ? 'flex' : 'none';
 		// Name why the wheel is with the user, when the broker told us. A specific
@@ -1255,6 +1262,7 @@
 		els.mirror = document.getElementById('web-mirror');
 		els.note   = document.getElementById('web-note');
 		els.blind  = document.getElementById('web-blind');
+		els.live   = document.getElementById('web-live');
 		els.url    = document.getElementById('web-url');
 		els.mode   = document.getElementById('web-mode');
 		els.body   = document.getElementById('web-body');

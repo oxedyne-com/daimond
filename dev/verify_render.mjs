@@ -571,6 +571,44 @@ try {
 	check('7b the app\'s OWN `<details>` is untouched by it',
 		geom.appOwn.border === '0px', geom.appOwn.border);
 
+	// ── 8. The copy button COPIES, which is not the same as being there ──
+	//
+	// `7`'s `out.spaced.codeBlock` asserts a `.code-copy-btn` is on the page, and that
+	// is all it asserts. On 2026-08-28 `dev/mutate.mjs` changed the class the delegated
+	// listener in www/js/render.js looks for -- from `code-copy-btn` to something
+	// nothing wears -- and every check in this file stayed green while the button under
+	// every code block silently stopped working. The element was still there; only the
+	// behaviour had gone, and presence was the only thing being asked about.
+	//
+	// So this presses it and reads what the press did. The clipboard itself is not
+	// available to a headless page without a permission grant, and the point here is
+	// the WIRING rather than the platform: a press that reaches the handler changes the
+	// button's label and adds `copied`, and a press that reaches nothing leaves both
+	// exactly as they were. That is the difference the mutation makes, so that is what
+	// is measured.
+	const copied = await s.page.evaluate(async () => {
+		const btn = document.querySelector('.code-block .code-copy-btn');
+		if (!btn) return { found: false };
+		const before = btn.textContent;
+		btn.click();
+		// The handler runs a promise before it relabels, so give the microtask queue a
+		// turn rather than reading the button in the same tick that pressed it.
+		await new Promise(r => setTimeout(r, 250));
+		return {
+			found:   true,
+			before,
+			after:   btn.textContent,
+			marked:  btn.classList.contains('copied'),
+			changed: btn.textContent !== before || btn.classList.contains('copied'),
+		};
+	});
+	check('8 the copy button under a code block is WIRED, not merely present',
+		copied.found && copied.changed,
+		copied.found
+			? `label ${JSON.stringify(copied.before)} -> ${JSON.stringify(copied.after)}, `
+				+ `copied=${copied.marked}; unchanged means the press reached no handler`
+			: 'no .code-copy-btn on the page at all');
+
 	// The renderer drawing itself while throwing is not drawing itself. The
 	// attack's own 404 is expected — the image is MEANT to fail, that is what
 	// makes 2d mean anything — so it is not counted as the app throwing.

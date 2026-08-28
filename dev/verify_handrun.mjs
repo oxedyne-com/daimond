@@ -65,6 +65,7 @@
 //
 //   node dev/verify_handrun.mjs --break nomark       # the mark never reaches the engine
 //   node dev/verify_handrun.mjs --break inventscope  # the page invents a workspace
+//   node dev/verify_handrun.mjs --break blindhello   # the handshake deadline guesses why it passed
 //   node dev/verify_handrun.mjs                      # and then, clean
 //
 // Needs nothing running: the dev server and the mock provider are started here
@@ -127,6 +128,16 @@ const BREAKS = {
 		file: 'js/daimond.js',
 		find: `			.filter(function (a) { return !!a.ws; })`,
 		with: `			.filter(function (a) { return false && !!a.ws; })`,
+	},
+	// The handshake's deadline spent without ever asking what it was spent ON --
+	// which is what it did until 2026-08-28. The two sentences collapse into one,
+	// and the wait is never extended, so a person still reading the consent window
+	// loses the command. Nothing else in the file touches this path.
+	blindhello: {
+		file: 'js/hand.js',
+		find: `		rec.timer = setTimeout(function () { helloLate(rec); }, HELLO_WAIT);`,
+		with: `		rec.timer = setTimeout(function () { drop(rec, rec.note || 'The machine hand `
+			+ `was asked to start and did not answer. The approval window may still be waiting.'); }, HELLO_WAIT);`,
 	},
 	// The other direction, and the dangerous one: the page hands over a folder
 	// nobody marked in. Every command then runs, including the ones sent by a chat
@@ -688,6 +699,70 @@ try {
 		/not installed/i.test(r), r.slice(0, 240));
 	check('and the sentence says exactly what to install',
 		/install\.sh/.test(r) && /com\.oxedyne\.daimond\.hand/.test(r), r.slice(0, 400));
+
+	// ── A greeting that never comes, and WHY it never came ──────────
+	//
+	// Opening the port is what raises the approval window, and the extension holds
+	// the greeting behind it -- so this one deadline is spent on a person reading a
+	// consent screen as often as on anything being wrong, and the two used to be
+	// told apart by guessing. Whatever had happened, the daimon was handed "the
+	// approval window may still be waiting", and a person who took longer than the
+	// deadline to read the strongest permission Daimond asks for had their command
+	// fail on a question they then said yes to. `hand_status` answers it -- a
+	// question with no window behind it -- and had no caller anywhere.
+	//
+	// Both branches are driven, because either sentence alone would pass on a page
+	// that simply always said that one.
+	await relink();
+	register({ mute: true });
+	await waits({ hello: 1500, status: 1500, grant: 2000 });
+	clearMockLog();
+	const tMute = Date.now();
+	await chat(s, '@tool run {"argv":["cargo","test"]}', { timeout: 60000 });
+	const muteTook = Date.now() - tMute;
+	r = toolResult();
+	check('a hand that is granted and never greets is reported as one that said nothing',
+		/said nothing/.test(r) && /^Refused: /.test(r), r.slice(0, 240));
+	check('and NOT as an approval window nobody has answered — nobody is being asked',
+		!/approval window/i.test(r), r.slice(0, 240));
+	check('and it ended rather than hanging on the extension\'s question',
+		muteTook < 45000, muteTook + ' ms');
+
+	// And now the other branch: the grant taken back, so connecting really does
+	// raise a window, and nothing here answers it. The wait must be EXTENDED rather
+	// than spent -- which is the whole fix -- and the sentence must then say that a
+	// question is waiting, because this time one is.
+	await relink();
+	await page.evaluate(() => new Promise((done) => {
+		const id = document.documentElement.dataset.daimondHands;
+		chrome.runtime.sendMessage(id, { cmd: 'hand_revoke' }, () => done(true));
+	}));
+	clearMockLog();
+	const tAsk = Date.now();
+	await chat(s, '@tool run {"argv":["cargo","test"]}', { timeout: 60000 });
+	const askTook = Date.now() - tAsk;
+	r = toolResult();
+	check('an unanswered approval window is reported as an unanswered approval window',
+		/approval window/i.test(r) && /^Refused: /.test(r), r.slice(0, 240));
+	check('and the daimon is told to have it answered rather than to install anything',
+		!/not installed/i.test(r), r.slice(0, 240));
+	// The extension is what the fix buys: the first deadline passes, `hand_status`
+	// says somebody is still being asked, and the page waits again instead of
+	// apologising. Measured against the deadline it was given, not against a clock.
+	check('and the handshake deadline was EXTENDED once while the question stood',
+		askTook > 3500, askTook + ' ms, against a 1500 ms handshake deadline');
+	// Answer it, so the case below meets the world it expects -- and then LET GO of
+	// the link the answer opens. Allowing it settles the connect this case left
+	// pending, which starts the mute host and leaves its relay parked against this
+	// tab; the next case would adopt that parked relay instead of trying to launch
+	// the host it has just unregistered, and would measure a mute host rather than
+	// a missing one. Measured: without this `relink` the missing-host case reported
+	// the handshake sentence above.
+	await allowHand(8000);
+	await relink();
+	register({ chunks: 1 });
+	await waits({ hello: 15000 });
+
 
 	// ── §1.16 again, where it actually bites ────────────────────────
 	//

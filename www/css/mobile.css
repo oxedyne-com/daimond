@@ -180,7 +180,7 @@
 		z-index: 40;
 		left: 0;
 		right: 0;
-		bottom: calc(58px + var(--safe-b));
+		bottom: calc(var(--mnav-h) + var(--safe-b));
 		height: 0;					/* closed; the controller sets the detent height */
 		background: var(--bg-primary);
 		border-top-left-radius: 16px;
@@ -441,9 +441,90 @@
 	   for it — so two composers can never disagree. */
 	body.sheet-open .ai .chat-input-bar { visibility: hidden; }
 
-	/* The bar sits ABOVE the sheet, so a destination is always one tap
-	   away and the sheet's foot rests just above it (see #msheet bottom). */
+	/* ── The footer: the panel chip row, scrolled sideways ─────
+	   The bar sits ABOVE the sheet, so a panel is always one tap away and the
+	   sheet's foot rests just above it (see #msheet bottom).
+
+	   It held four hard-wired destinations until 2026-08-28 -- Chat, Email,
+	   Files, Agents -- and the owner's verdict was that it "is currently useless
+	   to me": four of the seventeen panels named, the other thirteen reachable
+	   only through the drawer. It carries the chip row now, which is the same row
+	   the desktop header carries, moved rather than copied (`placeChips`,
+	   js/mobile.js).
+
+	   ITS HEIGHT IS `--mnav-h`, plus the home indicator's inset, and that variable
+	   is the only place the number is written. `#msheet { bottom }` below reads
+	   it, and js/mobile.js MEASURES the bar rather than carrying a fourth copy:
+	   there were three -- 54 in variables.css, 58 in this file and 58 in the shell
+	   -- and `dev/verify_sweep_mobile.mjs` exists partly because a sheet placed
+	   from one of them lands over a bar drawn from another. */
 	.mnav { position: relative; z-index: 60; }
+
+	/* The strip itself. It SCROLLS rather than fitting: "A chip is its label.
+	   Below that width it is not a shorter chip, it is an unreadable one" --
+	   css/improve.css, on the Social panel's chips, and it is the same rule here.
+	   So every chip takes the width its label needs (`flex: none` below) and the
+	   strip carries the rest of them past the edge.
+	   THE SAFE INSET IS ON THE SCROLLER, not on the bar, so the last chip scrolls
+	   clear of the home indicator instead of ending under it. A chip you cannot
+	   reach is the same class of fault as a chip that moves while you reach. */
+	#mnav .panel-tags {
+		display: flex !important;
+		flex: 1 1 auto;
+		align-items: center;
+		min-width: 0;
+		gap: 8px;
+		margin: 0;
+		/* 8 + 44 + 9 + the bar's 1px rule = `--mnav-h`, which is where the number
+		   lives and what the sheet's foot is placed from. */
+		padding: 8px 14px calc(9px + var(--safe-b));
+		overflow-x: auto;
+		overflow-y: hidden;
+		overscroll-behavior-x: contain;
+		-webkit-overflow-scrolling: touch;
+		/* The scrollbar would eat the height the chips need and, on a phone, is
+		   drawn over them for a second and then gone -- so the fact that the row
+		   scrolls is carried by the fade at its ends instead (`data-more` below). */
+		scrollbar-width: none;
+		/* A chip scrolled to is scrolled clear of the fade rather than under it. */
+		scroll-padding-inline: 22px;
+	}
+	#mnav .panel-tags::-webkit-scrollbar { display: none; }
+	/* A THUMB'S TARGET. 44px is the AAA figure and it is what the four buttons
+	   this row replaced already met, so the row that replaced them may not be
+	   smaller: `dev/verify_sweep_mobile.mjs` reports anything under it, and it
+	   reported these chips at 40 before this line said 44. */
+	#mnav .ptag,
+	#mnav .ptag-more {
+		flex: none;
+		min-height: 44px;
+		/* AND 44 ACROSS. A two-letter label -- "AI" -- came to 43px with the
+		   padding, which `dev/verify_sweep_mobile.mjs` reported at every phone
+		   width. It is a floor and not a width: a chip is still its label, and a
+		   longer one takes the room it needs. */
+		min-width: 44px;
+		justify-content: center;
+		display: inline-flex;
+		align-items: center;
+		padding: 0 14px;
+		font-size: var(--fs-xs);
+	}
+	#mnav .ptag-group { flex: none; gap: 8px; }
+	#mnav .ptag-div { margin: 0 2px; }
+
+	/* SCROLLABLE MUST LOOK SCROLLABLE. A strip that runs to the edge and stops
+	   reads as a truncated list, and a scrollbar would cost the height the chips
+	   are using. A soft fade at whichever end has more beyond it says the same
+	   thing and costs nothing: `data-more` is set by `markScroll` in js/mobile.js
+	   from the strip's own scroll position, so it is never a decoration that
+	   claims something untrue. Half a chip showing through the fade is the other
+	   half of the signal. */
+	#mnav .panel-tags[data-more="end"]   { mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent 100%); }
+	#mnav .panel-tags[data-more="start"] { mask-image: linear-gradient(to right, transparent 0, #000 34px); }
+	#mnav .panel-tags[data-more="both"]  { mask-image: linear-gradient(to right, transparent 0, #000 34px, #000 calc(100% - 34px), transparent 100%); }
+	#mnav .panel-tags[data-more="end"]   { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent 100%); }
+	#mnav .panel-tags[data-more="start"] { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px); }
+	#mnav .panel-tags[data-more="both"]  { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px, #000 calc(100% - 34px), transparent 100%); }
 
 	/* ── No iOS auto-zoom ───────────────────────────────────────
 	   Safari zooms IN (and never back out) when a focused control is

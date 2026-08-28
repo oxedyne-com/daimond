@@ -154,8 +154,21 @@
 	function toolOpen(turnId, chatId, callId, name, args) {
 		return push(stamp({ type: 'tool_open', stream: turnId, chatId: chatId, callId: callId, name: name, args: args }), true);
 	}
-	function toolDone(turnId, chatId, callId, result, failed) {
-		return push(stamp({ type: 'tool_done', stream: turnId, chatId: chatId, callId: callId, result: result, failed: !!failed }), true);
+	/// A tool call ended, and HOW it ended travels as the engine's own word.
+	///
+	/// `outcome` is `AgentEvent::ToolResult`'s third field -- exactly `done`, `refused` or
+	/// `failed` -- and is stored, not flattened. It used to be a BOOLEAN, and the crash-recovery
+	/// path in daimond.js then rebuilt the missing third value by reading the result TEXT, through
+	/// the one reader dev/CONTRACT_OUTCOME.md §4 quarantines for conversations written before the
+	/// field existed. §4 says the outcome is stored with the tool log so that exception stops
+	/// growing; this is the write that makes that true. A refusal recovered from an interrupted
+	/// turn came back as a FAILURE, which is what the user saw and what the Optimiser was told.
+	///
+	/// Stored verbatim rather than normalised: a value this build does not recognise is the
+	/// engine's, and inventing one here would be the second source of truth the contract exists to
+	/// remove. An empty string means the field was not sent, which the reader treats as §4's case.
+	function toolDone(turnId, chatId, callId, result, outcome) {
+		return push(stamp({ type: 'tool_done', stream: turnId, chatId: chatId, callId: callId, result: result, outcome: String(outcome || '') }), true);
 	}
 	function turnError(turnId, chatId, message) {
 		return push(stamp({ type: 'turn_error', stream: turnId, chatId: chatId, message: message }), true);
@@ -249,8 +262,11 @@
 			if (e.chatId) c.chatId = e.chatId;   // present on every turn event, so placement survives a lost open
 			if (e.type === 'turn_open')       { c.userText = e.text || ''; }
 			else if (e.type === 'delta')      { c.text += (e.text || ''); }
-			else if (e.type === 'tool_open')  { c.tools.push({ callId: e.callId, name: e.name, args: e.args, result: null, failed: false, done: false }); }
-			else if (e.type === 'tool_done')  { for (var i = c.tools.length - 1; i >= 0; i--) { if (c.tools[i].callId === e.callId) { c.tools[i].result = e.result; c.tools[i].failed = e.failed; c.tools[i].done = true; break; } } }
+			else if (e.type === 'tool_open')  { c.tools.push({ callId: e.callId, name: e.name, args: e.args, result: null, outcome: '', done: false }); }
+			// `e.outcome` is the engine's word; `e.failed` is what a record written before this
+			// field carried, and is passed through UNREAD so the caller can tell "not stored" from
+			// "stored as done" -- which is the difference between §4's named exception and a guess.
+			else if (e.type === 'tool_done')  { for (var i = c.tools.length - 1; i >= 0; i--) { if (c.tools[i].callId === e.callId) { c.tools[i].result = e.result; c.tools[i].outcome = String(e.outcome || ''); c.tools[i].failed = !!e.failed; c.tools[i].done = true; break; } } }
 			else if (e.type === 'turn_close') { c.closed = true; }
 			else if (e.type === 'turn_error') { c.closed = true; }   // errored is terminal, not interrupted
 		});

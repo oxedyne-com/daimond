@@ -1328,13 +1328,23 @@ try {
 		};
 		for (let i = 0; i < 5; i++) window.dispatchEvent(new Event('focus'));
 		document.dispatchEvent(new Event('visibilitychange'));
+		await new Promise(res => setTimeout(res, 900));
+		const storm = gets;
+		// And a focus arriving straight back is refused by the throttle. STRAIGHT
+		// BACK means straight back: the throttle is three seconds rather than thirty
+		// since 2026-08-28 (see FOCUS_PULL_MIN_MS in js/sync.js, and why it was
+		// lowered), so this probe used to sit two and a half seconds inside a
+		// thirty-second window and now sits one second inside a three-second one.
+		// A probe calibrated to the old figure would be measuring the throttle
+		// expiring rather than the throttle holding, and would pass or fail on how
+		// busy the box was.
+		window.dispatchEvent(new Event('focus'));
+		await new Promise(res => setTimeout(res, 900));
+		const again = gets;
+		// Only now let the storm's own pull finish landing: what it FETCHED is the
+		// question above, and what it MERGED is the question here.
 		await new Promise(res => setTimeout(res, 2500));
 		const after = holds();
-		const storm = gets;
-		// And a focus arriving straight back is refused by the throttle.
-		window.dispatchEvent(new Event('focus'));
-		await new Promise(res => setTimeout(res, 1200));
-		const again = gets;
 		window.fetch = real;
 		return { posted, before, after, storm, again };
 	});
@@ -2421,6 +2431,24 @@ try {
 	// restart is the ordinary case -- a deploy -- and a device that did not
 	// reconnect would go quiet until its owner touched it, which is exactly the
 	// state this whole section exists to end.
+	//
+	// ── ONE SIGHTING, UNEXPLAINED, 2026-08-28 ─────────────────────────
+	// `pushLanded` below came back `api handler error` -- a plain-text 500 to
+	// its GET of /api/sync, which threw out of `res.json()` and took the rest
+	// of the file with it: 163 passed, and sections 13c and 14 never ran. The
+	// store had been created eleven minutes earlier by the run before it and
+	// was being restarted for the first time in its life.
+	//
+	// WHAT WAS ESTABLISHED. It did not recur: the same code answered 177/177
+	// twice afterwards against the same store, once warm. So it is not the
+	// catch-up added to js/sync.js that day, and it is not this section.
+	//
+	// WHAT WAS NOT. Whether a cold o3db can 500 a read shortly after its first
+	// restart. The restarted gateway is spawned here with `stdio: 'ignore'`, so
+	// the one process that could have said why wrote nowhere -- which is the
+	// first thing to change if this is seen again. It was not chased further,
+	// deliberately: one sighting is a sighting, and a speculative guard against
+	// a fault nobody has characterised is how a fix grows a second defect.
 	const restarted = await restartGateway();
 	check('the gateway comes back after a restart', restarted === true, String(restarted));
 	if (restarted === true) {

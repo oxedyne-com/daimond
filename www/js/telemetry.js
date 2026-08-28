@@ -187,11 +187,25 @@
 	///
 	/// The first eleven keep their positions, because those names were right.
 	/// From here a tool goes on the END.
+	///
+	/// AND IT DRIFTED AGAIN. The twelve after `web_snapshot` were added on
+	/// 2026-08-28: the whole Social half, the spreadsheet and document tools, the
+	/// links, `ask`, `runs` and `verify` -- twelve of the registry's thirty-six,
+	/// so a third of every `tool.run` and `tool.fail` reported as 'other' and the
+	/// operator's picture of what a tool pack is worth was wrong for exactly the
+	/// tools a pack would be sold as. The paragraph above says this list is
+	/// checked against the registry, and it was: once, by hand, by somebody who
+	/// then left nothing behind that would notice. `dev/verify_telemetry.mjs`
+	/// now reads `Tool::name` out of `src/tools.rs` and fails on a name that is
+	/// not here, so a fourth drift cannot be silent.
 	var TOOLS = ['other', 'file_read', 'file_write', 'file_list', 'file_move',
 		'file_delete', 'dir_create', 'web_fetch', 'web_search', 'web_click',
 		'web_type', 'file_edit', 'file_glob', 'file_search', 'file_show',
 		'file_fetch', 'shell', 'run', 'spawn_agent', 'typst_compile',
-		'web_open', 'web_read', 'web_scroll', 'web_close', 'web_snapshot'];
+		'web_open', 'web_read', 'web_scroll', 'web_close', 'web_snapshot',
+		'ask', 'social_read', 'social_send', 'sheet_read', 'sheet_write',
+		'doc_edit', 'runs', 'verify', 'artefact_add', 'link_list', 'link_add',
+		'link_remove'];
 
 	/// Why something did not work. Deliberately coarse: a class of failure is
 	/// actionable and a message is not sendable.

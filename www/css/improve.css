@@ -56,6 +56,14 @@
    chips take a line of their own when there is not. */
 #panel-social .railhead { flex-wrap: wrap; row-gap: 2px; }
 #panel-social .railhead > span:first-child { flex: 1 0 auto; }
+/* AND THE CROSS KEEPS THE CORNER WHILE THE CHIPS WRAP. `order` decides which
+   items a flex line takes, so the heading and the head's controls make the
+   first line and the chips -- given a whole line by `flex-basis: 100%` -- make
+   the second. Without it the closer wrapped along with the chips and finished
+   248px in from the panel's right edge and 47px down, which is the one panel in
+   the app whose cross was not in its top-right corner. */
+#panel-social .railhead > .railhead-acts { order: 1; display: flex; align-items: center; gap: 4px; flex: none; }
+#panel-social .imp-chips { order: 2; flex-basis: 100%; }
 .imp-chips { flex-wrap: wrap; row-gap: 3px; min-width: 0; }
 /* A chip is its label. Below that width it is not a shorter chip, it is an
    unreadable one — the same rule this file keeps for the line under the note
@@ -313,7 +321,18 @@
 
 /* ── Your own notes ─────────────────────────────────────────── */
 
-.imp-notes { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0 8px; }
+/* THE LIST KEEPS A FLOOR, and the box above it gives way rather than the other
+   way round. The write box is ~364px in the no-voice state -- a 96px textarea,
+   the "what goes with it" block and three lines of explanation -- and the dock
+   gives this panel 434px when a second panel shares it. So the box alone was
+   taller than the whole view, the list was left 12px, and a panel opened on
+   Notes showed no note at all. A floor here and a shrink on the box is what
+   keeps the list the thing the view is for. */
+.imp-notes { flex: 1 1 0%; min-height: 40%; overflow-y: auto; padding: 4px 0 8px; }
+/* Which means the box has to be allowed to lose the argument: `min-height: 0`
+   lets it shrink past its content, and its own scroller is what makes that
+   survivable rather than a clip. */
+#improve-notes > .imp-write { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 .imp-notes .rail-note { padding: 12px 10px; }
 
 .imp-note { padding: 7px 10px; border-bottom: 1px solid var(--border); }
@@ -386,10 +405,12 @@
 }
 .imp-vote:hover { border-color: var(--accent); color: var(--accent-text); }
 .imp-vote.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
-/* A vote nobody has counted yet. Dashed, because the tally beside it is as at
-   a build and this vote is not in it — and a control that looked counted when
-   it was not would be the panel telling a lie it could easily avoid. */
-.imp-vote.held { border-style: dashed; }
+/* There is no `.held` state and there is no rule for one. A dashed "cast but not
+   counted yet" variant was drawn here for a client-side vote queue, and that queue was
+   rejected -- two stores of truth about one proposal, and the client's is stale the
+   moment somebody else votes (`dev/IMPROVE_CONTRACT.md` §5.8). Nothing has set the class
+   since; the rule outlived its setter until 2026-08-28. A vote is cast against the forge
+   or it is not cast, so `.on` is the only state there is to draw. */
 
 /* ============================================================
    The Share view — www/js/share.js
@@ -459,3 +480,24 @@
 }
 .shr-say[hidden] { display: none; }
 .shr-warn { color: var(--warn); }
+
+/* ── The triage plan ────────────────────────────────────────── */
+
+/* One draft in a plan, told from the next one.
+ *
+ * `triage.js` draws its rows out of `.imp-*` on purpose -- the box is
+ * `.imp-box`, the acts are `.imp-acts`, the refusal is `.imp-err` -- and it
+ * needed nothing of its own until there were several drafts on the screen at
+ * once. Photographed at a 300px dock and at 390px: a draft's last button and
+ * the next draft's "New proposal" sit against each other with nothing between
+ * them, so a list of separately sendable items reads as one wall of text and
+ * a reader cannot see which box a Send belongs to. Every OTHER trg- class is
+ * still bare, and should stay that way; this is the one thing the screen asked
+ * for.
+ *
+ * `--border`, and the same 1px it is drawn at on `.imp-note` and `.imp-prop`
+ * two hundred lines above -- the drafts are a list of items in the same panel
+ * and a louder line would say they were a different kind of thing. See the
+ * rule at the head of this file: a divider is not a control's boundary. */
+.trg-draft { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.trg-draft:last-child { border-bottom: none; }

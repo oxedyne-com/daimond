@@ -82,8 +82,24 @@ pub const DEFAULT_MAX_ROUNDS: usize = 150;
 /// the refusal.
 pub const DEFAULT_WINDOW: u64 = 131_072;
 
-/// Fraction of the window at which a conversation is folded.
-pub const FOLD_AT: f64 = 0.8;
+// Where a conversation folds
+//
+// It was 0.8 until 2026-08-28, and the owner moved it down after a tester read a long chat
+// as losing its history.  Two things go wrong close to the ceiling and both are silent: the
+// budget is computed against a window this app only GUESSED at, so an estimate a fifth too
+// generous puts the request over the real line before anything here notices; and the fold's
+// own summary is paid for out of the same window, so a fold begun at 0.8 can leave the
+// folded conversation still over it.  Folding earlier costs one summary sooner and buys the
+// headroom both of those want.
+//
+// The band exists because `Limits::budget` clamped whatever it was handed anyway, and the
+// figures now have to be read by the control that offers the choice: one offering 0.05 would
+// be offering a conversation folded to nothing, and one offering 0.99 no fold at all until
+// the provider refuses.
+
+pub const FOLD_AT:     f64 = 0.65;	// default, overridden by the user's own figure
+pub const FOLD_AT_MIN: f64 = 0.1;	// below this a fold leaves nothing standing
+pub const FOLD_AT_MAX: f64 = 0.95;	// above it the provider refuses before the fold runs
 
 /// Fraction of the budget kept verbatim at the end of the conversation.
 ///
@@ -236,7 +252,7 @@ impl Limits {
 	/// * `max_completion` - The cap the client puts on generated tokens.
 	pub fn budget(&self, max_completion: u32) -> u64 {
 		let w = if self.window == 0 { DEFAULT_WINDOW } else { self.window };
-		let by_fraction = (w as f64 * self.fold_at.clamp(0.1, 0.95)) as u64;
+		let by_fraction = (w as f64 * self.fold_at.clamp(FOLD_AT_MIN, FOLD_AT_MAX)) as u64;
 		// Never more than half the window to the reply, however big the client's cap is.
 		// A cap larger than the whole window is not a reason to leave no budget for the
 		// conversation; it is a reason to ignore most of the cap.
@@ -1365,6 +1381,33 @@ pub fn looks_like_overflow(err: &str, prompt_tokens: u64, budget: u64) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+	#[test]
+	fn test_the_shipped_fold_fraction_is_the_owners_figure_00() {
+		// Pinned as a FIGURE, not as "whatever the constant says". The whole point of moving it
+		// was that 0.8 arrived too late to be told apart from a fault, and a test written as
+		// `assert_eq!(FOLD_AT, Limits::default().fold_at)` would have passed on 0.8, on 0.65 and
+		// on anything a later hand put there.
+		assert_eq!(0.65, FOLD_AT);
+		assert_eq!(FOLD_AT, Limits::default().fold_at);
+		// Two thirds of the window and not four fifths of it, measured where it is spent: a
+		// 100,000 window with nothing reserved for the reply.
+		let mut l = Limits::default();
+		l.window = 100_000;
+		assert_eq!(65_000, l.budget(0));
+	}
+
+	#[test]
+	fn test_the_fold_band_is_the_one_the_budget_uses_00() {
+		// The clamp was written twice -- once as literals inside `budget` and once wherever a
+		// caller decided what to offer -- and a band held in two places is a band that drifts.
+		let mut l = Limits::default();
+		l.window = 100_000;
+		l.fold_at = 9.0;
+		assert_eq!((100_000.0 * FOLD_AT_MAX) as u64, l.budget(0));
+		l.fold_at = 0.0;
+		assert_eq!((100_000.0 * FOLD_AT_MIN) as u64, l.budget(0));
+	}
 	use super::*;
 
 	/// No fold open, which is what every size in these tests is measured against unless the test
@@ -2299,10 +2342,15 @@ mod tests {
 		// that looks small against the assumed budget. Judged as a fraction of that budget
 		// it would be dismissed as a malformed request, and the chat would die exactly as
 		// it did before.
+		// THE GUARD IS A RATIO, NOT A FIGURE. It was `assumed > 90_000`, which is the budget
+		// FOLD_AT 0.8 produced and nothing else -- so moving the fold fraction to 0.65 reddened a
+		// test about a refusal. What it actually needs is that the refused prompt looks small
+		// against the assumed budget, which is what a fraction-of-budget test would dismiss it on.
+		let refused = 12_000u64;
 		let assumed = Limits::default().budget(4_096);
-		assert!(assumed > 90_000, "the assumed budget is {}", assumed);
+		assert!(assumed > refused * 5, "the assumed budget is {}", assumed);
 		let bare = "LLM: HTTP error: 400 Bad Request.";
-		assert!(looks_like_overflow(bare, 12_000, assumed),
+		assert!(looks_like_overflow(bare, refused, assumed),
 			"a 12k-token prompt refused by a 16k-window model was not recognised");
 	}
 

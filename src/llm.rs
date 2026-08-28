@@ -187,6 +187,24 @@ fn new_carry() -> Carry {
 }
 
 
+/// One piece of a streamed turn, labelled with what kind of thing it is.
+///
+/// The two are different KINDS of content and not two shades of one.  Text is the
+/// answer: it is accumulated, persisted, and sent back to the model next turn as
+/// what the assistant said.  Reasoning is the model's working, which the user pays
+/// for and which decides the answer, but which is not the answer and must never be
+/// stored as one -- see `AgentEvent::Thinking` in src/protocol.rs.
+///
+/// One sink and not two, because a caller holds ONE `&mut` to whatever it is
+/// forwarding into.  Two closures over the same event sink is a borrow the compiler
+/// refuses, and the ways round it (a `RefCell`, a channel) buy nothing: the stream
+/// is serial, so exactly one delta is in flight at a time.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Delta<'a> {
+    Text(&'a str),
+    Reasoning(&'a str),
+}
+
 // ┌───────────────────────────────────────────────────────────────┐
 // │ LlmClient                                                      │
 // └───────────────────────────────────────────────────────────────┘
@@ -195,8 +213,8 @@ fn new_carry() -> Carry {
 ///
 /// Connects via TLS to the configured host, POSTs a chat completion
 /// request with `stream: true`, and parses the SSE response
-/// incrementally — calling `on_token` for each text chunk as it
-/// arrives.
+/// incrementally — calling `on_token` for each chunk as it arrives,
+/// saying whether it is the answer or the model's working ([`Delta`]).
 #[derive(Clone, Debug)]
 pub struct LlmClient {
     pub host:       String,
@@ -280,7 +298,7 @@ pub struct ChatResponse {
     /// How many times this call was retried before it succeeded; see
     /// [`ChatOnceResponse::retries`].
     pub retries:           u32,
-    /// The model's summarised reasoning; see [`ChatOnceResponse::thinking`].
+    /// The model's own reasoning; see [`ChatOnceResponse::thinking`].
     pub thinking:          String,
     /// Set when the provider stopped because the reply hit `max_tokens` --
     /// `finish_reason: "length"`, or Anthropic's `stop_reason: "max_tokens"`.
@@ -317,13 +335,20 @@ pub struct ChatOnceResponse {
     /// ordinary case; anything else is time the user waited for a provider that
     /// was not ready, and is worth showing rather than hiding.
     pub retries:           u32,
-    /// The model's summarised reasoning for this turn, when it thought and the
-    /// endpoint returns thinking at all -- so, Anthropic direct, on a model that
-    /// takes adaptive thinking.  Empty otherwise, and never part of `content`:
-    /// reasoning is not the answer, and a caller that persisted it as one would
-    /// be putting the model's working out where its reply should be.  The
-    /// tokens are already counted in `completion_tokens`, because thinking is
-    /// billed as output whether or not its text comes back.
+    /// The model's whole reasoning for this turn, gathered as it streamed.  Anthropic
+    /// direct returns it from `thinking_delta`; an OpenAI-dialect endpoint returns it
+    /// on `reasoning` (OpenRouter's spelling) or `reasoning_content` (DeepSeek's own).
+    /// Empty for a model that does not reason, which is most of them.
+    ///
+    /// NEVER part of `content`: reasoning is not the answer, and a caller that
+    /// persisted it as one would be putting the model's working out where its reply
+    /// should be -- and handing it back next turn as something the model said.  The
+    /// tokens are already counted in `completion_tokens`, because thinking is billed
+    /// as output whether or not its text comes back.
+    ///
+    /// A streaming caller does not need this: the same words reached it as
+    /// [`Delta::Reasoning`] while the round ran, which is the only time showing them
+    /// does any good.  It is here for the callers that take a turn whole.
     pub thinking:          String,
     /// Set when the provider stopped because the reply hit `max_tokens` --
     /// `finish_reason: "length"`, or Anthropic's `stop_reason: "max_tokens"`.
@@ -457,12 +482,11 @@ impl RetryPolicy {
 /// Retryability is decided where the status code is still in hand, rather than
 /// by reading it back out of an error message later.
 struct TransportErr {
-    /// Whether another attempt is worth making.
-    retryable: bool,
-    /// What the provider asked us to wait, in milliseconds, if it said.
-    after_ms:  Option<u64>,
-    /// A few plain words for the retry notice.  The error itself carries file,
-    /// line and ANSI colouring, none of which belongs in a user's message pane.
+    retryable: bool,            // is another attempt worth making?
+    after_ms:  Option<u64>,     // what the provider asked us to wait, if it said
+    // A few plain words for the retry notice, and -- since 2026-08-28 -- for the
+    // caller.  The error itself carries file, line and ANSI colouring, none of
+    // which belongs in a user's message pane.  See [`TransportErr::crossed`].
     reason:    String,
     err:       Error<ErrTag>,
 }
@@ -484,6 +508,24 @@ impl TransportErr {
     fn after(mut self, after_ms: Option<u64>) -> Self {
         self.after_ms = after_ms;
         self
+    }
+
+    /// The failure as it LEAVES this module, with the reason in front of it.
+    ///
+    /// WHY THE REASON HAS TO TRAVEL.  Until this existed only `err` was returned,
+    /// and `err` on the browser path is the browser's own sentence -- Chromium
+    /// says `Failed to fetch` and WebKit says `Load failed` for the identical
+    /// event.  The app's offline classifier (`isUnreachable`, www/js/daimond.js)
+    /// was therefore reduced to matching one vendor's prose, and on iOS it matched
+    /// nothing: a turn that died before the first token was written off as a
+    /// provider refusal, and the recovery built for exactly that case never ran.
+    ///
+    /// `reason` is this client's own wording and is the same on every browser, so
+    /// putting it in front of the error makes the classification a property of
+    /// Daimond rather than of Safari.  It is first because the reader -- person or
+    /// regex -- should meet the plain sentence before the framing.
+    fn crossed(self) -> Error<ErrTag> {
+        err!(self.err, "{}", self.reason; IO, Network, Wire)
     }
 }
 
@@ -526,7 +568,7 @@ pub(crate) fn header_value(headers: &str, name: &str) -> Option<String> {
 
 /// Sleep for `ms` milliseconds on the native transport.
 #[cfg(not(target_arch = "wasm32"))]
-async fn sleep_ms(ms: u64) {
+pub(crate) async fn sleep_ms(ms: u64) {
     tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
 }
 
@@ -535,7 +577,7 @@ async fn sleep_ms(ms: u64) {
 /// A scope with no timer resolves immediately, so a retry still happens -- just
 /// without the pause.
 #[cfg(target_arch = "wasm32")]
-async fn sleep_ms(ms: u64) {
+pub(crate) async fn sleep_ms(ms: u64) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::JsValue;
     use wasm_bindgen_futures::JsFuture;
@@ -639,8 +681,9 @@ impl LlmClient {
 
     /// Send a streaming chat completion request.
     ///
-    /// Reads the SSE response line-by-line from the TLS stream,
-    /// calling `on_token` for each text delta *as it arrives*.
+    /// Reads the SSE response line-by-line from the TLS stream, calling `on_token` for
+    /// each delta *as it arrives* -- [`Delta::Text`] for the answer, [`Delta::Reasoning`]
+    /// for the model's own working, which is never part of it.
     /// Returns the full accumulated response and token usage when
     /// the stream completes.
     /// A stream that failed before emitting a token is retried; one that failed
@@ -649,7 +692,7 @@ impl LlmClient {
     pub async fn chat_stream(
         &self,
         messages:   &[ChatMessage],
-        on_token:   &mut impl FnMut(&str),
+        on_token:   &mut impl FnMut(Delta<'_>),
     ) -> Outcome<ChatResponse> {
         let resp = res!(self.stream_turn(messages, None, on_token, false).await);
         Ok(ChatResponse {
@@ -668,10 +711,11 @@ impl LlmClient {
     /// Streaming chat completion with tools enabled.
     ///
     /// Issues the request with `stream: true` and reconstructs the
-    /// assistant turn from the SSE deltas: text is forwarded to
-    /// `on_token` as it arrives (so the answer streams even while tools
-    /// are active), and any `tool_calls` fragments are accumulated across
-    /// chunks into whole calls (see [`StreamAcc`]).  Returns the same
+    /// assistant turn from the SSE deltas: text and reasoning are forwarded
+    /// to `on_token` as they arrive, each labelled (so the answer streams even
+    /// while tools are active, and so does the working that precedes it), and
+    /// any `tool_calls` fragments are accumulated across chunks into whole
+    /// calls (see [`StreamAcc`]).  Returns the same
     /// [`ChatOnceResponse`] shape as [`chat_once`](Self::chat_once).
     ///
     /// A 429, a 5xx or a dropped connection is retried with bounded exponential
@@ -684,7 +728,7 @@ impl LlmClient {
         &self,
         messages:   &[ChatMessage],
         tools:      Option<&str>,
-        on_token:   &mut impl FnMut(&str),
+        on_token:   &mut impl FnMut(Delta<'_>),
     ) -> Outcome<ChatOnceResponse> {
         self.stream_turn(messages, tools, on_token, true).await
     }
@@ -702,13 +746,13 @@ impl LlmClient {
     /// * `messages` - The conversation so far.
     /// * `tools` - A ready-made OpenAI-shaped tool array, translated for the
     ///   Anthropic dialect; `None` disables tools.
-    /// * `on_token` - Called with each text delta as it arrives.
-    /// * `notify` - Whether to announce a retry through `on_token`.
+    /// * `on_token` - Called with each delta as it arrives, labelled by kind.
+    /// * `notify` - Whether to announce a retry through `on_token`, as text.
     async fn stream_turn(
         &self,
         messages:   &[ChatMessage],
         tools:      Option<&str>,
-        on_token:   &mut impl FnMut(&str),
+        on_token:   &mut impl FnMut(Delta<'_>),
         notify:     bool,
     ) -> Outcome<ChatOnceResponse> {
         let images = res!(self.vision_guard(messages));
@@ -724,9 +768,13 @@ impl LlmClient {
             let mut emitted = false;
             let outcome = {
                 let mut sink = |data: &str| {
-                    acc.ingest(data, &mut |token: &str| {
-                        emitted = true;
-                        on_token(token);
+                    acc.ingest(data, &mut |d: Delta<'_>| {
+                        // ONLY TEXT MAKES A TURN UNREPEATABLE. Reasoning already shown and
+                        // then shown again reads as the model thinking twice, which is odd;
+                        // an answer delivered twice is wrong. So a turn that has only
+                        // reasoned so far is still safe to start over.
+                        if matches!(d, Delta::Text(_)) { emitted = true; }
+                        on_token(d);
                     });
                 };
                 self.stream_sse(&body, &mut sink).await
@@ -771,32 +819,32 @@ impl LlmClient {
                             .collect();
                         body = self.build_body(&text_only, tools, true);
                         if notify {
-                            on_token(&fmt!(
+                            on_token(Delta::Text(&fmt!(
                                 "\n[daimond: the model would not take {} image{}; asking again \
                                  without {} -- it cannot see]\n",
                                 images,
                                 if images == 1 { "" } else { "s" },
-                                if images == 1 { "it" } else { "them" }));
+                                if images == 1 { "it" } else { "them" })));
                         }
                         continue;
                     }
                     if started || !e.retryable {
-                        return Err(self.vision_error(e.err, images));
+                        return Err(self.vision_error(e.crossed(), images));
                     }
                     let delay = match self.retry.next_delay(retries, waited, e.after_ms) {
                         Some(d) => d,
-                        None    => return Err(self.vision_error(e.err, images)),
+                        None    => return Err(self.vision_error(e.crossed(), images)),
                     };
                     waited += delay;
                     retries += 1;
                     if notify {
-                        on_token(&fmt!(
+                        on_token(Delta::Text(&fmt!(
                             "\n[daimond: {}; retrying in {}.{:01}s -- attempt {} of {}]\n",
                             e.reason,
                             delay / 1_000,
                             (delay % 1_000) / 100,
                             retries + 1,
-                            self.retry.max_attempts));
+                            self.retry.max_attempts)));
                     }
                     sleep_ms(delay).await;
                 }
@@ -840,11 +888,11 @@ impl LlmClient {
                         continue;
                     }
                     if !e.retryable {
-                        return Err(self.vision_error(e.err, images));
+                        return Err(self.vision_error(e.crossed(), images));
                     }
                     let delay = match self.retry.next_delay(retries, waited, e.after_ms) {
                         Some(d) => d,
-                        None    => return Err(self.vision_error(e.err, images)),
+                        None    => return Err(self.vision_error(e.crossed(), images)),
                     };
                     waited += delay;
                     retries += 1;
@@ -3501,6 +3549,8 @@ struct StreamCall {
 #[derive(Default)]
 struct StreamAcc {
     content:           String,
+    // The model's own working, kept apart from the answer it produced.
+    reasoning:         String,
     /// The last usage block the stream reported.  An aborted stream may never
     /// deliver one, which leaves this at its default rather than erroring.
     usage:             Usage,
@@ -3511,16 +3561,42 @@ struct StreamAcc {
 
 impl StreamAcc {
 
-    /// Fold one SSE `data:` payload into the accumulator, forwarding any
-    /// text delta to `on_token` as it arrives.
-    fn ingest(&mut self, data: &str, on_token: &mut impl FnMut(&str)) {
+    /// Fold one SSE `data:` payload into the accumulator, forwarding each delta to
+    /// `on_token` as it arrives, labelled as answer or as working.
+    fn ingest(&mut self, data: &str, on_token: &mut impl FnMut(Delta<'_>)) {
         // Text delta — scoped to before any `tool_calls` so a `content`
         // key inside a tool call's arguments is never mistaken for it.
         let scope_end = data.find("\"tool_calls\"").unwrap_or(data.len());
         if let Some(content) = extract_json_string(&data[..scope_end], "content") {
             if !content.is_empty() {
-                on_token(&content);
+                on_token(Delta::Text(&content));
                 self.content.push_str(&content);
+            }
+        }
+
+        // THE MODEL'S OWN WORKING, which every reasoning model on this dialect streams
+        // and which this client read none of until 2026-08-28. A measured DeepSeek round
+        // pulled 1.8 MB down the wire over 84 seconds and put fifty characters on the
+        // screen; all the rest was this field, discarded delta by delta, and the user was
+        // billed for it while watching a spinner.
+        //
+        // Two spellings, and never both in one delta: `reasoning` is what OpenRouter
+        // sends, `reasoning_content` is what DeepSeek's own endpoint calls it. So one is
+        // read and then the other, rather than both concatenated.
+        //
+        // `reasoning_details` is NOT read. OpenRouter sends it alongside `reasoning` with
+        // the same words in it, verbatim, so a reader that took both would put every
+        // token on the page twice.
+        //
+        // `null` is the value on the deltas that carry no reasoning, and
+        // `extract_json_string` answers None for a value that is not a string -- so the
+        // absence needs no test of its own here.
+        let think = extract_json_string(&data[..scope_end], "reasoning")
+            .or_else(|| extract_json_string(&data[..scope_end], "reasoning_content"));
+        if let Some(t) = think {
+            if !t.is_empty() {
+                on_token(Delta::Reasoning(&t));
+                self.reasoning.push_str(&t);
             }
         }
 
@@ -3601,9 +3677,7 @@ impl StreamAcc {
             cost_usd:          self.usage.cost_usd,
             aborted,
             retries,
-            // The OpenAI shape has no thinking block; a router that surfaces a
-            // model's reasoning does it as ordinary content.
-            thinking:          String::new(),
+            thinking:          self.reasoning,
             truncated:         self.truncated,
         }
     }
@@ -3730,15 +3804,15 @@ impl AnthropicAcc {
         }
     }
 
-    /// Fold one SSE `data:` payload in, forwarding text deltas to `on_token`.
+    /// Fold one SSE `data:` payload in, forwarding both kinds of delta to `on_token`.
     ///
-    /// Thinking deltas are deliberately *not* forwarded: the plain-chat caller
-    /// treats every token it is handed as the assistant's answer and would
-    /// persist the reasoning as the reply.  The summary is kept on the response
-    /// instead ([`ChatOnceResponse::thinking`]), where a caller that wants to
-    /// show it can, and the tokens are already counted -- thinking is billed as
-    /// output whether or not its text comes back.
-    fn ingest(&mut self, data: &str, on_token: &mut impl FnMut(&str)) {
+    /// Thinking goes out as [`Delta::Reasoning`] and never as [`Delta::Text`], which is
+    /// the whole of what keeps it out of the answer.  It used not to be forwarded at
+    /// all, because the sink took a bare `&str` and a caller that was handed one had no
+    /// way to tell working from reply -- so the reasoning was held back until the round
+    /// ended.  Now the sink says which is which, so it can be shown as it arrives, and a
+    /// round that thinks for a minute stops looking like a round that has hung.
+    fn ingest(&mut self, data: &str, on_token: &mut impl FnMut(Delta<'_>)) {
         let ty = match extract_json_string(data, "type") {
             Some(t) => t,
             None    => return,
@@ -3787,13 +3861,14 @@ impl AnthropicAcc {
                     "text_delta" => {
                         if let Some(t) = extract_json_string(&d, "text") {
                             if !t.is_empty() {
-                                on_token(&t);
+                                on_token(Delta::Text(&t));
                                 self.content.push_str(&t);
                             }
                         }
                     }
                     "thinking_delta" => {
                         if let Some(t) = extract_json_string(&d, "thinking") {
+                            if !t.is_empty() { on_token(Delta::Reasoning(&t)); }
                             self.slot(index, AnthKind::Thinking).think.push_str(&t);
                         }
                     }
@@ -3915,7 +3990,7 @@ impl Acc {
     }
 
     /// Fold one SSE `data:` payload in, forwarding text deltas to `on_token`.
-    fn ingest(&mut self, data: &str, on_token: &mut impl FnMut(&str)) {
+    fn ingest(&mut self, data: &str, on_token: &mut impl FnMut(Delta<'_>)) {
         match self {
             Self::OpenAi(a)    => a.ingest(data, on_token),
             Self::Anthropic(a) => a.ingest(data, on_token),
@@ -4813,15 +4888,115 @@ pub mod tests {
         assert_eq!(calls[1].arguments, r#"{"command":"ls"}"#);
     }
 
+    /// A sink that keeps the ANSWER and throws the working away.
+    ///
+    /// What nearly every check in this module is about: the answer is what gets
+    /// persisted and sent back next turn, so a check that let reasoning into the
+    /// same vector would pass on a client that confused the two.
+    fn text_sink(out: &mut Vec<String>) -> impl FnMut(Delta<'_>) + '_ {
+        move |d| if let Delta::Text(t) = d { out.push(t.to_string()); }
+    }
+
+    /// The other half: the working, kept and the answer thrown away.
+    fn think_sink(out: &mut Vec<String>) -> impl FnMut(Delta<'_>) + '_ {
+        move |d| if let Delta::Reasoning(t) = d { out.push(t.to_string()); }
+    }
+
     /// Drive a sequence of SSE `data:` payloads through a fresh
     /// [`StreamAcc`], collecting the forwarded text tokens.
     fn run_stream(chunks: &[&str]) -> (ChatOnceResponse, Vec<String>) {
         let mut acc = StreamAcc::default();
         let mut tokens = Vec::new();
         for c in chunks {
-            acc.ingest(c, &mut |t| tokens.push(t.to_string()));
+            acc.ingest(c, &mut text_sink(&mut tokens));
         }
         (acc.into_response(false, 0), tokens)
+    }
+
+    /// Drive the same payloads and keep BOTH sides, so a check can say which sink
+    /// each piece reached rather than only that it arrived somewhere.
+    fn run_stream_both(chunks: &[&str]) -> (ChatOnceResponse, Vec<String>, Vec<String>) {
+        let mut acc     = StreamAcc::default();
+        let mut tokens  = Vec::new();
+        let mut thought = Vec::new();
+        for c in chunks {
+            acc.ingest(c, &mut |d: Delta<'_>| match d {
+                Delta::Text(t)      => tokens.push(t.to_string()),
+                Delta::Reasoning(t) => thought.push(t.to_string()),
+            });
+        }
+        (acc.into_response(false, 0), tokens, thought)
+    }
+
+    #[test]
+    fn test_the_working_of_an_openai_dialect_model_reaches_the_page_as_it_arrives() {
+        // Captured from OpenRouter on 2026-08-28, `z-ai/glm-4.6` by way of DeepInfra:
+        // the reasoning is on `delta.reasoning` and repeated VERBATIM inside
+        // `delta.reasoning_details`, and `content` is an empty string throughout it.
+        // A round of this model spent 230 of its 300 output tokens here, and the app
+        // showed a spinner for all of them.
+        let (resp, tokens, thought) = run_stream_both(&[
+            r#"{"choices":[{"delta":{"content":"","role":"assistant","reasoning":"1","reasoning_details":[{"type":"reasoning.text","text":"1","format":"unknown","index":0}]}}]}"#,
+            r#"{"choices":[{"delta":{"content":"","role":"assistant","reasoning":"7 x 23","reasoning_details":[{"type":"reasoning.text","text":"7 x 23","format":"unknown","index":0}]}}]}"#,
+            r#"{"choices":[{"delta":{"content":"391","role":"assistant","reasoning":null}}]}"#,
+            r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
+        ]);
+        // ONE copy of each piece. `reasoning_details` says the same words again, so a
+        // reader that took both would show every token twice.
+        assert_eq!(thought, vec!["1", "7 x 23"],
+            "the model's working was dropped, or doubled by reasoning_details: {:?}", thought);
+        // A `null` reasoning field is the provider saying there is none this chunk.
+        assert_eq!(tokens, vec!["391"], "reasoning reached the answer sink: {:?}", tokens);
+        assert_eq!(resp.content, "391", "reasoning was accumulated as the reply");
+        assert_eq!(resp.thinking, "17 x 23",
+            "the round's working was not kept on the response");
+    }
+
+    #[test]
+    fn test_deepseeks_own_spelling_of_its_working_is_read_too() {
+        // `reasoning_content` is what DeepSeek's own endpoint calls it; `reasoning` is
+        // OpenRouter's. Both are wanted -- Daimond reaches DeepSeek both ways -- and
+        // never both in one delta, which is why one is read and then the other.
+        let (resp, tokens, thought) = run_stream_both(&[
+            r#"{"choices":[{"delta":{"role":"assistant","content":null,"reasoning_content":"So the"}}]}"#,
+            r#"{"choices":[{"delta":{"content":null,"reasoning_content":" answer is"}}]}"#,
+            r#"{"choices":[{"delta":{"content":"391","reasoning_content":null}}]}"#,
+        ]);
+        assert_eq!(thought, vec!["So the", " answer is"], "{:?}", thought);
+        assert_eq!(tokens, vec!["391"], "{:?}", tokens);
+        assert_eq!(resp.thinking, "So the answer is");
+        assert_eq!(resp.content, "391");
+    }
+
+    #[test]
+    fn test_a_models_working_is_never_stored_as_what_it_said() {
+        // THE DEFECT THIS WHOLE PATH IS ONE MISTAKE AWAY FROM. The reply is what gets
+        // written into the transcript and sent back to the model next turn as its own
+        // words. Reasoning put there is the model's working out quoted back to it as
+        // its answer -- and the working of a tool round is mostly wrong turns.
+        let (resp, tokens, thought) = run_stream_both(&[
+            r#"{"choices":[{"delta":{"content":"","reasoning":"Maybe I should delete it."}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"file_read","arguments":"{}"}}]}}]}"#,
+        ]);
+        assert!(resp.content.is_empty(),
+            "the working was accumulated as the reply: {:?}", resp.content);
+        assert!(tokens.is_empty(), "the working reached the answer sink: {:?}", tokens);
+        assert_eq!(thought, vec!["Maybe I should delete it."]);
+        assert_eq!(resp.tool_calls.len(), 1, "the tool call was lost");
+    }
+
+    #[test]
+    fn test_a_reasoning_key_inside_tool_arguments_is_not_the_models_working() {
+        // A model writing JSON about reasoning is not reasoning. The argument text is
+        // an escaped string, so the key form never matches -- asserted rather than
+        // assumed, because the same trap already caught `content` once.
+        let (resp, tokens, thought) = run_stream_both(&[
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"note_write","arguments":"{\"reasoning\":\"not mine\",\"content\":\"nor this\"}"}}]}}]}"#,
+        ]);
+        assert!(thought.is_empty(), "a tool argument was read as reasoning: {:?}", thought);
+        assert!(tokens.is_empty(), "a tool argument was read as text: {:?}", tokens);
+        assert_eq!(resp.tool_calls[0].arguments,
+            r#"{"reasoning":"not mine","content":"nor this"}"#);
     }
 
     #[test]
@@ -5584,6 +5759,38 @@ pub mod tests {
             .expect("text must still be allowed"));
     }
 
+    /// THE CLIENT'S OWN REASON MUST LEAVE THIS MODULE, because the browser's does not survive
+    /// the crossing intact and is not the same on two browsers.
+    ///
+    /// A failed `fetch` reads `TypeError: Failed to fetch` in Chromium and `TypeError: Load
+    /// failed` in WebKit for the identical event. `www/js/daimond.js` decides from that string
+    /// whether to hand a turn back with a Continue button or write it off, so while only `err`
+    /// crossed, that decision was a property of the browser. `crossed` puts `reason` -- which is
+    /// this file's wording and is the same everywhere -- in front of it.
+    #[test]
+    fn test_a_transport_failure_carries_its_reason_out_of_this_module() {
+        // The exact shape of the iOS case: the fetch never got a response, and the browser's
+        // own sentence is the only thing in the error.
+        let e = TransportErr::transient(
+            "could not reach the provider".to_string(),
+            err!("LLM: fetch failed: TypeError: Load failed."; IO, Network, Wire));
+        let out = fmt!("{}", e.crossed());
+        assert!(out.contains("could not reach the provider"),
+            "the client's own reason did not cross: {}", out);
+        assert!(out.contains("Load failed"),
+            "the provider's -- or the browser's -- own words must survive with it: {}", out);
+        // And a failure that is the PROVIDER answering carries a reason that says so, which is
+        // what keeps the app from reading a 429 as a dead road.
+        let e = TransportErr::fatal(
+            "the provider returned HTTP 400".to_string(),
+            err!("LLM: HTTP error: 400 Bad Request | context length exceeded"; IO, Network, Wire));
+        let out = fmt!("{}", e.crossed());
+        assert!(out.contains("the provider returned HTTP 400"), "{}", out);
+        // `compact::looks_like_overflow` reads this text, so the body detail must still be in it.
+        assert!(out.contains("context length"),
+            "the refusal's own body was lost, and overflow detection reads it: {}", out);
+    }
+
     /// A model NOT on the list is allowed through -- the list is of what is known blind, not of
     /// what is known to see, so a model released tomorrow is not refused today.
     #[test]
@@ -5820,9 +6027,19 @@ pub mod tests {
         let mut acc = AnthropicAcc::default();
         let mut tokens = Vec::new();
         for c in chunks {
-            acc.ingest(c, &mut |t| tokens.push(t.to_string()));
+            acc.ingest(c, &mut text_sink(&mut tokens));
         }
         (acc, tokens)
+    }
+
+    /// The same, keeping the working rather than the answer.
+    fn run_anth_thinking(chunks: &[&str]) -> (AnthropicAcc, Vec<String>) {
+        let mut acc = AnthropicAcc::default();
+        let mut thought = Vec::new();
+        for c in chunks {
+            acc.ingest(c, &mut think_sink(&mut thought));
+        }
+        (acc, thought)
     }
 
     #[test]
@@ -5887,6 +6104,16 @@ pub mod tests {
         // The reasoning is not the reply: a caller that streamed it into the
         // message would persist the model's working out as its answer.
         assert_eq!(tokens, vec!["21."], "thinking reached the token sink: {:?}", tokens);
+        // And it IS handed over, as its own kind, while the round is still running.
+        // Held back until the round ended, a model that thinks for a minute and a half
+        // is a minute and a half of blank spinner.
+        let (_a2, thought) = run_anth_thinking(&[
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Euclid: 1071 = 2 x 462 + 147"}}"#,
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"21."}}"#,
+        ]);
+        assert_eq!(thought, vec!["Euclid: 1071 = 2 x 462 + 147"],
+            "the working did not reach the reasoning sink: {:?}", thought);
         let blocks = acc.thinking_blocks();
         assert_eq!(blocks.len(), 1, "the signed block was not kept for replay");
         assert!(blocks[0].contains("\"signature\":\"EqQBCgIYAhIM\""), "{}", blocks[0]);
@@ -6382,9 +6609,7 @@ pub mod tests {
             ContentPart::Image(doc_image("cover.png")),
         ]))];
         let mut tokens = Vec::new();
-        let resp = match client.chat_stream_tools(&msgs, None, &mut |t| {
-            tokens.push(t.to_string());
-        }).await {
+        let resp = match client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
             Ok(r)  => r,
             Err(e) => panic!("a refused picture must not kill the turn: {}", e),
         };
@@ -6423,7 +6648,7 @@ pub mod tests {
             ContentPart::Text("and this one".to_string()),
             ContentPart::Image(doc_image("cover.png")),
         ]))];
-        let mut sink = |_: &str| {};
+        let mut sink = |_: Delta<'_>| {};
         let _ = client.chat_stream_tools(&msgs, None, &mut sink).await
             .expect("the first turn recovers");
         let _ = client.chat_stream_tools(&msgs, None, &mut sink).await
@@ -6451,9 +6676,7 @@ pub mod tests {
         let mut tokens = Vec::new();
 
         let started = std::time::Instant::now();
-        let resp = match client.chat_stream_tools(&msgs, None, &mut |t| {
-            tokens.push(t.to_string());
-        }).await {
+        let resp = match client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
             Ok(r)  => r,
             Err(e) => panic!("a 429 followed by a 200 should complete: {}", e),
         };
@@ -6491,7 +6714,7 @@ pub mod tests {
         let msgs = [ChatMessage::user("hello".to_string())];
         let mut tokens = Vec::new();
 
-        let result = client.chat_stream_tools(&msgs, None, &mut |t| tokens.push(t.to_string())).await;
+        let result = client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await;
         assert!(result.is_err(), "a malformed request must not be reported as success");
         // The whole point: a 400 will fail the same way next time, and retrying
         // it only costs the user money and time.
@@ -6510,9 +6733,7 @@ pub mod tests {
         let msgs = [ChatMessage::user("hello".to_string())];
         let mut tokens = Vec::new();
 
-        let resp = match client.chat_stream_tools(&msgs, None, &mut |t| {
-            tokens.push(t.to_string());
-        }).await {
+        let resp = match client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
             Ok(r)  => r,
             Err(e) => panic!("two 500s then a 200 should complete: {}", e),
         };
@@ -6692,7 +6913,7 @@ pub mod tests {
         let msgs = [ChatMessage::user("hello".to_string())];
         let mut tokens = Vec::new();
 
-        let _ = client.chat_stream_tools(&msgs, None, &mut |t| tokens.push(t.to_string())).await;
+        let _ = client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await;
 
         let text: String = tokens.iter().filter(|t| !t.starts_with("\n[daimond")).cloned().collect();
         assert_eq!(text, "Hello",
@@ -6723,7 +6944,7 @@ pub mod tests {
         let msgs = [ChatMessage::user("hello".to_string())];
         let mut tokens = Vec::new();
 
-        let _ = client.chat_stream_tools(&msgs, None, &mut |t| tokens.push(t.to_string())).await;
+        let _ = client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await;
 
         assert_eq!(connections(&seen), 1,
             "the turn was restarted on top of a partial tool call");
@@ -6753,9 +6974,7 @@ pub mod tests {
         let msgs = [ChatMessage::user("hello".to_string())];
         let mut tokens = Vec::new();
 
-        let resp = match client.chat_stream_tools(&msgs, None, &mut |t| {
-            tokens.push(t.to_string());
-        }).await {
+        let resp = match client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
             Ok(r)  => r,
             Err(e) => panic!("a stream that breaks before tokens should recover: {}", e),
         };

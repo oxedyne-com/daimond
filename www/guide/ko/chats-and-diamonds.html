@@ -105,11 +105,51 @@
 	<p>Diamond에는 <strong>두 얼굴</strong>이 있고, 머리글의 스위치로 오가요. <span class="ui">결정체</span> 는 Diamond이 아는 것이고요. <span class="ui">채팅</span> 은 그 Diamond 자신의 대화예요. 다른 것들처럼 남고, <span class="ui">접기</span> 버튼을 달고 있어요. 접기는 무언가를 설정하는 중이 아니라 흐름 한가운데서 하는 일이니까요. 레일에서 채팅을 고르면 평범한 대화가 돌아와요. 스테이지가 비려 할 때도 마찬가지예요.</p>
 
 	<h3 id="s12">Diamond이 하는 일과 하지 않는 일</h3>
-	<p>Diamond은 간직할 뿐 돌지 않아요. 결정체를 실행하는 것은 없어요. 워크플로 엔진도, 일정도, 한 Diamond에서 다른 Diamond으로 이어지는 사슬도, 터지기를 기다리는 저장된 작업도 없어요. Diamond으로 돌아간다고 움직이지 않고, 내버려 둔다고 움직이지도 않아요.</p>
+	<p>A Diamond retains; on its own it does not run. Nothing executes a crystal: there is no workflow engine and no chain from one Diamond to another. Returning to a Diamond does not set it going, and neither does leaving it alone. A Diamond you have not automated answers when you prompt it and at no other time — which is what its panel says when you look: <em>Nothing set. This Diamond answers when you prompt it and at no other time.</em></p>
 
 	<p>그러니 <em>다시 손에 든다는 것은</em> 는 이미 배운 것을 모두 손에 쥔 채 다시 이끈다는 뜻이에요. 결정체는 산문이고, 모델이 가장 잘 읽는 형태죠. 내가 그 Diamond을 다룰 때 daimon에게 건네지고, 거기서 내보내는 모든 일꾼에게도 건네져요. 한 번 알아낸 것은 다시 치지 않아도, 쳐야 한다고 떠올리지 않아도 다시 그 일에 닿아요.</p>
 
-	<h2 id="s13">결정체와 그 이력</h2>
+	<p>The one way a Diamond acts without you is the one you set up yourself, described next.</p>
+
+	<h2 id="s13">Triggered actions</h2>
+	<p>A <strong>triggered action</strong> is a standing arrangement for a Diamond to do something <em>without being asked</em>. You write it, you switch it on, and from then on the Diamond acts when the thing you named happens. It is the only part of Daimond that spends money with nobody at the keyboard, so it is worth reading this section before you set one.</p>
+
+	<p>They live under <span class="ui">When this Diamond acts</span> on a Diamond's crystal. <span class="ui">Add an action</span> makes one; a pulldown selects it for editing when there is more than one. Two things can set an action off:</p>
+	<ul>
+		<li><strong>Minutes of my activity.</strong> A timer that only counts while you are actually working. A tab left open overnight counts none of them, so a Diamond set to thirty minutes fires after half an hour of your work, not half an hour of wall clock.</li>
+		<li><strong>Mail arriving.</strong> Mail landing in a folder you name, in a mailbox you have already set up. Nothing fires until there is mail.</li>
+	</ul>
+
+	<p>Each action carries two pieces of writing. The <strong>instruction</strong> is what the Diamond is asked to do when it fires, and it is sent every time. The <strong>context</strong> is background it needs the first time only: it goes in front of the first instruction and then stops going, until you change it, at which point it is sent once more. That is what changing it means.</p>
+
+	<p>Actions are ordinary files. They sit in the Diamond's own directory as <strong translate="no">triggers.json</strong>, in the open, where you can read them in the Workspace panel and where the Diamond itself can read and edit them with the file tools it already has. Nothing about them is hidden from you or from it.</p>
+
+	<h3 id="s14">The play, the pause and the light</h3>
+	<p>Every triggered action wears the same three-part control the rest of the app uses: a <strong>play</strong>, a <strong>pause</strong> and a round <strong>light</strong>. The Diamond carries one that speaks for all of its actions, and the <span class="ui">전체</span> row at the top of the rail carries one that speaks for the whole app.</p>
+
+	<p><strong>The light says whether anything is going to happen on its own.</strong> Not whether you have pressed pause — whether something is actually armed and free to fire:</p>
+	<ul>
+		<li><strong>Red.</strong> Nothing here will act by itself — because you have set nothing up, or because what is here is switched off, held, or missing something it cannot fire without.</li>
+		<li><strong>Amber.</strong> Some of what is set up will act, and some is held.</li>
+		<li><strong>Green.</strong> Everything that is set up will act.</li>
+	</ul>
+
+	<p>A Diamond you have not automated therefore shows <strong>red</strong>, and so does the <span class="ui">전체</span> row on a fresh account. That is not a warning. It is the honest answer to "is anything running by itself?", and on a new account the answer is no.</p>
+
+	<p>The two buttons follow the light, so you never have to work out which one would do something:</p>
+	<ul>
+		<li>Red: <strong>play</strong> is live and <strong>pause</strong> is greyed. There is nothing running to stop.</li>
+		<li>Amber: <strong>both</strong> are live. You can release what is held or hold the rest.</li>
+		<li>Green: <strong>pause</strong> is live and <strong>play</strong> is greyed. There is nothing held to release.</li>
+	</ul>
+
+	<div class="note"><strong>An action that cannot fire is not counted.</strong> An action switched on but missing its mailbox, its folder or its instruction would never go off, so the light does not report it as though it would. Fill in what it is missing and the light changes on its own.</div>
+
+	<p>Pressing pause on a Diamond holds every action under it; pressing it on the <span class="ui">전체</span> row holds the lot. Nothing is spent by a held action — it is refused before the turn starts, so a pause costs nothing but the wait. Amber can only be arrived at, never set: there is no button that makes a light amber, which is what stops the colour from meaning whatever somebody last clicked.</p>
+
+	<p>The same light rides on your mailboxes, and it reads the same way. A mailbox whose folders you refresh by hand is <strong>red</strong>: pressing refresh yourself is not automation, it is you. Give a folder an interval and it goes green.</p>
+
+	<h2 id="s15">결정체와 그 이력</h2>
 	<p>The crystal is two real files in the Diamond's own directory: <strong translate="no">crystal.json</strong>은 Diamond가 아는 것, <strong translate="no">crystal.html</strong>, the page that draws it. That directory is always in the Diamond's workspace, so both can be opened in the Workspace panel, read, and edited by hand. It is not inside the folder you have open as your workspace, though: a Diamond is kept in the browser's own storage, apart from your work.</p>
 
 	<p>쓸 때마다 버전이 찍히니, 결정체에는 이력이 있고 덮어써지는 것은 없어요. 이력은 모든 버전을 새것부터 늘어놓고, 저마다 무엇이 그것을 낳았는지 붙여요.</p>
@@ -121,7 +161,7 @@
 
 	<div class="note"><strong>되살려도 사라지지 않아요.</strong> 현재이던 글이 먼저 이력에 남으니, 예전 버전을 되살려도 이력이 갈리지 않고 늘어나요 — 뜻하지 않은 되살리기도 그 자체를 되돌릴 수 있어요.</div>
 
-	<h2 id="s14">산출물</h2>
+	<h2 id="s16">산출물</h2>
 	<p>Diamond은 그 일이 건드린 것도 적어 둬요. 그 일을 하는 동안 쓰인 파일과 열린 페이지죠. 내가 적을 필요는 없어요. Daimond은 에이전트가 쓴 도구를 이미 적어 두니, 목록은 일어난 일에서 읽어 내고, 접기를 받아들이는 그 순간에 모아요.</p>
 
 	<p>그저 <em>읽기만 한</em> 파일은 일부러 빼 뒀어요. 에이전트는 하나를 찾느라 파일 마흔을 열기도 하는데, 마흔을 다 늘어놓으면 정작 중요한 하나가 묻혀요. 남기는 것은 그 일이 만들어 낸 것과, 내가 보자고 한 페이지예요.</p>
@@ -135,14 +175,14 @@
 
 	<div class="note">그 뒤에 이름을 바꾸거나 지운 파일은, 열려고 하면 <strong>그렇다고 말해 줘요</strong> — 조용히 아무 일도 하지 않는 게 아니에요. 끊긴 링크를 아닌 척 늘어놓는 목록은, 목록이 없는 것보다 나쁘니까요.</div>
 
-	<h2 id="s15">Diamond의 작업 공간</h2>
+	<h2 id="s17">Diamond의 작업 공간</h2>
 	<p>Diamond에는 <strong>작업 공간</strong>이 있어요. 그와 함께 두는 파일과 폴더예요. 거기 두는 사람은 나고요. daimon은 자기 작업 공간에 무언가를 더할 수 없으니, 받은 것으로 일하고 더 필요하면 나에게 물어요.</p>
 
 	<p><strong>이건 내 파일을 들여다보는 창이지, 파일을 담아 두는 상자가 아니에요.</strong> 붙인다고 복사되는 것은 없어요. 파일은 있던 자리에 그대로 있고, Diamond은 그것을 가리킬 뿐이에요. 같은 폴더를 두 Diamond에 붙여도 폴더는 하나이고, 어느 쪽에서 고치든 다른 쪽이 읽는 것은 같은 파일이에요. Diamond의 작업 공간에서 빼도 떼어 낼 뿐, 파일 자체는 그대로이고, 없어지는 것은 일부러 지웠을 때뿐이에요. <em>작업 공간</em> 이라는 말은 사본이 있을 것 같은 느낌을 주지만, 사본은 없어요.</p>
 
 	<p>Diamond에는 저만의 디렉터리도 있어요. 늘 작업 공간 안에 있고 늘 쓸 수 있으니, 내가 아무것도 붙이지 않아도 그 daimon에게는 일할 자리가 있죠. 결정체도 거기 살아요. 폴더는 <strong>편집이 아니라 참고용</strong>으로 붙일 수도 있어요. 그러면 daimon은 읽을 수 있고, 쓰기는 모두 거부돼요. 그리고 <a href="email-web-files.html">작업 공간</a> 패널은 내 파일 전부를 보여 주거나 이 Diamond이 가진 것만 보여 주거나, 눈앞의 일에 맞는 쪽을 보여 줘요.</p>
 
-	<h3 id="s16">클립으로 붙이기</h3>
+	<h3 id="s18">클립으로 붙이기</h3>
 	<p> <strong>📎</strong> 은 작업 공간 패널 어느 줄에나 있고 — 폴더뿐 아니라 파일에도 — 문서 패널 머리글에도 있어요. 이름은 <span class="ui">현재 포커스에 첨부</span>예요. 조작은 하나이고, 그 효과는 줄의 자리가 아니라 지금 초점에 있는 것을 따라요. 초점에 아무것도 없으면 아예 나오지 않고요.</p>
 	<ul>
 		<li><strong>Diamond이 초점에 있을 때.</strong> 그 파일이나 폴더는 그 Diamond의 작업 공간에 들어가 뗄 때까지 남아요. 그러면 그 daimon이 그것을 열 수 있고요.</li>
@@ -152,17 +192,17 @@
 	<p>어느 쪽이든 만들어지는 글 (<em>… 메모해줘</em>, 또는 <em>… 전체를 읽어줘.</em>) 은 내 메시지 앞에 칸으로 적혀요. 보내기 전에 고치거나 지울 수 있고요. 앱이 써 놓고 감추는 프롬프트는 아무도 따질 수 없는 프롬프트예요.</p>
 	<p>꼬리말에는 <strong>+</strong> 가 있어서, 읽던 것을 떠나지 않고 여럿을 붙일 수 있어요. 그리고 타일 <span class="ui">스택</span> 과 더 큰 <span class="ui">아이콘</span> 줄 사이를 바꾸는 스위치예요. 타일이 여섯 — 창이 좁으면 넷 — 을 넘으면 늘어나는 대신 스크롤하니, 입력 칸은 제자리에 있어요. 열려 있지 않은 작업 공간에서 붙인 것은 빈 폴더처럼 보이는 대신 어디에 있는지 말해 주고, 만들어지는 글에서는 빠져요. 모델이 열 수 없는 경로는 사과만 하는 턴 하나를 살 뿐이니까요.</p>
 
-	<h3 id="s17">daimon이 열 수 있는 것</h3>
+	<h3 id="s19">daimon이 열 수 있는 것</h3>
 	<p><strong>daimon이 열 수 있는 파일은 자기 Diamond의 작업 공간에 있는 것뿐이에요.</strong> 그 밖에 있는 것은 읽지도 쓰지도 못해요. daimon도, 그가 내보낸 어떤 일꾼도요. 이건 모델이 지킬 수도 안 지킬 수도 있는 프롬프트 속 지시가 아니에요. 검사는 컴파일된 코드 안, 모든 파일 도구가 지나는 단 하나의 문에 놓여 있어요. 그 코드는 공개된 번들 안에 있고, 그 번들은 되풀이해 똑같이 만들어져요. 그러니 이건 믿음으로 받아들일 주장이 아니라 확인할 수 있는 주장이에요.</p>
 
 	<p>무엇을 막지 못하는지도 같은 숨에 말해야죠. 이것이 정하는 것은 daimon이 닿는 범위이지, 읽은 것이 가 닿는 곳이 아니에요. 연 것은 턴의 나머지와 함께 내 모델 제공자에게 가요. 꾐에 넘어간 에이전트는 막아 줘요. 페이지나 메일에서 낯선 이의 지시를 막 읽고 그 사람을 위해 찾아 나선 턴도, 이 작업 공간 밖으로는 닿지 못해요. 제공자가 보낸 것을 잘못 쓰는 일이나, 저희가 공개한 것이 아닌 빌드는 막지 못하고요. 거기에 답하는 것은 <a href="accounts.html">브라우저에서 나가는 것</a> 그리고 <a href="interface.html">모든 빌드의 봉인된 기록</a>.</p>
 
-	<h2 id="s18">일꾼 내보내기</h2>
+	<h2 id="s20">일꾼 내보내기</h2>
 	<p>적어 두는 데 그치지 않고 일 자체를 해야 하는 용건도 있어요. 그럴 때 Diamond의 daimon이 내보내는 것이 <strong>일꾼 에이전트</strong>예요. 일꾼은 저마다 자기 컨텍스트에서 작업 공간 파일 도구를 들고 돌고, 상시 지시와 이 Diamond의 결정체를 받아요. 그 결정체가 내 일에 대해 아는 전부예요. 일꾼에게는 내 대화가 보이지 않으니, 건네는 일감에 나머지 필요한 것을 다 적어야 해요.</p>
 
 	<p>한 번에 도는 일꾼은 최대 <strong>여덟</strong> 이고, 나머지는 줄을 서요. daimon은 내보낸 자리에서 턴을 끝내고 그 결과를 받지 않아요. 저마다 요약을 알려 주고, 남길 만한 것은 내가 손으로 접어 넣죠. 결정체에 무엇이 들어가는지를 고르는 일이 내 것으로 남는 까닭이에요. 돌고 있는 실행은 독의 <strong>에이전트</strong> 패널에 나와요.</p>
 
-	<h3 id="s19">에이전트 붙잡고 세우기</h3>
+	<h3 id="s21">에이전트 붙잡고 세우기</h3>
 	<p>에이전트 패널 머리글에는 <em>모든</em> 에이전트에 한 번에 듣는 조작이 셋 있어요. 같은 셋이 타일마다 붙어 있어서 하나에만 쓸 수도 있어요:</p>
 	<ul>
 		<li><strong>일시정지</strong> <span class="ui">⏸</span>: 돌고 있는 것을 붙들고 줄을 세워 둬요. 돌던 에이전트는 그때까지 만든 것을 지니고, 기다리던 것은 시작하지 않아요. 재개할 때까지 새로 뜨는 것도 없고요. 생각보다 빠르게 쓰고 있는 팬아웃을 잡는 제동기예요.</li>
@@ -175,7 +215,7 @@
 
 	<p>한계가 둘 있어요. 일꾼은 다른 일꾼을 내보낼 수 없으니, 맡기기는 한 단계에서 멈춰요. 그리고 한 번에 이끄는 Diamond은 하나라, 등을 돌린 사이에 두 번째 Diamond이 일하고 있는 일은 없어요.</p>
 
-	<h2 id="s20">태그</h2>
+	<h2 id="s22">태그</h2>
 	<p>Diamonds은 쌓이니 태그를 붙일 수 있어요. 태그는 내가 고르는 짧은 이름표이고, 고치는 곳은 <span class="ui">태그</span> 이고, Diamond의 결정체 위에서 해요. 처음 삼을 만한 것으로 넷을 내밀어 두었어요 (<strong>person</strong>, <strong>project</strong>, <strong>topic</strong> 그리고 <strong>org</strong>), 다만 Daimond이 분류를 강요하지는 않아요. 내 일에 맞는 말을 치면 돼요.</p>
 
 	<p>친 글자는 정리돼요. 태그는 소문자로 바뀌고, 앞뒤 공백이 잘리고, 중복이 없어져요. Diamond 하나에 붙는 태그는 최대 <strong>8</strong> 개, 하나하나의 길이는 최대 <strong>24</strong> 자예요. 태그는 다른 모든 것처럼 이 기기에서 그 Diamond 자신의 메타에 저장돼요.</p>
@@ -186,7 +226,7 @@
 
 	<p>레일에서는 <span class="ui">태그로 거르기</span> 를 열면 좁히는 데 쓸 수 있는 태그가 나와요. 개수는 버튼에 붙어 있고요. 태그를 누르면 그것이 붙은 Diamond만 보이고, 다시 누르면 반대로 감춰요. 둘 이상 골랐을 때는 <span class="ui">모두</span> 그리고 <span class="ui">하나라도</span> 가 어떻게 묶을지 정하고, <span class="ui">지우기</span> 가 거르기를 비워요. 따로 검색 칸은 없어요. Diamond은 어디에 정리해 두었는지로 찾는 것이고, 짧은 목록 하나를 좁히는 길이 둘이면 하나가 남으니까요. 목록은 가장 최근에 손댄 순서라, 바로 전까지 하던 것이 맨 위에 놓여요.</p>
 
-	<h2 id="s21">휴지통</h2>
+	<h2 id="s23">휴지통</h2>
 	<p>채팅이나 Diamond을 지워도 없어지는 것은 아니에요. <strong>휴지통으로 가요</strong>. 저장된 채로, 동기화된 채로 남고, 레일에서 빠지고, 관계도와 태그 거르기에서도 빠지고, 어느 daimon의 손도 닿지 않게 되며, 독의 <strong>휴지통</strong> 패널에 놓여요. 옆에는 “되돌리기” 버튼이 붙고요. 보관되는 기간은 <strong>서른 날</strong> 이고, 그다음 완전히 지워져요. 날짜는 줄마다 적혀 있고요.</p>
 
 	<p>되돌릴 수 있는 행동이라 그 앞에서 묻는 것이 없어요. 묻는 일은 그것이 참인 두 자리로 옮겨 두었어요. <span class="ui">완전히 지우기</span> 는 한 항목에, <span class="ui">휴지통 비우기</span>는 개수를 말해 줘요. 둘 다 되돌릴 수 없고, 둘 다 모든 기기에서 사라져요. 되돌릴 수 있는 행동 앞에 대화상자를 두면 사람들은 대화상자를 그냥 눌러 넘기는 법을 배우고, 그러면 되돌릴 수 없는 쪽도 눌러 넘기게 돼요.</p>

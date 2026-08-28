@@ -46,6 +46,7 @@
 //   node dev/verify_handle.mjs --break applystamps # 2 fails: applying its OWN parcel moves it
 //   node dev/verify_handle.mjs --break nocarry     # 2 fails: the parcel drops it
 //   node dev/verify_handle.mjs --break alwaysadopt # 3 fails: an older record wins
+//   node dev/verify_handle.mjs --break handledeaf  # 8b fails: adopted, and not drawn
 //   node dev/verify_handle.mjs --break onemessage  # 4 fails: one sentence for three noes
 //   node dev/verify_handle.mjs --break devicename  # 1 fails: the device label is overwritten
 //   node dev/verify_handle.mjs --break nolookup    # the public half fails
@@ -119,6 +120,15 @@ const BREAKS = {
 	}],
 	// Whatever arrives is taken, stamps ignored. Two devices then hand the same
 	// two names back and forth, and an older record undoes a rename.
+	// The drawer is deaf to the event. Everything the STORE does stays exactly
+	// right -- the record is adopted, the parcel carries it, the ties settle --
+	// and only 8b reddens, which is what makes 8b a check about the screen
+	// rather than a second reading of the store.
+	handledeaf: [{
+		file: 'js/daimond.js',
+		find: "\t\t\twindow.addEventListener('daimond:handle', function () {",
+		with: "\t\t\twindow.addEventListener('daimond:handle-nobody-sends-this', function () {",
+	}],
 	alwaysadopt: [{
 		file: 'js/identity.js',
 		find: '\t\tif (!handleBeats(incoming, mine)) return false;',
@@ -451,13 +461,51 @@ try {
 	check('the second device adopted the identity and holds no name yet',
 		became.took && became.unlocked && !became.showing, JSON.stringify(became));
 
+	// ── 8b. AND THE SCREEN SAYS SO, WITHOUT ANOTHER CLICK ────────────
+	//
+	// The store is not the screen. B is holding the account view OPEN before the
+	// parcel arrives and nothing is touched afterwards, so the row that names the
+	// account either redraws itself or it does not. It did not: `identity.js`
+	// dispatched `daimond:handle` on both write paths and nothing anywhere
+	// listened, so the local claim redrew the drawer by calling it directly and
+	// the adopted one -- this path -- left B showing the name it had, or, as
+	// here, no name at all.
+	await b.page.evaluate(() => { window.DaimondAdmin.home(); });
+	await b.page.waitForTimeout(400);
+	/// What the account row on that screen is showing, or '' when it is not drawn.
+	const shownOn = (p) => p.evaluate(() => {
+		const r = document.getElementById('account-handle');
+		const v = r && r.querySelector('.account-fp-val');
+		return v ? (v.textContent || '').trim() : '';
+	});
+	const drawnBefore = await shownOn(b.page);
+	check('the second device has the account view open and no name drawn on it',
+		drawnBefore === '', `showing '${drawnBefore}'`);
+
+	// APPLIED AND READ IN ONE EVALUATE, with no timeout between them. This world
+	// has no gateway, so the home view's console section fails to load and retries
+	// itself on a timer -- `renderHome` again at 1.2s, 2.4s, 3.6s -- which redraws
+	// the handle row for a reason that has nothing to do with the handle. A check
+	// that waited would pass with the listener deleted, which is what it did when
+	// it was written that way. A `setTimeout` callback cannot run between an
+	// `await` resuming and the statements after it, so this reads the DOM at the
+	// only moment nothing else can have touched it.
 	const parcelA = await page.evaluate(() => window.DaimondSync.parcel());
-	await b.page.evaluate(async (p) => { await window.DaimondSync.apply(p); }, parcelA);
+	const adopted2 = await b.page.evaluate(async (p) => {
+		await window.DaimondSync.apply(p);
+		const r = document.getElementById('account-handle');
+		const v = r && r.querySelector('.account-fp-val');
+		return { drawn: v ? (v.textContent || '').trim() : '', held: window.DaimondSync.handle() };
+	}, parcelA);
 	await b.page.waitForTimeout(800);
 	const onB = await handleOf(b.page);
 	const onA = await handleOf(page);
 	check('and the parcel alone gives it the account\'s name', onB === onA && !!onB,
 		`A shows '${onA}', B shows '${onB}'`);
+
+	check('and the open drawer draws it, with nothing clicked and no timer to help',
+		!!adopted2.held && adopted2.drawn === adopted2.held,
+		`drawn '${adopted2.drawn}', held '${adopted2.held}'`);
 
 	// ── 9. A refusal says WHICH refusal ──────────────────────────────
 	// Back to a name the stub's namespace will accept, so the refusals below are

@@ -198,10 +198,15 @@ const logTree = (id) => p.evaluate(async (id) => {
 /// Put a file's TRUE hash into the delivery record, as though it had been
 /// delivered.
 ///
-/// Used on a path under `log/`, and the fixture is not artificial: the delivery
-/// record lives at `diamonds/<id>/capp.json`, which `PAGE_NEVER_WRITES` does not
-/// cover, so a capp page can write exactly this. It is also what a corrupted or a
-/// half-migrated record looks like.
+/// Used on a path under `log/`. It writes through the WASM DOOR, `store_write`, which
+/// is what the app itself uses -- not through the page's `save`, which cannot reach
+/// `capp.json` at all: `PAGE_NEVER_WRITES` covers it since 2026-08-17
+/// (`www/js/crystal.js:755`). This comment said the opposite until 2026-08-28, and
+/// justified the fixture by that gap; the fixture never depended on it, but a reader
+/// would have reasoned from a fence that had already been closed.
+///
+/// What it stands in for now is the shape that is still reachable: a corrupted or a
+/// half-migrated record, or one written by a build that predates the guard.
 ///
 /// It exists because without it the log assertions pass for the WRONG REASON. A log
 /// file has no recorded hash, so the divergence rule already refuses to replace it

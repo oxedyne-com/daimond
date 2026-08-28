@@ -576,20 +576,22 @@ pub async fn handle_chat_websocket<
                                 result = r;
                                 // Drain any remaining events.
                                 while let Ok(ev) = rx.try_recv() {
-                                    let (cmd_name, vals) = event_to_ws(&ev);
-                                    let _ = ws.send(&text_msg(
-                                        syntax_ref.clone(), cmd_name, vals,
-                                    )).await;
+                                    if let Some((cmd_name, vals)) = event_to_ws(&ev) {
+                                        let _ = ws.send(&text_msg(
+                                            syntax_ref.clone(), cmd_name, vals,
+                                        )).await;
+                                    }
                                 }
                                 break;
                             }
                             ev = rx.recv() => {
                                 match ev {
                                     Some(ev) => {
-                                        let (cmd_name, vals) = event_to_ws(&ev);
-                                        let _ = ws.send(&text_msg(
-                                            syntax_ref.clone(), cmd_name, vals,
-                                        )).await;
+                                        if let Some((cmd_name, vals)) = event_to_ws(&ev) {
+                                            let _ = ws.send(&text_msg(
+                                                syntax_ref.clone(), cmd_name, vals,
+                                            )).await;
+                                        }
                                     }
                                     None => break,
                                 }
@@ -765,8 +767,9 @@ fn hex_decode(s: &str) -> Outcome<Vec<u8>> {
     Ok(out)
 }
 
-fn event_to_ws(ev: &AgentEvent) -> (&'static str, Vec<Dat>) {
-    match ev {
+/// The Steel WS command for one agent event, or `None` where this wire carries none.
+fn event_to_ws(ev: &AgentEvent) -> Option<(&'static str, Vec<Dat>)> {
+    Some(match ev {
         AgentEvent::Text(t)   => ("text",  vec![dat!(t.clone())]),
         AgentEvent::ToolCall { name, args, .. } =>
             ("tool_call", vec![dat!(name.clone()), dat!(args.clone())]),
@@ -778,13 +781,18 @@ fn event_to_ws(ev: &AgentEvent) -> (&'static str, Vec<Dat>) {
         AgentEvent::ToolResult { name, result, .. } =>
             ("tool_result", vec![dat!(name.clone()), dat!(result.clone())]),
         AgentEvent::Interjected(text) => ("interjected", vec![dat!(text.clone())]),
-        // NOT carried on this wire, for the same reason the tool outcome is not: the WS
-        // commands are declared in `src/syntax.rs`, and adding one is a protocol change
-        // nobody in this round owns a reader for. The browser gets it over
-        // `wasm::app::event_to_js`, which is the path the page runs on. An empty vector
-        // rather than a silent drop, so a client that ever does read `thinking` sees the
-        // act happened even before this wire learns to carry the text.
-        AgentEvent::Thinking(_) => ("thinking", vec![]),
+        // NOT carried on this wire, and now not sent at all. The WS commands are declared
+        // in `src/syntax.rs`, which declares no `thinking` -- so the empty frame this used
+        // to send named a command the syntax does not know, and `text_msg` could never
+        // build one. It was a no-op, once a round, and nobody noticed.
+        //
+        // Since 2026-08-28 the reasoning STREAMS, so the same no-op would happen for every
+        // delta: 1,378 of them in one measured round, each a syntax lookup and a discarded
+        // send. The old note argued that an empty frame at least said the act had happened;
+        // hundreds of identical empty frames say nothing a client can use, and this wire has
+        // no reader for them either way. The browser gets the text over
+        // `wasm::app::event_to_js`, which is the path the page runs on.
+        AgentEvent::Thinking(_) => return None,
         // Not carried on this wire either, and for the reason given above: the WS commands are
         // declared in `src/syntax.rs`. The browser reads it over `wasm::app::event_to_js`.
         AgentEvent::Ended { .. } => ("ended", vec![]),
@@ -797,10 +805,17 @@ fn event_to_ws(ev: &AgentEvent) -> (&'static str, Vec<Dat>) {
         // many pictures were left out is drawable without reading a sentence.
         AgentEvent::Unseeable { images, model } =>
             ("unseeable", vec![Dat::U64(*images as u64), dat!(model.clone())]),
+        // Not carried on this wire, for the reason `thinking` and `ended` are not: the WS
+        // commands are declared in `src/syntax.rs` and widening one is a protocol change with no
+        // reader in this round. The road ladder is a BROWSER mechanism in any case -- the mark it
+        // classifies on is set in `window.fetch` (www/js/gateway.js) -- so the native path can
+        // never raise this. Named rather than swept into a catch-all, so a future event cannot
+        // reach this wire unnoticed.
+        AgentEvent::Roading { .. } => ("roading", vec![]),
         AgentEvent::Truncated => ("truncated", vec![]),
         AgentEvent::Done      => ("done",  vec![]),
         AgentEvent::Error(msg) => ("error", vec![dat!(msg.clone())]),
-    }
+    })
 }
 
 fn text_msg(syntax: SyntaxRef, cmd: &str, vals: Vec<Dat>)

@@ -338,7 +338,8 @@
 		                railhead and chead
 		    closer      common.close_named. js/closer.js is the whole control
 		    cog         tile.settings, on the button that opens it
-		    light       pause.state_play, pause.state_pause, pause.state_mixed
+		    light       pause.state_play, pause.state_pause, pause.state_mixed,
+		                pause.state_idle
 		    divider     layout.handle
 		    row         astat.tools_of and the rest of astat
 		    spend row   spend.period_day, spend.period_week, spend.period_month
@@ -405,7 +406,7 @@
 			<div class="term" id="term-light">
 				<h3 id="s12">voyant</h3>
 				<img src="../shots/vocab-everything.png" alt="Une ligne portant Tout, avec une flèche de lecture, un symbole de pause et un voyant ambre rond devant, et une croix à l’extrême droite." loading="lazy">
-				<p>Le voyant rond à côté d’une lecture et d’une pause, qui dit si cette partie de Daimond tourne. Vert pour en cours, rouge pour en pause, ambre pour partiellement en pause, dans cet ordre, comme un feu de circulation.</p>
+				<p>La lumière ronde à côté d’un play et d’une pause, qui dit si cette partie de Daimond va agir d’elle-même. Vert quand tout ce qui est configuré tourne, ambre quand une partie est retenue, rouge quand rien ne tourne — soit retenu, soit rien de configuré du tout. Survolez-la et elle dit laquelle des deux.</p>
 				<p>Chaque voyant de l’application dépend de celui de la ligne <span class="ui">Tout</span> , qui parle pour tous.</p>
 				<p class="say">Dites : le voyant de la ligne <span class="ui">Tout</span> est ambre.</p>
 			</div>
@@ -530,9 +531,11 @@
 
 		<h3 id="s27">Votre voix</h3>
 
-		<p>Tout ce qui quitte cet appareil part sous une <strong>voix</strong>. Une voix est une ligne de texte que la forge imprime une fois pour vous : un secret qui appartient à une personne et par lequel la forge vous retrouve. C’est toute votre identité là-bas. Aucun nom, aucun pseudonyme et aucune adresse ne voyagent avec ce que vous écrivez, et ce navigateur n’apprend jamais comment s’appelle votre voix.</p>
+		<p>Tout ce qui quitte cet appareil part sous une <strong>voix</strong>. A voice is a run of 43 characters the forge makes for you once: a secret belonging to one person, which the forge looks you up by. It is the whole of your identity there. No name, no handle and no address travels with what you write, and this browser is never told what your voice is called.</p>
 
-		<p>Vous la posez dans le panneau. Appuyez sur <span class="ui">Définir une voix</span>, collez la ligne, et appuyez sur <span class="ui">Enregistrer la voix</span>. Daimond la garde sur cet appareil, chiffrée sous votre phrase de passe, et la passerelle par laquelle elle sort n’enregistre rien. <span class="ui">L’oublier</span> retire la copie de cet appareil ; la forge a montré cette ligne une fois et ne peut pas la remontrer, gardez-la donc là où vous saurez la retrouver.</p>
+		<p>You cannot make one and neither can Daimond. Voices are given out by invitation, one person at a time, by whoever runs the repository — so if you have not got one, ask Oxedyne for an invitation link. Following that link shows you who invited you and what you would be allowed to do; you accept, and the forge makes your voice in front of you and shows it once. Copy it then. It is never shown again, and losing it means asking for another invitation.</p>
+
+		<p>Then you put it in the panel. Press <span class="ui">Paste your voice</span>, paste those 43 characters in, and press <span class="ui">Enregistrer la voix</span>. If what you copied brought the word <strong translate="no">secret</strong> along in front of it, Daimond takes that off and keeps the 43 characters. If it will not take what you pasted, the secret has been broken somewhere in the middle: copy it again in one piece. Daimond holds it on this device, encrypted under your passphrase, and the gateway it passes through on its way out stores nothing. <span class="ui">L’oublier</span> removes the copy on this device.</p>
 
 		<p>Sans voix, il n’y a que <span class="ui">Garder</span>  : le panneau ne propose pas <span class="ui">Envoyer</span>, et il ne propose pas non plus de voter ni de répondre.</p>
 
@@ -682,7 +685,7 @@
 
 		<p>Le relais porte une enveloppe scellée de 64 Ko au plus : le porteur est donc décidé par la taille et non demandé de vous, et le panneau dit lequel a servi et quelle taille avait le partage.</p>
 
-		<p>Au-delà de cette taille, Daimond écrit le partage comme un fichier portant l’extension <code translate="no">.dshare</code> — toujours cette extension —, le nomme d’après le partage et son adresse, et vous dit comment il s’appelle. Donnez-lui ce fichier. Une page de capp fait environ 64 Ko à elle seule : un partage qui porte une capp voyage donc toujours ainsi ; de même un partage qui part sur une clé USB, ou vers quelqu’un qui n’a pas de compte ici. Un <code translate="no">.dshare</code> n’est pas plus digne de confiance qu’un message pour avoir été un fichier : les octets sont la même enveloppe scellée, scellée pour cette seule personne, et l’ouvrir pose la même question.</p>
+		<p>Au-delà de cette taille, Daimond écrit le partage comme un fichier portant l’extension <code translate="no">.dshare</code> — toujours cette extension —, le nomme d’après le partage et son adresse, et vous dit comment il s’appelle. Donnez-lui ce fichier. Une page de capp fait environ 100 Ko à elle seule : un partage qui porte une capp voyage donc toujours ainsi ; de même un partage qui part sur une clé USB, ou vers quelqu’un qui n’a pas de compte ici. Un <code translate="no">.dshare</code> n’est pas plus digne de confiance qu’un message pour avoir été un fichier : les octets sont la même enveloppe scellée, scellée pour cette seule personne, et l’ouvrir pose la même question.</p>
 
 		<div class="note"><strong>Le fichier est le chemin qui aboutit.</strong> Un partage assez petit pour le relais est envoyé par lui, et on dit à l’expéditeur qu’il est parti. Le côté réception de ce chemin n’est pas achevé : aucun contrôle ne l’ouvre, et il apparaît sous ses <span class="ui">Messages</span> comme un message que son appareil n’a pas pu lire. En attendant que cela soit fait, enregistrez le fichier et remettez-le — ce qu’un partage de n’importe quelle taille peut faire.</div>
 
