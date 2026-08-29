@@ -341,6 +341,50 @@
 		});
 	}
 
+	// ── The sync parcel ────────────────────────────────────────
+	//
+	// A voice is a fact about the ACCOUNT, not about the browser it was set in:
+	// paired devices share one passphrase-derived identity, so the wrapped
+	// secret is decryptable on every one of them. It was simply never
+	// transported, and the empty state on the other device told the user it
+	// "will sync here shortly" -- a promise nothing kept. sync.js now carries
+	// this record beside the pause tree and the trash, and voice.js answers for
+	// it as those modules answer for theirs.
+	//
+	// THE WRAPPED RECORD TRAVELS AS-IS. Nothing here unwraps it: the ciphertext
+	// is the same shape at both ends and the plaintext never enters the parcel,
+	// so the one rule at the top of this file holds across the wire too.
+
+	/// The stored record, for the parcel -- or null where there is none.
+	///
+	/// The whole `{ v, s, at }`, `s` still wrapped. `null` is omitted by the
+	/// collector, and a section left off is a section the other device keeps;
+	/// an empty record would read to the merge as a deletion.
+	function snapshot() { return rec(); }
+
+	/// Merge a record from another device. True when this device took it.
+	///
+	/// NEWER `at` WINS, and that is the whole merge. A re-issued voice is set
+	/// with a fresh `Date.now()`, so it is newer everywhere and propagates; an
+	/// older incoming record never buries a voice this device set more recently.
+	/// A tie keeps what is already here, since the two are the same wrapped
+	/// secret under the same identity. Nothing stamps on the way in -- a device
+	/// that restamped what it adopted would push it straight back for ever.
+	function adopt(incoming) {
+		if (!incoming || typeof incoming !== 'object') return false;
+		if (incoming.v !== REC_V || typeof incoming.s !== 'string' || !incoming.s) return false;
+		var inAt = (typeof incoming.at === 'number') ? incoming.at : 0;
+		var mine = rec();
+		if (mine) {
+			var myAt = (typeof mine.at === 'number') ? mine.at : 0;
+			if (inAt <= myAt) return false;		// ours is newer or the same; keep it
+		}
+		try {
+			localStorage.setItem(LS, JSON.stringify({ v: REC_V, s: incoming.s, at: inAt }));
+		} catch (e) { return false; }			// private mode: nothing to store into
+		return true;
+	}
+
 	// ── For the moment of a request ────────────────────────────
 
 	/// The header a request carries, or `{}` where no voice is held.
@@ -443,6 +487,10 @@
 		tidy:   tidy,
 		has:    has,
 		at:     at,
+		/// The wrapped record for the sync parcel, or null; and the merge that
+		/// applies one arriving from another device -- newer `at` wins.
+		snapshot: snapshot,
+		adopt:    adopt,
 		/// What is wrong with a secret, or '' — for validating as it is typed.
 		check:  check,
 		set:    set,

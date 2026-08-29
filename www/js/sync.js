@@ -823,6 +823,18 @@
 				if (pst) state.post = pst;
 			}
 		} catch (e) { log('post snapshot failed', e); }
+		// THE FORGE VOICE, wrapped under the account's shared identity so it is
+		// decryptable on every paired device but was never carried to one. It is
+		// a fact about the account like the handle above, not about this browser.
+		// The wrapped record travels verbatim -- voice.js never unwraps it -- and
+		// `null` (no voice held) is omitted, so a device with no voice does not
+		// read to the merge as one deleting it.
+		try {
+			if (window.DaimondVoice && DaimondVoice.snapshot) {
+				var vce = DaimondVoice.snapshot();
+				if (vce) state.voice = vce;
+			}
+		} catch (e) { log('voice snapshot failed', e); }
 		return state;
 	}
 
@@ -862,6 +874,14 @@
 		if (window.DaimondTrash) {
 			try { DaimondTrash.adopt(state && state.trash); }
 			catch (e) { log('trash adopt failed', e); failed.push('trash'); }
+		}
+		// The forge voice, under the same rule as everything above it: the record
+		// with the newer `at` wins, so a re-issued voice propagates and an older
+		// one never buries a newer local one. voice.js writes it verbatim, `s`
+		// still wrapped, at the key it reads from.
+		if (window.DaimondVoice && DaimondVoice.adopt) {
+			try { DaimondVoice.adopt(state && state.voice); }
+			catch (e) { log('voice adopt failed', e); failed.push('voice'); }
 		}
 		if (window.DaimondPost) {
 			try { DaimondPost.adopt(state && state.post); }
