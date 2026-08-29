@@ -2659,7 +2659,6 @@
 	'social.send_help': 'Genau das oben an Oxedyne senden. Sonst geht nichts mit.',
 	// Eine Notiz geht unter der STIMME der schreibenden Person. Kein Handle und
 	// kein Name geht mit, also darf hier nichts die Person benennen.
-	'social.as_voice': 'Geht unter deiner Stimme an die Schmiede, wo jeder mit dem Repository sie lesen kann.',
 	'social.as_novoice': 'Du hast keine Stimme, also kann eine Notiz nur hier bleiben.',
 	// Über dem Senden-Knopf, und genau dann zu sehen, wenn er zu sehen ist. Das
 	// Repository ist öffentlich, also kann eine gesendete Notiz von JEDEM ohne
@@ -2694,10 +2693,9 @@
 	// in eine Adresse.
 	'social.voice_held': 'Auf diesem Gerät liegt eine Stimme, verschlüsselt unter deiner Passphrase.',
 	'social.voice_none': 'Du hast keine Stimme, also kannst du lesen, was andere hier geschrieben haben, aber nichts hinzufügen. Behalten ist alles, was eine eigene Notiz kann.',
-	'social.voice_set': 'Stimme einfügen',
 	'social.voice_replace': 'Die Stimme ersetzen',
-	'social.voice_help': 'Die 43 Zeichen, die der Tracker dir gezeigt hat. Sie bleiben hier verschlüsselt und kommen nie in eine Adresse.',
-	'social.voice_ph': 'Füg die 43 Zeichen ein, die der Tracker dir gezeigt hat',
+	'social.voice_help': 'Die 45 Zeichen, die der Tracker dir gezeigt hat. Sie bleiben hier verschlüsselt und kommen nie in eine Adresse.',
+	'social.voice_ph': 'Füg die 45 Zeichen ein, die der Tracker dir gezeigt hat',
 	'social.voice_save': 'Stimme speichern',
 	'social.voice_saved': 'Deine Stimme liegt hier, verschlüsselt.',
 	'social.voice_failed': 'Diese Stimme konnte nicht gespeichert werden.',
@@ -2706,8 +2704,8 @@
 	'social.voice_forgotten': 'Die Kopie auf diesem Gerät ist weg.',
 	'social.voice_ask_forget': 'Deine Stimme auf diesem Gerät vergessen? Die Schmiede hat sie einmal gezeigt und kann sie nicht noch einmal zeigen.',
 	'voice.err.empty':          'Zum Schreiben auf der Schmiede wird eine Stimme gebraucht.',
-	'voice.err.shape':          'Das sieht nicht nach einer Stimme aus. Sie ist eine zusammenhängende Folge von 43 Zeichen ohne Leerzeichen.',
-	'voice.err.short':          'Das ist kürzer als jede Stimme, die die Schmiede ausgibt. Kopiere alle 43 Zeichen.',
+	'voice.err.shape':          'Das sieht nicht nach einer Stimme aus. Sie ist eine zusammenhängende Folge von 45 Zeichen ohne Leerzeichen.',
+	'voice.err.short':          'Das ist kürzer als jede Stimme, die die Schmiede ausgibt. Kopiere alle 45 Zeichen.',
 	'voice.err.long':           'Das ist länger, als eine Stimme sein kann.',
 	'voice.err.locked':         'Entsperre Daimond zuerst: deine Stimme wird unter deiner Passphrase verschlüsselt aufbewahrt.',
 	'voice.err.locked_send':    'Entsperre Daimond, um auf der Schmiede zu schreiben: deine Stimme ist unter deiner Passphrase verschlüsselt.',
@@ -2772,8 +2770,6 @@
 	'social.err_session': 'Daimond ist gerade nicht angemeldet und konnte die Schmiede deshalb nicht erreichen.',
 	'social.err_toolong': 'Das ist länger, als die Schmiede annimmt. Kürze es, oder sende es in zwei Teilen.',
 	'social.err_offline': 'Gerade konnte nichts gesendet werden.',
-	'social.voice_how': 'Eine Stimme ist der Zugangsschlüssel, mit dem du in Daimonds öffentlichem Tracker auf {host} schreiben darfst. Lesen braucht nichts; Schreiben, Antworten und Abstimmen brauchen alle einen, und sie werden auf Einladung vergeben statt beantragt. Bitte Oxedyne um einen Einladungslink. Wenn du ihm folgst, siehst du, wer dich eingeladen hat und was du tun darfst, und der Tracker erzeugt deine Stimme vor deinen Augen und zeigt sie einmal — 43 Zeichen, nie wieder gezeigt. Füge diese hier ein.',
-	'social.voice_help_none': 'Die 43 Zeichen, die der Tracker dir gezeigt hat, als du deine Einladung angenommen hast.',
 	'social.amend': 'Überarbeiten',
 	'social.amend_help': 'Ersetze, was dieser Vorschlag sagt. Alle, die ihn lesen, sehen den neuen Wortlaut.',
 	'social.amend_title_ph': 'Die eine Zeile, worum es hier geht',

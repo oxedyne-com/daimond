@@ -32,7 +32,7 @@
 //       around a public page.
 //   6.  VALIDATION IS NOT LOOSER THAN THE GATEWAY'S `check_secret` — non-empty, ASCII graphic,
 //       at most 256 bytes. It is STRICTER in one place, a 16-character floor, which the forge's
-//       43-character minted secret clears by a mile and a truncated paste does not.
+//       45-character minted secret clears by a mile and a truncated paste does not.
 //
 // EACH CHECK IS PROVED AGAINST BROKEN CODE FIRST, and each break is chosen so it survives every
 // check except the one it is meant to prove. A break caught by an earlier, cheaper check leaves
@@ -45,6 +45,7 @@
 //   node dev/verify_voice.mjs --break inurl        # 4a — put in the query string as well
 //   node dev/verify_voice.mjs --break chatty       # 4b — logged to the console
 //   node dev/verify_voice.mjs --break unguarded    # 4c — the URL guard comes off
+//   node dev/verify_voice.mjs --break rawonly      # 4d — the guard reads the raw URL only
 //   node dev/verify_voice.mjs --break alwayssend   # 5  — an empty header sent when none is held
 //   node dev/verify_voice.mjs --break loose        # 6  — validation accepts anything
 //   node dev/verify_voice.mjs                      # and then, clean
@@ -88,13 +89,15 @@ const WWW  = path.join(HERE, '..', 'www');
 const HDR = 'x-daimond-voice';
 
 // A fixture shaped like a real minted voice: the forge mints 32 bytes and prints them in the
-// Hematite64 alphabet, so 43 ASCII-graphic characters. Distinctive, so that finding it in a dump
-// of storage or a console line is finding THIS and not a coincidence.
+// Hematite64 alphabet WITH ITS PADDING, so 43 symbols then `=` and a marker digit: 45 ASCII-graphic
+// characters ending `=2`. It was 41 until 2026-08-29 -- shaped like a voice but no length the forge
+// has ever issued -- which is how a fixture stops standing in for the thing it names. Distinctive,
+// so that finding it in a dump of storage or a console line is finding THIS and not a coincidence.
 // Invented here, never minted, valid nowhere. It exists so the checks below can search storage,
 // console lines and request URLs FOR it — a fixture read from the environment could not be
 // searched for, which is the one thing this file has to do.
 // allowlist secret
-const SECRET = 'Vz7Kq3Np9Rw2Ty5Uv8Bd4Fg6Hj1Lm0Qs3Xc5Vb7Nm';
+const SECRET = 'Vz7Kq3Np9Rw2Ty5Uv8Bd4Fg6Hj1Lm0Qs3Xc5Vb7Nm2P=2';
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
@@ -174,8 +177,17 @@ const BREAKS = {
 	// bad URL is gone.
 	unguarded: {
 		file: 'js/voice.js',
-		find: "\t\tif (h[HDR] && url.indexOf(h[HDR]) >= 0) {",
+		find: "\t\tif (h[HDR] && seen.indexOf(h[HDR]) >= 0) {",
 		with: "\t\tif (false) {",
+	},
+	// The guard reading the RAW url only, which is what it did until 2026-08-29. Kept apart from
+	// `unguarded` because it is a different mistake with the same consequence and it is the one
+	// that actually shipped: the guard is present, reads correctly, and matches nothing, because a
+	// minted voice ends `=2` and a query carries that as `%3D`. It reddens the URL check alone.
+	rawonly: {
+		file: 'js/voice.js',
+		find: "\t\ttry { seen = url + '\\n' + decodeURIComponent(url); } catch (e) { /* raw only */ }",
+		with: "\t\tseen = url;",
 	},
 	// An empty header sent when no voice is held. Looks harmless and is not: the gateway's
 	// `check_secret` refuses an empty value, so every read of a PUBLIC repository would be turned
@@ -450,7 +462,19 @@ try {
 	// Asked of `tidy` as well as of `check`: a rule that merely ACCEPTED the paste
 	// while storing the label with it would pass a check that only looked at the
 	// refusal, and would then send the label on the header.
-	const MINTED = 'V'.repeat(43);				// exactly what the forge mints: 32 bytes in Hematite64
+	// EXACTLY WHAT THE FORGE MINTS, DERIVED RATHER THAN TYPED. `SECRET_BYTES` is 32 and
+	// `ore_store::keys::text_of` prints them with HEMATITE64, which is NOT standard Base64:
+	// `fe2o3_text/src/base2x.rs:75-79` gives it `padding: Some(('=', ['1'..'5','_']))`, so the
+	// symbols are followed by `'='` and a marker digit counting the leftover bits. 43 symbols
+	// carry 258 bits for 256 of secret, hence the `=2` every minted voice ends on.
+	//
+	// THIS LINE SAID `'V'.repeat(43)` UNTIL 2026-08-29 AND THAT IS WHY NOTHING CAUGHT THE BUG.
+	// A fixture no forge has ever issued made every labelled-paste check below agree with a
+	// `LEN` that was also 43, so the pair was consistent and wrong together, and `tidy` never
+	// stripped a real `secret ` label in the running app. The number is computed here so it
+	// cannot be typed wrong in two places again.
+	const SYMBOLS = Math.ceil((32 * 8) / 6);		// 43
+	const MINTED  = 'V'.repeat(SYMBOLS) + '=' + String(SYMBOLS * 6 - 32 * 8);	// …=2, 45 long
 	const labelled = [
 		['the forge\'s own two-column line', 'secret   ' + MINTED],
 		['it with a trailing newline',        'secret   ' + MINTED + '\n'],
@@ -470,7 +494,8 @@ try {
 	// twice: a build that changed it here and not there would fold nothing and
 	// nobody would find out until somebody pasted a labelled line.
 	const len = await page.evaluate(() => DaimondVoice.LEN);
-	check('the length it folds on is the length the forge mints (43)', len === 43, String(len));
+	check('the length it folds on is the length the forge mints (' + MINTED.length + ')',
+		len === MINTED.length, String(len));
 
 } catch (e) {
 	check('the run completed', false, String(e && e.message || e));

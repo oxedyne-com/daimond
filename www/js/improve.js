@@ -460,16 +460,27 @@
 	// ── The voice a proposal is written with ───────────────────
 	//
 	// `voice.js` holds it, encrypted under the user's passphrase, and this panel
-	// is the only surface that has ever needed one. Without a place to SET it the
+	// is the only surface that has ever needed one. Without a place to GET it the
 	// whole write half would be unreachable, which is the defect this file was
 	// rewritten to remove -- so the place is here, beside the button that needs
 	// it, rather than in a settings screen a tester would have to be told about.
 	//
-	// The secret never leaves this function's arguments: it is read off the input,
-	// handed to `DaimondVoice.set`, and the input is emptied. Nothing here logs
-	// it, draws it, or puts it anywhere a later reader could find it.
+	// ONE TAP, NOT A PASTE. A first voice is now GOT rather than pasted: `Get my
+	// voice` posts to `/api/voice/provision`, the gateway has the forge mint one,
+	// and the secret it answers with is handed straight to `DaimondVoice.set` and
+	// dropped in the same breath. Nothing here logs it, draws it, or keeps it past
+	// the wrap. Pasting survives only as an unobtrusive fallback for a voice the
+	// forge made elsewhere -- kept because a secret can arrive out of band, not
+	// because a first voice is got that way.
+	//
+	// WHY A TAP AND NOT SILENT. Provisioning is a forge WRITE, so it happens on a
+	// press and never on its own: the button says what it will do, and a tester
+	// who only wants to read is never surprised by a voice appearing in their name.
 
 	function voice() { return window.DaimondVoice || null; }
+
+	/// The gateway module, or null in a build without it.
+	function gw() { return window.DaimondGateway || null; }
 
 	/// Is a voice held on this device? Presence only -- reading it needs the
 	/// passphrase, and that question is asked at the moment of a request.
@@ -478,7 +489,9 @@
 		try { return !!(v && v.has()); } catch (e) { return false; }
 	}
 
-	var _voiceOpen = false;			// whether the "set a voice" form is showing
+	var _voiceOpen    = false;		// whether the manual-paste fallback form is showing
+	var _voiceBusy    = false;		// a provision request is in flight
+	var _voiceAlready = false;		// the forge holds a voice this device has not got yet
 
 	/// The row under the buttons: whether a voice is held, and how to change it.
 	/// Built here rather than in the markup because the markup is another lane's
@@ -508,71 +521,91 @@
 		line.className = 'imp-as';
 		line.id = 'improve-voice-say';
 		line.textContent = hasVoice()
-			? tOr('social.voice_held', 'A voice is held on this device, encrypted under your passphrase.')
-			: tOr('social.voice_none', 'You have no voice, so you can read what other people have written here but not add to it. Keep is all a note of your own can do.');
+			? tOr('social.voice_held', 'Voice held on this device, encrypted under your passphrase.')
+			: tOr('social.voice_none', 'No voice yet: you can read proposals, but only Keep a note to this device.');
 		host.appendChild(line);
 
-		// WHAT IT IS, WHY YOU HAVEN'T GOT ONE, AND WHAT TO DO -- three sentences, on
-		// the empty state only.
-		//
-		// It said "Set a voice", helped by "The line the forge printed for you", and
-		// the owner -- who wrote this app -- asked what a voice was and what he was
-		// supposed to do to set one. Every word of the old pair presumed something
-		// the reader has not got: a forge they have never heard of, and a line
-		// nobody gave them. A control whose author cannot use it is not opaque to
-		// some users, it is opaque.
-		//
-		// The instruction has to be the TRUE one, and it is not "paste the line".
-		// Nothing in Daimond can mint a voice and nothing here can ask for one: the
-		// forge issues them by invitation (`views/invite.rs`), an admin on the
-		// repository issues the link, and following it mints the secret in front of
-		// the person and shows it once (`views/claim.rs`). So the honest instruction
-		// is to ask for an invitation, and the honest promise about what happens next
-		// is what that page actually does.
-		//
-		// It is NOT said to somebody who already holds a voice, for the reason
-		// `drawPublic` is not said to somebody who cannot send: an instruction for
-		// getting something you have is noise.
-		if (!hasVoice()) {
-			var how = document.createElement('span');
-			how.className = 'imp-as';
-			how.id = 'improve-voice-how';
-			how.textContent = tOr('social.voice_how',
-				'A voice is the credential that lets you write on Daimond\u2019s public tracker at {host}. '
-				+ 'Reading it needs nothing; writing, replying and voting all need one, and they are given out '
-				+ 'by invitation rather than signed up for. Ask Oxedyne for an invitation link. Following it '
-				+ 'shows you who invited you and what you may do, and the tracker makes your voice in front of '
-				+ 'you and shows it once \u2014 43 characters, never shown again. Paste those here.',
-				{ host: FORGE_HOST });
-			host.appendChild(how);
-		}
-
-		if (!_voiceOpen) {
-			host.appendChild(button('imp-note-copy', 'improve-voice-open',
-				hasVoice() ? tOr('social.voice_replace', 'Replace the voice')
-					: tOr('social.voice_set', 'Paste your voice'),
-				hasVoice()
-					? tOr('social.voice_help', 'The 43 characters the tracker showed you. Kept encrypted here and never put in an address.')
-					: tOr('social.voice_help_none', 'The 43 characters the tracker showed you when you accepted your invitation.')));
-			if (hasVoice()) {
-				host.appendChild(button('imp-note-copy', 'improve-voice-forget',
-					tOr('social.voice_forget', 'Forget it'),
-					tOr('social.voice_forget_help', 'Remove the copy on this device.')));
-			}
+		// THE MANUAL-PASTE FALLBACK, shared by "Replace the voice" (a voice is
+		// held) and the unobtrusive "I already have a voice" affordance (none is).
+		// It is no longer how a FIRST voice is got -- that is one tap now -- but a
+		// voice the forge made elsewhere can still be pasted in, so the form stays.
+		if (_voiceOpen) {
+			var input = document.createElement('input');
+			input.type = 'password';
+			input.className = 'imp-box';
+			input.id = 'improve-voice-in';
+			input.autocomplete = 'off';
+			input.spellcheck = false;
+			input.placeholder = tOr('social.voice_ph', 'Paste the line the forge showed you');
+			input.setAttribute('aria-label', tOr('social.voice_ph', 'Paste the line the forge showed you'));
+			host.appendChild(input);
+			host.appendChild(button('imp-send', 'improve-voice-save', tOr('social.voice_save', 'Save the voice')));
+			host.appendChild(button('imp-keep', 'improve-voice-cancel', t('common.cancel')));
 			return;
 		}
 
-		var input = document.createElement('input');
-		input.type = 'password';
-		input.className = 'imp-box';
-		input.id = 'improve-voice-in';
-		input.autocomplete = 'off';
-		input.spellcheck = false;
-		input.placeholder = tOr('social.voice_ph', 'Paste the 43 characters the tracker showed you');
-		input.setAttribute('aria-label', tOr('social.voice_ph', 'Paste the 43 characters the tracker showed you'));
-		host.appendChild(input);
-		host.appendChild(button('imp-send', 'improve-voice-save', tOr('social.voice_save', 'Save the voice')));
-		host.appendChild(button('imp-keep', 'improve-voice-cancel', t('common.cancel')));
+		// A VOICE IS HELD: replace it, or forget the copy on this device.
+		if (hasVoice()) {
+			host.appendChild(button('imp-note-copy', 'improve-voice-open',
+				tOr('social.voice_replace', 'Replace the voice'),
+				tOr('social.voice_help', 'The line the forge showed you. Kept encrypted on this device.')));
+			host.appendChild(button('imp-note-copy', 'improve-voice-forget',
+				tOr('social.voice_forget', 'Forget it'),
+				tOr('social.voice_forget_help', 'Remove the copy on this device.')));
+			return;
+		}
+
+		// NO VOICE HELD. One tap gets one, and there is nothing to paste.
+		//
+		// The old empty state told a reader to ask Oxedyne for an invitation link
+		// and paste 45 characters back in -- true of how the forge issues a voice,
+		// but a dead end for a person who just wants to write, which is what the
+		// owner met. Provisioning makes the voice for them: the honest instruction
+		// is now "tap the button", and the button does exactly what it says.
+
+		// THE FORGE ALREADY HOLDS ONE, on another device -- the provision call said
+		// `already`. It is not minted again here; it arrives by sync. Say so, and
+		// offer the one way out if it never comes: a re-issue, which is destructive.
+		if (_voiceAlready) {
+			var arriving = document.createElement('span');
+			arriving.className = 'imp-as';
+			arriving.id = 'improve-voice-arriving';
+			arriving.textContent = tOr('social.voice_already',
+				'Your voice is set on another device and will sync here shortly.');
+			host.appendChild(arriving);
+			host.appendChild(button('imp-note-copy', 'improve-voice-reissue',
+				tOr('social.voice_reissue', 'I lost my voice \u2014 re-issue'),
+				tOr('social.voice_reissue_help',
+					'Makes a new voice; the old one stops working everywhere. Cannot be undone.')));
+			return;
+		}
+
+		var how = document.createElement('span');
+		how.className = 'imp-as';
+		how.id = 'improve-voice-how';
+		how.textContent = tOr('social.voice_intro',
+			'A voice lets you post, reply and vote on the forge; reading needs none.',
+			{ host: FORGE_HOST });
+		host.appendChild(how);
+
+		// THE PRIMARY PATH: one tap. Disabled and relabelled while the request is
+		// in flight, so a second press cannot mint a second voice.
+		var get = button('imp-send', 'improve-voice-get',
+			_voiceBusy
+				? tOr('social.voice_getting', 'Making your voice on the forge\u2026')
+				: tOr('social.voice_get', 'Get my voice'),
+			tOr('social.voice_get_help',
+				'Makes your voice on the forge. One tap.'));
+		if (_voiceBusy) get.disabled = true;
+		host.appendChild(get);
+
+		// THE UNOBTRUSIVE FALLBACK, kept per the owner's instruction behind an "I
+		// already have a voice" affordance rather than as the primary path: for a
+		// voice the forge made elsewhere and handed over out of band.
+		host.appendChild(button('imp-keep', 'improve-voice-open',
+			tOr('social.voice_have', 'I already have a voice'),
+			tOr('social.voice_have_help',
+				'Paste a voice the forge already gave you.')));
 	}
 
 	/// Take the secret off the input and hand it to voice.js, which wraps it.
@@ -590,10 +623,155 @@
 		if (why) { flash(why); return false; }
 		try { await v.set(raw); }
 		catch (e) { flash(e && e.message ? String(e.message) : tOr('social.voice_failed', 'That voice could not be stored.')); return false; }
-		_voiceOpen = false;
+		_voiceOpen    = false;
+		_voiceAlready = false;
 		flash(tOr('social.voice_saved', 'Your voice is held here, encrypted.'));
 		render();
 		return true;
+	}
+
+	/// A Daimond-session POST that keeps the STATUS and the BODY.
+	///
+	/// The gateway's own `post()` reduces every failure to a message string and
+	/// throws it, but this panel has to tell a 402 `pro_required` from a 200
+	/// `already` and from an ordinary failure, and those live in the status and the
+	/// body. So it goes through `DaimondGateway.gwFetch` -- the one copy of the
+	/// session rule, renew once and retry once -- and reads the answer itself.
+	///
+	/// NOT `DaimondVoice.send`: provisioning is how a voice is GOT, so there is no
+	/// voice to carry and this is a Daimond-account call rather than a forge one.
+	async function gwPost(path, body) {
+		var g = gw();
+		if (!g || !g.gwFetch) return { ok: false, status: 0, data: null };
+		var r;
+		try {
+			r = await g.gwFetch(path, {
+				method:      'POST',
+				credentials: 'same-origin',
+				headers: {
+					'content-type': 'application/json',
+					'x-daimond-api': String(g.clientApi ? g.clientApi() : ''),
+				},
+				body: JSON.stringify(body || {}),
+			});
+		} catch (e) {
+			// A network failure throws a `TypeError` whose message is the browser's
+			// own English; it must not reach a screen this app has translated. The
+			// caller says its own sentence off `ok:false`.
+			return { ok: false, status: 0, data: null };
+		}
+		var data = null;
+		try { data = await r.json(); } catch (e) { data = null; }
+		return { ok: r.ok, status: r.status, data: data };
+	}
+
+	/// Make this device a voice, on a press.
+	///
+	/// POST `/api/voice/provision` -- body `{}` to mint or adopt, `{reissue:true}`
+	/// to replace a voice the forge holds that this device cannot read. The gateway
+	/// forwards to the forge and answers one of:
+	///
+	///   200 { provisioned:true, secret:"<45>" }   a voice was minted -- hold it
+	///   200 { provisioned:true, already:true }      one exists already -- it syncs
+	///   402 { error:"pro_required" }                a voice is part of Pro
+	///
+	/// A minted secret is handed straight to `DaimondVoice.set`, which wraps it
+	/// under the passphrase, and the local reference is dropped in the same breath.
+	/// NOTHING HERE LOGS, DRAWS OR KEEPS THE SECRET -- the same rule voice.js opens
+	/// with, kept on this side of the call as well.
+	async function provision(reissue) {
+		var v = voice();
+		if (!v || _voiceBusy) return false;
+		// A voice is wrapped at rest under the passphrase, so `set()` needs an
+		// unlocked identity. Say so before a round trip that would only fail at the
+		// end of it -- and before a forge write is made that could not be held.
+		try {
+			if (window.DaimondIdentity && !DaimondIdentity.isUnlocked()) {
+				flash(tOr('voice.err.locked',
+					'Unlock Daimond first: your voice is kept encrypted under your passphrase.'));
+				return false;
+			}
+		} catch (e) { /* no identity module: let set() below speak */ }
+
+		_voiceBusy = true;
+		drawVoice();
+		var a = await gwPost('/api/voice/provision', reissue ? { reissue: true } : {});
+		_voiceBusy = false;
+
+		// A VOICE IS PART OF PRO. Say it once and hand the person to the offer that
+		// already exists -- the Pro block at the top of the Credits drawer, the same
+		// door mail.js and sync.js send a buyer to -- rather than drawing a second
+		// one here. Read off the status OR the token, so a body-less 402 still lands.
+		if (a.status === 402 || (a.data && a.data.error === 'pro_required')) {
+			flash(tOr('social.voice_pro', 'A voice is part of Daimond Pro.'));
+			try {
+				if (window.DaimondAdmin && DaimondAdmin.credits) {
+					DaimondAdmin.credits(tOr('social.voice_pitch',
+						'A voice on the forge is part of Daimond Pro.'));
+				}
+			} catch (e) { /* the drawer is absent; the sentence still stood */ }
+			drawVoice();
+			return false;
+		}
+
+		if (!a.ok || !a.data || a.data.provisioned !== true) {
+			flash(tOr('social.voice_get_failed',
+				'Could not make your voice. Try again shortly.'));
+			drawVoice();
+			return false;
+		}
+
+		// THE FORGE ALREADY HOLDS ONE and did not hand a secret back: it exists on
+		// another device and arrives by sync, not by minting a second here. Say so,
+		// and `drawVoice` offers the destructive re-issue as the one way out.
+		if (a.data.already === true || typeof a.data.secret !== 'string') {
+			_voiceAlready = true;
+			_voiceOpen    = false;
+			flash(tOr('social.voice_already',
+				'Your voice is set on another device and will sync here shortly.'));
+			drawVoice();
+			return true;
+		}
+
+		// A VOICE WAS MINTED. Hold it, then drop the plaintext at once.
+		try {
+			await v.set(a.data.secret);
+		} catch (e) {
+			// `set()` throws a sentence a person can act on -- a locked identity, a
+			// wrap that refused. Never quote the value.
+			flash(e && e.message ? String(e.message)
+				: tOr('social.voice_get_failed',
+					'Could not make your voice. Try again shortly.'));
+			drawVoice();
+			return false;
+		}
+		a.data.secret = '';			// in the clear only for the wrap above
+		_voiceOpen    = false;
+		_voiceAlready = false;
+		flash(tOr('social.voice_saved', 'Your voice is held here, encrypted.'));
+		render();
+		return true;
+	}
+
+	/// Re-issue a voice the forge holds but this device cannot read.
+	///
+	/// DESTRUCTIVE, so it asks first: a re-issue mints a new voice and the old one
+	/// stops working on every device, and there is no undo. Offered only after a
+	/// provision answered `already` -- the one case where a person genuinely lost
+	/// the copy the forge made for them.
+	async function reissueVoice() {
+		var ok = true;
+		try {
+			if (window.DaimondCore && DaimondCore.confirm) {
+				ok = await DaimondCore.confirm(
+					tOr('social.voice_reissue_ask',
+						'Re-issue your voice? The old one stops working on every device, and this cannot be undone.'),
+					tOr('social.voice_reissue_do', 'Re-issue'),
+					{ title: tOr('social.voice_reissue_title', 'Re-issue your voice'), danger: true });
+			}
+		} catch (e) { ok = true; }
+		if (!ok) return false;
+		return await provision(true);
 	}
 
 	/// Forget the voice on this device. It asks, because the forge cannot give it
@@ -606,7 +784,7 @@
 			if (window.DaimondCore && DaimondCore.confirm) {
 				ok = await DaimondCore.confirm(
 					tOr('social.voice_ask_forget',
-						'Forget your voice on this device? The forge showed it once and cannot show it again.'),
+						'Forget your voice here? It was shown once and will not be shown again.'),
 					tOr('social.voice_forget', 'Forget it'),
 					{ title: tOr('social.voice_forget', 'Forget it') });
 			}
@@ -661,7 +839,7 @@
 		if (as) {
 			as.hidden = hasVoice();
 			as.textContent = hasVoice() ? ''
-				: tOr('social.as_novoice', 'You have no voice, so a note can only be kept here.');
+				: tOr('social.as_novoice', 'No voice yet — a note can only be kept here.');
 		}
 		// Without a voice there is nothing to send AS, and the forge would refuse
 		// it. The button is hidden rather than shown-and-inert: a control that
@@ -705,9 +883,8 @@
 		// The host rides as a placeholder so that eight translations carry the
 		// address without any of them retyping it.
 		line.textContent = tOr('social.public_note',
-			'Sending publishes this note at {host}, with your voice name on it. '
-			+ 'Anyone can read it there without an account. '
-			+ 'A note you keep stays on this device.',
+			'Sending publishes this at {host} under your voice — anyone can read it, no account needed. '
+			+ 'A kept note stays here.',
 			{ host: FORGE_HOST });
 		line.hidden = !(send && !send.hidden);
 	}
@@ -726,7 +903,7 @@
 			acts.appendChild(hint);
 		}
 		hint.textContent = tOr('social.title_hint',
-			'The first line is the title of the proposal. What happened goes underneath it.');
+			'First line is the title; what happened goes below.');
 	}
 
 	// ── Keeping and sending ────────────────────────────────────
@@ -819,7 +996,7 @@
 	/// that the note is still here.
 	function keptAfter(a) {
 		return saying(a) + ' ' + tOr('social.kept_here',
-			'Your note is kept here and nothing tried again.');
+			'Kept here; nothing tried again.');
 	}
 
 	/// Put one already-stored note on the wire and take the answer back into the
@@ -842,10 +1019,10 @@
 		if (!text) { flash(tOr('social.nothing', 'Write something first.')); return null; }
 		var parts = split(text);
 		if (!parts) {
-			flash(tOr('social.no_title', 'The first line is the title. Write one, then what happened underneath.'));
+			flash(tOr('social.no_title', 'First line is the title — write one, then what happened.'));
 			return null;
 		}
-		if (!hasVoice()) { flash(tOr('social.as_novoice', 'You have no voice, so a note can only be kept here.')); return null; }
+		if (!hasVoice()) { flash(tOr('social.as_novoice', 'No voice yet — a note can only be kept here.')); return null; }
 		var rec = store(text, 0);
 		clearBox();
 		render();
@@ -863,8 +1040,8 @@
 		var rec = s.notes.find(function (n) { return n.id === id; });
 		if (!rec || rec.sent) return false;
 		var parts = split(rec.text);
-		if (!parts) { flash(tOr('social.no_title', 'The first line is the title. Write one, then what happened underneath.')); return false; }
-		if (!hasVoice()) { flash(tOr('social.as_novoice', 'You have no voice, so a note can only be kept here.')); return false; }
+		if (!parts) { flash(tOr('social.no_title', 'First line is the title — write one, then what happened.')); return false; }
+		if (!hasVoice()) { flash(tOr('social.as_novoice', 'No voice yet — a note can only be kept here.')); return false; }
 		var a = await through(rec, parts);
 		if (!a.ok) flash(keptAfter(a));
 		render();
@@ -881,7 +1058,7 @@
 		try {
 			if (window.DaimondCore && DaimondCore.confirm) {
 				ok = await DaimondCore.confirm(
-					tOr('social.drop_ask', 'Delete this note? It is only on this device, so there is no other copy.'),
+					tOr('social.drop_ask', 'Delete this note? It is only here — no other copy.'),
 					tOr('social.drop_ok', 'Delete'),
 					{ title: tOr('social.drop', 'Delete this note') });
 			}
@@ -1572,7 +1749,7 @@
 			if (!n.sent && hasVoice()) {
 				foot.appendChild(button('imp-note-send', 'improve-resend',
 					tOr('social.send', 'Send'),
-					tOr('social.send_help', 'Send exactly what is above to Oxedyne. Nothing else goes with it.')));
+					tOr('social.send_help', 'Sends exactly what is above. Nothing else goes with it.')));
 			}
 			foot.appendChild(button('imp-note-copy', 'improve-copy', t('common.copy'), t('common.copy')));
 
@@ -1691,7 +1868,7 @@
 			acts.className = 'imp-acts';
 			acts.appendChild(button('imp-note-copy', 'improve-amend-open',
 				tOr('social.amend', 'Revise this'),
-				tOr('social.amend_help', 'Replace what this proposal says. Everybody who reads it sees the new words.')));
+				tOr('social.amend_help', 'Replace what this proposal says; everyone sees the new words.')));
 			into.appendChild(acts);
 			return;
 		}
@@ -1717,7 +1894,7 @@
 		row.className = 'imp-acts';
 		row.appendChild(button('imp-send', 'improve-amend-save',
 			tOr('social.amend_save', 'Publish the revision'),
-			tOr('social.amend_save_help', 'Send exactly what is in these two boxes. Nothing else goes with them.')));
+			tOr('social.amend_save_help', 'Sends exactly these two boxes. Nothing else.')));
 		row.appendChild(button('imp-keep', 'improve-amend-cancel', t('common.cancel')));
 		into.appendChild(row);
 	}
@@ -1851,10 +2028,9 @@
 				var floor = document.createElement('p');
 				floor.className = 'imp-prop-says imp-floor';
 				floor.textContent = tOr('social.move_floor',
-					'A note follows its content across a file boundary only when the change is recognised as a move, '
-					+ 'and the floor for that is 64 bytes. Cut less than that from one file into another and the '
-					+ 'history holds a deletion and an insertion, so a note anchored there honestly reports its '
-					+ 'content deleted. The note is right and the history is right.');
+					'A note follows its content across files only when the change counts as a move — the floor is '
+					+ '64 bytes. Cut less, and the history holds a delete and an insert, so the note reports its '
+					+ 'content deleted.');
 				body.appendChild(floor);
 			}
 
@@ -1914,7 +2090,7 @@
 				acts.className = 'imp-acts';
 				acts.appendChild(button('imp-send', 'improve-comment',
 					tOr('social.reply', 'Say it'),
-					tOr('social.reply_help', 'Send exactly what is in this box. Nothing else goes with it.')));
+					tOr('social.reply_help', 'Sends exactly this box. Nothing else.')));
 				body.appendChild(acts);
 			}
 
@@ -2336,7 +2512,9 @@
 		if (act === 'improve-keep')   { e.preventDefault(); keep(); return; }
 		if (act === 'improve-send')   { e.preventDefault(); send(); return; }
 		if (act === 'improve-more')   { e.preventDefault(); loadList(true); return; }
-		if (act === 'improve-voice-open')   { e.preventDefault(); _voiceOpen = true;  drawVoice(); return; }
+		if (act === 'improve-voice-get')    { e.preventDefault(); provision(false); return; }
+		if (act === 'improve-voice-reissue'){ e.preventDefault(); reissueVoice(); return; }
+		if (act === 'improve-voice-open')   { e.preventDefault(); _voiceOpen = true; _voiceAlready = false; drawVoice(); return; }
 		if (act === 'improve-voice-cancel') { e.preventDefault(); _voiceOpen = false; drawVoice(); return; }
 		if (act === 'improve-voice-save')   { e.preventDefault(); saveVoice(); return; }
 		if (act === 'improve-voice-forget') { e.preventDefault(); forgetVoice(); return; }

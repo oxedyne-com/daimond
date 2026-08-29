@@ -2686,7 +2686,6 @@
 	'social.send_help': '把上面的内容原样发给 Oxedyne。不会附带别的。',
 	// 笔记以书写者的“声音”发出。没有账号名，也没有姓名同行，所以这里的任何
 	// 一句都不能指名书写的人。
-	'social.as_voice': '以你的声音发往锻造台，凡是能看到这个仓库的人都能读到。',
 	'social.as_novoice': '你还没有声音，所以笔记只能留在这里。',
 	// 在发送按钮上方，只在发送出现时一起出现。仓库是公开的，所以发出去的笔记
 	// 任何人都能读到，不需要账号，还会带上声音的名称。这三点翻译时都不能丢。
@@ -2718,10 +2717,9 @@
 	// 加密保存，绝不会出现在地址里。
 	'social.voice_held': '这台设备上存着一个声音，用你的口令加密。',
 	'social.voice_none': '你还没有声音，所以能读别人写下的内容，但不能添加。你自己的笔记只能保留。',
-	'social.voice_set': '粘贴你的声音',
 	'social.voice_replace': '更换声音',
-	'social.voice_help': '追踪器给你看的那 43 个字符。它们在这里加密保存，永远不会进入地址。',
-	'social.voice_ph': '粘贴追踪器给你看的那 43 个字符',
+	'social.voice_help': '追踪器给你看的那 45 个字符。它们在这里加密保存，永远不会进入地址。',
+	'social.voice_ph': '粘贴追踪器给你看的那 45 个字符',
 	'social.voice_save': '保存声音',
 	'social.voice_saved': '你的声音已加密保存在这里。',
 	'social.voice_failed': '这个声音没能保存。',
@@ -2730,8 +2728,8 @@
 	'social.voice_forgotten': '这台设备上的副本没有了。',
 	'social.voice_ask_forget': '忘掉这台设备上的声音？锻造台只显示过一次，无法再显示第二次。',
 	'voice.err.empty':          '要在锻造台上写东西，得先有一个声音。',
-	'voice.err.shape':          '这看起来不像声音。声音是一串不含空格的 43 个字符。',
-	'voice.err.short':          '这比锻造炉签发的任何声音都短。请复制全部 43 个字符。',
+	'voice.err.shape':          '这看起来不像声音。声音是一串不含空格的 45 个字符。',
+	'voice.err.short':          '这比锻造炉签发的任何声音都短。请复制全部 45 个字符。',
 	'voice.err.long':           '这比一个声音能有的长度还长。',
 	'voice.err.locked':         '请先解锁 Daimond：你的声音是用你的密码短语加密保存的。',
 	'voice.err.locked_send':    '要在锻造台上写东西，请先解锁 Daimond：你的声音是用你的密码短语加密的。',
@@ -2793,8 +2791,6 @@
 	'social.err_session': 'Daimond 现在没有登录，所以没能连上锻造台。',
 	'social.err_toolong': '这比锻造台能接受的长度还长。缩短一些，或者分两次发。',
 	'social.err_offline': '刚才什么都没能发出去。',
-	'social.voice_how': '声音是让你能在 {host} 上的 Daimond 公开追踪器里写东西的凭据。阅读不需要任何东西；写、回复和投票都需要，而且它是通过邀请发出的，不能自行注册。向 Oxedyne 索取一个邀请链接。打开它会告诉你是谁邀请了你、你能做什么，追踪器会当着你的面生成你的声音并只显示一次 — 43 个字符，不会再显示。把它们粘贴到这里。',
-	'social.voice_help_none': '你接受邀请时追踪器给你看的那 43 个字符。',
 	'social.amend': '修订这条',
 	'social.amend_help': '替换这条提案的内容。每个读到它的人看到的都是新文字。',
 	'social.amend_title_ph': '说明这是关于什么的那一行',

@@ -107,7 +107,7 @@
 	/// hole and stricter has to earn its place instead.
 	///
 	/// The forge mints a voice from `SECRET_BYTES` = 32 bytes of operating-system
-	/// randomness and prints it in the Hematite64 alphabet, so a real secret is 43
+	/// randomness and prints it in the Hematite64 alphabet, so a real secret is 45
 	/// characters. Sixteen is far below any secret the forge has ever issued and
 	/// far above anything a half-completed copy would leave behind — and a
 	/// truncated paste is exactly the mistake this catches. Without it the tester
@@ -168,9 +168,9 @@
 		// The alphabet first, so that `length` below is a count of BYTES: every
 		// character admitted here is one byte, which is what the gateway measures.
 		if (!GRAPHIC.test(s)) return tOr('voice.err.shape',
-			'That does not look like a voice. It is one run of 43 characters with no spaces in it.');
+			'That does not look like a voice. It is one run of 45 characters with no spaces in it.');
 		if (s.length < MIN) return tOr('voice.err.short',
-			'That is shorter than any voice the forge issues. Copy all 43 characters.');
+			'That is shorter than any voice the forge issues. Copy all 45 characters.');
 		if (s.length > MAX) return tOr('voice.err.long',
 			'That is longer than a voice can be.');
 		return '';
@@ -181,11 +181,23 @@
 	/// The forge mints `SECRET_BYTES` = 32 bytes of operating-system randomness and
 	/// prints them in the Hematite64 alphabet (`oregami/src/voice.rs:67`, through
 	/// `ore_store::keys::text_of`). Six bits a character, unpadded, so 32 bytes is
-	/// ceil(256 / 6) = 43 characters. Used ONLY by `tidy` below, to decide whether
-	/// a paste carrying whitespace is a labelled secret or a damaged one; every
-	/// other bound stays the loose pair, because whether the secret is the RIGHT
-	/// secret is the forge's question and this file does not answer it.
-	var LEN = 43;
+	/// ceil(256 / 6) = 43 symbols, AND THEN THE PADDING, which is what this file got
+	/// wrong. HEMATITE64 is not standard Base64 -- `fe2o3_text/src/base2x.rs:39` says
+	/// so outright -- and its padding is `'='` followed by a marker digit counting the
+	/// leftover bits. 43 symbols carry 258 bits for 256 of secret, so every minted
+	/// voice ends `=2` and is 45 characters.
+	///
+	/// THE OLD 43 DID NOT MERELY MISLABEL ANYTHING; IT DISARMED `tidy`. The label is
+	/// taken off only when the tail is exactly a voice long, so against a real paste
+	/// the test was 45 === 43, the `secret ` column stayed on the front, and `GRAPHIC`
+	/// then refused the space -- the very dead end this pair of functions was written
+	/// to end. The fix for tester note 17 was built against a length no voice has.
+	///
+	/// Used ONLY by `tidy` below, to decide whether a paste carrying whitespace is a
+	/// labelled secret or a damaged one; every other bound stays the loose pair,
+	/// because whether the secret is the RIGHT secret is the forge's question and this
+	/// file does not answer it.
+	var LEN = 45;
 
 	/// The secret as it will be stored and sent: what was pasted, trimmed, and with
 	/// a LABEL taken off the front where the paste plainly carried one.
@@ -206,15 +218,15 @@
 	/// rescues the labelled paste and also swallows a DAMAGED one: a real secret
 	/// with a space knocked into the middle of it would store its second half, be
 	/// refused by the forge as `unknown`, and tell the tester nothing about which
-	/// of the two things went wrong. Splitting a 43-character secret cannot leave a
-	/// 43-character tail, so the two cases are separated exactly rather than by
+	/// of the two things went wrong. Splitting a 45-character secret cannot leave a
+	/// 45-character tail, so the two cases are separated exactly rather than by
 	/// judgement, and a damaged paste is still refused by `GRAPHIC` below.
 	///
 	/// The alternative -- keep refusing and word the refusal better -- was rejected
 	/// as the WHOLE fix, because the field is `type=password`: it asks a person to
 	/// make an exact edit to characters they cannot see, which is the worst place in
 	/// the app to demand precision. It is kept as HALF the fix, for every paste this
-	/// cannot rescue: the sentences in `check` now say what to copy -- one run of 43
+	/// cannot rescue: the sentences in `check` now say what to copy -- one run of 45
 	/// characters with no spaces -- rather than repeating the instruction that
 	/// caused the mistake.
 	function tidy(secret) {
@@ -389,7 +401,23 @@
 		// built `?voice=…` is refused rather than corrected, because a request that
 		// went out with the query string quietly stripped would still have been
 		// composed by code that thinks this is allowed.
-		if (h[HDR] && url.indexOf(h[HDR]) >= 0) {
+		//
+		// THE DECODED FORM IS TESTED AS WELL, AND WITHOUT IT THIS GUARD MISSED EVERY
+		// REAL VOICE. A minted secret ends `=2` (see `LEN`), and every ordinary way of
+		// building a query -- `encodeURIComponent`, `URLSearchParams`, a template with
+		// a caller's own escaping -- writes that `=` as `%3D`. A raw substring test
+		// therefore matched nothing, the request went out, and the credential reached
+		// the access log, the history and the referrer this file's opening rule is
+		// about. It read as sound for as long as `dev/verify_voice.mjs` drove it with a
+		// 43-character fixture carrying no `=`: a fixture that was not the shape of the
+		// thing hid a hole in the code that was.
+		//
+		// `decodeURIComponent` throws on a malformed escape, and a URL nobody can decode
+		// is not one this can clear -- so the throw is caught and the raw test stands
+		// alone rather than the whole guard falling open.
+		var seen = url;
+		try { seen = url + '\n' + decodeURIComponent(url); } catch (e) { /* raw only */ }
+		if (h[HDR] && seen.indexOf(h[HDR]) >= 0) {
 			throw new Error(tOr('voice.err.inurl',
 				'A voice goes in a header, never in an address.'));
 		}

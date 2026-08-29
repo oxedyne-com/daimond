@@ -2666,7 +2666,6 @@
 	'social.send_help': 'Envoie à Oxedyne exactement ce qui est au-dessus. Rien d’autre ne part avec.',
 	// Une note part sous la VOIX de celui qui écrit. Aucun pseudonyme et aucun nom
 	// ne voyage, donc rien ici ne doit nommer cette personne.
-	'social.as_voice': 'Part vers la forge sous votre voix, où quiconque a le dépôt peut la lire.',
 	'social.as_novoice': 'Vous n’avez pas de voix, donc une note ne peut que rester ici.',
 	// Au-dessus d’Envoyer, et à l’écran exactement quand Envoyer y est. Le dépôt
 	// est public : une note envoyée est lisible par N’IMPORTE QUI, SANS COMPTE, et
@@ -2701,10 +2700,9 @@
 	// jamais dans une adresse.
 	'social.voice_held': 'Une voix est gardée sur cet appareil, chiffrée sous votre phrase secrète.',
 	'social.voice_none': 'Vous n’avez pas de voix : vous pouvez lire ce que d’autres ont écrit ici, mais rien y ajouter. Garder est tout ce qu’une note à vous peut faire.',
-	'social.voice_set': 'Collez votre voix',
 	'social.voice_replace': 'Remplacer la voix',
-	'social.voice_help': 'Les 43 caractères que le suivi vous a montrés. Ils restent ici chiffrés et ne passent jamais dans une adresse.',
-	'social.voice_ph': 'Collez les 43 caractères que le suivi vous a montrés',
+	'social.voice_help': 'Les 45 caractères que le suivi vous a montrés. Ils restent ici chiffrés et ne passent jamais dans une adresse.',
+	'social.voice_ph': 'Collez les 45 caractères que le suivi vous a montrés',
 	'social.voice_save': 'Enregistrer la voix',
 	'social.voice_saved': 'Votre voix est gardée ici, chiffrée.',
 	'social.voice_failed': 'Cette voix n’a pas pu être enregistrée.',
@@ -2713,8 +2711,8 @@
 	'social.voice_forgotten': 'La copie sur cet appareil n’est plus là.',
 	'social.voice_ask_forget': 'Oublier votre voix sur cet appareil ? La forge l’a montrée une fois et ne peut pas la montrer à nouveau.',
 	'voice.err.empty':          'Il faut une voix pour écrire sur la forge.',
-	'voice.err.shape':          'Cela ne ressemble pas à une voix. C’est une seule suite de 43 caractères, sans espaces.',
-	'voice.err.short':          'C’est plus court que toute voix émise par la forge. Copiez les 43 caractères.',
+	'voice.err.shape':          'Cela ne ressemble pas à une voix. C’est une seule suite de 45 caractères, sans espaces.',
+	'voice.err.short':          'C’est plus court que toute voix émise par la forge. Copiez les 45 caractères.',
 	'voice.err.long':           'C’est plus long qu’une voix ne peut l’être.',
 	'voice.err.locked':         'Déverrouillez Daimond d’abord : votre voix est gardée chiffrée sous votre phrase secrète.',
 	'voice.err.locked_send':    'Déverrouillez Daimond pour écrire sur la forge : votre voix est chiffrée sous votre phrase secrète.',
@@ -2780,8 +2778,6 @@
 	'social.err_session': 'Daimond n’est pas connecté pour l’instant, il n’a donc pas pu joindre la forge.',
 	'social.err_toolong': 'C’est plus long que ce que la forge accepte. Raccourcissez, ou envoyez en deux fois.',
 	'social.err_offline': 'Rien n’a pu être envoyé pour l’instant.',
-	'social.voice_how': 'Une voix est l’identifiant qui vous autorise à écrire dans le suivi public de Daimond, sur {host}. Le lire ne demande rien ; écrire, répondre et voter en demandent un, et il se donne sur invitation plutôt qu’à l’inscription. Demandez un lien d’invitation à Oxedyne. En le suivant, vous verrez qui vous a invité et ce que vous pourrez faire, et le suivi fabrique votre voix devant vous et l’affiche une fois — 43 caractères, jamais réaffichés. Collez-les ici.',
-	'social.voice_help_none': 'Les 43 caractères que le suivi vous a montrés quand vous avez accepté votre invitation.',
 	'social.amend': 'Réviser',
 	'social.amend_help': 'Remplace ce que dit cette proposition. Tous ceux qui la lisent voient les nouveaux mots.',
 	'social.amend_title_ph': 'La seule ligne disant de quoi il s’agit',

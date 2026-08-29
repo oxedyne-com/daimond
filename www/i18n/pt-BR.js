@@ -2652,7 +2652,6 @@
 	'social.send_help': 'Envia à Oxedyne exatamente o que está acima. Nada mais vai junto.',
 	// Uma nota vai sob a VOZ de quem escreve. Nenhum apelido e nenhum nome viaja,
 	// então nada aqui pode nomear essa pessoa.
-	'social.as_voice': 'Vai para a forja sob a sua voz, onde qualquer pessoa com o repositório pode ler.',
 	'social.as_novoice': 'Você não tem voz, então uma nota só pode ficar aqui.',
 	// Acima de Enviar, e na tela exatamente quando Enviar está. O repositório é
 	// público, então uma nota enviada pode ser lida por QUALQUER PESSOA, SEM
@@ -2686,10 +2685,9 @@
 	// Fica guardada aqui, cifrada sob a sua frase secreta, e nunca vai num endereço.
 	'social.voice_held': 'Há uma voz guardada neste dispositivo, cifrada sob a sua frase secreta.',
 	'social.voice_none': 'Você não tem uma voz, então pode ler o que outras pessoas escreveram aqui, mas não acrescentar nada. Guardar é tudo o que uma nota sua pode fazer.',
-	'social.voice_set': 'Cole a sua voz',
 	'social.voice_replace': 'Trocar a voz',
-	'social.voice_help': 'Os 43 caracteres que o rastreador lhe mostrou. Ficam aqui criptografados e nunca vão numa endereço.',
-	'social.voice_ph': 'Cole os 43 caracteres que o rastreador lhe mostrou',
+	'social.voice_help': 'Os 45 caracteres que o rastreador lhe mostrou. Ficam aqui criptografados e nunca vão numa endereço.',
+	'social.voice_ph': 'Cole os 45 caracteres que o rastreador lhe mostrou',
 	'social.voice_save': 'Salvar a voz',
 	'social.voice_saved': 'Sua voz está aqui, cifrada.',
 	'social.voice_failed': 'Essa voz não pôde ser guardada.',
@@ -2698,8 +2696,8 @@
 	'social.voice_forgotten': 'A cópia neste dispositivo se foi.',
 	'social.voice_ask_forget': 'Esquecer sua voz neste dispositivo? A forja mostrou ela uma vez e não pode mostrar de novo.',
 	'voice.err.empty':          'É preciso uma voz para escrever na forja.',
-	'voice.err.shape':          'Isso não parece uma voz. Ela é uma única sequência de 43 caracteres, sem espaços.',
-	'voice.err.short':          'Isso é mais curto que qualquer voz que a forja emite. Copie os 43 caracteres.',
+	'voice.err.shape':          'Isso não parece uma voz. Ela é uma única sequência de 45 caracteres, sem espaços.',
+	'voice.err.short':          'Isso é mais curto que qualquer voz que a forja emite. Copie os 45 caracteres.',
 	'voice.err.long':           'Isso é mais longo do que uma voz pode ser.',
 	'voice.err.locked':         'Desbloqueie o Daimond primeiro: sua voz fica guardada cifrada sob a sua frase-senha.',
 	'voice.err.locked_send':    'Desbloqueie o Daimond para escrever na forja: sua voz está cifrada sob a sua frase-senha.',
@@ -2764,8 +2762,6 @@
 	'social.err_session': 'O Daimond não está conectado agora, então não conseguiu chegar à forja.',
 	'social.err_toolong': 'Isso é mais longo do que a forja aceita. Encurte, ou mande em duas partes.',
 	'social.err_offline': 'Nada pôde ser enviado agora.',
-	'social.voice_how': 'Uma voz é a credencial que permite escrever no rastreador público do Daimond em {host}. Ler não exige nada; escrever, responder e votar exigem uma, e ela é dada por convite em vez de cadastro. Peça à Oxedyne um link de convite. Ao segui-lo você vê quem o convidou e o que poderá fazer, e o rastreador cria a sua voz na sua frente e a mostra uma vez — 43 caracteres, nunca mostrados de novo. Cole-os aqui.',
-	'social.voice_help_none': 'Os 43 caracteres que o rastreador lhe mostrou quando você aceitou o convite.',
 	'social.amend': 'Revisar isto',
 	'social.amend_help': 'Substitui o que esta proposta diz. Todos que a lerem verão as novas palavras.',
 	'social.amend_title_ph': 'A única linha sobre o que isto trata',

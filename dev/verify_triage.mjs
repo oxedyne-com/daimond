@@ -589,7 +589,7 @@ try {
 	check('and it says honestly whether anything prices this model',
 		est.known === false && est.usd === 0, JSON.stringify(est));
 	check('and says nothing leaves until a draft is pressed',
-		!!before && /until you press Send/i.test(before.text), before && before.text);
+		!!before && /nothing is sent until/i.test(before.text), before && before.text);
 	check('and it is ABOVE the button, where it is read before the press',
 		!!before && before.above === true, JSON.stringify(before));
 	check('the button names the whole list rather than one note',

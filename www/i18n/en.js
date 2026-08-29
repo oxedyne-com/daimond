@@ -3557,11 +3557,10 @@
 	'social.keep':         'Keep',
 	'social.keep_help':    'Store this note on this device. Nothing is sent.',
 	'social.send':         'Send',
-	'social.send_help':    'Send exactly what is above to Oxedyne. Nothing else goes with it.',
+	'social.send_help':    'Sends exactly what is above. Nothing else goes with it.',
 	// A note goes under the writer's VOICE. No handle and no name travels with
 	// it, so nothing here may name the writer.
-	'social.as_voice':     'Goes to the forge under your voice, where anyone with the repository can read it.',
-	'social.as_novoice':   'You have no voice, so a note can only be kept here.',
+	'social.as_novoice':   'No voice yet — a note can only be kept here.',
 	// Above Send, and on the screen exactly when Send is. The repository this
 	// panel reads is public — the forge draws no other kind — so a note that is
 	// sent is readable by ANYBODY, with NO account, under the name of the voice
@@ -3569,22 +3568,22 @@
 	// `{host}` is the forge's address, filled in by js/improve.js: keep it as it
 	// is rather than typing the address out, and do not name the repository,
 	// which is a constant in the code and would strand eight files if it moved.
-	'social.publish_body': 'Daimond wants to publish this, in your name, where other people can read it. It cannot be taken back.\n\n{what}\n\nIf you did not expect this, decline. Nothing is lost but this one publication.',
+	'social.publish_body': 'Daimond will publish this in your name, for anyone to read. It cannot be taken back.\n\n{what}\n\nDecline if you did not expect it.',
 	'social.publish_ok': 'Publish it',
 	'social.publish_title': 'Publish this?',
-	'social.public_note':  'Sending publishes this note at {host}, with your voice name on it. Anyone can read it there without an account. A note you keep stays on this device.',
-	'social.title_hint':   'The first line is the title of the proposal. What happened goes underneath it.',
-	'social.no_title':     'The first line is the title. Write one, then what happened underneath.',
+	'social.public_note':  'Sending publishes this at {host} under your voice — anyone can read it, no account needed. A kept note stays here.',
+	'social.title_hint':   'First line is the title; what happened goes below.',
+	'social.no_title':     'First line is the title — write one, then what happened.',
 	'social.nothing':      'Write something first.',
 	// Said after a refusal. Nothing is queued and nothing is tried again, so a
 	// translation must not promise a retry.
-	'social.kept_here':    'Your note is kept here and nothing tried again.',
+	'social.kept_here':    'Kept here; nothing tried again.',
 	'social.copied':       'Copied.',
 	'social.state_kept':   'Kept here',
 	'social.state_sent':   'Sent {date}',
 	'social.state_sent_n': 'Sent {date}, and is proposal {n}',
 	'social.drop':         'Delete this note',
-	'social.drop_ask':     'Delete this note? It is only on this device, so there is no other copy.',
+	'social.drop_ask':     'Delete this note? It is only here — no other copy.',
 	'social.drop_ok':      'Delete',
 	'social.no_notes':     'No notes yet.',
 	// The one line that goes with a note, in the characters it travels as.
@@ -3596,27 +3595,44 @@
 
 	// The voice: a per-person secret the forge looks the writer up by. It is
 	// held here encrypted under the passphrase, and it never goes in an address.
-	'social.voice_held':        'A voice is held on this device, encrypted under your passphrase.',
-	'social.voice_none':        'You have no voice, so you can read what other people have written here but not add to it. Keep is all a note of your own can do.',
-	// WHAT IT IS, WHY YOU HAVEN'T GOT ONE, AND WHAT TO DO. The empty state said
-	// "Set a voice", helped by "The line the forge printed for you", and the owner
-	// -- who wrote the app -- asked what a voice was and how he was meant to set
-	// one. Both presumed something the reader has not got. Nothing in Daimond can
-	// mint one and nothing here can ask for one, so the true instruction is to ask
-	// for an invitation.
-	'social.voice_how':         'A voice is the credential that lets you write on Daimond\u2019s public tracker at {host}. Reading it needs nothing; writing, replying and voting all need one, and they are given out by invitation rather than signed up for. Ask Oxedyne for an invitation link. Following it shows you who invited you and what you may do, and the tracker makes your voice in front of you and shows it once \u2014 43 characters, never shown again. Paste those here.',
-	'social.voice_set':         'Paste your voice',
+	'social.voice_held':        'Voice held on this device, encrypted under your passphrase.',
+	'social.voice_none':        'No voice yet: you can read proposals, but only Keep a note to this device.',
+	// \u2500\u2500 ONE TAP, NOT A PASTE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+	// `Get my voice` posts to `/api/voice/provision` and the forge mints one; the
+	// honest instruction is "tap the button". The old paste-first strings
+	// (`voice_how`, `voice_set`, `voice_help_none`) were dropped in the terseness
+	// pass -- nothing referenced them, and they carried the stale invitation flow.
+	// The paste FORM survives as a fallback for a voice made elsewhere, so
+	// `voice_ph`, `voice_help`, `voice_replace` and `voice_save` stay. Detail lives
+	// in guide/social.html, not here.
+	'social.voice_intro':       'A voice lets you post, reply and vote on the forge; reading needs none.',
+	'social.voice_get':         'Get my voice',
+	'social.voice_get_help':    'Makes your voice on the forge. One tap.',
+	'social.voice_getting':     'Making your voice on the forge\u2026',
+	'social.voice_get_failed':  'Could not make your voice. Try again shortly.',
+	'social.voice_pro':         'A voice is part of Daimond Pro.',
+	'social.voice_pitch':       'A voice on the forge is part of Daimond Pro.',
+	// The forge already holds a voice for this account, on another device.
+	'social.voice_already':     'Your voice is set on another device and will sync here shortly.',
+	'social.voice_reissue':      'I lost my voice \u2014 re-issue',
+	'social.voice_reissue_help': 'Makes a new voice; the old one stops working everywhere. Cannot be undone.',
+	'social.voice_reissue_do':    'Re-issue',
+	'social.voice_reissue_title': 'Re-issue your voice',
+	'social.voice_reissue_ask':   'Re-issue your voice? The old one stops working on every device, and this cannot be undone.',
+	// The unobtrusive fallback: a voice the forge made elsewhere, pasted in.
+	'social.voice_have':        'I already have a voice',
+	'social.voice_have_help':   'Paste a voice the forge already gave you.',
+	// The paste fallback form (see the note above).
 	'social.voice_replace':     'Replace the voice',
-	'social.voice_help':        'The 43 characters the tracker showed you. Kept encrypted here and never put in an address.',
-	'social.voice_help_none':   'The 43 characters the tracker showed you when you accepted your invitation.',
-	'social.voice_ph':          'Paste the 43 characters the tracker showed you',
+	'social.voice_help':        'The line the forge showed you. Kept encrypted on this device.',
+	'social.voice_ph':          'Paste the line the forge showed you',
 	'social.voice_save':        'Save the voice',
 	'social.voice_saved':       'Your voice is held here, encrypted.',
 	'social.voice_failed':      'That voice could not be stored.',
 	'social.voice_forget':      'Forget it',
 	'social.voice_forget_help': 'Remove the copy on this device.',
 	'social.voice_forgotten':   'The copy on this device is gone.',
-	'social.voice_ask_forget':  'Forget your voice on this device? The forge showed it once and cannot show it again.',
+	'social.voice_ask_forget':  'Forget your voice here? It was shown once and will not be shown again.',
 
 	// ── What js/voice.js says when a voice will not do ──────────
 	// The secret itself, and every refusal about it. These were in NO catalogue
@@ -3657,7 +3673,7 @@
 	'social.said_n.other': '{n} replies',
 	'social.built_on':     'written on build {build}',
 	'social.closed_by':    'closed by mark {mark}',
-	'social.move_floor':   'A note follows its content across a file boundary only when the change is recognised as a move, and the floor for that is 64 bytes. Cut less than that from one file into another and the history holds a deletion and an insertion, so a note anchored there honestly reports its content deleted. The note is right and the history is right.',
+	'social.move_floor':   'A note follows its content across files only when the change counts as a move — the floor is 64 bytes. Cut less, and the history holds a delete and an insert, so the note reports its content deleted.',
 	'social.state_open':   'Open',
 	// The forge calls this state `accepted`; the panel has always called it
 	// Being done, and the eight locales already hold that phrase.
@@ -3670,33 +3686,33 @@
 	// Revising one's own proposal. Dark until the forge answers the per-asker flag;
 	// see `drawAmendControl` in improve.js.
 	'social.amend':             'Revise this',
-	'social.amend_help':        'Replace what this proposal says. Everybody who reads it sees the new words.',
+	'social.amend_help':        'Replace what this proposal says; everyone sees the new words.',
 	'social.amend_title_ph':    'The one line this proposal is about',
 	'social.amend_body_ph':     'What happened, and what was expected instead',
 	'social.amend_save':        'Publish the revision',
-	'social.amend_save_help':   'Send exactly what is in these two boxes. Nothing else goes with them.',
+	'social.amend_save_help':   'Sends exactly these two boxes. Nothing else.',
 	'social.revised_n.one':     'revised once',
 	'social.revised_n.other':   'revised {n} times',
 	// Drafting from the whole list of kept notes at once (www/js/triage.js).
 	'social.triage_run': 'Draft from all {n} notes',
-	'social.triage_run_help': 'Reads every kept note and the proposals already on the forge, and writes a plan. Nothing leaves this device until you press Send on one of the drafts.',
+	'social.triage_run_help': 'Reads your kept notes and the forge, and drafts a plan. Nothing is sent until you Send a draft.',
 	'social.triage_running': 'Reading your notes…',
-	'social.triage_cost': 'Reads all {n} notes on {model}, on your own key: about {in} tokens in and at most {out} out, so at most {usd} — usually much less.',
-	'social.triage_cost_unknown': 'Reads all {n} notes on {model}, on your own key: about {in} tokens in and at most {out} out. Nothing here prices that model, so the cost is not known before it runs.',
-	'social.triage_cost_stop': 'Nothing is sent to the forge until you press Send on a draft.',
+	'social.triage_cost': 'All {n} notes on {model}, your key: ~{in} tokens in, up to {out} out — at most {usd}.',
+	'social.triage_cost_unknown': 'All {n} notes on {model}, your key: ~{in} tokens in, up to {out} out. This model is not priced, so the cost is not known first.',
+	'social.triage_cost_stop': 'Nothing is sent until you Send a draft.',
 	'social.triage_nomodel': 'Set a model in AI before drafting from your notes.',
 	'social.triage_nonotes': 'There are no kept notes to draft from.',
-	'social.triage_unread': 'The model did not answer with a plan this panel could read. Nothing was sent, and your notes are untouched.',
+	'social.triage_unread': 'The model did not return a readable plan. Nothing was sent; your notes are untouched.',
 	'social.triage_failed': 'The drafting did not finish: {why}',
-	'social.triage_plan': '{n} drafts, written by {model} from your notes. Read each one, change it if it is wrong, and send the ones you want. Nothing here has left this device.',
-	'social.triage_dropped': '{n} more were answered in a shape this panel could not read, and are not shown.',
+	'social.triage_plan': '{n} drafts from your notes, by {model}. Edit any, send the ones you want. Nothing has left this device.',
+	'social.triage_dropped': '{n} more came back in a shape this panel could not read, and are not shown.',
 	'social.triage_left': '{n} notes are in no draft:',
 	'social.triage_clear': 'Forget this plan',
-	'social.triage_clear_help': 'Take the drafts off the screen. Nothing is sent and no note is changed.',
+	'social.triage_clear_help': 'Clear the drafts. Nothing is sent.',
 	'social.triage_drop': 'Not this one',
-	'social.triage_drop_help': 'Take this draft off the plan. Nothing is sent.',
-	'social.triage_send_help': 'Send exactly the characters in the box above. Nothing else goes with them.',
-	'social.triage_kept': 'Nothing was sent and nothing tried again. Your notes are untouched.',
+	'social.triage_drop_help': 'Drop this draft. Nothing is sent.',
+	'social.triage_send_help': 'Sends exactly what is in the box. Nothing else.',
+	'social.triage_kept': 'Nothing sent, nothing retried. Your notes are untouched.',
 	'social.triage_from': 'from {n} notes',
 	'social.triage_from_one': 'from 1 note',
 	'social.triage_kind_new': 'New proposal',
@@ -3709,7 +3725,7 @@
 	'social.vote_off':     'Press again to take your vote back off.',
 	'social.reply':        'Say it',
 	'social.reply_ph':     'Say something about this proposal.',
-	'social.reply_help':   'Send exactly what is in this box. Nothing else goes with it.',
+	'social.reply_help':   'Sends exactly this box. Nothing else.',
 
 	// What the forge refused, said in words. None of them names which allowance
 	// ran out: a limit that reports its own state is one somebody can pace

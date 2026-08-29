@@ -279,16 +279,15 @@
 				'Set a model in AI before drafting from your notes.');
 		}
 		var stop = ' ' + tOr('social.triage_cost_stop',
-			'Nothing is sent to the forge until you press Send on a draft.');
+			'Nothing is sent until you Send a draft.');
 		if (!est.known) {
 			return tOr('social.triage_cost_unknown',
-				'Reads all {n} notes on {model}, on your own key: about {in} tokens in and at most '
-				+ '{out} out. Nothing here prices that model, so the cost is not known before it runs.',
+				'All {n} notes on {model}, your key: ~{in} tokens in, up to {out} out. '
+				+ 'This model is not priced, so the cost is not known first.',
 				{ n: n, model: est.model, in: est.inTok, out: est.outTok }) + stop;
 		}
 		return tOr('social.triage_cost',
-			'Reads all {n} notes on {model}, on your own key: about {in} tokens in and at most '
-			+ '{out} out, so at most {usd} — usually much less.',
+			'All {n} notes on {model}, your key: ~{in} tokens in, up to {out} out — at most {usd}.',
 			{ n: n, model: est.model, in: est.inTok, out: est.outTok, usd: money(est.usd) }) + stop;
 	}
 
@@ -422,8 +421,7 @@
 			var read = parse(text);
 			if (read.err || !read.drafts.length) {
 				_say = tOr('social.triage_unread',
-					'The model did not answer with a plan this panel could read. Nothing was sent, '
-					+ 'and your notes are untouched.');
+					'The model did not return a readable plan. Nothing was sent; your notes are untouched.');
 				return null;
 			}
 			_plan = { at: Date.now(), drafts: read.drafts, left: read.left, dropped: read.dropped,
@@ -515,7 +513,7 @@
 		} else {
 			var parts = cut(text);
 			if (!parts) {
-				d.err = tOr('social.no_title', 'The first line is the title. Write one, then what happened underneath.');
+				d.err = tOr('social.no_title', 'First line is the title — write one, then what happened.');
 				draw();
 				return false;
 			}
@@ -523,7 +521,7 @@
 		}
 		if (!a || !a.ok) {
 			d.err = p.forge.saying(a) + ' ' + tOr('social.triage_kept',
-				'Nothing was sent and nothing tried again. Your notes are untouched.');
+				'Nothing sent, nothing retried. Your notes are untouched.');
 			draw();
 			return false;
 		}
@@ -608,15 +606,14 @@
 				_busy ? tOr('social.triage_running', 'Reading your notes…')
 					: tOr('social.triage_run', 'Draft from all {n} notes', { n: notes.length }),
 				tOr('social.triage_run_help',
-					'Reads every kept note and the proposals already on the forge, and writes a plan. '
-					+ 'Nothing leaves this device until you press Send on one of the drafts.'));
+					'Reads your kept notes and the forge, and drafts a plan. Nothing is sent until you Send a draft.'));
 			if (_busy) b.disabled = true;
 			acts.appendChild(b);
 		}
 		if (_plan) {
 			acts.appendChild(button('imp-note-copy trg-clear', 'triage-clear',
 				tOr('social.triage_clear', 'Forget this plan'),
-				tOr('social.triage_clear_help', 'Take the drafts off the screen. Nothing is sent and no note is changed.')));
+				tOr('social.triage_clear_help', 'Clear the drafts. Nothing is sent.')));
 		}
 		box.appendChild(acts);
 		return box;
@@ -630,13 +627,13 @@
 		notes.forEach(function (r) { byId[r.id] = r; });
 
 		wrap.appendChild(line('imp-asat trg-asat', tOr('social.triage_plan',
-			'{n} drafts, written by {model} from your notes. Read each one, change it if it is wrong, '
-			+ 'and send the ones you want. Nothing here has left this device.',
+			'{n} drafts from your notes, by {model}. Edit any, send the ones you want. '
+			+ 'Nothing has left this device.',
 			{ n: _plan.drafts.length, model: _plan.model })));
 
 		if (_plan.dropped) {
 			wrap.appendChild(line('rail-note trg-dropped', tOr('social.triage_dropped',
-				'{n} more were answered in a shape this panel could not read, and are not shown.',
+				'{n} more came back in a shape this panel could not read, and are not shown.',
 				{ n: _plan.dropped })));
 		}
 
@@ -737,15 +734,15 @@
 			acts.appendChild(button('imp-send trg-send', 'triage-send',
 				tOr('social.send', 'Send'),
 				tOr('social.triage_send_help',
-					'Send exactly the characters in the box above. Nothing else goes with them.')));
+					'Sends exactly what is in the box. Nothing else.')));
 		} else if (can === 'novoice') {
 			acts.appendChild(line('imp-as', tOr('social.as_novoice',
-				'You have no voice, so a note can only be kept here.')));
+				'No voice yet — a note can only be kept here.')));
 		}
 		// `can === 'dark'` draws NOTHING. See `sendable`.
 		acts.appendChild(button('imp-note-copy trg-drop', 'triage-drop',
 			tOr('social.triage_drop', 'Not this one'),
-			tOr('social.triage_drop_help', 'Take this draft off the plan. Nothing is sent.')));
+			tOr('social.triage_drop_help', 'Drop this draft. Nothing is sent.')));
 		row.appendChild(acts);
 		return row;
 	}
