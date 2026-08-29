@@ -965,15 +965,28 @@
 		if (!j.present) { serverVersion = 0; pulledOk = true; saveVersion(); restStatus(); return 0; }
 		var state;
 		try {
-			// The size of what arrived, before it is opened. Three copies of this
-			// exist at once a moment from now -- the sealed blob, the plain text,
-			// and the object graph `JSON.parse` builds from it -- so on a phone
-			// this number is the single largest allocation the app ever makes, and
-			// until now nothing anywhere recorded it. Bytes only: no content.
+			// The size of what arrived, before it is opened. Three forms of this
+			// pass through in a moment -- the sealed blob, the plain text, and the
+			// object graph `JSON.parse` builds from it -- but each is released as
+			// soon as the next exists (see below), so no more than two are ever
+			// live at once and only the graph survives into the merge. On a phone
+			// this is still the single largest allocation the app makes. Bytes
+			// only: no content.
 			trail('sync pull', Math.round((j.blob || '').length / 1024) + 'K sealed');
 			var plain = await DaimondIdentity.unwrap(j.blob);	// throws on a wrong key.
+			// The sealed copy has done its work: release it the moment the plain
+			// text exists, so the blob and the object graph never coexist. On a
+			// phone the three of them together are the single largest allocation
+			// the app makes, and iOS kills the tab before they all fit. `j.version`
+			// is still read below, so only the blob field goes -- what is applied
+			// and the order it is applied in do not change by a byte.
+			j.blob = null;
 			trail('sync parcel', Math.round(plain.length / 1024) + 'K plain');
 			state = JSON.parse(plain);
+			// Same again: the plain text is redundant to the graph now, and
+			// applyParcel below is the memory-heavy phase, so free it before that
+			// runs rather than leaving it alive across the merge.
+			plain = null;
 			trail('sync parsed');
 		} catch (e) {
 			// Not readable at all, which is a DIFFERENT thing from readable and

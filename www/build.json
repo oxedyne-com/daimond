@@ -1,1 +1,1 @@
-{"build":"345b761fc748","note":"Carry the forge voice in the sync parcel, so paired devices receive it"}
+{"build":"670afa02aa63","note":"Free the sealed blob and plaintext before the merge, so iOS stops OOM-looping"}
