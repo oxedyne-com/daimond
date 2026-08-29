@@ -2124,6 +2124,10 @@
 		// without that file draws the panel it has always drawn, and this file
 		// keeps working when the drafting half is not there.
 		try { if (window.DaimondTriage) DaimondTriage.draw(); } catch (e) { log('the triage row would not draw', e); }
+		// The approve-list: a local review queue of drafts, batch-sent through the
+		// forge door above. Drawn beside the triage row on the same terms -- called,
+		// not imported, so a build without js/approvelist.js draws exactly as before.
+		try { if (window.DaimondApproveList) DaimondApproveList.draw(); } catch (e) { log('the approve-list would not draw', e); }
 		drawProps();
 	}
 

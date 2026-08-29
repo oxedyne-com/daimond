@@ -1,1 +1,1 @@
-{"build":"670afa02aa63","note":"Free the sealed blob and plaintext before the merge, so iOS stops OOM-looping"}
+{"build":"85bfe5f585b6","note":"Curated-proposal pipeline, mobile full screen, and an Ed25519/X25519 fallback so old browsers can unlock"}

@@ -1,0 +1,8 @@
+/* App-wide full-screen toggle -- phone only.
+   Visibility (and the phone/API gating) is driven from js/fullscreen.js via an
+   inline display, matching the crystal full button's pattern. This sheet only
+   swaps the two faces: corner arrows out to enter, in to exit. The .ic sizing
+   comes from `.top-actions .icon-btn .ic` in app.css. */
+#fullscreen-btn .ic-fs-exit { display: none; }
+#fullscreen-btn.on .ic-fs-enter { display: none; }
+#fullscreen-btn.on .ic-fs-exit { display: block; }

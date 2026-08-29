@@ -58,11 +58,14 @@
    characters in the box, only that a person read them and pressed
    the button beside them. A model-drafted proposal shown in a box
    and pressed is exactly as compliant as a hand-typed one -- the
-   same one act, the same one press, the same reading of the same
-   screen at the same moment. `send()` below reads the textarea's
-   value at the instant of the press and cuts it, exactly as
-   `improve.js`'s `outgoing()` and `split()` do, and it goes
-   through THAT file's door rather than opening a second one.
+   same one act, the same reading of the same screen at the moment
+   of the press. THIS FILE NO LONGER HOLDS THAT PRESS. It drafts a
+   plan and hands the drafts to js/approvelist.js -- the one review
+   surface, where each draft is edited, ticked and sent, reading the
+   textarea at the instant of the press exactly as `improve.js`'s
+   `outgoing()`/`split()` do, through improve.js's forge door rather
+   than a second one. The rule is kept there now; there is no second
+   place it could be got wrong.
 
    What DOES change, and is amended honestly in the contract
    rather than quietly, is two lines of §6: "No daimon
@@ -80,10 +83,11 @@
 
    ── AND NOTHING RUNS ON ITS OWN ─────────────────────────────
 
-   One press to draft, a review, then one press per draft. No
-   timer, no panel-open trigger, no "while you were away". The
-   cost is said BEFORE the press and as a CEILING, because a
-   figure a person reads after the money is gone is not consent.
+   One press to draft, then the drafts wait in the queue for the
+   ticks and the one "Send selected" press below. No timer, no
+   panel-open trigger, no "while you were away". The cost is said
+   BEFORE the drafting press and as a CEILING, because a figure a
+   person reads after the money is gone is not consent.
 
    Attaches `window.DaimondTriage`.
    ============================================================ */
@@ -114,6 +118,16 @@
 	function el(id) { return document.getElementById(id); }
 
 	function panel() { return window.DaimondImprove || null; }
+
+	/// Hand a plan's drafts to the approve-list, which is the ONE place a draft
+	/// is reviewed, edited, ticked and sent. This file GENERATES a plan from the
+	/// whole list of notes; it does not send. The queue does, in one press, and
+	/// folds the notes a sent draft was written from -- so there is one door and
+	/// one review surface, not two.
+	function toQueue(drafts) {
+		try { if (window.DaimondApproveList) DaimondApproveList.enqueue(drafts); }
+		catch (e) { log('the drafts would not reach the queue', e); }
+	}
 
 	// ── What the drafting is given, and what it may answer ─────
 	//
@@ -426,6 +440,7 @@
 			}
 			_plan = { at: Date.now(), drafts: read.drafts, left: read.left, dropped: read.dropped,
 				model: got.model };
+			toQueue(read.drafts);
 			return _plan;
 		} catch (e) {
 			_say = tOr('social.triage_failed', 'The drafting did not finish: {why}',
@@ -467,87 +482,20 @@
 		catch (e) { /* likewise */ }
 	}
 
-	// ── One press per draft ────────────────────────────────────
+	// ── There is no press here any more ────────────────────────
+	//
+	// A draft used to be sent by its own press in this file's own plan view, and
+	// every note it was written from was folded here. BOTH MOVED TO THE QUEUE.
+	// js/approvelist.js is the one surface a draft is reviewed, edited, ticked and
+	// sent on, and it folds the notes at the moment it sends -- so `boxed`, `cut`,
+	// `send` and `drop` are gone rather than kept beside a second door. This file
+	// GENERATES a plan and hands its drafts to `toQueue`; it reads no textarea and
+	// puts nothing on the wire. Removing the surface rather than hiding it is the
+	// no-back-compat rule: two review surfaces is exactly the confusion the unify
+	// was asked for.
 
-	/// The characters in one draft's box, RIGHT NOW.
-	///
-	/// THE ONE FUNCTION THAT DECIDES WHAT LEAVES, and the twin of
-	/// `improve.js`'s `outgoing()`. It reads the textarea and nothing else: not
-	/// the record the model answered, not what was drawn a moment ago. A person
-	/// who edited the box before pressing sends what they edited, which is the
-	/// only reading of §4 that is true of a box somebody can type in.
-	function boxed(i) {
-		var box = document.querySelector('.trg-draft[data-draft="' + i + '"] .trg-box');
-		return box ? String(box.value || '') : '';
-	}
-
-	/// A draft cut into the two fields a proposal is made of, by the same rule.
-	/// A cut and never an addition: `title + '\n' + body` is what was on screen.
-	function cut(text) {
-		var i     = text.indexOf('\n');
-		var title = (i < 0) ? text : text.slice(0, i);
-		var body  = (i < 0) ? ''   : text.slice(i + 1);
-		if (!title.trim()) return null;
-		return { title: title, body: body };
-	}
-
-	/// Send one draft. One press, one publication, and no retry.
-	///
-	/// NO `build` FIELD. `improve.js` sends one because the box's own "What goes
-	/// with it" row shows those same characters, and closing that row takes them
-	/// off the wire. There is no such row here, and every note that went into the
-	/// brief already carries its own build in its text -- so a `build` here would
-	/// be a field the person could not see, which is exactly what §4's field-set
-	/// check exists to make impossible.
-	async function send(i) {
-		var p = panel();
-		if (!p || !_plan) return false;
-		var d = _plan.drafts[i];
-		if (!d || d.sent) return false;
-		var text = boxed(i);
-		if (!text.trim()) { d.err = tOr('social.nothing', 'Write something first.'); draw(); return false; }
-
-		var a;
-		if (d.kind === 'comment') {
-			a = await p.forge.say(d.n, text);
-		} else {
-			var parts = cut(text);
-			if (!parts) {
-				d.err = tOr('social.no_title', 'First line is the title — write one, then what happened.');
-				draw();
-				return false;
-			}
-			a = (d.kind === 'revision') ? await p.forge.amend(d.n, parts) : await p.forge.open(parts);
-		}
-		if (!a || !a.ok) {
-			d.err = p.forge.saying(a) + ' ' + tOr('social.triage_kept',
-				'Nothing sent, nothing retried. Your notes are untouched.');
-			draw();
-			return false;
-		}
-		d.err  = '';
-		// A comment and a revision land on the proposal they named; a new one on
-		// whatever number the forge gave it. Read from the ANSWER, never assumed:
-		// the answer is the detail shape of the record that changed.
-		d.sent = Math.max(0, (a.data && typeof a.data.number === 'number') ? Math.floor(a.data.number) : 0)
-			|| d.n;
-		// Folded, which is not sent. `improve.js` decides what that means for
-		// the cap; this file only says which notes and which proposal.
-		try { p.fold(d.from, d.sent); } catch (e) { log('the notes would not be marked', e); }
-		try { p.render(); } catch (e) { draw(); }
-		return true;
-	}
-
-	/// Take one draft off the plan. Nothing is sent and no note is touched: a
-	/// plan is a proposal about proposals, and refusing one of them is free.
-	function drop(i) {
-		if (!_plan || !_plan.drafts[i]) return false;
-		_plan.drafts.splice(i, 1);
-		draw();
-		return true;
-	}
-
-	/// Forget the whole plan. The notes are where they were.
+	/// Forget this run's summary. The drafts are in the queue, where they stay;
+	/// this only clears the line above the queue that says how the run went.
 	function clear() { _plan = null; _say = ''; draw(); }
 
 	// ── Drawing ────────────────────────────────────────────────
@@ -572,10 +520,6 @@
 		s.className = cls;
 		s.textContent = text;
 		return s;
-	}
-
-	function hasVoice() {
-		try { return !!(window.DaimondVoice && DaimondVoice.has()); } catch (e) { return false; }
 	}
 
 	function draw() {
@@ -619,7 +563,10 @@
 		return box;
 	}
 
-	/// The plan: one box per draft, each sent by its own press.
+	/// The plan's SUMMARY, not the drafts: how the run went. The drafts themselves
+	/// went to the approve-list below, which is where they are read, edited,
+	/// ticked and sent. What stays here is the count, anything dropped, and the
+	/// notes that landed in no draft -- feedback the queue does not carry.
 	function drawPlan(notes) {
 		var wrap = document.createElement('div');
 		wrap.className = 'trg-plan';
@@ -627,8 +574,8 @@
 		notes.forEach(function (r) { byId[r.id] = r; });
 
 		wrap.appendChild(line('imp-asat trg-asat', tOr('social.triage_plan',
-			'{n} drafts from your notes, by {model}. Edit any, send the ones you want. '
-			+ 'Nothing has left this device.',
+			'{n} drafts added to the review queue below, by {model}. '
+			+ 'Edit, tick and send them there. Nothing has left this device.',
 			{ n: _plan.drafts.length, model: _plan.model })));
 
 		if (_plan.dropped) {
@@ -636,10 +583,6 @@
 				'{n} more came back in a shape this panel could not read, and are not shown.',
 				{ n: _plan.dropped })));
 		}
-
-		_plan.drafts.forEach(function (d, i) {
-			wrap.appendChild(drawDraft(d, i, byId));
-		});
 
 		if (_plan.left.length) {
 			var left = document.createElement('div');
@@ -663,115 +606,12 @@
 		return s.length > 90 ? (s.slice(0, 89) + '…') : s;
 	}
 
-	/// The word a draft's kind is read as, and the whole of what it promises.
-	function kindWord(d) {
-		if (d.kind === 'comment')  return tOr('social.triage_kind_comment', 'Comment on #{n}', { n: d.n });
-		if (d.kind === 'revision') return tOr('social.triage_kind_revision', 'Revision of #{n}', { n: d.n });
-		return tOr('social.triage_kind_new', 'New proposal');
-	}
-
-	/// One draft, in a box somebody can read, edit and press.
-	function drawDraft(d, i, byId) {
-		var row = document.createElement('div');
-		row.className = 'trg-draft';
-		row.dataset.draft = String(i);
-		row.dataset.kind  = d.kind;
-
-		var head = document.createElement('div');
-		head.className = 'trg-head';
-		var kind = document.createElement('span');
-		kind.className = 'trg-kind';
-		kind.textContent = kindWord(d);
-		head.appendChild(kind);
-		// A separator in the DOM rather than a margin in a stylesheet. It was put
-		// here because improve.css belonged to another lane that week and a head
-		// reading "New proposalfrom 1 note" is wrong on the screen today; the
-		// file is free now and this is still the right place for it, since what
-		// separates two words is a character and not a box.
-		var gap = document.createElement('span');
-		gap.className = 'imp-as trg-gap';
-		gap.textContent = ' \u00b7 ';
-		head.appendChild(gap);
-		var from = document.createElement('span');
-		from.className = 'imp-note-state trg-from';
-		from.textContent = d.from.length === 1
-			? tOr('social.triage_from_one', 'from 1 note')
-			: tOr('social.triage_from', 'from {n} notes', { n: d.from.length });
-		from.title = d.from.map(function (id) {
-			return byId[id] ? firstLine(byId[id].text) : id;
-		}).join('\n');
-		head.appendChild(from);
-		row.appendChild(head);
-
-		if (d.why) row.appendChild(line('imp-as trg-why', d.why));
-
-		if (d.sent) {
-			// What happened, and the draft's own characters kept beside it: a row
-			// that replaced the words with "Sent" would take the only reading of
-			// what was published off the screen.
-			row.appendChild(line('imp-note-state trg-sent', d.kind === 'comment'
-				? tOr('social.triage_said', 'Said on proposal #{n}.', { n: d.sent })
-				: (d.kind === 'revision'
-					? tOr('social.triage_revised', 'Proposal #{n} is revised.', { n: d.sent })
-					: tOr('social.triage_opened', 'Opened as proposal #{n}.', { n: d.sent }))));
-			row.appendChild(line('imp-note-text trg-was', bodyOf(d)));
-			return row;
-		}
-
-		var box = document.createElement('textarea');
-		box.className = 'imp-box trg-box';
-		box.rows = d.kind === 'comment' ? 3 : 6;
-		box.value = bodyOf(d);
-		box.setAttribute('aria-label', kindWord(d));
-		row.appendChild(box);
-
-		if (d.err) row.appendChild(line('rail-note imp-err trg-err', d.err));
-
-		var acts = document.createElement('div');
-		acts.className = 'imp-acts trg-draft-acts';
-		var can = sendable(d);
-		if (can === 'yes') {
-			acts.appendChild(button('imp-send trg-send', 'triage-send',
-				tOr('social.send', 'Send'),
-				tOr('social.triage_send_help',
-					'Sends exactly what is in the box. Nothing else.')));
-		} else if (can === 'novoice') {
-			acts.appendChild(line('imp-as', tOr('social.as_novoice',
-				'No voice yet — a note can only be kept here.')));
-		}
-		// `can === 'dark'` draws NOTHING. See `sendable`.
-		acts.appendChild(button('imp-note-copy trg-drop', 'triage-drop',
-			tOr('social.triage_drop', 'Not this one'),
-			tOr('social.triage_drop_help', 'Drop this draft. Nothing is sent.')));
-		row.appendChild(acts);
-		return row;
-	}
-
-	/// The characters a draft's box starts with: the same cut, put back
-	/// together, so what is read is what would leave.
-	function bodyOf(d) {
-		if (d.kind === 'comment') return d.body;
-		return d.body ? (d.title + '\n' + d.body) : d.title;
-	}
-
-	/// Whether this draft can be sent, and if not, whether to say so.
-	///
-	/// THREE ANSWERS AND THE THIRD IS SILENCE. `dark` is a REVISION on a forge
-	/// that has not said this asker may revise -- and the flag is ABSENT rather
-	/// than false when no voice asked, so `mayAmend` is false for both "not
-	/// allowed" and "never asked". A button there would reach a route that does
-	/// not exist yet, which is exactly the defect improve.js was rewritten to
-	/// remove; a DISABLED button, or a sentence explaining the absence, would be
-	/// a promise about a feature nobody has been given. So nothing is drawn, on
-	/// the same terms the vote control is not drawn, and the day the forge
-	/// answers the flag this lights up with no edit here.
-	function sendable(d) {
-		if (!hasVoice()) return 'novoice';
-		if (d.kind !== 'revision') return 'yes';
-		var p = panel();
-		try { return (p && p.forge.mayAmend(d.n)) ? 'yes' : 'dark'; }
-		catch (e) { return 'dark'; }
-	}
+	// The kind word, the draft box, the per-draft Send and the author-only
+	// `sendable` gate all MOVED TO js/approvelist.js, which draws the drafts now.
+	// The revision gate in particular -- a REVISION is dark until the forge says
+	// this asker may amend -- lives there, on the same argument it lived here:
+	// a control that reached a route this asker may not use is the defect the
+	// panel was rewritten to remove. One review surface, one copy of that rule.
 
 	// ── Wiring ─────────────────────────────────────────────────
 
@@ -783,11 +623,6 @@
 		var act = b.dataset.act;
 		if (act === 'triage-run')   { e.preventDefault(); run(); return; }
 		if (act === 'triage-clear') { e.preventDefault(); clear(); return; }
-		var row = b.closest('.trg-draft');
-		if (!row) return;
-		var i = Number(row.dataset.draft);
-		if (act === 'triage-send') { e.preventDefault(); send(i); return; }
-		if (act === 'triage-drop') { e.preventDefault(); drop(i); return; }
 	});
 
 	// Say this row's words again in a new language, on the same surface
@@ -801,12 +636,11 @@
 		/// Drawn by improve.js's `render()`, so the row and the notes it counts
 		/// can never disagree.
 		draw:     draw,
-		/// The one press: read every kept note and the public proposals, and
-		/// draft a plan. Nothing is sent.
+		/// The one press: read every kept note and the public proposals, draft a
+		/// plan, and hand its drafts to the approve-list. Nothing is sent -- the
+		/// queue sends, in one press, on the user's tick.
 		run:      run,
-		/// One press per draft. Sends exactly the characters in that box.
-		send:     send,
-		drop:     drop,
+		/// Forget this run's summary. The drafts stay in the queue.
 		clear:    clear,
 		/// Everything the model is given, PURE, so a verifier can assert that all
 		/// of it arrived rather than inferring it from a plausible plan.
@@ -828,6 +662,9 @@
 			var got = pick();
 			_plan = { at: Date.now(), drafts: read.drafts, left: read.left,
 				dropped: read.dropped, model: got ? got.model : '' };
+			// The same hand-off a real run makes, so a verifier drives the queue the
+			// run would have filled rather than a second path written for it.
+			toQueue(read.drafts);
 			draw();
 			return JSON.parse(JSON.stringify(_plan));
 		},

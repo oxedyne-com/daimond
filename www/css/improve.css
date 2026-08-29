@@ -501,3 +501,20 @@
  * rule at the head of this file: a divider is not a control's boundary. */
 .trg-draft { padding: 8px 0; border-bottom: 1px solid var(--border); }
 .trg-draft:last-child { border-bottom: none; }
+
+/* ── The approve-list queue ─────────────────────────────────────
+ *
+ * LANE NOTE: this block is the approve-list lane's (js/approvelist.js). Another
+ * lane may also edit improve.css; keep this delimited so the two do not collide.
+ *
+ * It mirrors `.trg-draft` directly above -- one queued draft told from the next
+ * by the same 1px `--border`, because the queue is a list of items in the same
+ * panel and a louder line would say they were a different kind of thing. The row
+ * head is laid out so the tick, the kind and the target do not run together,
+ * which is the same defect the `.trg-draft` rule two lines up was drawn out of.
+ * Every other apl- class reuses `.imp-box`, `.imp-acts`, `.imp-err`, `.imp-as`
+ * and needs nothing of its own. */
+.apl-row { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.apl-row:last-child { border-bottom: none; }
+.apl-rowhead { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.apl-tick { align-self: center; }

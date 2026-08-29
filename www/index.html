@@ -89,11 +89,14 @@
 <link rel="stylesheet" href="css/workspace.css">
 <link rel="stylesheet" href="css/trash.css">
 <link rel="stylesheet" href="css/improve.css">
+<link rel="stylesheet" href="css/tracker.css"><!-- js/tracker.js — the Proposals tracker view -->
 <link rel="stylesheet" href="css/terminal.css">
 <link rel="stylesheet" href="css/lapse.css">
 	<link rel="stylesheet" href="css/release.css">
 	<link rel="stylesheet" href="css/responsive.css">
 <link rel="stylesheet" href="css/mobile.css">
+<!-- Full-screen toggle (phone only) -- just the two icon faces; see js/fullscreen.js. -->
+<link rel="stylesheet" href="css/fullscreen.css">
 <link rel="stylesheet" href="css/skin-warm.css">
 </head>
 <body data-mpanel="ai">
@@ -155,6 +158,19 @@
 				aria-label="Appearance and layout" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu"
 				data-i18n-title="topbar.appearance" data-i18n-aria-label="topbar.appearance">
 				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></svg>
+			</button>
+			<!-- Full screen: PHONE ONLY, and only where the browser offers the
+			     Fullscreen API. Firefox on Android will not install the PWA
+			     standalone, so this is the one route to an immersive view there;
+			     desktop has F11 and a real install and never sees it. Shown,
+			     hidden and kept in sync by js/fullscreen.js -- the inline
+			     display:none is the off state the script clears on a phone. The
+			     two faces are the crystal button's corner arrows: out to enter,
+			     in to exit. -->
+			<button class="icon-btn" id="fullscreen-btn" type="button" style="display:none"
+				aria-pressed="false" title="Full screen" aria-label="Full screen">
+				<svg class="ic ic-fs-enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M15 20h5v-5M9 20H4v-5"/></svg>
+				<svg class="ic ic-fs-exit" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h5V4M20 9h-5V4M20 15h-5v5M4 15h5v5"/></svg>
 			</button>
 		</div>
 	</header>
@@ -1281,6 +1297,20 @@
 				<div class="imp-props" id="improve-props"></div>
 			</div>
 		</aside>
+		<!-- ── The Proposals tracker (js/tracker.js) ──────────────────────────
+		     A read-first view of Daimond's own development, tracked as proposals on
+		     the Oregami forge. Reads through the gateway (/api/improve); the owner's
+		     settle controls are dormant until an admin voice is minted. js/tracker.js
+		     OWNS #tracker-view and draws all of it; it self-mounts and reads the
+		     listing the first time the panel is shown. -->
+		<aside class="panel tracker" id="panel-tracker" data-panel="tracker" data-zone="dock" data-label="Proposals" data-i18n-label="panel.tracker">
+			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.tracker">Proposals</span>
+				<button class="addbtn panel-close" data-close="tracker" title="Close panel" data-i18n-title="common.close_panel">
+					<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+				</button>
+			</div>
+			<div id="tracker-view" class="trk"></div>
+		</aside>
 	</div>
 
 	<!-- Mobile: the panel chip row, which is the DESKTOP header's row moved down
@@ -1515,11 +1545,21 @@
 <script src="js/drafts.js"></script>
 <script src="js/improve.js"></script>
 <script src="js/triage.js"></script>
+<script src="js/tracker.js"></script><!-- the Proposals tracker: read-first, self-mounts into #tracker-view -->
+<!-- approvelist.js AFTER triage.js: it reads triage's held plan into a local
+     review queue and batch-sends the ticked drafts through improve.js's forge
+     door. It makes its own host element, so it needs no markup here. -->
+<script src="js/approvelist.js"></script>
 <script src="js/triggers.js"></script>
 <script src="js/verify.js"></script>
 <!-- wordlist.js before identity.js: the create screen generates a passphrase
      before any identity exists to hold it. -->
 <script src="js/wordlist.js"></script>
+<!-- The pure-JS Ed25519/X25519 fallback, before identity.js so it is present
+     when an unlock on an engine without WebCrypto for those curves needs it.
+     Vendored noble-curves loads first; curvefallback.js wraps it. -->
+<script src="js/vendor/noble-curves.min.js"></script>
+<script src="js/curvefallback.js"></script>
 <script src="js/identity.js"></script>
 <!-- passkey.js AFTER identity.js: it builds on DaimondIdentity to seal and
      recover the passphrase behind a WebAuthn PRF credential. -->
@@ -1594,6 +1634,8 @@
 <!-- The phone shell (drawer + sheet). Classic, before the module, so
      window.DaimondSheet/DaimondShell exist when the app wires into them. -->
 <script src="js/mobile.js"></script>
+<!-- fullscreen.js AFTER mobile.js: it reads DaimondShell.isPhone for the phone gate. -->
+<script src="js/fullscreen.js"></script>
 <!-- The permission ladder's surface. Classic, before the module, so
      window.DaimondHandMode exists when daimond.js hands it the wasm setter. -->
 <script src="js/handmode.js"></script>

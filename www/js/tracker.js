@@ -1,0 +1,748 @@
+/* ============================================================
+   Daimond — the Tracker view (tracker.js)
+   ------------------------------------------------------------
+   A read-first window onto Daimond's own development, which is
+   tracked as PROPOSALS on the Oregami forge repository
+   `oxedyne/daimond`. This view LISTS those proposals with their
+   state, title, comment count and vote tally, and opens one in
+   full — its statement, its revisions and its comments.
+
+   IT REACHES THE FORGE THROUGH THE DAIMOND GATEWAY, exactly as
+   improve.js does: every request goes to the same-origin
+   `/api/improve` route, which forwards over loopback to the forge
+   and translates a Daimond voice header (`x-daimond-voice`) into
+   the forge's own (`x-ore-voice`). Reading needs no voice — the
+   repository is public — so a read is a bare same-origin GET; the
+   gateway path works whether the repository is public or veiled,
+   which is why the view does not talk to the forge host directly.
+   `request()` below is the single place that path is decided.
+
+   VOTES ARE DARK. The replicated log does not attribute a vote, so
+   the forge answers a tally — `{for, against}` — and never a voter.
+   This view draws the two counts and can draw nothing more.
+
+   THE OWNER MAY SETTLE. Accepting, declining, marking done or
+   reopening is an `admin` decision, so it is offered ONLY when an
+   admin voice is held. That voice is the owner's, hand-cranked: the
+   auto-provisioned voice improve.js gets is pull-only, so this view
+   keeps its OWN admin voice, pasted once and stored wrapped under
+   the passphrase like the pull voice in voice.js. Settle posts just
+   the decide field — `state=<word>` — and sends the admin voice as
+   `x-daimond-voice`; the gateway forwards it and does NOT hold it.
+   The view never opens, comments on, votes on or amends anything.
+
+   This is not the Social panel. improve.js is where a tester WRITES
+   feedback (a note becomes a proposal) and votes; this view is where
+   Daimond's development is READ and, by the owner, settled.
+
+   Attaches one global, `window.DaimondTracker`.
+   ============================================================ */
+(function () {
+	'use strict';
+
+	// ── Saying things ──────────────────────────────────────────
+
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
+	function tOr(k, fallback, v) {
+		var s = t(k, v);
+		if (s !== k) return s;
+		if (!v) return fallback;
+		return String(fallback).replace(/\{(\w+)\}/g, function (whole, name) {
+			return v[name] != null ? String(v[name]) : whole;
+		});
+	}
+
+	function log(/* ...args */) {
+		try { if (window.console && console.debug) console.debug.apply(console, ['[tracker]'].concat([].slice.call(arguments))); }
+		catch (e) { /* no console */ }
+	}
+
+	// ── What this view reads, and through what ─────────────────
+	//
+	// One account, one repository: Daimond's own forge repository, the same for
+	// every reader, so none of these is a setting a person would ever change.
+	// `base` is the Daimond gateway route the requests go through, the same door
+	// improve.js uses; `configure()` lets a verifier point the whole view at a
+	// stand-in without any of the drawing code learning that it moved.
+
+	var cfg = {
+		base:    '/api/improve',	// the Daimond gateway, same-origin; it forwards to the forge
+		account: 'oxedyne',
+		repo:    'daimond',
+		/// An admin voice held in memory, for a test or a session that already has
+		/// one to hand. When empty, the wrapped store below is consulted instead.
+		/// Held only in memory, never drawn, never logged.
+		voice:   '',
+	};
+
+	/// Point the view at a gateway route, a repository, or an in-memory admin
+	/// voice. Any field left out keeps what it had.
+	function configure(next) {
+		if (!next || typeof next !== 'object') return cfg;
+		if (typeof next.base === 'string')    cfg.base    = next.base;
+		if (typeof next.account === 'string') cfg.account = next.account;
+		if (typeof next.repo === 'string')    cfg.repo    = next.repo;
+		if (typeof next.voice === 'string')   cfg.voice   = next.voice;
+		return cfg;
+	}
+
+	// ── The owner's admin voice ────────────────────────────────
+	//
+	// Held wrapped under the passphrase, the same shape voice.js keeps the pull
+	// voice in, and for the same reasons: a secret at rest is sealed, and reading
+	// it needs an unlocked identity. This view keeps its OWN store because the
+	// admin voice is a different voice from the pull one improve.js provisions —
+	// the pull voice may not settle, so it cannot stand in here.
+
+	var ADMIN_LS  = 'daimond-tracker-admin';	// namespaced per account by accounts.js, like other daimond-* keys
+	var ADMIN_MIN = 16;							// a truncated paste is caught where the person can still see it
+	var ADMIN_V   = 1;
+
+	function adminRec() {
+		try { return JSON.parse(localStorage.getItem(ADMIN_LS) || 'null'); }
+		catch (e) { return null; }
+	}
+
+	/// Is an admin voice held on this device? Presence only; reading it needs the
+	/// passphrase, asked at the moment of a settle.
+	function adminHas() {
+		var r = adminRec();
+		return !!(r && typeof r.s === 'string' && r.s);
+	}
+
+	/// Trim the label the forge prints around a minted secret, so a pasted line
+	/// stores as the secret alone.
+	function tidy(secret) { return String(secret == null ? '' : secret).trim(); }
+
+	/// What is wrong with a pasted secret, or '' — for validating as it is typed.
+	function adminCheck(secret) {
+		var s = tidy(secret);
+		if (!s) return tOr('tracker.admin_empty', 'Paste the admin voice the forge printed.');
+		if (s.length < ADMIN_MIN) return tOr('tracker.admin_short', 'That looks too short to be a whole voice.');
+		return '';
+	}
+
+	/// Hold the admin voice, wrapped under the passphrase. Throws the sentence a
+	/// person should read: the secret is invalid, or the identity is locked.
+	async function adminSet(secret) {
+		var why = adminCheck(secret);
+		if (why) throw new Error(why);
+		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) {
+			throw new Error(tOr('tracker.admin_locked',
+				'Unlock Daimond first: the admin voice is kept encrypted under your passphrase.'));
+		}
+		var wrapped = await DaimondIdentity.wrap(tidy(secret));
+		try { localStorage.setItem(ADMIN_LS, JSON.stringify({ v: ADMIN_V, s: wrapped, at: Date.now() })); }
+		catch (e) { throw new Error(tOr('tracker.admin_store', 'That voice could not be stored on this device.')); }
+	}
+
+	/// Forget the admin voice, destructively. The record goes, not a flag beside it.
+	function adminClear() {
+		try { localStorage.removeItem(ADMIN_LS); } catch (e) { /* private mode: nothing stored */ }
+	}
+
+	/// The admin secret in the clear, for the length of one settle, or '' when
+	/// none is held. `cfg.voice` wins when set — a test or a session that already
+	/// holds one to hand. Nothing caches the plaintext; each call unwraps afresh.
+	async function adminSecret() {
+		if (cfg.voice) return cfg.voice;
+		var r = adminRec();
+		if (!r || !r.s) return '';
+		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) {
+			throw new Error(tOr('tracker.admin_locked_send',
+				'Unlock Daimond to settle: the admin voice is encrypted under your passphrase.'));
+		}
+		try { return await DaimondIdentity.unwrap(r.s); }
+		catch (e) {
+			throw new Error(tOr('tracker.admin_unreadable',
+				'The admin voice cannot be read with this passphrase. Set it again.'));
+		}
+	}
+
+	/// Whether the owner's settle controls are offered: a voice held here or one
+	/// handed in. Presence only, and nothing about its value.
+	function canSettle() { return !!cfg.voice || adminHas(); }
+
+	// ── THE ONE DOOR ───────────────────────────────────────────
+	//
+	// Every request goes through here, and this is the single place the path is
+	// decided. It mirrors improve.js: the account and repository ride in the
+	// QUERY on the same-origin `/api/improve` route; a read carries no voice; a
+	// settle carries the admin voice in `x-daimond-voice`, which the gateway
+	// translates to the forge's `x-ore-voice`. A voiced write goes through
+	// `DaimondGateway.gwFetch` — the one copy of the session rule — when the
+	// gateway module is present; a plain read is a bare `fetch`.
+
+	/// The route, with the repository this view reads. Built here and nowhere
+	/// else, and the voice is never in it: a query string is written into every
+	/// access log it passes.
+	function route(extra) {
+		var q = 'account=' + encodeURIComponent(cfg.account) + '&repo=' + encodeURIComponent(cfg.repo);
+		return String(cfg.base || '/api/improve') + '?' + q + (extra ? '&' + extra : '');
+	}
+
+	/// One exchange, read the way this view needs it: `{ ok, data }` on success,
+	/// or `{ ok:false, why, because, status }` where `why` is the forge's stable
+	/// token, `gateway` for a refusal with no token, or `offline` for no answer.
+	///
+	/// `voiceSecret` is the admin voice for a settle, or falsy for a read.
+	async function request(path, opts, voiceSecret) {
+		var o = Object.assign({}, opts || {});
+		o.headers = Object.assign({}, (opts && opts.headers) || {});
+		var g = window.DaimondGateway;
+		var useGw = false;
+		if (voiceSecret) {
+			o.headers['x-daimond-voice'] = voiceSecret;
+			if (g && g.gwFetch) {
+				useGw = true;
+				o.headers['x-daimond-api'] = String(g.clientApi ? g.clientApi() : '');
+				o.credentials = 'same-origin';
+			}
+		}
+		var r;
+		try {
+			r = useGw ? await g.gwFetch(path, o) : await fetch(path, o);
+		} catch (e) {
+			return { ok: false, why: 'offline' };
+		}
+		var text = '';
+		try { text = await r.text(); } catch (e) { text = ''; }
+		var data = null;
+		try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+		if (data && typeof data === 'object' && typeof data.error === 'string' && TOKENS[data.error]) {
+			return {
+				ok:      false,
+				why:     data.error,
+				because: (typeof data.because === 'string' && BECAUSE[data.because]) ? data.because : '',
+				status:  r.status,
+			};
+		}
+		if (r.ok && data && typeof data === 'object') return { ok: true, data: data };
+		return { ok: false, why: 'gateway', status: r.status };
+	}
+
+	var TOKENS = {
+		absent: 1, unvoiced: 1, unknown: 1, unpermitted: 1, throttled: 1,
+		malformed: 1, no_proposal: 1, unsupported: 1, internal: 1,
+	};
+	var BECAUSE = { address: 1, voice: 1, failing: 1 };
+
+	/// What a refusal says on screen. `absent` covers "no such repository" and
+	/// "this repository is private" alike — true in both, leaks in neither.
+	function saying(a) {
+		if (!a) return tOr('tracker.err_offline', 'Nothing could be read just now.');
+		switch (a.why) {
+		case 'absent':      return tOr('tracker.err_absent', 'This repository is not available.');
+		case 'unvoiced':    return tOr('tracker.err_unvoiced', 'The forge was given no voice.');
+		case 'unknown':     return tOr('tracker.err_unknown', 'The forge does not recognise that voice.');
+		case 'unpermitted': return tOr('tracker.err_unpermitted', 'That voice may not settle proposals here.');
+		case 'throttled':
+			if (a.because === 'address') return tOr('tracker.err_throttled_address', 'Too many requests from this address. Wait, then try again.');
+			return tOr('tracker.err_throttled', 'Too many requests just now. Wait, then try again.');
+		case 'malformed':   return tOr('tracker.err_malformed', 'The forge could not read that request.');
+		case 'no_proposal': return tOr('tracker.err_no_proposal', 'There is no such proposal.');
+		case 'unsupported': return tOr('tracker.err_unsupported', 'The forge does not answer that.');
+		case 'internal':    return tOr('tracker.err_internal', 'Something went wrong at the forge.');
+		case 'gateway':
+			if (a.status === 401) return tOr('tracker.err_session', 'Not signed in, so the forge could not be reached.');
+			return tOr('tracker.err_gateway', 'The forge could not be reached just now.');
+		default:            return tOr('tracker.err_offline', 'Nothing could be read just now.');
+		}
+	}
+
+	// ── The record ─────────────────────────────────────────────
+
+	var STATES = { open: 1, accepted: 1, declined: 1, done: 1 };
+
+	function whole(v) { return (typeof v === 'number' && isFinite(v)) ? Math.floor(v) : 0; }
+
+	function clean(p) {
+		if (!p || typeof p !== 'object') return null;
+		var n = whole(p.number);
+		if (n < 1) return null;
+		var rec = {
+			n:        n,
+			title:    (typeof p.title === 'string') ? p.title : '',
+			state:    STATES[p.state] ? p.state : 'open',
+			author:   (typeof p.author === 'string') ? p.author : '',
+			comments: Math.max(0, whole(p.comments)),
+			opened:   Math.max(0, whole(p.opened)),
+			changed:  (typeof p.changed === 'number') ? Math.max(0, whole(p.changed)) : null,
+			mark:     (typeof p.mark === 'string') ? p.mark : '',
+			build:    (typeof p.build === 'string') ? p.build : '',
+			body:     (typeof p.body === 'string') ? p.body : '',
+			detail:   false,
+			// A TALLY, never a voter. Two counts, and nothing that says who.
+			votes:    null,
+			revisions:  null,
+			discussion: null,
+		};
+		if (p.votes && typeof p.votes === 'object' && !Array.isArray(p.votes)) {
+			rec.votes = { for: Math.max(0, whole(p.votes.for)), against: Math.max(0, whole(p.votes.against)) };
+		}
+		if (typeof p.body === 'string') rec.detail = true;
+		if (Array.isArray(p.discussion)) {
+			rec.detail = true;
+			rec.discussion = p.discussion.map(function (d) {
+				return {
+					author: (d && typeof d.author === 'string') ? d.author : '',
+					said:   (d && typeof d.said === 'string') ? d.said : '',
+					when:   Math.max(0, whole(d && d.when)),
+				};
+			});
+		}
+		if (Array.isArray(p.revisions)) {
+			rec.revisions = p.revisions.map(function (r) {
+				return {
+					title: (r && typeof r.title === 'string') ? r.title : '',
+					body:  (r && typeof r.body === 'string') ? r.body : '',
+					when:  Math.max(0, whole(r && r.when)),
+				};
+			});
+		}
+		return rec;
+	}
+
+	// ── The store ──────────────────────────────────────────────
+
+	var PAGE = 50;
+
+	var _by    = {};
+	var _order = [];
+	var _open  = null;
+	var _st    = { total: 0, loading: false, err: null, read: false };
+	var _voiceOpen = false;				// the admin-voice paste form is showing
+
+	function absorb(rec) {
+		if (!rec) return null;
+		var cur = _by[rec.n];
+		if (cur && !rec.detail) {
+			rec.body       = cur.body;
+			rec.discussion = cur.discussion;
+			rec.revisions  = cur.revisions;
+			rec.detail     = cur.detail;
+		}
+		if (!cur) _order.push(rec.n);
+		_by[rec.n] = rec;
+		return rec;
+	}
+
+	// ── Reading ────────────────────────────────────────────────
+
+	/// Read the listing, newest first. From the top only: this view shows recent
+	/// development at a glance and opens one proposal in full, rather than paging
+	/// the whole history the Social panel walks.
+	async function load() {
+		if (_st.loading) return false;
+		_st.loading = true;
+		_st.err     = null;
+		draw();
+		var a = await request(route('limit=' + PAGE), { method: 'GET' });
+		_st.loading = false;
+		if (!a.ok) { _st.err = a; draw(); return false; }
+		_by = {}; _order = [];
+		var raw = Array.isArray(a.data.proposals) ? a.data.proposals : [];
+		raw.forEach(function (p) { var rec = clean(p); if (rec) absorb(rec); });
+		_st.total = Math.max(0, whole(a.data.total));
+		_st.read  = true;
+		draw();
+		return true;
+	}
+
+	/// Read one proposal in full and show it.
+	async function open(n) {
+		var a = await request(route('n=' + n), { method: 'GET' });
+		if (!a.ok) { _st.err = a; draw(); return false; }
+		absorb(clean(a.data));
+		_open    = whole(n);
+		_st.err  = null;
+		draw();
+		return true;
+	}
+
+	/// Back to the listing.
+	function back() { _open = null; draw(); }
+
+	/// Load once, when the panel is first shown. Reading on every app boot would
+	/// fetch for a panel nobody opened.
+	function onOpen() { if (!_st.read && !_st.loading) load(); return true; }
+
+	// ── Settling (owner only) ──────────────────────────────────
+
+	// FOUR TOKENS AND NO MORE: state is open, accepted, declined or done. There is
+	// no "reopen" token — a Reopen button sends `state=open`. Settle carries ONLY
+	// the `state` field: no mark, no reason.
+	var DECISIONS = { accept: 'accepted', decline: 'declined', done: 'done', reopen: 'open' };
+
+	/// Post the decide field for proposal `n` under the admin voice. `which` is
+	/// one of accept, decline, done, reopen — the last of which sends `state=open`.
+	async function settle(n, which) {
+		if (!canSettle()) return false;
+		var state = DECISIONS[which];
+		if (!state) return false;
+		var secret;
+		try { secret = await adminSecret(); }
+		catch (e) { _st.err = { why: 'gateway' }; flash(String((e && e.message) || e)); return false; }
+		if (!secret) { flash(tOr('tracker.admin_need', 'Paste your admin voice first.')); return false; }
+		var f = new URLSearchParams();
+		f.set('state', state);
+		var a = await request(route('n=' + n), {
+			method:  'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body:    f.toString(),
+		}, secret);
+		if (!a.ok) { _st.err = a; draw(); return false; }
+		absorb(clean(a.data));
+		_st.err = null;
+		draw();
+		return true;
+	}
+
+	// ── Drawing ────────────────────────────────────────────────
+
+	var _host = null;
+
+	function fmtWhen(secs) {
+		if (!secs) return '';
+		var loc;
+		try { loc = window.DaimondI18n ? DaimondI18n.locale() : undefined; } catch (e) { loc = undefined; }
+		try { return new Date(secs * 1000).toLocaleDateString(loc || undefined, { day: 'numeric', month: 'short' }); }
+		catch (e) { return ''; }
+	}
+
+	function stateWord(s) {
+		if (s === 'accepted') return tOr('tracker.state_taken', 'Being done');
+		if (s === 'done')     return tOr('tracker.state_done', 'Done');
+		if (s === 'declined') return tOr('tracker.state_declined', 'Declined');
+		return tOr('tracker.state_open', 'Open');
+	}
+
+	function el(tag, cls, text) {
+		var e = document.createElement(tag);
+		if (cls) e.className = cls;
+		if (text != null) e.textContent = text;
+		return e;
+	}
+
+	function button(cls, act, text, title) {
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.className = cls;
+		if (act) b.dataset.act = act;
+		b.textContent = text;
+		if (title) b.title = title;
+		return b;
+	}
+
+	/// The tally, drawn as two counts and never as a name.
+	function tallyLine(p) {
+		if (!p.votes) return null;
+		return el('span', 'trk-tally', tOr('tracker.tally', '{yes} for, {no} against',
+			{ yes: p.votes.for, no: p.votes.against }));
+	}
+
+	function drawRow(p) {
+		var row = el('div', 'trk-row');
+		row.dataset.prop = p.n;
+
+		var badge = el('span', 'trk-state', stateWord(p.state));
+		badge.dataset.state = p.state;
+		row.appendChild(badge);
+
+		row.appendChild(el('span', 'trk-num', '#' + p.n));
+
+		var title = el('button', 'trk-title', p.title || ('#' + p.n));
+		title.type = 'button';
+		title.dataset.act = 'tracker-open';
+		title.dataset.prop = p.n;
+		row.appendChild(title);
+
+		var meta = el('span', 'trk-meta');
+		meta.appendChild(el('span', 'trk-comments', tOr('tracker.comments', '{n} comments', { n: p.comments })));
+		var tl = tallyLine(p);
+		if (tl) meta.appendChild(tl);
+		row.appendChild(meta);
+
+		return row;
+	}
+
+	/// The settle controls for one proposal, or nothing when there is no owner
+	/// voice. Reopen on a settled proposal; the other three on an open one.
+	function drawSettle(p) {
+		if (!canSettle()) return null;
+		var acts = el('div', 'trk-settle');
+		if (p.state === 'open') {
+			acts.appendChild(settleBtn('accept',  p.n, tOr('tracker.accept', 'Accept')));
+			acts.appendChild(settleBtn('decline', p.n, tOr('tracker.decline', 'Decline')));
+			acts.appendChild(settleBtn('done',    p.n, tOr('tracker.done', 'Mark done')));
+		} else {
+			acts.appendChild(settleBtn('reopen',  p.n, tOr('tracker.reopen', 'Reopen')));
+		}
+		return acts;
+	}
+
+	function settleBtn(which, n, text) {
+		var b = button('trk-settle-btn', 'tracker-settle', text);
+		b.dataset.which = which;
+		b.dataset.prop  = n;
+		return b;
+	}
+
+	function drawDetail(p) {
+		var box = el('div', 'trk-detail');
+		box.dataset.prop = p.n;
+
+		var head = el('div', 'trk-detail-head');
+		head.appendChild(button('trk-back', 'tracker-back', tOr('tracker.back', 'Back')));
+		var badge = el('span', 'trk-state', stateWord(p.state));
+		badge.dataset.state = p.state;
+		head.appendChild(badge);
+		head.appendChild(el('span', 'trk-num', '#' + p.n));
+		box.appendChild(head);
+
+		box.appendChild(el('h3', 'trk-detail-title', p.title || ('#' + p.n)));
+
+		var meta = el('div', 'trk-detail-meta');
+		if (p.author) meta.appendChild(el('span', 'trk-author', p.author));
+		if (p.opened) meta.appendChild(el('span', 'trk-when', fmtWhen(p.opened)));
+		var tl = tallyLine(p);
+		if (tl) meta.appendChild(tl);
+		if (p.mark) meta.appendChild(el('span', 'trk-mark', p.mark));
+		box.appendChild(meta);
+
+		box.appendChild(el('p', 'trk-body', p.body || ''));
+
+		var settle = drawSettle(p);
+		if (settle) box.appendChild(settle);
+
+		if (p.revisions && p.revisions.length) {
+			var revs = el('div', 'trk-revisions');
+			revs.appendChild(el('h4', 'trk-sub', tOr('tracker.revisions', 'Revisions')));
+			p.revisions.forEach(function (r) {
+				var one = el('div', 'trk-rev');
+				one.appendChild(el('span', 'trk-when', fmtWhen(r.when)));
+				one.appendChild(el('span', 'trk-rev-title', r.title));
+				revs.appendChild(one);
+			});
+			box.appendChild(revs);
+		}
+
+		var comments = el('div', 'trk-comments-list');
+		comments.appendChild(el('h4', 'trk-sub', tOr('tracker.discussion', 'Comments')));
+		var disc = p.discussion || [];
+		if (!disc.length) {
+			comments.appendChild(el('div', 'trk-none', tOr('tracker.no_comments', 'No comments.')));
+		} else {
+			disc.forEach(function (d) {
+				var c = el('div', 'trk-comment');
+				var foot = el('div', 'trk-comment-foot');
+				if (d.author) foot.appendChild(el('span', 'trk-author', d.author));
+				if (d.when)   foot.appendChild(el('span', 'trk-when', fmtWhen(d.when)));
+				c.appendChild(el('div', 'trk-comment-said', d.said));
+				c.appendChild(foot);
+				comments.appendChild(c);
+			});
+		}
+		box.appendChild(comments);
+		return box;
+	}
+
+	/// The owner's admin-voice control, drawn under the head. Shown only where an
+	/// identity exists to wrap under — in a build without one, `cfg.voice` is the
+	/// only way a voice is held, and there is nothing to paste. Presence, replace,
+	/// forget: the same three states voice.js draws for the pull voice.
+	function drawAdmin() {
+		if (!window.DaimondIdentity) return null;		// nothing to wrap under; tests use cfg.voice
+		var host = el('div', 'trk-admin');
+		if (_voiceOpen) {
+			var input = document.createElement('input');
+			input.type = 'password';
+			input.className = 'trk-admin-in';
+			input.id = 'tracker-admin-in';
+			input.autocomplete = 'off';
+			input.spellcheck = false;
+			input.placeholder = tOr('tracker.admin_ph', 'Paste the admin voice the forge printed');
+			input.setAttribute('aria-label', tOr('tracker.admin_ph', 'Paste the admin voice the forge printed'));
+			host.appendChild(input);
+			host.appendChild(button('trk-admin-save', 'tracker-admin-save', tOr('tracker.admin_save', 'Save')));
+			host.appendChild(button('trk-admin-cancel', 'tracker-admin-cancel', tOr('common.cancel', 'Cancel')));
+			return host;
+		}
+		if (adminHas()) {
+			host.appendChild(el('span', 'trk-admin-say', tOr('tracker.admin_held', 'Admin voice held, encrypted.')));
+			host.appendChild(button('trk-admin-btn', 'tracker-admin-forget', tOr('tracker.admin_forget', 'Forget it')));
+			return host;
+		}
+		// DORMANT UNTIL AN ADMIN VOICE EXISTS. Only the owner may settle, and that
+		// needs an admin voice — which is not minted on this repository yet, so the
+		// settle controls stay hidden and this says why. The paste holder is built
+		// and ready for the day an operator mints one; adding one before then simply
+		// has nothing to authorise.
+		host.appendChild(el('span', 'trk-admin-say', tOr('tracker.admin_none',
+			'Reading only. Settling is owner-only and needs an admin voice.')));
+		host.appendChild(button('trk-admin-btn', 'tracker-admin-open', tOr('tracker.admin_add', 'Add admin voice')));
+		return host;
+	}
+
+	function draw() {
+		if (!_host) return;
+		_host.innerHTML = '';
+
+		var head = el('div', 'trk-head');
+		head.appendChild(el('span', 'trk-title-main', tOr('tracker.title', 'Development')));
+		if (_st.read) head.appendChild(el('span', 'trk-count', tOr('tracker.count', '{n} proposals', { n: _st.total })));
+		_host.appendChild(head);
+
+		var admin = drawAdmin();
+		if (admin) _host.appendChild(admin);
+
+		if (_st.err) _host.appendChild(el('div', 'trk-err', saying(_st.err)));
+
+		var say = el('div', 'trk-say');
+		say.id = 'tracker-say';
+		_host.appendChild(say);
+
+		if (_st.loading && !_order.length) {
+			_host.appendChild(el('div', 'trk-loading', tOr('tracker.loading', 'Reading…')));
+			return;
+		}
+
+		if (_open && _by[_open]) { _host.appendChild(drawDetail(_by[_open])); return; }
+
+		if (!_order.length) {
+			if (_st.read) _host.appendChild(el('div', 'trk-none', tOr('tracker.empty', 'No proposals yet.')));
+			return;
+		}
+		var list = el('div', 'trk-list');
+		_order.forEach(function (n) { if (_by[n]) list.appendChild(drawRow(_by[n])); });
+		_host.appendChild(list);
+	}
+
+	/// One line for the answers not worth a dialog.
+	function flash(text) {
+		var n = document.getElementById('tracker-say');
+		if (!n) return;
+		n.textContent = text;
+		clearTimeout(flash._t);
+		flash._t = setTimeout(function () { if (n.textContent === text) n.textContent = ''; }, 8000);
+	}
+
+	// ── Admin-voice actions ────────────────────────────────────
+
+	async function saveAdmin() {
+		var input = document.getElementById('tracker-admin-in');
+		if (!input) return false;
+		var raw = String(input.value || '');
+		input.value = '';
+		try { await adminSet(raw); }
+		catch (e) { flash(String((e && e.message) || e)); return false; }
+		_voiceOpen = false;
+		draw();
+		flash(tOr('tracker.admin_saved', 'Admin voice held, encrypted.'));
+		return true;
+	}
+
+	async function forgetAdmin() {
+		var ok = true;
+		try {
+			if (window.DaimondCore && DaimondCore.confirm) {
+				ok = await DaimondCore.confirm(
+					tOr('tracker.admin_forget_ask', 'Forget the admin voice here? It was shown once.'),
+					tOr('tracker.admin_forget', 'Forget it'),
+					{ title: tOr('tracker.admin_forget', 'Forget it') });
+			}
+		} catch (e) { ok = true; }
+		if (!ok) return false;
+		adminClear();
+		draw();
+		flash(tOr('tracker.admin_forgotten', 'The copy on this device is gone.'));
+		return true;
+	}
+
+	// ── Wiring ─────────────────────────────────────────────────
+
+	function onClick(e) {
+		var b = e.target.closest ? e.target.closest('[data-act]') : null;
+		if (!b || !_host || !_host.contains(b)) return;
+		var act = b.dataset.act;
+		// `dataset` values are strings; `whole()` rejects a non-number, so parse here.
+		var n   = parseInt(b.dataset.prop, 10) || 0;
+		if (act === 'tracker-open' && n) { open(n); return; }
+		if (act === 'tracker-back') { back(); return; }
+		if (act === 'tracker-settle' && n) { settle(n, b.dataset.which); return; }
+		if (act === 'tracker-admin-open') { _voiceOpen = true; draw(); return; }
+		if (act === 'tracker-admin-cancel') { _voiceOpen = false; draw(); return; }
+		if (act === 'tracker-admin-save') { saveAdmin(); return; }
+		if (act === 'tracker-admin-forget') { forgetAdmin(); return; }
+	}
+
+	/// Draw the view into `host`. Does NOT read: `onOpen()` does, once the panel
+	/// is shown, so a panel nobody opened costs no request.
+	function mount(host) {
+		if (_host) { try { _host.removeEventListener('click', onClick); } catch (e) { /* gone */ } }
+		_host = host || null;
+		if (!_host) return;
+		_host.addEventListener('click', onClick);
+		draw();
+	}
+
+	// ── Self-mount into the app's panel, and read on first reveal ──
+	//
+	// The panel's markup is `#tracker-view`, an empty mount point in index.html.
+	// This finds it, draws the shell, and reads the listing the first time the
+	// panel becomes visible — so nothing is fetched until a person opens it, and
+	// no hand-wired `onOpen` hook in daimond.js is needed.
+
+	function init() {
+		var el = document.getElementById('tracker-view');
+		if (!el) return;
+		mount(el);
+		try {
+			if (typeof IntersectionObserver === 'function') {
+				var io = new IntersectionObserver(function (entries) {
+					for (var i = 0; i < entries.length; i++) {
+						if (entries[i].isIntersecting) { onOpen(); io.disconnect(); return; }
+					}
+				});
+				io.observe(el);
+			} else {
+				onOpen();
+			}
+		} catch (e) { onOpen(); }
+	}
+
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', init);
+	} else {
+		init();
+	}
+
+	window.DaimondTracker = {
+		configure: configure,
+		mount:     mount,
+		onOpen:    onOpen,
+		load:      load,
+		open:      open,
+		back:      back,
+		settle:    settle,
+		canSettle: canSettle,
+		/// The admin voice, published so a settings surface or a test can drive the
+		/// same store the paste field writes.
+		adminHas:  adminHas,
+		adminSet:  adminSet,
+		adminClear: adminClear,
+		state:     function () {
+			return {
+				total:   _st.total,
+				read:    _st.read,
+				loading: _st.loading,
+				err:     _st.err ? _st.err.why : '',
+				open:    _open,
+				shown:   _order.slice(),
+			};
+		},
+		proposal:  function (n) { return _by[n] ? JSON.parse(JSON.stringify(_by[n])) : null; },
+		reset:     function () { _by = {}; _order = []; _open = null; _voiceOpen = false; _st = { total: 0, loading: false, err: null, read: false }; draw(); },
+	};
+})();

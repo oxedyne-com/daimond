@@ -33232,14 +33232,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// failed, so an existing passphrase that genuinely carries padding
 			// still opens, and the second (expensive) derivation only ever runs
 			// on an unlock that was going to be refused anyway.
-			if ((!r || !r.ok) && window.DaimondWords) {
+			// Only re-try the canonical spelling when this could still be a
+			// passphrase problem. An 'unsupported' result is the passphrase being
+			// RIGHT on a browser that cannot load the key, so a second derivation
+			// would waste PBKDF2 and change nothing.
+			if ((!r || !r.ok) && (!r || r.reason !== 'unsupported') && window.DaimondWords) {
 				var canon = DaimondWords.normalise(pass);
 				if (canon !== pass) {
 					try { r = await DaimondIdentity.unlock(canon); } catch (e) { r = { ok: false }; }
 					if (r && r.ok) pass = canon;
 				}
 			}
-			if (!r || !r.ok) { err.textContent = t('identity.err_wrong_pass'); return; }
+			if (!r || !r.ok) {
+				// The passphrase unwrapped the key but the browser cannot do this
+				// account's curve — say THAT, not "wrong passphrase".
+				err.textContent = (r && r.reason === 'unsupported')
+					? t('identity.err_unsupported_crypto')
+					: t('identity.err_wrong_pass');
+				return;
+			}
 		}
 		// Hand the credential to the browser explicitly where it supports the
 		// Credential Management API. The real form and its password field are what

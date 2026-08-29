@@ -47,27 +47,25 @@
 //   4. THE PROPOSALS ARE READ WITH NO VOICE, which is what lets this work before
 //      anybody is enrolled.
 //
-//   5. DRAFTING SENDS NOTHING TO THE FORGE. The whole plan is on the screen and
-//      not one proposal has been opened.
+//   5. DRAFTING SENDS NOTHING TO THE FORGE, AND HANDS THE DRAFTS TO THE QUEUE.
+//      The whole plan lands in the approve-list (js/approvelist.js) and not one
+//      proposal has been opened. Triage generates; it keeps no per-draft box or
+//      Send of its own.
 //
-//   6. ONE PRESS PER DRAFT, AND WHAT LEAVES IS THE BOX. The box is EDITED first,
-//      and what left is what was edited — the reading happens at the press, not
-//      when the model answered. The field set is exactly `title` and `body`:
-//      no `build`, because there is no row on this screen showing one and §4's
-//      whole argument is that nothing travels that a person cannot see.
+//   6. (MOVED) ONE PRESS PER DRAFT, WHAT LEAVES IS THE BOX, and the title+body
+//      field set are now dev/verify_approvelist.mjs's -- the queue sends, so what
+//      leaves is proved where it leaves.
 //
-//   7. A FOLDED NOTE IS NOT A SENT ONE. The notes a draft was written from are
-//      marked `into`, their `sent` is untouched, and `delivered()` answers no —
-//      so the cap in `save()` never evicts one. The forge holds the drafting and
-//      a fragment of each note; this device holds the only copy of the words.
+//   7. (MOVED) A FOLDED NOTE IS NOT A SENT ONE is also the queue's now: it folds
+//      the notes a sent draft was written from. §8 below still holds the cap
+//      itself, driven through `DaimondImprove.fold` directly.
 //
 //   8. AND THE CAP HONOURS THAT. Driven past two hundred with a mix of sent and
 //      folded notes: the sent ones go and the folded ones stay.
 //
-//   9. THE REVISION CONTROL IS DARK UNTIL THE FORGE SAYS OTHERWISE. Nothing is
-//      drawn — not a disabled button, not a sentence about a feature nobody has.
-//      With the flag answered true it appears on its own, and the request then
-//      goes to `amend=1` and not to the comment route.
+//   9. (MOVED) THE REVISION DRAFT'S DARK/LIT GATE is the queue's, since a revision
+//      draft is drawn there now. `cleanProp`'s absent-vs-false (§10) and the
+//      panel's own Revise control (§10c) stay here -- both improve.js's.
 //
 //  10. ABSENT IS NOT FALSE. `cleanProp` does not coerce the flag: a proposal
 //      nobody asked about is `askedAmend: false`, and one answered `false` is
@@ -221,30 +219,18 @@ function requireSeams() {
 // it claims.
 
 const BREAKS = {
-	// A folded note is marked SENT. The screen is identical and the plan is
-	// identical; what changes is that the panel now believes the forge holds
-	// this person's own characters, and the cap will evict the note to make room.
-	foldsent: [{
-		file: 'js/triage.js',
-		find: '\t\ttry { p.fold(d.from, d.sent); } catch (e) { log(\'the notes would not be marked\', e); }',
-		with: '\t\ttry { p.fold(d.from, d.sent); p.notes().forEach(function (r) {\n'
-			+ '\t\t\tif (d.from.indexOf(r.id) !== -1) r.sent = Date.now();\n'
-			+ '\t\t}); } catch (e) { log(\'the notes would not be marked\', e); }',
-	}],
+	// NOTE: the triage-side send breaks -- `foldsent` (a folded note marked sent),
+	// `rebuild` (send reads the record not the box) and `amendbright` (a revision
+	// drawn sendable whatever the forge said) -- MOVED to dev/verify_approvelist.mjs
+	// as `failvanishes`, `staleedit` and `amendbright`, because the send and the
+	// revision gate they broke now live in the queue. Triage no longer sends.
+
 	// The cap treats a folded note as delivered, which is the same data loss
 	// arriving from the other side: `fold` is right and eviction is wrong.
 	evictfolded: [{
 		file: 'js/improve.js',
 		find: '\t\treturn !!(rec && rec.sent && !(rec.into && rec.into.length));',
 		with: '\t\treturn !!(rec && (rec.sent || (rec.into && rec.into.length)));',
-	}],
-	// The revision control is drawn whatever the forge said. A button that
-	// reaches a route which does not exist yet is exactly the defect improve.js
-	// was rewritten to remove.
-	amendbright: [{
-		file: 'js/triage.js',
-		find: '\t\ttry { return (p && p.forge.mayAmend(d.n)) ? \'yes\' : \'dark\'; }\n\t\tcatch (e) { return \'dark\'; }',
-		with: '\t\treturn \'yes\';',
 	}],
 	// The flag is coerced like every other field, so "nobody asked" and
 	// "answered no" become the same fact and the control can never light up
@@ -263,14 +249,6 @@ const BREAKS = {
 		find: '\t\thost.appendChild(drawControl(notes));',
 		with: '\t\thost.appendChild(drawControl(notes));\n'
 			+ '\t\tif (!_plan && !_busy && notes.length) run();',
-	}],
-	// What leaves is the model's record rather than the box. Identical on screen
-	// until somebody edits a draft before pressing Send -- which is the one
-	// moment the whole consent argument rests on.
-	rebuild: [{
-		file: 'js/triage.js',
-		find: '\t\tvar text = boxed(i);',
-		with: '\t\tvar text = bodyOf(d);',
 	}],
 	// The panel goes back to a spelling nobody answers. THE BREAK THIS LANE EXISTS
 	// FOR: two lanes built this half against a forge that had not published the
@@ -649,13 +627,20 @@ try {
 	const plan = await page.evaluate(() => window.DaimondTriage.plan());
 	check('the plan the model answered was read whole', !!plan && plan.drafts.length === PLAN_LEN,
 		plan ? `${plan.drafts.length} of ${PLAN_LEN} drafts` : 'none');
-	const boxes = await page.locator('#improve-triage .trg-draft').count();
-	check('one box per draft is drawn', boxes === PLAN_LEN, `${boxes} drawn`);
-	const kinds = await page.evaluate(() => [...document.querySelectorAll('#improve-triage .trg-draft')]
-		.map(r => r.dataset.kind));
-	check('and each box is tagged with what pressing it would do',
-		kinds.length === PLAN_LEN && kinds.every(k => ['new', 'comment', 'revision'].indexOf(k) !== -1),
-		kinds.join(','));
+	// THE DRAFTS GO STRAIGHT TO THE APPROVE-LIST QUEUE, which is the one surface a
+	// draft is reviewed, edited, ticked and sent on. Triage generates and hands
+	// off; it keeps no per-draft box or Send of its own. The sending itself is
+	// dev/verify_approvelist.mjs's; here we prove the hand-off happened.
+	const triageBoxes = await page.locator('#improve-triage .trg-draft').count();
+	check('triage keeps no per-draft box of its own: the drafts went to the queue',
+		triageBoxes === 0, `${triageBoxes} drawn`);
+	const queued = await page.evaluate(() =>
+		window.DaimondApproveList ? window.DaimondApproveList.queue() : []);
+	check('every draft the model answered landed in the approve-list queue',
+		queued.length === PLAN_LEN, `${queued.length} of ${PLAN_LEN} queued`);
+	check('and each queued draft is tagged with what sending it would do',
+		queued.length === PLAN_LEN && queued.every(d => ['new', 'comment', 'revision'].indexOf(d.kind) !== -1),
+		queued.map(d => d.kind).join(','));
 
 	// ── 13. Every note is accounted for ──────────────────────────
 	const accounted = new Set();
@@ -677,18 +662,13 @@ try {
 
 	await shot(s, 'triage-plan' + (BREAK ? '-' + BREAK : ''));
 
-	// With no voice, no draft offers a Send: the forge refuses a write without
-	// one, and a button that cannot work teaches people to distrust every button.
-	const unsendable = await page.evaluate(() => ({
-		sends: document.querySelectorAll('#improve-triage [data-act="triage-send"]').length,
-		says:  (document.querySelector('#improve-triage .trg-draft') || {}).textContent || '',
-	}));
-	check('with no voice, not one draft offers a Send', unsendable.sends === 0,
-		`${unsendable.sends} offered`);
-	check('and each one says why, rather than leaving a gap',
-		/no voice/i.test(unsendable.says), unsendable.says.slice(0, 160));
+	// With no voice, triage offers no per-draft Send -- it offers no Send at all
+	// any more. Whether the QUEUE offers a tick without a voice is the queue's own
+	// check, in dev/verify_approvelist.mjs.
+	check('with no voice, triage offers no per-draft Send',
+		await page.locator('#improve-triage [data-act="triage-send"]').count() === 0);
 
-	// ── A voice is set, and only now can anything be sent ────────
+	// ── A voice is set, for the panel's own Revise control below ─
 	await page.click('[data-act="improve-voice-open"]');
 	await page.waitForTimeout(200);
 	await page.fill('#improve-voice-in', SECRET);
@@ -696,56 +676,12 @@ try {
 	await page.waitForTimeout(800);
 	check('a voice can be set in the panel that needs it',
 		await page.evaluate(() => window.DaimondVoice.has()) === true);
-	check('and the drafts now offer a Send, without the plan being drafted again',
-		await page.locator('#improve-triage [data-act="triage-send"]').count() > 0
-		&& turns().length === 1, `${turns().length} model turn(s)`);
+	check('setting a voice drafts no new plan', turns().length === 1, `${turns().length} model turn(s)`);
 
-	// ── 6. One press per draft, and what leaves is the box ───────
-	const EDIT = ' quokka-marker-edited';
-	const first = page.locator('#improve-triage .trg-draft[data-draft="0"]');
-	const box0  = first.locator('.trg-box');
-	const was   = await box0.inputValue();
-	await box0.fill(was + EDIT);
-	const now = await box0.inputValue();
-
-	await first.locator('[data-act="triage-send"]').click();
-	await page.waitForTimeout(1200);
-
-	check('pressing Send on one draft opened exactly one proposal', opens().length === 1,
-		`${opens().length}`);
-	const f = opens().length ? fields(opens()[0].body) : {};
-	check('and what left, put back together, is exactly the characters in that box',
-		opens().length === 1 && (f.title + '\n' + f.body) === now,
-		JSON.stringify({ wire: (f.title || '') + '\n' + (f.body || ''), box: now }).slice(0, 400));
-	check('including the edit made after the model answered',
-		(f.body || '').indexOf(EDIT) !== -1 || (f.title || '').indexOf(EDIT) !== -1);
-	check('and the field set is exactly title and body, with no build nobody could see',
-		JSON.stringify(Object.keys(f).sort()) === JSON.stringify(['body', 'title']),
-		Object.keys(f).sort().join(','));
-
-	// ── 7. A folded note is not a sent one ───────────────────────
-	const from0 = plan.drafts[0].from;
-	const marks = await page.evaluate((ids) => window.DaimondImprove.notes()
-		.filter(r => ids.indexOf(r.id) !== -1)
-		.map(r => ({ id: r.id, sent: r.sent, n: r.n, into: r.into,
-			delivered: window.DaimondImprove.delivered(r) })), from0);
-	check('the notes the draft was written from are marked folded',
-		marks.length === from0.length && marks.every(m => m.into.length === 1),
-		JSON.stringify(marks));
-	check('and NOT sent: this device still holds the only copy of what was written',
-		marks.every(m => m.sent === 0 && m.n === 0), JSON.stringify(marks));
-	check('and the cap is told so: a folded note has not been delivered',
-		marks.every(m => m.delivered === false), JSON.stringify(marks));
-	// COUNTED BEFORE IT IS READ. An absent locator does not report itself absent
-	// -- `innerText` waits thirty seconds and then throws, which turns a check
-	// that should FAIL into a run that stops, and a break that stops the run
-	// proves nothing about the check it was written for.
-	const rowSays = await page.evaluate(() => {
-		const n = document.querySelector('.imp-note .imp-note-state[data-state="folded"]');
-		return n ? (n.textContent || '') : '';
-	});
-	check('and the row says which proposal a draft from it went to',
-		/proposal #/i.test(rowSays), rowSays || '(no folded row was drawn at all)');
+	// §6 (ONE PRESS PER DRAFT, WHAT LEAVES IS THE BOX) and §7 (A FOLDED NOTE IS NOT
+	// A SENT ONE) MOVED to dev/verify_approvelist.mjs, which now owns the sending
+	// and the fold. Triage no longer sends, so what-leaves-is-the-box, the
+	// title+body field set, and folding-on-send are proved where they now happen.
 
 	// ── 8. And the cap honours it ────────────────────────────────
 	const capped = await page.evaluate(() => {
@@ -910,64 +846,13 @@ try {
 		JSON.stringify(pressed).slice(0, 240));
 	await page.evaluate(() => window.DaimondImprove.show('notes'));
 
-	// The drawing, from a plan holding one revision draft against proposal 1.
-	const revPlan = { drafts: [{ kind: 'revision', n: absent.n, title: 'Revised title',
-		body: 'Revised body', from: [NOTES[0].id], why: 'the statement was wrong' }], left: [] };
-	amendMode = 'absent';
-	await page.evaluate(() => { window.DaimondImprove.reset(); });
-	await page.evaluate(() => window.DaimondImprove.load(false));
-	await page.waitForTimeout(700);
-	// The DRAWING, from a plan the module is holding. `hold()` goes through the
-	// same `parse()` a run does, so what is drawn is what a run would draw --
-	// and it costs no turn, which is the only reason it exists.
-	const dark = await page.evaluate((p) => {
-		const held = window.DaimondTriage.hold(p);
-		const row  = document.querySelector('#improve-triage .trg-draft[data-draft="0"]');
-		return {
-			drafts: held ? held.drafts.length : 0,
-			kind:   held ? held.drafts[0].kind : '',
-			send:   !!(row && row.querySelector('[data-act="triage-send"]')),
-			drop:   !!(row && row.querySelector('[data-act="triage-drop"]')),
-			words:  row ? (row.textContent || '').replace(/\s+/g, ' ') : '',
-		};
-	}, revPlan);
-	check('a revision draft parses and draws as one',
-		dark.drafts === 1 && dark.kind === 'revision', JSON.stringify(dark).slice(0, 200));
-	check('and with the forge silent about amending, NO send control is drawn on it',
-		dark.send === false, JSON.stringify(dark).slice(0, 300));
-	check('not a disabled one and not a sentence about a feature nobody has',
-		dark.send === false && !/amend/i.test(dark.words) && !/revis(e|ion) is not/i.test(dark.words),
-		dark.words.slice(0, 200));
-	check('while the draft can still be taken off the plan, which costs nothing',
-		dark.drop === true);
-
-	// And it lights up on its own the day the forge answers.
-	amendMode = 'true';
-	await page.evaluate(() => { window.DaimondImprove.reset(); window.DaimondTriage.reset(); });
-	await page.evaluate(() => window.DaimondImprove.load(false));
-	await page.waitForTimeout(700);
-	const lit = await page.evaluate((p) => {
-		window.DaimondTriage.hold(p);
-		const row = document.querySelector('#improve-triage .trg-draft[data-draft="0"]');
-		return !!(row && row.querySelector('[data-act="triage-send"]'));
-	}, revPlan);
-	check('and the day the forge says this asker may amend, the control appears with no edit here',
-		lit === true);
-
-	const revsBefore = revisions().length;
-	await page.locator('#improve-triage .trg-draft[data-draft="0"] [data-act="triage-send"]').click();
-	await page.waitForTimeout(1000);
-	check('pressing it makes exactly one request', revisions().length === revsBefore + 1,
-		`${revisions().length - revsBefore}`);
-	const rf = revisions().length ? fields(revisions()[revisions().length - 1].body) : {};
-	check('and that request goes to the revision route, not to the comment route',
-		revisions().length > revsBefore
-		&& revisions()[revisions().length - 1].query.amend === '1'
-		&& says().length === 0,
-		`amend=${(revisions()[revisions().length - 1] || {}).query?.amend} says=${says().length}`);
-	check('carrying the proposal restated: a title and a body and nothing else',
-		JSON.stringify(Object.keys(rf).sort()) === JSON.stringify(['body', 'title']),
-		Object.keys(rf).sort().join(','));
+	// THE REVISION DRAFT'S DARK/LIT GATE AND ITS SEND MOVED to
+	// dev/verify_approvelist.mjs: a revision draft is now drawn in the QUEUE, and
+	// whether it offers a tick is gated there on the forge's per-asker
+	// `mine_to_amend` flag (dark when the forge is silent, lit when it grants,
+	// never a path to another author's proposal). What stays HERE is `cleanProp`'s
+	// absent-vs-false above, and the panel's OWN Revise control below §10c -- both
+	// improve.js's, not triage's.
 
 	// ── 11. A refusal is said and nothing is retried ─────────────
 	// ── 12. An unreadable answer costs nothing else ──────────────

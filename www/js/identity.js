@@ -77,6 +77,12 @@
 	var _wrapKey = null;	// AES-GCM CryptoKey deriving from the passphrase.
 	var _signKey = null;	// Device private signing key (non-extractable).
 	var _sealKey = null;	// Device private SEALING key (non-extractable). See ensureSealingKey.
+	// Pure-JS fallback material, set ONLY on an engine whose WebCrypto lacks the
+	// curve, and null otherwise. Unlike the CryptoKeys above these hold the RAW
+	// private key in JS memory — see curvefallback.js for why that is accepted
+	// and how it is contained. Never logged, never transmitted, zeroed on lock().
+	var _signSeed   = null;	// 32-byte Ed25519 seed, when WebCrypto cannot load it.
+	var _sealScalar = null;	// 32-byte X25519 scalar, when WebCrypto cannot load it.
 
 	// ── Encoding helpers ───────────────────────────────────────
 
@@ -119,6 +125,26 @@
 			&& !!crypto.subtle
 			&& typeof crypto.subtle.deriveKey === 'function'
 			&& typeof crypto.getRandomValues === 'function';
+	}
+
+	/// The pure-JS curve fallback, or null when it is not loaded or not usable.
+	/// Consulted ONLY after a WebCrypto importKey/deriveBits has thrown for want
+	/// of Ed25519 or X25519 support; WebCrypto stays the default everywhere else.
+	function curveFallback() {
+		var f = (typeof window !== 'undefined' && window.DaimondCurveFallback) || null;
+		return (f && f.available()) ? f : null;
+	}
+
+	/// Does this engine implement Ed25519 signing in WebCrypto? Probed by
+	/// generating a key, since that is the call that actually fails on the
+	/// engines this concerns and nothing else answers it.
+	async function signingAvailable() {
+		try {
+			await crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']);
+			return true;
+		} catch (e) {
+			return false;
+		}
 	}
 
 	// ── Cryptographic primitives ───────────────────────────────
@@ -283,7 +309,28 @@
 		try {
 			pair = await crypto.subtle.generateKey({ name: 'X25519' }, true, ['deriveBits']);
 		} catch (e) {
-			return { ok: false, made: false };		// no X25519 on this engine
+			// No WebCrypto X25519 here. Make the key with the pure-JS fallback so
+			// an identity created (or catching up) on such an engine can still
+			// RECEIVE sealed messages. The stored pkcs8 is the same shape a modern
+			// browser emits, so this same identity opened elsewhere imports it
+			// unchanged. Raw scalar in memory — see the security note.
+			var fbGen = curveFallback();
+			if (!fbGen) return { ok: false, made: false };
+			try {
+				var scalar  = fbGen.randomXScalar();
+				var jsPkcs8 = fbGen.xPkcs8FromScalar(scalar);
+				var jsPub   = new Uint8Array(fbGen.xPublicKey(scalar));
+				var jsWrap  = await seal(_wrapKey, jsPkcs8);
+				localStorage.setItem(K_SEALP, b64enc(jsPub));
+				localStorage.setItem(K_SEALK, jsWrap);
+				localStorage.setItem(K_SEALA, 'X25519');
+				_sealKey    = null;
+				_sealScalar = scalar;
+				fbGen.zero(jsPkcs8);
+			} catch (e2) {
+				return { ok: false, made: false };
+			}
+			return { ok: true, made: true };
 		}
 		try {
 			var pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey));
@@ -307,15 +354,28 @@
 	/// key already derived. Silent when there is none: an identity without a
 	/// sealing key is not broken, it is one that has not made one yet.
 	async function loadSealingKey(wrapKey) {
-		_sealKey = null;
+		_sealKey    = null;
+		_sealScalar = null;
 		var wrapped = localStorage.getItem(K_SEALK);
 		if (!wrapped) return;
+		var pkcs8;
 		try {
-			var pkcs8 = await open(wrapKey, wrapped);
+			pkcs8 = await open(wrapKey, wrapped);
+		} catch (e) {
+			return;		// wrong key or tampered store — nothing to load.
+		}
+		try {
 			_sealKey = await crypto.subtle.importKey(
 				'pkcs8', pkcs8, { name: 'X25519' }, false, ['deriveBits']);
 		} catch (e) {
-			_sealKey = null;		// wrong key, tampered store, or an engine without X25519
+			// The blob decrypted, so this is an engine without WebCrypto X25519,
+			// not a bad key. Fall back to the pure-JS scalar so sealed messages
+			// still open here. See the security note in curvefallback.js.
+			var fb = curveFallback();
+			if (fb) {
+				try { _sealScalar = fb.xScalarFromPkcs8(pkcs8); }
+				catch (e2) { _sealScalar = null; }
+			}
 		}
 	}
 
@@ -327,10 +387,17 @@
 	/// spend a good primitive badly. Unlocked only.
 	async function sharedSecret(theirPubBytes) {
 		requireUnlocked();
-		if (!_sealKey) {
+		if (!_sealKey && !_sealScalar) {
 			throw new Error(tOr('identity.err_no_sealing_key',
 				'This device has no sealing key, so it cannot open a sealed message. '
 				+ 'Unlock the identity once and one will be made.'));
+		}
+		if (_sealScalar) {
+			// Pure-JS path: bit-identical to the deriveBits below for the same
+			// keys. Only reached on an engine without WebCrypto X25519.
+			var their = (theirPubBytes instanceof Uint8Array)
+				? theirPubBytes : new Uint8Array(theirPubBytes);
+			return new Uint8Array(curveFallback().xSharedSecret(_sealScalar, their));
 		}
 		var theirs = await crypto.subtle.importKey(
 			'raw', theirPubBytes, { name: 'X25519' }, false, []);
@@ -406,7 +473,7 @@
 
 	/// True while the identity is unlocked and key material is in memory.
 	function isUnlocked() {
-		return !!_wrapKey && !!_signKey;
+		return !!_wrapKey && (!!_signKey || !!_signSeed);
 	}
 
 	/// Announce that `isUnlocked()` has changed answer.
@@ -688,11 +755,20 @@
 		var newKey = await deriveWrapKey(newPass, salt);
 		var wrapped = await seal(newKey, pkcs8);
 
-		var signKey;
+		// The passphrase is already proven (the open above), so an import failure
+		// here is an engine without the curve, not a bad key — fall back for an
+		// Ed25519 account rather than refusing the change.
+		var signKey  = null;
+		var signSeed = null;
 		try {
 			signKey = await crypto.subtle.importKey('pkcs8', pkcs8, importAlg(alg), false, ['sign']);
 		} catch (e) {
-			return { ok: false };
+			var fbSign = curveFallback();
+			if (alg === 'Ed25519' && fbSign) {
+				try { signSeed = fbSign.edSeedFromPkcs8(pkcs8); }
+				catch (e2) { signSeed = null; }
+			}
+			if (!signSeed) return { ok: false };
 		}
 
 		// Re-sealed BEFORE anything is written, so a failure here leaves the whole
@@ -722,8 +798,9 @@
 		// re-read fired at this point would read stores still wrapped under the
 		// OLD passphrase. Re-wrapping is `DaimondRekey`'s job, and it is a
 		// registry precisely so that this function names nobody.
-		_wrapKey = newKey;
-		_signKey = signKey;
+		_wrapKey  = newKey;
+		_signKey  = signKey;
+		_signSeed = signSeed;
 		await loadSealingKey(newKey);
 		try { await ensureSealingKey(); } catch (e) { /* a rekey is not a failure for this */ }
 		return { ok: true };
@@ -758,7 +835,15 @@
 		}
 
 		// Import the recovered private key for signing (non-extractable).
-		var signKey;
+		//
+		// The AES-GCM open above ALREADY PROVED the passphrase, so a failure from
+		// here on is NOT a wrong passphrase — it is an engine that cannot load a
+		// key of this algorithm (old Android Chrome, older Firefox, for Ed25519).
+		// So try WebCrypto, and on an Ed25519 account fall back to the pure-JS
+		// signer rather than turning the user away; only when neither can load the
+		// key do we surface the honest 'unsupported' reason, never 'wrong pass'.
+		var signKey  = null;
+		var signSeed = null;
 		try {
 			signKey = await crypto.subtle.importKey(
 				'pkcs8',
@@ -768,11 +853,19 @@
 				['sign'],
 			);
 		} catch (e) {
-			return { ok: false };
+			var fb = curveFallback();
+			if (alg === 'Ed25519' && fb) {
+				try { signSeed = fb.edSeedFromPkcs8(pkcs8); }
+				catch (e2) { signSeed = null; }
+			}
+			if (!signSeed) {
+				return { ok: false, reason: 'unsupported' };
+			}
 		}
 
-		_wrapKey = wrapKey;
-		_signKey = signKey;
+		_wrapKey   = wrapKey;
+		_signKey   = signKey;
+		_signSeed  = signSeed;
 		announce('unlock');
 
 		// Both of these run at every unlock, and both are why an identity made by
@@ -809,6 +902,13 @@
 		_wrapKey = null;
 		_signKey = null;
 		_sealKey = null;
+		// Overwrite the raw fallback material before dropping the reference. The
+		// CryptoKeys above are non-extractable and hold nothing readable; these
+		// two do, so they are zeroed. Best-effort — see curvefallback.js.
+		var fb = curveFallback();
+		if (fb) { fb.zero(_signSeed); fb.zero(_sealScalar); }
+		_signSeed   = null;
+		_sealScalar = null;
 		if (was) announce('lock');		// so a decrypted store can drop what it holds.
 	}
 
@@ -840,6 +940,13 @@
 			? utf8(bytesOrString)
 			: bytesOrString;
 		var alg = localStorage.getItem(K_ALG) || 'Ed25519';
+		if (_signSeed) {
+			// Pure-JS Ed25519, deterministic and byte-for-byte the signature
+			// WebCrypto would make from the same seed. Only reached on an engine
+			// without WebCrypto Ed25519.
+			var d = (data instanceof Uint8Array) ? data : new Uint8Array(data);
+			return b64enc(curveFallback().edSign(_signSeed, d));
+		}
 		var sig = await crypto.subtle.sign(signAlg(alg), _signKey, data);
 		return b64enc(sig);
 	}
@@ -1093,6 +1200,9 @@
 		/// The sealing subkey: a SECOND keypair, for receiving sealed messages.
 		/// See the note above `ensureSealingKey` for why it is not the signing one.
 		sealingAvailable: sealingAvailable,
+		/// Does this engine implement Ed25519 signing in WebCrypto? False on the
+		/// engines the pure-JS fallback exists for.
+		signingAvailable: signingAvailable,
 		sealingKeyRaw:    sealingKeyRaw,
 		ensureSealingKey: ensureSealingKey,
 		/// ECDH with a correspondent's sealing key. The INPUT to a key derivation,

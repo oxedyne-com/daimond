@@ -1,0 +1,80 @@
+/* css/tracker.css — the Proposals tracker view (js/tracker.js).
+ *
+ * A read-first list of Daimond's own development, tracked as proposals on the
+ * Oregami forge. Reuses the app's design tokens (the same `--bg-*`, `--text-*`,
+ * `--accent-*`, `--border` and `--fs-*` variables improve.css draws on), so it
+ * inherits the theme and the type scale rather than restating them. Terse: a
+ * label, a state chip, two vote counts; the detail lives in the guide. */
+
+#tracker-view { padding: 8px 10px 12px; font-size: var(--fs-xs); color: var(--text-primary); }
+
+/* ── Head ─────────────────────────────────────────────────────────────── */
+.trk-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.trk-title-main { font-weight: 600; }
+.trk-count { font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+
+.trk-err { margin: 4px 0; padding: 5px 8px; border-radius: var(--radius-sm);
+	background: var(--bg-tertiary); color: var(--warn); font-size: var(--fs-2xs-xs); }
+.trk-say { min-height: 0; font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+.trk-say:empty { display: none; }
+.trk-loading, .trk-none { padding: 10px 2px; color: var(--text-muted); font-size: var(--fs-2xs-xs); }
+
+/* ── The owner's admin voice (dormant until one is minted) ─────────────── */
+.trk-admin { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+	margin: 4px 0 8px; padding: 5px 8px; border-radius: var(--radius-sm);
+	background: var(--bg-secondary); border: 1px solid var(--border); }
+.trk-admin-say { flex-basis: 100%; font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+.trk-admin-in { flex: 1 1 auto; min-width: 0; padding: 4px 6px; font-size: var(--fs-2xs-xs);
+	background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm);
+	color: var(--text-primary); }
+.trk-admin-btn, .trk-admin-save, .trk-admin-cancel {
+	padding: 3px 8px; font-size: var(--fs-3xs-2xs); border-radius: var(--radius-sm);
+	border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; }
+.trk-admin-save { border-color: var(--accent); color: var(--accent-text); }
+.trk-admin-btn:hover, .trk-admin-save:hover, .trk-admin-cancel:hover { border-color: var(--accent); }
+
+/* ── The listing ──────────────────────────────────────────────────────── */
+.trk-list { display: flex; flex-direction: column; gap: 2px; }
+.trk-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px;
+	padding: 6px 4px; border-bottom: 1px solid var(--border); }
+.trk-num { font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+.trk-title { flex: 1 1 auto; min-width: 0; text-align: left; padding: 0;
+	background: none; border: none; color: var(--text-primary); font: inherit; cursor: pointer; }
+.trk-title:hover { color: var(--accent-text); text-decoration: underline; }
+.trk-meta { flex-basis: 100%; display: flex; gap: 10px; font-size: var(--fs-3xs); color: var(--text-muted); }
+
+/* The state chip, one colour per state. Muted, not loud: this is a label. */
+.trk-state { font-size: var(--fs-3xs); padding: 1px 6px; border-radius: 999px;
+	border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
+.trk-state[data-state="open"]     { color: var(--accent-text); border-color: var(--accent); }
+.trk-state[data-state="accepted"] { color: var(--ok); border-color: var(--ok); }
+.trk-state[data-state="done"]     { color: var(--text-muted); }
+.trk-state[data-state="declined"] { color: var(--warn); border-color: var(--warn); }
+
+.trk-tally { font-variant-numeric: tabular-nums; }
+
+/* ── One proposal in full ─────────────────────────────────────────────── */
+.trk-detail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.trk-back { padding: 3px 10px; font-size: var(--fs-3xs-2xs); border-radius: var(--radius-sm);
+	border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; }
+.trk-back:hover { border-color: var(--accent); }
+.trk-detail-title { margin: 4px 0; font-size: var(--fs-sm); }
+.trk-detail-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px;
+	font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+.trk-author { color: var(--text-secondary); }
+.trk-mark { font-family: var(--font-mono); }
+.trk-body { white-space: pre-wrap; line-height: 1.45; margin: 6px 0 10px; }
+
+.trk-settle { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.trk-settle-btn { padding: 4px 10px; font-size: var(--fs-2xs-xs); border-radius: var(--radius-sm);
+	border: 1px solid var(--border-strong); background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; }
+.trk-settle-btn:hover { border-color: var(--accent); color: var(--accent-text); }
+
+.trk-sub { margin: 10px 0 4px; font-size: var(--fs-2xs-xs); color: var(--text-secondary); }
+.trk-revisions, .trk-comments-list { margin-top: 8px; }
+.trk-rev { display: flex; gap: 8px; padding: 3px 0; font-size: var(--fs-3xs-2xs); }
+.trk-rev .trk-when { color: var(--text-muted); }
+.trk-comment { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.trk-comment-said { white-space: pre-wrap; line-height: 1.4; }
+.trk-comment-foot { display: flex; gap: 8px; margin-top: 2px; font-size: var(--fs-3xs); color: var(--text-muted); }
+.trk-when { font-variant-numeric: tabular-nums; }

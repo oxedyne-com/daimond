@@ -120,6 +120,9 @@
 	'topbar.guide':       'Open the user guide',
 	'topbar.guide_short': 'User guide',
 	'topbar.appearance':  'Appearance and layout',
+	// Full-screen toggle (phone only). See js/fullscreen.js.
+	'fullscreen.enter':   'Full screen',
+	'fullscreen.exit':    'Exit full screen',
 
 	// ── About ──────────────────────────────────────────────────
 	// `about.what` is the guide's opening paragraph, near enough word for word:
@@ -2522,6 +2525,7 @@
 	'identity.err_wrong_pass':      'That passphrase did not match. Try again.',
 	'identity.err_locked':          'Daimond identity is locked.',
 	'identity.err_no_webcrypto':    'WebCrypto is unavailable in this browser.',
+	'identity.err_unsupported_crypto': 'This browser cannot do the cryptography this account needs (Ed25519/X25519). Update your browser, or open the account in a newer one.',
 
 	// ── Passkeys, in the interface ─────────────────────────────
 	'passkey.have_one':          'I have a passkey for Daimond',
@@ -3721,6 +3725,34 @@
 	'social.triage_opened': 'Opened as proposal #{n}.',
 	'social.triage_said': 'Said on proposal #{n}.',
 	'social.triage_revised': 'Proposal #{n} is revised.',
+
+	// The approve-list (js/approvelist.js): a local review queue of drafts, batch-
+	// sent through the forge door. Terse — a label, not a paragraph.
+	'approve.count':         '{n} drafts waiting, {sel} ticked. Edit any, tick the ones to send.',
+	'approve.send':          'Send selected',
+	'approve.sending':       'Sending…',
+	'approve.send_help':     'Sends exactly the ticked drafts, each as it is in its box.',
+	'approve.all':           'Tick all',
+	'approve.all_help':      'Tick every draft that can be sent.',
+	'approve.clear_sel':     'Untick all',
+	'approve.clear':         'Empty the queue',
+	'approve.clear_help':    'Remove every draft. Nothing is sent.',
+	'approve.drop':          'Not this one',
+	'approve.drop_help':     'Take this draft off the queue. Nothing is sent.',
+	'approve.tick':          'Send this one',
+	'approve.kind_new':      'New proposal',
+	'approve.kind_comment':  'Comment on #{n}',
+	'approve.kind_revision': 'Revision of #{n}',
+	'approve.target_new':    'opens a new proposal',
+	'approve.target_on':     'on proposal #{n}',
+	'approve.not_yours':     'Only the proposal’s author can revise it.',
+	'approve.novoice':       'No voice yet — a draft can only wait here.',
+	'approve.none_ticked':   'Tick a draft first.',
+	'approve.empty':         'Nothing to send.',
+	'approve.no_title':      'First line is the title — write one, then what happened.',
+	'approve.kept':          'Kept here; nothing tried again.',
+	'approve.sent_batch':    'Sent {sent}. {failed} still waiting.',
+
 	'social.vote_novoice': 'Set a voice to vote on this.',
 	'social.vote_off':     'Press again to take your vote back off.',
 	'social.reply':        'Say it',
@@ -3870,5 +3902,66 @@
 	'lapse.lic_off_past':         'Cross-device sync, cloud storage and Daimond Email are off, because each of those is a service we run on our side.',
 	'lapse.lic_keep':             'Everything on this device carries on exactly as before: your files, your chats, your Diamonds, your identity and your own provider key. Nothing is deleted, nothing is locked, and nothing you have made becomes unreadable.',
 	'lapse.lic_pull':             'Pulling down what you have already stored never stops, and your credits are unaffected.',
+
+	// ── The Tracker view (js/tracker.js) ───────────────────────
+	// A read-first window onto Daimond's own development, tracked as proposals on
+	// the Oregami forge. Votes are shown as a tally only; the settle controls are
+	// the owner's. Terse throughout -- the detail lives in the guide.
+	'tracker.title':          'Development',
+	'tracker.count':          '{n} proposals',
+	'tracker.loading':        'Reading…',
+	'tracker.empty':          'No proposals yet.',
+	'tracker.comments':       '{n} comments',
+	'tracker.tally':          '{yes} for, {no} against',
+	'tracker.back':           'Back',
+	'tracker.revisions':      'Revisions',
+	'tracker.discussion':     'Comments',
+	'tracker.no_comments':    'No comments.',
+	// The state words a reader is shown for the forge's open/accepted/declined/done.
+	'tracker.state_open':     'Open',
+	'tracker.state_taken':    'Being done',
+	'tracker.state_done':     'Done',
+	'tracker.state_declined': 'Declined',
+	// The owner's settle controls.
+	'tracker.accept':         'Accept',
+	'tracker.decline':        'Decline',
+	'tracker.done':           'Mark done',
+	'tracker.reopen':         'Reopen',
+	// Refusals, said not swallowed. `absent` is true whether the repository is
+	// missing or private, and leaks neither.
+	'tracker.err_offline':           'Nothing could be read just now.',
+	'tracker.err_absent':            'This repository is not available.',
+	'tracker.err_unvoiced':          'The forge was given no voice.',
+	'tracker.err_unknown':           'The forge does not recognise that voice.',
+	'tracker.err_unpermitted':       'That voice may not settle proposals here.',
+	'tracker.err_throttled':         'Too many requests just now. Wait, then try again.',
+	'tracker.err_throttled_address': 'Too many requests from this address. Wait, then try again.',
+	'tracker.err_malformed':         'The forge could not read that request.',
+	'tracker.err_no_proposal':       'There is no such proposal.',
+	'tracker.err_unsupported':       'The forge does not answer that.',
+	'tracker.err_internal':          'Something went wrong at the forge.',
+	'tracker.err_session':           'Not signed in, so the forge could not be reached.',
+	'tracker.err_gateway':           'The forge could not be reached just now.',
+	// The nav/panel label. Kept in this block, not beside the other `panel.*`
+	// keys, so this lane's addition sits at one anchor.
+	'panel.tracker':          'Proposals',
+	// The owner's admin voice: pasted once, wrapped under the passphrase, and
+	// dormant until an admin voice is minted on the forge.
+	'tracker.admin_none':        'Reading only. Settling is owner-only and needs an admin voice.',
+	'tracker.admin_add':         'Add admin voice',
+	'tracker.admin_held':        'Admin voice held, encrypted.',
+	'tracker.admin_forget':      'Forget it',
+	'tracker.admin_forget_ask':  'Forget the admin voice here? It was shown once.',
+	'tracker.admin_forgotten':   'The copy on this device is gone.',
+	'tracker.admin_ph':          'Paste the admin voice the forge printed',
+	'tracker.admin_save':        'Save',
+	'tracker.admin_saved':       'Admin voice held, encrypted.',
+	'tracker.admin_need':        'Paste your admin voice first.',
+	'tracker.admin_empty':       'Paste the admin voice the forge printed.',
+	'tracker.admin_short':       'That looks too short to be a whole voice.',
+	'tracker.admin_locked':      'Unlock Daimond first: the admin voice is kept encrypted under your passphrase.',
+	'tracker.admin_locked_send': 'Unlock Daimond to settle: the admin voice is encrypted under your passphrase.',
+	'tracker.admin_unreadable':  'The admin voice cannot be read with this passphrase. Set it again.',
+	'tracker.admin_store':       'That voice could not be stored on this device.',
 	});
 })();
