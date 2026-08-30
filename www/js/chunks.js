@@ -379,7 +379,51 @@
 		};
 	}
 
+	/// Offload an in-memory byte array and return its manifest, the same shape
+	/// and the same stable-address machinery `offloadFile` gives a file on disk.
+	///
+	/// A Blob answers everything `offloadFile` asks of its argument — `.size`,
+	/// `.slice(a, b)` returning something with `.arrayBuffer()` — so the whole
+	/// two-pass body is reused verbatim: the plaintext-hash→address map still
+	/// makes an unchanged payload keep its addresses, which is what lets a
+	/// Diamond or a transcript that has not moved produce a byte-identical
+	/// manifest between two collects. The one thing a Blob has not got is a name,
+	/// so `label` is passed only for the log line.
+	///
+	/// Peak memory is the bytes plus one chunk plus one upload batch. The caller
+	/// is expected to hand this ONE item's bytes at a time and let them go, so a
+	/// store of many Diamonds is never in memory at once — that is the whole
+	/// reason the payload moves out of the inline parcel.
+	async function offloadBytes(label, bytes) {
+		return await offloadFile(label, new Blob([bytes]));
+	}
+
 	// ── Materialise ────────────────────────────────────────────
+
+	/// Recover the bytes an `offloadBytes` manifest names: each chunk is fetched,
+	/// unsealed on its own and appended, and the joined array returned — or null
+	/// if any piece is no longer held, so the caller leaves the item absent
+	/// rather than acting on a truncated one.
+	///
+	/// The seal-per-chunk twin of `materialiseV1`, which recovers the original
+	/// whole-file scheme where one seal covered the lot. Only ONE item's chunks
+	/// are held here, so this is affordable for a single Diamond or transcript
+	/// and is never asked for the whole store at once.
+	async function materialiseBytes(manifest) {
+		if (!manifest || !Array.isArray(manifest.chunks)) return null;
+		var parts = [], total = 0;
+		for (var i = 0; i < manifest.chunks.length; i++) {
+			var bytes = await getChunk(manifest.chunks[i].addr);
+			if (bytes === null) { log('materialiseBytes: missing chunk', manifest.chunks[i].addr); return null; }
+			var plain;
+			try { plain = await DaimondIdentity.unwrapBytes(bytes); }
+			catch (e) { log('materialiseBytes: unwrap failed'); return null; }
+			parts.push(plain); total += plain.length;
+		}
+		var out = new Uint8Array(total), at = 0;
+		parts.forEach(function (p) { out.set(p, at); at += p.length; });
+		return out;
+	}
 
 	/// Stream a file back from its manifest, handing each decrypted piece to
 	/// `write` in order. Returns true on success; false if any piece is no longer
@@ -980,7 +1024,9 @@
 	// ── Public surface ─────────────────────────────────────────
 	window.DaimondChunks = {
 		offloadFile:       offloadFile,			// (path, File) -> manifest v2
+		offloadBytes:      offloadBytes,		// (label, Uint8Array) -> manifest v2
 		materialiseStream: materialiseStream,	// (manifest, write) -> bool
+		materialiseBytes:  materialiseBytes,	// (manifest) -> Uint8Array|null, one item whole
 		materialiseV1:     materialiseV1,		// (manifest) -> text|null, old files only
 		chunkSizeFor:      chunkSizeFor,
 		commit:            commit,				// ({path: manifest}, version) -> {swept,...}|null

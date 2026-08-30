@@ -81,6 +81,75 @@
 	function pins()       { return readJson(PIN_KEY, {}); }
 	function atimes()     { return readJson(ATIME_KEY, {}); }
 
+	// ── Content manifests, co-located under a reserved prefix ──────
+	// Diamonds and chats too large for the inline parcel are offloaded like a
+	// file, but they are not workspace files: they have no path, no `.synced`
+	// merge, and no residency the file tools should report. So their manifests
+	// live in THIS index under a reserved-prefix namespace — `@d/<id>` for a
+	// Diamond, `@c/<id>` for a chat — rather than in a store of their own.
+	//
+	// Co-location is the whole point, and it is load-bearing. The one commit in
+	// sync.js declares the live set from this index; the gateway sweeps every
+	// chunk that set does not name. A Diamond or chat chunk kept in a separate
+	// store would be swept by that file-only commit the moment it ran. Sharing
+	// the index means the commit names them WITHOUT a line changing at its call
+	// site — the sweep-safety is structural rather than remembered.
+	//
+	// What keeps them apart from the file paths beside them is `isContentKey`:
+	// the 3-way merge, the residency list and the cloud view each skip a content
+	// key, because the collector that owns the Diamond or the chat is the only
+	// writer of its manifest, and none of those file mechanisms mean anything for
+	// it.
+
+	/// Is this index key a content manifest rather than a workspace path?
+	function isContentKey(p) { return /^@[dc]\//.test(String(p)); }
+
+	/// The content manifest stored under `key`, or null. Shape-checked the same
+	/// way `manifest` checks a file's, so a half-written entry never becomes a
+	/// reference the collector reuses.
+	function contentGet(key) {
+		var m = index()[key];
+		return (m && Array.isArray(m.chunks)) ? m : null;
+	}
+
+	/// Record the content manifest for `key`. The record carries the collector's
+	/// own change-key beside `{v,size,key,chunks}` — `touched` for a Diamond, `fp`
+	/// for a chat — so the next collect can tell an unchanged item from a moved
+	/// one WITHOUT re-offloading it, which is what keeps the parcel a fixed point.
+	function contentSet(key, rec) {
+		var ix = index();
+		ix[key] = rec;
+		setIndex(ix);
+		return ix;
+	}
+
+	/// Drop the content manifest at `key`, so its chunks stop being named live
+	/// and the next commit sweeps them. Used when a Diamond or chat drops below
+	/// the inline threshold and no longer needs a reference at all.
+	function contentForget(key) {
+		var ix = index();
+		if (!Object.prototype.hasOwnProperty.call(ix, key)) return false;
+		delete ix[key];
+		setIndex(ix);
+		return true;
+	}
+
+	/// Drop every content manifest under `prefix` whose id is not in `live`.
+	/// Called by the Diamond and chat collectors once they have enumerated what
+	/// still exists, so a deleted item's manifest does not linger and go on
+	/// naming chunks nothing refers to. Writes only when something actually goes,
+	/// so a collect where nothing was deleted leaves the index byte-identical.
+	function contentReap(prefix, live) {
+		var ix = index(), changed = false;
+		Object.keys(ix).forEach(function (k) {
+			if (k.slice(0, prefix.length) !== prefix) return;
+			var id = k.slice(prefix.length);
+			if (!live || !live[id]) { delete ix[k]; changed = true; }
+		});
+		if (changed) setIndex(ix);
+		return changed;
+	}
+
 	/// The manifest for a path, or null if cloud storage does not hold it.
 	function manifest(path) {
 		var m = index()[path];
@@ -314,6 +383,9 @@
 		var keys = Object.keys(ix);
 		for (var i = 0; i < keys.length; i++) {
 			var p = keys[i];
+			// A content manifest is not a workspace file: the agent's file tools
+			// must not be told a Diamond or a chat is a path in cloud storage.
+			if (isContentKey(p)) continue;
 			if (!(await isHeld(p))) out[p] = (ix[p] && ix[p].size) | 0;
 		}
 		writeJson(PATHS_KEY, out);
@@ -342,6 +414,15 @@
 		Object.keys(remoteIx).forEach(function (p) { seen[p] = 1; });
 
 		Object.keys(seen).forEach(function (p) {
+			// A content manifest is owned by the Diamond or chat collector on THIS
+			// device, never reconciled across devices: the reference that travels
+			// rides inline with its Diamond or chat, so a remote copy here is nothing
+			// to adopt and nothing to sidecar. Keep whatever this device holds and
+			// drop the rest.
+			if (isContentKey(p)) {
+				if (Object.prototype.hasOwnProperty.call(local, p)) out[p] = local[p];
+				return;
+			}
 			var l = local[p], r = remoteIx[p];
 			if (!r) { out[p] = l; return; }							// only here: keep, it will push.
 			if (!l) { out[p] = r; return; }							// only there: adopt the reference.
@@ -432,7 +513,17 @@
 	/// a lapse.
 	function tierPlan(allowance) {
 		var ix = index(), a = atimes(), plan = {};
+		// Diamonds and chats are CORE content, not overflow, so they claim the
+		// free allowance BEFORE the workspace files do. The tier decides one thing
+		// and it is the worst one: at the end of grace the gateway keeps the free
+		// tier and evicts the paid. A Diamond left paid would be lost at a lapse
+		// the way overflow is, where today it rides the free sealed parcel and
+		// survives — so a lapsed account must keep its Diamonds and its chats, and
+		// spend the paid tier on the workspace files instead. Within each class,
+		// most recently used first, because the free tier is the working set.
 		var paths = Object.keys(ix).sort(function (x, y) {
+			var cx = isContentKey(x) ? 0 : 1, cy = isContentKey(y) ? 0 : 1;
+			if (cx !== cy) return cx - cy;			// content first, then files.
 			return (a[y] || 0) - (a[x] || 0);		// most recently used first.
 		});
 		var free = 0, budget = allowance | 0;
@@ -646,6 +737,7 @@
 		var ix = index(), away = awayPaths();
 		var total = 0, awayBytes = 0, files = 0, awayFiles = 0;
 		Object.keys(ix).forEach(function (p) {
+			if (isContentKey(p)) return;		// Diamonds and chats are not workspace files.
 			var s = (ix[p] && ix[p].size) | 0;
 			total += s; files++;
 			if (Object.prototype.hasOwnProperty.call(away, p)) { awayBytes += s; awayFiles++; }
@@ -690,6 +782,13 @@
 		merge:        merge,
 		put:          put,
 		forget:       forget,
+		// Content manifests (Diamonds, chats) co-located under a reserved prefix.
+		// Owned by the sync collectors, skipped by every file mechanism.
+		isContentKey: isContentKey,
+		contentGet:   contentGet,
+		contentSet:   contentSet,
+		contentForget: contentForget,
+		contentReap:  contentReap,
 		fetch:        fetchDown,
 		evict:        evict,
 		pin:          pin,

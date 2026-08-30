@@ -1,1 +1,1 @@
-{"build":"cd0e9c9cbfd6","note":"Stop the peer lease churning the sync parcel (409 loop) and close a >90s dispatched-turn double-charge"}
+{"build":"31917db85d14","note":"Offload large Diamonds and chat transcripts out of the inline sync parcel so iOS can complete a sync"}

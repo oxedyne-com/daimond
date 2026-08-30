@@ -3177,9 +3177,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				|| diamondStamp(b) - diamondStamp(a)
 				|| (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0));
 		});
+		// Whether a Diamond too large to ride inline can be offloaded to chunks
+		// this round: the transport is loaded and the identity that seals a chunk
+		// is unlocked. When it is not, a large Diamond falls back to riding inline
+		// and is budgeted the old way, so it still travels.
+		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
+			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
+			&& DaimondCloud.contentGet);
+		var liveIds = {};
 		var used = 0;
 		for (var i = 0; i < held.length; i++) {
 			var d = held[i], data;
+			liveIds[d.id] = 1;
 			// MEASURE BEFORE MATERIALISING. This used to export every Diamond and
 			// then check the result against the budget, so the ones over budget
 			// were built in full and thrown away -- the budget capped what was
@@ -3198,33 +3207,108 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					size = await diamondApp().export_diamond_size(d.id);
 				}
 			} catch (e) { size = null; }        // an older engine: fall back to measuring after
-			if (size !== null && used + size > budget) {
-				out.left.push({ id: d.id, name: d.name || d.id });
-				out.complete = false;
-				continue;                        // never exported, so never held
-			}
-			try { data = await diamondApp().export_diamond(d.id); }
-			catch (e) { out.complete = false; continue; }  // one unreadable Diamond must not hold up the rest
-			// `continue`, not `break`: one enormous Diamond must not stop the small
-			// fresh ones behind it from travelling.
-			if (used + data.length > budget) {
-				out.left.push({ id: d.id, name: d.name || d.id });
-				out.complete = false;
-				data = null;                     // let it go before the next one is read
+			var stamp = diamondStamp(d);
+			var ckey = '@d/' + d.id;
+			var stored = canOffload ? DaimondCloud.contentGet(ckey) : null;
+
+			// SMALL ENOUGH TO RIDE INLINE, or nowhere to offload it to. Kept inline
+			// so an old receiver degrades cleanly and only large payloads become
+			// refs. If it had a manifest from when it was larger, that manifest is
+			// now unreferenced and goes, so its chunks are swept.
+			if (!canOffload || (size !== null && size <= SYNC_FILE_MAX)) {
+				if (stored && DaimondCloud.contentForget) DaimondCloud.contentForget(ckey);
+				if (size !== null && used + size > budget) {
+					out.left.push({ id: d.id, name: d.name || d.id });
+					out.complete = false;
+					continue;                    // never exported, so never held
+				}
+				try { data = await diamondApp().export_diamond(d.id); }
+				catch (e) { out.complete = false; continue; }  // one unreadable Diamond must not hold up the rest
+				// `continue`, not `break`: one enormous Diamond must not stop the
+				// small fresh ones behind it from travelling.
+				if (used + data.length > budget) {
+					out.left.push({ id: d.id, name: d.name || d.id });
+					out.complete = false;
+					data = null;                 // let it go before the next one is read
+					continue;
+				}
+				used += data.length;
+				out.list.push({
+					id:      d.id,
+					updated: d.updated || 0,
+					// A device that predates the second stamp sends none, and the
+					// receiver falls back to `updated` — which is what `touched`
+					// means on such a device anyway.
+					touched: stamp,
+					model:   models[d.id] || null,
+					data:    data,
+				});
 				continue;
 			}
-			used += data.length;
+
+			// OFFLOADED. The heavy export moves to chunks and only a reference
+			// rides in the parcel. Reuse the stored manifest when the Diamond has
+			// not been touched since it was made -- no export, no re-offload, and
+			// the index bytes do not move, which is the fixed point the parcel
+			// depends on. `touched` moves on every change (tags and links
+			// included), and an import lays stamps down wholesale, so it is a safe
+			// change-key here.
+			var ref = null;
+			if (stored && stored.touched === stamp && Array.isArray(stored.chunks)) {
+				ref = { v: stored.v, size: stored.size, key: stored.key, chunks: stored.chunks };
+			} else {
+				var text;
+				try { text = await diamondApp().export_diamond(d.id); }
+				catch (e) { out.complete = false; continue; }
+				var mani = null;
+				try { mani = await DaimondChunks.offloadBytes('d:' + d.id, new TextEncoder().encode(text)); }
+				catch (e) { mani = null; }        // gateway unreachable, store full: fall back to inline
+				if (!mani) {
+					// The offload could not be made this round, so the Diamond rides
+					// inline instead of not travelling at all -- exactly as it did
+					// before offload existed, budget permitting.
+					if (used + text.length > budget) {
+						out.left.push({ id: d.id, name: d.name || d.id });
+						out.complete = false; text = null; continue;
+					}
+					used += text.length;
+					out.list.push({
+						id:      d.id,
+						updated: d.updated || 0,
+						touched: stamp,
+						model:   models[d.id] || null,
+						data:    text,
+					});
+					text = null;
+					continue;
+				}
+				text = null;                     // freed before the next Diamond is read
+				DaimondCloud.contentSet(ckey, {
+					v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks, touched: stamp });
+				ref = { v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks };
+			}
+			// The reference is a few hundred bytes, so the budget essentially never
+			// binds on it -- the real ceiling on offloaded content is the chunk
+			// store's, which the commit counts it against alongside the files.
+			var refBytes = JSON.stringify(ref).length;
+			if (used + refBytes > budget) {
+				out.left.push({ id: d.id, name: d.name || d.id });
+				out.complete = false;
+				continue;
+			}
+			used += refBytes;
 			out.list.push({
 				id:      d.id,
 				updated: d.updated || 0,
-				// A device that predates the second stamp sends none, and the
-				// receiver falls back to `updated` — which is what `touched`
-				// means on such a device anyway.
-				touched: d.touched || d.updated || 0,
+				touched: stamp,
 				model:   models[d.id] || null,
-				data:    data,
+				dataRef: ref,
 			});
 		}
+		// A Diamond that is gone leaves its manifest naming chunks nothing refers
+		// to; drop those so the next commit sweeps them. Writes only on a real
+		// deletion, so a no-op collect leaves the index byte-identical.
+		if (window.DaimondCloud && DaimondCloud.contentReap) DaimondCloud.contentReap('@d/', liveIds);
 		trail('sync collected', out.list.length + ' of ' + held.length
 			+ ', ' + Math.round(used / 1024) + ' kB, ' + out.left.length + ' left behind');
 		return out;
@@ -3323,9 +3407,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The store owns normalisation and caps the list at eight, so a union that
 	/// overflows is trimmed there; the extra write that costs is harmless, and
 	/// the round after it agrees.
-	async function unionDiamondTags(app, r, mine) {
+	async function unionDiamondTags(app, r, mine, data) {
 		var here  = Array.isArray(mine && mine.tags) ? mine.tags : [];
-		var there = packTags(r.data);
+		var there = packTags(data);
 		if (!there.length) return false;
 		var union = here.slice();
 		for (var i = 0; i < there.length; i++) {
@@ -3377,11 +3461,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// runs only where neither copy is fresher. What it can repair is therefore
 	/// only the divergence the missing stamp left behind, which is what it is
 	/// for.
-	async function unionDiamondLinks(app, r) {
-		var there = packLinks(r.data);
+	async function unionDiamondLinks(app, r, data) {
+		var there = packLinks(data);
 		if (!there.trim()) return false;
 		try { return (await app.union_links(r.id, there)) === true; }
 		catch (e) { return false; }							// it goes on the next pull
+	}
+
+	/// The export string for a pulled Diamond, materialised only when one is
+	/// needed. A v2 parcel carries the whole export inline as `data` and this
+	/// hands it back untouched; a v3 parcel carries a `dataRef` and the bytes are
+	/// fetched from chunks, decrypted and joined HERE — one Diamond in memory,
+	/// which the caller frees the moment it is done. A strict-older Diamond never
+	/// reaches this, so an unchanged Diamond costs no fetch at all.
+	async function diamondData(r) {
+		if (r.data != null) return r.data;
+		if (!r.dataRef || !window.DaimondChunks || !DaimondChunks.materialiseBytes) return null;
+		var b = await DaimondChunks.materialiseBytes(r.dataRef);
+		return b ? new TextDecoder().decode(b) : null;
 	}
 
 	/// Merge the pulled Diamonds into the store. Tombstones first, so a deletion
@@ -3424,7 +3521,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		for (var i = 0; i < incoming.length; i++) {
 			var r = incoming[i];
-			if (!r || !r.id || !r.data || tombs[r.id]) continue;
+			// A v3 entry carries a `dataRef` in place of `data`; either is enough
+			// to act on, and an entry with neither is nothing to import. An old
+			// receiver reaching a v3-only entry drops it here rather than
+			// corrupting anything, and it lands when the Diamond next updates.
+			if (!r || !r.id || (r.data == null && !r.dataRef) || tombs[r.id]) continue;
 			var mine = local[r.id];
 			// STRICTLY newer: equal stamps keep what is here, so a Diamond that
 			// has not moved is not rewritten on every pull.
@@ -3433,15 +3534,65 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// two disagree about the TAGS or the LINKS, both sides can have
 				// them all. Both unions run: one answering false says only that
 				// it had nothing to add, not that the other has nothing.
+				//
+				// The export string is needed to read the tags and links out of,
+				// so a v3 entry is materialised HERE and only here -- a strict-older
+				// Diamond above already `continue`d without a fetch.
+				//
+				// AND ONLY WHEN IT COULD SAY ANYTHING NEW. An offloaded Diamond whose
+				// stored manifest key equals the incoming reference's key is
+				// byte-identical to the local copy, so its tags and links are already
+				// equal and the union has nothing to add. Skipping it there spares N
+				// metered chunk fetches on every quiet round -- the same content-key
+				// guard the chat path uses -- and, like a union that found nothing,
+				// writes nothing, so the fixed point is untouched. The export is
+				// fetched only when the keys differ or there is no manifest to compare.
 				if (diamondStamp(r) === diamondStamp(mine)) {
-					var tagged = await unionDiamondTags(app, r, mine);
-					var linked = await unionDiamondLinks(app, r);
-					if (tagged || linked) changed = true;
+					var skipUnion = false;
+					if (r.dataRef && r.dataRef.key && window.DaimondCloud && DaimondCloud.contentGet) {
+						try {
+							var sd = DaimondCloud.contentGet('@d/' + r.id);
+							if (sd && sd.key && sd.key === r.dataRef.key) skipUnion = true;
+						} catch (e) { skipUnion = false; }
+					}
+					if (!skipUnion) {
+						var udata = await diamondData(r);
+						if (udata != null) {
+							var tagged = await unionDiamondTags(app, r, mine, udata);
+							var linked = await unionDiamondLinks(app, r, udata);
+							if (tagged || linked) changed = true;
+						}
+						udata = null;
+					}
 				}
 				continue;
 			}
-			try { await app.import_diamond(r.data); changed = true; }
-			catch (e) { continue; }
+			var idata = await diamondData(r);
+			if (idata == null) continue;			// a v3 ref whose chunks are no longer held
+			try { await app.import_diamond(idata); changed = true; }
+			catch (e) { idata = null; continue; }
+			idata = null;							// free the export before the next Diamond
+			// RECORD THE SENDER'S MANIFEST, so this device names the SAME chunks the
+			// sender does instead of re-offloading the identical Diamond to fresh
+			// addresses on its next collect. Two things follow: no second upload of a
+			// Diamond that already travelled, and — because both devices then name
+			// one address set — no commit here sweeps the copy the sender is holding
+			// alive. The stored `touched` matches what the import just laid down, so
+			// the collector's reuse-check reuses this reference rather than exporting
+			// again. Not in the spec, which left the receiver to re-offload; that
+			// re-offload diverged the two devices' addresses and let each sweep the
+			// other's, which is the outage this whole change exists to avoid.
+			if (r.dataRef && window.DaimondCloud && DaimondCloud.contentSet) {
+				try {
+					DaimondCloud.contentSet('@d/' + r.id, {
+						v:       r.dataRef.v,
+						size:    r.dataRef.size,
+						key:     r.dataRef.key,
+						chunks:  r.dataRef.chunks,
+						touched: diamondStamp(r),
+					});
+				} catch (e) { /* the collector will re-offload; only efficiency is lost */ }
+			}
 			// Best effort: the model may be one this device has no key for, and
 			// the Diamond then shows as unable to run, which is already a state
 			// the rail draws.
@@ -3451,6 +3602,67 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		bumpDiamonds();                            // tell the other TABS
 		await onDiamondsChangedElsewhere();        // and this one: same reconciliation
 		signalLinksChanged();                      // links ride with their Diamond, so the graph moved
+	}
+
+	/// Every stored chat, packed for the parcel, with a heavy transcript moved
+	/// out to chunks and only a reference left inline.
+	///
+	/// A chat's scalar metadata is small and rides inline as it always has; only
+	/// the `messages` array is offloaded, and only when it is over the inline
+	/// threshold. A small transcript stays inline, so an old receiver degrades
+	/// cleanly and only large payloads become refs.
+	///
+	/// THE CHANGE-KEY IS THE TRANSCRIPT ITSELF, not `updatedAt`. `applyChats`
+	/// unions new messages into a chat while keeping the older `updatedAt` of the
+	/// two copies, so a transcript can grow without its stamp moving; keying the
+	/// reuse on the stamp would then hand back a stale manifest and the two
+	/// devices would silently diverge. So the manifest is reused only when a
+	/// fingerprint of the serialised messages matches the one stored beside it —
+	/// `fileHash`, the same cheap fingerprint the file merge trusts.
+	async function collectChatsRefs() {
+		var chats = storedChats();
+		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
+			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
+			&& DaimondCloud.contentGet);
+		var live = {}, out = [];
+		for (var i = 0; i < chats.length; i++) {
+			var c = chats[i];
+			live[c.id] = 1;
+			// The model's own conversation never travels (collectSync stripped it
+			// before), so `session` is nulled here as it was in the inline map.
+			var entry = slimChat(c);
+			entry.session = null;
+			var msgs = Array.isArray(c.messages) ? c.messages : [];
+			var serial = JSON.stringify(msgs);
+			var ckey = '@c/' + c.id;
+			var stored = canOffload ? DaimondCloud.contentGet(ckey) : null;
+			// Small transcripts ride inline. A chat that had a manifest and has
+			// since shrunk under the threshold drops it, so its chunks are swept.
+			if (!canOffload || serial.length <= SYNC_FILE_MAX) {
+				if (stored && DaimondCloud.contentForget) DaimondCloud.contentForget(ckey);
+				out.push(entry);				// keeps the inline `messages`
+				continue;
+			}
+			var fp = fileHash(serial);
+			var ref;
+			if (stored && stored.fp === fp && Array.isArray(stored.chunks)) {
+				ref = { v: stored.v, size: stored.size, key: stored.key, chunks: stored.chunks };
+			} else {
+				var mani;
+				try { mani = await DaimondChunks.offloadBytes('c:' + c.id, new TextEncoder().encode(serial)); }
+				catch (e) { out.push(entry); continue; }	// offload failed: ride inline this round
+				DaimondCloud.contentSet(ckey, {
+					v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks, fp: fp });
+				ref = { v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks };
+			}
+			entry.messages = null;
+			entry.messagesRef = ref;
+			out.push(entry);
+		}
+		// Drop manifests for chats that are gone, so their chunks stop being named
+		// live. Writes only on a real deletion; a no-op collect leaves it be.
+		if (window.DaimondCloud && DaimondCloud.contentReap) DaimondCloud.contentReap('@c/', live);
+		return out;
 	}
 
 	async function collectSync() {
@@ -3468,24 +3680,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// let the two sections agree to overrun the ceiling between them.
 		var dCol = await collectDiamonds(
 			Math.max(0, Math.min(SYNC_DIAMONDS_MAX, SYNC_PARCEL_MAX - fileCol.bytes)));
+		var chatsList = await collectChatsRefs();
+		// RE-READ THE INDEX AFTER THE CONTENT COLLECTORS. `collectChunked` snapped
+		// the index before the Diamonds and chats wrote their `@d/`/`@c/` manifests
+		// into it, and the ONE commit in sync.js declares its live set from what
+		// travels here. If the content manifests were absent from that set, the
+		// file-only commit would sweep the chunks they name -- the very outage this
+		// co-location exists to prevent. A no-op collect wrote nothing, so this is
+		// byte-identical to the snapshot on a quiet round.
+		if (window.DaimondCloud) chunked = DaimondCloud.index();
 		noteFilesLeft(fileCol.left);
 		noteDiamondsLeft(dCol.left);
-		// v2 adds `diamonds` and `diamondTombs`. The version is informational:
-		// every section is read by name and a missing one is a no-op, so a v1
-		// device and a v2 device sync happily in both directions -- the v1 side
-		// ignores what it does not know, and the v2 side sees no Diamonds rather
-		// than an error.
+		// v3 moves a large Diamond or transcript out to chunks and leaves a
+		// `dataRef`/`messagesRef` inline in its place; v2 added `diamonds` and
+		// `diamondTombs`. The version is informational: every section is read by
+		// name and a missing one is a no-op, so a v1, v2 and v3 device all sync in
+		// every direction -- an older side ignores a field it does not know, and a
+		// small Diamond or chat still rides inline so it degrades cleanly.
 		return {
-			v:            2,
+			v:            3,
 			// Without the model's own conversation: it holds one provider's call ids,
 			// it is this device's copy of what its agent was told, and it would roughly
 			// double a parcel that is already every transcript the account has. The
-			// other device rebuilds it from the transcript it does receive.
-			chats:        storedChats().map(function (c) {
-				var out = slimChat(c);
-				out.session = null;
-				return out;
-			}),
+			// other device rebuilds it from the transcript it does receive. A heavy
+			// transcript travels as a `messagesRef`; see `collectChatsRefs`.
+			chats:        chatsList,
 			tombs:        readJson(TOMBS_KEY, {}),
 			msgTombs:     readJson(MSG_TOMBS_KEY, {}),
 			files:        fileCol.files,
@@ -3544,7 +3763,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// by the same freshest-wins, union-the-transcript rule the cross-tab path
 	/// uses; then the in-memory array and the UI are reconciled without
 	/// disturbing a turn in flight.
-	function applyChats(remote) {
+	async function applyChats(remote) {
 		// REFUSE RATHER THAN GUESS.
 		//
 		// The merge below reads "this device has no record under that id" as "the
@@ -3569,17 +3788,78 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			byId[c.id] = c;
 			was[c.id] = (c.messages || []).length;
 		});
-		(Array.isArray(remote.chats) ? remote.chats : []).forEach(function (r) {
-			if (!r || !r.id) return;
+		var remoteChats = Array.isArray(remote.chats) ? remote.chats : [];
+		for (var ri = 0; ri < remoteChats.length; ri++) {
+			var src = remoteChats[ri];
+			if (!src || !src.id) continue;
+			// WORK ON A SHALLOW COPY. The merge below reassigns this entry's
+			// `messagesRef` and `messages`; mutating the caller's parcel object in
+			// place would make a second apply of the same parcel unrepeatable -- the
+			// reference would already be nulled, so a chat that landed metadata-only
+			// while its chunks were missing could never self-heal on a re-apply. The
+			// nested message arrays are not touched here beyond what the merge has
+			// always done to an inline transcript.
+			var r = {};
+			for (var rk in src) { if (Object.prototype.hasOwnProperty.call(src, rk)) r[rk] = src[rk]; }
+			// A v3 transcript travels as a chunk reference. Materialise it ONE at a
+			// time and only when it is needed: if this device already holds the very
+			// same transcript -- the reference's content key matches the one stored
+			// beside our own copy -- there is nothing to fetch and nothing to union.
+			// Otherwise fetch, decode and parse this one, then let the bytes go.
+			if (r.messagesRef && !Array.isArray(r.messages)) {
+				var incomingRef = r.messagesRef;
+				var willUnion = !!byId[r.id];			// a local copy this transcript will merge into
+				var same = false;
+				try {
+					var scur = (window.DaimondCloud && DaimondCloud.contentGet)
+						? DaimondCloud.contentGet('@c/' + r.id) : null;
+					if (scur && scur.key && incomingRef.key && scur.key === incomingRef.key) same = true;
+				} catch (e) { same = false; }
+				if (same && byId[r.id]) {
+					r.messages = byId[r.id].messages;		// identical transcript already here
+				} else {
+					var mb = (window.DaimondChunks && DaimondChunks.materialiseBytes)
+						? await DaimondChunks.materialiseBytes(incomingRef) : null;
+					if (mb) {
+						try { r.messages = JSON.parse(new TextDecoder().decode(mb)); }
+						catch (e) { r.messages = []; }
+					} else {
+						// The chunks are no longer held: land metadata-only. The union
+						// below with an empty transcript is a no-op, so a chat already
+						// here keeps its messages and a brand-new one lands empty and
+						// self-heals when the reference resolves.
+						r.messages = [];
+					}
+					mb = null;
+					// A BRAND-NEW chat is stored verbatim, so this device can name the
+					// sender's chunks and skip re-offloading them — the same convergence
+					// the Diamond import records. A chat that will UNION with a local
+					// copy is stored as neither side's transcript, so its manifest is
+					// genuinely this device's own and is left for the collector to make.
+					if (!willUnion && Array.isArray(r.messages) && r.messages.length
+						&& incomingRef.key && window.DaimondCloud && DaimondCloud.contentSet) {
+						try {
+							DaimondCloud.contentSet('@c/' + r.id, {
+								v:      incomingRef.v,
+								size:   incomingRef.size,
+								key:    incomingRef.key,
+								chunks: incomingRef.chunks,
+								fp:     fileHash(JSON.stringify(r.messages)),
+							});
+						} catch (e) { /* the collector will re-offload; only efficiency is lost */ }
+					}
+				}
+				r.messagesRef = null;
+			}
 			var st = byId[r.id];
-			if (!st) { byId[r.id] = r; return; }
+			if (!st) { byId[r.id] = r; continue; }
 			var merged = slimChat((r.updatedAt || 0) >= (st.updatedAt || 0) ? r : st);
 			merged.messages = slimMessages(mergeMessages(st.messages, r.messages, r.id));
 			// A parcel carries no session (collectSync strips it), so the freshest-wins
 			// rule above would trade this device's model memory for the remote's nothing.
 			if (!merged.session && st.session) merged.session = st.session;
 			byId[r.id] = merged;
-		});
+		}
 		Object.keys(tombs).forEach(function (id) { delete byId[id]; });
 		var out = Object.keys(byId).map(function (id) { return byId[id]; });
 		// A MERGE THAT SHORTENED A TRANSCRIPT, in the durable trail.
@@ -3648,7 +3928,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// out, so a later reader gets this round's own state rather than the one both
 		// devices last agreed on.
 		var cloudBase = readJson(SYNC_CLOUDBASE_KEY, {});
-		await section('chats',    function () { applyChats(remote); });
+		await section('chats',    function () { return applyChats(remote); });
 		await section('diamonds', function () { return applyDiamonds(remote); });
 		await section('files',    function () { return applyFiles(remote.files, remote.filesComplete === true); });
 		// The large files held in the chunk store, reconstructed on demand.
@@ -22742,7 +23022,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var s  = await DaimondCloud.summary();
 			var ix = DaimondCloud.index();
 			var away = DaimondCloud.awayPaths();
-			var paths = Object.keys(ix).sort(function (a, b) { return (ix[b].size | 0) - (ix[a].size | 0); });
+			// The reserved-prefix content manifests (Diamonds, chats) share this
+			// index but are not workspace files, so they are left off the list.
+			var paths = Object.keys(ix)
+				.filter(function (p) { return !DaimondCloud.isContentKey(p); })
+				.sort(function (a, b) { return (ix[b].size | 0) - (ix[a].size | 0); });
 
 			viewEl.innerHTML =
 				'<div class="files-view-head">' +
