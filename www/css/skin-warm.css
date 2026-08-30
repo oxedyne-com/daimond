@@ -59,7 +59,11 @@
    look like a third section with its alignment lost. */
 :root[data-skin="warm"] .railhead > span:first-child,
 :root[data-skin="warm"] .pop-head,
-:root[data-skin="warm"] .admin-sec {
+:root[data-skin="warm"] .admin-sec,
+/* The Models/Credits/Push drawer headings share the account menu's `.admin-sec`
+   idiom (see app.css), so they take the same friendly weight here -- otherwise
+   the two settings menus read as two systems under this skin. */
+:root[data-skin="warm"] .admin-body .settings-section h3 {
 	text-transform: none;
 	letter-spacing: 0;
 	font-weight: 700;

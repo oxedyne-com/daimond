@@ -1047,10 +1047,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// here, and so it goes when the chat goes — a scope that outlived its chat
 			// would be a fence around a conversation nobody can open.
 			holds: Array.isArray(c.holds) ? c.holds : [],
-			// The per-chat "run on my laptop when awake" toggle: true/false when the
-			// chat has chosen, absent to defer to the account default. Travels so the
-			// choice follows the chat across devices.
-			runOnPeer: (typeof c.runOnPeer === 'boolean') ? c.runOnPeer : undefined,
 			updatedAt: c.updatedAt || 0, foldedInto: c.foldedInto || null };
 	}
 	function readJson(key, fallback) {
@@ -2106,10 +2102,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// itself overnight is worse than one that was never offered, and the
 			// workspace mark rides here, so it would have taken the fence with it.
 			holds: Array.isArray(c.holds) ? c.holds : [],
-			// The per-chat "run on my laptop when awake" toggle: true/false when the
-			// chat has chosen, absent to defer to the account default. Travels so the
-			// choice follows the chat across devices.
-			runOnPeer: (typeof c.runOnPeer === 'boolean') ? c.runOnPeer : undefined,
 			updatedAt: c.updatedAt || 0, foldedInto: c.foldedInto || null };
 	}
 	/// Open the store and hand back what it holds, hydrated — everything the user
@@ -9873,11 +9865,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// agent's own tool calls are dispatched inside Rust, not through JS.
 	window.__daimondEgressAllowed = function (payloadJson) { return egressAllowed(payloadJson); };
 
-	// The explicit "run on my laptop" entry point (dev/PEER_DESIGN.md §4, step 4).
-	// Exposed as a reachable hook so the control that invokes it -- and the step-6
-	// state machine that owns the dispatched/claimed/running/done UI and its §5 copy
-	// -- can call the one dispatch path, without this step reaching into the
-	// composer DOM blind. The ORDER and the errand it runs are tested in
+	// The reachable hand-a-turn-to-a-peer hook (dev/PEER_DESIGN.md §4, step 4).
+	// Exposed so the step-6 state machine that owns the dispatched/claimed/running/
+	// done UI and its §5 copy can call the one dispatch path, without reaching into
+	// the composer DOM blind. The ORDER and the errand it runs are tested in
 	// peer.test.mjs via DaimondPeer.buildDispatch.
 	window.__daimondDispatchToPeer = function (chat, turnId, promptText, scopePaths) {
 		return dispatchToPeer(chat, turnId, promptText, scopePaths);
@@ -10557,19 +10548,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			homeView.appendChild(el('div', 'admin-sec', tOr('home.sec_sync', 'Syncing and diagnostics')));
 			if (window.DaimondSafe) {
 				var syncing = !DaimondSafe.on();
-				item(syncing
+				var sb = item(syncing
 					? tOr('safe.turn_off', 'Start without syncing')
 					: tOr('safe.turn_on', 'Turn syncing back on'), function () {
 					DaimondSafe.set(syncing, 'user');       // syncing → we are turning it OFF
 					location.reload();
 				});
+				// The full account of what stopping does rides on the control's
+				// hover, so the on-screen line stays a one-clause label.
+				sb.title = tOr('settings.sync_help',
+					'Stopping is immediate and loses nothing; your work stays on this '
+						+ 'device and this device stops reaching your others.');
 				homeView.appendChild(el('div', 'admin-note', syncing
-					? tOr('settings.sync_on_note',
-						'This device is sending its work to your other devices. Stopping is '
-							+ 'immediate and loses nothing; everything stays here.')
-					: tOr('settings.sync_off_note',
-						'This device is not syncing. Its work is safe here and is not reaching '
-						+ 'your other devices.')));
+					? tOr('settings.sync_on_note', 'Sending your work to your other devices.')
+					: tOr('settings.sync_off_note', 'Not syncing — your work stays here.')));
 			}
 			if (window.DaimondTrail) {
 				var trailOut = el('div', 'admin-note', '');
@@ -10599,10 +10591,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						navigator.clipboard.writeText(text).then(done, function () { fallback(text, done); });
 					} else if (text) { fallback(text, done); }
 				});
+				// The detail -- what the trail does and does not carry -- rides on the
+				// button's hover; the note is a one-line label.
+				tb.title = tOr('settings.trail_help',
+					'Event names and a clock only: no keys, no message text, nothing from '
+						+ 'your files. Safe to paste into a bug report.');
 				homeView.appendChild(trailOut);
-				homeView.appendChild(el('div', 'admin-note', tOr('settings.trail_note',
-					'What Daimond last did: event names and a clock, no keys, no message text, '
-						+ 'nothing from your files. Safe to paste into a bug report.')));
+				homeView.appendChild(el('div', 'admin-note',
+					tOr('settings.trail_note', 'A safe-to-share log of what Daimond last did.')));
 			}
 
 			// Several people can share this browser, each with their own account. Switching locks
@@ -11799,7 +11795,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var label = document.createElement('span');
 		label.className = 'ti-label';
 		// The machine's NAME when we have it ("argonaut is doing this."), else the
-		// generic wording ("Your laptop is doing this."). The name comes from the
+		// generic wording ("Running on your other device."). The name comes from the
 		// presence beat of whoever holds the lease.
 		var holder = (window.DaimondLease && DaimondLease.holder) ? DaimondLease.holder(m.iturn) : null;
 		var name = (holder && window.DaimondPresence && DaimondPresence.name) ? DaimondPresence.name(holder) : '';
@@ -11831,9 +11827,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// The THIN wiring. The order and the whole errand live in
 	// `DaimondPeer.buildDispatch`; this runs the order and nothing more, so the
 	// load-bearing sequence (§4.1) is under test in peer.test.mjs rather than buried
-	// here. The explicit "run on my laptop" path only; the loss-branch auto-dispatch
-	// is step 4b, gated behind the iOS loss classifier, and is deliberately NOT
-	// wired here.
+	// here. The auto-dispatch path (send-time, `maybeAutoDispatch`) drives this; the
+	// loss-branch auto-dispatch is step 4b, gated behind the iOS loss classifier, and
+	// is deliberately NOT wired here.
 
 	/// Is `chat` the one on screen right now (and still a live chat)? The IIFE-scope
 	/// ownership check the peer wiring needs. `runTurn` has its own arg-less `owns`
@@ -12140,107 +12136,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 	} catch (e) { /* no document */ }
 
-	/// The explicit "run on my laptop" path (§4.1): take what is typed, make it a
-	/// turn, and hand it to a peer instead of running it here. Prepared exactly as an
-	/// ordinary send (mint the turn id, append the prompt) so the parcel push inside
-	/// dispatchToPeer carries it, then dispatched in the strict order (§4.1).
-	async function dispatchTypedPrompt() {
-		var chat = current;
-		if (!chat) return;
-		var text = (chatInput && chatInput.value) ? chatInput.value.trim() : '';
-		if (!text) return;
-		var umid = newMid();
-		try { appendUserMessage(text); } catch (e) { /* the record below is the truth */ }
-		chat.messages.push({ role: 'user', content: text, mid: umid, iturn: umid, ts: Date.now() });
-		touchChat(chat); persistChats();
-		if (chatInput) chatInput.value = '';
-		var res = await dispatchToPeer(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : []);
-		if (!res || !res.ok) { try { appendError((res && res.why) || 'could not hand this to a peer'); } catch (e) { /* drawn best-effort */ } }
-	}
-
-	/// Is there an awake desktop peer -- a fresh presence beat that is not this
-	/// device -- to hand a turn to? The one question the "run on my laptop" button
-	/// waits on, read through the same `awake()` the auto-dispatch decision reads.
-	function awakePeerPresent() {
-		try {
-			if (!window.DaimondPresence || !DaimondPresence.awake) return false;
-			var list = DaimondPresence.awake(selfDeviceId(), Date.now());
-			return !!(list && list.length);
-		} catch (e) { return false; }
-	}
-
-	/// Add or remove the "run on my laptop" button in the composer, to match the
-	/// presence. Guarded and idempotent: a missing bar or a repeat call is a no-op,
-	/// and a throw never reaches the composer. FLAGGED for live placement -- its
-	/// position and styling in the bar are the screenshot-verified part; the
-	/// handler above is tested.
-	function injectRunOnPeerButton() {
-		try {
-			// The button offers to hand this turn to a laptop, so it belongs on
-			// screen ONLY while a laptop is actually there to take it -- a fresh
-			// presence beat from another device. Two reasons, and the second is the
-			// bug this closes: a button for a laptop that is asleep is a dead
-			// control that hands turns into the void; and while it sits there it
-			// takes its share of the composer, which on a phone squeezed the text
-			// box below half the bar (verify_chathead). No awake peer, no button,
-			// and the input keeps the whole bar. Re-run on every presence beat and
-			// after every pull, so it appears the moment a laptop wakes and leaves
-			// when the beat goes stale.
-			if (!window.DaimondPeer) return;
-			var bar = document.querySelector('.chat-input-bar');
-			if (!bar) return;
-			var existing = bar.querySelector('.run-on-peer');
-			if (!awakePeerPresent()) {
-				if (existing) existing.remove();		// the laptop went quiet: give the bar back
-				return;
-			}
-			if (existing) return;						// already shown, nothing to do
-			var b = document.createElement('button');
-			b.className = 'run-on-peer';
-			b.type = 'button';
-			// An icon and a label, so a phone can show the icon alone (the label is
-			// hidden there) and keep the composer wide, while a wide screen reads in
-			// words. The label is the accessible name either way.
-			b.title = t('chat.run_on_peer_help');
-			b.setAttribute('aria-label', t('chat.run_on_peer'));
-			var ic = document.createElement('span');
-			ic.className = 'run-on-peer-ic';
-			ic.setAttribute('aria-hidden', 'true');
-			ic.textContent = '💻';			// laptop
-			var lbl = document.createElement('span');
-			lbl.className = 'run-on-peer-label';
-			lbl.textContent = t('chat.run_on_peer');
-			b.appendChild(ic);
-			b.appendChild(lbl);
-			b.addEventListener('click', function () { dispatchTypedPrompt(); });
-			bar.appendChild(b);
-		} catch (e) { /* the button is a convenience; never let it break the composer */ }
-	}
-	try { window.addEventListener('daimond:unlock', injectRunOnPeerButton); } catch (e) { /* no window */ }
-	// A pull may have carried a peer's first beat (or its last): re-evaluate then.
-	try { window.addEventListener('daimond:pulled', injectRunOnPeerButton); } catch (e) { /* no window */ }
-
 	// ── Presence beat + smart auto-dispatch (step 7) ───────────
-
-	var RUN_ON_PEER_DEFAULT = 'daimond-run-on-peer';	// the global "when awake" default
-
-	/// The account-wide default for "run on my laptop when it is awake".
-	function runOnPeerDefault() {
-		try { return localStorage.getItem(RUN_ON_PEER_DEFAULT) === '1'; } catch (e) { return false; }
-	}
-	function setRunOnPeerDefault(on) {
-		try { localStorage.setItem(RUN_ON_PEER_DEFAULT, on ? '1' : '0'); } catch (e) { /* private mode */ }
-	}
-	/// The per-chat toggle: true/false when the chat has chosen, null to defer to the
-	/// global default. Stored on the chat record (slimChat carries it, so it syncs).
-	function chatRunOnPeer(chat) {
-		return (chat && typeof chat.runOnPeer === 'boolean') ? chat.runOnPeer : null;
-	}
-	function setChatRunOnPeer(chat, on) {
-		if (!chat) return;
-		if (on === null) delete chat.runOnPeer; else chat.runOnPeer = !!on;
-		touchChat(chat); persistChats();
-	}
 
 	/// The agentic signal: full-autonomy hand mode means the user runs tool-heavy
 	/// turns, which are worth offloading. A worker chat is caught by the pure
@@ -12251,10 +12147,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { return false; }
 	}
 
+	/// Is this a phone-sized viewport? On a phone a send auto-routes to an awake
+	/// persistent peer; on desktop it does not (you are already on the persistent
+	/// instance). Read through the shell's own 760px signal, so there is one cliff.
+	function isPhoneViewport() {
+		try { return !!(window.DaimondShell && DaimondShell.isPhone && DaimondShell.isPhone()); }
+		catch (e) { return false; }
+	}
+
 	/// At send-time: hand this turn to a peer instead of running it here, when the
-	/// pure policy says so (fresh peer + a long/agentic turn, or the toggle). Answers
-	/// whether it dispatched; false falls through to the ordinary local run. Guarded,
-	/// so any hiccup runs locally -- the safe default.
+	/// pure policy says so. On a phone with an awake peer that is EVERY turn (the
+	/// answer syncs back); on desktop only a long/agentic turn. Answers whether it
+	/// dispatched; false falls through to the ordinary local run. Guarded, so any
+	/// hiccup runs locally -- the safe default.
 	function maybeAutoDispatch(chat, text) {
 		try {
 			if (!chat || chat.diamondId) return false;			// daimons never dispatch
@@ -12269,9 +12174,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
 			var d = DaimondPeer.autoDispatchDecision(chat, presence, {
 				selfId:        selfDeviceId(),
+				isPhone:       isPhoneViewport(),
 				toolsEnabled:  chatToolsEnabled(chat),
-				toggle:        chatRunOnPeer(chat),
-				globalDefault: runOnPeerDefault(),
 			}, Date.now());
 			if (!d.dispatch) return false;
 			// Prepared exactly as the explicit path, so the parcel push inside
@@ -12308,9 +12212,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// defect this replaces. A missed beat is safe.
 			DaimondPresence.beat(id, name, Date.now());
 			try { if (window.DaimondSync && DaimondSync.beatPresence) DaimondSync.beatPresence(id, name); } catch (e) { /* the next beat carries it */ }
-			// A beat is also when a peer's freshness may have lapsed: keep the "run
-			// on my laptop" button in step with who is actually awake.
-			try { injectRunOnPeerButton(); } catch (e) { /* the button is a convenience */ }
 		} catch (e) { /* a missed beat is safe */ }
 	}
 	function startPresenceBeat() {
@@ -12319,18 +12220,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_presenceTimer = setInterval(presenceTick, (window.DaimondPresence && DaimondPresence.BEAT_MS) || 45000);
 	}
 	try { window.addEventListener('daimond:unlock', startPresenceBeat); } catch (e) { /* no window */ }
-
-	// The "always run on my laptop when awake" toggle, exposed for the settings
-	// switch that reads and sets it. The storage and policy are built and tested
-	// here; the visible switch's placement in chat settings is the live-verified
-	// piece. `get` answers the per-chat choice (null = follow the default).
-	window.__daimondPeerToggle = {
-		label:      function () { return t('chat.run_on_peer_always'); },
-		get:        function () { return current ? chatRunOnPeer(current) : null; },
-		setChat:    function (on) { setChatRunOnPeer(current, on); },
-		getDefault: runOnPeerDefault,
-		setDefault: setRunOnPeerDefault,
-	};
 
 	/// What the model is told when the user presses Continue on a half-written answer.
 	///
@@ -17391,10 +17280,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			enqueueMessage(chat, text);
 			return;
 		}
-		// AUTO-DISPATCH (§4.1): a fresh awake peer plus a long/agentic turn (or the
-		// "run on my laptop when awake" toggle) hands this to the desktop instead of
-		// running it here; a quick foreground turn stays local for instant streaming,
-		// and no fresh peer means local. Guarded, so any hiccup runs locally.
+		// AUTO-DISPATCH (§4.1): with a fresh awake peer, a phone hands EVERY turn to
+		// it (the answer syncs back) and a desktop hands off only a long/agentic turn,
+		// staying local for a quick foreground one; no fresh peer means local. Guarded,
+		// so any hiccup runs locally.
 		if (maybeAutoDispatch(chat, text)) return;
 		clearComposer();
 		runTurn(chat, text);
@@ -35534,10 +35423,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the rest because unlocking is what makes a sealed key readable, and the
 		// row says something different either side of that.
 		SearchRow.render();
-		// The sync switch and the diagnostics trail. Built here rather than in the
-		// markup because every other settings row is, and because both are
-		// useless on a page where `DaimondSafe`/`DaimondTrail` did not load.
-		try { TrailRow.render(); } catch (e) { /* the row is not worth an error */ }
+		// Sync and diagnostics are NOT drawn here. They are device-and-account
+		// controls, not model settings, so they live in the account (user-name)
+		// drawer alone -- see `home.sec_sync` in `renderHomeBody`. They used to be
+		// built into this Models view as well, which is the duplication the owner
+		// flagged; the one home is the account drawer.
 	}
 	/// A string from the table, or the English written here when the table has no
 	/// entry for it yet.
@@ -35613,10 +35503,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var rnote = document.getElementById('cfg-max-rounds-note');
 			if (rnote) {
 				rnote.textContent = tOr('settings.max_rounds_note',
-					'How many times an agent may use a tool before one turn stops. It says so when it '
-					+ 'stops, and you can tell it to carry on.');
+					'How many tool-calls one turn may take.');
 			}
 			var sel = document.getElementById('cfg-max-rounds');
+			// The rest -- what happens at the limit -- rides on the control's hover.
+			sel.title = tOr('settings.max_rounds_help',
+				'It says so when it stops, and you can tell it to carry on.');
 			sel.innerHTML = '';
 			var mine = cfg.maxRounds || 0;
 			var steps = this.STEPS.slice();
@@ -35696,11 +35588,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var fnote = document.getElementById('cfg-fold-at-note');
 			if (fnote) {
 				fnote.textContent = tOr('settings.fold_at_note',
-					'How full the context window gets before Daimond replaces the earlier part of a '
-					+ 'chat with a summary. It says so in the thread when it does. Lower folds sooner '
-					+ 'and more often; higher keeps more of the conversation word for word.');
+					'How full the context gets before earlier chat is summarised.');
 			}
 			var sel = document.getElementById('cfg-fold-at');
+			// The trade-off between folding sooner and keeping more rides on hover.
+			sel.title = tOr('settings.fold_at_help',
+				'It says so in the thread when it folds. Lower folds sooner and more often; '
+					+ 'higher keeps more of the conversation word for word.');
 			sel.innerHTML = '';
 			var mine = Math.round((cfg.foldAt || 0) * 100);
 			var steps = this.STEPS.slice();
@@ -36276,143 +36170,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			warn.textContent = say;
 			warn.style.display = say ? '' : 'none';
-		},
-	};
-
-	/// So it lives in Settings too, behind a button, saying nothing until pressed.
-	var TrailRow = {
-		mount: function () {
-			if (document.getElementById('cfg-trail-btn')) return true;
-			var form = document.getElementById('byok-form');
-			var section = form && form.parentNode;
-			if (!section || !window.DaimondTrail) return false;
-
-			// A PLAIN SWITCH FOR SYNC, always here, on or off.
-			//
-			// Safe mode only ever armed ITSELF, on a loop, and the only control
-			// was a chip that appeared once it had. So a user asked to turn sync
-			// off had nowhere to do it and no way to find that out — which is
-			// exactly what happened, at the worst possible moment, while their
-			// data was being rewritten. A switch that exists only in the failure
-			// it was built for is not a switch.
-			if (window.DaimondSafe) {
-				var slab = document.createElement('label');
-				slab.className = 'cfg-fieldlabel';
-				slab.id = 'cfg-sync-label';
-				var sbtn = document.createElement('button');
-				sbtn.type = 'button';
-				sbtn.className = 'id-trail-btn';
-				sbtn.id = 'cfg-sync-btn';
-				var snote = document.createElement('p');
-				snote.className = 'cfg-fieldnote';
-				snote.id = 'cfg-sync-note';
-				sbtn.addEventListener('click', function () {
-					// `on` is read at the press, not at the build: the row is redrawn
-					// under a language change, and a switch that remembered its old
-					// answer would set the state it is already in.
-					DaimondSafe.set(!DaimondSafe.on(), 'user');    // syncing → we are turning it OFF
-					location.reload();
-				});
-				section.insertBefore(slab, form);
-				section.insertBefore(sbtn, form);
-				section.insertBefore(snote, form);
-			}
-			var lab = document.createElement('label');
-			lab.className = 'cfg-fieldlabel';
-			lab.id = 'cfg-trail-label';
-			var btn = document.createElement('button');
-			btn.type = 'button';
-			btn.className = 'id-trail-btn';
-			btn.id = 'cfg-trail-btn';
-			var note = document.createElement('p');
-			note.className = 'cfg-fieldnote';
-			note.id = 'cfg-trail-note';
-			var out = document.createElement('pre');
-			out.className = 'id-trail-text';
-			out.id = 'cfg-trail-text';
-			out.hidden = true;
-			btn.addEventListener('click', function () {
-				// A second press puts it away again; see the twin of this control in
-				// the account panel for why that matters.
-				if (!out.hidden) {
-					out.hidden = true;
-					TrailRow.copied = false;
-					TrailRow.render();
-					return;
-				}
-				var text = '';
-				try { text = DaimondTrail.text(); } catch (e) { text = ''; }
-				out.textContent = text || tOr('settings.trail_empty', 'Nothing recorded yet.');
-				out.hidden = false;
-				// Shown as well as copied: the clipboard is refused often enough on
-				// a phone that a button which only copies is a button that sometimes
-				// does nothing and says it worked.
-				var done = function () { TrailRow.copied = true; TrailRow.render(); };
-				if (text && navigator.clipboard && navigator.clipboard.writeText) {
-					navigator.clipboard.writeText(text).then(done, function () { fallback(text, done); });
-				} else if (text) { fallback(text, done); }
-			});
-			section.insertBefore(lab, form);
-			section.insertBefore(btn, form);
-			section.insertBefore(note, form);
-			section.insertBefore(out, form);
-			return true;
-		},
-
-		/// Whether the trail has just been copied, so the button can say so — and
-		/// go on saying so in the language now in force. Held here rather than in
-		/// the button's own words, because those are what a redraw replaces.
-		copied: false,
-
-		/// Say what both controls are, to the state they are in.
-		///
-		/// Everything above builds ONCE and returns early ever after, so nothing
-		/// there may write a string: the row would keep the language the panel was
-		/// first opened in for as long as the tab lived.
-		render: function () {
-			if (!this.mount()) return;
-			var slab = document.getElementById('cfg-sync-label');
-			if (slab) slab.textContent = tOr('settings.sync', 'Syncing');
-			var sbtn = document.getElementById('cfg-sync-btn');
-			var on   = !!(window.DaimondSafe && !DaimondSafe.on());   // syncing, that is
-			if (sbtn) {
-				sbtn.textContent = on
-					? tOr('safe.turn_off', 'Start without syncing')
-					: tOr('safe.turn_on', 'Turn syncing back on');
-			}
-			var snote = document.getElementById('cfg-sync-note');
-			if (snote) {
-				snote.textContent = on
-					? tOr('settings.sync_on_note',
-						'This device is sending its work to your other devices. Stopping is '
-							+ 'immediate and loses nothing; everything stays here.')
-					: tOr('settings.sync_off_note',
-						'This device is not syncing. Its work is safe here and is not reaching '
-						+ 'your other devices.');
-			}
-			var lab = document.getElementById('cfg-trail-label');
-			if (lab) lab.textContent = tOr('settings.trail', 'Diagnostics');
-			var btn = document.getElementById('cfg-trail-btn');
-			if (btn) {
-				btn.textContent = this.copied
-					? tOr('trail.copied', 'Copied')
-					: tOr('settings.trail_copy', 'Copy the app’s own trail');
-			}
-			var note = document.getElementById('cfg-trail-note');
-			if (note) {
-				note.textContent = tOr('settings.trail_note',
-					'What Daimond last did: event names and a clock, no keys, no message text, '
-						+ 'nothing from your files. Safe to paste into a bug report.');
-			}
-			// An open trail with nothing in it is a sentence of ours, so it follows
-			// the language too. A trail with lines in it is not: those are event
-			// names, and they are the same in every language.
-			var out = document.getElementById('cfg-trail-text');
-			var has = false;
-			try { has = !!(window.DaimondTrail && DaimondTrail.text()); } catch (e) { has = false; }
-			if (out && !out.hidden && !has) {
-				out.textContent = tOr('settings.trail_empty', 'Nothing recorded yet.');
-			}
 		},
 	};
 

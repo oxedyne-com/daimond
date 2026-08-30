@@ -149,12 +149,6 @@
 	   32px square. Only Send was grown for touch, so the pair read as a large
 	   button beside a small one, bottom-aligned and mismatched. They grow together. */
 	#chat-send, #chat-jump, #chat-end { min-width: 46px; width: 46px; height: 46px; font-size: var(--fs-2xl); }
-	/* The "run on my laptop" button (shown only when a laptop is awake) goes
-	   icon-only on a phone, so it costs one glyph of the bar and the text box
-	   keeps its room. The full label is the button's accessible name. */
-	.run-on-peer { width: 40px; min-width: 40px; height: 46px; padding: 0; font-size: var(--fs-xl); }
-	.run-on-peer .run-on-peer-ic { display: inline; }
-	.run-on-peer .run-on-peer-label { display: none; }
 
 	/* ── The box you type in gets the room ────────────────────────
 	   Measured on a 390px phone: the bar is 372 wide and the text box got 170 of

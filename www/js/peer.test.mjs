@@ -721,6 +721,25 @@ async function runPresenceAcceptance(P, PR, check) {
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', backgrounding: true, turnInFlight: true }, T); return d.dispatch === true && d.reason === 'backgrounding-in-flight'; })());
 	check('a worker chat is agentic -> dispatch',
 		P.autoDispatchDecision(workerChat, fresh, { selfId: 'phone' }, T).reason === 'long-turn');
+
+	// ── The MOBILE policy: a phone hands EVERY turn to an awake peer, quick or not,
+	// because the phone is not where a turn should run when a persistent peer exists;
+	// the answer syncs back. Desktop keeps the old behaviour (it IS the instance). ──
+	check('MOBILE + fresh peer + a plain QUICK turn -> dispatch (mobile-peer), naming the peer',
+		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: true }, T); return d.dispatch === true && d.reason === 'mobile-peer' && d.peer && d.peer.name === 'argonaut'; })());
+	check('DESKTOP (no isPhone) + fresh peer + a QUICK turn -> run local, NOT mobile-peer',
+		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false }, T); return d.dispatch === false && d.reason === 'quick-local'; })());
+	check('MOBILE with NO fresh peer -> run local (never dispatch into the void)',
+		(() => { const d = P.autoDispatchDecision(quickChat, stale, { selfId: 'phone', isPhone: true }, T); return d.dispatch === false && d.reason === 'no-fresh-peer'; })());
+
+	// ── The per-chat OPT-OUT pins a chat to THIS device, and it must beat the mobile
+	// default and the global default alike -- so it is decided before either. ──
+	check('OPT-OUT (toggle false) keeps a chat local even on MOBILE with a peer awake',
+		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: true, toggle: false }, T); return d.dispatch === false && d.reason === 'chat-local'; })());
+	check('OPT-OUT beats a global default ON as well (opt-out is decided first)',
+		P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: true, toggle: false, globalDefault: true }, T).dispatch === false);
+	check('OPT-IN (toggle true) is still an override on DESKTOP (toggle-on, not quick-local)',
+		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false, toggle: true }, T); return d.dispatch === true && d.reason === 'toggle-on'; })());
 }
 
 // ════════════════════════════════════════════════════════════════

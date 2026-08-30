@@ -108,9 +108,10 @@ const SURFACES = [
 		reach:  async (page) => { await click(page, '#astat-model'); },
 		ready:  '#admin-models',
 		root:   '#admin-models',
-		// `cfg-sync-btn` is the settings twin of the account panel's sync switch,
-		// and it leaves for the same reason: it reloads the app.
-		leaves: ['byok-save', 'cfg-sync-btn'],
+		// The sync switch used to have a twin here (`cfg-sync-btn`); it was a
+		// duplicate of the account drawer's own switch and now lives there alone,
+		// so this surface has only the save-and-start hand-off to leave by.
+		leaves: ['byok-save'],
 	},
 	{
 		name:   'Credits',

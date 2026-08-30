@@ -451,7 +451,7 @@
 	/// wired in step 6):
 	///  - `not-dispatched` -> an ordinary turn, ordinary recovery;
 	///  - `peer-held`      -> a LIVE FOREIGN lease holds it: do NOT recover locally,
-	///    show "your laptop is doing this";
+	///    show "running on your other device";
 	///  - `reclaimable`    -> the lease is vacant/expired or ours: recover locally /
 	///    offer Continue.
 	function dispatchState(turn, leaseRec, selfId, now) {
@@ -636,10 +636,21 @@
 	// send-time while online, through the already-proven ordered dispatcher. The
 	// rules, in order:
 	//   - NO fresh peer            -> run locally, never dispatch into the void;
+	//   - a per-chat OPT-OUT       -> keep this chat on THIS device (toggle === false);
 	//   - the toggle is on         -> hand it off (blanket-when-awake for this chat);
+	//   - MOBILE with a peer awake -> hand EVERY turn off (the phone is not where a
+	//                                 turn should run when a persistent peer exists;
+	//                                 sync brings the answer back). Desktop falls
+	//                                 through -- it IS the persistent instance;
 	//   - backgrounding in flight  -> hand it off (the phone is about to sleep);
 	//   - a long/agentic turn      -> hand it off (tools/worker/expected-long);
 	//   - otherwise (quick turn)   -> run locally, for instant streaming.
+	//
+	// The order is money-safe by construction: the NO-fresh-peer guard is first, so
+	// nothing ever dispatches into the void, and the opt-out precedes every "hand it
+	// off" rule, so a chat pinned local cannot be routed away by the mobile default.
+	// Broadening WHICH turns route changes nothing about HOW routing works -- the
+	// single-runner guarantee is the lease's (below), never this decision's.
 
 	/// Decide whether to dispatch, and to whom. Pure. Answers
 	/// `{ dispatch, peer, reason }`.
@@ -647,9 +658,18 @@
 		var o = opts || {}, c = chat || {};
 		var peer = freshestPeer(presence, o.selfId, now, o.freshWindowMs);
 		if (!peer) return { dispatch: false, reason: 'no-fresh-peer' };
-		// The toggle: per-chat, or the global default when the chat has not chosen.
-		var toggle = (o.toggle != null) ? !!o.toggle : !!o.globalDefault;
-		if (toggle) return { dispatch: true, peer: peer, reason: 'toggle-on' };
+		// The per-chat choice: true = always hand off, false = keep on THIS device
+		// (the opt-out), null/undefined = decide by the policy below.
+		var toggle = (o.toggle != null) ? !!o.toggle : null;
+		// An explicit opt-out pins the chat here, even on a phone with a peer awake --
+		// so it must be tested BEFORE the mobile default and before the global one.
+		if (toggle === false) return { dispatch: false, reason: 'chat-local' };
+		// The toggle on, or the global default when the chat has not chosen.
+		if (toggle === true || o.globalDefault) return { dispatch: true, peer: peer, reason: 'toggle-on' };
+		// MOBILE: a persistent peer is awake, so hand EVERY turn off -- quick or
+		// agentic -- rather than run it on the phone; the answer syncs back. Desktop
+		// (no isPhone) falls through: you are already on the persistent instance.
+		if (o.isPhone) return { dispatch: true, peer: peer, reason: 'mobile-peer' };
 		// The phone is backgrounding with a turn still in flight -- move the running
 		// off it before it suspends.
 		if (o.backgrounding && o.turnInFlight) return { dispatch: true, peer: peer, reason: 'backgrounding-in-flight' };
