@@ -1,1 +1,1 @@
-{"build":"e18ae1ab6928","note":"A peer that cannot run a dispatched turn releases the lease and reports why, instead of pinning it silently."}
+{"build":"4540746f51ee","note":"Let a trusted computer finish dispatched or walk-away work without asking at the egress gate."}

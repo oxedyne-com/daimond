@@ -9646,6 +9646,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return true;
 	}
 
+	// This computer's standing answer to "may you act unattended". It lives in
+	// localStorage and NOWHERE ELSE, because it is a fact about THIS machine — its
+	// owner has told it to finish dispatched work on its own — and it must not ride
+	// the sync parcel: arming argonaut must not arm the phone. `collectSync` packs a
+	// fixed, named set of fields, so a key it does not name never travels, and this
+	// one is not named there. See `dev/verify_autonomous_posture.mjs`, which asserts
+	// it stays out of the parcel. The toggle that writes it lives in `handmode.js`,
+	// which reaches this same key by the same name.
+	var AUTONOMOUS_KEY = 'daimond-autonomous-posture';
+
+	/// Does THIS computer hold the autonomous posture?
+	///
+	/// Off by silence: a machine where it was never turned on reads false and keeps
+	/// today's ask-and-park behaviour untouched. Any read error is false too —
+	/// private mode, no storage, a value this build cannot make sense of — because
+	/// the careful reading of "I cannot tell" is "keep asking". Per-computer and
+	/// never synced; see `AUTONOMOUS_KEY`.
+	function autonomousPosture() {
+		try { return localStorage.getItem(AUTONOMOUS_KEY) === '1'; }
+		catch (e) { return false; }
+	}
+
 	// Requests parked on the Pending panel, by tile id, each holding the
 	// `resolve` of the promise the engine is awaiting. In memory, and
 	// deliberately so — see the note above on what a reload takes with it.
@@ -9754,6 +9776,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var strict = !!(opts && opts.strict);
 		var req = {};
 		try { req = JSON.parse(String(payloadJson || '{}')) || {}; } catch (e) { req = {}; }
+		// THIS COMPUTER FINISHES WHAT IT WAS DISPATCHED, WITHOUT ASKING. When its
+		// owner has set the autonomous posture on this machine (`autonomousPosture`)
+		// AND the turn is unattended — a dispatched worker with nobody driving it,
+		// or a screen nobody is at — every act below is allowed with no dialog and
+		// no tile on the Pending panel. The bound on what it may do is the account's
+		// credit at the AI provider and at Daimond, not a question put to an empty
+		// room; that is the owner's decision, and it is why there is no spend gate
+		// here. It sits at the TOP so it covers every tool below it in one place.
+		//
+		// `strict` is excluded and stays excluded: a crystal page's own navigation is
+		// not a model acting, and no posture waves it through. And the whole guard is
+		// a no-op whenever the posture is off — a machine that was never armed reaches
+		// none of this, and every dialog and park below stands exactly as before.
+		if (!strict && autonomousPosture() && (req.alone || !someoneCanAnswer())) {
+			// The yes WORD differs by tool: `run_net` and `social_send` read a bare
+			// `allow` as a refusal (each takes only its own word, see those branches
+			// below), so hand each the one it reads as yes. Every other tool takes the
+			// plain word. Without this the posture would silently fence a walked-away
+			// turn's network commands and publications while allowing its web acts.
+			if (req.tool === 'run_net')     return 'allow-net';
+			if (req.tool === 'social_send') return 'allow-publish';
+			return 'allow';
+		}
 		// The conversation's standing answer, as the engine reports it. Never under
 		// `strict`, whose whole purpose is that no standing answer covers it.
 		var granted = !strict && req.granted === true;
@@ -10142,8 +10187,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	// The wasm tools call this by name, exactly as the cloud bridge is called: an
-	// agent's own tool calls are dispatched inside Rust, not through JS.
-	window.__daimondEgressAllowed = function (payloadJson) { return egressAllowed(payloadJson); };
+	// agent's own tool calls are dispatched inside Rust, not through JS. The wasm
+	// passes one argument, so `opts` is undefined and `strict` is false, exactly as
+	// before; the second parameter is forwarded only so a verifier can drive the
+	// strict path that `pageEgressAllowed` builds in production, and setting
+	// `strict` can only make this MORE cautious (it is never auto-allowed).
+	window.__daimondEgressAllowed = function (payloadJson, opts) { return egressAllowed(payloadJson, opts); };
 
 	// The reachable hand-a-turn-to-a-peer hook (dev/PEER_DESIGN.md §4, step 4).
 	// Exposed so the step-6 state machine that owns the dispatched/claimed/running/

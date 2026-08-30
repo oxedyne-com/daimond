@@ -47,6 +47,15 @@
 	// answerable. This is what gets rid of it.
 	var LS_NET  = 'daimond-net-standing';
 
+	// THIS COMPUTER's autonomous posture: whether it may finish work dispatched to
+	// it while nobody is here, reaching the web, acting on pages and running
+	// commands on its own. Device-local by design and never synced -- arming one
+	// machine must not arm another -- so it is a plain localStorage key like the
+	// rung above it, not per-chat and not per-Diamond. The reader on the other side
+	// is `autonomousPosture()` in daimond.js, which reaches this SAME key by this
+	// SAME name; the two must not drift.
+	var LS_AUTO = 'daimond-autonomous-posture';
+
 	/// The rungs, in the order they are offered: strictest first, so the list
 	/// reads as a ladder and the last row is the one that gives most away.
 	var MODES = ['ask', 'guarded', 'bypass'];
@@ -58,6 +67,37 @@
 
 	function t(k, v) {
 		return (window.DaimondI18n ? DaimondI18n.t(k, v) : k);
+	}
+
+	/// `t`, but with an English fallback for a key the tables do not carry yet.
+	///
+	/// The autonomous-posture strings below are authored here rather than in
+	/// `i18n/en.js`, so `t` would return the key and warn. This gives the plain
+	/// English while leaving the keys ready for a translator, exactly as the
+	/// worker-consent dialogs in `daimond.js` do with their own `tOr`.
+	function tOr(k, fallback, v) {
+		var s = t(k, v);
+		if (s !== k) return s;
+		if (!v) return fallback;
+		return String(fallback).replace(/\{(\w+)\}/g, function (whole, name) {
+			return v[name] != null ? String(v[name]) : whole;
+		});
+	}
+
+	/// Does THIS computer hold the autonomous posture? Off by silence, false on any
+	/// read error, for the reason `load()` falls back to the careful rung.
+	function autoOn() {
+		try { return localStorage.getItem(LS_AUTO) === '1'; }
+		catch (e) { return false; }
+	}
+
+	/// Set it, or clear it. Off is stored as removal, so a machine that was never
+	/// armed and one that was disarmed read the same absent key.
+	function setAuto(on) {
+		try {
+			if (on) localStorage.setItem(LS_AUTO, '1');
+			else localStorage.removeItem(LS_AUTO);
+		} catch (e) { /* private mode: nothing to persist, and off is the safe read */ }
 	}
 
 	function label(name) { return t('permmode.' + name); }
@@ -262,7 +302,44 @@
 		foot.className = 'pop-note';
 		foot.textContent = t('permmode.never');
 		pop.appendChild(foot);
+		renderAutonomous();
 		renderNet();
+	}
+
+	/// This computer's autonomous posture, under a head of its own.
+	///
+	/// It is app-wide like the rungs and device-local like them, so it sits above
+	/// the per-chat network section and below the ladder. Not a fourth rung and not
+	/// a per-chat control: it is one machine's standing decision to get on with work
+	/// dispatched to it while nobody is here. Off until it is turned on, and the
+	/// body says in plain words what a yes lets the machine do and what bounds it --
+	/// the account's provider and Daimond credit, not a dialog.
+	function renderAutonomous() {
+		var head = document.createElement('div');
+		head.className = 'pop-head';
+		head.textContent = tOr('autonomous.head', 'Work on its own when you’re away');
+		pop.appendChild(head);
+		var body = document.createElement('p');
+		body.className = 'pop-note';
+		body.textContent = tOr('autonomous.body',
+			'Let this computer finish tasks you’ve dispatched to it without asking — it '
+				+ 'will reach the web, act on pages and run commands on its own. The limit '
+				+ 'is your provider and Daimond credit. This is set for THIS computer only '
+				+ 'and is off until you turn it on.');
+		pop.appendChild(body);
+		var row = document.createElement('label');
+		row.className = 'dlg-tick auto-row';
+		var box = document.createElement('input');
+		box.type = 'checkbox';
+		box.className = 'dlg-tick-box';
+		box.checked = autoOn();
+		box.setAttribute('aria-label', tOr('autonomous.switch', 'Work unattended on this computer'));
+		box.addEventListener('change', function () { setAuto(box.checked); });
+		var say = document.createElement('span');
+		say.textContent = tOr('autonomous.switch', 'Work unattended on this computer');
+		row.appendChild(box);
+		row.appendChild(say);
+		pop.appendChild(row);
 	}
 
 	/// This chat's own network, under the rungs and under a head of its own.
