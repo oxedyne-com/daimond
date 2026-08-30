@@ -1,1 +1,1 @@
-{"build":"31917db85d14","note":"Offload large Diamonds and chat transcripts out of the inline sync parcel so iOS can complete a sync"}
+{"build":"e18ae1ab6928","note":"A peer that cannot run a dispatched turn releases the lease and reports why, instead of pinning it silently."}

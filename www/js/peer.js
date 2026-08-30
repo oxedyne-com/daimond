@@ -1262,7 +1262,24 @@
 			// 2. RECONSTRUCT the chat and workspace at the errand's version.
 			var ctx;
 			try { ctx = await d.reconstruct(e); trace.push('reconstruct'); }
-			catch (err) { return { ran: false, why: 'reconstruct-failed', trace: trace }; }
+			catch (err) {
+				// The lease was TAKEN above. A reconstruct that throws must NOT leave it
+				// pinned at 'claimed' to the errand's deadline: on an iOS phone that cannot
+				// fire the deadline fallback, that reads as a turn stuck on "picking this
+				// up" for ever, with the engine's real sentence swallowed and nothing to act
+				// on. So SURFACE it and HAND IT BACK -- post an error report carrying the
+				// reason (the phone shows it and offers [Run here]) and release the lease so
+				// the turn is reclaimable at once rather than after the deadline. Nothing ran,
+				// so there is no charge and the release is money-safe.
+				var rwhy = String((err && err.message) || err);
+				trace.push('reconstruct-failed');
+				try { if (typeof console !== 'undefined') console.error('peer: reconstruct failed for turn ' + turnId + ' -- ' + rwhy); } catch (e2) {}
+				try { if (d.post) await d.post(makeReport({ eid: e.eid, turnId: turnId, chatId: e.chatId, status: 'error', why: rwhy })); }
+				catch (e2) { /* the release below still frees the turn */ }
+				try { await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
+				catch (e2) { /* an unreleased lease still expires at its deadline */ }
+				return { ran: false, error: true, why: rwhy, trace: trace };
+			}
 
 			// 3. Transition claimed -> running ONCE -- a semantic state change for the UI
 			// footer ("running" vs "picking this up"), one write, before the turn goes
