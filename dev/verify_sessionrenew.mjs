@@ -185,7 +185,58 @@ try {
 	// edit would prove the request recovered; this proves the WORK travelled.
 	const MARK2 = 'SESSMARK-' + '2';
 	await chat(s, 'And remember the codeword ' + MARK2 + ' too.');
-	const landed = await pushLanded(page, 15000);
+	// The property, tested so it cannot pass by a timing accident: the renewed
+	// push LANDS -- the mailbox moves past where the work started -- AND the client
+	// then reports that same version and HOLDS it. `pushLanded` used to sample the
+	// client's own cursor once, after `chat()` had already let the work push, so a
+	// correct engine that settled the version before the sample read as "no
+	// advance", and the lost-update regression passed only because its cursor
+	// happened to dip below that late sample and recover inside the window. Both
+	// are timing, not the property.
+	//
+	// So this measures the client cursor against the MAILBOX (a `__realFetch` GET,
+	// the authority the client cannot fake) across a settle window LONGER than the
+	// engine's ~5s catch-up throttle. The regression leaves the client a step
+	// behind the mailbox it just wrote to for those whole seconds -- caught here
+	// whether or not a later pull recovers it -- while a correct engine never lags.
+	// The dip is floored at the throttle, so no sampling rate or machine speed can
+	// slip past it. See www/js/sync.js `adoptVersion`.
+	const watch = await page.evaluate(async (start) => {
+		const readServer = async () => {
+			const r = await window.__realFetch('/api/sync', {
+				credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+			});
+			if (r.status !== 200) return -1;
+			const j = await r.json();
+			return j.version | 0;
+		};
+		// Phase 1: drive the push until the MAILBOX itself moves past the start.
+		const t0 = Date.now();
+		let serverV = start, landed = false;
+		while (Date.now() - t0 < 12000) {
+			await window.DaimondSync.push();
+			const v = await readServer();
+			if (v > serverV) serverV = v;
+			if (serverV > start) { landed = true; break; }
+			await new Promise(r => setTimeout(r, 150));
+		}
+		// Phase 2: over a window that outlasts the catch-up throttle, and with no
+		// push of our own to move it, the client cursor must equal the mailbox at
+		// every sample. Any moment a step behind is the lost update.
+		let lagged = false, maxLag = 0, samples = 0;
+		let clientFinal = window.DaimondSync.state().version;
+		const settleEnd = Date.now() + 8000;
+		while (Date.now() < settleEnd) {
+			const cv = window.DaimondSync.state().version;
+			const sv = await readServer();
+			if (sv > serverV) serverV = sv;
+			clientFinal = cv;
+			samples++;
+			if (serverV > start && cv < serverV) { lagged = true; maxLag = Math.max(maxLag, serverV - cv); }
+			await new Promise(r => setTimeout(r, 200));
+		}
+		return { landed, serverV, clientFinal, lagged, maxLag, samples, start };
+	}, before.version);
 	const after = await page.evaluate(async () => {
 		const r = await window.__realFetch('/api/sync', {
 			credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
@@ -205,9 +256,14 @@ try {
 			pageSame: window.__sessRenewPage === 'alive',
 		};
 	});
-	check('a push after the session died still lands — the version advances',
-		landed && after.version > before.version,
-		'version ' + before.version + ' -> ' + after.version);
+	check('a push after the session died lands — the mailbox advances past where the work started',
+		watch.landed && watch.serverV > watch.start && after.version > before.version,
+		'mailbox ' + watch.start + ' -> ' + watch.serverV);
+	check('and the client holds that version, never a step behind the mailbox it just wrote — no lost update',
+		watch.lagged === false && watch.clientFinal === watch.serverV,
+		watch.lagged
+			? 'client fell ' + watch.maxLag + ' behind the mailbox during the settle window (lost update)'
+			: 'client=' + watch.clientFinal + ' mailbox=' + watch.serverV + ' held across ' + watch.samples + ' samples');
 	check('and the mailbox really holds the work that was pushed over the dead session',
 		after.carries.indexOf(MARK2) !== -1,
 		after.carries ? 'blob opened, ' + after.carries.length + ' bytes' : 'blob did not open');

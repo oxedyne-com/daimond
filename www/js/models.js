@@ -1388,6 +1388,34 @@
 		save();
 	}
 
+	// ── The drafting model ──────────────────────────────────────────
+	// The note→proposal drafting in triage.js runs on the CHAT model unless a model
+	// is chosen HERE. This is the one global task routed to a model of its own, the
+	// way a Diamond's vision and worker already are per Diamond. UNSET means "same as
+	// chat", so the whole feature is exactly as it was until somebody chooses.
+
+	function getDraft() {
+		var dr = store.draft || {};
+		return { provider: dr.provider || '', model: dr.model || '' };
+	}
+	/// Empty model clears the setting: drafting falls back to the chat default. The
+	/// provider is dropped with it, since a provider with no model names nothing.
+	function setDraft(provider, model) {
+		store.draft   = { provider: model ? (provider || '') : '', model: model || '' };
+		store.draftAt = Date.now();			// which device chose last, for the merge
+		save();
+	}
+
+	/// What the note→proposal drafting runs on: the drafting model when one is set,
+	/// the chat model when it is not. The SAME shape `resolve` answers, so a caller
+	/// cannot tell a defaulted run from a chosen one and the cost line prices
+	/// whichever it actually is.
+	function resolveDraft() {
+		var dr = getDraft();
+		if (dr.model) return resolve(dr.provider, dr.model);
+		return resolve('', '');
+	}
+
 	/// What a chat needs to actually run: the endpoint, the key and the model.
 	///
 	/// A chat records the provider it was started on, so switching the default later does not
@@ -1439,6 +1467,9 @@
 		delete plain[id];
 		delete probes[id];					// no floor to hold back a key that is gone
 		if (store.def.provider === id) store.def = { provider: '', model: '' };
+		// A drafting model on the removed provider falls back to the chat model, the
+		// same way the default does rather than pointing at nothing.
+		if (store.draft && store.draft.provider === id) store.draft = { provider: '', model: '' };
 		// Before the store is written, so the very next push carries the deletion:
 		// there is one way into this function and every delete in the panel comes
 		// through it, which is what keeps the tombstone from being forgotten at one
@@ -1555,6 +1586,9 @@
 			v:     2,
 			def:   { provider: store.def.provider || '', model: store.def.model || '' },
 			defAt: ms(store.defAt),
+			draft:   { provider: (store.draft && store.draft.provider) || '',
+				model:  (store.draft && store.draft.model)  || '' },
+			draftAt: ms(store.draftAt),
 			providers: {},
 			// What was deleted here, so the other device deletes it too rather than
 			// handing it back on the next pull.
@@ -1617,6 +1651,7 @@
 			delete store.providers[id];
 			delete plain[id];
 			if (store.def.provider === id) store.def = { provider: '', model: '' };
+			if (store.draft && store.draft.provider === id) store.draft = { provider: '', model: '' };
 			updated++;
 		});
 		Object.keys(remote.providers).sort().forEach(function (id) {
@@ -1691,6 +1726,17 @@
 			&& store.providers[remote.def.provider]) {
 			store.def   = { provider: remote.def.provider, model: remote.def.model || '' };
 			store.defAt = rAt;
+			updated++;
+		}
+		// The drafting model travels on the same rule as the default, with one added
+		// case: an UNSET draft (empty model, empty provider) is a real choice — "use
+		// the chat model" — and adopts freely, since it points at no provider to be
+		// missing after the merge.
+		var drAt = ms(remote.draftAt);
+		if (drAt > ms(store.draftAt) && remote.draft
+			&& (!remote.draft.provider || store.providers[remote.draft.provider])) {
+			store.draft   = { provider: remote.draft.provider || '', model: remote.draft.model || '' };
+			store.draftAt = drAt;
 			updated++;
 		}
 		// Fill the gaps in the plaintext cache, never overwrite it.
@@ -2173,6 +2219,50 @@
 			if (fc) foot.appendChild(fc);
 		}
 		el.appendChild(foot);
+
+		// The drafting model, once there is at least one model to draft with. Below
+		// the default because it is a refinement of it: unset, it IS the default.
+		if (list.some(function (p) { return p.count > 0; })) el.appendChild(draftFoot(d));
+	}
+
+	/// The drafting-model row under the default: the model triage.js uses to turn
+	/// notes into proposals. One `<select>` whose first option is "same as chat" —
+	/// picking it clears the setting, so the row can always be put back to the
+	/// zero-config state it starts in — and everything below it is the ordinary model
+	/// list, so a drafting model is chosen exactly the way a chat's is.
+	function draftFoot(d) {
+		var box = document.createElement('div');
+		box.className = 'models-draft';
+		var dr = getDraft();
+
+		var lab = document.createElement('label');
+		lab.className = 'models-draft-lab';
+		lab.textContent = t('models.drafting_label');
+		lab.title = t('models.drafting_help');
+
+		var sel = document.createElement('select');
+		sel.className = 'models-draft-sel';
+		lab.appendChild(sel);
+		fillSelect(sel, dr.provider, dr.model);
+		// The sentinel first, and selected when nothing is set, so drafting reads as
+		// what it is -- the chat model, named rather than left blank.
+		var same = document.createElement('option');
+		same.value = '';
+		same.textContent = (d.provider && d.model)
+			? t('models.drafting_same_on', { model: d.model })
+			: t('models.drafting_same');
+		sel.insertBefore(same, sel.firstChild);
+		if (!dr.model) same.selected = true;
+
+		// A sentinel value of '' clears the setting through `setDraft`, so choosing it
+		// is the one gesture that puts drafting back on the chat model.
+		sel.addEventListener('change', function () {
+			var g = pick(sel);
+			setDraft(g.provider, g.model);
+			render();
+		});
+		box.appendChild(lab);
+		return box;
 	}
 
 	/// The panel's one message line.
@@ -2503,6 +2593,10 @@
 		getDefault:     getDefault,
 		setDefault:     setDefault,
 		resolve:        resolve,
+		// The drafting model: the note→proposal task's own model, defaulting to chat.
+		getDraft:       getDraft,
+		setDraft:       setDraft,
+		resolveDraft:   resolveDraft,
 		ready:          ready,
 		providerName:   providerName,
 		// The store as it travels between devices, and the merge on arrival.

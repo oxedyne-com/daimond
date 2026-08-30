@@ -1047,6 +1047,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// here, and so it goes when the chat goes — a scope that outlived its chat
 			// would be a fence around a conversation nobody can open.
 			holds: Array.isArray(c.holds) ? c.holds : [],
+			// The per-chat "run on my laptop when awake" toggle: true/false when the
+			// chat has chosen, absent to defer to the account default. Travels so the
+			// choice follows the chat across devices.
+			runOnPeer: (typeof c.runOnPeer === 'boolean') ? c.runOnPeer : undefined,
 			updatedAt: c.updatedAt || 0, foldedInto: c.foldedInto || null };
 	}
 	function readJson(key, fallback) {
@@ -2102,6 +2106,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// itself overnight is worse than one that was never offered, and the
 			// workspace mark rides here, so it would have taken the fence with it.
 			holds: Array.isArray(c.holds) ? c.holds : [],
+			// The per-chat "run on my laptop when awake" toggle: true/false when the
+			// chat has chosen, absent to defer to the account default. Travels so the
+			// choice follows the chat across devices.
+			runOnPeer: (typeof c.runOnPeer === 'boolean') ? c.runOnPeer : undefined,
 			updatedAt: c.updatedAt || 0, foldedInto: c.foldedInto || null };
 	}
 	/// Open the store and hand back what it holds, hydrated — everything the user
@@ -4766,6 +4774,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// every reader most likely to meet one. It carries the messages and the
 		// people as well now, and it is called Social.
 		social: 1,
+		// The Proposals board is a review surface you dip into, not somewhere you
+		// sit -- and, like the others here, it has no `body[data-mpanel="tracker"]`
+		// rule in responsive.css, so reaching it as a bar destination would blank
+		// the phone. It rises as a sheet instead.
+		tracker: 1,
 	};
 	function mshow(name) {
 		// A phone showing something other than the conversation is a phone that is
@@ -9637,9 +9650,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!what.trim()) return 'deny';		// nothing to show, so nothing to authorise.
 			var okPub = await confirmDialog(
 				tOr('social.publish_body',
-					'Daimond wants to publish this, in your name, where other people can read it. '
-						+ 'It cannot be taken back.\n\n{what}\n\nIf you did not expect this, decline. '
-						+ 'Nothing is lost but this one publication.',
+					'Daimond will publish this in your name, for anyone to read. It cannot be taken back.'
+						+ '\n\n{what}\n\nDecline if you did not expect it.',
 					{ what: what }),
 				tOr('social.publish_ok', 'Publish it'),
 				{ title: tOr('social.publish_title', 'Publish this?'), danger: true });
@@ -9860,6 +9872,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// The wasm tools call this by name, exactly as the cloud bridge is called: an
 	// agent's own tool calls are dispatched inside Rust, not through JS.
 	window.__daimondEgressAllowed = function (payloadJson) { return egressAllowed(payloadJson); };
+
+	// The explicit "run on my laptop" entry point (dev/PEER_DESIGN.md §4, step 4).
+	// Exposed as a reachable hook so the control that invokes it -- and the step-6
+	// state machine that owns the dispatched/claimed/running/done UI and its §5 copy
+	// -- can call the one dispatch path, without this step reaching into the
+	// composer DOM blind. The ORDER and the errand it runs are tested in
+	// peer.test.mjs via DaimondPeer.buildDispatch.
+	window.__daimondDispatchToPeer = function (chat, turnId, promptText, scopePaths) {
+		return dispatchToPeer(chat, turnId, promptText, scopePaths);
+	};
 
 	/// A link a crystal page asked the app to follow, put to the user.
 	///
@@ -11737,6 +11759,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		div.classList.add('interrupted');
 		var foot = document.createElement('div');
 		foot.className = 'turn-interrupted';
+		// A turn handed to a peer draws the §5 state machine, not the local
+		// interrupted copy: its words and its control depend on the lease and the
+		// report, which DaimondPeer.uiState decides (step 6).
+		if (m.why === 'dispatched' && window.DaimondPeer && DaimondPeer.uiState) {
+			renderDispatchedFooter(foot, m);
+			div.appendChild(foot);
+			return;
+		}
 		var label = document.createElement('span');
 		label.className = 'ti-label';
 		// WHICH interruption. A turn that died on the road and a turn that died with the tab
@@ -11758,6 +11788,549 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		foot.appendChild(label); foot.appendChild(btn);
 		div.appendChild(foot);
 	}
+
+	/// Draw the §5 footer for a turn handed to a peer: the words for its current
+	/// state and the one control that state offers. The state is decided by the pure
+	/// `DaimondPeer.uiState` (peerUiStateFor); this only renders it. Literal `t()`
+	/// keys, so dev/i18ncheck.mjs can read every one out of the source.
+	function renderDispatchedFooter(foot, m) {
+		var st = peerUiStateFor(m);
+		if (st === 'done') return;			// the merged answer draws itself; no badge
+		var label = document.createElement('span');
+		label.className = 'ti-label';
+		// The machine's NAME when we have it ("argonaut is doing this."), else the
+		// generic wording ("Your laptop is doing this."). The name comes from the
+		// presence beat of whoever holds the lease.
+		var holder = (window.DaimondLease && DaimondLease.holder) ? DaimondLease.holder(m.iturn) : null;
+		var name = (holder && window.DaimondPresence && DaimondPresence.name) ? DaimondPresence.name(holder) : '';
+		if      (st === 'no-peer-awake') label.textContent = t('turn.peer_none');
+		else if (st === 'claimed')       label.textContent = name ? t('turn.peer_claimed_named', { name: name }) : t('turn.peer_claimed');
+		else if (st === 'running')       label.textContent = name ? t('turn.peer_running_named', { name: name }) : t('turn.peer_running');
+		else if (st === 'failed')        label.textContent = t('turn.peer_failed');
+		else                             label.textContent = t('turn.peer_sent');	// dispatched
+		foot.appendChild(label);
+		// The one control this state offers. A live claim (claimed/running) can be
+		// TAKEN BACK; a stall or a failure (no-peer-awake/failed) can be RUN HERE.
+		if (st === 'running' || st === 'claimed') {
+			var tb = document.createElement('button');
+			tb.className = 'ti-continue';
+			tb.textContent = t('turn.peer_takeback');
+			tb.addEventListener('click', function () { peerTakeBack(m.iturn); });
+			foot.appendChild(tb);
+		} else if (st === 'failed' || st === 'no-peer-awake') {
+			var rh = document.createElement('button');
+			rh.className = 'ti-continue';
+			rh.textContent = t('turn.peer_runhere');
+			rh.addEventListener('click', function () { continueTurn(current, m.iturn, m.itext); });
+			foot.appendChild(rh);
+		}
+	}
+
+	// ── Hand a turn to a peer (dev/PEER_DESIGN.md §4, step 4) ───
+	//
+	// The THIN wiring. The order and the whole errand live in
+	// `DaimondPeer.buildDispatch`; this runs the order and nothing more, so the
+	// load-bearing sequence (§4.1) is under test in peer.test.mjs rather than buried
+	// here. The explicit "run on my laptop" path only; the loss-branch auto-dispatch
+	// is step 4b, gated behind the iOS loss classifier, and is deliberately NOT
+	// wired here.
+
+	/// Is `chat` the one on screen right now (and still a live chat)? The IIFE-scope
+	/// ownership check the peer wiring needs. `runTurn` has its own arg-less `owns`
+	/// closed over its turn's chat; that closure is invisible out here, so the peer
+	/// functions must not call a bare `owns()` (a ReferenceError that killed every
+	/// dispatch) — they call this with the chat they mean.
+	function ownsChat(chat) {
+		return current === chat && chats.indexOf(chat) !== -1;
+	}
+
+	/// Mark a local turn peer-held, so recoverInterrupted and Continue leave it
+	/// alone (the record shape the `offline` branch of runTurn's catch writes, with
+	/// the dispatched reason). An empty placeholder, because a dispatch happens
+	/// before any token.
+	function markTurnDispatched(chat, mark) {
+		chat.messages = chat.messages || [];
+		chat.messages.push({
+			role:        'assistant',
+			content:     '',
+			mid:         newMid(),
+			interrupted: true,
+			why:         mark.why,			// 'dispatched'
+			iturn:       mark.iturn,
+			itext:       mark.itext,
+			dispatchedBy: mark.dispatchedBy,
+			ts:          Date.now(),
+		});
+		if (ownsChat(chat)) renderHistory(chat.messages);
+		touchChat(chat);
+		persistChats();
+	}
+
+	/// Dispatch a turn to a peer of this account. STRICT ORDER (§4.1), each step
+	/// durable before the next: push the prompt parcel FIRST and capture the version
+	/// it committed at, mark the local turn peer-held SECOND, seal and post the
+	/// errand LAST carrying that version. The errand is never posted before the
+	/// prompt is on the server. Answers `{ ok, why }`.
+	async function dispatchToPeer(chat, turnId, promptText, scopePaths) {
+		if (!window.DaimondPeer || !DaimondPeer.buildDispatch
+			|| !window.DaimondPost || !DaimondPost.post
+			|| !window.DaimondSync  || !DaimondSync.push) {
+			return { ok: false, why: 'the peer transport is not available in this build' };
+		}
+		var pause = null;
+		try { if (window.DaimondPause) pause = DaimondPause.snapshot(); } catch (e) { pause = null; }
+		// This device's stable id, for "waiting for <machine>" and so a peer never
+		// claims its own dispatch. The PER-DEVICE id, not the account key: pairing
+		// shares the key, so a key-derived `by` could not tell a device from its twin.
+		var by = selfDeviceId();
+		var plan = DaimondPeer.buildDispatch(chat, {
+			turnId: turnId,
+			prompt: promptText,
+			// The chat's OWN model. The url is resolved by the peer from the provider
+			// (models.js), so it is left for the runner rather than looked up here.
+			model:  { provider: chat.provider || '', model: chat.model || '', url: '' },
+			scope:  scopePaths || (Array.isArray(chat.holds) ? chat.holds : []),
+			pause:  pause,
+			dispatchedBy: by,
+		});
+		// 1. PUSH THE PROMPT PARCEL FIRST, then read the version it committed at.
+		try { await DaimondSync.push(); }
+		catch (e) { return { ok: false, why: 'the prompt could not be saved to the server' }; }
+		var parcelVersion = 0;
+		try { parcelVersion = DaimondSync.version() | 0; } catch (e) { parcelVersion = 0; }
+		// 2. MARK the local turn peer-held.
+		markTurnDispatched(chat, plan.mark);
+		// 3. POST the errand LAST, carrying that version.
+		var body;
+		try { body = await DaimondPeer.sealForSelf(plan.errand(parcelVersion)); }
+		catch (e) { return { ok: false, why: 'the errand could not be sealed: ' + (e && e.message || e) }; }
+		var res = await DaimondPost.post(body);
+		if (!res || !res.ok) return { ok: false, why: (res && res.why) || 'the relay would not take the errand' };
+		return { ok: true, turnId: turnId, parcelVersion: parcelVersion };
+	}
+
+	// ── The peer runner wiring (dev/PEER_DESIGN.md §4.3, step 5) ─
+	//
+	// THIN glue. The ordered, tested logic is DaimondPeer.runErrand (take -> run ->
+	// push -> report -> release, hard-abort on revoke, ack only after commit); this
+	// supplies the real deps and registers it on DaimondPeer.onErrand, so an errand
+	// collected on a Channel::Post wake (takeRow -> peek -> absorb, step 2) reaches
+	// it. Three pieces are running-app integration points, flagged for live
+	// verification because the node harness cannot exercise them: the reconstruct's
+	// pull-to-parcelVersion and by-hash chunk fetch, and the renew timer.
+
+	/// The sync-like object the lease CAS binds to (DaimondPeer.syncCas). `commit`
+	/// installs the proposed leases section and pushes it under the parcel's CAS; the
+	/// 409 path is DaimondSync's own pull + DaimondLease.adopt.
+	function peerSyncShim() {
+		return {
+			version: function () { try { return DaimondSync.version() | 0; } catch (e) { return 0; } },
+			leases:  function () { try { return DaimondLease.snapshot() || {}; } catch (e) { return {}; } },
+			commit:  async function (base, proposed) {
+				var cur = 0;
+				try { cur = DaimondSync.version() | 0; } catch (e) { cur = 0; }
+				if (cur !== base) return { ok: false, version: cur, leases: DaimondLease.snapshot() || {} };
+				DaimondLease.install(proposed);				// stage it for the push
+				try { await DaimondSync.push(); }
+				catch (e) { return { ok: false, version: cur, leases: DaimondLease.snapshot() || {} }; }
+				var after = cur;
+				try { after = DaimondSync.version() | 0; } catch (e) { after = cur; }
+				if (after > cur) return { ok: true, version: after };
+				return { ok: false, version: after, leases: DaimondLease.snapshot() || {} };
+			},
+		};
+	}
+
+	/// Reconstruct the chat and its workspace for an errand: find the chat (present
+	/// after the wake's sync), build its app and scope it to the errand's fence.
+	/// FLAGGED: the pull-to-parcelVersion and the by-hash chunk fetch (chunks.js)
+	/// belong here and need running-app verification.
+	async function peerReconstruct(errand) {
+		var chat = null;
+		for (var i = 0; i < chats.length; i++) if (chats[i].id === errand.chatId) { chat = chats[i]; break; }
+		if (!chat) throw new Error('the errand names a chat this device does not hold yet');
+		// D3 — rebuild the agent from the freshly-synced transcript (a stale app from
+		// before the sync would carry neither the dispatched prompt nor whatever the
+		// phone did since), and SEED IT WITHOUT the errand's own user prompt: runTurn
+		// re-sends that prompt through `run_turn`, so seeding it too would feed the
+		// model the same message twice. `ensureApp`'s `exceptMid` drops exactly the one
+		// message whose mid is the turn id; runTurn (promptInTranscript) then does not
+		// append a duplicate to the transcript either.
+		chat.app = null;
+		var app = ensureApp(chat, String(errand.turnId || ''));
+		await scopeChatTo(app, chat.id);
+		return { chat: chat, app: app };
+	}
+
+	/// Register the runner. Idempotent (DaimondPeer.onErrand just sets the handler),
+	/// so it is safe to call on every unlock.
+	function registerPeerRunner() {
+		if (!window.DaimondPeer || !DaimondPeer.onErrand || !DaimondPeer.runErrand) return false;
+		// The lease `holder` this peer writes: the PER-DEVICE id, so its claim is
+		// distinguishable from a paired twin's (a key-derived id would collide and let
+		// both run the turn). Read at each errand, not captured here, so a device that
+		// mints its id lazily still holds the right one.
+		DaimondPeer.onErrand(async function (errand) {
+			// D1(a/c). A device NEVER runs its OWN dispatched errand. On its return from
+			// the background the phone re-collects its own self-posted errand
+			// (peerCollectOnReturn); routed here and run it would re-take the peer's
+			// released lease and re-run the finished turn -- a second completion and a
+			// second charge. Skip it: the collect loop already advances the post-box
+			// cursor past the row (post.js), and the peer that RAN it acked the relay
+			// row on commit, so nothing re-collects it. Deliberately NOT acked here -- a
+			// phone still awake that collects before the peer has picked the errand up
+			// must not yank it from the relay. runErrand carries the same guard, so this
+			// is belt-and-braces.
+			if (errand && String(errand.dispatchedBy) && String(errand.dispatchedBy) === String(selfDeviceId())) {
+				return { ran: false, why: 'self-dispatched' };
+			}
+			var cas = DaimondPeer.syncCas(peerSyncShim());
+			var ctx = null;
+			return await DaimondPeer.runErrand(errand, {
+				selfId: selfDeviceId(),
+				cas:    cas,
+				// D1(b). Whether this errand's turn is already FINISHED, so a released
+				// lease (which reads vacant) is not re-taken and re-run. Two proofs the
+				// turn completed: a done report collected for it, or the answer already
+				// merged into the transcript (a non-empty assistant message under the
+				// turn's iturn). Either means stand down before the take.
+				finished: async function (er) {
+					try {
+						var tid = String(er.turnId);
+						var rep = peerReports[tid];
+						if (rep && rep.status === 'done') return true;
+						for (var ci = 0; ci < chats.length; ci++) {
+							var c = chats[ci];
+							if (!c || c.id !== er.chatId || !c.messages) continue;
+							for (var mi = 0; mi < c.messages.length; mi++) {
+								var m = c.messages[mi];
+								if (m.role === 'assistant' && String(m.iturn) === tid
+									&& m.content && m.content.trim() && !m.interrupted) return true;
+							}
+						}
+					} catch (e) { /* on any doubt, let the lease decide */ }
+					return false;
+				},
+				reconstruct: async function (er) { ctx = await peerReconstruct(er); return ctx; },
+				// The ordinary turn engine. A renew timer calls the runner's own
+				// onProgress (which renews the lease and hard-aborts on revoke) at the
+				// renew cadence -- the thin stand-in for the journal-event piggyback
+				// (§2.4), refined in the running app; chat.app.abort is the hard stop.
+				runTurn: async function (c, prompt, opts) {
+					var timer = setInterval(function () {
+						try { opts.onProgress(); } catch (e) { /* renew best effort */ }
+					}, (DaimondLease.RENEW_EVERY_MS || 30000));
+					// D3 — the prompt is already in the reconstructed transcript, so tell
+					// runTurn to run against it rather than append a second copy.
+					try { await runTurn(c.chat, prompt, { promptInTranscript: !!(opts && opts.promptInTranscript), turnId: opts && opts.turnId }); }
+					finally { clearInterval(timer); }
+				},
+				abort: function () { try { if (ctx && ctx.chat && ctx.chat.app) ctx.chat.app.abort(); } catch (e) { /* idempotent */ } },
+				pushResult: async function () {
+					try { if (ctx && ctx.chat) captureSession(ctx.chat, ctx.app); } catch (e) { /* best effort */ }
+					try { await DaimondSync.push(); } catch (e) { /* the report still nudges */ }
+					try { return DaimondSync.version() | 0; } catch (e) { return 0; }
+				},
+				post: async function (report) {
+					try { var body = await DaimondPeer.sealForSelf(report); await DaimondPost.post(body); }
+					catch (e) { /* the answer is already in the parcel */ }
+				},
+				ack: async function () { try { await DaimondPost.ack(); } catch (e) { /* re-collect is idempotent */ } },
+			});
+		});
+		// The DISPATCHING side: a report is the nudge that a dispatched turn is
+		// settled. Stash it by turnId for the UI state machine, and on a `done` drop
+		// the local "dispatched" placeholder so the merged answer stands alone (the
+		// iturn tombstone path, §2.6 / §4.5).
+		DaimondPeer.onReport(function (report) {
+			try {
+				peerReports[String(report.turnId)] = report;
+				if (report.status === 'done') dropDispatchedPlaceholder(String(report.turnId));
+				renderDispatchedBadges();
+			} catch (e) { /* a report is only a nudge */ }
+		});
+		// D4 — a lease learned through a SYNC pull (the phone watching the peer claim,
+		// then run, its turn) moves the local lease view but touches no message record,
+		// so the dispatched footer would sit on "Sent to your other devices" and never
+		// advance to "running" or show "[Take back]". Re-render the badges whenever the
+		// lease view moves, so a sync update advances the footer the way a report does.
+		try { if (DaimondLease && DaimondLease.onChange) DaimondLease.onChange(renderDispatchedBadges); }
+		catch (e) { /* no lease module: the footer still advances on a report */ }
+		return true;
+	}
+	// Registered on unlock, by which point every peer module is loaded; idempotent,
+	// so re-registering on a later unlock simply replaces the handler.
+	try { window.addEventListener('daimond:unlock', registerPeerRunner); } catch (e) { /* no window */ }
+
+	// ── The dispatching side: state, controls, return collect ──
+
+	/// Reports collected for dispatched turns, by turnId, for the UI state machine.
+	var peerReports = {};
+
+	/// This device's stable id -- a PER-DEVICE random id (identity.js:deviceId), NOT
+	/// the account public key. Pairing copies the account key onto every device, so
+	/// two paired devices would share a key-derived id: presence would self-exclude
+	/// the only peer, and both twins would write the same lease `holder` and both
+	/// run and bill the turn. The device id is distinct per device, which is what the
+	/// lease's foreign-holder test and presence rely on.
+	function selfDeviceId() {
+		try { return (window.DaimondIdentity && DaimondIdentity.deviceId()) || ''; }
+		catch (e) { return ''; }
+	}
+
+	/// The §5 display state of a dispatched turn message, via the pure classifier.
+	function peerUiStateFor(m) {
+		if (!window.DaimondPeer || !DaimondPeer.uiState) return 'dispatched';
+		var lease  = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(m.iturn) : null;
+		var report = peerReports[String(m.iturn)] || null;
+		return DaimondPeer.uiState(m, lease, report, selfDeviceId(), Date.now());
+	}
+
+	/// The phone's TAKE-BACK (§3.3): revoke the lease whoever holds it. The peer's
+	/// next renew reads `released` and hard-aborts (proven in peer.test.mjs); the
+	/// turn is then reclaimable locally.
+	async function peerTakeBack(turnId) {
+		try {
+			if (!window.DaimondLease || !DaimondLease.revoke) return;
+			await DaimondLease.revoke(turnId, DaimondPeer.syncCas(peerSyncShim()));
+			renderDispatchedBadges();
+		} catch (e) { /* a revoke that could not land leaves the peer running; the UI reflects it */ }
+	}
+
+	/// Drop the empty "dispatched" placeholder for a turn once its answer has merged,
+	/// so the real assistant message (same iturn, different mid) stands alone.
+	/// Tombstoned, so a later merge does not resurrect it.
+	function dropDispatchedPlaceholder(turnId) {
+		for (var i = 0; i < chats.length; i++) {
+			var c = chats[i];
+			if (!c.messages) continue;
+			var kept = [];
+			for (var j = 0; j < c.messages.length; j++) {
+				var m = c.messages[j];
+				if (m.why === 'dispatched' && m.iturn === turnId && !(m.content && m.content.trim())) {
+					msgTombstone([m.mid]);
+					continue;			// drop the empty placeholder
+				}
+				kept.push(m);
+			}
+			if (kept.length !== c.messages.length) {
+				c.messages = kept;
+				if (ownsChat(c)) renderHistory(c.messages);
+				touchChat(c); persistChats();
+			}
+		}
+	}
+
+	/// Redraw the interrupted badges, so a state change (a lease claimed, a report
+	/// arrived) reaches the footer. Cheap: re-renders the current chat's history.
+	function renderDispatchedBadges() {
+		try { if (current && ownsChat(current) && current.messages) renderHistory(current.messages); }
+		catch (e) { /* nothing drawn */ }
+	}
+
+	/// On return to a foregrounded tab, collect the post box so a `report` clears the
+	/// "waiting" UI; the parcel (with the merged answer) is pulled by sync's own
+	/// focus path (§4.5). Wired beside the durability visibility hook.
+	function peerCollectOnReturn() {
+		try { if (window.DaimondPost && DaimondPost.collect) DaimondPost.collect(); } catch (e) { /* offline */ }
+	}
+	try {
+		document.addEventListener('visibilitychange', function () {
+			if (document.visibilityState === 'visible') peerCollectOnReturn();
+		});
+	} catch (e) { /* no document */ }
+
+	/// The explicit "run on my laptop" path (§4.1): take what is typed, make it a
+	/// turn, and hand it to a peer instead of running it here. Prepared exactly as an
+	/// ordinary send (mint the turn id, append the prompt) so the parcel push inside
+	/// dispatchToPeer carries it, then dispatched in the strict order (§4.1).
+	async function dispatchTypedPrompt() {
+		var chat = current;
+		if (!chat) return;
+		var text = (chatInput && chatInput.value) ? chatInput.value.trim() : '';
+		if (!text) return;
+		var umid = newMid();
+		try { appendUserMessage(text); } catch (e) { /* the record below is the truth */ }
+		chat.messages.push({ role: 'user', content: text, mid: umid, iturn: umid, ts: Date.now() });
+		touchChat(chat); persistChats();
+		if (chatInput) chatInput.value = '';
+		var res = await dispatchToPeer(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : []);
+		if (!res || !res.ok) { try { appendError((res && res.why) || 'could not hand this to a peer'); } catch (e) { /* drawn best-effort */ } }
+	}
+
+	/// Is there an awake desktop peer -- a fresh presence beat that is not this
+	/// device -- to hand a turn to? The one question the "run on my laptop" button
+	/// waits on, read through the same `awake()` the auto-dispatch decision reads.
+	function awakePeerPresent() {
+		try {
+			if (!window.DaimondPresence || !DaimondPresence.awake) return false;
+			var list = DaimondPresence.awake(selfDeviceId(), Date.now());
+			return !!(list && list.length);
+		} catch (e) { return false; }
+	}
+
+	/// Add or remove the "run on my laptop" button in the composer, to match the
+	/// presence. Guarded and idempotent: a missing bar or a repeat call is a no-op,
+	/// and a throw never reaches the composer. FLAGGED for live placement -- its
+	/// position and styling in the bar are the screenshot-verified part; the
+	/// handler above is tested.
+	function injectRunOnPeerButton() {
+		try {
+			// The button offers to hand this turn to a laptop, so it belongs on
+			// screen ONLY while a laptop is actually there to take it -- a fresh
+			// presence beat from another device. Two reasons, and the second is the
+			// bug this closes: a button for a laptop that is asleep is a dead
+			// control that hands turns into the void; and while it sits there it
+			// takes its share of the composer, which on a phone squeezed the text
+			// box below half the bar (verify_chathead). No awake peer, no button,
+			// and the input keeps the whole bar. Re-run on every presence beat and
+			// after every pull, so it appears the moment a laptop wakes and leaves
+			// when the beat goes stale.
+			if (!window.DaimondPeer) return;
+			var bar = document.querySelector('.chat-input-bar');
+			if (!bar) return;
+			var existing = bar.querySelector('.run-on-peer');
+			if (!awakePeerPresent()) {
+				if (existing) existing.remove();		// the laptop went quiet: give the bar back
+				return;
+			}
+			if (existing) return;						// already shown, nothing to do
+			var b = document.createElement('button');
+			b.className = 'run-on-peer';
+			b.type = 'button';
+			// An icon and a label, so a phone can show the icon alone (the label is
+			// hidden there) and keep the composer wide, while a wide screen reads in
+			// words. The label is the accessible name either way.
+			b.title = t('chat.run_on_peer_help');
+			b.setAttribute('aria-label', t('chat.run_on_peer'));
+			var ic = document.createElement('span');
+			ic.className = 'run-on-peer-ic';
+			ic.setAttribute('aria-hidden', 'true');
+			ic.textContent = '💻';			// laptop
+			var lbl = document.createElement('span');
+			lbl.className = 'run-on-peer-label';
+			lbl.textContent = t('chat.run_on_peer');
+			b.appendChild(ic);
+			b.appendChild(lbl);
+			b.addEventListener('click', function () { dispatchTypedPrompt(); });
+			bar.appendChild(b);
+		} catch (e) { /* the button is a convenience; never let it break the composer */ }
+	}
+	try { window.addEventListener('daimond:unlock', injectRunOnPeerButton); } catch (e) { /* no window */ }
+	// A pull may have carried a peer's first beat (or its last): re-evaluate then.
+	try { window.addEventListener('daimond:pulled', injectRunOnPeerButton); } catch (e) { /* no window */ }
+
+	// ── Presence beat + smart auto-dispatch (step 7) ───────────
+
+	var RUN_ON_PEER_DEFAULT = 'daimond-run-on-peer';	// the global "when awake" default
+
+	/// The account-wide default for "run on my laptop when it is awake".
+	function runOnPeerDefault() {
+		try { return localStorage.getItem(RUN_ON_PEER_DEFAULT) === '1'; } catch (e) { return false; }
+	}
+	function setRunOnPeerDefault(on) {
+		try { localStorage.setItem(RUN_ON_PEER_DEFAULT, on ? '1' : '0'); } catch (e) { /* private mode */ }
+	}
+	/// The per-chat toggle: true/false when the chat has chosen, null to defer to the
+	/// global default. Stored on the chat record (slimChat carries it, so it syncs).
+	function chatRunOnPeer(chat) {
+		return (chat && typeof chat.runOnPeer === 'boolean') ? chat.runOnPeer : null;
+	}
+	function setChatRunOnPeer(chat, on) {
+		if (!chat) return;
+		if (on === null) delete chat.runOnPeer; else chat.runOnPeer = !!on;
+		touchChat(chat); persistChats();
+	}
+
+	/// The agentic signal: full-autonomy hand mode means the user runs tool-heavy
+	/// turns, which are worth offloading. A worker chat is caught by the pure
+	/// decision itself. Conservative on purpose -- an ordinary quick turn stays
+	/// local for instant streaming.
+	function chatToolsEnabled(chat) {
+		try { return !!(window.DaimondHandMode && DaimondHandMode.get && DaimondHandMode.get() === 'bypass'); }
+		catch (e) { return false; }
+	}
+
+	/// At send-time: hand this turn to a peer instead of running it here, when the
+	/// pure policy says so (fresh peer + a long/agentic turn, or the toggle). Answers
+	/// whether it dispatched; false falls through to the ordinary local run. Guarded,
+	/// so any hiccup runs locally -- the safe default.
+	function maybeAutoDispatch(chat, text) {
+		try {
+			if (!chat || chat.diamondId) return false;			// daimons never dispatch
+			if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+			if (!window.DaimondPeer || !DaimondPeer.autoDispatchDecision) return false;
+			// Best-effort: nudge the gateway for the freshest presence so the
+			// decision sees who is awake. Fire-and-forget -- this function is
+			// synchronous, so it cannot await -- which refreshes the map for the next
+			// decision rather than this one; the ~45s beat keeps it current between.
+			try { if (window.DaimondSync && DaimondSync.refreshPresence) DaimondSync.refreshPresence(); }
+			catch (e) { /* the local snapshot stands */ }
+			var presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+			var d = DaimondPeer.autoDispatchDecision(chat, presence, {
+				selfId:        selfDeviceId(),
+				toolsEnabled:  chatToolsEnabled(chat),
+				toggle:        chatRunOnPeer(chat),
+				globalDefault: runOnPeerDefault(),
+			}, Date.now());
+			if (!d.dispatch) return false;
+			// Prepared exactly as the explicit path, so the parcel push inside
+			// dispatchToPeer carries the prompt (§4.1).
+			clearComposer();
+			var umid = newMid();
+			try { appendUserMessage(text); } catch (e) { /* the record below is the truth */ }
+			chat.messages.push({ role: 'user', content: text, mid: umid, iturn: umid, ts: Date.now() });
+			touchChat(chat); persistChats();
+			dispatchToPeer(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : []).then(function (res) {
+				if (!res || !res.ok) { try { appendError((res && res.why) || 'could not hand this to a peer'); } catch (e) { /* drawn best-effort */ } }
+			});
+			return true;
+		} catch (e) { return false; }		// any hiccup: run locally
+	}
+
+	/// The presence beat: while this tab is AWAKE and visible, write a heartbeat into
+	/// the parcel every ~45 s so the phone knows this device is awake and can name it
+	/// ("waiting for argonaut"). A missed beat is a stale beat, which is safe (the
+	/// deadline and lease catch a peer that actually slept).
+	var _presenceTimer = null;
+	function presenceTick() {
+		try {
+			if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+			if (!window.DaimondPresence || !DaimondPresence.beat) return;
+			var id = selfDeviceId();
+			if (!id) return;
+			var name = '';
+			try { name = (window.DaimondIdentity && DaimondIdentity.displayName && DaimondIdentity.displayName()) || ''; } catch (e) { name = ''; }
+			// Optimistic self-update, then beat the gateway on its OWN lightweight,
+			// non-waking presence path and adopt the authoritative map it answers
+			// with. NOT DaimondSync.push(): presence left the content parcel, so a
+			// beat no longer re-uploads ~163K nor wakes every other device -- the
+			// defect this replaces. A missed beat is safe.
+			DaimondPresence.beat(id, name, Date.now());
+			try { if (window.DaimondSync && DaimondSync.beatPresence) DaimondSync.beatPresence(id, name); } catch (e) { /* the next beat carries it */ }
+			// A beat is also when a peer's freshness may have lapsed: keep the "run
+			// on my laptop" button in step with who is actually awake.
+			try { injectRunOnPeerButton(); } catch (e) { /* the button is a convenience */ }
+		} catch (e) { /* a missed beat is safe */ }
+	}
+	function startPresenceBeat() {
+		if (_presenceTimer) return;
+		presenceTick();				// beat now, so a peer sees this device at once
+		_presenceTimer = setInterval(presenceTick, (window.DaimondPresence && DaimondPresence.BEAT_MS) || 45000);
+	}
+	try { window.addEventListener('daimond:unlock', startPresenceBeat); } catch (e) { /* no window */ }
+
+	// The "always run on my laptop when awake" toggle, exposed for the settings
+	// switch that reads and sets it. The storage and policy are built and tested
+	// here; the visible switch's placement in chat settings is the live-verified
+	// piece. `get` answers the per-chat choice (null = follow the default).
+	window.__daimondPeerToggle = {
+		label:      function () { return t('chat.run_on_peer_always'); },
+		get:        function () { return current ? chatRunOnPeer(current) : null; },
+		setChat:    function (on) { setChatRunOnPeer(current, on); },
+		getDefault: runOnPeerDefault,
+		setDefault: setRunOnPeerDefault,
+	};
 
 	/// What the model is told when the user presses Continue on a half-written answer.
 	///
@@ -11803,6 +12376,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// so no record can carry the badge without the id and this cannot fire
 		// today. One field away from that is not a margin worth keeping.
 		if (!iturn) return;
+		// A turn a PEER still holds must not be re-run here (§3.3): that is the
+		// cross-device double bill the lease exists to stop. Only a vacant or expired
+		// lease -- the reclaimable state -- lets a local Continue through. A turn that
+		// was never dispatched has no lease and reads reclaimable, so this changes
+		// nothing for ordinary interruptions.
+		try {
+			if (window.DaimondPeer && DaimondPeer.dispatchState) {
+				var dm = null;
+				for (var di = 0; di < (chat.messages || []).length; di++) {
+					var mm = chat.messages[di];
+					if (mm.iturn === iturn && mm.why === 'dispatched') { dm = mm; break; }
+				}
+				if (dm) {
+					var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(iturn) : null;
+					if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), Date.now()) === 'peer-held') return;
+				}
+			}
+		} catch (e) { /* fall through to the ordinary continue */ }
 		// Idempotent across tabs: if this interrupted turn is already gone (another tab continued or
 		// dismissed it, tombstoning its messages), do nothing rather than run and bill it twice.
 		var mine = (chat.messages || []).filter(function (x) { return x.iturn === iturn; });
@@ -11869,6 +12460,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			chat.messages = chat.messages || [];
 			if (chat.messages.some(function (m) { return m.iturn === iturn; })) { DaimondJournal.clearTurn(iturn); return; }   // already recovered
 			if (tombs[iturn]) { DaimondJournal.clearTurn(iturn); return; }   // this turn was already continued/dismissed
+			// A turn a peer still holds is NOT recovered locally (§3.3): leave it for
+			// the collector, or the double bill is exactly here. Only a vacant/expired
+			// lease lets recovery re-run. Defensive -- a dispatched turn is not
+			// journaled -- but the guard belongs beside the tombstone one.
+			try {
+				var pm = null;
+				for (var pj = 0; pj < (chat.messages || []).length; pj++) {
+					if (chat.messages[pj].iturn === iturn && chat.messages[pj].why === 'dispatched') { pm = chat.messages[pj]; break; }
+				}
+				if (pm && window.DaimondPeer && DaimondPeer.dispatchState
+					&& DaimondPeer.dispatchState(pm, (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(iturn) : null, selfDeviceId(), Date.now()) === 'peer-held') {
+					return;			// the peer has it; do not recover locally
+				}
+			} catch (e) { /* fall through to ordinary recovery */ }
 
 			// If the tab's dying breath still managed to write the aborted request as an error (the
 			// catch ran before the page went), drop that trailing error: the interrupted turn about
@@ -15725,7 +16330,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	// ── Send a turn ────────────────────────────────────────────
-	function ensureApp(chat) {
+	function ensureApp(chat, exceptMid) {
 		if (chat.app) return chat.app;
 		// A chat runs on the provider and model it was started with, and falls back to the
 		// default. Both travel with the chat, so a later change of default leaves it alone.
@@ -15787,6 +16392,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the persisted history back in, with the token counters, so the
 		// first turn after a reload is also metered against the real total.
 		var hist = (chat.messages || []).filter(function (msg) {
+			// `exceptMid` drops the one message a peer turn is about to RE-SEND through
+			// `run_turn` (the dispatched prompt), so it is not seeded into the agent as
+			// well and fed to the model twice (D3). Absent, every caller keeps the whole
+			// history unchanged.
+			if (exceptMid && msg && String(msg.mid) === String(exceptMid)) return false;
 			return msg && msg.content && (msg.role === 'user' || msg.role === 'assistant');
 		});
 		// The model's OWN conversation first, when one was stored. It is a different
@@ -16781,6 +17391,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			enqueueMessage(chat, text);
 			return;
 		}
+		// AUTO-DISPATCH (§4.1): a fresh awake peer plus a long/agentic turn (or the
+		// "run on my laptop when awake" toggle) hands this to the desktop instead of
+		// running it here; a quick foreground turn stays local for instant streaming,
+		// and no fresh peer means local. Guarded, so any hiccup runs locally.
+		if (maybeAutoDispatch(chat, text)) return;
 		clearComposer();
 		runTurn(chat, text);
 	}
@@ -17216,7 +17831,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Run one turn of a chat, journalling every step so a tab that dies mid-turn loses nothing but
 	/// the split-second in flight. This is the shared core of both the composer and the Continue
 	/// button: `text` is the user's message; the rest is durability.
-	async function runTurn(chat, text) {
+	async function runTurn(chat, text, opts) {
+		opts = opts || {};
+		// D3 — a peer runs a turn whose user prompt is ALREADY in the transcript (the
+		// dispatcher persist-first pushed it before the errand, §4.1). `promptInTranscript`
+		// tells this turn to anchor to that existing message (mid === `turnId`) and NOT
+		// append a second copy. The agent was already seeded without it (peerReconstruct
+		// -> ensureApp exceptMid), so `run_turn(text)` below sends it exactly once.
+		var reusePrompt = null;
+		if (opts.promptInTranscript && opts.turnId) {
+			var tin = String(opts.turnId), msgs0 = chat.messages || [];
+			for (var ri = msgs0.length - 1; ri >= 0; ri--) {
+				if (msgs0[ri].role === 'user' && String(msgs0[ri].mid) === tin) { reusePrompt = msgs0[ri]; break; }
+			}
+		}
 		var app;
 		// A workspace that changed while this chat was mid-turn could not be applied then --
 		// `compose` INTERSECTS, so a live app cannot be widened -- and the mark is applied here
@@ -17239,7 +17867,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// What the user has open right now, so the payload matches their screen. See `_openFolds`.
 		pushOpenFolds(app);
 
-		var umid = newMid();
+		// The turn id: a fresh mid for an ordinary turn, or the EXISTING dispatched
+		// prompt's mid for a peer turn (D3), so the journal, the rebuild and the
+		// assistant grouping all key on the message already in the transcript.
+		var umid = reusePrompt ? String(reusePrompt.mid) : newMid();
 		// Scored HERE, before the message joins the record, because what is being
 		// measured is this message as a reaction to the turn before it. Counters
 		// move and the text is dropped -- see signals.js, which never keeps it and
@@ -17265,8 +17896,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// read after the turn: a dispatch that named no task starts nothing, and the
 		// user used to see no agent, no error and no explanation.
 		var dispatched = [], rejectedSpawns = 0;
-		appendUserMessage(text);
-		chat.messages.push({ role: 'user', content: text, mid: umid, ts: Date.now() });
+		// D3 — the peer turn's prompt is already the transcript message `umid` (and, if
+		// the chat is on screen, already drawn from the synced history); append neither
+		// a duplicate record nor a duplicate bubble. An ordinary turn appends the
+		// freshly-typed prompt as before.
+		if (!reusePrompt) {
+			appendUserMessage(text);
+			chat.messages.push({ role: 'user', content: text, mid: umid, ts: Date.now() });
+		}
 		// AFTER the push, so the count includes this turn: "which turn of that
 		// chat this is, counting from one". How deep a conversation goes before
 		// it is left is the question. `telT0` is the turn's own clock and is the
@@ -33802,6 +34439,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		if (!name) return;
 		try { DaimondIdentity.rename(name); } catch (e) { noticeDialog(t('rename.failed'), friendlyError(e)); return; }
+		// Push a fresh presence beat so a peer sees the new name at once, rather
+		// than waiting up to a beat interval and meanwhile claiming a lease under
+		// the old one (the footer read a stale "phone").
+		try { presenceTick(); } catch (e) { /* the next scheduled beat carries it */ }
 		updateUserRow();
 	}
 

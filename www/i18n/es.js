@@ -2042,6 +2042,8 @@
 	'changepass.search_not_unsealed': 'Estos servicios de búsqueda ya tenían claves ilegibles antes del cambio, y siguen necesitando que vuelvas a poner sus claves: {list}.',
 	'changepass.voice_not_resealed': 'Tu voz de la forja no se pudo volver a cifrar con la frase de paso nueva. Vuelve a ponerla desde la línea que la forja imprimió para ti.',
 	'changepass.voice_not_unsealed': 'Tu voz de la forja no se pudo leer con la frase de paso antigua, así que sigue haciendo falta ponerla otra vez desde la línea que la forja imprimió para ti.',
+	'changepass.settle_not_resealed': 'Tu voz de resolución no se pudo volver a cifrar con la frase de paso nueva. Pégala de nuevo desde la línea que la forja imprimió para ti.',
+	'changepass.settle_not_unsealed': 'Tu voz de resolución no se pudo leer con la frase de paso antigua, así que sigue haciendo falta pegarla otra vez desde la línea que la forja imprimió para ti.',
 	'changepass.rekey_generic':    '{who}: {list}.',
 	'changepass.rekey_failed':     'Parte de lo que se guarda aquí no se pudo volver a cifrar con la frase de paso nueva. Revisa tus claves y las contraseñas de los buzones en Ajustes.',
 	'changepass.changed': 'Frase de paso cambiada',
@@ -2706,6 +2708,7 @@
 	'voice.err.inurl':          'Una voz va en una cabecera, nunca en una dirección.',
 	'voice.the_voice':          'tu voz de la forja',
 
+	'tracker.the_settle_voice': 'tu voz de resolución',
 	// Las propuestas se leen de la forja mientras las miras. Nada avisa de cuándo
 	// se responde una, y ninguna frase de aquí puede dar a entender lo contrario.
 	'social.live_note': 'Esto se lee de la forja mientras lo miras. Nada te avisa cuando se responde una propuesta; vuelve a mirar para saberlo.',

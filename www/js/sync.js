@@ -764,6 +764,21 @@
 		var state = await DaimondCore.collectSync();
 		try { if (window.DaimondPause) state.pause = DaimondPause.snapshot(); }
 		catch (e) { log('pause snapshot failed', e); }
+		// THE PERSISTENT DESKTOP PEER'S LEASE (dev/PEER_DESIGN.md §2). Which device
+		// is running a given turn is a fact about the ACCOUNT, carried in the parcel
+		// so two devices cannot both bill one turn. Attached beside the pause tree,
+		// and merged on the way in by its OWN take-if-vacant rule (see adopt below),
+		// NOT the append-only union the rest of the parcel uses -- a lease is a
+		// mutable claim, and freshest-scalar would be the double claim.
+		try { if (window.DaimondLease) state.leases = DaimondLease.snapshot(); }
+		catch (e) { log('lease snapshot failed', e); }
+		// PRESENCE IS NOT IN THE PARCEL. Which devices are awake used to ride here as
+		// a freshest-scalar section, but its moving lastSeen made the parcel a moving
+		// target -- never a fixed point -- and re-uploaded the whole ~163K parcel
+		// every beat, waking every other device for a fact that wakes nobody. It now
+		// travels on the gateway's own lightweight, non-waking presence path
+		// (DaimondSync.beatPresence / refreshPresence) and is adopted through
+		// DaimondPresence.ingest, off the parcel entirely.
 		// Where the Diamonds sit in the graph, under the same rule: sorted keys,
 		// three fields each, stamped per Diamond rather than once over the map --
 		// two devices that each moved a different Diamond must keep both moves,
@@ -854,6 +869,19 @@
 			try { DaimondPause.adopt(state && state.pause); }
 			catch (e) { log('pause adopt failed', e); failed.push('pause'); }
 		}
+		// THE LEASE, merged by its OWN take-if-vacant rule (DaimondLease.adopt),
+		// NOT the freshest-scalar/union the core parcel uses. This is the ONE
+		// non-append-only section, and routing it here -- beside the pause tree,
+		// through a named section merge -- is what keeps it off the generic scalar
+		// path where last-write-by-clock would be a double claim (§2.3, §3.2).
+		if (window.DaimondLease) {
+			try { DaimondLease.adopt(state && state.leases); }
+			catch (e) { log('lease adopt failed', e); failed.push('leases'); }
+		}
+		// Presence is NOT adopted here any more: it left the parcel (see
+		// collectParcel) and is ingested from the gateway's own presence path
+		// through DaimondPresence.ingest -- on every ordinary pull (see pullOnce,
+		// where `j.presence` is read) and on each beat.
 		// Always through `adopt`, never by writing `daimond-graph`: graph.js caches
 		// the record in memory and re-reads it only on a cross-tab `storage` event
 		// or an account switch, so a same-tab write is invisible to it and the next
@@ -954,15 +982,28 @@
 	async function pullOnce(quiet) {
 		lastFailed = [];		// what follows is the only merge this answers for.
 		setStatus('syncing', t('sync.syncing'));
+		// What the cursor held before this read left. A push that moves it past this
+		// while the read is in flight makes the version this read returns with stale,
+		// and it must not overwrite the push's. See `adoptVersion`.
+		var preRead = serverVersion;
 		var res;
 		try { res = await call('GET'); }
 		catch (e) { log('pull network error', e); restStatus(); return -1; }
 		if (res.status !== 200 || !res.json) { log('pull status', res.status); restStatus(); return -1; }
 		lastPullAt = Date.now();		// asked, and answered: see the catch-up in push().
 		var j = res.json;
+		// PRESENCE RIDES ALONGSIDE THE PARCEL, in the clear. The gateway stamps a
+		// last_seen per awake device in its own clock and includes `now` so this
+		// client can convert to its own frame; `ingest` REPLACES the local view
+		// (the gateway is the source of truth). Adopted here for free on every pull,
+		// whether or not there is a parcel to open below, and off the sealed blob
+		// entirely -- presence never touches the parcel now. See beatPresence.
+		try {
+			if (window.DaimondPresence && j && j.presence) DaimondPresence.ingest(j.presence, j.now);
+		} catch (e) { log('presence ingest failed', e); }
 		// An empty mailbox is an answer: this device has heard, and there was
 		// nothing to hear. See `pulledOk`.
-		if (!j.present) { serverVersion = 0; pulledOk = true; saveVersion(); restStatus(); return 0; }
+		if (!j.present) { adoptVersion(0, preRead); pulledOk = true; restStatus(); return serverVersion; }
 		var state;
 		try {
 			// The size of what arrived, before it is opened. Three forms of this
@@ -999,15 +1040,13 @@
 			// `lastFailed` is for sections that ARRIVED and could not be merged;
 			// this is not one.
 			log('pull decrypt/parse failed; keeping local state');
-			serverVersion = j.version | 0;
-			saveVersion();
+			adoptVersion(j.version | 0, preRead);
 			if (!quiet) restStatus();
 			return serverVersion;
 		}
 		lastFailed = await applyParcel(state);
 		pulledOk   = true;			// a parcel was read; see `pulledOk`.
-		serverVersion = j.version | 0;
-		saveVersion();
+		adoptVersion(j.version | 0, preRead);
 		noteSynced();
 		// A merge that could not finish is not a sync that worked, and it is the
 		// user's business: their other device's work is sitting in the mailbox
@@ -1194,6 +1233,46 @@
 		} finally {
 			inFlight = false;
 		}
+	}
+
+	// ── Presence ───────────────────────────────────────────────
+	// A separate, lightweight door from push/pull. A beat WRITES this device's
+	// last_seen and READS the account's whole fresh map back in one round; it bumps
+	// no blob version and wakes no other device, so it can fire every ~45s without
+	// the cost push() carries. That is the whole point of moving presence off the
+	// content parcel: the moving timestamp no longer re-uploads ~163K and taps every
+	// device. The map comes back stamped in the SERVER clock with a `now`, and
+	// `DaimondPresence.ingest` converts it into this client's frame.
+
+	/// Beat this device's presence and adopt the authoritative map. `deviceId` and
+	/// `name` are passed in by the caller (daimond.js), so this file need not reach
+	/// for identity. A missed beat is safe -- the freshness window and the lease
+	/// catch a peer that actually slept -- so an error is swallowed rather than
+	/// surfaced. Answers the response JSON, or null.
+	async function beatPresence(deviceId, name) {
+		if (!ready() || !entitled) return null;
+		try {
+			var res = await call('POST',
+				{ device_id: String(deviceId || ''), name: String(name || '') }, '?presence=1');
+			if (res.status === 200 && res.json && res.json.presence && window.DaimondPresence) {
+				DaimondPresence.ingest(res.json.presence, res.json.now);
+			}
+			return res.json || null;
+		} catch (e) { log('presence beat failed', e); return null; }
+	}
+
+	/// Read the account's presence map WITHOUT writing a beat -- a GET to
+	/// `?presence=1` -- and adopt it, for a dispatch-time refresh so the decision
+	/// sees the freshest peers. Quiet on error, like the beat.
+	async function refreshPresence() {
+		if (!ready() || !entitled) return null;
+		try {
+			var res = await call('GET', undefined, '?presence=1');
+			if (res.status === 200 && res.json && res.json.presence && window.DaimondPresence) {
+				DaimondPresence.ingest(res.json.presence, res.json.now);
+			}
+			return res.json || null;
+		} catch (e) { log('presence refresh failed', e); return null; }
 	}
 
 	// ── Wake channel ───────────────────────────────────────────
@@ -1675,6 +1754,28 @@
 	function saveVersion() {
 		try { localStorage.setItem(K_VERSION, String(serverVersion)); } catch (e) { /* ignore */ }
 	}
+
+	/// Take the version a pull read off the mailbox, unless a push moved the cursor
+	/// on WHILE that read was in flight.
+	///
+	/// `serverVersion` is one cursor and both the pull and the push mutate it. A
+	/// pull reads the mailbox, then merges what it found -- the heaviest step the
+	/// app has -- and only then writes the version it saw. A push that lands in
+	/// that gap sets the cursor to the newer version first; the pull then overwrites
+	/// it with the OLDER one it read before the push existed. The device's own
+	/// just-sent work is then reported as never sent, its version a step behind the
+	/// mailbox -- a lost update, and under load it is what left a renewed session's
+	/// push looking like it never landed.
+	///
+	/// The refusal is narrow. A downgrade is dropped ONLY when a push actually
+	/// advanced the cursor during this read (`serverVersion > preRead`); a reset
+	/// lowers the version with no push behind it, so `preRead` still equals the
+	/// cursor and the lower version is taken as it must be.
+	function adoptVersion(v, preRead) {
+		if (v < serverVersion && serverVersion > preRead) return;	// a stale read raced a push; keep the push's cursor.
+		serverVersion = v;
+		saveVersion();
+	}
 	function loadVersion() {
 		serverVersion = parseInt(localStorage.getItem(K_VERSION) || '0', 10) || 0;
 		lastSynced    = parseInt(localStorage.getItem(K_LAST) || '0', 10) || 0;
@@ -1831,6 +1932,12 @@
 		push:    function () { return push(); },
 		nudge:   nudge,
 		recheck: recheck,
+		/// The presence path, off the content parcel: `beatPresence(deviceId, name)`
+		/// writes this device's last_seen and adopts the account's fresh map (bumping
+		/// no version and waking nobody); `refreshPresence()` reads that map without a
+		/// beat, for a dispatch-time refresh. Both ingest through DaimondPresence.
+		beatPresence:    beatPresence,
+		refreshPresence: refreshPresence,
 		/// Exactly what a push would send, and exactly what a pull would merge.
 		///
 		/// A verifier comparing `DaimondCore.collectSync()` is comparing the core

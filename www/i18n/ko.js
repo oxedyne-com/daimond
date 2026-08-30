@@ -2060,6 +2060,8 @@
 	'changepass.search_not_unsealed': '다음 검색 서비스는 바꾸기 전부터 키를 읽을 수 없었어요. 그래서 키는 여전히 다시 설정해야 해요: {list}.',
 	'changepass.voice_not_resealed': '포지 목소리를 새 암호문구로 다시 암호화하지 못했어요. 포지가 찍어 준 줄에서 다시 설정해 주세요.',
 	'changepass.voice_not_unsealed': '포지 목소리를 예전 암호문구로도 읽지 못했어요. 그래서 포지가 찍어 준 줄에서 다시 설정해야 해요.',
+	'changepass.settle_not_resealed': '확정용 목소리를 새 암호문구로 다시 암호화하지 못했어요. 포지가 찍어 준 줄에서 다시 붙여넣어 주세요.',
+	'changepass.settle_not_unsealed': '확정용 목소리를 예전 암호문구로도 읽지 못했어요. 그래서 포지가 찍어 준 줄에서 다시 붙여넣어야 해요.',
 	'changepass.rekey_generic':    '{who}: {list}.',
 	'changepass.rekey_failed':     '여기 보관된 것 가운데 일부를 새 암호문구로 다시 암호화하지 못했어요. 설정에서 키와 메일함 비밀번호를 확인해 주세요.',
 	'changepass.changed':         '암호문구를 바꿨어요',
@@ -2746,6 +2748,7 @@
 	'voice.err.inurl':          '목소리는 헤더에 넣어요. 주소에는 절대 넣지 않아요.',
 	'voice.the_voice':          '포지 목소리',
 
+	'tracker.the_settle_voice': '확정용 목소리',
 	// 제안은 보는 그때 포지에서 읽어 와요. 답이 달렸는지 알려 주는 것은 없으니,
 	// 여기 어떤 문장도 알려 준다고 비치면 안 돼요.
 	'social.live_note': '이건 당신이 보는 그때 포지에서 읽어 와요. 제안에 답이 달려도 알려 주지 않아요. 다시 열어 확인해 주세요.',

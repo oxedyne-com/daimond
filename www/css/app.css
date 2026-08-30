@@ -869,6 +869,27 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    size and the mark size are set in the same place and cannot drift apart. */
 #chat-jump .ic, #chat-end .ic { width: 16px; height: 16px; }
 #chat-jump:hover, #chat-end:hover { background: var(--bg-hover); color: var(--text-primary); }
+/* "Run on my laptop" — the peer hand-off, a secondary action beside Send. It has
+   no fill of its own, so it must not inherit the native button's pale ground: on a
+   dark palette that left cream text on light grey (4.1:1, below the 4.5 floor). It
+   takes the composer's own surface and border, where --text-primary clears the
+   floor exactly as the input's text does. */
+.run-on-peer {
+	box-sizing: border-box;
+	height: 32px;
+	flex-shrink: 0;
+	padding: 0 12px;
+	border-radius: var(--radius);
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border-strong);
+	color: var(--text-primary);
+	font-size: var(--fs-base);
+}
+.run-on-peer:hover { background: var(--bg-hover); border-color: var(--accent); }
+.run-on-peer:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A wide screen reads the words; the laptop glyph is for the phone (responsive.css). */
+.run-on-peer-ic { display: none; }
+.run-on-peer-label { white-space: nowrap; }
 
 /* Chat messages */
 /* An answer belongs to the question above it, so it sits close to it; the air

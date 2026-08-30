@@ -2054,6 +2054,8 @@
 	'changepass.search_not_unsealed': '这些搜索服务在这次更改之前，密钥就已经读不出来了，仍然要重新设置密钥：{list}。',
 	'changepass.voice_not_resealed': '你的锻造台声音没能用新的密码短语重新加密。请用锻造台为你打印的那一行重新设置一次。',
 	'changepass.voice_not_unsealed': '你的锻造台声音用旧的密码短语读不出来，所以仍然要用锻造台为你打印的那一行重新设置一次。',
+	'changepass.settle_not_resealed': '你的裁定声音没能用新的密码短语重新加密。请用锻造台为你打印的那一行重新粘贴一次。',
+	'changepass.settle_not_unsealed': '你的裁定声音用旧的密码短语读不出来，所以仍然要用锻造台为你打印的那一行重新粘贴一次。',
 	'changepass.rekey_generic':    '{who}：{list}。',
 	'changepass.rekey_failed':     '这里存着的东西，有一部分没能用新的密码短语重新加密。请到设置里检查你的密钥和邮箱密码。',
 	'changepass.changed':         '密码短语已更改',
@@ -2737,6 +2739,7 @@
 	'voice.err.inurl':          '声音放在请求头里，绝不放进地址。',
 	'voice.the_voice':          '你的锻造台声音',
 
+	'tracker.the_settle_voice': '你的裁定声音',
 	// 提案是在你查看时从锻造台读来的。没有任何东西会告诉你提案何时有了回应，
 	// 这里的任何一句都不能让人以为有。
 	'social.live_note': '这些是在你查看时从锻造台读来的。提案有了回应不会有任何提示；再看一次才知道。',

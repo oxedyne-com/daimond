@@ -2048,6 +2048,8 @@
 	'changepass.search_not_unsealed': 'Diese Suchdienste hatten schon vor der Änderung unlesbare Schlüssel und brauchen sie weiterhin neu gesetzt: {list}.',
 	'changepass.voice_not_resealed': 'Deine Schmiede-Stimme ließ sich nicht unter der neuen Passphrase neu verschlüsseln. Setze sie erneut aus der Zeile, die die Schmiede für dich ausgegeben hat.',
 	'changepass.voice_not_unsealed': 'Deine Schmiede-Stimme ließ sich unter der alten Passphrase nicht lesen, sie muss also weiterhin erneut aus der Zeile gesetzt werden, die die Schmiede für dich ausgegeben hat.',
+	'changepass.settle_not_resealed': 'Deine Schlichtungsstimme ließ sich nicht unter der neuen Passphrase neu verschlüsseln. Füge sie erneut aus der Zeile ein, die die Schmiede für dich ausgegeben hat.',
+	'changepass.settle_not_unsealed': 'Deine Schlichtungsstimme ließ sich unter der alten Passphrase nicht lesen, sie muss also weiterhin erneut aus der Zeile eingefügt werden, die die Schmiede für dich ausgegeben hat.',
 	'changepass.rekey_generic':    '{who}: {list}.',
 	'changepass.rekey_failed':     'Ein Teil dessen, was hier gespeichert ist, ließ sich nicht unter der neuen Passphrase neu verschlüsseln. Prüfe deine Schlüssel und Postfach-Passwörter in den Einstellungen.',
 	'changepass.changed': 'Passphrase geändert',
@@ -2713,6 +2715,7 @@
 	'voice.err.inurl':          'Eine Stimme gehört in einen Header, nie in eine Adresse.',
 	'voice.the_voice':          'deine Schmiede-Stimme',
 
+	'tracker.the_settle_voice': 'deine Schlichtungsstimme',
 	// Vorschläge werden aus der Schmiede gelesen, während man hinsieht. Nichts
 	// meldet, wann einer beantwortet wurde, und kein Satz hier darf das andeuten.
 	'social.live_note': 'Diese werden aus der Schmiede gelesen, während du hinsiehst. Nichts sagt dir, wann ein Vorschlag beantwortet ist; sieh noch einmal nach.',

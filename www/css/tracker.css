@@ -1,12 +1,17 @@
 /* css/tracker.css — the Proposals tracker view (js/tracker.js).
  *
- * A read-first list of Daimond's own development, tracked as proposals on the
- * Oregami forge. Reuses the app's design tokens (the same `--bg-*`, `--text-*`,
- * `--accent-*`, `--border` and `--fs-*` variables improve.css draws on), so it
- * inherits the theme and the type scale rather than restating them. Terse: a
- * label, a state chip, two vote counts; the detail lives in the guide. */
+ * A DECISION-QUEUE BOARD onto Daimond's own development, tracked as proposals on
+ * the Oregami forge: four columns, the life of a proposal left to right —
+ * Awaiting you, Greenlit, Shipped, Dropped. Reuses the app's design tokens (the
+ * same `--bg-*`, `--text-*`, `--accent-*`, `--border` and `--fs-*` variables
+ * improve.css draws on), so it inherits the theme and the type scale rather than
+ * restating them. Terse: a title, a comment count, two vote counts; the detail
+ * lives one press away. */
 
-#tracker-view { padding: 8px 10px 12px; font-size: var(--fs-xs); color: var(--text-primary); }
+/* A query container, so the board inside can size to THIS panel's width rather
+ * than the viewport's -- the Proposals dock is ~280px inside a wide window. */
+#tracker-view { padding: 8px 10px 12px; font-size: var(--fs-xs); color: var(--text-primary);
+	container-type: inline-size; container-name: tracker; }
 
 /* ── Head ─────────────────────────────────────────────────────────────── */
 .trk-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
@@ -33,17 +38,53 @@
 .trk-admin-save { border-color: var(--accent); color: var(--accent-text); }
 .trk-admin-btn:hover, .trk-admin-save:hover, .trk-admin-cancel:hover { border-color: var(--accent); }
 
-/* ── The listing ──────────────────────────────────────────────────────── */
-.trk-list { display: flex; flex-direction: column; gap: 2px; }
-.trk-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px;
-	padding: 6px 4px; border-bottom: 1px solid var(--border); }
+/* ── The board ────────────────────────────────────────────────────────── */
+/* A container query, NOT a viewport one: this board sits in the ~280px Proposals
+ * dock as well as at full width, so it must read its own width. The default is
+ * one scrollable column -- the four sections stacked, each keeping its heading,
+ * a readable decision queue; four columns only once #tracker-view has room for
+ * them (main/max view). overflow-x is a belt-and-braces for the wide branch. */
+.trk-board { display: grid; grid-template-columns: 1fr;
+	gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+@container tracker (min-width: 640px) {
+	.trk-board { grid-template-columns: repeat(4, minmax(150px, 1fr)); }
+}
+.trk-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.trk-col-head { display: flex; align-items: baseline; gap: 6px; padding: 2px 2px 4px;
+	border-bottom: 2px solid var(--border); }
+.trk-col-label { font-weight: 600; font-size: var(--fs-2xs-xs); }
+.trk-col-count { font-size: var(--fs-3xs); color: var(--text-muted);
+	font-variant-numeric: tabular-nums; }
+.trk-col-empty { padding: 6px 2px; font-size: var(--fs-3xs); color: var(--text-muted); }
+
+/* The column tint: the same four hues the state chip used, on the header rule. */
+.trk-col[data-state="open"]     .trk-col-head { border-bottom-color: var(--accent); }
+.trk-col[data-state="accepted"] .trk-col-head { border-bottom-color: var(--ok); }
+.trk-col[data-state="done"]     .trk-col-head { border-bottom-color: var(--text-muted); }
+.trk-col[data-state="declined"] .trk-col-head { border-bottom-color: var(--warn); }
+
+/* ── One card ─────────────────────────────────────────────────────────── */
+.trk-card { display: flex; flex-direction: column; gap: 4px; padding: 7px 8px;
+	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	background: var(--bg-secondary); }
+.trk-card-top { display: flex; align-items: baseline; gap: 6px; }
 .trk-num { font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
 .trk-title { flex: 1 1 auto; min-width: 0; text-align: left; padding: 0;
 	background: none; border: none; color: var(--text-primary); font: inherit; cursor: pointer; }
 .trk-title:hover { color: var(--accent-text); text-decoration: underline; }
-.trk-meta { flex-basis: 100%; display: flex; gap: 10px; font-size: var(--fs-3xs); color: var(--text-muted); }
+.trk-card-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: var(--fs-3xs); color: var(--text-muted); }
 
-/* The state chip, one colour per state. Muted, not loud: this is a label. */
+.trk-activity { font-size: var(--fs-3xs-2xs); color: var(--text-secondary);
+	line-height: 1.35; overflow-wrap: anywhere; }
+
+.trk-ship { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px;
+	font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+.trk-ship-id { font-family: var(--font-mono); font-size: var(--fs-3xs-2xs);
+	padding: 1px 6px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+	background: var(--bg-tertiary); color: var(--accent-text); cursor: pointer; }
+.trk-ship-id:hover { border-color: var(--accent); text-decoration: underline; }
+
+/* The state chip, one colour per state — now only on the detail head. */
 .trk-state { font-size: var(--fs-3xs); padding: 1px 6px; border-radius: 999px;
 	border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
 .trk-state[data-state="open"]     { color: var(--accent-text); border-color: var(--accent); }

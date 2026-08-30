@@ -1724,7 +1724,7 @@ try {
 		return p ? p.textContent.replace(/\s+/g, ' ') : '';
 	});
 
-	// SAMPLED IN EACH STATE, AND UNIONED, because three of the guide's labels
+	// SAMPLED IN EACH STATE, AND UNIONED, because four of the guide's labels
 	// are MUTUALLY EXCLUSIVE with any one state the panel can be in:
 	//
 	//   `Set a voice`     drawn only while NO voice is held. By this point one
@@ -1732,6 +1732,11 @@ try {
 	//   `Save the voice`  drawn only while the paste field is open.
 	//   `Say it`          drawn only inside an expanded proposal, and only with
 	//                     a voice -- the forge refuses an unvoiced comment.
+	//   `I lost my voice — re-issue`  drawn only once the forge has said a voice
+	//                     exists on ANOTHER device (`provision` answered `already`)
+	//                     and none is held here -- the one state where a re-issue
+	//                     is the way out. Reached below by standing in for that
+	//                     answer and pressing `Get my voice`.
 	//
 	// One snapshot was asked for three states' worth of labels and reported all
 	// three missing from the panel. They were in the panel; the check was in one
@@ -1765,6 +1770,21 @@ try {
 	await page.evaluate(() => { window.DaimondVoice.clear(); window.DaimondImprove.render(); });
 	await page.waitForTimeout(400);
 	sampled.push(await words());
+
+	// And the `already` state: the forge holds a voice on another device that has
+	// not synced here. `Get my voice` posts to `/api/voice/provision`; standing in
+	// for the gateway's answer with `already:true` drives the panel into the one
+	// state the destructive `I lost my voice — re-issue` control lives in. The guide
+	// names it (§"The Social panel"), so the union has to reach it.
+	await page.route('**/api/voice/provision', (r) => r.fulfill({
+		status: 200, contentType: 'application/json',
+		body: JSON.stringify({ provisioned: true, already: true }),
+	}));
+	await page.click('[data-act="improve-voice-get"]');
+	await page.waitForTimeout(400);
+	sampled.push(await words());
+	await page.unroute('**/api/voice/provision');
+
 	// Put it back before anything downstream reads the panel: everything after
 	// this point assumes the voiced panel the checks above left behind.
 	await page.evaluate(async (sec) => {

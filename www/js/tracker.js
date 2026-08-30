@@ -1,39 +1,48 @@
 /* ============================================================
    Daimond — the Tracker view (tracker.js)
    ------------------------------------------------------------
-   A read-first window onto Daimond's own development, which is
-   tracked as PROPOSALS on the Oregami forge repository
-   `oxedyne/daimond`. This view LISTS those proposals with their
-   state, title, comment count and vote tally, and opens one in
-   full — its statement, its revisions and its comments.
+   A DECISION-QUEUE BOARD onto Daimond's own development, which
+   is tracked as PROPOSALS on the Oregami forge repository
+   `oxedyne/daimond`. The board is four columns, left to right the
+   life of a proposal:
+
+     Awaiting you  (open)      a decision is wanted
+     Greenlit      (accepted)  taken on, with its latest activity
+     Shipped       (done)      out, stamped with the build it went in
+     Dropped       (declined)  not being done
+
+   Settling happens FROM the board: an Accept, Decline or Mark done
+   on an Awaiting-you card; a Reopen or Mark done further along. A
+   card opens in full — its statement, revisions and comments — when
+   its title is pressed.
 
    IT REACHES THE FORGE THROUGH THE DAIMOND GATEWAY, exactly as
    improve.js does: every request goes to the same-origin
    `/api/improve` route, which forwards over loopback to the forge
    and translates a Daimond voice header (`x-daimond-voice`) into
-   the forge's own (`x-ore-voice`). Reading needs no voice — the
-   repository is public — so a read is a bare same-origin GET; the
-   gateway path works whether the repository is public or veiled,
-   which is why the view does not talk to the forge host directly.
+   the forge's own (`x-ore-voice`). READING NEEDS NO VOICE — the
+   repository is public — so a read is a bare same-origin GET.
    `request()` below is the single place that path is decided.
 
    VOTES ARE DARK. The replicated log does not attribute a vote, so
    the forge answers a tally — `{for, against}` — and never a voter.
-   This view draws the two counts and can draw nothing more.
 
-   THE OWNER MAY SETTLE. Accepting, declining, marking done or
-   reopening is an `admin` decision, so it is offered ONLY when an
-   admin voice is held. That voice is the owner's, hand-cranked: the
-   auto-provisioned voice improve.js gets is pull-only, so this view
-   keeps its OWN admin voice, pasted once and stored wrapped under
-   the passphrase like the pull voice in voice.js. Settle posts just
-   the decide field — `state=<word>` — and sends the admin voice as
-   `x-daimond-voice`; the gateway forwards it and does NOT hold it.
-   The view never opens, comments on, votes on or amends anything.
+   THE OWNER (AND OPERATORS) MAY SETTLE. Accepting, declining,
+   marking done or reopening is an `admin` decision, so it is offered
+   ONLY when an admin voice is held. That voice is HAND-MINTED and
+   pasted once, stored wrapped under the passphrase like the pull
+   voice in voice.js — the auto-provisioned voice improve.js gets is
+   pull-only and cannot settle. When none is held the board shows a
+   terse "add your settle voice" affordance rather than settle
+   buttons that would fail. Settle posts just the decide field —
+   `state=<word>` — and sends the admin voice as `x-daimond-voice`.
 
-   This is not the Social panel. improve.js is where a tester WRITES
-   feedback (a note becomes a proposal) and votes; this view is where
-   Daimond's development is READ and, by the owner, settled.
+   THE SHIPPED STAMP IS READ, NEVER INVENTED. An agent that ships a
+   proposal comments the real deployed build id onto it (see
+   dev/forge.mjs `ship`); the board parses that stamp out of the
+   proposal's comments and draws it, clickable to the transparency
+   log. A done proposal with no stamp yet reads "awaiting build
+   stamp" — the board never guesses an id.
 
    Attaches one global, `window.DaimondTracker`.
    ============================================================ */
@@ -70,9 +79,9 @@
 		base:    '/api/improve',	// the Daimond gateway, same-origin; it forwards to the forge
 		account: 'oxedyne',
 		repo:    'daimond',
-		/// An admin voice held in memory, for a test or a session that already has
-		/// one to hand. When empty, the wrapped store below is consulted instead.
-		/// Held only in memory, never drawn, never logged.
+		// An in-memory admin voice, for a test or a session that already has one to
+		// hand. When empty, the wrapped store below is consulted instead. Held only
+		// in memory, never drawn, never logged.
 		voice:   '',
 	};
 
@@ -87,12 +96,12 @@
 		return cfg;
 	}
 
-	// ── The owner's admin voice ────────────────────────────────
+	// ── The settle voice (hand-minted admin) ───────────────────
 	//
 	// Held wrapped under the passphrase, the same shape voice.js keeps the pull
 	// voice in, and for the same reasons: a secret at rest is sealed, and reading
 	// it needs an unlocked identity. This view keeps its OWN store because the
-	// admin voice is a different voice from the pull one improve.js provisions —
+	// admin voice is a DIFFERENT voice from the pull one improve.js provisions —
 	// the pull voice may not settle, so it cannot stand in here.
 
 	var ADMIN_LS  = 'daimond-tracker-admin';	// namespaced per account by accounts.js, like other daimond-* keys
@@ -118,7 +127,7 @@
 	/// What is wrong with a pasted secret, or '' — for validating as it is typed.
 	function adminCheck(secret) {
 		var s = tidy(secret);
-		if (!s) return tOr('tracker.admin_empty', 'Paste the admin voice the forge printed.');
+		if (!s) return tOr('tracker.admin_empty', 'Paste your settle voice.');
 		if (s.length < ADMIN_MIN) return tOr('tracker.admin_short', 'That looks too short to be a whole voice.');
 		return '';
 	}
@@ -130,7 +139,7 @@
 		if (why) throw new Error(why);
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) {
 			throw new Error(tOr('tracker.admin_locked',
-				'Unlock Daimond first: the admin voice is kept encrypted under your passphrase.'));
+				'Unlock Daimond first: your settle voice is kept encrypted under your passphrase.'));
 		}
 		var wrapped = await DaimondIdentity.wrap(tidy(secret));
 		try { localStorage.setItem(ADMIN_LS, JSON.stringify({ v: ADMIN_V, s: wrapped, at: Date.now() })); }
@@ -151,28 +160,89 @@
 		if (!r || !r.s) return '';
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) {
 			throw new Error(tOr('tracker.admin_locked_send',
-				'Unlock Daimond to settle: the admin voice is encrypted under your passphrase.'));
+				'Unlock Daimond to settle: your settle voice is encrypted under your passphrase.'));
 		}
 		try { return await DaimondIdentity.unwrap(r.s); }
 		catch (e) {
 			throw new Error(tOr('tracker.admin_unreadable',
-				'The admin voice cannot be read with this passphrase. Set it again.'));
+				'Your settle voice cannot be read with this passphrase. Set it again.'));
 		}
 	}
 
-	/// Whether the owner's settle controls are offered: a voice held here or one
+	/// Whether the settle controls are offered: an admin voice held here or one
 	/// handed in. Presence only, and nothing about its value.
 	function canSettle() { return !!cfg.voice || adminHas(); }
+
+	// ── The settle voice through a passphrase change ───────────────
+	//
+	// Sealed under the passphrase, so a change to it must read the voice out under
+	// the old one and put it back under the new — the same two phases voice.js runs
+	// for the pull voice. Without this the admin voice would be left wrapped to a
+	// key that no longer exists, and lost. The `at` stamp is kept: this is a
+	// re-wrapping, not a fresh paste.
+
+	var heldAdmin = null;		// plaintext, ONLY for the length of one change
+
+	/// Read the admin voice out under the OLD passphrase, before the key changes.
+	async function readForRekey() {
+		heldAdmin = null;
+		if (!adminHas()) return { held: 0, failed: [] };
+		var r = adminRec();
+		try { heldAdmin = await DaimondIdentity.unwrap(r.s); }
+		catch (e) { return { held: 0, failed: [tOr('tracker.the_settle_voice', 'your settle voice')] }; }
+		if (!heldAdmin) return { held: 0, failed: [] };
+		return { held: 1, failed: [] };
+	}
+
+	/// Put it back under the NEW passphrase, and forget it either way. Wrapped
+	/// directly rather than through `adminSet`, which re-validates: a voice stored
+	/// by an older build must survive a change rather than be dropped by it.
+	async function resealForRekey() {
+		if (!heldAdmin) return { failed: [] };
+		var failed = [];
+		try {
+			var r = adminRec();
+			var when = (r && typeof r.at === 'number') ? r.at : Date.now();
+			localStorage.setItem(ADMIN_LS, JSON.stringify({
+				v: ADMIN_V, s: await DaimondIdentity.wrap(heldAdmin), at: when,
+			}));
+		} catch (e) { failed.push(tOr('tracker.the_settle_voice', 'your settle voice')); }
+		finally { heldAdmin = null; }		// in the clear; never held past here
+		return { failed: failed };
+	}
+
+	/// Drop the plaintext unused, for a change that did not happen.
+	function forgetRekey() { heldAdmin = null; }
+
+	if (window.DaimondRekey) {
+		DaimondRekey.register({
+			name:   'settle',
+			read:   readForRekey,
+			reseal: resealForRekey,
+			forget: forgetRekey,
+			/// One secret, so the list is not named: there is only ever one settle
+			/// voice on a device.
+			sentence: function (kind) {
+				return kind === 'unread'
+					? tOr('changepass.settle_not_unsealed',
+						'Your settle voice could not be read under the old passphrase, so it '
+						+ 'still needs pasting again from the line the forge printed for you.')
+					: tOr('changepass.settle_not_resealed',
+						'Your settle voice could not be re-encrypted under the new passphrase. '
+						+ 'Paste it again from the line the forge printed for you.');
+			},
+		});
+	}
 
 	// ── THE ONE DOOR ───────────────────────────────────────────
 	//
 	// Every request goes through here, and this is the single place the path is
 	// decided. It mirrors improve.js: the account and repository ride in the
-	// QUERY on the same-origin `/api/improve` route; a read carries no voice; a
-	// settle carries the admin voice in `x-daimond-voice`, which the gateway
-	// translates to the forge's `x-ore-voice`. A voiced write goes through
-	// `DaimondGateway.gwFetch` — the one copy of the session rule — when the
-	// gateway module is present; a plain read is a bare `fetch`.
+	// QUERY on the same-origin `/api/improve` route; a READ carries no voice — the
+	// repository is public; a settle carries the admin voice in `x-daimond-voice`,
+	// which the gateway translates to the forge's `x-ore-voice`. A voiced write
+	// goes through `DaimondGateway.gwFetch` — the one copy of the session rule —
+	// when the gateway module is present; a plain read is a bare `fetch`.
 
 	/// The route, with the repository this view reads. Built here and nowhere
 	/// else, and the voice is never in it: a query string is written into every
@@ -277,6 +347,12 @@
 			votes:    null,
 			revisions:  null,
 			discussion: null,
+			// Set from the discussion once it is read: the last comment, drawn on a
+			// Greenlit card as its latest activity, and the shipped build id parsed
+			// out of the ship stamp. Never from the wire — the board derives them.
+			latest:   null,
+			shipped:  '',
+			enriched: false,
 		};
 		if (p.votes && typeof p.votes === 'object' && !Array.isArray(p.votes)) {
 			rec.votes = { for: Math.max(0, whole(p.votes.for)), against: Math.max(0, whole(p.votes.against)) };
@@ -304,6 +380,37 @@
 		return rec;
 	}
 
+	// ── The shipped-build stamp ────────────────────────────────
+	//
+	// An agent that ships a proposal comments the real deployed build id onto it,
+	// in a fixed line (dev/forge.mjs `ship`): "Shipped in build <id>". The board
+	// parses that id out of the proposal's comments. It reads the id; it never
+	// invents one, so a done proposal that has not been stamped shows no id at all.
+
+	var SHIP_RE = /shipped in build\s+`?([0-9a-f]{8,40})`?/i;
+
+	/// The shipped build id from a discussion, or '' when none is stamped. The
+	/// LAST stamp wins, so a re-ship supersedes an earlier one.
+	function parseShip(discussion) {
+		if (!Array.isArray(discussion)) return '';
+		for (var i = discussion.length - 1; i >= 0; i--) {
+			var said = discussion[i] && discussion[i].said;
+			var m = (typeof said === 'string') ? SHIP_RE.exec(said) : null;
+			if (m) return m[1];
+		}
+		return '';
+	}
+
+	/// Derive the latest comment and the shipped id from a record's own discussion,
+	/// once it has been read. Marks the record enriched so it is not fetched again.
+	function deriveFrom(n) {
+		var p = _by[n];
+		if (!p || !Array.isArray(p.discussion)) return;
+		p.latest   = p.discussion.length ? p.discussion[p.discussion.length - 1] : null;
+		p.shipped  = parseShip(p.discussion);
+		p.enriched = true;
+	}
+
 	// ── The store ──────────────────────────────────────────────
 
 	var PAGE = 50;
@@ -322,6 +429,11 @@
 			rec.discussion = cur.discussion;
 			rec.revisions  = cur.revisions;
 			rec.detail     = cur.detail;
+			// Carry the derived board fields forward, so a listing refresh does not
+			// blank a card's shipped stamp or latest-activity line.
+			rec.latest     = cur.latest;
+			rec.shipped    = cur.shipped;
+			rec.enriched   = cur.enriched;
 		}
 		if (!cur) _order.push(rec.n);
 		_by[rec.n] = rec;
@@ -330,7 +442,7 @@
 
 	// ── Reading ────────────────────────────────────────────────
 
-	/// Read the listing, newest first. From the top only: this view shows recent
+	/// Read the listing, newest first. From the top only: this board shows recent
 	/// development at a glance and opens one proposal in full, rather than paging
 	/// the whole history the Social panel walks.
 	async function load() {
@@ -350,29 +462,45 @@
 		return true;
 	}
 
-	/// Read one proposal in full and show it.
+	/// Read one proposal in full and show it. Deriving its board fields from the
+	/// discussion in the same breath, so opening a card is also how it is enriched.
 	async function open(n) {
 		var a = await request(route('n=' + n), { method: 'GET' });
 		if (!a.ok) { _st.err = a; draw(); return false; }
 		absorb(clean(a.data));
+		deriveFrom(whole(n));
 		_open    = whole(n);
 		_st.err  = null;
 		draw();
 		return true;
 	}
 
-	/// Back to the listing.
+	/// A Greenlit or Shipped card wants its latest comment and its shipped stamp,
+	/// which live in the discussion and not in the listing. Read the proposal in
+	/// full, once, and derive them. A read is public and unvoiced, like every read.
+	async function enrich(n) {
+		var p = _by[n];
+		if (!p || p.enriched) return;
+		p.enriched = true;			// once; a failed read does not loop
+		var a = await request(route('n=' + n), { method: 'GET' });
+		if (!a.ok) return;			// leave the listing-only card as it stands
+		absorb(clean(a.data));
+		deriveFrom(n);
+		draw();
+	}
+
+	/// Back to the board.
 	function back() { _open = null; draw(); }
 
 	/// Load once, when the panel is first shown. Reading on every app boot would
 	/// fetch for a panel nobody opened.
 	function onOpen() { if (!_st.read && !_st.loading) load(); return true; }
 
-	// ── Settling (owner only) ──────────────────────────────────
+	// ── Settling (admin voice only) ────────────────────────────
 
 	// FOUR TOKENS AND NO MORE: state is open, accepted, declined or done. There is
-	// no "reopen" token — a Reopen button sends `state=open`. Settle carries ONLY
-	// the `state` field: no mark, no reason.
+	// no "reopen" token — a Reopen sends `state=open`. Settle carries ONLY the
+	// `state` field: no mark, no reason.
 	var DECISIONS = { accept: 'accepted', decline: 'declined', done: 'done', reopen: 'open' };
 
 	/// Post the decide field for proposal `n` under the admin voice. `which` is
@@ -384,7 +512,7 @@
 		var secret;
 		try { secret = await adminSecret(); }
 		catch (e) { _st.err = { why: 'gateway' }; flash(String((e && e.message) || e)); return false; }
-		if (!secret) { flash(tOr('tracker.admin_need', 'Paste your admin voice first.')); return false; }
+		if (!secret) { flash(tOr('tracker.admin_need', 'Add your settle voice first.')); return false; }
 		var f = new URLSearchParams();
 		f.set('state', state);
 		var a = await request(route('n=' + n), {
@@ -394,6 +522,7 @@
 		}, secret);
 		if (!a.ok) { _st.err = a; draw(); return false; }
 		absorb(clean(a.data));
+		deriveFrom(n);
 		_st.err = null;
 		draw();
 		return true;
@@ -435,6 +564,12 @@
 		return b;
 	}
 
+	/// A comment cut to a card's width. The whole thing is one press away.
+	function snippet(s) {
+		var x = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+		return x.length > 90 ? x.slice(0, 89) + '…' : x;
+	}
+
 	/// The tally, drawn as two counts and never as a name.
 	function tallyLine(p) {
 		if (!p.votes) return null;
@@ -442,42 +577,122 @@
 			{ yes: p.votes.for, no: p.votes.against }));
 	}
 
-	function drawRow(p) {
-		var row = el('div', 'trk-row');
-		row.dataset.prop = p.n;
+	// ── The board ──────────────────────────────────────────────
+	//
+	// Four columns, the life of a proposal left to right. The order in `_order` is
+	// newest-first, so filtering it per column keeps each column newest-first too.
 
-		var badge = el('span', 'trk-state', stateWord(p.state));
-		badge.dataset.state = p.state;
-		row.appendChild(badge);
+	var COLUMNS = [
+		{ state: 'open',     key: 'col_open',  label: 'Awaiting you' },
+		{ state: 'accepted', key: 'col_green', label: 'Greenlit' },
+		{ state: 'done',     key: 'col_ship',  label: 'Shipped' },
+		{ state: 'declined', key: 'col_drop',  label: 'Dropped' },
+	];
 
-		row.appendChild(el('span', 'trk-num', '#' + p.n));
+	function drawBoard() {
+		var board = el('div', 'trk-board');
+		COLUMNS.forEach(function (col) {
+			var ns = _order.filter(function (n) { return _by[n] && _by[n].state === col.state; });
+			board.appendChild(drawColumn(col, ns));
+		});
+		return board;
+	}
 
+	function drawColumn(col, ns) {
+		var c = el('div', 'trk-col');
+		c.dataset.state = col.state;
+		var head = el('div', 'trk-col-head');
+		head.appendChild(el('span', 'trk-col-label', tOr('tracker.' + col.key, col.label)));
+		head.appendChild(el('span', 'trk-col-count', String(ns.length)));
+		c.appendChild(head);
+		if (!ns.length) {
+			c.appendChild(el('div', 'trk-col-empty', tOr('tracker.col_empty', 'Nothing here.')));
+		} else {
+			ns.forEach(function (n) { c.appendChild(drawCard(_by[n], col.state)); });
+		}
+		return c;
+	}
+
+	function drawCard(p, state) {
+		var card = el('div', 'trk-card');
+		card.dataset.prop = p.n;
+
+		var top = el('div', 'trk-card-top');
+		top.appendChild(el('span', 'trk-num', '#' + p.n));
 		var title = el('button', 'trk-title', p.title || ('#' + p.n));
 		title.type = 'button';
 		title.dataset.act = 'tracker-open';
 		title.dataset.prop = p.n;
-		row.appendChild(title);
+		top.appendChild(title);
+		card.appendChild(top);
 
-		var meta = el('span', 'trk-meta');
+		var meta = el('div', 'trk-card-meta');
 		meta.appendChild(el('span', 'trk-comments', tOr('tracker.comments', '{n} comments', { n: p.comments })));
 		var tl = tallyLine(p);
 		if (tl) meta.appendChild(tl);
-		row.appendChild(meta);
+		card.appendChild(meta);
 
-		return row;
+		// The column's own body. Greenlit shows its latest activity; Shipped shows
+		// the build it went out in. Both need the discussion, so both enrich.
+		if (state === 'accepted') {
+			card.appendChild(drawActivity(p));
+			enrich(p.n);
+		} else if (state === 'done') {
+			card.appendChild(drawShip(p));
+			enrich(p.n);
+		}
+
+		var acts = drawSettle(p, state);
+		if (acts) card.appendChild(acts);
+		return card;
 	}
 
-	/// The settle controls for one proposal, or nothing when there is no owner
-	/// voice. Reopen on a settled proposal; the other three on an open one.
-	function drawSettle(p) {
+	/// A Greenlit card's latest agent activity: the last comment once read, or the
+	/// count and when it last moved until then.
+	function drawActivity(p) {
+		var line = el('div', 'trk-activity');
+		if (p.latest && p.latest.said) {
+			var who = p.latest.author ? (p.latest.author + ': ') : '';
+			line.textContent = who + snippet(p.latest.said);
+		} else {
+			var parts = [tOr('tracker.comments', '{n} comments', { n: p.comments })];
+			if (p.changed) parts.push(tOr('tracker.active', 'active {when}', { when: fmtWhen(p.changed) }));
+			line.textContent = parts.join(' · ');
+		}
+		return line;
+	}
+
+	/// A Shipped card's build stamp: the real parsed id, clickable to the
+	/// transparency log, or a plain "awaiting build stamp" when none is stamped.
+	function drawShip(p) {
+		var line = el('div', 'trk-ship');
+		if (p.shipped) {
+			line.appendChild(el('span', 'trk-ship-say', tOr('tracker.shipped_in', 'Shipped in')));
+			var b = button('trk-ship-id', 'tracker-transparency', p.shipped,
+				tOr('tracker.ship_help', 'Open the transparency log.'));
+			b.dataset.build = p.shipped;
+			line.appendChild(b);
+		} else {
+			line.appendChild(el('span', 'trk-ship-say', tOr('tracker.shipped_await', 'Shipped — awaiting build stamp.')));
+		}
+		return line;
+	}
+
+	/// The settle controls for one card, or nothing when there is no admin voice.
+	/// Per column: the three forward decisions on an Awaiting-you card; Mark done
+	/// or Reopen on a Greenlit one; Reopen on a Shipped or Dropped one.
+	function drawSettle(p, state) {
 		if (!canSettle()) return null;
 		var acts = el('div', 'trk-settle');
-		if (p.state === 'open') {
+		if (state === 'open') {
 			acts.appendChild(settleBtn('accept',  p.n, tOr('tracker.accept', 'Accept')));
 			acts.appendChild(settleBtn('decline', p.n, tOr('tracker.decline', 'Decline')));
 			acts.appendChild(settleBtn('done',    p.n, tOr('tracker.done', 'Mark done')));
+		} else if (state === 'accepted') {
+			acts.appendChild(settleBtn('done',   p.n, tOr('tracker.done', 'Mark done')));
+			acts.appendChild(settleBtn('reopen', p.n, tOr('tracker.reopen', 'Reopen')));
 		} else {
-			acts.appendChild(settleBtn('reopen',  p.n, tOr('tracker.reopen', 'Reopen')));
+			acts.appendChild(settleBtn('reopen', p.n, tOr('tracker.reopen', 'Reopen')));
 		}
 		return acts;
 	}
@@ -511,9 +726,12 @@
 		if (p.mark) meta.appendChild(el('span', 'trk-mark', p.mark));
 		box.appendChild(meta);
 
+		// The build it shipped in, if it is done and has been stamped.
+		if (p.state === 'done') box.appendChild(drawShip(p));
+
 		box.appendChild(el('p', 'trk-body', p.body || ''));
 
-		var settle = drawSettle(p);
+		var settle = drawSettle(p, p.state);
 		if (settle) box.appendChild(settle);
 
 		if (p.revisions && p.revisions.length) {
@@ -548,10 +766,12 @@
 		return box;
 	}
 
-	/// The owner's admin-voice control, drawn under the head. Shown only where an
-	/// identity exists to wrap under — in a build without one, `cfg.voice` is the
-	/// only way a voice is held, and there is nothing to paste. Presence, replace,
-	/// forget: the same three states voice.js draws for the pull voice.
+	/// The settle-voice control, drawn under the head. Shown only where an identity
+	/// exists to wrap under — in a build without one, `cfg.voice` is the only way a
+	/// voice is held, and there is nothing to paste. Presence, replace, forget: the
+	/// same three states voice.js draws for the pull voice. When no voice is held
+	/// this is the terse "add your settle voice" affordance the owner asked for, so
+	/// the board never shows a settle button that would fail.
 	function drawAdmin() {
 		if (!window.DaimondIdentity) return null;		// nothing to wrap under; tests use cfg.voice
 		var host = el('div', 'trk-admin');
@@ -562,26 +782,24 @@
 			input.id = 'tracker-admin-in';
 			input.autocomplete = 'off';
 			input.spellcheck = false;
-			input.placeholder = tOr('tracker.admin_ph', 'Paste the admin voice the forge printed');
-			input.setAttribute('aria-label', tOr('tracker.admin_ph', 'Paste the admin voice the forge printed'));
+			input.placeholder = tOr('tracker.admin_ph', 'Paste your settle voice');
+			input.setAttribute('aria-label', tOr('tracker.admin_ph', 'Paste your settle voice'));
 			host.appendChild(input);
 			host.appendChild(button('trk-admin-save', 'tracker-admin-save', tOr('tracker.admin_save', 'Save')));
 			host.appendChild(button('trk-admin-cancel', 'tracker-admin-cancel', tOr('common.cancel', 'Cancel')));
 			return host;
 		}
 		if (adminHas()) {
-			host.appendChild(el('span', 'trk-admin-say', tOr('tracker.admin_held', 'Admin voice held, encrypted.')));
+			host.appendChild(el('span', 'trk-admin-say', tOr('tracker.admin_held', 'Settle voice held, encrypted.')));
 			host.appendChild(button('trk-admin-btn', 'tracker-admin-forget', tOr('tracker.admin_forget', 'Forget it')));
 			return host;
 		}
-		// DORMANT UNTIL AN ADMIN VOICE EXISTS. Only the owner may settle, and that
-		// needs an admin voice — which is not minted on this repository yet, so the
-		// settle controls stay hidden and this says why. The paste holder is built
-		// and ready for the day an operator mints one; adding one before then simply
-		// has nothing to authorise.
+		// NO SETTLE VOICE HELD. Reading and the board are open to everyone; settling
+		// is owner-and-operator only and needs a hand-minted admin voice, pasted once.
+		// This is the affordance that opens the paste, in place of dead settle buttons.
 		host.appendChild(el('span', 'trk-admin-say', tOr('tracker.admin_none',
-			'Reading only. Settling is owner-only and needs an admin voice.')));
-		host.appendChild(button('trk-admin-btn', 'tracker-admin-open', tOr('tracker.admin_add', 'Add admin voice')));
+			'Reading only. Settling needs your admin voice.')));
+		host.appendChild(button('trk-admin-btn', 'tracker-admin-open', tOr('tracker.admin_add', 'Add your settle voice')));
 		return host;
 	}
 
@@ -614,9 +832,7 @@
 			if (_st.read) _host.appendChild(el('div', 'trk-none', tOr('tracker.empty', 'No proposals yet.')));
 			return;
 		}
-		var list = el('div', 'trk-list');
-		_order.forEach(function (n) { if (_by[n]) list.appendChild(drawRow(_by[n])); });
-		_host.appendChild(list);
+		_host.appendChild(drawBoard());
 	}
 
 	/// One line for the answers not worth a dialog.
@@ -639,7 +855,7 @@
 		catch (e) { flash(String((e && e.message) || e)); return false; }
 		_voiceOpen = false;
 		draw();
-		flash(tOr('tracker.admin_saved', 'Admin voice held, encrypted.'));
+		flash(tOr('tracker.admin_saved', 'Settle voice held, encrypted.'));
 		return true;
 	}
 
@@ -648,7 +864,7 @@
 		try {
 			if (window.DaimondCore && DaimondCore.confirm) {
 				ok = await DaimondCore.confirm(
-					tOr('tracker.admin_forget_ask', 'Forget the admin voice here? It was shown once.'),
+					tOr('tracker.admin_forget_ask', 'Forget your settle voice here? It was shown once.'),
 					tOr('tracker.admin_forget', 'Forget it'),
 					{ title: tOr('tracker.admin_forget', 'Forget it') });
 			}
@@ -658,6 +874,17 @@
 		draw();
 		flash(tOr('tracker.admin_forgotten', 'The copy on this device is gone.'));
 		return true;
+	}
+
+	// ── The transparency log ───────────────────────────────────
+
+	/// Open the transparency log (the version history), where the shipped build's
+	/// own entry lives. The Admin panel already draws it; the stamp only opens it.
+	function openTransparency() {
+		try {
+			if (window.DaimondAdmin && DaimondAdmin.release) { DaimondAdmin.release(); return true; }
+		} catch (e) { /* no admin panel in this build */ }
+		return false;
 	}
 
 	// ── Wiring ─────────────────────────────────────────────────
@@ -671,6 +898,7 @@
 		if (act === 'tracker-open' && n) { open(n); return; }
 		if (act === 'tracker-back') { back(); return; }
 		if (act === 'tracker-settle' && n) { settle(n, b.dataset.which); return; }
+		if (act === 'tracker-transparency') { openTransparency(); return; }
 		if (act === 'tracker-admin-open') { _voiceOpen = true; draw(); return; }
 		if (act === 'tracker-admin-cancel') { _voiceOpen = false; draw(); return; }
 		if (act === 'tracker-admin-save') { saveAdmin(); return; }
@@ -727,6 +955,9 @@
 		back:      back,
 		settle:    settle,
 		canSettle: canSettle,
+		/// The shipped-build stamp parser, published so a test drives the same
+		/// parse the board does rather than a second copy of the rule.
+		parseShip: parseShip,
 		/// The admin voice, published so a settings surface or a test can drive the
 		/// same store the paste field writes.
 		adminHas:  adminHas,
@@ -739,6 +970,7 @@
 				loading: _st.loading,
 				err:     _st.err ? _st.err.why : '',
 				open:    _open,
+				settle:  canSettle(),
 				shown:   _order.slice(),
 			};
 		},

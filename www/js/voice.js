@@ -168,9 +168,9 @@
 		// The alphabet first, so that `length` below is a count of BYTES: every
 		// character admitted here is one byte, which is what the gateway measures.
 		if (!GRAPHIC.test(s)) return tOr('voice.err.shape',
-			'That does not look like a voice. It is one run of 45 characters with no spaces in it.');
+			'That does not look like a voice. Copy the whole line the forge printed.');
 		if (s.length < MIN) return tOr('voice.err.short',
-			'That is shorter than any voice the forge issues. Copy all 45 characters.');
+			'That is shorter than any voice the forge issues. Copy the whole line.');
 		if (s.length > MAX) return tOr('voice.err.long',
 			'That is longer than a voice can be.');
 		return '';

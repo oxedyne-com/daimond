@@ -883,8 +883,8 @@
 		// The host rides as a placeholder so that eight translations carry the
 		// address without any of them retyping it.
 		line.textContent = tOr('social.public_note',
-			'Sending publishes this at {host} under your voice — anyone can read it, no account needed. '
-			+ 'A kept note stays here.',
+			'Sending publishes this at {host} with your voice name on it — anyone can read it, no account needed. '
+			+ 'A kept note stays on this device.',
 			{ host: FORGE_HOST });
 		line.hidden = !(send && !send.hidden);
 	}

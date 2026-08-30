@@ -1631,6 +1631,12 @@
 <script src="js/workspace.js"></script>
 <script src="js/release.js"></script>
 <script src="js/graph.js"></script>
+<!-- The persistent desktop peer: window.DaimondPeer / DaimondLease /
+     DaimondPresence, consumed by the guarded glue in daimond.js. Money-safe
+     (the sequential double-bill is closed, proven in live two-context QA). See
+     dev/PEER_DESIGN.md. -->
+<script src="js/peer.js"></script>
+
 <!-- The phone shell (drawer + sheet). Classic, before the module, so
      window.DaimondSheet/DaimondShell exist when the app wires into them. -->
 <script src="js/mobile.js"></script>

@@ -247,13 +247,16 @@
 	// the run cannot exceed. A cost line that under-states is worse than none:
 	// the person who reads it has already decided by the time it is wrong.
 
-	/// Which model this would run on: the user's own default, on their own key.
-	/// Null when nothing is configured, which is a reason not to offer the
-	/// control at all rather than a reason to offer one that fails.
+	/// Which model this would run on: the DRAFTING model, which is the chat model
+	/// until the user sets one of its own in AI settings. On their own key either
+	/// way. Null when nothing is configured, which is a reason not to offer the
+	/// control at all rather than a reason to offer one that fails. `resolveDraft`
+	/// answers the same shape as `resolve`, so the estimate and the cost line below
+	/// price whichever model this actually is.
 	function pick() {
 		try {
 			if (!window.DaimondModels) return null;
-			return DaimondModels.resolve('', '');
+			return DaimondModels.resolveDraft();
 		} catch (e) { return null; }
 	}
 
@@ -574,8 +577,8 @@
 		notes.forEach(function (r) { byId[r.id] = r; });
 
 		wrap.appendChild(line('imp-asat trg-asat', tOr('social.triage_plan',
-			'{n} drafts added to the review queue below, by {model}. '
-			+ 'Edit, tick and send them there. Nothing has left this device.',
+			'{n} drafts from your notes, by {model}. '
+			+ 'Edit any, send the ones you want. Nothing has left this device.',
 			{ n: _plan.drafts.length, model: _plan.model })));
 
 		if (_plan.dropped) {

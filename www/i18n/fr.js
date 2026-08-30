@@ -2055,6 +2055,8 @@
 	'changepass.search_not_unsealed': 'Ces services de recherche avaient déjà des clés illisibles avant le changement, et leur clé reste à redonner : {list}.',
 	'changepass.voice_not_resealed': 'Votre voix de la forge n’a pas pu être rechiffrée sous la nouvelle phrase secrète. Redonnez-la à partir de la ligne que la forge a imprimée pour vous.',
 	'changepass.voice_not_unsealed': 'Votre voix de la forge n’a pas pu être lue sous l’ancienne phrase secrète, elle reste donc à redonner à partir de la ligne que la forge a imprimée pour vous.',
+	'changepass.settle_not_resealed': 'Votre voix de règlement n’a pas pu être rechiffrée sous la nouvelle phrase secrète. Recollez-la à partir de la ligne que la forge a imprimée pour vous.',
+	'changepass.settle_not_unsealed': 'Votre voix de règlement n’a pas pu être lue sous l’ancienne phrase secrète, elle reste donc à recoller à partir de la ligne que la forge a imprimée pour vous.',
 	'changepass.rekey_generic':    '{who} : {list}.',
 	'changepass.rekey_failed':     'Une partie de ce qui est gardé ici n’a pas pu être rechiffrée sous la nouvelle phrase secrète. Vérifiez vos clés et les mots de passe de vos boîtes mail dans les Réglages.',
 	'changepass.changed': 'Phrase secrète changée',
@@ -2720,6 +2722,7 @@
 	'voice.err.inurl':          'Une voix va dans un en-tête, jamais dans une adresse.',
 	'voice.the_voice':          'votre voix de la forge',
 
+	'tracker.the_settle_voice': 'votre voix de règlement',
 	// Les propositions sont lues depuis la forge pendant qu’on les regarde. Rien
 	// n’annonce qu’une proposition a reçu une réponse, et aucune phrase ici ne
 	// doit laisser croire le contraire.

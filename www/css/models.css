@@ -83,6 +83,20 @@
 	border-top: 1px solid var(--border);
 }
 
+/* The drafting-model row: a label and its select, under the default. A refinement of
+   the default rather than a peer of it, so it is quieter -- no rule above it, and the
+   label at the panel's chip size. */
+.models-draft {
+	margin-top: 4px; padding: 2px;
+	font-size: var(--fs-2xs); color: var(--text-secondary);
+}
+.models-draft-lab {
+	display: flex; align-items: center; gap: 6px;
+}
+.models-draft-sel {
+	flex: 1 1 auto; min-width: 0;
+}
+
 /* What is left on this provider's key, inside its expanded body. It sits between the provider
    head and the model rows, so it is ruled off from both rather than floating between them; and
    it is built entirely from the panel's own tokens, which is what carries it across dark, light

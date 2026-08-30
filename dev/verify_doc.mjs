@@ -233,13 +233,25 @@ let s = null;
 	// paid most for, so the sentence is required to name the place in the same
 	// words the Workspace panel's own mode chip uses.
 	const coldPath = 'notes-' + new Date().toISOString().slice(0, 10) + '.md';
+	// The panel names the cold document by TODAY, computed when it opens -- not
+	// when this line runs. A run that straddles midnight sees the date advance in
+	// between, so the name the panel shows may be this day's or the next. Both are
+	// covered here, and the file is read back below under the name it ACTUALLY
+	// showed, so a rollover mid-run is a fact about the clock and not a red.
+	const nextPath = 'notes-'
+		+ new Date(Date.parse(coldPath.slice(6, 16)) + 86400000).toISOString().slice(0, 10) + '.md';
 	// It must not exist BEFORE the panel is opened, or "Save created it" is a
-	// claim about a file that was already there.
-	const existedBefore = await page.evaluate(async (rel) => {
-		try { const m = await import('/pkg/oxedyne_daimond.js'); await m.read_file(rel); return true; }
-		catch (e) { return false; }
-	}, coldPath);
-	check('the document this will propose is not on disk yet', !existedBefore, coldPath);
+	// claim about a file that was already there. Neither candidate name may be on
+	// disk, so whichever the panel picks, Save is what wrote it.
+	const existedBefore = await page.evaluate(async (rels) => {
+		for (const rel of rels) {
+			try { const m = await import('/pkg/oxedyne_daimond.js'); await m.read_file(rel); return rel; }
+			catch (e) { /* good: not on disk */ }
+		}
+		return '';
+	}, [coldPath, nextPath]);
+	check('the document this will propose is not on disk yet', !existedBefore,
+		existedBefore || (coldPath + ' / ' + nextPath));
 
 	await page.evaluate(() => {
 		window.DaimondPanels.markUsed('doc');
@@ -269,7 +281,8 @@ let s = null;
 	});
 	check('opening Doc cold puts an editable document in it, not nothing',
 		cold.editing, JSON.stringify(cold));
-	check('and it is named, so it can be found again', cold.name === coldPath, cold.name);
+	check('and it is named, so it can be found again', cold.name === coldPath || cold.name === nextPath,
+		cold.name + (cold.name === nextPath ? ' (the clock rolled to the next day mid-run)' : ''));
 	check('the panel says where the document will land, in the mode row\'s own word',
 		cold.saidShown && !!cold.place.trim() && cold.said.includes(cold.place.trim()),
 		JSON.stringify({ said: cold.said, place: cold.place }));
@@ -295,6 +308,9 @@ let s = null;
 		if (b) b.click();
 	});
 	await sleep(2500);
+	// Read back under the name the panel ACTUALLY showed, not the one guessed
+	// before it opened: on a midnight-straddling run those differ, and the round
+	// trip is about the bytes at the panel's own name.
 	const saved = await page.evaluate(async (rel) => {
 		const view = document.getElementById('doc-view');
 		let onDisk = null;
@@ -311,7 +327,7 @@ let s = null;
 			download: shown('[data-act="download"]'),
 			attach:   shown('[data-act="attach"]'),
 		};
-	}, coldPath);
+	}, cold.name);
 	check('Save writes exactly what was typed, at the name the panel showed',
 		saved.onDisk === NEW_BODY, JSON.stringify(saved.onDisk));
 	check('and the button flips back, so the user can tell it is written',

@@ -1141,6 +1141,37 @@
 		return { ok: true, addr: made.addr };
 	}
 
+	// ── The raw put, for the persistent desktop peer ───────────
+	//
+	// PEER STEP 2 (dev/PEER_DESIGN.md §1.4). An errand and a report ride this same
+	// `/api/post` door a message does, but they are NOT messages: they are sealed
+	// by DaimondPeer -- raw JSON under the account's own seal -- and handed here as
+	// a finished `{ to, addr, envelope }` body. `send` stays the message-shaped
+	// door (compose -> seal -> post); this is the one raw put, and it composes
+	// nothing and stores no Sent copy, because a peer envelope is not a message and
+	// must never reach the message list. Status is read through the SAME
+	// `whyRefused` table `send` uses, so a full box or a refused put fails in the
+	// same words wherever it is posted from.
+
+	/// Put an already-sealed `{ to, addr, envelope }` in the box. Answers
+	/// `{ ok, status, addr, why }`. `to` is the account's OWN public address for a
+	/// self-post, so the gateway wakes the account's OTHER devices (wake.rs
+	/// `Sub.origin` does not wake the poster).
+	async function post(body) {
+		var b = body || {};
+		if (!b.to || !b.addr || !b.envelope) {
+			return { ok: false, status: 0, why: tOr('post.err_bad_put',
+				'A post needs a recipient, an address and a sealed body.') };
+		}
+		var r;
+		try { r = await call('POST', { to: String(b.to), addr: String(b.addr), envelope: String(b.envelope) }); }
+		catch (e) { return { ok: false, status: 0, why: whyRefused(0) }; }
+		if (r.status !== 200 || !r.json || !r.json.ok) {
+			return { ok: false, status: r.status | 0, why: whyRefused(r.status) };
+		}
+		return { ok: true, status: 200, addr: String(b.addr) };
+	}
+
 	/// Hand a roster to group.js, and say whether it moved anything.
 	///
 	/// Its own function rather than four lines inside `collect`, so that a
@@ -1341,6 +1372,23 @@
 		// Already held. A message is immutable -- its address is its content -- so
 		// a second sighting of one is a re-collect and not news.
 		if (st.msgs[String(row.addr)]) return NOTHING;
+		// THE PERSISTENT DESKTOP PEER'S OWN ENVELOPES (dev/PEER_DESIGN.md §4.3). An
+		// errand or a report rides this same box but is raw JSON, not a message
+		// artefact -- `openEnvelope` below would reject it as "not a message". So it
+		// is peeked for and routed FIRST: `DaimondPeer.peek` unseals and classifies,
+		// `absorb` verifies the account signature and hands it to the runner. A row
+		// that is not a peer envelope -- every ordinary message -- peeks to null and
+		// falls straight through to the message read below, UNCHANGED. A build with
+		// no peer module skips the block entirely.
+		if (window.DaimondPeer && DaimondPeer.peek) {
+			var peer = null;
+			try { peer = await DaimondPeer.peek(row.envelope); } catch (e) { peer = null; }
+			if (peer) {
+				try { await DaimondPeer.absorb(peer, row); }
+				catch (e) { log('a peer envelope would not apply', e); }
+				return NOTHING;			// routed, and never a message on the list
+			}
+		}
 		try {
 			var got1 = await openEnvelope(row.envelope, row.addr);
 			// A ROSTER IS NOT A MESSAGE, and this is the same safety
@@ -2250,6 +2298,9 @@
 		open:    openEnvelope,
 		/// The five verbs.
 		send:    send,
+		/// The raw put: an already-sealed `{ to, addr, envelope }` in the box, for
+		/// the peer's errand and report. Not a message; composes and stores nothing.
+		post:    post,
 		collect: collect,
 		ack:     ackThrough,
 		round:   round,

@@ -2041,6 +2041,8 @@
 	'changepass.search_not_unsealed': 'Estes serviços de busca já tinham chaves ilegíveis antes da mudança, e as chaves ainda precisam ser definidas de novo: {list}.',
 	'changepass.voice_not_resealed': 'Sua voz da forja não pôde ser recriptografada sob a frase-senha nova. Defina-a de novo a partir da linha que a forja imprimiu para você.',
 	'changepass.voice_not_unsealed': 'Sua voz da forja não pôde ser lida sob a frase-senha antiga, então ela ainda precisa ser definida de novo a partir da linha que a forja imprimiu para você.',
+	'changepass.settle_not_resealed': 'Sua voz de resolução não pôde ser recriptografada sob a frase-senha nova. Cole-a de novo a partir da linha que a forja imprimiu para você.',
+	'changepass.settle_not_unsealed': 'Sua voz de resolução não pôde ser lida sob a frase-senha antiga, então ela ainda precisa ser colada de novo a partir da linha que a forja imprimiu para você.',
 	'changepass.rekey_generic':    '{who}: {list}.',
 	'changepass.rekey_failed':     'Parte do que está guardado aqui não pôde ser recriptografada sob a frase-senha nova. Confira suas chaves e as senhas das caixas de correio nas Configurações.',
 	'changepass.changed': 'Frase-senha mudada',
@@ -2705,6 +2707,7 @@
 	'voice.err.inurl':          'Uma voz vai num cabeçalho, nunca num endereço.',
 	'voice.the_voice':          'sua voz da forja',
 
+	'tracker.the_settle_voice': 'sua voz de resolução',
 	// As propostas são lidas da forja enquanto você olha. Nada avisa quando uma é
 	// respondida, e nenhuma frase daqui pode dar a entender o contrário.
 	'social.live_note': 'Isto é lido da forja enquanto você olha. Nada avisa quando uma proposta é respondida; olhe de novo para saber.',

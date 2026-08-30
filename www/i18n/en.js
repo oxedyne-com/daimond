@@ -569,6 +569,12 @@
 	'models.remove':               'Remove {provider}',
 	'models.starts_on':            'New chats start on: {model}',
 	'models.no_default':           'No default model yet. Star one above.',
+	// ── Track D: drafting model (one contiguous block, en only) ──
+	'models.drafting_label':       'Drafting model',
+	'models.drafting_help':        'Model that drafts proposals from your notes. Defaults to your chat model.',
+	'models.drafting_same':        'Same as chat',
+	'models.drafting_same_on':     'Same as chat ({model})',
+	// ── end Track D block ──
 	'models.none_yet':             'No provider yet',
 	'models.err_refused':          'The account service refused (HTTP {status}).',
 	'models.err_bad_key':          'The account service sent a key Daimond cannot use.',
@@ -1904,6 +1910,18 @@
 	'turn.interrupted_early': 'Interrupted before it could answer.',
 	'turn.offline':           'The connection dropped before this finished. Nothing was lost — pick it up where it stopped.',
 	'turn.offline_early':     'The connection dropped before an answer arrived. Nothing was lost — ask again from here.',
+	'turn.peer_sent':         'Sent to your other devices.',
+	'turn.peer_none':         'No awake device picked this up.',
+	'turn.peer_claimed':       'Your laptop is picking this up.',
+	'turn.peer_claimed_named': '{name} is picking this up.',
+	'turn.peer_running':       'Your laptop is doing this.',
+	'turn.peer_running_named': '{name} is doing this.',
+	'turn.peer_failed':        'Your laptop couldn’t finish this.',
+	'turn.peer_takeback':      'Take back',
+	'turn.peer_runhere':       'Run here',
+	'chat.run_on_peer':        'Run on my laptop',
+	'chat.run_on_peer_help':   'Hand this turn to another device of yours that is awake.',
+	'chat.run_on_peer_always': 'Always run on my laptop when it is awake',
 	'turn.continue':          'Continue',
 	'turn.continue_help':     'Run this turn again from your message.',
 	'astat.no_model':         'No model connected',
@@ -2599,6 +2617,8 @@
 	'changepass.search_not_unsealed': 'These search services already had unreadable keys before the change, and still need their keys set again: {list}.',
 	'changepass.voice_not_resealed': 'Your forge voice could not be re-encrypted under the new passphrase. Set it again from the line the forge printed for you.',
 	'changepass.voice_not_unsealed': 'Your forge voice could not be read under the old passphrase, so it still needs setting again from the line the forge printed for you.',
+	'changepass.settle_not_resealed': 'Your settle voice could not be re-encrypted under the new passphrase. Paste it again from the line the forge printed for you.',
+	'changepass.settle_not_unsealed': 'Your settle voice could not be read under the old passphrase, so it still needs pasting again from the line the forge printed for you.',
 	// A module that seals something failed in a way it had no words of its own
 	// for. Generic on purpose and rare by design: every participant in
 	// js/rekey.js carries its own sentence, and this is what is left if one does
@@ -3306,6 +3326,7 @@
 	'post.err_no_account':       'No account holds that key, so the message has not been sent.',
 	'post.err_too_big':          'That message is too large for the relay to carry.',
 	'post.err_refused':          'The relay would not take that message, so it has not been sent.',
+	'post.err_bad_put':          'A post needs a recipient, an address and a sealed body.',
 	'post.locked':               'Unlock Daimond to read your messages: they are kept encrypted on this device.',
 	'post.tray_head':            'Waiting for your answer',
 	'post.none':                 'No messages yet.',
@@ -3575,7 +3596,7 @@
 	'social.publish_body': 'Daimond will publish this in your name, for anyone to read. It cannot be taken back.\n\n{what}\n\nDecline if you did not expect it.',
 	'social.publish_ok': 'Publish it',
 	'social.publish_title': 'Publish this?',
-	'social.public_note':  'Sending publishes this at {host} under your voice — anyone can read it, no account needed. A kept note stays here.',
+	'social.public_note':  'Sending publishes this at {host} with your voice name on it — anyone can read it, no account needed. A kept note stays on this device.',
 	'social.title_hint':   'First line is the title; what happened goes below.',
 	'social.no_title':     'First line is the title — write one, then what happened.',
 	'social.nothing':      'Write something first.',
@@ -3662,6 +3683,7 @@
 	// sentence a person reads.
 	'voice.the_voice':      'your forge voice',
 
+	'tracker.the_settle_voice': 'your settle voice',
 	// Proposals, read from the forge as the panel is looked at. Nothing tells a
 	// reader when one is answered, and no string here may suggest otherwise.
 	'social.live_note':    'These are read from the forge as you look at them. Nothing tells you when a proposal is answered; look again to find out.',
@@ -3904,9 +3926,10 @@
 	'lapse.lic_pull':             'Pulling down what you have already stored never stops, and your credits are unaffected.',
 
 	// ── The Tracker view (js/tracker.js) ───────────────────────
-	// A read-first window onto Daimond's own development, tracked as proposals on
-	// the Oregami forge. Votes are shown as a tally only; the settle controls are
-	// the owner's. Terse throughout -- the detail lives in the guide.
+	// A decision-queue BOARD onto Daimond's own development, tracked as proposals
+	// on the Oregami forge: four columns, the life of a proposal left to right.
+	// Votes are shown as a tally only; the settle controls are the owner's and
+	// operators'. Terse throughout -- the detail lives one press away.
 	'tracker.title':          'Development',
 	'tracker.count':          '{n} proposals',
 	'tracker.loading':        'Reading…',
@@ -3917,12 +3940,30 @@
 	'tracker.revisions':      'Revisions',
 	'tracker.discussion':     'Comments',
 	'tracker.no_comments':    'No comments.',
-	// The state words a reader is shown for the forge's open/accepted/declined/done.
+	// The four board columns, and the empty note under one that holds nothing.
+	// tracker.js:drawColumn builds `tracker.` + col.key for the four column labels;
+	// the prefix is the board's whole namespace (title, columns, state, admin, errors)
+	// and only these four are formed by concatenation, so the sweep is one-way.
+	// i18n-family: tracker. = one-way col_open col_green col_ship col_drop -- the prefix is the board's whole namespace, not a set; only the four column labels are built by concatenation in tracker.js.
+	'tracker.col_open':       'Awaiting you',
+	'tracker.col_green':      'Greenlit',
+	'tracker.col_ship':       'Shipped',
+	'tracker.col_drop':       'Dropped',
+	'tracker.col_empty':      'Nothing here.',
+	// A Greenlit card's latest activity, when it is drawn from the listing rather
+	// than the last comment: "{n} comments · active {when}".
+	'tracker.active':         'active {when}',
+	// A Shipped card's build stamp: the real deployed id, or a wait for one.
+	'tracker.shipped_in':     'Shipped in',
+	'tracker.shipped_await':  'Shipped — awaiting build stamp.',
+	'tracker.ship_help':      'Open the transparency log.',
+	// The state words a reader is shown on the detail head for the forge's
+	// open/accepted/declined/done.
 	'tracker.state_open':     'Open',
 	'tracker.state_taken':    'Being done',
 	'tracker.state_done':     'Done',
 	'tracker.state_declined': 'Declined',
-	// The owner's settle controls.
+	// The settle controls, on a board card and on the detail.
 	'tracker.accept':         'Accept',
 	'tracker.decline':        'Decline',
 	'tracker.done':           'Mark done',
@@ -3945,23 +3986,24 @@
 	// The nav/panel label. Kept in this block, not beside the other `panel.*`
 	// keys, so this lane's addition sits at one anchor.
 	'panel.tracker':          'Proposals',
-	// The owner's admin voice: pasted once, wrapped under the passphrase, and
-	// dormant until an admin voice is minted on the forge.
-	'tracker.admin_none':        'Reading only. Settling is owner-only and needs an admin voice.',
-	'tracker.admin_add':         'Add admin voice',
-	'tracker.admin_held':        'Admin voice held, encrypted.',
+	// The settle voice: a hand-minted admin voice, pasted once and wrapped under
+	// the passphrase. When none is held the board shows the "add your settle voice"
+	// affordance in place of settle buttons that would fail.
+	'tracker.admin_none':        'Reading only. Settling needs your admin voice.',
+	'tracker.admin_add':         'Add your settle voice',
+	'tracker.admin_held':        'Settle voice held, encrypted.',
 	'tracker.admin_forget':      'Forget it',
-	'tracker.admin_forget_ask':  'Forget the admin voice here? It was shown once.',
+	'tracker.admin_forget_ask':  'Forget your settle voice here? It was shown once.',
 	'tracker.admin_forgotten':   'The copy on this device is gone.',
-	'tracker.admin_ph':          'Paste the admin voice the forge printed',
+	'tracker.admin_ph':          'Paste your settle voice',
 	'tracker.admin_save':        'Save',
-	'tracker.admin_saved':       'Admin voice held, encrypted.',
-	'tracker.admin_need':        'Paste your admin voice first.',
-	'tracker.admin_empty':       'Paste the admin voice the forge printed.',
+	'tracker.admin_saved':       'Settle voice held, encrypted.',
+	'tracker.admin_need':        'Add your settle voice first.',
+	'tracker.admin_empty':       'Paste your settle voice.',
 	'tracker.admin_short':       'That looks too short to be a whole voice.',
-	'tracker.admin_locked':      'Unlock Daimond first: the admin voice is kept encrypted under your passphrase.',
-	'tracker.admin_locked_send': 'Unlock Daimond to settle: the admin voice is encrypted under your passphrase.',
-	'tracker.admin_unreadable':  'The admin voice cannot be read with this passphrase. Set it again.',
+	'tracker.admin_locked':      'Unlock Daimond first: your settle voice is kept encrypted under your passphrase.',
+	'tracker.admin_locked_send': 'Unlock Daimond to settle: your settle voice is encrypted under your passphrase.',
+	'tracker.admin_unreadable':  'Your settle voice cannot be read with this passphrase. Set it again.',
 	'tracker.admin_store':       'That voice could not be stored on this device.',
 	});
 })();

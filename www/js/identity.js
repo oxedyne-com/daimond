@@ -71,6 +71,11 @@
 	var K_SEALK = 'daimond-id-seal';	// base64 wrapped (encrypted) pkcs8 sealing key.
 	var K_SEALA = 'daimond-id-sealalg';	// 'X25519'. The only one a card can carry.
 	var K_CARD  = 'daimond-id-card';	// base64 of this identity's signed card. See mintCard().
+	// A random id minted once per DEVICE. NEVER in the bundle and never set by
+	// importBundle, so two devices paired to one account (which share every key
+	// above) still hold different ids — the peer's holder/dispatchedBy key. See
+	// deviceId() for why the account public key cannot serve this purpose.
+	var K_DEVID = 'daimond-id-device';	// hex random 128-bit, per-device, un-synced.
 
 	// ── In-memory state (present only while unlocked) ──────────
 	// All three are dropped by lock(); none is ever persisted.
@@ -928,6 +933,7 @@
 		localStorage.removeItem(K_SEALK);
 		localStorage.removeItem(K_SEALA);
 		localStorage.removeItem(K_CARD);
+		localStorage.removeItem(K_DEVID);
 	}
 
 	// ── Signing / public key (for future Oxegen binding) ───────
@@ -951,6 +957,37 @@
 		return b64enc(sig);
 	}
 
+	/// Verify a detached signature against a raw public key. The counterpart to
+	/// `sign`, split the same way: WebCrypto where it does Ed25519, the pure-JS
+	/// verifier where it does not. Public and lock-agnostic -- verification needs
+	/// only the public key -- and it exists because `sign` had no counterpart in
+	/// JS: message signatures are checked in the wasm bridge, so anything signing
+	/// OFF that path (the peer's errand) had nowhere to verify but a second copy of
+	/// this engine split, which the header forbids.
+	///
+	/// `pub` is raw key bytes; `sig` is base64 (as `sign` answers) or raw bytes;
+	/// `data` is the signed bytes or a string. Answers false on any malformed
+	/// input rather than throwing, so a caller branches on one boolean.
+	async function verifySig(pub, sig, data) {
+		var alg  = localStorage.getItem(K_ALG) || 'Ed25519';
+		var pubB = (pub instanceof Uint8Array) ? pub : b64dec(pub);
+		var sigB = (sig instanceof Uint8Array) ? sig : b64dec(sig);
+		var msgB = (typeof data === 'string') ? utf8(data) : data;
+		try {
+			var importAlg = (alg === 'Ed25519')
+				? { name: 'Ed25519' }
+				: { name: 'ECDSA', namedCurve: 'P-256' };
+			var key = await crypto.subtle.importKey('raw', pubB, importAlg, false, ['verify']);
+			return await crypto.subtle.verify(signAlg(alg), key, sigB, msgB);
+		} catch (e) {
+			// The engine has no WebCrypto Ed25519. The pure-JS verifier, which is the
+			// same one the interop test checks WebCrypto's own signatures against.
+			var fb = curveFallback();
+			if (alg === 'Ed25519' && fb) return fb.edVerify(pubB, sigB, msgB);
+			return false;
+		}
+	}
+
 	/// The raw public key bytes (the device identity), or null if no
 	/// identity exists. Public, so this works whether locked or not.
 	async function publicKeyRaw() {
@@ -965,6 +1002,24 @@
 		var raw = localStorage.getItem(K_PUB);
 		if (!raw) return null;
 		return raw.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	}
+
+	/// This DEVICE's stable local id, minted once and kept in localStorage. The
+	/// account public key cannot serve as a device id: pairing copies the whole
+	/// keypair (exportBundle/importBundle), so every paired device shares it, and a
+	/// peer keyed on it could not tell itself from its twin — it would self-exclude
+	/// from presence and, worse, both twins would write the SAME lease `holder` and
+	/// both run and bill the turn. This id is random, never travels in the bundle
+	/// or the parcel, and so is unique per device. Lazily minted so an existing
+	/// device keeps the id it already has.
+	function deviceId() {
+		var id = localStorage.getItem(K_DEVID);
+		if (id) return id;
+		var bytes = crypto.getRandomValues(new Uint8Array(16));
+		var s = '';
+		for (var i = 0; i < bytes.length; i++) s += ('0' + bytes[i].toString(16)).slice(-2);
+		try { localStorage.setItem(K_DEVID, s); } catch (e) { /* private mode: the id lives for this page only */ }
+		return s;
 	}
 
 	// ── BYOK key wrapping ──────────────────────────────────────
@@ -1230,8 +1285,14 @@
 		changePassphrase: changePassphrase,
 		verify:       verify,
 		sign:         sign,
+		/// Verify a detached signature against a raw public key. The JS counterpart
+		/// to `sign`, for a signature made off the wasm message path.
+		verifySig:    verifySig,
 		publicKeyRaw: publicKeyRaw,
 		publicKeyB64url: publicKeyB64url,
+		/// This device's stable local id — distinct on every paired device, unlike
+		/// the account key. The peer's holder/dispatchedBy/presence key.
+		deviceId:     deviceId,
 		wrap:         wrap,
 		unwrap:       unwrap,
 		// The byte-shaped seal, for the file pipeline.
