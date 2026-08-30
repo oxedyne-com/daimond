@@ -11958,6 +11958,71 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return { chat: chat, app: app };
 	}
 
+	/// Build the deps `DaimondPeer.runErrand` runs an errand over. Shared by the
+	/// collector's onErrand handler (a PEER running a dispatched errand) and by the
+	/// dispatching device's own recovery-on-return (`allowSelf`), so BOTH go through
+	/// the identical take-if-vacant lease, `finished` guard, renew/abort, push,
+	/// report, ack and release -- the money-safety is one implementation, not two.
+	/// `opts.allowSelf` lifts ONLY runErrand's blanket refusal to run this device's
+	/// own dispatch (D1(a)); every other guard is untouched, so recovery is as
+	/// single-run-safe as a peer.
+	function peerRunErrandDeps(opts) {
+		var o = opts || {};
+		var ctx = null;
+		return {
+			selfId:    selfDeviceId(),
+			cas:       DaimondPeer.syncCas(peerSyncShim()),
+			allowSelf: !!o.allowSelf,
+			// D1(b). Whether this errand's turn is already FINISHED, so a released
+			// lease (which reads vacant) is not re-taken and re-run. Two proofs the
+			// turn completed: a done report collected for it, or the answer already
+			// merged into the transcript (a non-empty assistant message under the
+			// turn's iturn). Either means stand down before the take.
+			finished: async function (er) {
+				try {
+					var tid = String(er.turnId);
+					var rep = peerReports[tid];
+					if (rep && rep.status === 'done') return true;
+					for (var ci = 0; ci < chats.length; ci++) {
+						var c = chats[ci];
+						if (!c || c.id !== er.chatId || !c.messages) continue;
+						for (var mi = 0; mi < c.messages.length; mi++) {
+							var m = c.messages[mi];
+							if (m.role === 'assistant' && String(m.iturn) === tid
+								&& m.content && m.content.trim() && !m.interrupted) return true;
+						}
+					}
+				} catch (e) { /* on any doubt, let the lease decide */ }
+				return false;
+			},
+			reconstruct: async function (er) { ctx = await peerReconstruct(er); return ctx; },
+			// The ordinary turn engine. A renew timer calls the runner's own
+			// onProgress (which renews the lease and hard-aborts on revoke) at the
+			// renew cadence -- the thin stand-in for the journal-event piggyback
+			// (§2.4), refined in the running app; chat.app.abort is the hard stop.
+			runTurn: async function (c, prompt, ropts) {
+				var timer = setInterval(function () {
+					try { ropts.onProgress(); } catch (e) { /* renew best effort */ }
+				}, (DaimondLease.RENEW_EVERY_MS || 30000));
+				// D3 — the prompt is already in the reconstructed transcript, so tell
+				// runTurn to run against it rather than append a second copy.
+				try { await runTurn(c.chat, prompt, { promptInTranscript: !!(ropts && ropts.promptInTranscript), turnId: ropts && ropts.turnId }); }
+				finally { clearInterval(timer); }
+			},
+			abort: function () { try { if (ctx && ctx.chat && ctx.chat.app) ctx.chat.app.abort(); } catch (e) { /* idempotent */ } },
+			pushResult: async function () {
+				try { if (ctx && ctx.chat) captureSession(ctx.chat, ctx.app); } catch (e) { /* best effort */ }
+				try { await DaimondSync.push(); } catch (e) { /* the report still nudges */ }
+				try { return DaimondSync.version() | 0; } catch (e) { return 0; }
+			},
+			post: async function (report) {
+				try { var body = await DaimondPeer.sealForSelf(report); await DaimondPost.post(body); }
+				catch (e) { /* the answer is already in the parcel */ }
+			},
+			ack: async function () { try { await DaimondPost.ack(); } catch (e) { /* re-collect is idempotent */ } },
+		};
+	}
+
 	/// Register the runner. Idempotent (DaimondPeer.onErrand just sets the handler),
 	/// so it is safe to call on every unlock.
 	function registerPeerRunner() {
@@ -11967,72 +12032,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// both run the turn). Read at each errand, not captured here, so a device that
 		// mints its id lazily still holds the right one.
 		DaimondPeer.onErrand(async function (errand) {
-			// D1(a/c). A device NEVER runs its OWN dispatched errand. On its return from
-			// the background the phone re-collects its own self-posted errand
-			// (peerCollectOnReturn); routed here and run it would re-take the peer's
-			// released lease and re-run the finished turn -- a second completion and a
-			// second charge. Skip it: the collect loop already advances the post-box
-			// cursor past the row (post.js), and the peer that RAN it acked the relay
-			// row on commit, so nothing re-collects it. Deliberately NOT acked here -- a
-			// phone still awake that collects before the peer has picked the errand up
-			// must not yank it from the relay. runErrand carries the same guard, so this
-			// is belt-and-braces.
+			// D1(a/c). The AUTOMATIC collect path NEVER runs this device's OWN dispatch.
+			// On its return from the background the phone re-collects its own self-posted
+			// errand (peerCollectOnReturn); routed here and run it would re-take the
+			// peer's released lease and re-run the finished turn -- a second completion
+			// and a second charge. Skip it: the collect loop already advances the
+			// post-box cursor past the row (post.js), and the peer that RAN it acked the
+			// relay row on commit, so nothing re-collects it. Deliberately NOT acked here
+			// -- a phone still awake that collects before the peer has picked the errand
+			// up must not yank it from the relay. Deliberate LOCAL RECOVERY of an orphan
+			// is a SEPARATE path (recoverDispatchedTurns) that passes `allowSelf` and has
+			// already confirmed the turn is unrun and unclaimed; it never comes through
+			// here. runErrand carries the same guard, so this is belt-and-braces.
 			if (errand && String(errand.dispatchedBy) && String(errand.dispatchedBy) === String(selfDeviceId())) {
 				return { ran: false, why: 'self-dispatched' };
 			}
-			var cas = DaimondPeer.syncCas(peerSyncShim());
-			var ctx = null;
-			return await DaimondPeer.runErrand(errand, {
-				selfId: selfDeviceId(),
-				cas:    cas,
-				// D1(b). Whether this errand's turn is already FINISHED, so a released
-				// lease (which reads vacant) is not re-taken and re-run. Two proofs the
-				// turn completed: a done report collected for it, or the answer already
-				// merged into the transcript (a non-empty assistant message under the
-				// turn's iturn). Either means stand down before the take.
-				finished: async function (er) {
-					try {
-						var tid = String(er.turnId);
-						var rep = peerReports[tid];
-						if (rep && rep.status === 'done') return true;
-						for (var ci = 0; ci < chats.length; ci++) {
-							var c = chats[ci];
-							if (!c || c.id !== er.chatId || !c.messages) continue;
-							for (var mi = 0; mi < c.messages.length; mi++) {
-								var m = c.messages[mi];
-								if (m.role === 'assistant' && String(m.iturn) === tid
-									&& m.content && m.content.trim() && !m.interrupted) return true;
-							}
-						}
-					} catch (e) { /* on any doubt, let the lease decide */ }
-					return false;
-				},
-				reconstruct: async function (er) { ctx = await peerReconstruct(er); return ctx; },
-				// The ordinary turn engine. A renew timer calls the runner's own
-				// onProgress (which renews the lease and hard-aborts on revoke) at the
-				// renew cadence -- the thin stand-in for the journal-event piggyback
-				// (§2.4), refined in the running app; chat.app.abort is the hard stop.
-				runTurn: async function (c, prompt, opts) {
-					var timer = setInterval(function () {
-						try { opts.onProgress(); } catch (e) { /* renew best effort */ }
-					}, (DaimondLease.RENEW_EVERY_MS || 30000));
-					// D3 — the prompt is already in the reconstructed transcript, so tell
-					// runTurn to run against it rather than append a second copy.
-					try { await runTurn(c.chat, prompt, { promptInTranscript: !!(opts && opts.promptInTranscript), turnId: opts && opts.turnId }); }
-					finally { clearInterval(timer); }
-				},
-				abort: function () { try { if (ctx && ctx.chat && ctx.chat.app) ctx.chat.app.abort(); } catch (e) { /* idempotent */ } },
-				pushResult: async function () {
-					try { if (ctx && ctx.chat) captureSession(ctx.chat, ctx.app); } catch (e) { /* best effort */ }
-					try { await DaimondSync.push(); } catch (e) { /* the report still nudges */ }
-					try { return DaimondSync.version() | 0; } catch (e) { return 0; }
-				},
-				post: async function (report) {
-					try { var body = await DaimondPeer.sealForSelf(report); await DaimondPost.post(body); }
-					catch (e) { /* the answer is already in the parcel */ }
-				},
-				ack: async function () { try { await DaimondPost.ack(); } catch (e) { /* re-collect is idempotent */ } },
-			});
+			return await DaimondPeer.runErrand(errand, peerRunErrandDeps());
 		});
 		// The DISPATCHING side: a report is the nudge that a dispatched turn is
 		// settled. Stash it by turnId for the UI state machine, and on a `done` drop
@@ -12124,15 +12139,119 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { /* nothing drawn */ }
 	}
 
-	/// On return to a foregrounded tab, collect the post box so a `report` clears the
-	/// "waiting" UI; the parcel (with the merged answer) is pulled by sync's own
-	/// focus path (§4.5). Wired beside the durability visibility hook.
-	function peerCollectOnReturn() {
+	/// Whether an errand's turn is already FINISHED on this device: a done report was
+	/// collected, or a non-empty assistant answer is merged under the turn's iturn.
+	/// The dispatching-side twin of the runner's D1(b) `finished` guard, read by the
+	/// recovery decision so a turn a peer already answered is never re-run locally.
+	function dispatchedTurnFinished(chat, turnId) {
+		try {
+			var tid = String(turnId);
+			var rep = peerReports[tid];
+			if (rep && rep.status === 'done') return true;
+			if (chat && chat.messages) {
+				for (var i = 0; i < chat.messages.length; i++) {
+					var m = chat.messages[i];
+					if (m.role === 'assistant' && String(m.iturn) === tid
+						&& m.content && m.content.trim() && !m.interrupted) return true;
+				}
+			}
+		} catch (e) { /* on doubt, let the lease decide */ }
+		return false;
+	}
+
+	/// Rebuild the errand for a local recovery from the dispatched turn's own record.
+	/// The turn already holds everything an errand needs -- its id (`iturn`), its
+	/// prompt (`itext`), the chat, its model and scope. `deadline: 0` so recovery
+	/// runs however old the orphan is (the deadline governs PEERS starting a turn,
+	/// not the owner rescuing it), and `dispatchedBy` is this device -- which is why
+	/// the run must go through the `allowSelf` path.
+	function errandForRecovery(chat, m) {
+		return DaimondPeer.makeErrand({
+			turnId:       String(m.iturn),
+			chatId:       String(chat.id || ''),
+			prompt:       String(m.itext == null ? '' : m.itext),
+			model:        { provider: chat.provider || '', model: chat.model || '', url: '' },
+			scope:        Array.isArray(chat.holds) ? chat.holds : [],
+			parcelVersion: (function () { try { return DaimondSync.version() | 0; } catch (e) { return 0; } })(),
+			deadline:     0,
+			dispatchedBy: selfDeviceId(),
+			ts:           m.ts || Date.now(),
+		});
+	}
+
+	/// Run ONE orphaned dispatched turn locally, through the same lease as a peer.
+	/// Money-safe: `runErrand` with `allowSelf` still TAKES the lease (a peer that
+	/// already holds it wins the take-if-vacant merge and this stands down), still
+	/// checks `finished` first, and on completion pushes the answer, posts the done
+	/// report, ACKS the relay errand (so no peer re-collects and re-runs it) and
+	/// releases the lease. On done, drop the empty "dispatched" placeholder so the
+	/// real answer stands alone.
+	async function recoverOneLocally(chat, m) {
+		if (chat._generating) return;			// a live turn already owns this chat
+		var errand = errandForRecovery(chat, m);
+		var res = null;
+		try { res = await DaimondPeer.runErrand(errand, peerRunErrandDeps({ allowSelf: true })); }
+		catch (e) { return; }					// a failed recovery leaves the footer as it was
+		if (res && res.done) {
+			try { dropDispatchedPlaceholder(String(m.iturn)); } catch (e) { /* nothing drawn */ }
+			renderDispatchedBadges();
+		}
+	}
+
+	/// On return to a foregrounded tab: learn the latest, then RESCUE any orphan.
+	///
+	/// The reported failure is a phone that dispatched a turn no peer ran, then came
+	/// back to nothing. This closes it. First collect the post box (a `report` clears
+	/// the "waiting" UI) and pull the parcel (a peer's answer and any lease it took),
+	/// so the recovery decision reads server truth. Then, for every turn still marked
+	/// `dispatched` that is neither finished nor held by a LIVE peer lease, run it
+	/// HERE -- through the lease, so if a peer is genuinely on it we stand down. A
+	/// backgrounded phone cannot fire the deadline fallback, so this is the fallback.
+	var _recovering = false;
+	async function peerCollectOnReturn() {
+		if (_recovering) return;
+		_recovering = true;
+		try {
+			try { if (window.DaimondPost && DaimondPost.collect) await DaimondPost.collect(); } catch (e) { /* offline */ }
+			try { if (window.DaimondSync && DaimondSync.pull) await DaimondSync.pull(); } catch (e) { /* offline */ }
+			if (!window.DaimondPeer || !DaimondPeer.recoverDecision || !DaimondPeer.runErrand) return;
+			var self = selfDeviceId();
+			var now  = Date.now();
+			// A snapshot of the candidates first, because recoverOneLocally mutates
+			// chats/messages (drops the placeholder) as it goes.
+			var jobs = [];
+			for (var i = 0; i < chats.length; i++) {
+				var chat = chats[i];
+				if (!chat || chat.diamondId || !chat.messages) continue;
+				for (var j = 0; j < chat.messages.length; j++) {
+					var m = chat.messages[j];
+					if (!m || m.why !== DaimondPeer.REASON_DISPATCHED || !m.iturn) continue;
+					var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(m.iturn) : null;
+					var fin   = dispatchedTurnFinished(chat, m.iturn);
+					if (DaimondPeer.recoverDecision(m, lease, fin, self, now)) jobs.push({ chat: chat, m: m });
+				}
+			}
+			for (var k = 0; k < jobs.length; k++) {
+				await recoverOneLocally(jobs[k].chat, jobs[k].m);
+			}
+		} finally { _recovering = false; }
+	}
+
+	/// Start LISTENING for dispatched errands: park on the gateway's Post channel and
+	/// collect once now. Until this, a device only parked while the Social panel was
+	/// open (post.js `onOpen`), so a genuinely-awake peer that beat presence NEVER
+	/// received an errand -- presence said "available" while nothing was listening,
+	/// which is the live "no peer ran it" failure. An awake device that beats
+	/// presence must also be reachable for the errand that beat invites; idempotent,
+	/// self-disabling when not entitled, so it is safe to call on every unlock.
+	function startErrandListener() {
+		try { if (window.DaimondPost && DaimondPost.parkStart) DaimondPost.parkStart(); } catch (e) { /* no transport */ }
 		try { if (window.DaimondPost && DaimondPost.collect) DaimondPost.collect(); } catch (e) { /* offline */ }
 	}
+	try { window.addEventListener('daimond:unlock', startErrandListener); } catch (e) { /* no window */ }
 	try {
 		document.addEventListener('visibilitychange', function () {
-			if (document.visibilityState === 'visible') peerCollectOnReturn();
+			if (document.visibilityState === 'visible') { startErrandListener(); peerCollectOnReturn(); }
 		});
 	} catch (e) { /* no document */ }
 
@@ -12176,6 +12295,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				selfId:        selfDeviceId(),
 				isPhone:       isPhoneViewport(),
 				toolsEnabled:  chatToolsEnabled(chat),
+				// A dispatch uses a TIGHTER freshness than the display: a peer last seen
+				// longer ago than this is treated as gone, so a turn is not handed to a
+				// device that may have died since its last beat. Recovery-on-return is
+				// the safety net for the residual race; this keeps most turns off it.
+				freshWindowMs: DaimondPeer.DISPATCH_FRESH_MS,
 			}, Date.now());
 			if (!d.dispatch) return false;
 			// Prepared exactly as the explicit path, so the parcel push inside

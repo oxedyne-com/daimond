@@ -665,8 +665,170 @@ async function main() {
 	// ══════════════════════════════════════════════════════════
 	await runMoneySafety(phone, laptop, check);
 
+	// ══════════════════════════════════════════════════════════
+	// ORPHAN RECOVERY — the shipped "sent to your other devices, then
+	// nothing" failure. A phone dispatches a turn no peer runs and comes
+	// back to nothing. The fix rescues it on return, THROUGH the same lease,
+	// so a peer that also claims never causes a second run or a second
+	// charge. These checks fail on the pre-fix code and pass on the fix.
+	// ══════════════════════════════════════════════════════════
+	await runRecoveryAcceptance(phone.DaimondPeer, phone.DaimondLease, check);
+
 	console.log(failures === 0 ? '\nALL PASS' : ('\n' + failures + ' FAILURE(S)'));
 	if (failures) process.exitCode = 1;
+}
+
+// The REALISTIC leases CAS: unlike makeLeaseSync (a clean compare-and-set), this
+// models sync.js's push() + daimond.js's peerSyncShim faithfully -- on a 409 it
+// PULLS the winner's lease in, MERGES it (take-if-vacant drops our own claim) and
+// RETRIES, and it reports success by the VERSION ADVANCING. That advance is NOT
+// proof our claim landed: through this path a losing racer's version moves too. A
+// take that trusts `ok` alone lets BOTH racers believe they won -- the double
+// charge. `leaseTakeFrom` must re-read and confirm the section still names it.
+function makeRealisticSync(L, gw, NOW) {
+	let localVersion = gw.version();
+	let view = {};
+	return {
+		version: () => localVersion,
+		leases:  () => JSON.parse(JSON.stringify(view)),
+		commit:  async (base, proposed) => {
+			if (localVersion !== base) return { ok: false, version: localVersion, leases: JSON.parse(JSON.stringify(view)) };
+			view = JSON.parse(JSON.stringify(proposed));				// install
+			for (let a = 0; a < 4; a++) {
+				const r = gw.push(localVersion, view);
+				if (r.status === 200) { localVersion = r.version; break; }	// clean commit
+				localVersion = r.version;								// 409: pull + merge + retry
+				view = L.merge(view, r.leases, NOW);
+			}
+			if (localVersion > base) return { ok: true, version: localVersion };
+			return { ok: false, version: localVersion, leases: JSON.parse(JSON.stringify(view)) };
+		},
+	};
+}
+
+async function runRecoveryAcceptance(P, L, check) {
+	const NOW = 1700000000000;
+
+	// ── ADVERSARIAL, the money crux: a phone RECOVERS-LOCAL while a PEER also
+	//    claims, from the SAME base version, through the REALISTIC pull-merge-retry
+	//    commit. Exactly one may hold the lease -- else exactly one double-charge. ──
+	{
+		console.log('\nRecovery — adversarial: recover-local vs a peer claim, realistic sync');
+		L.forget();
+		let gwV = 5, gwL = {};
+		const gw = {
+			version: () => gwV,
+			leases:  () => JSON.parse(JSON.stringify(gwL)),
+			push: (base, next) => {
+				if (base !== gwV) return { status: 409, version: gwV, leases: JSON.parse(JSON.stringify(gwL)) };
+				gwV += 1; gwL = JSON.parse(JSON.stringify(next));
+				return { status: 200, version: gwV };
+			},
+		};
+		const phoneCas = P.syncCas(makeRealisticSync(L, gw, NOW));
+		const peerCas  = P.syncCas(makeRealisticSync(L, gw, NOW));
+		const snapPhone = await phoneCas.read();		// both read the SAME base 5
+		const snapPeer  = await peerCas.read();
+		// The phone's local recovery take (allowSelf on the runner; here the take is
+		// what matters) and the peer's take race from that one base version.
+		const rPhone = await L.takeFrom(snapPhone, 'turn-adv', { holder: 'PHONE', eid: 'e', deadline: 0 }, phoneCas, () => NOW);
+		const rPeer  = await L.takeFrom(snapPeer,  'turn-adv', { holder: 'PEER',  eid: 'e', deadline: 0 }, peerCas,  () => NOW + 1);
+		check('recover-vs-peer: EXACTLY ONE take wins (no double-charge) through the realistic commit',
+			(rPhone.won ? 1 : 0) + (rPeer.won ? 1 : 0) === 1);
+		check('recover-vs-peer: the loser stood down and was told the true holder',
+			rPeer.won === false && rPeer.holder === 'PHONE');
+		check('recover-vs-peer: the gateway names exactly one holder',
+			!!gw.leases()['turn-adv'] && gw.leases()['turn-adv'].holder === 'PHONE');
+	}
+
+	// ── An ORPHAN is rescued locally, exactly once, and acked so no peer re-runs. ──
+	{
+		console.log('\nRecovery — an orphaned dispatched turn runs locally on return');
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0, acked = 0, pushed = 0, reported = 0;
+		const errand = P.makeErrand({ turnId: 't-orphan', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const res = await P.runErrand(errand, {
+			selfId: 'PHONE', cas: P.syncCas(sync), allowSelf: true,
+			finished:    async () => false,
+			reconstruct: async () => ({ chat: {}, app: {} }),
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => { pushed++; return 1; },
+			post:  async () => { reported++; }, ack: async () => { acked++; }, now: () => NOW,
+		});
+		check('orphan recovery RUNS the turn locally exactly once', res.ran === true && res.done === true && ran === 1);
+		check('orphan recovery ACKS the relay errand (so no peer re-collects and re-runs)', acked === 1);
+		check('orphan recovery pushes the answer and posts a done report', pushed === 1 && reported === 1);
+		check('orphan recovery released the lease when done', sync.leases()['t-orphan'].mode === 'released');
+	}
+
+	// ── Recovery STANDS DOWN when a peer holds a LIVE lease -- no take-over, no
+	//    double run -- both by the pure decision and by the runner's own take. ──
+	{
+		console.log('\nRecovery — stands down when a peer is genuinely on the turn');
+		L.forget();
+		const now = NOW;
+		const live = { 't-held': { turnId: 't-held', eid: 'e', holder: 'PEER', mode: 'running', expiry: now + L.LEASE_TTL_MS, renewedAt: now } };
+		check('recoverDecision: FALSE under a live foreign lease (leave it to the peer)',
+			P.recoverDecision({ why: 'dispatched', iturn: 't-held' }, live['t-held'], false, 'PHONE', now) === false);
+		check('recoverDecision: TRUE when vacant and unfinished (rescue the orphan)',
+			P.recoverDecision({ why: 'dispatched', iturn: 'x' }, null, false, 'PHONE', now) === true);
+		check('recoverDecision: FALSE when the turn is already finished (a peer answered)',
+			P.recoverDecision({ why: 'dispatched', iturn: 'x' }, null, true, 'PHONE', now) === false);
+		check('recoverDecision: FALSE for a turn that was never dispatched',
+			P.recoverDecision({ why: 'offline', iturn: 'x' }, null, false, 'PHONE', now) === false);
+		// And the runner itself stands down on the take, even asked to recover.
+		const sync = makeLeaseSync(live);
+		let ran = 0, touched = false;
+		const errand = P.makeErrand({ turnId: 't-held', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const res = await P.runErrand(errand, {
+			selfId: 'PHONE', cas: P.syncCas(sync), allowSelf: true,
+			finished: async () => false,
+			reconstruct: async () => { touched = true; return {}; },
+			runTurn: async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {}, now: () => now,
+		});
+		check('recovery runner STANDS DOWN on a live foreign lease (never runs)', res.ran === false && ran === 0 && touched === false);
+	}
+
+	// ── A turn a peer ALREADY finished is not re-run by recovery (D1b belt-and-braces
+	//    for the release-then-recollect window, where the lease reads vacant). ──
+	{
+		console.log('\nRecovery — never re-runs a turn a peer already completed');
+		L.forget();
+		const sync = makeLeaseSync({});			// lease vacant (peer released after done)
+		let ran = 0;
+		const errand = P.makeErrand({ turnId: 't-fin', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const res = await P.runErrand(errand, {
+			selfId: 'PHONE', cas: P.syncCas(sync), allowSelf: true,
+			finished:    async () => true,			// a done report / merged answer exists
+			reconstruct: async () => { ran = -99; return {}; },
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {}, now: () => NOW,
+		});
+		check('recovery on an ALREADY-FINISHED turn stands down (no second charge)',
+			res.ran === false && res.why === 'already-done' && ran === 0);
+	}
+
+	// ── The AUTOMATIC collect path still refuses this device's OWN errand (D1a),
+	//    so an incidental re-collect on return never runs; only deliberate recovery
+	//    (allowSelf) does. ──
+	{
+		console.log('\nRecovery — the automatic path still refuses a self-dispatch (D1a preserved)');
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0;
+		const errand = P.makeErrand({ turnId: 't-self', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const res = await P.runErrand(errand, {			// allowSelf omitted -> false
+			selfId: 'PHONE', cas: P.syncCas(sync),
+			finished: async () => false,
+			reconstruct: async () => { ran = -99; return {}; },
+			runTurn: async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {}, now: () => NOW,
+		});
+		check('automatic path refuses this device\'s OWN errand (D1a intact)',
+			res.ran === false && res.why === 'self-dispatched' && ran === 0);
+	}
 }
 
 async function runPresenceAcceptance(P, PR, check) {

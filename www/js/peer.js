@@ -492,6 +492,26 @@
 		return 'dispatched';
 	}
 
+	/// Should the DISPATCHING device RECOVER this turn locally now (on its return to
+	/// the foreground)? Pure. A backgrounded phone cannot run the deadline fallback,
+	/// so on return it must run any turn that was dispatched but that NO peer ran, or
+	/// the user comes back to nothing -- the reported "complete and utter failure".
+	///
+	/// Recover when the turn is `dispatched`, is NOT finished (no done report, no
+	/// merged answer -- the app supplies this as `finished`), and is NOT held by a
+	/// LIVE FOREIGN lease. A live foreign lease means a peer IS on it: leave it, and
+	/// let the answer sync back (or the user take it back by hand). An expired lease,
+	/// no lease, or our own lease is reclaimable. This only decides whether to TRY;
+	/// the take-if-vacant lease is the money-safe arbiter at run time, so a peer that
+	/// claims between this decision and the local take still wins (and vice-versa).
+	function recoverDecision(turn, lease, finished, selfId, now) {
+		if (!turn || turn.why !== REASON_DISPATCHED) return false;
+		if (finished) return false;
+		var n = now == null ? Date.now() : now;
+		if (liveLease(lease, n) && lease.holder !== String(selfId)) return false;	// a peer is on it
+		return true;
+	}
+
 	// ── Presence (dev/PEER_DESIGN.md §4.2, §7 step 7) ──────────
 	//
 	// Each AWAKE, visible Daimond writes a heartbeat into the parcel so the phone
@@ -505,6 +525,15 @@
 
 	var PRESENCE_BEAT_MS  = 45000;		// write a beat about this often while visible
 	var PRESENCE_FRESH_MS = 120000;		// a beat older than this is not "awake" (≈ 2 min)
+	// The window the auto-dispatch DECISION uses -- deliberately TIGHTER than the
+	// display window above, and well under the gateway's 5-min presence TTL. A beat
+	// is written every 45 s, so two beats plus slack is a peer that is genuinely
+	// still beating; a peer last seen longer ago than this is treated as gone and
+	// the turn runs locally, rather than dispatched to a device that may have died
+	// since its last beat. The display can afford to name a peer as "awake" for
+	// longer; a DISPATCH cannot, because a dispatch into a dead peer is an orphan
+	// (the recovery-on-return catches it, but the tighter window avoids most).
+	var DISPATCH_FRESH_MS = 90000;		// a peer beat older than this is not dispatched to (≈ 1.5 min)
 
 	var _presence = {};					// deviceId -> { name, lastSeen }
 
@@ -894,8 +923,25 @@
 			}
 			var res = await cas.write(snap.version, proposed);
 			if (res.ok) {
-				_leases = proposed;
-				return { won: true, holder: holder };
+				// A version bump is NOT proof our claim landed. The real sync resolves a
+				// 409 mid-push by PULLING the concurrent winner's lease in, merging it
+				// (take-if-vacant DROPS our claim), and pushing THAT -- yet the version
+				// still advances, so a bare `ok` would let a loser believe it won and
+				// double-run/double-charge (confirmed: two racers both `won` through the
+				// pull-merge-retry commit). Trust the MERGE, never the version: re-read the
+				// authoritative section and stand down unless it still names us as a LIVE
+				// holder. A concurrent winner cannot be displaced by a later pull either --
+				// its lease is live and foreign, which `mergeLeases` keeps -- so a re-read
+				// that names us is a true win.
+				var conf;
+				try { conf = await cas.read(); }
+				catch (e) { conf = { version: res.version, leases: res.leases || {} }; }
+				_leases = conf.leases || {};
+				var landed = _leases[tid];
+				if (landed && landed.holder === holder && liveLease(landed, leaseNow(nowFn))) {
+					return { won: true, holder: holder };
+				}
+				return { won: false, holder: landed ? landed.holder : null };
 			}
 			// 409: the version moved under us. Re-read and re-merge; if the winner's
 			// claim is now present, the fold above stands us down next pass.
@@ -1079,15 +1125,23 @@
 		var turnId = String(e.turnId);
 		var trace = [];
 
-		// D1(a) — NEVER run an errand THIS device dispatched. The phone returns from
-		// the background, re-collects its OWN self-posted errand (peerCollectOnReturn),
-		// and without this guard re-takes the released lease and re-runs the turn the
-		// peer already ran -- a second completion and a second charge. `dispatchedBy`
-		// names the dispatching device (the per-device id, not the account key), so a
-		// match to this device is our own dispatch: stand down before the take. Guarded
-		// on a truthy `dispatchedBy`, so an errand that never carried one (the
-		// runner-acceptance path, a pre-step-4 dispatch) is unaffected.
-		if (e.dispatchedBy && String(e.dispatchedBy) === String(d.selfId)) {
+		// D1(a) — NEVER run an errand THIS device dispatched, EXCEPT on a deliberate
+		// local recovery (`allowSelf`). The phone returns from the background and the
+		// ordinary collect loop re-collects its OWN self-posted errand
+		// (peerCollectOnReturn); routed here and run, it would re-take a released lease
+		// and re-run a turn a peer already ran -- a second completion and a second
+		// charge. So the AUTOMATIC path stands down on its own dispatch. Recovery is
+		// different: it is the dispatching device DELIBERATELY running its own orphaned
+		// turn because no peer did, and it has already confirmed the turn is not
+		// finished and not held by a live foreign lease. It is STILL money-safe, because
+		// it goes through the SAME `finished` (D1(b)) check and the SAME take-if-vacant
+		// lease below -- a peer that took the lease first wins the merge and recovery
+		// stands down; a peer that collects AFTER recovery's ack finds no errand and,
+		// if it somehow does, `finished`/the released-with-answer lease stand it down.
+		// `allowSelf` only lifts THIS blanket refusal; every other guard is untouched.
+		// `dispatchedBy` names the dispatching device (the per-device id, not the
+		// account key), so a match to this device is our own dispatch.
+		if (!d.allowSelf && e.dispatchedBy && String(e.dispatchedBy) === String(d.selfId)) {
 			trace.push('self-dispatched');
 			return { ran: false, why: 'self-dispatched', trace: trace };
 		}
@@ -1214,8 +1268,16 @@
 		/// acts on it at send-time. And the shared "which peer is awake" answer.
 		autoDispatchDecision: autoDispatchDecision,
 		freshestPeer:  freshestPeer,
+		/// Whether the dispatching device should RECOVER an orphaned dispatched turn
+		/// locally on its return -- dispatched, not finished, not held by a live peer.
+		/// daimond.js acts on it through the same lease, so it is money-safe.
+		recoverDecision: recoverDecision,
 		REASON_DISPATCHED:    REASON_DISPATCHED,
 		DISPATCH_DEADLINE_MS: DISPATCH_DEADLINE_MS,
+		/// The TIGHTER window the auto-dispatch decision uses (under the display
+		/// window and well under the gateway TTL), so a dispatch never goes to a peer
+		/// last seen too long ago to still be beating.
+		DISPATCH_FRESH_MS:    DISPATCH_FRESH_MS,
 		/// The runner: bind the lease CAS to the real sync (`syncCas`), then run an
 		/// errand end to end (`runErrand`) -- take, run, push, report, release, with
 		/// a hard-abort on revoke and ack only after commit. Pure over injected deps.

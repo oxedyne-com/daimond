@@ -1,1 +1,1 @@
-{"build":"c183cf1bf93e","note":"Post-release UX: generic peer routing, a scrollable draft queue, and one de-duplicated settings menu"}
+{"build":"ac2e62a53769","note":"Peer turns no longer orphan: awake devices listen for errands, the phone recovers an unrun turn, no lease double-charge"}
