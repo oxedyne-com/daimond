@@ -1,1 +1,1 @@
-{"build":"ac2e62a53769","note":"Peer turns no longer orphan: awake devices listen for errands, the phone recovers an unrun turn, no lease double-charge"}
+{"build":"cd0e9c9cbfd6","note":"Stop the peer lease churning the sync parcel (409 loop) and close a >90s dispatched-turn double-charge"}

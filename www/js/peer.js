@@ -742,6 +742,14 @@
 	var LEASE_TTL_MS   = 90000;		// a lease past this is vacant (§2.4)
 	var RENEW_EVERY_MS = 30000;		// three renews per TTL, so one dropped renew is survivable
 	var MAX_TAKE_TRIES = 6;			// bound the CAS retry loop, as sync.js bounds its own (:113)
+	// The hard ceiling on how long ONE errand's liveness ticker may run before it gives
+	// up and aborts. The ticker is READ-ONLY (it never renews the parcel -- the lease is
+	// claimed straight to its deadline, so no renew is needed), so it is not itself a
+	// churn source; but a runTurn whose promise never settles would keep the ticker (and
+	// the errand) alive indefinitely, so this caps it -- after which the run is aborted
+	// best-effort and the lease is left to expire at its deadline. Generous, because it
+	// is a backstop for a hung turn, not a turn budget.
+	var MAX_LEASE_LIFE_MS = 30 * 60 * 1000;	// 30 min: a turn still 'running' past this is hung, not live
 
 	/// The local materialised view of the parcel's `leases` section: turnId ->
 	/// record. Snapshotted into the parcel and merged back through `adopt`.
@@ -759,16 +767,33 @@
 		return !!r && r.mode !== 'released' && leaseMs(r.expiry) > now;
 	}
 
-	/// Cap a record's expiry to `now + LEASE_TTL_MS`. A holder with a fast clock
-	/// could otherwise write a far-future expiry and, if it then died, park the turn
-	/// for up to that skew beyond the TTL (QA defect a). Every merge clamps what it
-	/// keeps to the ADOPTING device's clock, so no foreign expiry outlives one TTL
-	/// here. A same-clock lease is already <= now + TTL, so this is a no-op for it,
-	/// and a released record (expiry 0) is untouched. Returns a copy only when it
-	/// must change the value, so an unchanged merge stays byte-identical.
+	/// The ceiling an adopted expiry may reach on the ADOPTING device's clock: one TTL
+	/// from now, OR the errand's own `deadline` when the record carries one. A running
+	/// turn's lease is claimed with `expiry = deadline` (see leaseTakeFrom), because a
+	/// busy device cannot propagate a 30s renew (sync.js:1077 suppresses the push over a
+	/// live turn), so a TTL-capped lease would read EXPIRED on other devices after 90s
+	/// while the turn is still running -- and the phone's recovery would then re-run and
+	/// re-bill it (the >TTL double-run). Bounding to the deadline lets the claim stay
+	/// live for the whole turn with no renew at all. The deadline is authored by the
+	/// DISPATCHER (buildDispatch), not the holder, so it is not a fast-clock lever.
+	function expiryCap(r, now) {
+		var cap = now + LEASE_TTL_MS;
+		var dl  = leaseMs(r && r.deadline);
+		return dl > cap ? dl : cap;
+	}
+
+	/// Clamp a record's expiry to `expiryCap`. A holder with a fast clock could
+	/// otherwise write a far-future expiry and, if it then died, park the turn for up
+	/// to that skew (QA defect a). Every merge clamps what it keeps to the ADOPTING
+	/// device's clock, so no foreign expiry outlives the cap here. A deadline-bounded
+	/// lease is already <= its deadline <= cap, so this is a no-op for it; an expiry
+	/// ABOVE the cap (a fast clock, or a lease reaching past its own deadline) is
+	/// clamped -- the fast-clock defence is preserved, now measured against the deadline
+	/// rather than a bare TTL. A released record (expiry 0) is untouched. Returns a copy
+	/// only when it must change the value, so an unchanged merge stays byte-identical.
 	function clampExpiry(r, now) {
 		if (!r) return r;
-		var cap = now + LEASE_TTL_MS;
+		var cap = expiryCap(r, now);
 		if (leaseMs(r.expiry) <= cap) return r;
 		var c = {};
 		for (var k in r) if (Object.prototype.hasOwnProperty.call(r, k)) c[k] = r[k];
@@ -912,9 +937,18 @@
 			if (deadline && now > deadline) {
 				return { won: false, why: 'deadline' };
 			}
+			// The claim expiry is the errand's DEADLINE, not now + TTL, so the lease
+			// stays live for the whole turn WITHOUT a renew -- a busy turn cannot push a
+			// renew (sync.js:1077), so a TTL-capped claim would read expired elsewhere
+			// after 90s and be re-run (the >TTL double-run). A recovery errand carries
+			// no deadline (deadline 0), so it falls back to a single TTL, which is right:
+			// recovery is the owner running its own orphan, not a peer holding for long.
+			// The record carries `deadline` so every merge/clamp honours the same bound.
 			var claim = {
 				turnId: tid, eid: String(o.eid || ''), holder: holder,
-				mode: 'claimed', expiry: now + LEASE_TTL_MS, renewedAt: now,
+				mode: 'claimed', deadline: deadline || 0,
+				expiry: (deadline && deadline > now) ? deadline : (now + LEASE_TTL_MS),
+				renewedAt: now,
 			};
 			var proposed = mergeLeases({ [tid]: claim }, snap.leases, now);
 			if (!proposed[tid] || proposed[tid].holder !== holder) {
@@ -970,10 +1004,17 @@
 				_leases = mergeLeases(_leases, snap.leases, now);
 				return { ok: false, why: 'revoked' };
 			}
+			// A renew never SHRINKS a deadline-bounded expiry: it holds to the later of
+			// one TTL from now and the errand's deadline. Since a running turn is claimed
+			// straight to its deadline and no longer renews on a ticker (runErrand only
+			// transitions claimed -> running once), this is a no-op for a live turn; it
+			// stays correct for a direct DaimondLease.renew of a TTL-only (no-deadline)
+			// lease, where it is the old `now + TTL`.
 			var bumped = {
 				turnId: tid, eid: cur.eid, holder: h,
 				mode: cur.mode === 'claimed' ? 'running' : cur.mode,
-				expiry: now + LEASE_TTL_MS, renewedAt: now,
+				deadline: leaseMs(cur.deadline),
+				expiry: Math.max(now + LEASE_TTL_MS, leaseMs(cur.deadline)), renewedAt: now,
 			};
 			var proposed = mergeLeases({ [tid]: bumped }, snap.leases, now);
 			var res = await cas.write(snap.version, proposed);
@@ -984,7 +1025,7 @@
 
 	/// COMPLETE (mode 'done') or RELEASE (mode 'released', which is vacant) a lease
 	/// this device holds. `release` is also how the phone takes a turn back from a
-	/// live peer (§3.3): the peer's next renew sees `revoked` and aborts.
+	/// live peer (§3.3): the peer's read-only liveness check sees it released and aborts.
 	async function leaseSet(turnId, holder, mode, cas, nowFn) {
 		var tid = String(turnId), h = String(holder);
 		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
@@ -997,6 +1038,7 @@
 			}
 			var next = {
 				turnId: tid, eid: cur.eid, holder: h, mode: mode,
+				deadline: leaseMs(cur.deadline),
 				expiry: mode === 'released' ? 0 : cur.expiry, renewedAt: now,
 			};
 			var proposed = mergeLeases({ [tid]: next }, snap.leases, now);
@@ -1008,10 +1050,10 @@
 
 	/// REVOKE a turn's lease whoever holds it -- the phone's take-back (§3.3). Unlike
 	/// `release`, which is the holder letting go, this vacates a lease held by a
-	/// DIFFERENT device: the running peer's next renew reads `mode:'released'` and
-	/// returns `revoked`, which hard-aborts its turn. CAS-written, so it races the
-	/// peer's own renews cleanly. `renewedAt` is stamped now so the same-holder merge
-	/// keeps the released record over the peer's live one.
+	/// DIFFERENT device: the running peer's read-only liveness check reads
+	/// `mode:'released'` and hard-aborts its turn. CAS-written, so it races the peer
+	/// cleanly. `renewedAt` is stamped now so the same-holder merge keeps the released
+	/// record over the peer's live one.
 	async function leaseRevoke(turnId, cas, nowFn) {
 		var tid = String(turnId);
 		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
@@ -1024,7 +1066,7 @@
 			// over the peer's live running record -- a fast-clock peer cannot outbid it.
 			var revoked = {
 				turnId: tid, eid: cur.eid, holder: cur.holder,
-				mode: 'released', expiry: 0,
+				mode: 'released', expiry: 0, deadline: leaseMs(cur.deadline),
 				renewedAt: Math.max(now, leaseMs(cur.renewedAt)),
 			};
 			var proposed = mergeLeases({ [tid]: revoked }, snap.leases, now);
@@ -1045,8 +1087,9 @@
 	// The lease section provider, attached like pause.js so sync.js finds it by the
 	// same `snapshot`/`adopt` contract every other section keeps.
 	window.DaimondLease = {
-		LEASE_TTL_MS:   LEASE_TTL_MS,
-		RENEW_EVERY_MS: RENEW_EVERY_MS,
+		LEASE_TTL_MS:      LEASE_TTL_MS,
+		RENEW_EVERY_MS:    RENEW_EVERY_MS,
+		MAX_LEASE_LIFE_MS: MAX_LEASE_LIFE_MS,
 		/// The named take-if-vacant merge for one turnId and for the whole section.
 		/// Published so sync.js and a verifier drive the ONE implementation.
 		mergeOne:  mergeOneLease,
@@ -1173,58 +1216,110 @@
 		trace.push('take');
 		if (!took.won) return { ran: false, why: took.why || 'stood-down', holder: took.holder, trace: trace };
 
-		// 2. RECONSTRUCT the chat and workspace at the errand's version.
-		var ctx;
-		try { ctx = await d.reconstruct(e); trace.push('reconstruct'); }
-		catch (err) { return { ran: false, why: 'reconstruct-failed', trace: trace }; }
-
-		// 3. RUN, renewing on journal progress; a revoked lease HARD-ABORTS at once.
-		var revoked = false;
-		async function progress() {
-			if (revoked) return;
-			var r = await leaseRenew(turnId, d.selfId, d.cas, d.now);
-			if (!r.ok && r.why === 'revoked') {
+		// THE LEASE DOES NOT RENEW. It is claimed straight to the errand's DEADLINE
+		// (leaseTakeFrom), so it stays live for the whole turn with no periodic write --
+		// which is what keeps the parcel a fixed point during a running turn AND closes
+		// the >LEASE_TTL_MS double-run: a busy turn cannot push a 30s renew (sync.js:1077
+		// suppresses the push over a live turn), so a TTL-capped lease read EXPIRED on
+		// other devices after 90s while the turn ran on, and the phone's recovery re-ran
+		// and re-billed it. What runs on a ticker now is a READ-ONLY liveness check: it
+		// detects a take-back (the phone REVOKED the lease) and HARD-ABORTS, and it caps a
+		// hung turn's lifetime -- it never writes the parcel, so a running turn causes no
+		// churn. The check is owned HERE (not in the injected runTurn) and stopped on
+		// EVERY exit (the finally), so it can neither outlive the errand nor leak a timer.
+		var revoked = false, checkStopped = false, checkTimer = null;
+		var checkStart = leaseNow(d.now);
+		var maxLife = (d.maxLeaseLifeMs != null) ? d.maxLeaseLifeMs : MAX_LEASE_LIFE_MS;
+		var setT = d.setTimer   || (typeof setInterval   === 'function' ? setInterval   : null);
+		var clrT = d.clearTimer || (typeof clearInterval === 'function' ? clearInterval : null);
+		function stopCheck() {
+			checkStopped = true;
+			if (checkTimer != null && clrT) { try { clrT(checkTimer); } catch (err) {} checkTimer = null; }
+		}
+		// READ-ONLY: never writes the parcel (no renew, no churn). Aborts on a revoke
+		// -- the lease is no longer ours, or was released, which a sync pull adopts into
+		// the view this reads -- and on the lifetime cap, the backstop for a runTurn
+		// whose promise never settles, after which the lease is simply left to expire.
+		async function liveness() {
+			if (checkStopped || revoked) return;
+			if (leaseNow(d.now) - checkStart > maxLife) {
+				trace.push('renew-capped');
+				stopCheck();
+				revoked = true;
+				try { if (d.abort) d.abort(); } catch (err) { /* idempotent */ }
+				return;
+			}
+			var snap;
+			try { snap = await d.cas.read(); } catch (err) { return; }	// a failed read is not a revoke
+			var cur = (snap && snap.leases) ? snap.leases[turnId] : null;
+			if (!cur || cur.holder !== String(d.selfId) || cur.mode === 'released') {
 				revoked = true;
 				trace.push('abort');
 				try { if (d.abort) d.abort(); } catch (err) { /* idempotent */ }
 			}
 		}
-		await progress();			// claimed -> running, and a first liveness check
 		try {
-			// D3 — the prompt is ALREADY in the synced transcript (the dispatcher
-			// persist-first pushed it before posting the errand, §4.1). Tell runTurn so,
-			// so it runs the turn against the existing user message instead of appending
-			// a second copy -- otherwise the prompt sits twice in `messages` AND is fed
-			// to the model twice (seeded history + the re-sent turn). `turnId` names the
-			// existing user message (mid === turnId) the runner anchors to.
-			await d.runTurn(ctx, e.prompt, { onProgress: progress, promptInTranscript: true, turnId: turnId });
-			trace.push('run');
-		} catch (err) {
-			// Revoked -> the lease is already whoever took it back's; touch nothing,
-			// do NOT ack -- the errand is theirs now.
-			if (revoked) return { ran: true, aborted: true, why: 'revoked', trace: trace };
-			// A genuine crash: do NOT ack and do NOT complete, so the relay keeps the
-			// errand and the lease EXPIRES. The phone reclaims (§2.5); nothing dropped.
-			return { ran: true, error: true, why: String(err && err.message || err), trace: trace };
-		}
-		if (revoked) return { ran: true, aborted: true, why: 'revoked', trace: trace };
+			// 2. RECONSTRUCT the chat and workspace at the errand's version.
+			var ctx;
+			try { ctx = await d.reconstruct(e); trace.push('reconstruct'); }
+			catch (err) { return { ran: false, why: 'reconstruct-failed', trace: trace }; }
 
-		// 4. COMPLETE in order: push the transcript (append merges), post the report,
-		// mark the lease done, ACK the errand (only now the push has committed), then
-		// release the lease.
-		var parcelVersion = 0;
-		try { parcelVersion = (await d.pushResult()) | 0; trace.push('push'); }
-		catch (err) { return { ran: true, error: true, why: 'push-failed', trace: trace }; }
-		try {
-			await d.post(makeReport({ eid: e.eid, turnId: turnId, chatId: e.chatId,
-				status: 'done', parcelVersion: parcelVersion }));
-			trace.push('report');
-		} catch (err) { /* the report is only the nudge; the answer is already pushed */ }
-		await leaseSet(turnId, d.selfId, 'done', d.cas, d.now); trace.push('complete');
-		try { if (d.ack) { await d.ack(); trace.push('ack'); } }
-		catch (err) { /* a missed ack costs one idempotent re-collect, never a drop */ }
-		await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release');
-		return { ran: true, done: true, parcelVersion: parcelVersion, trace: trace };
+			// 3. Transition claimed -> running ONCE -- a semantic state change for the UI
+			// footer ("running" vs "picking this up"), one write, before the turn goes
+			// busy. This keeps the deadline expiry (leaseRenew never shrinks it); it does
+			// NOT start a heartbeat. A lease already revoked between take and here aborts.
+			var mk = await leaseRenew(turnId, d.selfId, d.cas, d.now);
+			if (!mk.ok && mk.why === 'revoked') {
+				revoked = true;
+				trace.push('abort');
+				try { if (d.abort) d.abort(); } catch (err) { /* idempotent */ }
+				return { ran: true, aborted: true, why: 'revoked', trace: trace };
+			}
+			// 4. RUN. A revoked lease HARD-ABORTS at once, via the read-only ticker and
+			// the injected onProgress (kept so a real journal-event piggyback can check
+			// liveness between ticks); chat.app.abort is the hard stop.
+			if (setT) checkTimer = setT(function () { liveness(); }, RENEW_EVERY_MS);
+			try {
+				// D3 — the prompt is ALREADY in the synced transcript (the dispatcher
+				// persist-first pushed it before posting the errand, §4.1). Tell runTurn so,
+				// so it runs the turn against the existing user message instead of appending
+				// a second copy -- otherwise the prompt sits twice in `messages` AND is fed
+				// to the model twice (seeded history + the re-sent turn). `turnId` names the
+				// existing user message (mid === turnId) the runner anchors to.
+				await d.runTurn(ctx, e.prompt, { onProgress: liveness, promptInTranscript: true, turnId: turnId });
+				trace.push('run');
+			} catch (err) {
+				// Revoked -> the lease is already whoever took it back's; touch nothing,
+				// do NOT ack -- the errand is theirs now.
+				if (revoked) return { ran: true, aborted: true, why: 'revoked', trace: trace };
+				// A genuine crash: do NOT ack and do NOT complete, so the relay keeps the
+				// errand and the lease EXPIRES (at its deadline). The phone reclaims (§2.5).
+				return { ran: true, error: true, why: String(err && err.message || err), trace: trace };
+			}
+			if (revoked) return { ran: true, aborted: true, why: 'revoked', trace: trace };
+			// The turn produced a result: stop the liveness ticker BEFORE completing, so
+			// nothing races the done/release writes below.
+			stopCheck();
+
+			// 4. COMPLETE in order: push the transcript (append merges), post the report,
+			// mark the lease done, ACK the errand (only now the push has committed), then
+			// release the lease.
+			var parcelVersion = 0;
+			try { parcelVersion = (await d.pushResult()) | 0; trace.push('push'); }
+			catch (err) { return { ran: true, error: true, why: 'push-failed', trace: trace }; }
+			try {
+				await d.post(makeReport({ eid: e.eid, turnId: turnId, chatId: e.chatId,
+					status: 'done', parcelVersion: parcelVersion }));
+				trace.push('report');
+			} catch (err) { /* the report is only the nudge; the answer is already pushed */ }
+			await leaseSet(turnId, d.selfId, 'done', d.cas, d.now); trace.push('complete');
+			try { if (d.ack) { await d.ack(); trace.push('ack'); } }
+			catch (err) { /* a missed ack costs one idempotent re-collect, never a drop */ }
+			await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release');
+			return { ran: true, done: true, parcelVersion: parcelVersion, trace: trace };
+		} finally {
+			stopCheck();			// EVERY exit stops the liveness ticker -- no timer leaks.
+		}
 	}
 
 	// ── Public surface ─────────────────────────────────────────

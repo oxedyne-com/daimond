@@ -617,6 +617,27 @@ async function main() {
 	await runRunnerAcceptance(phone.DaimondPeer, phone.DaimondLease, check);
 
 	// ══════════════════════════════════════════════════════════
+	// STEP 5b — THE RENEW HEARTBEAT is bounded: it stops on every
+	// exit and cannot outlive its turn. This is the fix for the
+	// permanent 409 push-loop -- a lease that renewed for ever
+	// rewrote the parcel every 30s, so it was never a fixed point.
+	// ══════════════════════════════════════════════════════════
+	console.log('\nHeartbeat — the renew ticker is owned by runErrand and can never renew for ever');
+	await runHeartbeatContainment(phone.DaimondPeer, phone.DaimondLease, check);
+
+	// ══════════════════════════════════════════════════════════
+	// STEP 5c — THE >LEASE_TTL_MS DOUBLE-RUN, closed. A busy turn
+	// cannot propagate a 30s renew (the push is suppressed over a
+	// live turn), so a TTL-capped lease read EXPIRED on other
+	// devices after 90s while the turn ran on -- and the phone's
+	// recovery re-ran and re-billed it. The lease is now claimed to
+	// the errand DEADLINE, so it stays live for the whole turn with
+	// no renew, and exactly one device ever runs and bills it.
+	// ══════════════════════════════════════════════════════════
+	console.log('\nDeadline lease — a >TTL turn cannot be double-run (claim expires at the deadline, no renew)');
+	await runDeadlineExpiryMoneySafety(phone.DaimondPeer, phone.DaimondLease, check);
+
+	// ══════════════════════════════════════════════════════════
 	// STEP 6 — the UI state machine (pure). daimond.js only renders
 	// what uiState decides; here every §5 state is asserted.
 	// ══════════════════════════════════════════════════════════
@@ -1057,6 +1078,199 @@ function makeLeaseSync(initial) {
 			return { ok: true, version };
 		},
 	};
+}
+
+// A leases CAS that COUNTS the pushes a renew commits and lets renews land (busy
+// false), so a heartbeat that outlives its turn is visible as an ever-climbing
+// version -- the permanent parcel churn the fix bounds. Faithful to makeLeaseSync's
+// 409-on-stale-base, plus a `pushes` tally and a `bytes` digest of the leases.
+function makeCountingSync(initial) {
+	let version = 5;
+	let leases = JSON.parse(JSON.stringify(initial || {}));
+	let pushes = 0;
+	return {
+		version: () => version,
+		leases:  () => JSON.parse(JSON.stringify(leases)),
+		pushes:  () => pushes,
+		bytes:   () => JSON.stringify(leases),
+		commit:  (base, next) => {
+			if (base !== version) return { ok: false, version, leases: JSON.parse(JSON.stringify(leases)) };
+			version += 1; leases = JSON.parse(JSON.stringify(next)); pushes += 1;
+			return { ok: true, version };
+		},
+	};
+}
+
+// An injectable timer the test drives by hand: `set` records a live handle and its
+// callback; `clear` marks it dead. The test invokes the captured callback itself,
+// so ticks are deterministic and no wall-clock 30s is waited.
+function makeFakeTimer() {
+	const handles = [];
+	return {
+		handles,
+		set:   (fn, ms) => { const h = { fn, ms, live: true }; handles.push(h); return h; },
+		clear: (h) => { if (h) h.live = false; },
+		live:  () => handles.filter((h) => h.live).length,
+	};
+}
+
+async function runHeartbeatContainment(P, L, check) {
+	const TID = 'turn-hb';
+
+	// ── (A) HAPPY PATH: the ticker is created, then CLEARED, so nothing renews after
+	//    the turn. A ticker left live is the loop; a ticker cleared is a fixed point. ──
+	{
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		const errand = P.makeErrand({ turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: 9e15 });
+		const res = await P.runErrand(errand, {
+			selfId: 'peerA', cas: P.syncCas(sync), now: () => 2000,
+			setTimer: timer.set, clearTimer: timer.clear,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: async (ctx, prompt, opts) => { await opts.onProgress(); P.foldAssistant(ctx.chat, { mid: 'a', turnId: TID, text: 'ok', ts: 3 }); },
+			abort: () => {}, pushResult: async () => 9, post: async () => {}, ack: async () => {},
+		});
+		check('heartbeat: the happy path creates a renew ticker', timer.handles.length === 1);
+		check('heartbeat: and the ticker is CLEARED when the turn ends (no lingering renew)',
+			timer.live() === 0 && res.done === true);
+		// Fire the (dead) ticker callback anyway: a released lease must NEVER be re-renewed.
+		const pushesAfter = sync.pushes();
+		await timer.handles[0].fn();
+		check('heartbeat: firing the ticker after release renews nothing (released lease is not resurrected)',
+			sync.pushes() === pushesAfter && sync.leases()[TID].mode === 'released');
+	}
+
+	// ── (B) THE TICKER IS READ-ONLY: a running turn -- even one whose promise NEVER
+	//    settles (the "couldn't finish" errand) -- causes NO parcel write from the
+	//    ticker, so the parcel is a fixed point for the whole turn (the churn source is
+	//    gone, not merely bounded). The lifetime CAP still stops the ticker and aborts a
+	//    hung turn, so no timer fires for ever. Reverting the cap leaves the timer live. ──
+	{
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		let clock = 1000, aborted = 0;
+		const errand = P.makeErrand({ turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: 9e15 });
+		const running = P.runErrand(errand, {
+			selfId: 'peerHang', cas: P.syncCas(sync), now: () => clock,
+			setTimer: timer.set, clearTimer: timer.clear,
+			maxLeaseLifeMs: 100,			// tiny cap so the test drives past it in a few ticks
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: () => new Promise(() => {}),		// never settles
+			abort: () => { aborted += 1; },
+			pushResult: async () => 9, post: async () => {}, ack: async () => {},
+		});
+		await new Promise((r) => setTimeout(r, 0));		// let take/mark-running/ticker start
+		check('heartbeat: a hung turn holds the lease and started a liveness ticker',
+			timer.handles.length === 1 && !!sync.leases()[TID]);
+		// Only the take (claim) and the one claimed->running transition wrote; the ticker
+		// must add nothing more, however many times it fires.
+		const pushesAtRunStart = sync.pushes();
+		const tick = timer.handles[0].fn;
+		for (let i = 0; i < 8; i++) { clock += 40; await tick(); }		// each tick +40ms; cap 100ms
+		check('heartbeat: the liveness ticker is READ-ONLY -- driving it pushes NOTHING (no renew churn)',
+			sync.pushes() === pushesAtRunStart);
+		check('heartbeat: a hung turn does NOT fire for ever -- the cap STOPS the ticker',
+			timer.live() === 0);
+		check('heartbeat: the cap aborts the hung run (best-effort hard stop)', aborted >= 1);
+		for (let i = 0; i < 6; i++) { clock += 40; await tick(); }		// well past the cap
+		check('heartbeat: past the cap the parcel is still untouched (fixed point during the turn)',
+			sync.pushes() === pushesAtRunStart);
+		void running;						// intentionally never awaited: the turn hung
+	}
+
+	// ── (C) CRASH: the error path leaves the lease to EXPIRE, and the fix guarantees it
+	//    expires WITHOUT a further renew -- the ticker is cleared by the finally. ──
+	{
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		const errand = P.makeErrand({ turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: 9e15 });
+		const res = await P.runErrand(errand, {
+			selfId: 'peerCrash', cas: P.syncCas(sync), now: () => 2000,
+			setTimer: timer.set, clearTimer: timer.clear,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: async () => { throw new Error('kaboom'); },
+			abort: () => {}, pushResult: async () => 9, post: async () => {}, ack: async () => {},
+		});
+		check('heartbeat: a crash is reported as an error and the lease is left unreleased (to expire)',
+			res.error === true && sync.leases()[TID].mode !== 'released');
+		check('heartbeat: the crash CLEARS the ticker, so the lingering lease expires without a renew',
+			timer.live() === 0);
+		const pushesAfter = sync.pushes();
+		await timer.handles[0].fn();		// the dead ticker fires once more
+		check('heartbeat: a fired-after-crash ticker renews nothing', sync.pushes() === pushesAfter);
+	}
+}
+
+async function runDeadlineExpiryMoneySafety(P, L, check) {
+	const NOW = 1_700_000_000_000;
+	const DEADLINE = NOW + 15 * 60 * 1000;		// the dispatch deadline (buildDispatch default)
+
+	// ── The claim expiry IS the deadline, and the record carries it. ──
+	{
+		L.forget();
+		const cas = makeCas({});
+		const took = await L.take('turn-ttl', { holder: 'DESK', eid: 'e', deadline: DEADLINE }, cas, () => NOW);
+		check('deadline: a claim with a deadline expires AT the deadline (not now + TTL)',
+			took.won === true && cas.peekLeases()['turn-ttl'].expiry === DEADLINE);
+		check('deadline: the record carries `deadline` so every merge/clamp honours the same bound',
+			cas.peekLeases()['turn-ttl'].deadline === DEADLINE);
+	}
+
+	// ── A recovery errand (no deadline) still gets a single TTL, unchanged. ──
+	{
+		L.forget();
+		const cas = makeCas({});
+		await L.take('turn-rec', { holder: 'PHONE', eid: 'e', deadline: 0 }, cas, () => NOW);
+		check('deadline: a no-deadline (recovery) claim falls back to now + TTL',
+			cas.peekLeases()['turn-rec'].expiry === NOW + L.LEASE_TTL_MS);
+	}
+
+	// ── THE MONEY CRUX: a busy peer holds a turn for >90s; the phone returns and MUST
+	//    stand down, because the deadline-bounded lease still reads LIVE. Reverting the
+	//    claim expiry to now+TTL re-opens the double-charge (proven by the mutation run).
+	{
+		L.forget();
+		const cas = makeCas({});			// the one shared parcel both devices read
+		const desk = await L.take('turn-long', { holder: 'DESK', eid: 'e', deadline: DEADLINE }, cas, () => NOW);
+		check('>TTL: the peer holds the long turn (claimed to its deadline)', desk.won === true);
+		const later = NOW + 100_000;		// past LEASE_TTL_MS (90s), well before the deadline
+		// The phone returns, pulls the parcel, and evaluates recovery against server truth.
+		L.forget();
+		L.adopt(cas.peekLeases(), () => later);
+		const rec = L.record('turn-long');
+		check('>TTL: the peer lease still reads LIVE after 90s (deadline-bounded, no renew needed)',
+			L.live(rec, later) === true);
+		check('>TTL: recoverDecision stands the phone DOWN (a live foreign lease holds it)',
+			P.recoverDecision({ why: 'dispatched', iturn: 'turn-long' }, rec, false, 'PHONE', later) === false);
+		// The take itself: the phone tries to reclaim through the CAS and MUST lose.
+		const phone = await L.take('turn-long', { holder: 'PHONE', eid: 'e2', deadline: 0 }, cas, () => later);
+		check('>TTL: the phone take STANDS DOWN while the peer still runs (no double-run/charge)',
+			phone.won === false && phone.holder === 'DESK');
+		check('>TTL: EXACTLY ONE holder remains -- the peer (no double-charge)',
+			(desk.won ? 1 : 0) + (phone.won ? 1 : 0) === 1 && cas.peekLeases()['turn-long'].holder === 'DESK');
+	}
+
+	// ── The dead-peer bound: a lease is reclaimable at its DEADLINE, not before, and
+	//    not forever -- the accepted recovery-latency tradeoff, honoured via the carried
+	//    deadline (clampExpiry does not shrink it below the deadline on adopt). ──
+	{
+		L.forget();
+		const cas = makeCas({});
+		await L.take('turn-dead', { holder: 'DESK', eid: 'e', deadline: DEADLINE }, cas, () => NOW);
+		// Before the deadline the lease is NOT reclaimable, even after adopting it fresh.
+		L.forget();
+		L.adopt(cas.peekLeases(), () => NOW + 100_000);
+		const early = await L.take('turn-dead', { holder: 'PHONE', eid: 'e2', deadline: 0 }, cas, () => NOW + 100_000);
+		check('dead-peer: before the deadline the lease is NOT reclaimable (held for the turn)',
+			early.won === false && cas.peekLeases()['turn-dead'].holder === 'DESK');
+		// Past the deadline (the dead peer never renews -- there is no renew) it expires.
+		const reclaim = await L.take('turn-dead', { holder: 'PHONE', eid: 'e3', deadline: 0 }, cas, () => DEADLINE + 1);
+		check('dead-peer: at the deadline a dead holder\'s lease IS reclaimable (bounded, not forever)',
+			reclaim.won === true && cas.peekLeases()['turn-dead'].holder === 'PHONE');
+	}
 }
 
 async function runRunnerAcceptance(P, L, check) {

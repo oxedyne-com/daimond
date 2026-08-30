@@ -11996,18 +11996,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				return false;
 			},
 			reconstruct: async function (er) { ctx = await peerReconstruct(er); return ctx; },
-			// The ordinary turn engine. A renew timer calls the runner's own
-			// onProgress (which renews the lease and hard-aborts on revoke) at the
-			// renew cadence -- the thin stand-in for the journal-event piggyback
-			// (§2.4), refined in the running app; chat.app.abort is the hard stop.
+			// The ordinary turn engine. No heartbeat is created here: the lease no longer
+			// renews (it is claimed straight to the errand's deadline), and runErrand owns
+			// the READ-ONLY liveness ticker that detects a take-back and caps a hung turn.
+			// This dep used to setInterval a renew and clear it in a finally, which both
+			// churned the parcel every 30s and leaked the timer whenever `runTurn` never
+			// settled -- the permanent 409 push-loop. `onProgress` is still passed so a
+			// real journal-event piggyback can check liveness between ticks; chat.app.abort
+			// is the hard stop.
 			runTurn: async function (c, prompt, ropts) {
-				var timer = setInterval(function () {
-					try { ropts.onProgress(); } catch (e) { /* renew best effort */ }
-				}, (DaimondLease.RENEW_EVERY_MS || 30000));
 				// D3 — the prompt is already in the reconstructed transcript, so tell
 				// runTurn to run against it rather than append a second copy.
-				try { await runTurn(c.chat, prompt, { promptInTranscript: !!(ropts && ropts.promptInTranscript), turnId: ropts && ropts.turnId }); }
-				finally { clearInterval(timer); }
+				await runTurn(c.chat, prompt, { promptInTranscript: !!(ropts && ropts.promptInTranscript), turnId: ropts && ropts.turnId });
 			},
 			abort: function () { try { if (ctx && ctx.chat && ctx.chat.app) ctx.chat.app.abort(); } catch (e) { /* idempotent */ } },
 			pushResult: async function () {
