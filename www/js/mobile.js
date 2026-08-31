@@ -35,10 +35,9 @@
 	// The bar carried four hard-wired destinations -- Chat, Email, Files, Agents
 	// -- and named four of the seventeen panels there are. It carries the chip
 	// row now, which is the row the desktop header carries, MOVED here rather
-	// than copied: `#panel-tags` is the one row the layout engine renders, the
-	// one `Badge.paint` marks with unseen counts, and the one the gallery asks
-	// whether a panel is on. A second copy would be a second thing to keep in
-	// step with all three, and the first to drift.
+	// than copied: `#panel-tags` is the one row the layout engine renders, and
+	// the one the gallery asks whether a panel is on. A second copy would be a
+	// second thing to keep in step with both, and the first to drift.
 
 	/// Put the chip row where this width wants it: the footer on a phone, the
 	/// top bar otherwise.

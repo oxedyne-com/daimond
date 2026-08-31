@@ -6,15 +6,16 @@
 //   1. A Diamond SHOWS the model it thinks with. It has been stored since
 //      Diamonds had models and drawn nowhere, so two Diamonds deliberately put
 //      on different models were indistinguishable on the rail.
-//   2. Changing the daimon's model takes effect at once, is written into the
-//      crystal's own version history — the discontinuity notes2 calls "a fold and
-//      a new daimon" — and LEAVES THE CONVERSATION WHERE IT IS. There is no
-//      confirm, and the absence is the property: the modal that stood here warned
-//      that the thread would not carry over, which was true for the twenty-two
-//      minutes before a daimon had a thread at all. So the two halves are checked
-//      together, because either one alone can be satisfied by the wrong thing: a
-//      confirm nobody answers also leaves the session intact, and a silent handler
-//      that empties it also asks nothing.
+//   2. Changing the daimon's model is a deliberate two-step: the pulldown reveals
+//      a "Change" button ONLY while the pick differs, and pressing it takes effect,
+//      is written into the crystal's own version history — the discontinuity notes2
+//      calls "a fold and a new daimon" — and LEAVES THE CONVERSATION WHERE IT IS.
+//      There is no confirm, and the absence is the property: the modal that stood
+//      here warned that the thread would not carry over, which was true for the
+//      twenty-two minutes before a daimon had a thread at all. So the two halves are
+//      checked together, because either one alone can be satisfied by the wrong
+//      thing: a confirm nobody answers also leaves the session intact, and a silent
+//      handler that empties it also asks nothing.
 //   3. The secondary is a map keyed by modality. A task naming an image is
 //      dispatched on the vision model; a task naming none is not. Measured from
 //      the RUN, which is what carries the model and the key, rather than from
@@ -78,16 +79,16 @@ const SRC_BREAKS = {
 	// half gone -- the model's own copy, which is what the next turn carries, and the
 	// transcript the reader is looking at.
 	wipes: {
-		find: "\t\t\t\tresetDiamondApps();\n\t\t\t\tvar logged = true;",
-		with: "\t\t\t\tresetDiamondApps();\n"
-			+ "\t\t\t\tvar _lost = (chats || []).find(function (c) { return c.diamondId === opts.id; });\n"
-			+ "\t\t\t\tif (_lost) {\n"
-			+ "\t\t\t\t\t_lost.messages = [];\n"
-			+ "\t\t\t\t\t_lost.session = { v: 1, msgs: [], upto: '', uptoTs: 0 };\n"
-			+ "\t\t\t\t\tpersistChats();\n"
-			+ "\t\t\t\t\tif (current && current.id === _lost.id) renderHistory(_lost.messages);\n"
-			+ "\t\t\t\t}\n"
-			+ "\t\t\t\tvar logged = true;",
+		find: "\t\t\tresetDiamondApps();\n\t\t\tvar logged = true;",
+		with: "\t\t\tresetDiamondApps();\n"
+			+ "\t\t\tvar _lost = (chats || []).find(function (c) { return c.diamondId === opts.id; });\n"
+			+ "\t\t\tif (_lost) {\n"
+			+ "\t\t\t\t_lost.messages = [];\n"
+			+ "\t\t\t\t_lost.session = { v: 1, msgs: [], upto: '', uptoTs: 0 };\n"
+			+ "\t\t\t\tpersistChats();\n"
+			+ "\t\t\t\tif (current && current.id === _lost.id) renderHistory(_lost.messages);\n"
+			+ "\t\t\t}\n"
+			+ "\t\t\tvar logged = true;",
 	},
 	// THE OLD FOLD GUARD, restored: `chat.app`, which asks whether an engine was built
 	// during THIS page load and not whether anything was ever said. After a reload it
@@ -110,12 +111,13 @@ const SRC_BREAKS = {
 	},
 	// The confirm back, in its plainest form. Nothing answers it, so the model does
 	// not move either — which is the point: a confirm is a thing that stands there.
+	// It now lives on the Change button's click, where the switch was moved.
 	asks: {
-		find: "\t\t\t\tsetDiamondModel(opts.id, { provider: p.provider, model: p.model });",
-		with: "\t\t\t\tvar _ok = await confirmDialog('Change the model?', 'Change',\n"
-			+ "\t\t\t\t\t{ title: 'Change the daimon', danger: false });\n"
-			+ "\t\t\t\tif (!_ok) return;\n"
-			+ "\t\t\t\tsetDiamondModel(opts.id, { provider: p.provider, model: p.model });",
+		find: "\t\t\tsetDiamondModel(opts.id, { provider: p.provider, model: p.model });",
+		with: "\t\t\tvar _ok = await confirmDialog('Change the model?', 'Change',\n"
+			+ "\t\t\t\t{ title: 'Change the daimon', danger: false });\n"
+			+ "\t\t\tif (!_ok) return;\n"
+			+ "\t\t\tsetDiamondModel(opts.id, { provider: p.provider, model: p.model });",
 	},
 };
 let patched = null;
@@ -269,7 +271,7 @@ try {
 	await setView(p, 'max');
 	await p.waitForTimeout(300);
 
-	// ══ 2. The model changes, at once, and the thread comes with it ═══
+	// ══ 2. The model changes on Change, and the thread comes with it ═══
 	//
 	// GIVE THE DAIMON A CONVERSATION FIRST. Without one, "the session is the same
 	// length afterwards" is 0 === 0 — a check with no subject, which passes against
@@ -373,8 +375,38 @@ try {
 			} catch { return false; }
 		};
 
-		// ── Moving the pulldown moves the daimon, with nothing asked. ──
+		// ── The pulldown reveals Change; pressing it moves the daimon. ──
+		//
+		// The switch is two steps now, on purpose: a daimon's model is persistent, so
+		// it is not moved by a pulldown brushed past. The Change button beside it shows
+		// ONLY while the pick differs from the model in force, and pressing it is what
+		// switches -- reusing the conversation, never a fresh daimon.
+		/// Is the daimon row's Change button drawn (a real bounding box), and what does
+		/// it read? Measured as `getClientRects()`, never a computed `display`, for the
+		/// reason `confirmWithin` states about itself.
+		const changeState = () => p.evaluate(() => {
+			const row = [...document.querySelectorAll('.tile-dlg-card .tile-dlg-model')]
+				.find(r => { const s = r.querySelector('select'); return s && /daimon/.test(s.id); });
+			const b = row ? row.querySelector('.tile-dlg-apply') : null;
+			return { shown: !!(b && b.getClientRects().length), text: b ? (b.textContent || '').trim() : '' };
+		});
+		const pressChange = () => p.evaluate(() => {
+			const row = [...document.querySelectorAll('.tile-dlg-card .tile-dlg-model')]
+				.find(r => { const s = r.querySelector('select'); return s && /daimon/.test(s.id); });
+			const b = row ? row.querySelector('.tile-dlg-apply') : null;
+			if (b) b.click();
+		});
+		const hiddenAtRest = await changeState();
+		check(!hiddenAtRest.shown,
+			'the Change button is hidden until a different model is picked',
+			'shown=' + hiddenAtRest.shown);
 		await move(other);
+		await p.waitForTimeout(150);
+		const shownOnDiff = await changeState();
+		check(shownOnDiff.shown && /change/i.test(shownOnDiff.text),
+			'picking a different model reveals the button, reading "Change"',
+			JSON.stringify(shownOnDiff));
+		await pressChange();
 		// THE RECEIPT IS CAUGHT AS IT APPEARS. It used to be read at the bottom of
 		// this block, and that read was a coin toss.
 		//

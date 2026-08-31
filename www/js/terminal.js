@@ -383,6 +383,7 @@
 		var pPriv = '';		// the private marker a CSI opened with
 		var oStr = '';		// the OSC/DCS payload
 		var oKind = '';		// which string sequence is open
+		var oEsc = false;	// an ESC seen inside a string: half of a possible ST
 
 		function params(def) {
 			var out = pStr.split(';').map(function (s) {
@@ -665,8 +666,8 @@
 				var ch = s[i];
 				if (st === 1) {
 					if (ch === '[') { st = 2; pStr = ''; pPriv = ''; }
-					else if (ch === ']') { st = 3; oStr = ''; oKind = 'osc'; }
-					else if (ch === 'P' || ch === 'X' || ch === '^' || ch === '_') { st = 3; oStr = ''; oKind = 'dcs'; }
+					else if (ch === ']') { st = 3; oStr = ''; oKind = 'osc'; oEsc = false; }
+					else if (ch === 'P' || ch === 'X' || ch === '^' || ch === '_') { st = 3; oStr = ''; oKind = 'dcs'; oEsc = false; }
 					else if (ch === '(' || ch === ')' || ch === '*' || ch === '+') { st = 4; }
 					else { st = 0; esc(ch); }
 					continue;
@@ -680,9 +681,22 @@
 					continue;
 				}
 				if (st === 3) {
+					// The String Terminator is ESC \, and its two bytes routinely
+					// fall in different `write` calls -- a network read splits a
+					// burst anywhere -- so the ESC is remembered in a flag that
+					// outlives the chunk rather than looked back for in `s`, where
+					// `s.charCodeAt(-1)` is NaN and the terminator is missed. That
+					// miss left the parser collecting the rest of the session into
+					// `oStr` and drawing nothing: a live terminal that looks hung,
+					// which is what an interactive `ssh` produced.
+					if (oEsc) {
+						oEsc = false;
+						if (ch === '\\') { st = 0; if (oKind === 'osc') osc(); continue; }
+						// An ESC not followed by `\` was not an ST; it is dropped and
+						// this byte is handled as an ordinary one, as it was before.
+					}
 					if (c === 0x07) { st = 0; if (oKind === 'osc') osc(); continue; }
-					if (c === 0x1b) { continue; }	// the ST's first half
-					if (ch === '\\' && oStr.length >= 0 && s.charCodeAt(i - 1) === 0x1b) { st = 0; if (oKind === 'osc') osc(); continue; }
+					if (c === 0x1b) { oEsc = true; continue; }	// the ST's first half
 					oStr += ch;
 					continue;
 				}
@@ -906,7 +920,7 @@
 			S.modes.alt = false; S.modes.mouse = 0; S.modes.mouseSgr = false;
 			S.modes.wrap = true; S.modes.reverse = false;
 			S.cursor.visible = true; S.cursor.shape = 'block';
-			st = 0; markAll();
+			st = 0; oEsc = false; oStr = ''; oKind = ''; markAll();
 		};
 
 		/// Everything the model holds, as text. The a11y mirror and a

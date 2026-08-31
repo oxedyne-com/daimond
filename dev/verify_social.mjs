@@ -98,8 +98,8 @@ const BREAKS = {
 	// through the eight locale files either.
 	sixthchip: [{
 		file: 'index.html',
-		find: '<button type="button" class="imp-chip" data-view="proposals" aria-pressed="false" data-i18n="social.proposals">Proposals</button>',
-		with: '<button type="button" class="imp-chip" data-view="proposals" aria-pressed="false" data-i18n="social.proposals">Proposals</button>\n'
+		find: '<button type="button" class="imp-chip" data-view="settings" aria-pressed="false" data-i18n="social.settings">Settings</button>',
+		with: '<button type="button" class="imp-chip" data-view="settings" aria-pressed="false" data-i18n="social.settings">Settings</button>\n'
 			+ '\t\t\t\t\t<button type="button" class="imp-chip" data-view="groups" aria-pressed="false">Groups</button>',
 	}],
 	noask: [{
@@ -332,8 +332,8 @@ check('the panel is in the markup, exactly once', panels === 1, `${panels} found
 // every one of them — `--break nochip`, `--break swapchip`, `--break sixthchip`.
 const chipViews = await page.evaluate(() =>
 	[...document.querySelectorAll('#panel-social .imp-chip[data-view]')].map(c => c.dataset.view));
-check('its head carries decision 13’s four chips, and Share',
-	JSON.stringify(chipViews) === JSON.stringify(['messages', 'people', 'share', 'notes', 'proposals']),
+check('its head carries the five chips: Messages, People, Share, Proposals, Settings',
+	JSON.stringify(chipViews) === JSON.stringify(['messages', 'people', 'share', 'proposals', 'settings']),
 	chipViews.join(' ') || 'none');
 
 check('the panel declares itself to the layout engine as `social`',
@@ -356,7 +356,7 @@ const panelBox = await boxOf('#panel-social');
 check('phone: the panel itself has a real box on the screen',
 	onScreen(panelBox), JSON.stringify(panelBox));
 
-const chipBox = await boxOf('#panel-social .imp-chip[data-view="notes"]');
+const chipBox = await boxOf('#panel-social .imp-chip[data-view="proposals"]');
 check('phone: and a control inside it is on the screen too',
 	onScreen(chipBox), JSON.stringify(chipBox));
 
@@ -419,7 +419,7 @@ check('SOURCE: a panel already open at boot is told too (daimond.js)',
 		.test(SRC.daimond));
 
 // 1e. Every chip leads somewhere with something in it.
-for (const view of ['messages', 'people', 'notes', 'proposals']) {
+for (const view of ['messages', 'people', 'proposals', 'settings']) {
 	const seen = await page.evaluate(async (v) => {
 		window.DaimondSocial.show(v);
 		await new Promise(r => setTimeout(r, 350));

@@ -1190,8 +1190,8 @@
 					     before this one. Beside People because a share goes TO somebody,
 					     and the same projection names them in both. -->
 					<button type="button" class="imp-chip" data-view="share" aria-pressed="false" data-i18n="social.share">Share</button>
-					<button type="button" class="imp-chip on" data-view="notes" aria-pressed="true" data-i18n="social.notes">Notes</button>
-					<button type="button" class="imp-chip" data-view="proposals" aria-pressed="false" data-i18n="social.proposals">Proposals</button>
+					<button type="button" class="imp-chip on" data-view="proposals" aria-pressed="true" data-i18n="social.proposals">Proposals</button>
+					<button type="button" class="imp-chip" data-view="settings" aria-pressed="false" data-i18n="social.settings">Settings</button>
 					<!-- What this panel is, in the guide. The one circled "i" this app
 					     draws -- the same path as the top bar's About button, because
 					     two information marks drawn differently are two marks the
@@ -1258,9 +1258,14 @@
 				<div class="imp-list" id="social-share-list"></div>
 			</div>
 
-			<div class="imp-view" id="improve-notes">
-				<div class="imp-write">
-					<textarea class="imp-box" id="improve-box" rows="4"
+			<!-- Proposals, and the compose box that makes them. Note-capture merged
+			     in here: a note is written at the top and posted straight as a
+			     proposal, verbatim or polished by the model first. There is no
+			     separate Notes view and no Keep -- a note that cannot be sent yet
+			     waits in the queue below the box, not in a list of its own. -->
+			<div class="imp-view" id="improve-props-view">
+				<div class="imp-write imp-compose">
+					<textarea class="imp-box" id="improve-box" rows="3"
 						placeholder="Where it is, what you expected, and what happened instead."
 						data-i18n-placeholder="social.box_ph"
 						aria-label="Write a note about Daimond" data-i18n-aria-label="social.box_label"></textarea>
@@ -1277,24 +1282,26 @@
 							aria-label="Take the details off this note" data-i18n-aria-label="social.with_off"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 					</div>
 					<div class="imp-acts" id="improve-acts">
-						<button type="button" class="imp-keep" data-act="improve-keep" data-i18n="social.keep"
-							title="Store this note on this device. Nothing is sent." data-i18n-title="social.keep_help">Keep</button>
-						<button type="button" class="imp-send" data-act="improve-send" data-i18n="social.send"
-							title="Send exactly what is above to Oxedyne. Nothing else goes with it." data-i18n-title="social.send_help">Send</button>
+						<button type="button" class="imp-send" data-act="improve-post" data-i18n="social.post"
+							title="Post exactly what is above to the forge as a proposal." data-i18n-title="social.post_help">Post</button>
+						<button type="button" class="imp-note-copy" data-act="improve-polish" data-i18n="social.polish"
+							title="Let the model rewrite it as a proposal, then post that." data-i18n-title="social.polish_help">Polish &amp; post</button>
 						<span class="imp-as" id="improve-as"></span>
 					</div>
 					<div class="imp-say" id="improve-say" role="status" aria-live="polite"></div>
 				</div>
-				<!-- js/triage.js OWNS the inside of this row and clears it on every
-				     draw: the one control whose object is the WHOLE list of notes,
-				     and the plan it produces. Empty in a build without that file. -->
-				<div class="imp-triage" id="improve-triage"></div>
-				<div class="imp-notes" id="improve-list"></div>
-			</div>
-
-			<div class="imp-view" id="improve-props-view" hidden>
+				<!-- Notes that could not be sent yet: written offline, or a send that
+				     failed. js/improve.js OWNS this and clears it on every draw; it is
+				     drained automatically when the browser comes back online. -->
+				<div class="imp-queue" id="improve-queue"></div>
 				<div class="imp-asat" id="improve-asat"></div>
 				<div class="imp-props" id="improve-props"></div>
+			</div>
+
+			<!-- Settings: the voice this device posts with, and the drafts the model
+			     prepared. js/improve.js OWNS the inside and draws all of it. -->
+			<div class="imp-view" id="social-settings" hidden>
+				<div class="imp-settings" id="improve-settings"></div>
 			</div>
 		</aside>
 		<!-- ── The Proposals tracker (js/tracker.js) ──────────────────────────
@@ -1614,6 +1621,10 @@
 <script src="js/mail.js"></script>
 <script src="js/tools.js"></script>
 <script src="js/models.js"></script>
+<!-- After models.js: window.DaimondOcr does the authenticated OpenRouter / Mistral POSTs that
+     turn a PDF or an image into text for `file_read` and the `ocr` tool, and it reads the
+     provider key from DaimondModels, so that must exist first. -->
+<script src="js/ocr.js"></script>
 <!-- After models.js, which it is a miniature of: same registry shape, same
      sealing, same credits-or-your-own-key question asked about search. -->
 <script src="js/search.js"></script>

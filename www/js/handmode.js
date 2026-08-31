@@ -56,6 +56,14 @@
 	// SAME name; the two must not drift.
 	var LS_AUTO = 'daimond-autonomous-posture';
 
+	// THIS COMPUTER's step-away posture: whether a turn it is running is handed to
+	// another awake device when this one is stepped away from — the lid closes, the
+	// tab is closed. Device-local and never synced, the same rule as the autonomous
+	// posture above. The reader on the other side is `handoffWhenAway()` in
+	// daimond.js, which reaches this SAME key by this SAME name; the two must not
+	// drift.
+	var LS_HANDOFF = 'daimond-handoff-when-away';
+
 	/// The rungs, in the order they are offered: strictest first, so the list
 	/// reads as a ladder and the last row is the one that gives most away.
 	var MODES = ['ask', 'guarded', 'bypass'];
@@ -97,6 +105,21 @@
 		try {
 			if (on) localStorage.setItem(LS_AUTO, '1');
 			else localStorage.removeItem(LS_AUTO);
+		} catch (e) { /* private mode: nothing to persist, and off is the safe read */ }
+	}
+
+	/// Does THIS computer hand its turns off when stepped away from? Off by silence,
+	/// false on any read error, the same careful default as `autoOn`.
+	function handoffOn() {
+		try { return localStorage.getItem(LS_HANDOFF) === '1'; }
+		catch (e) { return false; }
+	}
+
+	/// Set it, or clear it — removal for off, so armed-never and disarmed read alike.
+	function setHandoff(on) {
+		try {
+			if (on) localStorage.setItem(LS_HANDOFF, '1');
+			else localStorage.removeItem(LS_HANDOFF);
 		} catch (e) { /* private mode: nothing to persist, and off is the safe read */ }
 	}
 
@@ -303,6 +326,7 @@
 		foot.textContent = t('permmode.never');
 		pop.appendChild(foot);
 		renderAutonomous();
+		renderStepAway();
 		renderNet();
 	}
 
@@ -337,6 +361,41 @@
 		box.addEventListener('change', function () { setAuto(box.checked); });
 		var say = document.createElement('span');
 		say.textContent = tOr('autonomous.switch', 'Work unattended on this computer');
+		row.appendChild(box);
+		row.appendChild(say);
+		pop.appendChild(row);
+	}
+
+	/// This computer's step-away hand-off, under a head of its own.
+	///
+	/// App-wide and device-local like the autonomous posture it sits beside, and a
+	/// different promise: not "work while I am gone" but "if I close this while a
+	/// turn is running, move it to a device that is awake so it finishes there and
+	/// syncs back", rather than leaving it interrupted until this one returns. Off
+	/// until it is turned on, and for THIS computer only.
+	function renderStepAway() {
+		var head = document.createElement('div');
+		head.className = 'pop-head';
+		head.textContent = tOr('handoff.head', 'Hand off when you step away');
+		pop.appendChild(head);
+		var body = document.createElement('p');
+		body.className = 'pop-note';
+		body.textContent = tOr('handoff.body',
+			'If you close this computer while a turn is running, hand it to another '
+				+ 'device that is awake so it finishes there and syncs back, instead of '
+				+ 'waiting for you to return. This is set for THIS computer only and is '
+				+ 'off until you turn it on.');
+		pop.appendChild(body);
+		var row = document.createElement('label');
+		row.className = 'dlg-tick auto-row';
+		var box = document.createElement('input');
+		box.type = 'checkbox';
+		box.className = 'dlg-tick-box';
+		box.checked = handoffOn();
+		box.setAttribute('aria-label', tOr('handoff.switch', 'Hand my turns to another device when I step away'));
+		box.addEventListener('change', function () { setHandoff(box.checked); });
+		var say = document.createElement('span');
+		say.textContent = tOr('handoff.switch', 'Hand my turns to another device when I step away');
 		row.appendChild(box);
 		row.appendChild(say);
 		pop.appendChild(row);

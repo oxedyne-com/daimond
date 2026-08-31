@@ -315,7 +315,11 @@ try {
 	await page.evaluate(() => window.DaimondImprove.load(false));
 	await page.waitForTimeout(500);
 
-	// A voice, so writes are permitted (the forge refuses one without it).
+	// A voice, so writes are permitted (the forge refuses one without it). It lives
+	// in the Settings view now, so show that to reach the paste control, then come
+	// back to Proposals where the queue draws.
+	await page.evaluate(() => window.DaimondSocial.show('settings'));
+	await page.waitForTimeout(200);
 	await page.click('[data-act="improve-voice-open"]');
 	await page.waitForTimeout(200);
 	await page.fill('#improve-voice-in', SECRET);
@@ -323,6 +327,8 @@ try {
 	await page.waitForTimeout(600);
 	check('a voice is held, so the queue can send',
 		await page.evaluate(() => window.DaimondVoice.has()) === true);
+	await page.evaluate(() => window.DaimondSocial.show('proposals'));
+	await page.waitForTimeout(200);
 
 	// ── 1. A triage GENERATE lands the drafts DIRECTLY in the queue ─
 	//

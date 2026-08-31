@@ -2670,6 +2670,7 @@
 	'social.publish_ok': 'Veröffentlichen',
 	'social.publish_title': 'Dies veröffentlichen?',
 	'social.public_note': 'Beim Senden wird diese Notiz auf {host} veröffentlicht, mit dem Namen deiner Stimme daran. Dort kann sie jeder ohne Konto lesen. Eine Notiz, die du behältst, bleibt auf diesem Gerät.',
+	'social.compose_public': 'Öffentlich gepostet, unter dem Namen deiner Stimme — jeder kann es lesen.',
 	'social.title_hint': 'Die erste Zeile ist der Titel des Vorschlags. Was passiert ist, kommt darunter.',
 	'social.no_title': 'Die erste Zeile ist der Titel. Schreib eine, und darunter, was passiert ist.',
 	'social.nothing': 'Schreib zuerst etwas.',

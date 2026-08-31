@@ -3509,8 +3509,175 @@
 		DaimondI18n.onChange(function () { if (els.state) render(); });
 	}
 
+	// ── The model-facing mail tools ─────────────────────────────────
+	//
+	// The five functions `src/wasm/mail.rs` reaches, behind the registry's
+	// `mail_list`, `mail_search`, `mail_read` and `mail_draft`. They read what the
+	// human panel reads -- the mailbox already synced to disk -- and file a draft in
+	// the SAME drafts folder the user's Send button reads.
+	//
+	// NOTHING HERE SENDS. None of these reaches `/api/mail/send`; that stays
+	// `sendDraft`'s alone, and `sendDraft` runs only when a person presses Send. A
+	// draft written here is a file for the user to review, exactly as one they typed
+	// themselves. The English is deliberate, as with the digest: these strings are
+	// read by a model relaying them to the user, not drawn on the panel.
+
+	function parseReq(json) {
+		try { var v = JSON.parse(json || '{}'); return (v && typeof v === 'object') ? v : {}; }
+		catch (e) { return {}; }
+	}
+
+	function b64ToBytes(s) {
+		try {
+			var bin = atob(String(s || '').replace(/\s+/g, ''));
+			var out = new Uint8Array(bin.length);
+			for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 0xff;
+			return out;
+		} catch (e) { return new Uint8Array(0); }
+	}
+
+	/// Which mailbox a draft is from when the model named none: the selected one,
+	/// or the first configured, or '' when there is none.
+	function senderAddr(req) {
+		var a = req.address ? acct(req.address) : (acct(state.sel) || state.accounts[0]);
+		return a ? a.address : '';
+	}
+
+	async function toolSender(json) {
+		return senderAddr(parseReq(json));
+	}
+
+	function summariseRow(m) {
+		return 'uid ' + m.uid + (m.seen ? '' : '  [unread]')
+			+ '  ' + (m.date || '') + '  from ' + (m.from || '?')
+			+ '  — ' + (m.subject || '(no subject)');
+	}
+
+	async function toolList(json) {
+		var req = parseReq(json);
+		if (!state.accounts.length) {
+			return 'No mailboxes are configured. The user adds one in the Mail panel; '
+				+ 'until then there is nothing to read.';
+		}
+		var addr = req.address || state.sel || (state.accounts[0] && state.accounts[0].address);
+		var lines = ['Mailboxes:'];
+		state.accounts.forEach(function (a) {
+			lines.push('  ' + a.address + (a.address === addr ? '  (selected)' : ''));
+			var folders = a.folders || { INBOX: {} };
+			Object.keys(folders).sort().forEach(function (n) {
+				var f = folders[n] || {};
+				lines.push('      ' + n + ' — ' + (f.count | 0) + ' message(s) synced');
+			});
+		});
+		var folder = req.folder || folderOf(addr);
+		var limit = (req.limit > 0) ? Math.min(req.limit | 0, 100) : 20;
+		var msgs = await readMailbox(addr, folder);
+		lines.push('');
+		lines.push('Recent in ' + addr + ' / ' + folder + ', newest first:');
+		if (!msgs.length) {
+			lines.push('  (nothing synced yet — the user syncs mail from the Mail panel)');
+		} else {
+			msgs.slice().reverse().slice(0, limit).forEach(function (m) {
+				lines.push('  ' + summariseRow(m));
+			});
+		}
+		lines.push('');
+		lines.push('Read one in full with mail_read (its address, folder and uid). '
+			+ 'Write or reply with mail_draft.');
+		return lines.join('\n');
+	}
+
+	async function toolSearch(json) {
+		var req = parseReq(json);
+		var q = String(req.query || '').trim().toLowerCase();
+		if (!q) return 'mail_search needs a non-empty "query".';
+		var addr = req.address || state.sel || (state.accounts[0] && state.accounts[0].address);
+		if (!addr) return 'No mailbox is configured to search.';
+		var folder = req.folder || folderOf(addr);
+		var limit = (req.limit > 0) ? Math.min(req.limit | 0, 100) : 20;
+		var msgs = await readMailbox(addr, folder);
+		var hits = msgs.filter(function (m) {
+			return (String(m.from || '') + ' ' + String(m.subject || '')).toLowerCase().indexOf(q) >= 0;
+		});
+		if (!hits.length) {
+			return 'No message in ' + addr + ' / ' + folder + ' matched "' + req.query
+				+ '" in its sender or subject. ' + msgs.length + ' message(s) are synced there. '
+				+ 'This searches the sender and subject of synced mail, not the body.';
+		}
+		var lines = ['Matches for "' + req.query + '" in ' + addr + ' / ' + folder
+			+ ' (sender and subject of synced mail):'];
+		hits.slice().reverse().slice(0, limit).forEach(function (m) {
+			lines.push('  ' + summariseRow(m));
+		});
+		lines.push('');
+		lines.push('Read one in full with mail_read.');
+		return lines.join('\n');
+	}
+
+	/// Hand one message's raw bytes to the caller, base64 in a JSON envelope, or an
+	/// error sentence in the same envelope. The bytes are read but never parsed here:
+	/// `oxedyne_fe2o3_mail::message` decodes them, so there is one decoder, not two.
+	async function toolReadRaw(json) {
+		var req = parseReq(json);
+		var path = req.path;
+		if (!path) {
+			var addr = req.address || state.sel || (state.accounts[0] && state.accounts[0].address);
+			var folder = req.folder || folderOf(addr);
+			var uid = parseInt(req.uid, 10);
+			if (!addr || !uid) {
+				return JSON.stringify({ error: 'mail_read needs a mailbox address, a folder and a '
+					+ 'uid — or a path. Use mail_list to see them.' });
+			}
+			var msgs = await readMailbox(addr, folder);
+			var hit = msgs.find(function (m) { return m.uid === uid; });
+			if (!hit) {
+				return JSON.stringify({ error: 'No message with uid ' + uid + ' in ' + addr + ' / '
+					+ folder + '. Use mail_list to see what is there.' });
+			}
+			path = hit.file;
+		}
+		var raw = await readText(path);
+		if (raw.outcome !== 'done') {
+			return JSON.stringify({ error: 'The message at ' + path + ' could not be read.' });
+		}
+		return JSON.stringify({ raw_b64: b64(utf8(raw.text)) });
+	}
+
+	/// File an already-built draft. The bytes are `oxedyne_fe2o3_mail`'s; this only
+	/// writes them where `sendDraft` and the compose panel read a draft, and never
+	/// sends. Always answers with a sentence, so a refusal reaches the model as words.
+	async function putDraftRaw(json) {
+		var req = parseReq(json);
+		var addr = req.address || state.sel;
+		if (!addr) return 'A draft needs a mailbox to be from, and none is configured.';
+		if (!acct(addr)) return 'There is no configured mailbox ' + addr
+			+ '. Use mail_list to see the addresses.';
+		var bytes = b64ToBytes(req.raw_b64);
+		if (!bytes.length) return 'The draft had no bytes to write, so nothing was saved.';
+		try {
+			var id = 'draft-' + Date.now() + '-' + rand(3);
+			var path = draftsDir(addr) + '/' + id + '.eml';
+			await deps.writeBytes(path, bytes);
+			if (deps.refreshFiles) deps.refreshFiles();
+			try { await refreshDrafts(); } catch (e) { /* the file is written regardless */ }
+			render();
+			return 'Draft saved to ' + path + ' for ' + addr + '. It is in the Mail panel drafts '
+				+ 'now, where the user reviews it and presses Send. Nothing has been sent.';
+		} catch (e) {
+			return 'The draft could not be saved: ' + ((e && e.message) || e);
+		}
+	}
+
 	window.DaimondMail = {
 		init:    init,
+		// The model-facing edge, reached from `src/wasm/mail.rs`. None of these
+		// sends; `mail_draft` files a draft for the user, and the send stays
+		// `sendDraft`'s, run only when a person presses Send.
+		toolList:    toolList,
+		toolSearch:  toolSearch,
+		toolReadRaw: toolReadRaw,
+		putDraftRaw: putDraftRaw,
+		toolSender:  toolSender,
 		/// Whether any account is configured. The Message and Compose panels are
 		/// held off the chip row until one is, since neither means anything
 		/// without somewhere for mail to come from.

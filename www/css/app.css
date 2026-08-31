@@ -238,49 +238,6 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 .railhead > span:first-child { flex: 1; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; }
 .rail-count { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; }
 
-/* ── The dock count badge ───────────────────────────────────────────
-   How many things arrived at a panel while you were looking somewhere else.
-   `.rail-count` above says what a panel HOLDS, quietly, while you are already
-   reading it; this says something is WAITING, on the chip that opens it, and
-   has to be seen from across the row. So it is filled rather than muted.
-
-   `--accent-text` on `--accent-soft` and not `--accent` on it: this is 10px
-   text, small text needs 4.5, and the plain accent manages 3.6 on seven of the
-   eleven palettes. The same pairing the phone bar's own selected tab uses, and
-   for the same measurement.
-
-   It is never drawn holding a zero: the count that owns it writes an empty
-   string instead, and hides the element as well, so a count that has gone back
-   to nothing leaves no mark and no gap. */
-.dock-count {
-	display: inline-block;
-	min-width: 1.15em;
-	padding: 0 4px;
-	border-radius: 999px;
-	background: var(--accent-soft);
-	color: var(--accent-text);
-	border: 1px solid var(--accent);
-	font-family: var(--font-mono);
-	font-size: var(--fs-3xs);
-	line-height: 1.4;
-	text-align: center;
-	font-variant-numeric: tabular-nums;
-}
-.dock-count[hidden] { display: none; }
-/* ON A CHIP IT IS OVER THE CHIP, NOT ON THE LINE. It followed the label with a
-   5px margin, so a chip grew by ~21px the moment something arrived for it and
-   every chip left of it moved -- measured 2026-08-28 at 1440px, nine of thirteen
-   shifted 21px when three messages landed in the mailbox, which is the least
-   predictable moment there is to be reaching for one. Out of the chip's flow
-   instead, over its top-right corner, which is where a badge is looked for and
-   what `.mnav button .dock-count` (responsive.css) has always done. */
-.ptag { position: relative; }
-.ptag .dock-count {
-	position: absolute;
-	top: -6px;
-	right: -4px;
-	pointer-events: none;
-}
 .addbtn { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1; }
 .addbtn:hover { color: var(--text-primary); }
 .addbtn:disabled { opacity: 0.4; cursor: default; }
@@ -2589,6 +2546,17 @@ span.arte-open { cursor: default; }
 }
 .tile-dlg-clear:hover { border-color: var(--accent); color: var(--text-primary); }
 .tile-dlg-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The daimon's "Change". Filled, because it IS the affirmative -- pressing it
+   switches the model -- and it shows only while the pick differs, so it never
+   sits idle beside the pulldown inviting a press that does nothing. Beside it the
+   bordered `.tile-dlg-clear` reads as the quieter act it is. */
+.tile-dlg-apply {
+	flex: 0 0 auto;
+	background: var(--accent); color: var(--on-fill, #fff); border: none;
+	border-radius: var(--radius-sm); padding: 8px 12px; font-size: var(--fs-sm);
+}
+.tile-dlg-apply:hover { background: var(--accent-hover); }
+.tile-dlg-apply:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tile-dlg-note { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.5; margin-top: 8px; }
 /* The same note in the palette's warning colour, for the one that says a chosen
    pair of colours cannot be read. Colour ALONE, with no frame and no icon: it is

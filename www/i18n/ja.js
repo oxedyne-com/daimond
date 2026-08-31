@@ -2705,6 +2705,7 @@
 	'social.publish_ok': '公開する',
 	'social.publish_title': 'これを公開しますか？',
 	'social.public_note': '送信すると、このメモは {host} で公開され、あなたの声の名前が付きます。そこでは誰でもアカウントなしで読めます。手元に置いたメモはこの端末に残ります。',
+	'social.compose_public': 'あなたの声の名前で公開されます。誰でも読めます。',
 	'social.title_hint': '最初の行が提案の題名です。何が起きたかはその下に書きます。',
 	'social.no_title': '最初の行が題名です。まず題名を書き、その下に何が起きたかを書いてください。',
 	'social.nothing': 'まず何か書いてください。',

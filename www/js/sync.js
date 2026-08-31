@@ -914,11 +914,6 @@
 		if (window.DaimondPost) {
 			try { DaimondPost.adopt(state && state.post); }
 			catch (e) { log('post adopt failed', e); failed.push('post'); }
-			// A parcel is the fifth occasion the unread count can have changed,
-			// and the only one that is not a press: messages read on another
-			// device arrive here already read.
-			try { if (window.DaimondBadge && DaimondBadge.post) DaimondBadge.post(); }
-			catch (e) { /* no badge in this build */ }
 		}
 		// The account's public handle, under the same rule as everything above
 		// it: `adoptHandle` takes the larger record and writes it VERBATIM, so a

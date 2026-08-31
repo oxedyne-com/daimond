@@ -16,6 +16,12 @@
    card opens in full — its statement, revisions and comments — when
    its title is pressed.
 
+   NOT THE SOCIAL ▸ PROPOSALS CHIP. That chip (js/improve.js,
+   `DaimondImprove`) is where a user MAKES a proposal from a note and
+   votes on one, with the pull voice; this board is where the owner
+   and operators DECIDE one, with a settle voice. Same forge repo,
+   two surfaces, two stores — see dev/IMPROVE_CONTRACT.md §3a.
+
    IT REACHES THE FORGE THROUGH THE DAIMOND GATEWAY, exactly as
    improve.js does: every request goes to the same-origin
    `/api/improve` route, which forwards over loopback to the forge

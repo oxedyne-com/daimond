@@ -2696,6 +2696,7 @@
 	'social.publish_ok': '发布',
 	'social.publish_title': '发布这条内容？',
 	'social.public_note': '发送会把这条笔记发布到 {host}，并带上你的声音名称。任何人都可以在那里读到它，不需要账号。你留下的笔记只留在这台设备上。',
+	'social.compose_public': '以你的声音名公开发布，任何人都能读到。',
 	'social.title_hint': '第一行是提案的标题。发生了什么写在它下面。',
 	'social.no_title': '第一行是标题。先写一行标题，再在下面写发生了什么。',
 	'social.nothing': '先写点什么。',

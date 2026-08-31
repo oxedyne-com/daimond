@@ -459,6 +459,8 @@
 	'tile.model_none': 'none',
 	'tile.diamond_model_help': 'This Diamond thinks with {model}.',
 	'tile.model_note': 'A worker keeps the model it started on. A new model applies to the next one dispatched.',
+	'tile.model_change':      'Change',
+	'tile.model_change_help': 'Switch the daimon to the selected model. The conversation carries over.',
 	'tile.model_changed': 'Daimon moved from {from} to {to}. The conversation continues.',
 	'tile.model_change_note': 'Daimon moved from {from} to {to}.',
 	'tile.model_change_unlogged': 'The model changed, but the history entry could not be written.',
@@ -1696,7 +1698,7 @@
 		// i18n-family: tools.cap. = checking.name checking.blurb machine.name machine.blurb reading.name reading.blurb
 		// i18n-family: tools.cap. = browsing.name browsing.blurb typeset.name typeset.blurb
 		// i18n-family: tools.cap. = dispatch.name dispatch.blurb graph.name graph.blurb
-		// i18n-family: tools.cap. = social.name social.blurb
+		// i18n-family: tools.cap. = social.name social.blurb email.name email.blurb
 		// i18n-family: tools.cap. = other.name other.blurb
 		'tools.cap.files.name':      'Your files',
 		'tools.cap.files.blurb':     'Daimond reads, writes and edits the files in your workspace — a spreadsheet’s cells and a document’s words included — finds things across all of them at once, and tidies up after itself.',
@@ -1724,6 +1726,8 @@
 		'tools.cap.dispatch.blurb':  'Daimond breaks a large job into bounded tasks and sends a worker to each, several at a time, then folds what they bring back into one answer.',
 		'tools.cap.graph.name':      'How your work relates',
 		'tools.cap.graph.blurb':     'Daimond reads and records the relations between your Diamonds, files, pages and chats — what supersedes what, what produced what.',
+		'tools.cap.email.name':      'Your email',
+		'tools.cap.email.blurb':     'Daimond reads the mailboxes you have synced to this device — listing them, finding a message by who it is from or its subject, and reading one in full — and writes a draft reply for you to review. It never sends: only you can press Send.',
 		'tools.cap.other.name':      'Not yet described',
 		'tools.cap.other.blurb':     'Daimond has these and this panel has not been told what to call them. Open it to see what they are.',
 
@@ -3271,6 +3275,26 @@
 	'social.people':       'People',
 	'social.notes':        'Notes',
 	'social.proposals':    'Proposals',
+	'social.settings':     'Settings',
+	// The compose box, merged into Proposals: two ways to post, both auto-send.
+	'social.post':         'Post',
+	'social.post_help':    'Post exactly what is above to the forge as a proposal. Public, under your voice name — no account needed to read it.',
+	'social.polish':       'Polish & post',
+	'social.polish_help':  'Let the model rewrite it as a proposal, then post that.',
+	'social.compose_public': 'Posted publicly, under your voice name — anyone can read it.',
+	'social.novoice_set':  'No voice yet — set one in Settings to post.',
+	'social.polish_wait':  'The model could not draft it just now; it is still waiting to send.',
+	'social.waiting_here': 'Waiting to send; it will go when the forge is reachable.',
+	// The queue: notes that could not be sent yet.
+	'social.queue':        'Waiting to send ({n})',
+	'social.q_verbatim':   'Waiting to post',
+	'social.q_polish':     'Waiting to polish and post',
+	'social.send_now':     'Send now',
+	'social.send_now_help': 'Try to send this one now, in the way it was written.',
+	// The Settings view: the voice, and the drafts the model prepared.
+	'social.set_voice':    'Your voice',
+	'social.set_drafts':   'Prepared drafts',
+	'social.set_drafts_note': 'Forgets any proposals the model drafted from your notes that you have not sent. Your notes waiting to send are not touched.',
 	// What each chip's list says while it is empty, and the two are NOT the same
 	// sentence. Messages is not switched on in this build, so it says that -- an
 	// empty list there would be claiming "nothing has arrived", which is a

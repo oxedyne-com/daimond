@@ -416,8 +416,8 @@ const BREAKS = {
 	// it stay green and only the one about the WORDS moves.
 	nopublic: [{
 		file: 'js/improve.js',
-		find: "\t\tline.textContent = tOr('social.public_note',",
-		with: "\t\tline.textContent = '';\n\t\tif (0) line.textContent = tOr('social.public_note',",
+		find: "\t\tline.textContent = tOr('social.compose_public',",
+		with: "\t\tline.textContent = '';\n\t\tif (0) line.textContent = tOr('social.compose_public',",
 	}],
 	// Said to somebody who cannot send it. A tester with no voice is told their
 	// notes will be published, which is false — and a sentence that is false in
@@ -681,13 +681,13 @@ const BREAKS = {
 			+ '\t\t\t\t\'These are read from the forge as you look at them. Nothing tells you when a proposal is answered; look again to find out.\');',
 		with: '\t\t\tasAt.textContent = \'\';',
 	}],
-	// The panel calls its first chip something the guide does not. Broken in the
-	// CATALOGUE and not in the markup, because the markup's English is only a
-	// fallback: `data-i18n` paints the table's word over it on the first apply.
+	// The panel calls a chip something the guide does not. Broken in the CATALOGUE
+	// and not in the markup, because the markup's English is only a fallback:
+	// `data-i18n` paints the table's word over it on the first apply.
 	renamechip: [{
 		file: 'i18n/en.js',
-		find: "\t'social.notes':        'Notes',",
-		with: "\t'social.notes':        'Feedback',",
+		find: "\t'social.proposals':    'Proposals',",
+		with: "\t'social.proposals':    'Feedback',",
 	}],
 };
 
@@ -984,57 +984,55 @@ try {
 	const panels = await panel.count();
 	check('the panel is on screen, exactly once', panels === 1, `${panels} found`);
 
-	// ── 1. Writing is not sending, and neither is Keep ───────────
+	// ── 1. Writing is not sending, and there is no Keep ──────────
+	//
+	// Note-capture merged into the Proposals view: the box is there, and its
+	// primary verb is Post (the button still carries `.imp-send`). There is no
+	// Keep -- a note that is not posted just sits in the box as a draft, and
+	// nothing is queued until a Post that could not go leaves one waiting.
 	const NOTE_1 = 'The closer on the Everything row put the whole rail away\n'
 		+ 'I expected it to close that row. quokka-marker-one';
 
-	// Send is not offered before there is a voice to send under. A control that
-	// does nothing when pressed teaches people to distrust every control.
-	// Asked for by the selector the markup really has, AND counted: an absent
-	// locator reports itself hidden, so a check that only asked whether it was
-	// hidden would pass over a button that does not exist -- which is how the
-	// hiding went unbuilt for as long as it did.
-	check('the Send button is there to be hidden in the first place',
+	// Post is not offered before there is a voice to post under. A control that
+	// does nothing when pressed teaches people to distrust every control. Counted
+	// as well as asked-hidden: an absent locator reports itself hidden, so "not
+	// shown here" and "never built" look identical from here.
+	check('the Post button is there to be hidden in the first place',
 		await page.locator('#improve-acts .imp-send').count() === 1);
-	check('with no voice, Send is not offered at all',
+	check('with no voice, Post is not offered at all',
 		await page.locator('#improve-acts .imp-send').isHidden());
 
-	// And nobody who cannot send is told that their notes are published, because
-	// they are not. COUNTED as well as asked whether it is hidden, for the same
-	// reason the button above is: an absent locator reports itself hidden, so "it
-	// is not shown here" and "it was never built" look identical from here.
 	check('the disclosure exists, to be hidden in the first place',
 		await page.locator('#improve-public').count() === 1);
-	check('and with no voice and no Send, nobody is told their notes are published',
+	check('and with no voice and no Post, nobody is told their notes are published',
 		await page.locator('#improve-public').isHidden());
 
 	await page.fill('#improve-box', NOTE_1);
 	await page.waitForTimeout(700);
 	check('writing a note sends nothing', opens().length === 0,
 		`${opens().length} request(s) left the page`);
+	check('and merely writing queues nothing: a draft in the box is not a note waiting to send',
+		await page.evaluate(() => window.DaimondImprove.notes().length) === 0);
+	await page.fill('#improve-box', '');
 
-	await page.click('.imp-keep');
-	await page.waitForTimeout(700);
-	check('and Keep sends nothing either', opens().length === 0,
-		`${opens().length} request(s) left the page`);
-
-	const kept = await page.locator('.imp-note .imp-note-state[data-state="kept"]').first().innerText();
-	check('the kept note says it is only here', /kept here/i.test(kept), kept);
-
-	// ── A voice is set, in this panel, by the person who has one ──
+	// ── A voice is set, from the Settings view where it now lives ──
+	await page.evaluate(() => window.DaimondSocial.show('settings'));
+	await page.waitForTimeout(200);
 	await page.click('[data-act="improve-voice-open"]');
 	await page.waitForTimeout(200);
 	await page.fill('#improve-voice-in', SECRET);
 	await page.click('[data-act="improve-voice-save"]');
 	await page.waitForTimeout(600);
-	check('a voice can be set in the panel that needs it',
+	check('a voice can be set in the Settings view',
 		await page.evaluate(() => window.DaimondVoice.has()) === true);
 	check('and the secret is not left in the field it was typed into',
 		await page.evaluate(() => {
 			const i = document.getElementById('improve-voice-in');
 			return !i || !i.value;
 		}));
-	check('and Send is offered once there is a voice',
+	await page.evaluate(() => window.DaimondSocial.show('proposals'));
+	await page.waitForTimeout(200);
+	check('and Post is offered once there is a voice',
 		await page.locator('#improve-acts .imp-send').isVisible());
 
 	// ── 1b. What Send does is said before it is pressed ──────────
@@ -1064,16 +1062,15 @@ try {
 	// host. Every one of them is something a person would be surprised by
 	// afterwards, which is the whole test of whether it belongs beside the button:
 	// ANYONE, with NO account, and the voice name goes with it.
-	const HOST = 'oregami.oxegen.io';
+	// TERSE now (#6): the whole address and the "no account" detail moved to the
+	// Post button's tooltip; the line under the box keeps the one fact a person must
+	// read before pressing -- it goes out in public, under their name.
 	const SAYS = [
-		['names the forge by host',         /oregami\.oxegen\.io/],
-		['says anyone can read it',         /\banyone\b/i],
-		['says no account is needed',       /\b(?:without an account|no account)\b/i],
-		['says the voice name goes too',    /voice name/i],
-		['and that a kept note stays here', /this device/i],
+		['says anyone can read it',      /\banyone\b/i],
+		['says the voice name goes too', /voice name/i],
 	];
 	const unsaid = disclosed ? SAYS.filter(([, re]) => !re.test(disclosed.text)).map(([what]) => what) : ['nothing is drawn'];
-	check('once Send is offered, the box says what Send does, in full',
+	check('once Post is offered, the box says, tersely, what Post does',
 		shown && unsaid.length === 0,
 		(shown ? '' : 'not on the screen; ') + (unsaid.join(', ') || JSON.stringify(disclosed && disclosed.text)));
 
@@ -1123,9 +1120,13 @@ try {
 		Object.keys(f2).sort().join(',') === 'body,build,title',
 		Object.keys(f2).sort().join(',') || '(none)');
 
-	const sentRow = await page.locator('.imp-note').first().innerText();
-	check('the note now says it went, and names the proposal it became',
-		/sent/i.test(sentRow) && /\b13\b/.test(sentRow), sentRow.slice(0, 90));
+	// #3: a note that becomes a proposal LEAVES -- there is no sent row and no
+	// notes list for one to sit in. The queue is empty (the send took it) and the
+	// proposal it became is now in the list.
+	check('the note left the queue: it became a proposal',
+		await page.evaluate(() => window.DaimondImprove.notes().length) === 0);
+	check('and the proposal it became is in the list',
+		await page.evaluate(() => window.DaimondImprove.forge.props().some(p => p.n === 13)));
 
 	// ── 2c. And that line is true AT THE PRESS ───────────────────
 	//
@@ -1210,7 +1211,12 @@ try {
 	check('and the build identifier that row was showing is off it too',
 		!('build' in f3), Object.keys(f3).sort().join(','));
 
-	// ── 4. A note that could not be sent is kept, and never retried ──
+	// ── 4. A Post the forge refuses WAITS in the queue, not retried on its own ──
+	//
+	// The note the forge would not take stays in the queue (offline or refused, the
+	// holding is the same), and the reconnect flush -- not a timer -- is the only
+	// thing that will try it again. It is drawn as waiting, with Copy to carry it out
+	// by hand, and nothing here fires an `online` event, so nothing retries.
 	forge = FORGE.main; asRepo = '_throttled-writes';
 	const NOTE_4 = 'The paperclip is missing from file rows\n'
 		+ 'The Workspace panel draws none of them. quokka-marker-four';
@@ -1222,18 +1228,20 @@ try {
 	check('a note the forge refuses was still tried once',
 		opens().length === before4 + 1, `${opens().length - before4} attempt(s)`);
 
-	const keptRow = await page.locator('.imp-note').first().innerText();
-	check('and it is kept, and the row says so rather than claiming it went',
-		/kept here/i.test(keptRow) && !/^sent/i.test(keptRow.trim()), keptRow.slice(0, 90));
+	check('and it stayed in the queue rather than vanishing',
+		await page.evaluate(() => window.DaimondImprove.notes().some(n => /paperclip/.test(n.text))));
+	const keptRow = await page.locator('.imp-queue-row').first().innerText();
+	check('and its row says it is waiting, not that it went',
+		/waiting/i.test(keptRow) && !/^sent/i.test(keptRow.trim()), keptRow.slice(0, 90));
 	check('and Copy is offered on it, so the words can be carried out by hand',
-		await page.locator('.imp-note').first().locator('.imp-note-copy').count() === 1);
+		await page.locator('.imp-queue-row').first().locator('.imp-note-copy').count() === 1);
 	const saidBack = await page.locator('#improve-say').innerText();
 	check('and the panel says WHY, rather than one sentence for every fault',
-		/too many/i.test(saidBack) && /kept/i.test(saidBack), saidBack);
+		/too many/i.test(saidBack) && /waiting/i.test(saidBack), saidBack);
 
 	const after4 = opens().length;
 	await sleep(4000);
-	check('and nothing tries again — a queue of text is what this design refuses',
+	check('and nothing tries again on its own — only a reconnect flushes the queue',
 		opens().length === after4, `${opens().length - after4} further attempt(s) in 4s`);
 	asRepo = '';
 
@@ -1696,24 +1704,26 @@ try {
 
 	const chipState = async () => page.evaluate(() => {
 		const q = (v) => document.querySelector(`#panel-social .imp-chip[data-view="${v}"]`);
-		const n = q('notes'), p = q('proposals');
+		const set = q('settings'), p = q('proposals');
 		const vis = (id) => { const e = document.getElementById(id); return !!(e && !e.hidden); };
 		return {
-			notes: !!(n && n.classList.contains('on')), props: !!(p && p.classList.contains('on')),
-			notesView: vis('improve-notes'), propsView: vis('improve-props-view'),
+			settings: !!(set && set.classList.contains('on')), props: !!(p && p.classList.contains('on')),
+			settingsView: vis('social-settings'), propsView: vis('improve-props-view'),
 		};
 	});
 	const onProps = await chipState();
-	check('the Proposals chip is filled while the proposals are showing, and Notes is not',
-		onProps.props && !onProps.notes && onProps.propsView && !onProps.notesView,
+	check('the Proposals chip is filled while the proposals are showing, and Settings is not',
+		onProps.props && !onProps.settings && onProps.propsView && !onProps.settingsView,
 		JSON.stringify(onProps));
 
-	await page.evaluate(() => window.DaimondImprove.show('notes'));
+	await page.evaluate(() => window.DaimondImprove.show('settings'));
 	await page.waitForTimeout(400);
-	const onNotes = await chipState();
+	const onSettings = await chipState();
 	check('and pressing the other chip swaps which is filled and which view shows',
-		onNotes.notes && !onNotes.props && onNotes.notesView && !onNotes.propsView,
-		JSON.stringify(onNotes));
+		onSettings.settings && !onSettings.props && onSettings.settingsView && !onSettings.propsView,
+		JSON.stringify(onSettings));
+	await page.evaluate(() => window.DaimondImprove.show('proposals'));
+	await page.waitForTimeout(300);
 
 	// Both views' text, because the guide describes both and one is hidden at
 	// any moment. `textContent` rather than `innerText`: a hidden view has no
@@ -1754,8 +1764,9 @@ try {
 	if (await anyRow.count()) { await anyRow.click(); await page.waitForTimeout(900); }
 	sampled.push(await words());
 
-	// The paste field open. `Save the voice` is the button beside it.
-	await page.evaluate(() => window.DaimondImprove.show('notes'));
+	// The paste field open. `Save the voice` is the button beside it. It lives in
+	// the Settings view now.
+	await page.evaluate(() => window.DaimondImprove.show('settings'));
 	await page.waitForTimeout(400);
 	await page.click('[data-act="improve-voice-open"]');
 	await page.waitForTimeout(300);
@@ -1829,9 +1840,9 @@ try {
 	await page.evaluate(() => window.DaimondI18n.setLocale('en'));
 	await page.waitForTimeout(350);
 
-	const untranslated = inEach.filter(([, s]) => !s || s === englishSaid || s.indexOf(HOST) === -1)
+	const untranslated = inEach.filter(([, s]) => !s || s === englishSaid)
 		.map(([c, s]) => c + ': ' + (s ? JSON.stringify(s.slice(0, 40)) : 'nothing'));
-	check(`the disclosure is said in all eight languages, host and all (${inEach.length + 1} checked)`,
+	check(`the disclosure is said in all eight languages (${inEach.length + 1} checked)`,
 		untranslated.length === 0, untranslated.join(' | '));
 	// And the strings this lane put in the catalogues alongside it are in all
 	// eight too. READ OFF DISK and not off the screen, and the difference is
@@ -1877,6 +1888,10 @@ try {
 	await page.waitForTimeout(600);
 	await page.evaluate(() => { if (window.DaimondSheet) window.DaimondSheet.open('social'); });
 	await page.waitForTimeout(900);
+	// The note box lives in the Proposals view now; show it before measuring, or a
+	// box in a hidden view reports no size.
+	await page.evaluate(() => window.DaimondSocial.show('proposals'));
+	await page.waitForTimeout(300);
 	const phone = await page.evaluate(() => {
 		const box  = document.getElementById('improve-box');
 		const send = document.querySelector('#improve-acts .imp-send');

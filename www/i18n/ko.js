@@ -2703,6 +2703,7 @@
 	'social.publish_ok': '공개하기',
 	'social.publish_title': '이것을 공개할까요?',
 	'social.public_note': '보내면 이 메모는 {host}에 공개되고, 당신의 목소리 이름이 함께 붙어요. 거기서는 누구나 계정 없이 읽을 수 있어요. 보관한 메모는 이 기기에 남아요.',
+	'social.compose_public': '당신의 목소리 이름으로 공개 게시돼요. 누구나 읽을 수 있어요.',
 	'social.title_hint': '첫 줄이 제안의 제목이에요. 무슨 일이 있었는지는 그 아래에 써요.',
 	'social.no_title': '첫 줄이 제목이에요. 제목을 쓰고, 그 아래에 무슨 일이 있었는지 써 주세요.',
 	'social.nothing': '먼저 뭔가 써 주세요.',

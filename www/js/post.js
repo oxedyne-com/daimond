@@ -771,8 +771,6 @@
 			await refreshDir();
 		} catch (e) { log('wake failed', e); }
 		try { render(); } catch (e) { /* no panel yet */ }
-		try { if (window.DaimondBadge && DaimondBadge.post) DaimondBadge.post(); }
-		catch (e) { /* no badge in this build */ }
 		return !!_st;
 	}
 

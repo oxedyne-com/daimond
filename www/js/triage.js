@@ -197,6 +197,25 @@
 		'of work and not two, or why it belongs on a proposal that already exists.',
 	].join('\n');
 
+	/// The whole of what the SINGLE-note polish is told. The compose box's "Polish
+	/// & post" runs this on one note and posts what it drafts, so it is one note in
+	/// and one proposal out -- no triage, no comments, no revisions, no `from`.
+	var POLISH_SYSTEM = [
+		'You are turning ONE person\'s note about an application called Daimond into ONE proposal.',
+		'A NOTE is a report shaped like experience: where they were, what they expected, what happened.',
+		'A PROPOSAL is one change, stated so it can be agreed with, disagreed with, and FINISHED.',
+		'',
+		'Rules you are judged on:',
+		'1. ONE proposal, one change. If the note holds two faults, state the most serious and only that.',
+		'2. INVENT NOTHING. Every claim must be traceable to the note. You have not read the code.',
+		'3. USE THE REPORTER\'S OWN WORDS where they are already precise. You are re-aiming a report at a',
+		'   maintainer, not rewriting it in your own voice.',
+		'4. The TITLE is one line and names the change, not the feeling.',
+		'',
+		'Answer with ONE JSON object and nothing else -- no prose around it, no code fence:',
+		'{ "title": "...", "body": "..." }',
+	].join('\n');
+
 	/// One note, as the drafting reads it. The id goes FIRST and verbatim,
 	/// because it is what every draft is aimed with and a model that paraphrases
 	/// it produces a plan that folds nothing.
@@ -455,6 +474,40 @@
 		}
 	}
 
+	/// Rewrite ONE note into a proposal with the model, for the compose box's
+	/// "Polish & post". Returns `{ title, body }`, or null when there is no model,
+	/// the answer is unreadable, or the run failed -- in which case improve.js
+	/// leaves the note in the queue for the next flush. Metered exactly like a run,
+	/// through the same ledger. TOOLS OFF, same argument as `client`: the answer may
+	/// depend only on the note the person wrote.
+	async function polish(text) {
+		var got = pick();
+		if (!got) return null;
+		var one = String(text || '').trim();
+		if (!one) return null;
+		try {
+			var mod = await import(PKG);
+			var app = new mod.DaimondApp(got.baseUrl, got.apiKey, got.model, OUT_MAX, POLISH_SYSTEM, false);
+			var out = '';
+			await app.run_turn('The note:\n\n' + one + '\n\nWrite the proposal now.', function (ev) {
+				if (ev && ev.type === 'text' && typeof ev.content === 'string') out += ev.content;
+			});
+			meter(app, got);
+			var i = out.indexOf('{'), j = out.lastIndexOf('}');
+			if (i === -1 || j <= i) return null;
+			var obj = null;
+			try { obj = JSON.parse(out.slice(i, j + 1)); } catch (e) { return null; }
+			if (!obj || typeof obj !== 'object') return null;
+			var title = (typeof obj.title === 'string') ? obj.title.replace(/[\r\n]+/g, ' ').trim() : '';
+			var body  = (typeof obj.body  === 'string') ? obj.body  : '';
+			if (!title) return null;
+			return { title: title.slice(0, 300), body: body.slice(0, 16000) };
+		} catch (e) {
+			log('the note would not polish', e);
+			return null;
+		}
+	}
+
 	/// Book what the run cost against the account's own ledger.
 	///
 	/// Through `DaimondLedger` and `DaimondGovernor` rather than through
@@ -643,6 +696,9 @@
 		/// plan, and hand its drafts to the approve-list. Nothing is sent -- the
 		/// queue sends, in one press, on the user's tick.
 		run:      run,
+		/// Rewrite ONE note into `{ title, body }` with the model, for the compose
+		/// box's "Polish & post". improve.js posts what this returns.
+		polish:   polish,
 		/// Forget this run's summary. The drafts stay in the queue.
 		clear:    clear,
 		/// Everything the model is given, PURE, so a verifier can assert that all

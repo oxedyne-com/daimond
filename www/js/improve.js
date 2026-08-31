@@ -230,6 +230,8 @@
 			id:   String(r.id || '') || ('n' + ms(r.at)),
 			at:   ms(r.at) || Date.now(),
 			text: text.slice(0, MAX_CHARS),
+			mode: (r.mode === 'polish') ? 'polish' : 'verbatim',
+			build: (typeof r.build === 'string') ? r.build : '',
 			sent: ms(r.sent),
 			/// The proposal this note became, or 0. Kept so a row can name it: a
 			/// tester who sent something and was told only "Sent" has no way back
@@ -493,26 +495,22 @@
 	var _voiceBusy    = false;		// a provision request is in flight
 	var _voiceAlready = false;		// the forge holds a voice this device has not got yet
 
-	/// The row under the buttons: whether a voice is held, and how to change it.
-	/// Built here rather than in the markup because the markup is another lane's
-	/// file and every part of it is drawn from this one anyway.
+	/// Whether a voice is held, and how to change it -- drawn in the Settings view
+	/// now, not beside the compose box. Built here rather than in the markup because
+	/// every word of it is drawn from this file anyway. `drawSettings` calls this
+	/// after it has put the section heading in place.
 	function drawVoice() {
-		var write = document.querySelector('#panel-social .imp-write');
-		var say   = el('improve-say');
+		var write = el('improve-settings');
 		if (!write) return;
 		var host = el('improve-voice');
 		if (!host) {
 			host = document.createElement('div');
-			// `.imp-acts` as well as `.imp-voice`: the first is an existing rule
-			// that lays a row of buttons out with a sentence above them, which is
-			// exactly this row's shape. Reusing it means this panel needs no new
-			// stylesheet rule to be legible, the same trick `#improve-hint` plays
-			// with `.imp-as`. Without it the sentence and the buttons run together
-			// on one line, which is what the first draft did.
+			// `.imp-acts` lays a row of buttons out with a sentence above them, which
+			// is exactly this row's shape, so the panel needs no new rule to be
+			// legible.
 			host.className = 'imp-acts imp-voice';
 			host.id = 'improve-voice';
-			if (say) write.insertBefore(host, say);
-			else write.appendChild(host);
+			write.appendChild(host);
 		}
 		host.innerHTML = '';
 		if (!voice()) return;			// no voice.js in this build
@@ -839,12 +837,15 @@
 		if (as) {
 			as.hidden = hasVoice();
 			as.textContent = hasVoice() ? ''
-				: tOr('social.as_novoice', 'No voice yet — a note can only be kept here.');
+				: tOr('social.novoice_set', 'No voice yet — set one in Settings to post.');
 		}
-		// Without a voice there is nothing to send AS, and the forge would refuse
+		// Without a voice there is nothing to post AS, and the forge would refuse
 		// it. The button is hidden rather than shown-and-inert: a control that
-		// does nothing when pressed teaches people to distrust every control.
+		// does nothing when pressed teaches people to distrust every control. The
+		// polish button rides with it -- both post, and neither can without a voice.
 		if (send) send.hidden = !hasVoice();
+		var polish = el('panel-social') ? document.querySelector('[data-act="improve-polish"]') : null;
+		if (polish) polish.hidden = !hasVoice();
 		drawPublic(send);
 		drawHint();
 	}
@@ -880,12 +881,11 @@
 			line.id = 'improve-public';
 			write.insertBefore(line, acts);		// above the buttons, under the box
 		}
-		// The host rides as a placeholder so that eight translations carry the
-		// address without any of them retyping it.
-		line.textContent = tOr('social.public_note',
-			'Sending publishes this at {host} with your voice name on it — anyone can read it, no account needed. '
-			+ 'A kept note stays on this device.',
-			{ host: FORGE_HOST });
+		// Terse (#6): the whole address and the "no account needed" detail sit in the
+		// Post button's tooltip; the line under the box is the one fact that must be
+		// read before pressing -- it goes out in public, under your name.
+		line.textContent = tOr('social.compose_public',
+			'Posted publicly, under your voice name — anyone can read it.');
 		line.hidden = !(send && !send.hidden);
 	}
 
@@ -906,23 +906,60 @@
 			'First line is the title; what happened goes below.');
 	}
 
-	// ── Keeping and sending ────────────────────────────────────
+	// ── The queue, and posting from it ─────────────────────────
 
-	/// Store what is in the box, and clear it. `sentAt` is 0 for a note that has
-	/// not left and must not pretend it has.
-	function store(text, sentAt) {
+	/// Put a note in the queue, with the mode a flush will send it in. There is no
+	/// "kept" state any more -- a note is here only because it has not been sent
+	/// yet, and it leaves the moment it is.
+	function store(text, mode) {
 		var s = load();
 		var rec = {
 			id:   'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
 			at:   Date.now(),
 			text: String(text).slice(0, MAX_CHARS),
-			sent: ms(sentAt),
+			// How a flush will send it: 'verbatim' posts the words as they are;
+			// 'polish' has the model rewrite it into a proposal first. Remembered so
+			// a note queued offline is sent the way its author chose when the browser
+			// comes back.
+			mode: (mode === 'polish') ? 'polish' : 'verbatim',
+			// The sealed build identifier, captured NOW -- while the "what goes with
+			// it" row is in the state the author left it. A note may sit in the queue
+			// past a reconnect, by when the live row has been reset, so the build
+			// cannot be read again at send time or a closed row would put it back.
+			build: contextOff() ? '' : _build,
+			sent: 0,
 			n:    0,
 			into: [],
 		};
 		s.notes.unshift(rec);
 		save();
 		return rec;
+	}
+
+	/// Take one note off the queue. Called when a send takes it (the note becomes a
+	/// proposal, so the copy here is spare) and when a person drops it by hand.
+	function removeNote(id) {
+		var s = load();
+		var i = s.notes.findIndex(function (n) { return n.id === String(id); });
+		if (i === -1) return false;
+		s.notes.splice(i, 1);
+		save();
+		return true;
+	}
+
+	/// One queued note by id, or null.
+	function find(id) {
+		var s = load();
+		for (var i = 0; i < s.notes.length; i++) if (s.notes[i].id === String(id)) return s.notes[i];
+		return null;
+	}
+
+	/// Is the browser online? `navigator.onLine` is only reliably FALSE (a true can
+	/// still fail to reach the forge), so a submit tries to send and leaves the note
+	/// queued if it does not go -- this only stops a pointless attempt while plainly
+	/// offline, and gates the reconnect flush.
+	function onLine() {
+		try { return navigator.onLine !== false; } catch (e) { return true; }
 	}
 
 	/// Mark the notes a draft was written from as folded into proposal `n`.
@@ -960,17 +997,6 @@
 		drawContext();
 	}
 
-	/// Keep this note here. Nothing is sent, now or ever: a kept note reaches
-	/// the network only if somebody presses Send on it afterwards.
-	function keep() {
-		var text = outgoing();
-		if (!text) { flash(tOr('social.nothing', 'Write something first.')); return null; }
-		var rec = store(text, 0);
-		clearBox();
-		render();
-		return rec;
-	}
-
 	/// Open a proposal from one note's characters.
 	///
 	/// THE WHOLE OF WHAT LEAVES is these three fields, and all three came out of
@@ -992,60 +1018,137 @@
 		});
 	}
 
-	/// What a refusal leaves on the screen after a Send: why it did not go, and
-	/// that the note is still here.
+	/// What a refusal leaves on the screen after a send: why it did not go, and that
+	/// the note is still waiting in the queue.
 	function keptAfter(a) {
-		return saying(a) + ' ' + tOr('social.kept_here',
-			'Kept here; nothing tried again.');
+		return saying(a) + ' ' + tOr('social.waiting_here',
+			'Waiting to send; it will go when the forge is reachable.');
 	}
 
 	/// Put one already-stored note on the wire and take the answer back into the
 	/// record. THE ONE DOOR a note leaves by, whether the press came from the box,
-	/// from a kept row, or from a daimon that was told yes -- so a fourth caller
-	/// cannot quietly acquire a different idea of what "sent" means.
+	/// from the queue, or from a daimon that was told yes -- so a fourth caller
+	/// cannot quietly acquire a different idea of what "sent" means. On success the
+	/// note LEAVES the queue (#3): the forge holds the proposal, so the copy here
+	/// is spare and there is no list for it to sit in.
 	async function through(rec, parts) {
 		var a = await post(parts);
 		if (a.ok) {
-			rec.sent = Date.now();
-			rec.n    = Math.max(0, whole(a.data && a.data.number));
-			save();
-			absorb(cleanProp(a.data), true);
+			removeNote(rec.id);
+			absorb(cleanProp(a.data));
 		}
 		return a;
 	}
 
-	async function send() {
+	// ── The compose box: two ways to post, both auto-send ──────
+	//
+	// One box, two verbs. "Post" sends the words as they are; "Polish & post" has
+	// the model rewrite them into a proposal first. NEITHER keeps -- both queue the
+	// note and immediately try to send it, so the only holding area is the queue,
+	// and only for a note that could not go yet. A note remembers which verb made
+	// it, so a reconnect flush sends it the way its author chose.
+
+	/// Post the box, in one of the two modes. Queues the note, then -- if the
+	/// browser is online -- tries to send it at once. If the send does not go (or
+	/// the browser is offline) the note stays in the queue and the reconnect flush
+	/// will take it later.
+	async function submit(mode) {
 		var text = outgoing();
 		if (!text) { flash(tOr('social.nothing', 'Write something first.')); return null; }
-		var parts = split(text);
-		if (!parts) {
+		// A verbatim post needs a first line to be its title; a polished one does
+		// not, because the model writes the title.
+		if (mode !== 'polish' && !split(text)) {
 			flash(tOr('social.no_title', 'First line is the title — write one, then what happened.'));
 			return null;
 		}
-		if (!hasVoice()) { flash(tOr('social.as_novoice', 'No voice yet — a note can only be kept here.')); return null; }
-		var rec = store(text, 0);
+		if (!hasVoice()) { flash(tOr('social.novoice_set', 'No voice yet — set one in Settings to post.')); return null; }
+		var rec = store(text, mode);
 		clearBox();
 		render();
-		var a = await through(rec, parts);
-		if (!a.ok) flash(keptAfter(a));
+		if (onLine()) { await sendOne(rec); }
 		render();
 		return rec;
 	}
 
-	/// Send a note that is already kept. The same one act, from the row instead
-	/// of from the box, and it opens a proposal from the note's stored
-	/// characters unchanged.
-	async function resend(id) {
-		var s = load();
-		var rec = s.notes.find(function (n) { return n.id === id; });
-		if (!rec || rec.sent) return false;
+	/// Send one queued note, in its own mode. Verbatim goes straight through the
+	/// door; polish runs the model first and posts what it drafted.
+	async function sendOne(rec) {
+		var cur = find(rec.id);
+		if (!cur) return false;					// already gone
+		return (cur.mode === 'polish') ? await sendPolished(cur) : await sendVerbatim(cur);
+	}
+
+	async function sendVerbatim(rec) {
 		var parts = split(rec.text);
 		if (!parts) { flash(tOr('social.no_title', 'First line is the title — write one, then what happened.')); return false; }
-		if (!hasVoice()) { flash(tOr('social.as_novoice', 'No voice yet — a note can only be kept here.')); return false; }
+		// The build is the note's OWN, captured when it was written -- not whatever
+		// the live "what goes with it" row happens to say now. `split` reads the live
+		// row, so its build is overwritten here.
+		parts.build = rec.build || '';
 		var a = await through(rec, parts);
 		if (!a.ok) flash(keptAfter(a));
-		render();
 		return a.ok;
+	}
+
+	/// Polish one note into a proposal with the model, then post it. The drafting
+	/// is js/triage.js's, the one place the model machinery and its metering live;
+	/// this posts what it drafted through the same door a verbatim note leaves by.
+	/// A failure -- no model, offline, an unreadable answer -- leaves the note in
+	/// the queue for the next flush.
+	async function sendPolished(rec) {
+		var got = null;
+		try { if (window.DaimondTriage && DaimondTriage.polish) got = await DaimondTriage.polish(rec.text); }
+		catch (e) { got = null; }
+		if (!got || !got.title) {
+			flash(tOr('social.polish_wait', 'The model could not draft it just now; it is still waiting to send.'));
+			return false;
+		}
+		var a = await through(rec, { title: got.title, body: got.body || '', build: rec.build || '' });
+		if (!a.ok) flash(keptAfter(a));
+		return a.ok;
+	}
+
+	/// Send one queued note now, by id -- the queue row's own "Send now". The same
+	/// one act the flush makes, from a press instead of from a reconnect.
+	async function resend(id) {
+		var rec = find(id);
+		if (!rec) return false;
+		if (!hasVoice()) { flash(tOr('social.novoice_set', 'No voice yet — set one in Settings to post.')); return false; }
+		var ok = await sendOne(rec);
+		render();
+		return ok;
+	}
+
+	// ── Draining the queue when the browser comes back ─────────
+	//
+	// THE NET-NEW PIECE. A note written offline (or one whose send failed) waits in
+	// the queue; when the browser fires `online`, js/daimond.js calls this and every
+	// waiting note is sent in the mode it was written in -- a polish note drafts on
+	// reconnect, because the model needs the network too. One flush at a time, and
+	// it stops the moment the browser drops again rather than throwing every note at
+	// a dead forge.
+
+	var _flushing = false;
+
+	async function flushQueue() {
+		if (_flushing || !onLine()) return { sent: 0, waiting: load().notes.length };
+		if (!hasVoice()) return { sent: 0, waiting: load().notes.length };
+		_flushing = true;
+		var sent = 0;
+		try {
+			var q = load().notes.slice();		// a snapshot of ids; the list changes under us
+			for (var i = 0; i < q.length; i++) {
+				if (!onLine()) break;
+				var rec = find(q[i].id);
+				if (!rec) continue;				// taken meanwhile
+				var ok = await sendOne(rec);
+				if (ok) sent++;
+			}
+		} finally {
+			_flushing = false;
+			render();
+		}
+		return { sent: sent, waiting: load().notes.length };
 	}
 
 	/// Delete one note. It is only on this device, so this is the whole of it --
@@ -1699,22 +1802,33 @@
 		return b;
 	}
 
-	/// Your own notes, newest first: what you wrote, when, and whether it went.
-	function drawNotes() {
-		var list = el('improve-list');
-		if (!list) return;
-		var notes = load().notes.slice();
-		list.innerHTML = '';
-		if (!notes.length) {
-			var none = document.createElement('div');
-			none.className = 'rail-note';
-			none.textContent = tOr('social.no_notes', 'No notes yet.');
-			list.appendChild(none);
-			return;
-		}
-		notes.forEach(function (n) {
+	/// One line of text in a `div`, its text set as textContent so nothing here is
+	/// ever markup. The queue head and the Settings sections are drawn with it.
+	function line(cls, text) {
+		var d = document.createElement('div');
+		d.className = cls;
+		d.textContent = text;
+		return d;
+	}
+
+	/// The queue: notes that could not be sent yet, newest first. Empty when there
+	/// is nothing waiting, so the compose box sits straight above the proposals in
+	/// the ordinary case; it fills only when a send did not go -- offline, or a
+	/// forge that refused. Each row shows the words, how it will be sent, and offers
+	/// a Send-now and a Delete. The reconnect flush drains it on its own.
+	function drawQueue() {
+		var host = el('improve-queue');
+		if (!host) return;
+		var q = load().notes.slice();
+		host.innerHTML = '';
+		if (!q.length) return;
+
+		host.appendChild(line('imp-asat imp-queue-head', tnOr('social.queue', q.length,
+			'Waiting to send ({n})', 'Waiting to send ({n})', { n: q.length })));
+
+		q.forEach(function (n) {
 			var row = document.createElement('div');
-			row.className = 'imp-note';
+			row.className = 'imp-note imp-queue-row';
 			row.dataset.note = n.id;
 
 			var text = document.createElement('div');
@@ -1727,29 +1841,16 @@
 
 			var state = document.createElement('span');
 			state.className = 'imp-note-state';
-			// THREE STATES, BECAUSE THERE ARE THREE FACTS. `sent` is these
-			// characters at the forge; `folded` is a drafting of them there and
-			// these characters still only here, which is why the row goes on
-			// offering Send; `kept` is neither. A folded note drawn as sent would
-			// tell somebody their words had been delivered when a paraphrase of
-			// them had.
-			state.dataset.state = n.sent ? 'sent' : (n.into.length ? 'folded' : 'kept');
-			state.textContent = n.sent
-				? (n.n
-					? tOr('social.state_sent_n', 'Sent {date}, and is proposal {n}', { date: fmtDate(n.sent), n: n.n })
-					: tOr('social.state_sent', 'Sent {date}', { date: fmtDate(n.sent) }))
-				: (n.into.length
-					? tnOr('social.state_folded', n.into.length,
-						'Kept here. A draft written from it went to proposal {list}.',
-						'Kept here. Drafts written from it went to proposals {list}.',
-						{ list: n.into.map(function (k) { return '#' + k; }).join(', ') })
-					: tOr('social.state_kept', 'Kept here'));
+			state.dataset.state = 'waiting';
+			state.textContent = (n.mode === 'polish')
+				? tOr('social.q_polish', 'Waiting to polish and post')
+				: tOr('social.q_verbatim', 'Waiting to post');
 			foot.appendChild(state);
 
-			if (!n.sent && hasVoice()) {
+			if (hasVoice()) {
 				foot.appendChild(button('imp-note-send', 'improve-resend',
-					tOr('social.send', 'Send'),
-					tOr('social.send_help', 'Sends exactly what is above. Nothing else goes with it.')));
+					tOr('social.send_now', 'Send now'),
+					tOr('social.send_now_help', 'Try to send this one now, in the way it was written.')));
 			}
 			foot.appendChild(button('imp-note-copy', 'improve-copy', t('common.copy'), t('common.copy')));
 
@@ -1764,7 +1865,7 @@
 			}
 
 			row.appendChild(foot);
-			list.appendChild(row);
+			host.appendChild(row);
 		});
 	}
 
@@ -2113,22 +2214,42 @@
 		list.appendChild(foot);
 	}
 
+	/// The Settings view: the voice this device posts with, and the drafts the
+	/// model prepared. Both used to sit beside the compose box; the owner moved them
+	/// out so the box is just a box (#7). `drawVoice` fills the voice section;
+	/// "Forget this plan" clears anything the model drafted that has not been sent.
+	function drawSettings() {
+		var host = el('improve-settings');
+		if (!host) return;
+		host.innerHTML = '';
+
+		host.appendChild(line('imp-with-label imp-set-head', tOr('social.set_voice', 'Your voice')));
+		drawVoice();
+
+		host.appendChild(line('imp-with-label imp-set-head', tOr('social.set_drafts', 'Prepared drafts')));
+		host.appendChild(line('imp-as imp-set-note', tOr('social.set_drafts_note',
+			'Forgets any proposals the model drafted from your notes that you have not sent. '
+			+ 'Your notes waiting to send are not touched.')));
+		var acts = document.createElement('div');
+		acts.className = 'imp-acts';
+		acts.appendChild(button('imp-note-copy', 'improve-forget-plan',
+			tOr('social.triage_clear', 'Forget this plan'),
+			tOr('social.triage_clear_help', 'Clear the drafts. Nothing is sent.')));
+		host.appendChild(acts);
+	}
+
 	function render() {
 		bindNoteBox();
 		drawContext();
 		drawAs();
-		drawVoice();
-		drawNotes();
-		// The verb whose object is the whole list, drawn by js/triage.js into its
-		// own host under the note box. Called rather than imported: a build
-		// without that file draws the panel it has always drawn, and this file
-		// keeps working when the drafting half is not there.
-		try { if (window.DaimondTriage) DaimondTriage.draw(); } catch (e) { log('the triage row would not draw', e); }
-		// The approve-list: a local review queue of drafts, batch-sent through the
-		// forge door above. Drawn beside the triage row on the same terms -- called,
-		// not imported, so a build without js/approvelist.js draws exactly as before.
+		drawQueue();
+		// The approve-list draws only where its host exists; with the Notes view
+		// gone it is dormant, but kept called so a build that restores a batch
+		// surface needs no change here. Same for the triage row.
 		try { if (window.DaimondApproveList) DaimondApproveList.draw(); } catch (e) { log('the approve-list would not draw', e); }
+		try { if (window.DaimondTriage) DaimondTriage.draw(); } catch (e) { log('the triage row would not draw', e); }
 		drawProps();
+		drawSettings();
 	}
 
 	// ── WHAT IS HALF-WRITTEN SURVIVES A RELOAD ─────────────────
@@ -2437,32 +2558,32 @@
 
 	// ── The chips on the head ──────────────────────────────────
 	//
-	// Decision 13: the panel is Social. It held four things — Messages, People,
-	// Notes, Proposals — and now holds five, Share being the fifth. Two of them
-	// are this file's; the other three are containers other modules render into,
-	// and this file only shows and hides them. It defaults to Notes, which is the
-	// one that works in every build.
+	// The panel is Social. It holds five things -- Messages, People, Share,
+	// Proposals, Settings. Note-capture MERGED INTO PROPOSALS: the standalone Notes
+	// view is gone, its compose box now sits at the top of the Proposals view, and
+	// Settings is the new fifth. It defaults to Proposals, which is where a person
+	// both writes and reads.
 	//
-	// The count is deliberately no longer in the heading. A heading that names a
-	// number is a heading that goes stale the next time somebody adds a chip, and
-	// the table below is the only honest count.
+	// The count is deliberately not in the heading. A heading that names a number
+	// goes stale the next time somebody adds a chip, and the panel is the only
+	// honest count.
 	//
 	// The views are looked up by NAME rather than listed twice: a chip is a
-	// `data-view` on the head and an element id in the table below, and a fifth
+	// `data-view` on the head and an element id in the table below, and a sixth
 	// chip is one line here.
 
 	var VIEWS = {
 		messages:  'social-messages',
 		people:    'social-people',
-		// The fifth, and it cost the one line this table was built to cost.
 		// js/share.js renders into `#social-share-list` the way post.js renders
 		// into the messages list; this file shows and hides it and nothing more.
 		share:     'social-share',
-		notes:     'improve-notes',
 		proposals: 'improve-props-view',
+		// This file's own, drawn by `drawSettings`: the voice and the drafts.
+		settings:  'social-settings',
 	};
 
-	var _view = 'notes';
+	var _view = 'proposals';
 
 	/// Callbacks a lane registers to be told its own view was opened, so it can
 	/// read what it needs LAZILY. Ten chips resolved on panel open is ten
@@ -2470,7 +2591,7 @@
 	var _watch = [];
 
 	function show(view) {
-		_view = VIEWS[view] ? view : 'notes';
+		_view = VIEWS[view] ? view : 'proposals';
 		Object.keys(VIEWS).forEach(function (v) {
 			var e = el(VIEWS[v]);
 			if (e) e.hidden = (v !== _view);
@@ -2483,6 +2604,8 @@
 		if (_view === 'proposals') {
 			if (!_list.read && !_list.loading) loadList(false);
 			else drawProps();
+		} else if (_view === 'settings') {
+			drawSettings();
 		} else drawProps();
 		_watch.forEach(function (f) { try { f(_view); } catch (e) { /* one lane's fault is its own */ } });
 	}
@@ -2502,6 +2625,10 @@
 	function onOpen() {
 		render();
 		if (_view === 'proposals') loadList(false);
+		// Opening the panel is a good moment to drain anything that could not be
+		// sent while it was shut, so a queue does not sit full when the network is
+		// plainly back. The reconnect event is the main path; this is the belt.
+		if (onLine()) { try { flushQueue(); } catch (e) { /* best effort */ } }
 		_watch.forEach(function (f) { try { f(_view); } catch (e) { /* as above */ } });
 	}
 
@@ -2513,9 +2640,15 @@
 		var b = e.target.closest('[data-act]');
 		if (!b) return;
 		var act = b.dataset.act;
-		if (act === 'improve-keep')   { e.preventDefault(); keep(); return; }
-		if (act === 'improve-send')   { e.preventDefault(); send(); return; }
+		if (act === 'improve-post')   { e.preventDefault(); submit('verbatim'); return; }
+		if (act === 'improve-polish') { e.preventDefault(); submit('polish'); return; }
 		if (act === 'improve-more')   { e.preventDefault(); loadList(true); return; }
+		if (act === 'improve-forget-plan') {
+			e.preventDefault();
+			try { if (window.DaimondTriage) DaimondTriage.clear(); } catch (err) { /* no triage in this build */ }
+			try { if (window.DaimondApproveList) DaimondApproveList.clear(); } catch (err) { /* no queue */ }
+			return;
+		}
 		if (act === 'improve-voice-get')    { e.preventDefault(); provision(false); return; }
 		if (act === 'improve-voice-reissue'){ e.preventDefault(); reissueVoice(); return; }
 		if (act === 'improve-voice-open')   { e.preventDefault(); _voiceOpen = true; _voiceAlready = false; drawVoice(); return; }
@@ -2867,11 +3000,11 @@
 		if (view === 'notes') {
 			var notes = load().notes.slice(0, limit);
 			if (!notes.length) {
-				return 'This device has kept no notes about Daimond.';
+				return 'This device has no notes waiting to send.';
 			}
-			return 'Notes kept on this device (' + notes.length + '):\n\n'
+			return 'Notes waiting to send on this device (' + notes.length + '):\n\n'
 				+ notes.map(function (rec) {
-					return (rec.sent ? ('sent as #' + rec.n) : 'NOT SENT') + '  ' + rec.text;
+					return '[' + (rec.mode === 'polish' ? 'to polish & post' : 'to post') + ']  ' + rec.text;
 				}).join('\n\n');
 		}
 		if (view === 'messages') {
@@ -2970,7 +3103,7 @@
 		}
 		if (d.act === 'propose') {
 			var text = d.body ? (d.title + '\n' + d.body) : d.title;
-			var rec  = store(text, 0);
+			var rec  = store(text, 'verbatim');
 			render();
 			var a = await through(rec, { title: d.title, body: d.body, build: d.build });
 			render();
@@ -3016,12 +3149,16 @@
 		onOpen:   onOpen,
 		render:   render,
 		show:     show,
-		/// Writing, keeping and sending. Published so a verifier drives the same
-		/// path a person does rather than a second one written for it.
-		keep:     keep,
-		send:     send,
+		/// The two compose verbs, and the queue. Published so a verifier drives the
+		/// same path a person does rather than a second one written for it.
+		/// `submit('verbatim')` posts the words as they are; `submit('polish')` has
+		/// the model rewrite them first. Both queue then try to send.
+		submit:   submit,
 		resend:   resend,
 		drop:     drop,
+		/// Drain the queue: send every waiting note in its own mode. Called by
+		/// js/daimond.js on the browser's `online` event, and on panel open.
+		flushQueue: flushQueue,
 		/// The exact characters a Send would put on the wire right now, and the
 		/// cut that turns them into a proposal. The verifier compares both against
 		/// what actually left.
@@ -3081,6 +3218,18 @@
 			/// here and `false` from `askedAmend`, and the control is drawn on
 			/// neither.
 			mayAmend: function (n) { return canAmend(_by[n]); },
+			/// Fold a forge answer into the panel's proposal store, and hand back the
+			/// record it landed as.
+			///
+			/// A door PUTS a write on the wire and answers with the DETAIL SHAPE of the
+			/// record it changed; the panel's own send, comment and vote each absorb
+			/// that answer, so a DOOR CALLER must too. The approve-list's batch did not,
+			/// and so a proposal it opened never entered `_by`/`_order` -- the Proposals
+			/// view silently omitted every one the queue sent, which is why a run of
+			/// eight drafts showed only the one proposal some other path had absorbed.
+			/// Defended by `cleanProp`, so an answer shaped in a way this build does not
+			/// know is dropped rather than drawn.
+			absorb:   function (data) { return absorb(cleanProp(data)); },
 		},
 		// `_amending` with the rest: a row left in amend mode across an account
 		// switch would offer somebody else's proposal with this account's boxes

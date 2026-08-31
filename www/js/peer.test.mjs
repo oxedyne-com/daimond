@@ -923,6 +923,30 @@ async function runPresenceAcceptance(P, PR, check) {
 		P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: true, toggle: false, globalDefault: true }, T).dispatch === false);
 	check('OPT-IN (toggle true) is still an override on DESKTOP (toggle-on, not quick-local)',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false, toggle: true }, T); return d.dispatch === true && d.reason === 'toggle-on'; })());
+
+	// ── LAPTOP ELIGIBILITY (proposal #10). A wide desktop view is `isPhone: false`.
+	// Before this it could only hand off an agentic turn; the step-away posture, which
+	// daimond.js's `maybeAutoDispatch` passes as `globalDefault: handoffWhenAway()`,
+	// makes a laptop route its ordinary quick turns to an awake peer too, so a chat
+	// started on it survives it being closed. Off by silence, so nothing changes for a
+	// laptop that never turned it on. ──
+	check('LAPTOP (isPhone false) + step-away posture ON + fresh peer -> dispatch, naming the peer',
+		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false, globalDefault: true }, T); return d.dispatch === true && d.reason === 'toggle-on' && d.peer && d.peer.name === 'argonaut'; })());
+	check('LAPTOP + posture OFF + a QUICK turn -> run local (no regression when unset)',
+		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false }, T); return d.dispatch === false && d.reason === 'quick-local'; })());
+
+	// ── THE STEP-AWAY HAND-OFF (proposal #10). Exactly the opts daimond.js's
+	// `handoffInFlightOnStepAway` passes from the `pagehide` handler for a turn still
+	// running when the laptop is closed: backgrounding, a turn in flight. The posture
+	// gate is applied in the app before this call; the pure decision picks the
+	// freshest peer, and the lease is the single-runner arbiter at run time (untouched
+	// here). ──
+	check('STEP-AWAY: laptop closing with a turn in flight -> hand to the freshest peer',
+		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false, backgrounding: true, turnInFlight: true }, T); return d.dispatch === true && d.reason === 'backgrounding-in-flight' && d.peer && d.peer.name === 'argonaut'; })());
+	check('STEP-AWAY with NO fresh peer -> run local (never hand into the void)',
+		(() => { const d = P.autoDispatchDecision(quickChat, stale, { selfId: 'phone', isPhone: false, backgrounding: true, turnInFlight: true }, T); return d.dispatch === false && d.reason === 'no-fresh-peer'; })());
+	check('STEP-AWAY still honours a per-chat OPT-OUT (a pinned chat is decided local first)',
+		P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false, backgrounding: true, turnInFlight: true, toggle: false }, T).dispatch === false);
 }
 
 // ════════════════════════════════════════════════════════════════

@@ -125,7 +125,10 @@
 		{ id: 'files',    fns: ['file_read', 'file_write', 'file_edit', 'file_list',
 		                        'file_search', 'file_glob', 'file_delete', 'file_move',
 		                        'dir_create',
-		                        'sheet_read', 'doc_edit', 'sheet_write'] },
+		                        'sheet_read', 'doc_edit', 'sheet_write',
+		                        // The text of a file whose text is a PICTURE: the OCR
+		                        // counterpart to file_read, reaching the same workspace path.
+		                        'ocr'] },
 		{ id: 'cloud',    fns: ['file_fetch'] },
 		{ id: 'work',     fns: ['artefact_add'] },
 		// `say` sat here beside `file_show` until folding stopped being a tool: an answer
@@ -163,6 +166,10 @@
 		{ id: 'typeset',  fns: ['typst_compile'] },
 		{ id: 'dispatch', fns: ['spawn_agent'] },
 		{ id: 'graph',    fns: ['link_list', 'link_add', 'link_remove'] },
+		// Mail. All four are sold in the Email pack, so this becomes a shelf row with
+		// its functions disclosed under it -- and `mail_draft` writes a draft for the
+		// user rather than sending, which is the whole of a model's reach to the wire.
+		{ id: 'email',    fns: ['mail_list', 'mail_search', 'mail_read', 'mail_draft'] },
 	];
 
 	/// The capability a function belongs to, or `other` for one nobody has placed.

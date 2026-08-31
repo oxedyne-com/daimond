@@ -2677,6 +2677,7 @@
 	'social.publish_ok': 'Publier',
 	'social.publish_title': 'Publier ceci ?',
 	'social.public_note': 'Envoyer publie cette note sur {host}, avec le nom de votre voix. N’importe qui peut l’y lire sans compte. Une note que vous gardez reste sur cet appareil.',
+	'social.compose_public': 'Publié publiquement, sous le nom de votre voix — n’importe qui peut le lire.',
 	'social.title_hint': 'La première ligne est le titre de la proposition. Ce qui s’est passé vient en dessous.',
 	'social.no_title': 'La première ligne est le titre. Écrivez-en un, puis ce qui s’est passé en dessous.',
 	'social.nothing': 'Écrivez d’abord quelque chose.',

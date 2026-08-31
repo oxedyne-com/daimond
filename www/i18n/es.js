@@ -2664,6 +2664,7 @@
 	'social.publish_ok': 'Publicarlo',
 	'social.publish_title': '¿Publicar esto?',
 	'social.public_note': 'Al enviarla, esta nota se publica en {host}, con el nombre de tu voz. Allí cualquiera puede leerla sin tener cuenta. Una nota que guardas se queda en este dispositivo.',
+	'social.compose_public': 'Publicado públicamente, con el nombre de tu voz — cualquiera puede leerlo.',
 	'social.title_hint': 'La primera línea es el título de la propuesta. Lo que ocurrió va debajo.',
 	'social.no_title': 'La primera línea es el título. Escribe una y, debajo, lo que ocurrió.',
 	'social.nothing': 'Escribe algo primero.',

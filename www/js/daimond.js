@@ -4906,9 +4906,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// Once the page is on its way out, a request that dies is an INTERRUPTION, not a failure: the
 	// turn's own catch checks this so it does not write a spurious "network error" over what
 	// recovery will show, correctly, as an interrupted turn.
-	window.addEventListener('pagehide', function () {
+	window.addEventListener('pagehide', function (e) {
 		_unloading = true;
 		if (window.DaimondJournal) DaimondJournal.flush();
+		// A GENUINE unload only, never a bfcache suspend (`e.persisted`): on a
+		// suspend the page — and the turn running on it — is frozen and may thaw
+		// again, so handing the turn off would leave two runners once it did. A real
+		// unload kills the local turn with the page, so the hand-off has the field to
+		// itself. The journal flush above is the fallback for whatever this does not
+		// land in the page's last moments.
+		if (!(e && e.persisted)) handoffInFlightOnStepAway();
 		// How long the sitting lasted, and the last chance to send anything at
 		// all: the module's own timer is a minute, and this page has moments. The
 		// flush is not awaited (nothing here may wait) -- `keepalive` on the
@@ -5087,188 +5094,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// a page whose sheet script did not load, and are woken anyway: a panel
 		// shown without its onOpen is a panel that draws nothing.
 		if (name === 'work') Files.onOpen();
-		if (name === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); Badge.seen('mail'); }
+		if (name === 'mail' && window.DaimondMail) DaimondMail.onOpen();
 		if (name === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
 		if (name === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 		if (name === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
-		if (name === 'social' && window.DaimondSocial) { DaimondSocial.onOpen(); postBadge(); }
+		if (name === 'social' && window.DaimondSocial) DaimondSocial.onOpen();
 	}
-
-	// ── The dock count badge ───────────────────────────────────
-	//
-	// ONE NUMBER ON A PANEL'S CHIP, and with Web Push declined this is the whole
-	// of what this app does to say that something arrived while you were looking
-	// somewhere else. It is drawn in three places at once, because a chip is not
-	// always on screen:
-	//
-	//   the chip row         `#panel-tags .ptag[data-panel]` -- the top bar on a
-	//                        desktop, the bottom bar on a phone, one row either way
-	//   the document title   `(3) Daimond`, when the tab is not the one in front
-	//
-	// and `navigator.setAppBadge`, which an installed app shows on its icon and
-	// which needs no push subscription and no permission prompt. Where it is not
-	// implemented the call simply does not exist and nothing else changes.
-	//
-	// THE COUNT IS NEVER A ZERO ON SCREEN. `#pending-count`, `#agents-count` and
-	// `#trash-count` all write `n ? String(n) : ''` for the same reason: a badge
-	// reading 0 is a mark that has to be READ before it can be ignored, which is
-	// the opposite of what a badge is for.
-	//
-	// AND IT DOES NOT COUNT WHAT YOU ARE LOOKING AT. A panel that is open and on
-	// screen when its thing arrives has already told you; a badge over it would
-	// be asking you to go and see what is in front of you.
-	//
-	// WIRED TO MAIL, WHICH ALREADY HAS A CALLER. `mail.js` dispatches
-	// `daimond:mail-arrived` with a count on every fetch that brought something
-	// new, and has since the mail triggers were built. Messages become the second
-	// caller in Phase 3 and need not one line here.
-	//
-	// WHAT THIS IS NOT, said plainly: it counts ARRIVALS SINCE YOU LAST LOOKED,
-	// held in memory, and not the number of messages carrying no `\Seen` flag.
-	// Those two are the same number until a message is read on another device or
-	// this tab is reloaded. `mail.js` has the honest tally within reach — every
-	// row it draws already knows its own `seen` (`mail.js:1624`, drawn at
-	// `mail.js:2114`) — but it exposes only per-folder TOTALS (`counts()`), and
-	// mail.js is another lane's file. When it offers an unseen tally, `set()`
-	// below takes it and this comment goes.
-	var Badge = (function () {
-		var counts = {};                 // panel id -> what has arrived unseen
-		var BASE = document.title;
-
-		function total() {
-			var n = 0;
-			Object.keys(counts).forEach(function (k) { n += counts[k] | 0; });
-			return n;
-		}
-
-		/// Is that panel in front of the user right now? Open is not enough on a
-		/// phone, where only the panel in the sheet or on the floor is visible.
-		function visible(id) {
-			try {
-				if (!DaimondPanels.isOpen(id)) return false;
-				if (!isMobile()) return true;
-				if (document.body.dataset.mpanel === id) return true;
-				return !!(window.DaimondSheet && DaimondSheet.guest && DaimondSheet.guest() === id);
-			} catch (e) { return false; }
-		}
-
-		/// Put the count on one host element, adding the mark only if there is
-		/// something to say and taking it away again when there is not.
-		function mark(host, n) {
-			if (!host) return;
-			var b = host.querySelector('.dock-count');
-			if (!b) {
-				if (!n) return;
-				b = document.createElement('span');
-				b.className = 'dock-count';
-				b.setAttribute('role', 'status');
-				host.appendChild(b);
-			}
-			b.textContent = n ? String(n) : '';
-			b.hidden = !n;
-			b.title = n ? tn('dock.unseen', n, { n: n }) : '';
-			if (n) host.dataset.unseen = String(n); else delete host.dataset.unseen;
-		}
-
-		/// Draw every count where it belongs. Called whenever a number changes and
-		/// again after the chip row is rebuilt, since that throws the chips away.
-		function paint() {
-			var ids = Object.keys(counts);
-			// Chips that no longer carry a count still have to be cleaned, so the
-			// sweep is over what is ON SCREEN and not over what is counted.
-			document.querySelectorAll('#panel-tags .ptag[data-panel]').forEach(function (c) {
-				mark(c, counts[c.dataset.panel] | 0);
-			});
-			ids.forEach(function (id) {
-				// A panel's own head, where one has been given a place for it.
-				mark(document.querySelector('#panel-' + id + ' .rail-count-host'), counts[id] | 0);
-			});
-			var n = total();
-			document.title = n ? '(' + n + ') ' + BASE : BASE;
-			try {
-				if (n && navigator.setAppBadge) navigator.setAppBadge(n);
-				else if (navigator.clearAppBadge) navigator.clearAppBadge();
-			} catch (e) { /* the platform does not draw one */ }
-		}
-
-		return {
-			/// Set the count for a panel outright. What an honest tally calls.
-			set: function (id, n) {
-				n = Math.max(0, n | 0);
-				if ((counts[id] | 0) === n) return;
-				counts[id] = n;
-				paint();
-			},
-			/// Something arrived. Ignored while that panel is in front of the user.
-			bump: function (id, n) {
-				n = Math.max(0, n | 0);
-				if (!n || visible(id)) return;
-				counts[id] = (counts[id] | 0) + n;
-				paint();
-			},
-			/// The user is looking at it now, so there is nothing left to say.
-			seen: function (id) {
-				if (!(counts[id] | 0)) return;
-				counts[id] = 0;
-				paint();
-			},
-			/// What it would draw, for a verifier that wants the record as well as
-			/// the pixels.
-			count: function (id) { return counts[id] | 0; },
-			total: total,
-			paint: paint,
-		};
-	})();
-	window.DaimondBadge = Badge;
-
-	// Mail is the caller that already exists. `count` is what came in above the
-	// mark this fetch started from — mail.js's own definition of an arrival, with
-	// backfills and uid-validity rebuilds already fenced out of it.
-	window.addEventListener('daimond:mail-arrived', function (ev) {
-		var d = (ev && ev.detail) || {};
-		Badge.bump('mail', d.count);
-	});
-
-	/// The Social panel's own count: how many messages have not been read.
-	///
-	/// `set` rather than `bump`, and NOT cleared by looking at the panel, because
-	/// this is an honest tally rather than a memory of arrivals — `post.js` knows
-	/// which messages carry no `read` mark, and a message you have not opened is
-	/// still unread while you are staring at the list of them. Mail's badge is
-	/// the weaker of the two and says so where it is wired.
-	///
-	/// NO TIMER OF ITS OWN. It is recomputed on the five occasions the number can
-	/// have changed: the minute clock this file already runs, the panel opening,
-	/// anything pressed inside the panel, another tab writing the store, and a
-	/// sync parcel arriving (js/sync.js, which calls back through
-	/// `DaimondBadge.post`).
-	function postBadge() {
-		try {
-			if (!window.DaimondPost || !DaimondPost.unread) return;
-			// BELT AND BRACES over identity.js's `daimond:unlock`. The store is read
-			// lazily and answers 0 unread while it is unread, so a badge that only
-			// counted would be a badge that could never light: its whole job is to
-			// say "open the panel", and the panel opening was the only thing that
-			// read the store. Asking here means a listener that never fired costs a
-			// minute rather than the session.
-			if (DaimondPost.read && DaimondPost.state && !DaimondPost.state().read) {
-				DaimondPost.read().then(function () {
-					Badge.set('social', DaimondPost.unread());
-				}, function () { /* locked: there is nothing to count yet */ });
-			}
-			Badge.set('social', DaimondPost.unread());
-		} catch (e) { /* no messages in this build */ }
-	}
-	window.DaimondBadge.post = postBadge;
-	document.addEventListener('click', function (e) {
-		if (!e.target || !e.target.closest || !e.target.closest('#panel-social')) return;
-		// After the press has been handled: `post.js` marks a message read on the
-		// way through, and a count taken in the same tick is the count before it.
-		setTimeout(postBadge, 0);
-	});
-	window.addEventListener('storage', function (e) {
-		if (e && e.key && e.key.indexOf('daimond-post') !== -1) postBadge();
-	});
 
 	// ── Layout: three zones ────────────────────────────────────
 	//
@@ -6444,10 +6275,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!tagsEl) return;
 			if (window.DaimondWorkspace && DaimondWorkspace.renderTags) {
 				DaimondWorkspace.renderTags(tagModel());
-				// The chips were thrown away and rebuilt, and the counts on them
-				// with them. Repainted HERE rather than inside the renderer, so the
-				// badge has one owner and workspace.js need not know it exists.
-				Badge.paint();
 				return;
 			}
 			tagsEl.innerHTML = '';
@@ -6461,7 +6288,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				b.addEventListener('click', function () { activate(p.id); });
 				tagsEl.appendChild(b);
 			});
-			Badge.paint();
 		}
 
 		/// Open a panel in its own zone. A stage panel takes a free seat, or evicts
@@ -6532,14 +6358,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// focuses a textarea, and one in a panel not yet seated is laid out at
 			// nothing.
 			if (id === 'doc') Files.onDocOpen();
-			if (id === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); Badge.seen('mail'); }
+			if (id === 'mail' && window.DaimondMail) DaimondMail.onOpen();
 			if (id === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
 			// The terminal is built on the first open and started there: a pty is a
 			// real program on the user's machine, so it begins when a person asks
 			// for one and not when the app loads.
 			if (id === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 			if (id === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
-			if (id === 'social' && window.DaimondSocial) { DaimondSocial.onOpen(); postBadge(); }
+			if (id === 'social' && window.DaimondSocial) DaimondSocial.onOpen();
 			if (isMobile()) mshow(id);
 		}
 
@@ -9668,6 +9494,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { return false; }
 	}
 
+	// THIS COMPUTER's step-away posture: whether a turn it is running should be
+	// handed to another live device when this one is stepped away from — the lid
+	// closes, the tab is closed, the network drops. Device-local and never synced,
+	// exactly like the autonomous posture above it and for the same reason: turning
+	// it on here must not turn it on elsewhere. It is NOT named in `collectSync`, so
+	// it never rides the parcel. The toggle that writes it lives in `handmode.js`,
+	// which reaches this same key by the same name.
+	var HANDOFF_AWAY_KEY = 'daimond-handoff-when-away';
+
+	/// Does THIS computer hand its turns to another device when stepped away from?
+	///
+	/// Off by silence, and false on any read error, for the reason `autonomousPosture`
+	/// reads false when it cannot tell: the careful reading of "I do not know" is to
+	/// leave the turn where it is. Per-computer and never synced; see `HANDOFF_AWAY_KEY`.
+	function handoffWhenAway() {
+		try { return localStorage.getItem(HANDOFF_AWAY_KEY) === '1'; }
+		catch (e) { return false; }
+	}
+
 	// Requests parked on the Pending panel, by tile id, each holding the
 	// `resolve` of the promise the engine is awaiting. In memory, and
 	// deliberately so — see the note above on what a reload takes with it.
@@ -11852,6 +11697,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The dots are only true while they are true.
 			window.addEventListener('online',  status);
 			window.addEventListener('offline', status);
+			// Coming back online drains the Social compose queue: notes written while
+			// offline (or whose send failed) are posted now, each in the mode its
+			// author chose -- a verbatim note goes straight through, a polish note
+			// drafts on the model first. improve.js owns the draining; this is the one
+			// event that tells it the network is back.
+			window.addEventListener('online', function () {
+				try { if (window.DaimondImprove && DaimondImprove.flushQueue) DaimondImprove.flushQueue(); }
+				catch (e) { /* the panel may not be up; the queue survives for next time */ }
+			});
 			// A handle claimed on ANOTHER device arrives in a sync parcel, and the
 			// row naming it is drawn in the home view. The local claim redraws
 			// itself -- `doChangeHandle` calls `homeContent()` when the gateway
@@ -12624,6 +12478,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				selfId:        selfDeviceId(),
 				isPhone:       isPhoneViewport(),
 				toolsEnabled:  chatToolsEnabled(chat),
+				// The step-away posture makes this device — a laptop as much as a phone —
+				// route its turns to an awake peer so they run there and survive it being
+				// closed. Off by silence, so a machine that never turned it on keeps
+				// today's behaviour: a desktop runs its own quick turns, a phone routes
+				// on its own `isPhone` rule. The pure decision reads this as
+				// `globalDefault` and honours a per-chat opt-out ahead of it.
+				globalDefault: handoffWhenAway(),
 				// A dispatch uses a TIGHTER freshness than the display: a peer last seen
 				// longer ago than this is treated as gone, so a turn is not handed to a
 				// device that may have died since its last beat. Recovery-on-return is
@@ -12643,6 +12504,65 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 			return true;
 		} catch (e) { return false; }		// any hiccup: run locally
+	}
+
+	/// The in-flight turn of a generating chat, as `{ turnId, text }`, or null.
+	///
+	/// A turn's prompt is the last user message pushed before it began (runTurn:
+	/// mid === the turn id), so for a chat that is generating right now that message
+	/// IS the running turn. The turn id and the prompt are all a hand-off needs; the
+	/// transcript and scope ride the parcel, not the errand.
+	function inflightTurnOf(chat) {
+		var msgs = (chat && chat.messages) || [];
+		for (var i = msgs.length - 1; i >= 0; i--) {
+			if (msgs[i].role === 'user') return { turnId: String(msgs[i].mid), text: msgs[i].content || '' };
+		}
+		return null;
+	}
+
+	/// Hand any turn still running on THIS device to an awake peer, because the device
+	/// is being stepped away from — the tab is unloading, the lid is closing. Gated on
+	/// the step-away posture (off by silence), so a machine that never asked for this
+	/// keeps its interrupted turn and its Continue button.
+	///
+	/// It REUSES the ordinary dispatch hand-off (`dispatchToPeer`) and adds no rule of
+	/// its own: the pure decision picks the freshest peer (backgrounding + a turn in
+	/// flight is the §4.1 case), the lease is the single-runner arbiter, and a
+	/// dispatch that does not land in the page's dying moments is caught by
+	/// recovery-on-return — `recoverDecision` re-runs a dispatched turn that no peer
+	/// took, so the turn is never lost either way. Called from `pagehide`, where the
+	/// local turn dies with the page, so there is no window in which both run.
+	function handoffInFlightOnStepAway() {
+		try {
+			if (!handoffWhenAway()) return;
+			if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+			if (!window.DaimondPeer || !DaimondPeer.autoDispatchDecision || !DaimondPeer.DISPATCH_FRESH_MS) return;
+			var presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+			var self = selfDeviceId(), now = Date.now();
+			chats.forEach(function (chat) {
+				if (!chat || !chat._generating || chat.diamondId) return;
+				var turn = inflightTurnOf(chat);
+				if (!turn) return;
+				// The posture gate above is the "should we hand off at all" decision;
+				// the pure call only picks the freshest peer and confirms one is awake
+				// (no fresh peer -> keep it here, to be recovered on return). This IS the
+				// §4.1 backgrounding-with-a-turn-in-flight case, and a per-chat opt-out
+				// still beats it inside the pure decision.
+				var d = DaimondPeer.autoDispatchDecision(chat, presence, {
+					selfId:        self,
+					backgrounding: true,
+					turnInFlight:  true,
+					freshWindowMs: DaimondPeer.DISPATCH_FRESH_MS,
+				}, now);
+				if (!d.dispatch) return;
+				// Best-effort: the page is going, so this is not awaited. `markTurnDispatched`
+				// inside runs first and is synchronous, so recovery-on-return sees the turn
+				// as dispatched even if the push/post do not finish — and a dispatched turn
+				// no peer ran is reclaimable.
+				try { dispatchToPeer(chat, turn.turnId, turn.text, Array.isArray(chat.holds) ? chat.holds : []); }
+				catch (e) { /* recovery-on-return is the net */ }
+			});
+		} catch (e) { /* the page is going; nothing here may throw into unload */ }
 	}
 
 	/// The presence beat: while this tab is AWAKE and visible, write a heartbeat into
@@ -15528,10 +15448,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The three are not the same KIND of setting, and the dialog does not pretend they
 	/// are:
 	///
-	///   * **The daimon** is persistent, so changing it ends one daimon and starts
-	///     another. It applies at once and is written into the crystal's version
-	///     history, where the Diamond's other discontinuities are. The conversation is
-	///     not one of the things that ends: it belongs to the record, not to the model.
+	///   * **The daimon** is persistent, so the change is taken deliberately: the
+	///     pulldown does not switch on its own, and a "Change" button beside it shows
+	///     only while the pick differs from the model in force. Pressing it points the
+	///     daimon's next turn at the new model and re-meters the context against its
+	///     window; it is written into the crystal's version history, where the
+	///     Diamond's other discontinuities are. The conversation is REUSED, never
+	///     ended — it belongs to the record, not to the model — and if the new window
+	///     is smaller the usual fold runs on the next turn.
 	///   * **The workers** may be changed at any time and apply to NEW agents only. A
 	///     worker already running keeps the model it was dispatched with, because moving
 	///     it would bill one conversation to two models.
@@ -15585,50 +15509,80 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		// ── The daimon.
+		//
+		// The pulldown no longer switches on its own. A daimon's model is persistent, so
+		// the change waits for the Change button beside it, and that button shows only
+		// while the pick differs from the model the daimon runs on now. Picking the
+		// current model back hides it again.
+		var change = document.createElement('button');
+		change.type = 'button';
+		change.className = 'tile-dlg-apply';
+		change.textContent = t('tile.model_change');
+		change.title = t('tile.model_change_help');
+		change.hidden = true;
+		var pendingPick = null;			// the pick awaiting a Change press, or null when it matches
+
 		var daimonSel = row('tile.model_daimon', 'tile.model_daimon_help',
-			own.provider, own.model, false, async function (p) {
-				var before = diamondModel(opts.id);
-				if (p.model === before.model && p.provider === before.provider) return;
-				// NO CONFIRM, DELIBERATELY. The modal that stood here warned that the
-				// conversation would not carry over. That was true for the twenty-two
-				// minutes before a daimon had a conversation at all, and false ever since:
-				// the thread lives on the record and travels as `prior`, and nothing below
-				// so much as reads it. What is left is a setting that costs nothing to
-				// change and is undone by changing it back, and a cheaply reversible act
-				// earns a receipt rather than a question -- asking one for a harmless
-				// change is how people learn to click through the confirms that matter.
-				setDiamondModel(opts.id, { provider: p.provider, model: p.model });
-				// A DaimondApp has no setter for its model, so the cached client for this
-				// Diamond has to go; `diamondApp` builds the new one on next use.
-				resetDiamondApps();
-				var logged = true;
-				try {
-					await diamondApp(opts.id).record_model_change(opts.id,
-						t('tile.model_change_note', {
-							from: before.model || '?', to: p.model,
-						}));
-				} catch (e) {
-					// The setting is already written and in force. Say the history entry
-					// failed rather than implying the change did.
-					logged = false;
-					toast(t('tile.model_change_unlogged'), true);
-				}
-				// The receipt: what moved, and that the thread came with it. One message
-				// or the other -- `model_change_unlogged` already says the change stuck,
-				// so a second toast beside it would say it twice.
-				if (logged) {
-					toast(t('tile.model_changed', {
-						from: shortModel(before.model) || t('tile.model_none'),
-						to:   shortModel(p.model),
-					}));
-				}
-				if (currentDiamond && currentDiamond.id === opts.id) {
-					await refreshDiamondAfterChange();
-				} else {
-					bumpDiamonds(); await loadDiamonds();
-				}
+			own.provider, own.model, false, function (p) {
+				// The pulldown only relabels the button; the switch itself waits for Change.
+				var plan = DaimondModels.planModelSwitch(diamondModel(opts.id), p, 0);
+				pendingPick   = plan.changed ? p : null;
+				change.hidden = !plan.changed;
 			});
 
+		change.addEventListener('click', async function () {
+			if (!pendingPick) return;
+			var p = pendingPick;
+			var before = diamondModel(opts.id);
+			// A pick that no longer differs (the model moved in another tab, say) switches
+			// nothing and clears the button.
+			if (!DaimondModels.planModelSwitch(before, p, 0).changed) {
+				pendingPick = null; change.hidden = true; return;
+			}
+			// NO POPUP, DELIBERATELY, and the conversation is REUSED. The modal that once
+			// stood in the switch path warned the conversation would not carry over; it
+			// does. The thread lives on the record and travels as `prior`, so switching
+			// only points the daimon's next turn at the new model and re-meters the
+			// context against its window. A smaller window is folded on the next turn by
+			// the engine, which is also the only thing that ever forces a fresh daimon --
+			// never this button.
+			setDiamondModel(opts.id, { provider: p.provider, model: p.model });
+			// A DaimondApp has no setter for its model, so the cached client for this
+			// Diamond has to go; `diamondApp` builds the new one, with the new window, on
+			// next use. The persisted session is untouched and is re-seeded into it.
+			resetDiamondApps();
+			var logged = true;
+			try {
+				await diamondApp(opts.id).record_model_change(opts.id,
+					t('tile.model_change_note', {
+						from: before.model || '?', to: p.model,
+					}));
+			} catch (e) {
+				// The setting is already written and in force. Say the history entry
+				// failed rather than implying the change did.
+				logged = false;
+				toast(t('tile.model_change_unlogged'), true);
+			}
+			// The receipt: what moved, and that the thread came with it. One message
+			// or the other -- `model_change_unlogged` already says the change stuck,
+			// so a second toast beside it would say it twice.
+			if (logged) {
+				toast(t('tile.model_changed', {
+					from: shortModel(before.model) || t('tile.model_none'),
+					to:   shortModel(p.model),
+				}));
+			}
+			pendingPick   = null;			// the pulldown now matches the model in force
+			change.hidden = true;
+			if (currentDiamond && currentDiamond.id === opts.id) {
+				await refreshDiamondAfterChange();
+			} else {
+				bumpDiamonds(); await loadDiamonds();
+			}
+		});
+
+		// The Change button, then the reset, beside the model it thinks with.
+		daimonSel.parentNode.appendChild(change);
 		// A fresh daimon, tucked in beside the model it thinks with.
 		mountDaimonReset(daimonSel.parentNode, opts.id);
 
@@ -21549,7 +21503,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// been fetched at boot -- the identity was still locked. Ask now that
 		// there is a session, or a returning user is told the account service is
 		// unreachable when it is fine.
-		if (window.DaimondMail && DaimondPanels.isOpen('mail')) { DaimondMail.onOpen(); Badge.seen('mail'); }
+		if (window.DaimondMail && DaimondPanels.isOpen('mail')) DaimondMail.onOpen();
 		grew('mail.onOpen');
 		// And what this account has unlocked, for the same reason: at boot there was no
 		// session to ask under, so the rail could count what Daimond is born with and
@@ -26388,8 +26342,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// an hour of wall clock to reach the case it is checking.
 		async function triggerTick() {
 			DaimondTriggers.tickActivity(TRIGGER_TICK_MS);
-			// The Social panel's unread count, on an occasion that already exists.
-			postBadge();
 			// Every TA is measured against ITS OWN stopwatch, so the reading goes in
 			// as a lookup: `due` stays pure and asks the occasion, and the occasion
 			// asks the clock. There is no early return on "less than a minute" any
@@ -33463,12 +33415,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A panel that was already open when the app booted is never `show`n,
 		// so it would otherwise never ask the gateway what this account holds
 		// and would sit there reporting the account service unreachable.
-		if (window.DaimondMail && DaimondPanels.isOpen('mail')) { DaimondMail.onOpen(); Badge.seen('mail'); }
+		if (window.DaimondMail && DaimondPanels.isOpen('mail')) DaimondMail.onOpen();
 		// And the Terminal, for the same reason: a panel left open in the saved
 		// layout is never `show`n, so nothing would ever build the terminal into it.
 		if (window.DaimondTerm && DaimondPanels.isOpen('term')) DaimondTerm.onOpen();
 		if (window.DaimondTrashPanel && DaimondPanels.isOpen('trash')) DaimondTrashPanel.onOpen();
-		if (window.DaimondSocial && DaimondPanels.isOpen('social')) { DaimondSocial.onOpen(); postBadge(); }
+		if (window.DaimondSocial && DaimondPanels.isOpen('social')) DaimondSocial.onOpen();
 		// Expiry and retention, on every boot. A device that has been off for six
 		// weeks comes back to a trash whose whole contents are due, and works
 		// that out from the stamps it already holds rather than from a message

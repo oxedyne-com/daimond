@@ -2489,6 +2489,31 @@
 		return { provider: o.dataset.provider || '', model: o.value };
 	}
 
+	/// The consequence of pointing a daimon (or a chat) at a different model.
+	///
+	/// `before` and `after` are `{ provider, model }`; `used` is the context the
+	/// conversation already holds, in tokens. `changed` is whether the pick really
+	/// differs from what runs now — the daimon settings button reads "Change" only
+	/// when it does. `window` is the new model's context window in tokens, or 0
+	/// where nobody publishes one, so the meter can be redrawn against it. The
+	/// switch REUSES the existing conversation: the thread belongs to the record,
+	/// not to the model, so nothing here ends it. `needsFresh` is the single case
+	/// it cannot carry over — a published window the held context already exceeds
+	/// outright — and even then it is the engine's fold on the next turn that acts;
+	/// this only names the state so a caller need not compute it twice.
+	function planModelSwitch(before, after, used) {
+		before = before || {}; after = after || {};
+		var changed = String(after.model || '')    !== String(before.model || '')
+			|| String(after.provider || '') !== String(before.provider || '');
+		var win = window.DaimondPricing
+			? (DaimondPricing.contextWindow(after.model || '', after.provider || '') || 0) : 0;
+		return {
+			changed:    changed,
+			window:     win,
+			needsFresh: changed && win > 0 && (used || 0) > win,
+		};
+	}
+
 	function init(d) {
 		deps = d || {};
 		load();
@@ -2551,6 +2576,9 @@
 		favourites:     favourites,
 		fillSelect:     fillSelect,
 		pick:           pick,
+		// Whether a picked model differs from the one in force, the new model's window,
+		// and whether the held context cannot fit it at all. Drives the daimon "Change".
+		planModelSwitch: planModelSwitch,
 		init:           init,
 		unseal:         unseal,
 		/// Re-wrap every key after a passphrase change. The keys never leave this module.

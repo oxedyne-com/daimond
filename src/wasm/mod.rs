@@ -35,6 +35,10 @@
 //!   one.  The model never emits document XML; the conversion is code.
 //! - [`typst`] — the Typst compiler edge: bindings to the `window.DaimondTypst`
 //!   driver behind `typst_compile`, which exchanges bytes only.
+//! - [`mail`] — the Mail panel's edge: bindings to `window.DaimondMail` behind the model's
+//!   `mail_list`, `mail_search`, `mail_read` and `mail_draft` tools.  It reads the mailbox
+//!   the human panel reads and files a draft where the human's Send button reads it; there is
+//!   no send here, and none the model can reach.
 //! - [`mailtls`] — the browser end of the blind mail tunnel: a TLS client that runs
 //!   in the page, so the gateway relays ciphertext and holds no keys.  Sans-io —
 //!   JavaScript owns the socket and pumps bytes through it.
@@ -51,7 +55,9 @@ pub mod doc;
 pub mod entry;
 pub mod hand;
 pub mod diamond;
+pub mod mail;
 pub mod mailtls;
+pub mod ocr;
 pub mod office;
 pub mod opfs;
 pub mod pty;

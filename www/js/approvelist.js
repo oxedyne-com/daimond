@@ -332,6 +332,14 @@
 			return false;
 		}
 
+		// Fold the forge's answer into the panel's proposal store, so a proposal
+		// opened through this batch shows in the Proposals view at once. The panel's
+		// own send, comment and vote do this with the record the forge hands back; a
+		// batch that skipped it left every proposal it sent absent from the list
+		// until the next full walk -- the fault that hid seven of eight sent drafts.
+		try { if (p.forge && p.forge.absorb) p.forge.absorb(a.data); }
+		catch (e) { log('the proposal would not land in the list', e); }
+
 		// The number the forge gave it: from the ANSWER, never assumed. A comment
 		// and a revision land on the proposal they named; a new one on whatever
 		// number the forge answered with.
@@ -353,17 +361,25 @@
 	function host() {
 		var h = el('improve-approve');
 		if (h) return h;
-		var trg = el('improve-triage');
+		var trg  = el('improve-triage');
 		var list = el('improve-list');
-		var into = (trg && trg.parentNode) || (list && list.parentNode);
+		// The Notes view was merged into Proposals: `#improve-triage` and
+		// `#improve-list` are gone, so fall back to the Proposals view, drawing
+		// above its waiting-to-send queue. This list only appears when a batch
+		// draft has filled it, which the merged compose never does -- so in ordinary
+		// use it stays empty and unseen; it is here so a batch surface still works
+		// where one is driven (dev/verify_proposalsappear.mjs).
+		var queue = el('improve-queue');
+		var into = (trg && trg.parentNode) || (list && list.parentNode) || (queue && queue.parentNode);
 		if (!into) return null;
 		h = document.createElement('div');
 		h.className = 'imp-approve';
 		h.id = 'improve-approve';
-		// After the triage row, before the notes list: the queue reads as the
-		// step between drafting and the notes it came from.
+		// After the triage row / before the notes list where those existed; else
+		// above the Proposals queue.
 		if (list && list.parentNode === into) into.insertBefore(h, list);
 		else if (trg && trg.nextSibling) into.insertBefore(h, trg.nextSibling);
+		else if (queue && queue.parentNode === into) into.insertBefore(h, queue);
 		else into.appendChild(h);
 		return h;
 	}

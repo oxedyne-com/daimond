@@ -194,10 +194,10 @@ const modelLog = () => {
 const SEAM = [
 	{ file: 'index.html', want: '<script src="js/triage.js"></script>',
 	  why: 'the drafting module is not loaded' },
-	{ file: 'index.html', want: 'id="improve-triage"',
-	  why: 'there is no host for the control, so nothing can draw one' },
+	{ file: 'js/improve.js', want: 'DaimondTriage.polish', // the per-note polish path the compose box drives
+	  why: 'the compose box has no polish path to the drafting machinery' },
 	{ file: 'js/improve.js', want: 'window.DaimondTriage) DaimondTriage.draw()',
-	  why: 'the panel never draws the row, so the control appears only after some other redraw' },
+	  why: 'the panel never draws the row, so a batch surface could not be restored' },
 ];
 
 function requireSeams() {
@@ -242,14 +242,11 @@ const BREAKS = {
 			+ '\t\t\trec.amendable  = (p[AMEND_FLAG] === true);\n\t\t}',
 		with: '\t\trec.askedAmend = true;\n\t\trec.amendable = !!p[AMEND_FLAG];',
 	}],
-	// The drafting runs on its own, the moment the row is drawn. Nobody pressed
-	// anything and the money is gone.
-	autorun: [{
-		file: 'js/triage.js',
-		find: '\t\thost.appendChild(drawControl(notes));',
-		with: '\t\thost.appendChild(drawControl(notes));\n'
-			+ '\t\tif (!_plan && !_busy && notes.length) run();',
-	}],
+	// (`autorun` and `noconsent` retired: they broke the batch drafting CONTROL,
+	// whose UI was removed when note-capture merged into the compose box. The
+	// compose box's own model path -- "Polish & post" -- runs only on a press and
+	// only for one note, and that is proved in dev/verify_composemerge.mjs.)
+
 	// The panel goes back to a spelling nobody answers. THE BREAK THIS LANE EXISTS
 	// FOR: two lanes built this half against a forge that had not published the
 	// name, guessed `amend` and `may_amend`, and each had a green run behind it --
@@ -287,12 +284,6 @@ const BREAKS = {
 			with: '\t\t\tamend:   amend,',
 		},
 	],
-	// The cost is worked out after the run instead of before it.
-	noconsent: [{
-		file: 'js/triage.js',
-		find: '\t\tbox.appendChild(line(\'imp-as trg-cost\', costLine(est, notes.length)));',
-		with: '\t\tif (_plan) box.appendChild(line(\'imp-as trg-cost\', costLine(est, notes.length)));',
-	}],
 };
 
 if (BREAK && !BREAKS[BREAK]) {
@@ -536,113 +527,90 @@ try {
 	check('the eighteen notes are in the store the panel reads', stored === 18, `${stored} found`);
 
 	// ── 1. Nothing runs on its own ───────────────────────────────
-	check('opening the panel with eighteen kept notes reaches no model at all',
-		turns().length === 0, `${turns().length} request(s) left the page`);
+	//
+	// THE BATCH DRAFTING NO LONGER HAS A UI. Note-capture merged into the compose
+	// box in the Proposals view, which drafts ONE note at a time -- "Polish & post",
+	// proved end to end in dev/verify_composemerge.mjs. What is guarded HERE is the
+	// MACHINERY that survived and that the polish path shares: the brief the model is
+	// handed, the parse that defends its answer, and the cost said before a run --
+	// driven headlessly, so nothing here pays for a turn.
+	check('opening the panel reaches no model at all', turns().length === 0,
+		`${turns().length} request(s) left the page`);
 
-	// ── 2. The cost is said before the press ─────────────────────
-	const before = await page.evaluate(() => {
-		const cost = document.querySelector('#improve-triage .trg-cost');
-		const run  = document.querySelector('#improve-triage [data-act="triage-run"]');
-		if (!cost || !run) return null;
-		const a = cost.getBoundingClientRect(), b = run.getBoundingClientRect();
-		return {
-			text: (cost.textContent || '').replace(/\s+/g, ' ').trim(),
-			runs: (run.textContent || '').replace(/\s+/g, ' ').trim(),
-			above: a.bottom <= b.top,
-		};
-	});
-	check('the control and its cost line are both on the screen before anything runs',
-		!!before, JSON.stringify(before));
-	check('the cost line names the model the run would use',
-		!!before && /mock\/fast/.test(before.text), before && before.text);
-	check('and carries a quantity somebody can weigh: a price, or the tokens it will spend',
-		!!before && (/\$[0-9]/.test(before.text) || /[0-9]+ tokens in/.test(before.text)),
-		before && before.text);
-	// And the quantity is the brief's own size rather than a round number: the
-	// estimate is taken from the characters that will actually be sent.
+	// ── 2. The brief carries everything, and drops nothing ───────
+	const brief = await page.evaluate(() =>
+		window.DaimondTriage.brief(window.DaimondImprove.notes(), []));
+	const missing = NOTES.filter(n => brief.user.indexOf(n.id) === -1);
+	check('every one of the eighteen note ids is in the brief', missing.length === 0,
+		missing.map(n => n.id).join(', '));
+	const missingWords = NOTES.filter(n => brief.user.indexOf(n.text.split('\n')[0].slice(0, 40)) === -1);
+	check('and the first words of every one of them', missingWords.length === 0,
+		missingWords.map(n => n.id).join(', '));
+	check('the brief tells the model not to merge two faults that share a panel',
+		/DO NOT MERGE TWO FAULTS BECAUSE THEY TOUCH THE SAME PANEL/.test(brief.system));
+	check('and that a note holding two faults becomes two proposals',
+		/one note holds two faults: TWO proposals/.test(brief.system));
+
+	// ── 3. The cost is honest, measured off that brief ───────────
 	const est = await page.evaluate(() =>
 		window.DaimondTriage.estimate(window.DaimondImprove.notes(), []));
-	check('the estimate is measured off the real brief, not guessed',
-		est.inTok > 1200 && est.inTok < 6000, JSON.stringify(est));
-	check('and it says honestly whether anything prices this model',
+	check('the estimate is measured off the real brief, not a round number',
+		est.inTok === Math.ceil((brief.system.length + brief.user.length) / 3.5) && est.inTok > 1200,
+		JSON.stringify({ inTok: est.inTok }));
+	check('it names the model a run would use', !!est.model && /mock\/fast/.test(est.model),
+		est.model || '(none)');
+	check('and says honestly whether anything prices that model',
 		est.known === false && est.usd === 0, JSON.stringify(est));
-	check('and says nothing leaves until a draft is pressed',
-		!!before && /nothing is sent until/i.test(before.text), before && before.text);
-	check('and it is ABOVE the button, where it is read before the press',
-		!!before && before.above === true, JSON.stringify(before));
-	check('the button names the whole list rather than one note',
-		!!before && /all 18 notes/i.test(before.runs), before && before.runs);
 
-	await shot(s, 'triage-before' + (BREAK ? '-' + BREAK : ''));
+	// ── 4. The parse defends a junk answer, reads a good one ─────
+	const parsed = await page.evaluate(() => ({
+		fence:   window.DaimondTriage.parse('```json\n{"drafts":[]}\n```'),
+		prose:   window.DaimondTriage.parse('Sure: {"drafts":[{"kind":"new","title":"x","body":"y","from":[]}]}'),
+		garbage: window.DaimondTriage.parse('not json at all'),
+		nokind:  window.DaimondTriage.parse('{"drafts":[{"title":"no kind"}]}'),
+	}));
+	check('a fenced empty plan parses to no drafts, not a throw',
+		parsed.fence && parsed.fence.err === '' && parsed.fence.drafts.length === 0, JSON.stringify(parsed.fence));
+	check('a plan wrapped in prose is still read', parsed.prose && parsed.prose.drafts.length === 1,
+		JSON.stringify(parsed.prose));
+	check('junk parses to an empty plan with a shape error, and costs nothing else',
+		parsed.garbage && parsed.garbage.err === 'shape' && parsed.garbage.drafts.length === 0,
+		JSON.stringify(parsed.garbage));
+	check('a draft with no kind this build knows is dropped, and counted',
+		parsed.nokind && parsed.nokind.drafts.length === 0 && parsed.nokind.dropped === 1,
+		JSON.stringify(parsed.nokind));
 
-	// ── 3. One press drafts ──────────────────────────────────────
-	const forgeReadsBefore = asked.length;
-	await page.click('#improve-triage [data-act="triage-run"]');
-	await page.waitForTimeout(4000);
-	for (let i = 0; i < 40 && await page.evaluate(() => window.DaimondTriage.busy()); i++) {
-		await page.waitForTimeout(500);
-	}
-	await page.waitForTimeout(600);
+	// ── 5. The fixture plan, HELD without paying: the hand-off ───
+	// `hold()` is the same hand-off a real run makes -- parse, then to the queue --
+	// so the plan-to-queue coverage stands without a model turn.
+	const plan = await page.evaluate((p) => window.DaimondTriage.hold(p), PLAN);
 
-	check('one press reached the model exactly once', turns().length === 1,
-		`${turns().length} request(s)`);
-	check('and read the proposal listing first', asked.length > forgeReadsBefore,
-		`${asked.length - forgeReadsBefore} forge request(s)`);
+	const PLAN_LEN = PLAN.drafts.length;
+	check('the whole fixture plan is read, none dropped', plan && plan.drafts.length === PLAN_LEN,
+		plan ? `${plan.drafts.length} of ${PLAN_LEN}` : 'none');
 
-	const sent = modelLog();
-	const last = sent[sent.length - 1] || {};
-	const msgs = last.messages || [];
-	const sysText  = msgs.filter(m => m.role === 'system').map(m => String(m.content || '')).join('\n');
-	const userText = msgs.filter(m => m.role === 'user').map(m => String(m.content || '')).join('\n');
-
-	const missing = NOTES.filter(n => userText.indexOf(n.id) === -1);
-	check('every one of the eighteen note ids reached the model', missing.length === 0,
-		missing.map(n => n.id).join(', '));
-	const missingWords = NOTES.filter(n => userText.indexOf(n.text.split('\n')[0].slice(0, 40)) === -1);
-	check('and so did the words of every one of them', missingWords.length === 0,
-		missingWords.map(n => n.id).join(', '));
-	check('the proposals already on the forge reached it too',
-		/THE PROPOSALS ALREADY ON THE FORGE \(6\)/.test(userText),
-		userText.slice(0, 200));
-	check('the brief tells it not to merge two faults that share a panel',
-		/DO NOT MERGE TWO FAULTS BECAUSE THEY TOUCH THE SAME PANEL/.test(sysText));
-	check('and that a note holding two faults becomes two proposals',
-		/one note holds two faults: TWO proposals/.test(sysText));
-
-	// ── 4. The listing is read with no voice ─────────────────────
+	// ── 6. The listing is read with no voice ─────────────────────
 	const reads = asked.filter(a => a.method === 'GET');
 	check('the proposal listing is read with no voice at all, so this works unenrolled',
 		reads.length > 0 && reads.every(a => !a.headers[HDR]),
 		`${reads.length} read(s), ${reads.filter(a => a.headers[HDR]).length} voiced`);
 
-	// ── 5. Drafting sends nothing to the forge ───────────────────
-	check('the whole plan is on the screen and not one proposal has been opened',
+	// ── 7. Drafting sends nothing to the forge ───────────────────
+	check('drafting reaches no forge write: nothing has been posted',
 		opens().length === 0 && says().length === 0 && revisions().length === 0,
 		`${opens().length} opens, ${says().length} comments, ${revisions().length} revisions`);
 
-	// The plan, as the panel read it. Twenty drafts from eighteen notes: the
-	// count is the fixture's own, so a plan that was truncated on the way in
-	// fails here rather than passing as a shorter plan.
-	const PLAN_LEN = PLAN.drafts.length;
-	const plan = await page.evaluate(() => window.DaimondTriage.plan());
-	check('the plan the model answered was read whole', !!plan && plan.drafts.length === PLAN_LEN,
-		plan ? `${plan.drafts.length} of ${PLAN_LEN} drafts` : 'none');
-	// THE DRAFTS GO STRAIGHT TO THE APPROVE-LIST QUEUE, which is the one surface a
-	// draft is reviewed, edited, ticked and sent on. Triage generates and hands
-	// off; it keeps no per-draft box or Send of its own. The sending itself is
-	// dev/verify_approvelist.mjs's; here we prove the hand-off happened.
-	const triageBoxes = await page.locator('#improve-triage .trg-draft').count();
-	check('triage keeps no per-draft box of its own: the drafts went to the queue',
-		triageBoxes === 0, `${triageBoxes} drawn`);
+	// The hand-off: every draft went to the approve-list queue, which is where a
+	// draft is reviewed and sent -- dev/verify_approvelist.mjs owns the sending.
 	const queued = await page.evaluate(() =>
 		window.DaimondApproveList ? window.DaimondApproveList.queue() : []);
-	check('every draft the model answered landed in the approve-list queue',
+	check('every draft the plan named landed in the approve-list queue',
 		queued.length === PLAN_LEN, `${queued.length} of ${PLAN_LEN} queued`);
-	check('and each queued draft is tagged with what sending it would do',
+	check('and each is tagged with what sending it would do',
 		queued.length === PLAN_LEN && queued.every(d => ['new', 'comment', 'revision'].indexOf(d.kind) !== -1),
 		queued.map(d => d.kind).join(','));
 
-	// ── 13. Every note is accounted for ──────────────────────────
+	// ── 8. Every note is accounted for ───────────────────────────
 	const accounted = new Set();
 	(plan ? plan.drafts : []).forEach(d => d.from.forEach(id => accounted.add(id)));
 	(plan ? plan.left : []).forEach(l => accounted.add(l.id));
@@ -650,33 +618,29 @@ try {
 	check('every note is in a draft or said to be left out, by name', lost.length === 0,
 		lost.map(n => n.id).join(', '));
 
-	// The two notes the owner wrote that hold two faults each are drafted twice,
-	// and no other note is. Named, because "twenty drafts from eighteen notes"
-	// would pass with any two of them split.
 	const twice = {};
 	(plan ? plan.drafts : []).forEach(d => d.from.forEach(id => { twice[id] = (twice[id] || 0) + 1; }));
-	const split = Object.keys(twice).filter(k => twice[k] > 1).sort();
+	const splitTwo = Object.keys(twice).filter(k => twice[k] > 1).sort();
 	check('the two notes holding two faults each became two drafts, and only those two',
-		split.length === 2 && split.includes('nmtbemooi4ok8') && split.includes('nmtbes6h4vei5'),
-		split.join(', '));
+		splitTwo.length === 2 && splitTwo.includes('nmtbemooi4ok8') && splitTwo.includes('nmtbes6h4vei5'),
+		splitTwo.join(', '));
 
-	await shot(s, 'triage-plan' + (BREAK ? '-' + BREAK : ''));
+	await shot(s, 'triage-machinery' + (BREAK ? '-' + BREAK : ''));
 
-	// With no voice, triage offers no per-draft Send -- it offers no Send at all
-	// any more. Whether the QUEUE offers a tick without a voice is the queue's own
-	// check, in dev/verify_approvelist.mjs.
-	check('with no voice, triage offers no per-draft Send',
-		await page.locator('#improve-triage [data-act="triage-send"]').count() === 0);
-
-	// ── A voice is set, for the panel's own Revise control below ─
+	// ── A voice is set, from the Settings view where it now lives, for the panel's
+	// own Revise control below.
+	await page.evaluate(() => window.DaimondSocial.show('settings'));
+	await page.waitForTimeout(200);
 	await page.click('[data-act="improve-voice-open"]');
 	await page.waitForTimeout(200);
 	await page.fill('#improve-voice-in', SECRET);
 	await page.click('[data-act="improve-voice-save"]');
 	await page.waitForTimeout(800);
-	check('a voice can be set in the panel that needs it',
+	check('a voice can be set from the Settings view',
 		await page.evaluate(() => window.DaimondVoice.has()) === true);
-	check('setting a voice drafts no new plan', turns().length === 1, `${turns().length} model turn(s)`);
+	check('setting a voice runs no model turn', turns().length === 0, `${turns().length} model turn(s)`);
+	await page.evaluate(() => window.DaimondSocial.show('proposals'));
+	await page.waitForTimeout(200);
 
 	// §6 (ONE PRESS PER DRAFT, WHAT LEAVES IS THE BOX) and §7 (A FOLDED NOTE IS NOT
 	// A SENT ONE) MOVED to dev/verify_approvelist.mjs, which now owns the sending
@@ -868,7 +832,22 @@ try {
 	check('a comment with no proposal number is dropped: it has nowhere to land',
 		junk[2].drafts.length === 0 && junk[2].dropped === 1, JSON.stringify(junk[2]));
 
-	// ── 14. The run is booked ────────────────────────────────────
+	// ── 14. A REAL polish run: it reaches the model, and is booked ─
+	//
+	// The one paid turn in this file. `DaimondTriage.polish` is what the compose
+	// box's "Polish & post" runs; here it is run for real against the mock model,
+	// so meter() and the account ledger are exercised and the note's own words are
+	// shown to have reached the model. (dev/verify_composemerge.mjs stubs the draft
+	// to prove the WIRING that posts it; this proves the run itself.)
+	await page.evaluate(() => window.DaimondTriage.polish('The compose box loses focus after a post.'));
+	await page.waitForTimeout(700);
+	const polishSent = modelLog();
+	const polishMsg = polishSent.length
+		? (polishSent[polishSent.length - 1].messages || []).filter(m => m.role === 'user')
+			.map(m => String(m.content || '')).join('\n')
+		: '';
+	check('a Polish run reaches the model, carrying the note\'s own words',
+		/compose box loses focus/.test(polishMsg), polishMsg.slice(0, 120));
 	const booked = await page.evaluate(() => {
 		try {
 			if (!window.DaimondLedger) return null;
@@ -876,7 +855,7 @@ try {
 			return per.map(function (r) { return { model: r.model || r.m || '', tokens: r.tokens || 0 }; });
 		} catch (e) { return null; }
 	});
-	check('the drafting run reached the account\'s own ledger, under the model that ran it',
+	check('and it is booked to the account\'s own ledger, under the model that ran it',
 		Array.isArray(booked) && booked.some(r => /mock\/fast/.test(r.model) && r.tokens > 0),
 		JSON.stringify(booked));
 
