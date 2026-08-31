@@ -12084,6 +12084,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { body = await DaimondPeer.sealForSelf(plan.errand(parcelVersion)); }
 		catch (e) { return { ok: false, why: 'the errand could not be sealed: ' + (e && e.message || e) }; }
 		var res = await DaimondPost.post(body);
+		try { console.log('[peer] dispatched: turn=' + String(turnId) + ' parcelV=' + parcelVersion
+			+ ' errandPosted=' + String(res && res.ok)); } catch (e) {}
 		if (!res || !res.ok) return { ok: false, why: (res && res.why) || 'the relay would not take the errand' };
 		return { ok: true, turnId: turnId, parcelVersion: parcelVersion };
 	}
@@ -12144,16 +12146,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// at file-read time (chunks.js), so the manifests being present is the gate.
 	async function peerReconstruct(errand) {
 		var want = (errand && errand.parcelVersion) | 0;
-		if (want > 0 && window.DaimondSync && DaimondSync.pull) {
+		if (window.DaimondSync && DaimondSync.pull) {
 			var by   = Date.now() + RECONSTRUCT_CATCHUP_MS;
 			var have = 0;
 			try { have = DaimondSync.version() | 0; } catch (e) { have = 0; }
-			while (have < want && Date.now() < by) {
+			// ALWAYS pull at least once, then loop to `want` when a target is known. A
+			// dispatcher whose version read 0 at dispatch (parcelVersion 0) carries no
+			// target, but the receiver may still be behind, and one fresh pull is cheap.
+			var first = true;
+			while (first || (want > 0 && have < want && Date.now() < by)) {
+				first = false;
 				try { await DaimondSync.pull(true); } catch (e) { /* offline: the window retries */ }
 				try { have = DaimondSync.version() | 0; } catch (e) { have = 0; }
-				if (have < want) await new Promise(function (res) { setTimeout(res, 400); });
+				if (want > 0 && have < want) await new Promise(function (res) { setTimeout(res, 400); });
 			}
-			try { console.log('[peer] reconstruct caught up to v' + (DaimondSync.version() | 0)
+			try { console.log('[peer] reconstruct: pulled to v' + (DaimondSync.version() | 0)
 				+ ' (wanted v' + want + ') for turn ' + String(errand.turnId || '')); } catch (e) {}
 		}
 		var chat = null;
@@ -12258,10 +12265,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// is a SEPARATE path (recoverDispatchedTurns) that passes `allowSelf` and has
 			// already confirmed the turn is unrun and unclaimed; it never comes through
 			// here. runErrand carries the same guard, so this is belt-and-braces.
+			try { console.log('[peer] onErrand fired: turn=' + String(errand && errand.turnId)
+				+ ' chat=' + String(errand && errand.chatId) + ' by=' + String(errand && errand.dispatchedBy)
+				+ ' self=' + String(selfDeviceId()) + ' parcelV=' + String(errand && errand.parcelVersion)); } catch (e) {}
 			if (errand && String(errand.dispatchedBy) && String(errand.dispatchedBy) === String(selfDeviceId())) {
+				try { console.log('[peer] onErrand: skipped (self-dispatched)'); } catch (e) {}
 				return { ran: false, why: 'self-dispatched' };
 			}
-			return await DaimondPeer.runErrand(errand, peerRunErrandDeps());
+			var _res = await DaimondPeer.runErrand(errand, peerRunErrandDeps());
+			try { console.log('[peer] runErrand done: trace=' + JSON.stringify(_res && _res.trace)
+				+ ' why=' + String(_res && _res.why) + ' ran=' + String(_res && _res.ran)); } catch (e) {}
+			return _res;
 		});
 		// The DISPATCHING side: a report is the nudge that a dispatched turn is
 		// settled. Stash it by turnId for the UI state machine, and on a `done` drop
@@ -12522,6 +12536,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// the safety net for the residual race; this keeps most turns off it.
 				freshWindowMs: DaimondPeer.DISPATCH_FRESH_MS,
 			}, Date.now());
+			try { console.log('[peer] dispatch decision: dispatch=' + String(d.dispatch)
+				+ ' reason=' + String(d.reason) + ' peer=' + String(d.peer && (d.peer.name || d.peer.deviceId))
+				+ ' awake=' + JSON.stringify(Object.keys(presence))); } catch (e) {}
 			if (!d.dispatch) return false;
 			// Prepared exactly as the explicit path, so the parcel push inside
 			// dispatchToPeer carries the prompt (§4.1).

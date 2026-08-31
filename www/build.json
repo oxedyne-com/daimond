@@ -1,1 +1,1 @@
-{"build":"952928bc91ea","note":"Improve IA (option b): one hub, Social capture-only, All/Mine filter, raised confirmation"}
+{"build":"811d5c448d1c","note":"peer: instrument hand-off receive path + reconstruct pull-once hardening (diagnostic build)"}

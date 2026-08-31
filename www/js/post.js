@@ -1382,6 +1382,8 @@
 			var peer = null;
 			try { peer = await DaimondPeer.peek(row.envelope); } catch (e) { peer = null; }
 			if (peer) {
+				try { console.log('[peer] envelope collected: t=' + String(peer.t)
+					+ ' turn=' + String(peer.turnId)); } catch (e) {}
 				try { await DaimondPeer.absorb(peer, row); }
 				catch (e) { log('a peer envelope would not apply', e); }
 				return NOTHING;			// routed, and never a message on the list
@@ -1710,7 +1712,10 @@
 					+ 'so this is an ordinary pull. Parking is off.');
 				return;
 			}
-			if (r.json.changed) await round();
+			if (r.json.changed) {
+				try { console.log('[peer] park woke (changed), collecting the box'); } catch (e) {}
+				await round();
+			}
 			var spent = Date.now() - began;
 			if (spent < PARK_FLOOR_MS) await sleep(PARK_FLOOR_MS - spent);
 		}
