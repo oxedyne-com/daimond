@@ -12120,11 +12120,42 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		};
 	}
 
-	/// Reconstruct the chat and its workspace for an errand: find the chat (present
-	/// after the wake's sync), build its app and scope it to the errand's fence.
-	/// FLAGGED: the pull-to-parcelVersion and the by-hash chunk fetch (chunks.js)
-	/// belong here and need running-app verification.
+	// A bounded catch-up window for peerReconstruct. Short on purpose: the lease is
+	// already held by the time reconstruct runs, so a peer that cannot reach the
+	// dispatch version must free it promptly (runErrand releases on a reconstruct
+	// throw) rather than park the turn to its deadline.
+	var RECONSTRUCT_CATCHUP_MS = 8000;
+
+	/// Reconstruct the chat and its workspace for an errand. It PULLS TO THE
+	/// ERRAND'S PARCEL VERSION FIRST, then finds the chat, builds its app and scopes
+	/// it to the errand's fence.
+	///
+	/// The catch-up is load-bearing, and its absence was the live "argonaut showed
+	/// 'Sent to another device' but never ran it" failure. The post-box wake that
+	/// routed this errand here (post.js `parkOnce` -> `round`) is a SEPARATE channel
+	/// from the sync pull, and the dispatcher posts the errand only AFTER it has
+	/// pushed the prompt parcel (dispatchToPeer). So on a fast dispatch the errand
+	/// arrives before this device's own poll has pulled that parcel: the chat would
+	/// be absent (reconstruct throws, the row is already consumed by takeRow, and no
+	/// peer re-runs it) or stale (runTurn against a transcript missing the prompt and
+	/// the added files). `parcelVersion` is read AFTER the prompt push, so a local
+	/// version at or past it holds the prompt, the chat, and the offloaded-file chunk
+	/// manifests -- the large files themselves hydrate on demand from those manifests
+	/// at file-read time (chunks.js), so the manifests being present is the gate.
 	async function peerReconstruct(errand) {
+		var want = (errand && errand.parcelVersion) | 0;
+		if (want > 0 && window.DaimondSync && DaimondSync.pull) {
+			var by   = Date.now() + RECONSTRUCT_CATCHUP_MS;
+			var have = 0;
+			try { have = DaimondSync.version() | 0; } catch (e) { have = 0; }
+			while (have < want && Date.now() < by) {
+				try { await DaimondSync.pull(true); } catch (e) { /* offline: the window retries */ }
+				try { have = DaimondSync.version() | 0; } catch (e) { have = 0; }
+				if (have < want) await new Promise(function (res) { setTimeout(res, 400); });
+			}
+			try { console.log('[peer] reconstruct caught up to v' + (DaimondSync.version() | 0)
+				+ ' (wanted v' + want + ') for turn ' + String(errand.turnId || '')); } catch (e) {}
+		}
 		var chat = null;
 		for (var i = 0; i < chats.length; i++) if (chats[i].id === errand.chatId) { chat = chats[i]; break; }
 		if (!chat) throw new Error('the errand names a chat this device does not hold yet');

@@ -1,1 +1,1 @@
-{"build":"fd410ef5d3aa","note":"Proposals campaign: Notes-into-Proposals, email + OCR tools, laptop hand-off, model-switch, terminal + badge fixes"}
+{"build":"a32d2f5c40b9","note":"peer: reconstruct pulls to errand parcelVersion before running; fixes a dispatched turn that never ran on the peer"}
