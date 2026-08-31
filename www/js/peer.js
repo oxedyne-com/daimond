@@ -741,7 +741,8 @@
 
 	var LEASE_TTL_MS   = 90000;		// a lease past this is vacant (§2.4)
 	var RENEW_EVERY_MS = 30000;		// three renews per TTL, so one dropped renew is survivable
-	var MAX_TAKE_TRIES = 6;			// bound the CAS retry loop, as sync.js bounds its own (:113)
+	var MAX_TAKE_TRIES = 10;		// bound the CAS retry loop (was 6): more headroom under two-device churn
+	var TAKE_BACKOFF_MS = 250;		// jittered wait between take retries so a claim gets a clean window
 	// The hard ceiling on how long ONE errand's liveness ticker may run before it gives
 	// up and aborts. The ticker is READ-ONLY (it never renews the parcel -- the lease is
 	// claimed straight to its deadline, so no renew is needed), so it is not itself a
@@ -977,9 +978,21 @@
 				}
 				return { won: false, holder: landed ? landed.holder : null };
 			}
-			// 409: the version moved under us. Re-read and re-merge; if the winner's
-			// claim is now present, the fold above stands us down next pass.
-			snap = { version: res.version, leases: res.leases || {} };
+			// 409: the version CHURNED under us. Under active two-device sync the parcel
+			// version keeps moving, so a stale `base` is refused by the commit BEFORE it
+			// even pushes -- back-to-back tries then all fail and the claim never lands
+			// (the live why:'exhausted' hand-off failure). Take a FRESH read so the next
+			// base is current, and back off a jittered moment so the two devices do not
+			// collide in lockstep -- giving the claim a real window. The fold above still
+			// stands us down if a live foreign winner has appeared, so this stays
+			// single-run safe: only the persistence changes, never the arbitration.
+			try { snap = await cas.read(); }
+			catch (e) { snap = { version: res.version, leases: res.leases || {} }; }
+			if (attempt + 1 < MAX_TAKE_TRIES) {
+				await new Promise(function (r) {
+					setTimeout(r, Math.round(TAKE_BACKOFF_MS * (0.5 + Math.random())));
+				});
+			}
 		}
 		return { won: false, why: 'exhausted' };
 	}

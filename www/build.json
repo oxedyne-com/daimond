@@ -1,1 +1,1 @@
-{"build":"4a95403327b2","note":"peer: sender holds its own errand until the peer collects it (hand-off fix)"}
+{"build":"b4f7b19aa0d0","note":"peer: harden lease claim against two-device sync churn"}
