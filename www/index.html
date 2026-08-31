@@ -1289,13 +1289,21 @@
 						<span class="imp-as" id="improve-as"></span>
 					</div>
 					<div class="imp-say" id="improve-say" role="status" aria-live="polite"></div>
+					<!-- Said after a note is raised (posted, or queued): "Raised — see it
+					     in Improve", where Improve is a press that opens the hub. Drawn by
+					     js/improve.js. -->
+					<div class="imp-raised" id="improve-raised" role="status" aria-live="polite" hidden></div>
 				</div>
 				<!-- Notes that could not be sent yet: written offline, or a send that
 				     failed. js/improve.js OWNS this and clears it on every draw; it is
-				     drained automatically when the browser comes back online. -->
+				     drained automatically when the browser comes back online.
+
+				     CAPTURE ONLY. The browse/vote list of all proposals is NOT here any
+				     more -- it is the Improve hub (js/tracker.js, #panel-tracker). This
+				     view writes a proposal and shows what is waiting to send; reading and
+				     settling live in the hub, so the two surfaces no longer duplicate a
+				     list. -->
 				<div class="imp-queue" id="improve-queue"></div>
-				<div class="imp-asat" id="improve-asat"></div>
-				<div class="imp-props" id="improve-props"></div>
 			</div>
 
 			<!-- Settings: the voice this device posts with, and the drafts the model
@@ -1310,8 +1318,8 @@
 		     settle controls are dormant until an admin voice is minted. js/tracker.js
 		     OWNS #tracker-view and draws all of it; it self-mounts and reads the
 		     listing the first time the panel is shown. -->
-		<aside class="panel tracker" id="panel-tracker" data-panel="tracker" data-zone="dock" data-label="Proposals" data-i18n-label="panel.tracker">
-			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.tracker">Proposals</span>
+		<aside class="panel tracker" id="panel-tracker" data-panel="tracker" data-zone="dock" data-label="Improve" data-i18n-label="panel.tracker">
+			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.tracker">Improve</span>
 				<button class="addbtn panel-close" data-close="tracker" title="Close panel" data-i18n-title="common.close_panel">
 					<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 				</button>

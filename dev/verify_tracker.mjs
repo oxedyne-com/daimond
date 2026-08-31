@@ -29,6 +29,9 @@
 //   7. A SHIPPED CARD STAMPS THE REAL BUILD. The board PARSES the ship stamp out of the proposal's
 //      comments and draws the id, clickable; it reads the id, it does not invent one.
 //   8. A PROPOSAL OPENS IN FULL, and a refusal is SAID, not swallowed.
+//   9. ALL / MINE. The board defaults to All; Mine shows only the proposals THIS DEVICE raised,
+//      read from DaimondImprove.raisedProposalNumbers() (author cannot match — the local voice has
+//      no name). With no capture surface, Mine shows a "nothing raised" state and never throws.
 //
 // EACH CHECK IS PROVED AGAINST BROKEN CODE FIRST. `--break <name>` serves a damaged tracker.js
 // and the run is expected to FAIL the one check it targets:
@@ -38,6 +41,7 @@
 //   node dev/verify_tracker.mjs --break alwayssettle   # 5  settle drawn with no voice
 //   node dev/verify_tracker.mjs --break shipinvent     # 7  the shipped stamp is invented
 //   node dev/verify_tracker.mjs --break swallow        # 8  a refusal drawn as blank
+//   node dev/verify_tracker.mjs --break minefilter     # 9  Mine shows more than this device raised
 //   node dev/verify_tracker.mjs                        # and then, clean
 //
 // Needs playwright-core (resolved via dev/harness.mjs) and node. No dev server, no Rust: the page
@@ -116,6 +120,13 @@ const BREAKS = {
 		file: 'js/tracker.js',
 		find: "\t\tif (_st.err) _host.appendChild(el('div', 'trk-err', saying(_st.err)));",
 		with: "\t\tif (_st.err && false) _host.appendChild(el('div', 'trk-err', saying(_st.err)));",
+	}],
+	// The Mine filter ignores the raised set, so Mine shows every proposal rather
+	// than only the ones this device raised. Bites check 9: Mine is no longer Mine.
+	minefilter: [{
+		file: 'js/tracker.js',
+		find: "\t\t\t\tif (_filter === 'mine') return !!(mine && mine[n]);",
+		with: "\t\t\t\tif (_filter === 'mine') return true;",
 	}],
 };
 
@@ -515,6 +526,46 @@ async function run() {
 			check('the accepted proposal moves to Greenlit', false, 'no Accept to click');
 			check('Reopen posts state=open', false, 'no Accept to click');
 		}
+
+		// ── 9. All / Mine filter ─────────────────────────────────────
+		// "Mine" is the proposals THIS DEVICE raised. The local voice has no name, so
+		// Mine cannot be an author match; it is a match against the numbers the capture
+		// surface (js/improve.js) publishes as DaimondImprove.raisedProposalNumbers().
+		// The harness has no capture surface by default, which is the empty-state path.
+		await page.evaluate(() => { try { delete window.DaimondImprove; } catch (e) { window.DaimondImprove = undefined; } });
+		await mount();
+		check('the board draws an All / Mine filter', (await page.locator('#trk .trk-filter').count()) === 1);
+		check('the filter defaults to All',
+			(await page.locator('#trk .trk-filter-btn[data-filter="all"].on').count()) === 1
+			&& (await page.locator('#trk .trk-filter-btn[data-filter="mine"].on').count()) === 0);
+		const allNums = (await page.locator('#trk .trk-board .trk-num').allInnerTexts()).map(s => Number(s.replace('#', '')));
+		check('All shows every loaded proposal', allNums.length === 12, `${allNums.length} cards`);
+
+		// Mine with NO capture surface: the empty state, no cards, and no throw.
+		await page.locator('#trk .trk-filter-btn[data-filter="mine"]').click();
+		await sleep(150);
+		check('Mine, with no capture surface, shows the "nothing raised" state', (await page.locator('#trk .trk-mine-empty').count()) === 1);
+		check('Mine, with no capture surface, shows no cards', (await page.locator('#trk .trk-card').count()) === 0);
+
+		// A capture surface that raised two specific proposals: Mine shows exactly those.
+		const raised = [allNums[0], allNums[5]].sort((a, b) => a - b);
+		await page.evaluate((nums) => { window.DaimondImprove = { raisedProposalNumbers: () => nums.slice() }; }, raised);
+		await page.locator('#trk .trk-filter-btn[data-filter="all"]').click();		// force a redraw off Mine
+		await sleep(120);
+		await page.locator('#trk .trk-filter-btn[data-filter="mine"]').click();
+		await sleep(150);
+		const mineNums = (await page.locator('#trk .trk-board .trk-num').allInnerTexts()).map(s => Number(s.replace('#', ''))).sort((a, b) => a - b);
+		check('Mine shows ONLY the proposals this device raised', JSON.stringify(mineNums) === JSON.stringify(raised),
+			`shown ${JSON.stringify(mineNums)} vs raised ${JSON.stringify(raised)}`);
+		check('Mine drew those cards, not the empty state',
+			(await page.locator('#trk .trk-mine-empty').count()) === 0 && mineNums.length === raised.length);
+
+		// All restores the whole board.
+		await page.locator('#trk .trk-filter-btn[data-filter="all"]').click();
+		await sleep(120);
+		const backNums = (await page.locator('#trk .trk-board .trk-num').allInnerTexts()).map(s => Number(s.replace('#', '')));
+		check('All restores every proposal', backNums.length === allNums.length, `${backNums.length} vs ${allNums.length}`);
+		await page.evaluate(() => { try { delete window.DaimondImprove; } catch (e) { window.DaimondImprove = undefined; } });
 
 		// ── 8b. A refusal is said ────────────────────────────────────
 		await mount({ repo: '_absent' });

@@ -299,6 +299,26 @@
 		return !!(rec && rec.sent && !(rec.into && rec.into.length));
 	}
 
+	/// The proposal numbers this DEVICE has raised, de-duped, whole and above zero.
+	///
+	/// The local voice has NO NAME -- the secret is the identity and this client
+	/// never learns its own author (voice.js) -- so "raised here" cannot be matched
+	/// against a proposal's `author`. It is matched by the numbers this file already
+	/// tracks: every stored note's `into` (the proposals a draft written from it was
+	/// folded into) and its `n` (the proposal the note itself became, where a path
+	/// keeps the note). The Improve hub's "Mine" filter reads this and shows only
+	/// those numbers. A read, so nothing here writes the store.
+	function raisedProposalNumbers() {
+		var out = [];
+		load().notes.forEach(function (rec) {
+			(rec.into || []).forEach(function (n) {
+				if (n > 0 && out.indexOf(n) === -1) out.push(n);
+			});
+			if (rec.n > 0 && out.indexOf(rec.n) === -1) out.push(rec.n);
+		});
+		return out;
+	}
+
 	function save() {
 		var s = load();
 		// Newest first on disk as well as on screen, so a person reading the raw
@@ -1067,6 +1087,9 @@
 		render();
 		if (onLine()) { await sendOne(rec); }
 		render();
+		// Raised, whether it posted or is queued -- either way it has left the box.
+		// Point the person at the Improve hub, where it is read and settled.
+		showRaised();
 		return rec;
 	}
 
@@ -1192,6 +1215,37 @@
 		n.textContent = text;
 		clearTimeout(flash._t);
 		flash._t = setTimeout(function () { if (n.textContent === text) n.textContent = ''; }, 8000);
+	}
+
+	/// Open the Improve hub -- the read-and-settle board (js/tracker.js), a panel of
+	/// its own. This surface CAPTURES a proposal; the hub is where it is read and
+	/// decided, so a confirmation and a reference both hand the reader there.
+	function openHub() {
+		try { if (window.DaimondPanels) DaimondPanels.show('tracker'); } catch (e) { /* no engine */ }
+	}
+
+	/// Say a note was raised, with a press that opens the Improve hub. Drawn after a
+	/// post OR a queue: either way the note has left the box and is on its way, so
+	/// the person is pointed at where it is read. The hub word is a real affordance,
+	/// not prose -- "see it in Improve" with Improve the button.
+	function showRaised() {
+		var host = el('improve-raised');
+		if (!host) return;
+		host.innerHTML = '';
+		host.appendChild(document.createTextNode(
+			tOr('social.raised_lead', 'Raised — see it in') + ' '));
+		host.appendChild(button('imp-raised-hub', 'improve-open-hub',
+			tOr('social.raised_hub', 'Improve')));
+		host.hidden = false;
+		clearTimeout(showRaised._t);
+		showRaised._t = setTimeout(function () { if (host) host.hidden = true; }, 12000);
+	}
+
+	/// Take the confirmation down. Called when a new note is being written, so it
+	/// does not sit stale over a fresh compose.
+	function hideRaised() {
+		var host = el('improve-raised');
+		if (host && !host.hidden) host.hidden = true;
 	}
 
 	// ── The wire ───────────────────────────────────────────────
@@ -2386,7 +2440,20 @@
 							note:  tnOr('ref.said_n', p.comments, '{n} comment, public',
 								'{n} comments, public', { n: p.comments }),
 							act:   tOr('ref.open_proposal', 'Open the proposal'),
-							go:    function () { absorb(p); show('proposals'); openProp(p.n); },
+							// The browse list lives in the Improve hub now (js/tracker.js),
+							// not on this capture surface, so a proposal reference opens
+							// there. Falls back to this panel where the hub is absent.
+							go:    function () {
+								try {
+									if (window.DaimondPanels && window.DaimondTracker) {
+										DaimondPanels.show('tracker');
+										DaimondTracker.open(p.n);
+										return;
+									}
+								} catch (e) { /* no hub in this build */ }
+								try { if (window.DaimondPanels) DaimondPanels.show('social'); } catch (e2) { /* no engine */ }
+								show('proposals');
+							},
 						}
 						: { ok: false, why: saying(null) };
 				}
@@ -2443,14 +2510,6 @@
 		}
 		_refs[key] = out;
 		return out;
-	}
-
-	/// Open a proposal in the Proposals view, as pressing its row does.
-	function openProp(n) {
-		_open[String(n)] = 1;
-		drawProps();
-		var row = document.querySelector('.imp-prop[data-prop="' + n + '"]');
-		if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
 	}
 
 	/// What a chip is called before anything has been read.
@@ -2642,6 +2701,7 @@
 		var act = b.dataset.act;
 		if (act === 'improve-post')   { e.preventDefault(); submit('verbatim'); return; }
 		if (act === 'improve-polish') { e.preventDefault(); submit('polish'); return; }
+		if (act === 'improve-open-hub') { e.preventDefault(); openHub(); return; }
 		if (act === 'improve-more')   { e.preventDefault(); loadList(true); return; }
 		if (act === 'improve-forget-plan') {
 			e.preventDefault();
@@ -2727,6 +2787,14 @@
 			}, true);
 		} catch (err) { /* no document */ }
 	});
+
+	// Writing a fresh note takes the "Raised" confirmation down, so it never sits
+	// stale over a compose that has moved on.
+	try {
+		document.addEventListener('input', function (e) {
+			if (e.target && e.target.id === 'improve-box') hideRaised();
+		}, true);
+	} catch (e) { /* no document */ }
 
 	// Another tab wrote a note, or an account switch emptied the store.
 	window.addEventListener('storage', function (e) {
@@ -3188,6 +3256,10 @@
 		/// Mark notes as folded into a proposal a draft was written from. What
 		/// js/triage.js calls after the forge took a draft, and nothing else.
 		fold:     fold,
+		/// The proposal numbers this DEVICE raised, de-duped. The Improve hub's
+		/// (js/tracker.js) "Mine" filter reads this: the local voice has no name, so
+		/// "raised here" is matched by number, never by author.
+		raisedProposalNumbers: raisedProposalNumbers,
 		/// THE FORGE, AS THIS PANEL REACHES IT, for the module that drafts from the
 		/// whole list of notes at once.
 		///

@@ -119,3 +119,13 @@
 .trk-comment-said { white-space: pre-wrap; line-height: 1.4; }
 .trk-comment-foot { display: flex; gap: 8px; margin-top: 2px; font-size: var(--fs-3xs); color: var(--text-muted); }
 .trk-when { font-variant-numeric: tabular-nums; }
+
+/* The All/Mine filter above the board. "Mine" reads proposals raised from this
+   device (improve.js), so it is a client-side allow-list, not a server query. */
+.trk-filter { display: flex; gap: 6px; margin: 2px 0 8px; }
+.trk-filter-btn { padding: 3px 10px; font-size: var(--fs-3xs-2xs); border-radius: var(--radius-sm);
+	border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
+	cursor: pointer; }
+.trk-filter-btn:hover { border-color: var(--accent); }
+.trk-filter-btn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft);
+	color: var(--accent-text); }

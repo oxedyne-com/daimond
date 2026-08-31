@@ -1,1 +1,1 @@
-{"build":"a32d2f5c40b9","note":"peer: reconstruct pulls to errand parcelVersion before running; fixes a dispatched turn that never ran on the peer"}
+{"build":"ac2ea9925794","note":"Improve IA (option b): one hub, Social capture-only, All/Mine filter, raised confirmation"}

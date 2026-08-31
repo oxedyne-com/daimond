@@ -426,6 +426,7 @@
 	var _open  = null;
 	var _st    = { total: 0, loading: false, err: null, read: false };
 	var _voiceOpen = false;				// the admin-voice paste form is showing
+	var _filter    = 'all';				// board filter: 'all', or 'mine' (raised from this device)
 
 	function absorb(rec) {
 		if (!rec) return null;
@@ -595,13 +596,72 @@
 		{ state: 'declined', key: 'col_drop',  label: 'Dropped' },
 	];
 
+	// ── All / Mine ─────────────────────────────────────────────
+	//
+	// "Mine" is the proposals THIS DEVICE raised. The local voice has no name --
+	// the secret is the identity and this client never learns its own author (see
+	// voice.js) -- so "mine" CANNOT be matched against a card's `author`. It is
+	// matched by number instead: js/improve.js records, on each note it holds, the
+	// proposals a draft written from it became, and publishes the de-duped set as
+	// `DaimondImprove.raisedProposalNumbers()`. This board reads that set and shows
+	// only the numbers in it. Purely client-side: no author query rides to the forge.
+
+	/// The numbers this device raised, as a lookup, or null when there is no capture
+	/// surface to ask. Never throws: an absent or misbehaving `DaimondImprove` is
+	/// read as "nothing raised here" rather than an error on the board.
+	function raisedSet() {
+		try {
+			if (window.DaimondImprove && DaimondImprove.raisedProposalNumbers) {
+				var arr = DaimondImprove.raisedProposalNumbers();
+				if (!Array.isArray(arr)) return null;
+				var set = {};
+				arr.forEach(function (n) { var w = whole(n); if (w > 0) set[w] = 1; });
+				return set;
+			}
+		} catch (e) { /* absent or threw: nothing raised from here */ }
+		return null;
+	}
+
 	function drawBoard() {
+		// In Mine, keep only the numbers this device raised. `mine` null means the
+		// capture surface is absent -- which shows NOTHING here, not everything: Mine
+		// is an allow-list, so a card is drawn only when it is on that list.
+		var mine  = (_filter === 'mine') ? raisedSet() : null;
 		var board = el('div', 'trk-board');
+		var shown = 0;
 		COLUMNS.forEach(function (col) {
-			var ns = _order.filter(function (n) { return _by[n] && _by[n].state === col.state; });
+			var ns = _order.filter(function (n) {
+				if (!_by[n] || _by[n].state !== col.state) return false;
+				if (_filter === 'mine') return !!(mine && mine[n]);
+				return true;
+			});
+			shown += ns.length;
 			board.appendChild(drawColumn(col, ns));
 		});
+		// Mine with nothing to show -- nothing raised here, no capture surface, or the
+		// raised ones sit below the page this board reads -- says so rather than four
+		// empty columns.
+		if (_filter === 'mine' && shown === 0) {
+			return el('div', 'trk-none trk-mine-empty',
+				tOr('tracker.mine_empty', 'Nothing raised from this device yet.'));
+		}
 		return board;
+	}
+
+	/// The All / Mine control, above the board. Drawn only where the board is.
+	function drawFilter() {
+		var bar = el('div', 'trk-filter');
+		bar.setAttribute('role', 'group');
+		[['all', tOr('tracker.filter_all', 'All')], ['mine', tOr('tracker.filter_mine', 'Mine')]]
+			.forEach(function (pair) {
+				var b  = button('trk-filter-btn', 'tracker-filter', pair[1]);
+				b.dataset.filter = pair[0];
+				var on = _filter === pair[0];
+				if (on) b.classList.add('on');
+				b.setAttribute('aria-pressed', on ? 'true' : 'false');
+				bar.appendChild(b);
+			});
+		return bar;
 	}
 
 	function drawColumn(col, ns) {
@@ -838,6 +898,7 @@
 			if (_st.read) _host.appendChild(el('div', 'trk-none', tOr('tracker.empty', 'No proposals yet.')));
 			return;
 		}
+		_host.appendChild(drawFilter());
 		_host.appendChild(drawBoard());
 	}
 
@@ -903,6 +964,11 @@
 		var n   = parseInt(b.dataset.prop, 10) || 0;
 		if (act === 'tracker-open' && n) { open(n); return; }
 		if (act === 'tracker-back') { back(); return; }
+		if (act === 'tracker-filter') {
+			var f = (b.dataset.filter === 'mine') ? 'mine' : 'all';
+			if (f !== _filter) { _filter = f; draw(); }
+			return;
+		}
 		if (act === 'tracker-settle' && n) { settle(n, b.dataset.which); return; }
 		if (act === 'tracker-transparency') { openTransparency(); return; }
 		if (act === 'tracker-admin-open') { _voiceOpen = true; draw(); return; }
@@ -977,10 +1043,11 @@
 				err:     _st.err ? _st.err.why : '',
 				open:    _open,
 				settle:  canSettle(),
+				filter:  _filter,
 				shown:   _order.slice(),
 			};
 		},
 		proposal:  function (n) { return _by[n] ? JSON.parse(JSON.stringify(_by[n])) : null; },
-		reset:     function () { _by = {}; _order = []; _open = null; _voiceOpen = false; _st = { total: 0, loading: false, err: null, read: false }; draw(); },
+		reset:     function () { _by = {}; _order = []; _open = null; _voiceOpen = false; _filter = 'all'; _st = { total: 0, loading: false, err: null, read: false }; draw(); },
 	};
 })();

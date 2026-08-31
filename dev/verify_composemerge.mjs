@@ -60,6 +60,10 @@ const SEAM = [
 	  why: 'the queue cannot be drained on reconnect' },
 	{ file: 'js/daimond.js', want: 'DaimondImprove.flushQueue()',
 	  why: 'the online event never drains the queue' },
+	{ file: 'index.html', want: 'id="improve-raised"',
+	  why: 'the compose box has no "Raised — see it in Improve" confirmation host' },
+	{ file: 'js/improve.js', want: "act === 'improve-open-hub'",
+	  why: 'the Raised confirmation cannot open the Improve hub' },
 ];
 
 function requireSeams() {
@@ -254,8 +258,32 @@ try {
 		JSON.stringify(aPost).slice(0, 140));
 	check('(a) the note is gone from the queue: it became a proposal',
 		await page.evaluate(() => window.DaimondImprove.notes().length) === 0);
-	check('(a) and the proposal appears in the list',
+	check('(a) and the proposal appears in the store',
 		await page.evaluate(() => window.DaimondImprove.forge.props().some(p => p.n === 100)));
+
+	// ── Capture-only: the browse list is gone, a confirmation points at the hub ──
+	// The Social ▸ Proposals surface writes a proposal; the browse/vote list of all
+	// proposals is the Improve hub (js/tracker.js) now, not here, so the two surfaces
+	// no longer duplicate a list.
+	check('the browse list of all proposals is NOT on the capture surface',
+		await page.locator('#panel-social #improve-props').count() === 0,
+		`${await page.locator('#panel-social #improve-props').count()} list host(s)`);
+	check('after a raise, the "Raised — see it in Improve" confirmation shows',
+		await page.locator('#improve-raised [data-act="improve-open-hub"]').count() === 1);
+	const raisedText = await page.evaluate(() => {
+		const h = document.getElementById('improve-raised');
+		return h ? (h.textContent || '').replace(/\s+/g, ' ').trim() : '';
+	});
+	check('the confirmation reads "Raised" and names the Improve hub',
+		/[Rr]aised/.test(raisedText) && /Improve/.test(raisedText), raisedText);
+	// The affordance opens the Improve hub panel (js/tracker.js, #panel-tracker).
+	await page.click('#improve-raised [data-act="improve-open-hub"]');
+	await page.waitForTimeout(300);
+	check('pressing Improve opens the Improve hub panel',
+		await page.evaluate(() => !!(window.DaimondPanels && DaimondPanels.isOpen('tracker'))) === true);
+	// Back to Social for the checks that follow.
+	await page.evaluate(() => { window.DaimondPanels.show('social'); window.DaimondSocial.show('proposals'); });
+	await page.waitForTimeout(200);
 
 	// ── (b) Polish online → the DRAFTED proposal posted ─────────
 	before = opens().length;
@@ -296,6 +324,8 @@ try {
 		return h ? h.textContent : '';
 	});
 	check('(c) the queue shows "Waiting to send (2)"', /2/.test(qHead) && /[Ww]aiting/.test(qHead), qHead);
+	check('(c) a queued (offline) note also shows the Raised confirmation',
+		await page.locator('#improve-raised [data-act="improve-open-hub"]').count() === 1);
 	await shot(s, 'composemerge-offline' + (BREAK ? '-' + BREAK : ''));
 
 	// ── (d) Reconnect → the flush drains, each in its own mode ──

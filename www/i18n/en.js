@@ -3282,6 +3282,10 @@
 	'social.polish':       'Polish & post',
 	'social.polish_help':  'Let the model rewrite it as a proposal, then post that.',
 	'social.compose_public': 'Posted publicly, under your voice name — anyone can read it.',
+	// Shown after a note is raised (posted, or queued to send). The hub label is a
+	// press that opens the Improve panel, where it is read and settled.
+	'social.raised_lead':  'Raised — see it in',
+	'social.raised_hub':   'Improve',
 	'social.novoice_set':  'No voice yet — set one in Settings to post.',
 	'social.polish_wait':  'The model could not draft it just now; it is still waiting to send.',
 	'social.waiting_here': 'Waiting to send; it will go when the forge is reachable.',
@@ -3957,6 +3961,12 @@
 	// operators'. Terse throughout -- the detail lives one press away.
 	'tracker.title':          'Development',
 	'tracker.count':          '{n} proposals',
+	// The All / Mine filter on the hub. "Mine" is proposals THIS DEVICE raised,
+	// matched by the locally-tracked numbers -- the local voice has no name, so it
+	// cannot be matched by author. Defaults to All.
+	'tracker.filter_all':     'All',
+	'tracker.filter_mine':    'Mine',
+	'tracker.mine_empty':     'Nothing raised from this device yet.',
 	'tracker.loading':        'Reading…',
 	'tracker.empty':          'No proposals yet.',
 	'tracker.comments':       '{n} comments',
@@ -4010,7 +4020,7 @@
 	'tracker.err_gateway':           'The forge could not be reached just now.',
 	// The nav/panel label. Kept in this block, not beside the other `panel.*`
 	// keys, so this lane's addition sits at one anchor.
-	'panel.tracker':          'Proposals',
+	'panel.tracker':          'Improve',
 	// The settle voice: a hand-minted admin voice, pasted once and wrapped under
 	// the passphrase. When none is held the board shows the "add your settle voice"
 	// affordance in place of settle buttons that would fail.
