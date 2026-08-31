@@ -21,7 +21,14 @@ import { open, chat, signInAs, newChat, connectMock, shot, storedChats } from '.
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
-const RTMS = Number(process.env.RESCUE_MS || 40000);
+// The live two-context round-trip -- B wakes on the Post channel, claims the
+// lease, runs the mock and pushes -- has a variable latency dominated by B's wake
+// cadence, and under a full gate's CPU contention 40 s was marginal: the same
+// product code passed at one commit and timed out at the next whose only
+// difference was three other verifiers' .mjs. The wait polls and returns the
+// instant the answer lands, so a higher ceiling costs nothing on a green run and
+// only stops the false red. Override with RESCUE_MS.
+const RTMS = Number(process.env.RESCUE_MS || 90000);
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
 	(pass ? ok : bad).push(name + (detail ? ' — ' + detail : ''));

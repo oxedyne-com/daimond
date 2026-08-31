@@ -367,6 +367,18 @@ const GWORDS = 'thimble cartography ' + Math.random().toString(36).slice(2, 10);
 
 		// ── 2. A message, through the real relay ───────────────────────
 		console.log('\n2. A seals, the gateway carries, B opens');
+		// STOP B'S BACKGROUND AUTO-COLLECT for this raw-delivery measurement. The
+		// errand listener (daimond.js `startErrandListener`) opens a long-poll park
+		// on unlock; when A's message lands, that park's own `round()` collects and
+		// FILES it before B's manual `collect()` below is ever called -- so the
+		// manual collect, the path a person's browser takes, would find the box
+		// already emptied (got=0) and `takeRow` would dedup the re-collect to
+		// nothing. Parking is the peer-errand door, not this person-to-person
+		// delivery path. Stopped BEFORE A sends, so nothing collects the row ahead of
+		// the manual collect. This does not weaken the check: if delivery or filing
+		// actually broke, the manual collect still returns got=0 (or files the wrong
+		// body) and the two assertions below still go red.
+		await B.page.evaluate(() => { try { window.DaimondPost.parkStop(); } catch (e) {} });
 		A.seen.length = 0;
 		const sent = await A.page.evaluate(async ({ to, body }) => {
 			const r = await window.DaimondPost.send({ to, body });

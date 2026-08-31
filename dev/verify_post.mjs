@@ -703,7 +703,18 @@ async function parkWithoutWaitedStops() {
 		// An ordinary collect answer served to a park: what a front door that drops
 		// the query string produces. It is `ok`, it is 200, and it has no `waited`.
 		const log = await mockServer(s, { park: { ok: true, seq: 0, rows: [], more: false } });
-		await s.page.evaluate(() => window.DaimondPost.parkStart());
+		// The errand listener (daimond.js `startErrandListener`) already called
+		// parkStart() on daimond:unlock -- before this fixture's mock was in place --
+		// so its first park raced a front door with no gateway behind it and now sits
+		// in backoff, parking still ON with no reason. Stop that, then start a
+		// CONTROLLED park against the mock, so this measures the no-`waited`
+		// detection rather than the listener's pre-mock attempt. (parkStart is a
+		// no-op while parking is on, which is why the reset is needed first.)
+		await s.page.evaluate(async () => {
+			window.DaimondPost.parkStop();
+			await new Promise(r => setTimeout(r, 50));
+			window.DaimondPost.parkStart();
+		});
 		await s.page.waitForTimeout(1200);
 		const first = await s.page.evaluate(() => window.DaimondPost.parking());
 		ok(first.on === false, 'parking turned itself off', first);

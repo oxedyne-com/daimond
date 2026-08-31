@@ -787,7 +787,7 @@ try {
 	check('while its bytes travel exactly as before, or there would be nothing to restore',
 		parcel.listed === carriedBefore,
 		'carried before=' + carriedBefore + ', after=' + parcel.listed + ' (of ' + parcel.count + ')');
-	check('the parcel declares itself v2', parcel.v === 2, 'v=' + parcel.v);
+	check('the parcel declares itself v3', parcel.v === 3, 'v=' + parcel.v);
 
 	// And destroying it from the trash is what lays the tombstone.
 	const purged = await purgeDiamond(ids.B);
@@ -1318,16 +1318,30 @@ try {
 		// did not already hold it" passed for a device that held nothing at all.
 		const holds = () => JSON.stringify(window.DaimondCore.chatStore().stored()).indexOf(mark) !== -1;
 		const before = holds();
-		// Count the pulls, so a focus STORM is proved to coalesce into one.
+		// Count the pulls, so a focus STORM is proved to coalesce into one. Every
+		// pull is a bare `GET /api/sync`; the presence path (`?presence=1`) is a
+		// different door and is not one of these, but two content pulls still are,
+		// so the burst below is FOCUS EVENTS ONLY.
+		//
+		// A `visibilitychange` is deliberately NOT dispatched into the count. Since
+		// devices began listening for dispatched errands (daimond.js
+		// `peerCollectOnReturn`, wired to `visibilitychange`), returning to a visible
+		// tab fires a SECOND, separate content pull — the peer-return recovery pull —
+		// alongside the focus one. That pull is intended and bounded (one per return,
+		// guarded by `_recovering`); it is simply not the focus-coalescing property
+		// this check measures, and counting it here made a green throttle read as two
+		// pulls. The visibility path shares the very same `scheduleFocusPull` throttle
+		// as focus (js/sync.js), so five focus events exercise the coalescing in full:
+		// a broken throttle pulls five times here, which is exactly what must go red.
 		const real = window.fetch;
 		let gets = 0;
 		window.fetch = function (u, o) {
 			const url = String((u && u.url) || u || '');
-			if (url.indexOf('/api/sync') !== -1 && (!o || !o.method || o.method === 'GET')) gets++;
+			if (url.indexOf('/api/sync') !== -1 && url.indexOf('presence') === -1
+				&& (!o || !o.method || o.method === 'GET')) gets++;
 			return real.apply(this, arguments);
 		};
 		for (let i = 0; i < 5; i++) window.dispatchEvent(new Event('focus'));
-		document.dispatchEvent(new Event('visibilitychange'));
 		await new Promise(res => setTimeout(res, 900));
 		const storm = gets;
 		// And a focus arriving straight back is refused by the throttle. STRAIGHT
