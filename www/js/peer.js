@@ -1340,6 +1340,21 @@
 	}
 
 	// ── Public surface ─────────────────────────────────────────
+	/// Does this errand name THIS device as its dispatcher? The sender must NOT ack
+	/// its own un-run errand off the shared relay -- only the peer that actually runs
+	/// it may (post.js `collect`/`takeRow` hold it otherwise). `dispatchedBy` carries
+	/// the dispatcher's peer id, which is `DaimondIdentity.deviceId()` -- the same
+	/// `selfDeviceId` the runner's D1(a) self-dispatch guard compares against.
+	function isOwnDispatch(env) {
+		if (!env || env.t !== T_ERRAND || !env.dispatchedBy) return false;
+		var self = '';
+		try {
+			self = (window.DaimondIdentity && DaimondIdentity.deviceId)
+				? String(DaimondIdentity.deviceId() || '') : '';
+		} catch (e) { self = ''; }
+		return !!self && String(env.dispatchedBy) === self;
+	}
+
 	window.DaimondPeer = {
 		ENVELOPE_V: ENVELOPE_V,
 		T_ERRAND:   T_ERRAND,
@@ -1360,6 +1375,9 @@
 		/// (`peek`), then verify-and-run it (`absorb`). `takeRow` calls these.
 		peek:    peek,
 		absorb:  absorb,
+		/// Whether an errand is THIS device's own dispatch -- so the sender's collect
+		/// leaves it on the relay for the peer rather than acking it away.
+		isOwnDispatch: isOwnDispatch,
 		/// Register the runners the collector hands a verified envelope to. Set by
 		/// daimond.js; absent, `absorb` verifies and drops.
 		onErrand: onErrand,

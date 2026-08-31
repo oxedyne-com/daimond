@@ -1,1 +1,1 @@
-{"build":"811d5c448d1c","note":"peer: instrument hand-off receive path + reconstruct pull-once hardening (diagnostic build)"}
+{"build":"7fc0ab064697","note":"peer: sender holds its own errand until the peer collects it (hand-off fix)"}

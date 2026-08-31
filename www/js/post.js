@@ -1382,6 +1382,16 @@
 			var peer = null;
 			try { peer = await DaimondPeer.peek(row.envelope); } catch (e) { peer = null; }
 			if (peer) {
+				// OUR OWN dispatch: leave it on the relay for the peer to run and ack.
+				// The sender collecting its own post must NOT advance the ack cursor past
+				// it -- acking it here drops it from the shared relay before the peer
+				// collects, which is the awake-sender hand-off failure. HOLD tells
+				// collect() to keep the ack watermark just below this row.
+				if (DaimondPeer.isOwnDispatch && DaimondPeer.isOwnDispatch(peer)) {
+					try { console.log('[peer] own errand left on relay for the peer: turn='
+						+ String(peer.turnId)); } catch (e) {}
+					return HOLD;
+				}
 				try { console.log('[peer] envelope collected: t=' + String(peer.t)
 					+ ' turn=' + String(peer.turnId)); } catch (e) {}
 				try { await DaimondPeer.absorb(peer, row); }
@@ -1467,6 +1477,10 @@
 	var ROSTER     = { got: 0, notes: 1, unreadable: 0 };
 	var UNREADABLE = { got: 0, notes: 0, unreadable: 1 };
 	var NOTHING    = { got: 0, notes: 0, unreadable: 0 };
+	// Our own un-run errand: collected but deliberately LEFT on the relay for the
+	// peer. `hold` tells collect() to keep the ack watermark below this row's seq, so
+	// ackThrough never drops it -- only the peer that runs it may ack it away.
+	var HOLD       = { got: 0, notes: 0, unreadable: 0, hold: true };
 
 	/// Collect everything above what this device has folded, and fold it.
 	///
@@ -1477,6 +1491,7 @@
 		if (!st) return { ok: false, why: 'locked' };
 		var got = 0, notes = 0, unread = 0, more = false;
 
+		var holdSeq = 0;	// our own un-run errand's seq; the ack watermark stays below it
 		for (var round = 0; round < 8; round++) {
 			var r = await call('GET', undefined, '?since=' + st.through);
 			if (r.status !== 200 || !r.json || !r.json.ok) {
@@ -1489,11 +1504,17 @@
 				got    += took.got;
 				notes  += took.notes;
 				unread += took.unreadable;
-				if ((row.seq | 0) > st.through) st.through = row.seq | 0;
+				// Our own errand (takeRow -> HOLD) pins the ack watermark just below it:
+				// every row still folds, but st.through -- what ackThrough acks through --
+				// never passes the errand, so the relay keeps it for the peer to collect.
+				if (took.hold && !holdSeq) holdSeq = row.seq | 0;
+				if ((row.seq | 0) > st.through && (!holdSeq || (row.seq | 0) < holdSeq)) {
+					st.through = row.seq | 0;
+				}
 			}
 			parkAgain();			// a request that was served proves the session is back
 			more = !!r.json.more;
-			if (!more) break;
+			if (!more || holdSeq) break;	// once holding, stop fetching further batches this pass
 		}
 		await save();
 		render();
