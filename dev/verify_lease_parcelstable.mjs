@@ -1,16 +1,18 @@
-// verify_lease_parcelstable.mjs — the LEASE section of the parcel must be a fixed
-// point too, and the renew heartbeat must not make it churn for ever.
+// verify_lease_parcelstable.mjs — the LEASE must NOT ride the content parcel, so a
+// held, renewing lease can never make the parcel churn.
 //
-// verify_parcelstable.mjs measures DaimondCore.collectSync() -- the CORE parcel,
-// which the lease is NOT part of: the lease is hung on the parcel by sync.js's
-// collectParcel (state.leases = DaimondLease.snapshot()). So the lease churn that
-// drove two devices to push at each other every 30s is invisible to that verifier.
-// This one measures DaimondSync.parcel() (collectParcel itself), and shows:
+// This test used to prove the OPPOSITE — that a held lease churned the parcel every
+// renew — because the lease was a parcel section (collectParcel: state.leases =
+// DaimondLease.snapshot()). That churn made a lease CLAIM a whole-parcel
+// compare-and-set, which stormed the gateway with 409s under multi-device hand-off
+// races. The lease now has its OWN lightweight CAS door (DaimondSync.leaseGet /
+// leaseCommit), off the parcel entirely, exactly as presence does. So this verifier
+// is now the regression guard for that move, and shows:
 //
-//   1. A HELD, renewing lease is NOT a fixed point -- two collects around a renew
-//      differ in exactly the lease's renewedAt/expiry. This is the loop.
-//   2. A RELEASED lease (the state runErrand leaves on every clean exit after the
-//      fix) IS a fixed point -- two collects are byte-identical.
+//   1. A HELD, renewing lease does NOT appear in the parcel at all, and the parcel
+//      is byte-identical across a renew -- the churn is gone because the lease left.
+//   2. The lease door exists (DaimondSync.leaseGet / leaseCommit), which is where a
+//      lease now lives.
 //   3. The published cap DaimondLease.MAX_LEASE_LIFE_MS exists and is finite, so a
 //      renew heartbeat can never run for ever (proven behaviourally in peer.test.mjs).
 //
@@ -36,44 +38,32 @@ try {
 
 	const out = await page.evaluate(async () => {
 		const L = window.DaimondLease;
-		// collectParcel is async, so the parcel is a Promise -- await it.
-		const bytes = async () => JSON.stringify(((await DaimondSync.parcel()) || {}).leases || null);
+		// collectParcel is async, so the parcel is a Promise -- await it. Measure the
+		// WHOLE parcel, and separately its (now absent) lease section.
+		const whole   = async () => JSON.stringify((await DaimondSync.parcel()) || {});
+		const leaseOf = async () => JSON.stringify(((await DaimondSync.parcel()) || {}).leases || null);
 		const r = { steps: {} };
 
-		// ── 1. A held, renewing lease churns the parcel ─────────────
+		// ── 1. A held, renewing lease is OFF the parcel and does not churn it ──
 		L.forget();
 		const now = 1_700_000_000_000;
 		// Install a live running lease, as a held turn would.
 		L.install({ 'turn-x': { turnId: 'turn-x', eid: 'e', holder: 'DESK', mode: 'running',
 			expiry: now + L.LEASE_TTL_MS, renewedAt: now } });
-		const beforeRenew = await bytes();
-		// A renew bumps renewedAt/expiry -- exactly what the 30s heartbeat did.
+		const wholeBefore = await whole();
+		r.steps.leaseAbsent = ((await leaseOf()) === 'null');	// the lease is not a parcel section
+		// A renew bumps renewedAt/expiry -- exactly what the 30s heartbeat did. It must
+		// NOT move the parcel, because the lease no longer rides it.
 		L.install({ 'turn-x': { turnId: 'turn-x', eid: 'e', holder: 'DESK', mode: 'running',
 			expiry: now + L.RENEW_EVERY_MS + L.LEASE_TTL_MS, renewedAt: now + L.RENEW_EVERY_MS } });
-		const afterRenew = await bytes();
-		r.steps.heldChurns = (beforeRenew !== afterRenew);
-		r.steps.churnFields = (() => {
-			try {
-				const a = JSON.parse(beforeRenew)['turn-x'], b = JSON.parse(afterRenew)['turn-x'];
-				return Object.keys(a).filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k])).join(',');
-			} catch (e) { return ''; }
-		})();
+		const wholeAfter = await whole();
+		r.steps.parcelStableAcrossRenew = (wholeBefore === wholeAfter);
 
-		// ── 2. A released lease is a fixed point ────────────────────
-		L.forget();
-		L.install({ 'turn-x': { turnId: 'turn-x', eid: 'e', holder: 'DESK', mode: 'released',
-			expiry: 0, renewedAt: now } });
-		const rel1 = await bytes();
-		const rel2 = await bytes();			// nothing renews a released lease
-		r.steps.releasedFixed = (rel1 === rel2);
+		// ── 2. The lease lives on its own door now ──────────────────
+		r.steps.doorExists = (typeof DaimondSync.leaseGet === 'function'
+			&& typeof DaimondSync.leaseCommit === 'function');
 
-		// ── 3. No-lease is a fixed point ────────────────────────────
-		L.forget();
-		const none1 = await bytes();
-		const none2 = await bytes();
-		r.steps.vacantFixed = (none1 === none2 && (none1 === 'null' || none1 === '{}'));
-
-		// ── 4. The heartbeat cap is finite ──────────────────────────
+		// ── 3. The heartbeat cap is finite ──────────────────────────
 		r.steps.capFinite = (typeof L.MAX_LEASE_LIFE_MS === 'number' && isFinite(L.MAX_LEASE_LIFE_MS) && L.MAX_LEASE_LIFE_MS > 0);
 		r.steps.cap = L.MAX_LEASE_LIFE_MS;
 
@@ -81,13 +71,12 @@ try {
 		return r;
 	});
 
-	check(out.steps.heldChurns === true,
-		'LOOP (before): a held, renewing lease is NOT a fixed point (churns every renew)',
-		'changed fields: ' + out.steps.churnFields);
-	check(out.steps.releasedFixed === true,
-		'FIXED (after): a RELEASED lease collects byte-identical twice (fixed point)');
-	check(out.steps.vacantFixed === true,
-		'FIXED: no lease held collects byte-identical twice (fixed point)');
+	check(out.steps.leaseAbsent === true,
+		'OFF THE PARCEL: a held lease is NOT a parcel section (collectParcel has no leases)');
+	check(out.steps.parcelStableAcrossRenew === true,
+		'NO CHURN: the parcel is byte-identical across a lease renew (the storm cause is gone)');
+	check(out.steps.doorExists === true,
+		'the lease lives on its own door now (DaimondSync.leaseGet / leaseCommit)');
 	check(out.steps.capFinite === true,
 		'the renew heartbeat has a FINITE published cap (no forever-renew)', 'MAX_LEASE_LIFE_MS=' + out.steps.cap);
 

@@ -1387,8 +1387,19 @@
 				// it -- acking it here drops it from the shared relay before the peer
 				// collects, which is the awake-sender hand-off failure. HOLD tells
 				// collect() to keep the ack watermark just below this row.
+				//
+				// But VERIFY the account signature before honouring the HOLD. `peer` is
+				// the UNVERIFIED peek object, and `dispatchedBy` rides inside it; a
+				// forgery sealed to this account's public sealing key could set it to
+				// our own device id purely to force a HOLD and stall the ack cursor
+				// (an availability nuisance -- it is never run, the signature stops
+				// that). Only a row that verifies as ours may hold; an unverified
+				// "own dispatch" falls through to absorb, which drops it and lets the
+				// cursor advance.
 				if (DaimondPeer.isOwnDispatch && DaimondPeer.isOwnDispatch(peer)) {
-					return HOLD;
+					var ours = false;
+					try { ours = await DaimondPeer.verifyEnvelope(peer); } catch (e) { ours = false; }
+					if (ours) return HOLD;
 				}
 				try { await DaimondPeer.absorb(peer, row); }
 				catch (e) { log('a peer envelope would not apply', e); }

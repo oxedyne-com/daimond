@@ -79,16 +79,25 @@
 	// minted its own sealing key could not open a sibling's errand even though the
 	// account was one. The symmetric key travels whole in the pairing bundle (the
 	// salt does), so every device of the account opens it and the gateway -- which
-	// never holds it -- opens nothing. `DPY1` tags the scheme apart from a post.js
-	// `DPS1` X25519 envelope; the open path reads a legacy `DPS1` envelope too, so a
-	// hand-off in flight across a rollout is never dropped.
-	var SYM_MAGIC = new Uint8Array([0x44, 0x50, 0x59, 0x31]);	// "DPY1"
+	// never holds it -- opens nothing.
+	//
+	// The current scheme is `DPY2`: AES-GCM under the account key with the purpose
+	// string bound in as additional data, so the ciphertext is cryptographically
+	// domain-separated from every other thing sealed under that one key (the parcel,
+	// the wrapped keys, the voice) and cannot be opened where any of them is
+	// expected -- and the scheme tag is authenticated in the same move. The open
+	// path also reads a legacy `DPY1` (the same key, no AAD, the first-hour form)
+	// and a legacy post.js `DPS1` X25519 envelope, so a hand-off in flight across a
+	// rollout is never dropped.
+	var PEER_AAD    = 'daimond/peer/env/1';						// the envelope's GCM domain
+	var SYM_MAGIC   = new Uint8Array([0x44, 0x50, 0x59, 0x32]);	// "DPY2" -- AAD-bound
+	var SYM_MAGIC_1 = new Uint8Array([0x44, 0x50, 0x59, 0x31]);	// "DPY1" -- legacy, no AAD
 
-	/// Does a sealed body carry the symmetric-scheme tag?
-	function hasSymMagic(bytes) {
-		if (!bytes || bytes.length < SYM_MAGIC.length) return false;
-		for (var i = 0; i < SYM_MAGIC.length; i++) {
-			if (bytes[i] !== SYM_MAGIC[i]) return false;
+	/// Do the first four bytes match this scheme tag?
+	function tagged(bytes, tag) {
+		if (!bytes || bytes.length < tag.length) return false;
+		for (var i = 0; i < tag.length; i++) {
+			if (bytes[i] !== tag[i]) return false;
 		}
 		return true;
 	}
@@ -270,8 +279,10 @@
 		var signed = obj.sig ? obj : await signEnvelope(obj);
 		var plain  = utf8(JSON.stringify(signed));
 		// The tag rides in front of the AES-GCM `IV || ciphertext` so the open path
-		// tells this scheme from a legacy X25519 envelope without a trial decrypt.
-		var sealed = cat([SYM_MAGIC, await window.DaimondIdentity.wrapBytes(plain)]);
+		// tells this scheme from a legacy one without a trial decrypt; the purpose is
+		// bound into the GCM tag as AAD, which both domain-separates the key and
+		// authenticates the tag itself.
+		var sealed = cat([SYM_MAGIC, await window.DaimondIdentity.wrapBytesAad(plain, PEER_AAD)]);
 		// The delivery address is the account's public key in the BASE64URL form the
 		// gateway binds an account to (identity.js:publicKeyB64url). It is NOT the hex
 		// of the raw key: the gateway looks a delivery up by the b64url string, so a
@@ -291,15 +302,22 @@
 	/// way each underlying open does, so the callers' refusal handling is unchanged.
 	/// It DECRYPTS only; `openEnvelope` is where the signature is verified.
 	async function openSealed(bytes) {
-		if (hasSymMagic(bytes)) {
-			if (!window.DaimondIdentity || !window.DaimondIdentity.unwrapBytes) {
+		// The three schemes are mutually exclusive at byte 0-3, so each tag routes
+		// exactly one decrypt and a mis-tagged body fails its own scheme rather than
+		// cross-opening another's. DPY2 (current, AAD-bound) and DPY1 (the first-hour
+		// legacy, same key, no AAD) both open under this account's symmetric key; a
+		// GCM failure is "sealed under a different account key" -- named, not left as
+		// a raw OperationError -- the symmetric analogue of post.js's "not for you".
+		var sym = tagged(bytes, SYM_MAGIC) ? SYM_MAGIC : (tagged(bytes, SYM_MAGIC_1) ? SYM_MAGIC_1 : null);
+		if (sym) {
+			if (!window.DaimondIdentity || !window.DaimondIdentity.unwrapBytesAad) {
 				throw new Error('peer: no identity, so a sealed peer body cannot be opened.');
 			}
-			// A GCM failure here is "sealed under a different account key" -- the
-			// symmetric analogue of post.js's "not for you". Name it, rather than let
-			// a raw WebCrypto OperationError read as an incidental fault.
+			var body = bytes.subarray(sym.length);
 			try {
-				return await window.DaimondIdentity.unwrapBytes(bytes.subarray(SYM_MAGIC.length));
+				return sym === SYM_MAGIC
+					? await window.DaimondIdentity.unwrapBytesAad(body, PEER_AAD)
+					: await window.DaimondIdentity.unwrapBytes(body);	// DPY1 legacy, drop next release
 			} catch (e) {
 				throw new Error('peer: this errand was not sealed to this account, so it is not for this device.');
 			}
@@ -307,7 +325,7 @@
 		if (!window.DaimondPost || !window.DaimondPost.unseal) {
 			throw new Error('peer: the post seal is not loaded, so nothing can be opened.');
 		}
-		return await window.DaimondPost.unseal(bytes);
+		return await window.DaimondPost.unseal(bytes);	// DPS1 legacy X25519
 	}
 
 	/// Open a sealed envelope, VERIFY its signature, and answer the parsed object --
@@ -1203,7 +1221,14 @@
 	/// against a fake sync in the tests.
 	function syncCas(sync) {
 		return {
-			read:  function () { return Promise.resolve({ version: sync.version(), leases: sync.leases() }); },
+			// A sync that offers an async `read` (the real lease door does; a test's
+			// fake sync does not) reads through it; otherwise the synchronous
+			// version()/leases() getters, which is what the tests drive.
+			read:  function () {
+				return sync.read
+					? sync.read()
+					: Promise.resolve({ version: sync.version(), leases: sync.leases() });
+			},
 			write: function (base, leases) { return Promise.resolve(sync.commit(base, leases)); },
 		};
 	}

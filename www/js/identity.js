@@ -1070,6 +1070,35 @@
 		return new Uint8Array(pt);
 	}
 
+	/// As wrapBytes, but BINDS the ciphertext to a purpose string, passed as the
+	/// AES-GCM additional data. The same string is required to open it, so a blob
+	/// sealed for one purpose (a peer envelope, say) cannot be opened where another
+	/// is expected even though every purpose shares this key -- domain separation
+	/// without a second key derivation. `unwrapBytesAad` with the same string is the
+	/// only thing that opens it.
+	async function wrapBytesAad(plainBytes, purpose) {
+		requireUnlocked();
+		var iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+		var ct = new Uint8Array(await crypto.subtle.encrypt(
+			{ name: 'AES-GCM', iv: iv, additionalData: utf8(String(purpose)) }, _wrapKey, plainBytes));
+		var out = new Uint8Array(iv.length + ct.length);
+		out.set(iv, 0);
+		out.set(ct, iv.length);
+		return out;
+	}
+
+	/// Decrypt what wrapBytesAad sealed under the SAME purpose string. Throws (the
+	/// GCM tag) on a wrong key, a tampered ciphertext, OR a purpose that does not
+	/// match -- which is how the domain separation is enforced.
+	async function unwrapBytesAad(bytes, purpose) {
+		requireUnlocked();
+		var buf = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
+		var pt = await crypto.subtle.decrypt(
+			{ name: 'AES-GCM', iv: buf.slice(0, IV_BYTES), additionalData: utf8(String(purpose)) },
+			_wrapKey, buf.slice(IV_BYTES));
+		return new Uint8Array(pt);
+	}
+
 	// ── The identity card ──────────────────────────────────────
 	//
 	// What a QR code carries and what a paste carries. A bare public key is not
@@ -1298,6 +1327,8 @@
 		// The byte-shaped seal, for the file pipeline.
 		wrapBytes:    wrapBytes,
 		unwrapBytes:  unwrapBytes,
+		wrapBytesAad:   wrapBytesAad,
+		unwrapBytesAad: unwrapBytesAad,
 		reset:        reset,
 		exportBundle: exportBundle,
 		importBundle: importBundle,

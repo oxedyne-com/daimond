@@ -765,14 +765,13 @@
 		var state = await DaimondCore.collectSync();
 		try { if (window.DaimondPause) state.pause = DaimondPause.snapshot(); }
 		catch (e) { log('pause snapshot failed', e); }
-		// THE PERSISTENT DESKTOP PEER'S LEASE (dev/PEER_DESIGN.md §2). Which device
-		// is running a given turn is a fact about the ACCOUNT, carried in the parcel
-		// so two devices cannot both bill one turn. Attached beside the pause tree,
-		// and merged on the way in by its OWN take-if-vacant rule (see adopt below),
-		// NOT the append-only union the rest of the parcel uses -- a lease is a
-		// mutable claim, and freshest-scalar would be the double claim.
-		try { if (window.DaimondLease) state.leases = DaimondLease.snapshot(); }
-		catch (e) { log('lease snapshot failed', e); }
+		// THE LEASE IS NOT IN THE PARCEL any more. Which device runs a turn is a fact
+		// about the account, but riding it in the parcel made a lease CLAIM a
+		// whole-parcel compare-and-set that stormed under multi-device churn (see the
+		// lease door in this file). It now travels on its own lightweight CAS door
+		// (leaseGet / leaseCommit) and is adopted through adoptLeaseDoor -- on every
+		// ordinary pull (where `j.lease` is read) -- off the parcel entirely, exactly
+		// as presence was moved below.
 		// PRESENCE IS NOT IN THE PARCEL. Which devices are awake used to ride here as
 		// a freshest-scalar section, but its moving lastSeen made the parcel a moving
 		// target -- never a fixed point -- and re-uploaded the whole ~163K parcel
@@ -870,15 +869,10 @@
 			try { DaimondPause.adopt(state && state.pause); }
 			catch (e) { log('pause adopt failed', e); failed.push('pause'); }
 		}
-		// THE LEASE, merged by its OWN take-if-vacant rule (DaimondLease.adopt),
-		// NOT the freshest-scalar/union the core parcel uses. This is the ONE
-		// non-append-only section, and routing it here -- beside the pause tree,
-		// through a named section merge -- is what keeps it off the generic scalar
-		// path where last-write-by-clock would be a double claim (§2.3, §3.2).
-		if (window.DaimondLease) {
-			try { DaimondLease.adopt(state && state.leases); }
-			catch (e) { log('lease adopt failed', e); failed.push('leases'); }
-		}
+		// The lease is NOT adopted here any more: it left the parcel (see
+		// collectParcel) and is adopted from its own gateway door through
+		// adoptLeaseDoor -- on every ordinary pull, where `j.lease` is read -- by the
+		// same take-if-vacant merge (DaimondLease.adopt), off the parcel entirely.
 		// Presence is NOT adopted here any more: it left the parcel (see
 		// collectParcel) and is ingested from the gateway's own presence path
 		// through DaimondPresence.ingest -- on every ordinary pull (see pullOnce,
@@ -997,6 +991,10 @@
 		try {
 			if (window.DaimondPresence && j && j.presence) DaimondPresence.ingest(j.presence, j.now);
 		} catch (e) { log('presence ingest failed', e); }
+		// The lease, folded into the same pull off its own door (like presence), so a
+		// device that only watches a hand-off it dispatched still advances its footer.
+		try { if (j && j.lease) await adoptLeaseDoor(j.lease); }
+		catch (e) { log('lease door adopt failed', e); }
 		// An empty mailbox is an answer: this device has heard, and there was
 		// nothing to hear. See `pulledOk`.
 		if (!j.present) { adoptVersion(0, preRead); pulledOk = true; restStatus(); return serverVersion; }
@@ -1278,6 +1276,104 @@
 			}
 			return res.json || null;
 		} catch (e) { log('presence refresh failed', e); return null; }
+	}
+
+	// ── The lease door ─────────────────────────────────────────
+	// WHICH DEVICE IS RUNNING A TURN used to ride the content parcel as a section,
+	// so a lease CLAIM was a whole-parcel compare-and-set: under three busy devices
+	// the parcel version churned faster than a claim could land, and the loser of a
+	// hand-off race stormed the gateway with 409s (up to the take loop times the
+	// push loop) before it stood down. The lease now has its own lightweight CAS
+	// door on the gateway (`?lease=1`), exactly as presence took its own door: a
+	// claim is a ~100-byte compare-and-set that does not touch the parcel and does
+	// not contend with content churn. The arbitration is unchanged -- it still lives
+	// in DaimondLease's take-if-vacant merge and the merge-trust re-read, so exactly
+	// one runner still wins a turn; only the CAS substrate moved off the parcel.
+	//
+	// The blob is the lease map, AES-GCM-sealed under the account key with the lease
+	// purpose bound in (so the gateway holds an opaque record and a lease blob is
+	// cryptographically distinct from a parcel or an envelope). A tiny marker inside
+	// guards against ever reading some other blob as a lease.
+	var LEASE_AAD  = 'daimond/peer/lease/1';
+	var LEASE_MARK = 'dlease1';
+	var _leaseVer  = 0;			// the door's version this device last saw.
+
+	// Base64 of raw bytes and back -- the door blob is bytes, unlike the parcel
+	// which travels as a string through DaimondIdentity.wrap.
+	function b64FromBytes(bytes) {
+		var b = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
+		var s = '';
+		for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+		return btoa(s);
+	}
+	function bytesFromB64(s) {
+		var raw = atob(String(s));
+		var out = new Uint8Array(raw.length);
+		for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+		return out;
+	}
+
+	/// Seal a lease map for the door, or '' when there is nothing (or no key) to
+	/// send -- an empty blob is a vacant door, which the gateway stores verbatim.
+	async function leaseSeal(map) {
+		if (!map || !Object.keys(map).length) return '';
+		if (!window.DaimondIdentity || !DaimondIdentity.wrapBytesAad
+			|| (DaimondIdentity.isUnlocked && !DaimondIdentity.isUnlocked())) return '';
+		var plain = new TextEncoder().encode(JSON.stringify({ k: LEASE_MARK, v: map }));
+		return b64FromBytes(await DaimondIdentity.wrapBytesAad(plain, LEASE_AAD));
+	}
+
+	/// Open a door blob back to a lease map, or null when it is empty, unopenable,
+	/// or not a lease record (the marker did not match).
+	async function leaseUnseal(b64) {
+		if (!b64) return null;
+		if (!window.DaimondIdentity || !DaimondIdentity.unwrapBytesAad
+			|| (DaimondIdentity.isUnlocked && !DaimondIdentity.isUnlocked())) return null;
+		try {
+			var pt  = await DaimondIdentity.unwrapBytesAad(bytesFromB64(b64), LEASE_AAD);
+			var obj = JSON.parse(new TextDecoder().decode(pt));
+			return (obj && obj.k === LEASE_MARK && obj.v) ? obj.v : null;
+		} catch (e) { return null; }
+	}
+
+	/// Read the lease door: its version and the decrypted lease map. Empty map on a
+	/// vacant or unopenable door. Caches the version so a later fallback getter and
+	/// the claim path agree on the base.
+	async function leaseGet() {
+		var res = await call('GET', undefined, '?lease=1');
+		var j   = res && res.json;
+		var ver = (j && j.version) | 0;
+		_leaseVer = ver;
+		var leases = (j && j.blob) ? (await leaseUnseal(j.blob)) : null;
+		return { version: ver, leases: leases || {} };
+	}
+
+	/// Compare-and-set the lease door: seal `proposed`, push it against `base`.
+	/// Answers the shape DaimondLease's CAS expects -- `{ ok, version, leases }` --
+	/// so a 409 hands back the door's current version and map for the retry.
+	async function leaseCommit(base, proposed) {
+		var blob = await leaseSeal(proposed);
+		var res  = await call('POST', { base_version: base | 0, blob: blob, w: WAKE_ID }, '?lease=1');
+		var j    = res && res.json;
+		if (res && res.status === 200 && j && j.ok) {
+			_leaseVer = (j.version) | 0;
+			return { ok: true, version: _leaseVer };
+		}
+		// 409 (or any refusal): report the door's current state for the re-read.
+		var ver = (j && j.version) | 0;
+		_leaseVer = ver;
+		return { ok: false, version: ver, leases: (j && j.blob) ? (await leaseUnseal(j.blob)) || {} : {} };
+	}
+
+	/// Adopt the lease map folded into an ordinary pull (like presence), so a device
+	/// that dispatched -- and is only WATCHING, never claiming -- still sees the peer
+	/// take and run the turn and advances its footer (D4). `j.lease` is the door's
+	/// {version, blob}; a moved merge fires DaimondLease.onChange for the redraw.
+	async function adoptLeaseDoor(lease) {
+		if (!lease || !window.DaimondLease) return;
+		_leaseVer = (lease.version) | 0;
+		var map = lease.blob ? (await leaseUnseal(lease.blob)) : null;
+		try { DaimondLease.adopt(map || {}); } catch (e) { log('lease adopt failed', e); }
 	}
 
 	// ── Wake channel ───────────────────────────────────────────
@@ -1943,6 +2039,13 @@
 		/// beat, for a dispatch-time refresh. Both ingest through DaimondPresence.
 		beatPresence:    beatPresence,
 		refreshPresence: refreshPresence,
+		/// The lease door, off the content parcel: `leaseGet()` reads the door's
+		/// {version, leases}; `leaseCommit(base, proposed)` compare-and-sets it. The
+		/// peer lease CAS (daimond.js peerSyncShim) binds to these, and `leaseVersion`
+		/// is the last version seen, for the CAS's synchronous fallback getter.
+		leaseGet:     leaseGet,
+		leaseCommit:  leaseCommit,
+		leaseVersion: function () { return _leaseVer | 0; },
 		/// Exactly what a push would send, and exactly what a pull would merge.
 		///
 		/// A verifier comparing `DaimondCore.collectSync()` is comparing the core

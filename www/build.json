@@ -1,1 +1,1 @@
-{"build":"6ecfc62edd8a","note":"Peer hand-off errands now seal with the account's shared key, so any paired device runs one without re-pairing."}
+{"build":"1d8294916ff8","note":"Move the peer lease onto its own CAS door so a hand-off claim no longer storms the gateway; harden envelope sealing."}

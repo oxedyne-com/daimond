@@ -12098,25 +12098,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// verification because the node harness cannot exercise them: the reconstruct's
 	// pull-to-parcelVersion and by-hash chunk fetch, and the renew timer.
 
-	/// The sync-like object the lease CAS binds to (DaimondPeer.syncCas). `commit`
-	/// installs the proposed leases section and pushes it under the parcel's CAS; the
-	/// 409 path is DaimondSync's own pull + DaimondLease.adopt.
+	/// The sync-like object the lease CAS binds to (DaimondPeer.syncCas). It reads
+	/// and compare-and-sets the lease's OWN gateway door (DaimondSync.leaseGet /
+	/// leaseCommit), NOT the content parcel: a claim no longer rides a whole-parcel
+	/// push, so it does not contend with content churn and cannot 409-storm. The
+	/// arbitration is unchanged -- DaimondLease's take-if-vacant merge and the
+	/// merge-trust re-read decide the winner; this only moves the CAS substrate.
 	function peerSyncShim() {
 		return {
-			version: function () { try { return DaimondSync.version() | 0; } catch (e) { return 0; } },
-			leases:  function () { try { return DaimondLease.snapshot() || {}; } catch (e) { return {}; } },
-			commit:  async function (base, proposed) {
-				var cur = 0;
-				try { cur = DaimondSync.version() | 0; } catch (e) { cur = 0; }
-				if (cur !== base) return { ok: false, version: cur, leases: DaimondLease.snapshot() || {} };
-				DaimondLease.install(proposed);				// stage it for the push
-				try { await DaimondSync.push(); }
-				catch (e) { return { ok: false, version: cur, leases: DaimondLease.snapshot() || {} }; }
-				var after = cur;
-				try { after = DaimondSync.version() | 0; } catch (e) { after = cur; }
-				if (after > cur) return { ok: true, version: after };
-				return { ok: false, version: after, leases: DaimondLease.snapshot() || {} };
+			read:    async function () {
+				try { return await DaimondSync.leaseGet(); }
+				catch (e) { return { version: 0, leases: {} }; }
 			},
+			commit:  async function (base, proposed) {
+				try { return await DaimondSync.leaseCommit(base, proposed); }
+				catch (e) { return { ok: false, version: base | 0, leases: {} }; }
+			},
+			// Kept for the CAS's synchronous fallback and any direct caller.
+			version: function () { try { return DaimondSync.leaseVersion() | 0; } catch (e) { return 0; } },
+			leases:  function () { try { return DaimondLease.snapshot() || {}; } catch (e) { return {}; } },
 		};
 	}
 
