@@ -333,7 +333,7 @@ async function main() {
 	catch (e) { strangerOpened = false; strangerWhy = String(e && e.message || e); }
 	check('a DIFFERENT account CANNOT open the sealed errand', strangerOpened === false);
 	check('the refusal is the crypto "not for you", not an incidental error',
-		/not sealed to any key/i.test(strangerWhy));
+		/not sealed/i.test(strangerWhy));
 
 	// ── The laptop collects, claims-nothing (step 1), runs, pushes ─
 	console.log('\nPeer — laptop collects, runs the turn, folds and pushes');

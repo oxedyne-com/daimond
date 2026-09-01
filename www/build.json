@@ -1,1 +1,1 @@
-{"build":"84bdd50634b5","note":"sync: back off between conflict retries so multi-device pushes converge"}
+{"build":"6ecfc62edd8a","note":"Peer hand-off errands now seal with the account's shared key, so any paired device runs one without re-pairing."}

@@ -72,6 +72,36 @@
 		return out;
 	}
 
+	// The peer envelope is sealed with the account's SHARED symmetric key (the
+	// passphrase+salt one every paired device derives), NOT the per-device X25519
+	// sealing key. The old per-device seal was the "same account, different sealing
+	// key -> silent drop" bug that needed a manual re-pair: a device that lazily
+	// minted its own sealing key could not open a sibling's errand even though the
+	// account was one. The symmetric key travels whole in the pairing bundle (the
+	// salt does), so every device of the account opens it and the gateway -- which
+	// never holds it -- opens nothing. `DPY1` tags the scheme apart from a post.js
+	// `DPS1` X25519 envelope; the open path reads a legacy `DPS1` envelope too, so a
+	// hand-off in flight across a rollout is never dropped.
+	var SYM_MAGIC = new Uint8Array([0x44, 0x50, 0x59, 0x31]);	// "DPY1"
+
+	/// Does a sealed body carry the symmetric-scheme tag?
+	function hasSymMagic(bytes) {
+		if (!bytes || bytes.length < SYM_MAGIC.length) return false;
+		for (var i = 0; i < SYM_MAGIC.length; i++) {
+			if (bytes[i] !== SYM_MAGIC[i]) return false;
+		}
+		return true;
+	}
+
+	/// Concatenate byte arrays into one Uint8Array.
+	function cat(parts) {
+		var n = 0, i;
+		for (i = 0; i < parts.length; i++) n += parts[i].length;
+		var out = new Uint8Array(n), off = 0;
+		for (i = 0; i < parts.length; i++) { out.set(parts[i], off); off += parts[i].length; }
+		return out;
+	}
+
 	function hex(bytes) {
 		var b = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
 		var s = '';
@@ -215,32 +245,33 @@
 
 	// ── Seal, and the open only the account can do ─────────────
 
-	/// Seal one envelope object to the account's OWN sealing key and answer the
+	/// Seal one envelope object to the account's SHARED symmetric key and answer the
 	/// post body `{ to, addr, envelope }` -- the identical shape `send` posts
 	/// (post.js:1127). `to` is the account's own public address; `addr` is the
 	/// sealed artefact's address; `envelope` is the base64 sealed bytes.
 	///
-	/// The self-seal is the whole of why only the account can open it: the one
-	/// recipient key is this account's, and every device of the account holds it
-	/// (the bundle travels whole, identity.js `exportBundle`), so a peer of the
-	/// SAME account opens it and nothing else on earth does.
+	/// Every device of the account derives the SAME symmetric key from the passphrase
+	/// and the account salt (the salt travels whole in the pairing bundle, identity.js
+	/// `exportBundle`), so a peer of the SAME account opens it and the gateway -- which
+	/// never holds the key -- opens nothing. This is deliberately NOT the per-device
+	/// X25519 sealing key: two siblings of one account can hold different sealing keys
+	/// (one was minted lazily after the other paired), and the old per-device seal then
+	/// dropped the errand silently, which is why a re-pair was needed to hand off.
 	async function sealForSelf(obj) {
-		if (!window.DaimondPost || !window.DaimondPost.seal) {
-			throw new Error('peer: the post seal is not loaded, so nothing can be dispatched.');
+		if (!window.DaimondIdentity || !window.DaimondIdentity.wrapBytes) {
+			throw new Error('peer: no identity, so there is no key to seal with.');
 		}
-		if (!window.DaimondIdentity || !window.DaimondIdentity.sealingKeyRaw) {
-			throw new Error('peer: no identity, so there is no key to seal to.');
-		}
-		var mine = window.DaimondIdentity.sealingKeyRaw();
-		if (!mine || mine.length !== 32) {
-			throw new Error('peer: this device has no sealing key; unlock Daimond once to make one.');
+		if (window.DaimondIdentity.isUnlocked && !window.DaimondIdentity.isUnlocked()) {
+			throw new Error('peer: Daimond is locked, so nothing can be sealed for a peer.');
 		}
 		// Signed BEFORE sealing, so the signature is inside the seal and the gateway
 		// -- which cannot open the seal -- never sees author or sig. An envelope
 		// already carrying a `sig` (a re-seal) is not signed twice.
 		var signed = obj.sig ? obj : await signEnvelope(obj);
 		var plain  = utf8(JSON.stringify(signed));
-		var sealed = await window.DaimondPost.seal([mine], plain);	// the self-slot, and only it
+		// The tag rides in front of the AES-GCM `IV || ciphertext` so the open path
+		// tells this scheme from a legacy X25519 envelope without a trial decrypt.
+		var sealed = cat([SYM_MAGIC, await window.DaimondIdentity.wrapBytes(plain)]);
 		// The delivery address is the account's public key in the BASE64URL form the
 		// gateway binds an account to (identity.js:publicKeyB64url). It is NOT the hex
 		// of the raw key: the gateway looks a delivery up by the b64url string, so a
@@ -254,11 +285,36 @@
 		};
 	}
 
-	/// Open a sealed envelope with this device's key, VERIFY its signature, and
-	/// answer the parsed object -- or THROW. Two refusals, both about authorship:
+	/// Open a sealed peer body to its plaintext bytes, whichever scheme sealed it:
+	/// the current symmetric account key (`DPY1`), or a legacy per-device X25519
+	/// envelope (`DPS1`, post.js) still in flight across a rollout. Throws the same
+	/// way each underlying open does, so the callers' refusal handling is unchanged.
+	/// It DECRYPTS only; `openEnvelope` is where the signature is verified.
+	async function openSealed(bytes) {
+		if (hasSymMagic(bytes)) {
+			if (!window.DaimondIdentity || !window.DaimondIdentity.unwrapBytes) {
+				throw new Error('peer: no identity, so a sealed peer body cannot be opened.');
+			}
+			// A GCM failure here is "sealed under a different account key" -- the
+			// symmetric analogue of post.js's "not for you". Name it, rather than let
+			// a raw WebCrypto OperationError read as an incidental fault.
+			try {
+				return await window.DaimondIdentity.unwrapBytes(bytes.subarray(SYM_MAGIC.length));
+			} catch (e) {
+				throw new Error('peer: this errand was not sealed to this account, so it is not for this device.');
+			}
+		}
+		if (!window.DaimondPost || !window.DaimondPost.unseal) {
+			throw new Error('peer: the post seal is not loaded, so nothing can be opened.');
+		}
+		return await window.DaimondPost.unseal(bytes);
+	}
+
+	/// Open a sealed envelope, VERIFY its signature, and answer the parsed object --
+	/// or THROW. Two refusals, both about authorship:
 	///
-	///  - `DaimondPost.unseal` refuses an envelope not sealed to this account
-	///    (post.js:388-391) -- the same-account-can-OPEN property;
+	///  - `openSealed` refuses an envelope not sealed under this account's key -- the
+	///    same-account-can-OPEN property;
 	///  - `verifyEnvelope` refuses one this account did not SIGN -- the
 	///    same-account-WROTE-it property, which is what stops a correspondent who
 	///    knows our public sealing key from forging an errand into the box.
@@ -266,10 +322,7 @@
 	/// A caller that wants the object without acting on it -- to inspect a rejected
 	/// forgery -- catches the throw; the collector uses `peek`/`absorb` instead.
 	async function openEnvelope(b64) {
-		if (!window.DaimondPost || !window.DaimondPost.unseal) {
-			throw new Error('peer: the post seal is not loaded, so nothing can be opened.');
-		}
-		var plain = await window.DaimondPost.unseal(b64dec(b64));
+		var plain = await openSealed(b64dec(b64));
 		var obj;
 		try { obj = JSON.parse(fromUtf8(plain)); }
 		catch (e) { throw new Error('peer: an opened envelope was not an errand or report.'); }
@@ -290,9 +343,8 @@
 	/// message path unchanged. Verification is deferred to `absorb`, so the peek
 	/// stays a classify and nothing more.
 	async function peek(b64) {
-		if (!window.DaimondPost || !window.DaimondPost.unseal) return null;
 		var obj;
-		try { obj = JSON.parse(fromUtf8(await window.DaimondPost.unseal(b64dec(b64)))); }
+		try { obj = JSON.parse(fromUtf8(await openSealed(b64dec(b64)))); }
 		catch (e) { return null; }
 		if (obj && (obj.t === T_ERRAND || obj.t === T_REPORT)) return obj;
 		return null;
