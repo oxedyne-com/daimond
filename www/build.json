@@ -1,1 +1,1 @@
-{"build":"ed2b2c132469","note":"Bump the API floor to v2 so old tabs auto-reload onto the lease-door build, closing the double-charge window."}
+{"build":"b16a6e668799","note":"Route the client API version through one source so the v2 floor bump does not break pairing, reporting or the console."}

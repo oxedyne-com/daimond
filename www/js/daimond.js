@@ -11063,7 +11063,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// effect the first attempt never had.
 				DaimondGateway.gwFetch('/api/admin?view=whoami', {
 					credentials: 'same-origin',
-					headers: { 'x-daimond-api': '1' },
+					headers: { 'x-daimond-api': String(DaimondGateway.clientApi()) },
 				}).then(function (r) {
 					// A 401 or 403 is the gateway declining to say, not a No.
 					if (!r.ok) throw new Error('HTTP ' + r.status);

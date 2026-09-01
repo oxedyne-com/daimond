@@ -162,7 +162,7 @@
 		if (_reasons) return _reasons;
 		var r = await fetch(API, {
 			credentials: 'same-origin',
-			headers: { 'x-daimond-api': '1' },
+			headers: { 'x-daimond-api': String(DaimondGateway.clientApi()) },
 		});
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
@@ -181,7 +181,7 @@
 		var r = await fetch(API, {
 			method: 'POST',
 			credentials: 'same-origin',
-			headers: { 'Content-Type': 'application/json', 'x-daimond-api': '1' },
+			headers: { 'Content-Type': 'application/json', 'x-daimond-api': String(DaimondGateway.clientApi()) },
 			body: JSON.stringify({
 				artefact: parts.art,
 				envelope: parts.env,

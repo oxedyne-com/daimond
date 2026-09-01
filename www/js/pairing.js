@@ -51,7 +51,9 @@
 (function () {
 	'use strict';
 
-	var CLIENT_API = 1;
+	// The API version rides on DaimondGateway.clientApi() -- the ONE copy -- never a
+	// local constant: a private `var CLIENT_API = 1` here silently missed the v2
+	// floor bump and 426'd every pair/redeem, which is how device linking broke.
 
 	/// Where a name typed on THIS device while linking it waits for the device
 	/// roster to exist.
@@ -433,7 +435,7 @@
 		}
 		var r = await DaimondGateway.gwFetch('/api/pair', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': String(DaimondGateway.clientApi()) },
 			body: JSON.stringify({ bundle: parked }),
 		});
 		var j = null; try { j = await r.json(); } catch (e) {}
@@ -466,7 +468,7 @@
 		if (!code) throw new Error(t('pair.err_enter_code'));
 		var r = await fetch('/api/pair/redeem', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': String(DaimondGateway.clientApi()) },
 			body: JSON.stringify({ code: code }),
 		});
 		var j = null; try { j = await r.json(); } catch (e) {}
