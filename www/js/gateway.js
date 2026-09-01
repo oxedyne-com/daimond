@@ -93,7 +93,7 @@
 	/// number and must not carry its own copy: two constants that have to match
 	/// are two constants that will eventually not. `models.js` mints inference
 	/// keys against `/api/inference-key` and reads it from here.
-	var CLIENT_API = 1;
+	var CLIENT_API = 2;		// v2: the lease moved to its own door; v1 tabs are evicted.
 
 	/// Every gateway reply advertises the gateway's version and the oldest client
 	/// it will serve. If this tab is below that floor -- or a call was refused

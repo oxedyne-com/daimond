@@ -85,10 +85,12 @@
 	// string bound in as additional data, so the ciphertext is cryptographically
 	// domain-separated from every other thing sealed under that one key (the parcel,
 	// the wrapped keys, the voice) and cannot be opened where any of them is
-	// expected -- and the scheme tag is authenticated in the same move. The open
-	// path also reads a legacy `DPY1` (the same key, no AAD, the first-hour form)
-	// and a legacy post.js `DPS1` X25519 envelope, so a hand-off in flight across a
-	// rollout is never dropped.
+	// expected. The AAD authenticates the PURPOSE, not the literal tag bytes -- the
+	// tag only routes the decrypt -- but that is enough: a body sealed for one
+	// purpose fails GCM under another's AAD, so a mis-routed or flipped tag fails to
+	// open rather than opening something. The open path also reads a legacy `DPY1`
+	// (the same key, no AAD, the first-hour form) and a legacy post.js `DPS1` X25519
+	// envelope, so a hand-off in flight across a rollout is never dropped.
 	var PEER_AAD    = 'daimond/peer/env/1';						// the envelope's GCM domain
 	var SYM_MAGIC   = new Uint8Array([0x44, 0x50, 0x59, 0x32]);	// "DPY2" -- AAD-bound
 	var SYM_MAGIC_1 = new Uint8Array([0x44, 0x50, 0x59, 0x31]);	// "DPY1" -- legacy, no AAD
@@ -279,9 +281,9 @@
 		var signed = obj.sig ? obj : await signEnvelope(obj);
 		var plain  = utf8(JSON.stringify(signed));
 		// The tag rides in front of the AES-GCM `IV || ciphertext` so the open path
-		// tells this scheme from a legacy one without a trial decrypt; the purpose is
-		// bound into the GCM tag as AAD, which both domain-separates the key and
-		// authenticates the tag itself.
+		// tells this scheme from a legacy one without a trial decrypt; the purpose
+		// (not the tag bytes) is bound in as AAD, which domain-separates this key's
+		// uses -- a body for another purpose fails to open here, and vice versa.
 		var sealed = cat([SYM_MAGIC, await window.DaimondIdentity.wrapBytesAad(plain, PEER_AAD)]);
 		// The delivery address is the account's public key in the BASE64URL form the
 		// gateway binds an account to (identity.js:publicKeyB64url). It is NOT the hex

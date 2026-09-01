@@ -459,6 +459,40 @@ async function main() {
 	check('the collector ABSORB drops the forgery (verified:false, routed:false)',
 		absorbed.verified === false && absorbed.routed === false);
 
+	// ── AAD domain separation, and the DPY1 legacy read path ────
+	console.log('\nSeal — the purpose (AAD) domain-separates the account key, and a legacy DPY1 still opens');
+	const withMagic = (tag, body) => { const o = new Uint8Array(tag.length + body.length); o.set(tag, 0); o.set(body, tag.length); return o; };
+	const DPY1 = new Uint8Array([0x44, 0x50, 0x59, 0x31]);
+	const DPY2 = new Uint8Array([0x44, 0x50, 0x59, 0x32]);
+
+	// A body sealed under one purpose opens only under that same purpose.
+	const aad1 = await phone.DaimondIdentity.wrapBytesAad(encU8('coordination'), 'daimond/test/one');
+	const round = await phone.DaimondIdentity.unwrapBytesAad(aad1, 'daimond/test/one');
+	check('wrapBytesAad round-trips under the SAME purpose', new TextDecoder().decode(round) === 'coordination');
+	let crossAad = false, noAad = false;
+	try { await phone.DaimondIdentity.unwrapBytesAad(aad1, 'daimond/test/two'); } catch (e) { crossAad = true; }
+	try { await phone.DaimondIdentity.unwrapBytes(aad1); } catch (e) { noAad = true; }
+	check('a DIFFERENT purpose CANNOT open it (crypto-layer domain separation)', crossAad === true);
+	check('a no-AAD open of an AAD body also fails (parcel/voice vs peer separation)', noAad === true);
+
+	// A DPY2 envelope sealed under the WRONG purpose is refused by the peer open path.
+	const legacyErr    = await phone.DaimondPeer.signEnvelope(phone.DaimondPeer.makeErrand({ turnId: 'legacy-1', chatId: 'c', prompt: 'hi' }));
+	const legacyPlain  = encU8(JSON.stringify(legacyErr));
+	const dpy2WrongAad = withMagic(DPY2, await phone.DaimondIdentity.wrapBytesAad(legacyPlain, 'not/the/peer/purpose'));
+	let dpy2WrongFailed = false;
+	try { await phone.DaimondPeer.openEnvelope(b64Bytes(dpy2WrongAad)); } catch (e) { dpy2WrongFailed = true; }
+	check('a DPY2 body under the WRONG purpose is refused by openEnvelope', dpy2WrongFailed === true);
+
+	// A legacy DPY1 envelope (same key, NO AAD) still opens and verifies — the rollout read path.
+	const dpy1Env    = withMagic(DPY1, await phone.DaimondIdentity.wrapBytes(legacyPlain));
+	const dpy1Opened = await phone.DaimondPeer.openEnvelope(b64Bytes(dpy1Env));
+	check('a legacy DPY1 envelope (no AAD) still opens and verifies (rollout read path)',
+		!!dpy1Opened && dpy1Opened.turnId === 'legacy-1');
+	// And a paired sibling opens the same DPY1, since the key is the account's.
+	const dpy1Sibling = await laptop.DaimondPeer.openEnvelope(b64Bytes(dpy1Env));
+	check('a paired sibling opens the legacy DPY1 too (shared account key)',
+		!!dpy1Sibling && dpy1Sibling.turnId === 'legacy-1');
+
 	// ── The raw poster builds the correct body ─────────────────
 	console.log('\nPoster — DaimondPost.post(body) builds {to,addr,envelope} with the own address');
 	let lastPostBody = null;

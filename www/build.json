@@ -1,1 +1,1 @@
-{"build":"1d8294916ff8","note":"Move the peer lease onto its own CAS door so a hand-off claim no longer storms the gateway; harden envelope sealing."}
+{"build":"ed2b2c132469","note":"Bump the API floor to v2 so old tabs auto-reload onto the lease-door build, closing the double-charge window."}
