@@ -729,6 +729,14 @@ async function main() {
 	// ══════════════════════════════════════════════════════════
 	await runRecoveryAcceptance(phone.DaimondPeer, phone.DaimondLease, check);
 
+	// ══════════════════════════════════════════════════════════
+	// THE NOMINATED RUNNER — a claim guard that defers to one device
+	// when it is FRESHLY awake, without ever stranding a turn: an
+	// offline or stale nominee is no barrier, and the stand-down is
+	// re-decided against live presence rather than being permanent.
+	// ══════════════════════════════════════════════════════════
+	await runNominationAcceptance(phone.DaimondPeer, phone.DaimondLease, check);
+
 	console.log(failures === 0 ? '\nALL PASS' : ('\n' + failures + ' FAILURE(S)'));
 	if (failures) process.exitCode = 1;
 }
@@ -883,6 +891,138 @@ async function runRecoveryAcceptance(P, L, check) {
 		});
 		check('automatic path refuses this device\'s OWN errand (D1a intact)',
 			res.ran === false && res.why === 'self-dispatched' && ran === 0);
+	}
+}
+
+// The NOMINATED runner. The account may name ONE always-on device; a non-nominee
+// stands down for it, but ONLY while it is genuinely, freshly awake -- an offline
+// or stale nominee is no barrier, and the stand-down is re-decided against live
+// presence so a turn is never stranded. The lease is still the single-runner
+// arbiter, so the nomination only moves WHO attempts the claim.
+async function runNominationAcceptance(P, L, check) {
+	const NOW     = 1700000000000;
+	const W       = P.DISPATCH_FRESH_MS;			// the freshness the guard reuses
+	const NOMINEE = 'aaaa0000bbbb1111';			// 16-hex, the roster's id shape
+	const OTHER   = 'cccc2222dddd3333';
+	const freshNom = { [NOMINEE]: { name: 'desktop', lastSeen: NOW - 1000 } };
+	const staleNom = { [NOMINEE]: { name: 'desktop', lastSeen: NOW - (W + 60000) } };
+
+	console.log('\nNomination — the always-on-runner claim guard');
+
+	// ── The pure decision, the crux of the guard. ──
+	check('(a) the NOMINEE never stands down for its own nomination -> it claims',
+		P.nominationStandDown(NOMINEE, NOMINEE, freshNom, NOW, W) === false);
+	check('(b) a non-nominee STANDS DOWN for a freshly-awake nominee',
+		P.nominationStandDown(NOMINEE, OTHER, freshNom, NOW, W) === true);
+	check('(c) a non-nominee CLAIMS when the nominee is offline (absent from presence)',
+		P.nominationStandDown(NOMINEE, OTHER, {}, NOW, W) === false);
+	check('(d) NO nomination -> first-come unchanged (never stands down)',
+		P.nominationStandDown('', OTHER, freshNom, NOW, W) === false);
+	// (e) STALE-PRESENCE stall defence: a lagging map showing a slept nominee as
+	// awake must NOT make a fallback stand down for a device that is gone.
+	check('(e) a non-nominee does NOT stand down for a STALE nominee',
+		P.nominationStandDown(NOMINEE, OTHER, staleNom, NOW, W) === false);
+	check('(e) freshness edge: at the window stands down, one ms past claims',
+		P.nominationStandDown(NOMINEE, OTHER, { [NOMINEE]: { name: 'd', lastSeen: NOW - W } }, NOW, W) === true
+		&& P.nominationStandDown(NOMINEE, OTHER, { [NOMINEE]: { name: 'd', lastSeen: NOW - W - 1 } }, NOW, W) === false);
+	// (f) NOT PERMANENT: the SAME beat that read fresh at T reads stale at T+W+1, so
+	// a fallback that stood down re-decides and claims -- the turn is never stranded.
+	{
+		const nom = { [NOMINEE]: { name: 'desktop', lastSeen: NOW } };
+		check('(f) stands down at T while the nominee is fresh',
+			P.nominationStandDown(NOMINEE, OTHER, nom, NOW, W) === true);
+		check('(f) NOT permanent: re-decided past the window, the fallback CLAIMS',
+			P.nominationStandDown(NOMINEE, OTHER, nom, NOW + W + 1, W) === false);
+	}
+
+	// ── End to end through runErrand: the real CLAIM decision, not a smoke test. ──
+	// A non-nominee with a freshly-awake nominee stands down BEFORE the lease take:
+	// it never reconstructs, never runs, never touches the lease, and answers
+	// why:'nominee' -- the signal takeRow reads to HOLD the errand on the relay.
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0, touched = false;
+		const errand = P.makeErrand({ turnId: 't-nom-b', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const res = await P.runErrand(errand, {
+			selfId: OTHER, cas: P.syncCas(sync),
+			nominatedId: NOMINEE, presence: freshNom, freshWindowMs: W,
+			finished:    async () => false,
+			reconstruct: async () => { touched = true; return {}; },
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {}, now: () => NOW,
+		});
+		check('runErrand: a non-nominee STANDS DOWN for a fresh nominee (no run, lease untouched)',
+			res.ran === false && res.why === 'nominee' && ran === 0 && touched === false && !sync.leases()['t-nom-b']);
+	}
+	// The NOMINEE runs its own errand: never stands down, so it takes the lease.
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0;
+		const errand = P.makeErrand({ turnId: 't-nom-a', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const res = await P.runErrand(errand, {
+			selfId: NOMINEE, cas: P.syncCas(sync),
+			nominatedId: NOMINEE, presence: freshNom, freshWindowMs: W,
+			finished:    async () => false,
+			reconstruct: async () => ({ chat: {}, app: {} }),
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {}, now: () => NOW,
+		});
+		check('runErrand: the NOMINEE claims and runs its errand exactly once',
+			res.ran === true && ran === 1 && sync.leases()['t-nom-a'].holder === NOMINEE);
+	}
+	// A non-nominee with the nominee OFFLINE claims and runs (fallback = any awake).
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0;
+		const errand = P.makeErrand({ turnId: 't-nom-c', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const res = await P.runErrand(errand, {
+			selfId: OTHER, cas: P.syncCas(sync),
+			nominatedId: NOMINEE, presence: {}, freshWindowMs: W,
+			finished:    async () => false,
+			reconstruct: async () => ({ chat: {}, app: {} }),
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {}, now: () => NOW,
+		});
+		check('runErrand: a non-nominee CLAIMS when the nominee is offline (fallback runs)',
+			res.ran === true && ran === 1 && sync.leases()['t-nom-c'].holder === OTHER);
+	}
+	// A non-nominee with the nominee STALE claims and runs -- the (e) stall defence,
+	// proven through the runner and not only the pure decision.
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0;
+		const errand = P.makeErrand({ turnId: 't-nom-s', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const res = await P.runErrand(errand, {
+			selfId: OTHER, cas: P.syncCas(sync),
+			nominatedId: NOMINEE, presence: staleNom, freshWindowMs: W,
+			finished:    async () => false,
+			reconstruct: async () => ({ chat: {}, app: {} }),
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {}, now: () => NOW,
+		});
+		check('runErrand: a non-nominee CLAIMS when the nominee is STALE (no stall)',
+			res.ran === true && ran === 1 && sync.leases()['t-nom-s'].holder === OTHER);
+	}
+	// No nomination -> unchanged first-come: a non-nominee claims and runs.
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0;
+		const errand = P.makeErrand({ turnId: 't-nom-d', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const res = await P.runErrand(errand, {
+			selfId: OTHER, cas: P.syncCas(sync),
+			nominatedId: '', presence: freshNom, freshWindowMs: W,
+			finished:    async () => false,
+			reconstruct: async () => ({ chat: {}, app: {} }),
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {}, now: () => NOW,
+		});
+		check('runErrand: NO nomination -> first-come unchanged (non-nominee claims)',
+			res.ran === true && ran === 1 && sync.leases()['t-nom-d'].holder === OTHER);
 	}
 }
 

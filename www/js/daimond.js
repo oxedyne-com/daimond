@@ -2635,6 +2635,68 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (changed) saveDevices(reg);
 	}
 
+	// ── The nominated always-on runner ─────────────────────────
+	//
+	// One device the account names as the runner that should pick up a dispatched
+	// turn, so a laptop someone closes mid-turn does not race in and grab it. It is
+	// an ACCOUNT scalar -- WHICH single device -- not a per-line fact, so it rides as
+	// its own freshest-`at`-wins record beside the roster rather than as a flag on
+	// each line. A boolean per line has no principled winner when two devices name
+	// different runners (the roster unions, and both would read as nominated); one
+	// scalar keeps EXACTLY ONE nominee for free and makes "nominate this one" clear
+	// any other outright. An empty id is un-nominated; a fresher empty record
+	// propagates the clearing, like handle and look. It only changes WHO attempts a
+	// claim -- the lease CAS (peer.js) is still the single-runner arbiter.
+	var NOMINATED_KEY = 'daimond-nominated';	// { id, at }: the account's chosen runner
+
+	/// The nomination as it rides the parcel, or null when this device has never held
+	/// one. Verbatim -- collectSync never stamps -- so a parcel this device already
+	/// agrees with serialises to the same bytes and the push still skips. A fixed
+	/// field order, for that same byte-stability.
+	function nominationSnapshot() {
+		var rec = readJson(NOMINATED_KEY, null);
+		if (!rec || typeof rec !== 'object') return null;
+		var id = String(rec.id || '');
+		if (id && !DEVICE_ID_RE.test(id)) return null;
+		return { id: id, at: ms(rec.at) };
+	}
+
+	/// The nominated device's id, or '' when none is set.
+	function nominatedDeviceId() {
+		var rec = nominationSnapshot();
+		return rec ? rec.id : '';
+	}
+
+	/// Name ONE device the always-on runner, or clear the nomination with ''. Exactly
+	/// one per account: this is a single scalar, so naming a device replaces any prior
+	/// nominee outright. Stamps `at` with the clock, which is how the choice wins over
+	/// an older one on every device (adoptNomination).
+	function nominateDevice(id) {
+		var next = String(id || '');
+		if (next && !DEVICE_ID_RE.test(next)) return null;
+		var rec = { id: next, at: Date.now() };
+		try { localStorage.setItem(NOMINATED_KEY, JSON.stringify(rec)); } catch (e) { /* best effort */ }
+		return rec;
+	}
+
+	/// Merge a nomination that arrived from another device: the fresher `at` wins,
+	/// STRICTLY, and is written VERBATIM -- no restamp -- so a record this device
+	/// already holds moves nothing and the next parcel is unchanged. An equal or older
+	/// stamp is ignored, which is what stops two devices pushing at each other over a
+	/// nomination they already agree on.
+	function adoptNomination(rec) {
+		if (!rec || typeof rec !== 'object') return;
+		var id = String(rec.id || '');
+		if (id && !DEVICE_ID_RE.test(id)) return;
+		var at = ms(rec.at);
+		var mine = readJson(NOMINATED_KEY, null);
+		var mineAt = (mine && typeof mine === 'object') ? ms(mine.at) : -1;
+		if (at > mineAt) {
+			try { localStorage.setItem(NOMINATED_KEY, JSON.stringify({ id: id, at: at })); }
+			catch (e) { /* best effort */ }
+		}
+	}
+
 	// ── Workspace files (the other half of "the work") ─────────
 	// Chats have a natural merge (union transcripts); files do not, so they use
 	// a 3-way compare against a stored per-file hash BASELINE — the state as of
@@ -3741,6 +3803,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// And which lines were taken off the list on purpose, so a removal on
 			// one device is not undone by the next parcel from the other.
 			deviceTombs:  loadTombMap(DEVICE_TOMBS_KEY),
+			// The account's NOMINATED always-on runner -- one device id, freshest-`at`-
+			// wins, verbatim (see nominationSnapshot). A fact about the account like the
+			// handle, carried so an offline or freshly paired device learns the choice.
+			// `null` when never set, which reads to the merge as "nothing to say".
+			nominated:    nominationSnapshot(),
 			// What the account has spent, turn by turn.
 			//
 			// The provider keys and their credit bases already travel, so without
@@ -3923,6 +3990,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// the roster it applies to is merged.
 			mergeTombMap(DEVICE_TOMBS_KEY, remote.deviceTombs);
 			mergeDevices(remote.devices);
+			// The nominated runner rides beside the roster: pure localStorage, freshest-
+			// `at`-wins, so it settles here with the rest of the account's device facts.
+			adoptNomination(remote.nominated);
 		});
 		// Read before any section runs: `applyFiles` commits a new fork point on its way
 		// out, so a later reader gets this round's own state rather than the one both
@@ -10950,6 +11020,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function renderDevices() {
 			var reg = collectDevices();		// reading it is also how this device joins it
 			var self = deviceId();
+			var nominee = nominatedDeviceId();	// the account's always-on runner, or ''
 			var ids = Object.keys(reg).sort(function (a, b) {
 				var sa = a === self ? 1 : 0, sb = b === self ? 1 : 0;
 				if (sa !== sb) return sb - sa;
@@ -10970,6 +11041,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				r.appendChild(el('span', 'device-id', id.slice(-4)));
 				r.appendChild(el('span', 'device-when',
 					id === self ? t('devices.this_device') : relTime(d.seen)));
+				// The nominee wears a small badge, so the one always-on runner is plain
+				// at a glance without reading every ✩ button.
+				if (nominee && id === nominee) {
+					var badge = el('span', 'device-nominee', t('devices.nominee'));
+					badge.title = t('devices.nominee_aria', { name: shown });
+					r.appendChild(badge);
+				}
 				// The row shows the last four characters, which is all that is
 				// needed to tell two lines apart; the button copies the WHOLE id,
 				// which is what a support message or a sync question actually
@@ -10978,6 +11056,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// every paired device holds.
 				r.appendChild(idCopyBtn(tOr('copy.what_device', 'the id of {name}',
 					{ name: shown }), id));
+				// Nominate this device the always-on runner, or clear it. A single
+				// scalar per account, so nominating one clears any other; ✭ filled = the
+				// nominee, ✩ hollow = not. Every row, this device included -- a desktop
+				// naming itself the runner is the common case.
+				var nom = document.createElement('button');
+				var isNominee = !!(nominee && id === nominee);
+				nom.className = 'device-nominate' + (isNominee ? ' is-nominee' : '');
+				nom.type = 'button';
+				nom.textContent = isNominee ? '✭' : '✩';
+				nom.title = isNominee ? t('devices.unnominate_aria', { name: shown })
+					: t('devices.nominate_aria', { name: shown });
+				nom.setAttribute('aria-label', nom.title);
+				nom.setAttribute('aria-pressed', isNominee ? 'true' : 'false');
+				nom.addEventListener('click', function () { setNominee(isNominee ? '' : id); });
+				r.appendChild(nom);
 				// Every row, not only this device's: the name carries a stamp of
 				// its own, so one typed here reaches the device it names.
 				var b = document.createElement('button');
@@ -11005,6 +11098,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 			homeView.appendChild(el('div', 'admin-note',
 				ids.length > 1 ? t('devices.note') : t('devices.only_this')));
+			// One line on what the ✩ does, shown only once there is a second device to
+			// hand a turn to -- on a lone device it would describe nothing.
+			if (ids.length > 1) {
+				homeView.appendChild(el('div', 'admin-note', t('devices.nominee_note')));
+			}
+		}
+
+		/// Name a device the always-on runner, or clear the nomination with ''. Pushes
+		/// the choice to the other devices at once (it is an account fact) and redraws.
+		function setNominee(id) {
+			nominateDevice(id);
+			if (window.DaimondSync && DaimondSync.nudge) {
+				try { DaimondSync.nudge(); } catch (e) { /* not syncing */ }
+			}
+			renderHome();
 		}
 
 		/// A way through to the operator console, for accounts that hold a role.
@@ -12190,6 +12298,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			selfId:    selfDeviceId(),
 			cas:       DaimondPeer.syncCas(peerSyncShim()),
 			allowSelf: !!o.allowSelf,
+			// DEFER TO THE NOMINATED RUNNER. runErrand stands down before the lease take
+			// if the account has named an always-on runner and it is FRESHLY awake and
+			// this device is not it -- so a closable laptop leaves the turn for the
+			// desktop. The nominee's freshness is judged against the same tight window a
+			// dispatch uses (DISPATCH_FRESH_MS) over the LIVE presence view, so a nominee
+			// that actually slept reads offline and this device claims. Skipped on
+			// recovery (`allowSelf`), which is the guaranteed net and must never stall.
+			nominatedId:   nominatedDeviceId(),
+			presence:      (window.DaimondPresence && DaimondPresence.snapshot()) || {},
+			freshWindowMs: DaimondPeer.DISPATCH_FRESH_MS,
 			// D1(b). Whether this errand's turn is already FINISHED, so a released
 			// lease (which reads vacant) is not re-taken and re-run. Two proofs the
 			// turn completed: a done report collected for it, or the answer already
@@ -12240,6 +12358,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		};
 	}
 
+	// One pending fallback re-collect after a stand-down, so many held errands do not
+	// pile timers. Cleared when it fires; the re-collect it triggers re-schedules if
+	// this device still stands down.
+	var _nomineeFallbackTimer = null;
+
+	/// After standing down for the nominated runner, re-collect once its freshness
+	/// window has elapsed, so a nominee that slept without running the turn does not
+	/// leave this awake device idle. Idempotent: a re-collect that finds the turn run
+	/// (nominee collected it, or the lease is taken) simply stands down or is a no-op.
+	function scheduleNomineeFallback() {
+		if (_nomineeFallbackTimer) return;
+		var wait = ((window.DaimondPeer && DaimondPeer.DISPATCH_FRESH_MS) || 90000) + 5000;
+		_nomineeFallbackTimer = setTimeout(function () {
+			_nomineeFallbackTimer = null;
+			// The dispatcher's own recovery-on-return is the longer-stop net; this is
+			// the prompt one. Offline: the beat brings presence back and the net holds.
+			try { if (window.DaimondPost && DaimondPost.collect) DaimondPost.collect(); }
+			catch (e) { /* offline; the dispatcher's recovery is the backstop */ }
+		}, wait);
+	}
+
 	/// Register the runner. Idempotent (DaimondPeer.onErrand just sets the handler),
 	/// so it is safe to call on every unlock.
 	function registerPeerRunner() {
@@ -12264,7 +12403,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (errand && String(errand.dispatchedBy) && String(errand.dispatchedBy) === String(selfDeviceId())) {
 				return { ran: false, why: 'self-dispatched' };
 			}
-			return await DaimondPeer.runErrand(errand, peerRunErrandDeps());
+			var res = await DaimondPeer.runErrand(errand, peerRunErrandDeps());
+			// STOOD DOWN for the nominated runner: the errand is HELD on the relay
+			// (takeRow), not acked, so it survives for the nominee. But the 45s presence
+			// beat does not re-collect, so nothing here would retry until an unrelated
+			// wake -- and a nominee that slept just after its last beat would leave this
+			// awake fallback idle. Schedule ONE re-collect past the nominee's freshness
+			// window: by then a slept nominee reads offline and this device claims;
+			// a nominee that kept beating (still fresh) stands this down again and
+			// reschedules. Bounds the fallback stall to about one freshness window
+			// rather than the dispatcher's much longer deadline.
+			if (res && res.why === 'nominee') scheduleNomineeFallback();
+			return res;
 		});
 		// The DISPATCHING side: a report is the nudge that a dispatched turn is
 		// settled. Stash it by turnId for the UI state machine, and on a `done` drop
@@ -28785,6 +28935,70 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return bar;
 	}
 
+	/// A click-to-expand view of this Diamond's MEMORY -- `crystal.json` as it sits on
+	/// disk -- with an inline editor. The page above RENDERS the memory; this shows the
+	/// memory itself, raw and editable, which is the affordance the page-owned crystal
+	/// took away.
+	///
+	/// The memory is what a fresh daimon carries into every turn on this Diamond -- the
+	/// "Diamond" band in the wire -- and it is composed from the file as it stands, so an
+	/// edit here reaches the next turn with no fold. Saved through `write_crystal_data`,
+	/// which snapshots a version and syncs, so a hand edit is as recoverable and as
+	/// portable as a fold. `crystal.js`'s `parse` is the same gate the ✎ form's JSON view
+	/// uses: an object or nothing, never a half-written file the page then cannot draw.
+	///
+	/// Collapsed by default, a native `<details>` so the toggle needs no state of its own.
+	function crystalMemoryPanel(id, rawText) {
+		var C = crystalLib();
+		var box = document.createElement('details');
+		box.className = 'crystal-memory';
+		var sum = document.createElement('summary');
+		sum.className = 'crystal-memory-sum';
+		sum.textContent = t('crystal.memory');
+		sum.title = t('crystal.memory_help');
+		box.appendChild(sum);
+		var ta = document.createElement('textarea');
+		ta.className = 'crystal-memory-ta';
+		ta.spellcheck = false;
+		// Pretty-printed where it parses, so what opens is readable; verbatim where it
+		// does not, so a file a daimon left half-written can still be seen and mended.
+		var text = String(rawText || '');
+		try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* as-is */ }
+		ta.value = text;
+		box.appendChild(ta);
+		var actions = document.createElement('div');
+		actions.className = 'crystal-memory-bar';
+		var save = document.createElement('button');
+		save.className = 'crystal-act primary';
+		save.textContent = '✔ ' + t('common.save');
+		save.addEventListener('click', async function () {
+			var d = null;
+			if (C && typeof C.parse === 'function') {
+				var r = C.parse(ta.value);
+				if (r && r.ok) d = r.data;
+			} else {
+				try { d = JSON.parse(ta.value); } catch (e) { d = null; }
+			}
+			// An array or a bare value is valid JSON and is not a crystal: what would be
+			// written back is not the shape everything downstream reads.
+			if (!d || typeof d !== 'object' || Array.isArray(d)) {
+				noticeDialog(t('crystal.save_failed'), t('crystal.memory_invalid'));
+				return;
+			}
+			save.disabled = true; save.textContent = t('files.saving');
+			try { await diamondApp().write_crystal_data(id, JSON.stringify(d, null, 2)); }
+			catch (e) {
+				noticeDialog(t('crystal.save_failed'), friendlyError(e));
+				save.disabled = false; save.textContent = '✔ ' + t('common.save');
+				return;
+			}
+			await refreshDiamondAfterChange();
+		});
+		actions.appendChild(save);
+		box.appendChild(actions);
+		return box;
+	}
+
 	/// Read the current crystal and draw it: the data, through this Diamond's own page.
 	///
 	/// Every Diamond starts on the shipped page, so one whose page is missing is given
@@ -28850,6 +29064,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var data = crystalData(text);
 		clearCrystalBody();
 		crystalBody.appendChild(crystalBar(data || {}));
+		// The raw memory, click-to-expand and editable, on every face-state below: a page
+		// renders the memory but does not let you see or change the memory itself, and
+		// `mount` and `fallback` touch only their own nodes, so this survives the swap.
+		crystalBody.appendChild(crystalMemoryPanel(id, text));
 
 		// An instance with NO delivery record cannot be judged and must not be
 		// rewritten behind anybody's back, so it is asked about instead. Not awaited:

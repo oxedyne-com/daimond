@@ -2662,6 +2662,15 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .device-remove:hover, .device-remove:focus-visible,
 .device-row:hover .device-remove:hover,
 .device-row:hover .device-remove:focus-visible { color: var(--danger); }
+/* The always-on-runner star. It takes the same icon-button box as the pencil and
+   cross, and is muted-until-hover the same way -- EXCEPT the current nominee, whose
+   filled star stays lit so the one runner is visible without hovering every row. */
+.device-nominate { flex: none; align-self: center; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; margin-left: 2px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: var(--fs-2xl); line-height: 1; cursor: pointer; opacity: .75; }
+.device-row:hover .device-nominate, .device-nominate:hover, .device-nominate:focus-visible { opacity: 1; color: var(--text-primary); background: var(--bg-hover); }
+.device-nominate.is-nominee { opacity: 1; color: var(--accent); }
+/* A small badge on the nominee's line, so the runner reads at a glance beside the
+   last-seen column rather than only through the star. */
+.device-nominee { flex: none; font-size: var(--fs-3xs); text-transform: uppercase; letter-spacing: .04em; color: var(--accent); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
 
 #id-name-row { margin-bottom: 8px; }
 #id-name { width: 100%; }
@@ -2753,6 +2762,15 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 /* The raw JSON, behind a second click, and it refuses to save unparseable text. */
 .crystal-json { width: 100%; min-height: 320px; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 12px; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; resize: vertical; }
 .crystal-json:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+
+/* The memory, click-to-expand and editable. The page renders the memory; this
+   shows the memory itself. Collapsed by default, so it costs one row until asked. */
+.crystal-memory { margin: 0 0 10px; }
+.crystal-memory-sum { cursor: pointer; font-size: var(--fs-xs); color: var(--text-secondary); padding: 2px 0; user-select: none; }
+.crystal-memory-sum:hover { color: var(--text-primary); }
+.crystal-memory-ta { width: 100%; min-height: 220px; margin-top: 8px; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 12px; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; resize: vertical; }
+.crystal-memory-ta:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.crystal-memory-bar { display: flex; gap: 6px; margin-top: 8px; }
 .hist-list { display: flex; flex-direction: column; gap: 6px; }
 /* Wraps, so a note can take a line of its own beneath the version and its
    buttons rather than squeezing between them. A row with no note is unchanged:

@@ -60,6 +60,18 @@
 	var applying = false;
 	var chip     = null;
 
+	// An ACTIVE session should not be reloaded out from under the user. A soft
+	// update waits for a hidden tab OR a foreground one left untouched this long; a
+	// forced one (the gateway refusing the tab) never reloads mid-turn and waits a
+	// short pause after the last keystroke rather than yank the page mid-sentence.
+	// `lastActive` is user INPUT only -- a turn ending is not input, so a forced
+	// reload applies as soon as a turn finishes (unless a key was just pressed).
+	var QUIESCE_MS = 600000;       // ~10 min of no input: a safe moment for a soft update
+	var GRACE_MS   = 20000;        // a short pause after the last keystroke before a forced reload
+	var lastActive = Date.now();   // epoch-ms of the last keydown/pointerdown (a fresh tab counts as just-active)
+	var graceTimer = null;
+	function quietFor() { return Date.now() - lastActive; }
+
 	/// Read the stamp, never from cache -- the whole point is to see the server's current truth.
 	/// Any failure (offline, no stamp deployed, bad JSON) resolves to null and is simply ignored;
 	/// a broken check must never break the app or nag the user.
@@ -100,8 +112,11 @@
 		if (applying || !pending) return false;
 		if (busy()) return false;                 // never interrupt a running turn or agent
 		if (!force) {
-			if (!document.hidden) return false;   // automatic: background tabs only
-			if (composerHasText()) return false;  // and nothing half-typed
+			// A soft update applies at a quiet moment: a hidden tab, or a foreground
+			// one left untouched for QUIESCE_MS -- never over a half-typed prompt, and
+			// (via the busy() check above) never over a running turn.
+			if (!document.hidden && quietFor() < QUIESCE_MS) return false;
+			if (composerHasText()) return false;
 		}
 		applying = true;
 		try { sessionStorage.setItem(KEY, pending); } catch (e) {}
@@ -229,6 +244,16 @@
 			setChip('stale');
 			return false;
 		}
+		// Never reload mid-keystroke. If the composer holds text and a key was
+		// pressed within the grace, wait out the remaining pause and retry -- the tab
+		// stays refused (the red chip says so) but the reload lands at the next
+		// natural break, not the middle of a sentence. A running turn is handled by
+		// apply(true), which defers until daimond:idle.
+		if (composerHasText() && quietFor() < GRACE_MS) {
+			if (graceTimer) clearTimeout(graceTimer);
+			graceTimer = setTimeout(force, GRACE_MS - quietFor() + 100);
+			return false;
+		}
 		if (!apply(true)) return false;            // deferred over a running turn
 		trail('forced reload', 'the gateway refused this build');
 		spendForce();
@@ -327,6 +352,12 @@
 		} else if (chip) {
 			chip.hidden = true;                   // no stamp deployed yet: no version system, stay silent
 		}
+
+		// User input, for the quiescence and typing-grace thresholds above. Capture
+		// phase so it counts even when a downstream handler stops propagation.
+		var bump = function () { lastActive = Date.now(); };
+		document.addEventListener('keydown', bump, true);
+		document.addEventListener('pointerdown', bump, true);
 
 		setInterval(poll, POLL_MS);
 		document.addEventListener('visibilitychange', function () {

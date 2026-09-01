@@ -322,6 +322,13 @@
 	'devices.remove_body': '“{name}” comes off this list. That does not sign the device out. It holds the same keys as this one, so it reappears the next time it syncs.',
 	'devices.remove':      'Remove',
 	'devices.remove_title':'Remove this device',
+	// The always-on runner: one nominated device picks up handed-off turns, so a
+	// device that may be closed mid-turn does not grab one.
+	'devices.nominee':          'runner',
+	'devices.nominee_aria':     '{name} is the always-on runner',
+	'devices.nominate_aria':    'Make {name} the always-on runner',
+	'devices.unnominate_aria':  'Clear {name} as the always-on runner',
+	'devices.nominee_note':     'Star one device as the always-on runner. Handed-off turns wait for it while it is awake, and fall to another awake device only when it is not.',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline':             'Offline',
@@ -1982,6 +1989,9 @@
 	'crystal.empty_paren':    '(empty)',
 	'crystal.save_failed':    'Could not save the crystal',
 	'crystal.back':           'Back to the crystal',
+	'crystal.memory':         'Memory',
+	'crystal.memory_help':    'View and edit this Diamond’s memory — the crystal it carries into every turn',
+	'crystal.memory_invalid': 'That is not valid crystal JSON, so nothing was saved.',
 	'crystal.no_history':     'No history yet.',
 	'crystal.view':           'View',
 	'crystal.restore':        'Restore',

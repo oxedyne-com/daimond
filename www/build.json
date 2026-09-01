@@ -1,1 +1,1 @@
-{"build":"b16a6e668799","note":"Route the client API version through one source so the v2 floor bump does not break pairing, reporting or the console."}
+{"build":"c9d26ea4788b","note":"Updates wait for a quiet moment and never cut a turn; nominate an always-on hand-off device; editable crystal memory."}

@@ -387,9 +387,13 @@
 			if (window.console) console.log('peer: a ' + obj.t + ' failed signature check; dropped.');
 			return { routed: false, verified: false };
 		}
-		if (obj.t === T_ERRAND && _onErrand) await _onErrand(obj, row);
+		// The errand runner's answer is propagated so takeRow can read a stand-down:
+		// a non-nominee that deferred to the awake nominee (`why:'nominee'`) must leave
+		// the errand on the relay (HOLD), not ack it away before the nominee collects.
+		var result = null;
+		if (obj.t === T_ERRAND && _onErrand) result = await _onErrand(obj, row);
 		else if (obj.t === T_REPORT && _onReport) await _onReport(obj, row);
-		return { routed: true, verified: true };
+		return { routed: true, verified: true, result: result };
 	}
 
 	/// Route the post box's rows the way a collector does: open each, dispatch by
@@ -787,6 +791,42 @@
 		var agentic = !!o.toolsEnabled || !!o.expectedLong || !!worker;
 		if (agentic) return { dispatch: true, peer: peer, reason: 'long-turn' };
 		return { dispatch: false, reason: 'quick-local' };
+	}
+
+	// ── The nominated always-on runner (the claim guard) ───────
+	//
+	// An account may name ONE device as the runner that should pick a dispatched
+	// turn up, so a laptop someone closes mid-turn does not race in and grab it.
+	// This decides only WHO attempts the lease claim; the take-if-vacant CAS below
+	// is still the single-runner arbiter, so a stale or racing decision here can at
+	// worst cost one extra claim attempt, never a double run.
+
+	/// Should this device STAND DOWN from claiming a dispatched errand, deferring to
+	/// the account's NOMINATED always-on runner? Pure. True only when a nominee is
+	/// set, this device is NOT it, AND the nominee is presently, FRESHLY awake in the
+	/// presence map -- judged by the SAME tight window a dispatch uses to call a peer
+	/// awake (DISPATCH_FRESH_MS). A nominee whose last beat has aged out of that
+	/// window is treated as OFFLINE, so this device claims (the owner's fallback: any
+	/// awake device, over nobody-runs-it).
+	///
+	/// Two stalls this guards against, both by construction:
+	///   - STALE PRESENCE: a lagging map still showing a slept nominee as awake would
+	///     have every fallback stand down for a device that is gone. The freshness
+	///     bound is the defence -- an aged beat reads offline and the fallback claims.
+	///   - A PERMANENT stand-down: the decision reads LIVE presence and is re-taken on
+	///     every re-collect (the errand is HELD on the relay, not acked, while standing
+	///     down -- post.js), so a nominee that slept just after its last beat stops
+	///     being "fresh" within one window and a fallback then claims. The worst-case
+	///     stall is one presence-sync lag plus DISPATCH_FRESH_MS.
+	function nominationStandDown(nominatedId, selfId, presence, now, windowMs) {
+		var nom = String(nominatedId || '');
+		if (!nom) return false;						// no nomination -> first-come, unchanged
+		if (nom === String(selfId || '')) return false;	// this device IS the nominee -> claim
+		var rec = (presence || {})[nom];
+		if (!rec) return false;						// nominee absent from presence -> offline
+		var n = now == null ? Date.now() : now;
+		var w = windowMs || DISPATCH_FRESH_MS;
+		return (n - leaseMs(rec.lastSeen)) <= w;	// stand down only while the nominee is FRESH
 	}
 
 	// ════════════════════════════════════════════════════════════
@@ -1294,6 +1334,23 @@
 			if (already) { trace.push('already-done'); return { ran: false, why: 'already-done', trace: trace }; }
 		}
 
+		// D1(c) — DEFER TO THE NOMINATED RUNNER. When the account has named an always-on
+		// runner and it is FRESHLY awake, a non-nominee stands down and leaves the claim
+		// to it, so a laptop that may be closed mid-turn does not grab a turn the desktop
+		// should run. Gated on the nominee's LIVE freshness (DISPATCH_FRESH_MS): a nominee
+		// that has actually slept reads offline and this device claims instead -- fall back
+		// to any awake device, the owner's explicit choice over nobody-runs-it. NOT applied
+		// on a deliberate local recovery (`allowSelf`): recovery is the guaranteed net that
+		// a turn NO peer ran is still run, and must never itself stall for the nominee.
+		// Standing down does NOT ack -- takeRow HOLDs the errand on the relay (post.js) --
+		// so it is re-collected and re-decided against live presence until the nominee runs
+		// it or its beat ages out. Only WHO attempts the claim changes; the take-if-vacant
+		// lease below is still the single-runner arbiter.
+		if (!d.allowSelf && nominationStandDown(d.nominatedId, d.selfId, d.presence, leaseNow(d.now), d.freshWindowMs)) {
+			trace.push('stood-down-for-nominee');
+			return { ran: false, why: 'nominee', trace: trace };
+		}
+
 		// A missing lease CAS cannot arbitrate a claim, so there is no safe way to run:
 		// stand down cleanly rather than let `leaseTake` dereference a null `cas` and
 		// throw the opaque "Cannot read properties of null (reading 'read')".
@@ -1494,6 +1551,10 @@
 		/// locally on its return -- dispatched, not finished, not held by a live peer.
 		/// daimond.js acts on it through the same lease, so it is money-safe.
 		recoverDecision: recoverDecision,
+		/// Should this device stand down from claiming a dispatched turn, deferring to
+		/// the account's nominated always-on runner? Pure; runErrand consults it before
+		/// the lease take, and daimond.js supplies the nominee id + live presence.
+		nominationStandDown: nominationStandDown,
 		REASON_DISPATCHED:    REASON_DISPATCHED,
 		DISPATCH_DEADLINE_MS: DISPATCH_DEADLINE_MS,
 		/// The TIGHTER window the auto-dispatch decision uses (under the display

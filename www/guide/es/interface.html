@@ -232,7 +232,12 @@
 	<div class="note"><strong>La entrada prevista se ve distinta porque es distinta.</strong> No lleva id de compilación ni número de sello, y dice con palabras que aún no está construida y que no se promete para ninguna fecha. Todo lo que hay debajo está sellado y es comprobable; una declaración de intenciones no es ninguna de las dos cosas, y no debería tomar prestada la autoridad de un registro.</div>
 	<p>No hay vuelta atrás a una compilación más vieja. Una fijada se topa con la propia negativa de la pasarela a hablar con un cliente demasiado viejo; puede llevar un fallo de seguridad ya corregido, en una aplicación que guarda tus claves de proveedor, tu identidad y tus passkeys; y al encontrarse con datos locales más nuevos corre el riesgo de leerlos mal. El disgusto por un cambio se responde en el cambio, diciendo con claridad qué cambió, que es para lo que están estas notas.</p>
 
-	<h2 id="s6">El escenario — centro</h2>
+	<h3 id="s6">Cómo llegan las actualizaciones</h3>
+	<p>Daimond se actualiza solo. No hay nada que descargar: la pestaña en marcha nota una compilación más nueva y se recarga sobre ella, y la recarga no pierde nada, porque cada arranque recupera tu trabajo del diario de durabilidad.</p>
+	<p>La única pregunta es <em>cuándo</em>. Una actualización normal espera un momento tranquilo — la pestaña en segundo plano, o sin tocar unos diez minutos — y nunca se recarga sobre un turno en marcha ni un mensaje a medio escribir. El chip junto a los botones de arriba dice cuándo hay una lista; púlsalo para tomar la actualización al momento.</p>
+	<p>Algunas actualizaciones no pueden esperar. Cuando un cambio significa que una pestaña anticuada ya no puede trabajar con el servidor, el servidor la rechaza, y la pestaña se recarga sola sobre la versión actual. Aun así no corta un turno en marcha, y espera un momento tras tu última tecla en vez de recargar a mitad de una frase. No hay forma de rechazar una versión: la aplicación que conservarías es la misma aplicación de la misma gente, y un navegador no puede correr la compilación de ayer contra el servidor de hoy.</p>
+
+	<h2 id="s7">El escenario — centro</h2>
 	<p>The stage is the middle zone. Its occupants sit side by side and never dock at the right, so you never leave the conversation to do a thing: read the message, watch the page, read the document beside the pages it was typeset into, with the daimon still there to be asked about any of it.</p>
 
 	<p>How many seats there are is decided by <strong>how wide the stage is</strong>, not by a fixed number: two at the narrowest, four at the widest, and one more for roughly every 380 pixels, which is where a line of prose still holds about 45 characters. Four of them want around 1550 pixels of stage, so they are for a large monitor; a laptop usually gets two or three. Two is the floor whatever the width, because the whole point of the stage is that whatever you are attending to opens <em>junto a</em> the conversation rather than over it.</p>
@@ -241,79 +246,79 @@
 
 	<div class="cards">
 		<div class="card">
-			<h3 id="s7">IA — el chat</h3>
+			<h3 id="s8">IA — el chat</h3>
 			<p>Donde hablas con el daimon. Es el ocupante por defecto y vuelve siempre que el escenario quedaría vacío. Tus mensajes, las respuestas y cualquier paso de herramienta aparecen aquí.</p>
 		</div>
 		<div class="card">
-			<h3 id="s8">Web</h3>
+			<h3 id="s9">Web</h3>
 			<p>Una página web, mostrada o conducida. Se abre desde la cabecera o cuando Daimond sigue un enlace.</p>
 		</div>
 		<div class="card">
-			<h3 id="s9">Doc</h3>
+			<h3 id="s10">Doc</h3>
 			<p>A file as its characters, given room to read it and to edit it. Its header carries the paperclip that attaches what you are reading to what you are working on.</p>
 		</div>
 		<div class="card">
-			<h3 id="s10">Preview</h3>
+			<h3 id="s11">Preview</h3>
 			<p>What a file looks like, as against what it says: a compiled PDF, a picture, or the typeset pages of a document as you write it. It is a panel of its own so that a source and its pages can be on screen at once, which is why the stage grew past two seats.</p>
 		</div>
 		<div class="card">
-			<h3 id="s11">Mensaje</h3>
+			<h3 id="s12">Mensaje</h3>
 			<p>Un solo mensaje de correo, abierto desde Correo, leído junto al chat.</p>
 		</div>
 		<div class="card">
-			<h3 id="s12">Herramientas</h3>
+			<h3 id="s13">Herramientas</h3>
 			<p>Lo que Daimond sabe hacer, y lo que costaría el resto. Se abre desde la fila <span class="ui">Herramientas</span> del panel de administración.</p>
 		</div>
 		<div class="card">
-			<h3 id="s13">Redactar</h3>
+			<h3 id="s14">Redactar</h3>
 			<p>Escribir un mensaje de correo. Aquí no se envía nada solo: solo el botón <span class="ui">Enviar</span> pone correo en el cable, y solo tú puedes pulsarlo.</p>
 		</div>
 		<div class="card">
-			<h3 id="s14">Grafo</h3>
+			<h3 id="s15">Grafo</h3>
 			<p>Tus Diamonds y los enlaces entre ellos, dibujados. Se abre desde el botón de grafo de la cabecera de Diamonds, donde también puedes recolocarlos o trazar un enlace nuevo.</p>
 		</div>
 		<div class="card">
-			<h3 id="s15">Terminal</h3>
+			<h3 id="s16">Terminal</h3>
 			<p>Un terminal de verdad en tu propia máquina, en el mismo compartimento en el que corre un comando. Consulta <a href="../machine-operations.html">Comandos en el equipo</a>.</p>
 		</div>
 	</div>
 
 	<p>Cada invitado del escenario tiene una cabecera con un botón de cerrar. Un panel cerrado no desaparece: su ficha sigue en la barra superior, sin rellenar, y al pulsarla vuelve.</p>
 
-	<h2 id="s16">El dock — derecha</h2>
+	<h2 id="s17">El dock — derecha</h2>
 	<p>El dock contiene las fuentes de las que tiras. Al cerrar una, su ficha se queda en la barra superior; al pulsar la ficha vuelve a acoplarse. Cómo se cuadricula el dock, y por tanto cuántos paneles sostiene a la vez, lo decides tú en <strong>Cuadrícula del dock</strong> del menú de apariencia, que se describe abajo.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3 id="s17">Correo</h3>
+			<h3 id="s18">Correo</h3>
 			<p>Tus buzones y lo que hay en ellos. Añade un buzón, sincroniza y abre un mensaje en el escenario.</p>
 		</div>
 		<div class="card">
-			<h3 id="s18">Espacio</h3>
+			<h3 id="s19">Espacio</h3>
 			<p>Tus archivos, como un árbol corriente. Las herramientas de archivo del agente leen y escriben aquí.</p>
 		</div>
 		<div class="card">
-			<h3 id="s19">Agentes</h3>
+			<h3 id="s20">Agentes</h3>
 			<p>Ejecuciones de agentes en vivo, según ocurren, con una cuenta de cuántos están trabajando.</p>
 		</div>
 		<div class="card">
-			<h3 id="s20">Gastos</h3>
+			<h3 id="s21">Gastos</h3>
 			<p>Lo que has gastado, y en qué. Se trata por entero en <a href="spending.html">Gastos</a>.</p>
 		</div>
 		<div class="card">
-			<h3 id="s21">Pendiente</h3>
+			<h3 id="s22">Pendiente</h3>
 			<p>Lo que un daimon ha pedido y está esperando. Cada fila se puede ordenar por prioridad o por antigüedad, y responder con <span class="ui">Hazlo</span>, <span class="ui">Hablarlo primero</span> o <span class="ui">Descartar</span>.</p>
 		</div>
 		<div class="card">
-			<h3 id="s22">Papelera</h3>
+			<h3 id="s23">Papelera</h3>
 			<p>Chats y Diamonds borrados, que se guardan treinta días y se pueden restaurar en cualquiera de tus dispositivos. Consulta <a href="chats-and-diamonds.html">Chats y Diamonds</a>.</p>
 		</div>
 	</div>
 
-	<h2 id="s23">La barra superior</h2>
+	<h2 id="s24">La barra superior</h2>
 	<p>A lo largo de la parte de arriba están el logotipo, una fila de <strong>fichas de panel</strong>, y, a la derecha del todo, un botón para <strong>vincular otro dispositivo</strong>, un diálogo <strong>Acerca de</strong> y esta <strong>guía</strong>, y el menú <strong>de apariencia y disposición</strong> — y junto a ellos aparece una ficha cuando sale una compilación nueva.</p>
 
-	<h3 id="s24">Las fichas</h3>
+	<h3 id="s25">Las fichas</h3>
 	<p>Cada panel tiene una ficha, esté abierto o cerrado, y al pulsar una se abre o se cierra ese panel. La ficha de un panel abierto está rellena, así que la fila se lee como un mapa de lo que hay en pantalla. Si solo la tuvieran los paneles cerrados, la fila sería más larga cuanto más vacía estuviera la aplicación y cada ficha se desplazaría de lado cada vez que se usara una; una ficha que no se mueve es una cuya posición puedes aprender. (Agentes es la excepción a <em>todos</em>: se mantiene apartado hasta que corre el primer agente.)</p>
 	<p>Las fichas se agrupan por zona — barra lateral, luego escenario, luego dock — con un divisor fino entre los grupos, en el orden en que las zonas están en pantalla. Así que una ficha está del lado en el que aparecerá el panel que abre. Dos marcas llevan significado:</p>
 	<ul>
@@ -321,14 +326,14 @@
 		<li>Una ficha de dock cerrada está <strong>en gris cuando el dock está lleno</strong>. Su información emergente señala la solución: una cuadrícula mayor en el menú de apariencia, o cerrar un panel del dock.</li>
 	</ul>
 
-	<h3 id="s25">Paneles fijados, y la galería</h3>
+	<h3 id="s26">Paneles fijados, y la galería</h3>
 	<p>Tú decides qué fichas están en la barra superior. Cualquier panel se puede <strong>fijar</strong> o soltar; los sueltos viven detrás de una ficha <span class="ui">⋯</span> al final de la fila, con una cuenta de cuántos hay ahí detrás. Al pulsarla se abre la <strong>galería</strong>: todos los paneles que hay, buscables por nombre, agrupados por zona, cada fila con un control para fijar y diciendo si ese panel está abierto. Pulsar una fila abre o cierra el panel igual que haría una ficha.</p>
 	<p>La fila puede estar incompleta solo porque la galería no lo está. Tampoco se ordena nada por lo mucho que lo uses: una fila que se reordenara sola destruiría la memoria muscular que las posiciones fijas existen para construir.</p>
 
-	<h3 id="s26">La paleta</h3>
+	<h3 id="s27">La paleta</h3>
 	<p><kbd>Ctrl</kbd> <kbd>K</kbd>, <kbd>Cmd</kbd> <kbd>K</kbd> en un Mac — abre una caja de búsqueda que llega a cualquier panel o ajuste escribiendo. Las flechas recorren los resultados, <span class="ui">Enter</span> ejecuta el resaltado, <span class="ui">Esc</span> la cierra. Enumera los paneles, las paletas, los cuatro tamaños de texto, las cuadrículas del dock, los idiomas, las monedas y los modos de permisos. Nunca es la ruta más rápida a un panel cuya ficha ves; es la ruta que sigue completa por muchos paneles que haya.</p>
 
-	<h3 id="s27">Con el teclado, y de oído</h3>
+	<h3 id="s28">Con el teclado, y de oído</h3>
 	<p>Daimond se puede manejar sin ratón. <span class="ui">Tab</span> recorre los controles en el orden en que están dibujados, <span class="ui">Enter</span> o <span class="ui">Espacio</span> acciona aquel en el que estás, y <span class="ui">Esc</span> cierra lo que esté abierto. Cada diálogo, menú y hoja lleva además un aspa en su esquina, un solo control hecho de una sola manera, del tamaño de un pulgar en un teléfono.</p>
 	<p>Dónde estás se dibuja <em>fuera</em> del control, como un anillo separado de su borde. Dibujado como un cambio en el propio borde del control, como fue en su día, el anillo solo se lee mientras el borde en reposo es casi invisible — así que hacer visibles los bordes habría quitado el anillo de foco en todas las paletas a la vez. Contra la superficie de detrás, el anillo sobrevive a todo el rango: medido en las once paletas, el anillo más tenue sigue teniendo cuatro veces y media el contraste que pide la norma.</p>
 	<p>Dos sitios en particular:</p>
@@ -339,7 +344,7 @@
 	<p>Con un lector de pantalla, una respuesta se anuncia <strong>una vez, cuando ha llegado</strong> («Daimond ha respondido, 120 palabras»)y no según se va escribiendo. Una región viva se lee en voz alta en cada cambio, así que una respuesta en streaming se te recitaría a trozos mientras el modelo siguiera escribiendo. La gente eso lo apaga, y una aplicación cuyos anuncios se han apagado parece accesible y no lo es. Una frase por turno es menos, y se puede usar.</p>
 	<p>La ventana tiene regiones con nombre y encabezados de verdad por todas partes, así que la propia lista de puntos de referencia de un lector de pantalla es un índice que funciona para la aplicación. Cualquier cosa a la que no puedas llegar o que no puedas oír es un fallo, no un límite; dilo.</p>
 
-	<h3 id="s28">Apariencia y disposición</h3>
+	<h3 id="s29">Apariencia y disposición</h3>
 	<p>El botón de arriba a la derecha abre un único menú con las decisiones sobre cómo se ve y se sienta Daimond, frente a lo que hace:</p>
 	<ul>
 		<li><strong>Vista</strong>: <span class="ui">Simple</span> o <span class="ui">Máx</span>. Simple da a cada cosa su nombre y si está en marcha, con todo lo demás a una pulsación; Máx pone al lado el modelo, el coste y el contexto, para comparar dos sin abrir ninguno. Fija con ello la forma de la interfaz, porque una forma aireada a densidad máxima es una combinación que nadie quiere. La rueda dentada de un mosaico sigue mandando sobre ese mosaico.</li>
@@ -349,10 +354,10 @@
 		<li><strong>Idioma</strong> y <strong>Moneda</strong>: en qué habla Daimond y en qué se muestran las cifras. Un idioma que aún no tiene tabla se queda en inglés; el cobro es siempre en dólares estadounidenses, se muestren las cifras como se muestren.</li>
 	</ul>
 
-	<h3 id="s29">Guardar una disposición con un Diamond</h3>
+	<h3 id="s30">Guardar una disposición con un Diamond</h3>
 	<p>Con un Diamond seleccionado, el menú de apariencia ofrece guardar con él la disposición actual de paneles, y actualizar u olvidar una ya guardada. Volver a abrir ese Diamond la repone, así que volver a un trabajo no es rearmar sus paneles a mano. Solo se guarda cuando lo pides, nunca se deduce ni se hace en segundo plano, porque un cambio que cerrara paneles en silencio se leería como trabajo perdido.</p>
 
-	<h2 id="s30">En una pantalla estrecha</h2>
+	<h2 id="s31">En una pantalla estrecha</h2>
 	<p>Por debajo del ancho de un teléfono, los chips y la galería dan paso a la carcasa de teléfono, que responde a la misma pregunta con menos espacio: el chat es el suelo, un panel se eleva sobre él como una hoja que puede arrastrar, y el raíl se convierte en un cajón que abre el botón de arriba a la izquierda. La fila inferior es la misma fila de chips, desplazada de lado. Cada panel tiene allí un chip, en el orden en que las zonas se disponen en una pantalla mayor; el relleno es aquel que está mirando, y no todo lo que está abierto, porque en un teléfono sólo hay una cosa a la vez; y un chip le lleva allí en lugar de alternar, ya que lo que cerraría sería la pantalla entera. Al panel de administración se llega al final del cajón. No se pierde nada; son los mismos paneles, mostrados de uno en uno.</p>
 	<p>Instalado en la pantalla de inicio, Daimond corre en su propia ventana sin el mobiliario del navegador, y se mantiene apartado del notch y del indicador de inicio. Es la misma página y el mismo trabajo guardado, así que no hay que mover nada dentro.</p>
 

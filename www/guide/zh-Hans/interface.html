@@ -232,7 +232,12 @@
 	<div class="note"><strong>计划中的那一条看上去不一样，因为它本来就不一样。</strong> 它没有构建 id，也没有封存编号，并且用文字说明它还没被构建，也没有承诺日期。它下面的每一条都已封存、都可核对；一句意向声明两样都不是，也不该借用记录的权威。</div>
 	<p>回到旧构建的路是没有的。钉住一个旧构建，会撞上网关自己那条“不跟太旧的客户端说话”的规矩；它可能带着一个已经修好的安全缺陷，而这个应用装着你的提供商密钥、你的身份和你的通行密钥；它碰上更新的本地数据，还有读错的风险。不喜欢某个改动，要在那个改动本身上回应，办法是把改了什么讲清楚 —— 这些说明就是干这个用的。</p>
 
-	<h2 id="s6">舞台 —— 中</h2>
+	<h3 id="s6">更新是怎么来的</h3>
+	<p>Daimond 会自己更新。没有什么要下载：正在跑的标签页发现有个更新的构建，就重载到它上面，而重载不会丢任何东西，因为每次启动都会从耐久日志里把你的工作恢复出来。</p>
+	<p>唯一的问题是 <em>什么时候</em>。一次寻常的更新会等一个安静的时机 —— 标签页在后台，或者十来分钟没动过 —— 绝不会盖在正在跑的一轮或一条打了一半的消息上重载。顶栏按钮旁边的那个小标会告诉你什么时候有一个准备好了；点它就当场把更新拿下来。</p>
+	<p>有些更新等不了。当某个改动意味着一个过时的标签页没法再跟服务器一起工作时，服务器就会拒掉它，标签页自己重载到当前版本。就算这样，它也不会切断正在跑的一轮，而是在你最后一次敲键之后稍等一下，而不是在一句话中间重载。没有办法拒绝一个版本：你要留住的那个应用，是同一批人做的同一个应用，而浏览器没法拿昨天的构建去对着今天的服务器跑。</p>
+
+	<h2 id="s7">舞台 —— 中</h2>
 	<p>The stage is the middle zone. Its occupants sit side by side and never dock at the right, so you never leave the conversation to do a thing: read the message, watch the page, read the document beside the pages it was typeset into, with the daimon still there to be asked about any of it.</p>
 
 	<p>How many seats there are is decided by <strong>how wide the stage is</strong>, not by a fixed number: two at the narrowest, four at the widest, and one more for roughly every 380 pixels, which is where a line of prose still holds about 45 characters. Four of them want around 1550 pixels of stage, so they are for a large monitor; a laptop usually gets two or three. Two is the floor whatever the width, because the whole point of the stage is that whatever you are attending to opens <em>紧挨着</em> the conversation rather than over it.</p>
@@ -241,79 +246,79 @@
 
 	<div class="cards">
 		<div class="card">
-			<h3 id="s7">AI —— 聊天</h3>
+			<h3 id="s8">AI —— 聊天</h3>
 			<p>你和 daimon 说话的地方。它是默认的占位者，只要舞台本来会空着，它就回来。你的消息、回答，以及任何工具步骤，都出现在这里。</p>
 		</div>
 		<div class="card">
-			<h3 id="s8">网页</h3>
+			<h3 id="s9">网页</h3>
 			<p>一个网页，可以显示，也可以操作。从头部打开，或者 Daimond 跟着一个链接时打开。</p>
 		</div>
 		<div class="card">
-			<h3 id="s9">文档</h3>
+			<h3 id="s10">文档</h3>
 			<p>A file as its characters, given room to read it and to edit it. Its header carries the paperclip that attaches what you are reading to what you are working on.</p>
 		</div>
 		<div class="card">
-			<h3 id="s10">Preview</h3>
+			<h3 id="s11">Preview</h3>
 			<p>What a file looks like, as against what it says: a compiled PDF, a picture, or the typeset pages of a document as you write it. It is a panel of its own so that a source and its pages can be on screen at once, which is why the stage grew past two seats.</p>
 		</div>
 		<div class="card">
-			<h3 id="s11">消息</h3>
+			<h3 id="s12">消息</h3>
 			<p>单独一封邮件，从邮件面板打开，在聊天旁边读。</p>
 		</div>
 		<div class="card">
-			<h3 id="s12">工具</h3>
+			<h3 id="s13">工具</h3>
 			<p>Daimond 能做什么，其余的要花多少钱。从 <span class="ui">工具</span> 行打开。</p>
 		</div>
 		<div class="card">
-			<h3 id="s13">撰写</h3>
+			<h3 id="s14">撰写</h3>
 			<p>写一封邮件。这里什么都不会自己发出去：只有 <span class="ui">发送</span> 按钮才把邮件送上线路，而且只有你能按它。</p>
 		</div>
 		<div class="card">
-			<h3 id="s14">图谱</h3>
+			<h3 id="s15">图谱</h3>
 			<p>你的 Diamonds，以及它们之间的连线，画出来。从 Diamonds 标题栏上的图谱按钮打开，在那里也可以重新排布，或者画一条新的连线。</p>
 		</div>
 		<div class="card">
-			<h3 id="s15">终端</h3>
+			<h3 id="s16">终端</h3>
 			<p>你自己机器上的一个真正的终端，就在命令运行的那个隔间里。见 <a href="../machine-operations.html">在本机运行命令</a>.</p>
 		</div>
 	</div>
 
 	<p>舞台上的每位客人都有一个带关闭按钮的头部。关掉的面板不会消失：它的标签留在顶栏里，不填色，点这个标签它就回来。</p>
 
-	<h2 id="s16">停靠区 —— 右</h2>
+	<h2 id="s17">停靠区 —— 右</h2>
 	<p>停靠区装着你要取用的来源。关掉一个，它的标签留在顶栏里；点那个标签，它又停回来。停靠区怎么分格，以及因此一次能装几个面板，由你在外观菜单里的 <strong>停靠区分格</strong> 里设定，下面会讲。</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3 id="s17">邮件</h3>
+			<h3 id="s18">邮件</h3>
 			<p>你的邮箱和邮箱里的东西。添加邮箱、同步，把一封邮件打开到舞台上。</p>
 		</div>
 		<div class="card">
-			<h3 id="s18">工作区</h3>
+			<h3 id="s19">工作区</h3>
 			<p>你的文件，一棵普通的树。智能体的文件工具就在这里读和写。</p>
 		</div>
 		<div class="card">
-			<h3 id="s19">智能体</h3>
+			<h3 id="s20">智能体</h3>
 			<p>正在跑的智能体，实时呈现，并数出有多少个在干活。</p>
 		</div>
 		<div class="card">
-			<h3 id="s20">支出</h3>
+			<h3 id="s21">支出</h3>
 			<p>你花了多少，花在什么上。完整的说明见 <a href="spending.html">支出</a>.</p>
 		</div>
 		<div class="card">
-			<h3 id="s21">待办</h3>
+			<h3 id="s22">待办</h3>
 			<p>daimon 提出的、正等着你答复的事。每一行都可以按优先级或按时长排序，答复可以是 <span class="ui">去做</span>, <span class="ui">先讨论</span> 或 <span class="ui">放弃</span>.</p>
 		</div>
 		<div class="card">
-			<h3 id="s22">回收站</h3>
+			<h3 id="s23">回收站</h3>
 			<p>删掉的聊天和 Diamonds，保留三十天，在你的任何一台设备上都能还原。见 <a href="chats-and-diamonds.html">聊天与 Diamonds</a>.</p>
 		</div>
 	</div>
 
-	<h2 id="s23">顶栏</h2>
+	<h2 id="s24">顶栏</h2>
 	<p>最上面一排是文字标、一行 <strong>面板标签</strong>，最右边是一个按钮，用来 <strong>关联另一台设备</strong>，一个 <strong>关于</strong> 对话框，这份 <strong>指南</strong>，以及 <strong>外观与布局</strong> 菜单。有新构建发布时，旁边会出现一个标签。</p>
 
-	<h3 id="s24">那一行标签</h3>
+	<h3 id="s25">那一行标签</h3>
 	<p>每个面板都有一个标签，开着关着都有；点一个，就切换那个面板。开着的面板，它的标签是填色的，所以这一行读起来就是屏幕上有什么的一张地图。要是只有关着的面板才有标签，应用最空的时候这一行反而最长，而且每用一次，每个标签都要横着挪一格；位置不动的标签，你才记得住它在哪。（智能体是 <em>每一个</em>的例外：在第一个智能体跑起来之前，它一直不来碍事。）</p>
 	<p>这些标签按区域分组 —— 先侧栏，再舞台，然后停靠区 —— 组与组之间有一条细分隔线，顺序和这几个区域在屏幕上的顺序一样。于是一个标签待的那一侧，就是它打开的面板将要出现的那一侧。有两种记号是有含义的：</p>
 	<ul>
@@ -321,14 +326,14 @@
 		<li>一个关着的停靠区标签， <strong>停靠区满了的时候会变灰</strong>。它的提示指向解法：在外观菜单里选一个更大的分格，或者关掉一个停靠区面板。</li>
 	</ul>
 
-	<h3 id="s25">固定的面板，以及面板总览</h3>
+	<h3 id="s26">固定的面板，以及面板总览</h3>
 	<p>哪些标签待在顶栏，由你决定。任何面板都可以 <strong>固定</strong> 或者取消固定；没固定的那些住在这一行末尾的一个 <span class="ui">⋯</span> 标签后面，并带一个数字，说明后面藏了几个。点它，就打开 <strong>面板总览</strong>：所有的面板都在里面，可以按名字搜索，按区域分组，每一行都带一个固定控制项，并说明那个面板是否开着。点一行，就像点标签一样打开或关掉那个面板。</p>
 	<p>这一行之所以可以不完整，只因为面板总览是完整的。也没有什么按你用得多不多来排序：一行会自己重排的标签，会毁掉固定位置本来要建立的肌肉记忆。</p>
 
-	<h3 id="s26">命令面板</h3>
+	<h3 id="s27">命令面板</h3>
 	<p><kbd>Ctrl</kbd> <kbd>K</kbd>, <kbd>Cmd</kbd> <kbd>K</kbd> （在 Mac 上）—— 打开一个搜索框，打字就能到达任何面板或任何设置。方向键在结果里移动， <span class="ui">Enter</span> 运行高亮的那一个， <span class="ui">Esc</span> 关闭它。里面列出面板、配色、四档字号、停靠区分格、语言、货币，以及权限模式。要去一个你看得见其标签的面板，这从来不是最快的路；但无论有多少面板，这条路都是齐全的。</p>
 
-	<h3 id="s27">用键盘，用耳朵</h3>
+	<h3 id="s28">用键盘，用耳朵</h3>
 	<p>不用鼠标也能操作 Daimond。 <span class="ui">Tab</span> 按控制项画出来的顺序在它们之间移动， <span class="ui">Enter</span> 或 <span class="ui">Space</span> 操作你当前所在的那一个， <span class="ui">Esc</span> 关掉当前打开的东西。每一个对话框、菜单和浮层，角上都还有一个叉：同一个控制项，同一种做法，尺寸按手机上的拇指来定。</p>
 	<p>你在哪里，是画在控制项 <em>外面</em> 的，是一个离开它边缘一点的圆环。像从前那样把它画成控制项自身边框的变化，这个环只有在静止边框几乎看不见时才读得出来 —— 于是把边框做得可见，就会一次性拿掉所有配色下的焦点环。而衬在它背后的表面上，这个环在整个范围里都站得住：十一种配色全测过，最弱的那个环仍有标准所要求对比度的四倍半。</p>
 	<p>有两处尤其如此：</p>
@@ -339,7 +344,7 @@
 	<p>用屏幕阅读器时，一条回答只在 <strong>到齐的那一刻播报一次</strong> （“Daimond 回答了，120 个词”）而不是一边写一边播。实时区域每变一次就念一次，所以一条流式的回答，只要模型还在打字，就会被一片一片地念给你听。人们会把它关掉，而一个播报被关掉的应用，看着像能用，其实不能。一轮一句话是少了，但它能用。</p>
 	<p>整个窗口都有命名的区域和真正的标题，所以屏幕阅读器自己的地标列表，就是这个应用一份能用的目录。任何你走不到、听不到的地方都是缺陷，不是限制；请说出来。</p>
 
-	<h3 id="s28">外观与布局</h3>
+	<h3 id="s29">外观与布局</h3>
 	<p>右上角那个按钮打开一个菜单，里面装着关于 Daimond 长什么样、怎么摆的选择 —— 而不是它做什么：</p>
 	<ul>
 		<li><strong>视图</strong>: <span class="ui">简洁</span> 或 <span class="ui">全量</span>。简洁只给出每样东西的名字和它是不是在跑，其余的都在一按之外；全量把模型、花费和上下文摆在旁边，于是两个东西不用打开就能比。它同时定下界面的形状，因为最高密度配上疏朗的形状，是没人想要的组合。某张卡片自己的齿轮，仍然可以为那张卡片覆盖它。</li>
@@ -349,10 +354,10 @@
 		<li><strong>语言</strong> 和 <strong>货币</strong>：Daimond 说什么话，数字用什么币显示。还没有译文表的语言仍显示英文；不论数字以什么货币显示，结算一律用美元。</li>
 	</ul>
 
-	<h3 id="s29">把一套布置留给某个 Diamond</h3>
+	<h3 id="s30">把一套布置留给某个 Diamond</h3>
 	<p>选中一个 Diamond 时，外观菜单会提出把当前的面板布置留给它，也可以更新或忘掉已经保存的那一套。再打开那个 Diamond，布置就回来，于是回到一件工作，不必再动手把面板一个个摆好。它只在你开口时才保存，从不推测，也从不在后台进行 —— 因为一次悄悄关掉面板的切换，读起来就像工作丢了。</p>
 
-	<h2 id="s30">在窄屏幕上</h2>
+	<h2 id="s31">在窄屏幕上</h2>
 	<p>低于手机宽度时，芯片行与面板库让位给手机外壳，用更少的空间回答同一个问题：对话是地板，面板作为可拖动的浮层从其上升起，导轨变成左上角按钮打开的抽屉。底部那一行就是同一条芯片行，只是横向滚动。每个面板在其中都有一枚芯片，顺序与大屏上各区的排列一致；被填充的那一枚是你正在看的东西，而不是所有已打开的面板，因为手机上一次只看得见一样；芯片会带你过去而不是来回切换，因为它要关掉的将是整块屏幕。管理面板在抽屉的下方。什么都没有丢失；还是同样的面板，只是一次显示一个。</p>
 	<p>装到主屏幕上之后，Daimond 在自己的窗口里运行，没有浏览器的边框零件，并且自动避开刘海和主屏指示条。它还是同一个页面、同一份存下来的工作，所以不需要把任何东西搬进去。</p>
 

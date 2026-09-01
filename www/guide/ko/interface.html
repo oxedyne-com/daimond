@@ -232,7 +232,12 @@
 	<div class="note"><strong>예정 항목이 달라 보이는 것은 실제로 다르기 때문이에요.</strong> 빌드 id도 봉인 번호도 없고, 아직 만들어지지 않았으며 날짜도 약속하지 않았다고 말로 밝혀요. 그 아래는 모두 봉인되어 확인할 수 있어요. 의향의 표명은 그 어느 쪽도 아니니, 기록의 권위를 빌려서는 안 돼요.</div>
 	<p>예전 빌드로 돌아가는 길은 없어요. 붙잡아 둔 빌드는 너무 오래된 클라이언트와는 말하지 않겠다는 게이트웨이 자신의 거절에 부딪혀요. 이미 고친 보안 결함을 그대로 안고 있을 수도 있는데, 그 앱은 내 제공자 키와 신원과 패스키를 들고 있죠. 그리고 더 새로운 로컬 자료를 만나면 잘못 읽을 위험이 있어요. 바뀐 게 싫다는 말에는 그 변경 자리에서 답해요. 무엇이 바뀌었는지 또렷이 말하는 것, 이 메모가 하는 일이 그거예요.</p>
 
-	<h2 id="s6">스테이지 — 가운데</h2>
+	<h3 id="s6">업데이트가 오는 방식</h3>
+	<p>Daimond은 스스로 업데이트해요. 내려받을 것은 없어요. 돌고 있는 탭이 더 새 빌드를 알아채고 그리로 다시 읽어 들여요. 다시 읽어도 잃는 것은 없어요. 켤 때마다 내 작업이 내구성 저널에서 복구되기 때문이에요.</p>
+	<p>물음은 <em>언제</em> 뿐이에요. 보통의 업데이트는 조용한 때를 기다려요 — 탭이 뒤에 있을 때, 또는 십 분쯤 손대지 않았을 때 — 돌고 있는 턴이나 반쯤 쓴 메시지 위로는 결코 다시 읽지 않아요. 위쪽 버튼 옆의 칩이 하나가 준비된 때를 알려 줘요. 누르면 그 자리에서 업데이트를 받아요.</p>
+	<p>기다릴 수 없는 업데이트도 있어요. 어떤 변경으로 낡은 탭이 더는 서버와 함께 일하지 못하게 되면, 서버가 그 탭을 거절하고, 탭은 스스로 지금 버전으로 다시 읽어 들여요. 그때도 돌고 있는 턴을 끊지 않고, 문장 한가운데서 다시 읽는 대신 마지막 키 입력 뒤 잠깐 기다려요. 버전을 거절할 길은 없어요. 내가 남길 앱은 같은 사람들의 같은 앱이고, 브라우저는 어제의 빌드를 오늘의 서버에 맞대어 돌릴 수 없으니까요.</p>
+
+	<h2 id="s7">스테이지 — 가운데</h2>
 	<p>The stage is the middle zone. Its occupants sit side by side and never dock at the right, so you never leave the conversation to do a thing: read the message, watch the page, read the document beside the pages it was typeset into, with the daimon still there to be asked about any of it.</p>
 
 	<p>How many seats there are is decided by <strong>how wide the stage is</strong>, not by a fixed number: two at the narrowest, four at the widest, and one more for roughly every 380 pixels, which is where a line of prose still holds about 45 characters. Four of them want around 1550 pixels of stage, so they are for a large monitor; a laptop usually gets two or three. Two is the floor whatever the width, because the whole point of the stage is that whatever you are attending to opens <em>— 옆은</em> the conversation rather than over it.</p>
@@ -241,79 +246,79 @@
 
 	<div class="cards">
 		<div class="card">
-			<h3 id="s7">AI — 채팅</h3>
+			<h3 id="s8">AI — 채팅</h3>
 			<p>daimon과 이야기하는 곳이에요. 여기 기본으로 있는 손님이고, 스테이지가 비려 할 때면 언제나 돌아와요. 내 메시지, 답, 그리고 도구 단계가 여기 나와요.</p>
 		</div>
 		<div class="card">
-			<h3 id="s8">웹</h3>
+			<h3 id="s9">웹</h3>
 			<p>웹 페이지를 보여 주거나 조작해요. 머리글에서 열거나, Daimond이 링크를 따라갈 때 열려요.</p>
 		</div>
 		<div class="card">
-			<h3 id="s9">문서</h3>
+			<h3 id="s10">문서</h3>
 			<p>A file as its characters, given room to read it and to edit it. Its header carries the paperclip that attaches what you are reading to what you are working on.</p>
 		</div>
 		<div class="card">
-			<h3 id="s10">Preview</h3>
+			<h3 id="s11">Preview</h3>
 			<p>What a file looks like, as against what it says: a compiled PDF, a picture, or the typeset pages of a document as you write it. It is a panel of its own so that a source and its pages can be on screen at once, which is why the stage grew past two seats.</p>
 		</div>
 		<div class="card">
-			<h3 id="s11">메시지</h3>
+			<h3 id="s12">메시지</h3>
 			<p>메일 한 통. 메일에서 열어 채팅 옆에서 읽어요.</p>
 		</div>
 		<div class="card">
-			<h3 id="s12">도구</h3>
+			<h3 id="s13">도구</h3>
 			<p>Daimond이 할 수 있는 일, 그리고 나머지는 얼마인지. 여는 곳은 <span class="ui">도구</span> 행이에요.</p>
 		</div>
 		<div class="card">
-			<h3 id="s13">작성</h3>
+			<h3 id="s14">작성</h3>
 			<p>메일 메시지를 써요. 여기서 저절로 보내지는 것은 없어요. <span class="ui">보내기</span> 버튼만 메일을 회선에 올리고, 누를 수 있는 사람은 나뿐이에요.</p>
 		</div>
 		<div class="card">
-			<h3 id="s14">관계도</h3>
+			<h3 id="s15">관계도</h3>
 			<p>내 Diamonds과 그 사이의 링크를 그려요. Diamonds 머리에 있는 관계도 버튼에서 열고, 거기서 다시 늘어놓거나 새 링크를 그을 수도 있어요.</p>
 		</div>
 		<div class="card">
-			<h3 id="s15">터미널</h3>
+			<h3 id="s16">터미널</h3>
 			<p>내 기기에 있는 진짜 터미널이고, 명령이 도는 것과 같은 칸 안에 있어요. 자세한 것은 <a href="../machine-operations.html">기기에서 명령 실행</a>.</p>
 		</div>
 	</div>
 
 	<p>스테이지 손님은 저마다 머리글에 닫기 버튼을 가지고 있어요. 닫은 패널은 사라지지 않아요. 칩은 상단 바에 채워지지 않은 모습으로 남고, 칩을 누르면 돌아와요.</p>
 
-	<h2 id="s16">독 — 오른쪽</h2>
+	<h2 id="s17">독 — 오른쪽</h2>
 	<p>독은 내가 끌어오는 원천을 담아요. 하나를 닫아도 칩은 상단 바에 남고, 칩을 누르면 다시 들어와요. 독을 어떻게 나눌지, 그러니까 한 번에 패널을 몇 개 담을지는 <strong>독 분할</strong> 항목에서 정해요. 아래에서 설명해요.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3 id="s17">메일</h3>
+			<h3 id="s18">메일</h3>
 			<p>내 메일함과 그 안에 든 것. 메일함을 추가하고, 동기화하고, 메시지를 스테이지에 열어요.</p>
 		</div>
 		<div class="card">
-			<h3 id="s18">작업 공간</h3>
+			<h3 id="s19">작업 공간</h3>
 			<p>내 파일을 평범한 나무로. 에이전트의 파일 도구가 여기를 읽고 써요.</p>
 		</div>
 		<div class="card">
-			<h3 id="s19">에이전트</h3>
+			<h3 id="s20">에이전트</h3>
 			<p>돌고 있는 에이전트 실행을 일어나는 그대로. 몇이 일하고 있는지 수도 나와요.</p>
 		</div>
 		<div class="card">
-			<h3 id="s20">지출</h3>
+			<h3 id="s21">지출</h3>
 			<p>무엇에 얼마를 썼는지. 자세한 곳은 <a href="spending.html">지출</a>.</p>
 		</div>
 		<div class="card">
-			<h3 id="s21">대기</h3>
+			<h3 id="s22">대기</h3>
 			<p>daimon이 청해 놓고 기다리는 것들이에요. 줄은 우선순위로도 나이로도 정렬할 수 있고, 답은 <span class="ui">실행</span>, <span class="ui">먼저 상의</span> 또는 <span class="ui">버리기</span>.</p>
 		</div>
 		<div class="card">
-			<h3 id="s22">휴지통</h3>
+			<h3 id="s23">휴지통</h3>
 			<p>지운 채팅과 Diamonds이에요. 서른 날 동안 보관되고, 내 어느 기기에서든 되돌릴 수 있어요. 자세한 것은 <a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>.</p>
 		</div>
 	</div>
 
-	<h2 id="s23">상단 바</h2>
+	<h2 id="s24">상단 바</h2>
 	<p>위쪽에는 워드마크, <strong>패널 칩</strong>이 놓이고, 오른쪽 끝에는 <strong>다른 기기 연결</strong> 버튼, <strong>About</strong> 대화상자, 이 <strong>안내서</strong>, 그리고 <strong>모양과 배치</strong> 메뉴가 있어요. 새 빌드가 나오면 그 옆에 칩이 하나 나타나요.</p>
 
-	<h3 id="s24">칩</h3>
+	<h3 id="s25">칩</h3>
 	<p>패널에는 모두 칩이 있어요. 열려 있든 닫혀 있든 있고, 누르면 그 패널이 켜지고 꺼져요. 열린 패널의 칩은 채워져 있으니, 이 줄은 화면에 무엇이 있는지 보여 주는 지도로 읽혀요. 닫힌 패널만 칩을 가졌다면, 앱이 가장 비었을 때 줄이 가장 길어지고, 하나 쓸 때마다 칩이 옆으로 밀렸을 거예요. 자리를 지키는 칩이라야 그 자리를 익힐 수 있죠. (에이전트는 <em>모든</em>이라는 말의 예외예요. 첫 에이전트가 돌기 전까지는 비켜 있어요.)</p>
 	<p>칩은 구역별로 묶여 있어요. 레일, 스테이지, 독 순서이고, 사이에는 가는 칸막이가 들어가며, 화면에서 구역이 놓인 차례 그대로예요. 그래서 칩은 그것이 여는 패널이 나타날 쪽에 있어요. 뜻을 지닌 표시가 둘 있어요.</p>
 	<ul>
@@ -321,14 +326,14 @@
 		<li>닫힌 독 칩은 <strong>독이 가득 찼을 때 회색이 돼요</strong>. 툴팁이 고치는 길을 가리켜요. 모양 메뉴에서 분할을 더 크게 하거나, 독 패널 하나를 닫는 거예요.</li>
 	</ul>
 
-	<h3 id="s25">고정한 패널과 패널 모음</h3>
+	<h3 id="s26">고정한 패널과 패널 모음</h3>
 	<p>상단 바에 어떤 칩을 둘지는 내가 정해요. 어떤 패널이든 <strong>고정할 수</strong> 있고 풀 수도 있어요. 푼 것들은 줄 끝의 <span class="ui">⋯</span> 칩 뒤에 들어가고, 거기 몇 개가 있는지 수가 붙어요. 누르면 <strong>패널 모음</strong>이 열려요: 있는 모든 패널이 이름으로 검색되고, 구역별로 묶이고, 줄마다 고정 조작과 그 패널이 열려 있는지가 붙어요. 줄을 누르면 칩처럼 패널이 열리거나 닫혀요.</p>
 	<p>이 줄이 빠짐없지 않아도 되는 것은 패널 모음이 빠짐없기 때문이에요. 자주 쓴다고 순위가 매겨지지도 않아요. 스스로 차례를 바꾸는 줄은, 자리가 고정되어야 자라는 몸의 기억을 부숴 버리니까요.</p>
 
-	<h3 id="s26">명령 팔레트</h3>
+	<h3 id="s27">명령 팔레트</h3>
 	<p><kbd>Ctrl</kbd> <kbd>K</kbd>, <kbd>Cmd</kbd> <kbd>K</kbd> (Mac에서는) 를 누르면, 치는 것만으로 어떤 패널이나 설정에도 닿는 검색 칸이 열려요. 결과 사이는 화살표 키로 옮기고, <span class="ui">Enter</span> 로 고른 것을 실행하고, <span class="ui">Esc</span> 로 닫아요. 늘어서는 것은 패널, 팔레트, 네 가지 글자 크기, 독 분할, 언어, 통화, 그리고 권한 모드예요. 칩이 보이는 패널로 가는 가장 빠른 길은 결코 아니고, 패널이 몇이든 빠짐없이 남는 길이에요.</p>
 
-	<h3 id="s27">키보드로, 귀로</h3>
+	<h3 id="s28">키보드로, 귀로</h3>
 	<p>Daimond은 마우스 없이도 몰 수 있어요. <span class="ui">Tab</span> 은 그려진 차례대로 조작을 옮겨 다니고, <span class="ui">Enter</span> 또는 <span class="ui">Space</span> 는 지금 있는 조작을 눌러 주고, <span class="ui">Esc</span> 는 열려 있는 것을 닫아요. 어떤 대화상자든 메뉴든 시트든 모서리에 가위표가 있고, 같은 방식으로 만든 하나의 조작이며, 휴대폰에서 엄지에 맞는 크기예요.</p>
 	<p>지금 어디에 있는지는 조작의 <em>바깥에</em> 테두리에서 떨어져 선 고리로 그려요. 예전처럼 조작 자신의 테두리 변화로 그리면, 고리는 쉬고 있을 때의 테두리가 거의 보이지 않을 때만 읽혀요. 테두리를 보이게 했다면 모든 팔레트에서 초점 고리가 한꺼번에 사라졌겠죠. 뒤에 있는 면을 바탕으로 그린 고리는 그 폭 전체에서 살아남아요. 열한 팔레트 모두에서 재어 보니, 가장 옅은 고리도 기준이 요구하는 대비의 네 배 반이에요.</p>
 	<p>특히 두 곳이에요.</p>
@@ -339,7 +344,7 @@
 	<p>화면 낭독기에서는 답이 <strong>도착했을 때 한 번만</strong> 알려져요 — “Daimond이 답했어요, 120 단어” — 쓰이는 대로가 아니고요. 라이브 영역은 바뀔 때마다 읽히니, 흘러오는 답은 모델이 계속 쓰는 내내 조각조각 읽혀요. 사람들은 그걸 꺼 버리죠. 그리고 알림이 꺼진 앱은 답할 수 있어 보이지만 답하지 못해요. 턴마다 한 문장은 적지만, 쓸 수 있어요.</p>
 	<p>창에는 이름 붙은 구역과 진짜 제목이 두루 있어서, 화면 낭독기가 가진 표지 목록이 그대로 앱의 차례가 돼요. 닿지 못하거나 듣지 못하는 것이 있다면 그건 한계가 아니라 결함이에요. 그렇게 말해 주세요.</p>
 
-	<h3 id="s28">모양과 배치</h3>
+	<h3 id="s29">모양과 배치</h3>
 	<p>오른쪽 위 버튼은 Daimond이 무엇을 하는지가 아니라 어떻게 보이고 어떻게 앉는지에 대한 선택을 모아 둔 메뉴 하나를 열어요.</p>
 	<ul>
 		<li><strong>보기</strong>: <span class="ui">심플</span> 또는 <span class="ui">최대</span>. 심플은 저마다 이름과 돌고 있는지만 보여 주고, 나머지는 모두 한 번 누르면 나오게 둬요. 최대는 모델과 비용과 컨텍스트를 옆에 붙이니, 둘 다 열지 않고도 견줄 수 있어요. 인터페이스의 모양도 이것이 함께 정해요. 가장 빽빽한 밀도에 널찍한 모양이라는 짝은 아무도 원하지 않으니까요. 타일 자신의 톱니는 그 타일에 대해서는 여전히 이보다 앞서요.</li>
@@ -349,10 +354,10 @@
 		<li><strong>언어</strong> 그리고 <strong>통화</strong>: Daimond이 말하는 언어와, 금액을 보여 주는 단위예요. 아직 표가 없는 언어는 영어로 남고, 표시가 어떻든 청구는 늘 미국 달러예요.</li>
 	</ul>
 
-	<h3 id="s29">배치를 Diamond과 함께 남기기</h3>
+	<h3 id="s30">배치를 Diamond과 함께 남기기</h3>
 	<p>Diamond을 고른 상태에서 모양 메뉴는 지금의 패널 배치를 그 Diamond과 함께 남기겠느냐고 물어요. 이미 저장한 것을 새로 고치거나 잊게 할 수도 있고요. 그 Diamond을 다시 열면 배치가 돌아오니, 일로 돌아가는 것이 패널을 손으로 다시 짜는 일이 되지 않아요. 저장은 부탁했을 때만 되고, 짐작하지도 뒤에서 하지도 않아요. 말없이 패널을 닫는 전환은 일이 사라진 것처럼 읽히니까요.</p>
 
-	<h2 id="s30">좁은 화면에서는</h2>
+	<h2 id="s31">좁은 화면에서는</h2>
 	<p>전화 너비보다 좁아지면 칩과 갤러리는 전화 셸에 자리를 내주고, 더 좁은 자리에서 같은 물음에 답합니다. 채팅이 바닥이고, 패널은 그 위로 끌어 올릴 수 있는 시트로 떠오르며, 레일은 왼쪽 위 버튼으로 여는 서랍이 됩니다. 아래쪽 줄은 같은 칩 줄이며, 옆으로 스크롤됩니다. 모든 패널이 거기에 칩을 가지며, 순서는 큰 화면에서 구역이 놓이는 순서 그대로입니다. 채워진 칩은 지금 보고 있는 것이지 열려 있는 모든 것이 아닙니다. 전화에서는 한 번에 하나만 보이기 때문입니다. 그리고 칩은 전환하는 것이 아니라 그곳으로 데려갑니다. 닫는다면 화면 전체를 닫는 셈이기 때문입니다. 관리 패널은 서랍 아래쪽에서 닿습니다. 잃는 것은 없습니다. 같은 패널을 한 번에 하나씩 보여 줄 뿐입니다.</p>
 	<p>홈 화면에 넣으면 Daimond은 브라우저 장식 없는 저만의 창에서 돌고, 노치와 홈 인디케이터를 피해 자리를 잡아요. 같은 페이지이고 저장된 작업도 같으니, 그리로 옮겨야 할 것은 없어요.</p>
 

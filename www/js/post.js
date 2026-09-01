@@ -1401,8 +1401,17 @@
 					try { ours = await DaimondPeer.verifyEnvelope(peer); } catch (e) { ours = false; }
 					if (ours) return HOLD;
 				}
-				try { await DaimondPeer.absorb(peer, row); }
+				var routed = null;
+				try { routed = await DaimondPeer.absorb(peer, row); }
 				catch (e) { log('a peer envelope would not apply', e); }
+				// A non-nominee that STOOD DOWN for the account's nominated always-on
+				// runner leaves the errand on the relay, exactly as an own-dispatch does
+				// above: acking past it here would drop it before the nominee collects,
+				// and a nominee that then never ran would strand the turn. HOLD keeps the
+				// ack watermark below it, so it is re-collected -- and re-decided against
+				// live presence -- until the nominee runs it, or its beat ages out and
+				// this device claims. The stand-down is money-safe by the lease either way.
+				if (routed && routed.result && routed.result.why === 'nominee') return HOLD;
 				return NOTHING;			// routed, and never a message on the list
 			}
 		}
