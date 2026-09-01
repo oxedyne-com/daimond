@@ -262,13 +262,15 @@ try {
 		has(5) && has(4) && after.length === 5,
 		JSON.stringify(after));
 
-	// ── AND DRAWN. render() (called by the batch's finally) redraws the list from
-	// `_order`, so the rows are in the DOM without any further action.
-	const rows = await page.evaluate(() =>
-		[...document.querySelectorAll('#improve-props .imp-prop')].map(r => Number(r.dataset.prop)));
-	check('every sent proposal is drawn as a row in the Proposals list',
-		rows.indexOf(100) !== -1 && rows.indexOf(101) !== -1 && rows.indexOf(102) !== -1,
-		JSON.stringify(rows));
+	// ── AND DRAWN. RETIRED with the Social browse-list (option b, 2026-08-31): the
+	// Social ▸ Proposals surface is a capture box now and no longer renders
+	// `#improve-props .imp-prop` rows -- that list moved to the Improve hub
+	// (js/tracker.js). The META-BUG this file exists for is the FOLD, and it is
+	// proved above at the STORE level (`forge.props()`), which the `noappear` break
+	// still reddens; the hub's DRAWING of proposals (and the folding of a vote or
+	// comment answer into a card) is proved in dev/verify_tracker.mjs. A DOM-row
+	// check against a list that no longer exists would assert nothing, so it is not
+	// masked here -- it is gone, and its meaning is where the rendering now lives.
 
 	// The queue emptied, as a batch of accepted sends should.
 	const queue = await page.evaluate(() => window.DaimondApproveList.queue().length);

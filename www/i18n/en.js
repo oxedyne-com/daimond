@@ -3975,6 +3975,19 @@
 	'tracker.revisions':      'Revisions',
 	'tracker.discussion':     'Comments',
 	'tracker.no_comments':    'No comments.',
+	// Vote and comment, cast with the pull voice through the Social panel. The
+	// upvote shows the for-count; the reply box lives in the opened card. Without a
+	// voice the "set a voice" affordance shows in place of a control that would fail.
+	'tracker.upvotes':        '▲ {n}',
+	'tracker.upvote_help':    'Upvote this. Press again to take it back.',
+	'tracker.reply_ph':       'Say something about this proposal.',
+	'tracker.say':            'Say it',
+	'tracker.say_help':       'Sends exactly this box. Nothing else.',
+	'tracker.say_empty':      'Write something first.',
+	'tracker.say_novoice':    'Set a voice in Social to comment.',
+	'tracker.vote_novoice':   'Set a voice in Social to vote.',
+	'tracker.set_voice':      'Set a voice',
+	'tracker.set_voice_help': 'A voice lets you vote and comment. Set it in Social.',
 	// The four board columns, and the empty note under one that holds nothing.
 	// tracker.js:drawColumn builds `tracker.` + col.key for the four column labels;
 	// the prefix is the board's whole namespace (title, columns, state, admin, errors)

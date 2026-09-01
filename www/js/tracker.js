@@ -179,6 +179,39 @@
 	/// handed in. Presence only, and nothing about its value.
 	function canSettle() { return !!cfg.voice || adminHas(); }
 
+	// ── The pull voice (an ordinary reader's) ──────────────────────
+	//
+	// A DIFFERENT VOICE from the settle one above. The pull voice may vote and
+	// comment but not settle; it is the auto-provisioned voice the Social panel
+	// (js/improve.js) holds, and reading it, posting with it and provisioning it
+	// are all DaimondImprove's job. The board never grows its own copy of any of
+	// that -- it asks whether one is held, and sends votes and comments through
+	// DaimondImprove's own doors. Reading the board still needs no voice at all.
+
+	/// Is a pull voice held on this device? Never throws: an absent or misbehaving
+	/// DaimondImprove is read as "no voice", so the board offers the "set a voice"
+	/// affordance rather than a control the forge would refuse.
+	function pullVoice() {
+		try { return !!(window.DaimondImprove && DaimondImprove.hasVoice && DaimondImprove.hasVoice()); }
+		catch (e) { return false; }
+	}
+
+	/// The Social panel's vote door, or null when there is no capture surface.
+	function voteDoor() {
+		try {
+			var d = window.DaimondImprove && DaimondImprove.forge && DaimondImprove.forge.vote;
+			return (typeof d === 'function') ? d : null;
+		} catch (e) { return null; }
+	}
+
+	/// The Social panel's comment door, or null.
+	function sayDoor() {
+		try {
+			var d = window.DaimondImprove && DaimondImprove.forge && DaimondImprove.forge.say;
+			return (typeof d === 'function') ? d : null;
+		} catch (e) { return null; }
+	}
+
 	// ── The settle voice through a passphrase change ───────────────
 	//
 	// Sealed under the passphrase, so a change to it must read the voice out under
@@ -351,6 +384,13 @@
 			detail:   false,
 			// A TALLY, never a voter. Two counts, and nothing that says who.
 			votes:    null,
+			// THIS ASKER'S OWN VOTE, present only when the answer was voiced. A board
+			// READ carries no voice, so a listing card has neither -- the upvote is
+			// drawn unpressed until this device casts one, whose voiced answer carries
+			// them. Presence first, value second, the same rule improve.js's cleanProp
+			// keeps: `asked` absent is "no voice asked", not "asked and did not vote".
+			asked:    false,
+			mine:     null,
 			revisions:  null,
 			discussion: null,
 			// Set from the discussion once it is read: the last comment, drawn on a
@@ -362,6 +402,10 @@
 		};
 		if (p.votes && typeof p.votes === 'object' && !Array.isArray(p.votes)) {
 			rec.votes = { for: Math.max(0, whole(p.votes.for)), against: Math.max(0, whole(p.votes.against)) };
+		}
+		if (Object.prototype.hasOwnProperty.call(p, 'mine')) {
+			rec.asked = true;
+			rec.mine  = (p.mine === 1 || p.mine === -1) ? p.mine : null;
 		}
 		if (typeof p.body === 'string') rec.detail = true;
 		if (Array.isArray(p.discussion)) {
@@ -442,6 +486,12 @@
 			rec.shipped    = cur.shipped;
 			rec.enriched   = cur.enriched;
 		}
+		// KEEP THIS ASKER'S OWN VOTE across an UNVOICED re-read. An enrich or a
+		// listing refresh reads with no voice, so its record carries no `mine`; the
+		// upvote a person just cast (whose voiced answer did) must not be forgotten
+		// because the board looked again without a voice. Presence, not value: only
+		// an answer that actually carried `mine` replaces it.
+		if (cur && cur.asked && !rec.asked) { rec.asked = cur.asked; rec.mine = cur.mine; }
 		if (!cur) _order.push(rec.n);
 		_by[rec.n] = rec;
 		return rec;
@@ -535,6 +585,84 @@
 		return true;
 	}
 
+	// ── Voting and commenting (pull voice, through the Social panel) ──
+	//
+	// READING A TALLY OR A COMMENT NEEDS NO VOICE; casting one or saying something
+	// needs the pull voice. The board holds neither the voice nor the POST: it
+	// asks DaimondImprove whether a voice is held, and sends through its vote and
+	// comment DOORS, which carry the pull voice and speak the one copy of the wire
+	// improve.js keeps. The answer is the detail shape of the record it changed --
+	// tally, `mine` and discussion -- so the board ABSORBS it into its own store
+	// and redraws, exactly as a settle does, and never asks a second time.
+
+	/// Upvote proposal `n`, or take the upvote back. An idempotent up-vote per the
+	/// contract: the forge tallies, and this holds no second copy. `mine === 1`
+	/// means the upvote is already cast, so pressing again withdraws it (`d=0`);
+	/// otherwise it casts one (`d=1`). Down-voting is not offered on the board.
+	async function voteOn(n) {
+		if (!pullVoice()) { needVoice('vote'); return false; }
+		var door = voteDoor();
+		if (!door) { needVoice('vote'); return false; }
+		var p = _by[n];
+		if (!p || !p.votes) return false;
+		var d = (p.asked && p.mine === 1) ? 0 : 1;
+		var a;
+		try { a = await door(n, d); }
+		catch (e) { a = { ok: false, why: 'gateway' }; }
+		if (!a || !a.ok) { _st.err = a || { why: 'gateway' }; draw(); return false; }
+		absorb(clean(a.data));
+		deriveFrom(whole(n));
+		_st.err = null;
+		draw();
+		return true;
+	}
+
+	/// Say something on proposal `n`, from the reply box under its opened card. The
+	/// same one rule the note box keeps: exactly the characters in that box at the
+	/// press, nothing queued. The box is emptied only when the forge took it, so a
+	/// refusal leaves the words where they can still be read and copied.
+	async function commentOn(n) {
+		if (!pullVoice()) { needVoice('comment'); return false; }
+		var door = sayDoor();
+		if (!door) { needVoice('comment'); return false; }
+		var box = _host ? _host.querySelector('.trk-reply[data-prop="' + n + '"]') : null;
+		if (!box) return false;
+		var text = String(box.value || '').trim();
+		if (!text) { flash(tOr('tracker.say_empty', 'Write something first.')); return false; }
+		var a;
+		try { a = await door(n, text); }
+		catch (e) { a = { ok: false, why: 'gateway' }; }
+		if (!a || !a.ok) { _st.err = a || { why: 'gateway' }; draw(); return false; }
+		box.value = '';
+		absorb(clean(a.data));
+		deriveFrom(whole(n));
+		_st.err = null;
+		draw();
+		return true;
+	}
+
+	/// Send an unvoiced reader to where a voice is set. The one voice flow lives in
+	/// the Social panel (js/improve.js), so the board opens it when the layout
+	/// engine is present, and falls back to the exposed one-tap provision otherwise
+	/// -- never a vote or comment control that the forge would refuse.
+	function getVoice() {
+		try { if (window.DaimondPanels && DaimondPanels.show) { DaimondPanels.show('social'); return; } }
+		catch (e) { /* no engine: try provisioning in place */ }
+		try {
+			if (window.DaimondImprove && DaimondImprove.provision) {
+				Promise.resolve(DaimondImprove.provision()).then(function (ok) { if (ok) draw(); }, function () { /* said on its own surface */ });
+			}
+		} catch (e) { /* nothing to do */ }
+	}
+
+	/// Say a vote or comment needs a voice, and point at where one is set. Never a
+	/// dead control: the affordance is drawn inline, and this is the press path.
+	function needVoice(act) {
+		flash(act === 'comment'
+			? tOr('tracker.say_novoice', 'Set a voice in Social to comment.')
+			: tOr('tracker.vote_novoice', 'Set a voice in Social to vote.'));
+	}
+
 	// ── Drawing ────────────────────────────────────────────────
 
 	var _host = null;
@@ -582,6 +710,67 @@
 		if (!p.votes) return null;
 		return el('span', 'trk-tally', tOr('tracker.tally', '{yes} for, {no} against',
 			{ yes: p.votes.for, no: p.votes.against }));
+	}
+
+	/// The upvote control: the for-count as an affordance, so a vote is cast where
+	/// the count is read. Drawn ONLY when the record carries a tally -- the same
+	/// rule improve.js's vote control keeps, gated on the answer and never on a
+	/// date. With a pull voice it is a live button that toggles; without one it is
+	/// the count beside a terse "set a voice" affordance, never a button that the
+	/// forge would refuse. `mine === 1` shows the upvote already cast.
+	function drawVote(p) {
+		if (!p.votes) return null;
+		var box = el('div', 'trk-vote');
+		if (pullVoice() && voteDoor()) {
+			var up = button('trk-vote-btn', 'tracker-vote',
+				tOr('tracker.upvotes', '▲ {n}', { n: p.votes.for }),
+				tOr('tracker.upvote_help', 'Upvote this. Press again to take it back.'));
+			up.dataset.prop = p.n;
+			var on = !!(p.asked && p.mine === 1);
+			if (on) up.classList.add('on');
+			up.setAttribute('aria-pressed', on ? 'true' : 'false');
+			box.appendChild(up);
+		} else {
+			box.appendChild(el('span', 'trk-vote-count', tOr('tracker.upvotes', '▲ {n}', { n: p.votes.for })));
+			box.appendChild(setVoiceBtn());
+		}
+		return box;
+	}
+
+	/// The reply box under an opened card: with a pull voice, a box and Say it;
+	/// without one, the count of comments is already shown above, so this offers
+	/// the set-a-voice affordance in place of a box that could not be sent.
+	function drawSay(p) {
+		var box = el('div', 'trk-say-box');
+		if (pullVoice() && sayDoor()) {
+			var ta = document.createElement('textarea');
+			ta.className = 'trk-reply';
+			ta.rows = 2;
+			ta.dataset.prop = p.n;
+			ta.placeholder = tOr('tracker.reply_ph', 'Say something about this proposal.');
+			ta.setAttribute('aria-label', tOr('tracker.reply_ph', 'Say something about this proposal.'));
+			if (_replyKeep && _replyKeep[String(p.n)]) ta.value = _replyKeep[String(p.n)];
+			box.appendChild(ta);
+			var acts = el('div', 'trk-say-acts');
+			var b = button('trk-say-btn', 'tracker-comment', tOr('tracker.say', 'Say it'),
+				tOr('tracker.say_help', 'Sends exactly this box. Nothing else.'));
+			b.dataset.prop = p.n;
+			acts.appendChild(b);
+			box.appendChild(acts);
+		} else {
+			box.appendChild(el('span', 'trk-say-novoice',
+				tOr('tracker.say_novoice', 'Set a voice in Social to comment.')));
+			box.appendChild(setVoiceBtn());
+		}
+		return box;
+	}
+
+	/// The "set a voice" affordance, shared by the vote and comment controls when
+	/// no pull voice is held.
+	function setVoiceBtn() {
+		return button('trk-setvoice', 'tracker-getvoice',
+			tOr('tracker.set_voice', 'Set a voice'),
+			tOr('tracker.set_voice_help', 'A voice lets you vote and comment. Set it in Social.'));
 	}
 
 	// ── The board ──────────────────────────────────────────────
@@ -698,6 +887,11 @@
 		if (tl) meta.appendChild(tl);
 		card.appendChild(meta);
 
+		// The upvote, read and cast from the board itself. Comments are read and
+		// added in the opened card (drawDetail), the fuller surface the thread needs.
+		var vote = drawVote(p);
+		if (vote) card.appendChild(vote);
+
 		// The column's own body. Greenlit shows its latest activity; Shipped shows
 		// the build it went out in. Both need the discussion, so both enrich.
 		if (state === 'accepted') {
@@ -792,6 +986,10 @@
 		if (p.mark) meta.appendChild(el('span', 'trk-mark', p.mark));
 		box.appendChild(meta);
 
+		// The upvote, on the opened card as well as the board.
+		var vote = drawVote(p);
+		if (vote) box.appendChild(vote);
+
 		// The build it shipped in, if it is done and has been stamped.
 		if (p.state === 'done') box.appendChild(drawShip(p));
 
@@ -829,6 +1027,9 @@
 			});
 		}
 		box.appendChild(comments);
+
+		// Saying something back, in the opened card where the thread is read.
+		box.appendChild(drawSay(p));
 		return box;
 	}
 
@@ -869,8 +1070,16 @@
 		return host;
 	}
 
+	var _replyKeep = null;			// a half-typed comment, kept across one redraw
+
 	function draw() {
 		if (!_host) return;
+		// WHAT SOMEBODY IS HALF-WAY THROUGH TYPING SURVIVES THE REDRAW, the same care
+		// improve.js takes on its reply box: a vote or a language change redraws the
+		// whole view, and a comment three sentences in would go with it.
+		var keep = {};
+		_host.querySelectorAll('.trk-reply').forEach(function (b) { if (b.value) keep[b.dataset.prop] = b.value; });
+		_replyKeep = keep;
 		_host.innerHTML = '';
 
 		var head = el('div', 'trk-head');
@@ -970,6 +1179,9 @@
 			return;
 		}
 		if (act === 'tracker-settle' && n) { settle(n, b.dataset.which); return; }
+		if (act === 'tracker-vote' && n) { voteOn(n); return; }
+		if (act === 'tracker-comment' && n) { commentOn(n); return; }
+		if (act === 'tracker-getvoice') { getVoice(); return; }
 		if (act === 'tracker-transparency') { openTransparency(); return; }
 		if (act === 'tracker-admin-open') { _voiceOpen = true; draw(); return; }
 		if (act === 'tracker-admin-cancel') { _voiceOpen = false; draw(); return; }

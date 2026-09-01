@@ -1688,6 +1688,26 @@
 		return true;
 	}
 
+	/// Put one vote on the wire, and hand the forge's answer straight back. THE
+	/// DOOR the Improve hub's card (js/tracker.js) sends a vote through, so the
+	/// board holds neither this POST nor the pull voice it rides -- it draws its own
+	/// row from the answer, which is the detail shape of the record it changed. `d`
+	/// is 1, -1 or 0; anything else is refused here rather than sent, so a caller
+	/// cannot turn a dropped value into a stray withdrawal.
+	///
+	/// Kept apart from `vote` above, which draws THIS panel's own list and is where
+	/// dev/verify_improve.mjs anchors its vote breaks: this one only puts the request
+	/// on the wire, the same shape `say` and `post` do for a comment and a proposal.
+	async function voteWire(n, d) {
+		var body = voteBody(d);
+		if (!body) return { ok: false, why: 'malformed' };
+		return await ask(route('n=' + n + '&vote=1'), {
+			method:  'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body:    body,
+		});
+	}
+
 	// ── Revising one's own proposal ────────────────────────────
 	//
 	// THE SECOND DOOR ON THE SAME SEAM, and it was built dark for the reason the
@@ -3240,6 +3260,14 @@
 		vote:     vote,
 		comment:  comment,
 		voteBody: voteBody,
+		/// Is a pull voice held on this device? The Improve hub (js/tracker.js) asks
+		/// before it offers a vote or comment control, so it shows the "set a voice"
+		/// affordance rather than a button that the forge would refuse. Presence only.
+		hasVoice: hasVoice,
+		/// Get this device a pull voice, on a press: the same one-tap flow the
+		/// Settings view draws. Published so the hub can send an unvoiced reader here
+		/// rather than growing its own copy of the provisioning path.
+		provision: function () { return provision(false); },
 		/// Revising one's own proposal: the PANEL ACTION, which reads the two boxes
 		/// under the open row. `forge.amend` below is the door it sends through.
 		amend:    amend,
@@ -3274,6 +3302,12 @@
 			open:    post,
 			/// Say something on one proposal.
 			say:     say,
+			/// Vote on one proposal: `1` for, `-1` against, `0` withdraws. The door
+			/// the Improve hub's card sends through, so the POST and the pull voice it
+			/// carries live in one place and the two surfaces cannot drift apart about
+			/// what a vote is. Answers with the record it changed, tally and `mine` and
+			/// all -- the caller absorbs it into its own store.
+			vote:    voteWire,
 			/// Revise one proposal, from characters somebody else read. The door
 			/// `amend` sends through as well, so the panel and the triage plan
 			/// cannot drift apart about what a revision is.

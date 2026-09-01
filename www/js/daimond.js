@@ -12084,8 +12084,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { body = await DaimondPeer.sealForSelf(plan.errand(parcelVersion)); }
 		catch (e) { return { ok: false, why: 'the errand could not be sealed: ' + (e && e.message || e) }; }
 		var res = await DaimondPost.post(body);
-		try { console.log('[peer] dispatched: turn=' + String(turnId) + ' parcelV=' + parcelVersion
-			+ ' errandPosted=' + String(res && res.ok)); } catch (e) {}
 		if (!res || !res.ok) return { ok: false, why: (res && res.why) || 'the relay would not take the errand' };
 		return { ok: true, turnId: turnId, parcelVersion: parcelVersion };
 	}
@@ -12160,8 +12158,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { have = DaimondSync.version() | 0; } catch (e) { have = 0; }
 				if (want > 0 && have < want) await new Promise(function (res) { setTimeout(res, 400); });
 			}
-			try { console.log('[peer] reconstruct: pulled to v' + (DaimondSync.version() | 0)
-				+ ' (wanted v' + want + ') for turn ' + String(errand.turnId || '')); } catch (e) {}
 		}
 		var chat = null;
 		for (var i = 0; i < chats.length; i++) if (chats[i].id === errand.chatId) { chat = chats[i]; break; }
@@ -12265,17 +12261,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// is a SEPARATE path (recoverDispatchedTurns) that passes `allowSelf` and has
 			// already confirmed the turn is unrun and unclaimed; it never comes through
 			// here. runErrand carries the same guard, so this is belt-and-braces.
-			try { console.log('[peer] onErrand fired: turn=' + String(errand && errand.turnId)
-				+ ' chat=' + String(errand && errand.chatId) + ' by=' + String(errand && errand.dispatchedBy)
-				+ ' self=' + String(selfDeviceId()) + ' parcelV=' + String(errand && errand.parcelVersion)); } catch (e) {}
 			if (errand && String(errand.dispatchedBy) && String(errand.dispatchedBy) === String(selfDeviceId())) {
-				try { console.log('[peer] onErrand: skipped (self-dispatched)'); } catch (e) {}
 				return { ran: false, why: 'self-dispatched' };
 			}
-			var _res = await DaimondPeer.runErrand(errand, peerRunErrandDeps());
-			try { console.log('[peer] runErrand done: trace=' + JSON.stringify(_res && _res.trace)
-				+ ' why=' + String(_res && _res.why) + ' ran=' + String(_res && _res.ran)); } catch (e) {}
-			return _res;
+			return await DaimondPeer.runErrand(errand, peerRunErrandDeps());
 		});
 		// The DISPATCHING side: a report is the nudge that a dispatched turn is
 		// settled. Stash it by turnId for the UI state machine, and on a `done` drop
@@ -12536,9 +12525,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// the safety net for the residual race; this keeps most turns off it.
 				freshWindowMs: DaimondPeer.DISPATCH_FRESH_MS,
 			}, Date.now());
-			try { console.log('[peer] dispatch decision: dispatch=' + String(d.dispatch)
-				+ ' reason=' + String(d.reason) + ' peer=' + String(d.peer && (d.peer.name || d.peer.deviceId))
-				+ ' awake=' + JSON.stringify(Object.keys(presence))); } catch (e) {}
 			if (!d.dispatch) return false;
 			// Prepared exactly as the explicit path, so the parcel push inside
 			// dispatchToPeer carries the prompt (§4.1).
@@ -12620,12 +12606,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var _presenceTimer = null;
 	function presenceTick() {
 		try {
-			if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+			// A hidden PHONE tab is genuinely suspended, so it must not claim to be
+			// awake. A hidden DESKTOP tab (another window has focus) is still running
+			// and is exactly the persistent peer a hand-off targets -- so it keeps
+			// beating while it is open, unlocked and online, even in the background.
+			// Gating a desktop on visibility is what made argonaut only count as a peer
+			// while its tab was foregrounded, defeating "hand off while I work elsewhere".
+			if (typeof document !== 'undefined' && document.visibilityState !== 'visible'
+				&& isPhoneViewport()) return;
 			if (!window.DaimondPresence || !DaimondPresence.beat) return;
 			var id = selfDeviceId();
 			if (!id) return;
+			// Broadcast THIS device's own label -- the machine name in the devices list
+			// ("Argonaut Chrome on Linux") -- NOT the account display name. Every device
+			// of one account shares that name ("hoogs"), so beating it leaves the hand-off
+			// UI unable to say WHICH machine is running the turn. Falls back to the auto
+			// browser/OS name, then the account name.
 			var name = '';
-			try { name = (window.DaimondIdentity && DaimondIdentity.displayName && DaimondIdentity.displayName()) || ''; } catch (e) { name = ''; }
+			try {
+				var _reg = loadDevices();
+				var _me  = _reg && _reg[deviceId()];
+				name = (_me && (_me.label || _me.name)) || deviceName()
+					|| (window.DaimondIdentity && DaimondIdentity.displayName && DaimondIdentity.displayName()) || '';
+			} catch (e) { name = ''; }
 			// Optimistic self-update, then beat the gateway on its OWN lightweight,
 			// non-waking presence path and adopt the authoritative map it answers
 			// with. NOT DaimondSync.push(): presence left the content parcel, so a

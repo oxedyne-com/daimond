@@ -1,1 +1,1 @@
-{"build":"b4f7b19aa0d0","note":"peer: harden lease claim against two-device sync churn"}
+{"build":"34d965b9e710","note":"cleanup: device-named hand-off, backgrounded desktop peer, Improve voting hub, strip diagnostics"}

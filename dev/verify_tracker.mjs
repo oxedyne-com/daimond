@@ -32,6 +32,14 @@
 //   9. ALL / MINE. The board defaults to All; Mine shows only the proposals THIS DEVICE raised,
 //      read from DaimondImprove.raisedProposalNumbers() (author cannot match — the local voice has
 //      no name). With no capture surface, Mine shows a "nothing raised" state and never throws.
+//  10. VOTE AND COMMENT ARE RE-HOMED HERE, cast with the PULL voice through the Social panel's own
+//      doors (DaimondImprove.forge.vote / .say) — never a copy of the POST in tracker.js. Reading a
+//      tally or a thread needs no voice; with no pull voice the card shows the "set a voice"
+//      affordance, not a control that the forge would refuse.
+//  11. AN UPVOTE INCREMENTS THE SHOWN COUNT, drawn from the forge's own answer and never a second
+//      copy: the board folds the record the vote returned and redraws, and the upvote reads pressed.
+//  12. PRESSING AN UPVOTE ALREADY CAST WITHDRAWS IT — d=0, and the count falls back.
+//  13. A POSTED COMMENT APPEARS in the opened card's thread, from the answer the comment returned.
 //
 // EACH CHECK IS PROVED AGAINST BROKEN CODE FIRST. `--break <name>` serves a damaged tracker.js
 // and the run is expected to FAIL the one check it targets:
@@ -42,6 +50,10 @@
 //   node dev/verify_tracker.mjs --break shipinvent     # 7  the shipped stamp is invented
 //   node dev/verify_tracker.mjs --break swallow        # 8  a refusal drawn as blank
 //   node dev/verify_tracker.mjs --break minefilter     # 9  Mine shows more than this device raised
+//   node dev/verify_tracker.mjs --break votedark       # 10 a live upvote drawn with no pull voice
+//   node dev/verify_tracker.mjs --break votenofold     # 11 the vote answer is not folded back
+//   node dev/verify_tracker.mjs --break voteonlyup     # 12 an upvote cannot be withdrawn
+//   node dev/verify_tracker.mjs --break commentswallow # 13 a posted comment never appears
 //   node dev/verify_tracker.mjs                        # and then, clean
 //
 // Needs playwright-core (resolved via dev/harness.mjs) and node. No dev server, no Rust: the page
@@ -127,6 +139,37 @@ const BREAKS = {
 		file: 'js/tracker.js',
 		find: "\t\t\t\tif (_filter === 'mine') return !!(mine && mine[n]);",
 		with: "\t\t\t\tif (_filter === 'mine') return true;",
+	}],
+	// A live upvote drawn WITHOUT a pull voice: a control that the forge would
+	// refuse, offered to a reader who cannot post. Bites check 10: the no-voice
+	// card must show the "set a voice" affordance, not a live button.
+	votedark: [{
+		file: 'js/tracker.js',
+		find: "\t\tif (pullVoice() && voteDoor()) {\n\t\t\tvar up = button('trk-vote-btn', 'tracker-vote',",
+		with: "\t\tif (true) {\n\t\t\tvar up = button('trk-vote-btn', 'tracker-vote',",
+	}],
+	// The vote answer is not folded back, so the shown count never moves and the
+	// upvote never reads pressed -- the tally kept in the client disagreeing with
+	// the forge, which is exactly what the one-store rule forbids. Bites check 11.
+	votenofold: [{
+		file: 'js/tracker.js',
+		find: "\t\tif (!a || !a.ok) { _st.err = a || { why: 'gateway' }; draw(); return false; }\n\t\tabsorb(clean(a.data));\n\t\tderiveFrom(whole(n));\n\t\t_st.err = null;\n\t\tdraw();\n\t\treturn true;\n\t}\n\n\t/// Say something on proposal",
+		with: "\t\tif (!a || !a.ok) { _st.err = a || { why: 'gateway' }; draw(); return false; }\n\t\tif (false) absorb(clean(a.data));\n\t\tderiveFrom(whole(n));\n\t\t_st.err = null;\n\t\tdraw();\n\t\treturn true;\n\t}\n\n\t/// Say something on proposal",
+	}],
+	// Pressing an upvote already cast sends d=1 again instead of d=0, so there is
+	// no way to take a vote back -- a pressed control that will not un-press. Bites
+	// check 12: the withdrawal body.
+	voteonlyup: [{
+		file: 'js/tracker.js',
+		find: "\t\tvar d = (p.asked && p.mine === 1) ? 0 : 1;",
+		with: "\t\tvar d = 1;",
+	}],
+	// A posted comment's answer is not folded back, so the comment never appears in
+	// the thread -- the reader is left unsure whether it was sent. Bites check 13.
+	commentswallow: [{
+		file: 'js/tracker.js',
+		find: "\t\tbox.value = '';\n\t\tabsorb(clean(a.data));",
+		with: "\t\tbox.value = '';\n\t\tif (false) absorb(clean(a.data));",
 	}],
 };
 
@@ -268,8 +311,14 @@ const forgeReqs = [];
 function upstreamPath(u) {
 	const q = u.searchParams;
 	const n = q.get('n');
+	// The sub-resource of a proposal rides in the QUERY here and becomes a path
+	// segment upstream, exactly as improve.rs does: `&vote=1` -> `/proposals/n/vote`,
+	// `&amend=1` -> `/proposals/n/amend`. A settle carries neither, and its `state`
+	// rides in the body. Without this the board's vote POST would hit the comment
+	// route, and its `d=1` would be read as an empty comment.
+	const leaf = q.get('vote') === '1' ? '/vote' : (q.get('amend') === '1' ? '/amend' : '');
 	let p = `/${q.get('account')}/${q.get('repo')}/proposals`;
-	if (n !== null) p += '/' + n;
+	if (n !== null) p += '/' + n + leaf;
 	p += '?format=json';
 	if (n === null) {
 		for (const k of ['state', 'from', 'limit']) {
@@ -343,6 +392,37 @@ window.DaimondIdentity = {
 	isUnlocked: function () { return true; },
 	wrap:   async function (s) { return 'w:' + String(s); },
 	unwrap: async function (w) { return String(w).replace(/^w:/, ''); },
+};
+// The Social panel (js/improve.js) STOOD IN FOR: the board holds no pull voice
+// and no vote/comment POST of its own -- it calls these doors, which carry the
+// pull voice and speak the one copy of the wire improve.js keeps. The stub POSTs
+// through the same gateway route with the mock's PULL voice, and reads the answer
+// into the panel's {ok,data} shape exactly as improve.js's own \`ask\` does. This
+// is what lets the checks prove the board CALLS these doors and draws the result,
+// rather than re-implementing the POST in tracker.js.
+function __door(path, body) {
+	return fetch(path, { method: 'POST',
+		headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-daimond-voice': 'mock-voice-grace' },
+		body: body }).then(function (r) {
+		return r.text().then(function (t) {
+			var data = null; try { data = t ? JSON.parse(t) : null; } catch (e) { data = null; }
+			if (data && data.error) return { ok: false, why: data.error };
+			if (r.ok && data) return { ok: true, data: data };
+			return { ok: false, why: 'gateway', status: r.status };
+		});
+	}).catch(function () { return { ok: false, why: 'offline' }; });
+}
+window.__installImprove = function (hasVoice) {
+	window.DaimondImprove = {
+		hasVoice: function () { return !!hasVoice; },
+		raisedProposalNumbers: function () { return []; },
+		provision: function () { return Promise.resolve(false); },
+		forge: {
+			vote: function (n, d) { return __door('/api/improve?account=oxedyne&repo=daimond&n=' + n + '&vote=1', 'd=' + d); },
+			say:  function (n, text) { var f = new URLSearchParams(); f.set('said', text);
+				return __door('/api/improve?account=oxedyne&repo=daimond&n=' + n, f.toString()); },
+		},
+	};
 };
 </script>
 <script src="/js/tracker.js"></script>
@@ -526,6 +606,75 @@ async function run() {
 			check('the accepted proposal moves to Greenlit', false, 'no Accept to click');
 			check('Reopen posts state=open', false, 'no Accept to click');
 		}
+
+		// ── 10-13. Vote and comment, re-homed to the hub ─────────────
+		// The pull voice lives in the Social panel; the board CALLS its doors. Install
+		// the stand-in DaimondImprove with a pull voice held, and redraw.
+		await page.evaluate(() => window.__installImprove(true));
+		await mount();
+		const vCard = col(0).locator('.trk-card').first();
+		check('with a pull voice, a card offers a live upvote', (await vCard.locator('.trk-vote-btn').count()) === 1);
+		check('with a pull voice, the card shows no "set a voice" affordance', (await vCard.locator('.trk-setvoice').count()) === 0);
+
+		const vN = Number((await vCard.locator('.trk-num').innerText()).replace('#', ''));
+		const beforeFor = await page.evaluate((n) => window.DaimondTracker.proposal(n).votes.for, vN);
+		forgeReqs.length = 0;
+		await vCard.locator('.trk-vote-btn').click();
+		await sleep(400);
+		const postV = forgeReqs.filter(r => r.method === 'POST');
+		check('the upvote posts exactly one write', postV.length === 1, `${postV.length}`);
+		check('the upvote carried the PULL voice, not the admin one', (postV[0] || {}).voice === 'mock-voice-grace', (postV[0] || {}).voice);
+		check('the upvote body is d=1 and nothing else', (postV[0] || {}).body === 'd=1', (postV[0] || {}).body);
+		const afterFor = await page.evaluate((n) => window.DaimondTracker.proposal(n).votes.for, vN);
+		check('the shown for-count increments by one', afterFor === beforeFor + 1, `${beforeFor} -> ${afterFor}`);
+		check('the upvote reads pressed after casting', (await col(0).locator(`.trk-card[data-prop="${vN}"] .trk-vote-btn.on`).count()) === 1);
+
+		// Pressing the cast upvote again withdraws it: d=0, and the count falls back.
+		forgeReqs.length = 0;
+		await col(0).locator(`.trk-card[data-prop="${vN}"] .trk-vote-btn`).click();
+		await sleep(400);
+		const wBody = (forgeReqs.filter(r => r.method === 'POST')[0] || {}).body;
+		check('pressing an upvote already cast withdraws it (d=0)', wBody === 'd=0', String(wBody));
+		const backFor = await page.evaluate((n) => window.DaimondTracker.proposal(n).votes.for, vN);
+		check('the for-count falls back after a withdrawal', backFor === beforeFor, `${backFor}`);
+
+		// Comment, in the opened card where the thread is read.
+		const cCard = col(0).locator('.trk-card').first();
+		const cN = Number((await cCard.locator('.trk-num').innerText()).replace('#', ''));
+		await cCard.locator('.trk-title').click();
+		await sleep(500);
+		check('the opened card offers a reply box with a pull voice', (await page.locator(`#trk .trk-reply[data-prop="${cN}"]`).count()) === 1);
+		const commentsBefore = await page.locator('#trk .trk-comment').count();
+		const SAYTEXT = 'the dark-mode grey needs this too';
+		await page.locator(`#trk .trk-reply[data-prop="${cN}"]`).fill(SAYTEXT);
+		forgeReqs.length = 0;
+		await page.locator(`#trk [data-act="tracker-comment"][data-prop="${cN}"]`).click();
+		await sleep(500);
+		const postC = forgeReqs.filter(r => r.method === 'POST');
+		check('the comment posts exactly one write', postC.length === 1, `${postC.length}`);
+		check('the comment carried the pull voice', (postC[0] || {}).voice === 'mock-voice-grace', (postC[0] || {}).voice);
+		const cf = Object.fromEntries(new URLSearchParams((postC[0] || {}).body || ''));
+		check('the comment body is the said field alone', JSON.stringify(Object.keys(cf).sort()) === JSON.stringify(['said']) && cf.said === SAYTEXT, JSON.stringify(cf));
+		const commentsAfter = await page.locator('#trk .trk-comment').count();
+		check('the posted comment appears in the thread', commentsAfter === commentsBefore + 1, `${commentsBefore} -> ${commentsAfter}`);
+		check('the posted comment text is shown', (await page.locator('#trk .trk-comment-said').allInnerTexts()).some(s => s.includes(SAYTEXT)));
+		await page.locator('#trk .trk-back').click();
+		await sleep(200);
+
+		// With NO pull voice: the affordance, never a control that would 500.
+		await page.evaluate(() => window.__installImprove(false));
+		await mount();
+		const nCard = col(0).locator('.trk-card').first();
+		check('with no pull voice, a card shows the set-a-voice affordance, not a live upvote',
+			(await nCard.locator('.trk-setvoice').count()) === 1 && (await nCard.locator('.trk-vote-btn').count()) === 0);
+		check('with no pull voice, the vote count is still shown', (await nCard.locator('.trk-vote-count').count()) === 1);
+		const nN = Number((await nCard.locator('.trk-num').innerText()).replace('#', ''));
+		await nCard.locator('.trk-title').click();
+		await sleep(400);
+		check('with no pull voice, the opened card shows the say affordance, not a reply box',
+			(await page.locator('#trk .trk-say-novoice').count()) === 1 && (await page.locator(`#trk .trk-reply`).count()) === 0);
+		check('reading votes and comments needed no voice at all', forgeReqs.filter(r => r.method === 'GET' && r.voice).length === 0);
+		await page.evaluate(() => { try { delete window.DaimondImprove; } catch (e) { window.DaimondImprove = undefined; } });
 
 		// ── 9. All / Mine filter ─────────────────────────────────────
 		// "Mine" is the proposals THIS DEVICE raised. The local voice has no name, so

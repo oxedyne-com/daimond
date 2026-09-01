@@ -120,6 +120,35 @@
 .trk-comment-foot { display: flex; gap: 8px; margin-top: 2px; font-size: var(--fs-3xs); color: var(--text-muted); }
 .trk-when { font-variant-numeric: tabular-nums; }
 
+/* ── Vote and comment (the pull voice, through the Social panel) ───────── */
+/* The upvote sits on the card and on the opened card; the comment box lives in
+ * the opened card where the thread is read. Both draw only when a tally is
+ * answered, and fall back to a "set a voice" affordance when none is held --
+ * never a control the forge would refuse. The `.on` cast state matches the
+ * Social panel's own vote pill (accent-soft), so the two surfaces read alike. */
+.trk-vote { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
+.trk-vote-btn { padding: 2px 9px; font-size: var(--fs-3xs-2xs); border-radius: var(--radius-sm);
+	border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
+	cursor: pointer; font-variant-numeric: tabular-nums; }
+.trk-vote-btn:hover { border-color: var(--accent); color: var(--accent-text); }
+.trk-vote-btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.trk-vote-count { font-size: var(--fs-3xs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+.trk-setvoice { padding: 2px 8px; font-size: var(--fs-3xs); border-radius: var(--radius-sm);
+	border: 1px solid var(--border); background: none; color: var(--accent-text); cursor: pointer; }
+.trk-setvoice:hover { border-color: var(--accent); text-decoration: underline; }
+
+.trk-say-box { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.trk-reply { width: 100%; min-height: 0; padding: 5px 7px; font: inherit; font-size: var(--fs-2xs-xs);
+	line-height: 1.4; background: var(--bg-tertiary); border: 1px solid var(--border);
+	border-radius: var(--radius-sm); color: var(--text-primary); resize: vertical; box-sizing: border-box; }
+.trk-reply:focus { outline: none; border-color: var(--accent); }
+.trk-say-acts { display: flex; gap: 6px; }
+.trk-say-btn { padding: 4px 10px; font-size: var(--fs-2xs-xs); border-radius: var(--radius-sm);
+	border: 1px solid var(--accent); background: var(--bg-tertiary); color: var(--accent-text); cursor: pointer; }
+.trk-say-btn:hover { background: var(--accent-soft); }
+.trk-say-novoice { font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+
 /* The All/Mine filter above the board. "Mine" reads proposals raised from this
    device (improve.js), so it is a client-side allow-list, not a server query. */
 .trk-filter { display: flex; gap: 6px; margin: 2px 0 8px; }
