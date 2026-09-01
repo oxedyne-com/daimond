@@ -12412,6 +12412,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (errand && String(errand.dispatchedBy) && String(errand.dispatchedBy) === String(selfDeviceId())) {
 				return { ran: false, why: 'self-dispatched' };
 			}
+			// MONEY-CRITICAL: the nominee stand-down inside runErrand decides against
+			// this device's LOCAL presence snapshot. A backgrounded/throttled tab woken
+			// by the errand's own wake never refreshes that snapshot on the collect path,
+			// so a still-awake nominee reads as stale and this device grabs the turn.
+			// Refresh presence from the gateway (the source of truth) FIRST, awaited, so
+			// the snapshot peerRunErrandDeps() reads below is current. A failed refresh
+			// falls back to the local snapshot rather than blocking the turn.
+			try { if (window.DaimondSync && DaimondSync.refreshPresence) await DaimondSync.refreshPresence(); }
+			catch (e) { /* the local snapshot stands */ }
 			var res = await DaimondPeer.runErrand(errand, peerRunErrandDeps());
 			// STOOD DOWN for the nominated runner: the errand is HELD on the relay
 			// (takeRow), not acked, so it survives for the nominee. But the 45s presence
@@ -12627,7 +12636,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	try { window.addEventListener('daimond:unlock', startErrandListener); } catch (e) { /* no window */ }
 	try {
 		document.addEventListener('visibilitychange', function () {
-			if (document.visibilityState === 'visible') { startErrandListener(); peerCollectOnReturn(); }
+			if (document.visibilityState === 'visible') {
+				// The errand listener re-arms on wake, but the 45s presence beat is throttled
+				// while hidden, so a woken tab's local view of who is awake can be minutes
+				// stale. Kick a presence refresh on wake so consumers of the snapshot see a
+				// current map. Belt-and-braces: the collect path also refreshes, awaited,
+				// before the money-critical stand-down.
+				try { if (window.DaimondSync && DaimondSync.refreshPresence) DaimondSync.refreshPresence(); } catch (e) { /* local snapshot stands */ }
+				startErrandListener();
+				peerCollectOnReturn();
+			}
 		});
 	} catch (e) { /* no document */ }
 

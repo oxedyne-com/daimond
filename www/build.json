@@ -1,1 +1,1 @@
-{"build":"d799b52bf2a5","note":"Re-arm the nominee hand-off fall-back on a transient offline blip, so a turn is never left waiting on the backstop."}
+{"build":"aef5d9a99dc3","note":"Peer hand-off: refresh presence before the nominee stand-down, so a background tab cannot grab its turn"}
