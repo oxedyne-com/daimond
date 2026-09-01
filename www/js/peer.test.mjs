@@ -1067,6 +1067,24 @@ async function runFallbackLivenessAcceptance(tab, check) {
 		const presence = { [NOMINEE]: { name: 'desktop', lastSeen: nomineeSeen } };
 		let ran = 0;
 
+		// The gateway's OWN view of the nominee's last beat: the source of truth the
+		// collect path refreshes against, distinct from the local `presence` snapshot,
+		// which can lag. `gatewayFresh()` models the nominee having beaten just now (awake);
+		// `refreshMode==='fail'` models a refresh that fails or hangs (offline, hung gateway),
+		// which the shipped code bounds and falls through to the local snapshot from.
+		let gatewayLastSeen = nomineeSeen;
+		let refreshMode = 'ok';
+		async function refreshPresence() {
+			if (refreshMode === 'fail') throw new Error('refresh failed');
+			presence[NOMINEE] = { name: 'desktop', lastSeen: gatewayLastSeen };
+		}
+
+		// Stub for presenceTick: the shipped onErrand beats presence the instant a turn
+		// ends (Fix A), so a just-run device asserts liveness for the next turn rather than
+		// waiting on its throttled 45s timer. Counted so the test proves the beat fires.
+		let beats = 0;
+		function beat() { beats++; }
+
 		// The REAL runner deps, carrying the nomination and the live presence/clock.
 		function deps() {
 			return {
@@ -1109,7 +1127,13 @@ async function runFallbackLivenessAcceptance(tab, check) {
 		}
 
 		P.onErrand(async (errand) => {
+			// Mirror of the shipped onErrand handler (daimond.js): refresh live presence
+			// before the stand-down reads the snapshot, fail-open. Shipped bounds it with
+			// Promise.race(4s); a timeout resolves the same way a caught failure does --
+			// proceed on the local snapshot -- which `refreshMode==='fail'` models here.
+			try { await refreshPresence(); } catch (e) { /* local snapshot stands */ }
 			const res = await P.runErrand(errand, deps());
+			if (res && res.ran) { try { beat(); } catch (e) {} }	// mirror of shipped Fix A: beat on a completed run
 			if (res && res.why === 'nominee') scheduleNomineeFallback();
 			return res;
 		});
@@ -1132,6 +1156,9 @@ async function runFallbackLivenessAcceptance(tab, check) {
 				live.forEach((h) => { h.live = false; });
 				for (const h of live) await h.fn();
 			},
+			gatewayFresh: () => { gatewayLastSeen = clock; },	// the nominee actually beat just now
+			setRefreshMode: (m) => { refreshMode = m; },		// 'ok' | 'fail'
+			beatCount: () => beats,								// presence beats fired on a completed run
 		};
 	}
 
@@ -1172,6 +1199,45 @@ async function runFallbackLivenessAcceptance(tab, check) {
 			s.ranCount() === 1 && s.sync.leases()['turn-live'].holder === selfId);
 		check('(h) exactly one live timer throughout (no double-arm)',
 			s.timer.live() === 0 && s.pendingLive() === false);
+	}
+
+	// ── (i) THE FIX: an awaited presence refresh on the collect path flips a stale LOCAL
+	//    read of an awake nominee back to a stand-down. Without the refresh line in the
+	//    reproduced onErrand glue this reddens -- the stale snapshot claims the nominee's
+	//    turn, which is the shipped iOS bug. ──
+	{
+		const s = await scenario();
+		s.age(W + 1);				// the LOCAL snapshot of the nominee is now stale...
+		s.gatewayFresh();			// ...but the nominee actually beat just now (gateway is fresh)
+		const r = await s.collect();		// wake: onErrand refreshes, then the stand-down sees it awake
+		check('(i) refresh flips a stale local read: stands down for the awake nominee (HOLD, no claim)',
+			r.ok === true && r.hold === true && s.ranCount() === 0
+			&& !s.sync.leases()['turn-live']);
+	}
+
+	// ── (j) a refresh that fails, or the bounded-await timeout, falls through to the local
+	//    snapshot and CLAIMS -- liveness, never a strand. The shipped Promise.race(4s)
+	//    timeout proceeds on the local snapshot exactly as a caught failure does. ──
+	{
+		const s = await scenario();
+		s.age(W + 1);				// local snapshot stale
+		s.gatewayFresh();			// the nominee is actually awake...
+		s.setRefreshMode('fail');		// ...but the refresh fails (offline / hung gateway / timeout)
+		await s.collect();
+		check('(j) a failed or timed-out refresh falls through to local and CLAIMS (liveness)',
+			s.ranCount() === 1 && s.sync.leases()['turn-live'].holder === selfId);
+	}
+
+	// ── (k) THE WRITER-SIDE FIX: a device that runs a turn beats presence on completion,
+	//    so the next turn's stand-down sees it fresh. Without the beat line in the glue this
+	//    reddens (beatCount stays 0), which is the between-turns staleness that let gilgamesh
+	//    grab turn 2 while argonaut was backgrounded. ──
+	{
+		const s = await scenario();
+		s.age(W + 1);				// the nominee is genuinely stale, so this device claims and runs
+		await s.collect();
+		check('(k) running a turn beats presence on completion (liveness asserted, not left to the throttled timer)',
+			s.ranCount() === 1 && s.beatCount() === 1);
 	}
 }
 

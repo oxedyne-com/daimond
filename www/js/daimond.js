@@ -12308,6 +12308,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			nominatedId:   nominatedDeviceId(),
 			presence:      (window.DaimondPresence && DaimondPresence.snapshot()) || {},
 			freshWindowMs: DaimondPeer.DISPATCH_FRESH_MS,
+			// Beat presence while the turn runs (from the lease liveness ticker), so a
+			// backgrounded nominee stays fresh through a long turn -- peers are handed the
+			// long ones. The non-waking off-parcel presence path, not the lease.
+			heartbeat: function () { try { presenceTick(); } catch (e) {} },
 			// D1(b). Whether this errand's turn is already FINISHED, so a released
 			// lease (which reads vacant) is not re-taken and re-run. Two proofs the
 			// turn completed: a done report collected for it, or the answer already
@@ -12417,11 +12421,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// by the errand's own wake never refreshes that snapshot on the collect path,
 			// so a still-awake nominee reads as stale and this device grabs the turn.
 			// Refresh presence from the gateway (the source of truth) FIRST, awaited, so
-			// the snapshot peerRunErrandDeps() reads below is current. A failed refresh
-			// falls back to the local snapshot rather than blocking the turn.
-			try { if (window.DaimondSync && DaimondSync.refreshPresence) await DaimondSync.refreshPresence(); }
-			catch (e) { /* the local snapshot stands */ }
+			// the snapshot peerRunErrandDeps() reads below is current. BOUNDED: gwFetch has
+			// no AbortController, so a truly hung connection would otherwise block the errand
+			// until the browser's own multi-minute fetch timeout. Race a 4s cap; on timeout
+			// or any failure, proceed on the local snapshot, which fails toward LIVENESS (a
+			// stale/absent nominee reads offline, so this device CLAIMS rather than stranding
+			// the turn). The lease still guarantees a single runner.
+			try {
+				if (window.DaimondSync && DaimondSync.refreshPresence) {
+					await Promise.race([
+						DaimondSync.refreshPresence(),
+						new Promise(function (r) { setTimeout(r, 4000); }),
+					]);
+				}
+			} catch (e) { /* the local snapshot stands */ }
 			var res = await DaimondPeer.runErrand(errand, peerRunErrandDeps());
+			// A just-run turn is the strongest proof this device is awake, but running an
+			// errand emits no presence beat, so a backgrounded nominee's throttled ~45s beat
+			// can drift past the 90s window between consecutive turns, and the next turn's
+			// stand-down then reads it offline and a fallback grabs the turn. Beat the instant
+			// a turn ends, so back-to-back turns in a chat stay with this device.
+			if (res && res.ran) { try { presenceTick(); } catch (e) { /* best-effort liveness */ } }
 			// STOOD DOWN for the nominated runner: the errand is HELD on the relay
 			// (takeRow), not acked, so it survives for the nominee. But the 45s presence
 			// beat does not re-collect, so nothing here would retry until an unrelated

@@ -1444,7 +1444,7 @@
 			// 4. RUN. A revoked lease HARD-ABORTS at once, via the read-only ticker and
 			// the injected onProgress (kept so a real journal-event piggyback can check
 			// liveness between ticks); chat.app.abort is the hard stop.
-			if (setT) checkTimer = setT(function () { liveness(); }, RENEW_EVERY_MS);
+			if (setT) checkTimer = setT(function () { liveness(); if (d.heartbeat) d.heartbeat(); }, RENEW_EVERY_MS);
 			try {
 				// D3 — the prompt is ALREADY in the synced transcript (the dispatcher
 				// persist-first pushed it before posting the errand, §4.1). Tell runTurn so,

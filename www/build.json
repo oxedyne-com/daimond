@@ -1,1 +1,1 @@
-{"build":"aef5d9a99dc3","note":"Peer hand-off: refresh presence before the nominee stand-down, so a background tab cannot grab its turn"}
+{"build":"17c578f89fdf","note":"Hand-off: beat presence when a turn runs so a backgrounded nominee keeps the run, and bound the refresh await"}
