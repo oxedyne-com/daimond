@@ -12370,12 +12370,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function scheduleNomineeFallback() {
 		if (_nomineeFallbackTimer) return;
 		var wait = ((window.DaimondPeer && DaimondPeer.DISPATCH_FRESH_MS) || 90000) + 5000;
-		_nomineeFallbackTimer = setTimeout(function () {
-			_nomineeFallbackTimer = null;
-			// The dispatcher's own recovery-on-return is the longer-stop net; this is
-			// the prompt one. Offline: the beat brings presence back and the net holds.
-			try { if (window.DaimondPost && DaimondPost.collect) DaimondPost.collect(); }
-			catch (e) { /* offline; the dispatcher's recovery is the backstop */ }
+		_nomineeFallbackTimer = setTimeout(async function () {
+			_nomineeFallbackTimer = null;			// null FIRST, so a route's re-arm can take the slot
+			// AWAITED, and RE-ARMED on failure. On a genuine route the re-collected errand
+			// stands down again and reschedules THROUGH onErrand; because the handle was
+			// nulled first that arm takes the one live slot, so on SUCCESS this must not arm
+			// a second timer -- and it does not. But a TRANSIENT failure (an offline blip:
+			// collect returns !ok, or rejects) routes nothing and so re-arms nothing, which
+			// would DROP the only prompt re-collect driver until an unrelated later collect
+			// or the dispatcher's recovery-on-return. So re-arm here on failure. The guard
+			// at the top makes any overlap a no-op, so the onErrand re-arm and this failure
+			// re-arm can never both leave a timer live (no double-arm).
+			var res = null;
+			try { if (window.DaimondPost && DaimondPost.collect) res = await DaimondPost.collect(); }
+			catch (e) { res = null; }
+			if (!res || !res.ok) scheduleNomineeFallback();
 		}, wait);
 	}
 

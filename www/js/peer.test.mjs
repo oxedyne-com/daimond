@@ -737,6 +737,17 @@ async function main() {
 	// ══════════════════════════════════════════════════════════
 	await runNominationAcceptance(phone.DaimondPeer, phone.DaimondLease, check);
 
+	// ══════════════════════════════════════════════════════════
+	// THE FALLBACK LIVENESS GLUE — the HOLD (post.js takeRow) that
+	// keeps a stood-down errand on the relay, the scheduled re-collect
+	// that drives it, and the RE-ARM on a transient collect failure so
+	// the driver is restored rather than dropped. Drives the REAL
+	// post.js takeRow and peer.js runErrand; the daimond.js scheduler is
+	// modelled faithfully (null-first, await, re-arm on !ok) on a hand
+	// -driven timer, since daimond.js does not load under node.
+	// ══════════════════════════════════════════════════════════
+	await runFallbackLivenessAcceptance(laptop, check);
+
 	console.log(failures === 0 ? '\nALL PASS' : ('\n' + failures + ' FAILURE(S)'));
 	if (failures) process.exitCode = 1;
 }
@@ -1023,6 +1034,144 @@ async function runNominationAcceptance(P, L, check) {
 		});
 		check('runErrand: NO nomination -> first-come unchanged (non-nominee claims)',
 			res.ran === true && ran === 1 && sync.leases()['t-nom-d'].holder === OTHER);
+	}
+}
+
+// The LIVENESS GLUE that keeps a nominee stand-down from stranding the turn. Three
+// real pieces meet here and were only asserted by construction before:
+//   - post.js takeRow returns HOLD on a `why:'nominee'` stand-down, so the errand
+//     stays on the relay (not acked) for the nominee -- driven through the REAL
+//     DaimondPost.take door and the REAL DaimondPeer.absorb/runErrand;
+//   - a scheduled re-collect (daimond.js scheduleNomineeFallback) re-decides against
+//     LIVE presence, so once the nominee's beat ages out the fallback CLAIMS;
+//   - that scheduler RE-ARMS on a transient collect failure, so an offline blip
+//     restores the driver instead of dropping the only prompt re-collect.
+// daimond.js does not load under node (a large, DOM-bound IIFE), so the scheduler is
+// reproduced here line-for-line -- null the handle first, await the collect, re-arm
+// on !ok -- on a hand-driven timer; the HOLD, the routing and the claim are all real.
+async function runFallbackLivenessAcceptance(tab, check) {
+	console.log('\nFallback liveness — HOLD -> scheduled re-collect -> claim, and re-arm on a failed tick');
+	const P = tab.DaimondPeer, L = tab.DaimondLease, Post = tab.DaimondPost;
+	const W = P.DISPATCH_FRESH_MS;
+	const NOMINEE = 'aaaa0000bbbb1111';			// the always-on runner (asleep after one beat)
+	const selfId  = tab.DaimondIdentity.deviceId();	// this tab is the awake FALLBACK
+
+	// One scenario, built fresh so it owns its box, lease and clock. `mode` flips the
+	// collect driver between a real run and a transient failure (the offline blip).
+	async function scenario() {
+		const box  = makePostBox();
+		const sync = makeLeaseSync({});
+		L.forget();
+		let clock = 1700000000000;
+		const nomineeSeen = clock;					// the nominee's one and only beat
+		const presence = { [NOMINEE]: { name: 'desktop', lastSeen: nomineeSeen } };
+		let ran = 0;
+
+		// The REAL runner deps, carrying the nomination and the live presence/clock.
+		function deps() {
+			return {
+				selfId, cas: P.syncCas(sync),
+				nominatedId: NOMINEE, presence: presence, freshWindowMs: W, now: () => clock,
+				finished:    async () => false,
+				reconstruct: async () => ({ chat: {}, app: {} }),
+				runTurn:     async () => { ran++; },
+				abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {},
+			};
+		}
+
+		// The daimond.js glue, reproduced: the onErrand handler runs the errand and, on
+		// a nominee stand-down, arms the fallback; the scheduler nulls its handle first,
+		// awaits the collect, and re-arms on failure. A hand-driven timer stands in for
+		// setTimeout so ticks are deterministic.
+		const timer = makeFakeTimer();
+		let pending = null, arms = 0, mode = 'ok';
+		function scheduleNomineeFallback() {
+			if (pending) return;					// the guard: never two live timers
+			arms++;
+			pending = timer.set(async () => {
+				pending = null;						// null FIRST, so a route's re-arm takes the slot
+				let res = null;
+				try { res = await driveCollect(); } catch (e) { res = null; }
+				if (!res || !res.ok) scheduleNomineeFallback();		// re-arm on a failed tick
+			}, W + 5000);
+		}
+		// A collect that runs each un-acked relay row through the REAL takeRow (Post.take),
+		// so the HOLD, the routing and the claim are the shipping code. `mode==='fail'`
+		// models a transient GET failure that routes nothing -- the offline blip.
+		async function driveCollect() {
+			if (mode === 'fail') return { ok: false, why: 'status_0' };
+			let hold = false;
+			for (const row of box.collect(0)) {
+				const r = await Post.take(row);
+				if (r && r.hold) hold = true;
+			}
+			return { ok: true, hold: hold };
+		}
+
+		P.onErrand(async (errand) => {
+			const res = await P.runErrand(errand, deps());
+			if (res && res.why === 'nominee') scheduleNomineeFallback();
+			return res;
+		});
+
+		// Seal an errand to this account and drop it on the relay.
+		const errand = P.makeErrand({ turnId: 'turn-live', chatId: 'c', prompt: 'p', model: {}, deadline: 0, dispatchedBy: 'phone-device' });
+		const sealed = await P.sealForSelf(errand);
+		box.post(sealed);
+
+		return {
+			box, sync, timer,
+			ranCount: () => ran,
+			armCount: () => arms,
+			pendingLive: () => timer.live() > 0,
+			setMode: (m) => { mode = m; },
+			age: (ms) => { clock = nomineeSeen + ms; },	// move the clock relative to the beat
+			collect: () => driveCollect(),				// the wake that first delivers the errand
+			fire: async () => {							// fire every live timer callback, in order
+				const live = timer.handles.filter((h) => h.live);
+				live.forEach((h) => { h.live = false; });
+				for (const h of live) await h.fn();
+			},
+		};
+	}
+
+	// ── (g) HOLD -> scheduled re-collect -> claim once the nominee ages out. ──
+	{
+		const s = await scenario();
+		// The wake: the fallback collects, stands down for the fresh nominee, and the
+		// errand is HELD on the relay (real takeRow) with the fallback armed.
+		const first = await s.collect();
+		check('(g) the fallback HOLDs the errand for a fresh nominee (real takeRow)',
+			first.ok === true && first.hold === true);
+		check('(g) standing down ran nothing and armed the re-collect',
+			s.ranCount() === 0 && s.armCount() === 1 && s.pendingLive() === true
+			&& !s.sync.leases()['turn-live']);
+		// The nominee sleeps: its one beat ages out of the freshness window.
+		s.age(W + 1);
+		await s.fire();
+		check('(g) the scheduled re-collect CLAIMS once the nominee is stale (turn runs)',
+			s.ranCount() === 1 && s.sync.leases()['turn-live'].holder === selfId);
+		check('(g) the driver stops after the claim (no re-arm, no double run)',
+			s.pendingLive() === false && s.ranCount() === 1);
+	}
+
+	// ── (h) a transient collect failure RE-ARMS rather than dropping the driver, and
+	//    a later good tick still drives the claim. This is the gap the fix closes. ──
+	{
+		const s = await scenario();
+		await s.collect();									// wake: HOLD + arm (nominee fresh)
+		check('(h) armed after the wake', s.armCount() === 1 && s.pendingLive() === true);
+		s.age(W + 1);										// the nominee has now slept out the window
+		s.setMode('fail');									// the next tick hits an offline blip
+		await s.fire();
+		check('(h) a FAILED tick re-arms the driver rather than dropping it',
+			s.ranCount() === 0 && s.armCount() === 2 && s.pendingLive() === true);
+		s.setMode('ok');									// the blip clears
+		await s.fire();
+		check('(h) the re-armed driver drives the claim on the next good tick',
+			s.ranCount() === 1 && s.sync.leases()['turn-live'].holder === selfId);
+		check('(h) exactly one live timer throughout (no double-arm)',
+			s.timer.live() === 0 && s.pendingLive() === false);
 	}
 }
 

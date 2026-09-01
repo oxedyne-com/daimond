@@ -1,1 +1,1 @@
-{"build":"c9d26ea4788b","note":"Updates wait for a quiet moment and never cut a turn; nominate an always-on hand-off device; editable crystal memory."}
+{"build":"d799b52bf2a5","note":"Re-arm the nominee hand-off fall-back on a transient offline blip, so a turn is never left waiting on the backstop."}
