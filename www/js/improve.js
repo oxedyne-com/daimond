@@ -200,6 +200,7 @@
 
 	var KEY = 'daimond-improve';
 	var MAX_NOTES = 200;			// past this the oldest KEPT note goes; sent ones stay
+	var MAX_RAISED = 500;			// cap on remembered posted-proposal numbers, oldest dropped
 	// What one note may be. NOT the gateway's cap, which is what this said until
 	// 2026-08-28: the improve route forwards at most 64 KiB (`MAX_BODY`,
 	// gateway/src/handlers/improve.rs:227) and no 20000 exists anywhere under
@@ -271,14 +272,21 @@
 
 	function load() {
 		if (_st) return _st;
-		_st = { notes: [] };
+		_st = { notes: [], raised: [] };
 		try {
 			var raw = JSON.parse(localStorage.getItem(KEY) || '{}') || {};
 			(Array.isArray(raw.notes) ? raw.notes : []).forEach(function (n) {
 				var c = cleanNote(n);
 				if (c) _st.notes.push(c);
 			});
-		} catch (e) { _st = { notes: [] }; }
+			// The proposal numbers this device has POSTED, kept apart from the notes.
+			// A posted note leaves the queue at once (`through`), so the number it
+			// became is the only trace that this device raised it -- see `recordRaised`.
+			(Array.isArray(raw.raised) ? raw.raised : []).forEach(function (n) {
+				var w = whole(n);
+				if (w > 0 && _st.raised.indexOf(w) === -1) _st.raised.push(w);
+			});
+		} catch (e) { _st = { notes: [], raised: [] }; }
 		return _st;
 	}
 
@@ -310,13 +318,36 @@
 	/// those numbers. A read, so nothing here writes the store.
 	function raisedProposalNumbers() {
 		var out = [];
-		load().notes.forEach(function (rec) {
+		var s = load();
+		s.notes.forEach(function (rec) {
 			(rec.into || []).forEach(function (n) {
 				if (n > 0 && out.indexOf(n) === -1) out.push(n);
 			});
 			if (rec.n > 0 && out.indexOf(rec.n) === -1) out.push(rec.n);
 		});
+		// Numbers from posts whose note has already left the queue.
+		(s.raised || []).forEach(function (n) {
+			if (n > 0 && out.indexOf(n) === -1) out.push(n);
+		});
 		return out;
+	}
+
+	/// Remember that this device posted proposal `n`, so the Improve hub's "Mine"
+	/// filter shows it. A verbatim post removes its note the moment the forge takes
+	/// it (`through`), so the number is the only surviving trace that THIS device
+	/// raised the proposal -- a resurrected note would be wrong (the note is spare
+	/// once the proposal exists), but the authorship fact is not spare.
+	function recordRaised(n) {
+		var num = Math.max(0, whole(n));
+		if (!num) return;
+		var s = load();
+		if (!Array.isArray(s.raised)) s.raised = [];
+		if (s.raised.indexOf(num) !== -1) return;
+		s.raised.push(num);
+		// A cap for symmetry with MAX_NOTES: drop the oldest numbers, which matter
+		// least once a proposal is long settled.
+		if (s.raised.length > MAX_RAISED) s.raised.splice(0, s.raised.length - MAX_RAISED);
+		save();
 	}
 
 	function save() {
@@ -342,7 +373,7 @@
 			}
 			if (over > 0) s.notes.length = MAX_NOTES;
 		}
-		try { localStorage.setItem(KEY, JSON.stringify({ v: 3, notes: s.notes })); }
+		try { localStorage.setItem(KEY, JSON.stringify({ v: 3, notes: s.notes, raised: s.raised || [] })); }
 		catch (e) { log('could not write the notes', e); }
 	}
 
@@ -1054,8 +1085,13 @@
 	async function through(rec, parts) {
 		var a = await post(parts);
 		if (a.ok) {
+			var prop = cleanProp(a.data);
 			removeNote(rec.id);
-			absorb(cleanProp(a.data));
+			absorb(prop);
+			// The note is gone; the number it became is what the hub's "Mine" filter
+			// reads, so keep it -- otherwise a post never appears in the very hub the
+			// `showRaised` note points the person at.
+			if (prop) recordRaised(prop.n);
 		}
 		return a;
 	}

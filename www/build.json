@@ -1,1 +1,1 @@
-{"build":"17c578f89fdf","note":"Hand-off: beat presence when a turn runs so a backgrounded nominee keeps the run, and bound the refresh await"}
+{"build":"b871420a8a4a","note":"Proposals board refreshes on re-show and records direct posts, so declines clear and new posts show in Mine"}

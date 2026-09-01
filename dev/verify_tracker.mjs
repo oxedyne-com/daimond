@@ -40,6 +40,11 @@
 //      copy: the board folds the record the vote returned and redraws, and the upvote reads pressed.
 //  12. PRESSING AN UPVOTE ALREADY CAST WITHDRAWS IT — d=0, and the count falls back.
 //  13. A POSTED COMMENT APPEARS in the opened card's thread, from the answer the comment returned.
+//  14. A RE-SHOWN BOARD REFETCHES. A proposal declined on ANOTHER device (a settle the board never
+//      made) moves from "Awaiting you" to "Dropped" when the panel is re-shown past the refresh
+//      throttle -- the board no longer reads once and freezes.
+//  15. A FAILED READ IS THROTTLED. Once the board has read, an erroring forge is refetched at most
+//      once per REFRESH_MS, because a failed read stamps the throttle exactly as a good one does.
 //
 // EACH CHECK IS PROVED AGAINST BROKEN CODE FIRST. `--break <name>` serves a damaged tracker.js
 // and the run is expected to FAIL the one check it targets:
@@ -54,6 +59,8 @@
 //   node dev/verify_tracker.mjs --break votenofold     # 11 the vote answer is not folded back
 //   node dev/verify_tracker.mjs --break voteonlyup     # 12 an upvote cannot be withdrawn
 //   node dev/verify_tracker.mjs --break commentswallow # 13 a posted comment never appears
+//   node dev/verify_tracker.mjs --break freeze         # 14 a re-shown board never refetches
+//   node dev/verify_tracker.mjs --break nothrottlefail # 15 a failed read leaves the forge unfloored
 //   node dev/verify_tracker.mjs                        # and then, clean
 //
 // Needs playwright-core (resolved via dev/harness.mjs) and node. No dev server, no Rust: the page
@@ -170,6 +177,29 @@ const BREAKS = {
 		file: 'js/tracker.js',
 		find: "\t\tbox.value = '';\n\t\tabsorb(clean(a.data));",
 		with: "\t\tbox.value = '';\n\t\tif (false) absorb(clean(a.data));",
+	}],
+	// The board FREEZES on its first read: the observer disconnects after one fire and onOpen
+	// only ever loads when it has never read. So a proposal declined on another device stays in
+	// "Awaiting you", which is the exact regression the re-show refetch removed. Bites check 14:
+	// the re-shown board never sees the cross-device decline. TWO edits, both reverting the fix --
+	// the read-once guard in onOpen and the one-shot disconnect in the observer.
+	freeze: [{
+		file: 'js/tracker.js',
+		find: "\t\tif (!_st.read || Date.now() - _lastLoad >= REFRESH_MS) load();",
+		with: "\t\tif (!_st.read && !_st.loading) load();",
+	}, {
+		file: 'js/tracker.js',
+		find: "\t\t\t\t\t\tif (entries[i].isIntersecting) { onOpen(); return; }",
+		with: "\t\t\t\t\t\tif (entries[i].isIntersecting) { onOpen(); io.disconnect(); return; }",
+	}],
+	// A FAILED read does not stamp the throttle, so a board that has read once and then meets an
+	// erroring forge refetches on every re-show with no floor -- a down forge pounded once per
+	// panel show. Bites check 15: two rapid re-shows against an erroring forge fire two reads, not
+	// one.
+	nothrottlefail: [{
+		file: 'js/tracker.js',
+		find: "\t\tif (!a.ok) { _st.err = a; _lastLoad = Date.now(); draw(); return false; }",
+		with: "\t\tif (!a.ok) { _st.err = a; draw(); return false; }",
 	}],
 };
 
@@ -305,6 +335,25 @@ for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopMock(); pro
 // rode on a GET. `voice` here is the Daimond voice header the browser sent.
 const forgeReqs = [];
 
+/// When set, the gateway answers every LISTING read with a 502, so the board can be driven
+/// against a forge that has gone down AFTER a first successful read. That is the one state the
+/// throttle-on-a-failed-read fix is about: a board that has read once (`read` is true) and then
+/// meets an erroring forge must not refetch on every re-show. Off for every other check.
+let failReads = false;
+
+/// Decline a proposal ON THE FORGE the way ANOTHER DEVICE would — a settle POST straight to the
+/// mock under the admin voice, which the board itself never made. This is the cross-device change
+/// the re-show refetch has to notice; the board has no hand in it. The mock holds its corpus in
+/// memory, so this mutation is the same corpus the browser reads back through the gateway.
+async function declineOnForge(n) {
+	const r = await fetch(`http://127.0.0.1:${MOCK_PORT}/oxedyne/daimond/proposals/${n}?format=json`, {
+		method:  'POST',
+		headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-ore-voice': 'mock-voice-ada' },
+		body:    'state=declined',
+	});
+	return r.status;
+}
+
 /// The upstream forge path the gateway builds from the query, reproduced from
 /// gateway/src/handlers/improve.rs (and verify_improve.mjs's stand-in): `format=json` is written
 /// by the gateway and never taken from the caller; the settle `state` field rides in the body.
@@ -352,6 +401,13 @@ async function gatewayRoute(route) {
 	const headers = req.headers();
 	const dvoice = headers['x-daimond-voice'] || '';
 	forgeReqs.push({ url: req.url(), method, voice: dvoice, body: req.postData() || '' });
+	// A forge that has gone down: every LISTING read answers 502. The read is still counted above,
+	// so a check can see the board FIRE a read; what it cannot get back is a listing, so `load()`
+	// fails and stamps its throttle. Only the listing, so an open/enrich detail read is untouched.
+	if (failReads && method === 'GET' && u.searchParams.get('n') === null) {
+		return route.fulfill({ status: 502, contentType: 'application/json',
+			body: JSON.stringify({ ok: false, error: 'the forge is unreachable' }) });
+	}
 	// The gateway refuses a voiceless POST before forwarding (reproduced from improve.rs).
 	if (method === 'POST' && !dvoice) {
 		return route.fulfill({ status: 401, contentType: 'application/json',
@@ -726,6 +782,51 @@ async function run() {
 		} else {
 			check('the refusal sentence is non-empty', false, 'no refusal drawn');
 		}
+
+		// ── 14. A RE-SHOWN BOARD REFETCHES A CROSS-DEVICE DECLINE ────
+		// A proposal open under "Awaiting you" is declined ON THE FORGE by another device -- a
+		// settle the board never made. A re-show past the REFRESH_MS throttle must refetch and move
+		// it to "Dropped"; the old freeze (a one-shot observer and a read-once guard) left declines
+		// made elsewhere sitting in "Awaiting you". Proved red by `--break freeze`.
+		await mount();
+		const declineN = Number((await col(0).locator('.trk-card').first().locator('.trk-num').innerText()).replace('#', ''));
+		check('a proposal is awaiting the owner before the cross-device decline',
+			(await col(0).locator(`.trk-card[data-prop="${declineN}"]`).count()) === 1, `#${declineN}`);
+		const declStatus = await declineOnForge(declineN);
+		check('the cross-device decline reached the forge', declStatus === 200, `status ${declStatus}`);
+		// Wait out the throttle (REFRESH_MS is 4s), then re-show the way a person returning to the
+		// panel does. The board must refetch, not serve its frozen snapshot.
+		await sleep(4200);
+		forgeReqs.length = 0;
+		await page.evaluate(() => window.DaimondTracker.onOpen());
+		await sleep(700);
+		check('the re-show refetched the listing (a network read fired)',
+			forgeReqs.filter(r => r.method === 'GET').length >= 1,
+			`${forgeReqs.filter(r => r.method === 'GET').length} GET(s)`);
+		check('after a cross-device decline, the re-shown board moves it to Dropped',
+			(await col(3).locator(`.trk-card[data-prop="${declineN}"]`).count()) === 1,
+			`#${declineN} in Dropped: ${await col(3).locator(`.trk-card[data-prop="${declineN}"]`).count()}`);
+		check('and the declined proposal is gone from Awaiting you',
+			(await col(0).locator(`.trk-card[data-prop="${declineN}"]`).count()) === 0,
+			`#${declineN} still awaiting: ${await col(0).locator(`.trk-card[data-prop="${declineN}"]`).count()}`);
+
+		// ── 15. A FAILED READ STAMPS THE THROTTLE (bounded refetch) ──
+		// The board reads once successfully, the forge then errors, and two rapid re-shows past the
+		// stale point must fire EXACTLY ONE network read -- the second throttled by the `_lastLoad`
+		// the failed read stamped. Without that stamp a down forge is refetched on every re-show.
+		// Proved red by `--break nothrottlefail`.
+		await mount();				// a clean, successful first read: `read` is now true
+		failReads = true;			// the forge now errors on every listing read
+		await sleep(4200);			// let the snapshot go stale
+		forgeReqs.length = 0;
+		await page.evaluate(() => window.DaimondTracker.onOpen());	// stale -> load -> fails, stamps the throttle
+		await sleep(400);
+		await page.evaluate(() => window.DaimondTracker.onOpen());	// within 4s of the failure -> throttled, no read
+		await sleep(400);
+		const failReadCount = forgeReqs.filter(r => r.method === 'GET').length;
+		check('a failed read stamps the throttle: two rapid re-shows against a down forge fire ONE read, not two',
+			failReadCount === 1, `${failReadCount} GET(s)`);
+		failReads = false;
 
 		check('no page errors were thrown', errs.length === 0, errs.join(' | '));
 	} finally {

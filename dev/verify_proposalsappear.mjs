@@ -23,9 +23,17 @@
 // new proposals in one batch are several distinct records and "they all appear"
 // is a claim with more than one thing in it.
 //
+// It also carries a second, unrelated regression: a DIRECT verbatim Post (the compose box's
+// "Post", submit('verbatim') -> through()) must record the number the forge returned, or the
+// proposal never enters raisedProposalNumbers() and never shows under the Improve hub's "Mine"
+// filter. That path is here rather than in verify_improve.mjs because this file already stands up
+// the whole app with a voice held and an incrementing-number forge stub -- exactly what the direct
+// post needs.
+//
 //   eval "$(bash dev/world.sh 8 --env)"
 //   node dev/verify_proposalsappear.mjs
-//   node dev/verify_proposalsappear.mjs --break noappear
+//   node dev/verify_proposalsappear.mjs --break noappear   # the batch fold-back is reverted
+//   node dev/verify_proposalsappear.mjs --break noraise    # the verbatim-Post path records nothing
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -81,6 +89,14 @@ const BREAKS = {
 		file: 'js/approvelist.js',
 		find: '\t\ttry { if (p.forge && p.forge.absorb) p.forge.absorb(a.data); }',
 		with: '\t\ttry { if (false && p.forge && p.forge.absorb) p.forge.absorb(a.data); }',
+	}],
+	// The verbatim-Post path (through()) stops recording the number it raised, so a proposal posted
+	// straight from the compose box never enters raisedProposalNumbers() and never shows under the
+	// hub's "Mine" filter. Bites the direct-post check below.
+	noraise: [{
+		file: 'js/improve.js',
+		find: '\t\t\tif (prop) recordRaised(prop.n);',
+		with: '\t\t\tif (false && prop) recordRaised(prop.n);',
 	}],
 };
 
@@ -275,6 +291,29 @@ try {
 	// The queue emptied, as a batch of accepted sends should.
 	const queue = await page.evaluate(() => window.DaimondApproveList.queue().length);
 	check('the queue is empty: every sent draft left it', queue === 0, `${queue}`);
+
+	// ── FIX 2: a DIRECT verbatim Post enters raisedProposalNumbers() ──
+	// The batch above went through the approve-list door, which records no raised number. The
+	// compose box's "Post" (submit('verbatim')) is the DIRECT path, and through() must record the
+	// number the forge returned -- otherwise a directly-posted proposal never shows under the
+	// Improve hub's "Mine" filter, the very place `showRaised` points the author. Proved red by
+	// `--break noraise`.
+	const raisedBefore = await page.evaluate(() => window.DaimondImprove.raisedProposalNumbers());
+	check('nothing is recorded as raised before the direct post (the batch does not record)',
+		raisedBefore.length === 0, JSON.stringify(raisedBefore));
+	const posted = await page.evaluate(async () => {
+		const box = document.getElementById('improve-box');
+		if (!box) return { ok: false, why: 'no compose box on the proposals surface' };
+		box.value = 'Directly posted title\nthe body of a note posted straight from the box';
+		box.dispatchEvent(new Event('input', { bubbles: true }));
+		const rec = await window.DaimondImprove.submit('verbatim');
+		return { ok: !!rec };
+	});
+	check('the direct verbatim post was submitted', posted.ok, JSON.stringify(posted));
+	await page.waitForTimeout(400);
+	const raisedAfter = await page.evaluate(() => window.DaimondImprove.raisedProposalNumbers());
+	check('the directly-posted proposal number enters raisedProposalNumbers()',
+		raisedAfter.length === 1 && raisedAfter[0] >= 100, JSON.stringify(raisedAfter));
 
 	await shot(s, 'proposalsappear' + (BREAK ? '-' + BREAK : ''));
 

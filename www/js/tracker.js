@@ -471,6 +471,7 @@
 	var _st    = { total: 0, loading: false, err: null, read: false };
 	var _voiceOpen = false;				// the admin-voice paste form is showing
 	var _filter    = 'all';				// board filter: 'all', or 'mine' (raised from this device)
+	var _lastLoad  = 0;				// when the listing last loaded, so a re-show refetches a stale board
 
 	function absorb(rec) {
 		if (!rec) return null;
@@ -509,12 +510,26 @@
 		draw();
 		var a = await request(route('limit=' + PAGE), { method: 'GET' });
 		_st.loading = false;
-		if (!a.ok) { _st.err = a; draw(); return false; }
+		// Stamp the throttle on a FAILED read too, not just a success: otherwise a
+		// forge that is erroring is refetched on every re-entry with no floor at all,
+		// and a down forge gets pounded once per panel show.
+		if (!a.ok) { _st.err = a; _lastLoad = Date.now(); draw(); return false; }
+		// Keep the pre-refetch records so a just-cast local vote survives the rebuild.
+		// The listing read is unvoiced, so `a.data` carries no `mine`/`asked`; clearing
+		// _by outright would drop a fresh upvote's highlight until the next voiced read.
+		var prev = _by;
 		_by = {}; _order = [];
 		var raw = Array.isArray(a.data.proposals) ? a.data.proposals : [];
-		raw.forEach(function (p) { var rec = clean(p); if (rec) absorb(rec); });
+		raw.forEach(function (p) {
+			var rec = clean(p);
+			if (!rec) return;
+			var was = prev[rec.n];
+			if (was && was.asked && !rec.asked) { rec.asked = was.asked; rec.mine = was.mine; }
+			absorb(rec);
+		});
 		_st.total = Math.max(0, whole(a.data.total));
 		_st.read  = true;
+		_lastLoad = Date.now();
 		draw();
 		return true;
 	}
@@ -549,9 +564,20 @@
 	/// Back to the board.
 	function back() { _open = null; draw(); }
 
-	/// Load once, when the panel is first shown. Reading on every app boot would
-	/// fetch for a panel nobody opened.
-	function onOpen() { if (!_st.read && !_st.loading) load(); return true; }
+	// How stale a listing may be before showing the panel refetches it. Small, so a
+	// re-shown board reflects declines, greenlights and new posts made meanwhile,
+	// but enough to swallow an IntersectionObserver re-entry from a scroll.
+	var REFRESH_MS = 4000;
+
+	/// Read the listing when the panel is shown. The FIRST show reads it (a panel
+	/// nobody opened costs no request); a later show REFETCHES if the snapshot has
+	/// gone stale, because a board that reads once and freezes shows declines that
+	/// were made elsewhere still sitting in "Awaiting you".
+	function onOpen() {
+		if (_st.loading) return true;
+		if (!_st.read || Date.now() - _lastLoad >= REFRESH_MS) load();
+		return true;
+	}
 
 	// ── Settling (admin voice only) ────────────────────────────
 
@@ -1212,9 +1238,12 @@
 		mount(el);
 		try {
 			if (typeof IntersectionObserver === 'function') {
+				// Stay connected, so every time the panel comes back into view
+				// `onOpen` runs and refetches a stale board -- a one-shot observer
+				// that disconnected was why a re-shown panel never saw a decline.
 				var io = new IntersectionObserver(function (entries) {
 					for (var i = 0; i < entries.length; i++) {
-						if (entries[i].isIntersecting) { onOpen(); io.disconnect(); return; }
+						if (entries[i].isIntersecting) { onOpen(); return; }
 					}
 				});
 				io.observe(el);
