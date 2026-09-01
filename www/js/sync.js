@@ -110,7 +110,8 @@
 	// constants that have to match are two constants that will eventually not.
 
 	var PUSH_DEBOUNCE_MS = 2500;	// Coalesce a flurry of changes into one push.
-	var MAX_CONFLICT_RETRIES = 4;	// Bound the pull-merge-retry loop.
+	var MAX_CONFLICT_RETRIES = 8;	// Bound the pull-merge-retry loop (was 4): more headroom under 3-device churn.
+	var CONFLICT_BACKOFF_MS  = 200;	// Jittered wait between conflict retries so busy devices do not collide every attempt.
 	// Focus arrives in bursts -- a click into the window raises focus on the
 	// window and a visibilitychange with it -- so the pull is debounced into one,
 	// and then rate-limited.
@@ -1186,6 +1187,15 @@
 						return;
 					}
 					lastPushed = null;			// local state changed under us; force a fresh send.
+					// Space the retries with a jittered backoff so three busy devices do
+					// not collide on every attempt and exhaust in a burst ("work has not
+					// been sent"). Same shape as the lease-take fix: only the retry cadence
+					// changes; the pull-merge that converges is untouched.
+					if (attempt + 1 < MAX_CONFLICT_RETRIES) {
+						await new Promise(function (r) {
+							setTimeout(r, Math.round(CONFLICT_BACKOFF_MS * (0.5 + Math.random())));
+						});
+					}
 					continue;
 				}
 				if (res.status === 402) {
