@@ -1,1 +1,1 @@
-{"build":"b569b40004f6","note":"Settling a proposal now takes a one-line reason, and a declined proposal's reason returns to whoever proposed it"}
+{"build":"1f200337a2a2","note":"A handed-off turn that needs a permission now asks you on the device you are using, instead of stalling on the runner"}

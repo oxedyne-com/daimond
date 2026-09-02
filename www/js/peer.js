@@ -51,6 +51,21 @@
 
 	var T_ERRAND = 'errand';	// a turn dispatched to a peer
 	var T_REPORT = 'report';	// a peer's account of how the turn went
+	// The two envelopes remote consent rides. A runner blocked on a genuinely
+	// per-turn question (a `web_type`, a `web_click`, an overlong address) that the
+	// synced account policy does NOT already cover cannot raise a dialog where nobody
+	// is, so it seals a `consent-ask` to the account and awaits the answer; an
+	// attended device raises the tile and seals back a `consent-grant`. They ride the
+	// same self-seal and the same signature as the errand -- no new transport, no new
+	// crypto -- and slot into the same route-by-type the collector already does.
+	var T_ASK   = 'consent-ask';	// runner -> the account: a live question for a human
+	var T_GRANT = 'consent-grant';	// an attended device -> the runner: the answer
+
+	/// Is `t` a peer envelope tag this layer owns? The collector routes exactly these
+	/// four and hands everything else (a message artefact) to the message path.
+	function peerType(t) {
+		return t === T_ERRAND || t === T_REPORT || t === T_ASK || t === T_GRANT;
+	}
 
 	// ── Bytes and text ─────────────────────────────────────────
 
@@ -232,6 +247,12 @@
 			parcelVersion: o.parcelVersion | 0,	// the freshness anchor -- §1.3
 			deadline:      +o.deadline || 0,	// epoch-ms after which no peer starts (NOT |0: ms overflows 32 bits)
 			dispatchedBy:  String(o.dispatchedBy || ''),
+			// How many times THIS turn has already parked (below MAX_PARKS by
+			// construction -- a dispatch is refused at the bound). Rides the errand and
+			// is carried forward through the parked report and the synced dispatched
+			// placeholder, so the ≤MAX_PARKS bound is GLOBAL across devices rather than
+			// a per-device count that would multiply the spend cap by device count.
+			parkCount: o.parkCount | 0,
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -246,10 +267,56 @@
 			eid:     String(o.eid || ''),
 			turnId:  String(o.turnId || ''),
 			chatId:  String(o.chatId || ''),
-			status:  String(o.status || 'done'),	// done | refused-spend | error | aborted
+			status:  String(o.status || 'done'),	// done | refused-spend | error | aborted | parked
 			parcelVersion: o.parcelVersion | 0,	// which version already carries the answer
 			cost:    o.cost || null,
 			why:     o.why ? String(o.why) : '',	// a human sentence for the failure states
+			// The GLOBAL park counter carried home so a re-dispatcher (any device that
+			// collects this report) bumps from the true total, never from a device-local
+			// zero. Only meaningful on a `parked` report; 0 elsewhere.
+			parkCount: o.parkCount | 0,
+			ts:      o.ts || Date.now(),
+		};
+	}
+
+	/// Build a consent-ask (not yet sealed): a runner's live question for a human.
+	/// `cid` names THIS question and is minted FRESH on every ask (including a
+	/// re-raise), so a captured or replayed grant for a spent `cid` matches nothing.
+	/// `detail` is the EXACT uncut string the human must authorise -- never a summary;
+	/// `dispatchedBy` is where the answer routes back to (the runner's device id).
+	function makeAsk(f) {
+		var o = f || {};
+		return {
+			t:       T_ASK,
+			v:       ENVELOPE_V,
+			cid:     o.cid || newId(),		// names THIS question; fresh per ask
+			eid:     String(o.eid || ''),
+			turnId:  String(o.turnId || ''),
+			chatId:  String(o.chatId || ''),
+			tool:    String(o.tool || ''),
+			host:    String(o.host || ''),
+			detail:  String(o.detail == null ? '' : o.detail),	// the uncut string to authorise
+			deadline:     +o.deadline || 0,		// epoch-ms (NOT |0: ms overflows 32 bits)
+			dispatchedBy: String(o.dispatchedBy || ''),	// the runner, so the grant routes home
+			ts:      o.ts || Date.now(),
+		};
+	}
+
+	/// Build a consent-grant (not yet sealed): an attended device's answer. It signs
+	/// `cid`/`turnId`/`verdict` but NOT `tool`/`host`/`detail` (they are not fields
+	/// here, so the signature cannot cover them) -- so the runner must replay the EXACT
+	/// act it bound to `cid`, never re-derive it from the grant. `verdict` is exactly
+	/// what `egressAllowed` returns, so the runner needs no translation layer.
+	function makeGrant(f) {
+		var o = f || {};
+		return {
+			t:       T_GRANT,
+			v:       ENVELOPE_V,
+			cid:     String(o.cid || ''),
+			eid:     String(o.eid || ''),
+			turnId:  String(o.turnId || ''),
+			verdict: o.verdict === 'allow' ? 'allow' : 'deny',
+			by:      String(o.by || ''),		// the answering device, for the UI
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -346,7 +413,7 @@
 		var obj;
 		try { obj = JSON.parse(fromUtf8(plain)); }
 		catch (e) { throw new Error('peer: an opened envelope was not an errand or report.'); }
-		if (!obj || (obj.t !== T_ERRAND && obj.t !== T_REPORT)) {
+		if (!obj || !peerType(obj.t)) {
 			throw new Error('peer: an opened envelope carried no known type tag.');
 		}
 		if (!(await verifyEnvelope(obj))) {
@@ -366,7 +433,7 @@
 		var obj;
 		try { obj = JSON.parse(fromUtf8(await openSealed(b64dec(b64)))); }
 		catch (e) { return null; }
-		if (obj && (obj.t === T_ERRAND || obj.t === T_REPORT)) return obj;
+		if (obj && peerType(obj.t)) return obj;
 		return null;
 	}
 
@@ -374,8 +441,12 @@
 	// verifies and drops -- routing without a runner is a no-op, not a crash.
 	var _onErrand = null;
 	var _onReport = null;
+	var _onAsk    = null;	// a runner's live consent question, raised on an attended device
+	var _onGrant  = null;	// an attended device's answer, delivered to the awaiting runner
 	function onErrand(fn) { _onErrand = fn; }
 	function onReport(fn) { _onReport = fn; }
+	function onAsk(fn)    { _onAsk = fn; }
+	function onGrant(fn)  { _onGrant = fn; }
 
 	/// Verify a peeked envelope and, if it was authored by this account, hand it to
 	/// the registered runner. An envelope that does not verify is DROPPED with a
@@ -393,6 +464,8 @@
 		var result = null;
 		if (obj.t === T_ERRAND && _onErrand) result = await _onErrand(obj, row);
 		else if (obj.t === T_REPORT && _onReport) await _onReport(obj, row);
+		else if (obj.t === T_ASK    && _onAsk)    await _onAsk(obj, row);
+		else if (obj.t === T_GRANT  && _onGrant)  await _onGrant(obj, row);
 		return { routed: true, verified: true, result: result };
 	}
 
@@ -427,6 +500,12 @@
 			} else if (obj.t === T_REPORT) {
 				tally.reports++;
 				if (h.onReport) await h.onReport(obj, row);
+			} else if (obj.t === T_ASK) {
+				tally.asks = (tally.asks | 0) + 1;
+				if (h.onAsk) await h.onAsk(obj, row);
+			} else if (obj.t === T_GRANT) {
+				tally.grants = (tally.grants | 0) + 1;
+				if (h.onGrant) await h.onGrant(obj, row);
 			}
 		}
 		return tally;
@@ -499,25 +578,29 @@
 		var pause    = o.pause || null;			// pause-tree snapshot pinned to dispatch -- §1.1
 		var deadline = leaseMs(o.deadline) || (now + DISPATCH_DEADLINE_MS);
 		var by       = String(o.dispatchedBy || '');
+		// The prior-park total this dispatch inherits (0 on a first dispatch). A
+		// re-dispatch of a parked turn carries the GLOBAL count read from the synced
+		// placeholder / parked report, so the ≤MAX_PARKS bound holds across devices.
+		var parkCount = o.parkCount | 0;
 		return {
 			order:  [STEP_PUSH_PROMPT, STEP_MARK_DISPATCH, STEP_POST_ERRAND],
 			turnId: turnId, chatId: chatId, eid: eid,
 			// What daimond.js writes on the local turn BETWEEN the push and the post,
 			// so recoverInterrupted and Continue treat it as peer-held, not a local
 			// interruption (§3.3). The runner/guards consult it in step 6.
-			mark: { interrupted: true, why: REASON_DISPATCHED, iturn: turnId, itext: prompt, dispatchedBy: by },
+			mark: { interrupted: true, why: REASON_DISPATCHED, iturn: turnId, itext: prompt, dispatchedBy: by, parkCount: parkCount },
 			/// Finalise the errand once the prompt push has returned its version.
 			errand: function (parcelVersion) {
 				return makeErrand({
 					eid: eid, turnId: turnId, chatId: chatId, prompt: prompt, model: model,
 					scope: scope, pause: pause, parcelVersion: parcelVersion,
-					deadline: deadline, dispatchedBy: by, ts: now,
+					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
 				});
 			},
 			// The fully-resolved fields (bar parcelVersion), exposed for inspection.
 			fields: {
 				turnId: turnId, chatId: chatId, prompt: prompt, model: model, scope: scope,
-				pause: pause, deadline: deadline, dispatchedBy: by, eid: eid,
+				pause: pause, deadline: deadline, dispatchedBy: by, eid: eid, parkCount: parkCount,
 			},
 		};
 	}
@@ -546,15 +629,28 @@
 	///   claimed        -- lease mode 'claimed': "<machine> is picking this up."
 	///   running        -- lease mode 'running': "<machine> is doing this. [Take back]"
 	///   done           -- report status 'done': the answer, the badge clears
-	///   failed         -- report a failure, OR the lease expired mid-run with no
-	///                     report (the peer stopped): the `why` sentence + [Run here]
-	function uiState(turn, lease, report, selfId, now) {
+	///   parked         -- report status 'parked': "needs your permission — it will
+	///                     re-run when you're back" (a survivable park, below the bound)
+	///   awaiting-consent -- an open consent-ask for this turn: the runner is blocked
+	///                     on a live question the user must answer -- "<peer> needs your
+	///                     permission to {act}", replacing "Sent to your other devices."
+	///   failed         -- report a failure (a terminal park included), OR the lease
+	///                     expired mid-run with no report (the peer stopped): the `why`
+	///                     sentence + [Run here]
+	/// `ask` is a collected consent-ask envelope for this turn, or null.
+	function uiState(turn, lease, report, selfId, now, ask) {
 		if (!turn || turn.why !== REASON_DISPATCHED) return 'not-dispatched';
 		var n = now == null ? Date.now() : now;
 		// A report settles it either way, and outlives the lease.
 		if (report && report.t === 'report') {
-			return report.status === 'done' ? 'done' : 'failed';
+			if (report.status === 'done')   return 'done';
+			if (report.status === 'parked') return 'parked';	// survivable: re-runs when a human is back
+			return 'failed';									// aborted / error / refused-spend: terminal
 		}
+		// A live question the runner is blocked on takes precedence over the lease
+		// state (which reads 'running' throughout the wait): the dispatch UI must stop
+		// saying "sent" and say what is actually holding it up.
+		if (ask && ask.t === T_ASK) return 'awaiting-consent';
 		// No report yet: read the lease.
 		if (liveLease(lease, n)) {
 			return lease.mode === 'running' ? 'running' : 'claimed';
@@ -632,11 +728,17 @@
 	}
 
 	/// Record this device's heartbeat. Answers whether the map changed (it always
-	/// does -- lastSeen moved -- which is what makes the beat a push).
-	function presenceBeat(deviceId, name, now) {
+	/// does -- lastSeen moved -- which is what makes the beat a push). `attended` is
+	/// the attention signal (foreground + recent interaction) a live consent routes on:
+	/// `attendedAt` stamps when the device was last attended, so freshness is judged on
+	/// attention rather than on the bare beat.
+	function presenceBeat(deviceId, name, now, attended) {
 		var id = String(deviceId || '');
 		if (!id) return false;
-		_presence[id] = { name: String(name || ''), lastSeen: now == null ? Date.now() : now };
+		var n = now == null ? Date.now() : now;
+		var prev = _presence[id];
+		var at = attended ? n : (prev ? leaseMs(prev.attendedAt) : 0);
+		_presence[id] = { name: String(name || ''), lastSeen: n, attended: !!attended, attendedAt: at };
 		return true;
 	}
 
@@ -652,7 +754,10 @@
 			if (!inc) continue;
 			var cur = _presence[id];
 			if (!cur || leaseMs(inc.lastSeen) > leaseMs(cur.lastSeen)) {
-				_presence[id] = { name: String(inc.name || ''), lastSeen: leaseMs(inc.lastSeen) };
+				_presence[id] = {
+					name: String(inc.name || ''), lastSeen: leaseMs(inc.lastSeen),
+					attended: !!inc.attended, attendedAt: leaseMs(inc.attendedAt),
+				};
 				moved = true;
 			}
 		}
@@ -682,7 +787,16 @@
 			// The wire field is `last_seen`; tolerate `lastSeen` in case a caller
 			// hands an already-client-framed record straight in.
 			var seen = leaseMs(rec.last_seen != null ? rec.last_seen : rec.lastSeen);
-			next[String(id)] = { name: String(rec.name || ''), lastSeen: seen - skew };
+			// The attention signal a live consent routes on. The gateway relays it as
+			// `attended` / `attended_at` (skew-adjusted like last_seen); when a build's
+			// gateway does not yet carry it, it reads absent -> not attended, so a runner
+			// PARKS rather than routing a question to a device that may be unwatched (the
+			// fail-safe the design requires).
+			var atRaw = rec.attended_at != null ? rec.attended_at : rec.attendedAt;
+			next[String(id)] = {
+				name: String(rec.name || ''), lastSeen: seen - skew,
+				attended: !!rec.attended, attendedAt: atRaw != null ? (leaseMs(atRaw) - skew) : 0,
+			};
 		}
 		var before = JSON.stringify(_presence);
 		_presence = next;
@@ -733,6 +847,85 @@
 		name:     presenceName,
 		forget:   presenceForget,
 	};
+
+	// ── Remote consent — attention, routing, the park bound ────
+	//
+	// A turn dispatched from the phone runs on a runner where nobody is. When it hits
+	// a genuinely per-turn consent the synced account policy does not cover, the
+	// runner cannot raise a dialog into an empty room: it routes the question to a
+	// device the user is ON, and awaits the answer while holding its turn in memory.
+	// Only the question and the answer travel; the turn never leaves the runner.
+	//
+	// The helpers here are the PURE decisions -- who is attended, whether to ask or
+	// park, and how far the park loop may run. daimond.js seals/posts/awaits over the
+	// real channel; the money-safety of the bound is decided here so a test drives it.
+
+	// The default life of one live consent question. ~1 minute, tunable: the runner
+	// holds its lease straight to the errand deadline (~15 min) throughout, so the
+	// short consent wait sits INSIDE the long claim and no lease renewal is needed.
+	var CONSENT_DEADLINE_MS = 60 * 1000;
+
+	// The hard cap on how many times ONE turn may park-and-re-dispatch. It is BOTH the
+	// liveness cap and the SPEND cap: each re-dispatch replays the turn's pre-consent
+	// account spend (the earlier LLM calls, a completed web_search), so N re-dispatches
+	// cost at most N× that spend. Small on purpose. The count is GLOBAL (synced on the
+	// errand / parked report / placeholder), so it is not multiplied by device count.
+	var MAX_PARKS = 2;
+
+	/// Is a presence record ATTENDED -- a person is at this device now, not merely a
+	/// beating heartbeat? Attention is a foreground + recent-interaction signal the
+	/// beat carries (`attended`), distinct from `lastSeen`: routing a live question to
+	/// an awake-but-unwatched device would just relocate the invisible stall. Absent or
+	/// false is NOT attended, so an attention-indeterminate device is never asked.
+	function recAttended(rec, now, windowMs) {
+		if (!rec || !rec.attended) return false;
+		var w = windowMs || DISPATCH_FRESH_MS;
+		var seen = leaseMs(rec.attendedAt != null ? rec.attendedAt : rec.lastSeen);
+		return (now - seen) <= w;
+	}
+
+	/// The freshest ATTENDED peer (not this device) in a presence map, or null. The one
+	/// pure answer to "is there a device the user is on that a live question can go to".
+	/// Attention fails SAFE: an indeterminate or stale-attention device is skipped, so
+	/// the caller parks rather than routing a question nobody will see.
+	function attendedPeer(presence, selfId, now, windowMs) {
+		var p = presence || {}, self = String(selfId || '');
+		var n = now == null ? Date.now() : now, best = null;
+		for (var id in p) {
+			if (!Object.prototype.hasOwnProperty.call(p, id)) continue;
+			if (id === self) continue;
+			var rec = p[id];
+			if (!recAttended(rec, n, windowMs)) continue;
+			if (!best || leaseMs(rec.lastSeen) > leaseMs(best.lastSeen)) {
+				best = { deviceId: id, name: (rec.name || ''), lastSeen: leaseMs(rec.lastSeen) };
+			}
+		}
+		return best;
+	}
+
+	/// Decide what a runner does with a per-turn consent it cannot answer locally:
+	/// ASK a specific attended peer, or PARK. Pure. `covered` is the policy-sync
+	/// short-circuit -- a standing account grant the runner already holds resolves the
+	/// act with no question at all, so the ask fires ONLY when the synced policy does
+	/// not already cover it (this composes with the shipped consent-sync, never
+	/// double-asking). Answers `{ action, peer?, verdict?, why? }`.
+	function consentRouteDecision(presence, selfId, now, opts) {
+		var o = opts || {};
+		if (o.covered) return { action: 'allow', verdict: 'allow', why: 'policy' };
+		var peer = attendedPeer(presence, selfId, now, o.windowMs);
+		if (peer) return { action: 'ask', peer: peer };
+		return { action: 'park', why: 'no-attended-device' };
+	}
+
+	/// The outcome of a park, given the parkCount the errand carried. Pure and the
+	/// single arbiter of the spend bound. `next` is the new GLOBAL park total (this
+	/// park included); `terminal` is true once it reaches the bound, at which point the
+	/// turn fails clean rather than re-dispatching into another respend.
+	function parkOutcome(errandParkCount, maxParks) {
+		var mx = (maxParks == null) ? MAX_PARKS : (maxParks | 0);
+		var next = (errandParkCount | 0) + 1;
+		return { next: next, terminal: next >= mx };
+	}
 
 	// ── Smart auto-dispatch (dev/PEER_DESIGN.md §4.1, §4.2) ────
 	//
@@ -1295,6 +1488,39 @@
 	///
 	/// Answers `{ ran, done?, aborted?, error?, why?, holder?, trace }`. `trace` is
 	/// the ordered side effects, so a test asserts the sequence rather than guessing.
+	///
+	/// PARK — abandon and re-run, never resume (there is no mid-turn checkpoint). When
+	/// a per-turn consent could not be answered (no attended device, or the wait timed
+	/// out), egressAllowed on the runner records the intent and aborts the turn; this
+	/// runner then parks. Park REPORTS THEN RELEASES -- mirroring the reconstruct-fail
+	/// order below -- so the lease is never stranded. Below MAX_PARKS the report is
+	/// `parked` (the turn re-dispatches, fresh, when a human next surfaces); AT the
+	/// bound it is a terminal failure the user is told about, and it does not re-run.
+	/// The parkCount it carries is the GLOBAL total, so two devices cannot each drive
+	/// the loop independently -- the count and the single-runner lease together cap the
+	/// respend at MAX_PARKS.
+	async function parkAndRelease(e, d, trace, pk) {
+		var turnId = String(e.turnId);
+		var out    = parkOutcome(e.parkCount, d.maxParks);
+		var terminal = out.terminal;
+		var why = String((pk && pk.why) || (terminal
+			? 'This turn needed your permission and no device was available to grant it -- it did not run.'
+			: 'This turn needs your permission and no device was available -- it will re-run when you are back.'));
+		// REPORT then RELEASE (the reconstruct-fail order), so the lease is freed only
+		// after the account of the stop is on its way. A terminal park is an `aborted`
+		// report (no re-dispatch); a survivable one is `parked`, carrying the bumped
+		// GLOBAL count so the re-dispatcher increments from the true total.
+		try {
+			if (d.post) await d.post(makeReport({
+				eid: e.eid, turnId: turnId, chatId: e.chatId,
+				status: terminal ? 'aborted' : 'parked', why: why, parkCount: out.next }));
+			trace.push('report');
+		} catch (err) { /* the release below still frees the turn */ }
+		try { await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
+		catch (err) { /* an unreleased lease still expires at its deadline */ }
+		return { ran: true, parked: !terminal, terminal: terminal, why: why, parkCount: out.next, trace: trace };
+	}
+
 	async function runErrand(errand, deps) {
 		var d = deps || {}, e = errand || {};
 		var turnId = String(e.turnId);
@@ -1458,11 +1684,23 @@
 				// Revoked -> the lease is already whoever took it back's; touch nothing,
 				// do NOT ack -- the errand is theirs now.
 				if (revoked) return { ran: true, aborted: true, why: 'revoked', trace: trace };
+				// PARK -> egressAllowed could not get consent and aborted the turn on
+				// purpose (no attended device, or the wait timed out). This is not a
+				// crash: report the park (or terminal failure at the bound) and RELEASE
+				// the lease, so the turn re-dispatches or ends clean rather than stranding.
+				var pkErr = d.parkRequested ? d.parkRequested(e) : null;
+				if (pkErr) { stopCheck(); return await parkAndRelease(e, d, trace, pkErr); }
 				// A genuine crash: do NOT ack and do NOT complete, so the relay keeps the
 				// errand and the lease EXPIRES (at its deadline). The phone reclaims (§2.5).
 				return { ran: true, error: true, why: String(err && err.message || err), trace: trace };
 			}
 			if (revoked) return { ran: true, aborted: true, why: 'revoked', trace: trace };
+			// PARK could also be signalled without the turn throwing (egressAllowed
+			// returned a refusal and the turn wound down on its own). Park takes
+			// precedence over completing a half-answer: nothing past the consent point
+			// ran, so there is nothing to push.
+			var pkOk = d.parkRequested ? d.parkRequested(e) : null;
+			if (pkOk) { stopCheck(); return await parkAndRelease(e, d, trace, pkOk); }
 			// The turn produced a result: stop the liveness ticker BEFORE completing, so
 			// nothing races the done/release writes below.
 			stopCheck();
@@ -1508,8 +1746,16 @@
 		ENVELOPE_V: ENVELOPE_V,
 		T_ERRAND:   T_ERRAND,
 		T_REPORT:   T_REPORT,
+		T_ASK:      T_ASK,
+		T_GRANT:    T_GRANT,
 		makeErrand:  makeErrand,
 		makeReport:  makeReport,
+		/// The two remote-consent envelopes: a runner's live question (`makeAsk`, fresh
+		/// `cid` per ask) and an attended device's answer (`makeGrant`, which signs
+		/// `cid`/`turnId`/`verdict` but NOT `tool`/`host`/`detail`, so the runner replays
+		/// the EXACT act it held).
+		makeAsk:     makeAsk,
+		makeGrant:   makeGrant,
 		/// Seal an envelope to this account and answer the `{ to, addr, envelope }`
 		/// post body. Reuses `DaimondPost.seal`; no server is involved, which is
 		/// also how it is tested.
@@ -1531,6 +1777,10 @@
 		/// daimond.js; absent, `absorb` verifies and drops.
 		onErrand: onErrand,
 		onReport: onReport,
+		/// Register the remote-consent handlers: `onAsk` raises a runner's question on
+		/// an attended device; `onGrant` delivers the answer to the awaiting runner.
+		onAsk:    onAsk,
+		onGrant:  onGrant,
 		/// Route a batch of collected rows by their sealed type tag (direct-drive).
 		routeRows:   routeRows,
 		/// Fold a peer's answer into a transcript as an append.
@@ -1547,6 +1797,16 @@
 		/// acts on it at send-time. And the shared "which peer is awake" answer.
 		autoDispatchDecision: autoDispatchDecision,
 		freshestPeer:  freshestPeer,
+		/// The remote-consent decisions, pure so a test drives the money-safe bound.
+		/// `attendedPeer` -- the freshest device the user is ON (foreground + recent
+		/// interaction), or null; `consentRouteDecision` -- ask that peer, resolve from
+		/// policy, or park; `parkOutcome` -- the new GLOBAL park total and whether it
+		/// reaches the terminal spend bound.
+		attendedPeer:         attendedPeer,
+		consentRouteDecision: consentRouteDecision,
+		parkOutcome:          parkOutcome,
+		CONSENT_DEADLINE_MS:  CONSENT_DEADLINE_MS,
+		MAX_PARKS:            MAX_PARKS,
 		/// Whether the dispatching device should RECOVER an orphaned dispatched turn
 		/// locally on its return -- dispatched, not finished, not held by a live peer.
 		/// daimond.js acts on it through the same lease, so it is money-safe.

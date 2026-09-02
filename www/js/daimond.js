@@ -9564,6 +9564,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return true;
 	}
 
+	// The ATTENTION signal a live consent routes on: not a bare heartbeat but
+	// foreground + a recent interaction, so a runner sends its question only to a
+	// device a person is actually ON. Routing to an awake-but-unwatched device would
+	// simply relocate the invisible stall it exists to fix. `_lastInteractAt` is
+	// stamped on real input; a device visible but idle past the window is not attended.
+	var _lastInteractAt = 0;
+	var ATTENDED_IDLE_MS = 90 * 1000;	// interaction older than this is not "at the device"
+	function noteInteraction() { _lastInteractAt = Date.now(); }
+	try {
+		['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) {
+			window.addEventListener(ev, noteInteraction, { passive: true, capture: true });
+		});
+	} catch (e) { /* no window: attention stays false, so a runner parks (fail-safe) */ }
+
+	/// Is a person AT this device now -- foreground and recently interacting? The
+	/// attention half of the presence beat; the runner's routing reads it (via
+	/// `attendedPeer`) and, when it cannot be positively determined for any device,
+	/// parks rather than routing a question nobody will see.
+	function isAttended() {
+		try {
+			if (document.visibilityState !== 'visible') return false;
+			return (Date.now() - _lastInteractAt) <= ATTENDED_IDLE_MS;
+		} catch (e) { return false; }
+	}
+
 	// This computer's standing answer to "may you act unattended". It lives in
 	// localStorage and NOWHERE ELSE, because it is a fact about THIS machine — its
 	// owner has told it to finish dispatched work on its own — and it must not ride
@@ -9641,40 +9666,62 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return live.length === 1 ? live[0] : null;
 	}
 
+	/// The headline and body for a consent tile, from the act's shape. Shared by the
+	/// LOCAL unsupervised-worker park (`parkConsent`) and the REMOTE ask a runner
+	/// routes here (`raiseConsentFromPeer`), so the two never word one question two
+	/// ways. The text sent (`detail`) is quoted IN FULL for `web_type`, the same reason
+	/// the dialog does not cut it: it is the thing being authorised.
+	function consentTileText(tool, host, detail) {
+		var head, body;
+		if (tool === 'web_type') {
+			head = t('pending.consent.type_head', { host: host });
+			body = tOr('permmode.type_worker_body',
+				'An agent working on its own wants to type this into {host} and send it:\n\n{text}\n\nYou are not driving it and it cannot ask you itself, so Daimond is asking. Text sent to a site cannot be recalled. Saying yes allows this one act and nothing after it.',
+				{ host: host, text: String(detail || '') || t('egress.nothing') });
+		} else if (tool === 'web_click') {
+			head = t('pending.consent.click_head', { host: host });
+			body = tOr('permmode.act_worker_body',
+				'An agent working on its own wants to click something on {host}. You are not driving it and it cannot ask you itself, so Daimond is asking. Clicking can spend your money, send a message or submit a form, and none of that can be taken back. Saying yes allows this one click and nothing after it.',
+				{ host: host });
+		} else if (tool === 'web_search') {
+			head = t('pending.consent.search_head');
+			body = tOr('permmode.search_worker_body',
+				'An agent working on its own wants to search the web for:\n\n{query}\n\nYou are not driving it and it cannot ask you itself, so Daimond is asking. The query is what leaves this device. Saying yes allows this one search.',
+				{ query: String(detail || '') || t('egress.nothing') });
+		} else {
+			head = t('pending.consent.reach_head', { host: host });
+			body = t('egress.reach_body', { host: host });
+		}
+		return { head: head, body: body + '\n\n' + t('pending.consent.why') };
+	}
+
+	/// A short phrase for what a runner is blocked asking about, for the dispatch
+	/// status ("argonaut needs your permission to {act}"). From the ask's tool and
+	/// host, so the user knows why the turn is not progressing and the ball is theirs.
+	function consentActPhrase(ask) {
+		var tool = String((ask && ask.tool) || ''), host = String((ask && ask.host) || '');
+		if (tool === 'web_type')   return t('turn.consent_act_type',  { host: host });
+		if (tool === 'web_click')  return t('turn.consent_act_click', { host: host });
+		if (tool === 'web_search') return t('turn.consent_act_search');
+		return t('turn.consent_act_reach', { host: host });
+	}
+
 	/// Raise this request on the Pending panel, and wait there for its answer.
 	///
 	/// # Arguments
 	/// * `req` - The engine's payload: `{ tool, url, detail, alone }`.
 	/// * `host` - The destination, already parsed, which is what the tile names.
 	function parkConsent(req, host) {
-		var tool = String(req.tool || '');
 		var who  = askingWorker();
-		var head, body;
-		if (tool === 'web_type') {
-			head = t('pending.consent.type_head', { host: host });
-			// The same words the dialog would have used, because it is the same
-			// question — and the text being sent is quoted in full for the same
-			// reason it is on the dialog: it is the thing being authorised.
-			body = tOr('permmode.type_worker_body',
-				'An agent working on its own wants to type this into {host} and send it:\n\n{text}\n\nYou are not driving it and it cannot ask you itself, so Daimond is asking. Text sent to a site cannot be recalled. Saying yes allows this one act and nothing after it.',
-				{ host: host, text: String(req.detail || '') || t('egress.nothing') });
-		} else if (tool === 'web_click') {
-			head = t('pending.consent.click_head', { host: host });
-			body = tOr('permmode.act_worker_body',
-				'An agent working on its own wants to click something on {host}. You are not driving it and it cannot ask you itself, so Daimond is asking. Clicking can spend your money, send a message or submit a form, and none of that can be taken back. Saying yes allows this one click and nothing after it.',
-				{ host: host });
-		} else {
-			head = t('pending.consent.reach_head', { host: host });
-			body = t('egress.reach_body', { host: host });
-		}
-		var detail = body + '\n\n' + t('pending.consent.why');
+		var txt  = consentTileText(String(req.tool || ''), host, String(req.detail || ''));
+		var detail = txt.body;
 		if (who) {
 			detail += '\n\n' + t('pending.consent.agent',
 				{ name: who.name || '', task: String(who.task || '').slice(0, 300) });
 		}
 		var id = Pending.add({
 			kind:        'consent',
-			headline:    head,
+			headline:    txt.head,
 			detail:      detail,
 			priority:    'high',		// something is stopped until it is answered.
 			diamondId:   who ? (who.diamondId || '') : '',
@@ -9684,6 +9731,176 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// could not be raised is a request nobody answered.
 		if (!id) return Promise.resolve('deny');
 		return new Promise(function (resolve) { _parked[id] = resolve; });
+	}
+
+	// ── Remote consent for a handed-off turn (dev/HANDOFF_CONSENT_DESIGN.md) ──
+	//
+	// A turn dispatched from the phone runs on a runner where nobody is. When it hits
+	// a genuinely per-turn consent the synced account policy does not cover, the
+	// runner cannot raise a dialog into an empty room: it seals a `consent-ask` to the
+	// account, routes it to a device the user is ON, and AWAITS the answer while
+	// holding its turn in memory -- exactly as it already awaits a local dialog. Only
+	// the question and the answer travel; the turn never leaves the runner. When no
+	// attended device exists, or the wait times out, the runner PARKS (abandon +
+	// re-run, never resume -- there is no mid-turn checkpoint), bounded by MAX_PARKS so
+	// the pre-consent respend can never run away. peer.js owns the envelopes, the
+	// signature and the pure decisions; this is the thin wiring over the real channel.
+
+	// A runner's ACTIVE dispatched turns, by turnId. Registered around runErrand so
+	// egressAllowed -- called deep inside the turn, with no turnId in its payload --
+	// can name the turn a live consent belongs to, seal the ask home, and (on a park)
+	// abort exactly that turn. Cleared on every exit.
+	var _runnerCtx    = Object.create(null);	// turnId -> { turnId, eid, chatId, dispatchedBy, parkCount, abort }
+	// A runner AWAITING a grant, by the ask's cid. The grant that names this cid
+	// resolves the promise egressAllowed is blocked on; a grant for a spent/unknown cid
+	// matches nothing and authorises nothing (the forged/replayed-grant defence).
+	var _consentWait  = Object.create(null);	// cid -> { turnId, resolve }
+	// A turn egressAllowed decided to PARK. runErrand reads this (parkRequested) after
+	// the turn aborts and reports parked/terminal + releases the lease.
+	var _runnerParked = Object.create(null);	// turnId -> { why }
+	// The dispatcher-side "a runner is blocked on a live question" marker, by turnId,
+	// so the dispatch status stops lying ("<peer> needs your permission to {act}").
+	var _openAsk      = Object.create(null);	// turnId -> ask envelope
+	// Source-side tiles raised for an incoming ask, by cid, so a re-collected ask is
+	// not re-raised (dedup) and a resolved one is retired.
+	var _askTiles     = Object.create(null);	// cid -> pending tile id
+
+	/// The one active runner turn, or null when it cannot be told (none, or several at
+	/// once). Like `askingTurn`, it FAILS TOWARDS SAFETY: not knowing which turn is
+	/// asking costs a refused act, never a wrong turn parked or a stranger's consent
+	/// spent. A runner runs its dispatched turns one at a time in the common case.
+	function activeRunnerTurn() {
+		var ids = Object.keys(_runnerCtx);
+		return ids.length === 1 ? _runnerCtx[ids[0]] : null;
+	}
+
+	/// Register / retire a runner's active turn around its run.
+	function runnerCtxBegin(errand) {
+		var tid = String((errand && errand.turnId) || '');
+		if (!tid) return;
+		_runnerCtx[tid] = {
+			turnId: tid, eid: String(errand.eid || ''), chatId: String(errand.chatId || ''),
+			dispatchedBy: String(errand.dispatchedBy || ''), parkCount: errand.parkCount | 0,
+			abort: null,
+		};
+	}
+	function runnerCtxEnd(turnId) {
+		var tid = String(turnId || '');
+		delete _runnerCtx[tid];
+		delete _runnerParked[tid];	// consumed by runErrand's parkRequested before this runs
+	}
+
+	/// PARK this runner turn: record the intent, hard-abort the in-flight turn, and
+	/// answer 'deny' so the pending act does not happen while the turn tears down.
+	/// runErrand then reports parked/terminal and releases the lease.
+	function parkRunnerTurn(rc, why) {
+		if (rc && rc.turnId) _runnerParked[rc.turnId] = { why: why || 'no-attended-device' };
+		try { if (rc && rc.abort) rc.abort(); } catch (e) { /* idempotent */ }
+		return 'deny';
+	}
+
+	/// Runner side: route a live per-turn consent to an attended device and AWAIT the
+	/// answer, or PARK. `covered` is false for the acts that reach here (web_type /
+	/// web_click / an overlong address) -- no standing scope covers them, so the ask
+	/// always fires; the reading/search path composes with the synced policy ABOVE
+	/// this, returning 'allow' before it ever gets here.
+	async function routeConsentAsk(req, host) {
+		var rc = activeRunnerTurn();
+		if (!rc) return 'deny';				// cannot tell which turn: refuse this act, park nothing
+		if (_openAskForTurn(rc.turnId)) return 'deny';	// one open ask per turnId at a time
+		var presence = (window.DaimondPresence && DaimondPresence.snapshot)
+			? (DaimondPresence.snapshot() || {}) : {};
+		var decision = DaimondPeer.consentRouteDecision(presence, selfDeviceId(), Date.now(),
+			{ windowMs: DaimondPeer.DISPATCH_FRESH_MS });
+		if (decision.action !== 'ask') return parkRunnerTurn(rc, decision.why || 'no-attended-device');
+		var wait = DaimondPeer.CONSENT_DEADLINE_MS || 60000;
+		var ask = DaimondPeer.makeAsk({
+			eid: rc.eid, turnId: rc.turnId, chatId: rc.chatId,
+			tool: String(req.tool || ''), host: String(host || ''),
+			detail: String(req.detail != null ? req.detail : (req.url || '')),
+			deadline: Date.now() + wait, dispatchedBy: selfDeviceId(),
+		});
+		var body;
+		try { body = await DaimondPeer.sealForSelf(ask); }
+		catch (e) { return parkRunnerTurn(rc, 'seal-failed'); }
+		try { var r = await DaimondPost.post(body); if (!r || !r.ok) return parkRunnerTurn(rc, 'post-failed'); }
+		catch (e) { return parkRunnerTurn(rc, 'post-failed'); }
+		// AWAIT the grant keyed by cid, or the deadline. The turn stays in memory; the
+		// lease is held to the errand deadline throughout, so it never reads vacant.
+		var verdict = await new Promise(function (resolve) {
+			var done = false;
+			function settle(v) { if (done) return; done = true; delete _consentWait[ask.cid]; resolve(v); }
+			_consentWait[ask.cid] = { turnId: rc.turnId, resolve: settle };
+			setTimeout(function () { settle(null); }, wait);
+		});
+		if (verdict === 'allow' || verdict === 'deny') return verdict;	// the human answered
+		return parkRunnerTurn(rc, 'consent-timeout');					// nobody answered in time
+	}
+
+	/// Is there an outstanding ask for this turn (runner side awaiting, or a source
+	/// tile up)? Guards one-open-ask-per-turnId.
+	function _openAskForTurn(turnId) {
+		var tid = String(turnId || '');
+		for (var cid in _consentWait) {
+			if (Object.prototype.hasOwnProperty.call(_consentWait, cid)
+				&& _consentWait[cid] && String(_consentWait[cid].turnId) === tid) return true;
+		}
+		return false;
+	}
+
+	/// onGrant: an attended device's answer has arrived. Resolve the runner awaiting
+	/// this cid, if any. A grant whose cid has no outstanding held act -- spent,
+	/// replayed, or for another turn -- is dropped and authorises nothing.
+	function deliverGrant(grant) {
+		try {
+			var cid = String(grant.cid || '');
+			var w = _consentWait[cid];
+			if (!w) return;							// no held act for this cid: drop
+			if (String(grant.turnId) !== String(w.turnId)) return;	// cid bound to another turn
+			w.resolve(grant.verdict === 'allow' ? 'allow' : 'deny');
+		} catch (e) { /* a lost grant times the runner out into a park; no double-charge */ }
+	}
+
+	/// onAsk (source side): a runner's live question has arrived. Record it for the
+	/// dispatch status on ANY device; raise the tile ONLY on an attended one (a device
+	/// that cannot answer must not hold a dialog nobody sees); dedup by cid. Answering
+	/// seals a `consent-grant` and posts it home, addressed by the ask's dispatchedBy.
+	function raiseConsentFromPeer(ask) {
+		try {
+			var cid = String(ask.cid || ''), turnId = String(ask.turnId || '');
+			_openAsk[turnId] = ask;								// the dispatcher's "awaiting" marker
+			try { renderDispatchedBadges(); } catch (e) {}
+			// Past its deadline: the runner has already parked; do not raise a stale tile.
+			if (ask.deadline && Date.now() > (+ask.deadline || 0)) return;
+			if (!someoneCanAnswer()) return;					// not attended: cannot raise a tile
+			if (_askTiles[cid]) return;							// dedup: a re-collected ask is not re-raised
+			var txt = consentTileText(String(ask.tool || ''), String(ask.host || ''), String(ask.detail || ''));
+			var id = Pending.add({
+				kind: 'consent', headline: txt.head, detail: txt.body, priority: 'high',
+			});
+			if (!id) return;
+			_askTiles[cid] = id;
+			// The tile settles through the ordinary settleConsent -> _parked[id] route;
+			// its verdict seals the grant home and retires the local marker.
+			new Promise(function (resolve) { _parked[id] = resolve; }).then(function (verdict) {
+				delete _askTiles[cid];
+				delete _openAsk[turnId];
+				try { renderDispatchedBadges(); } catch (e) {}
+				sealAndPostGrant(ask, verdict === 'allow' ? 'allow' : 'deny');
+			});
+		} catch (e) { /* a failure to raise leaves the runner to time out and park */ }
+	}
+
+	/// Seal a `consent-grant` for an ask and post it home. A lost grant is not a
+	/// double-charge risk: the runner times out and parks, and the turn re-runs bounded.
+	async function sealAndPostGrant(ask, verdict) {
+		try {
+			var grant = DaimondPeer.makeGrant({
+				cid: ask.cid, eid: ask.eid, turnId: ask.turnId, verdict: verdict, by: selfDeviceId(),
+			});
+			var body = await DaimondPeer.sealForSelf(grant);
+			await DaimondPost.post(body);
+		} catch (e) { /* the runner's timeout is the safe fallback */ }
 	}
 
 	/// Whether this act may happen, now that something from outside has been read.
@@ -9968,6 +10185,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				&& DaimondHandMode.scopeGranted('reading')) {
 				return 'allow';
 			}
+			// A RUNNER with NO standing 'reading' grant: route the question HOME rather
+			// than raise a dialog on a screen nobody is at. The owner's original stall
+			// was exactly a web_search prompt on the runner, and consent-sync above only
+			// closes it once 'reading' is granted -- so until it is, the ask goes to an
+			// attended device (or parks). Composes with consent-sync: a granted account
+			// already returned 'allow' and never reaches here. The routed verdict is a
+			// plain 'allow'/'deny', which is what `web_search` reads.
+			if (req.alone && !someoneCanAnswer() && activeRunnerTurn()) {
+				return await routeConsentAsk({ tool: 'web_search', detail: q, url: '' }, '');
+			}
 			var searchTurn = askingTurn(req);
 			if (searchTurn && _searchTurn.has(searchTurn)) {
 				return _searchTurn.get(searchTurn) ? 'allow' : 'deny';
@@ -10054,7 +10281,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// worse answer than the dialog. Below the same-origin shortcut, so our own
 		// pages are no more gated for a worker than for anybody else, and above
 		// the two act branches, which are the only tools that carry `alone`.
-		if (req.alone && !someoneCanAnswer()) return await parkConsent(req, host);
+		//
+		// A RUNNER routes the question HOME rather than parking it on its own empty
+		// screen: this is a turn dispatched from another device, and the person is at
+		// THAT device. `routeConsentAsk` seals the ask, sends it to an attended device
+		// and awaits the answer, holding the turn in memory; with no attended device,
+		// or on timeout, it parks (abandon + re-run, bounded). A LOCAL unsupervised
+		// worker (no dispatched errand in flight) keeps the existing on-panel park --
+		// nobody dispatched it, so there is nowhere else to send the question.
+		if (req.alone && !someoneCanAnswer()) {
+			if (activeRunnerTurn()) return await routeConsentAsk(req, host);
+			return await parkConsent(req, host);
+		}
 
 		// Typing into a page is not reading it. The text is the thing being sent, so
 		// it is shown, and consent is for this one act — a form post is exactly the
@@ -12168,17 +12406,35 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if      (st === 'no-peer-awake') label.textContent = t('turn.peer_none');
 		else if (st === 'claimed')       label.textContent = name ? t('turn.peer_claimed_named', { name: name }) : t('turn.peer_claimed');
 		else if (st === 'running')       label.textContent = name ? t('turn.peer_running_named', { name: name }) : t('turn.peer_running');
+		else if (st === 'awaiting-consent') {
+			// The dispatch status stops lying: the runner is blocked on a live question
+			// the user must answer, so it names the act and the machine rather than
+			// sitting on "Sent to your other devices."
+			var ask = _openAsk[String(m.iturn)] || null;
+			var act = consentActPhrase(ask);
+			label.textContent = name
+				? t('turn.peer_consent_named', { name: name, act: act })
+				: t('turn.peer_consent', { act: act });
+		}
+		else if (st === 'parked')        label.textContent = t('turn.peer_parked');
 		else if (st === 'failed')        label.textContent = t('turn.peer_failed');
 		else                             label.textContent = t('turn.peer_sent');	// dispatched
 		foot.appendChild(label);
-		// The one control this state offers. A live claim (claimed/running) can be
-		// TAKEN BACK; a stall or a failure (no-peer-awake/failed) can be RUN HERE.
-		if (st === 'running' || st === 'claimed') {
+		// The one control this state offers. A live claim, or a runner blocked on a
+		// question, can be TAKEN BACK; a stall or a failure can be RUN HERE; a parked
+		// turn can be RE-RUN (a fresh dispatch, or a local run at the bound).
+		if (st === 'running' || st === 'claimed' || st === 'awaiting-consent') {
 			var tb = document.createElement('button');
 			tb.className = 'ti-continue';
 			tb.textContent = t('turn.peer_takeback');
 			tb.addEventListener('click', function () { peerTakeBack(m.iturn); });
 			foot.appendChild(tb);
+		} else if (st === 'parked') {
+			var rr = document.createElement('button');
+			rr.className = 'ti-continue';
+			rr.textContent = t('turn.peer_rerun');
+			rr.addEventListener('click', function () { reRunParked(current, m.iturn, m.itext); });
+			foot.appendChild(rr);
 		} else if (st === 'failed' || st === 'no-peer-awake') {
 			var rh = document.createElement('button');
 			rh.className = 'ti-continue';
@@ -12221,6 +12477,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			iturn:       mark.iturn,
 			itext:       mark.itext,
 			dispatchedBy: mark.dispatchedBy,
+			parkCount:   mark.parkCount | 0,	// the GLOBAL park count, synced on the placeholder
 			ts:          Date.now(),
 		});
 		if (ownsChat(chat)) renderHistory(chat.messages);
@@ -12233,7 +12490,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// it committed at, mark the local turn peer-held SECOND, seal and post the
 	/// errand LAST carrying that version. The errand is never posted before the
 	/// prompt is on the server. Answers `{ ok, why }`.
-	async function dispatchToPeer(chat, turnId, promptText, scopePaths) {
+	async function dispatchToPeer(chat, turnId, promptText, scopePaths, opts) {
 		if (!window.DaimondPeer || !DaimondPeer.buildDispatch
 			|| !window.DaimondPost || !DaimondPost.post
 			|| !window.DaimondSync  || !DaimondSync.push) {
@@ -12245,6 +12502,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// claims its own dispatch. The PER-DEVICE id, not the account key: pairing
 		// shares the key, so a key-derived `by` could not tell a device from its twin.
 		var by = selfDeviceId();
+		// The GLOBAL park count this dispatch inherits (0 on a first dispatch, the
+		// carried total on a re-run of a parked turn), so the ≤MAX_PARKS respend bound
+		// holds across devices.
+		var parkCount = (opts && (opts.parkCount | 0)) || 0;
 		var plan = DaimondPeer.buildDispatch(chat, {
 			turnId: turnId,
 			prompt: promptText,
@@ -12254,6 +12515,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			scope:  scopePaths || (Array.isArray(chat.holds) ? chat.holds : []),
 			pause:  pause,
 			dispatchedBy: by,
+			parkCount: parkCount,
 		});
 		// 1. PUSH THE PROMPT PARCEL FIRST, then read the version it committed at.
 		try { await DaimondSync.push(); }
@@ -12397,6 +12659,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var tid = String(er.turnId);
 					var rep = peerReports[tid];
 					if (rep && rep.status === 'done') return true;
+					// A TERMINAL park (aborted at the bound) is finished-for-rerun too: a
+					// device that collects it must NOT claim the released lease and respend.
+					// This closes the sequential re-dispatch edge -- after one runner
+					// terminal-parks and releases, a second re-dispatched errand stands down.
+					if (rep && rep.status === 'aborted') return true;
 					for (var ci = 0; ci < chats.length; ci++) {
 						var c = chats[ci];
 						if (!c || c.id !== er.chatId || !c.messages) continue;
@@ -12418,7 +12685,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// settled -- the permanent 409 push-loop. `onProgress` is still passed so a
 			// real journal-event piggyback can check liveness between ticks; chat.app.abort
 			// is the hard stop.
+			// The GLOBAL park bound and the park signal. `maxParks` is peer.js's MAX_PARKS;
+			// `parkRequested` reports whether egressAllowed decided to park THIS turn (no
+			// attended device, or the consent wait timed out), so runErrand reports parked
+			// / terminal and releases the lease rather than treating the abort as a crash.
+			maxParks:      (window.DaimondPeer && DaimondPeer.MAX_PARKS) || 2,
+			parkRequested: function (er) { return _runnerParked[String(er.turnId)] || null; },
 			runTurn: async function (c, prompt, ropts) {
+				// Publish this turn's hard-stop to the runner context, so egressAllowed can
+				// abort exactly this turn when it parks. The app exists now (reconstruct ran).
+				var tid = String((ropts && ropts.turnId) || '');
+				if (tid && _runnerCtx[tid]) {
+					_runnerCtx[tid].abort = function () { try { if (c && c.chat && c.chat.app) c.chat.app.abort(); } catch (e) { /* idempotent */ } };
+				}
 				// D3 — the prompt is already in the reconstructed transcript, so tell
 				// runTurn to run against it rather than append a second copy.
 				await runTurn(c.chat, prompt, { promptInTranscript: !!(ropts && ropts.promptInTranscript), turnId: ropts && ropts.turnId });
@@ -12510,7 +12789,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					]);
 				}
 			} catch (e) { /* the local snapshot stands */ }
-			var res = await DaimondPeer.runErrand(errand, peerRunErrandDeps());
+			// Register this turn as ACTIVE for the run, so a live consent inside it can
+			// name it, seal the ask home and (on a park) abort exactly this turn. Cleared
+			// on every exit -- runErrand has already consumed the park flag by then.
+			runnerCtxBegin(errand);
+			var res;
+			try { res = await DaimondPeer.runErrand(errand, peerRunErrandDeps()); }
+			finally { runnerCtxEnd(errand && errand.turnId); }
 			// A just-run turn is the strongest proof this device is awake, but running an
 			// errand emits no presence beat, so a backgrounded nominee's throttled ~45s beat
 			// can drift past the 90s window between consecutive turns, and the next turn's
@@ -12535,11 +12820,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// iturn tombstone path, §2.6 / §4.5).
 		DaimondPeer.onReport(function (report) {
 			try {
-				peerReports[String(report.turnId)] = report;
-				if (report.status === 'done') dropDispatchedPlaceholder(String(report.turnId));
+				var tid = String(report.turnId);
+				peerReports[tid] = report;
+				if (report.status === 'done') dropDispatchedPlaceholder(tid);
+				// A parked / terminal report settles the live question, so retire the
+				// dispatcher's "awaiting" marker; the footer then reads the report state.
+				if (report.status === 'parked' || report.status === 'aborted') delete _openAsk[tid];
+				// Carry the GLOBAL park count onto the synced placeholder, so a re-run
+				// from ANY device bumps from the true total rather than a device-local
+				// zero. A parked (survivable) turn can re-run; a terminal one cannot.
+				if (report.status === 'parked') markPlaceholderParked(tid, report.parkCount | 0);
 				renderDispatchedBadges();
 			} catch (e) { /* a report is only a nudge */ }
 		});
+		// Remote consent: an attended device raises a runner's live question and seals
+		// the answer home; a grant resolves the runner awaiting its cid. Idempotent.
+		try {
+			if (DaimondPeer.onAsk)   DaimondPeer.onAsk(raiseConsentFromPeer);
+			if (DaimondPeer.onGrant) DaimondPeer.onGrant(deliverGrant);
+		} catch (e) { /* remote consent unavailable: a runner falls back to a park */ }
 		// D4 — a lease learned through a SYNC pull (the phone watching the peer claim,
 		// then run, its turn) moves the local lease view but touches no message record,
 		// so the dispatched footer would sit on "Sent to your other devices" and never
@@ -12569,12 +12868,70 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { return ''; }
 	}
 
-	/// The §5 display state of a dispatched turn message, via the pure classifier.
+	/// The §5 display state of a dispatched turn message, via the pure classifier. The
+	/// open consent-ask (if the runner is blocked on a live question) is passed so the
+	/// status can say so ("awaiting-consent") rather than sit on "Sent to your devices".
 	function peerUiStateFor(m) {
 		if (!window.DaimondPeer || !DaimondPeer.uiState) return 'dispatched';
 		var lease  = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(m.iturn) : null;
 		var report = peerReports[String(m.iturn)] || null;
-		return DaimondPeer.uiState(m, lease, report, selfDeviceId(), Date.now());
+		var ask    = _openAsk[String(m.iturn)] || null;
+		return DaimondPeer.uiState(m, lease, report, selfDeviceId(), Date.now(), ask);
+	}
+
+	/// Stamp the GLOBAL park count onto a turn's synced dispatched placeholder, so a
+	/// re-run from any device bumps from the true total. The placeholder rides the
+	/// content parcel, so the count travels; the parked report is the authority a
+	/// re-dispatch reads, and this keeps the UI and any device's re-run in step.
+	function markPlaceholderParked(turnId, parkCount) {
+		var tid = String(turnId || '');
+		for (var i = 0; i < chats.length; i++) {
+			var c = chats[i];
+			if (!c || !c.messages) continue;
+			var moved = false;
+			for (var j = 0; j < c.messages.length; j++) {
+				var m = c.messages[j];
+				if (m.why === 'dispatched' && String(m.iturn) === tid) {
+					if ((m.parkCount | 0) !== (parkCount | 0)) { m.parkCount = parkCount | 0; moved = true; }
+				}
+			}
+			if (moved) { touchChat(c); persistChats(); if (ownsChat(c)) renderDispatchedBadges(); }
+		}
+	}
+
+	/// Re-run a PARKED turn from the start -- a FRESH DISPATCH, not a resume (no
+	/// checkpoint exists). Offered only when a human is here on an attended device,
+	/// which is exactly the condition under which the re-dispatched runner's own ask is
+	/// answerable, so the loop reaches the bound only in the pathological case (a human
+	/// who surfaces, triggers a re-run, then leaves before the runner asks). Gated hard
+	/// on the GLOBAL parkCount: at MAX_PARKS it does not re-dispatch -- it runs LOCALLY
+	/// here (where the person is), which cannot park because the dialog is answerable.
+	function reRunParked(chat, turnId, text) {
+		var tid = String(turnId || '');
+		var rep = peerReports[tid] || null;
+		// The authoritative count: the parked report the runner posted, else the synced
+		// placeholder. A terminal report means the turn already failed clean -- do not
+		// re-run it.
+		if (rep && rep.status === 'aborted') return;
+		var count = (rep && rep.status === 'parked') ? (rep.parkCount | 0) : placeholderParkCount(chat, tid);
+		var max = (window.DaimondPeer && DaimondPeer.MAX_PARKS) || 2;
+		if (count >= max) { continueTurn(chat, tid, text); return; }	// at the bound: run here, no more re-dispatch
+		// A re-dispatch that would hand it to a peer again, carrying the GLOBAL count.
+		// If no peer is awake, dispatchToPeer's caller falls back to a local run.
+		try {
+			dispatchToPeer(chat, tid, text, Array.isArray(chat.holds) ? chat.holds : [], { parkCount: count });
+		} catch (e) { continueTurn(chat, tid, text); }
+	}
+
+	/// The park count stamped on a turn's dispatched placeholder, or 0.
+	function placeholderParkCount(chat, turnId) {
+		var tid = String(turnId || '');
+		if (!chat || !chat.messages) return 0;
+		for (var j = 0; j < chat.messages.length; j++) {
+			var m = chat.messages[j];
+			if (m.why === 'dispatched' && String(m.iturn) === tid) return m.parkCount | 0;
+		}
+		return 0;
 	}
 
 	/// The phone's TAKE-BACK (§3.3): revoke the lease whoever holds it. The peer's
@@ -12906,8 +13263,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// with. NOT DaimondSync.push(): presence left the content parcel, so a
 			// beat no longer re-uploads ~163K nor wakes every other device -- the
 			// defect this replaces. A missed beat is safe.
-			DaimondPresence.beat(id, name, Date.now());
-			try { if (window.DaimondSync && DaimondSync.beatPresence) DaimondSync.beatPresence(id, name); } catch (e) { /* the next beat carries it */ }
+			// Carry the attention signal on the beat, so an attended device is routable
+			// for a live consent. The optimistic local update carries it directly; the
+			// gateway path (beatPresence) forwards it too, so once the gateway relays
+			// `attended`/`attended_at` a runner can route to an attended peer live.
+			var att = isAttended();
+			DaimondPresence.beat(id, name, Date.now(), att);
+			try { if (window.DaimondSync && DaimondSync.beatPresence) DaimondSync.beatPresence(id, name, att); } catch (e) { /* the next beat carries it */ }
 		} catch (e) { /* a missed beat is safe */ }
 	}
 	function startPresenceBeat() {

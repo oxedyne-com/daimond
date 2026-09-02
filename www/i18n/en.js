@@ -1090,6 +1090,7 @@
 	'pending.consent.click_head': 'An agent wants to click something on {host}',
 	'pending.consent.type_head':  'An agent wants to send text to {host}',
 	'pending.consent.reach_head': 'An agent wants to reach {host}',
+	'pending.consent.search_head': 'An agent wants to search the web',
 	'pending.consent.why':        'It asked while this page was not in front of you, so the question is waiting here instead of on a dialog nobody would have seen.',
 	'pending.consent.agent':      'The agent is {name}. Its task: {task}',
 	'pending.consent.waiting':    'The agent is still waiting for this answer.',
@@ -1930,6 +1931,14 @@
 	'turn.peer_failed':        'Your other device couldn’t finish this.',
 	'turn.peer_takeback':      'Take back',
 	'turn.peer_runhere':       'Run here',
+	'turn.peer_consent':       'Your other device needs your permission to {act}.',
+	'turn.peer_consent_named': '{name} needs your permission to {act}.',
+	'turn.peer_parked':        'This needed your permission — it will re-run when you’re back.',
+	'turn.peer_rerun':         'Re-run',
+	'turn.consent_act_type':   'type into {host}',
+	'turn.consent_act_click':  'act on {host}',
+	'turn.consent_act_search': 'search the web',
+	'turn.consent_act_reach':  'reach {host}',
 	'turn.continue':          'Continue',
 	'turn.continue_help':     'Run this turn again from your message.',
 	'astat.no_model':         'No model connected',
@@ -2862,6 +2871,7 @@
 	'permmode.act_worker_title': 'An agent wants to act on a page',
 	'permmode.act_worker_body':  'An agent working on its own wants to click something on {host}. You are not driving it and it cannot ask you itself, so Daimond is asking. Clicking can spend your money, send a message or submit a form, and none of that can be taken back. Saying yes allows this one click and nothing after it.',
 	'permmode.type_worker_body': 'An agent working on its own wants to type this into {host} and send it:\n\n{text}\n\nYou are not driving it and it cannot ask you itself, so Daimond is asking. Text sent to a site cannot be recalled. Saying yes allows this one act and nothing after it.',
+	'permmode.search_worker_body': 'An agent working on its own wants to search the web for:\n\n{query}\n\nYou are not driving it and it cannot ask you itself, so Daimond is asking. The query is what leaves this device. Saying yes allows this one search.',
 
 	// ── When conversations stop being saved ────────────────────
 	// Said outright, and while the user can still act. The failure this replaces

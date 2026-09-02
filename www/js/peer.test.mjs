@@ -748,6 +748,15 @@ async function main() {
 	// ══════════════════════════════════════════════════════════
 	await runFallbackLivenessAcceptance(laptop, check);
 
+	// ══════════════════════════════════════════════════════════
+	// REMOTE CONSENT FOR A HANDED-OFF TURN — the two envelopes, the
+	// exact-act binding, the forged/replayed-grant defence, PARK ->
+	// terminal at MAX_PARKS with the lease freed not stranded, the
+	// GLOBAL two-device parkCount bound, policy composition, and
+	// attended-only routing. (dev/HANDOFF_CONSENT_DESIGN.md.)
+	// ══════════════════════════════════════════════════════════
+	await runRemoteConsentAcceptance(phone, laptop, stranger, check);
+
 	console.log(failures === 0 ? '\nALL PASS' : ('\n' + failures + ' FAILURE(S)'));
 	if (failures) process.exitCode = 1;
 }
@@ -1919,6 +1928,210 @@ async function runLeaseAcceptance(L, check) {
 			L.mergeOne(running, released, 100).mode === 'released');
 		check('equal renewedAt: released beats running (local released)',
 			L.mergeOne(released, running, 100).mode === 'released');
+	}
+}
+
+// ── Remote consent for a handed-off turn ───────────────────
+//
+// The two envelopes (round-trip + the exact-act binding), the forged/replayed-grant
+// defence, PARK reporting-then-releasing with a terminal fail at MAX_PARKS, the
+// GLOBAL two-device parkCount bound (the money guarantee), policy composition, and
+// attended-only routing. All against the REAL DaimondPeer under node.
+async function runRemoteConsentAcceptance(phone, laptop, stranger, check) {
+	const P  = phone.DaimondPeer;
+	const Pl = laptop.DaimondPeer;
+	const Ps = stranger.DaimondPeer;
+	const MAX = P.MAX_PARKS;
+
+	// ── A. The two envelopes: round-trip, exact-act binding, fresh cid. ──
+	console.log('\nRemote consent — the ask/grant round-trip and the exact-act binding');
+	{
+		const ask = P.makeAsk({ eid: 'e1', turnId: 't1', chatId: 'c1', tool: 'web_type',
+			host: 'shop.test', detail: 'card 4111 1111 1111 1111',
+			deadline: 1700000000000 + 60000, dispatchedBy: 'devPHONE' });
+		const askBody = await P.sealForSelf(ask);
+		// The attended peer (same account) opens AND verifies the runner's question.
+		const opened = await Pl.openEnvelope(askBody.envelope);
+		check('consent-ask opens on an attended peer with tool/host/detail intact (uncut)',
+			opened.t === 'consent-ask' && opened.tool === 'web_type' && opened.host === 'shop.test'
+			&& opened.detail === 'card 4111 1111 1111 1111' && opened.turnId === 't1'
+			&& opened.cid === ask.cid && opened.dispatchedBy === 'devPHONE');
+
+		// The attended device answers: a grant naming the SAME cid.
+		const grant = Pl.makeGrant({ cid: ask.cid, eid: 'e1', turnId: 't1', verdict: 'allow', by: 'devLAPTOP' });
+		const grantBody = await Pl.sealForSelf(grant);
+		const gOpened = await P.openEnvelope(grantBody.envelope);
+		check('consent-grant opens on the runner with the verdict and cid intact',
+			gOpened.t === 'consent-grant' && gOpened.verdict === 'allow'
+			&& gOpened.cid === ask.cid && gOpened.turnId === 't1');
+		check('the grant does NOT carry tool/host/detail (runner replays the EXACT held act, never re-derives)',
+			gOpened.tool === undefined && gOpened.host === undefined && gOpened.detail === undefined);
+
+		const ask2 = P.makeAsk({ turnId: 't1', tool: 'web_type' });
+		check('a FRESH cid is minted on every ask (a replayed grant matches no new cid)',
+			ask2.cid && ask2.cid !== ask.cid);
+	}
+
+	// ── B. Forged / replayed grant rejected. ──
+	console.log('\nRemote consent — a forged or replayed grant authorises nothing');
+	{
+		// A STRANGER (different account) seals a grant; the runner cannot open it (it
+		// is sealed to another account), and were the bytes forced in the signature is
+		// not this account's -- either way it is refused before it reaches deliverGrant.
+		const strangerGrant = Ps.makeGrant({ cid: 'deadbeef', turnId: 't1', verdict: 'allow', by: 'devEVIL' });
+		const sBody = await Ps.sealForSelf(strangerGrant);
+		let why = '';
+		try { await P.openEnvelope(sBody.envelope); }
+		catch (e) { why = String(e && e.message || e); }
+		check('a grant sealed by a STRANGER account is refused by the runner (open/verify throws)',
+			/not sealed|not signed|not for this device/i.test(why));
+
+		// The spent-cid drop mirrors daimond.js `deliverGrant`: only an OUTSTANDING cid
+		// resolves a waiting runner, and it is spent on first use, so a captured grant
+		// replayed after the act ran authorises nothing.
+		const outstanding = Object.create(null);
+		outstanding['cidLIVE'] = { turnId: 't1' };
+		function deliver(g) {
+			const w = outstanding[g.cid];
+			if (!w) return 'dropped';								// spent / unknown / replayed
+			if (String(g.turnId) !== String(w.turnId)) return 'dropped';
+			delete outstanding[g.cid];								// spend the cid
+			return 'resolved';
+		}
+		check('a grant for an OUTSTANDING cid resolves the waiting runner exactly once',
+			deliver({ cid: 'cidLIVE', turnId: 't1', verdict: 'allow' }) === 'resolved');
+		check('the SAME grant REPLAYED after the cid is spent is dropped (authorises nothing)',
+			deliver({ cid: 'cidLIVE', turnId: 't1', verdict: 'allow' }) === 'dropped');
+		check('a grant for an UNKNOWN cid is dropped',
+			deliver({ cid: 'nope', turnId: 't1', verdict: 'allow' }) === 'dropped');
+	}
+
+	// The deps a park test runs an errand over: the turn SPENDS (increments runCount)
+	// then egressAllowed aborts it for consent (runTurn throws), and parkRequested
+	// tells runErrand to park rather than treat the abort as a crash.
+	function parkDeps(sync, selfId, reports, runCounter, terminalGuard) {
+		return {
+			selfId, cas: P.syncCas(sync), now: () => 5000, maxParks: MAX,
+			// FINISHED stands a device down once a TERMINAL report exists, mirroring
+			// daimond.js: a device that collects the aborted report must not respend a
+			// turn that already failed clean. Absent otherwise.
+			finished: terminalGuard ? (async () => terminalGuard()) : undefined,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] }, app: {} }),
+			runTurn: async () => { if (runCounter) runCounter.n += 1; throw new Error('aborted for consent'); },
+			parkRequested: () => ({ why: null }),					// let the default sentences stand
+			abort: () => {}, pushResult: async () => 1,
+			post: async (r) => { reports.push(r); }, ack: async () => {},
+		};
+	}
+
+	// ── C. PARK reports then releases; parked below the bound, terminal at it. ──
+	console.log('\nRemote consent — PARK reports then releases; terminal at MAX_PARKS');
+	{
+		phone.DaimondLease.forget();
+		const sync = makeLeaseSync({});
+		const reports = [], rc = { n: 0 };
+		const errand = P.makeErrand({ turnId: 't-park', chatId: 'c', prompt: 'go', eid: 'e', deadline: 9e15, parkCount: 0 });
+		const res = await P.runErrand(errand, parkDeps(sync, 'runnerDev', reports, rc));
+		check('a park below the bound is NOT terminal', res.parked === true && res.terminal === false);
+		check('the turn spent exactly once before parking', rc.n === 1);
+		check('a park posts a PARKED report carrying the bumped GLOBAL count',
+			reports.length === 1 && reports[0].status === 'parked' && reports[0].parkCount === 1);
+		check('a park RELEASES the lease (not stranded)', sync.leases()['t-park'].mode === 'released');
+		check('a park REPORTS before it RELEASES (mirror the reconstruct-fail order)',
+			res.trace.indexOf('report') < res.trace.indexOf('release'));
+
+		phone.DaimondLease.forget();
+		const sync2 = makeLeaseSync({});
+		const reports2 = [], rc2 = { n: 0 };
+		const errandN = P.makeErrand({ turnId: 't-term', chatId: 'c', prompt: 'go', eid: 'e2', deadline: 9e15, parkCount: MAX - 1 });
+		const res2 = await P.runErrand(errandN, parkDeps(sync2, 'runnerDev', reports2, rc2));
+		check('a park AT the bound is TERMINAL', res2.terminal === true && res2.parked === false);
+		check('the terminal park posts an ABORTED report, the count at MAX_PARKS',
+			reports2.length === 1 && reports2[0].status === 'aborted' && reports2[0].parkCount === MAX);
+		check('the terminal report INFORMS the user (permission / did not run)',
+			/permission/i.test(reports2[0].why) && /did not run/i.test(reports2[0].why));
+		check('the terminal park RELEASES the lease (never stranded)', sync2.leases()['t-term'].mode === 'released');
+		check('the terminal park REPORTS before it RELEASES',
+			res2.trace.indexOf('report') < res2.trace.indexOf('release'));
+	}
+
+	// ── D. GLOBAL parkCount: two devices re-dispatching cannot exceed MAX_PARKS. ──
+	//
+	// The money guarantee. The count rides the errand and the parked report (SYNCED),
+	// so a re-dispatch bumps from the true GLOBAL total, and the single-runner lease
+	// plus the terminal-report stand-down cap the respend at MAX_PARKS -- NOT MAX_PARKS
+	// per device, which a device-local counter would have allowed.
+	console.log('\nRemote consent — GLOBAL parkCount: two devices cannot exceed MAX_PARKS total');
+	{
+		phone.DaimondLease.forget(); laptop.DaimondLease.forget();
+		const sync = makeLeaseSync({});
+		const reports = [], rc = { n: 0 };
+		const TID = 't-global';
+		const terminal = () => reports.some((r) => r.turnId === TID && r.status === 'aborted');
+
+		// Dispatch #1 (parkCount 0): one runner spends and parks -> parked report, count 1.
+		const r1 = await Pl.runErrand(
+			P.makeErrand({ turnId: TID, chatId: 'c', prompt: 'go', eid: 'e0', deadline: 9e15, parkCount: 0 }),
+			parkDeps(sync, 'lapDev', reports, rc, terminal));
+		check('two-device: the first dispatch spends once and parks (GLOBAL count -> 1)',
+			r1.parked === true && rc.n === 1 && reports[reports.length - 1].parkCount === 1);
+
+		// BOTH devices read the SAME parked report's count and re-dispatch errand(parkCount 1)
+		// for the SAME turnId, over the ONE shared lease. Exactly one re-runs; the other
+		// stands down on the terminal report the winner posts.
+		const carried = reports[reports.length - 1].parkCount;		// the GLOBAL count off the synced report
+		check('two-device: the re-dispatch reads the count off the SYNCED report (not a device-local zero)',
+			carried === 1);
+		const rA = await phone.DaimondPeer.runErrand(
+			P.makeErrand({ turnId: TID, chatId: 'c', prompt: 'go', eid: 'eA', deadline: 9e15, parkCount: carried }),
+			parkDeps(sync, 'phoneDev', reports, rc, terminal));
+		const rB = await laptop.DaimondPeer.runErrand(
+			P.makeErrand({ turnId: TID, chatId: 'c', prompt: 'go', eid: 'eB', deadline: 9e15, parkCount: carried }),
+			parkDeps(sync, 'lap2Dev', reports, rc, terminal));
+		check('two-device: exactly ONE re-run spends; the other STANDS DOWN on the terminal report',
+			rc.n === 2 && (rA.ran === false || rB.ran === false));
+		check('two-device: the re-run is TERMINAL at MAX_PARKS (' + MAX + ')',
+			(rA.terminal || rB.terminal) === true
+			&& reports.some((r) => r.status === 'aborted' && r.parkCount === MAX));
+		check('two-device: TOTAL respends never exceed MAX_PARKS (' + MAX + ') — the spend cap holds',
+			rc.n <= MAX);
+		check('two-device: the lease is RELEASED after the loop (not stranded)',
+			sync.leases()[TID].mode === 'released');
+	}
+
+	// ── E. Policy composition: a covered act never asks. ──
+	console.log('\nRemote consent — policy composition: a covered act never asks');
+	{
+		const now = 1700000000000;
+		const attended = { lap: { name: 'lap', lastSeen: now - 1000, attended: true, attendedAt: now - 1000 } };
+		const cov = P.consentRouteDecision(attended, 'self', now, { covered: true });
+		check('a COVERED act resolves ALLOW with no ask (composes with the synced policy)',
+			cov.action === 'allow' && cov.verdict === 'allow');
+		check('a covered act never asks even with an attended peer present',
+			P.consentRouteDecision(attended, 'self', now, { covered: true }).action !== 'ask');
+		const unc = P.consentRouteDecision(attended, 'self', now, { covered: false });
+		check('an UNCOVERED act with an attended peer ASKS that peer',
+			unc.action === 'ask' && unc.peer && unc.peer.deviceId === 'lap');
+	}
+
+	// ── F. Attended-only routing: an awake-but-unwatched device parks. ──
+	console.log('\nRemote consent — attended-only routing; an awake-but-unwatched device parks');
+	{
+		const now = 1700000000000;
+		const awakeNotAttended = { lap: { name: 'lap', lastSeen: now - 1000, attended: false, attendedAt: 0 } };
+		check('an AWAKE but unattended peer is NOT asked -> park',
+			P.consentRouteDecision(awakeNotAttended, 'self', now, { covered: false }).action === 'park');
+		check('attendedPeer is null for an awake-but-unattended map',
+			P.attendedPeer(awakeNotAttended, 'self', now) === null);
+		const attendedFresh = { lap: { name: 'lap', lastSeen: now - 1000, attended: true, attendedAt: now - 1000 } };
+		check('a FRESH attended peer is routable',
+			P.attendedPeer(attendedFresh, 'self', now).deviceId === 'lap');
+		const attendedStale = { lap: { name: 'lap', lastSeen: now - 1000, attended: true, attendedAt: now - 10 * 60 * 1000 } };
+		check('an attended peer whose attention has AGED OUT is not routable -> park',
+			P.consentRouteDecision(attendedStale, 'self', now, { covered: false }).action === 'park');
+		const indeterminate = { lap: { name: 'lap', lastSeen: now - 1000 } };		// no attention signal
+		check('attention-INDETERMINATE (no signal) fails SAFE to park',
+			P.consentRouteDecision(indeterminate, 'self', now, { covered: false }).action === 'park');
 	}
 }
 

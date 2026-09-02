@@ -1252,11 +1252,15 @@
 	/// for identity. A missed beat is safe -- the freshness window and the lease
 	/// catch a peer that actually slept -- so an error is swallowed rather than
 	/// surfaced. Answers the response JSON, or null.
-	async function beatPresence(deviceId, name) {
+	async function beatPresence(deviceId, name, attended) {
 		if (!ready() || !entitled) return null;
 		try {
+			// `attended` is the attention signal (foreground + recent interaction) a
+			// live consent routes on. Sent so a gateway that stores it can relay it to a
+			// runner; a gateway that does not carry it ignores the field, and a runner
+			// then sees no attended peer and parks (the fail-safe the design requires).
 			var res = await call('POST',
-				{ device_id: String(deviceId || ''), name: String(name || '') }, '?presence=1');
+				{ device_id: String(deviceId || ''), name: String(name || ''), attended: !!attended }, '?presence=1');
 			if (res.status === 200 && res.json && res.json.presence && window.DaimondPresence) {
 				DaimondPresence.ingest(res.json.presence, res.json.now);
 			}
