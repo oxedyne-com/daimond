@@ -1,1 +1,1 @@
-{"build":"24ecd298eac3","note":"Interactive terminal can now use your SSH keys to connect out; automated tool calls and daimons cannot reach them"}
+{"build":"5a658c9c44e1","note":"A runner now inherits permissions your account already allowed, so it stops re-asking for what you approved elsewhere"}

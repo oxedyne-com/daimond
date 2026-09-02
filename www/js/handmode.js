@@ -64,6 +64,155 @@
 	// drift.
 	var LS_HANDOFF = 'daimond-handoff-when-away';
 
+	// ── The account-level permission POLICY that TRAVELS ─────────
+	//
+	// The rung (LS_MODE) and the scope grants below are a fact about the ACCOUNT,
+	// not about this browser: a gated tool's egress happens at the gateway on the
+	// account's own credit, so consenting to it is the account's decision, and a
+	// runner device that inherits the policy must NOT put the question again. This
+	// is the half of the permission state that rides in the sync parcel -- see
+	// `snapshotPolicy`/`adoptPolicy` here and the `perms` field in daimond.js's
+	// collectSync/applySync.
+	//
+	// WHAT STAYS MACHINE-LOCAL AND NEVER TRAVELS is read a few lines up and must
+	// stay there: LS_ACK (a per-device safety acknowledgement of bypass), LS_NET
+	// (whether a COMMAND on THIS machine keeps its network after reading a
+	// stranger's words), LS_AUTO and LS_HANDOFF (this one machine's postures).
+	// Those are machine trust, and staying on the machine is the whole of their
+	// contract -- arming one computer must not arm another.
+	var LS_MODE_AT = 'daimond-permission-mode-at';   // when the rung was last chosen here (ms).
+	var LS_SCOPES  = 'daimond-permission-scopes';     // account scope grants: { id: { at, on } }.
+
+	// The scopes whose action happens at the gateway on the account. Reading the
+	// web (web_fetch/web_search) is the one gated act carried today. Named here so
+	// the snapshot is a fixed, sorted set and a scope a build does not know is
+	// dropped on the way in rather than carried as a member with no reader.
+	var ACCOUNT_SCOPES = ['reading'];
+
+	function ms(v) {
+		return (typeof v === 'number' && isFinite(v) && v > 0) ? Math.floor(v) : 0;
+	}
+
+	/// Tell the sync engine the policy moved, so the change travels without waiting
+	/// for the next turn to end. Best-effort: a device with no sync up loses
+	/// nothing, the next ordinary round carries it.
+	function nudge() {
+		try { if (window.DaimondSync && DaimondSync.nudge) DaimondSync.nudge(); }
+		catch (e) { /* sync is not up on this device */ }
+	}
+
+	/// This device's stamp for the rung, or 0 when it has never chosen one -- so a
+	/// device on the factory default never overrides another device's real choice.
+	function modeAt() {
+		var raw = 0;
+		try { raw = Number(localStorage.getItem(LS_MODE_AT) || 0); } catch (e) { raw = 0; }
+		return ms(raw);
+	}
+
+	/// The account scope grants this device holds, as { id: { at, on } }, cleaned
+	/// to the scopes this build knows and keyed for a sorted read. Absent is none.
+	function scopes() {
+		var raw = {};
+		try { raw = JSON.parse(localStorage.getItem(LS_SCOPES) || '{}') || {}; }
+		catch (e) { raw = {}; }
+		var out = {};
+		ACCOUNT_SCOPES.forEach(function (id) {
+			var r = raw[id];
+			if (r && typeof r === 'object' && ms(r.at) > 0) {
+				out[id] = { at: ms(r.at), on: r.on ? 1 : 0 };
+			}
+		});
+		return out;
+	}
+
+	function writeScopes(map) {
+		try { localStorage.setItem(LS_SCOPES, JSON.stringify(map)); }
+		catch (e) { /* private mode: nothing to persist */ }
+	}
+
+	/// Does the account's standing policy grant this scope? Read at the consent
+	/// site (egressAllowed in daimond.js): a yes here is what lets a runner skip a
+	/// prompt for a scope the user has already granted on the account.
+	function scopeGranted(id) {
+		var s = scopes()[id];
+		return !!(s && s.on);
+	}
+
+	/// Set (or clear) an account-level scope grant, stamped now, and nudge it out.
+	/// The stamp is what lets a later change on either device win the merge.
+	function grantScope(id, on) {
+		if (ACCOUNT_SCOPES.indexOf(id) < 0) return false;
+		var map = scopes();
+		// Strictly forward, even inside one millisecond: the stamp is the whole of
+		// what the freshest-wins merge compares, so two grants a tick apart must not
+		// read as equal and let the wrong one stand.
+		var at  = Math.max(Date.now(), ms(map[id] && map[id].at) + 1);
+		map[id] = { at: at, on: on === false ? 0 : 1 };
+		writeScopes(map);
+		nudge();
+		return true;
+	}
+
+	/// The account-level permission policy, for the sync parcel.
+	///
+	/// DETERMINISTIC by construction -- a fixed field order and the scopes sorted
+	/// by key -- so an unchanged policy serialises to the same bytes and the
+	/// push-skip in sync.js still holds. NOTHING HERE STAMPS: the stamps are
+	/// written when a choice is made (`set`, `grantScope`), never when the parcel
+	/// is packed, or a quiet device would re-push the same policy for ever.
+	function snapshotPolicy() {
+		var out = { v: 1, mode: current, mode_at: modeAt(), scopes: {} };
+		var src = scopes();
+		Object.keys(src).sort().forEach(function (id) { out.scopes[id] = src[id]; });
+		return out;
+	}
+
+	/// Merge an account policy from another device.
+	///
+	/// Freshest-wins PER FACT: the rung moves only when the arriving `mode_at` is
+	/// strictly later than ours, and each scope moves only when its own `at` is.
+	/// Nothing here stamps -- a policy this device already agrees with moves
+	/// nothing, so the next parcel it packs is unchanged (the `touchSelfDevice`
+	/// trap that had two devices pushing at each other). A parcel with no `perms`
+	/// -- a device that predates this -- is a no-op.
+	function adoptPolicy(remote) {
+		if (!remote || typeof remote !== 'object') return;
+		var rmAt = ms(remote.mode_at);
+		if (rmAt > modeAt()) {
+			// A rung this build knows, later than ours, and actually different: push
+			// it into the engine (the only copy that decides anything) and, only if
+			// that took, record it. A stamp taken forward without the rung going in
+			// would strand the page saying one thing while the engine ran another.
+			if (MODES.indexOf(remote.mode) >= 0 && remote.mode !== current) {
+				if (push(remote.mode)) {
+					current = remote.mode;
+					save(remote.mode);
+					try { localStorage.setItem(LS_MODE_AT, String(rmAt)); } catch (e) { /* private */ }
+					draw();
+					if (typeof cfg.onChange === 'function') cfg.onChange(remote.mode);
+				}
+			} else {
+				// Their stamp is later but the rung is the one we already hold (or a
+				// name we do not know): take the stamp so the same record is not
+				// re-adopted on every pull, but leave the engine alone.
+				try { localStorage.setItem(LS_MODE_AT, String(rmAt)); } catch (e) { /* private */ }
+			}
+		}
+		var mine = scopes();
+		var rem  = (remote.scopes && typeof remote.scopes === 'object') ? remote.scopes : {};
+		var moved = false;
+		ACCOUNT_SCOPES.forEach(function (id) {
+			var r = rem[id];
+			if (!r || typeof r !== 'object') return;
+			var rAt = ms(r.at);
+			if (rAt > 0 && rAt > ms(mine[id] && mine[id].at)) {
+				mine[id] = { at: rAt, on: r.on ? 1 : 0 };
+				moved = true;
+			}
+		});
+		if (moved) writeScopes(mine);
+	}
+
 	/// The rungs, in the order they are offered: strictest first, so the list
 	/// reads as a ladder and the last row is the one that gives most away.
 	var MODES = ['ask', 'guarded', 'bypass'];
@@ -275,8 +424,13 @@
 		}
 		current = name;
 		save(name);
+		// Stamp WHEN this rung was chosen, so the account policy can travel and a
+		// later choice on either device wins the merge. Written here, where a real
+		// choice is made, and never in `snapshotPolicy` -- see the note there.
+		try { localStorage.setItem(LS_MODE_AT, String(Date.now())); } catch (e) { /* private mode */ }
 		draw();
 		close();
+		nudge();
 		if (typeof cfg.onChange === 'function') cfg.onChange(name);
 		return true;
 	}
@@ -581,5 +735,15 @@
 		list: function () {
 			return MODES.map(function (n) { return { name: n, label: label(n) }; });
 		},
+		// ── The account-level policy that rides the sync parcel ──────
+		/// The policy this device holds, deterministic, for collectSync's `perms`.
+		snapshotPolicy: snapshotPolicy,
+		/// Merge a policy pulled from another device. Freshest-wins per fact.
+		adoptPolicy:    adoptPolicy,
+		/// Does the account's standing policy grant this scope? Read at the consent
+		/// site, so a runner does not re-ask for what the account already allows.
+		scopeGranted:   scopeGranted,
+		/// Grant (or clear) an account-level scope, stamped now and nudged out.
+		grantScope:     grantScope,
 	};
 })();

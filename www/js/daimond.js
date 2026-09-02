@@ -3795,6 +3795,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// state -- it is rebuilt per device in a sync or two and would only
 			// give the merge a conflict to have.
 			mail:         (window.DaimondMail && DaimondMail.exportSync) ? DaimondMail.exportSync() : null,
+			// The account-level PERMISSION POLICY: the rung (ask/guarded/bypass) and
+			// the standing grants for gateway-brokered scopes (reading the web).
+			// These decide what a device may do WITHOUT asking, and a gated tool's
+			// egress is at the gateway on the account's credit, so the consent is the
+			// account's rather than one machine's -- a runner handed a turn must
+			// inherit it and NOT re-prompt. Deterministic (fixed field order, sorted
+			// scopes) and stamped only when a choice is made, so a quiet device does
+			// not defeat the push-skip. What is DELIBERATELY not here is machine-local
+			// trust: the bypass acknowledgement, whether a COMMAND keeps its network,
+			// the folder grant and this machine's postures all stay device-local (see
+			// handmode.js). `null` on a build without the module reads as a no-op.
+			perms:        (window.DaimondHandMode && DaimondHandMode.snapshotPolicy)
+			                  ? DaimondHandMode.snapshotPolicy() : null,
 			// Which devices sync this account. Deterministic by construction — the
 			// ids are sorted and each line has a fixed field order — and this
 			// device's own stamp only moves when it is stale, so the parcel is the
@@ -4026,6 +4039,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the panel shows its pitch and the gateway refuses the sync.
 		await section('mail',     function () {
 			if (window.DaimondMail && DaimondMail.applySync) return DaimondMail.applySync(remote.mail);
+		});
+		// The account-level permission policy: the rung and the gateway-brokered
+		// scope grants. Freshest-wins per fact and nothing stamps on the way in, so
+		// a policy this device already agrees with moves nothing. A parcel without
+		// the field is a device that predates it, so it applies as a no-op -- the
+		// same tolerance as `models` above. Machine-local trust is not carried and
+		// so cannot be touched from here.
+		await section('perms',    function () {
+			if (window.DaimondHandMode && DaimondHandMode.adoptPolicy) DaimondHandMode.adoptPolicy(remote.perms);
 		});
 		// If the Workspace panel is open, show what just landed — including any
 		// file that arrived as a cloud reference rather than as bytes. Drawing is
@@ -9935,6 +9957,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (req.tool === 'web_search') {
 			var q = String(req.detail || '').trim();
 			if (!q) return 'deny';				// nothing to authorise, and nothing to show.
+			// THE ACCOUNT'S STANDING POLICY, above the turn memory and the dialog.
+			// A search's egress is at the gateway on the account's credit, so a yes
+			// the user gave once for the account is a yes here -- and this is the
+			// half that stops a RUNNER re-asking for a turn dispatched from another
+			// device, where the person is not even at the machine the prompt would
+			// appear on. Granted from the tick in the dialog below, and it travels in
+			// the sync parcel's `perms`. See handmode.js `scopeGranted`/`grantScope`.
+			if (window.DaimondHandMode && DaimondHandMode.scopeGranted
+				&& DaimondHandMode.scopeGranted('reading')) {
+				return 'allow';
+			}
 			var searchTurn = askingTurn(req);
 			if (searchTurn && _searchTurn.has(searchTurn)) {
 				return _searchTurn.get(searchTurn) ? 'allow' : 'deny';
@@ -9951,18 +9984,48 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try {
 				if (window.DaimondSearch) eng = DaimondSearch.engineName(DaimondSearch.engine());
 			} catch (e) { /* the module is not up; the phrase above still reads */ }
-			var okSearch = await confirmDialog(
-				tOr('egress.search_body',
+			// A `pick` rather than a plain confirm, so the account-level grant is
+			// offered as a tick beside the yes -- the same shape the network dialog
+			// uses for its "Always allow". Read at OK, not on change, so a box ticked
+			// and then unticked before the button is pressed is not already obeyed.
+			var searchAns = await dialog({
+				kind:    'pick',
+				title:   tOr('egress.search_title', 'Search the web?'),
+				message: tOr('egress.search_body',
 					'This turn has read content from outside your workspace. Daimond now wants '
 						+ 'to search the web.\n\nWhat it wants to search for:\n\n{query}\n\nSearching '
 						+ 'with {engine}, which is your setting. The query is what leaves this '
 						+ 'device.\n\nIf you did not expect this, decline. Nothing is lost but the one '
 						+ 'search.',
 					{ query: shownQ, engine: eng }),
-				tOr('egress.search_ok', 'Run this search'),
-				{ title: tOr('egress.search_title', 'Search the web?'), danger: true });
-			// Either way. A no that is not remembered is a no that gets asked again.
-			if (searchTurn) _searchTurn.set(searchTurn, !!okSearch);
+				okLabel: tOr('egress.search_ok', 'Run this search'),
+				danger:  true,
+				build:   function (card) {
+					var row = document.createElement('label');
+					row.className = 'dlg-tick';
+					var box = document.createElement('input');
+					box.type = 'checkbox';
+					box.className = 'dlg-tick-box search-standing-box';
+					var say = document.createElement('span');
+					mark(say, '', tOr('egress.search_remember',
+						'Allow web searches on this account without asking again'));
+					row.appendChild(box);
+					row.appendChild(say);
+					card.appendChild(row);
+					return { read: function () { return { ok: true, standing: !!box.checked }; } };
+				},
+			});
+			// Cancel, Escape, the cross and the backdrop all answer null: a dismissed
+			// dialog is a no, which is what the body's last sentence promises.
+			var okSearch = !!searchAns;
+			// A no that is not remembered is a no that gets asked again.
+			if (searchTurn) _searchTurn.set(searchTurn, okSearch);
+			// The account-level grant is recorded ONLY on a yes with the box ticked:
+			// making the permissive, account-wide direction standing is the half that
+			// needs the user's explicit word, exactly as the network dialog's tick is.
+			if (okSearch && searchAns.standing && window.DaimondHandMode && DaimondHandMode.grantScope) {
+				try { DaimondHandMode.grantScope('reading', true); } catch (e) { /* asked again, no worse */ }
+			}
 			return okSearch ? 'allow' : 'deny';
 		}
 		var url  = String(req.url || '');
@@ -10085,6 +10148,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// because there is nothing new to record and re-recording is how a first
 		// answer gets quietly replaced by a later one.
 		if (granted) return 'allow-once';
+		// THE ACCOUNT'S STANDING READING GRANT, at the SAME level as the
+		// conversation's grant and deliberately BELOW the payload-heavy gate above:
+		// approving reading the web on the account is not approving
+		// `example.test/?everything-I-know=…`, so an address carrying a payload is
+		// still asked however the policy stands. Reading tools only -- the acting
+		// branches (`web_click`, `web_type`) returned above and are never covered by
+		// a reading grant. This is the half that keeps a RUNNER from re-asking for a
+		// scope the user has granted the account. See handmode.js `scopeGranted`.
+		if (reading && window.DaimondHandMode && DaimondHandMode.scopeGranted
+			&& DaimondHandMode.scopeGranted('reading')) {
+			return 'allow-once';
+		}
 		// THE ONE ASK, AND IT ASKS FOR THE WHOLE THING. The user is agreeing that this
 		// conversation may reach ANY website, which is materially bigger than "may
 		// reach example.com" — so the dialog says that, in those words, at the moment
