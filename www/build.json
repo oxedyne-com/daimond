@@ -1,1 +1,1 @@
-{"build":"69658251c4ee","note":"Ship $8/month Pro subscription billing with ethical auto-pause and the /api/pricing route"}
+{"build":"f0845c35df0b","note":"Fix the operator console refused as out of date: send API v2 from adminFetch"}
