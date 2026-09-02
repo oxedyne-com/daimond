@@ -1,12 +1,12 @@
 {
 	"algo": "sha-256",
-	"source": "ad20b289287fa144aa2816f45deef9156d0f512d3f606d74a8c0d6286456b6a8",
+	"source": "9a24c35a48fbda4468a4f33de948d3c7520850a209ca11e4b0e284461f5bc8b0",
 	"toolchain": "1.90.0",
 	"build": "cargo build --release --manifest-path hand/Cargo.toml",
 	"binary": "hand/target/release/daimond-hand",
 	"files": {
-		"Cargo.lock": "a87c41417e89ba1466cf4559cf8ea5270044f407f2f69c7f3aabed54bac9189b",
-		"Cargo.toml": "eede48d41b12dc13420e916a29fe93f0f8b2f4b579aa23204217693af9a36d59",
+		"Cargo.lock": "d051613dcdaed94881889956dcf73ddeee558fdc9f903353531ddf6216c50f49",
+		"Cargo.toml": "48954a67a1ab5cf53c0fbbb936199c0e1e1d725391c52265bd7486719484f80c",
 		"README.md": "0e40dae9a01fed692bb2c50521dc371853f978e6843004fbe71d1749569bd8aa",
 		"REVIEW.md": "3eec823b57cb2ee7b068fd57d1c9569afddb86eb9578e6f97015230c9f7958c6",
 		"examples/buildfence.rs": "fc5d6e6cefa29527accb4be42d5b13ce9660b189e7337c6e9e9d7d3923fe563e",

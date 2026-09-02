@@ -35,17 +35,18 @@
 		// what is shown when the gateway names a reason this build has never
 		// heard of, so a refusal added on the server is still legible here.
 		refusal:  '',
-		pro:      null,     // Pro RUNNING right now? null until asked.
-		proPriceMinor: null,// the one-time Pro price, from the gateway.
-		// The five-year term, so a lapse can be explained rather than merely
-		// obeyed. `proExpiresTs` is when the licence ends (Unix seconds, null
-		// when none is held), `proExpired` says a licence exists and its term
-		// has run out, `proTermSecs` is the term itself, and `proNowTs` is the
-		// GATEWAY's clock at the moment it answered -- a countdown drawn
-		// against the device's own clock would be wrong on a device set wrong.
-		proExpiresTs: null,
-		proExpired:   false,
-		proTermSecs:  null,
+		pro:      null,     // Pro GRANTING right now? null until asked.
+		proPriceMinor: null,// the monthly Pro price, from the gateway.
+		// The subscription's standing, so a paused or past-due state can be shown
+		// warmly rather than as a bare lapse. `proStatus` is the gateway's word --
+		// 'active', 'past_due', 'paused', 'canceled' or 'none'; `proPeriodEnd` is
+		// when the current paid month ends (Unix seconds, 0 when none); `proWarned`
+		// says the gateway has flagged an approaching auto-pause, so the client
+		// shows the notice once; `proNowTs` is the GATEWAY's clock at the moment it
+		// answered, so any countdown is drawn against it and not the device's.
+		proStatus:    'none',
+		proPeriodEnd: null,
+		proWarned:    false,
 		proNowTs:     null,
 		// The console role, once asked for. `undefined` means not yet asked;
 		// null means asked and the answer was no. Switching account clears it,
@@ -1170,33 +1171,28 @@
 		return { held: false };
 	}
 
-	/// Drop what is known about THIS account's licence dates.
+	/// Drop what is known about THIS account's subscription standing.
 	///
-	/// One account's expiry date must not sit on screen under the next person's
+	/// One account's status must not sit on screen under the next person's
 	/// session, and a stale date is worse than none: a notice drawn from it would
-	/// name a day that means nothing to whoever is looking at it. `proTermSecs`
-	/// is not cleared -- five years is a fact about the product, not about
-	/// whoever is signed in.
+	/// name a day that means nothing to whoever is looking at it.
 	function forgetLicenceTerm() {
-		state.proExpiresTs = null;
-		state.proExpired   = false;
+		state.proStatus    = 'none';
+		state.proPeriodEnd = null;
+		state.proWarned    = false;
 		state.proNowTs     = null;
 	}
 
 	/// Whether this account holds Pro, asked of the gateway. Sets `state.pro`
 	/// and returns it, or leaves it null when the gateway cannot be reached.
 	///
-	/// Pro is a FIVE-YEAR licence, not a perpetual one, so the presence of a
-	/// licence record is no longer the answer: this reads `held`, which the
-	/// gateway sets from the same term check the sync, storage and mail doors
-	/// ask before opening. Reading `j.licence` -- as this did -- would have shown
-	/// Pro for a licence the gateway had already stopped honouring, which is the
-	/// worst of both: the app claims a capability every request then refuses.
-	///
-	/// The dates are carried through beside it, because a lapse has to be
-	/// EXPLAINED and not merely obeyed. The gateway deliberately still returns
-	/// the record and its expiry after the term ends, so the app can say which
-	/// licence ended and when, and offer another.
+	/// Pro is a monthly SUBSCRIPTION, so `held` is the live answer the gateway
+	/// gives from the same check the sync, storage and mail doors ask before
+	/// opening -- true while the subscription grants (active, or past-due inside
+	/// Stripe's grace window). The status is carried beside it, because a pause is
+	/// not a lapse and has to be shown as what it is: the ethical auto-pause stops
+	/// billing an idle account and resumes it the moment the account is used, so a
+	/// paused subscription is drawn warmly, not as an expiry.
 	///
 	/// `own` as for `refreshBalance` above: set only by the bootstrap that makes
 	/// this call as part of itself.
@@ -1205,10 +1201,10 @@
 		try {
 			var j = await get('/api/licence', own);
 			state.pro = !!(j && j.held);
-			state.proExpiresTs = (j && typeof j.expires_ts === 'number' && j.expires_ts > 0)
-				? j.expires_ts : null;
-			state.proExpired = !!(j && j.expired);
-			if (j && typeof j.term_secs === 'number') state.proTermSecs = j.term_secs;
+			state.proStatus = (j && typeof j.status === 'string') ? j.status : 'none';
+			state.proPeriodEnd = (j && typeof j.current_period_end === 'number' && j.current_period_end > 0)
+				? j.current_period_end : null;
+			state.proWarned = !!(j && j.warned);
 			if (j && typeof j.now_ts    === 'number') state.proNowTs    = j.now_ts;
 			if (j && typeof j.pro_price_minor === 'number') state.proPriceMinor = j.pro_price_minor;
 			if (j && j.currency) state.currency = j.currency;
@@ -1217,6 +1213,26 @@
 		}
 		return state.pro;
 	}
+
+	/// Act on this account's own subscription: cancel it at the period end, or
+	/// resume a paused or cancel-pending one. Refreshes what is known after, so
+	/// the app redraws from the gateway's answer rather than a guess. Returns the
+	/// new status string, or throws with a message the caller can show.
+	async function subscriptionAction(action) {
+		if (!state.authed) throw new Error(t('gateway.acct_unreachable'));
+		var r = await gwFetch('/api/subscription', {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
+			body: JSON.stringify({ action: action }),
+		});
+		var j = null; try { j = await r.json(); } catch (e) {}
+		if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || t('gateway.session_no_url'));
+		await refreshLicence(true);
+		return (j && j.status) || state.proStatus;
+	}
+	function cancelPro() { return subscriptionAction('cancel'); }
+	function resumePro() { return subscriptionAction('resume'); }
 
 	/// The whole categorised credit ledger, for the spending view: every
 	/// movement, newest first, each tagged with a `category` the breakdown
@@ -1385,6 +1401,8 @@
 		ledger:         ledger,
 		buyCredits:     buyCredits,
 		buyPro:         buyPro,
+		cancelPro:      cancelPro,
+		resumePro:      resumePro,
 		refreshLicence: refreshLicence,
 		saveCard:       saveCard,
 		autoReload:     autoReload,

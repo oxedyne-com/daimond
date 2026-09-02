@@ -2646,7 +2646,7 @@
 				+ '<p class="mail-fine">' + t('mail.pitch.fine', { cap: state.cap }) + '</p>'
 				+ '<p class="mail-fine">' + t('mail.pitch.privacy') + '</p>'
 				+ '<button class="mail-unlock"' + (state.busy ? ' disabled' : '') + '>'
-				+ esc(t('pro.buy')) + '</button>'
+				+ esc(t('pro.subscribe')) + '</button>'
 				+ '</div>'));
 			var ub = els.state.querySelector('.mail-unlock');
 			if (ub) ub.addEventListener('click', unlock);

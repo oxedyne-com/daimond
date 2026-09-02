@@ -11784,58 +11784,78 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			el2.title = moneyTitle(r);
 		}
 
-		/// The Pro row: held, ended, or an invitation to buy it. Shown only when
-		/// the gateway has answered for an account, since Pro is a fact about that
-		/// account -- a locked or unconnected app cannot say, so it says nothing.
+		/// The Pro row: active, paused, or an invitation to subscribe. Shown only
+		/// when the gateway has answered for an account, since Pro is a fact about
+		/// that account -- a locked or unconnected app cannot say, so it says
+		/// nothing.
 		///
-		/// THREE states and not two. A licence that ran its five years and ended is
-		/// not the same thing as one that was never bought, and a row reading
-		/// "Upgrade to Pro" at somebody who had paid would be telling them they
-		/// never had.
+		/// A paused subscription is its own state and not a lapse: billing was
+		/// paused while the account was away and resumes on use, so the row says
+		/// paused, not "upgrade", at somebody who is a subscriber in good standing.
 		function proRow() {
 			var r = document.getElementById('astat-pro');
 			if (!r) return;
 			var st = (window.DaimondGateway && DaimondGateway.state()) || {};
 			if (locked || !st.authed || st.pro === null) { r.style.display = 'none'; return; }
 			r.style.display = '';
-			var when = proEndDate(st);
 			if (st.pro) {
 				row('astat-pro', 'ok', 'Pro', t('astat.pro_owned'));
 				r.title = t('astat.pro_owned_help') + ' ' + proTermLine(st);
+			} else if (proPaused(st)) {
+				row('astat-pro', 'off', 'Pro', t('astat.pro_paused'));
+				r.title = t('astat.pro_paused_help');
 			} else if (proHasEnded(st)) {
 				row('astat-pro', 'off', 'Pro', t('astat.pro_ended'));
-				r.title = when ? t('pro.ended_on', { date: when }) : t('astat.pro_ended_help');
+				r.title = t('astat.pro_ended_help');
 			} else {
 				row('astat-pro', 'off', 'Pro', t('astat.pro_upgrade'));
 				r.title = t('astat.pro_upgrade_help');
 			}
-			// The value reads as a link when there is a purchase to make -- which
-			// an ended licence is, since the gateway will sell another term.
+			// The value reads as a link whenever there is something to do -- a
+			// subscribe, or a resume for a paused subscription.
 			r.classList.toggle('astat-pro-upgrade', !st.pro);
 		}
 
-		/// The Pro popup: buy it, buy another five years of it, or the confirmation
-		/// that it is held and the day it ends. Its own surface rather than the
-		/// Credits drawer, because Pro is a single decision -- one payment -- not a
-		/// balance to watch.
+		/// The Pro popup: subscribe, resume a paused subscription, or -- when it is
+		/// held -- the confirmation of where it stands with the option to cancel.
+		/// Its own surface rather than the Credits drawer, because Pro is a single
+		/// decision, not a balance to watch.
 		async function showPro() {
 			var st = (window.DaimondGateway && DaimondGateway.state()) || {};
-			if (st.pro) {
-				noticeDialog('Daimond Pro', t('pro.owned_plain') + '\n\n' + proTermLine(st));
+
+			// Held and active: confirm, and offer to cancel at the period end.
+			if (st.pro && !proPaused(st)) {
+				var cancel = await confirmDialog(
+					t('pro.owned_plain') + '\n\n' + proTermLine(st),
+					t('pro.cancel'),
+					{ title: 'Daimond Pro', danger: false, cancelLabel: t('dlg.done') });
+				if (!cancel) return;
+				var yes = await confirmDialog(t('pro.cancel_confirm'), t('pro.cancel'),
+					{ title: t('pro.cancel'), danger: true, cancelLabel: t('dlg.not_now') });
+				if (!yes) return;
+				try { await DaimondGateway.cancelPro(); status(); }
+				catch (e) { noticeDialog(t('pro.checkout_failed'), friendlyError(e)); }
 				return;
 			}
-			// An ended licence leads with the day it ended. The offer follows it,
-			// and the checkout behind the button really does go through: the
-			// gateway's re-purchase guard fires only on a RUNNING licence.
-			var ended = proHasEnded(st);
-			var when  = proEndDate(st);
+
+			// Paused: one tap resumes it, with no trip to Stripe.
+			if (proPaused(st)) {
+				var resume = await confirmDialog(t('pro.paused_plain'), t('pro.resume'),
+					{ title: t('astat.pro_paused'), danger: false, cancelLabel: t('dlg.not_now') });
+				if (!resume) return;
+				try { await DaimondGateway.resumePro(); status(); }
+				catch (e) { noticeDialog(t('pro.checkout_failed'), friendlyError(e)); }
+				return;
+			}
+
+			// Otherwise an offer to subscribe. The checkout behind the button goes
+			// through: the gateway refuses a second subscription only while one is
+			// granting.
 			var price = st.proPriceMinor ? DaimondGateway.fmtMoney(st.proPriceMinor, st.currency) : '';
 			var ok = await confirmDialog(
-				(ended && when ? t('pro.ended_on', { date: when }) + '\n\n' : '')
-					+ t('pro.offer_plain'),
+				t('pro.offer_plain'),
 				proBuyLabel(st, price),
-				{ title: ended ? t('astat.pro_ended') : t('astat.pro_upgrade'),
-				  danger: false, cancelLabel: t('dlg.not_now') });
+				{ title: t('astat.pro_upgrade'), danger: false, cancelLabel: t('dlg.not_now') });
 			if (!ok) return;
 			try {
 				var r = await DaimondGateway.buyPro();       // navigates to Stripe, or returns {held}
@@ -21899,57 +21919,52 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	//
 	// Three functions, used from both this scope and `DaimondAdmin`'s.
 
-	/// The day a licence ends, in the reader's language, or '' when the gateway
-	/// has not named one.
+	/// The day the current paid month ends, in the reader's language, or '' when
+	/// the gateway has not named one.
 	function proEndDate(st) {
-		if (!st || !st.proExpiresTs) return '';
+		if (!st || !st.proPeriodEnd) return '';
 		var loc;
 		try { loc = window.DaimondI18n ? DaimondI18n.locale() : undefined; }
 		catch (e) { loc = undefined; }
 		try {
-			return new Date(st.proExpiresTs * 1000).toLocaleDateString(loc || undefined,
+			return new Date(st.proPeriodEnd * 1000).toLocaleDateString(loc || undefined,
 				{ day: 'numeric', month: 'long', year: 'numeric' });
 		} catch (e) { return ''; }
 	}
 
-	/// Has this account's licence run out?
-	///
-	/// The GATEWAY's answer, and where it has to be computed, the GATEWAY's
-	/// clock: `proNowTs` is what the server said the time was when it answered.
-	/// `Date.now()` would let a device with its clock set wrong decide that a
-	/// running licence had ended, or that an ended one was still running -- and
-	/// either way put a wrong day in front of somebody who had paid.
-	function proHasEnded(st) {
-		if (!st) return false;
-		if (st.proExpired) return true;
-		return !!(st.proExpiresTs && st.proNowTs && st.proNowTs >= st.proExpiresTs);
-	}
+	/// Is the subscription paused for inactivity? The ethical auto-pause, shown
+	/// warmly rather than as a lapse: billing stopped while the account was away
+	/// and resumes the moment it is used again.
+	function proPaused(st)  { return !!(st && st.proStatus === 'paused'); }
+	/// Is a payment failing, with Stripe still retrying inside the grace window?
+	function proPastDue(st) { return !!(st && st.proStatus === 'past_due'); }
+	/// Has the subscription ended -- cancelled, and no longer granting?
+	function proHasEnded(st) { return !!(st && st.proStatus === 'canceled' && !st.pro); }
 
-	/// The one sentence a buyer ever sees about their term: the day it ends, the
-	/// day it ended, or -- with no licence to date -- how long one runs for.
+	/// The one sentence a subscriber sees about where their subscription stands:
+	/// paused, past-due, renewing, or -- with none -- what a fresh one costs.
 	function proTermLine(st) {
+		if (proPaused(st))  return t('pro.paused_note');
+		if (proPastDue(st)) return t('pro.past_due_note');
 		var when = proEndDate(st);
-		if (!when) return t('pro.term_note');
-		return proHasEnded(st)
-			? t('pro.ended_on', { date: when })
-			: t('pro.ends_on',  { date: when });
+		if (st && st.pro && when) return t('pro.renews_on', { date: when });
+		return t('pro.term_note');
 	}
 
 	/// What the button on a Pro offer says, and it must match what the checkout
-	/// will do: the gateway's re-purchase guard fires only on a RUNNING licence,
-	/// so a licence that ended can be bought again and the button says so.
+	/// will do. A paused subscription is resumed, not bought again; anything else
+	/// with no live subscription is a fresh monthly subscribe.
 	function proBuyLabel(st, price) {
-		if (proHasEnded(st) && !st.pro) {
-			return price ? t('pro.buy_again_priced', { price: price }) : t('pro.buy_again');
-		}
-		return price ? t('pro.buy_priced', { price: price }) : t('pro.buy');
+		if (proPaused(st)) return t('pro.resume');
+		return price ? t('pro.subscribe_priced', { price: price }) : t('pro.subscribe');
 	}
 
-	/// The Pro block at the top of the Credits drawer: an offer to buy Daimond
-	/// Pro, or the confirmation that it is held and the day it ends. Pro is the
-	/// one-time, five-year unlock that turns on cross-device sync, cloud storage
-	/// and Email; credits are separate and pay for metered use (inference,
-	/// bandwidth), whether or not Pro is held.
+	/// The Pro block at the top of the Credits drawer: an offer to subscribe to
+	/// Daimond Pro, the confirmation that it is held with a way to cancel, or the
+	/// warm note that billing is paused with a way to resume. Pro is the $8/month
+	/// subscription that turns on cross-device sync, cloud storage and Email;
+	/// credits are separate and pay for metered use (inference, bandwidth),
+	/// whether or not Pro is held.
 	function renderPro() {
 		var host = document.getElementById('credits-pro');
 		if (!host || !window.DaimondGateway) return;
@@ -21960,41 +21975,68 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// already carries the "create an account" path.
 		if (st.offline || !st.authed || st.pro === null) return;
 
-		if (st.pro) {
+		// Held and active: confirm it, show where it stands, and offer to cancel
+		// at the period end. An approaching auto-pause is noted once.
+		if (st.pro && !proPaused(st)) {
 			var owned = document.createElement('div');
 			owned.className = 'pro-owned';
-			// The term goes here and nowhere else in the drawer: this is the only
-			// surface a buyer ever reads their own end date off.
-			owned.innerHTML = t('pro.owned') + ' ' + proTermLine(st);
+			owned.innerHTML = t('pro.owned') + ' ' + proTermLine(st)
+				+ (st.proWarned ? '<p class="pro-fine">' + t('pro.warned_soon') + '</p>' : '')
+				+ '<button class="pro-link" id="pro-cancel">' + t('pro.cancel') + '</button>'
+				+ '<div class="pro-err" id="pro-err"></div>';
 			host.appendChild(owned);
+			var cbtn = document.getElementById('pro-cancel');
+			if (cbtn) cbtn.addEventListener('click', function () { showPro(); });
 			return;
 		}
-		// Pro is a real charge, so the price says US dollars out loud and hangs
-		// the converted figure off it. See `billing.usd_note` below.
+
+		// Paused for inactivity: shown warmly, with one tap to resume. No trip to
+		// Stripe and no re-purchase -- the subscription is still theirs.
+		if (proPaused(st)) {
+			var paused = document.createElement('div');
+			paused.className = 'pro-offer';
+			paused.innerHTML =
+				'<p><b>' + t('pro.paused_head') + '</b></p>'
+				+ '<p>' + t('pro.paused_note') + '</p>'
+				+ '<button class="pro-buy" id="pro-buy">' + t('pro.resume') + '</button>'
+				+ '<div class="pro-err" id="pro-err"></div>';
+			host.appendChild(paused);
+			bindProAction('resume');
+			return;
+		}
+
+		// Otherwise an offer to subscribe. The price says US dollars out loud and
+		// hangs the converted figure off it. See `billing.usd_note` below.
 		var price = st.proPriceMinor ? DaimondGateway.fmtBilled(st.proPriceMinor, st.currency) : '';
-		// A licence that RAN and ended leads with the day it ended, because that
-		// is the fact somebody who paid came here for -- and because an offer with
-		// nothing above it reads as though they had never bought at all.
-		var ended = proHasEnded(st);
-		var when  = proEndDate(st);
 		var box = document.createElement('div');
 		box.className = 'pro-offer';
-		// Static copy, a formatted price and a formatted date; no user text, so
-		// innerHTML is safe here and reads better than a pile of createElement.
 		box.innerHTML =
-			(ended && when ? '<p><b>' + t('pro.ended_on', { date: when }) + '</b></p>' : '')
-			+ t('pro.offer')
+			t('pro.offer')
 			+ '<p class="pro-fine">' + t('pro.fine') + '</p>'
 			+ '<button class="pro-buy" id="pro-buy">' + proBuyLabel(st, price) + '</button>'
 			+ (usdDisplay() ? '' : '<p class="pro-fine">' + t('billing.usd_note') + '</p>')
 			+ '<div class="pro-err" id="pro-err"></div>';
 		host.appendChild(box);
+		bindProAction('buy');
+	}
+
+	/// Wire the primary button in the Pro block: 'buy' navigates to Stripe
+	/// checkout, 'resume' resumes a paused subscription in place. Kept in one
+	/// place so the two paths share the same disable/redraw/error handling and
+	/// the Credits drawer never loses its balance to a fault here.
+	function bindProAction(kind) {
 		var btn = document.getElementById('pro-buy');
-		if (btn) btn.addEventListener('click', async function () {
+		if (!btn) return;
+		btn.addEventListener('click', async function () {
 			btn.disabled = true;
 			try {
-				var r = await DaimondGateway.buyPro();      // navigates to Stripe, or returns {held}
-				if (r && r.held) { await DaimondGateway.refreshLicence(); renderPro(); }
+				if (kind === 'resume') {
+					await DaimondGateway.resumePro();
+					renderPro();
+				} else {
+					var r = await DaimondGateway.buyPro();   // navigates to Stripe, or returns {held}
+					if (r && r.held) { await DaimondGateway.refreshLicence(); renderPro(); }
+				}
 			} catch (e) {
 				var err = document.getElementById('pro-err');
 				if (err) err.textContent = friendlyError(e);
