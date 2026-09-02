@@ -2348,9 +2348,119 @@
 		host.appendChild(acts);
 	}
 
+	// ── The proposer's returned notes (a declined proposal comes back) ──
+	//
+	// A proposal this device raised may be DECLINED by an operator, and the decline
+	// carries a one-line reason back to the proposer. It is the one thing the forge
+	// tells a proposer without being looked at (contract §7's "look again" holds for
+	// the proposals list, not for a refusal), because a note that was refused is
+	// news the writer would not otherwise find. It is read here, in the capture view
+	// beside the box the note was written in, and cleared per entry once seen.
+	//
+	// THE TWO DOORS SIT BEHIND ONE CONSTANT so a path firm-up is a one-line change:
+	// the GET reads what is waiting, the ACK is the same door with `&ack=1` and a
+	// FORM body naming the `when` keys the reader has seen. The forge derives the
+	// caller from the voice, holds that caller's own inbox and TTL-prunes old notes
+	// -- so this side never sends a name and never deletes whole: it acks the keys
+	// of the notes it has shown.
+	var RETURNED = 'returned=1';
+
+	var _returned = { notes: [], read: false, loading: false };
+
+	/// One returned note off the wire, kept to the three fields it is and no more.
+	/// A note with no `when` is dropped: the key is what an ack names, so one that
+	/// could not be acked would sit until the forge's TTL took it.
+	function cleanReturned(r) {
+		if (!r || typeof r !== 'object') return null;
+		var when = whole(r.when);
+		if (when < 1) return null;
+		return {
+			when:   when,
+			title:  (typeof r.title === 'string') ? r.title : '',
+			reason: (typeof r.reason === 'string') ? r.reason : '',
+		};
+	}
+
+	/// The returned notes an answer carries, cleaned and newest first.
+	function cleanReturnedList(data) {
+		var raw = (data && Array.isArray(data.returned)) ? data.returned : [];
+		var out = [];
+		raw.forEach(function (r) { var c = cleanReturned(r); if (c) out.push(c); });
+		out.sort(function (a, b) { return b.when - a.when; });
+		return out;
+	}
+
+	/// Read the notes a decline left for this proposer. Needs the device's own
+	/// voice; without one there is no inbox and the call is a no-op. A refusal is
+	/// quiet -- the inbox is a courtesy beside the box, not the panel itself.
+	async function loadReturned() {
+		if (_returned.loading) return false;
+		if (!hasVoice()) { _returned.notes = []; _returned.read = false; drawReturned(); return false; }
+		_returned.loading = true;
+		var a = await ask(route(RETURNED), { method: 'GET' });
+		_returned.loading = false;
+		if (!a.ok) { drawReturned(); return false; }
+		_returned.notes = cleanReturnedList(a.data);
+		_returned.read  = true;
+		drawReturned();
+		return true;
+	}
+
+	/// Acknowledge the notes named by their `when` keys: the forge drops them and
+	/// answers the remainder, which becomes the shown list. THE BODY IS A FORM, not
+	/// JSON -- `acked=<when>[,<when>…]`, the shape the machine surface reads. Per
+	/// entry, never delete-whole: only keys the reader has seen are named.
+	async function ackReturned(whens) {
+		var keys = (Array.isArray(whens) ? whens : [whens])
+			.map(function (w) { return whole(w); })
+			.filter(function (w) { return w > 0; });
+		if (!keys.length) return false;
+		var f = new URLSearchParams();
+		f.set('acked', keys.join(','));
+		var a = await ask(route(RETURNED + '&ack=1'), {
+			method:  'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body:    f.toString(),
+		});
+		if (!a.ok) { flash(saying(a)); return false; }
+		_returned.notes = cleanReturnedList(a.data);
+		drawReturned();
+		return true;
+	}
+
+	/// Draw the returned notes into the capture view, or nothing when there are
+	/// none. Terse: one line per note, and a dismiss that acks its own `when` key.
+	function drawReturned() {
+		var host = el('improve-returned');
+		if (!host) return;
+		host.innerHTML = '';
+		var notes = _returned.notes;
+		host.hidden = !notes.length;
+		if (!notes.length) return;
+		notes.forEach(function (r) {
+			var row = document.createElement('div');
+			row.className = 'imp-returned-one';
+			row.dataset.when = String(r.when);
+			var said = document.createElement('p');
+			said.className = 'imp-returned-said';
+			said.textContent = r.reason
+				? tOr('social.returned_one', "Your proposal '{title}' was declined: {reason}",
+					{ title: r.title, reason: r.reason })
+				: tOr('social.returned_bare', "Your proposal '{title}' was declined.", { title: r.title });
+			row.appendChild(said);
+			var x = button('imp-returned-x', 'improve-returned-dismiss',
+				tOr('common.dismiss', 'Dismiss'),
+				tOr('social.returned_dismiss', 'Dismiss this note.'));
+			x.dataset.when = String(r.when);
+			row.appendChild(x);
+			host.appendChild(row);
+		});
+	}
+
 	function render() {
 		bindNoteBox();
 		drawContext();
+		drawReturned();
 		drawAs();
 		drawQueue();
 		// The approve-list draws only where its host exists; with the Notes view
@@ -2739,6 +2849,9 @@
 	/// feed and looking IS how a tester finds out.
 	function onOpen() {
 		render();
+		// A declined proposal's note is read on open, the same "looking is how you
+		// find out" the proposals list keeps. Quiet without a voice or an inbox.
+		loadReturned();
 		if (_view === 'proposals') loadList(false);
 		// Opening the panel is a good moment to drain anything that could not be
 		// sent while it was shut, so a queue does not sit full when the network is
@@ -2775,6 +2888,13 @@
 			e.preventDefault();
 			var row = el('improve-with');
 			if (row) { row.dataset.off = '1'; row.hidden = true; }
+			return;
+		}
+		if (act === 'improve-returned-dismiss') {
+			e.preventDefault();
+			// The reader has SEEN this one: ack its own `when` key, never the whole
+			// inbox. The forge answers the remainder, which redraws.
+			ackReturned(Number(b.dataset.when));
 			return;
 		}
 		var noteEl = b.closest('.imp-note');
@@ -3291,6 +3411,11 @@
 		/// Reading the forge, and the walk downwards through it.
 		load:     loadList,
 		one:      loadOne,
+		/// The proposer's returned-notes inbox: read the notes a decline left, ack
+		/// the ones seen (per `when` key, form-encoded), and the record for a test.
+		loadReturned: loadReturned,
+		ackReturned:  ackReturned,
+		returned:     function () { return _returned.notes.slice(); },
 		/// Voting and saying something. Both go straight to the forge; neither is
 		/// kept here.
 		vote:     vote,
@@ -3376,6 +3501,6 @@
 		// `_amending` with the rest: a row left in amend mode across an account
 		// switch would offer somebody else's proposal with this account's boxes
 		// already open on it.
-		reset:    function () { _st = null; _by = {}; _order = []; _open = {}; _amending = {}; _list = { total: 0, lowest: null, done: false, loading: false, err: null, read: false }; },
+		reset:    function () { _st = null; _by = {}; _order = []; _open = {}; _amending = {}; _returned = { notes: [], read: false, loading: false }; _list = { total: 0, lowest: null, done: false, loading: false, err: null, read: false }; },
 	};
 })();

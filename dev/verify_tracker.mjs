@@ -24,8 +24,11 @@
 //      an admin voice is held.
 //   5. NO DEAD SETTLE BUTTONS. With no admin voice there is NO settle control — only the terse
 //      "add your settle voice" affordance; pasting a voice REVEALS the controls.
-//   6. THE OWNER SETTLES FROM THE BOARD. With an admin voice, Accept on an Awaiting-you card posts
-//      `state=accepted` under the voice and the card moves to Greenlit; Reopen posts `state=open`.
+//   6. THE OWNER SETTLES FROM THE BOARD, WITH A REQUIRED REASON. With an admin voice, Accept on an
+//      Awaiting-you card opens a one-line reason box (it does not settle yet); an empty confirm is
+//      refused with no write; a filled one posts `state=accepted` AND `reason` under the voice and
+//      the card moves to Greenlit. Decline the same, posting `state=declined` AND `reason`. Reopen
+//      and Mark done carry `state` alone. Reason max is REASON_LIMIT (1000).
 //   7. A SHIPPED CARD STAMPS THE REAL BUILD. The board PARSES the ship stamp out of the proposal's
 //      comments and draws the id, clickable; it reads the id, it does not invent one.
 //   8. A PROPOSAL OPENS IN FULL, and a refusal is SAID, not swallowed.
@@ -52,6 +55,8 @@
 //   node dev/verify_tracker.mjs --break leakvoters     # 3  a voter name reaches the DOM
 //   node dev/verify_tracker.mjs --break voicedread     # 4  a read carries a voice
 //   node dev/verify_tracker.mjs --break alwayssettle   # 5  settle drawn with no voice
+//   node dev/verify_tracker.mjs --break noreasongate   # 6  Accept settles with no reason box
+//   node dev/verify_tracker.mjs --break emptyreasonok  # 6  an empty reason is sent, not refused
 //   node dev/verify_tracker.mjs --break shipinvent     # 7  the shipped stamp is invented
 //   node dev/verify_tracker.mjs --break swallow        # 8  a refusal drawn as blank
 //   node dev/verify_tracker.mjs --break minefilter     # 9  Mine shows more than this device raised
@@ -200,6 +205,27 @@ const BREAKS = {
 		file: 'js/tracker.js',
 		find: "\t\tif (!a.ok) { _st.err = a; _lastLoad = Date.now(); draw(); return false; }",
 		with: "\t\tif (!a.ok) { _st.err = a; draw(); return false; }",
+	}],
+	// Accept and decline no longer ask for a reason: NEEDS_REASON is emptied, so
+	// the buttons settle at a press and the settle carries state alone. Bites the
+	// reason-box check (Accept must open a box, not post) and the "reason sent"
+	// checks. HALF 1.
+	noreasongate: [{
+		file: 'js/tracker.js',
+		find: "\tvar NEEDS_REASON = { accept: 1, decline: 1 };",
+		with: "\tvar NEEDS_REASON = {};",
+	}],
+	// The required-reason guard is neutered on BOTH sides -- the confirm and the
+	// settle -- so an empty reason is sent rather than refused. Bites the check
+	// that a confirm with an empty box fires NO write. HALF 1.
+	emptyreasonok: [{
+		file: 'js/tracker.js',
+		find: "\t\tif (need && !note) { flash(tOr('tracker.reason_empty', 'Give a one-line reason first.')); return false; }",
+		with: "\t\tif (false) { flash(tOr('tracker.reason_empty', 'Give a one-line reason first.')); return false; }",
+	}, {
+		file: 'js/tracker.js',
+		find: "\t\tif (!reason) { flash(tOr('tracker.reason_empty', 'Give a one-line reason first.')); return false; }\n\t\treturn settle(n, which, reason);",
+		with: "\t\treturn settle(n, which, reason);",
 	}],
 };
 
@@ -623,23 +649,48 @@ async function run() {
 		check('reads carry no voice even when an admin voice is held', forgeReqs.filter(r => r.method === 'GET' && r.voice).length === 0, `${forgeReqs.filter(r => r.method === 'GET' && r.voice).length} voiced GET(s)`);
 		check('with an admin voice, settle controls are drawn on Awaiting-you cards', (await col(0).locator('.trk-settle-btn').count()) >= 1);
 
-		// Accept the first open card; it should post state=accepted and move to Greenlit. Guarded
-		// by the button's presence, so a break that empties the Awaiting-you column fails these
-		// checks cleanly rather than hanging on a click that can never land.
+		// Accept now COLLECTS A REQUIRED REASON: pressing Accept opens a reason box rather than
+		// settling; an empty confirm is refused with no write; and the write that does go carries
+		// state=accepted AND the reason. Guarded by the button's presence, so a break that empties
+		// the Awaiting-you column fails cleanly rather than hanging on a click that can never land.
 		const openCard = col(0).locator('.trk-card').first();
 		const acceptBtn = openCard.locator('.trk-settle-btn[data-which="accept"]');
 		if (await acceptBtn.count()) {
 			const acceptN = Number((await openCard.locator('.trk-num').innerText()).replace('#', ''));
+
+			// Pressing Accept opens the reason box and posts NOTHING yet. Bitten by
+			// `noreasongate`, where Accept settles at a press with no box.
 			forgeReqs.length = 0;
 			await acceptBtn.click();
+			await sleep(200);
+			const askRow = col(0).locator(`.trk-card[data-prop="${acceptN}"] .trk-reason`);
+			check('pressing Accept opens a reason box and posts nothing yet',
+				(await askRow.count()) === 1 && forgeReqs.filter(r => r.method === 'POST').length === 0,
+				`box ${await askRow.count()}, ${forgeReqs.filter(r => r.method === 'POST').length} writes`);
+
+			// A confirm with an EMPTY reason is refused client-side: no write leaves. Bitten by
+			// `emptyreasonok`, where the empty reason is sent instead.
+			forgeReqs.length = 0;
+			await col(0).locator(`.trk-card[data-prop="${acceptN}"] [data-act="tracker-settle-do"]`).click();
+			await sleep(300);
+			check('a settle with an empty reason is refused, firing no write',
+				forgeReqs.filter(r => r.method === 'POST').length === 0,
+				`${forgeReqs.filter(r => r.method === 'POST').length} writes`);
+
+			// Fill the reason and confirm: one write, state=accepted AND the reason.
+			const REASON = 'clear win, shipping it';
+			await col(0).locator(`.trk-card[data-prop="${acceptN}"] .trk-reason`).fill(REASON);
+			forgeReqs.length = 0;
+			await col(0).locator(`.trk-card[data-prop="${acceptN}"] [data-act="tracker-settle-do"]`).click();
 			await sleep(500);
 			const posted = forgeReqs.filter(r => r.method === 'POST');
-			check('Accept posts exactly one write', posted.length === 1, `${posted.length} writes`);
+			check('Accept, with a reason, posts exactly one write', posted.length === 1, `${posted.length} writes`);
 			const w = posted[0] || { voice: '', body: '' };
 			check('the settle write carried the admin voice in x-daimond-voice', w.voice === 'mock-voice-ada', w.voice);
 			const f = Object.fromEntries(new URLSearchParams(w.body));
-			check('the settle write is state=accepted and nothing else',
-				JSON.stringify(Object.keys(f).sort()) === JSON.stringify(['state']) && f.state === 'accepted', JSON.stringify(f));
+			check('the accept write is state=accepted AND the reason, and nothing else',
+				JSON.stringify(Object.keys(f).sort()) === JSON.stringify(['reason', 'state'])
+					&& f.state === 'accepted' && f.reason === REASON, JSON.stringify(f));
 			await sleep(200);
 			const inGreen = await col(1).locator(`.trk-card[data-prop="${acceptN}"]`).count();
 			check('the accepted proposal moves to Greenlit', inGreen === 1, `#${acceptN} in Greenlit: ${inGreen}`);
@@ -651,17 +702,42 @@ async function run() {
 				await greenCard.locator('.trk-settle-btn[data-which="reopen"]').click();
 				await sleep(400);
 				const rf = Object.fromEntries(new URLSearchParams((forgeReqs.filter(r => r.method === 'POST')[0] || {}).body || ''));
-				check('Reopen posts state=open', rf.state === 'open', JSON.stringify(rf));
+				check('Reopen posts state=open and no reason',
+					rf.state === 'open' && !('reason' in rf), JSON.stringify(rf));
 			} else {
-				check('Reopen posts state=open', false, 'no Reopen offered on the Greenlit card');
+				check('Reopen posts state=open and no reason', false, 'no Reopen offered on the Greenlit card');
 			}
 		} else {
-			check('Accept posts exactly one write', false, 'no Accept on the first Awaiting-you card');
+			check('pressing Accept opens a reason box and posts nothing yet', false, 'no Accept on the first Awaiting-you card');
+			check('a settle with an empty reason is refused, firing no write', false, 'no Accept to click');
+			check('Accept, with a reason, posts exactly one write', false, 'no Accept to click');
 			check('the settle write carried the admin voice in x-daimond-voice', false, 'no Accept to click');
-			check('the settle write is state=accepted and nothing else', false, 'no Accept to click');
+			check('the accept write is state=accepted AND the reason, and nothing else', false, 'no Accept to click');
 			check('the accepted proposal moves to Greenlit', false, 'no Accept to click');
-			check('Reopen posts state=open', false, 'no Accept to click');
+			check('Reopen posts state=open and no reason', false, 'no Accept to click');
 		}
+
+			// Decline also collects a required reason, sent as state=declined AND reason.
+			const declCard = col(0).locator('.trk-card').first();
+			const declineBtn = declCard.locator('.trk-settle-btn[data-which="decline"]');
+			if (await declineBtn.count()) {
+				const declN = Number((await declCard.locator('.trk-num').innerText()).replace('#', ''));
+				await declineBtn.click();
+				await sleep(200);
+				const DREASON = 'out of scope for now';
+				await col(0).locator(`.trk-card[data-prop="${declN}"] .trk-reason`).fill(DREASON);
+				forgeReqs.length = 0;
+				await col(0).locator(`.trk-card[data-prop="${declN}"] [data-act="tracker-settle-do"]`).click();
+				await sleep(500);
+				const dPosted = forgeReqs.filter(r => r.method === 'POST');
+				const df = Object.fromEntries(new URLSearchParams((dPosted[0] || {}).body || ''));
+				check('Decline, with a reason, posts state=declined AND the reason',
+					dPosted.length === 1 && df.state === 'declined' && df.reason === DREASON
+						&& JSON.stringify(Object.keys(df).sort()) === JSON.stringify(['reason', 'state']),
+					`${dPosted.length} writes, ${JSON.stringify(df)}`);
+			} else {
+				check('Decline, with a reason, posts state=declined AND the reason', false, 'no Decline on the first Awaiting-you card');
+			}
 
 		// ── 10-13. Vote and comment, re-homed to the hub ─────────────
 		// The pull voice lives in the Social panel; the board CALLS its doors. Install

@@ -562,7 +562,7 @@
 	}
 
 	/// Back to the board.
-	function back() { _open = null; draw(); }
+	function back() { _open = null; _settleAsk = null; draw(); }
 
 	// How stale a listing may be before showing the panel refetches it. Small, so a
 	// re-shown board reflects declines, greenlights and new posts made meanwhile,
@@ -582,22 +582,42 @@
 	// ── Settling (admin voice only) ────────────────────────────
 
 	// FOUR TOKENS AND NO MORE: state is open, accepted, declined or done. There is
-	// no "reopen" token — a Reopen sends `state=open`. Settle carries ONLY the
-	// `state` field: no mark, no reason.
+	// no "reopen" token — a Reopen sends `state=open`. Accept and decline now carry
+	// a REQUIRED one-line `reason` beside the state — folded into the accept and
+	// posted back to the proposer on a decline; done and reopen carry state alone.
 	var DECISIONS = { accept: 'accepted', decline: 'declined', done: 'done', reopen: 'open' };
+
+	// Which decisions need a reason before they can be sent, and the longest a
+	// reason may be. The forge rejects a longer one as "too long"; the input is
+	// capped here as well so a person is stopped before the round trip.
+	var NEEDS_REASON = { accept: 1, decline: 1 };
+	var REASON_LIMIT = 1000;
+
+	// The card whose accept/decline reason box is open: `{ n, which }`, or null.
+	// One at a time, so a second press replaces the first rather than stacking.
+	var _settleAsk  = null;
+	var _reasonKeep = null;			// a half-typed reason, kept across one redraw
 
 	/// Post the decide field for proposal `n` under the admin voice. `which` is
 	/// one of accept, decline, done, reopen — the last of which sends `state=open`.
-	async function settle(n, which) {
+	/// `reason` is the required one-line note for accept and decline, and is
+	/// ignored (and never sent) for done and reopen.
+	async function settle(n, which, reason) {
 		if (!canSettle()) return false;
 		var state = DECISIONS[which];
 		if (!state) return false;
+		// A required reason that arrived empty is refused here rather than sent: the
+		// forge would reject it, but a person is told at the press instead.
+		var need = !!NEEDS_REASON[which];
+		var note = String(reason == null ? '' : reason).trim();
+		if (need && !note) { flash(tOr('tracker.reason_empty', 'Give a one-line reason first.')); return false; }
 		var secret;
 		try { secret = await adminSecret(); }
 		catch (e) { _st.err = { why: 'gateway' }; flash(String((e && e.message) || e)); return false; }
 		if (!secret) { flash(tOr('tracker.admin_need', 'Add your settle voice first.')); return false; }
 		var f = new URLSearchParams();
 		f.set('state', state);
+		if (need) f.set('reason', note);
 		var a = await request(route('n=' + n), {
 			method:  'POST',
 			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -606,9 +626,20 @@
 		if (!a.ok) { _st.err = a; draw(); return false; }
 		absorb(clean(a.data));
 		deriveFrom(n);
-		_st.err = null;
+		_st.err    = null;
+		_settleAsk = null;		// the decision landed; the reason box goes with it
 		draw();
 		return true;
+	}
+
+	/// Read the reason box for card `n` and settle, or refuse an empty one. THE ONE
+	/// PLACE the required reason is enforced on this side; `settle` guards it again
+	/// so a caller that reaches it directly cannot skip the rule.
+	function confirmSettle(n, which) {
+		var inp = _host ? _host.querySelector('.trk-reason[data-prop="' + n + '"]') : null;
+		var reason = inp ? String(inp.value || '').trim() : '';
+		if (!reason) { flash(tOr('tracker.reason_empty', 'Give a one-line reason first.')); return false; }
+		return settle(n, which, reason);
 	}
 
 	// ── Voting and commenting (pull voice, through the Social panel) ──
@@ -970,6 +1001,12 @@
 	function drawSettle(p, state) {
 		if (!canSettle()) return null;
 		var acts = el('div', 'trk-settle');
+		// Accept and decline ask for their one-line reason in place of the buttons;
+		// the confirm refuses an empty one. done and reopen settle at a press.
+		if (_settleAsk && _settleAsk.n === p.n) {
+			acts.appendChild(drawReason(p, _settleAsk.which));
+			return acts;
+		}
 		if (state === 'open') {
 			acts.appendChild(settleBtn('accept',  p.n, tOr('tracker.accept', 'Accept')));
 			acts.appendChild(settleBtn('decline', p.n, tOr('tracker.decline', 'Decline')));
@@ -983,11 +1020,44 @@
 		return acts;
 	}
 
+	/// One settle button. A decision that needs a reason opens the reason box
+	/// rather than settling; one that does not settles at the press.
 	function settleBtn(which, n, text) {
-		var b = button('trk-settle-btn', 'tracker-settle', text);
+		var b = button('trk-settle-btn', NEEDS_REASON[which] ? 'tracker-settle-ask' : 'tracker-settle', text);
 		b.dataset.which = which;
 		b.dataset.prop  = n;
 		return b;
+	}
+
+	/// The required one-line reason for an accept or a decline, shown in place of
+	/// the settle buttons: a box, the decision as its confirm, and Cancel. Empty
+	/// is refused at the confirm (see `confirmSettle`).
+	function drawReason(p, which) {
+		var box = el('div', 'trk-reason-box');
+		box.dataset.which = which;
+		var lab = (which === 'accept')
+			? tOr('tracker.reason_accept', 'Why accept it? Shown to the proposer.')
+			: tOr('tracker.reason_decline', 'Why decline it? Sent back to the proposer.');
+		var inp = document.createElement('input');
+		inp.type        = 'text';
+		inp.className   = 'trk-reason';
+		inp.maxLength   = REASON_LIMIT;
+		inp.dataset.prop = p.n;
+		inp.placeholder = lab;
+		inp.setAttribute('aria-label', lab);
+		if (_reasonKeep && _reasonKeep[String(p.n)]) inp.value = _reasonKeep[String(p.n)];
+		box.appendChild(inp);
+		var row = el('div', 'trk-reason-acts');
+		var ok  = button('trk-reason-do', 'tracker-settle-do',
+			(which === 'accept') ? tOr('tracker.accept', 'Accept') : tOr('tracker.decline', 'Decline'));
+		ok.dataset.which = which;
+		ok.dataset.prop  = p.n;
+		row.appendChild(ok);
+		var cancel = button('trk-reason-cancel', 'tracker-settle-cancel', tOr('tracker.cancel', 'Cancel'));
+		cancel.dataset.prop = p.n;
+		row.appendChild(cancel);
+		box.appendChild(row);
+		return box;
 	}
 
 	function drawDetail(p) {
@@ -1106,6 +1176,11 @@
 		var keep = {};
 		_host.querySelectorAll('.trk-reply').forEach(function (b) { if (b.value) keep[b.dataset.prop] = b.value; });
 		_replyKeep = keep;
+		// The same care for a half-typed settle reason, so a background refetch that
+		// redraws mid-decision does not take the words with it.
+		var rkeep = {};
+		_host.querySelectorAll('.trk-reason').forEach(function (b) { if (b.value) rkeep[b.dataset.prop] = b.value; });
+		_reasonKeep = rkeep;
 		_host.innerHTML = '';
 
 		var head = el('div', 'trk-head');
@@ -1205,6 +1280,9 @@
 			return;
 		}
 		if (act === 'tracker-settle' && n) { settle(n, b.dataset.which); return; }
+		if (act === 'tracker-settle-ask' && n) { _settleAsk = { n: n, which: b.dataset.which }; draw(); return; }
+		if (act === 'tracker-settle-do' && n) { confirmSettle(n, b.dataset.which); return; }
+		if (act === 'tracker-settle-cancel') { _settleAsk = null; draw(); return; }
 		if (act === 'tracker-vote' && n) { voteOn(n); return; }
 		if (act === 'tracker-comment' && n) { commentOn(n); return; }
 		if (act === 'tracker-getvoice') { getVoice(); return; }
@@ -1289,6 +1367,6 @@
 			};
 		},
 		proposal:  function (n) { return _by[n] ? JSON.parse(JSON.stringify(_by[n])) : null; },
-		reset:     function () { _by = {}; _order = []; _open = null; _voiceOpen = false; _filter = 'all'; _st = { total: 0, loading: false, err: null, read: false }; draw(); },
+		reset:     function () { _by = {}; _order = []; _open = null; _voiceOpen = false; _settleAsk = null; _filter = 'all'; _st = { total: 0, loading: false, err: null, read: false }; draw(); },
 	};
 })();

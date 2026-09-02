@@ -1294,6 +1294,11 @@
 					     js/improve.js. -->
 					<div class="imp-raised" id="improve-raised" role="status" aria-live="polite" hidden></div>
 				</div>
+				<!-- A proposal this device raised that was DECLINED comes back here with
+				     the operator's one-line reason. js/improve.js OWNS it, reads it on
+				     panel open under this device's own voice, and acks each note (per
+				     `when` key) once it has been shown and dismissed. Hidden while empty. -->
+				<div class="imp-returned" id="improve-returned" role="status" aria-live="polite" hidden></div>
 				<!-- Notes that could not be sent yet: written offline, or a send that
 				     failed. js/improve.js OWNS this and clears it on every draw; it is
 				     drained automatically when the browser comes back online.

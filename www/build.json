@@ -1,1 +1,1 @@
-{"build":"5a658c9c44e1","note":"A runner now inherits permissions your account already allowed, so it stops re-asking for what you approved elsewhere"}
+{"build":"b569b40004f6","note":"Settling a proposal now takes a one-line reason, and a declined proposal's reason returns to whoever proposed it"}
