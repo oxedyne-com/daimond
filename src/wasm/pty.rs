@@ -43,12 +43,13 @@ use crate::llm::{
 use crate::tools::{
     diamond_bounds,
     fence_enforced,
-    fence_spec,
+    fence_spec_surfaced,
     normalise,
     refusal_line,
     Bound,
     Kit,
     Machine,
+    Surface,
 };
 use crate::wasm::js_str;
 
@@ -395,9 +396,12 @@ pub async fn pty_request(ask_json: String) -> String {
     // actually chose: the folder they granted the hand.
     //
     // ONLY THE ALLOW-LIST GOES. A folder the user marked read-only keeps its `Bound::NoWrite`,
-    // and every standing denial `fence_spec` applies -- the hand's journal, `~/.ssh`, the
-    // daimon's own key -- is untouched. With no allow-list left, `fence_spec` reads the turn as
-    // unscoped and grants the granted root, which is exactly the ask.
+    // and every standing credential denial `fence_spec_surfaced` applies -- the hand's journal, the
+    // daimon's own key, `.gnupg`, `.aws`, `.config/oxedyne` and the rest -- is untouched. The one
+    // exception is `~/.ssh`: this surface passes `Surface::Terminal`, which lifts THAT deny alone so
+    // a user can `ssh` from the terminal as themselves (see `tools::Surface`). With no allow-list
+    // left, `fence_spec_surfaced` reads the turn as unscoped and grants the granted root, which is
+    // exactly the ask.
     //
     // `Bound::Nowhere` goes with them: it means "no Diamond at all", and a terminal that
     // belongs to no Diamond is now an ordinary terminal rather than a refusal.
@@ -464,7 +468,17 @@ pub async fn pty_request(ask_json: String) -> String {
     // home is untouched: the standing credential denies are home-relative and must not move.
     let mut tm = machine.clone();
     tm.root = root.clone();
-    let fence = fence_spec(&bounds, &tm, crate::tools::mode().withholds_net(tainted));
+    // `Surface::Terminal` is the ONE thing this call does that a `Tool::Run` fence does not, and
+    // the whole of the difference: it omits the `.ssh` deny so a user can `ssh` from here as
+    // themselves. It is a literal, never read from `ask`, `bounds` or the machine, and this is the
+    // only call site in the app that names it -- see `tools::Surface`. Every other credential deny
+    // still applies here unchanged.
+    let fence = fence_spec_surfaced(
+        &bounds,
+        &tm,
+        crate::tools::mode().withholds_net(tainted),
+        Surface::Terminal,
+    );
     if fence.rw.is_empty() && fence.ro.is_empty() {
         // Two states arrive here and a person can only act on one of them, so they are told
         // apart. A Diamond that named itself and nothing else is the ORDINARY case -- a fresh

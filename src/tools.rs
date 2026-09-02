@@ -2045,10 +2045,18 @@ const CREDS: &[Grant] = &[
 /// A deny costs nothing where the path is not granted anyway, and a denied path that does not exist
 /// is tolerated (`hand/src/fence.rs`, `canonical`), so this is applied unconditionally rather than
 /// worked out.
+///
+/// **One entry is lifted on one surface, and nowhere else.**  The interactive terminal
+/// ([`Surface::Terminal`], threaded from `wasm/pty.rs` and from no other call site) omits the
+/// `.ssh` deny, so a user can `ssh` from the Daimond terminal as themselves.  It is safe there for
+/// the reason the whole terminal widening is safe: a terminal is the user at a keyboard, no
+/// [`Tool`] opens one or types into one, and `pty_request` is a page-driven wasm entry a daimon
+/// cannot reach.  The carve lifts `.ssh` ALONE -- ssh reads only `~/.ssh` -- and every other secret
+/// here stays denied on the terminal exactly as on a command.  See [`fence_spec_surfaced`].
 const ALWAYS_DENIED: &[Grant] = &[
     Grant { tail: ".ssh", level: Level::Deny,
         why: "the user's private keys and known hosts, which Daimond reaches another machine \
-            as itself or not at all" },
+            as itself or not at all -- lifted ONLY on the interactive terminal, see Surface" },
     Grant { tail: ".gnupg", level: Level::Deny,
         why: "the signing keys, and a directory whose entire contents are secrets" },
     Grant { tail: ".aws", level: Level::Deny,
@@ -3122,6 +3130,30 @@ fn env_json_of(env: &[(String, String)]) -> String {
     fmt!("[{}]", pairs.join(","))
 }
 
+/// Which surface a fence is being built for.
+///
+/// This decides ONE thing and only one: whether `~/.ssh` is denied.  Everything else
+/// [`fence_spec_surfaced`] computes -- the allow-list, the credential denies, the toolkit fold, the
+/// net rule -- is identical for both surfaces, and the two secrets a shell reaches for, the private
+/// keys and the known hosts, both live under `~/.ssh` and nowhere else.
+///
+/// [`Surface::Tool`] is what every command and every [`compose`] door builds: `.ssh` denied like
+/// every other secret in [`ALWAYS_DENIED`].  [`Surface::Terminal`] is built at exactly one call
+/// site -- `wasm/pty.rs`, where a person is typing into an interactive pseudo-terminal -- and it
+/// omits the `.ssh` deny so a user can `ssh` from the Daimond terminal as themselves.
+///
+/// **Why lifting `.ssh` is safe, and only there.**  A terminal is the user at a keyboard, not a
+/// daimon: no [`Tool`] opens a terminal or types into one, and `pty_request` is reached only by a
+/// page-driven wasm entry, never a tool dispatch or an agent turn.  So the carve touches no
+/// model-driven path.  And the surface is a code-path constant -- a literal at the one pty call
+/// site, never read from the ask, the bounds, the machine or anything a request could shape -- so a
+/// daimon has no way to name [`Surface::Terminal`] and no way to reach the code that does.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Surface {
+    Tool,      // a command or a compose door -- `.ssh` denied like every other secret
+    Terminal,  // the interactive pty, the user at a keyboard -- `.ssh` readable, nothing else lifted
+}
+
 /// The bounds a turn runs with, restated as the fence the machine hand enforces.
 ///
 /// This is the whole of the compartmentalisation claim, and it is worth being clear about why it
@@ -3162,6 +3194,25 @@ fn env_json_of(env: &[(String, String)]) -> String {
 ///   against.
 /// * `tainted` - Whether this turn has ingested content from outside the user.
 pub fn fence_spec(bounds: &[Bound], m: &Machine, tainted: bool) -> FenceSpec {
+    // Every command and every compose door is a [`Surface::Tool`], where `.ssh` is denied like
+    // every other secret. The interactive terminal is the ONE surface that reads `~/.ssh`, and it
+    // threads [`Surface::Terminal`] from its own call site in `wasm/pty.rs`; nothing else does.
+    fence_spec_surfaced(bounds, m, tainted, Surface::Tool)
+}
+
+/// [`fence_spec`] with the surface stated explicitly.  See [`Surface`]: it decides one thing, the
+/// `~/.ssh` deny, and the interactive terminal is the only caller that lifts it.
+///
+/// # Arguments
+/// * `surface` - A code-path constant, never derived from request data. Only `wasm/pty.rs` passes
+///   [`Surface::Terminal`]; every other caller reaches this through [`fence_spec`] as
+///   [`Surface::Tool`].
+pub fn fence_spec_surfaced(
+    bounds:  &[Bound],
+    m:       &Machine,
+    tainted: bool,
+    surface: Surface,
+) -> FenceSpec {
     // A scope that could not be expressed. No roots at all, which the hand refuses -- the same
     // closed failure an unusable root produces, and for the same reason. Read before the root is
     // even looked at, because nothing a machine could say would widen this.
@@ -3317,6 +3368,11 @@ pub fn fence_spec(bounds: &[Bound], m: &Machine, tainted: bool) -> FenceSpec {
         if abs_dir(h) {
             let home = h.trim_end_matches('/');
             for g in ALWAYS_DENIED {
+                // The interactive terminal is the user at a keyboard, and `ssh` from it reads the
+                // user's OWN `~/.ssh` exactly as they would at any shell. No `Tool` opens or types
+                // into a terminal (see `wasm/pty.rs`), so lifting `.ssh` here reaches no daimon --
+                // and it lifts `.ssh` ALONE: every other secret stays denied on the terminal too.
+                if surface == Surface::Terminal && g.tail == ".ssh" { continue; }
                 if let Some(p) = home_path(home, g.tail) {
                     if !deny.contains(&p) { deny.push(p); }
                 }
@@ -24174,6 +24230,63 @@ mod tests {
         let f = fence_spec(&b, &m, false);
         assert!(f.deny.contains(&fmt!("/home/u/.ssh")),
             "a Diamond attached at the home directory reaches the private key: {:?}", f.deny);
+    }
+
+    /// **The Tool surface denies `.ssh` exactly as before, and `fence_spec` IS the Tool surface.**
+    ///
+    /// This is the invariant [`ALWAYS_DENIED`] exists for: a command must never reach the private
+    /// key. `fence_spec` is a thin delegator to [`fence_spec_surfaced`] with [`Surface::Tool`], so
+    /// this also pins that the default entry every command and every [`compose`] door goes through
+    /// is the denied one. If the terminal carve ever leaked into the Tool path, both halves fail.
+    #[test]
+    fn test_the_tool_surface_denies_ssh_and_is_the_default() {
+        let m = Machine {
+            os: fmt!("linux"), root: fmt!("/home/u"), home: Some(fmt!("/home/u")), terminal_root: None, terminal_ceilings: Vec::new(),
+            host: None, shell: None, remote: false, caps: vec![fmt!("fence:linux")],
+        };
+        let via_tool = fence_spec_surfaced(&[], &m, false, Surface::Tool);
+        assert!(via_tool.deny.contains(&fmt!("/home/u/.ssh")),
+            "the Tool surface stopped denying the private key: {:?}", via_tool.deny);
+        // `fence_spec` and the explicit Tool surface must be one and the same, byte for byte, or a
+        // caller reading `fence_spec` is not reading the fence it thinks it is.
+        assert_eq!(fence_spec(&[], &m, false).to_json(), via_tool.to_json(),
+            "fence_spec is not the Tool surface: the delegator has drifted from its default");
+    }
+
+    /// **The terminal lifts `.ssh` and lifts NOTHING else.**
+    ///
+    /// A user typing at the Daimond terminal can `ssh` as themselves, which needs `~/.ssh` and
+    /// nothing more. Every other standing credential deny -- `.gnupg`, `.aws`, `.config/oxedyne`,
+    /// `.netrc`, the two git-credential files, `.npmrc`, `.pypirc` -- must still stand on the
+    /// terminal, exactly as on a command. The safety of the carve rests on `wasm/pty.rs` being the
+    /// only caller that passes [`Surface::Terminal`], which no `Tool` can reach.
+    #[test]
+    fn test_the_terminal_surface_lifts_ssh_alone() {
+        let m = Machine {
+            os: fmt!("linux"), root: fmt!("/home/u"), home: Some(fmt!("/home/u")), terminal_root: None, terminal_ceilings: Vec::new(),
+            host: None, shell: None, remote: false, caps: vec![fmt!("fence:linux")],
+        };
+        let term = fence_spec_surfaced(&[], &m, false, Surface::Terminal);
+        assert!(!term.deny.contains(&fmt!("/home/u/.ssh")),
+            "the terminal still denies the user's own `.ssh`, so `ssh` cannot read it: {:?}",
+            term.deny);
+        // Every other secret stays denied. Named in full, so a future entry added to `ALWAYS_DENIED`
+        // that the carve accidentally lifted too would fail here rather than pass silently.
+        for tail in [".gnupg", ".aws", ".config/oxedyne", ".netrc", ".git-credentials",
+            ".config/git/credentials", ".npmrc", ".pypirc"] {
+            assert!(term.deny.contains(&fmt!("/home/u/{}", tail)),
+                "the terminal carve lifted `{}` as well as `.ssh`, which it must not: {:?}",
+                tail, term.deny);
+        }
+        // Precisely one deny separates the two surfaces, and it is `.ssh`. Anything else diverging
+        // means the carve reached past the one entry it is allowed to touch.
+        let tool = fence_spec_surfaced(&[], &m, false, Surface::Tool);
+        let lifted: Vec<&String> = tool.deny.iter().filter(|p| !term.deny.contains(p)).collect();
+        assert_eq!(vec![&fmt!("/home/u/.ssh")], lifted,
+            "the terminal surface differs from the Tool surface by more than `.ssh`: {:?}", lifted);
+        // And it only ever REMOVES: the terminal must not gain a deny the Tool path lacks.
+        assert!(term.deny.iter().all(|p| tool.deny.contains(p)),
+            "the terminal surface invented a deny the Tool surface does not have: {:?}", term.deny);
     }
 
     #[test]
