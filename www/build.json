@@ -1,1 +1,1 @@
-{"build":"8dc782c75362","note":"Route a hand-off's per-turn web consent to the attended source device, not the runner's local dialog"}
+{"build":"f81d856f93a9","note":"Dispatch every turn to the nominated always-on runner; await presence when the nominee looks stale"}

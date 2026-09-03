@@ -962,6 +962,28 @@
 		// An explicit opt-out pins the chat here, even on a phone with a peer awake --
 		// so it must be tested BEFORE the mobile default and before the global one.
 		if (toggle === false) return { dispatch: false, reason: 'chat-local' };
+		// A NOMINATED, fresh always-on runner takes EVERY turn -- above the mobile,
+		// agentic and quick-local rules below, so a nominated runner runs the turn
+		// whatever kind it is and whether or not this device is attended. That is the
+		// durability the nomination is for: a device can drop with no chance to set up
+		// a hand-off, so turns go to the runner by default, not to whatever device
+		// happens to be in front of someone. Judged by the NOMINEE'S OWN freshness
+		// (not `freshestPeer`), so it wins even when another peer beat more recently;
+		// a nominee aged out of the window reads offline and this falls through to the
+		// policy below, which keeps a quick foreground turn local -- the present user's
+		// device is the right fallback over routing to some other peer. The per-chat
+		// opt-out above still wins, so a chat pinned local (its files live on this
+		// device) is never overridden. dispatchToPeer posts to the relay with no peer;
+		// `nominationStandDown` is what actually seats the errand on the nominee.
+		var nom = String(o.nominatedId || '');
+		if (nom && nom !== String(o.selfId || '')) {
+			var nRec = (presence || {})[nom];
+			var nNow = (now == null ? Date.now() : now);
+			var nWin = o.freshWindowMs || DISPATCH_FRESH_MS;
+			if (nRec && (nNow - leaseMs(nRec.lastSeen)) <= nWin) {
+				return { dispatch: true, peer: { deviceId: nom, name: (nRec.name || ''), lastSeen: leaseMs(nRec.lastSeen) }, reason: 'nominee' };
+			}
+		}
 		// The toggle on, or the global default when the chat has not chosen.
 		if (toggle === true || o.globalDefault) return { dispatch: true, peer: peer, reason: 'toggle-on' };
 		// MOBILE: a persistent peer is awake, so hand EVERY turn off -- quick or

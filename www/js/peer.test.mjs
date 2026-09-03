@@ -1303,6 +1303,19 @@ async function runPresenceAcceptance(P, PR, check) {
 	check('a worker chat is agentic -> dispatch',
 		P.autoDispatchDecision(workerChat, fresh, { selfId: 'phone' }, T).reason === 'long-turn');
 
+	// ── The nominated always-on runner: it takes EVERY turn, above quick-local,
+	// so a turn goes to the runner regardless of what kind it is or whether this
+	// device is attended -- the durability the nomination is for. A per-chat
+	// opt-out still wins; a stale nominee falls back to local. ──
+	check('a FRESH nominee dispatches even a QUICK foreground turn',
+		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', nominatedId: 'argonaut' }, T); return d.dispatch === true && d.reason === 'nominee' && d.peer.deviceId === 'argonaut'; })());
+	check('a STALE nominee runs local (never dispatch into the void)',
+		P.autoDispatchDecision(quickChat, stale, { selfId: 'phone', nominatedId: 'argonaut' }, T).dispatch === false);
+	check('this device IS the nominee -> it does not dispatch a turn to itself',
+		P.autoDispatchDecision(quickChat, fresh, { selfId: 'argonaut', nominatedId: 'argonaut' }, T).dispatch === false);
+	check('a per-chat opt-out (toggle OFF) STILL wins over a fresh nominee',
+		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', nominatedId: 'argonaut', toggle: false }, T); return d.dispatch === false && d.reason === 'chat-local'; })());
+
 	// ── The MOBILE policy: a phone hands EVERY turn to an awake peer, quick or not,
 	// because the phone is not where a turn should run when a persistent peer exists;
 	// the answer syncs back. Desktop keeps the old behaviour (it IS the instance). ──

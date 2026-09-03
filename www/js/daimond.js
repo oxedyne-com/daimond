@@ -13151,22 +13151,45 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// answer syncs back); on desktop only a long/agentic turn. Answers whether it
 	/// dispatched; false falls through to the ordinary local run. Guarded, so any
 	/// hiccup runs locally -- the safe default.
-	function maybeAutoDispatch(chat, text) {
+	async function maybeAutoDispatch(chat, text) {
 		try {
 			if (!chat || chat.diamondId) return false;			// daimons never dispatch
 			if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
 			if (!window.DaimondPeer || !DaimondPeer.autoDispatchDecision) return false;
-			// Best-effort: nudge the gateway for the freshest presence so the
-			// decision sees who is awake. Fire-and-forget -- this function is
-			// synchronous, so it cannot await -- which refreshes the map for the next
-			// decision rather than this one; the ~45s beat keeps it current between.
-			try { if (window.DaimondSync && DaimondSync.refreshPresence) DaimondSync.refreshPresence(); }
-			catch (e) { /* the local snapshot stands */ }
+			var self     = selfDeviceId();
+			var nominee  = (typeof nominatedDeviceId === 'function') ? nominatedDeviceId() : '';
 			var presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+			// Presence freshness governs the dispatch, so make it current. If a runner
+			// is NOMINATED but its beat looks stale in the snapshot -- the case right
+			// after a hard refresh, before presence has re-synced -- do a BOUNDED,
+			// awaited refresh and re-snapshot before deciding, so a freshly nominated
+			// runner is not misjudged offline and the turn wrongly run here. Only that
+			// ambiguous case waits: a nominee already fresh, or no nominee, keeps the
+			// old fire-and-forget nudge and pays nothing. The race caps the wait so a
+			// slow or absent gateway never holds the send.
+			var nomStale = !!nominee && nominee !== self && DaimondPeer.nominationStandDown
+				&& !DaimondPeer.nominationStandDown(nominee, self, presence, Date.now(), DaimondPeer.DISPATCH_FRESH_MS);
+			if (window.DaimondSync && DaimondSync.refreshPresence) {
+				if (nomStale) {
+					try {
+						await Promise.race([
+							Promise.resolve(DaimondSync.refreshPresence()),
+							new Promise(function (r) { setTimeout(r, 900); }),
+						]);
+					} catch (e) { /* the snapshot we have stands */ }
+					presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+				} else {
+					try { DaimondSync.refreshPresence(); } catch (e) { /* the local snapshot stands */ }
+				}
+			}
 			var d = DaimondPeer.autoDispatchDecision(chat, presence, {
-				selfId:        selfDeviceId(),
+				selfId:        self,
 				isPhone:       isPhoneViewport(),
 				toolsEnabled:  chatToolsEnabled(chat),
+				// The account's nominated always-on runner: when it is fresh it takes
+				// every turn (autoDispatchDecision's `nominee` branch), above the
+				// mobile / agentic / quick-local rules.
+				nominatedId:   nominee,
 				// The step-away posture makes this device — a laptop as much as a phone —
 				// route its turns to an awake peer so they run there and survive it being
 				// closed. Off by silence, so a machine that never turned it on keeps
@@ -18402,7 +18425,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// it (the answer syncs back) and a desktop hands off only a long/agentic turn,
 		// staying local for a quick foreground one; no fresh peer means local. Guarded,
 		// so any hiccup runs locally.
-		if (maybeAutoDispatch(chat, text)) return;
+		if (await maybeAutoDispatch(chat, text)) return;
 		clearComposer();
 		runTurn(chat, text);
 	}
