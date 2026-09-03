@@ -1,1 +1,1 @@
-{"build":"984e1771b2ab","note":"Comp-migrate old Pro licence holders to comp subscriptions on boot (entitlement restore)"}
+{"build":"8dc782c75362","note":"Route a hand-off's per-turn web consent to the attended source device, not the runner's local dialog"}

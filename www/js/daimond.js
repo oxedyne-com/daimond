@@ -10186,13 +10186,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				return 'allow';
 			}
 			// A RUNNER with NO standing 'reading' grant: route the question HOME rather
-			// than raise a dialog on a screen nobody is at. The owner's original stall
-			// was exactly a web_search prompt on the runner, and consent-sync above only
-			// closes it once 'reading' is granted -- so until it is, the ask goes to an
-			// attended device (or parks). Composes with consent-sync: a granted account
-			// already returned 'allow' and never reaches here. The routed verdict is a
-			// plain 'allow'/'deny', which is what `web_search` reads.
-			if (req.alone && !someoneCanAnswer() && activeRunnerTurn()) {
+			// than raise a dialog on a screen nobody is at. Routes whenever nobody is
+			// attending THIS runner, INDEPENDENT of the worker `alone` flag -- a device
+			// hand-off is an ordinary chat turn and is never marked alone, so gating on
+			// `alone` (as this did) meant the hand-off web_search prompt -- the owner's
+			// original stall -- stalled on the runner instead of routing. consent-sync
+			// above closes it once 'reading' is granted and never reaches here. `isAttended`
+			// is the foreground+interaction test the presence beat routes on. The routed
+			// verdict is a plain 'allow'/'deny', which is what `web_search` reads.
+			if (activeRunnerTurn() && !isAttended()) {
 				return await routeConsentAsk({ tool: 'web_search', detail: q, url: '' }, '');
 			}
 			var searchTurn = askingTurn(req);
@@ -10270,27 +10272,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `verdict_of` on the other side takes nothing else.
 		if (!strict && host === location.host) return reading ? 'allow-once' : 'allow';
 
-		// A DISPATCHED WORKER'S QUESTION, WHEN THERE IS NOBODY TO PUT IT TO. It
-		// goes on the Pending panel and the worker waits on the tile; answering
-		// the tile resolves this promise, so a yes is the tool call carrying on.
-		// See `parkConsent`.
+		// WHEN THERE IS NOBODY HERE TO PUT THE QUESTION TO, it does not stall on a
+		// screen nobody is at. Two cases, in order, both below the same-origin
+		// shortcut so our own pages are no more gated than for anybody else.
 		//
-		// ONLY `alone` DIVERTS. The user's own turn belongs to a user who is in
-		// the loop by definition — they typed the thing that started it — and
-		// moving their question off the screen they are looking at would be a
-		// worse answer than the dialog. Below the same-origin shortcut, so our own
-		// pages are no more gated for a worker than for anybody else, and above
-		// the two act branches, which are the only tools that carry `alone`.
-		//
-		// A RUNNER routes the question HOME rather than parking it on its own empty
-		// screen: this is a turn dispatched from another device, and the person is at
-		// THAT device. `routeConsentAsk` seals the ask, sends it to an attended device
-		// and awaits the answer, holding the turn in memory; with no attended device,
-		// or on timeout, it parks (abandon + re-run, bounded). A LOCAL unsupervised
-		// worker (no dispatched errand in flight) keeps the existing on-panel park --
-		// nobody dispatched it, so there is nowhere else to send the question.
+		// A RUNNER turn routes the question HOME. This is a turn dispatched from
+		// another device, and the person is at THAT device -- so it routes whenever
+		// nobody is attending THIS runner, INDEPENDENT of the worker `alone` flag.
+		// A device hand-off runs as an ordinary chat turn and is NEVER marked alone
+		// (`markAlone` is the daimon-worker path alone), so gating the route on
+		// `alone` -- as this did -- meant a hand-off never routed and always stalled
+		// on the runner's local dialog. `isAttended` is the same foreground+interaction
+		// test the presence beat routes on, so a runner backgrounded OR merely idle
+		// routes. `routeConsentAsk` seals the ask, sends it to an attended device and
+		// awaits the answer in memory; with no attended device, or on timeout, it
+		// parks (abandon + re-run, bounded). Not under `strict`, whose crystal-page
+		// navigation is not a model act.
+		if (!strict && activeRunnerTurn() && !isAttended()) {
+			return await routeConsentAsk(req, host);
+		}
+		// A LOCAL unsupervised WORKER (alone, and no dispatched errand in flight)
+		// keeps the on-panel park: nobody dispatched it from elsewhere, so there is
+		// nowhere to send the question. The user's own attended turn is neither alone
+		// nor a runner and falls through to the dialog below -- they typed the thing
+		// that started it, so the question belongs on the screen they are looking at.
 		if (req.alone && !someoneCanAnswer()) {
-			if (activeRunnerTurn()) return await routeConsentAsk(req, host);
 			return await parkConsent(req, host);
 		}
 
