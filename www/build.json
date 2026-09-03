@@ -1,1 +1,1 @@
-{"build":"f0845c35df0b","note":"Fix the operator console refused as out of date: send API v2 from adminFetch"}
+{"build":"984e1771b2ab","note":"Comp-migrate old Pro licence holders to comp subscriptions on boot (entitlement restore)"}
