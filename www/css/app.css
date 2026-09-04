@@ -201,7 +201,15 @@ svg { display: block; }
    overflow to engage on. Measured 2026-08-28 with twenty notes kept: the panel
    was clipped at 434px and the list ran to 2606px, so NOT ONE note was on the
    screen and nothing would scroll to them. */
-.rail, .agents, .work, .mail, .spend, .social { flex: none; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+/* Improve (`.tracker`) is the same defect a third time, and the one that shipped:
+   it was never in this list, so the Proposals board stayed a block, took its
+   whole content height, and `#tracker-view`'s scroll (css/tracker.css) had no box
+   to engage against. Stacked in a dock column its board overflowed its cell
+   UNCLIPPED and painted down over the panel beneath it -- the Email list and the
+   Improve board superimposed in one cell, reported after a hard refresh (the
+   restored layout is where a stacked column gives Improve a short slice). Social
+   was fixed here on 2026-08-28; Improve is the twin that was missed. */
+.rail, .agents, .work, .mail, .spend, .social, .tracker { flex: none; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
 /* The `gap: 6px` above falls between the head and the body and NOWHERE ELSE
    here, which is why this panel needs no correction for it: every other child
    of `.social` is an `.imp-view`, and `.imp-view[hidden]` is `display: none`,

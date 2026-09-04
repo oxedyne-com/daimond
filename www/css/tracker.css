@@ -9,8 +9,15 @@
  * lives one press away. */
 
 /* A query container, so the board inside can size to THIS panel's width rather
- * than the viewport's -- the Proposals dock is ~280px inside a wide window. */
-#tracker-view { padding: 8px 10px 12px; font-size: var(--fs-xs); color: var(--text-primary);
+ * than the viewport's -- the Proposals dock is ~280px inside a wide window.
+ *
+ * The flexible, scrolling child of the panel, now that `.tracker` is a flex
+ * column (css/app.css): the head stays put and the board scrolls WITHIN the
+ * panel. Without this the view took its whole content height and the board
+ * overflowed the dock cell over the panel stacked beneath it. `min-height: 0`
+ * lets it shrink below its content so `overflow-y` has something to do. */
+#tracker-view { flex: 1 1 auto; min-height: 0; overflow-y: auto;
+	padding: 8px 10px 12px; font-size: var(--fs-xs); color: var(--text-primary);
 	container-type: inline-size; container-name: tracker; }
 
 /* ── Head ─────────────────────────────────────────────────────────────── */
