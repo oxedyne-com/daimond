@@ -27,7 +27,10 @@
    `/api/improve` route, which forwards over loopback to the forge
    and translates a Daimond voice header (`x-daimond-voice`) into
    the forge's own (`x-ore-voice`). READING NEEDS NO VOICE — the
-   repository is public — so a read is a bare same-origin GET.
+   repository is public — so a read is an unvoiced same-origin GET,
+   though it still rides the gateway's metered, session-gated door
+   like every call here, and so renews a lapsed session through
+   `gwFetch` rather than surfacing its 401.
    `request()` below is the single place that path is decided.
 
    VOTES ARE DARK. The replicated log does not attribute a vote, so
@@ -279,9 +282,11 @@
 	// decided. It mirrors improve.js: the account and repository ride in the
 	// QUERY on the same-origin `/api/improve` route; a READ carries no voice — the
 	// repository is public; a settle carries the admin voice in `x-daimond-voice`,
-	// which the gateway translates to the forge's `x-ore-voice`. A voiced write
-	// goes through `DaimondGateway.gwFetch` — the one copy of the session rule —
-	// when the gateway module is present; a plain read is a bare `fetch`.
+	// which the gateway translates to the forge's `x-ore-voice`. Voiced or not,
+	// every request goes through `DaimondGateway.gwFetch` — the one copy of the
+	// session rule — when the gateway module is present, because the gateway meters
+	// (and so session-gates) a read as much as a write; only a build without that
+	// module falls back to a bare `fetch`.
 
 	/// The route, with the repository this view reads. Built here and nowhere
 	/// else, and the voice is never in it: a query string is written into every
@@ -300,14 +305,22 @@
 		var o = Object.assign({}, opts || {});
 		o.headers = Object.assign({}, (opts && opts.headers) || {});
 		var g = window.DaimondGateway;
-		var useGw = false;
-		if (voiceSecret) {
-			o.headers['x-daimond-voice'] = voiceSecret;
-			if (g && g.gwFetch) {
-				useGw = true;
-				o.headers['x-daimond-api'] = String(g.clientApi ? g.clientApi() : '');
-				o.credentials = 'same-origin';
-			}
+		if (voiceSecret) o.headers['x-daimond-voice'] = voiceSecret;
+		// THROUGH gwFetch WHETHER OR NOT THIS CARRIES A VOICE. The forge reads a
+		// public repository with no voice, but the gateway in front of it does not
+		// wave a read through: every `/api/improve` request is metered per account,
+		// so its handler takes the session FIRST and answers 401 on a lapsed one --
+		// a read exactly as a write. gwFetch is the one place that 401 self-heals,
+		// renewing once from the device key still in the page and retrying; a bare
+		// read `fetch` cannot, which is why an hour-old session surfaced the
+		// gateway's 401 as "not signed in" with nothing to renew it. A read still
+		// carries no voice; only the session cookie and the api header ride with it,
+		// the same pair every other read in this app sends. Bare `fetch` remains the
+		// fallback for a build with no gateway module (a verifier's stand-in).
+		var useGw = !!(g && g.gwFetch);
+		if (useGw) {
+			o.headers['x-daimond-api'] = String(g.clientApi ? g.clientApi() : '');
+			o.credentials = 'same-origin';
 		}
 		var r;
 		try {

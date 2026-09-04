@@ -1,1 +1,1 @@
-{"build":"f81d856f93a9","note":"Dispatch every turn to the nominated always-on runner; await presence when the nominee looks stale"}
+{"build":"69533bb87b41","note":"Improve reads self-heal a lapsed session via gwFetch instead of a stuck not-signed-in"}
