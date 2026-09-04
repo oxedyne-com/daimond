@@ -31,10 +31,31 @@
 #
 #   bash dev/repro-check.sh          # ~8 minutes, mostly cold dependency builds
 #   SKIP_HAND=1 bash dev/repro-check.sh
+#   bash dev/repro-check.sh --static-only   # the www-only FAST path (no wasm rebuild)
+#
+# `--static-only` is for `deploy.sh`'s www-only fast path. The wasm is UNCHANGED
+# and was reproduced by an outsider when it first shipped -- deploy.sh's
+# discriminator has re-proven the inputs are still byte-identical -- so this does
+# NOT recompile it. It clones the committed mirror, drops the reused pkg (the exact
+# bytes deploy.sh already verified against the seal) into the clone, and runs
+# `verify/check.mjs` with no build. Every covered file is then verified either as a
+# previously-reproduced wasm byte or as a static byte, against the release's own
+# sealed manifest and chain. The hand is source-checked but not rebuilt (a www-only
+# release does not touch it). It proves the new bundle matches its seal; it does
+# NOT re-prove the wasm is outsider-reproducible, because that was proven when the
+# wasm first shipped and nothing about it has changed.
 #
 # Slow and disk-hungry by nature, so it is not part of `run_all.sh`. Run it at
 # release, which is the only time its answer can change.
 set -e
+
+STATIC_ONLY=0
+case "${1:-}" in
+	--static-only) STATIC_ONLY=1 ;;
+	'') ;;
+	*) echo "repro-check: unknown argument '$1'" >&2; exit 2 ;;
+esac
+
 cd "$(dirname "$0")/.."
 DEV=$(pwd -P)
 MIRROR=${MIRROR:-$DEV/../daimond-oss}
@@ -84,15 +105,26 @@ if [ "$HERE_BUILD" != "$CLONE_BUILD" ]; then
 	exit 1
 fi
 echo "   both manifests name build $HERE_BUILD"
-echo "── building as an outsider would"
-rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
-bash dev/build-wasm.sh >"$WORK/build.log" 2>&1 || {
-	echo "FAILED — the public mirror does not build. Last lines:"
-	tail -20 "$WORK/build.log"
-	exit 1
-}
+if [ "$STATIC_ONLY" = 1 ]; then
+	# The www-only fast path: reuse the wasm rather than rebuild it. The clone is a
+	# fresh checkout of the committed mirror, so it carries the new static www and
+	# manifest but not www/pkg (gitignored). Drop in the reused pkg -- the exact
+	# bytes deploy.sh already verified against the recorded provenance AND the sealed
+	# manifest -- so check.mjs sees the whole covered surface.
+	echo "── static-only: reusing the wasm (no rebuild), dropping in the reused pkg"
+	mkdir -p www/pkg
+	cp -a "$DEV/www/pkg/." www/pkg/
+else
+	echo "── building as an outsider would"
+	rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
+	bash dev/build-wasm.sh >"$WORK/build.log" 2>&1 || {
+		echo "FAILED — the public mirror does not build. Last lines:"
+		tail -20 "$WORK/build.log"
+		exit 1
+	}
+fi
 
-echo "── comparing the rebuild against the sealed manifest"
+echo "── comparing the bundle against the sealed manifest and chain"
 node verify/check.mjs --dir www
 
 if [ "${SKIP_HAND:-0}" = "1" ]; then
@@ -108,6 +140,13 @@ fi
 # that actually builds.
 echo "── the machine hand: is this the sealed source"
 node verify/check.mjs --hand hand
+
+if [ "$STATIC_ONLY" = 1 ]; then
+	# A www-only release does not touch the hand, so its source seal is checked
+	# above but its (expensive, non-byte-compared) native build is not repeated.
+	echo "── the machine hand: build skipped (static-only; hand source unchanged)"
+	exit 0
+fi
 
 echo "── the machine hand: does the published source build"
 # `--manifest-path`, never `-p`: the hand is its own cargo workspace. And a

@@ -12350,7 +12350,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chatOutput.appendChild(wrap);
 	}
 
+	// The chat whose transcript is currently drawn in the thread, so a re-render can
+	// tell opening a NEW chat (land at the bottom) from redrawing the OPEN one (hold
+	// the reader's place). See renderHistory.
+	var _renderedChatId = null;
+
 	function renderHistory(messages) {
+		// KEEP THE READER'S PLACE across a re-render they did not ask for.
+		//
+		// renderHistory runs when a chat is opened, and also whenever the chats store
+		// changes under the one already open -- a sync parcel arriving
+		// (onChatsChangedElsewhere), another tab writing, a dispatch report landing, a
+		// trashed chat restored. Rebuilding the thread resets the scroll (clearChat
+		// empties it) and pins each turn to the bottom as it is drawn
+		// (appendUserMessage), so before this every such change hauled a reader who had
+		// scrolled up back down to the newest message on its own -- the transcript
+		// "jumping around" when focus returned to the tab and a sync pull fired.
+		//
+		// Opening a DIFFERENT chat still lands at the bottom, where the conversation
+		// is. Redrawing the SAME chat holds the reader exactly where they were, unless
+		// they were already at the live end, in which case they stay pinned to it so a
+		// turn added elsewhere comes into view. Both readings are taken BEFORE the
+		// rebuild, while the old scroll state is still on screen.
+		var sameChat = current && current.id && current.id === _renderedChatId;
+		var wasDown  = nearBottom();
+		var keepTop  = chatOutput.scrollTop;
 		clearChat();
 		// Before a single fold is drawn: which of them this chat's reader had open.
 		loadTextFolds();
@@ -12408,6 +12432,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// conversation's commands have the network. Two chats side by side differ, and
 		// the mark is on a button that does not otherwise redraw.
 		if (window.DaimondHandMode && DaimondHandMode.refresh) DaimondHandMode.refresh();
+		// Put the reader back where the head of this function measured them: at the
+		// live end when they were already there or when this is a freshly opened chat,
+		// otherwise exactly where they had scrolled to. The per-turn pin above is what
+		// this overrides -- it fired for every user message the replay drew.
+		if (!sameChat || wasDown) chatOutput.scrollTop = chatOutput.scrollHeight;
+		else                      chatOutput.scrollTop = keepTop;
+		_renderedChatId = current && current.id ? current.id : null;
 	}
 
 	/// Badge a recovered assistant message as interrupted, with a Continue button that runs the
