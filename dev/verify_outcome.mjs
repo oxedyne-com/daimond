@@ -265,15 +265,20 @@ const arm = (plan) => p.evaluate((plan) => {
 /// Every tool block on screen, in order, as the reader sees it.
 const blocks = () => p.evaluate(() => [...document.querySelectorAll('#chat-output .tool-block')]
 	.map((b) => {
-		const tag = b.querySelector('.tool-outcome');
+		const meta = b.querySelector('.ctile-meta');
 		const res = b.querySelector('.tool-result');
+		const dot = b.querySelector('.ctile-dot');
+		// The outcome is NAMED after the tool in the label bar ("file_read \u00b7 failed"),
+		// and COLOURED by the tile's edge (the dot's resolved background), which is warn
+		// for a refusal and danger for a break -- two different colours, not amber-on-red.
+		const mt = meta ? String(meta.textContent || '') : '';
+		const word = mt.includes('\u00b7') ? mt.split('\u00b7').pop().trim() : '';
 		return {
 			cls:     b.className,
 			failed:  b.classList.contains('failed'),
 			refused: b.classList.contains('refused'),
-			word:    tag ? tag.textContent.trim() : '',
-			colour:  tag ? tag.style.color : '',
-			border:  b.style.borderColor || '',
+			word:    word,
+			dot:     dot ? getComputedStyle(dot).backgroundColor : '',
 			text:    res ? res.textContent.slice(0, 120) : '',
 		};
 	}));
@@ -354,13 +359,13 @@ try {
 	check(a.length === 3 && a[1].refused && !a[1].failed,
 		'A REFUSAL IS SHOWN AS A REFUSAL — its own state, not the red of a broken tool',
 		a.length === 3 ? `classes ${JSON.stringify(a[1].cls)}` : 'the fixture did not run');
-	check(a.length === 3 && /refused/i.test(a[1].word) && /warn/.test(a[1].border),
+	check(a.length === 3 && /refused/i.test(a[1].word) && a[1].refused && a[1].dot !== a[2].dot,
 		'and it is NAMED as well as coloured, so it does not rest on amber against red',
-		a.length === 3 ? `word ${JSON.stringify(a[1].word)}, border ${JSON.stringify(a[1].border)}` : '');
+		a.length === 3 ? `word ${JSON.stringify(a[1].word)}, dot ${JSON.stringify(a[1].dot)} vs ${JSON.stringify(a[2].dot)}` : '');
 	check(a.length === 3 && a[2].failed && !a[2].refused && /failed/i.test(a[2].word),
 		'while a real failure keeps the failure state, so the two are told apart',
 		a.length === 3 ? `classes ${JSON.stringify(a[2].cls)}, word ${JSON.stringify(a[2].word)}` : '');
-	check(a.length === 3 && !a[0].failed && !a[0].refused && a[0].word === '',
+	check(a.length === 3 && !a[0].failed && !a[0].refused && a[0].word === 'ok',
 		'and a call that completed is left alone',
 		a.length === 3 ? `classes ${JSON.stringify(a[0].cls)}` : '');
 	// The refusal's own sentence, unmangled. `friendlyError` collapses paragraphs and

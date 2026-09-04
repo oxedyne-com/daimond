@@ -620,11 +620,11 @@ try {
 		// element type and would answer about whatever div happens to be last.
 		const last = () => [...document.querySelectorAll('.tool-block')].pop();
 		out.blocks   = document.querySelectorAll('.tool-block').length;
-		let line = last() ? last().querySelector('.tool-nonet') : null;
+		let line = last() ? last().querySelector('.ctile-nonet') : null;
 		out.withNote = line ? (line.textContent || '').trim() : '';
 		out.shown    = !!(line && line.getClientRects().length);
 		DaimondCore.drawToolResult('run', 'Compiling daimond v0.1.0\n[exit code: 0]', 'done');
-		line = last() ? last().querySelector('.tool-nonet') : null;
+		line = last() ? last().querySelector('.ctile-nonet') : null;
 		out.without = line ? (line.textContent || '').trim() : '';
 		out.sentence = window.DaimondI18n ? DaimondI18n.t('chat.tool_no_net') : '';
 		return out;

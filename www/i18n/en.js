@@ -432,8 +432,30 @@
 	// ── A chat tile in the rail ────────────────────────────────
 	'chat.tool_refused':   'refused',
 	'chat.tool_failed':    'failed',
+	'chat.tool_ok':        'ok',
 	'chat.copy_message':   'Copy message',
 	'chat.include_turn':   'Include this turn when folding',
+
+	// ── The chat transcript tiles ──────────────────────────────
+	// One collapsible tile per unit of a turn: who spoke, and — for a run of the
+	// same kind — how many rolled up together. See www/js/daimond.js buildTile.
+	'chat.who_you':        'You',
+	'chat.who_daimond':    'Daimond',
+	'chat.who_tool':       'Tool',
+	'chat.who_tools':      'Tools',
+	'chat.who_system':     'System',
+	'chat.tool_sent':      'Sent',
+	'chat.tool_result':    'Result',
+	'chat.copy_selected':  'Copy selected',
+	'chat.copy_none':      'Nothing selected',
+	'chat.roll_thinking.one':   'thinking step',
+	'chat.roll_thinking.other': 'thinking steps',
+	'chat.roll_tools.one':      'tool call',
+	'chat.roll_tools.other':    'tool calls',
+	'chat.roll_system.one':     'part',
+	'chat.roll_system.other':   'parts',
+	'chat.selected_n.one':      '{n} selected',
+	'chat.selected_n.other':    '{n} selected',
 	'chat.connect_to_chat': 'Connect a provider, or unlock, to chat on this model.',
 	'tile.cost_estimated': 'Estimated. This model is not in the price table.',
 	'tile.cost_so_far':    'Cost so far for this chat.',

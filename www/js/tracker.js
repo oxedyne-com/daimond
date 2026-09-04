@@ -595,16 +595,19 @@
 	// ── Settling (admin voice only) ────────────────────────────
 
 	// FOUR TOKENS AND NO MORE: state is open, accepted, declined or done. There is
-	// no "reopen" token — a Reopen sends `state=open`. Accept and decline now carry
-	// a REQUIRED one-line `reason` beside the state — folded into the accept and
-	// posted back to the proposer on a decline; done and reopen carry state alone.
+	// no "reopen" token — a Reopen sends `state=open`. Accept and decline MAY carry
+	// a one-line `reason` beside the state — folded into the accept and posted back
+	// to the proposer on a decline; done and reopen carry state alone.
 	var DECISIONS = { accept: 'accepted', decline: 'declined', done: 'done', reopen: 'open' };
 
-	// Which decisions need a reason before they can be sent, and the longest a
-	// reason may be. The forge rejects a longer one as "too long"; the input is
-	// capped here as well so a person is stopped before the round trip.
-	var NEEDS_REASON = { accept: 1, decline: 1 };
-	var REASON_LIMIT = 1000;
+	// Which decisions may carry a reason, and the longest one may be. The reason is
+	// OPTIONAL: an empty one settles just the same, and is simply not sent. The forge
+	// rejects a longer one as "too long", so the input is capped here as well. A
+	// self-authored proposal (raised from this device — see `isSelf`) skips the reason
+	// step entirely and settles at a single press, the owner's own dev proposals being
+	// the friction this exists to remove.
+	var CARRIES_REASON = { accept: 1, decline: 1 };
+	var REASON_LIMIT   = 1000;
 
 	// The card whose accept/decline reason box is open: `{ n, which }`, or null.
 	// One at a time, so a second press replaces the first rather than stacking.
@@ -613,24 +616,23 @@
 
 	/// Post the decide field for proposal `n` under the admin voice. `which` is
 	/// one of accept, decline, done, reopen — the last of which sends `state=open`.
-	/// `reason` is the required one-line note for accept and decline, and is
-	/// ignored (and never sent) for done and reopen.
+	/// `reason` is the OPTIONAL one-line note for accept and decline, sent only when
+	/// non-empty, and ignored (never sent) for done and reopen.
 	async function settle(n, which, reason) {
 		if (!canSettle()) return false;
 		var state = DECISIONS[which];
 		if (!state) return false;
-		// A required reason that arrived empty is refused here rather than sent: the
-		// forge would reject it, but a person is told at the press instead.
-		var need = !!NEEDS_REASON[which];
+		// The reason is optional: an empty one settles just the same and is simply
+		// not sent, so a self-authored proposal (and anyone who declines the note)
+		// is one press from settled.
 		var note = String(reason == null ? '' : reason).trim();
-		if (need && !note) { flash(tOr('tracker.reason_empty', 'Give a one-line reason first.')); return false; }
 		var secret;
 		try { secret = await adminSecret(); }
 		catch (e) { _st.err = { why: 'gateway' }; flash(String((e && e.message) || e)); return false; }
 		if (!secret) { flash(tOr('tracker.admin_need', 'Add your settle voice first.')); return false; }
 		var f = new URLSearchParams();
 		f.set('state', state);
-		if (need) f.set('reason', note);
+		if (CARRIES_REASON[which] && note) f.set('reason', note);
 		var a = await request(route('n=' + n), {
 			method:  'POST',
 			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -645,13 +647,13 @@
 		return true;
 	}
 
-	/// Read the reason box for card `n` and settle, or refuse an empty one. THE ONE
-	/// PLACE the required reason is enforced on this side; `settle` guards it again
-	/// so a caller that reaches it directly cannot skip the rule.
+	/// Read the reason box for card `n` and settle. The reason is optional: an empty
+	/// box settles just the same, carrying no note. The box is offered where a note
+	/// is worth having (a proposal moving between different people); it is never
+	/// drawn for a self-authored proposal, which settles at the press.
 	function confirmSettle(n, which) {
 		var inp = _host ? _host.querySelector('.trk-reason[data-prop="' + n + '"]') : null;
 		var reason = inp ? String(inp.value || '').trim() : '';
-		if (!reason) { flash(tOr('tracker.reason_empty', 'Give a one-line reason first.')); return false; }
 		return settle(n, which, reason);
 	}
 
@@ -881,6 +883,18 @@
 		return null;
 	}
 
+	/// Was proposal `p` raised from THIS device — the owner's own dev proposal? The
+	/// local voice has no name (see the All/Mine note above), so "self" is matched by
+	/// number against the same raised set the Mine filter reads, never by author. A
+	/// self proposal settles at a single press: no reason step. When there is no
+	/// capture surface the answer is "not self", so the reason box is still offered
+	/// (optionally) rather than a self-skip fired on a device that raised nothing.
+	function isSelf(p) {
+		if (!p) return false;
+		var mine = raisedSet();
+		return !!(mine && mine[whole(p.n)]);
+	}
+
 	function drawBoard() {
 		// In Mine, keep only the numbers this device raised. `mine` null means the
 		// capture surface is absent -- which shows NOTHING here, not everything: Mine
@@ -1014,43 +1028,49 @@
 	function drawSettle(p, state) {
 		if (!canSettle()) return null;
 		var acts = el('div', 'trk-settle');
-		// Accept and decline ask for their one-line reason in place of the buttons;
-		// the confirm refuses an empty one. done and reopen settle at a press.
+		// A self-authored proposal (raised from this device) settles at a press with no
+		// reason step. Anything moving between different people offers a reason box in
+		// place of the accept/decline buttons — optional now, so an empty confirm still
+		// settles. done and reopen always settle at a press.
+		var self = isSelf(p);
 		if (_settleAsk && _settleAsk.n === p.n) {
 			acts.appendChild(drawReason(p, _settleAsk.which));
 			return acts;
 		}
 		if (state === 'open') {
-			acts.appendChild(settleBtn('accept',  p.n, tOr('tracker.accept', 'Accept')));
-			acts.appendChild(settleBtn('decline', p.n, tOr('tracker.decline', 'Decline')));
-			acts.appendChild(settleBtn('done',    p.n, tOr('tracker.done', 'Mark done')));
+			acts.appendChild(settleBtn('accept',  p.n, tOr('tracker.accept', 'Accept'), self));
+			acts.appendChild(settleBtn('decline', p.n, tOr('tracker.decline', 'Decline'), self));
+			acts.appendChild(settleBtn('done',    p.n, tOr('tracker.done', 'Mark done'), self));
 		} else if (state === 'accepted') {
-			acts.appendChild(settleBtn('done',   p.n, tOr('tracker.done', 'Mark done')));
-			acts.appendChild(settleBtn('reopen', p.n, tOr('tracker.reopen', 'Reopen')));
+			acts.appendChild(settleBtn('done',   p.n, tOr('tracker.done', 'Mark done'), self));
+			acts.appendChild(settleBtn('reopen', p.n, tOr('tracker.reopen', 'Reopen'), self));
 		} else {
-			acts.appendChild(settleBtn('reopen', p.n, tOr('tracker.reopen', 'Reopen')));
+			acts.appendChild(settleBtn('reopen', p.n, tOr('tracker.reopen', 'Reopen'), self));
 		}
 		return acts;
 	}
 
-	/// One settle button. A decision that needs a reason opens the reason box
-	/// rather than settling; one that does not settles at the press.
-	function settleBtn(which, n, text) {
-		var b = button('trk-settle-btn', NEEDS_REASON[which] ? 'tracker-settle-ask' : 'tracker-settle', text);
+	/// One settle button. A decision that may carry a reason opens the reason box
+	/// rather than settling — UNLESS the proposal is self-authored, which settles at
+	/// the press with no reason step. done and reopen always settle at the press.
+	function settleBtn(which, n, text, self) {
+		var ask = CARRIES_REASON[which] && !self;
+		var b   = button('trk-settle-btn', ask ? 'tracker-settle-ask' : 'tracker-settle', text);
 		b.dataset.which = which;
 		b.dataset.prop  = n;
 		return b;
 	}
 
-	/// The required one-line reason for an accept or a decline, shown in place of
-	/// the settle buttons: a box, the decision as its confirm, and Cancel. Empty
-	/// is refused at the confirm (see `confirmSettle`).
+	/// The optional one-line reason for an accept or a decline, shown in place of the
+	/// settle buttons: a box, the decision as its confirm, and Cancel. Empty settles
+	/// just the same (see `confirmSettle`); the box is a courtesy where a note is worth
+	/// having, never drawn for a self-authored proposal.
 	function drawReason(p, which) {
 		var box = el('div', 'trk-reason-box');
 		box.dataset.which = which;
 		var lab = (which === 'accept')
-			? tOr('tracker.reason_accept', 'Why accept it? Shown to the proposer.')
-			: tOr('tracker.reason_decline', 'Why decline it? Sent back to the proposer.');
+			? tOr('tracker.reason_accept', 'Why accept it? Optional, shown to the proposer.')
+			: tOr('tracker.reason_decline', 'Why decline it? Optional, sent back to the proposer.');
 		var inp = document.createElement('input');
 		inp.type        = 'text';
 		inp.className   = 'trk-reason';

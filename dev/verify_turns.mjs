@@ -102,45 +102,45 @@ const collapsed = await p.evaluate(() => {
 	document.getElementById('collapse-btn').click();
 	const users = [...out.querySelectorAll('.chat-msg-user')];
 	const asst  = [...out.querySelectorAll('.chat-msg-assistant')];
-	const tick  = out.querySelector('.turn-pick');
+	const chk   = out.querySelector('.ctile-chk');
 	return {
-		allClosed:  users.every(u => u.classList.contains('collapsed')),
-		asstHidden: asst.every(a => a.style.display === 'none'),
 		questionsStillThere: users.every(u => u.offsetParent !== null),
+		answersStillThere:   asst.every(a => a.offsetParent !== null),
 		latched:  document.getElementById('collapse-btn').classList.contains('on'),
 		toolsUp:  document.getElementById('select-tools').style.display !== 'none',
-		ticksUp:  !!tick && getComputedStyle(tick).display !== 'none',
+		ticksUp:  !!chk && getComputedStyle(chk).display !== 'none',
 	};
 });
-check('the − collapses every answer', collapsed.allClosed && collapsed.asstHidden);
-check('leaving the questions, which are what you are choosing between',
-	collapsed.questionsStillThere);
-check('the button stays depressed, so the mode is visible', collapsed.latched);
-check('and select mode brings out its tools and its ticks',
-	collapsed.toolsUp && collapsed.ticksUp);
+// Select mode reveals a tick on every tile and the Select-all/Fold tools; it does
+// NOT hide the conversation — questions AND answers stay readable while you choose
+// (the tiles already fold Thinking/Tools/System away on their own).
+check('the − latches select mode, bringing out its tools and a tick on every tile',
+	collapsed.latched && collapsed.toolsUp && collapsed.ticksUp);
+check('and it leaves the conversation in place — questions and answers both stay readable',
+	collapsed.questionsStillThere && collapsed.answersStillThere);
 
 const peek = await p.evaluate(() => {
 	const out = document.getElementById('chat-output');
 	const u = out.querySelector('.chat-msg-user[data-turn="1"]');
-	u.querySelector('.chat-msg-content').click();
-	const open = !u.classList.contains('collapsed');
-	u.querySelector('.chat-msg-content').click();
-	return open;
+	u.querySelector('.chat-msg-content').click();        // in select mode: ticks it
+	const ticked = u.classList.contains('sel');
+	u.querySelector('.chat-msg-content').click();        // and unticks it
+	return ticked && !u.classList.contains('sel');
 });
-check('and a question can still be opened while choosing', peek === true);
+check('a question can be ticked and unticked while choosing', peek === true);
 
 // ── Select all / Deselect all ──────────────────────────────────────────
 
 const picks = await p.evaluate(() => {
 	const out = document.getElementById('chat-output');
-	const boxes = () => [...out.querySelectorAll('.turn-pick input')];
+	const units = () => [...out.querySelectorAll('.csel-unit')];
 	document.getElementById('sel-all').click();
-	const all = boxes().filter(b => b.checked).length;
+	const all = units().filter(b => b.classList.contains('sel')).length;
 	document.getElementById('sel-none').click();
-	const none = boxes().filter(b => b.checked).length;
-	return { all, none, total: boxes().length };
+	const none = units().filter(b => b.classList.contains('sel')).length;
+	return { all, none, total: units().length };
 });
-check('Select all ticks every turn', picks.all === picks.total && picks.total === 4, `${picks.all}/${picks.total}`);
+check('Select all ticks every tile', picks.all === picks.total && picks.total > 0, `${picks.all}/${picks.total}`);
 check('Deselect all clears them', picks.none === 0);
 
 // Folding nothing is refused, rather than silently paying a reducer to fold an empty delta.
@@ -229,9 +229,8 @@ const menuHead = await p.evaluate(async () => {
 	const out = document.getElementById('chat-output');
 	document.getElementById('collapse-btn').click();     // into select mode
 	await new Promise(r => setTimeout(r, 300));
-	const box = out.querySelector('.chat-msg-user[data-turn="2"] .turn-pick input');
-	box.checked = true;
-	box.dispatchEvent(new Event('click', { bubbles: true }));
+	// Tick turn 2 by clicking its tile while choosing (the label bar selects in select mode).
+	out.querySelector('.chat-msg-user[data-turn="2"] .ctile-lbl').click();
 	document.getElementById('sel-fold').click();
 	await new Promise(r => setTimeout(r, 500));
 	const h = document.querySelector('.fold-menu-head');

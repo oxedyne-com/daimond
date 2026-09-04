@@ -7419,26 +7419,36 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (head) head.classList.toggle('selecting', on);
 		if (collapseBtn) collapseBtn.classList.toggle('on', on);
 		if (selectTools) selectTools.style.display = on ? '' : 'none';
-		setAllTurnsOpen(!on);
+		// FOLD SELECTED IS FOR AN ORDINARY CHAT ONLY. A daimon folds itself before
+		// every round and its engine holds no messages a hand fold could cut, so the
+		// control is hidden on a Diamond's chat — the same reason the surface Fold
+		// button is (see index.html).
+		var sf = document.getElementById('sel-fold');
+		if (sf) sf.style.display = (on && current && current.diamondId) ? 'none' : '';
+		// The whole-chat copy becomes a copy of what is selected while the mode is on.
+		var cb = document.getElementById('chat-copy-btn');
+		if (cb) cb.title = on ? tOr('chat.copy_selected', 'Copy selected')
+			: tOr('chat.copy_all_help', 'Copy the whole conversation to the clipboard');
 		if (!on) pickAll(false);
+		updateSelCount();
 	}
 
-	/// Tick or untick every question.
+	/// Select or clear every selectable unit — every tile and rollup.
 	function pickAll(on) {
-		var us = userDivs();
-		for (var i = 0; i < us.length; i++) {
-			var box = us[i].querySelector('.turn-pick input');
-			if (box) box.checked = on;
-			us[i].classList.toggle('picked', on);
-		}
+		var units = chatOutput.querySelectorAll('.csel-unit');
+		for (var i = 0; i < units.length; i++) units[i].classList.toggle('sel', on);
+		updateSelCount();
 	}
 
-	/// The turns the user has ticked, as turn numbers.
+	/// The turns folding should act on, read off whatever is selected. A tile or
+	/// rollup carries the number of the turn it belongs to; a selection of several
+	/// tiles in one turn folds that one turn once.
 	function pickedTurns() {
-		var out = [], us = userDivs();
-		for (var i = 0; i < us.length; i++) {
-			var box = us[i].querySelector('.turn-pick input');
-			if (box && box.checked) out.push(Number(us[i].dataset.turn));
+		var out = [], seen = {};
+		var units = chatOutput.querySelectorAll('.csel-unit.sel');
+		for (var i = 0; i < units.length; i++) {
+			var n = Number(units[i].dataset.turn);
+			if (!isNaN(n) && !seen[n]) { seen[n] = 1; out.push(n); }
 		}
 		return out;
 	}
@@ -7467,37 +7477,212 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_jumpAt = -1;
 	}
 
-	function appendUserMessage(text) {
-		var div = document.createElement('div');
-		div.className = 'chat-msg chat-msg-user';
-		div.innerHTML = '<div class="chat-msg-content"></div>';
-		div.querySelector('.chat-msg-content').textContent = text; // escaped
-		_turn += 1;
-		tagTurn(div);
+	// ── The chat tile ──────────────────────────────────────────
+	//
+	// One uniform, collapsible tile per unit of a turn, so the transcript reads as
+	// one system rather than five bespoke bubbles. A coloured label bar is the
+	// collapse control; the type colours it from the app's own semantic tokens
+	// (see css/app.css, .ctile). Direction of travel sets a small indent — what is
+	// SENT to the model (You, System) sits right, what comes FROM it (Thinking,
+	// Daimond) sits left, and a Tool, which runs locally, is centred.
+	//
+	// Every render path in this file builds its content into one of these, so the
+	// streaming turn and a reload draw the identical shape.
+	var TILE_DIR  = { user: 'to', wire: 'to', think: 'from', reply: 'from', tool: 'local' };
+	var TILE_ROLL = { think: 1, tool: 1, wire: 1 };   // consecutive runs of these roll up
 
-		// The box is the switch for the answers below it. Its TEXT is still ordinary text you can
-		// select -- so a click that ends a selection is a click that was selecting, not one that
-		// meant to fold the answer away, and it is left alone.
-		div.addEventListener('click', function (e) {
-			if (e.target.closest('.msg-copy') || e.target.closest('.turn-pick')) return;
+	/// The speaker word for a tile type, translated where a key exists.
+	function tileWho(type) {
+		switch (type) {
+			case 'user':  return tOr('chat.who_you', 'You');
+			case 'think': return tOr('chat.thinking', 'Thinking');
+			case 'reply': return tOr('chat.who_daimond', 'Daimond');
+			case 'tool':  return tOr('chat.who_tool', 'Tool');
+			case 'wire':  return tOr('chat.who_system', 'System');
+		}
+		return '';
+	}
+
+	/// One tile shell: the label bar (dot · speaker · meta · peek · copy/checkbox)
+	/// over a body. `opts.expanded` opens it; `opts.copy` is the text (or a
+	/// function returning it) the header copy button puts on the clipboard.
+	function buildTile(type, opts) {
+		opts = opts || {};
+		var tile = document.createElement('div');
+		tile.className = 'ctile csel-unit' + (opts.expanded ? '' : ' collapsed');
+		tile.dataset.t = type;
+		tile.dataset.dir = TILE_DIR[type] || 'from';
+		var lbl = document.createElement('div');
+		lbl.className = 'ctile-lbl';
+		var dot = document.createElement('span'); dot.className = 'ctile-dot';
+		var who = document.createElement('span'); who.className = 'ctile-who';
+		who.textContent = opts.who != null ? opts.who : tileWho(type);
+		var meta = document.createElement('span'); meta.className = 'ctile-meta';
+		if (opts.meta) meta.textContent = opts.meta;
+		var grow = document.createElement('span'); grow.className = 'ctile-grow';
+		var peek = document.createElement('span'); peek.className = 'ctile-peek';
+		var ctl  = document.createElement('span'); ctl.className = 'ctile-ctl';
+		var copy = document.createElement('button');
+		copy.type = 'button'; copy.className = 'ctile-copy'; copy.innerHTML = COPY_SVG;
+		copy.title = t('common.copy'); copy.setAttribute('aria-label', t('chat.copy_message'));
+		var chk = document.createElement('span'); chk.className = 'ctile-chk';
+		ctl.appendChild(copy); ctl.appendChild(chk);
+		lbl.appendChild(dot); lbl.appendChild(who); lbl.appendChild(meta);
+		lbl.appendChild(grow); lbl.appendChild(peek); lbl.appendChild(ctl);
+		var body = document.createElement('div'); body.className = 'ctile-body';
+		tile.appendChild(lbl); tile.appendChild(body);
+		tile._lbl = lbl; tile._body = body; tile._peek = peek; tile._meta = meta; tile._who = who;
+		lbl.addEventListener('click', function (e) {
+			if (e.target.closest('.ctile-copy')) return;
+			if (chatOutput.classList.contains('selecting')) { toggleSelUnit(tile); return; }
+			var sel = window.getSelection();
+			if (sel && String(sel).length) return;
+			if (type === 'user') { setTurnOpen(tile, !isTurnOpen(tile)); }
+			else {
+				// A reader who works a live thinking tile owns it from then on, so
+				// `postToChat` stops folding it away under them.
+				if (type === 'think') tile._held = true;
+				tile.classList.toggle('collapsed');
+			}
+		});
+		copy.addEventListener('click', function (e) {
+			e.stopPropagation();
+			var src = tile._copyText ? tile._copyText()
+				: (typeof opts.copy === 'function' ? opts.copy() : opts.copy);
+			if (src == null) src = body.innerText || '';
+			copyToClipboard(String(src)).then(function () {
+				copy.innerHTML = TICK_SVG; copy.classList.add('done');
+				setTimeout(function () { copy.innerHTML = COPY_SVG; copy.classList.remove('done'); }, 1200);
+			}, function () {});
+		});
+		return tile;
+	}
+
+	/// Set the one-line peek a collapsed tile shows.
+	function tilePeek(tile, text) {
+		if (tile && tile._peek) tile._peek.textContent = String(text == null ? '' : text).replace(/\s+/g, ' ').trim().slice(0, 140);
+	}
+
+	// ── Rollups ────────────────────────────────────────────────
+	//
+	// A run of consecutive same-type tiles (Thinking, Tools, System) collapses into
+	// one container with a count badge; a run of one stands as an ordinary tile.
+	// Accreted at `postToChat`, the single door every render path goes through, so
+	// the live turn and a reload group identically. `_roll` is the container the
+	// current run is growing, cleared the moment anything else reaches the thread.
+	var _roll = null;
+
+	function makeRollup(type, first) {
+		var box = document.createElement('div');
+		box.className = 'crollup csel-unit solo collapsed';
+		box.dataset.t = type;
+		box.dataset.dir = TILE_DIR[type] || 'from';
+		if (first.dataset.turn != null) box.dataset.turn = first.dataset.turn;
+		var lbl = document.createElement('div');
+		lbl.className = 'crollup-lbl';
+		var dot = document.createElement('span'); dot.className = 'ctile-dot';
+		var who = document.createElement('span'); who.className = 'ctile-who';
+		// The container reads plural — "Tools · 3" beside "Thinking" and "System" —
+		// while an individual tool tile stays "Tool".
+		who.textContent = type === 'tool' ? tOr('chat.who_tools', 'Tools') : tileWho(type);
+		var cnt = document.createElement('span'); cnt.className = 'crollup-count';
+		var noun = document.createElement('span'); noun.className = 'ctile-meta';
+		var grow = document.createElement('span'); grow.className = 'ctile-grow';
+		var peek = document.createElement('span'); peek.className = 'crollup-peek';
+		var ctl  = document.createElement('span'); ctl.className = 'ctile-ctl';
+		var copy = document.createElement('button');
+		copy.type = 'button'; copy.className = 'ctile-copy'; copy.innerHTML = COPY_SVG;
+		copy.title = t('common.copy');
+		var chk = document.createElement('span'); chk.className = 'ctile-chk';
+		ctl.appendChild(copy); ctl.appendChild(chk);
+		lbl.appendChild(dot); lbl.appendChild(who); lbl.appendChild(cnt); lbl.appendChild(noun);
+		lbl.appendChild(grow); lbl.appendChild(peek); lbl.appendChild(ctl);
+		var rbody = document.createElement('div'); rbody.className = 'crollup-body';
+		box.appendChild(lbl); box.appendChild(rbody);
+		box._body = rbody; box._count = cnt; box._noun = noun; box._peek = peek; box._type = type;
+		lbl.addEventListener('click', function (e) {
+			if (e.target.closest('.ctile-copy')) return;
+			if (chatOutput.classList.contains('selecting')) { toggleSelUnit(box); return; }
+			box.classList.toggle('collapsed');
+		});
+		copy.addEventListener('click', function (e) {
+			e.stopPropagation();
+			copyToClipboard(rbody.innerText || '').then(function () {
+				copy.innerHTML = TICK_SVG; copy.classList.add('done');
+				setTimeout(function () { copy.innerHTML = COPY_SVG; copy.classList.remove('done'); }, 1200);
+			}, function () {});
+		});
+		return box;
+	}
+
+	function rollNoun(type, n) {
+		if (type === 'think') return tn('chat.roll_thinking', n, { n: n });
+		if (type === 'tool')  return tn('chat.roll_tools', n, { n: n });
+		if (type === 'wire')  return tn('chat.roll_system', n, { n: n });
+		return '';
+	}
+
+	/// Re-read a rollup's child count and refresh its badge, noun and peek.
+	function rollUpdate(box) {
+		var kids = box._body.querySelectorAll(':scope > .ctile');
+		var n = kids.length;
+		// A nested tile is not its own selectable unit and takes no indent — the
+		// container gives it both.
+		for (var k = 0; k < n; k++) { kids[k].classList.remove('csel-unit'); kids[k].dataset.dir = ''; }
+		box.classList.toggle('solo', n < 2);
+		box._count.textContent = String(n);
+		box._count.style.display = n < 2 ? 'none' : '';
+		box._noun.textContent = n < 2 ? '' : rollNoun(box._type, n);
+		// The most telling one-liner per kind: a Tool's name-and-outcome, a System
+		// part's name, a thinking step's thought.
+		var pick = box._type === 'wire' ? '_who' : box._type === 'tool' ? '_meta' : '_peek';
+		var bits = [];
+		for (var i = 0; i < kids.length && bits.length < 3; i++) {
+			var el = kids[i][pick] || kids[i]._peek || kids[i]._meta || kids[i]._who;
+			var m = (el && el.textContent) || '';
+			bits.push(m.length > 24 ? m.slice(0, 24) + '…' : m);
+		}
+		box._peek.textContent = bits.join(' · ');
+	}
+
+	// ── Selection ──────────────────────────────────────────────
+	//
+	// A selectable unit is a top-level tile or a rollup (`.csel-unit`); a tile
+	// nested inside a rollup selects the rollup as a whole. Folding still works on
+	// TURNS, so `pickedTurns` reads the turn numbers off whatever is selected.
+	function toggleSelUnit(node) {
+		var unit = node.classList.contains('csel-unit') ? node : node.closest('.csel-unit');
+		if (!unit) return;
+		unit.classList.toggle('sel');
+		updateSelCount();
+	}
+	function updateSelCount() {
+		var el = document.getElementById('sel-count');
+		if (!el) return;
+		var n = chatOutput.querySelectorAll('.csel-unit.sel').length;
+		el.textContent = n ? tn('chat.selected_n', n, { n: n }) : '';
+	}
+
+	function appendUserMessage(text) {
+		var div = buildTile('user', { expanded: true, copy: text });
+		div.classList.add('chat-msg-user');           // kept for older hooks
+		var content = document.createElement('div');
+		content.className = 'chat-msg-content';
+		content.textContent = text;                    // escaped
+		div._body.appendChild(content);
+		// The question's own words are a fold switch too, the way they always were —
+		// click the question to hide its answers. Its TEXT is still selectable, so a
+		// click that ends a selection is one that was selecting, not one that meant to
+		// fold; and while choosing, a click ticks the turn rather than folding it.
+		content.addEventListener('click', function (e) {
+			if (chatOutput.classList.contains('selecting')) { toggleSelUnit(div); return; }
 			var sel = window.getSelection();
 			if (sel && String(sel).length) return;
 			setTurnOpen(div, !isTurnOpen(div));
 		});
-
-		// The tick that says "fold this one". It only means anything in select mode, so it is only
-		// there in select mode.
-		var pick = document.createElement('label');
-		pick.className = 'turn-pick';
-		pick.innerHTML = '<input type="checkbox">';
-		pick.title = t('chat.include_turn');
-		pick.querySelector('input').addEventListener('click', function (e) {
-			e.stopPropagation();                  // ticking a box is not a click on the box below it
-			div.classList.toggle('picked', e.target.checked);
-		});
-		div.appendChild(pick);
-
-		addMsgCopy(div, text);
+		_turn += 1;
+		tagTurn(div);
+		tilePeek(div, text);
 		postToChat(div);
 		chatOutput.scrollTop = chatOutput.scrollHeight;
 		// A new question is a new place to jump back to, so the walk starts again from the bottom.
@@ -7619,35 +7804,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// scrolls away under them.
 			var pinned = nearBottom();
 			liveThink._body.textContent += body;
+			tilePeek(liveThink, liveThink._body.textContent);
 			if (pinned) chatOutput.scrollTop = chatOutput.scrollHeight;
 			return;
 		}
 		if (!body.trim()) return;                // whitespace does not start a thought
 		finalizeAssistant();
-		var d = document.createElement('details');
-		d.className = 'md-fold chat-msg-thinking';
-		var sum = document.createElement('summary');
-		sum.textContent = tOr('chat.thinking', 'Thinking');
+		// A think tile — muted, from the model, collapsed by default; opened while
+		// live for the reason the note above records. The body is `textContent` and
+		// deliberately not parsed: this is the model talking to itself, and a stray
+		// backtick run through markdown would become layout.
+		var d = buildTile('think', { expanded: !!live });
+		d.classList.add('chat-msg-thinking');
 		var pre = document.createElement('div');
-		pre.className = 'chat-msg-content chat-thinking-body';
+		pre.className = 'chat-thinking-body';
 		pre.textContent = body;                  // escaped, and deliberately not parsed
-		d.appendChild(sum); d.appendChild(pre);
+		d._body.appendChild(pre);
+		d._pre = pre;
+		// `liveThink._body` is where a delta grows, so point it at the text node.
 		d._body = pre;
-		// OPEN WHILE IT IS THE ONLY THING HAPPENING, and shut the moment there is an
-		// answer for it to bury. The rule against showing working above a reply was
-		// written about a FINISHED turn, and it still holds there -- but a round that
-		// has not said anything yet has no answer to bury, and the alternative on a
-		// reasoning model is a blank spinner for a minute and a half. So this is the
-		// one window where the working is the only thing there is to show, and it is
-		// shown; `postToChat` folds it away as soon as anything else is drawn.
-		if (live) {
-			d.open = true;
-			// Except that a reader who works the disclosure themselves owns it from
-			// then on. Collapsing a tile somebody has just opened to read is the app
-			// taking a decision back off them.
-			sum.addEventListener('click', function () { d._held = true; });
-			liveThink = d;
-		}
+		tilePeek(d, body);
+		if (live) liveThink = d;
 		var wasDown = nearBottom();
 		tagTurn(d); postToChat(d);
 		if (wasDown) chatOutput.scrollTop = chatOutput.scrollHeight;
@@ -7892,20 +8069,59 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// says the reasoning is over, so the tile stops taking deltas and folds itself
 		// away. Unless the reader opened it, in which case it is theirs and it stays.
 		if (liveThink && node !== liveThink) {
-			if (!liveThink._held) liveThink.open = false;
+			if (!liveThink._held) liveThink.classList.add('collapsed');
 			liveThink = null;
+		}
+		// ROLL UP A RUN OF SAME-TYPE TILES. A rollable tile joins the container the
+		// current run is growing; anything else closes the run. See `_roll`.
+		var rollable = node.classList && node.classList.contains('ctile') && TILE_ROLL[node.dataset.t];
+		if (rollable) {
+			var type = node.dataset.t;
+			if (_roll && _roll.type === type && _roll.box.parentNode === chatOutput
+				&& isLastContent(_roll.box)) {
+				node.classList.remove('csel-unit');
+				node.dataset.dir = '';               // the container carries the indent
+				_roll.body.appendChild(node);
+				rollUpdate(_roll.box);
+				placeFurniture();
+				return;
+			}
+			var box = makeRollup(type, node);
+			node.classList.remove('csel-unit');
+			node.dataset.dir = '';
+			box._body.appendChild(node);
+			rollUpdate(box);
+			_roll = { type: type, box: box };
+			_roll.body = box._body;
+			node = box;
+		} else if (node !== spinnerEl) {
+			_roll = null;                            // a non-rollable tile closes the run
 		}
 		// What is waiting to be sent stays at the bottom, under what has happened.
 		var q = document.getElementById('chat-queued');
 		if (q) chatOutput.insertBefore(node, q);
 		else chatOutput.appendChild(node);
-		// And under everything, the turn indicator, which is up for as long as the
-		// turn is. Sinking it above each new tool block would leave the thread
-		// saying "running file_read" halfway up itself while the real work went on
-		// below. This is the one place every render path already goes through, so
-		// a path added later cannot forget -- which is the same reason the
-		// placeholder is removed here rather than at each call site.
-		if (spinnerEl && node !== spinnerEl && spinnerEl.parentNode === chatOutput) {
+		placeFurniture();
+	}
+
+	/// Is `node` the last piece of conversation in the thread — ignoring the queue
+	/// box and the turn indicator, which are always kept beneath it?
+	function isLastContent(node) {
+		var n = node.nextSibling;
+		while (n) {
+			if (n.nodeType === 1 && n !== spinnerEl && n.id !== 'chat-queued') return false;
+			n = n.nextSibling;
+		}
+		return true;
+	}
+
+	/// Keep the queue box and the turn indicator beneath everything said so far.
+	///
+	/// Sinking the indicator above each new tool tile would leave the thread saying
+	/// "running file_read" halfway up itself while the real work went on below.
+	function placeFurniture() {
+		var q = document.getElementById('chat-queued');
+		if (spinnerEl && spinnerEl.parentNode === chatOutput) {
 			if (q) chatOutput.insertBefore(spinnerEl, q);
 			else chatOutput.appendChild(spinnerEl);
 		}
@@ -8107,9 +8323,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 	function appendAssistantText(text) {
 		if (!curAsstDiv) {
-			curAsstDiv = document.createElement('div');
-			curAsstDiv.className = 'chat-msg chat-msg-assistant';
-			curAsstDiv.innerHTML = '<div class="chat-msg-content"></div>';
+			// The model's prose — the ANSWER — in a Daimond tile: accent-coloured,
+			// from the model (left indent), expanded. `drawAsst` streams into the
+			// `.chat-msg-content` inside its body exactly as it did into the bubble.
+			curAsstDiv = buildTile('reply', { expanded: true });
+			curAsstDiv.classList.add('chat-msg-assistant');
+			curAsstDiv._copyText = function () { return curAsstText; };
+			var content = document.createElement('div');
+			content.className = 'chat-msg-content';
+			curAsstDiv._body.appendChild(content);
 			tagTurn(curAsstDiv);
 			postToChat(curAsstDiv);
 			curAsstText = '';
@@ -8186,43 +8408,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (sp > 40) head = head.slice(0, sp);
 		}
 		var rest = text.slice(head.length).trim();
-		div.className = 'chat-msg-working';
-		div.innerHTML = '';
-		if (!rest) {
-			var line = document.createElement('div');
-			line.className = 'chat-working-line';
-			line.textContent = head;             // escaped: this is not an answer to parse
-			div.appendChild(line);
-			return;
-		}
-		var d = document.createElement('details');
-		d.className = 'md-fold chat-msg-thinking';
-		var sum = document.createElement('summary');
-		sum.textContent = head + ' ';
-		// HOW MUCH WENT BEHIND THE CONTROL, which is the whole of note 05's fix.
-		//
-		// The tester watched prose arrive, watched it be replaced by the final answer, and said
-		// he could not see what had been there before. Nothing was lost -- the words are in this
-		// element, and the whole run is stored as one assistant message, so a reload shows all
-		// of it -- but a grey first sentence where a paragraph had been reads as text that went
-		// away rather than as a control that opens on it. A count says there is something to
-		// open, in the register `say`'s own placeholder uses.
-		var more = document.createElement('span');
-		more.className = 'chat-working-more';
-		more.textContent = tOr('chat.working_more', '+{n} characters', { n: rest.length });
-		sum.appendChild(more);
-		var body = document.createElement('div');
-		body.className = 'chat-msg-content chat-thinking-body';
-		body.textContent = rest;
-		d.appendChild(sum); d.appendChild(body);
-		div.appendChild(d);
+		// The reply tile becomes a WORKING tile: same muted register as Thinking,
+		// because it is the same thing — the model narrating on its way to a tool —
+		// arriving by a different door. Collapsed, with the first sentence as the
+		// peek, so the run is behind a control that says there is something to open.
+		div.classList.remove('chat-msg-assistant');
+		div.classList.add('chat-msg-working');
+		div.dataset.t = 'think';
+		div.dataset.dir = 'from';
+		div._copyText = null;
+		if (div._who) div._who.textContent = tileWho('think');
+		div.classList.add('collapsed');
+		div._body.innerHTML = '';
+		var pre = document.createElement('div');
+		pre.className = 'chat-thinking-body';
+		pre.textContent = text;                  // escaped: this is not an answer to parse
+		div._body.appendChild(pre);
+		if (div._meta) div._meta.textContent = rest
+			? tOr('chat.working_more', '+{n} characters', { n: rest.length }) : '';
+		// The peek is the summary sentence itself (the head), whole — the CSS clips it
+		// with an ellipsis, but the full sentence stays in the node.
+		if (div._peek) div._peek.textContent = head;
 	}
 
 	function finalizeAssistant() {
 		if (curAsstDiv && curAsstText) {
 			var pinned = nearBottom();
 			drawAsst(true);
-			addMsgCopy(curAsstDiv, curAsstText);
+			// The tile's own header copy takes the answer (`_copyText`); no in-body button.
 			if (pinned) chatOutput.scrollTop = chatOutput.scrollHeight;
 		}
 		curAsstDiv = null; curAsstText = ''; _asstRenderPending = false;
@@ -8680,19 +8893,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Not `finalizeAssistant`: prose with a tool call after it is working, not an answer.
 		// See `demoteToWorking`.
 		demoteToWorking();
-		var block = document.createElement('div');
-		block.className = 'tool-block running collapsed';
-		var head = document.createElement('div');
-		head.className = 'tool-head';
-		head.textContent = '\u{1F527} ' + name;      // escaped via textContent
-		head.addEventListener('click', function () { block.classList.toggle('collapsed'); });
+		// A Tool tile — run locally, so centred (indented both sides), collapsed by
+		// default, expanding to Sent → Result. The old `.tool-block`/`.running`/
+		// `.tool-result` hooks ride along so the result, live output and Steps switch
+		// find it unchanged.
+		var argsText = typeof args === 'string' ? args : JSON.stringify(args);
+		var block = buildTile('tool', { expanded: false, meta: name });
+		block.classList.add('tool-block', 'running');
+		block._toolName = name;
+		var io = document.createElement('div'); io.className = 'ctile-io';
+		var sc = document.createElement('div');
+		sc.innerHTML = '<div class="cap"></div>';
+		sc.querySelector('.cap').textContent = tOr('chat.tool_sent', 'Sent');
 		var argsPre = document.createElement('pre');
-		argsPre.className = 'tool-args';
-		argsPre.textContent = typeof args === 'string' ? args : JSON.stringify(args);
+		argsPre.className = 'tool-args sent';
+		argsPre.textContent = argsText;
+		sc.appendChild(argsPre);
+		var rc = document.createElement('div');
+		rc.innerHTML = '<div class="cap"></div>';
+		rc.querySelector('.cap').textContent = tOr('chat.tool_result', 'Result');
 		var resPre = document.createElement('pre');
-		resPre.className = 'tool-result';
+		resPre.className = 'tool-result result';
 		resPre.style.display = 'none';
-		block.appendChild(head); block.appendChild(argsPre); block.appendChild(resPre);
+		rc.appendChild(resPre);
+		rc.style.display = 'none';
+		io.appendChild(sc); io.appendChild(rc);
+		block._body.appendChild(io);
+		block._resWrap = rc; block._resPre = resPre;
+		tilePeek(block, argsText.replace(/^\{|\}$/g, '').trim());
 		tagTurn(block);
 		postToChat(block);
 		lastToolBlock = block;
@@ -8760,8 +8988,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// against red is the one distinction a red-green reader cannot make, and
 			// until this seam landed there were not two states to tell apart at all.
 			lastToolBlock.classList.toggle('refused', refused);
-			lastToolBlock.style.borderColor = refused ? 'var(--warn)' : '';
 			markOutcome(lastToolBlock, refused ? 'refused' : failed ? 'failed' : 'done');
+			if (lastToolBlock._resWrap) lastToolBlock._resWrap.style.display = '';
 			var resPre = lastToolBlock.querySelector('.tool-result');
 			// A tool that SUCCEEDS can be colourful too, so the plain path is stripped
 			// as well; ONLY A STATED FAILURE goes through friendlyError. Neither a refusal
@@ -8798,11 +9026,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// not the danger one. It sits inside the tool block because it is about that
 	/// one command, and so goes away with the Steps switch that takes the block.
 	function noNetLine(block, on) {
-		var line = block.querySelector('.tool-nonet');
+		// On the tile itself, AFTER the body, so the warning stays visible when the
+		// tool step is folded away — it is a notice, not part of the result.
+		var line = block.querySelector('.ctile-nonet');
 		if (!on) { if (line) line.remove(); return; }
 		if (!line) {
 			line = document.createElement('div');
-			line.className = 'tool-nonet';
+			line.className = 'ctile-nonet';
 			block.appendChild(line);
 		}
 		// Bound rather than written, so a language change reaches it where it stands.
@@ -8837,26 +9067,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) { return false; }
 	}
 
-	/// Put a tool call's outcome on its head in words, beside the colour.
+	/// Name a tool call's outcome on the tile's label bar, beside the colour.
+	///
+	/// Amber against red is the one distinction a red-green reader cannot make, so
+	/// the state is a WORD as well as a hue: "web_search · ok", "· refused", "· failed".
 	function markOutcome(block, outcome) {
-		var head = block.querySelector('.tool-head');
-		if (!head) return;
-		var tag = head.querySelector('.tool-outcome');
-		if (outcome === 'done') { if (tag && tag.parentNode) tag.parentNode.removeChild(tag); return; }
-		if (!tag) {
-			tag = document.createElement('span');
-			tag.className = 'tool-outcome';
-			tag.style.fontWeight = '400';
-			tag.style.fontSize   = 'var(--fs-xs)';
-			head.appendChild(tag);
-		}
-		// English here rather than a key that does not exist yet: www/i18n is not this
-		// file's to write, and a head reading "chat.tool_refused" is worse than one
-		// reading English. The table wins the moment the keys land.
-		tag.textContent = outcome === 'refused'
-			? tOr('chat.tool_refused', 'refused')
-			: tOr('chat.tool_failed', 'failed');
-		tag.style.color = outcome === 'refused' ? 'var(--warn)' : 'var(--danger)';
+		if (!block._meta) return;
+		var word = outcome === 'refused' ? tOr('chat.tool_refused', 'refused')
+			: outcome === 'failed'   ? tOr('chat.tool_failed', 'failed')
+			:                          tOr('chat.tool_ok', 'ok');
+		block._meta.textContent = (block._toolName || '') + ' · ' + word;
 	}
 
 	/// The most a live command's output may occupy in the chat.
@@ -8878,6 +9098,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var pre = lastToolBlock.querySelector('.tool-result');
 		if (!pre) return;
 		lastToolBlock.classList.remove('collapsed');
+		if (lastToolBlock._resWrap) lastToolBlock._resWrap.style.display = '';
 		pre.style.display = '';
 		var s = pre.textContent + String(text == null ? '' : text);
 		if (s.length > RUN_LIVE_MAX) s = '… ' + s.slice(s.length - RUN_LIVE_MAX);
@@ -12327,6 +12548,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The card went with the thread. A reference left standing here would have the
 		// next conversation's first answer close a question drawn in the last one.
 		_askCard = null; _askJust = false;
+		// The live-turn tile state pointed into the thread that has just been emptied.
+		liveThink = null; _roll = null; lastToolBlock = null;
 		// The turns belonged to the thread that has just been thrown away. Numbering them from
 		// scratch is what keeps a turn number meaning "the nth question in THIS chat", which is
 		// the assumption the fold relies on when it maps a ticked turn back to a message.
@@ -38327,7 +38550,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return out.join('\n').replace(/\n{4,}/g, '\n\n\n') + '\n';
 	}
 
+	/// The selected tiles' text, top to bottom, for "Copy selected".
+	function selectedText() {
+		var out = [];
+		chatOutput.querySelectorAll('.csel-unit.sel').forEach(function (u) {
+			var who = u.querySelector('.ctile-who');
+			var body = u.querySelector('.crollup-body') || u.querySelector('.ctile-body');
+			var label = who ? who.textContent : '';
+			out.push((label ? '## ' + label + '\n\n' : '') + (body ? body.innerText.trim() : ''));
+		});
+		return out.join('\n\n').trim();
+	}
+
 	if (copyAllBtn) copyAllBtn.addEventListener('click', function () {
+		// In select mode this button copies what is ticked, not the whole chat.
+		if (chatOutput.classList.contains('selecting')) {
+			var picked = selectedText();
+			if (!picked) { toast(tOr('chat.copy_none', 'Nothing selected'), true); return; }
+			var wasSel = copyAllBtn.innerHTML;
+			copyToClipboard(picked).then(function () {
+				copyAllBtn.innerHTML = TICK_SVG; copyAllBtn.classList.add('done');
+				setTimeout(function () { copyAllBtn.innerHTML = wasSel; copyAllBtn.classList.remove('done'); }, 1600);
+			}, function () { toast(t('chat.copy_all_failed'), true); });
+			return;
+		}
 		var text = transcriptOf(current);
 		if (!text) { toast(t('chat.copy_all_empty'), true); return; }
 		// A TICK, not the word. The button is a drawing now, and writing "Copied" into it would
@@ -38392,33 +38638,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// are re-indented here to be readable, and the reader is owed the size of the bytes rather
 	/// than the size of the indenting.
 	function wireBand(label, why, help, text, tok) {
-		var row = document.createElement('div');
-		row.className = 'wire-band';
-		var head = document.createElement('button');
-		head.className = 'wire-band-head';
-		head.setAttribute('aria-expanded', 'false');
-		head.innerHTML = '<span class="wire-band-name"></span>'
-			+ '<span class="wire-band-why"></span><span class="wire-band-tok"></span>';
-		head.querySelector('.wire-band-name').textContent = '▸ ' + label;
-		head.querySelector('.wire-band-why').textContent  = why;
-		// One or two words on the row; the sentence behind them on hover. The row has to be
-		// scannable -- five of them stacked -- and the reason has to be reachable.
-		head.title = help || '';
-		head.querySelector('.wire-band-tok').textContent  = fmtTok(tok == null ? wireTok(text) : tok);
+		// One part of the system message as a System tile. The whole system prompt is
+		// a container of these (Role, Safety, Tools sent, schemas …), revealed by the
+		// Wire control; each part its own collapsible tile. Warn-coloured, sent to the
+		// model (right indent).
+		var tile = buildTile('wire', {
+			who:      label,
+			meta:     fmtTok(tok == null ? wireTok(text) : tok),
+			expanded: false,
+			copy:     String(text || ''),
+		});
+		// The one-word "why" and the sentence behind it go on hover — the bar itself
+		// stays scannable, with the content preview to its right.
+		tile._lbl.title = (why ? why + (help ? ' — ' + help : '') : (help || ''));
 		var body = document.createElement('pre');
 		body.className = 'wire-band-body';
-		body.style.display = 'none';
 		// textContent, never innerHTML: this is the raw payload, and some of it is written by a
 		// stranger whose page a turn read. It is shown, not run.
 		body.textContent = String(text || '');
-		head.addEventListener('click', function () {
-			var open = body.style.display === 'none';
-			body.style.display = open ? '' : 'none';
-			head.setAttribute('aria-expanded', open ? 'true' : 'false');
-			head.querySelector('.wire-band-name').textContent = (open ? '▾ ' : '▸ ') + label;
-		});
-		row.appendChild(head); row.appendChild(body);
-		return row;
+		tile._body.appendChild(body);
+		tilePeek(tile, String(text || ''));
+		return tile;
 	}
 
 	/// Draw the band at the head of the thread, or take it away.
@@ -38461,8 +38701,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (stale) stale.remove();
 
 		var box = document.createElement('div');
-		box.className = 'wire-head';
+		box.className = 'wire-head ct-wire-group';
 		box.id = 'wire-head';
+		// The system prompt is a container of System tiles — a rollup with a count,
+		// collapsed by default, sitting at the head of the thread.
+		var group = makeRollup('wire', { dataset: {} });
 		var sysTok = wireTok(w.role) + wireTok(w.tools_sentence) + wireTok(w.machine);
 		// INDENTED TO BE READ, COUNTED AS IT IS SENT. The request carries the schemas with no
 		// whitespace at all; this copy is spaced out so a person can find their way through it,
@@ -38498,27 +38741,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (std > 0) { standing = role.slice(std); role = role.slice(0, std); }
 		var cut = role.indexOf('## Rules that always apply');
 		if (cut > 0) {
-			box.appendChild(wireBand(t('wire.role'), t('wire.role_why'), t('wire.role_help'), role.slice(0, cut).trim()));
-			box.appendChild(wireBand(t('wire.safety'), t('wire.safety_why'), t('wire.safety_help'), role.slice(cut).trim()));
+			group._body.appendChild(wireBand(t('wire.role'), t('wire.role_why'), t('wire.role_help'), role.slice(0, cut).trim()));
+			group._body.appendChild(wireBand(t('wire.safety'), t('wire.safety_why'), t('wire.safety_help'), role.slice(cut).trim()));
 		} else {
-			box.appendChild(wireBand(t('wire.role'), t('wire.role_why'), t('wire.role_help'), role));
+			group._body.appendChild(wireBand(t('wire.role'), t('wire.role_why'), t('wire.role_help'), role));
 		}
 		if (local) {
-			box.appendChild(wireBand(t('wire.diamond'), t('wire.diamond_why'), t('wire.diamond_help'), local));
+			group._body.appendChild(wireBand(t('wire.diamond'), t('wire.diamond_why'), t('wire.diamond_help'), local));
 		}
 		if (standing) {
-			box.appendChild(wireBand(t('wire.standing'), t('wire.standing_why'), t('wire.standing_help'),
+			group._body.appendChild(wireBand(t('wire.standing'), t('wire.standing_why'), t('wire.standing_help'),
 				standing.trim()));
 		}
 		if (w.tools_sentence) {
-			box.appendChild(wireBand(t('wire.tools'), t('wire.tools_why'), t('wire.tools_help'), w.tools_sentence));
+			group._body.appendChild(wireBand(t('wire.tools'), t('wire.tools_why'), t('wire.tools_help'), w.tools_sentence));
 		}
 		if (w.machine) {
-			box.appendChild(wireBand(t('wire.machine'), t('wire.machine_why'), t('wire.machine_help'), w.machine));
+			group._body.appendChild(wireBand(t('wire.machine'), t('wire.machine_why'), t('wire.machine_help'), w.machine));
 		}
-		box.appendChild(wireBand(
+		group._body.appendChild(wireBand(
 			t('wire.schemas', { n: (w.names || []).length }), t('wire.schemas_why'),
 			t('wire.schemas_help'), schemas, schemaTok));
+		rollUpdate(group);
+		// Pressing Wire is an explicit request to SEE what is sent, so the System
+		// container opens on its parts; each part stays collapsed to its own peek.
+		group.classList.remove('collapsed');
+		box.appendChild(group);
 		chatOutput.insertBefore(box, chatOutput.firstChild);
 	}
 

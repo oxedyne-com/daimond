@@ -67,14 +67,14 @@ const BREAKS = {
 	// with a closed box and a spinner rather than something to watch.
 	shut: [{
 		file: 'js/daimond.js',
-		find: "\t\t\td.open = true;",
-		with: "\t\t\td.open = false;",
+		find: "\t\tvar d = buildTile('think', { expanded: !!live });",
+		with: "\t\tvar d = buildTile('think', { expanded: false });",
 	}],
 	// Grown and never closed off, so the answer arrives underneath a wall of working.
 	nocollapse: [{
 		file: 'js/daimond.js',
-		find: "\t\t\tif (!liveThink._held) liveThink.open = false;",
-		with: "\t\t\tif (false) liveThink.open = false;",
+		find: "\t\t\tif (!liveThink._held) liveThink.classList.add('collapsed');",
+		with: "\t\t\tif (false) liveThink.classList.add('collapsed');",
 	}],
 	// THE ONE THAT MATTERS. The working written into the record as what the model said.
 	asanswer: [{
@@ -147,7 +147,7 @@ while (Date.now() - t0 < 20000) {
 		const asst = document.querySelector('.chat-msg-assistant');
 		return {
 			tiles: tiles.length,
-			open:  tiles[0].open,
+			open:  !tiles[0].classList.contains('collapsed'),   // a tile is open when not collapsed
 			body:  b ? String(b.textContent || '') : '',
 			answerYet: asst ? String(asst.textContent || '') : '',
 		};
@@ -210,7 +210,7 @@ const done = await s.page.evaluate((words) => {
 	const out = document.getElementById('chat-output');
 	return {
 		tiles:  tiles.length,
-		open:   tiles.length ? tiles[0].open : null,
+		open:   tiles.length ? !tiles[0].classList.contains("collapsed") : null,
 		body,
 		counts,
 		text:   out ? out.innerText : '',
@@ -295,7 +295,7 @@ const back = await s.page.evaluate(() => {
 	const out = document.getElementById('chat-output');
 	return {
 		tiles: tiles.length,
-		open:  tiles.map(t => t.open),
+		open:  tiles.map(t => !t.classList.contains("collapsed")),
 		body:  tiles.map(t => String(t.querySelector('.chat-thinking-body').textContent || '')).join(' '),
 		text:  out ? out.innerText : '',
 	};

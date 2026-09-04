@@ -24,11 +24,14 @@
 //      an admin voice is held.
 //   5. NO DEAD SETTLE BUTTONS. With no admin voice there is NO settle control — only the terse
 //      "add your settle voice" affordance; pasting a voice REVEALS the controls.
-//   6. THE OWNER SETTLES FROM THE BOARD, WITH A REQUIRED REASON. With an admin voice, Accept on an
-//      Awaiting-you card opens a one-line reason box (it does not settle yet); an empty confirm is
-//      refused with no write; a filled one posts `state=accepted` AND `reason` under the voice and
-//      the card moves to Greenlit. Decline the same, posting `state=declined` AND `reason`. Reopen
-//      and Mark done carry `state` alone. Reason max is REASON_LIMIT (1000).
+//   6. THE OWNER SETTLES FROM THE BOARD, THE REASON OPTIONAL. With an admin voice, Accept on a
+//      NON-SELF Awaiting-you card opens an OPTIONAL one-line reason box (it does not settle yet);
+//      an EMPTY confirm settles, carrying `state` alone; a filled one posts `state=accepted` AND
+//      `reason` under the voice and the card moves to Greenlit. Decline the same. Reopen and Mark
+//      done carry `state` alone. Reason max is REASON_LIMIT (1000).
+//   6b. A SELF-AUTHORED PROPOSAL SKIPS THE REASON STEP. A proposal raised from THIS device (its
+//      number in DaimondImprove.raisedProposalNumbers()) settles at a single press: Accept/Decline
+//      is a direct settle carrying `state` alone, no reason box.
 //   7. A SHIPPED CARD STAMPS THE REAL BUILD. The board PARSES the ship stamp out of the proposal's
 //      comments and draws the id, clickable; it reads the id, it does not invent one.
 //   8. A PROPOSAL OPENS IN FULL, and a refusal is SAID, not swallowed.
@@ -55,8 +58,9 @@
 //   node dev/verify_tracker.mjs --break leakvoters     # 3  a voter name reaches the DOM
 //   node dev/verify_tracker.mjs --break voicedread     # 4  a read carries a voice
 //   node dev/verify_tracker.mjs --break alwayssettle   # 5  settle drawn with no voice
-//   node dev/verify_tracker.mjs --break noreasongate   # 6  Accept settles with no reason box
-//   node dev/verify_tracker.mjs --break emptyreasonok  # 6  an empty reason is sent, not refused
+//   node dev/verify_tracker.mjs --break noreasongate   # 6  a non-self Accept settles with no box
+//   node dev/verify_tracker.mjs --break noemptysettle  # 6  an empty reason is refused, not settled
+//   node dev/verify_tracker.mjs --break selfnoskip     # 6b a self proposal still shows the box
 //   node dev/verify_tracker.mjs --break shipinvent     # 7  the shipped stamp is invented
 //   node dev/verify_tracker.mjs --break swallow        # 8  a refusal drawn as blank
 //   node dev/verify_tracker.mjs --break minefilter     # 9  Mine shows more than this device raised
@@ -206,26 +210,27 @@ const BREAKS = {
 		find: "\t\tif (!a.ok) { _st.err = a; _lastLoad = Date.now(); draw(); return false; }",
 		with: "\t\tif (!a.ok) { _st.err = a; draw(); return false; }",
 	}],
-	// Accept and decline no longer ask for a reason: NEEDS_REASON is emptied, so
-	// the buttons settle at a press and the settle carries state alone. Bites the
-	// reason-box check (Accept must open a box, not post) and the "reason sent"
-	// checks. HALF 1.
+	// Accept and decline no longer offer their reason box: CARRIES_REASON is emptied, so
+	// the buttons settle at a press even for a NON-SELF proposal, and the optional note is
+	// gone. Bites the reason-box check (a non-self Accept must open a box, not post).
 	noreasongate: [{
 		file: 'js/tracker.js',
-		find: "\tvar NEEDS_REASON = { accept: 1, decline: 1 };",
-		with: "\tvar NEEDS_REASON = {};",
+		find: "\tvar CARRIES_REASON = { accept: 1, decline: 1 };",
+		with: "\tvar CARRIES_REASON = {};",
 	}],
-	// The required-reason guard is neutered on BOTH sides -- the confirm and the
-	// settle -- so an empty reason is sent rather than refused. Bites the check
-	// that a confirm with an empty box fires NO write. HALF 1.
-	emptyreasonok: [{
+	// The optional-reason guard is put BACK, so an empty confirm is refused rather than
+	// settled. Bites the check that an empty box now SETTLES with no reason field.
+	noemptysettle: [{
 		file: 'js/tracker.js',
-		find: "\t\tif (need && !note) { flash(tOr('tracker.reason_empty', 'Give a one-line reason first.')); return false; }",
-		with: "\t\tif (false) { flash(tOr('tracker.reason_empty', 'Give a one-line reason first.')); return false; }",
-	}, {
+		find: "\t\tvar reason = inp ? String(inp.value || '').trim() : '';\n\t\treturn settle(n, which, reason);",
+		with: "\t\tvar reason = inp ? String(inp.value || '').trim() : '';\n\t\tif (!reason) return false;\n\t\treturn settle(n, which, reason);",
+	}],
+	// The self signal is severed: isSelf always answers false, so a self-authored proposal
+	// still shows the reason box. Bites the 6b check that a self Accept is a direct settle.
+	selfnoskip: [{
 		file: 'js/tracker.js',
-		find: "\t\tif (!reason) { flash(tOr('tracker.reason_empty', 'Give a one-line reason first.')); return false; }\n\t\treturn settle(n, which, reason);",
-		with: "\t\treturn settle(n, which, reason);",
+		find: "\t\tvar mine = raisedSet();\n\t\treturn !!(mine && mine[whole(p.n)]);",
+		with: "\t\treturn false;",
 	}],
 };
 
@@ -649,36 +654,53 @@ async function run() {
 		check('reads carry no voice even when an admin voice is held', forgeReqs.filter(r => r.method === 'GET' && r.voice).length === 0, `${forgeReqs.filter(r => r.method === 'GET' && r.voice).length} voiced GET(s)`);
 		check('with an admin voice, settle controls are drawn on Awaiting-you cards', (await col(0).locator('.trk-settle-btn').count()) >= 1);
 
-		// Accept now COLLECTS A REQUIRED REASON: pressing Accept opens a reason box rather than
-		// settling; an empty confirm is refused with no write; and the write that does go carries
-		// state=accepted AND the reason. Guarded by the button's presence, so a break that empties
-		// the Awaiting-you column fails cleanly rather than hanging on a click that can never land.
-		const openCard = col(0).locator('.trk-card').first();
-		const acceptBtn = openCard.locator('.trk-settle-btn[data-which="accept"]');
-		if (await acceptBtn.count()) {
-			const acceptN = Number((await openCard.locator('.trk-num').innerText()).replace('#', ''));
+		// Accept on a NON-SELF card opens an OPTIONAL reason box; an EMPTY confirm now SETTLES,
+		// carrying state alone. Two cards, since the first is consumed when it settles. Guarded by
+		// the button's presence, so a break that empties the column fails cleanly.
+		const emptyCard = col(0).locator('.trk-card').first();
+		const emptyAccept = emptyCard.locator('.trk-settle-btn[data-which="accept"]');
+		if (await emptyAccept.count()) {
+			const emptyN = Number((await emptyCard.locator('.trk-num').innerText()).replace('#', ''));
 
 			// Pressing Accept opens the reason box and posts NOTHING yet. Bitten by
-			// `noreasongate`, where Accept settles at a press with no box.
+			// `noreasongate`, where a non-self Accept settles at a press with no box.
 			forgeReqs.length = 0;
-			await acceptBtn.click();
+			await emptyAccept.click();
 			await sleep(200);
-			const askRow = col(0).locator(`.trk-card[data-prop="${acceptN}"] .trk-reason`);
+			const askRow = col(0).locator(`.trk-card[data-prop="${emptyN}"] .trk-reason`);
 			check('pressing Accept opens a reason box and posts nothing yet',
 				(await askRow.count()) === 1 && forgeReqs.filter(r => r.method === 'POST').length === 0,
 				`box ${await askRow.count()}, ${forgeReqs.filter(r => r.method === 'POST').length} writes`);
 
-			// A confirm with an EMPTY reason is refused client-side: no write leaves. Bitten by
-			// `emptyreasonok`, where the empty reason is sent instead.
+			// A confirm with an EMPTY reason now SETTLES — the note is optional. One write,
+			// state=accepted, NO reason field. Bitten by `noemptysettle`, where empty is refused.
 			forgeReqs.length = 0;
-			await col(0).locator(`.trk-card[data-prop="${acceptN}"] [data-act="tracker-settle-do"]`).click();
-			await sleep(300);
-			check('a settle with an empty reason is refused, firing no write',
-				forgeReqs.filter(r => r.method === 'POST').length === 0,
-				`${forgeReqs.filter(r => r.method === 'POST').length} writes`);
+			await col(0).locator(`.trk-card[data-prop="${emptyN}"] [data-act="tracker-settle-do"]`).click();
+			await sleep(500);
+			const ePosted = forgeReqs.filter(r => r.method === 'POST');
+			const ef = Object.fromEntries(new URLSearchParams((ePosted[0] || {}).body || ''));
+			check('an empty reason SETTLES: one write, state=accepted, no reason field',
+				ePosted.length === 1 && ef.state === 'accepted' && !('reason' in ef)
+					&& JSON.stringify(Object.keys(ef)) === JSON.stringify(['state']),
+				`${ePosted.length} writes, ${JSON.stringify(ef)}`);
+			await sleep(200);
+			check('the empty-reason accept moved the card to Greenlit',
+				(await col(1).locator(`.trk-card[data-prop="${emptyN}"]`).count()) === 1);
+		} else {
+			check('pressing Accept opens a reason box and posts nothing yet', false, 'no Accept on the first Awaiting-you card');
+			check('an empty reason SETTLES: one write, state=accepted, no reason field', false, 'no Accept to click');
+			check('the empty-reason accept moved the card to Greenlit', false, 'no Accept to click');
+		}
 
-			// Fill the reason and confirm: one write, state=accepted AND the reason.
+		// Accept on ANOTHER card WITH a filled reason: one write, state=accepted AND the reason —
+		// the note is still carried where it is written.
+		const reasonCard = col(0).locator('.trk-card').first();
+		const acceptBtn = reasonCard.locator('.trk-settle-btn[data-which="accept"]');
+		if (await acceptBtn.count()) {
+			const acceptN = Number((await reasonCard.locator('.trk-num').innerText()).replace('#', ''));
 			const REASON = 'clear win, shipping it';
+			await acceptBtn.click();
+			await sleep(200);
 			await col(0).locator(`.trk-card[data-prop="${acceptN}"] .trk-reason`).fill(REASON);
 			forgeReqs.length = 0;
 			await col(0).locator(`.trk-card[data-prop="${acceptN}"] [data-act="tracker-settle-do"]`).click();
@@ -708,8 +730,6 @@ async function run() {
 				check('Reopen posts state=open and no reason', false, 'no Reopen offered on the Greenlit card');
 			}
 		} else {
-			check('pressing Accept opens a reason box and posts nothing yet', false, 'no Accept on the first Awaiting-you card');
-			check('a settle with an empty reason is refused, firing no write', false, 'no Accept to click');
 			check('Accept, with a reason, posts exactly one write', false, 'no Accept to click');
 			check('the settle write carried the admin voice in x-daimond-voice', false, 'no Accept to click');
 			check('the accept write is state=accepted AND the reason, and nothing else', false, 'no Accept to click');
@@ -717,7 +737,40 @@ async function run() {
 			check('Reopen posts state=open and no reason', false, 'no Accept to click');
 		}
 
-			// Decline also collects a required reason, sent as state=declined AND reason.
+		// ── 6b. A self-authored proposal skips the reason step ───────
+		// A proposal raised from THIS device settles at a single press. Name one open card as
+		// raised (DaimondImprove.raisedProposalNumbers), remount, and prove its Accept is a DIRECT
+		// settle carrying state alone — no reason box drawn first. Bitten by `selfnoskip`.
+		const selfCard = col(0).locator('.trk-card').first();
+		if (await selfCard.locator('.trk-settle-btn[data-which="accept"]').count()) {
+			const selfN = Number((await selfCard.locator('.trk-num').innerText()).replace('#', ''));
+			await page.evaluate((n) => {
+				window.__installImprove(true);
+				window.DaimondImprove.raisedProposalNumbers = function () { return [n]; };
+			}, selfN);
+			await mount({ voice: 'mock-voice-ada' });
+			const sAccept = col(0).locator(`.trk-card[data-prop="${selfN}"] .trk-settle-btn[data-which="accept"]`);
+			check('a self proposal Accept is a direct settle, not a reason-box opener',
+				(await sAccept.getAttribute('data-act')) === 'tracker-settle',
+				await sAccept.getAttribute('data-act'));
+			forgeReqs.length = 0;
+			await sAccept.click();
+			await sleep(500);
+			const sPosted = forgeReqs.filter(r => r.method === 'POST');
+			const sf = Object.fromEntries(new URLSearchParams((sPosted[0] || {}).body || ''));
+			check('the self-accept posts state=accepted alone, drawing no reason box',
+				sPosted.length === 1 && sf.state === 'accepted' && !('reason' in sf)
+					&& (await col(0).locator(`.trk-card[data-prop="${selfN}"] .trk-reason`).count()) === 0,
+				`${sPosted.length} writes, ${JSON.stringify(sf)}`);
+			// Back to no-self for the sections below.
+			await page.evaluate(() => window.__installImprove(true));
+			await mount({ voice: 'mock-voice-ada' });
+		} else {
+			check('a self proposal Accept is a direct settle, not a reason-box opener', false, 'no open card to mark self');
+			check('the self-accept posts state=accepted alone, drawing no reason box', false, 'no open card to mark self');
+		}
+
+			// Decline still carries a filled reason where one is written: state=declined AND reason.
 			const declCard = col(0).locator('.trk-card').first();
 			const declineBtn = declCard.locator('.trk-settle-btn[data-which="decline"]');
 			if (await declineBtn.count()) {

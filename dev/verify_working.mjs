@@ -60,8 +60,8 @@ const BREAKS = {
 	// The control, with nothing on it to say there is anything to open.
 	nocount: [{
 		file: 'js/daimond.js',
-		find: "\t\tsum.appendChild(more);",
-		with: "\t\tif (false) sum.appendChild(more);",
+		find: "tOr('chat.working_more', '+{n} characters', { n: rest.length })",
+		with: "''",
 	}],
 };
 if (BREAK && !BREAKS[BREAK]) {
@@ -132,20 +132,20 @@ line('2. and the control says there is something to open');
 const seen = await s.page.evaluate(() => {
 	const w = document.querySelector('.chat-msg-working');
 	if (!w) return { there: false };
-	const d = w.querySelector('details');
-	const sum = d && d.querySelector('summary');
-	const more = sum && sum.querySelector('.chat-working-more');
-	const body = d && d.querySelector('.chat-thinking-body');
-	// The summary's own words, without the count that sits at the end of it.
-	const label = sum ? String(sum.textContent || '')
-		.replace(more ? String(more.textContent || '') : '', '').trim() : '';
+	// A demoted working run is a muted think tile now: its label bar carries the
+	// "+N characters" count (.ctile-meta), the summary sentence is the peek, and
+	// the rest sits in the body behind the collapse.
+	const more = w.querySelector('.ctile-meta');
+	const body = w.querySelector('.chat-thinking-body');
+	const peek = w.querySelector('.ctile-peek');
+	const label = peek ? String(peek.textContent || '').trim() : '';
 	return {
 		there: true,
 		label: label,
 		more:  more ? String(more.textContent || '').trim() : '',
 		moreBox: more ? more.getBoundingClientRect().width : 0,
 		body:  body ? String(body.textContent || '') : '',
-		open:  d ? d.open : null,
+		open:  !w.classList.contains('collapsed'),
 	};
 });
 check(seen.there, 'the run of prose was demoted to working, which is the shape this is about');

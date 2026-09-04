@@ -224,13 +224,16 @@ const wireDom = (p) => p.evaluate(() => {
 		const r = el.getBoundingClientRect();
 		return Math.round(r.width * r.height);
 	};
-	const bands = [...box.querySelectorAll('.wire-band')].map((row) => {
-		const head = row.querySelector('.wire-band-head');
-		const body = row.querySelector('.wire-band-body');
+	// Each system part is a System tile (.ctile[data-t="wire"]) inside the wire
+	// rollup: the label bar carries the name and the token size, the raw payload
+	// stays in the .wire-band-body pre, and the "why" moved to the bar's tooltip.
+	const bands = [...box.querySelectorAll('.ctile[data-t="wire"]')].map((tile) => {
+		const head = tile.querySelector('.ctile-lbl');
+		const body = tile.querySelector('.wire-band-body');
 		return {
-			name: head.querySelector('.wire-band-name').textContent.replace(/^[▸▾]\s*/, ''),
-			why:  head.querySelector('.wire-band-why').textContent,
-			tok:  head.querySelector('.wire-band-tok').textContent,
+			name: (tile.querySelector('.ctile-who') || {}).textContent || '',
+			why:  (head && head.title) || '',
+			tok:  (tile.querySelector('.ctile-meta') || {}).textContent || '',
 			text: body ? body.textContent : '',
 			area: rect(head),
 		};

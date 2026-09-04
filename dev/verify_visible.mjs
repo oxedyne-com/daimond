@@ -165,16 +165,16 @@ line('3. and the collapsed summary still earns its keep');
 // so neither stops mattering under this ruling.
 const control = await s.page.evaluate(() => {
 	const w = document.querySelector('.chat-msg-working');
-	const d = w && w.querySelector('details');
-	const sum = d && d.querySelector('summary');
-	const more = sum && sum.querySelector('.chat-working-more');
-	const label = sum ? String(sum.textContent || '')
-		.replace(more ? String(more.textContent || '') : '', '').trim() : '';
+	// The working run is a muted think tile: the "+N characters" count is the label
+	// meta, the summary sentence is the peek, and it is collapsed (not the answer).
+	const more = w && w.querySelector('.ctile-meta');
+	const peek = w && w.querySelector('.ctile-peek');
+	const label = peek ? String(peek.textContent || '').trim() : '';
 	return {
 		label,
 		more:    more ? String(more.textContent || '').trim() : '',
 		moreBox: more ? Math.round(more.getBoundingClientRect().width) : 0,
-		open:    d ? d.open : null,
+		open:    w ? !w.classList.contains('collapsed') : null,
 	};
 });
 check(/\d/.test(control.more) && control.moreBox > 0,
