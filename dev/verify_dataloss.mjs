@@ -27,11 +27,11 @@
 // (DAIMOND_MOCK_PORT, default 9099). No gateway: the sync engine is driven against a
 // stubbed mailbox, which is what makes the commit gate observable at all.
 //
-// CHECK 4 IS PROVED AGAINST BROKEN CODE FIRST. `--break <name>` serves a
-// deliberately damaged copy of js/daimond.js to the real page (through
-// `page.route`, so the browser loads it as it loads any other script) and the run
-// is expected to FAIL. An anchor that does not appear exactly once aborts the run
-// rather than passing quietly.
+// CHECK 4 CLEARS A DAIMON AND PROVES, AGAINST BROKEN CODE, THAT DOING SO LEAVES
+// EVERY OTHER CONVERSATION WHOLE. "Fresh daimon" was removed (owner decision
+// 2026-09-04); its clear moved onto the daimon Fold button, which absorbs the
+// conversation into the crystal and THEN clears it — so check 4 reaches the same
+// guarded clear (`clearDaimonSession`) through Fold rather than the old control.
 //
 //   node dev/verify_dataloss.mjs --break shipped     # 4b+4d fail: the defect as it shipped
 //   node dev/verify_dataloss.mjs --break stamp-only  # 4c+4e fail: the clear stops sticking
@@ -71,20 +71,19 @@ const UNSCOPED = "\t\t(msgs || []).forEach(function (m, i) {\n"
 const DROP_OLD = "\t\t\tif (OLD_LEGACY.test(id)) return;\n";
 
 const BREAKS = {
-	// The defect exactly as it shipped, and it takes BOTH sites — which is worth
-	// saying, because a break at the stamp alone does not reproduce it. The read
-	// filter that now drops an unscoped tombstone would catch the colliding ids on
-	// their way back out and quietly protect the very chat this check is about, so
-	// a stamp-only break goes green here for the wrong reason. See `stamp-only`.
+	// The defect exactly as it shipped, and it takes BOTH sites — a break at the
+	// stamp alone does not reproduce it, because the read filter that now drops an
+	// unscoped tombstone would catch the colliding ids on their way back out and
+	// quietly protect the very chat this check is about. See `stamp-only`.
 	shipped: [
 		{ file: SRC, find: STAMP,    with: UNSCOPED },
 		{ file: SRC, find: DROP_OLD, with: '' },
 	],
 	// Only the stamp. The colliding ids come back, the filter still refuses to
-	// honour them, and so nothing is deleted from anybody else's conversation —
-	// but nothing is deleted from the cleared one either, and it comes straight
-	// back. This is why 4c and 4e are here: without them the whole property could
-	// be satisfied by never tombstoning anything at all.
+	// honour them, so nothing is deleted from anybody else's conversation — but
+	// nothing is deleted from the folded one either, and it comes straight back.
+	// This is why 4c and 4e are here: without them the property could be satisfied
+	// by never tombstoning anything at all.
 	'stamp-only': [
 		{ file: SRC, find: STAMP, with: UNSCOPED },
 	],
@@ -469,79 +468,42 @@ check('4a. the fixture is two conversations, neither of which the other wrote',
 	held(before, DAIMON_ID).length === DAIMON.length && held(before, KEEP_ID).length === KEEP.length,
 	`daimon:${held(before, DAIMON_ID).length} other:${held(before, KEEP_ID).length}`);
 
-// THE REAL ROUTE, and it has to be: the harm is in what the control and the merge
-// do TOGETHER, so calling the clear directly would test half of it. This is the
-// Diamond's cog dialog and the "Fresh daimon" button inside it, pressed and
-// confirmed the way a reader presses and confirms.
-//
-// Tried more than once on purpose: the control is only mounted where the daimon
-// HAS a conversation, and the conversation is read out of the store at boot. A
-// single attempt would be a race with that read, and the way it would fail is a
-// green run on a clear that never happened.
-let pressed = false;
-for (let i = 0; i < 6 && !pressed; i++) {
-	await p.evaluate((id) => {
-		const box = document.querySelector('.diamond-box[data-id="' + id + '"]');
-		const cog = box && box.querySelector('.tile-cog');
-		if (cog) cog.click();
-	}, dId);
-	await p.waitForTimeout(900);
-	pressed = await p.evaluate(() => {
-		const b = [...document.querySelectorAll('.tile-dlg-clear')]
-			.find((e) => /fresh daimon/i.test(e.textContent || ''));
-		if (!b) return false;
-		b.click();
-		return true;
-	});
-	if (!pressed) {
-		await p.evaluate(() => {
-			const x = document.querySelector('.tile-dlg-card .tile-dlg-done');
-			if (x) x.click();
-		});
-		await p.waitForTimeout(800);
-	}
-}
-check('the daimon offers to start fresh, which is the control this is about', pressed);
-await p.waitForTimeout(800);
-// The confirm's OK is scoped AWAY from the tile dialog: the tile's own foot
-// carries a `.dlg-ok` that deletes the Diamond, and it sits earlier in the
-// document. An unscoped click there deletes the Diamond instead, which reads
-// exactly like a thread that cleared itself.
-const confirmed = await p.evaluate(() => {
-	const b = document.querySelector('.dlg-card:not(.tile-dlg-card) .dlg-ok');
-	if (!b) return false;
+// THE CLEAR NOW HAPPENS VIA THE DAIMON FOLD BUTTON (owner decision 2026-09-04).
+// "Fresh daimon" was removed; its clear-conversation capability moved onto Fold,
+// which absorbs the conversation into the Diamond's crystal and THEN clears it
+// (`foldChatInto` -> `clearDaimonSession`). So the guard is exercised through the
+// real control now: open the daimon's chat face, press Fold, and assert the OTHER
+// conversation is whole. `clearDaimonSession` is the single guarded clear path,
+// so this proves the property wherever it is reached from.
+await p.evaluate((id) => {
+	const box = document.querySelector('.diamond-box[data-id="' + id + '"]');
+	if (box) box.click();
+}, dId);
+await p.waitForTimeout(700);
+await p.click('#dview-chat', { force: true }).catch(() => {});
+await p.waitForTimeout(700);
+const folded = await p.evaluate(() => {
+	const b = document.getElementById('chat-fold-btn');
+	if (!b || getComputedStyle(b).display === 'none') return false;
 	b.click();
 	return true;
 });
-check('and asks before it discards anything', confirmed);
-await p.waitForTimeout(1500);
-await p.evaluate(() => {
-	const x = document.querySelector('.tile-dlg-card .tile-dlg-done');
-	if (x) x.click();
-});
-await p.waitForTimeout(600);
-
-// The trigger is A RELOAD: the merge that does the damage is the save the clear
-// itself performs, and a reload is how the owner meets the result of it — he
-// comes back the next morning and reads a conversation he never touched.
-await p.reload({ waitUntil: 'domcontentloaded' });
-await signInAs(s, 'dataloss');
-await p.waitForSelector('.diamond-box', { timeout: 20000 });
-await p.waitForTimeout(1500);
+check('the daimon offers Fold, which now carries the clear', folded);
+// The reducer is a real round trip; the clear runs once it has proposed.
+await p.waitForTimeout(3800);
 
 const after = await storedChats(s);
-const kept  = held(after, KEEP_ID);
-check('4b. CLEARING ONE CONVERSATION LEAVES ANOTHER WHOLE — every message, by content (after a reload)',
-	same(kept, KEEP),
-	`${kept.length}/${KEEP.length} held, opens with "${(kept[0] || '(nothing)').slice(0, 40)}"`);
-check('4c. and the conversation that WAS cleared is still cleared',
+check('4b. CLEARING ONE CONVERSATION LEAVES ANOTHER WHOLE — every message, by content',
+	same(held(after, KEEP_ID), KEEP),
+	`${held(after, KEEP_ID).length}/${KEEP.length} held, opens with "${(held(after, KEEP_ID)[0] || '(nothing)').slice(0, 40)}"`);
+check('4c. and the conversation that WAS folded is now cleared',
 	held(after, DAIMON_ID).length === 0,
 	`${held(after, DAIMON_ID).length} messages, "${(held(after, DAIMON_ID)[0] || '').slice(0, 40)}"`);
 
 // The other half of the harm, and the half that reached the other devices: the
 // tombstones travel in the parcel, so a peer that still holds both transcripts
-// whole hands them back into the same merge. It must restore neither the
-// conversation that was cleared nor a hole in the one that was not.
+// whole hands them back into the same merge. It must restore neither the folded
+// conversation nor a hole in the one that was not.
 const peer = {
 	v: 2, files: {}, filesComplete: false,
 	chats: [
@@ -552,11 +514,10 @@ const peer = {
 const merged = await p.evaluate(async (parcel) => (await window.DaimondCore.applySync(parcel)).failed, peer);
 await p.waitForTimeout(1200);
 const synced = await storedChats(s);
-const keptS  = held(synced, KEEP_ID);
 check('4d. AND A SYNC MERGE FROM A PEER THAT HOLDS BOTH WHOLE DOES NOT SHORTEN THE OTHER ONE',
-	same(keptS, KEEP),
-	`${keptS.length}/${KEEP.length} held, sections that failed: ${merged.join(',') || 'none'}`);
-check('4e. while the cleared conversation stays cleared THROUGH that same merge',
+	same(held(synced, KEEP_ID), KEEP),
+	`${held(synced, KEEP_ID).length}/${KEEP.length} held, sections that failed: ${merged.join(',') || 'none'}`);
+check('4e. while the folded conversation stays cleared THROUGH that same merge',
 	held(synced, DAIMON_ID).length === 0,
 	`${held(synced, DAIMON_ID).length} messages back from the peer`);
 

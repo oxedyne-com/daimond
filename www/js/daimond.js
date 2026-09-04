@@ -2212,15 +2212,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			currentDiamond = still;
 			if (centreMode === 'focus') {
 				sessionNameEl.textContent = still.name;
-				aiMeter.textContent = 'crystal v' + (still.crystal_version || 0)
-					+ (still.updated ? ' · ' + relTime(still.updated) : '');
+				setDiamondWhen(still);
 			}
 			return;
 		}
 		// Gone. A steer or fold running against it has nothing left to write to.
 		currentDiamond = null;
 		signalDiamondChanged();
-		delete pendingFolds[had];
 		sessionNameEl.textContent = t('chat.no_chat');
 		showCentre('chat');
 		renderEmptyState();
@@ -4390,11 +4388,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		for (var k in crystalRunning) { if (crystalRunning[k]) return true; }
 		return false;
 	}
-	// A pending fold proposal belongs to its Diamond, not to whatever is on
-	// screen. It used to live in one global that `selectDiamond` cleared
-	// unconditionally, so clicking the chat to re-read it before deciding
-	// silently threw away a real (and paid-for) reducer round trip.
-	var pendingFolds = {};      // diamondId -> { base, proposed, delta, chatId, chatName }
+	// Folds commit directly now (owner decision 2026-09-04), so there is no pending
+	// fold proposal to hold: `pendingFolds` and its Accept/Reject diff were removed.
 
 	// Tags are the user's filing system and nothing more. A tag is never sent
 	// to a model, never written into a crystal, and never changes a prompt; no
@@ -7433,21 +7428,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		updateSelCount();
 	}
 
-	/// Select or clear every selectable unit — every tile and rollup.
+	/// Select or clear every LEAF tile — top-level and nested alike — and bring
+	/// every container's checkbox into line (owner review 2026-09-04: selection is
+	/// per-tile now, so Select all reaches the Thinking step inside a rollup too).
 	function pickAll(on) {
-		var units = chatOutput.querySelectorAll('.csel-unit');
-		for (var i = 0; i < units.length; i++) units[i].classList.toggle('sel', on);
+		var tiles = chatOutput.querySelectorAll('.ctile');
+		for (var i = 0; i < tiles.length; i++) tiles[i].classList.toggle('sel', on);
+		var rolls = chatOutput.querySelectorAll('.crollup');
+		for (var r = 0; r < rolls.length; r++) syncContainerSel(rolls[r]);
 		updateSelCount();
 	}
 
-	/// The turns folding should act on, read off whatever is selected. A tile or
-	/// rollup carries the number of the turn it belongs to; a selection of several
-	/// tiles in one turn folds that one turn once.
+	/// The turns folding should act on, read off the selected LEAF tiles. A leaf
+	/// carries the number of the turn it belongs to; several leaves in one turn fold
+	/// that one turn once.
 	function pickedTurns() {
 		var out = [], seen = {};
-		var units = chatOutput.querySelectorAll('.csel-unit.sel');
-		for (var i = 0; i < units.length; i++) {
-			var n = Number(units[i].dataset.turn);
+		var tiles = chatOutput.querySelectorAll('.ctile.sel');
+		for (var i = 0; i < tiles.length; i++) {
+			var n = Number(tiles[i].dataset.turn);
 			if (!isNaN(n) && !seen[n]) { seen[n] = 1; out.push(n); }
 		}
 		return out;
@@ -7503,6 +7502,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return '';
 	}
 
+	/// The short name of the model answering the conversation on screen, for the
+	/// Thinking and Daimond tile headers — so each response says which model
+	/// produced it (owner review 2026-09-04). `current` is the chat on an ordinary
+	/// chat and the daimon's own record on a Diamond's chat face, and both carry the
+	/// model they run on; the open Diamond and the app default fill in behind them.
+	function respModel() {
+		var m = (current && current.model)
+			|| (currentDiamond && currentDiamond.model)
+			|| (cfg && cfg.model) || '';
+		return m ? shortModel(m) : '';
+	}
+
 	/// One tile shell: the label bar (dot · speaker · meta · peek · copy/checkbox)
 	/// over a body. `opts.expanded` opens it; `opts.copy` is the text (or a
 	/// function returning it) the header copy button puts on the clipboard.
@@ -7534,7 +7545,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		tile._lbl = lbl; tile._body = body; tile._peek = peek; tile._meta = meta; tile._who = who;
 		lbl.addEventListener('click', function (e) {
 			if (e.target.closest('.ctile-copy')) return;
-			if (chatOutput.classList.contains('selecting')) { toggleSelUnit(tile); return; }
+			if (chatOutput.classList.contains('selecting')) { toggleSelLeaf(tile); return; }
 			var sel = window.getSelection();
 			if (sel && String(sel).length) return;
 			if (type === 'user') { setTurnOpen(tile, !isTurnOpen(tile)); }
@@ -7602,7 +7613,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		box._body = rbody; box._count = cnt; box._noun = noun; box._peek = peek; box._type = type;
 		lbl.addEventListener('click', function (e) {
 			if (e.target.closest('.ctile-copy')) return;
-			if (chatOutput.classList.contains('selecting')) { toggleSelUnit(box); return; }
+			if (chatOutput.classList.contains('selecting')) { toggleSelContainer(box); return; }
 			box.classList.toggle('collapsed');
 		});
 		copy.addEventListener('click', function (e) {
@@ -7647,19 +7658,56 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	// ── Selection ──────────────────────────────────────────────
 	//
-	// A selectable unit is a top-level tile or a rollup (`.csel-unit`); a tile
-	// nested inside a rollup selects the rollup as a whole. Folding still works on
-	// TURNS, so `pickedTurns` reads the turn numbers off whatever is selected.
-	function toggleSelUnit(node) {
-		var unit = node.classList.contains('csel-unit') ? node : node.closest('.csel-unit');
-		if (!unit) return;
-		unit.classList.toggle('sel');
+	// SELECTION LIVES ON THE LEAF TILE (owner review 2026-09-04). Every `.ctile`
+	// carries `.sel` when ticked — a top-level tile, or a Thinking/Tool/System step
+	// nested in a rollup. A rollup CONTAINER is a control, not a selection: ticking
+	// its checkbox ticks all its children, and its own box shows filled when they
+	// are all ticked, a dash when only some are, empty when none. Folding still
+	// works on TURNS, so `pickedTurns` reads the turn numbers off the ticked leaves.
+	//
+	// This replaced a model where a nested tile selected the whole rollup and a
+	// solo tile's tick landed on a container whose label was hidden — so a child's
+	// checkbox, and a standalone Thinking tile's, appeared to do nothing.
+
+	/// The child leaves of a rollup container.
+	function rollLeaves(box) {
+		return box._body ? box._body.querySelectorAll(':scope > .ctile')
+			: box.querySelectorAll('.crollup-body > .ctile');
+	}
+
+	/// Reflect a container's children on its own checkbox. A SOLO container has no
+	/// visible box — its single child stands as itself — so it never carries the mark.
+	function syncContainerSel(box) {
+		if (box.classList.contains('solo')) { box.classList.remove('sel', 'indeterminate'); return; }
+		var kids = rollLeaves(box), n = 0;
+		for (var i = 0; i < kids.length; i++) if (kids[i].classList.contains('sel')) n++;
+		box.classList.toggle('sel', kids.length > 0 && n === kids.length);
+		box.classList.toggle('indeterminate', n > 0 && n < kids.length);
+	}
+
+	/// Tick or untick one leaf tile, then bring its container's box into line.
+	function toggleSelLeaf(tile) {
+		if (!tile) return;
+		tile.classList.toggle('sel');
+		var box = tile.closest('.crollup');
+		if (box) syncContainerSel(box);
+		updateSelCount();
+	}
+
+	/// A container's checkbox ticks all its children, or clears them when they are
+	/// already all ticked.
+	function toggleSelContainer(box) {
+		if (!box) return;
+		var kids = rollLeaves(box), allSel = kids.length > 0;
+		for (var i = 0; i < kids.length; i++) if (!kids[i].classList.contains('sel')) { allSel = false; break; }
+		for (var j = 0; j < kids.length; j++) kids[j].classList.toggle('sel', !allSel);
+		syncContainerSel(box);
 		updateSelCount();
 	}
 	function updateSelCount() {
 		var el = document.getElementById('sel-count');
 		if (!el) return;
-		var n = chatOutput.querySelectorAll('.csel-unit.sel').length;
+		var n = chatOutput.querySelectorAll('.ctile.sel').length;
 		el.textContent = n ? tn('chat.selected_n', n, { n: n }) : '';
 	}
 
@@ -7675,7 +7723,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// click that ends a selection is one that was selecting, not one that meant to
 		// fold; and while choosing, a click ticks the turn rather than folding it.
 		content.addEventListener('click', function (e) {
-			if (chatOutput.classList.contains('selecting')) { toggleSelUnit(div); return; }
+			if (chatOutput.classList.contains('selecting')) { toggleSelLeaf(div); return; }
 			var sel = window.getSelection();
 			if (sel && String(sel).length) return;
 			setTurnOpen(div, !isTurnOpen(div));
@@ -7814,7 +7862,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// live for the reason the note above records. The body is `textContent` and
 		// deliberately not parsed: this is the model talking to itself, and a stray
 		// backtick run through markdown would become layout.
-		var d = buildTile('think', { expanded: !!live });
+		var d = buildTile('think', { expanded: !!live, meta: respModel() });
 		d.classList.add('chat-msg-thinking');
 		var pre = document.createElement('div');
 		pre.className = 'chat-thinking-body';
@@ -8012,9 +8060,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// Close the turn on screen with the line above, where there is one to draw.
+	///
+	/// THE FURNITURE LINE IS GONE (owner review 2026-09-04). "Answered · N tool
+	/// calls" under every tool turn was the noise a quiet disclosure must not
+	/// become — the owner read it as clutter, and on a turn whose tool tile is a
+	/// `say` fold it also read as a tool call with no tile to show for it. So a
+	/// turn that ended cleanly draws nothing at all now. Only a turn that REFUSED,
+	/// BROKE or wrote nothing where it said it would is still worth a line — that
+	/// is the case the whole mechanism exists for (see the note above) — so the
+	/// notice survives while the furniture does not.
 	function appendEnding(e) {
 		var p = endingParts(e);
-		if (!p) return;
+		if (!p || !p.notice) return;
 		finalizeAssistant();
 		var div = document.createElement('div');
 		div.className = 'chat-msg chat-msg-ended' + (p.notice ? ' ended-notice' : '');
@@ -8326,7 +8383,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The model's prose — the ANSWER — in a Daimond tile: accent-coloured,
 			// from the model (left indent), expanded. `drawAsst` streams into the
 			// `.chat-msg-content` inside its body exactly as it did into the bubble.
-			curAsstDiv = buildTile('reply', { expanded: true });
+			curAsstDiv = buildTile('reply', { expanded: true, meta: respModel() });
 			curAsstDiv.classList.add('chat-msg-assistant');
 			curAsstDiv._copyText = function () { return curAsstText; };
 			var content = document.createElement('div');
@@ -14680,24 +14737,40 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			toast(t('fold.empty_reply'), true);
 			return;
 		}
-		pendingFolds[diamondId] = {
+		var st = {
 			base: cur, proposed: proposed, delta: delta,
 			chatId: chat.id, chatName: chatDisplayName(chat),
 			// Some of a chat is not the chat. Marking the tile "Folded" on a partial fold would
 			// claim the rest went in too, and would then refuse to fold the rest as unchanged.
 			partial: !!turns,
 		};
-		// Only if that Diamond is still the one on screen: drawing this diff into
-		// whatever the user moved on to would put one Diamond's proposal over
-		// another's crystal. Coming back to it renders it (see selectDiamond).
-		if (currentDiamond && currentDiamond.id === diamondId) renderFoldDiff(diamondId);
-		// The proposal is waiting somewhere; say where. A user who clicked away
-		// during the reducer's minute is looking at something else entirely, and
-		// the rail row is the only other place the pending fold shows.
+		// ONE CLICK COMMITS (owner decision 2026-09-04): "Fold means fold, done." The
+		// proposed crystal is written straight in — no Accept/Reject step. Two guards
+		// survive because they are not the review: the empty-reducer guard just above
+		// (a round that returned nothing never reaches here, so a bad round cannot wipe
+		// the crystal), and the version snapshot `fold_apply` takes on write — which is
+		// now the undo path for a fold the user did not want.
+		try {
+			await commitFold(diamondId, st);
+		} catch (e) {
+			setCrystalStatus(friendlyError(e));
+			toast(friendlyError(e), true);
+			return;
+		}
+		// A DAIMON FOLDING INTO ITS OWN DIAMOND STARTS FRESH. The daimon-chat Fold
+		// button is the replacement for "Fresh daimon" (owner decision 2026-09-04): it
+		// absorbs the conversation into the crystal — the reducer read the WHOLE
+		// transcript — and, now that the crystal is COMMITTED, clears the conversation,
+		// so the chat begins empty with the updated crystal in effect. There is no
+		// reject window: the fold is already applied, so the clear is safe. Done only
+		// for a WHOLE fold of a daimon into ITSELF (`chat.diamondId === diamondId`); an
+		// ordinary chat keeps its thread and a partial fold leaves the rest.
+		// `clearDaimonSession` carries the 2026-08-14 data-loss guard, so this does not
+		// shorten any other conversation.
+		var selfFold = !turns && chat.diamondId && chat.diamondId === diamondId;
+		if (selfFold) clearDaimonSession(chat, diamondId);
 		renderDiamondList();
-		toast(centreMode === 'focus'
-			? t('fold.proposed_toast')
-			: t('fold.proposed_elsewhere', { diamond: f.name }));
+		toast(selfFold ? t('fold.committed_fresh') : t('fold.committed', { diamond: f.name }));
 	}
 
 	function timeLabel() {
@@ -16601,10 +16674,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		});
 
-		// The Change button, then the reset, beside the model it thinks with.
+		// The Change button, beside the model it thinks with.
 		daimonSel.parentNode.appendChild(change);
-		// A fresh daimon, tucked in beside the model it thinks with.
-		mountDaimonReset(daimonSel.parentNode, opts.id);
+		// "Fresh daimon" removed (owner review 2026-09-04): a new model takes effect
+		// on the next turn on its own, and the responding model now shows in the
+		// Thinking and Daimond tile headers, so a button to force a fresh start was
+		// redundant. `mountDaimonReset` is left defined but no longer mounted.
 
 		// ── The workers, text.
 		row('tile.model_workers', 'tile.worker_model_help',
@@ -16647,6 +16722,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// # Arguments
 	/// * `row` - The daimon's model row, which this sits at the end of.
 	/// * `id` - The Diamond whose daimon would be reset.
+	/// Clear a daimon's conversation to a FRESH SESSION, safely.
+	///
+	/// THE 2026-08-14 DATA-LOSS GUARD LIVES HERE, in one place. The discarded
+	/// messages are TOMBSTONED by id before the array is emptied, so
+	/// `persistChats`'s deliberate union does not put them straight back — and
+	/// because the ids are this conversation's own (minted from content, not
+	/// position), clearing THIS daimon does not shorten another. Both halves go:
+	/// `messages` is what the thread draws, `session.msgs` is what the next turn
+	/// sends — an EMPTY session, never `null`, or the union reads "this tab does not
+	/// know" and the stored conversation comes back. The web grant the ended
+	/// conversation held is forgotten with it; the Diamond's directory, crystal and
+	/// links are untouched — this ends a conversation, it does not undo what the
+	/// conversation did.
+	function clearDaimonSession(rec, id) {
+		if (!rec) return;
+		msgTombstone((rec.messages || []).map(function (m) { return m.mid; }));
+		rec.messages = [];
+		rec.session = { v: 1, msgs: [], upto: '', uptoTs: 0 };
+		rec.lastPrompt = 0;
+		if (id) forgetDiamondWebConsent(id);
+		touchChat(rec);
+		persistChats();
+	}
+
 	function mountDaimonReset(row, id) {
 		if (!row || !id) return;
 		var f = diamonds.find(function (x) { return x.id === id; });
@@ -16695,29 +16794,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A tombstone is how a deliberate removal survives the union; it is the same
 			// mechanism a replaced interrupted turn already uses, and it travels in the sync
 			// parcel, so a daimon ended here is ended on the other devices too.
-			msgTombstone((rec.messages || []).map(function (m) { return m.mid; }));
-			rec.messages = [];
-			// Both halves, and the second is the one that matters: `messages` is what the thread
-			// DRAWS, `session.msgs` is what goes to the model on the next turn. Clearing only the
-			// first would empty the screen and send the whole testing conversation anyway.
-			//
-			// AN EMPTY SESSION, NOT NO SESSION, for the same reason. `persistChats` keeps the
-			// stored session when this tab's record has none — so `null` here read as "this tab
-			// does not know" and the model's whole conversation came back with it. A session
-			// that exists and holds nothing is the difference between not knowing and knowing
-			// there is nothing.
-			rec.session = { v: 1, msgs: [], upto: '', uptoTs: 0 };
-			rec.lastPrompt = 0;
-			// AND THE PERMISSION THAT CONVERSATION HELD. A yes to reaching the web is
-			// given to a conversation and lasts as long as one; ending this one here and
-			// leaving the grant behind would hand the next daimon an answer nobody gave
-			// it. The taint is deliberately shared with the chat's client and is left
-			// alone -- it is a fact about what has been read, not a permission.
-			forgetDiamondWebConsent(id);
-			// The stamp moves, or a tab that has been idle since before the clear counts as the
-			// fresher copy of everything else on the record and writes its figures back over it.
-			touchChat(rec);
-			persistChats();
+			// The safe clear, guard and all (see `clearDaimonSession`).
+			clearDaimonSession(rec, id);
 			// The daimon's own directory, its crystal and its links are untouched. This ends a
 			// conversation; it does not undo anything the conversation did.
 			//
@@ -18599,22 +18677,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chip.classList.toggle('on', on);
 	}
 
-	/// Show Fold in the header when there is a conversation a hand fold can reach.
+	/// Show Fold in the header on a DIAMOND's chat, and nowhere else.
 	///
-	/// An ordinary chat with something in it, and nothing else. This used to be the exact
-	/// opposite -- a daimon's face only -- and a daimon is the one conversation a hand
-	/// fold CANNOT touch: the Diamond engine's session holds no messages for its whole
-	/// life, because `steer_inner` builds a local session from `prior`, so `fold_now`
-	/// there charges for a round that compacts nothing and then reports the thread
-	/// "already as short as it goes". Nor does it need touching -- `run_tool_loop` folds a
-	/// daimon before every round, at its own learnt window.
+	/// OWNER REVIEW 2026-09-04 INVERTED THIS. It used to be an ordinary chat's control
+	/// and hidden on a Diamond, because a hand `fold_now` on a daimon compacts nothing
+	/// (`run_tool_loop` already folds the engine session before every round). But the
+	/// Fold button on a Diamond's chat does a DIFFERENT thing now: it folds the chat
+	/// into its own Diamond's crystal (`foldChatInto`, below), which is a real, paid
+	/// reducer round and the whole point of a daimon — folding what it has said into
+	/// what it remembers. An ordinary chat keeps "Fold selected" in select mode and the
+	/// tile-dialog fold; it no longer carries a surface Fold button.
+	///
+	/// `diamondId` covers the crystal face as well as the chat face: `selectDiamond`
+	/// points `current` at the daimon's record on both, since both share the composer.
 	function syncFoldBtn() {
 		var b = document.getElementById('chat-fold-btn');
 		if (!b) return;
-		// `diamondId` covers the crystal face as well as the daimon's: `selectDiamond`
-		// points `current` at the daimon's record on BOTH faces, because both share the
-		// composer and the composer sends to `current`.
-		b.style.display = (current && !current.diamondId && chatSaid(current)) ? '' : 'none';
+		// The daimon's CHAT face only — not its crystal face (which shows the memory,
+		// not the conversation) and not an ordinary chat (which folds from select mode
+		// and the tile dialog). `centreMode === 'daimon'` is the chat face.
+		b.style.display = (current && current.diamondId && chatSaid(current) && centreMode === 'daimon') ? '' : 'none';
 		syncFoldBusy();
 	}
 
@@ -22629,11 +22711,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		meterDiamondTurn(fa, diamondId);
 		setCrystalStatus(''); setCrystalBusy(diamondId, false);
-		pendingFolds[diamondId] = {
+		// A reducer that returned nothing has FAILED: applying it would wipe the crystal.
+		// The same guard `foldChatInto` keeps, kept here too — it is not the review.
+		if (!proposed || !String(proposed).trim()) {
+			toast(t('fold.empty_reply'), true);
+			return;
+		}
+		// One click commits (owner decision 2026-09-04): a worker's summary folds
+		// straight into the crystal, no Accept/Reject. `commitFold` marks the source
+		// run folded so its tile does not offer the same text again.
+		var st = {
 			base: cur, proposed: proposed, delta: delta,
 			chatId: null, chatName: sourceName, sourceRun: sourceRun || null,
 		};
-		renderFoldDiff(diamondId);
+		try {
+			await commitFold(diamondId, st);
+		} catch (e) {
+			setCrystalStatus(friendlyError(e)); toast(friendlyError(e), true); return;
+		}
+		renderDiamondList();
+		toast(t('fold.committed', { diamond: f.name }));
 	}
 
 	// ── Workspace (OPFS over run_tool) ─────────────────────────
@@ -28621,13 +28718,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			mchip.title = t('tile.diamond_model_help', { model: dm.model });
 			meta.appendChild(mchip);
 		}
-		if (pendingFolds[f.id]) {
-			var pend = document.createElement('span');
-			pend.className = 'diamond-pending';
-			pend.textContent = t('fold.pending_badge');
-			pend.title = t('fold.pending_badge_help');
-			meta.appendChild(pend);
-		}
+		// (No pending-fold badge any more: folds commit directly — owner decision
+		// 2026-09-04 — so a Diamond is never left with a proposal waiting on it.)
 		// What is waiting on this Diamond's daimon, in the same words and the same
 		// style the chat tile uses -- a daimon's conversation is an ordinary chat
 		// record, so it queues the way one does and there is no second thing to say
@@ -28753,6 +28845,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `centreMode`. A fourth is refused rather than entered: every guard in the
 	/// file asks which face is up, so an unknown one would turn all of them off at
 	/// once and the Centre would quietly stop drawing anything.
+	/// Show how long since this Diamond was last edited, beside the label.
+	///
+	/// The crystal VERSION number that used to sit here carried no user value — it
+	/// is an internal counter, not something a reader acts on — so it is dropped
+	/// (owner review 2026-09-04). The "edited" time moves to the left of the header,
+	/// in `#chead-when`, beside the name and the face switch.
+	function setDiamondWhen(f) {
+		var w = document.getElementById('chead-when');
+		if (w) w.textContent = (f && f.updated) ? relTime(f.updated) : '';
+		// The right-hand meter no longer carries "crystal vN"; clear the stale text.
+		if (aiMeter && /^crystal v/.test(aiMeter.textContent || '')) aiMeter.textContent = '';
+	}
+
 	function showCentre(mode) {
 		if (CENTRE_FACES.indexOf(mode) < 0) {
 			try { console.warn('[centre] no such face: ' + mode); } catch (e) { /* no console */ }
@@ -28797,8 +28902,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A daimon's chat is a conversation, so it wears neither.
 		var ai = document.getElementById('panel-ai');
 		if (ai) ai.classList.toggle('crystal-face', crystalOn);
+		// The mark reads "this is a Diamond", so it wears on BOTH of a Diamond's
+		// faces — the crystal AND the chat — and on an ordinary chat it does not.
+		// It used to appear on the crystal face alone, so switching a Diamond to its
+		// chat face dropped the mark and the header looked like an ordinary chat's
+		// (owner review 2026-09-04: "some show it, some don't, with no pattern").
 		var mark = document.getElementById('chead-mark');
-		if (mark) mark.style.display = crystalOn ? '' : 'none';
+		if (mark) mark.style.display = onDiamond ? '' : 'none';
+		// The "edited" time belongs to a Diamond; an ordinary chat clears it.
+		if (!onDiamond) { var cw = document.getElementById('chead-when'); if (cw) cw.textContent = ''; }
 		// Fold belongs to the face that shows the conversation.
 		try { syncFoldBtn(); } catch (e) { /* not wired yet at first paint */ }
 		// The face switch belongs to a Diamond and nothing else: a chat has one face,
@@ -29432,8 +29544,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		signalDiamondChanged();
 		updateActiveDiamond();
 		sessionNameEl.textContent = f.name;
-		aiMeter.textContent = 'crystal v' + (f.crystal_version || 0)
-			+ (f.updated ? ' · ' + relTime(f.updated) : '');
+		setDiamondWhen(f);
 		var want = (view === 'chat' || view === 'crystal') ? view : diamondView(f.id);
 		if (view) setDiamondView(f.id, want);
 		// A Diamond that carries an arrangement is worked in it. Only an arrangement
@@ -29506,9 +29617,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// few nodes nobody sees and keeps one code path for both faces.
 		renderQueue();
 		setTimeout(function () { resumeSteerQueue(crec, f.id); }, 0);
-		// A proposal left pending on this Diamond is restored rather than lost.
-		if (pendingFolds[f.id]) renderFoldDiff(f.id);
-		else await renderCrystal();
+		// Folds commit directly (owner decision 2026-09-04), so there is never a
+		// pending proposal to restore — the crystal on screen is always the real one.
+		await renderCrystal();
 	}
 
 	// ── The crystal, and the page that draws it ──────────────────────
@@ -33735,8 +33846,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var f = diamonds.find(function (x) { return currentDiamond && x.id === currentDiamond.id; });
 		if (f) {
 			currentDiamond = f;
-			aiMeter.textContent = 'crystal v' + (f.crystal_version || 0)
-				+ (f.updated ? ' · ' + relTime(f.updated) : '');
+			setDiamondWhen(f);
 		}
 		await renderCrystal();
 	}
@@ -34159,105 +34269,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// delta, then show the diff for the user to Accept or Reject.  Writes
 	/// nothing — the advisory half of the fold.
 
-	/// Show the fold diff (current vs proposed) with Accept and Reject.
-	/// Every line is escaped via textContent (H5); nothing is written
-	/// until the user accepts.
-	function renderFoldDiff(diamondId) {
-		var st = pendingFolds[diamondId];
-		if (!st) { renderCrystal(); return; }
-		var f = diamonds.find(function (x) { return x.id === diamondId; });
-		clearCrystalBody();
-		// Both sides pretty-printed when both are JSON, so the diff reads as lines. A reducer
-		// writes its answer on one line as often as not, and a one-line diff of a whole
-		// crystal is a single red row against a single green one -- true, and no use to
-		// somebody deciding whether to accept it. Neither side is REWRITTEN by this: what is
-		// applied is still `st.proposed` exactly as it came back.
-		var diff = lineDiff(crystalVersionText(st.base || ''), crystalVersionText(st.proposed || ''));
-		var changed = diff.some(function (d) { return d.kind === 'add' || d.kind === 'del'; });
-
-		var head = document.createElement('div');
-		head.className = 'diff-head';
-		// Say what is being folded into what: by this point the centre has
-		// already switched away from the chat, so its name is nowhere on screen.
-		// Say what is going into what. The Diamond's name is an optional half of
-		// the sentence, so each shape is its own string rather than a fragment
-		// glued on: a language that puts the target first cannot reorder glue.
-		var into = f ? f.name : '';
-		head.textContent = !changed
-			? (into ? t('diff.no_change_into', { diamond: into }) : t('diff.no_change'))
-			: st.chatName
-				? (into ? t('diff.folding_chat_into', { chat: st.chatName, diamond: into })
-					: t('diff.folding_chat', { chat: st.chatName }))
-				: (into ? t('diff.proposed_into', { diamond: into }) : t('diff.proposed'));
-		crystalBody.appendChild(head);
-
-		// WHAT THE DIFF CANNOT SAY. A fold REPLACES the crystal wholesale, on one click, by a
-		// user who is being invited to click -- and a crystal that has lost half its keys is
-		// as valid a document as one that has not, since `{}` itself is legal. The diff shows
-		// the removal as red rows, which is honest and is also forty lines of red among a
-		// hundred, so a key silently gone is exactly what a reader skims past. This says it in
-		// words. Absence only: a key emptied in place is what a good fold does, and warning
-		// about that would train the eye to wave the warning through.
-		var lost = document.createElement('div');
-		lost.className = 'diff-lost';
-		lost.style.display = 'none';
-		crystalBody.appendChild(lost);
-		(async function () {
-			var names = [];
-			try {
-				names = JSON.parse(await diamondApp(diamondId)
-					.fold_keys_lost(diamondId, st.proposed) || '[]');
-			} catch (e) { names = []; }
-			// The proposal may have been accepted, dropped, or replaced by another while
-			// this was in flight, and the crystal itself may have moved underneath it.
-			if (!names.length || pendingFolds[diamondId] !== st) return;
-			lost.textContent = tOr('fold.keys_lost',
-				'Accepting this removes: {keys}', { keys: names.join(', ') });
-			lost.style.display = '';
-		})();
-
-		var lines = document.createElement('div');
-		lines.className = 'diff-lines';
-		diff.forEach(function (d) {
-			var row = document.createElement('div');
-			row.className = 'diff-line' + (d.kind === 'add' ? ' add' : d.kind === 'del' ? ' del' : '');
-			var sign = document.createElement('span');
-			sign.className = 'sign';
-			sign.textContent = d.kind === 'add' ? '+' : d.kind === 'del' ? '-' : ' ';
-			row.appendChild(sign);
-			row.appendChild(document.createTextNode(d.text));  // escaped (H5)
-			lines.appendChild(row);
-		});
-		crystalBody.appendChild(lines);
-
-		// Controls become Accept / Reject for the duration of the diff.
-		crystalControls.innerHTML = '';
-		var status = document.createElement('div');
-		status.className = 'crystal-status';
-		status.id = 'crystal-status';
-		var actions = document.createElement('div');
-		actions.className = 'diff-actions';
-		var accept = document.createElement('button');
-		accept.className = 'diff-accept';
-		accept.textContent = t('diff.accept');
-		// Accepting a no-op fold used to bump the crystal version and write a
-		// duplicate delta, so re-folding the same chat quietly grew the history
-		// with nothing in it.
-		accept.disabled = !changed;
-		if (!changed) accept.title = t('diff.nothing_to_apply');
-		accept.addEventListener('click', doFoldAccept);
-		var reject = document.createElement('button');
-		reject.className = 'diff-reject';
-		reject.textContent = changed ? t('diff.reject') : t('common.close');
-		reject.addEventListener('click', function () {
-			delete pendingFolds[diamondId];
-			renderCrystal();
-			renderDiamondList();          // the rail row carries the pending mark
-		});
-		actions.appendChild(accept); actions.appendChild(reject);
-		crystalControls.appendChild(status);
-		crystalControls.appendChild(actions);
-	}
+	// The fold-diff review UI (renderFoldDiff) was removed 2026-09-04: a fold
+	// commits directly now (see `commitFold`), so there is no Accept/Reject step
+	// and nothing renders a pending diff.
 
 	// ── Artefacts ───────────────────────────────────────────────────────
 	//
@@ -34350,47 +34364,51 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) { /* an artefact list is never worth failing a fold over */ }
 	}
 
-	/// Accept the proposed fold: write the new crystal, retain the raw
-	/// delta, log the fold, then re-render.  A fold never auto-applies.
-	async function doFoldAccept() {
-		if (!currentDiamond) return;
-		var diamondId = currentDiamond.id;
-		var st = pendingFolds[diamondId];
-		if (!st) return;
-		// Belt and braces beside the disabled button: applying a fold that
-		// changes nothing would still bump the version and write a duplicate
-		// delta, quietly growing the history with nothing in it.
-		if ((st.base || '') === (st.proposed || '')) {
-			delete pendingFolds[diamondId];
-			renderCrystal(); renderDiamondList();
-			return;
-		}
-		delete pendingFolds[diamondId];
-		renderDiamondList();              // the row's pending mark goes with it
-		setCrystalStatus('Applying fold…');
-		try {
-			await diamondApp().fold_apply(diamondId, st.proposed, st.delta, 'fold via UI');
-		} catch (e) {
-			setCrystalStatus(friendlyError(e));
-			return;
-		}
+	/// Commit a proposed fold to the crystal, DIRECTLY — write the new crystal,
+	/// retain the raw delta, log the fold, harvest artefacts, then re-render.
+	///
+	/// ONE CLICK COMMITS (owner decision 2026-09-04): this replaced `doFoldAccept`,
+	/// which stashed the proposal and waited on an Accept/Reject diff. There is no
+	/// review now. Two guards remain, at the CALL SITES rather than here, because
+	/// they are not the review: a reducer that returned nothing is refused before
+	/// this runs, so a bad round cannot wipe the crystal. And the undo is the
+	/// crystal's VERSION HISTORY: `fold_apply` writes through `write_crystal_data`,
+	/// which snapshots a version and logs the edit, so a fold the user did not want
+	/// is rolled back from history rather than declined up front.
+	///
+	/// `st` is `{ base, proposed, delta, chatId, chatName, partial, sourceRun }`.
+	/// Throws on a write failure so the caller can report it and, for a daimon
+	/// self-fold, NOT clear the conversation.
+	async function commitFold(diamondId, st) {
+		// A fold that changes nothing writes nothing: applying it would bump the
+		// version and store a duplicate delta, growing the history with nothing in it.
+		if ((st.base || '') === (st.proposed || '')) return;
+		setCrystalStatus(t('fold.applying'));
+		await diamondApp().fold_apply(diamondId, st.proposed, st.delta, 'fold via UI');
 		await harvestArtefacts(diamondId, st);
-
-		// Record where the chat went, so the tile can say so and the user is
-		// not left wondering whether the fold took. A fold of a few chosen turns is not the
+		// Record where the chat went, so the tile can say so and the user is not left
+		// wondering whether the fold took. A fold of a few chosen turns is not the
 		// chat going anywhere, so it leaves no such mark.
+		//
+		// NOT ON A DAIMON FOLDING INTO ITSELF. That conversation is cleared the moment
+		// this returns (`clearDaimonSession`), so a "folded into" marker on it is a
+		// mark on nothing — and its stored message-count would later match a FRESH
+		// conversation of the same length and wrongly trip the "nothing new" guard,
+		// refusing a fold whose content really is new. `chat.diamondId === diamondId`
+		// is exactly the self-fold.
 		if (st.chatId && !st.partial) {
 			var chat = chats.find(function (c) { return c.id === st.chatId; });
-			if (chat) {
-				chat.foldedInto = { id: diamondId, name: currentDiamond.name, at: Date.now(),
+			if (chat && chat.diamondId !== diamondId) {
+				var f = diamonds.find(function (x) { return x.id === diamondId; });
+				chat.foldedInto = { id: diamondId, name: (f && f.name) || '', at: Date.now(),
 					at_len: (chat.messages || []).length };
 				touchChat(chat);
 				persistChats();
 				renderSessionList();
 			}
 		}
-		// A worker's summary that has now been applied is marked so its tile no
-		// longer offers to fold the same text in a second time.
+		// A worker's summary that has now been applied is marked so its tile no longer
+		// offers to fold the same text in a second time.
 		if (st.sourceRun) {
 			st.sourceRun.folded = true;
 			Workers.persist();
@@ -34399,32 +34417,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		await refreshDiamondAfterChange();
 	}
 
-	/// A minimal LCS line diff, producing tagged lines (same / add / del).
-	/// Used only for display, so a straightforward dynamic-programming
-	/// table is more than adequate for crystal-sized inputs.
-	function lineDiff(a, b) {
-		var A = a.split('\n'), B = b.split('\n');
-		var n = A.length, m = B.length;
-		// LCS length table.
-		var dp = [];
-		for (var i = 0; i <= n; i++) { dp[i] = new Array(m + 1).fill(0); }
-		for (var i = n - 1; i >= 0; i--) {
-			for (var j = m - 1; j >= 0; j--) {
-				dp[i][j] = (A[i] === B[j]) ? dp[i + 1][j + 1] + 1
-					: Math.max(dp[i + 1][j], dp[i][j + 1]);
-			}
-		}
-		var out = [];
-		var i = 0, j = 0;
-		while (i < n && j < m) {
-			if (A[i] === B[j]) { out.push({ kind: 'same', text: A[i] }); i++; j++; }
-			else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ kind: 'del', text: A[i] }); i++; }
-			else { out.push({ kind: 'add', text: B[j] }); j++; }
-		}
-		while (i < n) { out.push({ kind: 'del', text: A[i] }); i++; }
-		while (j < m) { out.push({ kind: 'add', text: B[j] }); j++; }
-		return out;
-	}
+	// (`lineDiff`, the LCS line diff, was removed 2026-09-04 with the fold-review UI
+	// it drew for — folds commit directly and nothing renders a diff any more.)
 
 	// ── Local identity (D1) + BYOK key encryption (D5) ─────────
 	// A passphrase-derived key (WebCrypto, see identity.js) encrypts the stored
@@ -38550,12 +38544,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return out.join('\n').replace(/\n{4,}/g, '\n\n\n') + '\n';
 	}
 
-	/// The selected tiles' text, top to bottom, for "Copy selected".
+	/// The selected leaf tiles' text, top to bottom, for "Copy selected". Selection
+	/// is per-tile now, so a fully-ticked rollup contributes each of its children in
+	/// turn — the container itself carries no text of its own.
 	function selectedText() {
 		var out = [];
-		chatOutput.querySelectorAll('.csel-unit.sel').forEach(function (u) {
+		chatOutput.querySelectorAll('.ctile.sel').forEach(function (u) {
 			var who = u.querySelector('.ctile-who');
-			var body = u.querySelector('.crollup-body') || u.querySelector('.ctile-body');
+			var body = u.querySelector('.ctile-body');
 			var label = who ? who.textContent : '';
 			out.push((label ? '## ' + label + '\n\n' : '') + (body ? body.innerText.trim() : ''));
 		});
@@ -38611,7 +38607,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	//
 	// Composed by `Agent::system_parts`, which is the same function `run_turn` composes the real
 	// request with. A second assembly that agrees today is one that disagrees later, silently.
-	var _wireOn = false;
+	// ALWAYS ON (owner review 2026-09-04). The Wire toggle is gone; the System
+	// container is a permanent, collapsed-by-default tile at the head of the thread,
+	// so there is nothing to switch. Kept as a flag only so the mid-await staleness
+	// guards below read the same as they did.
+	var _wireOn = true;
 	// Which render is the current one. The getter awaits now -- it asks the hand for the
 	// machine note, exactly as the turn does -- so two renders can be in flight at once when a
 	// chat is switched mid-await, and the older one must not insert a second band under the newer.
@@ -38700,12 +38700,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var stale = document.getElementById('wire-head');
 		if (stale) stale.remove();
 
-		var box = document.createElement('div');
-		box.className = 'wire-head ct-wire-group';
-		box.id = 'wire-head';
-		// The system prompt is a container of System tiles — a rollup with a count,
-		// collapsed by default, sitting at the head of the thread.
+		// The System prompt is a container of System tiles — a rollup with a count,
+		// collapsed by default, sitting at the head of the thread. It IS the tile now:
+		// there is no outer box and no caption above it (owner review 2026-09-04). The
+		// "about N tokens" the caption used to carry moves into the header, beside the
+		// count, so the one line reads "System · 6 · parts · 17k".
 		var group = makeRollup('wire', { dataset: {} });
+		group.id = 'wire-head';
 		var sysTok = wireTok(w.role) + wireTok(w.tools_sentence) + wireTok(w.machine);
 		// INDENTED TO BE READ, COUNTED AS IT IS SENT. The request carries the schemas with no
 		// whitespace at all; this copy is spaced out so a person can find their way through it,
@@ -38715,10 +38716,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `schemas_len` is the length the engine measured of the string it puts in the request.
 		var schemas = JSON.stringify(w.schemas || [], null, 1);
 		var schemaTok = Math.round((w.schemas_len || 0) / 4);
-		var title = document.createElement('div');
-		title.className = 'wire-title';
-		title.textContent = t('wire.head', { n: fmtTok(sysTok + schemaTok) });
-		box.appendChild(title);
 
 		// The role prompt and what is appended to it are ONE string on the wire and two facts to
 		// a reader: the first is theirs to rewrite, the second is not. Split on the clause's own
@@ -38763,26 +38760,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			t('wire.schemas', { n: (w.names || []).length }), t('wire.schemas_why'),
 			t('wire.schemas_help'), schemas, schemaTok));
 		rollUpdate(group);
-		// Pressing Wire is an explicit request to SEE what is sent, so the System
-		// container opens on its parts; each part stays collapsed to its own peek.
-		group.classList.remove('collapsed');
-		box.appendChild(group);
-		chatOutput.insertBefore(box, chatOutput.firstChild);
+		// The token total rides in the header, after the noun: "System · 6 · parts · 17k".
+		if (group._noun) group._noun.textContent = group._noun.textContent + ' · ' + fmtTok(sysTok + schemaTok);
+		// The System container is present on every thread now (there is no Wire toggle),
+		// so it stays COLLAPSED by default — one quiet line at the head, opened on click.
+		chatOutput.insertBefore(group, chatOutput.firstChild);
 	}
 
-	var wireBtn = document.getElementById('wire-btn');
-	if (wireBtn) wireBtn.addEventListener('click', function () {
-		_wireOn = !_wireOn;
-		wireBtn.setAttribute('aria-pressed', _wireOn ? 'true' : 'false');
-		wireBtn.classList.toggle('on', _wireOn);
-		renderWire();
-	});
+	// The Wire button was removed (owner review 2026-09-04): the System container is
+	// always present and collapsible, so a control to reveal it was redundant. Its
+	// handler is gone with it; `renderWire` runs on every chat render.
 
 	var conciseChip = document.getElementById('concise-chip');
 	if (conciseChip) conciseChip.addEventListener('click', function () { toggleConcise(); });
 	var chatFoldBtn = document.getElementById('chat-fold-btn');
 	if (chatFoldBtn) chatFoldBtn.addEventListener('click', function () {
-		if (current) foldChatNow(current, chatFoldBtn);
+		// A Diamond's chat folds into its OWN Diamond — the destination is fixed
+		// (the Diamond this chat belongs to), so there is no target-picker. This is
+		// the only chat the button is shown on (see syncFoldBtn).
+		if (current && current.diamondId) foldChatInto(current, current.diamondId);
 	});
 	syncConciseChip();
 

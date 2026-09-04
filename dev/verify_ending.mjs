@@ -8,25 +8,26 @@
 // have no visibility on what occurred here."** `AgentEvent::Ended` now closes
 // every turn and `dev/CONTRACT_CLAIMS.md` §3 says how it is drawn.
 //
-// ── WHAT IT ASSERTS, WHICH IS THE FURNITURE RULE AND NOT THE FEATURE ─────────
+// ── WHAT IT ASSERTS (owner review 2026-09-04: the furniture line is GONE) ────
 //
-// Drawing a line is the easy half and it is not the half that matters. §3 is a
-// rule about NOT crying wolf, and two checks here are the whole of it:
+// The quiet "Answered · N tool calls" line under every turn was clutter the owner
+// asked to remove — on a clean turn it said nothing worth a line, and on a `say`
+// fold it read as a tool call with no tile to show for it. So a turn that ended
+// cleanly now draws NOTHING at all, exactly as a toolless turn always did. Only a
+// turn that REFUSED, BROKE or wrote nothing where it said it would still draws a
+// line, and that line is a NOTICE — the case the whole mechanism exists for.
 //
-//   - **a toolless turn draws nothing at all.** A pure chat has no tool log, so
-//     a line under every message in it is noise with nothing behind it.
-//   - **an ordinary successful turn is not styled as a notice.** An app that
-//     appends a warning to every turn teaches its reader to skip the one that
-//     mattered, which is the failure this whole mechanism exists to prevent.
-//     Only `refused`, `failed` or a missing path may promote it.
+// Two checks are the whole of the new rule:
 //
-// Without those two this becomes a warning nobody reads, and every other check
-// here would still be green.
+//   - **a clean turn draws nothing** — whether it used a tool or not. The commonest
+//     turn in the app leaves no residue.
+//   - **a refused/failed/missing turn draws a NOTICE** — the one a reader must be
+//     able to pick out, now that it is the only line the ending ever draws.
 //
 //   node dev/verify_ending.mjs
-//   node dev/verify_ending.mjs --break nofurniture   # a toolless turn draws a line
+//   node dev/verify_ending.mjs --break showsclean    # a clean turn draws a line again
 //   node dev/verify_ending.mjs --break alwaysnotice  # every ending is a notice
-//   node dev/verify_ending.mjs --break nopersist     # a reload loses the ending
+//   node dev/verify_ending.mjs --break nopersist     # a reload loses the notice
 //
 // A `--break` run EXPECTS to fail: exit 0 when something reddened, 1 when
 // nothing did, because a break that changes nothing is itself a failing run.
@@ -57,21 +58,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // the reload redrawing it, so only the durability check moves.
 const BREAK  = (() => { const i = process.argv.indexOf('--break'); return i > 0 ? process.argv[i + 1] : ''; })();
 const BREAKS = {
-	// BOTH GUARDS, and the fact that there are two is the finding. Patching
-	// `endingParts` alone reddened NOTHING on the first run: `endLogOf` refuses to
-	// store a toolless ending as well, so the line was never reached even with the
-	// drawing rule removed. That is belt and braces rather than a defect -- but a
-	// break that restores only half of a two-place rule launders a plain run as
-	// proof of the other half, which is exactly what this note exists to stop the
-	// next reader repeating.
-	nofurniture: [{
+	// The suppression is the rule now: `appendEnding` draws only a notice. Removing
+	// it makes a clean turn draw a line again, which reddens the "a clean turn draws
+	// nothing" checks — the whole of the owner's 2026-09-04 change.
+	showsclean: [{
 		file: 'js/daimond.js',
-		find: "		// Rule 2, first, so no caller can forget it.\n		if (!e || !((e.offered | 0) > 0)) return null;",
-		with: "		if (!e) return null;   // --break nofurniture",
-	}, {
-		file: 'js/daimond.js',
-		find: "		if (!ev || !((ev.offered | 0) > 0)) return null;",
-		with: "		if (!ev) return null;   // --break nofurniture",
+		find: "		if (!p || !p.notice) return;",
+		with: "		if (!p) return;   // --break showsclean",
 	}],
 	alwaysnotice: [{
 		file: 'js/daimond.js',
@@ -174,30 +167,21 @@ async function say(text, timeout = 40000) {
 	await sleep(500);
 }
 
-// ── 1. THE OWNER'S CASE: tools on the table, and no call made ────────────────
+// ── 1. A turn that offered tools and used none draws NOTHING (owner review) ───
 //
-// `offered > 0, calls === 0`. This is the turn he watched: nothing technically
-// wrong, so nothing was said. The line is what replaces that silence — and it is
-// FURNITURE, because a turn that simply answered is not a fault and drawing it
-// as one is how the reader learns to skip the line.
+// `offered > 0, calls === 0`. The old build drew "Answered · no tools used" here;
+// the owner asked for the furniture gone, so a clean turn now leaves no line.
 await newChat(s);
 await say('@text I will rewrite lines 43 through 49 applying the lessons.');
 const idle = await endings();
-check('1a a turn that used no tool still says how it ended',
-	idle.length === 1, JSON.stringify(idle));
-check('1b and it says NO TOOLS WERE USED, which is the fact he could not see',
-	idle.length === 1 && /no tools used/i.test(idle[0].text), (idle[0] || {}).text || '(none)');
-check('1c AND IT IS NOT A NOTICE — a turn that answered is not a fault',
-	idle.length === 1 && idle[0].notice === false,
-	idle.length ? ('notice=' + idle[0].notice) : '(no line)');
-check('1d the figures nobody put on the line are in its title',
-	idle.length === 1 && /\d/.test(idle[0].title), (idle[0] || {}).title || '(no title)');
+check('1a a clean turn that used no tool draws NO ending line',
+	idle.length === 0, JSON.stringify(idle));
 await shot(s, 'ending-1-no-tools');
 
-// ── 2. An ordinary successful turn, WITH a tool call ─────────────────────────
+// ── 2. An ordinary successful turn WITH a tool call also draws NOTHING ────────
 //
-// The second half of the not-crying-wolf rule: the commonest turn in the app
-// must read as quietly as the one above.
+// This is the exact line the owner pointed at — "Answered · 1 tool call" — and it
+// is gone. The commonest turn in the app leaves no residue at all.
 await newChat(s);
 const dir = await p.evaluate(() => {
 	const f = window.DaimondAttach.focus();
@@ -205,11 +189,8 @@ const dir = await p.evaluate(() => {
 });
 await say(`@tool file_write {"path":"${dir}/ok.txt","content":"hi"}`);
 const good = await endings();
-check('2a a turn that called a tool says so',
-	good.length === 1 && /1/.test(good[0].text), JSON.stringify(good));
-check('2b AND AN ORDINARY SUCCESSFUL TURN IS NOT STYLED AS A NOTICE',
-	good.length === 1 && good[0].notice === false,
-	good.length ? ('notice=' + good[0].notice + ' — ' + good[0].text) : '(no line)');
+check('2a a successful tool turn draws NO ending line',
+	good.length === 0, JSON.stringify(good));
 await shot(s, 'ending-2-ordinary');
 
 // ── 3. A refusal, which is what a notice is FOR ──────────────────────────────
@@ -256,12 +237,8 @@ await p.$('#dview-chat').then(el => el && el.click({ force: true }));
 await sleep(400);
 await say('@text I will rewrite lines 43 through 49.');
 const daimon = await endings();
-check('4e the DAIMON’S OWN THREAD closes the same way a chat’s does',
-	daimon.length >= 1 && /no tools used/i.test(daimon[daimon.length - 1].text),
-	JSON.stringify(daimon));
-check('4f and it is furniture there too',
-	daimon.length >= 1 && daimon[daimon.length - 1].notice === false,
-	daimon.length ? ('notice=' + daimon[daimon.length - 1].notice) : '(no line)');
+check('4e the DAIMON’S OWN THREAD closes the same way a chat’s does — a clean turn draws no line',
+	daimon.length === 0, JSON.stringify(daimon));
 await shot(s, 'ending-4b-daimon');
 
 // ── 4c. A worker's tile, which is the THIRD sink and NOT a thread ───────────

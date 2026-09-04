@@ -514,6 +514,29 @@ const plan = (messages) => {
 			};
 		}
 
+		// Reason, CALL a tool, then reason AGAIN before answering — the real DeepSeek
+		// shape the owner hit (a tool between two reasoning steps). Round 0 streams
+		// reasoning then a tool call; round 1 streams MORE reasoning then the answer.
+		// Used to prove a Tool tile renders BETWEEN the two Thinking tiles.
+		//   @rtr <think1> ;; <name> <json> ;; <think2>
+		case 'rtr': {
+			const [t1, call, t2] = d.rest.split(';;');
+			if (rounds > 0) {
+				return {
+					think:    (t2 || 'Now I can answer.').trim(),
+					thinkKey: 'reasoning',
+					text:     'Reasoned and done.',
+				};
+			}
+			const { name, args } = splitCall((call || 'file_list {"path":"."}').trim());
+			return {
+				think:    (t1 || 'Let me use a tool first.').trim(),
+				thinkKey: 'reasoning',
+				text:     '',
+				calls:    [toolCall(nextCallId(), name, args)],
+			};
+		}
+
 		// Prose, then a call, in ONE message. See the directive list.
 		case 'narrate': {
 			if (rounds > 0) return { text: 'Narration done.' };

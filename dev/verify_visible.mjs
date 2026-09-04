@@ -114,12 +114,20 @@ const ink = () => s.page.evaluate(() => {
 		return Math.round(r.width) * Math.round(r.height) > 0 ? Math.round(r.height) : 0;
 	};
 	const work = out.querySelector('.chat-msg-working');
+	// Expand the tool tile before measuring: since 2026-09-04 Steps hides the tool's
+	// DETAIL (its Sent→Result body), not the whole tile, so what the switch governs is
+	// the `.ctile-io` body — which is only on screen at all when the tile is open.
+	const tool = out.querySelector('.ctile[data-t="tool"]');
+	if (tool) tool.classList.remove('collapsed');
 	return {
 		hidden:  out.classList.contains('hide-tools'),
 		working: box(work),
 		// The words inside it, whether or not they are drawn.
 		words:   work ? String(work.textContent || '') : '',
-		steps:   box(out.querySelector('.tool-block')),
+		// The tool STEP is its Sent→Result detail; the LABEL is the compact marker
+		// that stays in the flow so a tool between two reasoning steps is not orphaned.
+		steps:   box(tool && tool.querySelector('.ctile-io')),
+		toolLabel: box(tool && tool.querySelector(':scope > .ctile-lbl')),
 		answer:  box(out.querySelector('.chat-msg-assistant')),
 	};
 });
@@ -150,7 +158,10 @@ await s.page.evaluate(() => {
 await s.page.waitForTimeout(400);
 seen = await ink();
 check(seen.hidden, 'the switch is on');
-check(seen.steps === 0, 'THE TOOL STEP IS GONE, which is what the switch is for');
+check(seen.steps === 0, 'THE TOOL STEP DETAIL IS GONE, which is what the switch is for');
+check(seen.toolLabel > 0,
+	'but the Tool label STAYS in the flow, so a tool between two reasoning steps is not orphaned',
+	`${seen.toolLabel}px tall`);
 check(seen.working > 0,
 	'AND THE MODEL\'S OWN PROSE IS STILL DRAWN, which is the ruling',
 	`${seen.working}px tall`);

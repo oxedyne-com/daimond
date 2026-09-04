@@ -125,8 +125,12 @@ try {
 	// ══ 2. What the daimon says lands in a thread ═════════════════════
 	clearMockLog();
 	await say(p, 'remember the word ORTOLAN');
+	// The transcript is uniform tiles now (`.ctile`), the user's and the daimon's
+	// carrying `.chat-msg-user`/`.chat-msg-assistant` for older hooks. `.chat-msg`
+	// alone (the pre-tile bubble class) matches only furniture, so it is added to
+	// the tiles rather than replaced.
 	let thread = await p.evaluate(() =>
-		[...document.querySelectorAll('#chat-output .chat-msg')]
+		[...document.querySelectorAll('#chat-output .ctile, #chat-output .chat-msg')]
 			.map(n => ({ cls: n.className, text: (n.textContent || '').trim().slice(0, 80) })));
 	check(thread.some(m => /chat-msg-user/.test(m.cls) && /ORTOLAN/.test(m.text)),
 		'what was asked is in the thread', thread.length + ' messages');
@@ -184,7 +188,7 @@ try {
 			? document.getElementById('dview-chat').getAttribute('aria-pressed') : '');
 	check(face === 'true', 'and it opens back on the face you left it on', face);
 	thread = await p.evaluate(() =>
-		[...document.querySelectorAll('#chat-output .chat-msg')]
+		[...document.querySelectorAll('#chat-output .ctile, #chat-output .chat-msg')]
 			.map(n => (n.textContent || '').trim()));
 	check(thread.some(x => /ORTOLAN/.test(x)),
 		'with the conversation still in it', String(thread.length) + ' messages');

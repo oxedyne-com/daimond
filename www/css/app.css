@@ -1601,7 +1601,11 @@ span.arte-open { cursor: default; }
 .tool-nonet { padding: 8px 12px; border-top: 1px solid var(--border); color: var(--warn); font-size: var(--fs-xs); }
 /* Collapsed by default: hide the (often long) args JSON, keep the result. */
 .tool-block.collapsed .tool-args { display: none !important; }
-.chat-output.hide-tools .tool-block { display: none; }
+/* Steps now hides the tool's DETAIL, not the whole tile (see the
+   `.ctile[data-t="tool"]` rules in the chat-tiles section). The old
+   `.chat-output.hide-tools .tool-block { display:none }` removed the new tile
+   outright, orphaning the reasoning around it (owner report 2026-09-04), so it
+   was retired here. */
 /* The model thinking out loud on its way to a tool call, and IT DOES NOT HIDE WITH THE
    STEPS. It did until 2026-08-28, on the reasoning that a reader who turned the working
    off meant this too, and what that actually did was take the model's own sentences off
@@ -3914,9 +3918,19 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .ctile > .ctile-nonet { padding: 2px 12px 9px; }
 .ctile-nonet { font-size: var(--fs-xs); color: var(--warn); line-height: 1.45; }
 
-/* Steps switch hides tool tiles, as it always hid tool blocks. */
-.chat-output.hide-tools .ctile[data-t="tool"],
-.chat-output.hide-tools .crollup[data-t="tool"] { display: none; }
+/* Steps switch: hide the tool STEP'S DETAIL, NOT the tool itself.
+   Removing the whole tile orphaned the reasoning around it — a tool called
+   between two Thinking steps left two Thinking tiles with an invisible gap and
+   the footer counting a call with nothing to show for it (owner report
+   2026-09-04). So the compact Tool label stays in the flow, keeping it coherent
+   as [Thinking][Tool][Thinking], and only its Sent→Result body, peek and copy
+   are withheld while the switch is off. */
+.chat-output.hide-tools .ctile[data-t="tool"] > .ctile-body,
+.chat-output.hide-tools .ctile[data-t="tool"] > .ctile-nonet,
+.chat-output.hide-tools .ctile[data-t="tool"] .ctile-peek,
+.chat-output.hide-tools .ctile[data-t="tool"] .ctile-copy { display: none !important; }
+.chat-output.hide-tools .ctile[data-t="tool"] > .ctile-lbl { cursor: default; }
+.chat-output.hide-tools .ctile[data-t="tool"] { opacity: 0.75; }
 
 /* ── Rollup: a run of same-type tiles under one collapsible container ── */
 .crollup {
@@ -3982,3 +3996,80 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 /* A rollup's noun ("parts", "tool calls") is short and load-bearing — keep it
    whole and let the peek to its right be the thing that truncates. */
 .crollup-lbl > .ctile-meta { flex: none; overflow: visible; text-overflow: clip; }
+
+/* ══ Chat-tile refinements (owner review, 2026-09-04) ═════════════════
+   Tighter turns, right-aligned sent-to-model text, a slimmer You tile, a
+   borderless System container, and a per-tile checkbox for select mode. */
+
+/* 4 — Tighter gap between turns. A turn opens on a You tile and closes on the
+   Daimond reply; the air between two turns was the reply's bottom margin plus
+   the next You tile's top margin plus the You body's own padding. Halve the
+   tile margins and pull the top of each new turn up to its question. */
+.chat-output .ctile { margin-top: 2px; margin-bottom: 2px; }
+.chat-output .crollup { margin-top: 2px; margin-bottom: 2px; }
+.chat-output .ctile.chat-msg-user { margin-top: 12px; margin-bottom: 2px; }
+.chat-output .ctile.chat-msg-user:first-child { margin-top: 2px; }
+
+/* 6 — The You tile was taller than the rest because its inner .chat-msg-content
+   still wore the old right-aligned bubble (accent-soft ground, 8px 14px pad)
+   INSIDE a tile that already has that ground and its own padding. Strip the
+   bubble: the tile body is the bubble now. */
+.ctile[data-t="user"] .chat-msg-content {
+	display: block; background: none; color: inherit;
+	border-radius: 0; padding: 0; max-width: none;
+}
+.ctile[data-t="user"] > .ctile-body { padding-top: 2px; padding-bottom: 8px; }
+
+/* 5 — Text SENT to the model reads from the right. You and System sit right
+   already (the indent); their body text follows. Code and schemas stay left,
+   where a monospace block is readable. */
+.ctile[data-dir="to"] > .ctile-body,
+.crollup[data-t="wire"] > .crollup-body > .ctile > .ctile-body { text-align: right; }
+.ctile[data-dir="to"] > .ctile-body pre,
+.crollup[data-t="wire"] .ctile-body pre { text-align: left; }
+
+/* 7 — The System container is the System tile now: no outer border, no caption.
+   `.ct-wire-group` used to wrap the rollup in a bordered box under a sentence;
+   the rollup stands on its own at the head of the thread. */
+.wire-title { display: none; }
+#wire-head.ct-wire-group { margin: 0; border: 0; padding: 0; background: none; }
+/* The token total rides in the System header (see renderWire): keep the noun and
+   its trailing count whole. */
+.crollup[data-t="wire"] > .crollup-lbl > .ctile-meta { flex: none; overflow: visible; text-overflow: clip; }
+
+/* 2 — Select mode: a checkbox on EVERY tile, children included, so a Thinking
+   step inside a rollup is selectable on its own and a solo tile shows its own
+   box rather than the hidden container's. */
+.crollup-body > .ctile > .ctile-lbl .ctile-chk { display: none; }
+.chat-output.selecting .crollup-body > .ctile > .ctile-lbl .ctile-copy { display: none; }
+.chat-output.selecting .crollup-body > .ctile > .ctile-lbl .ctile-chk { display: block; }
+.chat-output.selecting .crollup-body > .ctile > .ctile-lbl { cursor: default; }
+/* A child tile's own tick and its selected outline. */
+.crollup-body > .ctile.sel > .ctile-lbl .ctile-chk { background: var(--accent); border-color: var(--accent); }
+.crollup-body > .ctile.sel > .ctile-lbl .ctile-chk::after {
+	content: ""; position: absolute; left: 4px; top: 1px;
+	width: 4px; height: 8px; border: solid var(--on-fill, #fff);
+	border-width: 0 2px 2px 0; transform: rotate(40deg);
+}
+.crollup-body > .ctile.sel { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: -1px; }
+/* A container whose children are only partly ticked shows a dash, not a check. */
+.crollup.indeterminate > .crollup-lbl .ctile-chk { background: var(--accent); border-color: var(--accent); }
+.crollup.indeterminate > .crollup-lbl .ctile-chk::after {
+	content: ""; position: absolute; left: 3px; top: 5px;
+	width: 7px; height: 0; border-top: 2px solid var(--on-fill, #fff); transform: none;
+}
+
+/* 11 — The face switch and the "edited" time move to the left, beside the label.
+   `.chead-left` is the growing cluster; `.chead-right` stays pinned right. The
+   AI panel is narrow when it shares the stage, so the cluster can run out of
+   room: the NAME keeps a couple of characters (it is the identity), the switch
+   is a fixed control, and the "edited" time is the one that clips first — it is
+   last in the cluster and shrinks to nothing, which `overflow:hidden` then hides
+   cleanly rather than letting the row overflow into the right-hand controls. */
+.chead-left { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; overflow: hidden; }
+.chead-left > .ctitle { flex: 1 1 auto; min-width: 44px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chead-when { flex: 0 1 auto; min-width: 0; overflow: hidden; font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.panel.ai .chead .ctitle { flex: 1 1 auto; min-width: 44px; }
+.chead-left > #diamond-view { flex: none; }
+/* Compact the face switch so name and switch coexist on the narrow AI panel. */
+.chead-left > #diamond-view .dview-btn { padding: 3px 7px; }

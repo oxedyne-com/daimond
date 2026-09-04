@@ -238,7 +238,13 @@ const wireDom = (p) => p.evaluate(() => {
 			area: rect(head),
 		};
 	});
-	return { area: rect(box), title: (box.querySelector('.wire-title') || {}).textContent || '', bands };
+	// The System container IS the tile now (no outer box, no caption). The token
+	// total the caption used to carry rides in the header, after the noun —
+	// "System · 6 · parts · 17k" — so the headline is read off the container's own
+	// `.crollup-lbl > .ctile-meta`.
+	const lbl = box.querySelector(':scope > .crollup-lbl');
+	const title = lbl ? ((lbl.querySelector('.ctile-meta') || {}).textContent || '') : '';
+	return { area: rect(box), title, bands };
 });
 
 // The schema band's heading carries its count -- `Tool schemas (17)` -- so a name
@@ -282,26 +288,28 @@ const fmtTok = (n) => (n % 1024 === 0) ? (n / 1024) + 'k'
 	: (n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'
 		: (n >= 1000 ? Math.round(n / 1000) + 'k' : '' + n));
 
-/// Turn the band on and wait for it to be drawn.
+/// Wait for the System container to be drawn, and expand it so its bands read.
+///
+/// There is no Wire button any more (owner review 2026-09-04): the System
+/// container is always present at the head of the thread, collapsed by default.
+/// This waits for it and opens it — the state a reader who clicks it gets, and the
+/// one every band-reading check below expects.
 async function showWire(p) {
-	const on = await p.evaluate(() => document.getElementById('wire-btn').getAttribute('aria-pressed'));
-	if (on !== 'true') await p.click('#wire-btn', { force: true });
-	await p.waitForTimeout(900);
+	await p.waitForSelector('#wire-head', { timeout: 8000 }).catch(() => {});
+	await p.evaluate(() => {
+		const box = document.getElementById('wire-head');
+		if (box) box.classList.remove('collapsed');
+	});
+	await p.waitForTimeout(400);
 }
 
-/// Redraw the band for whatever thread is on screen now.
-///
-/// Off and on again rather than trusting a redraw: the band is rebuilt on every
-/// thread change, and this run wants the one for the thread it is looking at,
-/// not whichever render happened to finish last.
+/// The band is rebuilt on every thread change (renderWire runs from renderHistory),
+/// so a thread already on screen has a fresh container; this only waits for it and
+/// opens it again for reading.
 async function redrawWire(p) {
-	await p.evaluate(() => {
-		const b = document.getElementById('wire-btn');
-		if (b.getAttribute('aria-pressed') === 'true') b.click();
-	});
-	await p.waitForTimeout(300);
-	await p.click('#wire-btn', { force: true });
-	await p.waitForTimeout(1200);
+	await p.waitForTimeout(600);
+	await showWire(p);
+	await p.waitForTimeout(600);
 }
 
 async function makeDiamond(p, name) {

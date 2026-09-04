@@ -1994,7 +1994,12 @@
 	'fold.diamond_gone':     'Diamond is gone',
 	'fold.diamond_gone_body': 'The Diamond that dispatched this agent no longer exists.',
 	'fold.diamond_gone_chat_body': 'The Diamond you chose no longer exists; it may have been deleted in another tab. Nothing was folded.',
-	'fold.empty_reply':      'The model returned nothing to fold, so nothing was proposed. Try again.',
+	'fold.empty_reply':      'The model returned nothing to fold, so nothing was written. Try again.',
+	// One-click commit (owner decision 2026-09-04): a fold writes straight to the
+	// crystal, no Accept/Reject. The version history is the undo path.
+	'fold.applying':         'Folding…',
+	'fold.committed':        'Folded into “{diamond}”.',
+	'fold.committed_fresh':  'Folded into the crystal, and started fresh.',
 	'fold.proposed_toast':   'Fold proposed. Accept or Reject it below.',
 	'fold.proposed_elsewhere': 'Fold proposed on "{diamond}". Open it to Accept or Reject.',
 	'fold.pending_badge':    'fold waiting',

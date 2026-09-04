@@ -588,17 +588,25 @@
 					<!-- The mark, shown only on a Diamond's crystal (see showCentre): the
 					     crystal is a document you own rather than a conversation, and the
 					     panel says which of its two faces is up. -->
-					<img class="chead-mark" id="chead-mark" src="assets/daimond_mark.svg" alt="" aria-hidden="true" style="display:none">
-					<span class="ctitle" id="current-session-name" role="heading" aria-level="2">No chat</span>
-					<!-- A Diamond's two faces. The crystal is the daimon's output; the chat
-					     is its conversation, which is persistent and was until now not shown
-					     at all. Only drawn on a Diamond — a chat has one face. -->
-					<div class="dview" id="diamond-view" role="group" style="display:none"
-					     data-i18n-aria-label="crystal.view_switch" aria-label="Which face of this Diamond">
-						<button class="dview-btn" id="dview-crystal" type="button" aria-pressed="true"
-						        data-i18n="crystal.view_crystal">Crystal</button>
-						<button class="dview-btn" id="dview-chat" type="button" aria-pressed="false"
-						        data-i18n="crystal.view_chat">Chat</button>
+					<!-- The left cluster: mark, name, face switch and the "edited" time, in
+					     that order (owner review 2026-09-04 — the switch and the time used to
+					     sit on the right). `.chead-left` grows; `.chead-right` stays pinned. -->
+					<div class="chead-left">
+						<img class="chead-mark" id="chead-mark" src="assets/daimond_mark.svg" alt="" aria-hidden="true" style="display:none">
+						<span class="ctitle" id="current-session-name" role="heading" aria-level="2">No chat</span>
+						<!-- A Diamond's two faces. The crystal is the daimon's output; the chat
+						     is its conversation, which is persistent and was until now not shown
+						     at all. Only drawn on a Diamond — a chat has one face. -->
+						<div class="dview" id="diamond-view" role="group" style="display:none"
+						     data-i18n-aria-label="crystal.view_switch" aria-label="Which face of this Diamond">
+							<button class="dview-btn" id="dview-crystal" type="button" aria-pressed="true"
+							        data-i18n="crystal.view_crystal">Crystal</button>
+							<button class="dview-btn" id="dview-chat" type="button" aria-pressed="false"
+							        data-i18n="crystal.view_chat">Chat</button>
+						</div>
+						<!-- How long since this Diamond was last edited. Set by selectDiamond;
+						     empty on an ordinary chat. -->
+						<span class="chead-when" id="chead-when"></span>
 					</div>
 					<div class="chead-right">
 						<span class="cmeter" id="ai-meter"></span>
@@ -647,22 +655,10 @@
 						     model -- where copying forty messages one at a time is not a
 						     workaround, it is a refusal. Drawn for a chat and for a Diamond's
 						     chat face alike, because both are conversations. -->
-						<!-- What actually goes to the model. The thread is the payload laid out
-						     once; this turns on the parts of it that are normally invisible —
-						     the composed system message, whose it is, and the tool schemas
-						     nobody has ever seen. -->
-						<!-- THE ONE WORD IN A ROW OF DRAWINGS. Copy, Steps and Concise are
-						     verbs and draw as verbs; "wire" is not a picture of anything, and
-						     the glyph it had -- five stacked rules -- is the same shape as the
-						     Concise glyph beside it and read as a second Concise. The owner
-						     asked for the word back, and only for this one.
-						     `.label-chip` is what keeps the row's height: the word takes the
-						     26px box the icon chips set rather than the row growing to a
-						     word's padding. See css/app.css. -->
-						<button class="chip-btn label-chip" id="wire-btn" aria-pressed="false"
-							title="Show what is actually sent to the model"
-							data-i18n="wire.chip"
-							data-i18n-title="wire.chip_help">Wire</button>
+						<!-- Wire removed (owner review 2026-09-04): the System tile is always
+						     present at the head of the thread and collapsible, so a separate
+						     control to reveal it was redundant. The System container now renders
+						     unconditionally; there is no toggle. -->
 						<button class="chip-btn icon-chip" id="chat-copy-btn"
 							title="Copy the whole conversation to the clipboard"
 							aria-label="Copy the conversation" data-i18n-aria-label="chat.copy_all_aria"

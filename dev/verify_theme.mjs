@@ -592,12 +592,14 @@ for (const n of NAMES) {
 		if (w.surf) soft(`${n}/${nm(tok)}-vs-surface`, w.r, CTRL,
 			`${n}: ${nm(tok)} as a dot on its worst surface (${nm(w.surf)})`);
 	}
-	// White lettering on a filled state button. .diff-accept fills with --ok,
-	// .dlg-ok.danger and .admin-item.danger:hover and .abtn.stop:hover fill with
-	// --danger, and every primary button's HOVER fills with --accent-hover while
-	// keeping the same white label. All words, all 4.5.
+	// White lettering on a filled state surface. --ok fills the tool rollup's count
+	// badge (.crollup-count on a tool rollup), .dlg-ok.danger and
+	// .admin-item.danger:hover and .abtn.stop:hover fill with --danger, and every
+	// primary button's HOVER fills with --accent-hover while keeping the same white
+	// label. All words, all 4.5. (The fold Accept button that used --ok was removed
+	// with the fold-review UI on 2026-09-04; --ok's white-on-fill duty moved here.)
 	const fills = [
-		['--ok',           'the label on the Accept button (.diff-accept)'],
+		['--ok',           'white on the tool rollup count badge (.crollup-count, --ok)'],
 		['--danger',       'the label on a filled danger button (.dlg-ok.danger)'],
 		['--accent-hover', 'the label on a primary button, hovered (.admin-cta:hover)'],
 	];

@@ -6,16 +6,13 @@
 // own conversation, drawn in the chat's thread). Three guards ask which face is up before
 // they draw, and all three are about the same thing: IS THIS CONVERSATION THE ONE ON SCREEN.
 //
-//   * "Fresh daimon" empties a daimon's conversation, and has to repaint the thread. The
-//     dialog it is pressed in overlays the app, so what is behind it is stale until
-//     something repaints it — and closing a dialog repaints nothing. It also has to make the
-//     emptying STICK, which is a separate claim and was the false one: the transcript merge
-//     is a deliberate UNION, so an emptied array saved straight back was refilled from the
-//     store, and the conversation returned on the next reload with the screen none the wiser.
-//   * Fold belongs to the conversation a hand fold can REACH, and to no other. It was
-//     drawn on the daimon's face and nowhere else, which is precisely backwards: a
-//     Diamond engine's session holds no messages, so `fold_now` there compacts nothing
-//     and bills for the round; an ordinary chat is the one that can be folded by hand.
+//   * "Fresh daimon" was REMOVED (owner review 2026-09-04): a new model takes effect on
+//     the next turn on its own, and the responding model shows in the tile headers, so the
+//     control was redundant. Check 1 now asserts it is gone from the cog dialog.
+//   * Fold, on a Diamond, is now ON the daimon's CHAT face (owner review): it folds the
+//     conversation into the Diamond's crystal (`foldChatInto`), which is a real, paid
+//     reducer round and the whole point of a daimon. It is OFF the crystal face and OFF an
+//     ordinary chat, which folds from select mode ("Fold selected") and the tile dialog.
 //   * A daimon's reply streams into the thread AS IT ARRIVES, and only when that thread is
 //     the one on screen. A turn can run from a gather round with its Diamond nowhere near
 //     the screen, and drawing then puts one conversation's words in another's transcript.
@@ -36,11 +33,7 @@
 //
 // EACH CHECK IS PROVED AGAINST BROKEN CODE FIRST.
 //
-//   node dev/verify_daimonface.mjs --break no-redraw    # 1a fails: Fresh daimon stops repainting
-//   node dev/verify_daimonface.mjs --break resurrect    # 1b+1d fail: the union puts it all back
-//   node dev/verify_daimonface.mjs --break sessionless  # 1c fails: the model keeps the conversation
-//   node dev/verify_daimonface.mjs --break clear-midturn # 1e fails: a clear a turn then undoes
-//   node dev/verify_daimonface.mjs --break fold-drift   # 2 fails: Fold goes back to the daimon
+//   node dev/verify_daimonface.mjs --break fold-drift   # 2 fails: Fold goes back to the ordinary chat
 //   node dev/verify_daimonface.mjs --break crosstalk    # 3a fails: a reply lands in another thread
 //   node dev/verify_daimonface.mjs --break mute         # 3b fails: nothing streams into its own
 //   node dev/verify_daimonface.mjs --break dead-compare # 4a+4b fail: a face nothing enters
@@ -96,45 +89,19 @@ const BREAK = (() => {
 // an anchor that no longer matches is a break that quietly stopped applying, and a green run
 // under it proves nothing at all.
 const BREAKS = {
-	// The repaint after "Fresh daimon" simply never runs. The record still clears — which is
-	// the point of asserting on what is DRAWN rather than on what is stored.
-	'no-redraw': {
-		find: "			if (daimonOnScreen(rec)) {\n				await selectDiamond(f, 'chat');",
-		with: "			if (false) {\n				await selectDiamond(f, 'chat');",
-	},
 	// THE OLD CONDITION, restored: Fold drawn on the daimon's face and on no other. It is a
 	// real comparison against a real face, so every static check stays green and only the
 	// control checks move — which is the point, because for months this was the shipped
 	// behaviour and nothing in this file objected. It must redden 2a (the control is back on
 	// the face that cannot use it) and 2c (it is gone from the one that can).
 	'fold-drift': {
-		find: "		b.style.display = (current && !current.diamondId && chatSaid(current)) ? '' : 'none';",
-		with: "		b.style.display = (daimonOnScreen(current) && current.diamondId) ? '' : 'none';",
+		find: "		b.style.display = (current && current.diamondId && chatSaid(current) && centreMode === 'daimon') ? '' : 'none';",
+		with: "		b.style.display = (current && !current.diamondId && chatSaid(current)) ? '' : 'none';",
 	},
 	// The guard forgets WHICH conversation and remembers only that some conversation is up.
 	crosstalk: {
 		find: "		var onScreen = function () { return daimonOnScreen(rec); };",
 		with: "		var onScreen = function () { return !!(current && centreMode === 'daimon'); };",
-	},
-	// The tombstones come off, so the union puts the conversation straight back. The SCREEN
-	// still clears, which is what made this so hard to see: every check that watches the
-	// thread stays green and only the store, and a reload, know anything happened.
-	resurrect: {
-		find: "			msgTombstone((rec.messages || []).map(function (m) { return m.mid; }));\n",
-		with: "",
-	},
-	// The model's own conversation goes back to `null` — "this tab does not know" — which
-	// `persistChats` fills in from the store. Invisible on screen: the thread is empty and the
-	// next turn quietly carries the whole discarded conversation to the model, and is billed
-	// for it.
-	sessionless: {
-		find: "			rec.session = { v: 1, msgs: [], upto: '', uptoTs: 0 };",
-		with: "			rec.session = null;",
-	},
-	// The refusal comes off, so a clear can be taken mid-turn and undone by the turn.
-	'clear-midturn': {
-		find: "			if (rec._generating) {\n				await noticeDialog(t('tile.daimon_reset_busy_title'), t('tile.daimon_reset_busy'));\n				return;\n			}",
-		with: "			if (false) { return; }",
 	},
 	// The guard is always false — the state the whole file was mistakenly believed to be in.
 	mute: {
@@ -411,19 +378,19 @@ try {
 	// another check's reason stops being a control.
 	await openDiamond('Alpha', 'chat');
 	const onChat = await drawn();
-	check('2a. FOLD IS OFF THE DAIMON FACE, the one conversation a hand fold cannot reach',
-		onChat.fold === false, 'visible:' + onChat.fold);
+	check('2a. FOLD IS ON THE DAIMON CHAT FACE, which folds the chat into its Diamond (owner review)',
+		onChat.fold === true, 'visible:' + onChat.fold);
 	// The control beside it: the thread really has something in it, so 2a is a REFUSAL and not
 	// a button hidden for want of a conversation. It also makes check 1's "empty" below a
 	// change and not the state it started in.
-	check('the daimon really said something, so 2a is a refusal and not an empty thread',
+	check('the daimon really said something, so 2a is a real fold and not an empty thread',
 		onChat.users.length === 1 && /hello alpha/.test(onChat.users[0] || ''),
 		JSON.stringify(onChat.users));
 
 	await page.click('#dview-crystal', { force: true });
 	await page.waitForTimeout(900);
 	const onCrystal = await drawn();
-	check('2b. AND OFF THE CRYSTAL FACE, which shows no conversation at all',
+	check('2b. AND OFF THE CRYSTAL FACE, which shows the memory, not the conversation',
 		onCrystal.fold === false, 'visible:' + onCrystal.fold);
 
 	// ── 2c/2d. And ON an ordinary chat, once there is something in it.
@@ -443,9 +410,9 @@ try {
 	// control live: `runTurn` pushes and persists first, then syncs the composer.
 	await page.waitForTimeout(2500);
 	const onOrdinary = await drawn();
-	check('2c. FOLD IS ON AN ORDINARY CHAT WITH SOMETHING IN IT, which is the fold that works',
-		onOrdinary.fold === true, 'visible:' + onOrdinary.fold);
-	check('and that chat really has something in it, so 2c is not a control drawn over nothing',
+	check('2c. FOLD IS OFF AN ORDINARY CHAT, which folds from select mode instead (owner review)',
+		onOrdinary.fold === false, 'visible:' + onOrdinary.fold);
+	check('and that chat really has something in it, so 2c is a real hide and not an empty thread',
 		onOrdinary.users.length >= 1 && /hello chat/.test(onOrdinary.text),
 		JSON.stringify(onOrdinary.users));
 	// Let the turn finish before the Diamond work below, so a reply still streaming cannot
@@ -455,108 +422,28 @@ try {
 	await openDiamond('Alpha', 'chat');
 	await page.waitForTimeout(600);
 
-	// ── 1. "Fresh daimon" clears WHAT IS DRAWN, not merely what is stored.
-	await freshDaimon('Alpha');
-	const after = await drawn();
-	check('1a. FRESH DAIMON EMPTIES THE THREAD ON SCREEN',
-		after.users.length === 0 && !/hello alpha/.test(after.text),
-		JSON.stringify(after.users).slice(0, 80));
-	check('and the emptied thread says so rather than going blank',
-		after.empty === true, after.text.slice(0, 60));
-	// ── 1b. AND IT STAYS CLEARED. The screen and the store are two different claims, and this
-	//        is the one that was false: `persistChats` UNIONS a transcript with the stored copy,
-	//        so emptying the array and saving put every message back. Nothing on screen could
-	//        see it, because the screen had already been repainted from the emptied array.
-	const stored = () => page.evaluate(() => new Promise((res) => {
-		const r = indexedDB.open('daimond-chats', 1);
-		r.onsuccess = () => {
-			const db = r.result;
-			let t; try { t = db.transaction('chats', 'readonly'); } catch (e) { return res(null); }
-			const a = t.objectStore('chats').getAll();
-			a.onsuccess = () => {
-				const d = (a.result || []).filter(c => c.diamondId);
-				res({
-					msgs: d.reduce((n, c) => Math.max(n, (c.messages || []).length), 0),
-					sess: d.reduce((n, c) => Math.max(n, ((c.session || {}).msgs || []).length), 0),
-				});
-			};
-			a.onerror = () => res(null);
-		};
-		r.onerror = () => res(null);
-	}));
-	const st = await stored();
-	check('1b. THE TRANSCRIPT IS GONE FROM THE STORE TOO, not only from the screen',
-		!!st && st.msgs === 0, 'longest stored daimon transcript: ' + ((st || {}).msgs));
-	// The half the dialog's own comment calls the one that matters: `session.msgs` is what goes
-	// to the model on the next turn, and it is invisible from the screen either way.
-	check('1c. AND SO IS THE CONVERSATION THE MODEL HOLDS, which the next turn would carry',
-		!!st && st.sess === 0, 'stored session length: ' + ((st || {}).sess));
-
-	// Read the way the owner read it: come back tomorrow and see whether it is still gone.
-	await page.reload({ waitUntil: 'domcontentloaded' });
-	await signInAs(s, 'daimonface');
-	await page.waitForTimeout(1500);
-	await openDiamond('Alpha', 'chat');
-	const reloaded = await drawn();
-	check('1d. AND IT IS STILL GONE AFTER A RELOAD, which is what "start fresh" means',
-		reloaded.users.length === 0 && !/hello alpha/.test(reloaded.text),
-		JSON.stringify(reloaded.users).slice(0, 80));
-
-	// ── 1e. WHAT FALLS BETWEEN CHECK 1 AND CHECK 3, which neither can see on its own.
-	//
-	// Check 1 clears with nothing running. Check 3 runs a turn with nothing cleared. Between
-	// them sits the clear taken WHILE a turn is in flight, and it was real: the reply and the
-	// model's whole conversation are written back into the record when the turn ends, by
-	// reference, so the clear was undone a few seconds later and the reader was left with half
-	// an answer to a question that was no longer there. Two checks, each right, one gap.
-	await page.fill('#chat-input', '@long 40');
-	await page.click('#chat-send', { force: true });
-	await page.waitForTimeout(1500);
-	const refused = await page.evaluate(() => {
+	// ── 1. "Fresh daimon" is GONE (owner review 2026-09-04). A new model takes
+	// effect on the next turn on its own, and the responding model now shows in the
+	// Thinking/Daimond tile headers, so the control was removed from a Diamond's cog
+	// dialog. Assert its absence; Alpha's thread is left as it stands for the
+	// streaming checks below.
+	const freshGone = await page.evaluate((n) => new Promise((res) => {
 		const box = [...document.querySelectorAll('.diamond-box')]
-			.find(b => (b.textContent || '').indexOf('Alpha') >= 0);
+			.find(b => (b.textContent || '').indexOf(n) >= 0);
 		box.querySelector('.tile-cog').click();
-		return true;
-	}) && await page.waitForTimeout(700).then(async () => {
-		const pressed = await page.evaluate(() => {
-			const b = [...document.querySelectorAll('.tile-dlg-clear')]
-				.find(e => /fresh daimon/i.test(e.textContent || ''));
-			if (!b) return 'no control';
-			b.click();
-			return 'pressed';
-		});
-		await page.waitForTimeout(700);
-		// A NOTICE and not a confirm: nothing is discarded, and the way to discard is named.
-		return await page.evaluate((p) => {
-			const dlg = document.querySelector('.dlg-card:not(.tile-dlg-card)');
-			return { pressed: p, dialog: dlg ? (dlg.textContent || '').replace(/\s+/g, ' ') : '' };
-		}, pressed);
-	});
-	check('1e. A CLEAR IS REFUSED MID-TURN rather than undone by the turn a moment later',
-		/still working/i.test(refused.dialog),
-		refused.pressed + ': ' + (refused.dialog || '(no dialog)').slice(0, 70));
-	// Out of both dialogs, and let the turn finish, so what follows starts from a known place.
-	await page.evaluate(() => {
-		const n = document.querySelector('.dlg-card:not(.tile-dlg-card) .dlg-ok');
-		if (n) n.click();
-	});
-	await page.waitForTimeout(400);
-	await page.evaluate(() => {
-		const x = document.querySelector('.tile-dlg-card .tile-dlg-done');
-		if (x) x.click();
-	});
-	// The dots are the app's own answer to "is a turn still running", so they are what is
-	// waited on rather than a number of seconds somebody guessed.
-	await page.waitForSelector('.chat-spinner', { state: 'detached', timeout: 30000 });
-	await page.waitForTimeout(800);
-	// Cleared again, now that it is allowed — so check 3 below starts from an empty thread and
-	// its `chunk-` evidence is this turn's and not the one just run.
-	await freshDaimon('Alpha');
+		setTimeout(() => {
+			const has = [...document.querySelectorAll('.tile-dlg-clear')]
+				.some(e => /fresh daimon/i.test(e.textContent || ''));
+			const x = document.querySelector('.tile-dlg-card .tile-dlg-done');
+			if (x) x.click();
+			res(has);
+		}, 700);
+	}), 'Alpha');
+	check('1. "FRESH DAIMON" IS GONE FROM THE DIAMOND SETTINGS (owner review)',
+		freshGone === false, freshGone ? 'still present' : 'absent');
+	await page.waitForTimeout(500);
 	await openDiamond('Alpha', 'chat');
-	const cleared2 = await drawn();
-	check('and the clear works once the turn is over, which is what the refusal promised',
-		cleared2.users.length === 0 && !/chunk-/.test(cleared2.text),
-		JSON.stringify(cleared2.users) + ' chunks:' + /chunk-/.test(cleared2.text));
+	await page.waitForTimeout(400);
 
 	// ── 3. A reply streams into ITS OWN thread, and into no other.
 	await page.fill('#chat-input', '@long 40');

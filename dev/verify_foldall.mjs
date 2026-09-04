@@ -9,9 +9,14 @@
 //
 // So each check here is one way out of the fold, and what it asserts is that the
 // user can SEE it happened. The one that matters most is the last shape of the
-// failure: an empty reply from the reducer used to render as a diff deleting
-// every line of the crystal, with Accept enabled — one click from wiping the
-// document the app exists to build.
+// failure: an empty reply from the reducer must NEVER be written to the crystal.
+//
+// FOLDS COMMIT DIRECTLY NOW (owner decision 2026-09-04): there is no Accept/Reject
+// diff. A fold writes straight to the crystal and the version history is the undo.
+// So "a visible result" is a committed crystal and a toast, not a diff — and the
+// empty-reply guard is proved by the crystal being UNCHANGED, not by an unarmed
+// Accept button. The crystal version snapshot on write is what makes a fold the
+// owner did not want a rollback rather than a refusal.
 //
 //   node dev/verify_foldall.mjs
 //
@@ -155,22 +160,21 @@ async function settled(timeout = 20000) {
 	return 'nothing';
 }
 
-// ── 1. Folding the whole chat says something within ten seconds ──────
+// ── 1. Folding the whole chat COMMITS a visible change, not silence ──
 await clearToasts();
+const before1 = await crystalWords(DIAMOND);
 await foldAll();
 const outcome1 = await settled(20000);
 const d1 = await diffState();
 check('folding every turn produces a visible result, not silence',
 	outcome1 !== 'nothing', `outcome=${outcome1}`);
-check('and that result is a diff with real changes in it',
-	d1.lines > 0 && (d1.add + d1.del) > 0, `${d1.lines} lines, +${d1.add}/-${d1.del}`);
-await shot(s, 'foldall-diff');
-
-// Accept it, so the crystal has content for the empty-reply check below to risk.
-if (d1.acceptEnabled) { await p.click('.diff-accept', { force: true }); await sleep(3500); }
+check('and there is NO Accept/Reject diff — the fold commits directly',
+	d1.accept === false && d1.lines === 0, `accept=${d1.accept} diffLines=${d1.lines}`);
+await sleep(2000);
 const crystalLen = await crystalWords(DIAMOND);
-check('the accepted fold left a crystal with something in it (so the next check can bite)',
-	crystalLen > 20, `${crystalLen} chars`);
+check('the fold WROTE straight into the crystal (something is now there)',
+	crystalLen > 20 && crystalLen !== before1, `${before1} → ${crystalLen} chars`);
+await shot(s, 'foldall-committed');
 
 // ── 2. A provider failure is shown, and does not wedge the crystal ───
 await clearToasts();
@@ -243,13 +247,12 @@ await p.fill('.dlg-input', 'Empty Reply');
 await p.click('.dlg-ok', { force: true });
 await sleep(1000);
 await clearToasts();
-await foldAll({ pickName: 'Empty Reply' });
+await foldAll({ pickName: 'Empty Reply' });   // a real reducer round, commits directly
 await settled(20000);
-const dA = await diffState();
-if (dA.acceptEnabled) { await p.click('.diff-accept', { force: true }); await sleep(3500); }
+await sleep(2500);
 // The precondition, asserted rather than assumed: an empty reply against an EMPTY
-// crystal diffs to "no change" and Accept is disabled anyway, so the check below
-// would pass without proving anything.
+// crystal changes nothing anyway, so the check below would pass without proving
+// anything. The first fold committed real content, so now there IS something to risk.
 const emptyBase = await crystalWords('Empty Reply');
 check('the second Diamond has a crystal worth deleting (the precondition of the next check)',
 	emptyBase > 20, `${emptyBase} chars`);
@@ -274,22 +277,20 @@ await p.route('**/v1/chat/completions', route => route.fulfill({
 await foldAll({ pickName: 'Empty Reply' });
 await sleep(9000);
 const t4 = await toasts();
-const d4 = await diffState();
 await p.unroute('**/v1/chat/completions');
+const emptyAfter = await crystalWords('Empty Reply');
 check('an empty reducer reply is reported as a failure',
 	t4.some(x => x.err), JSON.stringify(t4.slice(0, 2)));
-check('and is NEVER offered as a diff that deletes the crystal',
-	!(d4.acceptEnabled && d4.del > 0), `accept=${d4.acceptEnabled} deletions=${d4.del}`);
+check('and is NEVER written to the crystal — the guard refuses to apply it',
+	emptyAfter === emptyBase && emptyAfter > 20, `${emptyBase} → ${emptyAfter} chars`);
 await shot(s, 'foldall-empty-reply');
-// Nothing was left pending on that Diamond, so no rail row claims one is waiting.
-const pendingAfterEmpty = await p.$$eval('.diamond-box', els => els.filter(e =>
-	e.querySelector('.diamond-pending')).map(e => (e.querySelector('.session-box-name') || {}).textContent));
-check('and no proposal is left pending from it',
-	pendingAfterEmpty.length === 0, JSON.stringify(pendingAfterEmpty));
 
-// ── 5. Leaving mid-propose leaves a mark on the rail row ─────────────
+// ── 5. A slow fold still COMMITS when it returns, even if you left ───
 // The reducer is slow on purpose; the user goes back to the chat while it runs.
+// With no accept step the commit needs no second click, so a fold begun before
+// the user walked away lands on its own — and says so.
 await clearToasts();
+const before5 = await crystalWords('Empty Reply');
 await p.route('**/v1/chat/completions', async route => {
 	await sleep(6000);
 	await route.continue();
@@ -298,20 +299,16 @@ await foldAll({ pickName: 'Empty Reply' });
 await sleep(1500);
 await p.evaluate(() => {
 	const box = document.querySelector('.session-box:not(.diamond-box)');
-	if (box) box.click();                       // away from the Diamond, mid-propose
+	if (box) box.click();                       // away from the Diamond, mid-fold
 });
 await sleep(14000);
 await p.unroute('**/v1/chat/completions');
-const pending = await p.$$eval('.diamond-box', els => els.map(e => ({
-	name: (e.querySelector('.session-box-name') || {}).textContent,
-	pending: !!e.querySelector('.diamond-pending'),
-})));
-check('a proposal that landed while you were elsewhere is marked on its rail row',
-	pending.some(x => x.pending), JSON.stringify(pending));
+const after5 = await crystalWords('Empty Reply');
 const t5 = await toasts();
-check('and the toast names the Diamond it is waiting on',
-	t5.some(x => /Empty Reply/.test(x.text)), JSON.stringify(t5.slice(0, 2)));
-await shot(s, 'foldall-pending-badge');
+check('a fold begun before you walked away still commits, on its own, when it returns',
+	after5 !== before5 || t5.some(x => /Empty Reply|Folded/.test(x.text)),
+	`${before5} → ${after5} chars; toasts ${JSON.stringify(t5.slice(0, 2))}`);
+await shot(s, 'foldall-slow-commit');
 
 // ── 6. The floor under the whole class ───────────────────────────────
 // Most of this app is started rather than awaited: a click hands a promise to

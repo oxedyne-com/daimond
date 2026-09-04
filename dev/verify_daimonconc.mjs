@@ -289,13 +289,16 @@ console.log('\n4. the fold controls answer for the right conversation\n');
 		answered);
 	check('and the daimon was still running when it did', (await state(A)).gen);
 
+	// OWNER REVIEW 2026-09-04 (item 12): an ordinary chat has NO surface Fold button —
+	// it folds from select mode ("Fold selected") and the tile dialog (exercised just
+	// below). The header Fold now lives on a daimon's chat face (see verify_daimonface
+	// check 2a), where `syncFoldBusy` disables it only for its OWN Diamond's turn.
 	const fold = await p.evaluate(() => {
 		const b = document.getElementById('chat-fold-btn');
-		return b ? { shown: b.style.display !== 'none', disabled: !!b.disabled } : null;
+		return { shown: b ? b.style.display !== 'none' : false };
 	});
-	check('the chat\'s own Fold control is offered', !!(fold && fold.shown), JSON.stringify(fold));
-	check('and it is NOT disabled by another Diamond\'s turn',
-		!!(fold && !fold.disabled), JSON.stringify(fold));
+	check('an ordinary chat has NO surface Fold button (it folds from select mode)',
+		fold.shown === false, JSON.stringify(fold));
 
 	// ── Folding this chat INTO the busy Diamond ────────────────
 	//
