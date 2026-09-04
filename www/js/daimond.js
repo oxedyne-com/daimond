@@ -6138,6 +6138,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					unseen.forEach(function (id) { open[id] = false; });
 					dock = dock.filter(function (id) { return unseen.indexOf(id) === -1; });
 				}
+				// An open dock panel the grid has no cell for is closed back to a
+				// chip, rather than left open and drawing loose in the row where the
+				// seating never reaches it. A saved layout can name more dock panels
+				// than `dockMax`: `load` slices `dock` and `seatOpenPanels` stops
+				// pushing once it is full, but neither turns the overflow OFF, so it
+				// stayed `open` with its element still a child of `main` — a bare,
+				// borderless panel the flex row drew beside the dock, over nothing it
+				// managed. This is the dock's version of the stage guest `fitStage`
+				// closes: `show` already caps a fresh open, so only a restore carries
+				// the state in, and only a restore triggers this.
+				PANELS.forEach(function (p) {
+					if (p.zone === 'dock' && open[p.id] && dock.indexOf(p.id) === -1) open[p.id] = false;
+				});
 				var cols = dockColumns(dockCols());
 				// Who ends up in which column, taken from the seating itself rather
 				// than read back off the DOM: a panel just closed still has its
@@ -6171,6 +6184,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (cols.indexOf(c) !== -1) { c.style.display = ''; return; }
 					while (c.firstChild) dockEl.appendChild(c.firstChild);
 					c.style.display = 'none';
+				});
+				// `place` seats a column's OWNERS but never turns a STRANGER out, and
+				// the sweep above only retires a WHOLE column, not a panel left inside
+				// a kept one. A panel dropped from a seat whose element still sits in
+				// the cell a neighbour now owns would draw THROUGH it -- both are bare,
+				// borderless, transparent columns with no ground of their own, so the
+				// two read as one cell holding two panels. So each drawn cell is
+				// cleared of anything its seat does not name, the stale stack sizing a
+				// past `applyStacks` left on it with it, and the panel goes back to the
+				// pool to be hidden by the `hideClosed` below (it is closed by now:
+				// anything not in `dock` was turned off before the seating ran).
+				dockSeats.forEach(function (s) {
+					[].slice.call(s.el.children).forEach(function (ch) {
+						if (!ch.classList || !ch.classList.contains('panel')) return;
+						if (s.ids.indexOf(ch.dataset.panel) !== -1) return;
+						ch.style.flex = '';
+						ch.style.height = '';
+						if (mainEl) mainEl.appendChild(ch);
+					});
 				});
 				dockEl.style.display = dock.length ? '' : 'none';
 				document.getElementById('handle-dock').style.display = dock.length ? '' : 'none';

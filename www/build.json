@@ -1,1 +1,1 @@
-{"build":"69533bb87b41","note":"Improve reads self-heal a lapsed session via gwFetch instead of a stuck not-signed-in"}
+{"build":"3862917aab69","note":"Seat or chip every open dock panel on a restored layout so none draws loose over another"}
