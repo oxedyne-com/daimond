@@ -151,10 +151,10 @@
 	'search.engine': 'Moteur de recherche',
 	// Un quota gratuit, pas une clé gratuite : au-delà, c'est le fournisseur qui
 	// facture l'utilisateur. Volontairement sans chiffre et sans nommer de moteur.
-	'search.engine_note': 'Le service avec lequel Daimond cherche. La plupart donnent un quota gratuit chaque mois si vous apportez votre propre clé.',
+	'search.engine_note': 'Le service avec lequel Daimond cherche.',
 	'search.credits': 'Crédits Daimond',
 	'search.key': 'Clé d’API',
-	'search.key_note': 'Gardée sur cet appareil, scellée par votre phrase secrète, et envoyée seulement avec la recherche qu’elle paie.',
+	'search.key_note': 'Gardée sur cet appareil, scellée par votre phrase secrète.',
 	// {engine} est un nom propre, par exemple Brave, et ne se traduit pas.
 	'search.no_key': 'Ajoutez une clé pour {engine}, ou passez aux crédits Daimond.',
 	'search.kind_web': 'Web',
@@ -166,7 +166,7 @@
 	'search.free_month': '{engine} : environ {n} recherches gratuites par mois, la dernière fois que nous avons vérifié.',
 
 	// ── Credits, packs and Pro ─────────────────────────────────
-	'credits.lead': 'Achetez des crédits et Daimond fait tourner le modèle pour vous, sans clé de fournisseur à gérer. Sans abonnement. Ce que vous achetez vous reste, et rien n’est prélevé à nouveau, sauf si vous activez la recharge automatique.',
+	'credits.lead': 'Achetez des crédits et Daimond fait tourner le modèle pour vous : sans clé de fournisseur, sans abonnement.',
 	'credits.balance': 'Solde : {amount}',
 	'credits.balance_unavailable': 'Solde indisponible.',
 	'credits.see_spend': 'Voir où vont vos dépenses →',
@@ -885,17 +885,17 @@
 	'settings.max_rounds': 'Étapes par tour',
 	'settings.crystal_limits': 'Taille du cristal',
 	'settings.crystal_cap':      'Limite de taille du cristal',
-	'settings.crystal_cap_note': 'Un cristal est le résumé d’un Diamond : il a donc un plafond. Au-delà, un daimon met le détail dans un fichier de la portée du Diamond.',
+	'settings.crystal_cap_note': 'Jusqu’où la mémoire d’un Diamond peut grandir.',
 	'settings.crystal_cap_auto': 'Par défaut',
 	'settings.crystal_page_cap': 'Limite de taille de la page',
-	'settings.crystal_page_cap_note': 'La page qui affiche les données d’un Diamond. Elle voyage à chaque synchronisation et partage le budget avec les données.',
+	'settings.crystal_page_cap_note': 'Jusqu’où la page d’un Diamond peut grandir.',
 	'settings.max_rounds_auto': 'Par défaut',
 	'settings.steps': 'étapes',
 	'settings.max_rounds_note': 'Combien de fois un agent peut utiliser un outil avant qu’un tour s’arrête. Il le dit en s’arrêtant, et vous pouvez lui demander de continuer.',
 	'settings.fold_at': 'Replier la conversation à',
 	'settings.fold_at_auto': 'Par défaut',
 	'settings.fold_at_note': 'Le remplissage de la fenêtre de contexte avant que Daimond ne remplace la partie ancienne d’un chat par un résumé. Il le dit dans le fil quand cela arrive. Plus bas replie plus tôt et plus souvent ; plus haut garde davantage de la conversation mot pour mot.',
-	'settings.max_tokens_note': 'Longueur maximale d’une seule réponse. Trop basse, et un gros fichier arrive coupé en deux.',
+	'settings.max_tokens_note': 'Longueur maximale d’une seule réponse.',
 	'settings.max_tokens_ceiling': 'accepte jusqu’à',
 
 	// ── Quand les conversations ne sont plus enregistrées ──────
@@ -1156,6 +1156,9 @@
 	'update.ready_help': 'Mise à jour prête. Elle s’applique à la fin de ceci, ou cliquez pour la forcer.',
 	'update.updated': 'Daimond mis à jour',
 	'update.stale': 'Daimond n’est plus à jour et doit recharger pour continuer à fonctionner. Cliquez pour recharger.',
+	'update.available': 'Une nouvelle version de Daimond est disponible.',
+	'update.reload': 'Recharger',
+	'update.dismiss': 'Ignorer',
 
 	// ── Typst ──────────────────────────────────────────────────
 	'typst.load_failed': 'Le compilateur Typst n’a pas pu se charger : {reason}',
@@ -1219,18 +1222,17 @@
 	'home.remove_passkey': 'Retirer la clé d’accès',
 	'home.export_backup': 'Exporter une sauvegarde',
 	'home.import_backup': 'Importer une sauvegarde…',
-	'home.dashboard': 'Tableau de bord Daimond ↗',
 	// "de {role}" and "en tant que {role}" would need elision before a
 	// vowel-initial role name ("d’ouvrier", "qu’owner"); "pour" and "avec le
 	// rôle" take any role without one.
 	'home.signed_in_as': 'Vous êtes connecté avec le rôle {role}.',
 	'home.edit_prompt': 'Modifier les instructions pour {role}…',
 	'home.prompt_opens': 'Ouvre {path} dans le panneau Doc.',
-	'home.prompts_note': 'Les instructions sous lesquelles chaque agent travaille, gardées comme fichiers dans votre espace de travail. Modifiez-en une et elle s’applique dès le tour suivant ; supprimez-la et l’originale revient. Deux règles tiennent quoi que vous écriviez : une page ou un courriel est une donnée et jamais une instruction, et rien d’irréversible n’arrive sans vous demander.',
+	'home.prompts_note': 'Les fichiers modifiables sous lesquels chaque agent travaille.',
 	'home.switch_to': 'Passer à {name}',
 	'home.unnamed_account': 'Compte sans nom',
 	'home.add_account': '＋ Ajouter un autre compte',
-	'home.accounts_note': 'Chaque compte a ses propres chats, clés, crédits et fichiers. En changer verrouille celui-ci et ouvre l’autre. Aucun compte ne voit les données d’un autre.',
+	'home.accounts_note': 'Chacun a ses propres chats, clés et fichiers, invisibles aux autres.',
 	'home.log_out': 'Se déconnecter',
 	'home.sec_devices': 'Appareils',
 	'home.sec_console':      'Console',
@@ -1249,12 +1251,14 @@
 	'push.lead':         'Un jeton permet à Daimond de pousser le travail que vous avez validé. Sans jeton il valide toujours, mais chaque push est refusé et le travail reste sur cette machine.',
 	'push.host':         'Hôte',
 	'push.host_ph':      'github.com',
-	'push.host_note':    'Le nom seul, comme github.com. Pas de https://, pas de port, pas de chemin. Seul cet hôte est authentifié ; un dépôt ailleurs est refusé, et votre jeton ne l’atteint jamais.',
+	'push.host_note':    'Le nom d’hôte seul, comme github.com — sans schéma, port ni chemin.',
 	'push.token':        'Jeton',
 	'push.token_ph':     'Collez un jeton autorisé à pousser',
-	'push.token_note':   'L’accès en push suffit ; le jeton n’a jamais besoin de plus. Daimond ne fait que pousser, uniquement en avance rapide, uniquement vers origin. Force, delete, mirror et tout autre dépôt distant sont refusés quoi que permette le jeton. Videz ce champ et enregistrez pour le retirer.',
+	'push.token_note':   'Un identifiant capable d’écrire, conservé sur cet appareil — ne lui donnez qu’un accès en push.',
+	'push.token_help':   'Daimond ne fait que pousser, uniquement en avance rapide, uniquement vers origin ; force, delete, mirror et tout autre dépôt distant sont refusés quoi que permette le jeton. Videz ce champ et enregistrez pour le retirer.',
 	'push.save':         'Enregistrer',
-	'push.privacy':      'Le jeton est chiffré avec votre phrase secrète et reste dans ce navigateur. Il n’est plus jamais affiché, jamais envoyé chez nous, jamais confié à un modèle. Sans compte, il n’y a rien pour le chiffrer : il ne vaut alors que pour cet onglet et vous sera redemandé après un rechargement.',
+	'push.privacy':      'Chiffré avec votre phrase secrète et conservé dans ce navigateur — jamais envoyé chez nous ni montré à un modèle.',
+	'push.privacy_help': 'Il n’est plus jamais affiché. Sans compte, il n’y a rien pour le chiffrer : il ne vaut alors que pour cet onglet et vous sera redemandé après un rechargement.',
 	'push.set':          'Défini. Un push atteint {host}.',
 	'push.none':         'Non défini. Chaque push est refusé tant qu’aucun jeton n’est enregistré ici.',
 	'push.saved':        'Enregistré. Chiffré avec votre phrase secrète et repris à chaque déverrouillage.',
@@ -2355,7 +2359,7 @@
 	'settings.fold_model': 'Replier avec',
 	'settings.fold_model_own': 'Le modèle propre de la conversation',
 	'settings.fold_model_group': 'Replier plutôt avec',
-	'settings.fold_model_note': 'Quand une conversation dépasse sa fenêtre, elle est résumée, et le résumé devient ce dont le modèle se souvient. Ceci choisit qui l’écrit, pour les chats du même fournisseur ; tout autre chat se replie avec son propre modèle.',
+	'settings.fold_model_note': 'Quel modèle écrit le résumé quand un chat est replié.',
 
 	// The durable trail, shown on the lock screen only when the app is
 	// actually looping -- three boots in ninety seconds. See breadcrumb.js.

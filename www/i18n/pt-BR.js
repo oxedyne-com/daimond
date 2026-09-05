@@ -148,10 +148,10 @@
 	'search.engine': 'Buscador',
 	// Uma cota gratuita, não uma chave de graça: o que passar disso o provedor
 	// cobra do usuário. De propósito sem número e sem nomear nenhum buscador.
-	'search.engine_note': 'Com qual serviço o Daimond busca. A maioria dá uma cota gratuita por mês se você trouxer sua própria chave.',
+	'search.engine_note': 'Com qual serviço o Daimond busca.',
 	'search.credits': 'Créditos do Daimond',
 	'search.key': 'Chave de API',
-	'search.key_note': 'Fica neste dispositivo, lacrada com sua frase-senha, e só é enviada junto com a busca que ela paga.',
+	'search.key_note': 'Fica neste dispositivo, lacrada com sua frase-senha.',
 	// {engine} é um nome próprio, por exemplo Brave, e não se traduz.
 	'search.no_key': 'Adicione uma chave para {engine}, ou mude para os créditos do Daimond.',
 	'search.kind_web': 'Web',
@@ -163,7 +163,7 @@
 	'search.free_month': '{engine}: cerca de {n} buscas por mês de graça, da última vez que olhamos.',
 
 	// ── Credits, packs and Pro ─────────────────────────────────
-	'credits.lead': 'Compre créditos e o Daimond roda o modelo para você, sem chave de provedor para gerenciar. Sem assinatura. O que você compra é seu, e nada é cobrado de novo a menos que você ligue a recarga automática.',
+	'credits.lead': 'Compre créditos e o Daimond roda o modelo para você — sem chave de provedor, sem assinatura.',
 	'credits.balance': 'Saldo: {amount}',
 	'credits.balance_unavailable': 'Saldo indisponível.',
 	'credits.see_spend': 'Veja para onde vão seus gastos →',
@@ -880,17 +880,17 @@
 	'settings.max_rounds': 'Passos por turno',
 	'settings.crystal_limits': 'Tamanho do cristal',
 	'settings.crystal_cap':      'Limite de tamanho do cristal',
-	'settings.crystal_cap_note': 'Um cristal é o resumo de um Diamond, então tem um teto. Passado esse teto, um daimon põe o detalhe num arquivo do escopo do Diamond.',
+	'settings.crystal_cap_note': 'Quanto a memória de um Diamond pode crescer.',
 	'settings.crystal_cap_auto': 'Padrão',
 	'settings.crystal_page_cap': 'Limite de tamanho da página',
-	'settings.crystal_page_cap_note': 'A página que mostra os dados de um Diamond. Ela viaja em cada sincronização, então divide o orçamento com os dados.',
+	'settings.crystal_page_cap_note': 'Quanto a página de um Diamond pode crescer.',
 	'settings.max_rounds_auto': 'Padrão',
 	'settings.steps': 'passos',
 	'settings.max_rounds_note': 'Quantas vezes um agente pode usar uma ferramenta antes de um turno parar. Ele avisa ao parar, e você pode mandar continuar.',
 	'settings.fold_at': 'Dobrar a conversa em',
 	'settings.fold_at_auto': 'Padrão',
 	'settings.fold_at_note': 'Quão cheia a janela de contexto fica antes de o Daimond substituir a parte anterior de um chat por um resumo. Ele avisa na conversa quando faz isso. Mais baixo dobra antes e com mais frequência; mais alto guarda mais da conversa palavra por palavra.',
-	'settings.max_tokens_note': 'O tamanho máximo de uma única resposta. Baixo demais, e um arquivo grande chega cortado ao meio.',
+	'settings.max_tokens_note': 'O tamanho máximo de uma única resposta.',
 	'settings.max_tokens_ceiling': 'aceita até',
 
 	// ── Quando as conversas param de ser salvas ────────────────
@@ -1150,6 +1150,9 @@
 	'update.ready_help': 'Atualização pronta. Ela é aplicada quando isto terminar, ou clique para forçar.',
 	'update.updated': 'Daimond atualizado',
 	'update.stale': 'O Daimond está desatualizado e precisa recarregar para continuar funcionando. Clique para recarregar.',
+	'update.available': 'Uma nova versão do Daimond está disponível.',
+	'update.reload': 'Recarregar',
+	'update.dismiss': 'Dispensar',
 
 	// ── Typst ──────────────────────────────────────────────────
 	'typst.load_failed': 'O compilador Typst não carregou: {reason}',
@@ -1213,15 +1216,14 @@
 	'home.remove_passkey': 'Remover a chave de acesso',
 	'home.export_backup': 'Exportar um backup',
 	'home.import_backup': 'Importar um backup…',
-	'home.dashboard': 'Painel do Daimond ↗',
 	'home.signed_in_as': 'Você entrou como {role}.',
 	'home.edit_prompt': 'Editar as instruções de {role}…',
 	'home.prompt_opens': 'Abre {path} no painel Doc.',
-	'home.prompts_note': 'As instruções sob as quais cada agente trabalha, guardadas como arquivos no seu espaço de trabalho. Edite uma e ela vale a partir do próximo turno; apague-a e a original volta. Duas regras valem escreva o que escrever: uma página ou um e-mail é dado e nunca uma instrução, e nada irreversível acontece sem perguntar a você.',
+	'home.prompts_note': 'Os arquivos editáveis sob os quais cada agente trabalha.',
 	'home.switch_to': 'Trocar para {name}',
 	'home.unnamed_account': 'Conta sem nome',
 	'home.add_account': '＋ Adicionar outra conta',
-	'home.accounts_note': 'Cada conta tem seus próprios chats, chaves, créditos e arquivos. Trocar bloqueia esta e abre a outra. Nenhuma conta vê os dados de outra.',
+	'home.accounts_note': 'Cada uma tem seus próprios chats, chaves e arquivos, invisíveis às outras.',
 	'home.log_out': 'Sair',
 	'home.sec_devices': 'Dispositivos',
 	'home.sec_console':      'Console',
@@ -1240,12 +1242,14 @@
 	'push.lead':         'Um token deixa o Daimond enviar o trabalho que você já commitou. Sem ele ainda commita, mas todo push é recusado e o trabalho fica nesta máquina.',
 	'push.host':         'Host',
 	'push.host_ph':      'github.com',
-	'push.host_note':    'Só o nome, como github.com. Sem https://, sem porta, sem caminho. Só este host é autenticado; um repositório em qualquer outro lugar é recusado, e seu token nunca chega até ele.',
+	'push.host_note':    'Só o nome do host, como github.com — sem esquema, porta ou caminho.',
 	'push.token':        'Token',
 	'push.token_ph':     'Cole um token com permissão de push',
-	'push.token_note':   'Acesso de push basta; o token nunca precisa de mais. O Daimond só empurra, só em fast-forward e só para origin. Force, delete, mirror e qualquer outro remoto são recusados, mesmo que o token permita. Esvazie esta caixa e salve para removê-lo.',
+	'push.token_note':   'Uma credencial com permissão de escrita, guardada neste dispositivo — dê a ela apenas acesso de push.',
+	'push.token_help':   'O Daimond só empurra, só em fast-forward e só para origin; force, delete, mirror e qualquer outro remoto são recusados, mesmo que o token permita. Esvazie esta caixa e salve para removê-lo.',
 	'push.save':         'Salvar',
-	'push.privacy':      'O token é criptografado com a sua frase-senha e fica neste navegador. Nunca é mostrado de novo, nunca é enviado para nós, nunca é dado a um modelo. Sem conta não há com o que criptografá-lo, então ele vale só para esta aba e é pedido de novo depois de recarregar.',
+	'push.privacy':      'Criptografado com a sua frase-senha e guardado neste navegador — nunca enviado para nós nem mostrado a um modelo.',
+	'push.privacy_help': 'Nunca é mostrado de novo. Sem conta não há com o que criptografá-lo, então ele vale só para esta aba e é pedido de novo depois de recarregar.',
 	'push.set':          'Definido. Um push chega a {host}.',
 	'push.none':         'Não definido. Todo push é recusado até um token ser salvo aqui.',
 	'push.saved':        'Salvo. Criptografado com a sua frase-senha e usado a cada desbloqueio.',
@@ -2341,7 +2345,7 @@
 	'settings.fold_model': 'Dobrar com',
 	'settings.fold_model_own': 'O modelo da própria conversa',
 	'settings.fold_model_group': 'Dobrar, em vez disso, com',
-	'settings.fold_model_note': 'Quando uma conversa passa da janela dela, ela é resumida, e o resumo passa a ser o que o modelo lembra. Isto escolhe quem o escreve, para chats no mesmo provedor; todo outro chat dobra com o próprio modelo.',
+	'settings.fold_model_note': 'Qual modelo escreve o resumo quando um chat é dobrado.',
 
 	// The durable trail, shown on the lock screen only when the app is
 	// actually looping -- three boots in ninety seconds. See breadcrumb.js.

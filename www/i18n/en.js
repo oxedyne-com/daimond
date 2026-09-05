@@ -257,21 +257,20 @@
 	'home.remove_passkey':    'Remove passkey',
 	'home.export_backup':     'Export a backup',
 	'home.import_backup':     'Import a backup…',
-	'home.dashboard':         'Daimond Dashboard ↗',
 	'home.signed_in_as':      'You are signed in as {role}.',
 	// {role} is a prompt role's name, lower-cased by the caller.
 	'home.edit_prompt':       'Edit the {role} prompt…',
 	'home.prompt_opens':      'Opens {path} in the Doc panel.',
-	'home.prompts_note':      'What each agent runs under, kept as editable files. A page or email is always data, never a command.',
+	'home.prompts_note':      'The editable files each agent runs under.',
 	'home.switch_to':         'Switch to {name}',
 	'home.unnamed_account':   'Unnamed account',
 	'home.add_account':       '＋ Add another account',
-	'home.accounts_note':     'Each has its own chats, keys and files, and cannot see another’s. Switching locks this one and opens the other.',
+	'home.accounts_note':     'Each keeps its own chats, keys and files, unseen by the others.',
 	'home.log_out':           'Log out',
 	'home.sec_devices':       'Devices',
 	'home.sec_console':      'Console',
 	'home.console_open':     'Open the operator console',
-	'home.console_note':     'This account holds the {role} role. The console opens in a new tab and follows this sign-in.',
+	'home.console_note':     'This {role} account can open the operator console (new tab, same sign-in).',
 	'home.sec_push':         'Push',
 	'home.push_setup':       'Set up git push…',
 	'home.push_to':          'Change the push token for {host}…',
@@ -285,12 +284,16 @@
 	'push.lead':         'A token lets Daimond push work you have committed. Without one it still commits, but every push is refused and the work stays on this machine.',
 	'push.host':         'Host',
 	'push.host_ph':      'github.com',
-	'push.host_note':    'Just the name, as in github.com. No https://, no port, no path. Only this host is authenticated; a repository anywhere else is refused, and your token never reaches it.',
+	'push.host_note':    'Just the host name, as in github.com — no scheme, port or path.',
 	'push.token':        'Token',
 	'push.token_ph':     'Paste a token with push access',
-	'push.token_note':   'Push access is enough; the token never needs more. Daimond only pushes, only fast-forward, only to origin. Force, delete, mirror and any other remote are refused whatever the token allows. Empty this box and save to remove it.',
+	'push.token_note':   'A write-capable credential, kept on this device — give it push access only.',
+	// Hover on `push.token_note`: the guarantees that keep a broad token safe here.
+	'push.token_help':   'Daimond only pushes, only fast-forward, only to origin; force, delete, mirror and any other remote are refused whatever the token allows. Empty this box and save to remove it.',
 	'push.save':         'Save',
-	'push.privacy':      'The token is encrypted under your passphrase and kept in this browser. It is never shown again, never sent to us, never given to a model. Without an account there is nothing to encrypt it with, so it is held for this tab only and asked for again after a reload.',
+	'push.privacy':      'Encrypted under your passphrase and kept in this browser — never sent to us or shown to a model.',
+	// Hover on `push.privacy`: what happens to the token without an account.
+	'push.privacy_help': 'Never shown again. Without an account there is nothing to encrypt it with, so it is held for this tab only and asked for again after a reload.',
 	'push.set':          'Set. A push reaches {host}.',
 	'push.none':         'Not set. Every push is refused until a token is saved here.',
 	'push.saved':        'Saved. Encrypted under your passphrase and used each time you unlock.',
@@ -669,10 +672,10 @@
 	// vendor changes its tier, and nobody re-reads eight locales to catch it.
 	// The per-engine line under the field (`.search-engine-note`) is the one
 	// that can be accurate.
-	'search.engine_note':     'Which service Daimond searches with. Most give a free allowance each month if you bring your own key.',
+	'search.engine_note':     'Which service Daimond searches with.',
 	'search.credits':         'Daimond credits',
 	'search.key':             'API key',
-	'search.key_note':        'Kept on this device, sealed with your passphrase, and sent only with the search it pays for.',
+	'search.key_note':        'Kept on this device, sealed with your passphrase.',
 	// {engine} is an engine's name, e.g. Brave. It is never translated.
 	'search.no_key':          'Add a key for {engine}, or switch to Daimond credits.',
 	// What is being searched: the open web, the news, or scholarly work. Three
@@ -702,7 +705,7 @@
 
 	// ── Credits, packs and Pro ─────────────────────────────────
 	// Anything the user is CHARGED says US dollars out loud. See `billing.*`.
-	'credits.lead':      'Buy credits and Daimond runs the model for you, with no provider key to manage. No subscription. You keep what you buy, and nothing is charged again unless you turn on auto-reload.',
+	'credits.lead':      'Buy credits and Daimond runs the model for you — no provider key, no subscription.',
 	'credits.balance':   'Balance: {amount}',
 	'credits.balance_unavailable': 'Balance unavailable.',
 	'credits.see_spend': 'See where your spending goes →',
@@ -2160,14 +2163,14 @@
 	// `astat.workspace_browser` / `astat.workspace_native`, so the footer, the
 	// account strip and the guide say the same words about the same idea.
 	'attach.ws_mark':      'Workspace',
-	'attach.ws_add':       'Mark a folder into the workspace',
-	'attach.add_mark':     'Mark a folder in',
-	'attach.mark_note':    'Ticking a FOLDER marks it in: this workspace may then read and change what is inside. Ticking a file only puts it in front of the model.',
-	'attach.mark_focus':   'Mark this folder into {name}, so its daimon may read and change what is inside',
-	'attach.ws_help':      'The folders this chat may read and change. Marking one in is the permission, and nothing will ask you again.',
+	'attach.ws_add':       'Add a folder to the workspace',
+	'attach.add_mark':     'Add a folder',
+	'attach.mark_note':    'Ticking a FOLDER adds it to the workspace: this chat may then read and change what is inside. Ticking a file only puts it in front of the model.',
+	'attach.mark_focus':   'Add this folder to {name}, so its daimon may read and change what is inside',
+	'attach.ws_help':      'The folders this chat may read and change. Adding one is the permission, and nothing will ask you again.',
 	'attach.ws_on':        'In this chat’s workspace: it may read and change what is inside. Press to take it out.',
-	'attach.ws_off':       'Not in the workspace, so this chat cannot open it. Press to mark it in.',
-	'attach.ws_empty':     'No folder is marked in. This chat can reach nothing of yours, only its own working folder. Mark one in with the + above.',
+	'attach.ws_off':       'Not in the workspace, so this chat cannot open it. Press to add it.',
+	'attach.ws_empty':     'Workspace files and folders',
 	'attach.group_prompt': 'In front of the model',
 	'attach.group_prompt_help': 'Named or quoted in the prompt when you send. This grants no reach.',
 	'attach.read_block':   'The contents of {path}:',
@@ -2196,8 +2199,8 @@
 	'dws.reach_help':      'The folders this Diamond’s daimon may write in. Shown in both trees, because it is true in both.',
 	'dws.reach_own':       'its own folder',
 	'dws.reach_search':    'A search that names no path looks in these and nowhere else.',
-	'dws.reach_none':      'Nothing else is marked in, so {name}’s daimon can write nowhere else of yours — and a search that names no path looks only here.',
-	'dws.mark_here':       'Mark “{name}” in',
+	'dws.reach_none':      'Nothing else is added, so {name}’s daimon can write nowhere else of yours — and a search that names no path looks only here.',
+	'dws.mark_here':       'Add “{name}”',
 	'dws.mark_here_help':  'Put the folder you are looking at into {name}’s workspace. Its daimon may then read and change what is inside, and a search that names no path will look there.',
 	'dws.kits':            'Toolchains',
 	'dws.kits_help':       'Which compilers and package managers a command from this Diamond may reach on your computer. Off unless you say so; no daimon chooses this.',
@@ -2799,17 +2802,17 @@
 	'settings.max_tokens':         'Longest reply',
 	'settings.max_tokens_auto':    'Automatic',
 	'settings.tokens':             'tokens',
-	'settings.max_tokens_note':    'How long a single reply may be. Too low and a large file arrives cut in half.',
+	'settings.max_tokens_note':    'How long a single reply may be.',
 	'settings.max_tokens_ceiling': 'accepts up to',
 
 	// ── How far one turn may go ─────────────────────
 	'settings.max_rounds':         'Steps per turn',
 	'settings.crystal_limits':   'Size limits',
 	'settings.crystal_cap':      'Crystal size limit',
-	'settings.crystal_cap_note': 'A crystal is a Diamond’s summary, so it has a ceiling. Past it, a daimon puts the detail in a file in the Diamond’s scope.',
+	'settings.crystal_cap_note': 'How large a Diamond’s memory may grow.',
 	'settings.crystal_cap_auto': 'Default',
 	'settings.crystal_page_cap': 'Page size limit',
-	'settings.crystal_page_cap_note': 'The page that renders a Diamond’s data. It travels in every sync, so it shares the budget with the data itself.',
+	'settings.crystal_page_cap_note': 'How large a Diamond’s page may grow.',
 	'settings.max_rounds_auto':    'Default',
 	'settings.steps':              'steps',
 	'settings.max_rounds_note':    'How many tool-calls one turn may take.',
@@ -2821,7 +2824,7 @@
 	'settings.fold_model':         'Fold with',
 	'settings.fold_model_own':     'The conversation’s own model',
 	'settings.fold_model_group':   'Fold with instead',
-	'settings.fold_model_note':    'When a conversation outgrows its window it is summarised, and the summary becomes what the model remembers. This chooses what writes it, for chats on the same provider; every other chat folds with its own model.',
+	'settings.fold_model_note':    'Which model writes the summary when a chat is folded.',
 
 	// ── The permission ladder ──────────────────────────────────
 	// What Daimond does WITHOUT ASKING. Nothing here moves the fence, the
@@ -3013,6 +3016,9 @@
 	'update.ready_help': 'Update ready. It applies when this finishes, or click to force it.',
 	'update.updated':    'Daimond updated',
 	'update.stale':      'Daimond is out of date and must reload to keep working. Click to reload.',
+	'update.available':  'A new version of Daimond is available.',
+	'update.reload':     'Reload',
+	'update.dismiss':    'Dismiss',
 
 	// ── Typst ──────────────────────────────────────────────────
 	// {reason} is the compiler's own diagnostic, which stays as it came.

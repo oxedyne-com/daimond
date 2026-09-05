@@ -886,6 +886,17 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .ti-label { font-size: var(--fs-xs); color: var(--warn); flex: 1; min-width: 0; }
 .ti-continue { flex: none; background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); font-size: var(--fs-xs); padding: 5px 12px; }
 .ti-continue:hover { background: var(--accent-hover); }
+/* A turn handed to a peer and STILL RUNNING is not an error, so its footer drops
+   the warn dashed frame the interrupted copy wears and reads as a quiet, live
+   status line inside the hand-off tile. The label takes the muted secondary
+   colour rather than the warn colour for the same reason. */
+.ti-handoff { border: none; background: none; padding: 4px 0; margin-top: 0; }
+.ti-handoff .ti-label { color: var(--text-secondary); }
+/* The inline hand-off spinner: the SAME three dots the thread's turn spinner
+   uses (`.chat-spinner-dot`, animated, resting under reduced motion), set inline
+   beside the status word rather than on their own centred line. */
+.ti-spin { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.ti-spin .chat-spinner-dot { width: 5px; height: 5px; }
 .chat-msg-content p { margin: 0 0 8px; }
 .chat-msg-content p:last-child { margin-bottom: 0; }
 .chat-msg-content pre { background: var(--bg-tertiary); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; font-size: var(--fs-sm); margin: 8px 0; }
@@ -1284,8 +1295,14 @@ span.arte-open { cursor: default; }
    rather than twice, once wrongly.
    The cap is `--attach-cap`, the FOOTER's own, because this is the whole footer
    and not the upper of two groups. */
-.ws-body { border: 1px solid var(--border-strong);
-	border-radius: var(--radius); background: var(--bg-tertiary);
+/* The box is the GROUP, not the body: its border, radius and fill wrap the head
+   band -- the view toggle and the + -- together with the tiles, so the chrome
+   reads as part of the workspace rather than as two chips floating above it.
+   `overflow: hidden` lets the head's top corners take the box radius. The body
+   keeps only the scroll. */
+.ws-group { border: 1px solid var(--border-strong); border-radius: var(--radius);
+	background: var(--bg-tertiary); overflow: hidden; }
+.ws-body {
 	max-height: calc(var(--attach-cap) * var(--attach-row-h) + var(--attach-peek));
 	overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; }
 .ws-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -1324,23 +1341,27 @@ span.arte-open { cursor: default; }
    region from another. A control that borrows the divider token disappears at
    its own edge in the paler palettes, and this is the rule verify_theme keeps:
    the failure it catches is a new control written by copying an old one. */
-.attach-view-btn { background: none; border: 1px solid var(--border-strong); border-radius: 999px;
-	cursor: pointer; color: var(--text-secondary); font-size: var(--fs-3xs-2xs);
-	line-height: 1.6; padding: 0 9px; }
-.attach-view-btn:hover { border-color: var(--accent); color: var(--accent-text); }
-/* It carries a WORD now, so it is shaped like the pill beside it rather than
-   like an icon: a bare `+` said nothing, and the two of them a few pixels apart
-   -- one granting a fence, one not -- read as the same button. */
-.attach-add { background: none; border: 1px solid var(--border-strong); border-radius: 999px;
-	cursor: pointer; color: var(--text-secondary); font-size: var(--fs-3xs-2xs);
-	line-height: 1.6; padding: 0 9px; min-height: 22px; }
-.attach-add:hover { border-color: var(--accent); color: var(--accent-text); }
-/* And a `+` that widens what a daimon may write wears the accent every other
-   granting control in this app wears, so the two are told apart without reading
-   either one. */
+/* The two head chips -- the view toggle and the + -- are one shape, so they
+   align and read as a set: same height, centred content, a border on a fill that
+   lifts them off the box. `--bg-secondary`, not the box's own `--bg-tertiary`, so
+   each reads as a raised control rather than a hole in the panel; this is the
+   app's chip, the same border token `.chip-btn` wears. */
+.attach-view-btn, .attach-add { display: inline-flex; align-items: center; justify-content: center;
+	box-sizing: border-box; height: 24px; padding: 0 11px; background: var(--bg-secondary);
+	border: 1px solid var(--border-strong); border-radius: 999px; cursor: pointer;
+	color: var(--text-secondary); font-size: var(--fs-3xs-2xs); line-height: 1; }
+.attach-view-btn:hover, .attach-add:hover { border-color: var(--accent);
+	color: var(--accent-text); background: var(--bg-hover); }
+/* The icon-only + is a round chip the same height as the word beside it, its
+   glyph centred and set large enough to read -- a bare + in a text-sized pill was
+   the "too small" of it. */
+.attach-add.icon { width: 24px; padding: 0; font-size: var(--fs-sm); font-weight: 500; }
+/* A + that widens what a daimon may write wears the accent every other granting
+   control in this app wears, so the two are told apart without reading either. */
 .attach-add.grants { color: var(--accent-text); border-color: var(--accent);
 	background: var(--accent-soft); }
-.attach-add.grants:hover { background: var(--accent); color: var(--on-fill, #fff); }
+.attach-add.grants:hover { background: var(--accent); color: var(--on-fill, #fff);
+	border-color: var(--accent); }
 
 /* The legend at the head of the picker, where a tick on a folder and a tick on
    a file mean two different things and no row has room to say which. */
@@ -3851,11 +3872,15 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	user-select: none;
 }
 .ctile-lbl:hover { background: color-mix(in srgb, var(--ct-edge) 9%, transparent); }
-/* The header bullet is a DIAMOND, not a square (owner review 2026-09-05) — the
-   app's mark. A square rotated 45° stays crisp at this size where a ◆ glyph would
-   depend on the font; the 1px radius only takes the sting off the four points.
-   Used by both the tile and the rollup label, so every tile type gets it. */
-.ctile-dot { width: 6px; height: 6px; border-radius: 1px; background: var(--ct-edge); flex: none; transform: rotate(45deg); }
+/* The header bullet is a DIAMOND, not a square (owner review 2026-09-05, again
+   2026-09-05) — the app's mark. A 6px square rotated 45° with a 1px radius read
+   as a rounded blob at that size: the radius scales with the box (1px on 6px is
+   the same blunting as 10px on 60px), so the four points were lost and the owner
+   saw a square. A clip-path polygon draws the diamond directly — sharp points,
+   no rounding, no rotation, and no dependence on a ◆ glyph's font. Slightly
+   larger so the mark actually reads. Used by both the tile and the rollup label,
+   so every tile type gets it. */
+.ctile-dot { width: 9px; height: 9px; background: var(--ct-edge); flex: none; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); }
 .ctile-who { color: var(--ct-edge); flex: none; white-space: nowrap; }
 .ctile-meta {
 	color: var(--text-muted); font-weight: 500; font-size: var(--fs-2xs);

@@ -455,7 +455,7 @@
 							<div class="search-engine-row">
 								<label class="cfg-fieldlabel" for="set-search-engine">Search engine</label>
 								<select id="set-search-engine" class="settings-select"></select>
-								<p class="search-engine-note" id="search-engine-note">Which service Daimond searches with. Most give you a free allowance each month if you bring your own key.</p>
+								<p class="search-engine-note" id="search-engine-note">Which service Daimond searches with.</p>
 							</div>
 							<!-- Hidden for `credits`: the gateway holds that key and there is
 							     nothing here for anyone to paste. -->
@@ -466,7 +466,7 @@
 								     password field is what invites a browser or a manager to
 								     file somebody else's bearer credential away. -->
 								<input type="text" id="set-search-key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
-								<p class="search-engine-note" id="search-key-note">Kept on this device, sealed with your passphrase, and sent only with the search it pays for.</p>
+								<p class="search-engine-note" id="search-key-note">Kept on this device, sealed with your passphrase.</p>
 								<p class="search-engine-note" id="search-key-warn" data-warn="1" style="display:none"></p>
 							</div>
 						</div>
@@ -544,16 +544,16 @@
 							<div id="push-state" class="cfg-fieldnote"></div>
 							<label class="cfg-fieldlabel" for="cfg-push-host" data-i18n="push.host">Host</label>
 							<input type="text" id="cfg-push-host" placeholder="github.com" data-i18n-placeholder="push.host_ph" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-							<p class="cfg-fieldnote" data-i18n="push.host_note">Just the name, as in github.com. No https://, no port, no path. Only this host is authenticated; a repository anywhere else is refused, and your token never reaches it.</p>
+							<p class="cfg-fieldnote" data-i18n="push.host_note">Just the host name, as in github.com — no scheme, port or path.</p>
 							<!-- Built exactly as #cfg-api-key is, and masked by installSecretMask
 							     for the same reason: a real password field is what makes a browser
 							     or a manager offer to save it, and this one belongs in neither. -->
 							<label class="cfg-fieldlabel" for="cfg-push-token" data-i18n="push.token">Token</label>
 							<input type="text" id="cfg-push-token" placeholder="Paste a token with push access" data-i18n-placeholder="push.token_ph" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
-							<p class="cfg-fieldnote" data-i18n="push.token_note">Push access is enough; the token never needs more. Daimond only pushes, only fast-forward, only to origin. Force, delete, mirror and any other remote are refused whatever the token allows. Empty this box and save to remove it.</p>
+							<p class="cfg-fieldnote" data-i18n="push.token_note" data-i18n-title="push.token_help" title="Daimond only pushes, only fast-forward, only to origin; force, delete, mirror and any other remote are refused whatever the token allows. Empty this box and save to remove it.">A write-capable credential, kept on this device — give it push access only.</p>
 							<button type="button" id="push-save" data-i18n="push.save">Save</button>
 							<div id="push-note" class="login-error"></div>
-							<p class="cfg-hint" data-i18n="push.privacy">The token is encrypted under your passphrase and kept in this browser. It is never shown again, never sent to us, never given to a model. Without an account there is nothing to encrypt it with, so it is held for this tab only and asked for again after a reload.</p>
+							<p class="cfg-hint" data-i18n="push.privacy" data-i18n-title="push.privacy_help" title="Never shown again. Without an account there is nothing to encrypt it with, so it is held for this tab only and asked for again after a reload.">Encrypted under your passphrase and kept in this browser — never sent to us or shown to a model.</p>
 						</div>
 					</div>
 

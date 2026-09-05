@@ -234,10 +234,10 @@
 	'search.engine':          '검색 엔진',
 	// 공짜인 것은 달마다 주어지는 일정량이지, 키 자체가 아니에요. 그걸 넘긴 만큼은
 	// 제공사가 사용자에게 청구해요. 숫자도 엔진 이름도 일부러 적지 않아요.
-	'search.engine_note':     'Daimond이 어떤 서비스로 검색할지 골라요. 자기 키를 가져오면 대부분 다달이 일정량까지 공짜예요.',
+	'search.engine_note':     'Daimond이 어떤 서비스로 검색할지.',
 	'search.credits':         'Daimond 크레딧',
 	'search.key':             'API 키',
-	'search.key_note':        '이 기기에만 두고, 암호문구로 봉인해서, 그 키로 값을 치르는 검색에만 함께 보내요.',
+	'search.key_note':        '이 기기에만 두고, 암호문구로 봉인해요.',
 	'search.no_key':          '{engine} 키를 넣거나, Daimond 크레딧으로 바꾸세요.',
 	'search.kind_web':        '웹',
 	'search.kind_news':       '뉴스',
@@ -249,7 +249,7 @@
 
 	// ── 크레딧, 팩, Pro ────────────────────────────────────────
 	// 실제로 결제되는 자리에서는 미국 달러라고 분명히 밝혀요. `billing.*` 참고.
-	'credits.lead':      '크레딧을 사면 제공자 키를 관리하지 않아도 Daimond이 대신 모델을 돌려요. 구독은 없어요. 산 만큼은 그대로 남고, 자동 충전을 켜지 않는 한 다시 결제되지 않아요.',
+	'credits.lead':      '크레딧을 사면 제공자 키도 구독도 없이 Daimond이 모델을 대신 돌려요.',
 	'credits.balance':   '잔액: {amount}',
 	'credits.balance_unavailable': '잔액을 가져올 수 없어요.',
 	'credits.see_spend': '지출이 어디로 가는지 보기 →',
@@ -1044,17 +1044,17 @@
 	'settings.max_rounds':         '한 턴의 단계 수',
 	'settings.crystal_limits':   '크리스털 용량',
 	'settings.crystal_cap':      '크리스털 크기 제한',
-	'settings.crystal_cap_note': '크리스털은 Diamond의 요약이므로 상한이 있습니다. 이를 넘으면 daimon이 세부 내용을 Diamond 범위의 파일에 씁니다.',
+	'settings.crystal_cap_note': 'Diamond의 기억이 얼마나 커질 수 있는지.',
 	'settings.crystal_cap_auto': '기본값',
 	'settings.crystal_page_cap': '페이지 크기 제한',
-	'settings.crystal_page_cap_note': 'Diamond의 데이터를 보여 주는 페이지입니다. 동기화할 때마다 함께 오가므로 데이터와 용량을 나눠 씁니다.',
+	'settings.crystal_page_cap_note': 'Diamond의 페이지가 얼마나 커질 수 있는지.',
 	'settings.max_rounds_auto':    '기본값',
 	'settings.steps':              '단계',
 	'settings.max_rounds_note':    '한 턴이 멈추기 전까지 에이전트가 도구를 쓸 수 있는 횟수. 멈출 때 그렇게 알려 주며, 계속하라고 지시할 수 있습니다.',
 	'settings.fold_at':    '대화를 접는 시점',
 	'settings.fold_at_auto':    '기본값',
 	'settings.fold_at_note':    '컨텍스트 창이 얼마나 찼을 때 Daimond가 대화의 앞부분을 요약으로 바꿀지. 바꿀 때는 대화창에서 그렇게 알려 줍니다. 낮으면 더 일찍 자주 접고, 높으면 대화를 원문 그대로 더 많이 남깁니다.',
-	'settings.max_tokens_note':    '한 번의 답변이 길어질 수 있는 한도예요. 너무 낮으면 큰 파일이 반쯤 잘려서 옵니다.',
+	'settings.max_tokens_note':    '한 번의 답변이 길어질 수 있는 한도예요.',
 	'settings.max_tokens_ceiling': '최대 허용',
 
 	// ── 대화가 저장되지 않을 때 ────────────────────────────────
@@ -1184,6 +1184,9 @@
 	'update.ready_help': '업데이트 준비됨. 이 일이 끝나면 적용되고, 눌러서 바로 적용할 수도 있어요.',
 	'update.updated':    'Daimond을 업데이트했어요',
 	'update.stale':      'Daimond이 오래돼서, 계속 쓰려면 새로고침해야 해요. 눌러서 새로고침하세요.',
+	'update.available':  'Daimond의 새 버전을 사용할 수 있어요.',
+	'update.reload':     '새로고침',
+	'update.dismiss':    '닫기',
 
 	// ── Typst ──────────────────────────────────────────────────
 	// {reason}은 컴파일러 자신의 진단 메시지라, 온 그대로 둬요.
@@ -1252,16 +1255,15 @@
 	'home.remove_passkey':    '패스키 지우기',
 	'home.export_backup':     '백업 내보내기',
 	'home.import_backup':     '백업 가져오기…',
-	'home.dashboard':         'Daimond 대시보드 ↗',
 	'home.signed_in_as':      '{role} 역할로 로그인해 있어요.',
 	// {role}은 프롬프트 역할의 이름이고, 부르는 쪽에서 소문자로 바꿔요.
 	'home.edit_prompt':       '{role} 프롬프트 편집…',
 	'home.prompt_opens':      '문서 패널에서 {path} 파일을 열어요.',
-	'home.prompts_note':      '에이전트마다 따르는 지시이고, 작업 공간에 파일로 있어요. 하나를 고치면 다음 턴부터 적용되고, 지우면 원래 것이 돌아와요. 무엇을 쓰든 규칙 둘은 그대로예요. 페이지나 메일은 자료일 뿐 지시가 아니라는 것, 그리고 되돌릴 수 없는 일은 먼저 물어본 뒤에 한다는 것이에요.',
+	'home.prompts_note':      '각 에이전트가 따르는, 편집할 수 있는 파일이에요.',
 	'home.switch_to':         '{name}(으)로 전환',
 	'home.unnamed_account':   '이름 없는 계정',
 	'home.add_account':       '＋ 다른 계정 추가',
-	'home.accounts_note':     '계정마다 채팅, 키, 크레딧, 파일이 따로예요. 전환하면 지금 것은 잠기고 다른 것이 열려요. 어느 계정도 다른 계정의 자료를 볼 수 없어요.',
+	'home.accounts_note':     '각자 채팅, 키, 파일이 따로 있고, 다른 계정에서는 보이지 않아요.',
 	'home.log_out':           '로그아웃',
 	'home.sec_devices':       '기기',
 	'home.sec_console':      '콘솔',
@@ -1280,12 +1282,14 @@
 	'push.lead':         '토큰이 있으면 Daimond가 커밋한 작업을 푸시할 수 있어요. 없어도 커밋은 되지만 푸시는 모두 거부되고, 작업은 이 기기에 남아요.',
 	'push.host':         '호스트',
 	'push.host_ph':      'github.com',
-	'push.host_note':    'github.com처럼 이름만 적어 주세요. https://도, 포트도, 경로도 없어요. 인증되는 것은 이 호스트뿐이고, 다른 곳의 저장소는 거부되며 토큰이 그리로 가지 않아요.',
+	'push.host_note':    'github.com처럼 호스트 이름만 적어 주세요. 스킴도 포트도 경로도 없어요.',
 	'push.token':        '토큰',
 	'push.token_ph':     '푸시할 수 있는 토큰을 붙여넣기',
-	'push.token_note':   '푸시 권한이면 충분하고, 토큰에 그 이상은 필요 없어요. Daimond는 푸시만, 빨리 감기만, origin으로만 보내요. 토큰이 허용하더라도 force, delete, mirror와 다른 리모트는 거부돼요. 이 칸을 비우고 저장하면 지워져요.',
+	'push.token_note':   '쓰기 권한이 있는 자격 증명이며 이 기기에 저장돼요. 푸시 권한만 주세요.',
+	'push.token_help':   'Daimond는 푸시만, 빨리 감기만, origin으로만 보내요. 토큰이 허용하더라도 force, delete, mirror와 다른 리모트는 거부돼요. 이 칸을 비우고 저장하면 지워져요.',
 	'push.save':         '저장',
-	'push.privacy':      '토큰은 암호문구로 암호화되어 이 브라우저에 있어요. 다시 보여 주지 않고, 저희에게 보내지 않고, 모델에게도 주지 않아요. 계정이 없으면 암호화할 것이 없어서 이 탭에서만 유지되고, 새로 고치면 다시 물어봐요.',
+	'push.privacy':      '암호문구로 암호화되어 이 브라우저에 보관돼요. 저희에게 보내지도, 모델에 보여 주지도 않아요.',
+	'push.privacy_help': '다시 보여 주지 않아요. 계정이 없으면 암호화할 것이 없어서 이 탭에서만 유지되고, 새로 고치면 다시 물어봐요.',
 	'push.set':          '설정됨. 푸시는 {host}로 가요.',
 	'push.none':         '설정 안 됨. 여기에 토큰을 저장하기 전까지 푸시는 모두 거부돼요.',
 	'push.saved':        '저장했어요. 암호문구로 암호화되고, 잠금을 풀 때마다 쓰여요.',
@@ -2381,7 +2385,7 @@
 	'settings.fold_model': '접을 때 쓸 모델',
 	'settings.fold_model_own': '그 대화 자신의 모델',
 	'settings.fold_model_group': '대신 이것으로 접기',
-	'settings.fold_model_note': '대화가 창을 넘어서면 요약되고, 그 요약이 모델이 기억하는 내용이 됩니다. 여기서는 같은 제공자의 대화에 대해 그것을 쓸 모델을 고릅니다. 나머지 대화는 각자의 모델로 접습니다.',
+	'settings.fold_model_note': '채팅을 접을 때 요약을 쓰는 모델이에요.',
 
 	// The durable trail, shown on the lock screen only when the app is
 	// actually looping -- three boots in ninety seconds. See breadcrumb.js.

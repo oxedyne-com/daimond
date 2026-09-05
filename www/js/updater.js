@@ -163,9 +163,79 @@
 	/// The update state, reflected on the chip. Stale (the gateway refuses this tab) is the loudest
 	/// and outranks the rest; otherwise ready when it could apply, "busy" while a turn must finish.
 	function reflect() {
-		if (stale)    { setChip('stale');   return; }
-		if (!pending) { setChip('current'); return; }
-		setChip(busy() ? 'busy' : 'ready');
+		if (stale)    { setChip('stale');   syncBanner('stale');   return; }
+		if (!pending) { setChip('current'); syncBanner('current'); return; }
+		var st = busy() ? 'busy' : 'ready';
+		setChip(st);
+		syncBanner(st);
+	}
+
+	// ── The banner ──────────────────────────────────────────────────────────
+	//
+	// The chip alone was too quiet. It is an 18px mark in a row of them and its
+	// whole message lives in a `title` nobody hovers -- so a foreground tab, the
+	// one case the soft path deliberately will NOT auto-reload (the user is here,
+	// working), was the one case with no visible word that a new build was waiting.
+	// The owner sat on a superseded build for exactly this reason: a UI-only deploy
+	// does not trip the gateway's stale path, so the pulsing chip was the only sign,
+	// and it went unseen. This is the word the chip could not say: a line at the
+	// foot of the window with a Reload button, shown only when a pending build is
+	// one the tab will not quietly take on its own. It is dismissible, and a
+	// dismissal stands only for the build in hand -- a newer one brings it back.
+	var banner       = null;
+	var dismissedFor = null;   // the pending build the user has waved away
+
+	function buildBanner() {
+		var b = document.createElement('div');
+		b.className = 'update-banner';
+		b.setAttribute('role', 'status');
+		b.setAttribute('aria-live', 'polite');
+		b.hidden = true;
+		var msg = document.createElement('span');
+		msg.className = 'update-banner-msg';
+		var go = document.createElement('button');
+		go.className = 'update-banner-go';
+		go.type = 'button';
+		// A user click, so `apply(true)` -- which flushes the journal and reloads,
+		// but still refuses to interrupt a running turn. Stale goes through `force`
+		// for its loop guard. Neither can lose work in flight.
+		go.addEventListener('click', function () { if (stale) force(); else apply(true); });
+		var x = document.createElement('button');
+		x.className = 'update-banner-x';
+		x.type = 'button';
+		x.textContent = '×';
+		x.addEventListener('click', function () { dismissedFor = pending; hideBanner(); });
+		b.appendChild(msg);
+		b.appendChild(go);
+		b.appendChild(x);
+		document.body.appendChild(b);
+		banner = { el: b, msg: msg, go: go, x: x };
+	}
+
+	function hideBanner() { if (banner) banner.el.hidden = true; }
+
+	/// Show, hide or relabel the banner to match the chip's state, so the loud line
+	/// and the quiet mark never disagree about whether an update is waiting. Shown
+	/// for `ready` (a new build the foreground tab is holding) and `stale` (the
+	/// gateway has refused the tab); hidden otherwise -- including `busy`, where a
+	/// reload would be wrong and the amber chip already says "waiting on this turn".
+	function syncBanner(state) {
+		var want = state === 'ready' || state === 'stale';
+		// A dismissal silences only the ready banner, and only for the build that
+		// was pending when it was waved away. Stale is not dismissible: ignoring
+		// the gateway's refusal is not a state the app can keep working in.
+		if (state === 'ready' && dismissedFor && dismissedFor === pending) want = false;
+		if (!want) { hideBanner(); return; }
+		if (!banner) buildBanner();
+		// {note} is the new build's own one-line label, when the deploy carried one.
+		banner.msg.textContent = state === 'stale'
+			? t('update.stale')
+			: t('update.available') + (note ? ' — ' + note : '');
+		banner.go.textContent = t('update.reload');
+		banner.x.setAttribute('aria-label', t('update.dismiss'));
+		banner.x.hidden = state === 'stale';
+		banner.el.dataset.state = state;
+		banner.el.hidden = false;
 	}
 
 	function onFound(j) {

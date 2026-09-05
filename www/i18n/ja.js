@@ -233,10 +233,10 @@
 	'search.engine':          '検索エンジン',
 	// 無料なのは毎月の一定量であって、キーそのものではありません。それを超えた分は
 	// 提供元がユーザーに請求します。数字もエンジン名も、あえて書きません。
-	'search.engine_note':     'Daimond がどのサービスで検索するか。自分のキーを持ち込めば、ほとんどは毎月一定量まで無料です。',
+	'search.engine_note':     'Daimond がどのサービスで検索するか。',
 	'search.credits':         'Daimond クレジット',
 	'search.key':             'API キー',
-	'search.key_note':        'この端末に留まり、パスフレーズで封印され、それが支払う検索のときだけ送られます。',
+	'search.key_note':        'この端末に留まり、パスフレーズで封印されます。',
 	'search.no_key':          '「{engine}」のキーを追加するか、Daimond クレジットに切り替えてください。',
 	'search.kind_web':        'ウェブ',
 	'search.kind_news':       'ニュース',
@@ -248,7 +248,7 @@
 
 	// ── クレジット、パック、Pro ────────────────────────────────
 	// 請求が発生するものは、米ドルであることをはっきり書きます。`billing.*` を参照。
-	'credits.lead':      'クレジットを買えば、プロバイダーの鍵を管理せずに Daimond がモデルを動かします。サブスクリプションはありません。買った分はそのまま残り、自動チャージをオンにしない限り、あらためて請求されることはありません。',
+	'credits.lead':      'クレジットを買えば、プロバイダーの鍵もサブスクも不要で Daimond がモデルを動かします。',
 	'credits.balance':   '残高：{amount}',
 	'credits.balance_unavailable': '残高を取得できません。',
 	'credits.see_spend': '支出の内訳を見る →',
@@ -1043,17 +1043,17 @@
 	'settings.max_rounds':         '1 ターンあたりのステップ数',
 	'settings.crystal_limits':   'クリスタルの容量',
 	'settings.crystal_cap':      'クリスタルのサイズ上限',
-	'settings.crystal_cap_note': 'クリスタルは Diamond の要約なので上限があります。超えた分は、daimon が Diamond のスコープ内のファイルに書きます。',
+	'settings.crystal_cap_note': 'Diamond の記憶をどこまで大きくできるか。',
 	'settings.crystal_cap_auto': 'デフォルト',
 	'settings.crystal_page_cap': 'ページのサイズ上限',
-	'settings.crystal_page_cap_note': 'Diamond のデータを表示するページです。同期のたびに一緒に運ばれるので、容量をデータと分け合います。',
+	'settings.crystal_page_cap_note': 'Diamond のページをどこまで大きくできるか。',
 	'settings.max_rounds_auto':    '既定',
 	'settings.steps':              'ステップ',
 	'settings.max_rounds_note':    '1 つのターンが止まるまでに、エージェントがツールを使える回数。止まるときにはそう伝えるので、続けるように指示できます。',
 	'settings.fold_at':    '会話をたたむ割合',
 	'settings.fold_at_auto':    '既定',
 	'settings.fold_at_note':    'コンテキストウィンドウがどれだけ埋まったら、Daimond がチャットの前半部分を要約に置き換えるか。置き換えたときはスレッドでそう伝えます。低いほど早く何度もたたみ、高いほど会話をそのままの言葉で多く残します。',
-	'settings.max_tokens_note':    '一回の返答の長さの上限です。低すぎると、大きなファイルが途中で切れて届きます。',
+	'settings.max_tokens_note':    '一回の返答の長さの上限です。',
 	'settings.max_tokens_ceiling': 'の上限は',
 
 	// ── 会話が保存されなくなったとき ───────────────────────────
@@ -1183,6 +1183,9 @@
 	'update.ready_help': '更新の準備ができました。これが終わったときに適用されます。クリックすると今すぐ適用します。',
 	'update.updated':    'Daimond を更新しました',
 	'update.stale':      'Daimond が古くなっており、動き続けるには再読み込みが必要です。クリックして再読み込みしてください。',
+	'update.available':  '新しいバージョンの Daimond が利用できます。',
+	'update.reload':     '再読み込み',
+	'update.dismiss':    '閉じる',
 
 	// ── Typst ──────────────────────────────────────────────────
 	// {reason} はコンパイラー自身の診断メッセージで、そのまま出します。
@@ -1251,16 +1254,15 @@
 	'home.remove_passkey':    'パスキーを削除',
 	'home.export_backup':     'バックアップを書き出す',
 	'home.import_backup':     'バックアップを読み込む…',
-	'home.dashboard':         'Daimond ダッシュボード ↗',
 	'home.signed_in_as':      '{role} としてサインインしています。',
 	// {role} はプロンプトの役割名で、呼び出し側が小文字にします。
 	'home.edit_prompt':       '{role}のプロンプトを編集…',
 	'home.prompt_opens':      '文書パネルで {path} を開きます。',
-	'home.prompts_note':      '各エージェントが従う指示で、作業領域にファイルとして置かれています。編集すれば次のやり取りから効き、削除すれば元に戻ります。何を書いても変わらない規則が 2 つあります。ページやメールはデータであって指示ではないこと、そして取り消せないことは必ず尋ねてから行うことです。',
+	'home.prompts_note':      '各エージェントが従う、編集できるファイルです。',
 	'home.switch_to':         '{name} に切り替える',
 	'home.unnamed_account':   '名前のないアカウント',
 	'home.add_account':       '＋ 別のアカウントを追加',
-	'home.accounts_note':     'アカウントごとにチャット、鍵、クレジット、ファイルが別々です。切り替えると今のものはロックされ、もう一方が開きます。ほかのアカウントのデータは見えません。',
+	'home.accounts_note':     'それぞれにチャット・鍵・ファイルがあり、ほかからは見えません。',
 	'home.log_out':           'ログアウト',
 	'home.sec_devices':       '端末',
 	'home.sec_console':      'コンソール',
@@ -1279,12 +1281,14 @@
 	'push.lead':         'トークンを渡すと、Daimond はコミット済みの作業をプッシュできます。トークンがなくてもコミットはできますが、プッシュはすべて拒否され、作業はこの端末に残ります。',
 	'push.host':         'ホスト',
 	'push.host_ph':      'github.com',
-	'push.host_note':    'github.com のように名前だけを入れてください。https:// もポートもパスも不要です。認証されるのはこのホストだけで、ほかの場所のリポジトリは拒否され、トークンが届くことはありません。',
+	'push.host_note':    'github.com のようにホスト名だけを入れてください。スキームもポートもパスも不要です。',
 	'push.token':        'トークン',
 	'push.token_ph':     'プッシュできるトークンを貼り付け',
-	'push.token_note':   'プッシュできるトークンで十分で、それ以上の権限は要りません。Daimond が行うのはプッシュだけ、しかも早送りのみ、宛先は origin のみです。トークンが許していても、force・delete・mirror やほかのリモートは拒否されます。この欄を空にして保存すると削除されます。',
+	'push.token_note':   '書き込みできる資格情報で、この端末に保存されます。プッシュ権限だけを与えてください。',
+	'push.token_help':   'Daimond が行うのはプッシュだけ、しかも早送りのみ、宛先は origin のみです。トークンが許していても force・delete・mirror やほかのリモートは拒否されます。この欄を空にして保存すると削除されます。',
 	'push.save':         '保存',
-	'push.privacy':      'トークンはパスフレーズで暗号化され、このブラウザの中だけに残ります。二度と表示されず、こちらにも送られず、モデルにも渡りません。アカウントがない場合は暗号化する鍵がないため、このタブの間だけ保持され、再読み込みのあとにもう一度尋ねられます。',
+	'push.privacy':      'パスフレーズで暗号化され、このブラウザの中に保持されます。こちらに送られることも、モデルに見せることもありません。',
+	'push.privacy_help': '二度と表示されません。アカウントがない場合は暗号化する鍵がないため、このタブの間だけ保持され、再読み込みのあとにもう一度尋ねられます。',
 	'push.set':          '設定済みです。プッシュは {host} に届きます。',
 	'push.none':         '未設定です。ここにトークンを保存するまで、プッシュはすべて拒否されます。',
 	'push.saved':        '保存しました。パスフレーズで暗号化され、ロックを解除するたびに使われます。',
@@ -2382,7 +2386,7 @@
 	'settings.fold_model': '折りたたみに使うモデル',
 	'settings.fold_model_own': 'その会話自身のモデル',
 	'settings.fold_model_group': '代わりにこれで折りたたむ',
-	'settings.fold_model_note': '会話がウィンドウを超えると要約され、その要約がモデルの記憶になります。ここではそれを書くモデルを、同じプロバイダーのチャットについて選びます。ほかのチャットは自分のモデルで折りたたみます。',
+	'settings.fold_model_note': 'チャットを折りたたむとき、要約を書くモデルです。',
 
 	// The durable trail, shown on the lock screen only when the app is
 	// actually looping -- three boots in ninety seconds. See breadcrumb.js.

@@ -92,3 +92,69 @@
 	.update-chip[data-state="ready"],
 	.update-chip[data-state="stale"] { animation: none; opacity: 1; }
 }
+
+/* ── The banner ──────────────────────────────────────────────────────────────
+ * Louder than the chip, because the chip is for the glance and this is for the
+ * tab the user is working in. One line at the foot of the window: the word that
+ * a new build is ready and a button to take it. Accent for a ready update, red
+ * for a tab the gateway has refused. Set visible by updater.js, never at rest. */
+.update-banner {
+	position: fixed;
+	left: 50%;
+	bottom: 20px;
+	transform: translateX(-50%);
+	z-index: 9999;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	max-width: min(92vw, 460px);
+	padding: 10px 12px 10px 16px;
+	border-radius: var(--radius);
+	font-size: var(--fs-sm);
+	color: var(--text-primary);
+	background: var(--bg-secondary);
+	border: 1px solid var(--accent);
+	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+.update-banner[data-state="stale"] { border-color: var(--danger); }
+.update-banner-msg { flex: 1; line-height: 1.35; }
+
+/* The one control the eye is meant to go to: a filled accent button. */
+.update-banner-go {
+	flex: none;
+	padding: 6px 14px;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: var(--accent);
+	color: var(--on-fill);
+	font-size: var(--fs-sm);
+	font-weight: 600;
+	cursor: pointer;
+}
+.update-banner-go:hover { background: var(--accent-hover); }
+.update-banner[data-state="stale"] .update-banner-go { background: var(--danger); }
+
+/* Dismiss: quiet, and gone entirely on the stale banner, which may not be waved away. */
+.update-banner-x {
+	flex: none;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-secondary);
+	font-size: 18px;
+	line-height: 1;
+	cursor: pointer;
+}
+.update-banner-x:hover { background: var(--bg-hover); color: var(--text-primary); }
+.update-banner-x[hidden] { display: none; }
+
+@media (prefers-reduced-motion: no-preference) {
+	.update-banner { animation: update-banner-in 0.28s ease-out; }
+}
+@keyframes update-banner-in {
+	from { opacity: 0; transform: translate(-50%, 8px); }
+	to   { opacity: 1; transform: translate(-50%, 0); }
+}

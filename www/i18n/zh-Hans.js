@@ -231,10 +231,10 @@
 	'search.engine':          '搜索引擎',
 	// 免费的是每月的一份用量，不是密钥本身；超出的部分由服务方向用户收费。
 	// 这里刻意不写数字，也不点名任何一家引擎。
-	'search.engine_note':     'Daimond 用哪家服务来搜索。多数服务只要你自带密钥，每月都有一定的免费用量。',
+	'search.engine_note':     'Daimond 用哪家服务来搜索。',
 	'search.credits':         'Daimond 额度',
 	'search.key':             'API 密钥',
-	'search.key_note':        '留在这台设备上，用你的密码短语封存，只随它付账的那次搜索一起发出。',
+	'search.key_note':        '留在这台设备上，用你的密码短语封存。',
 	'search.no_key':          '为“{engine}”添加一个密钥，或者改用 Daimond 额度。',
 	'search.kind_web':        '网页',
 	'search.kind_news':       '新闻',
@@ -246,7 +246,7 @@
 
 	// ── 额度、加油包与 Pro ─────────────────────────────────────
 	// 凡是会扣用户钱的地方，都要把美元说清楚。见 `billing.*`。
-	'credits.lead':      '买点额度，Daimond 就替你跑模型，不用你自己管一把提供商密钥。没有订阅。买到的额度一直是你的，除非你打开自动充值，否则不会再扣费。',
+	'credits.lead':      '买点额度，Daimond 就替你跑模型——不用提供商密钥，也没有订阅。',
 	'credits.balance':   '余额：{amount}',
 	'credits.balance_unavailable': '暂时无法获取余额。',
 	'credits.see_spend': '看看钱花到哪儿了 →',
@@ -1039,17 +1039,17 @@
 	'settings.max_rounds':         '每轮的步数',
 	'settings.crystal_limits':   '晶体容量',
 	'settings.crystal_cap':      '晶体大小上限',
-	'settings.crystal_cap_note': '晶体是 Diamond 的摘要，因此有上限。超过之后，daimon 会把细节写进 Diamond 范围内的文件。',
+	'settings.crystal_cap_note': 'Diamond 的记忆最大能有多大。',
 	'settings.crystal_cap_auto': '默认',
 	'settings.crystal_page_cap': '页面大小上限',
-	'settings.crystal_page_cap_note': '显示 Diamond 数据的页面。它随每次同步一起走，所以和数据共用同一份空间。',
+	'settings.crystal_page_cap_note': 'Diamond 的页面最大能有多大。',
 	'settings.max_rounds_auto':    '默认',
 	'settings.steps':              '步',
 	'settings.max_rounds_note':    '一轮停下来之前，代理可以使用工具的次数。停下来时它会说明，你可以让它继续。',
 	'settings.fold_at':    '折叠对话的阈值',
 	'settings.fold_at_auto':    '默认',
 	'settings.fold_at_note':    '上下文窗口填到多满时，Daimond 会把对话较早的部分换成摘要。发生时会在对话中说明。设得低会更早、更频繁地折叠；设得高会逐字保留更多对话。',
-	'settings.max_tokens_note':    '单次回复可以有多长。设得太低，大文件会被拦腰截断。',
+	'settings.max_tokens_note':    '单次回复可以有多长。',
 	'settings.max_tokens_ceiling': '最多接受',
 
 	// ── 当对话不再被保存时 ─────────────────────────────────────
@@ -1179,6 +1179,9 @@
 	'update.ready_help': '更新已就绪。这件事做完就会应用，也可以点击强制应用。',
 	'update.updated':    'Daimond 已更新',
 	'update.stale':      'Daimond 版本过旧，必须重新加载才能继续工作。点击重新加载。',
+	'update.available':  'Daimond 有新版本可用。',
+	'update.reload':     '重新加载',
+	'update.dismiss':    '忽略',
 
 	// ── Typst ──────────────────────────────────────────────────
 	// {reason} 是编译器自己的诊断信息，原样保留。
@@ -1247,17 +1250,16 @@
 	'home.remove_passkey':    '移除通行密钥',
 	'home.export_backup':     '导出备份',
 	'home.import_backup':     '导入备份…',
-	'home.dashboard':         'Daimond 控制台 ↗',
 	'home.signed_in_as':      '你现在的角色是 {role}。',
 	// {role} 是某个提示词角色的名称，由调用方转成小写。
 	// 引号是为了让角色名和前后的字分开：有的角色名以拉丁字母开头。
 	'home.edit_prompt':       '编辑“{role}”提示词…',
 	'home.prompt_opens':      '在文档面板里打开 {path}。',
-	'home.prompts_note':      '每个智能体运行时遵循的指令，以文件的形式放在你的工作区里。改一个，下一轮就生效；删掉它，原来的那份就回来。不管你写什么，有两条规矩始终成立：网页或邮件只是数据，永远不是指令；任何撤不回来的事，都要先问过你。',
+	'home.prompts_note':      '每个智能体运行时遵循的、可编辑的文件。',
 	'home.switch_to':         '切换到{name}',
 	'home.unnamed_account':   '未命名账户',
 	'home.add_account':       '＋ 添加另一个账户',
-	'home.accounts_note':     '每个账户都有自己的聊天、密钥、额度和文件。切换时会锁上这一个、打开另一个。任何账户都看不到别的账户的数据。',
+	'home.accounts_note':     '每个账户都有自己的聊天、密钥和文件，别的账户看不到。',
 	'home.log_out':           '退出登录',
 	'home.sec_devices':       '设备',
 	'home.sec_console':      '控制台',
@@ -1276,12 +1278,14 @@
 	'push.lead':         '有令牌，Daimond 就能把你提交过的工作推送出去。没有令牌也照样能提交，但每次推送都会被拒绝，工作只留在这台机器上。',
 	'push.host':         '主机',
 	'push.host_ph':      'github.com',
-	'push.host_note':    '只填名字，比如 github.com。不要 https://、端口和路径。只有这台主机会通过认证；别处的仓库会被拒绝，你的令牌不会到那里。',
+	'push.host_note':    '只填主机名，比如 github.com——不带协议、端口或路径。',
 	'push.token':        '令牌',
 	'push.token_ph':     '粘贴一个有推送权限的令牌',
-	'push.token_note':   '有推送权限就够了，令牌从不需要更多。Daimond 只推送，只快进，也只推到 origin。即使令牌允许，force、delete、mirror 和其他远程都会被拒绝。清空这一栏再保存就是删除它。',
+	'push.token_note':   '一份可写的凭据，保存在这台设备上——只给它推送权限。',
+	'push.token_help':   'Daimond 只推送、只快进、也只推到 origin；即使令牌允许，force、delete、mirror 和其他远程都会被拒绝。清空这一栏再保存就是删除它。',
 	'push.save':         '保存',
-	'push.privacy':      '令牌会用你的密码短语加密，只留在这个浏览器里。不会再显示，不会发给我们，也不会交给模型。没有账户就没有东西可以加密它，那样它只在这个标签页里有效，重新加载后会再问一次。',
+	'push.privacy':      '用你的密码短语加密，只留在这个浏览器里——不会发给我们，也不会给模型看。',
+	'push.privacy_help': '不会再显示。没有账户就没有东西可以加密它，那样它只在这个标签页里有效，重新加载后会再问一次。',
 	'push.set':          '已设置。推送会到 {host}。',
 	'push.none':         '未设置。在这里保存令牌之前，每次推送都会被拒绝。',
 	'push.saved':        '已保存。用你的密码短语加密，每次解锁后都会用上。',
@@ -2374,7 +2378,7 @@
 	'settings.fold_model': '用来折叠的模型',
 	'settings.fold_model_own': '对话自己的模型',
 	'settings.fold_model_group': '改用以下模型折叠',
-	'settings.fold_model_note': '对话超出窗口时会被总结，而这份摘要会成为模型所记得的内容。这里选择由谁来写，只对同一供应商的对话有效；其余的都用自己的模型折叠。',
+	'settings.fold_model_note': '折叠对话时，由哪个模型来写摘要。',
 
 	// The durable trail, shown on the lock screen only when the app is
 	// actually looping -- three boots in ninety seconds. See breadcrumb.js.

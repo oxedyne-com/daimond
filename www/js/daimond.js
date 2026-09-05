@@ -12731,12 +12731,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				askMarkAnswered(m.content);
 			}
 			else if (m.role === 'assistant') {
-				appendAssistantText(m.content || '', m.ranOn);
-				var div = curAsstDiv;
-				finalizeAssistant();
-				// A turn the tab died in the middle of: show what arrived, badge it, and offer to
-				// run it again. The mark rides on the message so it survives further reloads.
-				if (m.interrupted && div) markInterrupted(div, m);
+				// A turn HANDED TO A PEER, still in flight: an empty `dispatched`
+				// placeholder. It draws as its OWN hand-off tile (naming the device,
+				// a live spinner, the §5 status and control) rather than as an empty
+				// Daimond bubble with a footer under it — so a handed-off turn reads
+				// as a tile in the flow from the moment it leaves, and the spinner is
+				// visible for the whole wait (owner review 2026-09-05). Skipped once
+				// the answer has merged (finished), so the tile does not sit spinning
+				// beside the reply in the window before the placeholder is dropped.
+				if (m.interrupted && m.why === 'dispatched' && !(m.content && m.content.trim())
+					&& window.DaimondPeer && DaimondPeer.uiState) {
+					appendDispatchedTile(m);
+				} else {
+					appendAssistantText(m.content || '', m.ranOn);
+					var div = curAsstDiv;
+					finalizeAssistant();
+					// A turn the tab died in the middle of: show what arrived, badge it, and offer to
+					// run it again. The mark rides on the message so it survives further reloads.
+					if (m.interrupted && div) markInterrupted(div, m);
+				}
 			}
 			else if (m.role === 'error_log') { appendError(m.content); }
 			// THE COUNTS TRAVEL, so a reload draws the boundary where the live turn drew it.
@@ -12822,6 +12835,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function renderDispatchedFooter(foot, m) {
 		var st = peerUiStateFor(m);
 		if (st === 'done') return;			// the merged answer draws itself; no badge
+		// A LIVE spinner for the whole in-flight wait, so a handed-off turn never
+		// looks dead. Up while the turn is on the road or running on a peer — from
+		// the moment it is dispatched, through the claim and the run, until the
+		// answer syncs back (the placeholder is then dropped, or a report settles it
+		// to parked/failed and the spinner rests). The dots are the SAME class the
+		// thread's own turn spinner uses, so the two indications cannot drift and the
+		// reduced-motion rest state applies to both (owner review 2026-09-05).
+		if (st === 'dispatched' || st === 'claimed' || st === 'running' || st === 'awaiting-consent') {
+			var spin = document.createElement('span');
+			spin.className = 'ti-spin';
+			spin.innerHTML = '<span class="chat-spinner-dot"></span>'
+				+ '<span class="chat-spinner-dot"></span><span class="chat-spinner-dot"></span>';
+			foot.appendChild(spin);
+		}
 		var label = document.createElement('span');
 		label.className = 'ti-label';
 		// The machine's NAME when we have it ("argonaut is doing this."), else the
@@ -12870,6 +12897,81 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 	}
 
+	/// Has this dispatched turn's ANSWER already arrived? A `done` report is the
+	/// authority; failing that, the merged reply is found positionally, because a
+	/// peer's answer syncs back with no `iturn` on it (runTurn stamps only the
+	/// interrupted branches) — so the answer that belongs to a dispatched turn is
+	/// the first non-empty, non-interrupted assistant message after its placeholder
+	/// and before the next question. Used to stop the hand-off tile spinning beside
+	/// a reply in the window between the parcel syncing back and its report landing.
+	function dispatchedAnswerPresent(chat, m) {
+		try { var rep = peerReports[String(m.iturn)]; if (rep && rep.status === 'done') return true; } catch (e) { /* no report */ }
+		if (!chat || !chat.messages) return false;
+		var msgs = chat.messages;
+		// A merged answer may still carry the turn's iturn (the interrupted-then-
+		// finished paths do stamp it); match that first, wherever it sits.
+		for (var k = 0; k < msgs.length; k++) {
+			var a = msgs[k];
+			if (a.role === 'assistant' && !a.interrupted && a.content && a.content.trim()
+				&& String(a.iturn) === String(m.iturn)) return true;
+		}
+		// Positional: from the placeholder to the next question, a real reply is this
+		// turn's answer. A synthetic send-time `m` is not in the array (indexOf -1);
+		// nothing has merged yet then, so this correctly finds nothing.
+		var i = msgs.indexOf(m);
+		if (i < 0) return false;
+		for (var j = i + 1; j < msgs.length; j++) {
+			var mm = msgs[j];
+			if (mm.role === 'user' && !mm.interject) break;		// the next turn began
+			if (mm.role === 'assistant' && !mm.interrupted && mm.content && mm.content.trim()) return true;
+		}
+		return false;
+	}
+
+	/// The device a dispatched placeholder names while it waits: the lease HOLDER
+	/// once a peer has claimed it, else the target this device dispatched TO (stored
+	/// on the placeholder at dispatch, before any lease exists), so the tile can say
+	/// "Handed off to argonaut" from the first instant rather than "…to a device".
+	function handoffTargetLabel(m) {
+		try {
+			var holder = (window.DaimondLease && DaimondLease.holder) ? DaimondLease.holder(m.iturn) : null;
+			if (holder) { var hn = deviceLabelFor(holder); if (hn) return hn; }
+		} catch (e) { /* presence/lease not up */ }
+		if (m.toName) return String(m.toName);
+		if (m.toDevice) { var dn = deviceLabelFor(m.toDevice); if (dn) return dn; }
+		return '';
+	}
+
+	/// Draw a turn HANDED TO A PEER as its own hand-off tile, live for the whole
+	/// wait: a header naming the device, a spinner and the §5 status/control in the
+	/// body. This is what a handed-off turn looks like in the flow from the moment
+	/// it leaves this device until its answer syncs back — the tile the owner asked
+	/// for, with the in-progress spinner that was missing (owner review 2026-09-05).
+	///
+	/// `m` is the dispatched placeholder (or, at send time, a synthetic stand-in
+	/// carrying the same fields). Nothing is drawn once the answer has merged: the
+	/// merged reply draws its own quiet "Handed off to <device>" provenance tile
+	/// (see `appendHandoff`), and a spinning tile beside a finished answer would lie.
+	function appendDispatchedTile(m) {
+		var st = peerUiStateFor(m);
+		if (st === 'done') return;			// the merged answer draws itself
+		// The answer may already be in the transcript while the placeholder still
+		// stands (the parcel synced back before its report was collected): treat that
+		// as done here too, so the spinner does not linger beside the reply.
+		try { if (current && dispatchedAnswerPresent(current, m)) return; } catch (e) { /* draw it */ }
+		var dl   = handoffTargetLabel(m);
+		var line = dl ? tOr('chat.handed_off', 'Handed off to {name}', { name: dl })
+			: tOr('chat.who_handoff', 'Hand-off');
+		var tile = buildTile('handoff', { expanded: true, who: line });
+		tile.classList.add('chat-msg-handoff');
+		var foot = document.createElement('div');
+		foot.className = 'turn-interrupted ti-handoff';
+		renderDispatchedFooter(foot, m);
+		tile._body.appendChild(foot);
+		tagTurn(tile);
+		postToChat(tile);
+	}
+
 	// ── Hand a turn to a peer (dev/PEER_DESIGN.md §4, step 4) ───
 	//
 	// The THIN wiring. The order and the whole errand live in
@@ -12903,6 +13005,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			iturn:       mark.iturn,
 			itext:       mark.itext,
 			dispatchedBy: mark.dispatchedBy,
+			// WHERE this turn was sent, for the hand-off tile's "Handed off to <device>"
+			// before any lease holder is known. A best guess (the dispatch's chosen
+			// peer); once a peer claims the lease, the holder is authoritative and the
+			// tile follows it. Undefined on a re-dispatch that named no target.
+			toDevice:    mark.toDevice || '',
+			toName:      mark.toName || '',
 			parkCount:   mark.parkCount | 0,	// the GLOBAL park count, synced on the placeholder
 			ts:          Date.now(),
 		});
@@ -12948,7 +13056,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { return { ok: false, why: 'the prompt could not be saved to the server' }; }
 		var parcelVersion = 0;
 		try { parcelVersion = DaimondSync.version() | 0; } catch (e) { parcelVersion = 0; }
-		// 2. MARK the local turn peer-held.
+		// 2. MARK the local turn peer-held. Carry the chosen target onto the mark,
+		//    so the hand-off tile names the device before a lease holder exists.
+		if (opts && (opts.toId || opts.toName)) {
+			plan.mark.toDevice = opts.toId || '';
+			plan.mark.toName   = opts.toName || '';
+		}
 		markTurnDispatched(chat, plan.mark);
 		// 3. POST the errand LAST, carrying that version.
 		var body;
@@ -13633,7 +13746,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { appendUserMessage(text); } catch (e) { /* the record below is the truth */ }
 			chat.messages.push({ role: 'user', content: text, mid: umid, iturn: umid, ts: Date.now() });
 			touchChat(chat); persistChats();
-			dispatchToPeer(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : []).then(function (res) {
+			// SHOW THE HAND-OFF THE INSTANT IT IS DECIDED. `dispatchToPeer` pushes the
+			// prompt parcel FIRST (a network round trip) and only marks the turn
+			// dispatched — the point renderHistory draws the placeholder — AFTER that
+			// returns, so until this the turn sat with no indication for the whole
+			// push, which read as "it did nothing" (owner review 2026-09-05). Draw the
+			// hand-off tile with its spinner immediately from a synthetic placeholder
+			// naming the chosen peer; the durable placeholder's identical tile takes
+			// over on the post-push re-render, so the spinner is continuous.
+			try {
+				var to = d.peer || null;
+				appendDispatchedTile({
+					why:      'dispatched',
+					iturn:    umid,
+					itext:    text,
+					toDevice: (to && to.deviceId) || '',
+					toName:   (to && to.name) || '',
+				});
+			} catch (e) { /* the durable placeholder draws it after the push */ }
+			dispatchToPeer(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : [],
+				{ toId: (d.peer && d.peer.deviceId) || '', toName: (d.peer && d.peer.name) || '' }
+			).then(function (res) {
 				if (!res || !res.ok) { try { appendError((res && res.why) || 'could not hand this to a peer'); } catch (e) { /* drawn best-effort */ } }
 			});
 			return true;
@@ -32707,7 +32840,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var grants = attachAddGrants(o);
 			var add = document.createElement('button');
 			add.type = 'button';
-			add.className = 'attach-add' + (grants ? ' grants' : '');
+			add.className = 'attach-add' + (grants ? ' grants' : '') + (o.icon ? ' icon' : '');
 			add.dataset.act = 'attach-add';
 			add.dataset.grants = grants ? '1' : '';
 			if (o.icon) {
@@ -32823,19 +32956,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				shut:   away,
 				reason: away ? t('attach.not_here', { where: refWhere(a.ref) }) : '',
 				state:  a.state,
-				// A fence has to read as ONE thing, and an icon cell reads as an
-				// item on its own. The workspace is the stack in either view.
-				view:   a.ws ? 'stack' : null,
-				// Only a FOLDER can be marked in: the workspace is a union of
-				// folders, and a fence around a single file is a fence around the
-				// folder that holds it wearing a smaller name.
-				actions: a.dir ? [{
-					cls:     'attach-ws' + (a.ws ? ' on' : ''),
-					text:    t('attach.ws_mark'),
-					title:   t(a.ws ? 'attach.ws_on' : 'attach.ws_off'),
-					pressed: !!a.ws,
-					on:      function () { chatAttachSetWorkspace(f.id, a.ref, !a.ws); },
-				}] : [],
+				// Folders take the chosen view like files do: the icon toggle above
+				// governs the whole list, so a folder gets an icon cell in icon view
+				// rather than being pinned to a row of its own.
+				// A folder in the workspace list is obviously in the workspace, so it
+				// wears no redundant "Workspace" chip -- the row is the claim, and the
+				// × takes it back out. Reach is untouched: the a.ws flag still drives
+				// `scopeChatTo`; only the pointless toggle is gone from the row.
+				actions: [],
 				onState: function () { chatAttachSetState(f.id, a.ref, a.state === 'read' ? 'note' : 'read'); },
 				onDrop:  function () { chatAttachToggle(f.id, a.ref, a.dir, a.path); },
 			};
@@ -37736,8 +37864,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var note = document.getElementById('search-engine-note');
 			if (note) {
 				note.textContent = tOr('search.engine_note',
-					'Which service Daimond searches with. Most give a free allowance each month '
-						+ 'if you bring your own key.');
+					'Which service Daimond searches with.');
 				// Where a key comes from, for the engine now chosen. A vendor's own
 				// signup page in a real tab: it is somebody else's site and somebody
 				// else's session, so it is not one Daimond can draw.
@@ -37779,8 +37906,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var kn = document.getElementById('search-key-note');
 			if (kn) {
 				kn.textContent = tOr('search.key_note',
-					'Kept on this device, sealed with your passphrase, and sent only with the '
-					+ 'search it pays for.');
+					'Kept on this device, sealed with your passphrase.');
 			}
 			// One line, and which line it is says what to do next. The two refusals
 			// are different because the ways out are different: an ordinary engine
@@ -37943,8 +38069,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var cnote = document.getElementById('cfg-crystal-cap-note');
 			if (cnote) {
 				cnote.textContent = tOr('settings.crystal_cap_note',
-					'A crystal is a Diamond’s summary, so it has a ceiling. Past it, a daimon '
-						+ 'puts the detail in a file in the Diamond’s scope.');
+					'How large a Diamond’s memory may grow.');
 			}
 			var sel = document.getElementById('cfg-crystal-cap');
 			sel.innerHTML = '';
@@ -38029,8 +38154,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var pnote = document.getElementById('cfg-crystal-page-cap-note');
 			if (pnote) {
 				pnote.textContent = tOr('settings.crystal_page_cap_note',
-					'The page that renders a Diamond’s data. It travels in every sync, so it '
-					+ 'shares the budget with the data itself.');
+					'How large a Diamond’s page may grow.');
 			}
 			var sel = document.getElementById('cfg-crystal-page-cap');
 			sel.innerHTML = '';
@@ -38133,9 +38257,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var fnote = document.getElementById('cfg-fold-model-note');
 			if (fnote) {
 				fnote.textContent = tOr('settings.fold_model_note',
-					'When a conversation outgrows its window it is summarised, and the summary '
-						+ 'becomes what the model remembers. This chooses what writes it, for chats on '
-						+ 'the same provider; every other chat folds with its own model.');
+					'Which model writes the summary when a chat is folded.');
 			}
 			var sel = document.getElementById('cfg-fold-model');
 			sel.innerHTML = '';
@@ -38295,7 +38417,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The ceiling clause only when there IS one: naming the model and then
 			// saying nothing about it reads as a sentence that lost its end.
 			note.textContent = tOr('settings.max_tokens_note',
-				'How long a single reply may be. Too low and a large file arrives cut in half.')
+				'How long a single reply may be.')
 				+ (ceil ? ' ' + model + ' ' + tOr('settings.max_tokens_ceiling', 'accepts up to')
 					+ ' ' + fmtTok(ceil) + '.' : '');
 		},
