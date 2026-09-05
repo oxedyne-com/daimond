@@ -176,20 +176,23 @@ line('3. and the collapsed summary still earns its keep');
 // so neither stops mattering under this ruling.
 const control = await s.page.evaluate(() => {
 	const w = document.querySelector('.chat-msg-working');
-	// The working run is a muted think tile: the "+N characters" count is the label
-	// meta, the summary sentence is the peek, and it is collapsed (not the answer).
+	// The working run is a muted think tile: the summary sentence is the peek, and
+	// it is collapsed (not the answer). The "+N characters" count that used to sit
+	// in the label meta was removed as furniture (owner review 2026-09-05).
 	const more = w && w.querySelector('.ctile-meta');
 	const peek = w && w.querySelector('.ctile-peek');
 	const label = peek ? String(peek.textContent || '').trim() : '';
 	return {
 		label,
 		more:    more ? String(more.textContent || '').trim() : '',
-		moreBox: more ? Math.round(more.getBoundingClientRect().width) : 0,
 		open:    w ? !w.classList.contains('collapsed') : null,
 	};
 });
-check(/\d/.test(control.more) && control.moreBox > 0,
-	'the control still says how much is behind it', `"${control.more}" at ${control.moreBox}px`);
+check(!!control.label && control.label.length > 0,
+	'the collapsed summary peek says there is something to open',
+	`peek "${control.label}"`);
+check(!/\d+\s*character/i.test(control.more || ''),
+	'and the "+N characters" count is gone from the label', `meta "${control.more}"`);
 check(control.open === false, 'and it is still closed, because the working is not the answer');
 check(!!control.label && !/\S$/.test(LONG.slice(control.label.length, control.label.length + 1)),
 	'and its summary still stops on a whole word',

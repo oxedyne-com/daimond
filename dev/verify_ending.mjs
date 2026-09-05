@@ -8,26 +8,27 @@
 // have no visibility on what occurred here."** `AgentEvent::Ended` now closes
 // every turn and `dev/CONTRACT_CLAIMS.md` §3 says how it is drawn.
 //
-// ── WHAT IT ASSERTS (owner review 2026-09-04: the furniture line is GONE) ────
+// ── WHAT IT ASSERTS (owner review 2026-09-05: the SUMMARY is GONE) ───────────
 //
-// The quiet "Answered · N tool calls" line under every turn was clutter the owner
-// asked to remove — on a clean turn it said nothing worth a line, and on a `say`
-// fold it read as a tool call with no tile to show for it. So a turn that ended
-// cleanly now draws NOTHING at all, exactly as a toolless turn always did. Only a
-// turn that REFUSED, BROKE or wrote nothing where it said it would still draws a
-// line, and that line is a NOTICE — the case the whole mechanism exists for.
+// The furniture line "Answered · N tool calls" went on 2026-09-04. The trailing
+// NOTICE — "1 refused", "1 failed", "Ended on an error" — was the remnant, and the
+// owner asked for it gone too: a refused or failed tool already shows its state ON
+// ITS OWN TOOL TILE (`.ctile[data-t="tool"].refused` / `.failed`, named "· refused"
+// / "· failed"), and the absence of the spinner says the turn is over, so a line
+// under the whole turn restating the tally is noise. So a turn that produced a tile
+// of its own — the ordinary case — draws NOTHING now, whatever happened in it. The
+// one line that survives is for a HARD ERROR WITH NOTHING TO SHOW: a turn that drew
+// no tile at all, where the failure would otherwise be invisible.
 //
-// Two checks are the whole of the new rule:
+// The checks are:
 //
-//   - **a clean turn draws nothing** — whether it used a tool or not. The commonest
-//     turn in the app leaves no residue.
-//   - **a refused/failed/missing turn draws a NOTICE** — the one a reader must be
-//     able to pick out, now that it is the only line the ending ever draws.
+//   - **a clean turn draws nothing** — tool or not (unchanged from 2026-09-04).
+//   - **a REFUSED turn draws no trailing line either** — and the refusal is on the
+//     tool tile, which is where a reader picks it out now.
+//   - **a reload keeps that** — no line, tool-tile refusal intact.
 //
 //   node dev/verify_ending.mjs
-//   node dev/verify_ending.mjs --break showsclean    # a clean turn draws a line again
-//   node dev/verify_ending.mjs --break alwaysnotice  # every ending is a notice
-//   node dev/verify_ending.mjs --break nopersist     # a reload loses the notice
+//   node dev/verify_ending.mjs --break showsall    # every turn draws a summary line again
 //
 // A `--break` run EXPECTS to fail: exit 0 when something reddened, 1 when
 // nothing did, because a break that changes nothing is itself a failing run.
@@ -58,23 +59,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // the reload redrawing it, so only the durability check moves.
 const BREAK  = (() => { const i = process.argv.indexOf('--break'); return i > 0 ? process.argv[i + 1] : ''; })();
 const BREAKS = {
-	// The suppression is the rule now: `appendEnding` draws only a notice. Removing
-	// it makes a clean turn draw a line again, which reddens the "a clean turn draws
-	// nothing" checks — the whole of the owner's 2026-09-04 change.
-	showsclean: [{
+	// THE END-OF-TURN SUMMARY IS GONE (owner review 2026-09-05). `appendEnding`
+	// draws nothing when the turn produced a tile of its own — a refused or failed
+	// tool shows its state on ITS OWN tile, so a line under the whole turn is
+	// furniture. `showsall` removes that gate, so every offered>0 turn draws a
+	// trailing line again, which reddens the "draws nothing" checks — the whole of
+	// the change.
+	showsall: [{
 		file: 'js/daimond.js',
-		find: "		if (!p || !p.notice) return;",
-		with: "		if (!p) return;   // --break showsclean",
-	}],
-	alwaysnotice: [{
-		file: 'js/daimond.js',
-		find: "			notice: !!(refused || failed || missing.length),",
-		with: "			notice: true,   /* --break alwaysnotice */",
-	}],
-	nopersist: [{
-		file: 'js/daimond.js',
-		find: "			else if (m.role === 'end_log') { appendEnding(m); }",
-		with: "			else if (m.role === 'end_log') { /* --break nopersist */ }",
+		find: "		if (shown || !bad) return;",
+		with: "		if (false) return;   // --break showsall",
 	}],
 };
 
@@ -193,37 +187,47 @@ check('2a a successful tool turn draws NO ending line',
 	good.length === 0, JSON.stringify(good));
 await shot(s, 'ending-2-ordinary');
 
-// ── 3. A refusal, which is what a notice is FOR ──────────────────────────────
+// ── 3. A refusal shows on the TOOL TILE, not as a trailing summary ───────────
 //
 // A write outside the chat's fence comes back `CallOutcome::Refused` — the door
-// turned it away, nothing was written, and the turn finished normally. That is
-// exactly the ending a reader has to be able to pick out of a run of quiet ones.
+// turned it away, nothing was written, and the turn finished normally. The refusal
+// is disclosed on the tool tile itself (amber, named "· refused"); the turn draws
+// NO line under itself, because the tile has already said it.
+const refusedTile = () => p.evaluate(() => {
+	const t = document.querySelector('#chat-output .ctile[data-t="tool"].refused');
+	return { present: !!t, meta: t ? ((t.querySelector('.ctile-meta') || {}).textContent || '') : '' };
+});
 await newChat(s);
 await say('@tool file_write {"path":"/etc/passwd","content":"no"}');
 const refused = await endings();
-check('3a a refused call is counted on the line',
-	refused.length === 1 && /1/.test(refused[0].text), JSON.stringify(refused));
-check('3b AND IT IS PROMOTED TO A NOTICE',
-	refused.length === 1 && refused[0].notice === true,
-	refused.length ? ('notice=' + refused[0].notice + ' — ' + refused[0].text) : '(no line)');
+const rtile = await refusedTile();
+check('3a a refused turn draws NO trailing summary line',
+	refused.length === 0, JSON.stringify(refused));
+check('3b and the refusal is shown on the tool tile instead',
+	rtile.present === true && /refus/i.test(rtile.meta), JSON.stringify(rtile));
 await shot(s, 'ending-3-refused');
 
-// ── 4. A reload still shows how the turn ended ───────────────────────────────
+// ── 4. A reload keeps that: no line, tool-tile refusal intact ────────────────
 //
-// Persisted the way `think_log` and `fold_log` are. A RELOAD IS A LOCK: `boot()`
-// finds the stored identity and returns before `renderAll`, so waiting only for
-// `__DAIMOND_READY` reads the lock screen — see dev/verify_reopen.mjs.
+// The tool log is persisted with its outcome, so a reload redraws the refusal on
+// the tile. A RELOAD IS A LOCK: `boot()` finds the stored identity and returns
+// before `renderAll`, so waiting only for `__DAIMOND_READY` reads the lock screen
+// — see dev/verify_reopen.mjs.
 await reboot();
-// The app restores the chat that was open, which is the refused one above.
-let after = [];
+// The app restores the chat that was open, which is the refused one above. Wait
+// for the tile to redraw rather than for a line that never comes.
+let rafter = { present: false };
 const until = Date.now() + 20000;
 while (Date.now() < until) {
-	after = await endings();
-	if (after.length) break;
+	rafter = await refusedTile();
+	if (rafter.present) break;
 	await sleep(250);
 }
-check('4 A RELOAD STILL SHOWS HOW THE TURN ENDED',
-	after.length === 1 && after[0].notice === true, JSON.stringify(after));
+const after = await endings();
+check('4a A RELOAD KEEPS THE TRAILING LINE ABSENT',
+	after.length === 0, JSON.stringify(after));
+check('4b and the tool tile still shows the refusal after reload',
+	rafter.present === true, JSON.stringify(rafter));
 await shot(s, 'ending-4-reloaded');
 
 // ── 4b. The Diamond's own thread, which is the SECOND of three sinks ────────

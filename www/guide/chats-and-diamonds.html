@@ -50,6 +50,8 @@
 	<h2 id="s2">Reading a long conversation</h2>
 	<p>A conversation grows quickly, so the chat header carries controls to keep it readable, at the top-right of the centre panel. Two more sit in the composer bar beside <span class="ui">➤</span>.</p>
 
+	<p>Each turn is a labelled tile, so you can see at a glance who said what: <span class="ui">You</span> for your message, <span class="ui">Thinking</span> for the model's reasoning, <span class="ui">Tool</span> for a step it took, <span class="ui">Daimond</span> for its answer, and <span class="ui">System</span> for a note from the app itself. Runs of Thinking, Tool and System tiles roll up together; <span class="ui">Steps</span> below shows or hides them.</p>
+
 	<div class="cards">
 		<div class="card">
 			<h3 id="s3">Steps</h3>
@@ -92,7 +94,7 @@
 	<h3 id="s10">Selecting turns and folding them</h3>
 	<p>Collapse the thread with <span class="ui">−</span>, then pick the turns worth keeping. A row of controls appears in the header: <span class="ui">Select all</span>, <span class="ui">Deselect all</span> and <span class="ui">Fold selected</span>, which folds the chosen turns into the Diamond. Fold a step you have <em>adopted</em> and not a passing remark: folding keeps what you learnt, not the transcript.</p>
 
-	<div class="note"><strong>Nothing is absorbed on its own.</strong> A crystal never grows in the background: you choose the turns that are offered, and the fold itself is a proposal. The agent rewrites the crystal and shows you the result, which you accept or reject. A crystal only changes because you said so.</div>
+	<div class="note"><strong>Nothing is absorbed on its own.</strong> A crystal never grows in the background: you choose the turns, and folding them commits straight into the crystal — one click, no accept-or-reject step. The crystal keeps its own version history in the Diamond's workspace, so a fold you did not want can be rolled back. A crystal only changes because you said so.</div>
 
 	<figure class="shot" data-shot="diamond-fold">
 		<img alt="The Diamond command surface shown in place of the chat, with controls to steer and fold the method." src="shots/diamond-fold.png" loading="lazy">
@@ -102,7 +104,7 @@
 	<h2 id="s11">Working a Diamond</h2>
 	<p>Diamonds are listed above your chats in the rail; add one with the <strong>＋</strong> beside <strong>Diamonds</strong>. Selecting one replaces the chat in the centre with its command surface, a compact view where you steer the work and fold further improvements into it. You can tell which face the panel is showing without reading it: on a Diamond it takes the Daimond mark beside the name and squares its corners, against the rounded corners of everything else on screen.</p>
 
-	<p>A Diamond has <strong>two faces</strong>, and a switch in the header moves between them. <span class="ui">Crystal</span> is what the Diamond knows. <span class="ui">Chat</span> is its own conversation, which persists like any other and carries a <span class="ui">Fold</span> button, because folding is done mid-flow rather than while configuring something. Pick a chat in the rail and the ordinary conversation returns, as it does whenever the stage would otherwise be empty.</p>
+	<p>A Diamond has <strong>two faces</strong>, and a switch in the header moves between them. <span class="ui">Crystal</span> is what the Diamond knows. <span class="ui">Chat</span> is its own conversation, which persists like any other and carries a <span class="ui">Fold</span> button, because folding is done mid-flow rather than while configuring something. Folding a daimon's own chat commits the whole conversation into the crystal and then clears it, so the daimon begins fresh with what it has just learnt already in effect. Pick a chat in the rail and the ordinary conversation returns, as it does whenever the stage would otherwise be empty.</p>
 
 	<h3 id="s12">What a Diamond does, and what it does not</h3>
 	<p>A Diamond retains; on its own it does not run. Nothing executes a crystal: there is no workflow engine and no chain from one Diamond to another. Returning to a Diamond does not set it going, and neither does leaving it alone. A Diamond you have not automated answers when you prompt it and at no other time — which is what its panel says when you look: <em>Nothing set. This Diamond answers when you prompt it and at no other time.</em></p>

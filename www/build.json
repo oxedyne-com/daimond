@@ -1,1 +1,1 @@
-{"build":"2ec613c34cd6","note":"Chat: scroll no longer jumps on tab return; header controls fixed; retry lines no longer leak into replies"}
+{"build":"1deb47bc9086","note":"UI cleanup: menu dupes removed, chat tiles tidied, fold + source-device permissions fixed, Watch-in-panel control"}

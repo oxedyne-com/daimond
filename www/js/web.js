@@ -1017,18 +1017,47 @@
 		else if (mirrorWhy === 'refused') line(t('web.mirror_refused'));
 		if (mirrorOn) return;                 // already asked for; the button would say nothing
 		var btn = document.createElement('button');
-		btn.textContent = t('web.show_live');
-		btn.addEventListener('click', function () {
-			// The panel says it is waiting BEFORE the ask, and asks at once rather
-			// than at the next tick: the next thing the user sees may be Chrome's
-			// permission window, and an empty panel behind it is what made this
-			// look broken.
-			mirrorOn  = true;
-			mirrorWhy = 'wait';
-			extNote();
-			if (mirrorTick) mirrorTick();
-		});
+		btn.textContent = t('web.watch_in_panel');
+		btn.addEventListener('click', requestMirror);
 		els.note.appendChild(btn);
+	}
+
+	/// Ask to mirror the real tab into the panel -- the one-tap opt-in. Shared by
+	/// the standing strip's button (discoverable, always on screen while the
+	/// extension drives a tab) and the note's, so the two cannot drift. The panel
+	/// says it is waiting BEFORE the ask, and asks at once rather than at the next
+	/// tick: the next thing the user sees may be Chrome's permission window, and an
+	/// empty panel behind it is what made this look broken.
+	function requestMirror() {
+		mirrorOn  = true;
+		mirrorWhy = 'wait';
+		extNote();
+		syncWatchBtn();
+		if (mirrorTick) mirrorTick();
+	}
+
+	/// The standing strip above the picture: the quiet, never-dismissed sentence
+	/// that under Daimond Hands the page is a real browser tab. The one-tap
+	/// "Watch in panel" control does NOT live here -- the note overlay
+	/// (`position:absolute; inset:0`) sits above this strip whenever it is shown,
+	/// which is exactly when `!mirrorOn`, so a button here would be covered at the
+	/// one moment it is offered. The control lives on the note (front-and-centre
+	/// when the tab opens) and on the header (never covered); see `syncWatchBtn`.
+	function renderLiveStrip() {
+		if (!els.live) return;
+		els.live.hidden = state.driver !== 'ext';
+		if (!els.live.hidden) els.live.textContent = t('web.real_tab');
+	}
+
+	/// The persistent, never-covered copy of the "Watch in panel" control: a
+	/// header button offered whenever the extension is driving a tab and no live
+	/// picture is up yet. Discoverable at a glance even after the note is gone --
+	/// the owner's ask (2026-09-05), because a new browser window beside a panel
+	/// whose only offer is buried reads as Daimond having launched a browser and
+	/// stopped.
+	function syncWatchBtn() {
+		if (!els.watch) return;
+		els.watch.hidden = !(state.driver === 'ext' && state.mode !== 'user' && !mirrorOn);
 	}
 	function stopMirror() {
 		if (mirrorTimer) { clearInterval(mirrorTimer); mirrorTimer = null; }
@@ -1131,10 +1160,8 @@
 		// WHY THERE ARE TWO OF THEM, said for as long as there are two of them.
 		// Only under the extension: with a frame there is no second window to
 		// explain, and a panel that claimed one would be lying.
-		if (els.live) {
-			els.live.hidden = state.driver !== 'ext';
-			if (!els.live.hidden) els.live.textContent = t('web.real_tab');
-		}
+		renderLiveStrip();
+		syncWatchBtn();
 		paintBack();                        // shown only where it can act
 		els.blind.style.display = (state.mode === 'user') ? 'flex' : 'none';
 		// Name why the wheel is with the user, when the broker told us. A specific
@@ -1267,7 +1294,10 @@
 		els.mode   = document.getElementById('web-mode');
 		els.body   = document.getElementById('web-body');
 		els.back   = document.getElementById('web-back');
+		els.watch  = document.getElementById('web-watch');
 		if (!els.frame) return;
+		// The persistent one-tap "Watch in panel" control (see syncWatchBtn).
+		if (els.watch) els.watch.addEventListener('click', requestMirror);
 
 		// A document arriving is the moment Back's answer can change. See paintBack.
 		els.frame.addEventListener('load', paintBack);

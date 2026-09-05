@@ -24,7 +24,12 @@
 //
 //   node dev/verify_working.mjs
 //   node dev/verify_working.mjs --break midword   # the cut put back where it was
-//   node dev/verify_working.mjs --break nocount   # the control with nothing to say it opens
+//
+// THE "+N characters" COUNT IS GONE (owner review 2026-09-05). It was end-of-turn
+// furniture: the peek already shows the first sentence and the fold control already
+// says there is more behind it, so the count added nothing. The `nocount` break and
+// the check that asserted the count are removed with it; what says "there is
+// something to open" now is the peek plus the collapse.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -56,12 +61,6 @@ const BREAKS = {
 		file: 'js/daimond.js',
 		find: "\t\t\tvar sp = head.lastIndexOf(' ');\n\t\t\tif (sp > 40) head = head.slice(0, sp);",
 		with: "\t\t\tvar sp = head.lastIndexOf(' ');\n\t\t\tif (false) head = head.slice(0, sp);",
-	}],
-	// The control, with nothing on it to say there is anything to open.
-	nocount: [{
-		file: 'js/daimond.js',
-		find: "tOr('chat.working_more', '+{n} characters', { n: rest.length })",
-		with: "''",
 	}],
 };
 if (BREAK && !BREAKS[BREAK]) {
@@ -163,9 +162,13 @@ check(wholeWord,
 	'the summary never ends in the middle of a word',
 	`ends "${(seen.label || '').slice(-28)}" (next character in the source: `
 	+ JSON.stringify(LONG.slice((seen.label || '').length, (seen.label || '').length + 1)) + ')');
-check(/\d/.test(seen.more || '') && seen.moreBox > 0,
-	'and it says how much went behind it, so the control reads as one',
-	`"${seen.more}" at ${seen.moreBox}px`);
+check(!!seen.label && seen.label.length > 0,
+	'the summary peek is what says there is something to open (the "+N characters" count '
+	+ 'was removed as furniture, owner review 2026-09-05)',
+	`peek "${seen.label}"`);
+check(!/\d+\s*character/i.test(seen.more || ''),
+	'and the "+N characters" count is gone from the label',
+	`meta "${seen.more}"`);
 check(seen.open === false,
 	'it starts closed, because the working is not the answer');
 

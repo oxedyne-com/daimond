@@ -794,13 +794,16 @@ const HANDLERS = {
 		if (await alive(s.tabId)) {
 			tab = await chrome.tabs.update(s.tabId, { url, active: true });
 		} else {
-			const win = await chrome.windows.create({
-				url,
-				focused:	true,
-				width:		1180,
-				height:		860,
-			});
-			tab = win.tabs[0];
+			// A background TAB in the current window, not a new WINDOW. A fresh
+			// window steals focus and stacks over the app -- "a new window, not a
+			// tab", the more disruptive of the two (owner report 2026-09-05) --
+			// where a background tab keeps the operable real context (the user's
+			// own session, the only surface Hands can drive) without pulling the
+			// wheel away from Daimond. The app's panel offers "Watch in panel" to
+			// mirror the tab in place, so `active: false` leaves the user on Daimond
+			// to watch it there. `chrome.tabs.create` with no windowId lands in the
+			// last-focused NORMAL window (the app's), never the grant popup.
+			tab = await chrome.tabs.create({ url, active: false });
 		}
 
 		await set({ tabId: tab.id, windowId: tab.windowId, mode: 'agent', truce: false, reason: '' });

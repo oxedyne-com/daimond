@@ -3833,6 +3833,10 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .ctile[data-t="tool"].refused { --ct-edge: var(--warn); background: color-mix(in srgb, var(--warn) 9%, var(--bg-secondary)); }
 .ctile[data-t="tool"].failed  { --ct-edge: var(--danger); background: color-mix(in srgb, var(--danger) 9%, var(--bg-secondary)); }
 .ctile[data-t="wire"]  { --ct-edge: var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--bg-secondary)); }
+/* A device hand-off — the app's own act, so muted and centred (dir=local) like a
+   tool. Minimal: a label bar with no body. */
+.ctile[data-t="handoff"] { --ct-edge: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 6%, var(--bg-secondary)); }
+.ctile[data-t="handoff"] .ctile-who { font-weight: 500; }
 
 /* The label bar — the collapse control. */
 .ctile-lbl {
@@ -3847,7 +3851,11 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	user-select: none;
 }
 .ctile-lbl:hover { background: color-mix(in srgb, var(--ct-edge) 9%, transparent); }
-.ctile-dot { width: 7px; height: 7px; border-radius: 2px; background: var(--ct-edge); flex: none; }
+/* The header bullet is a DIAMOND, not a square (owner review 2026-09-05) — the
+   app's mark. A square rotated 45° stays crisp at this size where a ◆ glyph would
+   depend on the font; the 1px radius only takes the sting off the four points.
+   Used by both the tile and the rollup label, so every tile type gets it. */
+.ctile-dot { width: 6px; height: 6px; border-radius: 1px; background: var(--ct-edge); flex: none; transform: rotate(45deg); }
 .ctile-who { color: var(--ct-edge); flex: none; white-space: nowrap; }
 .ctile-meta {
 	color: var(--text-muted); font-weight: 500; font-size: var(--fs-2xs);
@@ -4127,3 +4135,10 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	.panel.ai .chead-right::-webkit-scrollbar { display: none; }
 	.panel.ai .chead-right > * { flex: none; }
 }
+
+/* Expand/collapse-all: one icon that swaps with state. Chevrons apart = the
+   thread is folded, press to expand; chevrons together = it is open, press to
+   collapse. */
+#expand-all-btn .ic-collapse { display: none; }
+#expand-all-btn.expanded .ic-expand { display: none; }
+#expand-all-btn.expanded .ic-collapse { display: inline; }

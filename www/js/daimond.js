@@ -7487,7 +7487,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	//
 	// Every render path in this file builds its content into one of these, so the
 	// streaming turn and a reload draw the identical shape.
-	var TILE_DIR  = { user: 'to', wire: 'to', think: 'from', reply: 'from', tool: 'local' };
+	var TILE_DIR  = { user: 'to', wire: 'to', think: 'from', reply: 'from', tool: 'local', handoff: 'local' };
 	var TILE_ROLL = { think: 1, tool: 1, wire: 1 };   // consecutive runs of these roll up
 
 	/// The speaker word for a tile type, translated where a key exists.
@@ -7498,6 +7498,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			case 'reply': return tOr('chat.who_daimond', 'Daimond');
 			case 'tool':  return tOr('chat.who_tool', 'Tool');
 			case 'wire':  return tOr('chat.who_system', 'System');
+			case 'handoff': return tOr('chat.who_handoff', 'Hand-off');
 		}
 		return '';
 	}
@@ -7797,6 +7798,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// path goes through).
 	var liveThink = null;
 
+	/// The turn a hand-off tile has already been drawn for, so a turn that a peer
+	/// ran gets ONE hand-off tile however many answer segments it merges. Reset in
+	/// `clearChat` with the rest of the per-thread state.
+	var _handoffTurn = -1;
+
+	/// A device hand-off, drawn as its own tile at the point the turn left this
+	/// device. `dir:'local'` gives it the centred dual indent a Tool tile has —
+	/// like a tool, it is the app's own act rather than either speaker's words. It
+	/// is minimal by design: one line naming the device that took the turn, no
+	/// body, sitting quietly in the flow above the answer that came back. It
+	/// replaces the "ran on <device>" meta the answer header used to carry, so the
+	/// provenance is said once and in one place.
+	function appendHandoff(ranOn) {
+		var dl = deviceLabelFor(ranOn);
+		if (!dl) return;
+		var line = tOr('chat.handed_off', 'Handed off to {name}', { name: dl });
+		var tile = buildTile('handoff', { expanded: false, who: line });
+		tile.classList.add('chat-msg-handoff');
+		tagTurn(tile);
+		postToChat(tile);
+	}
+
 	/// Put a round's working on the record, growing the entry rather than adding one.
 	///
 	/// The same coalescing as the drawing, and for the same reason: a reload reads these
@@ -8059,33 +8082,46 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		};
 	}
 
-	/// Close the turn on screen with the line above, where there is one to draw.
+	/// Close the turn on screen, but ONLY where the turn drew nothing else.
 	///
-	/// THE FURNITURE LINE IS GONE (owner review 2026-09-04). "Answered · N tool
-	/// calls" under every tool turn was the noise a quiet disclosure must not
-	/// become — the owner read it as clutter, and on a turn whose tool tile is a
-	/// `say` fold it also read as a tool call with no tile to show for it. So a
-	/// turn that ended cleanly draws nothing at all now. Only a turn that REFUSED,
-	/// BROKE or wrote nothing where it said it would is still worth a line — that
-	/// is the case the whole mechanism exists for (see the note above) — so the
-	/// notice survives while the furniture does not.
+	/// THE END-OF-TURN SUMMARY IS GONE (owner review 2026-09-05, asked
+	/// repeatedly). The furniture line "Answered · N tool calls" went on
+	/// 2026-09-04; the trailing NOTICE — "1 failed", "1 refused", "Ended on an
+	/// error" — is the remnant, and it went here. A refused or failed tool already
+	/// shows its state ON ITS OWN TOOL TILE (`.ctile[data-t="tool"].failed` /
+	/// `.refused`, named "· failed" / "· refused" on the label), and the absence
+	/// of the spinner is what says the turn is over — so a line under the whole
+	/// turn restating the tally is noise, not news.
+	///
+	/// The ONE case still worth a word is a HARD ERROR WITH NOTHING TO SHOW: a
+	/// turn that produced no tile at all — no thinking, no tool, no answer — where
+	/// the failure would otherwise be invisible. So a single minimal notice
+	/// survives, and only then: it is gated on the turn having drawn nothing, not
+	/// on what the tally says.
 	function appendEnding(e) {
 		var p = endingParts(e);
-		if (!p || !p.notice) return;
+		if (!p) return;
+		// What this turn actually drew, its own question aside. A tool tile, a
+		// thinking tile or an answer all count as "something was shown"; only the
+		// You tile is discounted, because it is the question and not the outcome.
+		var kids = chatOutput.querySelectorAll('[data-turn="' + String(_turn) + '"]');
+		var shown = false;
+		for (var i = 0; i < kids.length; i++) {
+			if (!kids[i].classList.contains('chat-msg-user')) { shown = true; break; }
+		}
+		// Something is on screen, or the turn ended cleanly: no trailing line.
+		var bad = p.notice || e.how === 'failed' || e.how === 'silent';
+		if (shown || !bad) return;
 		finalizeAssistant();
 		var div = document.createElement('div');
-		div.className = 'chat-msg chat-msg-ended' + (p.notice ? ' ended-notice' : '');
+		div.className = 'chat-msg chat-msg-ended ended-notice';
 		div.title = p.title;
 		var line = document.createElement('div');
 		line.className = 'end-line';
-		line.textContent = p.line;                   // escaped (H5)
+		// Minimal: the ending word alone (e.g. "Ended on an error"), not the tool
+		// tally — there were no tools to tally, which is the whole reason we are here.
+		line.textContent = tOr('end.how_' + (e.how || ''), String(e.how || '')) || p.line;
 		div.appendChild(line);
-		if (p.paths) {
-			var pl = document.createElement('div');
-			pl.className = 'end-paths';
-			pl.textContent = p.paths;                // escaped: these are paths a model chose
-			div.appendChild(pl);
-		}
 		tagTurn(div); postToChat(div);
 		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
 	}
@@ -8380,29 +8416,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 	function appendAssistantText(text, ranOn) {
 		if (!curAsstDiv) {
+			// WHICH DEVICE RAN THE TURN, when it was not this one: a turn dispatched to
+			// the always-on runner (or grabbed by another device) carries `ranOn` on the
+			// stored assistant message. It used to ride as a "ran on <device>" meta on
+			// the answer header; the owner asked for it as a proper tile instead, so a
+			// hand-off is drawn in the flow above the answer (see `appendHandoff`), once
+			// per turn. Quiet for a turn this device ran: `ranOn` equal to self is no
+			// hand-off.
+			if (ranOn && String(ranOn) !== selfDeviceId() && _handoffTurn !== _turn) {
+				appendHandoff(ranOn);
+				_handoffTurn = _turn;
+			}
 			// The model's prose — the ANSWER — in a Daimond tile: accent-coloured,
 			// from the model (left indent), expanded. `drawAsst` streams into the
 			// `.chat-msg-content` inside its body exactly as it did into the bubble.
-			// WHICH DEVICE RAN THE TURN, when it was not this one: a turn dispatched to
-			// the always-on runner (or grabbed by another device) carries `ranOn` on the
-			// stored assistant message, and the reply header names it beside the model —
-			// so a mis-routed turn ("ran on gilgamesh" when argonaut was nominated) is
-			// visible on the turn itself rather than only inferable from the dispatch
-			// footer that vanishes when the answer merges. Quiet for a turn this device
-			// ran: `ranOn` equal to self says nothing new.
-			var meta = respModel();
-			if (ranOn && String(ranOn) !== selfDeviceId()) {
-				var dl = deviceLabelFor(ranOn);
-				if (dl) {
-					var ran = tOr('chat.ran_on', 'ran on {name}', { name: dl });
-					meta = meta ? (meta + ' · ' + ran) : ran;
-				}
-			}
-			curAsstDiv = buildTile('reply', { expanded: true, meta: meta });
-			// Kept on the tile so the reply→working conversion (demoteToWorking) can
-			// carry the "ran on <device>" note across rather than overwriting it with
-			// the "+N characters" count.
-			curAsstDiv._ranOn = (ranOn && String(ranOn) !== selfDeviceId()) ? ranOn : null;
+			curAsstDiv = buildTile('reply', { expanded: true, meta: respModel() });
 			curAsstDiv.classList.add('chat-msg-assistant');
 			curAsstDiv._copyText = function () { return curAsstText; };
 			var content = document.createElement('div');
@@ -8483,7 +8511,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var sp = head.lastIndexOf(' ');
 			if (sp > 40) head = head.slice(0, sp);
 		}
-		var rest = text.slice(head.length).trim();
 		// The reply tile becomes a WORKING tile: same muted register as Thinking,
 		// because it is the same thing — the model narrating on its way to a tool —
 		// arriving by a different door. Collapsed, with the first sentence as the
@@ -8500,20 +8527,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		pre.className = 'chat-thinking-body';
 		pre.textContent = text;                  // escaped: this is not an answer to parse
 		div._body.appendChild(pre);
-		if (div._meta) {
-			var wmeta = rest ? tOr('chat.working_more', '+{n} characters', { n: rest.length }) : '';
-			// PRESERVE THE "ran on <device>" NOTE across the conversion. A turn a peer
-			// ran is still that peer's work once its prose is demoted to working, so the
-			// count must not overwrite where it ran.
-			if (div._ranOn) {
-				var wdl = deviceLabelFor(div._ranOn);
-				if (wdl) {
-					var wran = tOr('chat.ran_on', 'ran on {name}', { name: wdl });
-					wmeta = wmeta ? (wmeta + ' · ' + wran) : wran;
-				}
-			}
-			div._meta.textContent = wmeta;
-		}
+		// THE "+N characters" COUNT IS GONE (owner review 2026-09-05). The peek
+		// already shows the first sentence whole and the fold control already says
+		// there is more behind it, so a character count on a collapsed working tile
+		// is the end-of-turn furniture the owner asked to remove. Where a peer ran
+		// the turn, the hand-off tile above says so; the meta stays empty here.
+		if (div._meta) div._meta.textContent = '';
 		// The peek is the summary sentence itself (the head), whole — the CSS clips it
 		// with an ellipsis, but the full sentence stays in the node.
 		if (div._peek) div._peek.textContent = head;
@@ -10151,8 +10170,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (_openAskForTurn(rc.turnId)) return 'deny';	// one open ask per turnId at a time
 		var presence = (window.DaimondPresence && DaimondPresence.snapshot)
 			? (DaimondPresence.snapshot() || {}) : {};
+		// THE SOURCE DEVICE is the one this turn was dispatched from -- `rc.dispatchedBy`,
+		// carried on the errand from the dispatcher (peer.js `makeErrand`). A chat's
+		// consent belongs THERE, not on whoever is at the runner (owner rule 2026-09-05):
+		// `consentRouteDecision` prefers it, and falls back to an attended peer only when
+		// the source is offline.
 		var decision = DaimondPeer.consentRouteDecision(presence, selfDeviceId(), Date.now(),
-			{ windowMs: DaimondPeer.DISPATCH_FRESH_MS });
+			{ windowMs: DaimondPeer.DISPATCH_FRESH_MS, source: rc.dispatchedBy });
 		if (decision.action !== 'ask') return parkRunnerTurn(rc, decision.why || 'no-attended-device');
 		var wait = DaimondPeer.CONSENT_DEADLINE_MS || 60000;
 		var ask = DaimondPeer.makeAsk({
@@ -10160,6 +10184,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			tool: String(req.tool || ''), host: String(host || ''),
 			detail: String(req.detail != null ? req.detail : (req.url || '')),
 			deadline: Date.now() + wait, dispatchedBy: selfDeviceId(),
+			// The ONE device that should raise the tile and answer -- the source when it
+			// was preferred, else the fallback peer the decision chose. `raiseConsentFromPeer`
+			// raises only there, so the dialog lands on the source and nowhere else.
+			target: (decision.peer && decision.peer.deviceId) || '',
 		});
 		var body;
 		try { body = await DaimondPeer.sealForSelf(ask); }
@@ -10213,6 +10241,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { renderDispatchedBadges(); } catch (e) {}
 			// Past its deadline: the runner has already parked; do not raise a stale tile.
 			if (ask.deadline && Date.now() > (+ask.deadline || 0)) return;
+			// TARGETED TO ONE DEVICE. When the ask names a `target` (the chat's source
+			// device by preference -- owner rule 2026-09-05), only THAT device raises
+			// the tile, so a chat's permission lands where the chat was driven from and
+			// not on every attended device that happens to collect the broadcast. An ask
+			// with no target keeps the old any-attended-device behaviour.
+			var target = String(ask.target || '');
+			if (target && target !== selfDeviceId()) return;	// not the addressee: record only
 			if (!someoneCanAnswer()) return;					// not attended: cannot raise a tile
 			if (_askTiles[cid]) return;							// dedup: a re-collected ask is not re-raised
 			var txt = consentTileText(String(ask.tool || ''), String(ask.host || ''), String(ask.detail || ''));
@@ -10526,16 +10561,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				&& DaimondHandMode.scopeGranted('reading')) {
 				return 'allow';
 			}
-			// A RUNNER with NO standing 'reading' grant: route the question HOME rather
-			// than raise a dialog on a screen nobody is at. Routes whenever nobody is
-			// attending THIS runner, INDEPENDENT of the worker `alone` flag -- a device
-			// hand-off is an ordinary chat turn and is never marked alone, so gating on
-			// `alone` (as this did) meant the hand-off web_search prompt -- the owner's
-			// original stall -- stalled on the runner instead of routing. consent-sync
-			// above closes it once 'reading' is granted and never reaches here. `isAttended`
-			// is the foreground+interaction test the presence beat routes on. The routed
-			// verdict is a plain 'allow'/'deny', which is what `web_search` reads.
-			if (activeRunnerTurn() && !isAttended()) {
+			// A RUNNER with NO standing 'reading' grant: route the question to the chat's
+			// SOURCE device. A dispatched turn's chat is driven from another device, and
+			// its permission belongs THERE, not on whoever is at the runner (owner rule
+			// 2026-09-05) -- so this routes for ANY dispatched runner turn, not only when
+			// the runner is unattended (the earlier `!isAttended()` gate let an attended
+			// runner raise the dialog locally, which is the bug the owner hit). Every
+			// dispatched turn has a source (`dispatchedBy`), so `activeRunnerTurn()` alone
+			// is the condition. consent-sync above closes it once 'reading' is granted and
+			// never reaches here. The routed verdict is a plain 'allow'/'deny'.
+			if (activeRunnerTurn()) {
 				return await routeConsentAsk({ tool: 'web_search', detail: q, url: '' }, '');
 			}
 			var searchTurn = askingTurn(req);
@@ -10617,19 +10652,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// screen nobody is at. Two cases, in order, both below the same-origin
 		// shortcut so our own pages are no more gated than for anybody else.
 		//
-		// A RUNNER turn routes the question HOME. This is a turn dispatched from
-		// another device, and the person is at THAT device -- so it routes whenever
-		// nobody is attending THIS runner, INDEPENDENT of the worker `alone` flag.
-		// A device hand-off runs as an ordinary chat turn and is NEVER marked alone
-		// (`markAlone` is the daimon-worker path alone), so gating the route on
-		// `alone` -- as this did -- meant a hand-off never routed and always stalled
-		// on the runner's local dialog. `isAttended` is the same foreground+interaction
-		// test the presence beat routes on, so a runner backgrounded OR merely idle
-		// routes. `routeConsentAsk` seals the ask, sends it to an attended device and
-		// awaits the answer in memory; with no attended device, or on timeout, it
+		// A RUNNER turn routes the question to the chat's SOURCE device. This is a turn
+		// dispatched from another device, and the person is driving the chat from THAT
+		// device -- so its permission (e.g. "operate a site for you") belongs there, not
+		// on whoever is at the runner. It routes for ANY dispatched runner turn: the
+		// earlier `!isAttended()` gate let an ATTENDED runner raise the dialog locally,
+		// which is exactly the bug the owner hit -- the site-operation prompt appeared on
+		// the runner (argonaut) instead of the source (gilgamesh) (owner report
+		// 2026-09-05). Every dispatched turn has a source (`dispatchedBy`), so
+		// `activeRunnerTurn()` alone is the condition. `routeConsentAsk` seals the ask,
+		// addresses it to the source (falling back to an attended peer if the source is
+		// offline), and awaits the answer in memory; on no reachable device or timeout it
 		// parks (abandon + re-run, bounded). Not under `strict`, whose crystal-page
 		// navigation is not a model act.
-		if (!strict && activeRunnerTurn() && !isAttended()) {
+		if (!strict && activeRunnerTurn()) {
 			return await routeConsentAsk(req, host);
 		}
 		// A LOCAL unsupervised WORKER (alone, and no dispatched errand in flight)
@@ -11388,24 +11424,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			item(t('home.export_backup'), doExport);
 			item(t('home.import_backup'), doImport);
 
-			// The operator console, for the few accounts that hold a role on the
-			// gateway. Added hidden and revealed by the answer, never drawn and
-			// then removed: an item that appears and vanishes reads as a bug, and
-			// an item everyone can see that most people cannot open is worse.
-			// It opens in its own tab because it is a different job -- the app is
-			// where you work, the console is where you run the service.
-			if (window.DaimondGateway && DaimondGateway.operatorRole) {
-				var op = item(t('home.dashboard'), function () {
-					window.open('/console/', '_blank', 'noopener');
-				});
-				op.style.display = 'none';
-				DaimondGateway.operatorRole().then(function (role) {
-					if (!role) return;
-					op.style.display = '';
-					op.title = t('home.signed_in_as', { role: role });
-				}).catch(function () {});
-			}
-
 			// How many devices this account is on. A question a local-first app
 			// owes an answer to, and one nothing else on screen can answer: a
 			// linked device holds the same keypair, so the gateway sees one user
@@ -11687,7 +11705,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				return reg[b].seen - reg[a].seen;
 			});
 			if (!ids.length) return;
-			homeView.appendChild(el('div', 'admin-sec', t('home.sec_devices')));
+			// The caveat that used to sit under the list as a paragraph -- what the
+			// list is, and that nothing here signs a device out -- rides on the
+			// header's hover now, and the guide's sync page carries the rest. The
+			// rows below are the controls; the prose is one `title` away.
+			var devSec = el('div', 'admin-sec', t('home.sec_devices'));
+			devSec.title = t('devices.note');
+			homeView.appendChild(devSec);
 			ids.forEach(function (id) {
 				var d = reg[id], r = el('div', 'device-row');
 				var shown = deviceShownName(d);
@@ -11756,12 +11780,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				homeView.appendChild(r);
 			});
-			homeView.appendChild(el('div', 'admin-note',
-				ids.length > 1 ? t('devices.note') : t('devices.only_this')));
-			// One line on what the ✩ does, shown only once there is a second device to
-			// hand a turn to -- on a lone device it would describe nothing.
-			if (ids.length > 1) {
-				homeView.appendChild(el('div', 'admin-note', t('devices.nominee_note')));
+			// A lone device keeps its one-line note: it says something the empty
+			// list cannot. A multi-device list speaks for itself, so the prose that
+			// once stacked under it is gone -- the caveat is on the header hover, the
+			// ✩ is explained by its own hover, and the guide's sync page holds the
+			// rest.
+			if (ids.length === 1) {
+				homeView.appendChild(el('div', 'admin-note', t('devices.only_this')));
 			}
 		}
 
@@ -12642,6 +12667,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// scratch is what keeps a turn number meaning "the nth question in THIS chat", which is
 		// the assumption the fold relies on when it maps a ticked turn back to a message.
 		_turn = 0; _jumpAt = -1;
+		_handoffTurn = -1;
 		setSelectMode(false);
 	}
 
@@ -14764,12 +14790,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			noticeDialog(t('fold.busy_title'), t('fold.busy_body', { diamond: f.name }));
 			return;
 		}
-		await selectDiamond(f);                          // switch the centre to the Diamond crystal
+		// Stay on the face the user pressed Fold from -- no `view`, so a daimon's
+		// chat face stays the chat face. That is WHY progress has to be shown on
+		// the chat face too (below): the crystal spinner and status line live on
+		// the crystal face, which is not the one up.
+		await selectDiamond(f);
 		setCrystalBusy(diamondId, true); setCrystalStatus(t('fold.proposing'), true);
 		showCrystalSpinner();
+		// PROGRESS WHERE THE USER IS LOOKING. A whole-chat fold of a daimon runs
+		// from the chat face, and the reducer round is the slowest call the app
+		// makes; with the spinner only on the (hidden) crystal face the owner
+		// pressed Fold and saw nothing move for the length of a round -- "a twitch
+		// of the scroll then nothing" (report 2026-09-05). The chat's own spinner
+		// is raised on the chat face so the wait is visible where the button is.
+		var onChatFace = (centreMode === 'daimon');
+		if (onChatFace) showSpinner(t('fold.proposing'));
 		var delta = chatDelta(chat, turns), cur, proposed;
 		if (!delta) {                                  // ticked turns that carried no text
-			hideCrystalSpinner();
+			hideCrystalSpinner(); hideSpinner();
 			setCrystalStatus(''); setCrystalBusy(diamondId, false);
 			noticeDialog(t('fold.nothing'), t('fold.turns_empty'));
 			return;
@@ -14782,15 +14820,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			proposed = await fa.fold_propose(diamondId, delta);
 		} catch (e) {
 			meterDiamondTurn(fa, diamondId);
-			hideCrystalSpinner();
+			hideCrystalSpinner(); hideSpinner();
 			// The status line alone was invisible: it is 12px of muted grey under
-			// controls the user is not looking at, on a panel they may have left.
+			// controls the user is not looking at, on a panel they may have left --
+			// so the reducer failure is also toasted, which shows on any face.
 			setCrystalStatus(friendlyError(e)); setCrystalBusy(diamondId, false);
 			toast(friendlyError(e), true);
 			return;
 		}
 		meterDiamondTurn(fa, diamondId);
-		hideCrystalSpinner();
+		hideCrystalSpinner(); hideSpinner();
 		setCrystalStatus(''); setCrystalBusy(diamondId, false);
 		// A reducer that returned nothing has failed, whatever the crystal held. Shown
 		// as a diff it would be a deletion of every line with Accept enabled, so the
@@ -14830,7 +14869,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `clearDaimonSession` carries the 2026-08-14 data-loss guard, so this does not
 		// shorten any other conversation.
 		var selfFold = !turns && chat.diamondId && chat.diamondId === diamondId;
-		if (selfFold) clearDaimonSession(chat, diamondId);
+		if (selfFold) {
+			clearDaimonSession(chat, diamondId);
+			// REPAINT THE FACE THE USER IS ON. `clearDaimonSession` empties the record
+			// and persists, but paints nothing -- so the thread rendered before the
+			// fold sat on screen unchanged and the whole fold read as having done
+			// nothing (owner report 2026-09-05: the conversation was still there). A
+			// re-select from the now-empty record draws the fresh session. Only where
+			// the daimon's chat is actually up: the crystal face has no thread to be
+			// stale and `selectDiamond` already re-rendered its crystal. Mirrors the
+			// repaint in `mountDaimonReset`.
+			if (daimonOnScreen(chat)) await selectDiamond(f, 'chat');
+		}
 		renderDiamondList();
 		toast(selfFold ? t('fold.committed_fresh') : t('fold.committed', { diamond: f.name }));
 	}
@@ -17654,7 +17704,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		if (status === 'pending') {
-			// Pending: pick a model, then Start. Nothing runs until Start.
+			// Pending: pick the model here, then press Start. Start is ONE control,
+			// and it lives in the centre placeholder (`renderPendingCentre`), not on
+			// the tile as well: the tile chooses the model, the centre begins the
+			// chat, and each action has the one home.
 			var ctrls = document.createElement('div');
 			ctrls.className = 'tile-pending';
 			var sel = document.createElement('select');
@@ -17675,16 +17728,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					populateModelSelect(wsel, p.model, p.provider);
 				}
 			});
-			var start = document.createElement('button');
-			start.className = 'tile-start';
-			start.textContent = '▶ ' + t('tile.start');
-			start.title = t('tile.start_help');
-			start.addEventListener('click', function (e) {
-				e.stopPropagation();
-				var p = DaimondModels.pick(sel);
-				startChat(s, p.model, p.provider, DaimondModels.pick(wsel));
-			});
-			ctrls.appendChild(sel); ctrls.appendChild(start);
+			ctrls.appendChild(sel);
 			box.appendChild(ctrls);
 
 			// Below it: the model this chat's WORKERS run on. Its own row, because it is a second
@@ -38569,6 +38613,53 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		applyToolsVisibility();
 	});
 	applyToolsVisibility();
+
+	// ── Expand / collapse every tile at once ───────────────────
+	//
+	// A dedicated header icon, independent of the "−" beside it: that one latches
+	// select mode and folds whole ANSWERS (setSelectMode); this opens or closes the
+	// bodies of every TILE — Thinking, Tool, System and their rollups — so a reader
+	// can take the whole working in or fold it away in one press. It extends the
+	// dead `setAllTurnsOpen` helper with the tile bodies it never reached.
+	var expandAllBtn = document.getElementById('expand-all-btn');
+	/// Fold or unfold one leaf tile. The question is never folded — folding it
+	/// would leave nothing to read — and a Thinking tile a reader opens is marked
+	/// held so the live turn does not fold it back under them.
+	function foldTile(el, open) {
+		if (!el || el.dataset.t === 'user') return;
+		el.classList.toggle('collapsed', !open);
+		if (el.dataset.t === 'think') el._held = true;
+	}
+	/// Open or close every tile in the thread. A non-solo rollup folds to its count
+	/// badge; a solo rollup has no chrome, so its single child is the tile to fold.
+	function setAllTilesOpen(open) {
+		if (open) setAllTurnsOpen(true);
+		var rolls = chatOutput.querySelectorAll('.crollup');
+		for (var r = 0; r < rolls.length; r++) {
+			var box = rolls[r];
+			// The child bodies match the state either way, so reopening a folded
+			// rollup shows its tiles folded rather than however they were left.
+			var kids = box.querySelectorAll(':scope > .crollup-body > .ctile');
+			for (var k = 0; k < kids.length; k++) foldTile(kids[k], open);
+			// A solo rollup has no chrome — its child stands as the tile — so only a
+			// real container is folded to its count badge.
+			if (!box.classList.contains('solo')) box.classList.toggle('collapsed', !open);
+		}
+		var tops = chatOutput.querySelectorAll(':scope > .ctile');
+		for (var i = 0; i < tops.length; i++) foldTile(tops[i], open);
+		if (expandAllBtn) {
+			expandAllBtn.classList.toggle('expanded', open);
+			expandAllBtn.title = open ? tOr('chat.collapse_all_help', 'Collapse every tile')
+				: tOr('chat.expand_all_help', 'Expand every tile');
+		}
+	}
+	if (expandAllBtn) expandAllBtn.addEventListener('click', function () {
+		// If anything is folded, expand; otherwise collapse. Read from the DOM so a
+		// re-render between presses cannot leave the toggle out of step.
+		var anyCollapsed = !!chatOutput.querySelector(
+			'.crollup:not(.solo).collapsed, .ctile.collapsed:not([data-t="user"])');
+		setAllTilesOpen(anyCollapsed);
+	});
 
 	// ── The whole conversation, out ────────────────────────────
 	//

@@ -670,6 +670,16 @@
 							aria-label="Tool steps" data-i18n-aria-label="chat.steps"
 							data-i18n-title="chat.steps_help"><svg class="ic" viewBox="0 0 24 24"
 							aria-hidden="true"><path d="M4 6h4v4H4zM10 8h10M4 14h4v4H4zM10 16h10"/></svg></button>
+						<!-- Expand or collapse every TILE in the thread at once (Thinking,
+						     Tool, System bodies and their rollups), independent of the
+						     select-mode "−" beside it, which folds whole answers. The icon
+						     reflects state: chevrons apart offer expand, chevrons together
+						     offer collapse. -->
+						<button class="chip-btn icon-chip" id="expand-all-btn"
+							title="Expand every tile" data-i18n-title="chat.expand_all_help"
+							aria-label="Expand all tiles" data-i18n-aria-label="chat.expand_all"><svg class="ic ic-expand" viewBox="0 0 24 24"
+							aria-hidden="true"><path d="M8 4l4 4 4-4M8 20l4-4 4 4"/></svg><svg class="ic ic-collapse" viewBox="0 0 24 24"
+							aria-hidden="true"><path d="M8 8l4-4 4 4M8 16l4 4 4-4"/></svg></button>
 						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold" data-i18n-title="chat.collapse_help" aria-label="Collapse every answer" data-i18n-aria-label="chat.collapse">−</button>
 						<!-- Full screen, and only for the crystal face — `showCentre`
 						     draws it there and nowhere else. The page a Diamond
@@ -750,6 +760,12 @@
 						<span class="pptw-slot" id="web-pause"></span>
 						<button class="icon-btn" id="web-back" title="Back" data-i18n-title="web.back" aria-label="Back" data-i18n-aria-label="web.back">‹</button>
 						<button class="icon-btn" id="web-reload" title="Reload" data-i18n-title="web.reload" aria-label="Reload" data-i18n-aria-label="web.reload">⟳</button>
+						<!-- The persistent, never-covered "Watch in panel" control: shown
+						     only while Daimond Hands is driving a real tab and no live
+						     picture is up yet (js/web.js syncWatchBtn). One tap requests
+						     the opt-in mirror so the agent-operated tab can be watched
+						     INSIDE the panel. -->
+						<button class="icon-btn" id="web-watch" title="Watch this tab in the panel" data-i18n-title="web.watch_in_panel" aria-label="Watch this tab in the panel" data-i18n-aria-label="web.watch_in_panel" hidden>◉</button>
 						<button class="icon-btn" id="web-pop" title="Open in a real tab" data-i18n-title="web.pop_out" aria-label="Open in a real tab" data-i18n-aria-label="web.pop_out">↗</button>
 						<button class="addbtn panel-close" data-close="web" title="Close panel" data-i18n-title="common.close_panel">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>

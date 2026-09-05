@@ -283,7 +283,11 @@
 	/// `cid` names THIS question and is minted FRESH on every ask (including a
 	/// re-raise), so a captured or replayed grant for a spent `cid` matches nothing.
 	/// `detail` is the EXACT uncut string the human must authorise -- never a summary;
-	/// `dispatchedBy` is where the answer routes back to (the runner's device id).
+	/// `dispatchedBy` is where the answer routes back to (the runner's device id);
+	/// `target` is the ONE device that should raise the tile and answer -- the chat's
+	/// SOURCE device by preference (owner rule 2026-09-05: a chat's permission belongs
+	/// to the device it was driven from), or the fallback the decision chose. Empty
+	/// keeps the old any-attended-device behaviour.
 	function makeAsk(f) {
 		var o = f || {};
 		return {
@@ -298,6 +302,7 @@
 			detail:  String(o.detail == null ? '' : o.detail),	// the uncut string to authorise
 			deadline:     +o.deadline || 0,		// epoch-ms (NOT |0: ms overflows 32 bits)
 			dispatchedBy: String(o.dispatchedBy || ''),	// the runner, so the grant routes home
+			target:  String(o.target || ''),	// the device that should raise/answer this ask
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -884,6 +889,18 @@
 		return (now - seen) <= w;
 	}
 
+	/// Is a presence record AWAKE -- a fresh heartbeat within the window -- regardless
+	/// of whether a person is positively at it? Weaker than `recAttended`: it does not
+	/// require the attention signal. Used for the SOURCE device only, where "the device
+	/// the chat was driven from" is the right place for its consent to land even if the
+	/// person has stepped over to watch the runner -- the consent deadline parks it if
+	/// nobody answers, so an awake-but-unwatched source is a bounded wait, not a hang.
+	function recAwake(rec, now, windowMs) {
+		if (!rec) return false;
+		var w = windowMs || DISPATCH_FRESH_MS;
+		return (now - leaseMs(rec.lastSeen)) <= w;
+	}
+
 	/// The freshest ATTENDED peer (not this device) in a presence map, or null. The one
 	/// pure answer to "is there a device the user is on that a live question can go to".
 	/// Attention fails SAFE: an indeterminate or stale-attention device is skipped, so
@@ -912,7 +929,23 @@
 	function consentRouteDecision(presence, selfId, now, opts) {
 		var o = opts || {};
 		if (o.covered) return { action: 'allow', verdict: 'allow', why: 'policy' };
-		var peer = attendedPeer(presence, selfId, now, o.windowMs);
+		var self = String(selfId || '');
+		var n = now == null ? Date.now() : now;
+		var p = presence || {};
+		// PREFER THE SOURCE DEVICE -- the one the turn was dispatched from, which is
+		// where the person drove the chat (owner rule 2026-09-05: "any permissions
+		// related to a chat go to the source device"). Preferred whenever the source
+		// is merely AWAKE, attended or not: it is the device the chat lives on, and if
+		// nobody answers there the consent deadline parks the turn (bounded). Only when
+		// the source is OFFLINE does routing fall back to an attended peer.
+		var src = String(o.source || '');
+		if (src && src !== self && recAwake(p[src], n, o.windowMs)) {
+			var srec = p[src];
+			return { action: 'ask', peer: {
+				deviceId: src, name: (srec.name || ''), lastSeen: leaseMs(srec.lastSeen), source: true } };
+		}
+		// Source offline (or none): the freshest ATTENDED peer, else park.
+		var peer = attendedPeer(p, self, n, o.windowMs);
 		if (peer) return { action: 'ask', peer: peer };
 		return { action: 'park', why: 'no-attended-device' };
 	}
@@ -1825,6 +1858,7 @@
 		/// policy, or park; `parkOutcome` -- the new GLOBAL park total and whether it
 		/// reaches the terminal spend bound.
 		attendedPeer:         attendedPeer,
+		recAwake:             recAwake,
 		consentRouteDecision: consentRouteDecision,
 		parkOutcome:          parkOutcome,
 		CONSENT_DEADLINE_MS:  CONSENT_DEADLINE_MS,

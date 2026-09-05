@@ -315,7 +315,7 @@
 	// browser except inside the encrypted parcel; the wording says so, because a
 	// list of the user's devices is exactly where that question is asked.
 	'devices.rename_title': 'Name this device',
-	'devices.rename_body':  'A name to tell this device from the others. Empty the box to go back to “{derived}”. The name is stored with your own encrypted data and travels only to your other devices.',
+	'devices.rename_body':  'A name to tell this device from the others. Empty the box to go back to “{derived}”.',
 	'devices.rename_aria':  'Rename {name}',
 	'devices.note':        'Devices that have synced this account. One that holds the account but has never synced is not listed. Nothing here signs a device out. A linked device holds the same keys as this one, so it has to be dealt with there.',
 	'devices.remove_aria': 'Remove {name}',
@@ -441,9 +441,13 @@
 	// same kind — how many rolled up together. See www/js/daimond.js buildTile.
 	'chat.who_you':        'You',
 	'chat.who_daimond':    'Daimond',
-	// The per-turn device indicator: which device ran the turn, shown in the reply
-	// header when it was not this one (a turn dispatched to the always-on runner).
+	// The per-turn device indicator: which device ran the turn. It is a tile of its
+	// own now (see chat.handed_off), drawn in the flow above the answer when the
+	// turn ran on another device; `chat.ran_on` is the older header-meta phrasing,
+	// kept for any path that still reads it.
 	'chat.ran_on':         'ran on {name}',
+	'chat.handed_off':     'Handed off to {name}',
+	'chat.who_handoff':    'Hand-off',
 	'chat.who_tool':       'Tool',
 	'chat.who_tools':      'Tools',
 	'chat.who_system':     'System',
@@ -894,6 +898,9 @@
 	'chat.concise_failed_title': 'Concise is not available',
 	'chat.concise_failed': 'Daimond could not write .daimond/skills/concise.md, so the chip would refuse every turn instead of shortening it. Open a workspace folder, or check the Files panel, and try again.',
 	'chat.steps_help':     'Show or hide the tool steps in the thread',
+	'chat.expand_all':      'Expand all tiles',
+	'chat.expand_all_help': 'Expand every tile in the thread',
+	'chat.collapse_all_help': 'Collapse every tile in the thread',
 	'chat.collapse_help':  'Collapse every answer, leaving what you asked, and pick turns to fold',
 	'chat.input_ph':       'Type a message…',
 	'chat.send':           'Send',
@@ -953,7 +960,6 @@
 	'chat.fold_boundary':    'The model no longer has what is above this line as it was written — it has the summary in this note instead, plus the {kept} most recent messages. Everything above stays on your screen, so you can still read it and quote from it.',
 	'chat.shortened':         'Answers shortened for the model',
 	'chat.shortened_help':    'Daimond sent the older answers shortened so the conversation fits the model’s context window. Every word of them stays on your screen and in your record.',
-	'chat.working_more':    '+{n} characters',
 	// The same thing said on the chat's TILE, for a queue left on a conversation
 	// the user has walked away from: the bubbles are only drawn in the chat on
 	// screen, and money about to be spent should not depend on remembering.
@@ -1056,6 +1062,7 @@
 	'web.answer_late':     'Your answer came after Daimond had stopped waiting. ',
 	'web.driving_tab':     '<b>Daimond is driving {host}</b> in a browser tab. Watch it there, or pull a live picture into this panel.',
 	'web.show_live':       'Show live view here',
+	'web.watch_in_panel':  'Watch in panel',
 	'web.real_tab':       'The page opens as a real browser tab, which is what carries your own sign-ins, so this panel only shows a picture of it.',
 	'web.mirror_wait':    'Waiting for the first picture of that tab. If Chrome has put a permission window in front, it wants your answer.',
 	'web.mirror_silent':  'Nothing has come back from Daimond Hands for a while, so there is no live picture. The tab itself is still open, and is still the page.',

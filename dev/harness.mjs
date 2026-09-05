@@ -677,6 +677,14 @@ export async function newChat(s, { reuse = false } = {}) {
 	if (await start.count()) {
 		await start.click({ force: true });
 	}
+	// Start moved off the tile into the centre placeholder on 2026-09-05
+	// (renderPendingCentre → `.empty-new-session`, "▶ Start"), so a build without
+	// `.tile-start` begins the chat from there instead. Both are tried so the
+	// harness drives the old flow and the new one without a version flag.
+	if (!(await start.count())) {
+		const centreStart = page.locator('.pending-centre .empty-new-session').first();
+		if (await centreStart.count()) await centreStart.click({ force: true });
+	}
 	await page.waitForSelector('#chat-input', { state: 'visible', timeout: 10000 });
 	await page.waitForTimeout(300);
 	const after = await focusId();

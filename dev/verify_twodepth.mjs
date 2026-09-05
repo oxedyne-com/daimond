@@ -823,22 +823,31 @@ try {
 	// The tool step is measured in the same breath, because the reversal must not have taken
 	// the switch's real job with it. `dev/verify_visible.mjs` measures both as ink on a real
 	// screen; this pins the rule.
+	// The switch hides the tool's DETAIL, not the whole tile: removing the tile
+	// outright orphaned the reasoning around it (owner report 2026-09-04), so the
+	// compact Tool label stays in the flow and only its body/detail is withheld.
+	// `dev/verify_visible.mjs` measures both as ink; this pins the rule.
 	const underSwitch = await page.evaluate(() => {
 		const out = document.querySelector('#chat-output');
 		out.classList.add('hide-tools');
 		const w = out.querySelector('.chat-msg-working');
-		const t = out.querySelector('.tool-block');
+		const t = out.querySelector('.ctile[data-t="tool"]');
+		const body = t && t.querySelector('.ctile-body');
 		const seen = {
-			working: w ? getComputedStyle(w).display !== 'none' : null,
-			step:    t ? getComputedStyle(t).display !== 'none' : null,
+			working:  w ? getComputedStyle(w).display !== 'none' : null,
+			// The tile stays in the flow…
+			step:     t ? getComputedStyle(t).display !== 'none' : null,
+			// …while its detail body is hidden, which is what the switch is for.
+			stepBody: body ? getComputedStyle(body).display !== 'none' : null,
 		};
 		out.classList.remove('hide-tools');
 		return seen;
 	});
 	check('12d the working does NOT hide with the tool steps — it is the model\'s own prose',
 		underSwitch.working === true, JSON.stringify(underSwitch));
-	check('12e while the tool step still does, which is what the switch is for',
-		underSwitch.step === false, JSON.stringify(underSwitch));
+	check('12e while the tool step DETAIL still hides, which is what the switch is for '
+		+ '(the tile itself stays in the flow, owner report 2026-09-04)',
+		underSwitch.step === true && underSwitch.stepBody === false, JSON.stringify(underSwitch));
 
 	// ── 13. The seam the APP places ───────────────────────────────────
 	//

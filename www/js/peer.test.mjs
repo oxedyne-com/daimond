@@ -2146,6 +2146,67 @@ async function runRemoteConsentAcceptance(phone, laptop, stranger, check) {
 		check('attention-INDETERMINATE (no signal) fails SAFE to park',
 			P.consentRouteDecision(indeterminate, 'self', now, { covered: false }).action === 'park');
 	}
+
+	// ── G. Source-device routing: a chat's consent goes to where it was driven from. ──
+	// Owner rule 2026-09-05: "any permissions related to a chat go to the source device".
+	// The runner is 'self' (argonaut); the SOURCE is where the turn was dispatched from
+	// (gilgamesh). The decision must prefer the source over any other attended device,
+	// and over raising the dialog on the attended runner itself.
+	console.log('\nRemote consent — a chat\'s consent routes to its SOURCE device');
+	{
+		const now = 1700000000000;
+		const SRC = 'gilgamesh', RUN = 'self';
+		// 1. Source AWAKE (not even attended) beats an attended third device.
+		const m1 = {
+			gilgamesh: { name: 'gilgamesh', lastSeen: now - 1000, attended: false, attendedAt: 0 },
+			laptop:    { name: 'laptop',    lastSeen: now - 1000, attended: true,  attendedAt: now - 1000 },
+		};
+		const d1 = P.consentRouteDecision(m1, RUN, now, { source: SRC });
+		check('G1: the SOURCE device is chosen even when it is awake-but-unattended and another device IS attended',
+			d1.action === 'ask' && d1.peer.deviceId === SRC && d1.peer.source === true);
+
+		// 2. Source attended and the runner also attended: still the source, never the runner.
+		//    (attendedPeer skips self anyway, but this pins the SOURCE preference explicitly.)
+		const m2 = {
+			gilgamesh: { name: 'gilgamesh', lastSeen: now - 500, attended: true, attendedAt: now - 500 },
+		};
+		const d2 = P.consentRouteDecision(m2, RUN, now, { source: SRC });
+		check('G2: with the source present, consent routes to the source (not the attended runner)',
+			d2.action === 'ask' && d2.peer.deviceId === SRC);
+
+		// 3. Source OFFLINE (aged past the window): fall back to an attended peer.
+		const m3 = {
+			gilgamesh: { name: 'gilgamesh', lastSeen: now - 10 * 60 * 1000, attended: false, attendedAt: 0 },
+			laptop:    { name: 'laptop',    lastSeen: now - 1000, attended: true, attendedAt: now - 1000 },
+		};
+		const d3 = P.consentRouteDecision(m3, RUN, now, { source: SRC });
+		check('G3: an OFFLINE source falls back to the freshest attended peer',
+			d3.action === 'ask' && d3.peer.deviceId === 'laptop' && !d3.peer.source);
+
+		// 4. Source OFFLINE and no other attended device: park (bounded), never the runner.
+		const m4 = {
+			gilgamesh: { name: 'gilgamesh', lastSeen: now - 10 * 60 * 1000, attended: false, attendedAt: 0 },
+		};
+		const d4 = P.consentRouteDecision(m4, RUN, now, { source: SRC });
+		check('G4: an offline source with no attended fallback PARKS (never raises on the runner)',
+			d4.action === 'park');
+
+		// 5. No source given (a LOCAL, non-dispatched turn): unchanged attended-only routing.
+		const m5 = { laptop: { name: 'laptop', lastSeen: now - 1000, attended: true, attendedAt: now - 1000 } };
+		const d5 = P.consentRouteDecision(m5, RUN, now, {});
+		check('G5: with no source (local turn) the old attended-peer routing is unchanged',
+			d5.action === 'ask' && d5.peer.deviceId === 'laptop' && !d5.peer.source);
+
+		// 6. A covered act still short-circuits to allow, source or no source.
+		const d6 = P.consentRouteDecision(m1, RUN, now, { source: SRC, covered: true });
+		check('G6: a covered act allows with no ask even when a source is named',
+			d6.action === 'allow' && d6.verdict === 'allow');
+
+		// 7. The ask carries the chosen target so exactly one device raises the tile.
+		const ask = P.makeAsk({ turnId: 't-src', tool: 'web_type', dispatchedBy: RUN, target: SRC });
+		check('G7: makeAsk carries the target device, so the source raises the tile and no one else',
+			ask.target === SRC);
+	}
 }
 
 /// The mock model turn. `runTurn` (daimond.js:17552) is the real engine the peer
