@@ -8378,12 +8378,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		drawAsst();
 		if (pinned) chatOutput.scrollTop = chatOutput.scrollHeight;
 	}
-	function appendAssistantText(text) {
+	function appendAssistantText(text, ranOn) {
 		if (!curAsstDiv) {
 			// The model's prose — the ANSWER — in a Daimond tile: accent-coloured,
 			// from the model (left indent), expanded. `drawAsst` streams into the
 			// `.chat-msg-content` inside its body exactly as it did into the bubble.
-			curAsstDiv = buildTile('reply', { expanded: true, meta: respModel() });
+			// WHICH DEVICE RAN THE TURN, when it was not this one: a turn dispatched to
+			// the always-on runner (or grabbed by another device) carries `ranOn` on the
+			// stored assistant message, and the reply header names it beside the model —
+			// so a mis-routed turn ("ran on gilgamesh" when argonaut was nominated) is
+			// visible on the turn itself rather than only inferable from the dispatch
+			// footer that vanishes when the answer merges. Quiet for a turn this device
+			// ran: `ranOn` equal to self says nothing new.
+			var meta = respModel();
+			if (ranOn && String(ranOn) !== selfDeviceId()) {
+				var dl = deviceLabelFor(ranOn);
+				if (dl) {
+					var ran = tOr('chat.ran_on', 'ran on {name}', { name: dl });
+					meta = meta ? (meta + ' · ' + ran) : ran;
+				}
+			}
+			curAsstDiv = buildTile('reply', { expanded: true, meta: meta });
+			// Kept on the tile so the reply→working conversion (demoteToWorking) can
+			// carry the "ran on <device>" note across rather than overwriting it with
+			// the "+N characters" count.
+			curAsstDiv._ranOn = (ranOn && String(ranOn) !== selfDeviceId()) ? ranOn : null;
 			curAsstDiv.classList.add('chat-msg-assistant');
 			curAsstDiv._copyText = function () { return curAsstText; };
 			var content = document.createElement('div');
@@ -8481,8 +8500,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		pre.className = 'chat-thinking-body';
 		pre.textContent = text;                  // escaped: this is not an answer to parse
 		div._body.appendChild(pre);
-		if (div._meta) div._meta.textContent = rest
-			? tOr('chat.working_more', '+{n} characters', { n: rest.length }) : '';
+		if (div._meta) {
+			var wmeta = rest ? tOr('chat.working_more', '+{n} characters', { n: rest.length }) : '';
+			// PRESERVE THE "ran on <device>" NOTE across the conversion. A turn a peer
+			// ran is still that peer's work once its prose is demoted to working, so the
+			// count must not overwrite where it ran.
+			if (div._ranOn) {
+				var wdl = deviceLabelFor(div._ranOn);
+				if (wdl) {
+					var wran = tOr('chat.ran_on', 'ran on {name}', { name: wdl });
+					wmeta = wmeta ? (wmeta + ' · ' + wran) : wran;
+				}
+			}
+			div._meta.textContent = wmeta;
+		}
 		// The peek is the summary sentence itself (the head), whole — the CSS clips it
 		// with an ellipsis, but the full sentence stays in the node.
 		if (div._peek) div._peek.textContent = head;
@@ -12674,7 +12705,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				askMarkAnswered(m.content);
 			}
 			else if (m.role === 'assistant') {
-				appendAssistantText(m.content || '');
+				appendAssistantText(m.content || '', m.ranOn);
 				var div = curAsstDiv;
 				finalizeAssistant();
 				// A turn the tab died in the middle of: show what arrived, badge it, and offer to
@@ -13237,6 +13268,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { return ''; }
 	}
 
+	/// A readable name for a device id, for the per-turn "ran on <device>"
+	/// indicator. The presence beat carries each awake device's own label, so it
+	/// is asked first; the roster is the durable fallback for a device not
+	/// presently beating; and a short slice of the id is the last resort, so the
+	/// indicator always says SOMETHING rather than nothing.
+	function deviceLabelFor(id) {
+		var sid = String(id || '');
+		if (!sid) return '';
+		try {
+			if (window.DaimondPresence && DaimondPresence.name) {
+				var n = DaimondPresence.name(sid);
+				if (n) return n;
+			}
+		} catch (e) { /* presence not up */ }
+		try {
+			var reg = loadDevices();
+			var e2 = reg[sid];
+			if (e2 && (e2.label || e2.name)) return e2.label || e2.name;
+		} catch (e) { /* roster not readable */ }
+		return sid.slice(0, 6);
+	}
+
 	/// The §5 display state of a dispatched turn message, via the pure classifier. The
 	/// open consent-ask (if the runner is blocked on a live question) is passed so the
 	/// status can say so ("awaiting-consent") rather than sit on "Sent to your devices".
@@ -13607,6 +13660,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					selfId:        self,
 					backgrounding: true,
 					turnInFlight:  true,
+					// THE NOMINATED RUNNER TAKES A STEP-AWAY HAND-OFF TOO. Without this the
+					// decision skipped its nominee branch and handed the turn to the
+					// FRESHEST peer instead — so a turn in flight when a device was closed
+					// ran on whatever beat most recently (gilgamesh) rather than on the
+					// always-on runner the account named (argonaut), which is exactly what
+					// the nomination is for. The send-time path already passes this; the
+					// step-away path was the one that did not, so the two disagreed on
+					// where a turn goes.
+					nominatedId:   nominatedDeviceId(),
 					freshWindowMs: DaimondPeer.DISPATCH_FRESH_MS,
 				}, now);
 				if (!d.dispatch) return;
@@ -19635,7 +19697,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					}
 				}
 				if (chats.indexOf(chat) === -1) { if (J) J.clearTurn(umid); return; }
-				if (turnText) chat.messages.push({ role: 'assistant', content: turnText, mid: amid, ts: Date.now() });
+				// `ranOn` STAMPS THE DEVICE THAT ACTUALLY RAN THE TURN, so a turn a peer
+				// ran (the answer syncs back onto this record) shows "ran on <that device>"
+				// rather than looking as if this device produced it. The runner writes it
+				// here from its own id; it travels on the message in the parcel.
+				if (turnText) chat.messages.push({ role: 'assistant', content: turnText, mid: amid, ranOn: selfDeviceId(), ts: Date.now() });
 				stampMessages(chat.messages, chat.id);
 				if (owns()) finalizeAssistant();
 				else { curAsstDiv = null; curAsstText = ''; }
@@ -34073,6 +34139,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// note in `runTurn`.
 				logThinking(rec, ev.content || '');
 				if (onScreen()) appendThinking(ev.content || '', true);
+			} else if (ev.type === 'roading') {
+				// A pre-first-token retry (or a road failure): a caption on the spinner,
+				// NOT part of the conversation — the same rule the chat path follows. Not
+				// pushed into `rec.messages` and not journalled, so the retry notice never
+				// enters the crystal's transcript; it disappears when the turn does.
+				busySay(rec, tOr('chat.busy_road',
+					'The connection dropped — trying {name} again ({n} of {of})…',
+					{ name: ev.name || 'that', n: ev.attempt || 2, of: ev.of || 8 }));
 			} else if (ev.type === 'ended') {
 				// The daimon's turn closes the same way a chat's does. Its conversation
 				// is durable and it is the surface this app is developed from, so a
@@ -34149,7 +34223,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (onScreen()) finalizeAssistant();
 			if (replyText) {
 				rec.messages.push({ role: 'assistant', content: replyText,
-					mid: newMid(), ts: Date.now() });
+					mid: newMid(), ranOn: selfDeviceId(), ts: Date.now() });
 			}
 			rec.session = { v: 1, msgs: Array.prototype.slice.call(after || []),
 				upto: '', uptoTs: 0 };

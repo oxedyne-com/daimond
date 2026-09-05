@@ -819,7 +819,17 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 /* A pulldown, so `:focus-visible` -- see the note at `.settings-select`. */
 .chat-model-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 
-.chat-output { flex: 1; overflow-y: auto; padding: 16px 20px; font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-break: break-word; }
+/* `overflow-anchor: none` is load-bearing, not cosmetic. The thread manages its
+   own scroll: streaming pins to the bottom when the reader is there, and
+   `renderHistory` restores the reader's exact scrollTop across an unrequested
+   re-render (a sync pull, another tab's write, a tab re-focus). The browser's
+   scroll anchoring FIGHTS that restore -- `renderHistory` tears the whole thread
+   down and rebuilds it, so after the rebuild the browser nudges scrollTop to keep
+   its own chosen anchor element stable, landing ~46px below where the restore put
+   it. That nudge accumulates: every focus-return crept the reader a little nearer
+   the bottom until they were dumped at the live end. Turning anchoring off leaves
+   the JS the sole authority over this container's scroll position. */
+.chat-output { flex: 1; overflow-y: auto; overflow-anchor: none; padding: 16px 20px; font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-break: break-word; }
 .chat-input-bar { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
 #chat-input { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); resize: none; max-height: 120px; line-height: 1.5; }
 #chat-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
@@ -4059,17 +4069,61 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	width: 7px; height: 0; border-top: 2px solid var(--on-fill, #fff); transform: none;
 }
 
-/* 11 — The face switch and the "edited" time move to the left, beside the label.
-   `.chead-left` is the growing cluster; `.chead-right` stays pinned right. The
-   AI panel is narrow when it shares the stage, so the cluster can run out of
-   room: the NAME keeps a couple of characters (it is the identity), the switch
-   is a fixed control, and the "edited" time is the one that clips first — it is
-   last in the cluster and shrinks to nothing, which `overflow:hidden` then hides
-   cleanly rather than letting the row overflow into the right-hand controls. */
-.chead-left { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; overflow: hidden; }
-.chead-left > .ctitle { flex: 1 1 auto; min-width: 44px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chead-when { flex: 0 1 auto; min-width: 0; overflow: hidden; font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.panel.ai .chead .ctitle { flex: 1 1 auto; min-width: 44px; }
+/* 11 — The face switch and the "edited" time sit LEFT, beside the name (owner
+   review 2026-09-04). The hard part is the SHARED-STAGE panel: with the Guide and
+   Workspace open, the AI panel is a few hundred pixels wide and the right-hand
+   control cluster alone is ~260px, so name + switch + time and the controls cannot
+   share one row. Three earlier attempts each broke: a greedy title shoved the
+   switch and time right and clipped the time to width 0; content-sizing without
+   clipping let the FIXED 90px switch overhang and paint ON TOP of the mode chip
+   and icons as the right cluster slid left (owner QA #2 and #3).
+
+   THE FIX IS AT THE HEADER LEVEL, NOT INSIDE THE LEFT CLUSTER. `.chead` WRAPS:
+   when the name/switch/time cluster and the right-hand controls cannot fit on one
+   row, the right-hand cluster drops to its own second row (kept right-aligned by
+   `margin-left:auto`). So the switch can never overhang the controls — they are on
+   different rows — and the mode chip is never overlapped or clipped. The left
+   cluster is content-sized (`flex:0 1 auto`, not greedy) with only the title
+   ellipsising; the switch and time are `flex:none` so the time is always its full
+   width, never a fragment; and the left cluster may itself wrap the time below the
+   switch at the very narrowest, so nothing is ever clipped. On a wide panel it is
+   one clean row, name · switch · time on the left and the controls on the right. */
+.chead-left { display: flex; align-items: center; align-content: center; flex-wrap: wrap; row-gap: 0; column-gap: 6px; min-width: 0; flex: 0 1 auto; }
+.chead-left > .ctitle { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chead-when { flex: 0 0 auto; font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.panel.ai .chead .ctitle { flex: 0 1 auto; min-width: 0; }
 .chead-left > #diamond-view { flex: none; }
 /* Compact the face switch so name and switch coexist on the narrow AI panel. */
 .chead-left > #diamond-view .dview-btn { padding: 3px 7px; }
+/* The header wraps the right-hand controls to their own row rather than letting
+   the left cluster's fixed-width switch overhang them; the controls stay right.
+   ABOVE THE PHONE BREAKPOINT ONLY: at <=760px the phone shell instead SCROLLS the
+   control row (responsive.css) — a deliberate choice there, to spend no vertical
+   space on the axis a phone has least of — and the switch cannot overhang the
+   controls when they scroll within their own cluster. The overhang bug is a
+   desktop/tablet SHARED-STAGE problem (a narrow AI panel beside the Guide and
+   Workspace), so the wrap that fixes it is confined to that range. */
+@media (min-width: 761px) {
+	.panel.ai .chead { flex-wrap: wrap; row-gap: 3px; }
+	.panel.ai .chead-right { margin-left: auto; }
+}
+/* THE WRAPPED CONTROL ROW MUST STILL FIT — OR SCROLL. On the tightest shared-stage
+   band the AI panel is only ~210px wide (at a 1000px+ VIEWPORT), narrower than the
+   ~260px control cluster, so the wrapped control row ran off the panel edge with
+   the last one or two controls (collapse, and fullscreen on the crystal face)
+   unreachable — there was no scroll above the phone breakpoint. The panel is a
+   size-query container, so the header reacts to the PANEL's own width rather than
+   the viewport's; when the panel is too narrow to hold the control row, the
+   controls SCROLL within their cluster — the identical gesture the phone shell
+   uses (responsive.css) — so every control stays reachable at every width. */
+.panel.ai .chead { container-type: inline-size; container-name: aihead; }
+@container aihead (max-width: 270px) {
+	.panel.ai .chead-right {
+		flex: 1 1 auto; min-width: 0; margin-left: 0;
+		overflow-x: auto; overflow-y: hidden;
+		scrollbar-width: none; -webkit-overflow-scrolling: touch;
+		justify-content: flex-start;
+	}
+	.panel.ai .chead-right::-webkit-scrollbar { display: none; }
+	.panel.ai .chead-right > * { flex: none; }
+}

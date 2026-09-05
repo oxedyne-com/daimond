@@ -681,6 +681,11 @@ impl Agent {
                     // of it. Its own event, never `Text`, so `full` -- which becomes the
                     // assistant's message -- cannot pick it up.
                     Delta::Reasoning(think) => on_event(AgentEvent::Thinking(think.to_string())),
+                    // A pre-first-token retry: a caption, never part of `full`. No tool
+                    // name to give (this is a plain request retry), so the name is empty
+                    // and the UI reads "trying that again".
+                    Delta::Roading { attempt, of, wait_ms } =>
+                        on_event(AgentEvent::Roading { name: String::new(), attempt, of, wait_ms }),
                 },
             ).await;
             match result {
@@ -963,6 +968,10 @@ impl Agent {
                     &mut |d| match d {
                         Delta::Text(token)  => on_event(AgentEvent::Text(token.to_string())),
                         Delta::Reasoning(t) => on_event(AgentEvent::Thinking(t.to_string())),
+                        // A pre-first-token retry, shown as a caption and never written
+                        // to the transcript — see the note in the streaming loop above.
+                        Delta::Roading { attempt, of, wait_ms } =>
+                            on_event(AgentEvent::Roading { name: String::new(), attempt, of, wait_ms }),
                     },
                 ).await {
                     Ok(r) => break r,

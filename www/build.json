@@ -1,1 +1,1 @@
-{"build":"f060d9d5436b","note":"Chat tiles round 2: tool-tile and selection bugs fixed, live-testing refinements, fold commits directly"}
+{"build":"eb83032db8f9","note":"Chat: scroll no longer jumps on tab return; header controls fixed; retry lines no longer leak into replies"}

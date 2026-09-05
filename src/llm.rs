@@ -203,6 +203,12 @@ fn new_carry() -> Carry {
 pub enum Delta<'a> {
     Text(&'a str),
     Reasoning(&'a str),
+    // A transient provider failure being retried BEFORE the first token. Its own
+    // variant, never `Text`, so the retry notice cannot enter the assistant's
+    // message nor read as "writing the answer": the caller turns it into an
+    // `AgentEvent::Roading` and shows a retry caption, exactly as the tool-loop's
+    // own road ladder does. Carries no borrow, so the lifetime is unused here.
+    Roading { attempt: u32, of: u32, wait_ms: u64 },
 }
 
 // ┌───────────────────────────────────────────────────────────────┐
@@ -838,13 +844,18 @@ impl LlmClient {
                     waited += delay;
                     retries += 1;
                     if notify {
-                        on_token(Delta::Text(&fmt!(
-                            "\n[daimond: {}; retrying in {}.{:01}s -- attempt {} of {}]\n",
-                            e.reason,
-                            delay / 1_000,
-                            (delay % 1_000) / 100,
-                            retries + 1,
-                            self.retry.max_attempts)));
+                        // A RETRY NOTICE IS NOT ANSWER PROSE. It used to go out as
+                        // `Delta::Text`, so the app appended "[daimond: … retrying …]"
+                        // into the reply tile (it persisted as the stored turn text) and
+                        // flipped the caption to "Writing the answer…" while the request
+                        // was in fact failing and being retried. It is a `Roading` delta
+                        // now: the caller shows a retry caption and writes nothing to the
+                        // transcript, the same way the tool-loop road ladder already does.
+                        on_token(Delta::Roading {
+                            attempt: retries + 1,
+                            of:      self.retry.max_attempts,
+                            wait_ms: delay,
+                        });
                     }
                     sleep_ms(delay).await;
                 }
@@ -4923,6 +4934,7 @@ pub mod tests {
             acc.ingest(c, &mut |d: Delta<'_>| match d {
                 Delta::Text(t)      => tokens.push(t.to_string()),
                 Delta::Reasoning(t) => thought.push(t.to_string()),
+                Delta::Roading { .. } => {}   // the SSE accumulator never emits a retry delta
             });
         }
         (acc.into_response(false, 0), tokens, thought)

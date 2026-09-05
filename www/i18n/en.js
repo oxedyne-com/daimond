@@ -441,6 +441,9 @@
 	// same kind — how many rolled up together. See www/js/daimond.js buildTile.
 	'chat.who_you':        'You',
 	'chat.who_daimond':    'Daimond',
+	// The per-turn device indicator: which device ran the turn, shown in the reply
+	// header when it was not this one (a turn dispatched to the always-on runner).
+	'chat.ran_on':         'ran on {name}',
 	'chat.who_tool':       'Tool',
 	'chat.who_tools':      'Tools',
 	'chat.who_system':     'System',
