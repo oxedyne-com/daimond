@@ -121,8 +121,34 @@
 		applying = true;
 		try { sessionStorage.setItem(KEY, pending); } catch (e) {}
 		try { if (window.DaimondJournal) DaimondJournal.flush(); } catch (e) {}
-		location.reload();
+		doReload();
 		return true;
+	}
+
+	/// Reload onto the newest build in ONE go. A bare `location.reload()` reboots a
+	/// tab whose controlling worker is still the OLD one -- fine when the worker
+	/// script did not change (it re-reads build.json and serves fresh), but no
+	/// guarantee when it did: the new worker sits in `waiting` and the reloaded
+	/// page is served by the old one, so the user reloads and reloads and stays put.
+	/// So before reloading: drive the registration to its newest worker (update →
+	/// skipWaiting → it takes control), then empty the shell caches so the next
+	/// load fetches the freshest bytes. Both are bounded and neither can throw, and
+	/// the reload happens exactly once whatever the worker does -- a safety timer
+	/// fires it even if the handshake stalls, so a click is never lost.
+	function doReload() {
+		var went = false;
+		var go = function () {
+			if (went) return;
+			went = true;
+			try { location.reload(); } catch (e) {}
+		};
+		var safety = setTimeout(go, 3000);
+		var pwa = window.DaimondPWA;
+		var fresh = (pwa && pwa.freshenWorker) ? pwa.freshenWorker(2500) : Promise.resolve();
+		fresh
+			.then(function () { return (pwa && pwa.clearShell) ? pwa.clearShell() : null; })
+			.then(function () { clearTimeout(safety); go(); },
+			      function () { clearTimeout(safety); go(); });
 	}
 
 	var checking = false;

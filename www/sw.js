@@ -227,6 +227,12 @@ self.addEventListener('fetch', function (ev) {
 self.addEventListener('message', function (ev) {
 	const d = ev.data;
 	if (!d || !d.type) return;
+	// A page's banner "Reload" asks the worker it is handing over to to take
+	// control at once rather than sit in `waiting` until every tab has closed.
+	// `install` already self-skips, so a new worker rarely waits; this is the
+	// belt to that braces, and the one thing a page can do to force the handover
+	// on a browser that parked the new worker anyway. See js/pwa.js freshenWorker.
+	if (d.type === 'skipWaiting') { self.skipWaiting(); return; }
 	// js/updater.js has just read build.json, no-store, for its own purposes.
 	// Taking its answer is what makes "the build identity" one thing rather than
 	// two, and means a deploy noticed by a foreground tab empties the cache at

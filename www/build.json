@@ -1,1 +1,1 @@
-{"build":"9420a6124cfd","note":"UI corrective: diamond bullet, workspace chips, hand-off spinner, update banner, terser notes"}
+{"build":"0b83bf6a9e1d","note":"PWA: guarantee a Reload takes the newest service worker (no more stale builds)"}
