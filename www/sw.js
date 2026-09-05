@@ -7,18 +7,27 @@
  * every deploy, and reloads a tab that has fallen behind. A worker that ignored
  * that would undo it.
  *
- * So this one does not have its own opinion about freshness. It has exactly the
- * same one, from the same file:
+ * So this one does not have its own opinion about freshness. It goes to the
+ * network for the shell EVERY time, and reads the cache only when the network
+ * cannot be reached:
  *
- *   THE CACHE IS NAMED AFTER A BUILD, AND IS ONLY EVER READ WHILE THAT BUILD IS
- *   THE ONE THE SERVER IS SERVING.
+ *   THE NETWORK IS THE SOURCE. THE CACHE IS THE FALLBACK, NAMED AFTER A BUILD,
+ *   AND IS ONLY EVER READ WHEN THE SERVER CANNOT BE.
+ *
+ * This is network-first, deliberately, and it is the whole point: an ordinary
+ * open or refresh always loads the build the server is serving right now, with
+ * no banner to notice, no button to press, no worker to unregister. There is no
+ * grace period and no stale-while-revalidate -- an old build is not served once,
+ * briefly, while a new one is fetched. When there is a network, it is not served
+ * at all.
  *
  * `build.json` is fetched `no-store` -- and is never itself intercepted, or the
  * whole scheme would be reading its own cache -- on every page load, and again
- * whenever a request comes in on a cold answer. The moment the id differs, every
- * cache under the old name is deleted and the request goes to the network. There
- * is no stale-while-revalidate here and no grace period: an old build is not
- * served once, briefly, while a new one is fetched. It is not served.
+ * whenever a request comes in on a cold answer. It is what NAMES the cache: the
+ * moment its id differs, every cache under the old name is deleted, so the
+ * offline store never holds two builds at once. Freshness no longer rests on that
+ * check succeeding, though -- the shell is fetched from the network regardless;
+ * the check only keeps the fallback tidy.
  *
  * `js/updater.js` also posts each id it reads (it polls anyway, every two
  * minutes and on every focus), so a tab that notices a deploy tells the worker in
@@ -33,12 +42,12 @@
  * `build.json`, `manifest.json` or `releases.json` -- the three files whose whole
  * job is to say what the server is doing right now.
  *
- * OFFLINE: if `build.json` cannot be fetched at all, the last id that WAS seen
- * stands and the shell is served from the cache. That is not stale code being
- * hidden -- it is the most recent build this device ever saw the server offer,
- * and the alternative is an app that will not open on a train. The instant the
- * network answers again, the id is re-checked and a moved build empties the
- * cache before anything else is served.
+ * OFFLINE: the cache is read only when the network fails. If a shell fetch
+ * cannot complete, the last shell this device saw the server offer is served from
+ * the cache under the last id that WAS seen. That is not stale code being hidden
+ * -- it is the most recent build this device ever saw, and the alternative is an
+ * app that will not open on a train. The instant the network answers again the
+ * shell is fetched fresh, and a moved build empties the old cache.
  *
  * IN DEVELOPMENT the cache is off. On a dev server the files change constantly
  * and the build id does not move at all, so a build-keyed cache would serve an
@@ -158,33 +167,45 @@ async function store(p, res, at) {
 	if (live !== at) await caches.delete(PREFIX + at);
 }
 
-/// A shell request: the cache if the build says so, the network otherwise.
+/// A shell request: the network every time, the cache only when the network
+/// cannot be reached. Network-first -- so a plain open, a refresh or a hard
+/// refresh always loads the build the server is serving now, with no banner and
+/// no unregister dance. See the header.
 ///
 /// `done` releases the hold the fetch handler took on the event's lifetime; it is
 /// called on every path, including the failing ones, or the worker is kept alive
 /// by a promise nothing will settle.
 async function serve(req, p, done) {
 	try {
-		// A page load is when the question gets asked; everything else on that
-		// page rides on the answer until it goes cold.
+		// A page load is when the build id is re-checked; everything else on that
+		// page rides on the answer until it goes cold. This no longer gates
+		// freshness -- the shell is fetched below regardless -- it only keeps the
+		// offline cache named after the live build and sweeps old ones.
 		if (req.mode === 'navigate' || Date.now() - seen > FRESH_MS) await stamp();
 
-		// Guarded on its own: a browser with no usable Cache Storage -- some
-		// private modes, a full disk -- must fall through to the network, not
-		// take the whole app down with it. The worker is an improvement to a
-		// working app and may never be the reason one fails to open.
-		if (live) {
-			try {
-				const c = await caches.open(PREFIX + live);
-				const hit = await c.match(key(p));
-				if (hit) { done(); return hit; }
-			} catch (e) { /* no store to read from; the network stands */ }
+		const at = live;
+		try {
+			const res = await fetch(req);
+			// Squirrel the fresh copy away for offline, under the build that was
+			// live when it was asked for; store() drops it if a deploy has since
+			// moved on. A non-ok response (a 404, say) is returned as-is, not cached.
+			if (at) store(p, res.clone(), at).then(done, done); else done();
+			return res;
+		} catch (netErr) {
+			// Only here does the cache speak: the network failed, so serve the last
+			// shell this device saw the server offer. Guarded on its own -- a
+			// browser with no usable Cache Storage (some private modes, a full disk)
+			// must surface the network error, not take the whole app down with it.
+			if (live) {
+				try {
+					const c = await caches.open(PREFIX + live);
+					const hit = await c.match(key(p));
+					if (hit) { done(); return hit; }
+				} catch (e) { /* no store to read from; the failure stands */ }
+			}
+			done();
+			throw netErr;
 		}
-
-		const at  = live;
-		const res = await fetch(req);
-		if (at) store(p, res.clone(), at).then(done, done); else done();
-		return res;
 	} catch (e) {
 		done();
 		throw e;

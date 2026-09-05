@@ -1,1 +1,1 @@
-{"build":"0b83bf6a9e1d","note":"PWA: guarantee a Reload takes the newest service worker (no more stale builds)"}
+{"build":"ecf1b7fc50c8","note":"Service worker network-first: an ordinary or hard refresh always loads the newest build"}

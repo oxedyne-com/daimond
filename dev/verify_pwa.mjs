@@ -11,15 +11,19 @@
 //
 // So one check here carries all the others:
 //
-//   THE WORKER SERVES NOTHING FROM ITS CACHE ONCE THE BUILD ID HAS MOVED.
+//   THE WORKER SERVES THE SHELL FROM THE NETWORK, NOT ITS CACHE.
 //
-// It is asked at the network, on a server this file owns and can watch: the shell
-// is served, a warm reload is proved to hit nothing (so the cache is real and the
-// rest of the check means something), the build id is then changed on the server,
-// and the next load must fetch the document, the stylesheet AND the script again,
-// with the old cache gone rather than merely bypassed. Both halves, because "it
-// caches" and "it stops caching" are different failures and only one of them is
-// dangerous.
+// The worker is network-first: an ordinary open, refresh or hard refresh always
+// loads the build the server is serving now, and the cache speaks only when the
+// network cannot be reached. It is asked at the network, on a server this file
+// owns and can watch: the shell is served, a warm reload is proved to fetch the
+// document, stylesheet and script from the SERVER (so freshness never rests on a
+// build-id check succeeding), the network is then cut and the app must still open
+// from the held shell (so the cache is a real offline fallback), and finally the
+// build id is moved and the next load must fetch everything again with the old
+// cache swept. Each half is a different failure: serving the cache first is how a
+// user gets stuck on last week's build; holding nothing is an app that will not
+// open on a train.
 //
 // The rest:
 //
@@ -503,24 +507,41 @@ try {
 	check('and it agrees with the server about which build is live',
 		!!swState && swState.live === 'build-one', swState ? String(swState.live) : 'no worker');
 
-	// ── 4. THE ONE: a moved build id empties the cache ───────────
-	// First, prove the cache is real. A reload with the worker in control should
-	// reach the server for nothing at all; if it reaches for everything, the
-	// check below would pass with the whole feature absent.
-	await page.reload({ waitUntil: 'load' });		// prime: every shell file, through the worker
+	// ── 4. THE ONE: network-first, with the cache as an offline fallback ──
+	// First, prove the shell is fetched from the SERVER on a warm reload. A worker
+	// that served the cache here is exactly the "stuck on last week's build" trap;
+	// network-first is what stops it.
+	await page.reload({ waitUntil: 'load' });		// prime: fill the cache through the worker
 	await sleep(2500);
 	let from = since();
 	await page.reload({ waitUntil: 'load' });
 	await sleep(2000);
 	const warm = ['/index.html', '/css/app.css', '/js/daimond.js', '/js/updater.js']
 		.map(p => `${p}:${asked(from, p)}`);
-	const warmTotal = ['/', '/index.html', '/css/app.css', '/js/daimond.js', '/js/updater.js']
-		.reduce((n, p) => n + asked(from, p), 0);
+	const warmDoc  = asked(from, '/') + asked(from, '/index.html');
+	const warmEach = warmDoc >= 1
+		&& ['/css/app.css', '/js/daimond.js', '/js/updater.js'].every(p => asked(from, p) >= 1);
 	if (process.env.PWA_DEBUG) console.log('    warm window:', JSON.stringify(hits.slice(from)));
-	check('a warm reload is served from the cache, not from the server',
-		warmTotal === 0, warm.join(' '));
-	check('and the stamp is still fetched every time, because that is what decides',
+	check('a warm reload fetches the shell from the server, not the cache (network-first)',
+		warmEach, warm.join(' '));
+	check('and the stamp is fetched too, because that is what names the offline cache',
 		asked(from, '/build.json') >= 1, `${asked(from, '/build.json')} fetch(es)`);
+
+	// Now prove the cache earns its keep: cut the network and the app must still
+	// open, served from the shell the worker holds.
+	await cdp.send('Network.emulateNetworkConditions',
+		{ offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+	let offlineOpened = false;
+	try {
+		await page.reload({ waitUntil: 'load' });
+		await sleep(1200);
+		offlineOpened = await page.evaluate(() =>
+			document.readyState === 'complete' && !!document.querySelector('script'));
+	} catch (e) { offlineOpened = false; }
+	await cdp.send('Network.emulateNetworkConditions',
+		{ offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+	check('with the network cut, the app still opens from the cached shell (offline)',
+		offlineOpened, offlineOpened ? 'opened offline' : 'did not open offline');
 
 	// Now move the build. Everything the cache holds is a build the server has
 	// left behind, and none of it may be served again.
