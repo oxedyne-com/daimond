@@ -1,1 +1,1 @@
-{"build":"dad2e3803338","note":"Sync: offload retained messages from the parcel + index dispatched turns (no 413 on heavy accounts)"}
+{"build":"85f1929273f8","note":"Perf: cap stored logs + incremental transcript render + merge only changed chats (long-history hot paths)"}

@@ -2065,26 +2065,68 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// is not scrollback — it is the reason a day's work stopped being saved.
 	var TOOL_KEEP = 2048;
 
+	// How much of a think, vision or error log is kept in the STORED transcript.
+	//
+	// The same problem as a tool result, and for the same reason: these are the human's
+	// scrollback, not the model's context -- the model held the whole thing while the
+	// turn ran and keeps its own copy (see `captureSession`). Left untrimmed, a marathon
+	// chat's reasoning bursts, image descriptions and error dumps grew the row without
+	// bound, and the whole row is structured-cloned and `put` on every turn, so an
+	// unbounded log is unbounded write amplification. HEAD AND TAIL are kept, unlike a
+	// tool result -- the end of a thought or a stack is often the part worth reading --
+	// with the middle elided. The threshold is head+tail, so a log short enough to keep
+	// whole is passed through untouched.
+	var LOG_KEEP_HEAD = 2048;
+	var LOG_KEEP_TAIL = 1024;
+
 	/// Group a number with commas, for a count of characters in a marker.
 	function withCommas(n) {
 		return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 	}
 
-	/// Shorten the tool results in a transcript on its way into storage, saying in the
-	/// record itself how much went. Idempotent: a message already shortened carries
-	/// `elided` and is passed through untouched.
+	/// Keep the head and tail of a long log body, replacing the middle with a marker that
+	/// says how much went. Neutral wording, because unlike a tool result an error dump was
+	/// not necessarily handed to the model.
+	function elideHeadTail(body, head, tail) {
+		var gone = body.length - head - tail;
+		return {
+			text: body.slice(0, head)
+				+ '\n\n[' + withCommas(gone) + ' characters elided here from the saved copy to save space.]\n\n'
+				+ body.slice(body.length - tail),
+			gone: gone,
+		};
+	}
+
+	/// Shorten the long logs in a transcript on its way into storage, saying in the record
+	/// itself how much went. Tool results keep their head; think, vision and error logs
+	/// keep head and tail. Idempotent: a message already shortened carries `elided` and is
+	/// passed through untouched -- and `mergeMessages` prefers the un-elided copy, so a
+	/// re-save re-caps from the live full text rather than the last capped copy.
 	function slimMessages(msgs) {
 		return (msgs || []).map(function (m) {
-			if (!m || m.role !== 'tool_log' || m.elided) return m;
-			var body = String(m.content == null ? '' : m.content);
-			if (body.length <= TOOL_KEEP) return m;
-			var gone = body.length - TOOL_KEEP;
-			var out = {};
-			for (var k in m) { if (Object.prototype.hasOwnProperty.call(m, k)) out[k] = m[k]; }
-			out.content = body.slice(0, TOOL_KEEP) + '\n\n[' + withCommas(gone)
-				+ ' more characters of this result were not saved. The model was given the whole thing.]';
-			out.elided = gone;
-			return out;
+			if (!m || m.elided) return m;
+			if (m.role === 'tool_log') {
+				var body = String(m.content == null ? '' : m.content);
+				if (body.length <= TOOL_KEEP) return m;
+				var gone = body.length - TOOL_KEEP;
+				var out = {};
+				for (var k in m) { if (Object.prototype.hasOwnProperty.call(m, k)) out[k] = m[k]; }
+				out.content = body.slice(0, TOOL_KEEP) + '\n\n[' + withCommas(gone)
+					+ ' more characters of this result were not saved. The model was given the whole thing.]';
+				out.elided = gone;
+				return out;
+			}
+			if (m.role === 'think_log' || m.role === 'vision_log' || m.role === 'error_log') {
+				var b = String(m.content == null ? '' : m.content);
+				if (b.length <= LOG_KEEP_HEAD + LOG_KEEP_TAIL) return m;
+				var cut = elideHeadTail(b, LOG_KEEP_HEAD, LOG_KEEP_TAIL);
+				var o = {};
+				for (var kk in m) { if (Object.prototype.hasOwnProperty.call(m, kk)) o[kk] = m[kk]; }
+				o.content = cut.text;
+				o.elided = cut.gone;
+				return o;
+			}
+			return m;
 		});
 	}
 
@@ -2177,7 +2219,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// Another tab changed the chats: adopt anything new without disturbing a
 	// turn in flight here. Chats this tab already holds keep their live
 	// DaimondApp; chats it has never seen are added; chats deleted elsewhere go.
-	async function onChatsChangedElsewhere() {
+	async function onChatsChangedElsewhere(touchedIds) {
+		// A SET, or null. Passed by `applyChats` naming the ids the pulled parcel
+		// carried, so a chat the parcel never mentioned is reconciled by keeping this
+		// tab's own copy rather than re-unioning its whole transcript to no effect: the
+		// store copy such a chat merges against was not changed by the parcel, and this
+		// tab's copy is already that store copy (or fresher). The cross-tab and restore
+		// callers pass nothing, because they do not know which ids moved, and every chat
+		// is re-merged as before. Deletions and the current-gone check below run either
+		// way -- they read the tombstones and the rebuilt list, not this set.
+		var only = touchedIds ? {} : null;
+		if (touchedIds) for (var ti = 0; ti < touchedIds.length; ti++) only[touchedIds[ti]] = true;
 		var tombs = loadTombs();
 		// Trashed as well as tombstoned. This is also the path a RESTORE comes
 		// back through: the record never left the store, so re-reading it with the
@@ -2189,6 +2241,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var merged = stored.map(function (s) {
 			var c = mine[s.id];
 			if (!c) return hydrateChat(s);
+			// The parcel did not touch this one, so its store copy is unchanged and this
+			// tab's copy already reflects it: keep it as-is, transcript and all, rather
+			// than paying a whole-transcript union for a chat that cannot have moved.
+			if (only && !only[s.id]) return c;
 			// Update a chat we already hold IN PLACE. Replacing the object would
 			// orphan `current` and any turn in flight that closed over it — the
 			// turn would then look like it belonged to a deleted chat and its
@@ -3985,9 +4041,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			was[c.id] = (c.messages || []).length;
 		});
 		var remoteChats = Array.isArray(remote.chats) ? remote.chats : [];
+		// The ids this parcel actually carried. Handed to `onChatsChangedElsewhere` so it
+		// reconciles the in-memory array for these ids alone, rather than re-unioning
+		// every transcript the account holds -- the merge below has already produced the
+		// stored truth for exactly these, and a chat the parcel never mentioned cannot
+		// have moved. See item #5-merge.
+		var touched = [];
 		for (var ri = 0; ri < remoteChats.length; ri++) {
 			var src = remoteChats[ri];
 			if (!src || !src.id) continue;
+			touched.push(src.id);
 			// WORK ON A SHALLOW COPY. The merge below reassigns this entry's
 			// `messagesRef` and `messages`; mutating the caller's parcel object in
 			// place would make a second apply of the same parcel unrepeatable -- the
@@ -4070,7 +4133,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (n < was[c.id]) trail('sync chats SHORTER', c.id + ': ' + was[c.id] + ' -> ' + n);
 		});
 		ChatStore.save(out);
-		onChatsChangedElsewhere();
+		onChatsChangedElsewhere(touched);
 	}
 
 	/// Merge a pulled remote state into local storage, then refresh the live
@@ -8300,6 +8363,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// its own first message, with a screen of nothing above it. Every render
 	/// path goes through here, so a path added later cannot forget.
 	function postToChat(node) {
+		// A tile reached the thread from somewhere OTHER than a history render -- the
+		// live turn, a streamed answer. The append fast path in `renderHistory` may only
+		// draw a tail onto a thread whose tiles it put there itself, so a draw through
+		// this door outside a render means the next render must rebuild rather than
+		// append. `_renderedChatId` is deliberately left alone: the scroll-keeping in
+		// `renderHistory` still needs to know the same chat is on screen.
+		if (!_renderingHistory) _renderSynced = false;
 		var ph = chatOutput.querySelector('.empty-state');
 		if (ph) ph.remove();
 		// A ROUND'S WORKING IS ONE TILE, and it ends where the round does. Anything else
@@ -12810,6 +12880,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	function clearChat() {
+		// Emptying the thread from outside a render (the empty state, a daimon view
+		// swap) leaves what `renderHistory` last drew no longer on screen, so the next
+		// render must not append onto it. See `_renderSynced`.
+		if (!_renderingHistory) _renderSynced = false;
 		chatOutput.innerHTML = ''; curAsstDiv = null; curAsstText = '';
 		// The card went with the thread. A reference left standing here would have the
 		// next conversation's first answer close a question drawn in the last one.
@@ -12845,6 +12919,135 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// the reader's place). See renderHistory.
 	var _renderedChatId = null;
 
+	// The identity-and-shape signature of every message the thread currently holds, in
+	// draw order, so a re-render can tell an APPEND (the same chat with turns added on the
+	// end) from a rebuild (a switch, an edit, a middle insertion). See renderHistory: when
+	// only the tail is new, the tail alone is drawn onto the tiles already standing rather
+	// than the whole transcript being cleared and rebuilt -- which for a chat of thousands
+	// of turns is the difference between redrawing one tile and redrawing thousands on
+	// every store-change nonce. See `_renderedSigs`.
+	var _renderedSigs = [];
+
+	// True only while `renderHistory` is drawing its own tiles, so `postToChat` and
+	// `clearChat` can tell a render's draws from a live turn's and leave `_renderSynced`
+	// alone for the former.
+	var _renderingHistory = false;
+
+	// Whether the thread on screen is exactly what `renderHistory` last drew -- so the
+	// append fast path, which draws only the new tail, can trust the tiles beneath it.
+	// A live turn, a streamed answer or an external `clearChat` reaches the thread
+	// without `renderHistory` and turns this off; the next full render turns it back on.
+	var _renderSynced = false;
+
+	/// A cheap per-message signature: its id and everything the drawing reads that could
+	/// change WITHOUT the id changing (content length, elision, outcome, the hand-off and
+	/// interruption marks, a fold's counts). Deliberately not a stringify of the whole
+	/// message -- the point is to diff a megabyte of transcript without touching a
+	/// megabyte, so only scalars and a length are read.
+	function msgSig(m) {
+		if (!m) return '';
+		var c = m.content == null ? '' : String(m.content);
+		return (m.mid || '') + '#' + (m.role || '') + '#' + c.length
+			+ '#' + (m.elided || 0) + '#' + (m.outcome || '') + '#' + (m.interrupted ? 1 : 0)
+			+ '#' + (m.why || '') + '#' + (m.folded || 0) + '#' + (m.kept || 0)
+			+ '#' + (m.ranOn || '') + '#' + (m.handoffFellBack ? 1 : 0) + '#' + (m.interject ? 1 : 0)
+			+ '#' + (m.name || '') + '#' + (m.callId || '');
+	}
+
+	function sigsOf(messages) {
+		var out = [];
+		for (var i = 0; i < messages.length; i++) out.push(msgSig(messages[i]));
+		return out;
+	}
+
+	/// Is `next` the already-drawn `prev` with zero or more messages appended, and nothing
+	/// in the drawn prefix changed? Only then is drawing the tail alone the same DOM as a
+	/// full rebuild would have produced. Any shortening, any change to a message already on
+	/// screen, or a middle insertion answers no, and the caller rebuilds.
+	function isAppendOf(prev, next) {
+		if (next.length < prev.length) return false;
+		for (var i = 0; i < prev.length; i++) if (prev[i] !== next[i]) return false;
+		return true;
+	}
+
+	/// Draw one stored message as its tile(s). The SINGLE per-message drawing path, shared
+	/// by the full rebuild and the tail-only append, so the two cannot draw a message
+	/// differently. Every path reaches `postToChat`, which coalesces a run of same-type
+	/// tiles from `_roll` -- so a tail drawn onto a thread whose `_roll` still points at
+	/// the trailing rollup groups exactly as a rebuild would have grouped it.
+	function drawHistoryMessage(m) {
+		// A message said into a running turn is a user message to the model and
+		// not a turn of its own here, so it is drawn where it landed rather than
+		// as the question that started something.
+		if (m.role === 'user' && m.interject) appendInterjected(m.content);
+		else if (m.role === 'user') {
+			appendUserMessage(m.content);
+			// A question already answered is drawn as answered. The record of the
+			// answer is the message itself -- it opens with the marker the card
+			// sent it under -- so nothing extra has to be stored for a reload to
+			// know, and a card the user has already dealt with does not come back
+			// offering the buttons again.
+			askMarkAnswered(m.content);
+		}
+		else if (m.role === 'assistant') {
+			// A turn HANDED TO A PEER, still in flight: an empty `dispatched`
+			// placeholder. It draws as its OWN hand-off tile (naming the device,
+			// a live spinner, the §5 status and control) rather than as an empty
+			// Daimond bubble with a footer under it — so a handed-off turn reads
+			// as a tile in the flow from the moment it leaves, and the spinner is
+			// visible for the whole wait (owner review 2026-09-05). Skipped once
+			// the answer has merged (finished), so the tile does not sit spinning
+			// beside the reply in the window before the placeholder is dropped.
+			if (m.interrupted && m.why === 'dispatched' && !(m.content && m.content.trim())
+				&& window.DaimondPeer && DaimondPeer.uiState) {
+				appendDispatchedTile(m);
+			} else {
+				appendAssistantText(m.content || '', m.ranOn, m.handoffFellBack);
+				var div = curAsstDiv;
+				finalizeAssistant();
+				// A turn the tab died in the middle of: show what arrived, badge it, and offer to
+				// run it again. The mark rides on the message so it survives further reloads.
+				if (m.interrupted && div) markInterrupted(div, m);
+			}
+		}
+		else if (m.role === 'error_log') { appendError(m.content); }
+		// THE COUNTS TRAVEL, so a reload draws the boundary where the live turn drew it.
+		// A `vision_log` shares this drawing and is not a fold, so it passes none and gets
+		// the plain notice -- see `appendCompacted`.
+		else if (m.role === 'fold_log') { appendCompacted(m.content || '', m.folded, m.kept); }
+		else if (m.role === 'vision_log') { appendCompacted(m.content || ''); }
+		else if (m.role === 'think_log') { appendThinking(m.content || ''); }
+		// How the turn ended, redrawn from the record: a reload that dropped it
+		// would leave a reader who had walked away with the same silence the
+		// line exists to replace.
+		else if (m.role === 'end_log') { appendEnding(m); }
+		else if (m.role === 'tool_log') {
+			// A record of a tool the agent ran. Display only: it is not sent
+			// back to the model, which cannot replay a tool call it has no
+			// call-id for.
+			renderToolCall(m.name || '', m.args || '', m.callId || '');
+			// THE ONE PLACE PROSE IS STILL READ. A tool log stored before the outcome
+			// was a field has the text and nothing else; one stored since carries it.
+			renderToolResult(m.name || '', m.content || '',
+				m.outcome || outcomeOfStoredText(m.content || ''));
+		}
+	}
+
+	/// Redraw the parts of the thread that are NOT the transcript: the queue box, the
+	/// System band, the permissions chip. Runs on every render -- full or append -- because
+	/// each can differ between two chats and the append path does not otherwise touch them.
+	function renderHistoryFurniture() {
+		renderQueue();
+		// The band belongs to the conversation on screen, and every part of it can differ between
+		// two: a Diamond's fence is not a chat's, and a user may have rewritten one role prompt
+		// and not the other.
+		if (typeof renderWire === 'function') renderWire();
+		// And the permissions chip, which carries the same kind of fact: whether THIS
+		// conversation's commands have the network. Two chats side by side differ, and
+		// the mark is on a button that does not otherwise redraw.
+		if (window.DaimondHandMode && DaimondHandMode.refresh) DaimondHandMode.refresh();
+	}
+
 	function renderHistory(messages) {
 		// KEEP THE READER'S PLACE across a re-render they did not ask for.
 		//
@@ -12865,83 +13068,53 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var sameChat = current && current.id && current.id === _renderedChatId;
 		var wasDown  = nearBottom();
 		var keepTop  = chatOutput.scrollTop;
+
+		// THE APPEND FAST PATH. The same chat is on screen and the only change is turns
+		// added on the end -- the common case behind every store-change nonce, a sync
+		// pull, another tab's write, a landed dispatch. Draw the new tail onto the tiles
+		// already standing (nothing cleared, the counters and `_roll` continue) rather
+		// than clearing thousands of tiles and rebuilding every one. `drawHistoryMessage`
+		// is the same door as the rebuild below, so the tail draws identically; the drawn
+		// prefix is proven byte-for-byte unchanged by `isAppendOf`, so the result is the
+		// same DOM. Falls through to the rebuild for a chat switch, a shortening, an edit,
+		// or a middle insertion.
+		if (sameChat && _renderSynced && Array.isArray(messages)) {
+			var nextSigs = sigsOf(messages);
+			if (isAppendOf(_renderedSigs, nextSigs)) {
+				_renderingHistory = true;
+				loadTextFolds();
+				for (var i = _renderedSigs.length; i < messages.length; i++) {
+					drawHistoryMessage(messages[i]);
+				}
+				_renderingHistory = false;
+				renderHistoryFurniture();
+				// Pinned to the live end only if they were already there; otherwise the
+				// scroll is left exactly where the reader had it (nothing was cleared).
+				if (wasDown) chatOutput.scrollTop = chatOutput.scrollHeight;
+				_renderedSigs = nextSigs;
+				_renderedChatId = current && current.id ? current.id : null;
+				_renderSynced = true;
+				return;
+			}
+		}
+
+		_renderingHistory = true;
 		clearChat();
 		// Before a single fold is drawn: which of them this chat's reader had open.
 		loadTextFolds();
-		if (!Array.isArray(messages)) return;
-		messages.forEach(function (m) {
-			// A message said into a running turn is a user message to the model and
-			// not a turn of its own here, so it is drawn where it landed rather than
-			// as the question that started something.
-			if (m.role === 'user' && m.interject) appendInterjected(m.content);
-			else if (m.role === 'user') {
-				appendUserMessage(m.content);
-				// A question already answered is drawn as answered. The record of the
-				// answer is the message itself -- it opens with the marker the card
-				// sent it under -- so nothing extra has to be stored for a reload to
-				// know, and a card the user has already dealt with does not come back
-				// offering the buttons again.
-				askMarkAnswered(m.content);
-			}
-			else if (m.role === 'assistant') {
-				// A turn HANDED TO A PEER, still in flight: an empty `dispatched`
-				// placeholder. It draws as its OWN hand-off tile (naming the device,
-				// a live spinner, the §5 status and control) rather than as an empty
-				// Daimond bubble with a footer under it — so a handed-off turn reads
-				// as a tile in the flow from the moment it leaves, and the spinner is
-				// visible for the whole wait (owner review 2026-09-05). Skipped once
-				// the answer has merged (finished), so the tile does not sit spinning
-				// beside the reply in the window before the placeholder is dropped.
-				if (m.interrupted && m.why === 'dispatched' && !(m.content && m.content.trim())
-					&& window.DaimondPeer && DaimondPeer.uiState) {
-					appendDispatchedTile(m);
-				} else {
-					appendAssistantText(m.content || '', m.ranOn, m.handoffFellBack);
-					var div = curAsstDiv;
-					finalizeAssistant();
-					// A turn the tab died in the middle of: show what arrived, badge it, and offer to
-					// run it again. The mark rides on the message so it survives further reloads.
-					if (m.interrupted && div) markInterrupted(div, m);
-				}
-			}
-			else if (m.role === 'error_log') { appendError(m.content); }
-			// THE COUNTS TRAVEL, so a reload draws the boundary where the live turn drew it.
-			// A `vision_log` shares this drawing and is not a fold, so it passes none and gets
-			// the plain notice -- see `appendCompacted`.
-			else if (m.role === 'fold_log') { appendCompacted(m.content || '', m.folded, m.kept); }
-			else if (m.role === 'vision_log') { appendCompacted(m.content || ''); }
-			else if (m.role === 'think_log') { appendThinking(m.content || ''); }
-			// How the turn ended, redrawn from the record: a reload that dropped it
-			// would leave a reader who had walked away with the same silence the
-			// line exists to replace.
-			else if (m.role === 'end_log') { appendEnding(m); }
-			else if (m.role === 'tool_log') {
-				// A record of a tool the agent ran. Display only: it is not sent
-				// back to the model, which cannot replay a tool call it has no
-				// call-id for.
-				renderToolCall(m.name || '', m.args || '', m.callId || '');
-				// THE ONE PLACE PROSE IS STILL READ. A tool log stored before the outcome
-				// was a field has the text and nothing else; one stored since carries it.
-				renderToolResult(m.name || '', m.content || '',
-					m.outcome || outcomeOfStoredText(m.content || ''));
-			}
-		});
-		renderQueue();      // clearChat emptied the thread, queue and all
-		// The band belongs to the conversation on screen, and every part of it can differ between
-		// two: a Diamond's fence is not a chat's, and a user may have rewritten one role prompt
-		// and not the other.
-		if (typeof renderWire === 'function') renderWire();
-		// And the permissions chip, which carries the same kind of fact: whether THIS
-		// conversation's commands have the network. Two chats side by side differ, and
-		// the mark is on a button that does not otherwise redraw.
-		if (window.DaimondHandMode && DaimondHandMode.refresh) DaimondHandMode.refresh();
+		if (!Array.isArray(messages)) { _renderingHistory = false; _renderedSigs = []; _renderSynced = true; return; }
+		messages.forEach(drawHistoryMessage);
+		_renderingHistory = false;
+		renderHistoryFurniture();
 		// Put the reader back where the head of this function measured them: at the
 		// live end when they were already there or when this is a freshly opened chat,
 		// otherwise exactly where they had scrolled to. The per-turn pin above is what
 		// this overrides -- it fired for every user message the replay drew.
 		if (!sameChat || wasDown) chatOutput.scrollTop = chatOutput.scrollHeight;
 		else                      chatOutput.scrollTop = keepTop;
+		_renderedSigs = sigsOf(messages);
 		_renderedChatId = current && current.id ? current.id : null;
+		_renderSynced = true;
 	}
 
 	/// Badge a recovered assistant message as interrupted, with a Continue button that runs the
