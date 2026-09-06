@@ -1,1 +1,1 @@
-{"build":"43885cc290f6","note":"Hand-off: a turn that falls back to run locally now shows where it ran (no more silent provenance)"}
+{"build":"14bd3c35b6af","note":"Sync: budget inline chat transcripts so a heavy account's parcel no longer 413s on cross-device send"}

@@ -2734,9 +2734,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// is therefore 6,291,236 bytes of parcel and not one more.
 	//
 	// 5 MiB rather than that 6 MiB, and the margin is not caution. FIRST, this bounds
-	// only the two sections spent against it below -- the inline files and the
-	// Diamonds. The transcripts, the mailboxes, the model tables, the device list and
-	// the chunk manifest ride outside it and are capped by nothing. SECOND, every byte
+	// only the sections spent against it below -- the inline files, the Diamonds and
+	// (since 2026-09-06) the inline chat transcripts, which have their own
+	// SYNC_CHATS_INLINE_MAX. The mailboxes, the model tables, the device list, the
+	// LEDGER (one entry per turn, forever) and the chunk manifest still ride outside
+	// it and are capped by nothing -- the ledger is the one of those that grows
+	// without bound and is the next to watch. SECOND, every byte
 	// counted against it is counted with `String.length`, which is UTF-16 code units,
 	// and the wire carries UTF-8: a parcel of Japanese transcripts weighs half again
 	// as much on the wire as it does here. A ceiling set at the arithmetic maximum is
@@ -2786,6 +2789,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// into `skipped` and is named to nobody. That budget comes down when its skip is as
 	// visible as the Diamond's.
 	var SYNC_DIAMONDS_MAX    = 4 * 1024 * 1024;
+	// The budget for INLINE chat transcripts, spent freshest-first. A transcript
+	// over SYNC_FILE_MAX already offloads on its own; this bounds the SUM of the
+	// many that sit under it, which nothing did before. On a heavy account those
+	// small-but-numerous transcripts were ~90% of a parcel the gateway refused with
+	// a 413 (measured 2026-09-06: 200 chats of 30 KiB made 6.2 MiB of a 6.9 MiB
+	// parcel, over Steel's 8 MiB front door once base64-wrapped). Files and Diamonds
+	// are budgeted against the parcel this way in collectSync; chats were the
+	// section that escaped it. Two against a parcel of five leaves room for the
+	// files, the Diamonds and the sections that ride uncapped beside them; the
+	// freshest chats -- the dispatched turn's own among them -- stay inline, and the
+	// tail becomes `messagesRef` chunks the other device hydrates on demand. Without
+	// a reachable chunk store there is nowhere to move them, so the budget cannot
+	// bind and the too-large chip (sync.js showTooLarge) stays the honest end state.
+	var SYNC_CHATS_INLINE_MAX = 2 * 1024 * 1024;
 	var SYNC_FILEBASE_KEY    = 'daimond-sync-filebase';
 	// The cloud index has its own fork point, kept apart from the inline one so
 	// the two 3-way merges can never read each other's hashes.
@@ -3684,40 +3701,72 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
 			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
 			&& DaimondCloud.contentGet);
-		var live = {}, out = [];
+		// Serialise each transcript once, then decide inline-vs-ref against the
+		// budget below. The model's own conversation never travels (collectSync
+		// stripped it before), so `session` is nulled here as it was in the inline map.
+		var recs = [];
 		for (var i = 0; i < chats.length; i++) {
 			var c = chats[i];
-			live[c.id] = 1;
-			// The model's own conversation never travels (collectSync stripped it
-			// before), so `session` is nulled here as it was in the inline map.
 			var entry = slimChat(c);
 			entry.session = null;
 			var msgs = Array.isArray(c.messages) ? c.messages : [];
 			var serial = JSON.stringify(msgs);
-			var ckey = '@c/' + c.id;
+			recs.push({ c: c, entry: entry, serial: serial, len: serial.length });
+		}
+		// WHICH TRANSCRIPTS RIDE INLINE. The freshest keep theirs; once the inline
+		// budget is spent, the rest become refs -- EVEN a transcript under
+		// SYNC_FILE_MAX -- so the SUM of many small chats cannot push the parcel over
+		// the gateway's ceiling. A big transcript is never in the inline set, so it
+		// offloads as it always did. Ranked freshest-first, ties by id, so two
+		// collects of the same state pick the same inline set and the parcel stays
+		// the fixed point the push-skip needs. Off when nothing can be offloaded --
+		// the budget cannot bind with nowhere to move a transcript to.
+		var inline = {};
+		if (canOffload) {
+			var order = recs.slice().sort(function (a, b) {
+				var fa = (a.c && a.c.updatedAt) | 0, fb = (b.c && b.c.updatedAt) | 0;
+				if (fb !== fa) return fb - fa;					// freshest first
+				return String(a.c.id) < String(b.c.id) ? -1 : 1;	// deterministic tie-break
+			});
+			var spent = 0;
+			for (var r = 0; r < order.length; r++) {
+				var rec = order[r];
+				// A transcript over the per-chat threshold always offloads; a smaller
+				// one rides inline only while the budget still has room for it.
+				if (rec.len <= SYNC_FILE_MAX && spent + rec.len <= SYNC_CHATS_INLINE_MAX) {
+					inline[rec.c.id] = 1;
+					spent += rec.len;
+				}
+			}
+		}
+		var live = {}, out = [];
+		for (var j = 0; j < recs.length; j++) {
+			var c2 = recs[j].c, entry2 = recs[j].entry, serial2 = recs[j].serial;
+			live[c2.id] = 1;
+			var ckey = '@c/' + c2.id;
 			var stored = canOffload ? DaimondCloud.contentGet(ckey) : null;
-			// Small transcripts ride inline. A chat that had a manifest and has
-			// since shrunk under the threshold drops it, so its chunks are swept.
-			if (!canOffload || serial.length <= SYNC_FILE_MAX) {
+			// A chat that had a manifest and now rides inline drops it, so its chunks
+			// are swept.
+			if (!canOffload || inline[c2.id]) {
 				if (stored && DaimondCloud.contentForget) DaimondCloud.contentForget(ckey);
-				out.push(entry);				// keeps the inline `messages`
+				out.push(entry2);				// keeps the inline `messages`
 				continue;
 			}
-			var fp = fileHash(serial);
+			var fp = fileHash(serial2);
 			var ref;
 			if (stored && stored.fp === fp && Array.isArray(stored.chunks)) {
 				ref = { v: stored.v, size: stored.size, key: stored.key, chunks: stored.chunks };
 			} else {
 				var mani;
-				try { mani = await DaimondChunks.offloadBytes('c:' + c.id, new TextEncoder().encode(serial)); }
-				catch (e) { out.push(entry); continue; }	// offload failed: ride inline this round
+				try { mani = await DaimondChunks.offloadBytes('c:' + c2.id, new TextEncoder().encode(serial2)); }
+				catch (e) { out.push(entry2); continue; }	// offload failed: ride inline this round
 				DaimondCloud.contentSet(ckey, {
 					v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks, fp: fp });
 				ref = { v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks };
 			}
-			entry.messages = null;
-			entry.messagesRef = ref;
-			out.push(entry);
+			entry2.messages = null;
+			entry2.messagesRef = ref;
+			out.push(entry2);
 		}
 		// Drop manifests for chats that are gone, so their chunks stop being named
 		// live. Writes only on a real deletion; a no-op collect leaves it be.
