@@ -7820,6 +7820,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		postToChat(tile);
 	}
 
+	/// A hand-off that FELL BACK to this device: the turn was dispatched to
+	/// `toLabel`, that device never finished, and the turn ran HERE. Drawn so
+	/// provenance is never silent — the failure it fixes was a hand-off tile that
+	/// vanished when the fallback ran locally, leaving no way to tell where a turn
+	/// ran (owner report 2026-09-06). `toLabel` is the target's display name,
+	/// captured off the dispatch placeholder as it was dropped (see
+	/// `dropDispatchedPlaceholder`); absent, it degrades to a plain "ran here".
+	function appendRanHere(toLabel) {
+		var line = toLabel
+			? tOr('chat.ran_here_failed', 'Ran here — hand-off to {name} didn’t finish', { name: String(toLabel) })
+			: tOr('chat.ran_here', 'Ran on this device');
+		var tile = buildTile('handoff', { expanded: false, who: line });
+		tile.classList.add('chat-msg-handoff');
+		tagTurn(tile);
+		postToChat(tile);
+	}
+
 	/// Put a round's working on the record, growing the entry rather than adding one.
 	///
 	/// The same coalescing as the drawing, and for the same reason: a reload reads these
@@ -8414,18 +8431,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		drawAsst();
 		if (pinned) chatOutput.scrollTop = chatOutput.scrollHeight;
 	}
-	function appendAssistantText(text, ranOn) {
+	function appendAssistantText(text, ranOn, handoffFellBack) {
 		if (!curAsstDiv) {
 			// WHICH DEVICE RAN THE TURN, when it was not this one: a turn dispatched to
 			// the always-on runner (or grabbed by another device) carries `ranOn` on the
 			// stored assistant message. It used to ride as a "ran on <device>" meta on
 			// the answer header; the owner asked for it as a proper tile instead, so a
 			// hand-off is drawn in the flow above the answer (see `appendHandoff`), once
-			// per turn. Quiet for a turn this device ran: `ranOn` equal to self is no
-			// hand-off.
-			if (ranOn && String(ranOn) !== selfDeviceId() && _handoffTurn !== _turn) {
-				appendHandoff(ranOn);
-				_handoffTurn = _turn;
+			// per turn. A plain local turn (`ranOn` equal to self, and never handed off)
+			// is quiet. But a turn that WAS handed off and then FELL BACK to run here is
+			// not quiet: `handoffFellBack` names the device it was sent to, so provenance
+			// is drawn ("Ran here — hand-off to X didn't finish") rather than the tile
+			// vanishing and leaving the owner unable to tell where it ran.
+			if (_handoffTurn !== _turn) {
+				if (ranOn && String(ranOn) !== selfDeviceId()) {
+					appendHandoff(ranOn);
+					_handoffTurn = _turn;
+				} else if (handoffFellBack) {
+					appendRanHere(handoffFellBack);
+					_handoffTurn = _turn;
+				}
 			}
 			// The model's prose — the ANSWER — in a Daimond tile: accent-coloured,
 			// from the model (left indent), expanded. `drawAsst` streams into the
@@ -12743,7 +12768,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					&& window.DaimondPeer && DaimondPeer.uiState) {
 					appendDispatchedTile(m);
 				} else {
-					appendAssistantText(m.content || '', m.ranOn);
+					appendAssistantText(m.content || '', m.ranOn, m.handoffFellBack);
 					var div = curAsstDiv;
 					finalizeAssistant();
 					// A turn the tab died in the middle of: show what arrived, badge it, and offer to
@@ -13513,6 +13538,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		for (var i = 0; i < chats.length; i++) {
 			var c = chats[i];
 			if (!c.messages) continue;
+			// Provenance must OUTLIVE the placeholder. If this turn was handed off but
+			// then ran HERE (the target never finished; it fell back to this device),
+			// carry the hand-off target onto the real answer before the placeholder —
+			// the sole record of WHERE it was sent — is dropped. Without this the answer
+			// reads as a plain local turn and "where did it run?" is lost on reload
+			// (owner report 2026-09-06). No-op when a peer ran it (`ranOn` is the peer,
+			// not this device), which draws its own "Handed off to X" tile.
+			var _phTo = null, _ans = null;
+			for (var s = 0; s < c.messages.length; s++) {
+				var sm = c.messages[s];
+				if (sm.why === 'dispatched' && sm.iturn === turnId && !(sm.content && sm.content.trim())) {
+					_phTo = handoffTargetLabel(sm) || _phTo;
+				} else if (sm.role === 'assistant' && String(sm.iturn) === String(turnId)
+					&& sm.content && sm.content.trim()) {
+					_ans = sm;
+				}
+			}
+			if (_phTo && _ans && String(_ans.ranOn || '') === String(selfDeviceId()) && !_ans.handoffFellBack) {
+				_ans.handoffFellBack = _phTo;
+			}
 			var kept = [];
 			for (var j = 0; j < c.messages.length; j++) {
 				var m = c.messages[j];
@@ -19878,7 +19923,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// ran (the answer syncs back onto this record) shows "ran on <that device>"
 				// rather than looking as if this device produced it. The runner writes it
 				// here from its own id; it travels on the message in the parcel.
-				if (turnText) chat.messages.push({ role: 'assistant', content: turnText, mid: amid, ranOn: selfDeviceId(), ts: Date.now() });
+				if (turnText) {
+				var amsg = { role: 'assistant', content: turnText, mid: amid, ranOn: selfDeviceId(), ts: Date.now() };
+				// An ERRAND run carries a turnId (the ordinary turn path passes none), so
+				// group the answer with its turn. Without this a locally-recovered errand
+				// answer had no `iturn`: the finished-guards (peerRunErrandDeps.finished,
+				// dispatchedTurnFinished) that match on iturn could not see it — risking a
+				// re-run — and the "handed off then ran here" provenance had nothing to
+				// hang on. See dropDispatchedPlaceholder.
+				if (opts.turnId) amsg.iturn = String(opts.turnId);
+				chat.messages.push(amsg);
+			}
 				stampMessages(chat.messages, chat.id);
 				if (owns()) finalizeAssistant();
 				else { curAsstDiv = null; curAsstText = ''; }

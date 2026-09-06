@@ -1,1 +1,1 @@
-{"build":"ecf1b7fc50c8","note":"Service worker network-first: an ordinary or hard refresh always loads the newest build"}
+{"build":"43885cc290f6","note":"Hand-off: a turn that falls back to run locally now shows where it ran (no more silent provenance)"}

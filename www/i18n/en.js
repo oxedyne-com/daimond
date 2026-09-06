@@ -450,6 +450,10 @@
 	// kept for any path that still reads it.
 	'chat.ran_on':         'ran on {name}',
 	'chat.handed_off':     'Handed off to {name}',
+	// A hand-off that fell back to this device: it was sent to {name}, that device
+	// never finished, and the turn ran here. Said so provenance is never silent.
+	'chat.ran_here_failed': 'Ran here — hand-off to {name} didn’t finish',
+	'chat.ran_here':       'Ran on this device',
 	'chat.who_handoff':    'Hand-off',
 	'chat.who_tool':       'Tool',
 	'chat.who_tools':      'Tools',
