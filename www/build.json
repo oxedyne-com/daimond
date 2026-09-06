@@ -1,1 +1,1 @@
-{"build":"9e40f0b4d08a","note":"Storage: prune stale legacy chat archive + guard setItem at quota so a full store can't brick the app"}
+{"build":"dad2e3803338","note":"Sync: offload retained messages from the parcel + index dispatched turns (no 413 on heavy accounts)"}

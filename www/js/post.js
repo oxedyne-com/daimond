@@ -929,6 +929,146 @@
 		return moved;
 	}
 
+	// ── Offloading the tail of the message record ──────────────
+	//
+	// A RETAINED INCOMING MESSAGE IS ~30 KiB, and nothing bounded the SUM of them.
+	// The body cap is 8 KiB, but a received row also keeps the sealed EVIDENCE the
+	// relay will not -- the artefact, the envelope and the content key (`art`/`env`/
+	// `ck`, see the note where a row is stored) -- which roughly doubles it. The whole
+	// record rides the sync parcel as one section (sync.js `state.post`), and on a
+	// heavy social account those numerous small rows are the section that 413s the
+	// parcel once the chats have been budgeted (the parcel ceiling and its reasoning
+	// live in daimond.js `SYNC_PARCEL_MAX`).
+	//
+	// So the messages get the treatment the chat transcripts got: a byte budget, the
+	// freshest kept inline, the tail's HEAVY HALF (`body`/`art`/`env`/`ck`/`refs`)
+	// offloaded to a content chunk and left as a `msgRef`, hydrated on the other
+	// device on demand. The mutable flags (`read`/`tray`/`hidden`/`del`) and the
+	// identity (`addr`/`ts`) stay inline, which is what lets `adopt`'s flags-merge run
+	// against a tail row with no chunk to fetch: a message is immutable -- its address
+	// is its content -- so a copy the other device already holds needs nothing
+	// materialised, and only a message it has never seen is fetched (adoptRefs).
+	//
+	// The offload is deterministic and content-addressed (the manifest is reused via
+	// its stored fingerprint, exactly as the chat collector reuses one) so two
+	// collects of one state are byte-identical and the push-skip still holds.
+	var SYNC_POST_INLINE_MAX = 2 * 1024 * 1024;
+
+	/// A cheap content fingerprint, deliberately identical to daimond.js `fileHash`
+	/// and cloud.js `hash` -- enough to tell whether a message's heavy half changed,
+	/// which for an immutable message is never. Local so the offload does not depend
+	/// on cloud.js having loaded first.
+	function fp(s) {
+		var h = 5381;
+		for (var i = 0; i < s.length; i++) { h = ((h << 5) + h + s.charCodeAt(i)) | 0; }
+		return (h >>> 0).toString(36) + ':' + s.length;
+	}
+
+	/// The heavy, immutable half of a message row: the body, the sealed evidence and
+	/// any refs. Everything NOT here -- the address, the flags, the timestamps -- stays
+	/// inline, so an already-held message converges on flags alone with nothing to
+	/// hydrate.
+	function heavyPart(m) {
+		return { body: m.body, art: m.art, env: m.env, ck: m.ck, refs: m.refs, replyTo: m.replyTo };
+	}
+
+	/// The parcel section with the message tail offloaded. The async twin of
+	/// `snapshot()`: same `null` while locked, same deep copy, but the rows past the
+	/// inline budget carry a `msgRef` in place of their heavy half. Returns the plain
+	/// snapshot unchanged when nothing can be offloaded -- no chunk store, or an
+	/// account light enough that the budget never binds -- so an ordinary account's
+	/// parcel is byte-for-byte what it was.
+	async function snapshotRefs() {
+		if (!_st) return null;
+		var rec = JSON.parse(JSON.stringify(_st));
+		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
+			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
+			&& DaimondCloud.contentGet && DaimondCloud.contentSet);
+		if (!canOffload) return rec;
+		var msgs = rec.msgs || {};
+		var addrs = Object.keys(msgs);
+		// Serialise each heavy half once, then rank freshest-first with an address
+		// tie-break, so two collects of one state choose the same inline set and the
+		// parcel stays a fixed point.
+		var recs = [];
+		for (var i = 0; i < addrs.length; i++) {
+			var m0 = msgs[addrs[i]];
+			var serial = JSON.stringify(heavyPart(m0));
+			recs.push({ addr: addrs[i], m: m0, serial: serial, len: serial.length });
+		}
+		var order = recs.slice().sort(function (x, y) {
+			var tx = ms(x.m && x.m.ts), ty = ms(y.m && y.m.ts);
+			if (ty !== tx) return ty - tx;					// freshest first
+			return x.addr < y.addr ? -1 : 1;				// deterministic tie-break
+		});
+		var inline = {}, spent = 0;
+		for (var r = 0; r < order.length; r++) {
+			var o = order[r];
+			if (spent + o.len <= SYNC_POST_INLINE_MAX) { inline[o.addr] = 1; spent += o.len; }
+		}
+		var live = {};
+		for (var j = 0; j < recs.length; j++) {
+			var addr = recs[j].addr, mm = recs[j].m;
+			live[addr] = 1;
+			var ckey = '@m/' + addr;
+			var stored = DaimondCloud.contentGet(ckey);
+			// Rides inline: drop any manifest it once had, so its chunks are swept.
+			if (inline[addr]) {
+				if (stored && DaimondCloud.contentForget) DaimondCloud.contentForget(ckey);
+				continue;
+			}
+			var fpv = fp(recs[j].serial);
+			var ref;
+			if (stored && stored.fp === fpv && Array.isArray(stored.chunks)) {
+				ref = { v: stored.v, size: stored.size, key: stored.key, chunks: stored.chunks };
+			} else {
+				var mani;
+				try { mani = await DaimondChunks.offloadBytes('m:' + addr, new TextEncoder().encode(recs[j].serial)); }
+				catch (e) { continue; }						// offload failed: ride inline this round
+				DaimondCloud.contentSet(ckey, {
+					v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks, fp: fpv });
+				ref = { v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks };
+			}
+			// Strip the heavy half; keep the flags and identity; hang the reference.
+			mm.body = null; mm.art = null; mm.env = null; mm.ck = null; mm.refs = null; mm.replyTo = null;
+			mm.msgRef = ref;
+		}
+		// Drop manifests for messages that are gone, so their chunks stop being named
+		// live. Writes only on a real deletion; a no-op collect leaves the index be.
+		if (DaimondCloud.contentReap) DaimondCloud.contentReap('@m/', live);
+		return rec;
+	}
+
+	/// Hydrate any offloaded rows, then merge. `adopt` is synchronous by contract (a
+	/// throw from it jams the sync) and a chunk fetch is async, so the fetch happens
+	/// HERE and `adopt` sees the whole record it always did. Only a message this
+	/// device does not already hold is fetched -- a held copy is the same immutable
+	/// bytes and merges on its inline flags alone. A row whose chunks cannot be
+	/// materialised is dropped this round rather than stored blank; it self-heals when
+	/// the reference resolves on a later parcel.
+	async function adoptRefs(rec) {
+		if (!rec || typeof rec !== 'object' || !rec.msgs) return adopt(rec);
+		var addrs = Object.keys(rec.msgs);
+		for (var i = 0; i < addrs.length; i++) {
+			var addr = addrs[i], m = rec.msgs[addr];
+			if (!m || !m.msgRef) continue;
+			var ref = m.msgRef;
+			// Already held: the flags merge needs no evidence, so drop the reference
+			// and let `adopt` merge the inline flags against the copy we keep.
+			if (_st && _st.msgs && _st.msgs[addr]) { m.msgRef = null; continue; }
+			var bytes = (window.DaimondChunks && DaimondChunks.materialiseBytes)
+				? await DaimondChunks.materialiseBytes(ref) : null;
+			if (!bytes) { delete rec.msgs[addr]; continue; }
+			var heavy;
+			try { heavy = JSON.parse(new TextDecoder().decode(bytes)); }
+			catch (e) { delete rec.msgs[addr]; continue; }
+			m.body = heavy.body; m.art = heavy.art; m.env = heavy.env;
+			m.ck = heavy.ck; m.refs = heavy.refs; m.replyTo = heavy.replyTo;
+			m.msgRef = null;
+		}
+		return adopt(rec);
+	}
+
 	// ── People ─────────────────────────────────────────────────
 	//
 	// Sealing needs the recipient's ENCRYPTION key; the relay addresses by their
@@ -2356,6 +2496,13 @@
 		/// does -- an empty record reads to the other device as a deletion.
 		snapshot: snapshot,
 		adopt:    adopt,
+		/// The same two halves, but with the message tail offloaded to content chunks
+		/// under a byte budget and hydrated back on the way in -- the treatment the
+		/// chat transcripts get, for the section that would otherwise 413 a heavy
+		/// account's parcel. sync.js prefers these and falls back to the pair above on
+		/// a build without them; see the offload note beside `snapshotRefs`.
+		snapshotRefs: snapshotRefs,
+		adoptRefs:    adoptRefs,
 		/// Read the store out from under the passphrase. Idempotent, and answers
 		/// null while the identity is locked. Fired for you at `daimond:unlock`;
 		/// published so a caller that needs the record NOW -- the badge, a

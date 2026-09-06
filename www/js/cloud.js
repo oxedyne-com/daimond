@@ -86,7 +86,8 @@
 	// file, but they are not workspace files: they have no path, no `.synced`
 	// merge, and no residency the file tools should report. So their manifests
 	// live in THIS index under a reserved-prefix namespace — `@d/<id>` for a
-	// Diamond, `@c/<id>` for a chat — rather than in a store of their own.
+	// Diamond, `@c/<id>` for a chat, `@m/<addr>` for the offloaded heavy half of a
+	// private message — rather than in a store of their own.
 	//
 	// Co-location is the whole point, and it is load-bearing. The one commit in
 	// sync.js declares the live set from this index; the gateway sweeps every
@@ -102,7 +103,7 @@
 	// it.
 
 	/// Is this index key a content manifest rather than a workspace path?
-	function isContentKey(p) { return /^@[dc]\//.test(String(p)); }
+	function isContentKey(p) { return /^@[dcm]\//.test(String(p)); }
 
 	/// The content manifest stored under `key`, or null. Shape-checked the same
 	/// way `manifest` checks a file's, so a half-written entry never becomes a

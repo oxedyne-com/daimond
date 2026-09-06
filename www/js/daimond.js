@@ -999,8 +999,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// its way into storage (`slimMessages`), so without that rule a merge against the store would
 	/// hand this tab's whole result back to it truncated — the store's copy is written first, and
 	/// first used to win.
-	function mergeMessages(a, b, scope) {
-		var at = {}, out = [], tombs = loadMsgTombs();
+	function mergeMessages(a, b, scope, tombs) {
+		// `tombs` lets a merge PASS parse the message-tombstone map once and thread the
+		// same object through every chat it merges, rather than re-reading and
+		// re-filtering the whole map per chat. Absent, it is read here -- the single-
+		// call sites keep the old behaviour with nothing to hoist.
+		var at = {}, out = [];
+		if (!tombs) tombs = loadMsgTombs();
 		stampMessages(a, scope).concat(stampMessages(b, scope)).forEach(function (m) {
 			if (tombs[m.mid]) return;
 			var had = at[m.mid];
@@ -1671,6 +1676,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				var t = tx('readwrite');
 				var seen = {}, put = {};
+				var mtombs = loadMsgTombs();		// parse the message tombstones once for this pass
 				list.forEach(function (c) {
 					if (!c || !c.id) return;
 					seen[c.id] = true;
@@ -1711,7 +1717,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 									// is a removal nobody asked for.
 									rec = slimChat(rec);
 									rec.messages = slimMessages(
-										mergeMessages(old.messages, rec.messages, id));
+										mergeMessages(old.messages, rec.messages, id, mtombs));
 									// The stamp of what is ACTUALLY going to disk, or the next
 									// save would find the record unchanged and skip it.
 									put[id] = stampOf(rec);
@@ -1799,14 +1805,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// unioning their transcripts — the same rule the cross-tab and cross-device
 		/// merges use, because migration is the same problem.
 		function mergeInto(base, incoming) {
-			var byId = {};
+			var byId = {}, mtombs = loadMsgTombs();		// one tombstone parse for the whole pass
 			(base || []).forEach(function (c) { if (c && c.id) byId[c.id] = c; });
 			(incoming || []).forEach(function (c) {
 				if (!c || !c.id) return;
 				var st = byId[c.id];
 				if (!st) { byId[c.id] = c; return; }
 				var merged = slimChat((c.updatedAt || 0) > (st.updatedAt || 0) ? c : st);
-				merged.messages = slimMessages(mergeMessages(st.messages, c.messages, c.id));
+				merged.messages = slimMessages(mergeMessages(st.messages, c.messages, c.id, mtombs));
 				if (!merged.session && st.session) merged.session = st.session;
 				byId[c.id] = merged;
 			});
@@ -2085,7 +2091,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function persistChats() {
 		try {
 			var stored = ChatStore.stored();
-			var byId = {};
+			var byId = {}, mtombs = loadMsgTombs();		// one tombstone parse for this save pass
 			stored.forEach(function (c) { if (c && c.id) byId[c.id] = c; });
 			// This tab's version of a chat wins only if it is at least as
 			// fresh as the stored one — so a tab that has been idle cannot
@@ -2096,7 +2102,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The transcript is append-only: union it. Everything else is a
 				// scalar, so the fresher tab's value wins.
 				var merged = slimChat((c.updatedAt || 0) >= (st.updatedAt || 0) ? c : st);
-				merged.messages = slimMessages(mergeMessages(st.messages, c.messages, c.id));
+				merged.messages = slimMessages(mergeMessages(st.messages, c.messages, c.id, mtombs));
 				// The model's own conversation is this device's state, not something two
 				// tabs union: keep whichever copy has one when the other does not, or a
 				// save from an idle tab would drop the tool history the working tab holds.
@@ -2178,7 +2184,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// trash record lifted is the whole of putting the chat back on the rail.
 		var stored = (await ChatStore.refresh())
 			.filter(function (c) { return c && c.id && !tombs[c.id] && !trashed(c.id); });
-		var mine = {};
+		var mine = {}, mtombs = loadMsgTombs();		// one tombstone parse for the whole merge
 		chats.forEach(function (c) { mine[c.id] = c; });
 		var merged = stored.map(function (s) {
 			var c = mine[s.id];
@@ -2187,7 +2193,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// orphan `current` and any turn in flight that closed over it — the
 			// turn would then look like it belonged to a deleted chat and its
 			// reply would be thrown away.
-			c.messages = mergeMessages(s.messages, c.messages, s.id);
+			c.messages = mergeMessages(s.messages, c.messages, s.id, mtombs);
 			if ((s.updatedAt || 0) > (c.updatedAt || 0) && !c._generating) {
 				c.name             = s.name;
 				c.model            = s.model;
@@ -2222,6 +2228,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				&& !tombs[c.id] && !trashed(c.id)) merged.push(c);
 		});
 		chats = merged;
+		// The array was just rebuilt (a cross-tab write, a sync merge, a restore), so
+		// the dispatched-placeholder index is rebuilt from it here -- the one place
+		// that covers every wholesale change to `chats` short of the boot load.
+		rebuildDispatchedIndex();
 		if (current && !current._generating && chats.indexOf(current) !== -1) {
 			renderHistory(current.messages);      // another tab may have added turns
 		}
@@ -2842,6 +2852,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// bind and the too-large chip (sync.js showTooLarge) stays the honest end state.
 	var SYNC_CHATS_INLINE_MAX = 2 * 1024 * 1024;
 	var SYNC_FILEBASE_KEY    = 'daimond-sync-filebase';
+	// The fork point is one `path -> hash` entry per file both devices agree on, and
+	// `commitAgreedFiles` carries entries FORWARD, so a renamed-away path lingers
+	// until a merge deletes it -- growth the chunk map bounds (chunks.js `MAP_MAX`)
+	// and this did not. Guarded the same way and for the same reason: losing an entry
+	// costs at worst a `.synced` sidecar on the next merge, never a file.
+	var SYNC_FILEBASE_MAX    = 5000;
 	// The cloud index has its own fork point, kept apart from the inline one so
 	// the two 3-way merges can never read each other's hashes.
 	var SYNC_CLOUDBASE_KEY   = 'daimond-cloud-base';
@@ -3024,6 +3040,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) { return false; }
 	}
 
+	/// Write the file baseline, bounded like the chunk map: past the cap, the oldest
+	/// insertions (object key order) are dropped. A dropped path reads as new on both
+	/// sides next merge -- a sidecar at worst, which is why it is safe to drop.
+	function writeFilebase(map) {
+		var keys = Object.keys(map);
+		if (keys.length > SYNC_FILEBASE_MAX) {
+			var trimmed = {};
+			keys.slice(keys.length - SYNC_FILEBASE_MAX).forEach(function (k) { trimmed[k] = map[k]; });
+			map = trimmed;
+		}
+		try { localStorage.setItem(SYNC_FILEBASE_KEY, JSON.stringify(map)); } catch (e) { /* best effort */ }
+	}
+
 	/// Set the file baseline to the current local files: this is "what both
 	/// devices agree on now", the fork point the next 3-way merge measures from.
 	async function commitFileBaseline() {
@@ -3031,7 +3060,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var col = await collectFiles();
 		var base = {};
 		Object.keys(col.files).forEach(function (p) { base[p] = fileHash(col.files[p]); });
-		try { localStorage.setItem(SYNC_FILEBASE_KEY, JSON.stringify(base)); } catch (e) { /* best effort */ }
+		writeFilebase(base);
 		// The cloud index forked at the same moment, and its residency list is
 		// only true once the push that carried it has landed.
 		commitCloudBaseline();
@@ -3129,8 +3158,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!Object.prototype.hasOwnProperty.call(gone || {}, p)) next[p] = base[p];
 		});
 		Object.keys(agreed).forEach(function (p) { next[p] = agreed[p]; });
-		try { localStorage.setItem(SYNC_FILEBASE_KEY, JSON.stringify(next)); }
-		catch (e) { /* best effort */ }
+		writeFilebase(next);
 	}
 
 	/// The serialisable state to encrypt and push: every stored chat, both
@@ -3945,6 +3973,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var tombs = mergeTombMap(TOMBS_KEY, remote.tombs);
 		mergeTombMap(MSG_TOMBS_KEY, remote.msgTombs);
 		var byId = {};
+		// One tombstone parse for the whole merge, AFTER the remote message tombstones
+		// have been unioned in above, so it sees this parcel's deletions too.
+		var mtombs = loadMsgTombs();
 		var stored = ChatStore.stored();
 		// What each chat held before the parcel, so a merge that shortened one says so.
 		var was = {};
@@ -4019,7 +4050,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var st = byId[r.id];
 			if (!st) { byId[r.id] = r; continue; }
 			var merged = slimChat((r.updatedAt || 0) >= (st.updatedAt || 0) ? r : st);
-			merged.messages = slimMessages(mergeMessages(st.messages, r.messages, r.id));
+			merged.messages = slimMessages(mergeMessages(st.messages, r.messages, r.id, mtombs));
 			// A parcel carries no session (collectSync strips it), so the freshest-wins
 			// rule above would trade this device's model memory for the remote's nothing.
 			if (!merged.session && st.session) merged.session = st.session;
@@ -13136,6 +13167,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			parkCount:   mark.parkCount | 0,	// the GLOBAL park count, synced on the placeholder
 			ts:          Date.now(),
 		});
+		// The one place a dispatched placeholder is created: keep the index in step.
+		if (chat.id && mark.iturn) _dispatchedIx[String(mark.iturn)] = chat.id;
 		if (ownsChat(chat)) renderHistory(chat.messages);
 		touchChat(chat);
 		persistChats();
@@ -13518,6 +13551,51 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Reports collected for dispatched turns, by turnId, for the UI state machine.
 	var peerReports = {};
 
+	// ── The dispatched-placeholder index ───────────────────────
+	//
+	// A CACHE over `chats`: iturn -> chatId for every `why:'dispatched'` placeholder.
+	// The three peer-recovery scans below (`peerCollectOnReturn`, which runs on every
+	// tab-foreground, and the park/drop pair) each walked EVERY chat × EVERY message.
+	// This makes the lookup proportional to the number of dispatched turns instead. It
+	// is ONLY a cache -- rebuilt wholesale from `chats` by `rebuildDispatchedIndex`
+	// whenever the array is reloaded or merged, and kept in step between rebuilds by
+	// `markTurnDispatched` (append) and `dropDispatchedPlaceholder` (drop). Every
+	// consumer resolves the id against the LIVE `chats` array and re-checks the
+	// placeholder is really there, so a stale entry costs a wasted lookup and never a
+	// wrong action.
+	//
+	// The interrupted-reason a dispatched placeholder carries -- the literal
+	// `DaimondPeer.REASON_DISPATCHED`, held here so the index can be built before the
+	// peer module has loaded and matched against `markPlaceholderParked`, which uses
+	// the same literal.
+	var REASON_DISPATCHED_STR = 'dispatched';
+	var _dispatchedIx = Object.create(null);
+
+	/// Rebuild the dispatched-placeholder index from `chats`. Cheap relative to the
+	/// merges and loads that call it, and the truth the incremental updates track.
+	function rebuildDispatchedIndex() {
+		var ix = Object.create(null);
+		for (var i = 0; i < chats.length; i++) {
+			var c = chats[i];
+			if (!c || !c.id || !c.messages) continue;
+			for (var j = 0; j < c.messages.length; j++) {
+				var m = c.messages[j];
+				if (m && m.why === REASON_DISPATCHED_STR && m.iturn) ix[String(m.iturn)] = c.id;
+			}
+		}
+		_dispatchedIx = ix;
+	}
+
+	/// The live chat holding a turn's dispatched placeholder, via the index, or null.
+	/// Resolves the cached id against the live `chats` array, so a chat deleted since
+	/// the entry was made simply comes back null.
+	function dispatchedChat(turnId) {
+		var cid = _dispatchedIx[String(turnId)];
+		if (cid == null) return null;
+		for (var i = 0; i < chats.length; i++) if (chats[i] && chats[i].id === cid) return chats[i];
+		return null;
+	}
+
 	/// This device's stable id -- a PER-DEVICE random id (identity.js:deviceId), NOT
 	/// the account public key. Pairing copies the account key onto every device, so
 	/// two paired devices would share a key-derived id: presence would self-exclude
@@ -13568,18 +13646,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// re-dispatch reads, and this keeps the UI and any device's re-run in step.
 	function markPlaceholderParked(turnId, parkCount) {
 		var tid = String(turnId || '');
-		for (var i = 0; i < chats.length; i++) {
-			var c = chats[i];
-			if (!c || !c.messages) continue;
-			var moved = false;
-			for (var j = 0; j < c.messages.length; j++) {
-				var m = c.messages[j];
-				if (m.why === 'dispatched' && String(m.iturn) === tid) {
-					if ((m.parkCount | 0) !== (parkCount | 0)) { m.parkCount = parkCount | 0; moved = true; }
-				}
+		// The one chat holding this turn's placeholder, via the index; iturn is unique
+		// to a turn, so the old all-chats sweep only ever moved this one.
+		var c = dispatchedChat(tid);
+		if (!c || !c.messages) return;
+		var moved = false;
+		for (var j = 0; j < c.messages.length; j++) {
+			var m = c.messages[j];
+			if (m.why === 'dispatched' && String(m.iturn) === tid) {
+				if ((m.parkCount | 0) !== (parkCount | 0)) { m.parkCount = parkCount | 0; moved = true; }
 			}
-			if (moved) { touchChat(c); persistChats(); if (ownsChat(c)) renderDispatchedBadges(); }
 		}
+		if (moved) { touchChat(c); persistChats(); if (ownsChat(c)) renderDispatchedBadges(); }
 	}
 
 	/// Re-run a PARKED turn from the start -- a FRESH DISPATCH, not a resume (no
@@ -13632,8 +13710,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// so the real assistant message (same iturn, different mid) stands alone.
 	/// Tombstoned, so a later merge does not resurrect it.
 	function dropDispatchedPlaceholder(turnId) {
-		for (var i = 0; i < chats.length; i++) {
-			var c = chats[i];
+		// The one chat holding this turn's placeholder, via the index. iturn is unique
+		// to a turn, so the old all-chats sweep only ever touched this one; the answer
+		// (same iturn) lives in it too. The index entry goes once the placeholder does.
+		var only = dispatchedChat(turnId);
+		var scan = only ? [only] : [];
+		for (var i = 0; i < scan.length; i++) {
+			var c = scan[i];
 			if (!c.messages) continue;
 			// Provenance must OUTLIVE the placeholder. If this turn was handed off but
 			// then ran HERE (the target never finished; it fell back to this device),
@@ -13670,6 +13753,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				touchChat(c); persistChats();
 			}
 		}
+		// The placeholder is gone: its index entry goes with it.
+		delete _dispatchedIx[String(turnId)];
 	}
 
 	/// Redraw the interrupted badges, so a state change (a lease claimed, a report
@@ -13758,14 +13843,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var self = selfDeviceId();
 			var now  = Date.now();
 			// A snapshot of the candidates first, because recoverOneLocally mutates
-			// chats/messages (drops the placeholder) as it goes.
+			// chats/messages (drops the placeholder) as it goes. Driven off the
+			// dispatched-placeholder index rather than a walk of every chat × every
+			// message: only turns that carry a dispatched placeholder can be orphans.
+			// The chat is resolved against the live array (a stale id comes back null)
+			// and the placeholder re-found inside it, so the candidate set is exactly
+			// what the full scan produced.
 			var jobs = [];
-			for (var i = 0; i < chats.length; i++) {
-				var chat = chats[i];
+			var byId = {};
+			for (var bi = 0; bi < chats.length; bi++) if (chats[bi] && chats[bi].id) byId[chats[bi].id] = chats[bi];
+			var turns = Object.keys(_dispatchedIx);
+			for (var ti = 0; ti < turns.length; ti++) {
+				var chat = byId[_dispatchedIx[turns[ti]]];
 				if (!chat || chat.diamondId || !chat.messages) continue;
 				for (var j = 0; j < chat.messages.length; j++) {
 					var m = chat.messages[j];
-					if (!m || m.why !== DaimondPeer.REASON_DISPATCHED || !m.iturn) continue;
+					if (!m || m.why !== DaimondPeer.REASON_DISPATCHED || String(m.iturn) !== turns[ti]) continue;
 					var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(m.iturn) : null;
 					var fin   = dispatchedTurnFinished(chat, m.iturn);
 					if (DaimondPeer.recoverDecision(m, lease, fin, self, now)) jobs.push({ chat: chat, m: m });
@@ -37023,14 +37116,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// Merged into the store, not written over it: a restore adds to this tab
 				// rather than replacing it, which is the promise the rest of this function
 				// keeps for workspace files and Diamonds.
-				var byId = {};
+				var byId = {}, mtombs = loadMsgTombs();		// one tombstone parse for the restore
 				storedChats().forEach(function (c) { if (c && c.id) byId[c.id] = c; });
 				data.chats.forEach(function (r) {
 					if (!r || !r.id) return;
 					var st = byId[r.id];
 					if (!st) { byId[r.id] = r; return; }
 					var merged = slimChat((r.updatedAt || 0) >= (st.updatedAt || 0) ? r : st);
-					merged.messages = slimMessages(mergeMessages(st.messages, r.messages, r.id));
+					merged.messages = slimMessages(mergeMessages(st.messages, r.messages, r.id, mtombs));
 					if (!merged.session && st.session) merged.session = st.session;
 					byId[r.id] = merged;
 				});
@@ -39566,6 +39659,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return;
 		}
 		chats = await loadChats();  // restore persisted chats (survive reload)
+		rebuildDispatchedIndex();   // seed the dispatched-placeholder cache from the boot load
 		// NOTHING IS SEEDED FROM THIS LIST. A counter used to be, and `loadChats`
 		// omits every chat in the trash — which is how a new chat came back with an
 		// id the trash still owned. See `newChatId`.

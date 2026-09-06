@@ -834,10 +834,23 @@
 		// keeps. An empty record here would read to the merge as a deletion.
 		try {
 			if (window.DaimondPost) {
-				var pst = DaimondPost.snapshot();
+				// `snapshotRefs` offloads the message tail to content chunks under a
+				// byte budget (the chats' treatment); a build without it carries the
+				// whole record inline as before. Either way the section is left OFF
+				// when null -- an empty record reads to the merge as a deletion.
+				var pst = DaimondPost.snapshotRefs
+					? await DaimondPost.snapshotRefs() : DaimondPost.snapshot();
 				if (pst) state.post = pst;
 			}
 		} catch (e) { log('post snapshot failed', e); }
+		// RE-READ THE CHUNK INDEX after the post offload, for the same reason
+		// collectSync re-reads it after the Diamond and chat collectors: the `@m/`
+		// manifests `snapshotRefs` just wrote must be in the set the ONE commit in
+		// push() declares live, or the file-only commit would sweep the very chunks
+		// this parcel now references. A no-op offload wrote nothing, so on a quiet
+		// round this is byte-identical to what collectSync already put here.
+		try { if (window.DaimondCloud) state.chunked = DaimondCloud.index(); }
+		catch (e) { log('chunk index re-read failed', e); }
 		// THE FORGE VOICE, wrapped under the account's shared identity so it is
 		// decryptable on every paired device but was never carried to one. It is
 		// a fact about the account like the handle above, not about this browser.
@@ -907,7 +920,13 @@
 			catch (e) { log('voice adopt failed', e); failed.push('voice'); }
 		}
 		if (window.DaimondPost) {
-			try { DaimondPost.adopt(state && state.post); }
+			// `adoptRefs` hydrates any offloaded rows (fetching only a message this
+			// device does not already hold) BEFORE the synchronous flags-merge; a
+			// build without it merges the whole inline record as before.
+			try {
+				if (DaimondPost.adoptRefs) await DaimondPost.adoptRefs(state && state.post);
+				else DaimondPost.adopt(state && state.post);
+			}
 			catch (e) { log('post adopt failed', e); failed.push('post'); }
 		}
 		// The account's public handle, under the same rule as everything above

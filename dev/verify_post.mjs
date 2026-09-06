@@ -140,23 +140,29 @@ async function seamsAreReal() {
 
 /// Take the message record off the parcel, the way a locked identity does.
 ///
-/// `snapshot()` answering null is the REAL cause in the field, and sync.js's own
-/// `if (pst) state.post = pst` then leaves the section off -- so the strip runs
-/// through the shipped line rather than around it. Deleting `state.post` from a
-/// wrapper on `DaimondCore.collectSync` would do nothing at all: `collectParcel`
-/// calls `collectSync` and adds the section AFTERWARDS (www/js/sync.js:657,715).
+/// Both snapshot entry points answering null is the REAL cause in the field, and
+/// sync.js's own `if (pst) state.post = pst` then leaves the section off -- so the
+/// strip runs through the shipped line rather than around it. Deleting `state.post`
+/// from a wrapper on `DaimondCore.collectSync` would do nothing at all: `collectParcel`
+/// calls `collectSync` and adds the section AFTERWARDS (www/js/sync.js). Since
+/// 2026-09-06 `collectParcel` prefers `snapshotRefs` (the offloading collector) and
+/// falls back to `snapshot`, so BOTH are stubbed here -- stubbing one alone would let
+/// the other still carry the record.
 async function stripPostFromParcel(s) {
 	await s.page.evaluate(() => {
 		if (!window.__postSnapReal) window.__postSnapReal = window.DaimondPost.snapshot;
+		if (!window.__postSnapRefsReal) window.__postSnapRefsReal = window.DaimondPost.snapshotRefs;
 		window.DaimondPost.snapshot = function () { return null; };
+		window.DaimondPost.snapshotRefs = async function () { return null; };
 	});
 }
 
-/// Put it back. `delete` would NOT do this: `snapshot` is an own property of the
-/// published object, so deleting it leaves sync.js calling `undefined()`.
+/// Put it back. `delete` would NOT do this: the two are own properties of the
+/// published object, so deleting them leaves sync.js calling `undefined()`.
 async function restorePostToParcel(s) {
 	await s.page.evaluate(() => {
 		if (window.__postSnapReal) window.DaimondPost.snapshot = window.__postSnapReal;
+		if (window.__postSnapRefsReal) window.DaimondPost.snapshotRefs = window.__postSnapRefsReal;
 	});
 }
 
