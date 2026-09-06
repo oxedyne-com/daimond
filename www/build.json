@@ -1,1 +1,1 @@
-{"build":"5813d598b4a8","note":"Store: lazy read path — boot loads chat summaries, transcripts load on open (RAM-on-boot win)"}
+{"build":"15dd03a9ee49","note":"Store: chunks are the transcript source of truth (Stage 2 — append writes, physical delete, transition heal)"}

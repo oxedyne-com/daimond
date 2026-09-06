@@ -199,15 +199,21 @@ const appendTurn = [
 	{ role: 'think_log', mid: 'th2', ts: 10, content: 'A short new thought.' },
 	{ role: 'assistant', mid: 'a2', ts: 11, content: 'Third answer, appended after render.' },
 ];
+// A peer's append lands in the CHUNKS -- the source of truth since Stage 2 (seq
+// 214) -- as a new tail chunk row, exactly as another tab's `ChatStore.write` would
+// write it; the legacy row is kept as the fallback shadow, so this writes both. (In
+// Stage 1 the reader was the legacy row and this fixture wrote only that; the reader
+// flip moved the truth to the chunks, so the simulation has to append there.)
 await page.evaluate((extra) => new Promise((res, rej) => {
 	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
-		const db = req.result, t = db.transaction('chats', 'readwrite');
+		const db = req.result, t = db.transaction(['chats', 'msgchunks'], 'readwrite');
 		const g = t.objectStore('chats').get('hot1');
 		g.onsuccess = () => {
 			const rec = g.result; rec.messages = rec.messages.concat(extra); rec.updatedAt = Date.now();
 			t.objectStore('chats').put(rec);
 		};
+		t.objectStore('msgchunks').put({ k: 'hot1#999999999999-peer', chatId: 'hot1', seq: 999999999999, msgs: extra });
 		t.oncomplete = () => res(); t.onerror = () => rej(t.error);
 	};
 	req.onerror = () => rej(req.error);

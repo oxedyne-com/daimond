@@ -1565,6 +1565,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var CHATS_LEGACY  = 'daimond-chats-legacy';    // what localStorage held before the move
 	var CHATS_LEGACY_AT = 'daimond-chats-legacy-at'; // when the move stamped that archive
 	var LEGACY_GRACE_MS = 30 * 24 * 60 * 60 * 1000;  // how long the archive is kept as a safety net
+	// STAGE 2d (seq 214, DEFERRED): when the chunk reader was first vouched -- the grace
+	// clock a future build reads to retire the legacy one-row after a vouch + window,
+	// exactly as CHATS_LEGACY is pruned. Set here; nothing reads it to delete yet.
+	var CHATS_CHUNKS_AT = 'daimond-chats-chunks-at';
 	// HOW MANY RECORDS THE LAST GOOD WRITE LEFT ON DISK.
 	//
 	// `boot()` could not tell "the store is empty" from "the store was not read":
@@ -1585,6 +1589,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var usable  = false;     // the store opened and was read at least once
 		var vouched = false;     // and what it read can be believed -- see CHATS_COUNT
 		var shadowDone = Promise.resolve();   // resolves when the last transcript-shadow pass settled
+
+		// ── The append cursor (seq 214, Stage 2) ────────────────────────────────
+		//
+		// The msgchunks are the SOURCE OF TRUTH now, and the save path APPENDS only a
+		// chat's new tail rather than rewriting its whole row. To append only the tail
+		// -- and to notice when dead weight has built up and should be compacted -- the
+		// store keeps three per-chat facts in memory, seeded when a chat's chunks are
+		// first read (`readChunkState`, on open or reconstruct) and kept current on each
+		// append and compaction:
+		//
+		//   - `chunkedMids`  which mids are PHYSICALLY on disk, so a re-save appends none
+		//                    of them again (a repeat is harmless -- reconstruct dedups --
+		//                    but pointless);
+		//   - `chunkPhysical` how many messages are physically in the chunks, dead ones
+		//                    included, so a count above the live transcript's length is
+		//                    the tell that a tombstone left weight to compact;
+		//   - `chunkNextSeq` the next seq for an appended row, for a tidy on-disk order
+		//                    (reconstruct re-sorts by (ts,mid), so it is a hint, not law).
+		//
+		// A chat whose cursor is UNKNOWN (never opened this session -- a brand-new chat
+		// from a parcel, the rare localStorage migration) is appended WHOLE; reconstruct
+		// dedups and compaction trims, so this is safe, only occasionally wasteful.
+		var chunkedMids   = {};
+		var chunkPhysical = {};
+		var chunkNextSeq  = {};
+		function pad12(n) { return ('000000000000' + (n | 0)).slice(-12); }
+		// A unique key suffix, so two tabs appending (or compacting) the same chat at
+		// once write DIFFERENT rows rather than clobbering one another. reconstruct reads
+		// the whole range and dedups by mid, so a duplicate row costs space, never a
+		// message; a COLLIDING key would cost a message, which is why the suffix is here.
+		function chunkTag() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
 		/// How many records this account had at the last write that landed.
 		function watermark() {
@@ -1730,7 +1765,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					t3.onerror    = function () { rej(t3.error || new Error('the write failed')); };
 					t3.onabort    = function () { rej(t3.error || new Error('the write was aborted')); };
 				});
-				var seen = {}, put = {};
+				var seen = {}, put = {}, compactIds = [];
 				var mtombs = loadMsgTombs();		// parse the message tombstones once for this pass
 				list.forEach(function (c) {
 					if (!c || !c.id) return;
@@ -1741,27 +1776,41 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// it is SKIPPED here rather than needlessly rewritten.
 					var stamp = stampOf(c);
 					put[c.id] = stamp;
-					// A WRITE NEVER SHORTENS OR EMPTIES A TRANSCRIPT (audit B1).
+					if (disk[c.id] !== undefined && disk[c.id] === stamp) return;
+					// A WRITE NEVER SHORTENS OR EMPTIES A TRANSCRIPT (audit B1), now under
+					// append (seq 214, Stage 2). The msgchunks are the source of truth and
+					// only ever GROW here -- and only for THIS chat -- so a save of one chat
+					// cannot touch another, and transcripts shrink only via tombstone
+					// (dropped on read, removed from disk by compaction below).
 					//
-					// Whenever a chat is written -- for any reason, from any caller -- the
-					// row already on disk is read inside this same transaction and the
-					// incoming messages are UNIONED with it (`mergeMessages` honours the
-					// message tombstones, so an intended removal still removes; what cannot
-					// happen is a removal nobody asked for). This is what makes the lazy
-					// read path safe: since seq 213 the in-memory list carries a full
-					// transcript only for a RESIDENT chat, and a chat whose messages are
-					// not loaded contributes an EMPTY transcript here -- the union then
-					// preserves the stored one exactly, so a save of one chat can never
-					// empty another. The model session is preserved the same way. It was
-					// previously a fast direct `put` for a known id; the union is now total
-					// because the mirror it used to be safe against holds only summaries.
+					//   - A RESIDENT chat carries its authoritative transcript. Its NEW TAIL
+					//     is appended to the chunks (`appendChunks` skips any mid already on
+					//     disk, so a re-save appends nothing); the whole is written to the
+					//     legacy `chats` row as a FALLBACK SHADOW (a direct put -- the read
+					//     Stage 1 paid to union is gone, because the chunks, not this row,
+					//     are now read back). If a tombstone has left dead weight in the
+					//     chunks, this chat is queued for compaction after the commit.
+					//   - A NON-RESIDENT chat contributes an EMPTY transcript, so it appends
+					//     nothing and its chunks are left exactly as they are. Its rare
+					//     scalar change (a rename, a fold, an attachment) still has to reach
+					//     the legacy shadow WITHOUT shortening it, so that one row is unioned
+					//     against disk the way Stage 1 did -- the cost that path saved is on
+					//     the resident hot path, not here.
 					//
-					// The chatsum SUMMARY is refreshed alongside, so the rail (built from
-					// summaries at the next boot) does not go stale after a rename or a
-					// turn; the msgchunks stay the Stage 0 shadow (rebuilt by `writeShadow`;
-					// Stage 2 makes them authoritative), so nothing here serialises the
-					// transcript.
-					if (disk[c.id] === undefined || disk[c.id] !== stamp) {
+					// The chatsum SUMMARY is refreshed alongside either way, so the rail
+					// (built from summaries at the next boot) does not go stale.
+					//
+					// THE APPEND RUNS FOR EVERY SAVE, resident or not. The chunks are the
+					// source of truth, so any transcript a save carries must reach them --
+					// `appendChunks` is idempotent (it fingerprint-skips a copy already on
+					// disk) and never shortens, so it is a no-op for the empty transcript a
+					// non-resident scalar change carries and appends the tail for a merge
+					// (e.g. a sync into a chat this tab has never opened) that carries one.
+					// `_loaded` then governs ONLY the legacy shadow: a direct put of the
+					// resident-full transcript, or a union against disk that cannot shorten
+					// the row when the transcript in hand is empty.
+					appendChunks(mcS, c.id, c.messages);
+					if (c._loaded === false) {
 						(function (rec, id) {
 							var g = csS.get(id);
 							g.onsuccess = function () {
@@ -1776,6 +1825,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 								suS.put(summaryLite(rec));
 							};
 						})(c, c.id);
+					} else {
+						var rec = slimChat(c);
+						csS.put(rec);
+						suS.put(summaryLite(rec));
+						// Dead weight is gauged against the RESIDENT transcript only -- a
+						// non-resident save carries an empty one, which is no measure of it.
+						if ((chunkPhysical[c.id] || 0) > (c.messages || []).length) compactIds.push(c.id);
 					}
 				});
 				// A DELETION IS A TOMBSTONE, NOT AN ABSENCE.
@@ -1799,10 +1855,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				Object.keys(disk).forEach(function (id) {
 					if (seen[id]) return;
 					if (tombs[id]) {
-						// The chat's summary and its transcript shadow go with it.
+						// The chat's summary and its transcript shadow go with it, and its
+						// append cursor with them, or a re-created id would append onto a
+						// stranger's leftover count.
 						csS['delete'](id);
 						suS['delete'](id);
 						mcS['delete'](IDBKeyRange.bound(id + '#', id + '#\uffff'));
+						delete chunkedMids[id]; delete chunkPhysical[id]; delete chunkNextSeq[id];
 						return;
 					}
 					kept[id] = disk[id];
@@ -1828,6 +1887,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				vouched = true;
 				setWatermark(Object.keys(disk).length);
 				storageAlarmClear();          // a save landed: whatever it said is over
+				// Compact any chat a tombstone or a duplicate append left carrying dead
+				// weight, AFTER the save has committed and each in its own transaction.
+				// Bounded by construction: an append never makes the physical count exceed
+				// the live one, so this fires only after a deletion, not on an ordinary
+				// turn. Best-effort -- a failure leaves the weight for next time, which
+				// reconstruct still drops on read.
+				for (var ci = 0; ci < compactIds.length; ci++) {
+					try { await compactChunks(compactIds[ci]); }
+					catch (e) { /* dead weight kept; the reader still drops it */ }
+				}
 				return true;
 			} catch (e) {
 				storageAlarm(storeReason(e));
@@ -1841,6 +1910,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				writing = null;
 				if (queued) { var next = queued; queued = null; schedule(next); }
 			});
+		}
+
+		/// Wait for everything queued at this moment to reach the database. Bounded, so a
+		/// tab saving continuously cannot hold it off for ever. The private form `settled`
+		/// (public) and `compact` both lean on.
+		async function settledInternal() {
+			for (var i = 0; i < 8 && (writing || queued); i++) {
+				try { await writing; } catch (e) { break; }
+			}
 		}
 
 		/// What localStorage still holds under the old key, or under the archive the
@@ -1908,17 +1986,160 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 		}
 
-		/// Rebuild a chat's transcript from its chunks, with EXACTLY the semantics every
-		/// other merge in this app uses: concat the chunks in seq order, then hand the
-		/// whole to `mergeMessages`, which drops tombstoned mids, keeps the fuller of any
-		/// duplicated mid, and sorts by ts then mid. Reusing `mergeMessages` rather than
-		/// re-deriving the rule is the point -- the reconstructed transcript cannot drift
-		/// from what a reload of the legacy row would produce. See blocker B2.
+		/// A fingerprint of a message's STORED form -- content, elision and every flag --
+		/// so a re-save can tell the copy already on disk from a changed one. A mid alone
+		/// is not enough: a message's stored form changes across saves (a streamed reply
+		/// finalises, an interrupted turn drops its badge on continue, a long log is
+		/// re-elided), and the reader must serve the LATEST, not the first ever written.
+		function msgFp(m) { return fileHash(JSON.stringify(m)); }
+
+		/// Do two transcripts hold the same messages, same order, same bodies? A content
+		/// compare on the load-bearing fields -- id, role, time, elision and text -- not a
+		/// count, so the reader can tell a chunk set that has merely drifted in a message's
+		/// body (a full-vs-elided copy) from one that matches, and heal only when it must.
+		/// Deliberately NOT a whole-object compare: the stored copies are structurally
+		/// cloned twice over and a key-order difference is not a content one, and reading it
+		/// as such would heal on every read.
+		function msgIdent(m) {
+			return String(m && m.mid) + '' + ((m && m.role) || '') + ''
+				+ ((m && m.ts) || 0) + '' + ((m && m.elided) || 0) + ''
+				+ ((m && m.content == null) ? '' : String(m.content));
+		}
+		function sameTranscript(a, b) {
+			if ((a || []).length !== (b || []).length) return false;
+			for (var i = 0; i < a.length; i++) { if (msgIdent(a[i]) !== msgIdent(b[i])) return false; }
+			return true;
+		}
+
+		/// Reduce a chat's raw physical chunk messages to its live transcript, with the
+		/// reader's exact semantics: LAST-WINS per mid (the most recently appended copy is
+		/// the current one -- append-only chunks accumulate a mid's history, and the tail
+		/// is the truth), then `mergeMessages` to drop tombstoned mids and sort by (ts,mid)
+		/// (blocker B2). Reusing `mergeMessages` for the drop-and-sort keeps the result
+		/// byte-identical to what a merge of the legacy row would produce; the last-wins
+		/// pre-pass is what makes a CHANGED message converge on its newest copy rather than
+		/// freezing the first, which is the difference the append-only store introduces.
+		function reduceChunks(concat, chatId, tombs) {
+			var lastIx = {};
+			concat.forEach(function (m, i) { if (m && m.mid) lastIx[m.mid] = i; });
+			var latest = [];
+			concat.forEach(function (m, i) { if (!m || !m.mid || lastIx[m.mid] === i) latest.push(m); });
+			return mergeMessages(latest, [], chatId, tombs || loadMsgTombs());
+		}
+
+		/// Read a chat's chunk rows and rebuild BOTH the live transcript and the append
+		/// cursor in one pass. `msgs` is the reconstructed transcript (see `reduceChunks`).
+		/// The cursor (`chunkedMids` mid->fingerprint of the newest copy, `chunkPhysical`
+		/// the raw count including dead and superseded copies, `chunkNextSeq`) records what
+		/// is PHYSICALLY on disk, so the next save appends only what changed and a build-up
+		/// of dead weight can be noticed for compaction.
+		async function readChunkState(chatId) {
+			var rows = await readChunks(chatId), all = [], maxSeq = -1;
+			rows.forEach(function (r) {
+				if (r && Array.isArray(r.msgs)) all = all.concat(r.msgs);
+				var sq = (r && isFinite(r.seq)) ? (r.seq | 0) : -1;
+				if (sq > maxSeq) maxSeq = sq;
+			});
+			var lastIx = {};
+			all.forEach(function (m, i) { if (m && m.mid) lastIx[m.mid] = i; });
+			var fps = {};
+			all.forEach(function (m, i) { if (m && m.mid && lastIx[m.mid] === i) fps[m.mid] = msgFp(m); });
+			chunkedMids[chatId]   = fps;
+			chunkPhysical[chatId] = all.length;
+			chunkNextSeq[chatId]  = maxSeq + 1;
+			return { msgs: reduceChunks(all, chatId, loadMsgTombs()), physical: all.length };
+		}
+
+		/// Rebuild a chat's transcript from its chunks, byte-for-byte as a reload of the
+		/// legacy row would produce it. The reader since Stage 2 (seq 214).
 		async function reconstruct(chatId) {
 			await conn();
-			var rows = await readChunks(chatId), all = [];
-			rows.forEach(function (r) { if (r && Array.isArray(r.msgs)) all = all.concat(r.msgs); });
-			return mergeMessages(all, [], chatId, loadMsgTombs());
+			return (await readChunkState(chatId)).msgs;
+		}
+
+		/// Append the messages in `msgs` that are NOT already on disk in their current form
+		/// -- a new mid, or a mid whose stored fingerprint has changed -- to `store` (the
+		/// msgchunks object store of an already-open readwrite transaction), as one or more
+		/// new seq-keyed rows. Returns the count appended. Synchronous request-queuing only
+		/// -- no await, no CPU beyond the fingerprint -- so it is safe inside a live
+		/// transaction. The key carries a unique tag, so two tabs appending at once write
+		/// different rows rather than one clobbering the other; the reader is last-wins and
+		/// re-sorts by (ts,mid), so the physical order the tag disturbs does not matter.
+		///
+		/// NEVER-SHORTEN, now under append (audit B1): a chat's chunks only GROW here, and
+		/// only THIS chat's rows are written -- a save of one chat cannot touch another's,
+		/// and a non-resident chat contributes an empty `msgs` and appends nothing, so its
+		/// chunks are left exactly as they are. A changed message adds a copy rather than
+		/// rewriting one, and the superseded copy is dropped from disk later by compaction.
+		function appendChunks(store, chatId, msgs) {
+			var fps = chunkedMids[chatId] || (chunkedMids[chatId] = {});
+			var fresh = [];
+			(msgs || []).forEach(function (m) {
+				if (!m || !m.mid) return;
+				var fp = msgFp(m);
+				if (fps[m.mid] === fp) return;      // this exact copy is already the newest on disk
+				fps[m.mid] = fp;
+				fresh.push(m);
+			});
+			if (!fresh.length) return 0;
+			var seq = (typeof chunkNextSeq[chatId] === 'number') ? chunkNextSeq[chatId] : 0;
+			for (var i = 0; i < fresh.length; i += CHUNK_MSGS) {
+				store.put({ k: chatId + '#' + pad12(seq) + '-' + chunkTag(), chatId: chatId, seq: seq,
+					msgs: fresh.slice(i, i + CHUNK_MSGS) });
+				seq += 1;
+			}
+			chunkNextSeq[chatId]  = seq;
+			chunkPhysical[chatId] = (chunkPhysical[chatId] || 0) + fresh.length;
+			return fresh.length;
+		}
+
+		/// Rewrite a chat's chunk set, dropping the physical weight a tombstone or a
+		/// duplicate append leaves behind (audit part c). An append-only store cannot
+		/// remove a tombstoned mid in place -- reconstruct hides it, but it stays on disk,
+		/// and once its tombstone ages out (~37 d) a reader with no tombstone to honour
+		/// would resurrect it. Compaction is what physically removes it, in time.
+		///
+		/// Two transactions, and the safety is in HOW the second deletes. The first reads
+		/// the current rows (their keys and messages); the live transcript is rebuilt
+		/// outside any transaction (`reduceChunks`, the CPU that must not sit inside one).
+		/// The second deletes EXACTLY the rows the first read -- by key, never by range --
+		/// and writes the compacted set back under fresh tagged keys. So a row a second
+		/// tab appended between the two transactions carries a key this pass never read
+		/// and never deletes: its messages survive untouched, and the reader unions them
+		/// back in. Nothing is lost to a concurrent write; at worst a little dead weight
+		/// waits for the next pass. The compacted set is reduced with the SAME last-wins
+		/// rule the reader uses, so a compaction cannot change what reconstruct returns.
+		async function compactChunks(chatId) {
+			await conn();
+			var rows = await readChunks(chatId), concat = [], keys = [];
+			rows.forEach(function (r) {
+				if (!r) return;
+				if (r.k != null) keys.push(r.k);
+				if (Array.isArray(r.msgs)) concat = concat.concat(r.msgs);
+			});
+			var live = reduceChunks(concat, chatId, loadMsgTombs());
+			// Nothing physical to drop: record the true count and leave the rows be.
+			if (live.length >= concat.length) { chunkPhysical[chatId] = concat.length; return; }
+			var t = db.transaction(MSGCHUNK_STORE, 'readwrite'), store = t.objectStore(MSGCHUNK_STORE);
+			var done = new Promise(function (res, rej) {
+				t.oncomplete = res;
+				t.onerror    = function () { rej(t.error || new Error('compaction failed')); };
+				t.onabort    = function () { rej(t.error || new Error('compaction aborted')); };
+			});
+			keys.forEach(function (k) { store['delete'](k); });
+			var chunks = [];
+			for (var i = 0; i < live.length; i += CHUNK_MSGS) chunks.push(live.slice(i, i + CHUNK_MSGS));
+			if (!chunks.length) chunks.push([]);          // an empty transcript still gets a seq-0 chunk
+			var seq = 0, fps = {};
+			chunks.forEach(function (batch) {
+				batch.forEach(function (m) { if (m && m.mid) fps[m.mid] = msgFp(m); });
+				store.put({ k: chatId + '#' + pad12(seq) + '-' + chunkTag(), chatId: chatId, seq: seq, msgs: batch });
+				seq += 1;
+			});
+			await done;
+			chunkedMids[chatId]   = fps;
+			chunkPhysical[chatId] = live.length;
+			chunkNextSeq[chatId]  = seq;
 		}
 
 		/// A chat's stored summary row, or null.
@@ -2047,13 +2268,117 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		async function loadMessages(chatId) {
 			try {
 				await conn();
+				// STAGE 2 (seq 214): the CHUNKS are the source of truth, so the transcript
+				// is reconstructed from them -- which also seeds this chat's append cursor,
+				// so the save path can append only its tail.
+				var st  = await readChunkState(chatId);
 				var row = await getRow(chatId);
-				if (!row) return { messages: [], session: null };
-				return { messages: stampMessages(Array.isArray(row.messages) ? row.messages : [], chatId),
-					session: row.session || null };
+				var chunkMsgs  = st.msgs;
+				var legacyMsgs = (row && Array.isArray(row.messages)) ? row.messages : [];
+				var tombs = loadMsgTombs();
+				// THE CHUNKS ARE AUTHORITATIVE for any mid they hold; the legacy fallback row
+				// only fills a GAP -- a mid a Stage-1 chat (seq 213) left in the row but never
+				// in the chunks, because Stage 1 wrote the row and the summary on every save
+				// yet only (re)built the chunks at boot over rows with no summary, so a chat
+				// that grew after its first shadow left its chunks behind. Reading the row
+				// whole is the price of that recovery, and it is the SAME read Stage 1 paid on
+				// open. The gap-fill NEVER overrides a mid the chunks already hold, so a
+				// pre-seq-211 FULL log in the row cannot un-elide the chunk copy the reader
+				// serves; and a tombstoned mid is excluded from the fill (and already gone
+				// from the chunks), so a deletion cannot be refilled from the row. (Once the
+				// row is retired -- Stage 2d -- this read and this fill go with it.)
+				var have = {};
+				chunkMsgs.forEach(function (m) { if (m && m.mid) have[m.mid] = 1; });
+				var gap = legacyMsgs.filter(function (m) { return m && m.mid && !have[m.mid] && !tombs[m.mid]; });
+				var full = gap.length ? mergeMessages(chunkMsgs, gap, chatId, tombs) : chunkMsgs;
+				// Heal the CHUNKS when the row filled a gap (a Stage-1 chat's stale chunks),
+				// so the recovery is paid once and every read after is the pure chunk path.
+				if (!sameTranscript(full, chunkMsgs)) {
+					try { await rewriteChunks(chatId, full); } catch (e) { /* served from `full` regardless */ }
+				}
+				// Heal the fallback ROW when it has drifted from what the reader serves: a mid
+				// it holds un-elided that the chunks elided (a pre-seq-211 log -- the write-
+				// amplification regression), or a tombstoned mid it still physically holds
+				// (which would RESURRECT once the tombstone ages out, since the reader unions
+				// the row back in). Both converge the row onto the served transcript, once,
+				// so a read is also a sweep. Bounded: nothing is written when the row already
+				// matches, which is every ordinary chat.
+				if (row && !sameTranscript(full, legacyMsgs)) {
+					try {
+						row.messages = slimMessages(full);
+						var tt = tx('readwrite'); tt.store.put(row); await tt.done;
+					} catch (e) { /* the reader already served the truth; the row heals next time */ }
+				}
+				return { messages: full, session: (row && row.session) || null };
 			} catch (e) {
 				return { messages: [], session: null };
 			}
+		}
+
+		/// Fold the authoritative legacy transcript into a chat's chunks and rewrite them
+		/// clean -- the one-time heal a Stage-1 chat needs when its chunks lag its row (see
+		/// `loadMessages`). Atomic and concurrent-safe the same way `compactChunks` is: it
+		/// deletes exactly the rows it read (by key), so a row another tab appended between
+		/// the read and the write survives. `reduceChunks` gives the same last-wins result
+		/// the reader uses, so the heal cannot change what a read returns.
+		async function rewriteChunks(chatId, msgs) {
+			await conn();
+			var rows = await readChunks(chatId), keys = [];
+			rows.forEach(function (r) { if (r && r.k != null) keys.push(r.k); });
+			var t = db.transaction(MSGCHUNK_STORE, 'readwrite'), store = t.objectStore(MSGCHUNK_STORE);
+			var done = new Promise(function (res, rej) {
+				t.oncomplete = res;
+				t.onerror    = function () { rej(t.error || new Error('the chunk rewrite failed')); };
+				t.onabort    = function () { rej(t.error || new Error('the chunk rewrite was aborted')); };
+			});
+			keys.forEach(function (k) { store['delete'](k); });
+			var chunks = [];
+			for (var i = 0; i < msgs.length; i += CHUNK_MSGS) chunks.push(msgs.slice(i, i + CHUNK_MSGS));
+			if (!chunks.length) chunks.push([]);
+			var seq = 0, fps = {};
+			chunks.forEach(function (batch) {
+				batch.forEach(function (m) { if (m && m.mid) fps[m.mid] = msgFp(m); });
+				store.put({ k: chatId + '#' + pad12(seq) + '-' + chunkTag(), chatId: chatId, seq: seq, msgs: batch });
+				seq += 1;
+			});
+			await done;
+			chunkedMids[chatId]   = fps;
+			chunkPhysical[chatId] = msgs.length;
+			chunkNextSeq[chatId]  = seq;
+		}
+
+		/// PHYSICALLY drop every live-tombstoned mid from a chat's chunks AND its legacy
+		/// fallback row -- resident or not, in the parcel or not (seq 214). A tombstone
+		/// HIDES a mid on read, but the physical copies outlive it, and the reader unions
+		/// the fallback row back in, so once the tombstone ages out (~37 d) a mid nothing
+		/// swept would RESURRECT -- deleted content coming back in a privacy tool. This is
+		/// what closes that: driven from where a tombstone is APPLIED (a local delete, a
+		/// synced `msgTomb`) and from a read, not only from a chat that rode a parcel.
+		///
+		/// BOUNDED, so it is not a per-read cost: it reads the two stores and returns at
+		/// once unless a live tombstone still names a mid PHYSICALLY present, rewriting only
+		/// then. Returns whether it swept anything.
+		async function sweepChatTombs(chatId) {
+			await conn();
+			var tombs = loadMsgTombs();
+			if (!chatId) return false;
+			var rows = await readChunks(chatId), concat = [];
+			rows.forEach(function (r) { if (r && Array.isArray(r.msgs)) concat = concat.concat(r.msgs); });
+			var row = await getRow(chatId);
+			var legacyMsgs = (row && Array.isArray(row.messages)) ? row.messages : [];
+			var hitChunk  = concat.some(function (m) { return m && m.mid && tombs[m.mid]; });
+			var hitLegacy = legacyMsgs.some(function (m) { return m && m.mid && tombs[m.mid]; });
+			if (!hitChunk && !hitLegacy) return false;         // nothing tombstoned is physically here
+			if (hitChunk) {
+				await rewriteChunks(chatId, reduceChunks(concat, chatId, tombs));
+			}
+			if (hitLegacy && row) {
+				row.messages = slimMessages(mergeMessages(legacyMsgs, [], chatId, tombs));
+				var lt = tx('readwrite');
+				lt.store.put(row);
+				await lt.done;
+			}
+			return true;
 		}
 
 		/// Write the transcript shadow for every chat in `list`, skipping those already
@@ -2152,6 +2477,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					usable = true;
 					vouched = judge(mirror);
 					if (vouched) storageAlarmClear();
+					// STAGE 2d SCAFFOLDING (deferred). The reader is the chunks now; the
+					// legacy `chats` rows are kept as a rollback shadow and are NOT pruned
+					// yet. Start the grace clock the first time the store is believed, so a
+					// future build can retire the legacy one-row after a vouch PLUS a window
+					// -- the same shape as the CHATS_LEGACY prune. Setting the stamp is all
+					// this stage does; nothing reads it to delete.
+					if (vouched) {
+						try {
+							if (localStorage.getItem(CHATS_CHUNKS_AT) === null) {
+								localStorage.setItem(CHATS_CHUNKS_AT, String(Date.now()));
+							}
+						} catch (e5) { /* best effort — the clock is scaffolding, not load-bearing */ }
+					}
 				} catch (e) {
 					usable = false;
 					vouched = false;
@@ -2239,11 +2577,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// database. For a caller that must not clear its own record of a change
 			/// until the change is durable. Bounded, exactly as `refresh` is, so a tab
 			/// saving continuously cannot hold it off for ever.
-			settled: async function () {
-				for (var i = 0; i < 8 && (writing || queued); i++) {
-					try { await writing; } catch (e) { break; }
-				}
-			},
+			settled: function () { return settledInternal(); },
 			/// Forget everything — an account being forgotten takes its chats with it.
 			wipe: async function () {
 				mirror = []; disk = {};
@@ -2265,6 +2599,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// row -- what the open path and the whole-transcript consumers call to make a
 			/// chat resident (seq 213, Stage 1). See `loadMessages`.
 			loadMessages:  function (chatId) { return loadMessages(chatId); },
+			/// Physically drop the dead weight a tombstone leaves in a chat's append-only
+			/// chunks (seq 214, Stage 2). Called from the deletion paths so a cleared or
+			/// retracted turn is removed from disk, not merely hidden on read -- which is
+			/// what keeps it from resurrecting once its tombstone ages out. Best-effort and
+			/// never throws; safe for a non-resident chat, which the save path cannot
+			/// compact on its own. Sequences behind any queued write so it reads settled
+			/// chunks.
+			compact: async function (chatId) {
+				if (!chatId) return;
+				try { await settledInternal(); await sweepChatTombs(chatId); }
+				catch (e) { /* the reader still drops the tombstoned mid */ }
+			},
+			/// Physically drop live-tombstoned mids from a chat's chunks AND its legacy row
+			/// (seq 214). Driven from applyChats when a synced `msgTomb` names a mid in a
+			/// chat the parcel did not carry, so a deletion cannot resurrect on age-out.
+			sweepTombs: function (chatId) { return sweepChatTombs(chatId); },
 			// ── Transcript shadow (seq 212, Stage 0) ────────────────────────────
 			// Read by the probe only; none of these is on any behaviour path yet.
 			/// Rebuild a chat's transcript from its chunks, byte-for-byte as a reload of
@@ -4676,7 +5026,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// the shortened-transcript trail below, do rest on it.)
 			var localMsgs = Array.isArray(st.messages) ? st.messages : null;
 			var localSession = st.session || null;
-			if (localMsgs === null) {
+			// A NON-RESIDENT summary carries an EMPTY `messages` array beside a real
+			// `msgCount` (seq 213): [] means "not loaded here", not "empty". Load the
+			// authoritative transcript whenever the entry does not actually hold the
+			// messages it claims to, or the merge below would union the remote against
+			// nothing -- leaving the merged mirror, the summary count and the legacy
+			// shadow all SHORT of the local history. (`loadMessages` also seeds this
+			// chat's append cursor, so the write path appends a true delta.)
+			if (localMsgs === null || (localMsgs.length === 0 && chatMsgCount(st) > 0)) {
 				var lg = await ChatStore.loadMessages(r.id);
 				localMsgs = lg.messages; localSession = localSession || lg.session;
 			}
@@ -4702,6 +5059,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		ChatStore.save(out);
 		onChatsChangedElsewhere(touched);
+		// A synced `msgTomb` can name a mid in a chat this parcel did NOT carry (an
+		// asymmetric topology -- the deletion travelled without the shortened chat).
+		// The chats the parcel DID carry were re-slimmed above, so their physical copies
+		// are already dropped; a chat it did not carry was never touched, and its chunks
+		// and fallback row still hold the tombstoned mid, to resurrect on age-out. Sweep
+		// exactly those. Bounded: `sweepTombs` reads and returns at once unless a live
+		// tombstone still names a physically-present mid, and the normal parcel carries
+		// every chat, so this loop finds nothing to do.
+		if (remote.msgTombs && Object.keys(remote.msgTombs).length) {
+			var touchedSet = {};
+			touched.forEach(function (id) { touchedSet[id] = 1; });
+			var others = ChatStore.stored().map(function (c) { return c && c.id; })
+				.filter(function (id) { return id && !touchedSet[id]; });
+			for (var oi = 0; oi < others.length; oi++) {
+				try { await ChatStore.sweepTombs(others[oi]); } catch (e) { /* best effort */ }
+			}
+		}
 	}
 
 	/// Merge a pulled remote state into local storage, then refresh the live
@@ -14504,6 +14878,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				c.messages = kept;
 				if (ownsChat(c)) renderHistory(c.messages);
 				touchChat(c); persistChats();
+				if (c.id) ChatStore.compact(c.id);   // drop the tombstoned placeholder from the chunks (Stage 2)
 			}
 		}
 		// The placeholder is gone: its index entry goes with it.
@@ -14962,6 +15337,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			chat.messages = (chat.messages || []).filter(function (x) { return x.iturn !== iturn; });
 			chat.app = null;
 			touchChat(chat); persistChats();
+			if (chat.id) ChatStore.compact(chat.id);   // remove the retracted turn from the chunks (Stage 2)
 			renderHistory(chat.messages);
 			runTurn(chat, text);
 			return;
@@ -18002,6 +18378,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (id) forgetDiamondWebConsent(id);
 		touchChat(rec);
 		persistChats();
+		// The tombstoned mids are hidden on read at once, but they are still PHYSICALLY
+		// in this chat's append-only chunks; compaction drops them from disk so they
+		// cannot resurrect once the tombstone ages out (seq 214, Stage 2). Handles a
+		// non-resident daimon the save path cannot compact on its own.
+		if (rec.id) ChatStore.compact(rec.id);
 	}
 
 	function mountDaimonReset(row, id) {
@@ -37928,7 +38309,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// local transcript is safe regardless; this keeps the merged mirror correct.)
 					var localMsgs = Array.isArray(st.messages) ? st.messages : null;
 					var localSession = st.session || null;
-					if (localMsgs === null) {
+					// [] on a non-resident summary means "not loaded", not "empty" (seq 213):
+					// load the authoritative transcript before merging, or the restore unions
+					// the backup against nothing and the summary/shadow land short.
+					if (localMsgs === null || (localMsgs.length === 0 && chatMsgCount(st) > 0)) {
 						var lg = await ChatStore.loadMessages(r.id);
 						localMsgs = lg.messages; localSession = localSession || lg.session;
 					}

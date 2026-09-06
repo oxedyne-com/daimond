@@ -173,8 +173,11 @@ try {
 		const c = list.find(x => x.id === cid);
 		const beforeStamp = c.updatedAt;
 		const beforeManifest = window.DaimondCloud.contentGet('@c/' + cid);
-		// Add a message WITHOUT moving updatedAt.
-		c.messages = c.messages.concat([{ role: 'user', content: 'a genuinely new message ' + 'z'.repeat(50), mid: 'unioned-1', ts: 99999 }]);
+		// Add a message WITHOUT moving updatedAt. The mirror holds SUMMARIES (lazy read,
+		// seq 213), so load the transcript before appending and mark the entry resident.
+		const curMsgs = (await store.loadMessages(cid)).messages || [];
+		c.messages = curMsgs.concat([{ role: 'user', content: 'a genuinely new message ' + 'z'.repeat(50), mid: 'unioned-1', ts: 99999 }]);
+		c._loaded = true;
 		store.save(list);
 		window.__reset();
 		const p = await window.DaimondCore.collectSync();
@@ -334,7 +337,7 @@ try {
 		const pB = await window.DaimondCore.collectSync();
 		const entryB = (pB.chats || []).find(e => e.id === cid);
 		const bUnionManifest = window.DaimondCloud.contentGet('@c/' + cid);
-		const unionMsgs = store.stored().find(x => x.id === cid).messages;
+		const unionMsgs = (await store.loadMessages(cid)).messages;   // lazy mirror: load, don't read the summary
 
 		// Simulate the OTHER device computing the SAME union: offload the identical
 		// bytes after wiping the chunk-map (a device that never offloaded these).
@@ -465,16 +468,16 @@ try {
 		const freshIncoming = () => ({ v: 3, chats: [{ id: cid, name: 'Heal Me', model: 'mock/fast', updatedAt: 8000, messages: null, messagesRef: JSON.parse(JSON.stringify(manifest)), session: null }],
 			tombs: {}, msgTombs: {}, diamonds: [], diamondTombs: {} });
 		await window.DaimondCore.applySync(freshIncoming());
-		const afterMissing = store.stored().find(x => x.id === cid);
-		const keptExisting = !!afterMissing && afterMissing.messages.some(m => m.mid === 'exist1');
+		const afterMissingMsgs = (await store.loadMessages(cid)).messages || [];   // lazy mirror: load the transcript
+		const keptExisting = afterMissingMsgs.some(m => m.mid === 'exist1');
 		const noTombstone = !JSON.parse(localStorage.getItem('daimond-chats-deleted') || '{}')[cid];
 
 		// Restore the chunks and re-apply a FRESH parcel: it self-heals.
 		Object.keys(savedBlobs).forEach(a => { window.__store[a] = savedBlobs[a]; });
 		await window.DaimondCore.applySync(freshIncoming());
-		const afterHeal = store.stored().find(x => x.id === cid);
-		const healed = !!afterHeal && afterHeal.messages.length > existMsgs.length;
-		return { keptExisting, noTombstone, healedCount: afterHeal ? afterHeal.messages.length : 0, healed };
+		const afterHealMsgs = (await store.loadMessages(cid)).messages || [];
+		const healed = afterHealMsgs.length > existMsgs.length;
+		return { keptExisting, noTombstone, healedCount: afterHealMsgs.length, healed };
 	});
 	check('a missing chunk lands metadata-only WITHOUT destroying the existing transcript',
 		missing.keptExisting, `keptExisting=${missing.keptExisting}`);
