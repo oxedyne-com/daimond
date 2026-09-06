@@ -174,7 +174,7 @@ check(seen.open === false,
 
 line('3. nothing was lost, which is what the store has to show');
 const stored = await s.page.evaluate(() => new Promise((res) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
 		const db = req.result; let t;
 		try { t = db.transaction('chats', 'readonly'); } catch (e) { res([]); return; }

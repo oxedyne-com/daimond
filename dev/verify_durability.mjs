@@ -80,7 +80,7 @@ const midTurn = await p.evaluate(async () => {
 	// From IndexedDB, which is where transcripts live now — localStorage ran out of
 	// room for a day's tool results and failed silently when it did.
 	const snap = await new Promise((res) => {
-		const req = indexedDB.open('daimond-chats', 1);
+		const req = indexedDB.open('daimond-chats');
 		req.onsuccess = () => {
 			const db = req.result;
 			let t;

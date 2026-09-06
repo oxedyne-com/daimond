@@ -58,7 +58,7 @@ const RICH = {
 
 async function seed(page, rec) {
 	await page.evaluate((r) => new Promise((res, rej) => {
-		const req = indexedDB.open('daimond-chats', 1);
+		const req = indexedDB.open('daimond-chats');
 		req.onupgradeneeded = () => {
 			const d = req.result;
 			if (!d.objectStoreNames.contains('chats')) d.createObjectStore('chats', { keyPath: 'id' });

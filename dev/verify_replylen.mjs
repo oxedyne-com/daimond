@@ -164,7 +164,7 @@ async function setReplyLength(n) {
 /// stopped fitting in the origin's five megabytes. Read from outside the app, so
 /// what is asserted is what is on disk rather than what the page believes.
 const storedChats = () => p.evaluate(() => new Promise((res) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
 		const db = req.result;
 		let t;
@@ -181,7 +181,7 @@ const storedChats = () => p.evaluate(() => new Promise((res) => {
 /// migrated straight back in on the next boot.
 const clearChats = () => p.evaluate(() => new Promise((res) => {
 	try { localStorage.removeItem('daimond-chats'); localStorage.removeItem('daimond-chats-legacy'); } catch (e) { /* full */ }
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
 		const db = req.result;
 		let t;

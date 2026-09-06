@@ -1535,6 +1535,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	//     it holds is carried across the first time this store opens.
 	var CHATS_DB      = 'daimond-chats';           // the IndexedDB database, per account
 	var CHATS_STORE   = 'chats';
+	// ── Transcript shadow (seq 212, Stage 0) ───────────────────────────────
+	//
+	// ADDITIVE AND INERT. The `chats` store above stays the SOLE source of truth
+	// for every read and write; the two stores below are a shadow written beside it
+	// and read by nothing but the probe. They are the ground the lazy read path
+	// (Stage 1) and the append-only write path (Stage 2) will stand on:
+	//
+	//   - `msgchunks` holds a chat's transcript as append-only batches keyed
+	//     `chatId + '#' + seq`, so a turn can one day append a chunk rather than
+	//     rewrite the whole row (audit #5-boot).
+	//   - `chatsum` holds one small, `v`-versioned SUMMARY per chat -- the scalars the
+	//     rail needs, plus the iturns of any dispatched turns for the dispatched-
+	//     placeholder index -- so boot can one day read summaries alone (audit #4a).
+	//
+	// Adding two stores needs a version bump, and the bump is the whole risk of this
+	// otherwise inert stage: `onupgradeneeded` in `open()` is guarded by `contains()`
+	// so it only ADDS, never touches or recreates `chats`, and reaches the same shape
+	// from any earlier version. A tab still holding the store open at the OLD version
+	// blocks the upgrade -- `open()`'s `onblocked` rejects, boot falls back to the
+	// legacy read and raises the save alarm until that tab closes; no row is lost, and
+	// it self-heals. See the header of dev/verify_msgchunks_shadow.mjs.
+	var MSGCHUNK_STORE   = 'msgchunks';
+	var CHATSUM_STORE    = 'chatsum';
+	var CHATS_DB_VERSION = 2;                       // v1: chats only. v2: + msgchunks + chatsum.
+	var SHADOW_V         = 1;                        // the summary row's own format version
+	var CHUNK_MSGS       = 128;                      // messages per append-only chunk
 	var CHATS_REV     = 'daimond-chats-rev';       // the cross-tab nonce
 	var CHATS_LEGACY  = 'daimond-chats-legacy';    // what localStorage held before the move
 	var CHATS_LEGACY_AT = 'daimond-chats-legacy-at'; // when the move stamped that archive
@@ -1558,6 +1584,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var queued  = null;      // the next list to write, replacing any earlier one
 		var usable  = false;     // the store opened and was read at least once
 		var vouched = false;     // and what it read can be believed -- see CHATS_COUNT
+		var shadowDone = Promise.resolve();   // resolves when the last transcript-shadow pass settled
 
 		/// How many records this account had at the last write that landed.
 		function watermark() {
@@ -1577,11 +1604,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function open(name) {
 			return new Promise(function (resolve, reject) {
 				if (!window.indexedDB) { reject(new Error('this browser offers no IndexedDB')); return; }
-				var req = indexedDB.open(name, 1);
+				var req = indexedDB.open(name, CHATS_DB_VERSION);
 				req.onupgradeneeded = function () {
 					var d = req.result;
+					// Guarded and additive: a store already present is left exactly as it
+					// is, with every row intact -- see the shadow-store note above. The
+					// three run in order from any starting version (0, 1 or 2).
 					if (!d.objectStoreNames.contains(CHATS_STORE)) {
 						d.createObjectStore(CHATS_STORE, { keyPath: 'id' });
+					}
+					if (!d.objectStoreNames.contains(MSGCHUNK_STORE)) {
+						d.createObjectStore(MSGCHUNK_STORE, { keyPath: 'k' });
+					}
+					if (!d.objectStoreNames.contains(CHATSUM_STORE)) {
+						d.createObjectStore(CHATSUM_STORE, { keyPath: 'id' });
 					}
 				};
 				req.onsuccess = function () { resolve(req.result); };
@@ -1819,6 +1855,160 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return Object.keys(byId).map(function (id) { return byId[id]; });
 		}
 
+		// ── Transcript shadow: write, read, reconstruct (seq 212, Stage 0) ──────
+		//
+		// Everything here writes only `msgchunks`/`chatsum` and reads them back; none
+		// of it touches `chats` or sits on any behaviour path this stage. It is the
+		// scaffolding the lazy read and append-only write paths will grow onto.
+
+		/// A transaction over one or more shadow stores. Separate from `tx()`, which is
+		/// scoped to `chats` alone.
+		function shadowTx(names, mode) {
+			var t = db.transaction(names, mode), stores = {};
+			names.forEach(function (n) { stores[n] = t.objectStore(n); });
+			return { stores: stores, done: new Promise(function (res, rej) {
+				t.oncomplete = res;
+				t.onerror    = function () { rej(t.error || new Error('the shadow write failed')); };
+				t.onabort    = function () { rej(t.error || new Error('the shadow write was aborted')); };
+			}) };
+		}
+
+		/// This chat's chunk rows, in seq order. The key range is `chatId#` ..
+		/// `chatId#\uffff`; the separator '#' sorts below every character a chat id can
+		/// continue with ('-', digits, letters), so a longer id sharing this one as a
+		/// prefix falls OUTSIDE the range and cannot be picked up.
+		function readChunks(chatId) {
+			return new Promise(function (res, rej) {
+				var t = db.transaction(MSGCHUNK_STORE, 'readonly'), rows = [];
+				var range = IDBKeyRange.bound(chatId + '#', chatId + '#\uffff');
+				var cur = t.objectStore(MSGCHUNK_STORE).openCursor(range);
+				cur.onsuccess = function () {
+					var c = cur.result;
+					if (c) { rows.push(c.value); c.continue(); }
+					else { rows.sort(function (a, b) { return (a.seq | 0) - (b.seq | 0); }); res(rows); }
+				};
+				cur.onerror = function () { rej(cur.error || new Error('the chunks would not be read')); };
+			});
+		}
+
+		/// Rebuild a chat's transcript from its chunks, with EXACTLY the semantics every
+		/// other merge in this app uses: concat the chunks in seq order, then hand the
+		/// whole to `mergeMessages`, which drops tombstoned mids, keeps the fuller of any
+		/// duplicated mid, and sorts by ts then mid. Reusing `mergeMessages` rather than
+		/// re-deriving the rule is the point -- the reconstructed transcript cannot drift
+		/// from what a reload of the legacy row would produce. See blocker B2.
+		async function reconstruct(chatId) {
+			await conn();
+			var rows = await readChunks(chatId), all = [];
+			rows.forEach(function (r) { if (r && Array.isArray(r.msgs)) all = all.concat(r.msgs); });
+			return mergeMessages(all, [], chatId, loadMsgTombs());
+		}
+
+		/// A chat's stored summary row, or null.
+		function readSummary(chatId) {
+			return new Promise(function (res, rej) {
+				var t = db.transaction(CHATSUM_STORE, 'readonly');
+				var g = t.objectStore(CHATSUM_STORE).get(chatId);
+				g.onsuccess = function () { res(g.result || null); };
+				g.onerror   = function () { rej(g.error || new Error('the summary would not be read')); };
+			});
+		}
+
+		/// The dispatched-turn iturns in a transcript -- what blocker B3 needs in the
+		/// summary so the dispatched-placeholder index (`rebuildDispatchedIndex`, which
+		/// keys on exactly this `why`/`iturn` pair) can one day be built without the
+		/// transcript resident.
+		function dispatchedIturns(msgs) {
+			var out = [];
+			(msgs || []).forEach(function (m) {
+				if (m && m.why === 'dispatched' && m.iturn) out.push(String(m.iturn));
+			});
+			return out;
+		}
+
+		/// The SUMMARY row for a chat: the rail's scalars, the counts, a marker for the
+		/// model session (whose bytes stay in the legacy row this stage), the dispatched
+		/// iturns, and a fingerprint of the serialised transcript so a re-run can tell an
+		/// unchanged chat from a grown one.
+		function summaryOf(c, serial, chunks) {
+			return {
+				id: c.id, v: SHADOW_V,
+				name: c.name || '', model: c.model || '', provider: c.provider || '',
+				diamondId: c.diamondId || '',
+				workerModel: c.workerModel || '', workerProvider: c.workerProvider || '',
+				status: c.status || 'active',
+				promptTokens: c.promptTokens || 0, completionTokens: c.completionTokens || 0,
+				cachedTokens: c.cachedTokens || 0, costUsd: c.costUsd || 0,
+				prevPrompt: c.prevPrompt || 0, prevCompletion: c.prevCompletion || 0,
+				prevCached: c.prevCached || 0, prevCost: c.prevCost || 0, lastPrompt: c.lastPrompt || 0,
+				holds: Array.isArray(c.holds) ? c.holds : [],
+				updatedAt: c.updatedAt || 0,
+				foldedInto: c.foldedInto || null,
+				msgCount: (c.messages || []).length,
+				chunks: chunks,                                   // how many chunk rows this transcript spans
+				hasSession: !!(c.session),                        // session-ref: the bytes stay in the legacy row this stage
+				sessionMsgs: (c.session && c.session.msgs) ? c.session.msgs.length : 0,
+				iturns: dispatchedIturns(c.messages),
+				fp: fileHash(serial),
+			};
+		}
+
+		/// Write the transcript shadow for every chat in `list`, skipping those already
+		/// current. Best-effort and non-blocking: it writes only `msgchunks`/`chatsum`,
+		/// never `chats`, and it swallows its own errors -- the shadow is not load-bearing
+		/// this stage, so a failure here must never raise the save alarm or disturb a boot
+		/// that has already succeeded against the legacy rows.
+		///
+		/// IDEMPOTENT. An unchanged chat -- same format version, fingerprint and count --
+		/// is skipped, so re-running boot neither duplicates nor corrupts a chunk. A
+		/// changed chat has its whole chunk range cleared before the new chunks are
+		/// written, so a transcript that SHRANK (a cleared conversation) leaves no orphan
+		/// tail chunks. Each chat's clear-then-write plus its summary land in ONE
+		/// transaction, so a chat is never left half-shadowed.
+		async function writeShadow(list) {
+			try {
+				await conn();
+				// What is already shadowed, so an unchanged chat is not rewritten.
+				var have = {};
+				await new Promise(function (res, rej) {
+					var t = db.transaction(CHATSUM_STORE, 'readonly');
+					var cur = t.objectStore(CHATSUM_STORE).openCursor();
+					cur.onsuccess = function () { var c = cur.result; if (c) { have[c.value.id] = c.value; c.continue(); } else res(); };
+					cur.onerror   = function () { rej(cur.error || new Error('the summaries would not be read')); };
+				});
+				// Decide the work, and serialise each transcript, OUTSIDE the write
+				// transaction -- IDB commits a transaction the moment it goes idle, so no
+				// CPU (a JSON.stringify) may sit between its requests.
+				var work = [];
+				(list || []).forEach(function (c) {
+					if (!c || !c.id) return;
+					var msgs = Array.isArray(c.messages) ? c.messages : [];
+					var serial = JSON.stringify(msgs);
+					var sum = have[c.id];
+					if (sum && sum.v === SHADOW_V && sum.fp === fileHash(serial) && sum.msgCount === msgs.length) return;
+					var chunks = [];
+					for (var i = 0; i < msgs.length; i += CHUNK_MSGS) chunks.push(msgs.slice(i, i + CHUNK_MSGS));
+					if (!chunks.length) chunks.push([]);          // an empty chat still gets a seq-0 chunk
+					work.push({ c: c, serial: serial, chunks: chunks });
+				});
+				if (!work.length) return;
+				var wt = shadowTx([MSGCHUNK_STORE, CHATSUM_STORE], 'readwrite');
+				work.forEach(function (w) {
+					var id = w.c.id;
+					wt.stores[MSGCHUNK_STORE]['delete'](IDBKeyRange.bound(id + '#', id + '#\uffff'));
+					w.chunks.forEach(function (batch, seq) {
+						wt.stores[MSGCHUNK_STORE].put({ k: id + '#' + seq, chatId: id, seq: seq, msgs: batch });
+					});
+					wt.stores[CHATSUM_STORE].put(summaryOf(w.c, w.serial, w.chunks.length));
+				});
+				await wt.done;
+			} catch (e) {
+				// Inert by design: note it for the probe and move on. The legacy rows are
+				// untouched and the rail is already built.
+				try { if (console.debug) console.debug('Daimond: transcript shadow deferred —', (e && e.message) || e); } catch (e2) {}
+			}
+		}
+
 		return {
 			/// Open the store, read it, and take in anything the old localStorage key
 			/// still holds. Never throws: a browser that will not give us IndexedDB —
@@ -1883,6 +2073,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						}
 					} catch (e4) { /* best effort — the archive is dead weight, not load-bearing */ }
 				}
+				// Write the transcript shadow beside the legacy rows (seq 212, Stage 0).
+				// ONLY from a vouched read: shadowing a fallback or empty read could clear
+				// a chat's chunks against a mirror that is not the truth. Not awaited -- the
+				// rail is already built from `mirror` above -- and best-effort inside.
+				if (usable && vouched) { shadowDone = writeShadow(mirror.slice()); }
 				return mirror.slice();
 			},
 			/// What the store holds, without a read. This is what makes `persistChats()`
@@ -1948,7 +2143,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				vouched = true;
 				try { await conn(); var t = tx('readwrite'); t.store.clear(); await t.done; }
 				catch (e) { /* nothing to clear */ }
+				// The transcript shadow goes too, or a re-created account at this browser
+				// would find a stranger's chunks under its ids (seq 212, Stage 0).
+				try {
+					var st = shadowTx([MSGCHUNK_STORE, CHATSUM_STORE], 'readwrite');
+					st.stores[MSGCHUNK_STORE].clear(); st.stores[CHATSUM_STORE].clear();
+					await st.done;
+				} catch (e2) { /* nothing to clear */ }
 			},
+			// ── Transcript shadow (seq 212, Stage 0) ────────────────────────────
+			// Read by the probe only; none of these is on any behaviour path yet.
+			/// Rebuild a chat's transcript from its chunks, byte-for-byte as a reload of
+			/// the legacy row would produce it (see `reconstruct`).
+			reconstruct:   function (chatId) { return reconstruct(chatId); },
+			/// A chat's stored summary row, or null.
+			summary:       function (chatId) { return conn().then(function () { return readSummary(chatId); }); },
+			/// A chat's chunk rows, in seq order.
+			chunks:        function (chatId) { return conn().then(function () { return readChunks(chatId); }); },
+			/// Force a shadow pass over `list` (default: the current mirror). Returns when
+			/// it has settled; idempotent, so calling it twice is a no-op the second time.
+			migrateShadow: function (list) { shadowDone = writeShadow(list || mirror.slice()); return shadowDone; },
+			/// Resolves when the shadow pass kicked at boot (or by `migrateShadow`) settled.
+			shadowSettled: function () { return shadowDone; },
 		};
 	})();
 
@@ -3385,6 +3601,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			&& DaimondCloud.contentGet);
 		var liveIds = {};
 		var used = 0;
+		// A Diamond the parcel could not carry falls into two very different cases,
+		// and telling them apart is the whole of the fix here. GENUINE: it is small
+		// enough to ride inline anyway (offload would not have helped) and the parcel
+		// simply has no room -- the account has more Diamonds than one parcel holds,
+		// and naming it is the only way the user can act. TRANSIENT: it is large
+		// enough to need offload, but offload was not available THIS ROUND (the chunk
+		// store not yet ready just after a reload, or an identity that re-locked
+		// mid-collect) or an upload the gateway refused -- which `DaimondChunks
+		// .standRefused` already says, in its own words and persistently. A transient
+		// strand is HELD, not named: the next push, once the store is ready, carries
+		// it. Telling the user to "make it smaller" for a Diamond that is neither too
+		// big nor staying behind -- and telling them in a toast gone in four seconds
+		// -- was a false alarm. A held Diamond is absent from `out.list` exactly as a
+		// left one is, so the parcel and its fixed point are unchanged either way.
+		function strand(id, name, genuine) {
+			out.complete = false;
+			if (genuine) out.left.push({ id: id, name: name || id });
+			else out.held++;
+		}
+		out.held = 0;
 		for (var i = 0; i < held.length; i++) {
 			var d = held[i], data;
 			liveIds[d.id] = 1;
@@ -3417,8 +3653,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!canOffload || (size !== null && size <= SYNC_FILE_MAX)) {
 				if (stored && DaimondCloud.contentForget) DaimondCloud.contentForget(ckey);
 				if (size !== null && used + size > budget) {
-					out.left.push({ id: d.id, name: d.name || d.id });
-					out.complete = false;
+					// Genuine only if it is inline-sized -- a large one is here because
+					// offload was not available, and that is transient (see `strand`).
+					strand(d.id, d.name, size <= SYNC_FILE_MAX);
 					continue;                    // never exported, so never held
 				}
 				try { data = await diamondApp().export_diamond(d.id); }
@@ -3426,8 +3663,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// `continue`, not `break`: one enormous Diamond must not stop the
 				// small fresh ones behind it from travelling.
 				if (used + data.length > budget) {
-					out.left.push({ id: d.id, name: d.name || d.id });
-					out.complete = false;
+					strand(d.id, d.name, data.length <= SYNC_FILE_MAX);
 					data = null;                 // let it go before the next one is read
 					continue;
 				}
@@ -3467,8 +3703,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// inline instead of not travelling at all -- exactly as it did
 					// before offload existed, budget permitting.
 					if (used + text.length > budget) {
-						out.left.push({ id: d.id, name: d.name || d.id });
-						out.complete = false; text = null; continue;
+						// The offload was ATTEMPTED and failed (store full, or the
+						// network): held, never named "too big". If it was a refusal,
+						// DaimondChunks.standRefused has already said so honestly and
+						// persistently; a second, misleading toast would only muddy it.
+						strand(d.id, d.name, false);
+						text = null; continue;
 					}
 					used += text.length;
 					out.list.push({
@@ -3491,8 +3731,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// store's, which the commit counts it against alongside the files.
 			var refBytes = JSON.stringify(ref).length;
 			if (used + refBytes > budget) {
-				out.left.push({ id: d.id, name: d.name || d.id });
-				out.complete = false;
+				// The content is offloaded and only a few hundred bytes of reference
+				// would travel, so the parcel is jammed by the files ahead of it, not
+				// by this Diamond: genuine, and the user does have to act.
+				strand(d.id, d.name, true);
 				continue;
 			}
 			used += refBytes;
@@ -3509,54 +3751,110 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// deletion, so a no-op collect leaves the index byte-identical.
 		if (window.DaimondCloud && DaimondCloud.contentReap) DaimondCloud.contentReap('@d/', liveIds);
 		trail('sync collected', out.list.length + ' of ' + held.length
-			+ ', ' + Math.round(used / 1024) + ' kB, ' + out.left.length + ' left behind');
+			+ ', ' + Math.round(used / 1024) + ' kB, ' + out.left.length + ' left behind, '
+			+ out.held + ' held for offload');
 		return out;
 	}
 
-	/// The Diamonds the last parcel could not carry, told once per set.
-	///
-	/// Said out loud rather than logged. What the user has to act on is one Diamond
-	/// they can see the name of -- prune its versions, or delete it -- and a
-	/// `console.warn` is not a place anyone looks. Deduplicated on the set, so a push
-	/// every few seconds does not become a toast every few seconds; a set that
-	/// changes, or one that empties and comes back, is news again.
-	var _leftTold = null;
-	function noteDiamondsLeft(left) {
-		var sig = left.map(function (d) { return d.id; }).sort().join(',');
-		if (sig === _leftTold) return;
-		_leftTold = sig;
-		if (!left.length) return;
-		var names = left.slice(0, 3).map(function (d) { return d.name; });
-		if (left.length > names.length) names.push('…');
-		toast(tn('sync.diamonds_left', left.length, { names: names.join(', ') }), true);
+	// ── Something of yours the last parcel could not carry ─────────
+	//
+	// A PERSISTENT, DISMISSIBLE NOTICE, NOT A TOAST. This was a toast, and a toast
+	// is the wrong shape for it: the message is an ACTIONABLE warning -- a Diamond
+	// or a file of the user's is not reaching their other devices -- and it faded
+	// after four seconds, taking the item's name with it before the user, who had
+	// just hard-refreshed, could read which one. That is the same failure the
+	// vanishing hand-off tile had. So it is now a banner in the shape the update
+	// banner uses (see css/app.css `.left-banner` and js/updater.js): it stays until
+	// the item travels (the set empties, and the notice self-clears) or the user
+	// waves it away with the cross, and it names up to three of what is stuck.
+	//
+	// One banner carries both kinds -- Diamonds that did not fit and files that did
+	// not fit -- each on its own row with its own dismiss, because they are the same
+	// news in the same shape and two banners would be two things to learn. A row the
+	// user dismisses stays dismissed for THAT set (keyed by its signature, as the
+	// update banner keys a dismissal to the pending build); a set that changes, or
+	// one that empties and comes back, is news again.
+	var _left          = { diamonds: null, files: null };   // {sig, msg} per kind, or null
+	var _leftDismissed = { diamonds: '', files: '' };        // the sig the user waved away
+	var _leftEl        = null;
+
+	function leftBannerEl() {
+		if (_leftEl) return _leftEl;
+		var b = document.createElement('div');
+		b.className = 'left-banner';
+		b.setAttribute('role', 'status');
+		b.setAttribute('aria-live', 'polite');
+		b.hidden = true;
+		document.body.appendChild(b);
+		_leftEl = b;
+		return b;
 	}
 
-	/// The files the last parcel could not carry, told once per set.
-	///
-	/// THE SAME SHAPE AS `noteDiamondsLeft` ABOVE, deliberately: this is the same
-	/// kind of news -- something of the user's is not reaching their other devices
-	/// -- and two shapes would be two things to learn. So it is a toast, it names
-	/// up to three, and it is deduplicated on the set.
-	///
-	/// It existed on one side of the parcel only. A Diamond left out has been named
-	/// since the budget was written; a file left out went into a COUNT and was named
-	/// to nobody, so a workspace with a few megabytes of text quietly stopped
-	/// travelling between a person's devices and the app said nothing at all. Files
-	/// are spent first and are not clamped against the parcel, which makes this the
-	/// commoner of the two rather than the rarer.
-	///
-	/// Not an error and not drawn as one: the budget is doing what it is for, and
-	/// nothing at the far end is deleted -- an incomplete census carries no news
-	/// about what it did not see. What the user has to act on is the name.
-	var _filesLeftTold = null;
+	function renderLeftBanner() {
+		var b = leftBannerEl();
+		b.textContent = '';
+		var shown = 0;
+		['diamonds', 'files'].forEach(function (kind) {
+			var n = _left[kind];
+			if (!n || n.sig === _leftDismissed[kind]) return;
+			shown++;
+			var row = document.createElement('div');
+			row.className = 'left-banner-row';
+			var msg = document.createElement('span');
+			msg.className = 'left-banner-msg';
+			msg.textContent = n.msg;
+			var x = document.createElement('button');
+			x.className = 'left-banner-x';
+			x.type = 'button';
+			x.textContent = '×';
+			x.setAttribute('aria-label', tOr('common.dismiss', 'Dismiss'));
+			x.addEventListener('click', function () { _leftDismissed[kind] = n.sig; renderLeftBanner(); });
+			row.appendChild(msg);
+			row.appendChild(x);
+			b.appendChild(row);
+		});
+		b.hidden = shown === 0;
+	}
+
+	/// Note the items of one kind the parcel could not carry, and draw the standing
+	/// notice. `keyOf` makes the dedup signature (an id, so two same-named items are
+	/// two items); `nameOf` is what the user reads. An empty set clears the row AND
+	/// forgets any dismissal, so the same item stranding again later is news again.
+	function noteLeft(kind, items, i18nKey, keyOf, nameOf) {
+		if (!items.length) {
+			_left[kind] = null;
+			_leftDismissed[kind] = '';
+			renderLeftBanner();
+			return;
+		}
+		var names = items.slice(0, 3).map(nameOf);
+		if (items.length > names.length) names.push('…');
+		var sig = kind + ':' + items.map(keyOf).sort().join(',');
+		_left[kind] = { sig: sig, msg: tn(i18nKey, items.length, { names: names.join(', ') }) };
+		renderLeftBanner();
+	}
+
+	/// The Diamonds the last parcel could not carry. After the offload fix a Diamond
+	/// only lands here when it is small enough to ride inline yet the parcel is full
+	/// of others -- a large one that could not offload this round is HELD, not named
+	/// (see `strand` in `collectDiamonds`), so this notice never tells the user to
+	/// shrink a Diamond that is not the problem.
+	function noteDiamondsLeft(left) {
+		noteLeft('diamonds', left, 'sync.diamonds_left',
+			function (d) { return d.id; },
+			function (d) { return d.name; });
+	}
+
+	/// The files the last parcel could not carry, named the same way and in the same
+	/// banner. A file left out used to go into a COUNT and be named to nobody, so a
+	/// workspace with a few megabytes of text quietly stopped travelling between a
+	/// person's devices and the app said nothing; files are spent first and are not
+	/// clamped against the parcel, which makes this the commoner of the two. Not an
+	/// error -- the budget is doing its job and nothing at the far end is deleted.
 	function noteFilesLeft(left) {
-		var sig = left.slice().sort().join(',');
-		if (sig === _filesLeftTold) return;
-		_filesLeftTold = sig;
-		if (!left.length) return;
-		var names = left.slice(0, 3);
-		if (left.length > names.length) names.push('…');
-		toast(tn('sync.files_left', left.length, { names: names.join(', ') }), true);
+		noteLeft('files', left, 'sync.files_left',
+			function (n) { return n; },
+			function (n) { return n; });
 	}
 
 	/// How fresh a Diamond is, for the merge alone.

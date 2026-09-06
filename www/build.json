@@ -1,1 +1,1 @@
-{"build":"85f1929273f8","note":"Perf: cap stored logs + incremental transcript render + merge only changed chats (long-history hot paths)"}
+{"build":"74780de749a0","note":"Sync: hold offloadable Diamonds until the store is ready (no false too-big); persist the skip notice"}

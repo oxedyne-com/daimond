@@ -822,8 +822,8 @@
 	// 거절당한 꾸러미. 무엇이 너무 큰지와, 보통 무엇 때문인지를 밝혀요.
 	'sync.too_big':        '동기화 멈춤',
 	'sync.too_big_reason': '이 기기의 꾸러미가 너무 커서 보낼 수 없어요. 그래서 여기서 한 일이 밖으로 나가지 않아요. 대개는 아주 큰 Diamond이나 작업 공간 파일 하나가 원인이니, 줄이거나 지우면 동기화는 저절로 다시 돌아가요.',
-	'sync.diamonds_left.one': 'Diamond {n}개가 이 기기의 동기화 꾸러미에 들어가지 못해, 더 작아지기 전까지는 다른 기기로 가지 않아요: {names}',
-	'sync.diamonds_left.other': 'Diamond {n}개가 이 기기의 동기화 꾸러미에 들어가지 못해, 더 작아지기 전까지는 다른 기기로 가지 않아요: {names}',
+	'sync.diamonds_left.one': 'Diamond {n}개가 이 기기의 동기화 꾸러미에 들어가지 못해, 자리가 날 때까지는 다른 기기로 가지 않아요: {names}',
+	'sync.diamonds_left.other': 'Diamond {n}개가 이 기기의 동기화 꾸러미에 들어가지 못해, 자리가 날 때까지는 다른 기기로 가지 않아요: {names}',
 	// A file the parcel had no room for, named the way a Diamond that did not fit is
 	// named. The same news in the same shape; not an error -- the budget is doing what
 	// it is for, and nothing at the far end is deleted.

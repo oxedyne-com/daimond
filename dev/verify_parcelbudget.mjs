@@ -120,9 +120,20 @@ check('EVERY FILE THE PARCEL CANNOT CARRY IS RECORDED BY NAME, not merely counte
 check('and the names are handed to a teller when the parcel is packed',
 	/noteFilesLeft\(fileCol\.left\)/.test(APP));
 const teller = APP.slice(APP.indexOf('function noteFilesLeft'),
-	APP.indexOf('function noteFilesLeft') + 700);
+	APP.indexOf('function noteFilesLeft') + 400);
 check('which SAYS them, in the same shape a Diamond that did not fit is said in',
-	/toast\(tn\('sync\.files_left'/.test(teller) && /slice\(0, 3\)/.test(teller));
+	/'sync\.files_left'/.test(teller) && /noteLeft\(/.test(teller));
+// The shared notice names up to three, and -- the point of the 2026-09 change --
+// it is PERSISTENT: an actionable warning that vanishes after a few seconds is one
+// the user cannot act on (the vanishing hand-off tile, again). So it is a standing,
+// dismissible banner (`.left-banner`, css/app.css), not a `toast()`, which
+// auto-removes on a `setTimeout`.
+const shared = APP.slice(APP.indexOf('function noteLeft('),
+	APP.indexOf('function noteLeft(') + 700);
+check('and the notice names up to three of what did not fit',
+	/slice\(0, 3\)/.test(shared));
+check('and it is a PERSISTENT banner, not a toast that fades before it can be read',
+	/renderLeftBanner\(/.test(shared) && !/\btoast\(/.test(shared) && !/\btoast\(/.test(teller));
 // In all eight, because `tOr` and `tn` fall back to English and a missing
 // translation looks exactly like a finished one.
 const gaps = ['en', 'es', 'de', 'fr', 'pt-BR', 'zh-Hans', 'ja', 'ko'].filter((code) => {

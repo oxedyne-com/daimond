@@ -284,7 +284,7 @@ const SAID = {
 };
 
 const seedChats = (page, records) => page.evaluate((rows) => new Promise((res) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
 		const db = req.result;
 		const t = db.transaction('chats', 'readwrite');
@@ -371,7 +371,7 @@ const answer = (page, cls) => page.evaluate((c) => {
 /// The transcript a chat holds now, read from the store rather than the screen:
 /// what has to survive a restore is what is on disk.
 const storedSaid = (page, name) => page.evaluate((n) => new Promise((res) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
 		const all = req.result.transaction('chats', 'readonly').objectStore('chats').getAll();
 		all.onsuccess = () => {

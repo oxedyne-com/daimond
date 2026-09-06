@@ -32,7 +32,7 @@ const check = (name, pass, detail) => {
 /// Everything the IndexedDB chat store holds, read from OUTSIDE the app so the
 /// answer is the disk's and not the app's belief about it.
 const readStore = (s) => s.page.evaluate(() => new Promise((res) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
 		const db = req.result;
 		let t;

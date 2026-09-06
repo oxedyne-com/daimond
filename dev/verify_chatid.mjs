@@ -157,7 +157,7 @@ const railChats = (page) => page.$$eval('#session-list .session-box',
 /// Every chat the STORE holds, unfiltered — id and name. This is where the
 /// overwrite shows: the rail cannot report a record that was replaced under it.
 const storedChats = (page) => page.evaluate(() => new Promise((res) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
 		const all = req.result.transaction('chats', 'readonly').objectStore('chats').getAll();
 		all.onsuccess = () => res((all.result || []).map((c) => ({ id: c.id, name: c.name })));

@@ -666,8 +666,8 @@
 	// A refused parcel. Say what is too large, and what usually makes it so.
 	'sync.too_big': 'Sync angehalten',
 	'sync.too_big_reason': 'Das Paket dieses Geräts ist zu groß zum Senden, seine Arbeit reist also nicht mehr. Meist liegt es an einem sehr großen Diamond oder einer sehr großen Datei im Arbeitsbereich; verkleinere oder entferne sie, dann läuft die Synchronisierung von selbst wieder an.',
-	'sync.diamonds_left.one': '{n} Diamond passte nicht ins Sync-Paket dieses Geräts und erreicht deine anderen Geräte erst, wenn es kleiner ist: {names}',
-	'sync.diamonds_left.other': '{n} Diamonds passten nicht ins Sync-Paket dieses Geräts und erreichen deine anderen Geräte erst, wenn sie kleiner sind: {names}',
+	'sync.diamonds_left.one': '{n} Diamond passte nicht ins Sync-Paket dieses Geräts und erreicht deine anderen Geräte erst, wenn Platz dafür ist: {names}',
+	'sync.diamonds_left.other': '{n} Diamonds passten nicht ins Sync-Paket dieses Geräts und erreichen deine anderen Geräte erst, wenn Platz dafür ist: {names}',
 	// A file the parcel had no room for, named the way a Diamond that did not fit is
 	// named. The same news in the same shape; not an error -- the budget is doing what
 	// it is for, and nothing at the far end is deleted.

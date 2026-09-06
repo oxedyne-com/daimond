@@ -117,7 +117,7 @@ check('before the reload the model is shown its own tool calls',
 // What the browser stored as the model's own conversation.
 const storedSession = await s.page.evaluate(async () => {
 	const rows = await new Promise((res) => {
-		const req = indexedDB.open('daimond-chats', 1);
+		const req = indexedDB.open('daimond-chats');
 		req.onsuccess = () => {
 			const db = req.result;
 			const t = db.transaction('chats', 'readonly');
@@ -208,7 +208,7 @@ check('and its requests are whole', swFaults.length === 0, swFaults.slice(0, 4).
 // it, for ever. `pair_up` in src/wasm/app.rs repairs it on the way in; this is
 // what proves the repair exists, by breaking the store on purpose.
 const damage = await s.page.evaluate(() => new Promise((res) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
 		const db = req.result;
 		const t = db.transaction('chats', 'readwrite');

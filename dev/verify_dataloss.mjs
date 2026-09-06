@@ -426,7 +426,7 @@ function record(id, diamondId, lines) {
 }
 
 const seedChats = (recs) => p.evaluate((rs) => new Promise((resolve, reject) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onupgradeneeded = () => {
 		const d = req.result;
 		if (!d.objectStoreNames.contains('chats')) d.createObjectStore('chats', { keyPath: 'id' });

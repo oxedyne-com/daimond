@@ -193,7 +193,7 @@ function seedRecords() {
 /// creation order and could never set up the id/touch mismatch this file needs.
 async function seedChats(page, records) {
 	await page.evaluate((recs) => new Promise((resolve, reject) => {
-		const req = indexedDB.open('daimond-chats', 1);
+		const req = indexedDB.open('daimond-chats');
 		req.onupgradeneeded = () => {
 			const d = req.result;
 			if (!d.objectStoreNames.contains('chats')) d.createObjectStore('chats', { keyPath: 'id' });
@@ -315,7 +315,7 @@ try {
 	// check that looked it up by name afterwards would be asking the panel to
 	// agree with itself.
 	const foxId = await page.evaluate(() => new Promise((res) => {
-		const req = indexedDB.open('daimond-chats', 1);
+		const req = indexedDB.open('daimond-chats');
 		req.onsuccess = () => {
 			const all = req.result.transaction('chats', 'readonly').objectStore('chats').getAll();
 			all.onsuccess = () => res(((all.result || []).find((c) => c.name === 'Foxtrot') || {}).id || '');

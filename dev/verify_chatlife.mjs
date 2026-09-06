@@ -234,7 +234,7 @@ function seedRecords(anchors) {
 
 async function seedChats(page, records) {
 	await page.evaluate((recs) => new Promise((resolve, reject) => {
-		const req = indexedDB.open('daimond-chats', 1);
+		const req = indexedDB.open('daimond-chats');
 		req.onupgradeneeded = () => {
 			const d = req.result;
 			if (!d.objectStoreNames.contains('chats')) d.createObjectStore('chats', { keyPath: 'id' });
@@ -339,7 +339,7 @@ try {
 	await page.waitForTimeout(500);
 
 	const fresh = await page.evaluate(() => new Promise((res) => {
-		const req = indexedDB.open('daimond-chats', 1);
+		const req = indexedDB.open('daimond-chats');
 		req.onsuccess = () => {
 			const all = req.result.transaction('chats', 'readonly').objectStore('chats').getAll();
 			all.onsuccess = () => {
@@ -607,7 +607,7 @@ try {
 	// ONLY thing standing between it and the trash is this rule.
 	const guarded = await page.evaluate(async () => {
 		const rec = await new Promise((res) => {
-			const req = indexedDB.open('daimond-chats', 1);
+			const req = indexedDB.open('daimond-chats');
 			req.onsuccess = () => {
 				const st = req.result.transaction('chats', 'readwrite').objectStore('chats');
 				const g = st.get('c-yest');

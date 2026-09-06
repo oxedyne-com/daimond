@@ -238,7 +238,7 @@ await shot(s, 'thinking-after');
 // ── THE ONE THAT MUST NOT BREAK ─────────────────────────────────────────────
 line('3. the working is not the answer, in the record as well as on the screen');
 const stored = await s.page.evaluate(() => new Promise((res) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
 		const db = req.result; let t;
 		try { t = db.transaction('chats', 'readonly'); } catch (e) { res([]); return; }

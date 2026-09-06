@@ -37,7 +37,7 @@ const check = (name, pass, detail) => {
 /// The ids the DATABASE holds, read from outside the app so the answer is the
 /// disk's and not the app's belief about it.
 const onDisk = (s) => s.page.evaluate(() => new Promise((res) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
 		const db = req.result;
 		let t;

@@ -4167,3 +4167,53 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 #expand-all-btn .ic-collapse { display: none; }
 #expand-all-btn.expanded .ic-expand { display: none; }
 #expand-all-btn.expanded .ic-collapse { display: inline; }
+
+/* ── Something of yours the last parcel could not carry ────────────────────────
+ * A PERSISTENT, dismissible banner, not a toast. It tells the user a Diamond or a
+ * file is not reaching their other devices -- an actionable warning, which must
+ * not fade before it can be read (see noteLeft in js/daimond.js). Same shape and
+ * tokens as the update banner (css/updater.css), red-edged because it is a warning,
+ * and stacked a little above it so the two never sit on top of one another. Set
+ * visible by js/daimond.js, never at rest. */
+.left-banner {
+	position: fixed;
+	left: 50%;
+	bottom: 72px;
+	transform: translateX(-50%);
+	z-index: 9999;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-width: min(92vw, 460px);
+	padding: 10px 12px;
+	border-radius: var(--radius);
+	font-size: var(--fs-sm);
+	color: var(--text-primary);
+	background: var(--bg-secondary);
+	border: 1px solid var(--danger);
+	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+.left-banner-row { display: flex; align-items: flex-start; gap: 10px; }
+.left-banner-msg { flex: 1; line-height: 1.35; }
+.left-banner-x {
+	flex: none;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: none;
+	color: var(--text-secondary);
+	font-size: 18px;
+	line-height: 1;
+	cursor: pointer;
+}
+.left-banner-x:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+@media (prefers-reduced-motion: no-preference) {
+	.left-banner { animation: left-banner-in 0.28s ease-out; }
+}
+@keyframes left-banner-in {
+	from { opacity: 0; transform: translate(-50%, 8px); }
+	to   { opacity: 1; transform: translate(-50%, 0); }
+}

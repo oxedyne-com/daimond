@@ -40,7 +40,7 @@ function seededChat() {
 }
 
 const putRow = (page, rec) => page.evaluate((r) => new Promise((res, rej) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onupgradeneeded = () => {
 		const d = req.result;
 		if (!d.objectStoreNames.contains('chats')) d.createObjectStore('chats', { keyPath: 'id' });
@@ -54,7 +54,7 @@ const putRow = (page, rec) => page.evaluate((r) => new Promise((res, rej) => {
 }), rec);
 
 const readRow = (page, id) => page.evaluate((k) => new Promise((res, rej) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
 		const db = req.result, t = db.transaction('chats', 'readonly');
 		const g = t.objectStore('chats').get(k);
@@ -200,7 +200,7 @@ const appendTurn = [
 	{ role: 'assistant', mid: 'a2', ts: 11, content: 'Third answer, appended after render.' },
 ];
 await page.evaluate((extra) => new Promise((res, rej) => {
-	const req = indexedDB.open('daimond-chats', 1);
+	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
 		const db = req.result, t = db.transaction('chats', 'readwrite');
 		const g = t.objectStore('chats').get('hot1');

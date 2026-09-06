@@ -517,7 +517,7 @@ export async function clearDiamonds(s) {
 /// is on disk rather than what the page believes it wrote.
 export function storedChats(s) {
 	return s.page.evaluate(() => new Promise((res) => {
-		const req = indexedDB.open('daimond-chats', 1);
+		const req = indexedDB.open('daimond-chats');
 		req.onsuccess = () => {
 			const db = req.result;
 			let t;
@@ -540,7 +540,7 @@ export function clearChats(s) {
 			localStorage.removeItem('daimond-chats');
 			localStorage.removeItem('daimond-chats-legacy');
 		} catch (e) { /* private mode, or full */ }
-		const req = indexedDB.open('daimond-chats', 1);
+		const req = indexedDB.open('daimond-chats');
 		req.onsuccess = () => {
 			const db = req.result;
 			let t;
