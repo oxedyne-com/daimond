@@ -1,1 +1,1 @@
-{"build":"74780de749a0","note":"Sync: hold offloadable Diamonds until the store is ready (no false too-big); persist the skip notice"}
+{"build":"5813d598b4a8","note":"Store: lazy read path — boot loads chat summaries, transcripts load on open (RAM-on-boot win)"}

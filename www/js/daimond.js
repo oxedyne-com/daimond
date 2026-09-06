@@ -1674,9 +1674,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Stringified rather than counted, because Note to Read changes no length;
 			// cheap for the same reason the transcript is not stringified here, in
 			// reverse -- a handful of short records against a megabyte of turns.
-			return String(c.updatedAt || 0) + ':' + ((c.messages || []).length)
-				+ ':' + ((c.session && c.session.msgs) ? c.session.msgs.length : 0)
-				+ ':' + JSON.stringify(c.holds || []);
+			// The message and session counts come from the SUMMARY fields when the
+			// transcript is not resident (seq 213, Stage 1): a summary row and a chat
+			// whose messages have not been loaded both carry `msgCount`/`sessionMsgs`
+			// rather than the arrays, and taking the count off an empty `messages: []`
+			// would make every un-opened chat's stamp read as zero -- so the store would
+			// think each had shrunk and rewrite it on every save. `_loaded === false` is
+			// checked first, because a non-resident chat carries an EMPTY `messages`
+			// array beside the true `msgCount`.
+			var mc = (c._loaded === false && typeof c.msgCount === 'number') ? c.msgCount
+				: (Array.isArray(c.messages) ? c.messages.length : (c.msgCount || 0));
+			var sc = (c.session && c.session.msgs) ? c.session.msgs.length
+				: (typeof c.sessionMsgs === 'number' ? c.sessionMsgs : 0);
+			return String(c.updatedAt || 0) + ':' + mc + ':' + sc + ':' + JSON.stringify(c.holds || []);
 		}
 
 		/// Can the rows a read just handed back be believed?
@@ -1710,61 +1720,62 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (!db || dbOpen !== dbName()) {
 					await conn();
 				}
-				var t = tx('readwrite');
+				// The write spans all three stores: the authoritative `chats` row, the
+				// `chatsum` SUMMARY the rail is built from, and (on deletion) the chat's
+				// msgchunks. See the never-shorten note in the loop.
+				var t3 = db.transaction([CHATS_STORE, CHATSUM_STORE, MSGCHUNK_STORE], 'readwrite');
+				var csS = t3.objectStore(CHATS_STORE), suS = t3.objectStore(CHATSUM_STORE), mcS = t3.objectStore(MSGCHUNK_STORE);
+				var done = new Promise(function (res, rej) {
+					t3.oncomplete = res;
+					t3.onerror    = function () { rej(t3.error || new Error('the write failed')); };
+					t3.onabort    = function () { rej(t3.error || new Error('the write was aborted')); };
+				});
 				var seen = {}, put = {};
 				var mtombs = loadMsgTombs();		// parse the message tombstones once for this pass
 				list.forEach(function (c) {
 					if (!c || !c.id) return;
 					seen[c.id] = true;
-					// STAMPED AS IT IS AT THIS MOMENT, which is the state `put` clones:
-					// the value is structured-cloned synchronously here, and the record
-					// can be mutated again before the transaction settles. Taking the
-					// stamp afterwards, off the live object, wrote one state to disk and
-					// recorded a LATER one as being there -- so the next save found
-					// nothing to do and the change was lost with no error anywhere. It
-					// bit the moment two edits landed in one tick, which is exactly what
-					// attaching a folder and marking it into the workspace is.
+					// STAMPED AS IT IS AT THIS MOMENT. For a non-resident chat the stamp
+					// comes from its summary counts, not its empty `messages` array -- see
+					// `stampOf` -- so an un-opened chat's stamp matches what is on disk and
+					// it is SKIPPED here rather than needlessly rewritten.
 					var stamp = stampOf(c);
 					put[c.id] = stamp;
-					// A PUT MUST NEVER SHORTEN A TRANSCRIPT.
+					// A WRITE NEVER SHORTENS OR EMPTIES A TRANSCRIPT (audit B1).
 					//
-					// This is the same rule the tombstone paragraph below keeps for a
-					// whole chat, kept for its transcript: a record we cannot account
-					// for may be added to and may not be cut down. It is needed because
-					// the store's account of the disk (`disk`) can be empty while the
-					// disk is not -- an empty boot read installs an empty mirror,
-					// `applyChats` then adopts the other device's shorter record
-					// wholesale, and this put lands on top of the longer one. Nothing
-					// throws, nothing is tombstoned, and the conversation is gone.
+					// Whenever a chat is written -- for any reason, from any caller -- the
+					// row already on disk is read inside this same transaction and the
+					// incoming messages are UNIONED with it (`mergeMessages` honours the
+					// message tombstones, so an intended removal still removes; what cannot
+					// happen is a removal nobody asked for). This is what makes the lazy
+					// read path safe: since seq 213 the in-memory list carries a full
+					// transcript only for a RESIDENT chat, and a chat whose messages are
+					// not loaded contributes an EMPTY transcript here -- the union then
+					// preserves the stored one exactly, so a save of one chat can never
+					// empty another. The model session is preserved the same way. It was
+					// previously a fast direct `put` for a known id; the union is now total
+					// because the mirror it used to be safe against holds only summaries.
 					//
-					// Only for an id with no stamp, so the ordinary turn-by-turn write
-					// is untouched: it stays one synchronous `put` queued in the same
-					// tick as `save()`, which is what the paragraph above is protecting.
-					// The put is issued from the get's own success handler, inside this
-					// same transaction, so the read and the write cannot be separated.
-					if (disk[c.id] === undefined) {
+					// The chatsum SUMMARY is refreshed alongside, so the rail (built from
+					// summaries at the next boot) does not go stale after a rename or a
+					// turn; the msgchunks stay the Stage 0 shadow (rebuilt by `writeShadow`;
+					// Stage 2 makes them authoritative), so nothing here serialises the
+					// transcript.
+					if (disk[c.id] === undefined || disk[c.id] !== stamp) {
 						(function (rec, id) {
-							var g = t.store.get(id);
+							var g = csS.get(id);
 							g.onsuccess = function () {
 								var old = g.result;
-								if (old && (old.messages || []).length) {
-									// `mergeMessages` honours the message tombstones, so a
-									// deliberate removal still removes -- what cannot happen
-									// is a removal nobody asked for.
-									rec = slimChat(rec);
-									rec.messages = slimMessages(
-										mergeMessages(old.messages, rec.messages, id, mtombs));
-									// The stamp of what is ACTUALLY going to disk, or the next
-									// save would find the record unchanged and skip it.
-									put[id] = stampOf(rec);
+								rec = slimChat(rec);
+								if (old && ((old.messages || []).length || old.session)) {
+									rec.messages = slimMessages(mergeMessages(old.messages, rec.messages, id, mtombs));
+									if (!rec.session && old.session) rec.session = old.session;
+									put[id] = stampOf(rec);         // the stamp of what ACTUALLY lands
 								}
-								t.store.put(rec);
+								csS.put(rec);
+								suS.put(summaryLite(rec));
 							};
 						})(c, c.id);
-					} else if (disk[c.id] !== stamp) {
-						// Only what has moved. A `put` of every chat on every turn rewrites
-						// the whole store for one appended message.
-						t.store.put(c);
 					}
 				});
 				// A DELETION IS A TOMBSTONE, NOT AN ABSENCE.
@@ -1787,7 +1798,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var kept = {};
 				Object.keys(disk).forEach(function (id) {
 					if (seen[id]) return;
-					if (tombs[id]) { t.store['delete'](id); return; }
+					if (tombs[id]) {
+						// The chat's summary and its transcript shadow go with it.
+						csS['delete'](id);
+						suS['delete'](id);
+						mcS['delete'](IDBKeyRange.bound(id + '#', id + '#\uffff'));
+						return;
+					}
 					kept[id] = disk[id];
 				});
 				var keptN = Object.keys(kept).length;
@@ -1795,7 +1812,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					try { console.warn('Daimond: ' + keptN + ' chat(s) were left out of a save without a tombstone; kept on disk.'); }
 					catch (e) { /* no console */ }
 				}
-				await t.done;
+				await done;
 				// A kept row is still IN the database, so it stays in the store's
 				// account of the database. Rebuilding `disk` from the list alone
 				// would forget it, and the tombstoned deletion that arrived a
@@ -1953,6 +1970,92 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			};
 		}
 
+		/// The summary written on the hot save path (seq 213, Stage 1). It carries the
+		/// current scalars, counts and dispatched iturns off the row that just landed, so
+		/// the rail stays fresh after a rename or a turn -- but it does NOT serialise the
+		/// transcript, and it leaves `fp` as a value that cannot match a real fingerprint,
+		/// so `writeShadow` rebuilds this chat's chunks when it next runs. The chunks are a
+		/// lagging shadow in Stage 1; Stage 2 makes them authoritative and this stops.
+		function summaryLite(rec) {
+			return summaryOf(rec, '', Math.max(1, Math.ceil((rec.messages || []).length / CHUNK_MSGS)));
+		}
+
+		/// One legacy `chats` row, whole, or null. The transcript's source of truth in
+		/// Stage 1 -- the chunk store lags it within a session, so a lazy load reads HERE,
+		/// not from `reconstruct` (that becomes the reader in Stage 2).
+		function getRow(id) {
+			return new Promise(function (res, rej) {
+				var t = tx('readonly');
+				var g = t.store.get(id);
+				g.onsuccess = function () { res(g.result || null); };
+				g.onerror   = function () { rej(g.error || new Error('the row would not be read')); };
+			});
+		}
+
+		/// The ids in the legacy `chats` store -- keys only, no transcript loaded. This is
+		/// the authoritative set of chats, against which the summaries are reconciled.
+		function getAllChatKeys() {
+			return new Promise(function (res, rej) {
+				var t = tx('readonly');
+				var r = t.store.getAllKeys();
+				r.onsuccess = function () { res(r.result || []); };
+				r.onerror   = function () { rej(r.error || new Error('the keys would not be read')); };
+			});
+		}
+
+		/// The session mirror as SUMMARIES (seq 213, Stage 1): one small row per chat,
+		/// NO transcript loaded -- the boot-RAM win. Reconciled against the legacy `chats`
+		/// store, which stays authoritative for what exists:
+		///
+		///   - a chat that is summarised rides its summary in, transcript untouched;
+		///   - a chat present in `chats` but NOT yet summarised (a device that skipped
+		///     Stage 0, or a chat made before the last shadow) is read in full ONCE here to
+		///     derive a summary, and is queued to be shadowed -- so the first Stage 1 boot
+		///     on an un-migrated store pays one full read and every boot after is summaries;
+		///   - a summary whose chat is gone from `chats` is dropped, since the legacy store
+		///     is the authority on existence.
+		async function readSummaries() {
+			await conn();
+			var sums = await new Promise(function (res, rej) {
+				var t = db.transaction(CHATSUM_STORE, 'readonly'), rows = [];
+				var cur = t.objectStore(CHATSUM_STORE).openCursor();
+				cur.onsuccess = function () { var c = cur.result; if (c) { rows.push(c.value); c.continue(); } else res(rows); };
+				cur.onerror   = function () { rej(cur.error || new Error('the summaries would not be read')); };
+			});
+			var byId = {};
+			sums.forEach(function (s) { if (s && s.id) byId[s.id] = s; });
+			var keys = await getAllChatKeys();
+			var out = [], missingRows = [];
+			for (var i = 0; i < keys.length; i++) {
+				var id = keys[i];
+				if (byId[id]) { out.push(byId[id]); continue; }
+				var row = await getRow(id);
+				if (!row || !row.id) continue;
+				out.push(summaryOf(row, JSON.stringify(row.messages || []),
+					Math.max(1, Math.ceil((row.messages || []).length / CHUNK_MSGS))));
+				missingRows.push(row);
+			}
+			if (missingRows.length) { shadowDone = writeShadow(missingRows); }
+			return out;
+		}
+
+		/// The transcript and model session of ONE chat, read from its authoritative legacy
+		/// row (seq 213, Stage 1). The app calls this when a chat is opened, or whenever a
+		/// consumer needs a whole transcript the summary mirror does not hold. Never throws:
+		/// a row that will not read hands back an empty transcript rather than a rejection
+		/// the open path would have to catch.
+		async function loadMessages(chatId) {
+			try {
+				await conn();
+				var row = await getRow(chatId);
+				if (!row) return { messages: [], session: null };
+				return { messages: stampMessages(Array.isArray(row.messages) ? row.messages : [], chatId),
+					session: row.session || null };
+			} catch (e) {
+				return { messages: [], session: null };
+			}
+		}
+
 		/// Write the transcript shadow for every chat in `list`, skipping those already
 		/// current. Best-effort and non-blocking: it writes only `msgchunks`/`chatsum`,
 		/// never `chats`, and it swallows its own errors -- the shadow is not load-bearing
@@ -2017,7 +2120,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// been anything there.
 			boot: async function () {
 				try {
-					mirror = await readAll();
+					var old = readJson(CHATS_KEY, []);
+					if (Array.isArray(old) && old.length) {
+						// RARE: the pre-IndexedDB localStorage store is still present. It has to
+						// be unioned into the rows, which needs the full transcripts -- so this
+						// one-time migration pays a full read, writes, shadows, and then falls
+						// through to the summary mirror below. (`write` unions, so nothing the
+						// old store holds can shorten a row already migrated.)
+						var full = await readAll();
+						full.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
+						usable = true;
+						full = mergeInto(full, old);
+						if (await write(full)) {
+							// Kept as a readable archive, but MOVED off the live key so nothing
+							// unions it back in and resurrects a chat deleted after the move.
+							try {
+								localStorage.setItem(CHATS_LEGACY, JSON.stringify(old));
+								localStorage.setItem(CHATS_LEGACY_AT, String(Date.now()));
+							}
+							catch (e2) { /* no room for the archive; the store above has it */ }
+							try { localStorage.removeItem(CHATS_KEY); } catch (e3) { /* best effort */ }
+						}
+					}
+					// THE SESSION MIRROR IS SUMMARIES (seq 213, Stage 1): boot loads a small
+					// row per chat, NOT every transcript. A chat's messages are read on open
+					// (see `loadMessages`). `readSummaries` reconciles against the legacy rows,
+					// so a store the shadow never covered is surfaced whole and summarised.
+					disk = {};
+					mirror = await readSummaries();
 					mirror.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
 					usable = true;
 					vouched = judge(mirror);
@@ -2028,25 +2158,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					mirror = legacy();
 					storageAlarm(storeReason(e));
 					return mirror.slice();
-				}
-				var old = readJson(CHATS_KEY, []);
-				if (Array.isArray(old) && old.length) {
-					mirror = mergeInto(mirror, old);
-					if (await write(mirror)) {
-						// Only once it is safely in the new store. Kept rather than deleted —
-						// a copy of the transcript in a place a person can still read is worth
-						// the bytes it already occupied — but MOVED, so nothing unions it back
-						// in on the next boot and resurrects a chat deleted after the move.
-						try {
-							localStorage.setItem(CHATS_LEGACY, JSON.stringify(old));
-							// Stamp WHEN, so the archive can be pruned once it has served its
-							// grace window rather than sitting on the budget for ever. See the
-							// prune below.
-							localStorage.setItem(CHATS_LEGACY_AT, String(Date.now()));
-						}
-						catch (e2) { /* no room for the archive; the store above has it */ }
-						try { localStorage.removeItem(CHATS_KEY); } catch (e3) { /* best effort */ }
-					}
 				}
 				// Prune the pre-migration archive once it is safe to. It was kept as a
 				// safety net in case the IndexedDB move had failed, but it is a frozen
@@ -2073,11 +2184,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						}
 					} catch (e4) { /* best effort — the archive is dead weight, not load-bearing */ }
 				}
-				// Write the transcript shadow beside the legacy rows (seq 212, Stage 0).
-				// ONLY from a vouched read: shadowing a fallback or empty read could clear
-				// a chat's chunks against a mirror that is not the truth. Not awaited -- the
-				// rail is already built from `mirror` above -- and best-effort inside.
-				if (usable && vouched) { shadowDone = writeShadow(mirror.slice()); }
+				// The transcript shadow is kept current by `write` (the summary) and by
+				// `readSummaries` (a chat it had never covered). It is NOT re-shadowed from
+				// the mirror here: in Stage 1 the mirror holds summaries, and shadowing a
+				// summary would clear the chunks it stands for.
 				return mirror.slice();
 			},
 			/// What the store holds, without a read. This is what makes `persistChats()`
@@ -2099,8 +2209,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					try { await writing; } catch (e) { break; }
 				}
 				try {
-					mirror = await readAll();
 					disk = {};
+					mirror = await readSummaries();     // summaries, as boot reads them (seq 213)
 					mirror.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
 					usable = true;
 					vouched = judge(mirror);
@@ -2151,6 +2261,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					await st.done;
 				} catch (e2) { /* nothing to clear */ }
 			},
+			/// The transcript and model session of one chat, from its authoritative legacy
+			/// row -- what the open path and the whole-transcript consumers call to make a
+			/// chat resident (seq 213, Stage 1). See `loadMessages`.
+			loadMessages:  function (chatId) { return loadMessages(chatId); },
 			// ── Transcript shadow (seq 212, Stage 0) ────────────────────────────
 			// Read by the probe only; none of these is on any behaviour path yet.
 			/// Rebuild a chat's transcript from its chunks, byte-for-byte as a reload of
@@ -2257,13 +2371,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// transcript is still in memory, and a file on the user's disk is somewhere the
 	/// browser cannot take it back. Deliberately the same shape as a backup export, so
 	/// `doImport` reads it.
-	function downloadChatsNow() {
+	async function downloadChatsNow() {
+		// Prefer the transcript RESIDENT in memory -- it is the freshest, and it is here
+		// even when the store itself is what has failed -- and fall back to the chat's
+		// row for a summary-only chat this session never opened (seq 213, Stage 1).
+		var mem = {};
+		chats.forEach(function (c) { if (c && c.id) mem[c.id] = c; });
+		var sums = storedChats(), list = [];
+		for (var i = 0; i < sums.length; i++) {
+			var s = sums[i], m = mem[s.id], rec = slimChat(s);
+			if (m && m._loaded && Array.isArray(m.messages)) {
+				rec.messages = m.messages;
+				if (m.session) rec.session = m.session;
+			} else {
+				var got = await ChatStore.loadMessages(s.id);
+				rec.messages = got.messages || [];
+				if (got.session) rec.session = got.session;
+			}
+			list.push(rec);
+		}
 		var out = {
 			format:   'daimond-backup',
 			version:  BACKUP_VERSION,	// see the constant beside `doExport`
 			exported: new Date().toISOString(),
 			partial:  true,        // chats only; no workspace files, no Diamonds
-			chats:    chats.map(slimChat),
+			chats:    list,
 		};
 		var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
 		var a = document.createElement('a');
@@ -2358,13 +2490,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var st = byId[c.id];
 				if (!st) { byId[c.id] = slimChat(c); return; }
 				// The transcript is append-only: union it. Everything else is a
-				// scalar, so the fresher tab's value wins.
+				// scalar, so the fresher tab's value wins. `st` is a SUMMARY since seq
+				// 213 (no messages), so the union degrades to this tab's own transcript
+				// -- full for a RESIDENT chat, empty for a non-resident one -- and the
+				// cross-tab/on-disk safety net is `ChatStore.write`, which unions every
+				// save against the row already on disk.
 				var merged = slimChat((c.updatedAt || 0) >= (st.updatedAt || 0) ? c : st);
 				merged.messages = slimMessages(mergeMessages(st.messages, c.messages, c.id, mtombs));
 				// The model's own conversation is this device's state, not something two
 				// tabs union: keep whichever copy has one when the other does not, or a
 				// save from an idle tab would drop the tool history the working tab holds.
 				if (!merged.session && st.session) merged.session = st.session;
+				// Carry the residency markers onto the out entry so `stampOf` reads a
+				// non-resident chat's TRUE count from its summary, not the empty array it
+				// contributes here -- otherwise every un-opened chat would stamp as zero,
+				// mismatch the disk, and be needlessly re-written on every save (seq 213).
+				if (c._loaded === false) { merged._loaded = false; merged.msgCount = chatMsgCount(c); }
 				byId[c.id] = merged;
 			});
 			var tombs = loadTombs();
@@ -2381,7 +2522,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 	}
 	function hydrateChat(c) {
-		return { id: c.id, name: c.name, app: null, messages: stampMessages(Array.isArray(c.messages) ? c.messages : [], c.id), model: c.model,
+		// In Stage 1 (seq 213) a stored entry is a SUMMARY: no transcript, only the rail's
+		// scalars and the counts. A chat is created NON-RESIDENT -- `messages` empty,
+		// `_loaded` false -- and its transcript is read from the authoritative legacy row
+		// when it is opened (see `loadChatMessages`). `msgCount`/`sessionMsgs` carry the
+		// true counts so `stampOf`, the rail and the content predicates do not read a
+		// full chat as empty. An already-loaded input keeps its messages.
+		var loaded = c._loaded === true || (Array.isArray(c.messages) && c.messages.length > 0);
+		var msgCount = (typeof c.msgCount === 'number') ? c.msgCount
+			: (Array.isArray(c.messages) ? c.messages.length : 0);
+		var sessionMsgs = (typeof c.sessionMsgs === 'number') ? c.sessionMsgs
+			: ((c.session && c.session.msgs) ? c.session.msgs.length : 0);
+		return { id: c.id, name: c.name, app: null,
+			messages: loaded ? stampMessages(Array.isArray(c.messages) ? c.messages : [], c.id) : [],
+			_loaded: loaded, msgCount: msgCount, sessionMsgs: sessionMsgs,
+			model: c.model,
 			provider: c.provider || '',
 			// Which Diamond's daimon this conversation belongs to, or '' for an
 			// ordinary chat. It has to come back: a record that lost it becomes a chat
@@ -2396,7 +2551,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			cachedTokens: c.cachedTokens || 0, costUsd: c.costUsd || 0,
 			prevPrompt: c.prevPrompt || 0, prevCompletion: c.prevCompletion || 0, lastPrompt: c.lastPrompt || 0,
 			prevCached: c.prevCached || 0, prevCost: c.prevCost || 0,
-			session: c.session || null,
+			session: loaded ? (c.session || null) : null,
 			// THE CHAT'S WORKSPACE AND ITS ATTACHMENTS, which this did not carry and
 			// which were therefore lost on every reload -- `slimChat` wrote them out
 			// faithfully, nothing read them back, and the first save after boot then
@@ -2432,6 +2587,68 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Stamp a chat as touched, so the merge above can order concurrent writes.
 	function touchChat(c) { if (c) c.updatedAt = Date.now(); }
 
+	/// How many messages a chat has, whether or not its transcript is resident (seq 213,
+	/// Stage 1). A non-resident chat holds an empty `messages` array beside the true
+	/// `msgCount`, so a predicate that read `messages.length` alone would take a full
+	/// chat for an empty one.
+	function chatMsgCount(c) {
+		if (!c) return 0;
+		if (c._loaded === false && typeof c.msgCount === 'number') return c.msgCount;
+		if (Array.isArray(c.messages)) return c.messages.length;
+		return c.msgCount || 0;
+	}
+
+	/// Make a chat RESIDENT: read its transcript and model session from the authoritative
+	/// legacy row and install them on the live object (seq 213, Stage 1). A no-op for a
+	/// chat already loaded. The store copy is UNIONED under any turns that landed on the
+	/// live array between the call and its return, so a turn racing the open is never
+	/// dropped -- the same append-only rule the store keeps.
+	async function loadChatMessages(c) {
+		if (!c || !c.id || c._loaded) return c;
+		var got = await ChatStore.loadMessages(c.id);
+		if (c._loaded) return c;                       // another caller won the race
+		var live = Array.isArray(c.messages) ? c.messages : [];
+		c.messages = live.length ? mergeMessages(got.messages, live, c.id) : got.messages;
+		if (got.session && !c.session) c.session = got.session;
+		c.msgCount = c.messages.length;
+		c._loaded = true;
+		return c;
+	}
+
+	/// Load the transcripts of every chat that holds a dispatched placeholder, so the
+	/// peer/dispatch subsystem -- the recovery scan, the park/drop mutators -- finds the
+	/// placeholder resident and keeps working synchronously as it always has (blocker B3).
+	/// Bounded to the few chats with a live dispatch, named by the summary `iturns`.
+	async function ensureDispatchedResident() {
+		var want = [];
+		try {
+			ChatStore.stored().forEach(function (s) {
+				if (s && s.id && Array.isArray(s.iturns) && s.iturns.length) want.push(s.id);
+			});
+		} catch (e) { return; }
+		for (var i = 0; i < want.length; i++) {
+			var c = chats.find(function (x) { return x && x.id === want[i]; });
+			if (c && !c._loaded) { try { await loadChatMessages(c); } catch (e) { /* leave non-resident */ } }
+		}
+	}
+
+	/// Every summary as a whole record with its transcript AND model session loaded --
+	/// for the backup export, which must carry the messages, not the summary (seq 213,
+	/// Stage 1). Read one row at a time; nothing holds them all beyond the returned list.
+	async function chatsWithTranscripts(summaries) {
+		var out = [];
+		for (var i = 0; i < (summaries || []).length; i++) {
+			var c = summaries[i];
+			if (!c || !c.id) continue;
+			var got = await ChatStore.loadMessages(c.id);
+			var rec = slimChat(c);
+			rec.messages = got.messages || [];
+			if (!rec.session && got.session) rec.session = got.session;
+			out.push(rec);
+		}
+		return out;
+	}
+
 	// Another tab changed the chats: adopt anything new without disturbing a
 	// turn in flight here. Chats this tab already holds keep their live
 	// DaimondApp; chats it has never seen are added; chats deleted elsewhere go.
@@ -2461,10 +2678,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// tab's copy already reflects it: keep it as-is, transcript and all, rather
 			// than paying a whole-transcript union for a chat that cannot have moved.
 			if (only && !only[s.id]) return c;
+			// A non-resident chat tracks the summary's counts, so its stamp and the
+			// content predicates stay honest without loading the transcript (seq 213).
+			if (!c._loaded) {
+				if (typeof s.msgCount === 'number') c.msgCount = s.msgCount;
+				if (typeof s.sessionMsgs === 'number') c.sessionMsgs = s.sessionMsgs;
+			}
 			// Update a chat we already hold IN PLACE. Replacing the object would
 			// orphan `current` and any turn in flight that closed over it — the
 			// turn would then look like it belonged to a deleted chat and its
-			// reply would be thrown away.
+			// reply would be thrown away. `s` is a SUMMARY since seq 213, so this
+			// union adds nothing to a resident transcript here; the reload pass after
+			// the array is rebuilt is what brings another tab's new turn in.
 			c.messages = mergeMessages(s.messages, c.messages, s.id, mtombs);
 			if ((s.updatedAt || 0) > (c.updatedAt || 0) && !c._generating) {
 				c.name             = s.name;
@@ -2504,6 +2729,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the dispatched-placeholder index is rebuilt from it here -- the one place
 		// that covers every wholesale change to `chats` short of the boot load.
 		rebuildDispatchedIndex();
+		// CROSS-TAB LIVE UPDATE (seq 213). A RESIDENT chat whose summary now shows more
+		// messages than are in memory has had a turn added elsewhere (another tab, or a
+		// sync merge that just wrote its row). The summary carries no transcript, so re-read
+		// the authoritative row and UNION it in -- otherwise the open chat would not reflect
+		// the change until it was re-opened. Bounded to resident, changed, idle chats.
+		var storedById = {};
+		stored.forEach(function (s) { if (s && s.id) storedById[s.id] = s; });
+		for (var mi = 0; mi < merged.length; mi++) {
+			var mc = merged[mi];
+			if (!mc || !mc._loaded || mc._generating) continue;
+			var ms = storedById[mc.id];
+			var grew = ms && (ms.msgCount || 0) > (mc.messages || []).length;
+			// The CURRENT chat is re-read UNCONDITIONALLY: it is the one on screen, a single
+			// row, and another tab may have written its row without the summary this tab
+			// reads having caught up in the same tick. Other resident chats are re-read only
+			// when their summary shows growth.
+			if (mc === current || grew) {
+				var fresh = await ChatStore.loadMessages(mc.id);
+				mc.messages = mergeMessages(fresh.messages, mc.messages, mc.id, mtombs);
+				mc.msgCount = mc.messages.length;
+				if (fresh.session && !mc.session) mc.session = fresh.session;
+			}
+		}
+		// A dispatched-placeholder chat the parcel just introduced must be made resident,
+		// so the peer subsystem finds its placeholder (blocker B3).
+		await ensureDispatchedResident();
 		if (current && !current._generating && chats.indexOf(current) !== -1) {
 			renderHistory(current.messages);      // another tab may have added turns
 		}
@@ -4127,9 +4378,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var recs = [];
 		for (var i = 0; i < chats.length; i++) {
 			var c = chats[i];
+			// `storedChats()` hands back SUMMARIES since seq 213, so the transcript is read
+			// here from its authoritative legacy row -- one at a time, transient, never all
+			// held at once -- or the parcel would ship an empty transcript for every chat.
+			var got = await ChatStore.loadMessages(c.id);
+			var msgs = got.messages || [];
 			var entry = slimChat(c);
+			entry.messages = msgs;
 			entry.session = null;
-			var msgs = Array.isArray(c.messages) ? c.messages : [];
 			var serial = JSON.stringify(msgs);
 			recs.push({ c: c, entry: entry, serial: serial, len: serial.length });
 		}
@@ -4336,7 +4592,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		(Array.isArray(stored) ? stored : []).forEach(function (c) {
 			if (!c || !c.id) return;
 			byId[c.id] = c;
-			was[c.id] = (c.messages || []).length;
+			// The true prior count, from the summary -- the mirror holds no transcript
+			// since seq 213, so `messages.length` would read zero and disable the trail.
+			was[c.id] = chatMsgCount(c);
 		});
 		var remoteChats = Array.isArray(remote.chats) ? remote.chats : [];
 		// The ids this parcel actually carried. Handed to `onChatsChangedElsewhere` so it
@@ -4410,11 +4668,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			var st = byId[r.id];
 			if (!st) { byId[r.id] = r; continue; }
+			// `st` is a SUMMARY since seq 213 -- read the local transcript and session from
+			// the authoritative legacy row so the merge unions against the real history, not
+			// an empty summary. (Durability does not rest on this: `ChatStore.write` unions
+			// every save against the row already on disk, so the local transcript could not
+			// be lost even if this were skipped. The merge RESULT stored in the mirror, and
+			// the shortened-transcript trail below, do rest on it.)
+			var localMsgs = Array.isArray(st.messages) ? st.messages : null;
+			var localSession = st.session || null;
+			if (localMsgs === null) {
+				var lg = await ChatStore.loadMessages(r.id);
+				localMsgs = lg.messages; localSession = localSession || lg.session;
+			}
 			var merged = slimChat((r.updatedAt || 0) >= (st.updatedAt || 0) ? r : st);
-			merged.messages = slimMessages(mergeMessages(st.messages, r.messages, r.id, mtombs));
+			merged.messages = slimMessages(mergeMessages(localMsgs, r.messages, r.id, mtombs));
 			// A parcel carries no session (collectSync strips it), so the freshest-wins
 			// rule above would trade this device's model memory for the remote's nothing.
-			if (!merged.session && st.session) merged.session = st.session;
+			if (!merged.session && localSession) merged.session = localSession;
 			byId[r.id] = merged;
 		}
 		Object.keys(tombs).forEach(function (id) { delete byId[id]; });
@@ -14042,13 +14312,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var REASON_DISPATCHED_STR = 'dispatched';
 	var _dispatchedIx = Object.create(null);
 
-	/// Rebuild the dispatched-placeholder index from `chats`. Cheap relative to the
-	/// merges and loads that call it, and the truth the incremental updates track.
+	/// Rebuild the dispatched-placeholder index. Since seq 213 it reads the SUMMARIES,
+	/// not the transcripts: each summary carries the `iturns` of its dispatched turns
+	/// (blocker B3), so the index is built without a transcript resident -- which is the
+	/// whole point of the lazy read path. `ensureDispatchedResident` then loads the few
+	/// chats this names, so the mutators that DO touch the placeholder find it in memory.
+	/// Falls back to scanning any resident transcript, so a chat made this session (not
+	/// yet summarised on disk, but resident) is still indexed.
 	function rebuildDispatchedIndex() {
 		var ix = Object.create(null);
+		try {
+			ChatStore.stored().forEach(function (s) {
+				if (s && s.id && Array.isArray(s.iturns)) {
+					s.iturns.forEach(function (it) { if (it) ix[String(it)] = s.id; });
+				}
+			});
+		} catch (e) { /* mirror not up yet; the resident scan below still runs */ }
 		for (var i = 0; i < chats.length; i++) {
 			var c = chats[i];
-			if (!c || !c.id || !c.messages) continue;
+			if (!c || !c.id || !c._loaded || !c.messages) continue;
 			for (var j = 0; j < c.messages.length; j++) {
 				var m = c.messages[j];
 				if (m && m.why === REASON_DISPATCHED_STR && m.iturn) ix[String(m.iturn)] = c.id;
@@ -15435,6 +15717,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				tOr('keep.gone_body', 'It was destroyed on this device or another one. Nothing was made.'));
 			return '';
 		}
+		// The mirror holds only a SUMMARY since seq 213: load the transcript from its
+		// authoritative row, or the Diamond would keep an EMPTY conversation. A shallow
+		// copy, so the mirror's summary object is not mutated.
+		var _kept = await ChatStore.loadMessages(chatId);
+		chat = Object.assign({}, chat, { messages: _kept.messages, session: chat.session || _kept.session });
 
 		// Prefilled with the name the chat already carries, which is empty unless
 		// somebody set one — so for almost every chat this opens on a blank field
@@ -15596,6 +15883,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Fold a chat into a Diamond. `turns`, when given, folds only those turns.
 	async function foldChatInto(chat, diamondId, turns) {
+		// Fold reads and then clears the whole transcript, so it must be resident first --
+		// a daimon conversation folded from the rail may not have been opened this session
+		// (seq 213, Stage 1). Loading an already-resident chat is a no-op.
+		if (chat && !chat._loaded) { try { await loadChatMessages(chat); } catch (e) { /* an empty read is caught inside */ } }
 		var f = diamonds.find(function (x) { return x.id === diamondId; });
 		// The list is emptied on a read failure and re-read whenever another tab
 		// touches a Diamond, so the id picked a moment ago can be absent by now.
@@ -15763,7 +16054,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			chatInputBar.style.display = 'none';   // no input until the chat is started
 		} else {
 			chatInputBar.style.display = '';
-			renderHistory(chat.messages);
+			// The transcript is loaded on open (seq 213, Stage 1): a resident chat draws
+			// at once, a summary-only chat draws as soon as its legacy row is read. The
+			// read is a single-row IndexedDB get -- a few milliseconds -- and the re-render
+			// is guarded on the chat still being the one on screen, so switching away
+			// mid-read leaves nothing dangling.
+			if (chat._loaded) {
+				renderHistory(chat.messages);
+			} else {
+				renderHistory(chat.messages);   // the empty array, until the row lands
+				loadChatMessages(chat).then(function () {
+					if (current === chat && !chat._generating) renderHistory(chat.messages);
+				}).catch(function () { /* loadMessages never throws; the row was empty */ });
+			}
 		}
 		syncComposer();   // reflect THIS chat's own generating state
 		renderChatAttachments();
@@ -17071,8 +17374,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// is null for every chat after a reload, however much was said before it.
 	function chatSaid(chat) {
 		if (!chat) return false;
-		if (chat.messages && chat.messages.length) return true;
-		return !!(chat.session && chat.session.msgs && chat.session.msgs.length);
+		// `chatMsgCount`, not `messages.length`: a chat whose transcript is not resident
+		// still has content, and reading the empty array alone would hide Fold on a
+		// daimon conversation that plainly has one (seq 213, Stage 1).
+		if (chatMsgCount(chat) > 0) return true;
+		if (chat.session && chat.session.msgs && chat.session.msgs.length) return true;
+		return (chat.sessionMsgs || 0) > 0;
 	}
 
 	/// Fold a chat's context now, on the user's say-so.
@@ -17706,8 +18013,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// — and the answer would always be "an empty one", which is the answer that hides the
 		// button. A read must not write.
 		var rec = chats.find(function (c) { return c.diamondId === id; });
-		var held = rec ? ((rec.messages || []).length
-			+ (((rec.session || {}).msgs) || []).length) : 0;
+		// `chatMsgCount`, so a non-resident daimon with content still shows the reset
+		// (seq 213, Stage 1); `sessionMsgs` covers the summary's session marker too.
+		var held = rec ? (chatMsgCount(rec) + (rec._loaded
+			? (((rec.session || {}).msgs) || []).length : (rec.sessionMsgs || 0))) : 0;
 		if (!held) return;
 
 		var b = document.createElement('button');
@@ -19107,6 +19416,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// actually held -- rather than what this tab believes is held -- asks it
 		/// rather than keeping a second opinion.
 		chatStore:       function () { return ChatStore; },
+		/// The residency of the in-memory chats -- id, whether the transcript is loaded,
+		/// and the message count -- for the Stage 1 probe to prove boot loads no
+		/// transcripts and opening one loads it. Diagnostic only.
+		chatResidency:   function () {
+			return chats.map(function (c) { return { id: c.id, loaded: !!c._loaded, msgCount: chatMsgCount(c) }; });
+		},
 		// This device's coarse self-description ("Chromium on Linux"). sync.js
 		// sends it as the mailbox's display label -- the one field the gateway
 		// keeps in the clear -- because the account's chosen name is the user's
@@ -28278,8 +28593,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var f = group[i];
 				if (f.id === keep.id) continue;
 				var chat = (chats || []).find(function (c) { return c.diamondId === f.id; });
+				// `chatMsgCount`, not `messages.length`: a daimon chat that has not been
+				// opened this session is non-resident (empty `messages`, true `msgCount`),
+				// and reading the array alone would take a used Diamond for an unused one
+				// and trash it (seq 213, Stage 1).
 				var used = (f.crystal_version || 0) > 0
-					|| !!(chat && chat.messages && chat.messages.length);
+					|| chatMsgCount(chat) > 0;
 				if (used) { kept++; continue; }
 				try { DaimondTrash.put(f.id); moved++; }
 				catch (e) { /* the panel will still show it; better than throwing on boot */ }
@@ -30537,6 +30856,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			updateActiveSession();
 			showCentre('daimon');
 			renderHistory(rec.messages);
+			// The daimon's transcript loads on open, exactly as a chat's does (seq 213,
+			// Stage 1); re-render when the row lands, if this daimon is still on screen.
+			if (!rec._loaded) {
+				loadChatMessages(rec).then(function () {
+					if (current === rec && !rec._generating) renderHistory(rec.messages);
+				}).catch(function () { /* loadMessages never throws */ });
+			}
 			// A thread with nothing in it reads as a thing that is broken rather than
 			// a thing that has not started. Say which -- and say what the two faces
 			// are FOR, since this is the moment somebody has just found the second one.
@@ -37418,7 +37744,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			identity: (function () {
 				try { return DaimondIdentity.exportBundle(); } catch (e) { return null; }
 			})(),
-			chats: storedChats(),
+			// Whole transcripts, loaded from the authoritative rows -- the mirror holds
+			// only summaries since seq 213, so a backup built from it alone would be empty.
+			chats: await chatsWithTranscripts(storedChats()),
 			ledger: readJson('daimond-ledger', []),
 			diamonds: [],
 			workspace: await collectOpfsFiles(),
@@ -37589,15 +37917,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// keeps for workspace files and Diamonds.
 				var byId = {}, mtombs = loadMsgTombs();		// one tombstone parse for the restore
 				storedChats().forEach(function (c) { if (c && c.id) byId[c.id] = c; });
-				data.chats.forEach(function (r) {
-					if (!r || !r.id) return;
+				for (var di = 0; di < data.chats.length; di++) {
+					var r = data.chats[di];
+					if (!r || !r.id) continue;
 					var st = byId[r.id];
-					if (!st) { byId[r.id] = r; return; }
+					if (!st) { byId[r.id] = r; continue; }
+					// `st` is a SUMMARY since seq 213: union the backup against the real local
+					// transcript read from its authoritative row, not an empty summary. (As in
+					// `applyChats`, `ChatStore.write` also unions against the row on disk, so the
+					// local transcript is safe regardless; this keeps the merged mirror correct.)
+					var localMsgs = Array.isArray(st.messages) ? st.messages : null;
+					var localSession = st.session || null;
+					if (localMsgs === null) {
+						var lg = await ChatStore.loadMessages(r.id);
+						localMsgs = lg.messages; localSession = localSession || lg.session;
+					}
 					var merged = slimChat((r.updatedAt || 0) >= (st.updatedAt || 0) ? r : st);
-					merged.messages = slimMessages(mergeMessages(st.messages, r.messages, r.id, mtombs));
-					if (!merged.session && st.session) merged.session = st.session;
+					merged.messages = slimMessages(mergeMessages(localMsgs, r.messages, r.id, mtombs));
+					if (!merged.session && localSession) merged.session = localSession;
 					byId[r.id] = merged;
-				});
+				}
 				ChatStore.save(Object.keys(byId).map(function (id) { return byId[id]; }));
 			}
 			// The trash, by the same merge the sync uses: later of each stamp, so
@@ -40129,8 +40468,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			window.__DAIMOND_READY = false;
 			return;
 		}
-		chats = await loadChats();  // restore persisted chats (survive reload)
-		rebuildDispatchedIndex();   // seed the dispatched-placeholder cache from the boot load
+		chats = await loadChats();  // restore persisted chats (survive reload) -- SUMMARIES (seq 213)
+		rebuildDispatchedIndex();   // seed the dispatched-placeholder cache from the summaries
+		// Load the transcripts of the few chats that hold a dispatched placeholder, so the
+		// peer subsystem finds them resident (seq 213, Stage 1). Not awaited: the rail is
+		// built from summaries above and does not wait on a transcript read.
+		ensureDispatchedResident();
 		// NOTHING IS SEEDED FROM THIS LIST. A counter used to be, and `loadChats`
 		// omits every chat in the trash — which is how a new chat came back with an
 		// id the trash still owned. See `newChatId`.
