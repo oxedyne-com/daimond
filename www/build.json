@@ -1,1 +1,1 @@
-{"build":"14bd3c35b6af","note":"Sync: budget inline chat transcripts so a heavy account's parcel no longer 413s on cross-device send"}
+{"build":"9e40f0b4d08a","note":"Storage: prune stale legacy chat archive + guard setItem at quota so a full store can't brick the app"}

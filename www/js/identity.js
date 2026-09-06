@@ -544,12 +544,26 @@
 		var wrapped = await seal(wrapKey, pkcs8);
 		var pubBytes = new Uint8Array(await crypto.subtle.exportKey('raw', gen.pair.publicKey));
 
-		// Persist. No secret and no derived key is ever written.
-		localStorage.setItem(K_SALT, b64enc(salt));
-		localStorage.setItem(K_PUB,  b64enc(pubBytes));
-		localStorage.setItem(K_PRIV, wrapped);
-		localStorage.setItem(K_ALG,  alg);
-		localStorage.setItem(K_NAME, String(name || '').trim());
+		// Persist. No secret and no derived key is ever written. Written as a group,
+		// and rolled back if the group cannot complete: a quota failure partway
+		// through would leave a salt and public key with no wrapped private key
+		// beside them — an identity that reads as PRESENT and then fails every unlock
+		// as "wrong passphrase". So we clear the lot and throw a sentence the user can
+		// act on, rather than let `create` return as though the identity were saved.
+		try {
+			localStorage.setItem(K_SALT, b64enc(salt));
+			localStorage.setItem(K_PUB,  b64enc(pubBytes));
+			localStorage.setItem(K_PRIV, wrapped);
+			localStorage.setItem(K_ALG,  alg);
+			localStorage.setItem(K_NAME, String(name || '').trim());
+		} catch (e) {
+			[K_SALT, K_PUB, K_PRIV, K_ALG, K_NAME].forEach(function (k) {
+				try { localStorage.removeItem(k); } catch (e2) { /* best effort */ }
+			});
+			throw new Error(tOr('identity.err_storage_full',
+				'This device is out of storage, so the new identity could not be saved. '
+				+ 'Free some space in this browser and try again.'));
+		}
 		// A fresh identity carries no sealing key and no card yet, and this may be
 		// overwriting one that did. Left-over keys of a DIFFERENT identity are worse
 		// than none: a card would name a sealing key nobody holds the other half of.
@@ -1223,6 +1237,12 @@
 	/// Overwrites any identity already on this device, so callers confirm first.
 	function importBundle(b) {
 		if (!b || b.v !== 1 || !b.salt || !b.pub || !b.priv) return false;
+		// Written as a group. A quota failure partway through would leave a
+		// half-written identity — a salt and public key with no wrapped private key,
+		// which reads as present and then fails every unlock as "wrong passphrase".
+		// So on failure we clear every key this bundle touches and return false — the
+		// contract's "wrote nothing" — rather than throw uncaught or adopt a corpse.
+		try {
 		localStorage.setItem(K_SALT, b.salt);
 		localStorage.setItem(K_PUB,  b.pub);
 		localStorage.setItem(K_PRIV, b.priv);
@@ -1262,6 +1282,14 @@
 		var hdl = saneHandle(b.hdl);
 		if (hdl) localStorage.setItem(K_HDL, JSON.stringify({ h: hdl.h, t: hdl.t }));
 		else     localStorage.removeItem(K_HDL);
+		} catch (e) {
+			[K_SALT, K_PUB, K_PRIV, K_ALG, K_NAME, K_FP,
+			 K_SEALP, K_SEALK, K_SEALA, K_CARD, K_HDL].forEach(function (k) {
+				try { localStorage.removeItem(k); } catch (e2) { /* best effort */ }
+			});
+			try { lock(); } catch (e3) { /* best effort */ }
+			return false;
+		}
 		lock();		// require an explicit unlock with the passphrase next.
 		return true;
 	}

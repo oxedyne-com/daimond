@@ -381,6 +381,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// credential is handed to the engine for this tab and asked for again after a
 	// reload, and the panel says so rather than quietly forgetting it.
 	function saveCfg(c) {
+		try {
 		localStorage.setItem(CFG_KEY, JSON.stringify({
 			baseUrl:   c.baseUrl || '',
 			apiKey:    c.apiKeyEnc ? '' : (c.apiKey || ''),
@@ -402,6 +403,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			pushUser:     c.pushUser || '',
 			pushTokenEnc: c.pushTokenEnc || '',
 		}));
+		}
+		// Quota: the in-memory `cfg` the caller passed is still authoritative for
+		// this session, so the panel keeps working; only the reload-survival is lost.
+		catch (e) { /* quota: config holds for this session, not across a reload */ }
 	}
 
 	function cfgReady(cfg) {
@@ -1527,6 +1532,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var CHATS_STORE   = 'chats';
 	var CHATS_REV     = 'daimond-chats-rev';       // the cross-tab nonce
 	var CHATS_LEGACY  = 'daimond-chats-legacy';    // what localStorage held before the move
+	var CHATS_LEGACY_AT = 'daimond-chats-legacy-at'; // when the move stamped that archive
+	var LEGACY_GRACE_MS = 30 * 24 * 60 * 60 * 1000;  // how long the archive is kept as a safety net
 	// HOW MANY RECORDS THE LAST GOOD WRITE LEFT ON DISK.
 	//
 	// `boot()` could not tell "the store is empty" from "the store was not read":
@@ -1834,10 +1841,41 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// a copy of the transcript in a place a person can still read is worth
 						// the bytes it already occupied — but MOVED, so nothing unions it back
 						// in on the next boot and resurrects a chat deleted after the move.
-						try { localStorage.setItem(CHATS_LEGACY, JSON.stringify(old)); }
+						try {
+							localStorage.setItem(CHATS_LEGACY, JSON.stringify(old));
+							// Stamp WHEN, so the archive can be pruned once it has served its
+							// grace window rather than sitting on the budget for ever. See the
+							// prune below.
+							localStorage.setItem(CHATS_LEGACY_AT, String(Date.now()));
+						}
 						catch (e2) { /* no room for the archive; the store above has it */ }
 						try { localStorage.removeItem(CHATS_KEY); } catch (e3) { /* best effort */ }
 					}
+				}
+				// Prune the pre-migration archive once it is safe to. It was kept as a
+				// safety net in case the IndexedDB move had failed, but it is a frozen
+				// snapshot that never grows — so it is dead weight on the localStorage
+				// budget, and the biggest single thing on it: the first to trip a
+				// QuotaExceeded once the budget is tight. Remove it only when BOTH hold:
+				// the new store has been read and BELIEVED (`vouched`, so the move
+				// provably landed and this is not the fallback rail), AND the grace
+				// window has passed since the move — so a person restoring an old backup,
+				// or noticing a chat that went missing, still has the archive for the
+				// span it was kept for. An archive stamped by a build before CHATS_LEGACY_AT
+				// existed has its clock started here rather than being deleted unaged, so
+				// nothing is ever pruned without having served the full window.
+				if (usable && vouched) {
+					try {
+						if (localStorage.getItem(CHATS_LEGACY) !== null) {
+							var stampedAt = parseInt(readJson(CHATS_LEGACY_AT, 0), 10);
+							if (!isFinite(stampedAt) || stampedAt <= 0) {
+								localStorage.setItem(CHATS_LEGACY_AT, String(Date.now()));
+							} else if (Date.now() - stampedAt > LEGACY_GRACE_MS) {
+								localStorage.removeItem(CHATS_LEGACY);
+								localStorage.removeItem(CHATS_LEGACY_AT);
+							}
+						}
+					} catch (e4) { /* best effort — the archive is dead weight, not load-bearing */ }
 				}
 				return mirror.slice();
 			},
@@ -4075,7 +4113,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		await section('ledger',   function () {
 			if (!Array.isArray(remote.ledger) || !remote.ledger.length) return;
 			var merged = mergeLedgers(readJson('daimond-ledger', []), remote.ledger);
-			localStorage.setItem('daimond-ledger', JSON.stringify(merged));
+			// Quota here must not throw uncaught during a sync merge. The merge is
+			// idempotent — the same parcel replayed on the next sync re-unions the
+			// same rows — so a failed write costs nothing but a retry.
+			try { localStorage.setItem('daimond-ledger', JSON.stringify(merged)); }
+			catch (e) { /* quota: the merge re-runs on the next sync */ }
 			// The meters are showing a total that just changed.
 			try { updateSpend(); } catch (e) { /* nothing is drawn yet */ }
 		});
@@ -4224,7 +4266,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Commit the number, once a Diamond really exists.
 	function takeDiamondLabel() {
 		diamondCounter = nextDiamondNumber();
-		localStorage.setItem('daimond-diamond-counter', '' + diamondCounter);
+		try { localStorage.setItem('daimond-diamond-counter', '' + diamondCounter); }
+		catch (e) { /* quota: the in-memory counter carries this session */ }
 	}
 	/// The number the next Diamond would take.
 	///
@@ -4579,7 +4622,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		root.setAttribute('data-theme', theme);
 		root.setAttribute('data-tone', spec.tone);
 		root.setAttribute('data-ink', spec.ink);
-		localStorage.setItem('daimond-theme', theme);
+		// Runs on every apply and on boot: a bare throw here at quota would take down
+		// theming itself. The attributes above are what actually paint; the write is
+		// only so the choice survives a reload.
+		try { localStorage.setItem('daimond-theme', theme); }
+		catch (e) { /* quota: theme is applied; only reload-survival is lost */ }
 		// A word logo drawn for a dark background needs its dark-ink twin on any
 		// surface that takes dark lettering.
 		var lightBg = spec.ink === 'dark';
@@ -4621,7 +4668,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function setSkin(skin) {
 		if (!SKINS[skin]) skin = 'sharp';
 		document.documentElement.setAttribute('data-skin', skin);
-		localStorage.setItem('daimond-skin', skin);
+		try { localStorage.setItem('daimond-skin', skin); }
+		catch (e) { /* quota: skin is applied; only reload-survival is lost */ }
 	}
 	window.DaimondSkin = {
 		list: function () { return Object.keys(SKINS); },

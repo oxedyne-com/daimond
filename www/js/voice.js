@@ -251,7 +251,16 @@
 				'Unlock Daimond first: your voice is kept encrypted under your passphrase.'));
 		}
 		var wrapped = await DaimondIdentity.wrap(tidy(secret));
-		localStorage.setItem(LS, JSON.stringify({ v: REC_V, s: wrapped, at: Date.now() }));
+		// Persistence IS the job: a voice not stored is a voice not set. Fail with a
+		// sentence the user can read, the way this function's other failures do,
+		// rather than let a raw quota exception reach the caller unrecognised.
+		try {
+			localStorage.setItem(LS, JSON.stringify({ v: REC_V, s: wrapped, at: Date.now() }));
+		} catch (e) {
+			throw new Error(tOr('voice.err.storage_full',
+				'This device is out of storage, so your voice could not be saved. '
+				+ 'Free some space in this browser and try again.'));
+		}
 	}
 
 	/// Forget the voice held, destructively.

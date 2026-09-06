@@ -318,7 +318,15 @@
 	}
 
 	function save() {
-		localStorage.setItem(LS, JSON.stringify({ accounts: state.accounts, sel: state.sel }));
+		try {
+			localStorage.setItem(LS, JSON.stringify({ accounts: state.accounts, sel: state.sel }));
+		} catch (e) {
+			// Quota: `state` in memory stays authoritative for this session, and the
+			// sync nudge below still carries the change to paired devices — so the edit
+			// is not lost, only its survival of a reload ON THIS device is. Warn rather
+			// than throw from a void save that callers spread across the UI.
+			try { console.warn('[mail] could not persist mailbox state (storage full)', e); } catch (e2) {}
+		}
 		// A mailbox added or removed outside a turn must travel like any edit.
 		// The engine coalesces and skips an unchanged parcel, so this is cheap.
 		try { if (window.DaimondSync && DaimondSync.nudge) DaimondSync.nudge(); } catch (e) { /* not up yet */ }

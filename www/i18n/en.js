@@ -2614,6 +2614,7 @@
 	'identity.err_wrong_pass':      'That passphrase did not match. Try again.',
 	'identity.err_locked':          'Daimond identity is locked.',
 	'identity.err_no_webcrypto':    'WebCrypto is unavailable in this browser.',
+	'identity.err_storage_full':    'This device is out of storage, so the new identity could not be saved. Free some space in this browser and try again.',
 	'identity.err_unsupported_crypto': 'This browser cannot do the cryptography this account needs (Ed25519/X25519). Update your browser, or open the account in a newer one.',
 
 	// ── Passkeys, in the interface ─────────────────────────────
@@ -3780,6 +3781,7 @@
 	'voice.err.locked':     'Unlock Daimond first: your voice is kept encrypted under your passphrase.',
 	'voice.err.locked_send': 'Unlock Daimond to write on the forge: your voice is encrypted under your passphrase.',
 	'voice.err.unreadable': 'Your voice cannot be read with this passphrase. Set it again from the line the forge printed for you.',
+	'voice.err.storage_full': 'This device is out of storage, so your voice could not be saved. Free some space in this browser and try again.',
 	'voice.err.inurl':      'A voice goes in a header, never in an address.',
 	// What the voice is CALLED in a list of what did not survive a passphrase
 	// change. Never shown on its own; `changepass.voice_not_resealed` is the
