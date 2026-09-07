@@ -845,6 +845,62 @@ async function runRecoveryAcceptance(P, L, check) {
 		check('orphan recovery released the lease when done', sync.leases()['t-orphan'].mode === 'released');
 	}
 
+	// ── UNDELIVERABLE reconstruct: the peer HANDS THE TURN BACK cleanly. When the
+	//    progress-based catch-up gives up (the chat's parcel never synced here), the
+	//    reconstruct throws an `undeliverable` error. runErrand must: report status
+	//    'undeliverable' (so the dispatcher drops to a local run), RELEASE the lease
+	//    (nothing ran — money-safe), and ACK the errand (so no peer re-claims it into a
+	//    loop — the production claim-loop). It must NOT run the turn. ──
+	{
+		console.log('\nReconstruct — an UNDELIVERABLE chat is handed back: report + release + ack, never run');
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0, acked = 0, pushed = 0; let report = null;
+		const errand = P.makeErrand({ turnId: 't-undel', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'DESK' });
+		const res = await P.runErrand(errand, {
+			selfId: 'PEER', cas: P.syncCas(sync),
+			finished:    async () => false,
+			reconstruct: async () => { const e = new Error('could not sync in time'); e.undeliverable = true; throw e; },
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => { pushed++; return 1; },
+			post:  async (r) => { report = r; }, ack: async () => { acked++; }, now: () => NOW,
+		});
+		check('undeliverable reconstruct did NOT run the turn (no bill)', ran === 0 && res.ran === false && res.done !== true);
+		check('undeliverable reconstruct reported status "undeliverable"', !!report && report.status === 'undeliverable');
+		check('undeliverable reconstruct ACKED the errand (peers stop re-claiming)', acked === 1);
+		check('undeliverable reconstruct RELEASED the lease (reclaimable at once)', sync.leases()['t-undel'].mode === 'released');
+		check('undeliverable reconstruct pushed nothing (nothing ran)', pushed === 0);
+		check('undeliverable is flagged on the result for the caller', res.undeliverable === true);
+		check('undeliverable trace is report → release → ack',
+			res.trace.join(',').includes('reconstruct-undeliverable')
+			&& res.trace.indexOf('release') > res.trace.indexOf('report')
+			&& res.trace.indexOf('ack') > res.trace.indexOf('release'));
+	}
+
+	// ── A NON-undeliverable reconstruct error (a surprise this device could be alone in
+	//    hitting) is still handed back, but NOT acked — left on the relay for another
+	//    peer or the deadline, exactly as before the undeliverable split. ──
+	{
+		console.log('\nReconstruct — an unexpected error reports "error", releases, but does NOT ack');
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0, acked = 0; let report = null;
+		const errand = P.makeErrand({ turnId: 't-err', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'DESK' });
+		const res = await P.runErrand(errand, {
+			selfId: 'PEER', cas: P.syncCas(sync),
+			finished:    async () => false,
+			reconstruct: async () => { throw new Error('scope blew up'); },	// no .undeliverable
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1,
+			post:  async (r) => { report = r; }, ack: async () => { acked++; }, now: () => NOW,
+		});
+		check('unexpected reconstruct error did NOT run the turn', ran === 0 && res.ran === false);
+		check('unexpected reconstruct error reported status "error"', !!report && report.status === 'error');
+		check('unexpected reconstruct error did NOT ack (left on the relay for another peer)', acked === 0);
+		check('unexpected reconstruct error released the lease', sync.leases()['t-err'].mode === 'released');
+		check('unexpected reconstruct error is NOT flagged undeliverable', res.undeliverable !== true);
+	}
+
 	// ── Recovery STANDS DOWN when a peer holds a LIVE lease -- no take-over, no
 	//    double run -- both by the pure decision and by the runner's own take. ──
 	{

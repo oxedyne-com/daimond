@@ -14549,11 +14549,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			dispatchedBy: by,
 			parkCount: parkCount,
 		});
-		// 1. PUSH THE PROMPT PARCEL FIRST, then read the version it committed at.
-		try { await DaimondSync.push(); }
-		catch (e) { return { ok: false, why: 'the prompt could not be saved to the server' }; }
+		// 1. PUSH THE PROMPT PARCEL FIRST and CONFIRM it committed, then read the version
+		//    it committed at. A brand-new chat's summary and message tail must be FULLY on
+		//    the server before the errand names a version for the peer to pull to -- a bare
+		//    push() can return early (another push in flight, a live turn, a 409-retry
+		//    exhausting) having sent nothing, which would stamp the errand with a version
+		//    that predates the chat, and the peer would reach that version holding no chat.
+		//    flush() loops until the parcel is confirmed committed; if it cannot confirm,
+		//    fall back to a bare push + version() (the receiver's progress-based catch-up
+		//    and the undeliverable→local net still cover a stale stamp).
 		var parcelVersion = 0;
-		try { parcelVersion = DaimondSync.version() | 0; } catch (e) { parcelVersion = 0; }
+		try {
+			var fl = DaimondSync.flush ? await DaimondSync.flush() : null;
+			if (fl && fl.ok) { parcelVersion = fl.version | 0; }
+			else { await DaimondSync.push(); parcelVersion = DaimondSync.version() | 0; }
+		}
+		catch (e) { return { ok: false, why: 'the prompt could not be saved to the server' }; }
 		// 2. MARK the local turn peer-held. Carry the chosen target onto the mark,
 		//    so the hand-off tile names the device before a lease holder exists.
 		if (opts && (opts.toId || opts.toName)) {
@@ -14602,11 +14613,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		};
 	}
 
-	// A bounded catch-up window for peerReconstruct. Short on purpose: the lease is
-	// already held by the time reconstruct runs, so a peer that cannot reach the
-	// dispatch version must free it promptly (runErrand releases on a reconstruct
-	// throw) rather than park the turn to its deadline.
-	var RECONSTRUCT_CATCHUP_MS = 8000;
+	// Progress-based catch-up bounds for peerReconstruct. The old design gave the pull a
+	// FIXED 8s and then threw + released the lease -- which threw the turn into a claim
+	// loop (the next device claims, throws, releases, ...) on a LARGE account whose
+	// parcel is still syncing tens of seconds past dispatch. That was the live "peers
+	// claim the lease but nobody runs" failure (production log, build 221: the parcel
+	// version climbing 6253→6258 with chunk pulls landing at +96s, long past the fixed
+	// 8s). So the wait is PROGRESS-based: keep the lease and keep pulling AS LONG AS the
+	// parcel version is still advancing toward the errand's version (or the chat is
+	// appearing / becoming resident) -- the stall clock resets on every scrap of
+	// progress. Give up only when it has been genuinely STALLED for RECONSTRUCT_STALL_MS
+	// with no progress at all, or after the absolute RECONSTRUCT_ABS_CAP_MS ceiling. A
+	// give-up throws an `undeliverable` error, which runErrand turns into an UNDELIVERABLE
+	// report + an ack (so peers stop re-claiming) and the dispatcher drops to a local run
+	// at once rather than after the ~95s backstop.
+	var RECONSTRUCT_STALL_MS   = 45000;		// no version/chat progress for this long ⇒ stalled
+	var RECONSTRUCT_ABS_CAP_MS = 300000;	// absolute ceiling regardless of progress (≪ lease deadline)
 
 	/// Reconstruct the chat and its workspace for an errand. It PULLS TO THE
 	/// ERRAND'S PARCEL VERSION FIRST, then finds the chat, builds its app and scopes
@@ -14625,51 +14647,85 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// manifests -- the large files themselves hydrate on demand from those manifests
 	/// at file-read time (chunks.js), so the manifests being present is the gate.
 	async function peerReconstruct(errand) {
-		var want = (errand && errand.parcelVersion) | 0;
-		// The whole catch-up -- the pull AND the materialise below -- lives inside one
-		// window, so `by` is set before either.
-		var by   = Date.now() + RECONSTRUCT_CATCHUP_MS;
-		if (window.DaimondSync && DaimondSync.pull) {
-			var have = 0;
-			try { have = DaimondSync.version() | 0; } catch (e) { have = 0; }
-			// ALWAYS pull at least once, then loop to `want` when a target is known. A
-			// dispatcher whose version read 0 at dispatch (parcelVersion 0) carries no
-			// target, but the receiver may still be behind, and one fresh pull is cheap.
-			var first = true;
-			while (first || (want > 0 && have < want && Date.now() < by)) {
-				first = false;
-				try { await DaimondSync.pull(true); } catch (e) { /* offline: the window retries */ }
-				try { have = DaimondSync.version() | 0; } catch (e) { have = 0; }
-				if (want > 0 && have < want) await new Promise(function (res) { setTimeout(res, 400); });
-			}
+		var want    = (errand && errand.parcelVersion) | 0;
+		var startAt = Date.now();
+		var absBy   = startAt + RECONSTRUCT_ABS_CAP_MS;
+		function haveVer() {
+			try { return (window.DaimondSync && DaimondSync.version) ? (DaimondSync.version() | 0) : 0; }
+			catch (e) { return 0; }
 		}
 		function findErrandChat() {
 			for (var i = 0; i < chats.length; i++) if (chats[i].id === errand.chatId) return chats[i];
 			return null;
 		}
-		// FIND THE CHAT, MATERIALISING IT WHEN THE IN-MEMORY REBUILD HAS NOT CAUGHT UP.
+		function pause(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+
+		// THE PROGRESS-BASED CATCH-UP. Keep the lease and keep pulling/materialising as
+		// long as ANYTHING is still moving toward having the chat resident: the parcel
+		// version advancing toward `want`, the chat appearing in `chats[]`, or it becoming
+		// resident. `stallBy` is reset on every scrap of that progress; only a genuine
+		// stall (no progress for RECONSTRUCT_STALL_MS) or the absolute cap ends the wait
+		// unsatisfied. `have >= want` is the "we hold everything the dispatcher committed"
+		// signal, but the chat can arrive before that, so a materialise is attempted every
+		// pass rather than gated behind reaching `want`.
 		//
-		// The pull above merged the errand's parcel into the STORE, but `applyChats`
-		// fires `onChatsChangedElsewhere` WITHOUT awaiting it, and that rebuild's first
-		// act is a real async summaries read -- so `chats[]` can still be missing a
-		// brand-new chat here while the store already holds it. Throwing then RELEASED
-		// the lease, the next device claimed and threw in turn, and the turn looped
-		// uncompleted: the live "Sent to your other devices" that no peer ever ran. So
-		// drive the rebuild from the store ourselves and retry within the catch-up
-		// window, and throw only if the chat is genuinely absent from what we pulled.
-		var chat = findErrandChat();
-		while (!chat && Date.now() < by) {
-			try { await onChatsChangedElsewhere(); } catch (e) { /* retry within the window */ }
+		// This replaces a FIXED 8s window that threw + released the lease the moment it
+		// expired -- which claim-looped a turn whose (large) parcel was still syncing, the
+		// production failure. It also still closes the seq-220 rebuild race below: the pull
+		// merges the parcel into the STORE, but `applyChats` fires `onChatsChangedElsewhere`
+		// WITHOUT awaiting it (its first act is an async summaries read), so `chats[]` can
+		// lag the store; driving that rebuild ourselves each pass finds the chat.
+		var have    = haveVer();
+		var chat    = findErrandChat();
+		var stallBy = startAt + RECONSTRUCT_STALL_MS;
+		var pulled  = false;
+		while (true) {
 			chat = findErrandChat();
-			if (!chat) await new Promise(function (res) { setTimeout(res, 150); });
+			if (chat && chat._loaded) break;			// present and resident: ready to run
+			// Present but a NON-RESIDENT summary (empty transcript beside a real msgCount,
+			// seq 213): make it resident before building the agent, or ensureApp would seed
+			// the runner from an empty transcript.
+			if (chat && !chat._loaded) {
+				try { await loadChatMessages(chat); } catch (e) { /* retry within the window */ }
+				if (chat._loaded) break;
+			}
+			var now = Date.now();
+			if (now > absBy) break;						// absolute ceiling
+			if (pulled && now > stallBy) break;			// genuinely stalled (after ≥ one pull)
+			// Pull toward `want`. Always at least once (a dispatcher whose version read 0
+			// carries want 0 and no target, but the receiver may still be behind and one
+			// fresh pull is cheap); thereafter only while still behind.
+			var before = have;
+			if (window.DaimondSync && DaimondSync.pull && (!pulled || want <= 0 || have < want)) {
+				try { await DaimondSync.pull(true); } catch (e) { /* offline: the window retries */ }
+				pulled = true;
+				have = haveVer();
+			}
+			// Drive the in-memory rebuild ourselves (the seq-220 gap above).
+			var hadChat = !!chat;
+			try { await onChatsChangedElsewhere(); } catch (e) { /* retry within the window */ }
+			var appeared = !hadChat && !!findErrandChat();
+			if (have > before || appeared) stallBy = Date.now() + RECONSTRUCT_STALL_MS;	// progress ⇒ reset
+			await pause(have < want ? 400 : 150);
 		}
-		if (!chat) throw new Error('the errand names a chat this device does not hold yet');
-		// A chat that arrived through the parcel is a NON-RESIDENT summary -- an empty
-		// transcript beside a real `msgCount` (seq 213). Make it resident BEFORE building
-		// the agent, or `ensureApp` would seed the runner from an empty transcript,
-		// carrying neither the dispatched prompt nor the workspace. `loadChatMessages` is
-		// a no-op for a chat already loaded.
-		if (!chat._loaded) { try { await loadChatMessages(chat); } catch (e) { /* ensureApp reads what is resident */ } }
+
+		chat = findErrandChat();
+		if (!chat) {
+			// GENUINELY UNDELIVERABLE: the errand's chat never synced here in the window.
+			// Marked so runErrand ACKS the errand (peers stop re-claiming) and the
+			// dispatcher drops to local at once. Nothing ran, so the release is money-safe.
+			var eAbsent = new Error('the errand names a chat this device could not sync in time');
+			eAbsent.undeliverable = true;
+			throw eAbsent;
+		}
+		if (!chat._loaded) {
+			try { await loadChatMessages(chat); } catch (e) { /* one last attempt below decides */ }
+		}
+		if (!chat._loaded) {
+			var eResident = new Error('the errand\'s chat could not be made resident in time');
+			eResident.undeliverable = true;
+			throw eResident;
+		}
 		// D3 — rebuild the agent from the freshly-synced transcript (a stale app from
 		// before the sync would carry neither the dispatched prompt nor whatever the
 		// phone did since), and SEED IT WITHOUT the errand's own user prompt: runTurn
@@ -14889,6 +14945,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// A parked / terminal report settles the live question, so retire the
 				// dispatcher's "awaiting" marker; the footer then reads the report state.
 				if (report.status === 'parked' || report.status === 'aborted') delete _openAsk[tid];
+				// UNDELIVERABLE — a peer could not sync the chat's parcel and handed the turn
+				// back (having acked the errand off the relay so no peer re-claims it). Drop
+				// to a LOCAL run on THIS device AT ONCE, rather than wait out the ~95s
+				// dispatch backstop, through the SAME money-safe take-if-vacant lease the
+				// backstop uses. runDispatchFallback re-reads server truth first and stands
+				// down under a live foreign lease, so a peer that IS genuinely on it still
+				// wins; only the dispatching device holds the dispatched placeholder, so this
+				// no-ops elsewhere. _localRecovering dedupes it against the backstop timer.
+				if (report.status === 'undeliverable') {
+					delete _openAsk[tid];
+					try { clearDispatchFallback(tid); } catch (e) { /* the report-driven run is the recovery now */ }
+					try { runDispatchFallback(String(report.chatId || ''), tid); } catch (e) { /* the 15-min deadline + [Run here] remain */ }
+				}
 				// Carry the GLOBAL park count onto the synced placeholder, so a re-run
 				// from ANY device bumps from the true total rather than a device-local
 				// zero. A parked (survivable) turn can re-run; a terminal one cannot.
@@ -15326,6 +15395,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { if (window.DaimondSync && DaimondSync.pull) await DaimondSync.pull(); } catch (e) { /* offline */ }
 			var chat = null;
 			for (var i = 0; i < chats.length; i++) if (chats[i] && chats[i].id === chatId) { chat = chats[i]; break; }
+			// A report-driven call may carry no/empty chatId; resolve by the turn's
+			// dispatched-placeholder index instead.
+			if (!chat) { try { chat = dispatchedChat(tid); } catch (e) { chat = null; } }
 			if (!chat || chat.diamondId || !chat.messages) return;
 			var m = null;
 			for (var j = 0; j < chat.messages.length; j++) {

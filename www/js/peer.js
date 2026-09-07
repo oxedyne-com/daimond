@@ -267,7 +267,7 @@
 			eid:     String(o.eid || ''),
 			turnId:  String(o.turnId || ''),
 			chatId:  String(o.chatId || ''),
-			status:  String(o.status || 'done'),	// done | refused-spend | error | aborted | parked
+			status:  String(o.status || 'done'),	// done | refused-spend | error | aborted | parked | undeliverable
 			parcelVersion: o.parcelVersion | 0,	// which version already carries the answer
 			cost:    o.cost || null,
 			why:     o.why ? String(o.why) : '',	// a human sentence for the failure states
@@ -650,6 +650,11 @@
 		if (report && report.t === 'report') {
 			if (report.status === 'done')   return 'done';
 			if (report.status === 'parked') return 'parked';	// survivable: re-runs when a human is back
+			// UNDELIVERABLE is not terminal: the peer could not sync the chat and handed
+			// the turn back, and the dispatcher is running it locally now (or the backstop
+			// will). Keep the spinner ('claimed'), not a [Run here] failure, while that
+			// happens -- if the local recovery genuinely stalls the deadline still lands it.
+			if (report.status === 'undeliverable') return 'claimed';
 			return 'failed';									// aborted / error / refused-spend: terminal
 		}
 		// A live question the runner is blocked on takes precedence over the lease
@@ -1782,13 +1787,27 @@
 				// the turn is reclaimable at once rather than after the deadline. Nothing ran,
 				// so there is no charge and the release is money-safe.
 				var rwhy = String((err && err.message) || err);
-				trace.push('reconstruct-failed');
-				try { if (typeof console !== 'undefined') console.error('peer: reconstruct failed for turn ' + turnId + ' -- ' + rwhy); } catch (e2) {}
-				try { if (d.post) await d.post(makeReport({ eid: e.eid, turnId: turnId, chatId: e.chatId, status: 'error', why: rwhy })); }
+				// UNDELIVERABLE (progress-based reconstruct gave up: the parcel is not
+				// reaching this device) vs an unexpected reconstruct error. The former is a
+				// clean hand-back -- ACK the errand so it leaves the shared relay and no peer
+				// re-claims it into a loop, and the dispatcher's undeliverable-report handler
+				// drops to a local run at once. The latter is a surprise this device could be
+				// alone in hitting, so it is left ON the relay (not acked) for another peer or
+				// the deadline, exactly as before.
+				var undeliverable = !!(err && err.undeliverable);
+				trace.push(undeliverable ? 'reconstruct-undeliverable' : 'reconstruct-failed');
+				try { if (typeof console !== 'undefined') console.error('peer: reconstruct '
+					+ (undeliverable ? 'undeliverable' : 'failed') + ' for turn ' + turnId + ' -- ' + rwhy); } catch (e2) {}
+				try { if (d.post) await d.post(makeReport({ eid: e.eid, turnId: turnId, chatId: e.chatId,
+					status: undeliverable ? 'undeliverable' : 'error', why: rwhy })); }
 				catch (e2) { /* the release below still frees the turn */ }
 				try { await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
 				catch (e2) { /* an unreleased lease still expires at its deadline */ }
-				return { ran: false, error: true, why: rwhy, trace: trace };
+				if (undeliverable) {
+					try { if (d.ack) { await d.ack(); trace.push('ack'); } }
+					catch (e2) { /* a missed ack costs one idempotent re-collect, never a re-run: finished guards it */ }
+				}
+				return { ran: false, error: true, undeliverable: undeliverable, why: rwhy, trace: trace };
 			}
 
 			// 3. Transition claimed -> running ONCE -- a semantic state change for the UI

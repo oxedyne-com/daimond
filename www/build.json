@@ -1,1 +1,1 @@
-{"build":"864dc78c4545","note":"Sync: reserve the diamond reference floor so a heavy file workspace can't strand diamonds"}
+{"build":"0d7f50a310f1","note":"Hand-off no longer claim-loops on a slow-syncing parcel; sync storage kept small so it cannot leak"}

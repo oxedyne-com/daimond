@@ -112,6 +112,8 @@
 	var PUSH_DEBOUNCE_MS = 2500;	// Coalesce a flurry of changes into one push.
 	var MAX_CONFLICT_RETRIES = 8;	// Bound the pull-merge-retry loop (was 4): more headroom under 3-device churn.
 	var CONFLICT_BACKOFF_MS  = 200;	// Jittered wait between conflict retries so busy devices do not collide every attempt.
+	var FLUSH_MAX_ROUNDS     = 6;	// Bound flush()'s push-and-confirm loop.
+	var FLUSH_RETRY_MS       = 300;	// Wait between flush() rounds while a push is in flight elsewhere.
 	// Focus arrives in bursts -- a click into the window raises focus on the
 	// window and a visibilitychange with it -- so the pull is debounced into one,
 	// and then rate-limited.
@@ -1257,6 +1259,46 @@
 		}
 	}
 
+	/// Push until the CURRENT local parcel is committed on the server, and answer the
+	/// version it committed at. A single `await push()` is NOT enough for a caller that
+	/// must know a version genuinely CONTAINS the state it just added (a hand-off
+	/// dispatcher, whose errand carries that version for the peer to pull to): `push()`
+	/// returns early -- sending nothing -- when another push is already in flight, over
+	/// a live turn, or when it 409-retries and exhausts. A dispatcher that then read
+	/// `version()` would stamp the errand with a version that predates the new chat, and
+	/// the peer would reach that version holding no chat. This loops -- push, then
+	/// confirm the live parcel equals what last committed -- until the parcel is on the
+	/// server or it gives up. Answers `{ ok, version, why? }`; `ok:false` (not entitled,
+	/// too large, over a live turn, or the mailbox kept moving) lets the caller fall
+	/// back to what a bare push()+version() would have given, and the receiver's own
+	/// progress-based catch-up is the further net.
+	async function flush() {
+		if (!ready() || !entitled) return { ok: false, version: serverVersion, why: 'not_entitled' };
+		// Over a live turn push() will not send (it must not churn the parcel while a
+		// turn runs), so do not spin: one best-effort attempt and report it unconfirmed.
+		if (window.DaimondCore.busy && DaimondCore.busy()) {
+			try { await push(); } catch (e) { /* best effort */ }
+			return { ok: false, version: serverVersion, why: 'busy' };
+		}
+		for (var i = 0; i < FLUSH_MAX_ROUNDS; i++) {
+			if (tooLarge) return { ok: false, version: serverVersion, why: 'too_large' };
+			var plain;
+			try { plain = JSON.stringify(await collectParcel()); }
+			catch (e) { return { ok: false, version: serverVersion, why: 'collect_failed' }; }
+			// Already committed: the parcel we hold is what the mailbox holds, at
+			// serverVersion (lastPushed is set only after a 200 that moved the version).
+			if (plain === lastPushed && serverVersion > 0) return { ok: true, version: serverVersion };
+			try { await push(); } catch (e) { return { ok: false, version: serverVersion, why: 'push_failed' }; }
+			// Confirm against the live parcel: a change under us forces another round.
+			var after = null;
+			try { after = JSON.stringify(await collectParcel()); }
+			catch (e) { after = null; }
+			if (after !== null && after === lastPushed && serverVersion > 0) return { ok: true, version: serverVersion };
+			await new Promise(function (r) { setTimeout(r, FLUSH_RETRY_MS); });
+		}
+		return { ok: false, version: serverVersion, why: 'not_confirmed' };
+	}
+
 	// ── Presence ───────────────────────────────────────────────
 	// A separate, lightweight door from push/pull. A beat WRITES this device's
 	// last_seen and READS the account's whole fresh map back in one round; it bumps
@@ -2059,6 +2101,10 @@
 	window.DaimondSync = {
 		pull:    pull,
 		push:    function () { return push(); },
+		/// Push and CONFIRM the current parcel is committed, answering the version it
+		/// committed at -- `{ ok, version, why? }`. Used by the hand-off dispatcher so
+		/// the errand's parcelVersion genuinely contains the chat it just added.
+		flush:   flush,
 		nudge:   nudge,
 		recheck: recheck,
 		/// The presence path, off the content parcel: `beatPresence(deviceId, name)`
