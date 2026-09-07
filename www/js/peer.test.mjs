@@ -1379,6 +1379,47 @@ async function runPresenceAcceptance(P, PR, check) {
 		P.recGenuine({ name: 'g', lastSeen: T }, T, P.DISPATCH_FRESH_MS) === true);
 	check('freshestGenuinePeer skips a phantom and picks the genuine peer',
 		P.freshestGenuinePeer({ ph: { name: 'ph', lastSeen: T, servicedAt: T - 5 * 60 * 1000 }, ok: { name: 'ok', lastSeen: T - 40000, servicedAt: T - 40000 } }, 'phone', T, P.DISPATCH_FRESH_MS).deviceId === 'ok');
+
+	// ── seq-217 ROLLOUT REGRESSION (permanent): the gateway must not conflate an
+	// ABSENT `servicing` field (an old-build runner that CANNOT say) with an explicit
+	// `servicing:false`. The fixed gateway OMITS the servicing pair for an old client, so
+	// the relayed record ingests with servicedAt ABSENT and recGenuine falls back to the
+	// bare beat -- the old runner stays reachable for hand-off. A PRESENT serviced_at:0
+	// (an explicit not-servicing seq-217 tab) is still excluded. Before the fix the gateway
+	// stamped serviced_at:0 for the old client too, so a live runner read as stale and every
+	// mobile turn ran local with NO hand-off -- the symptom the owner hit on seq 217.
+	// Driven through the REAL presenceIngest relay path (server clock -> client frame).
+	{
+		const sNow = Date.now();
+		const win  = P.DISPATCH_FRESH_MS;
+		const dispatch = () => P.autoDispatchDecision(quickChat, PR.snapshot(),
+			{ selfId: 'phone', isPhone: true, nominatedId: 'argonaut' }, Date.now());
+		// (a) OLD-build runner, FIXED wire: NO serviced/serviced_at keys, beating now.
+		PR.forget();
+		PR.ingest({ argonaut: { name: 'Argonaut', last_seen: sNow - 5000, attended: false, attended_at: 0 } }, sNow);
+		const oldRec = PR.snapshot().argonaut;
+		check('rollout(a): an old-build runner (no serviced_at on the wire) ingests with servicedAt ABSENT',
+			oldRec.servicedAt == null);
+		check('rollout(a): recGenuine makes an old-build runner ELIGIBLE via the bare beat',
+			P.recGenuine(oldRec, Date.now(), win) === true);
+		check('rollout(a): a mobile turn HANDS OFF to the old-build runner (was: ran local, no hand-off)',
+			(() => { const d = dispatch(); return d.dispatch === true && d.peer && d.peer.deviceId === 'argonaut'; })());
+		// (b) seq-217 EXPLICIT not-servicing: serviced_at:0 PRESENT -> still excluded.
+		PR.forget();
+		PR.ingest({ argonaut: { name: 'Argonaut', last_seen: sNow - 5000, attended: false, attended_at: 0,
+			serviced: false, serviced_at: 0 } }, sNow);
+		check('rollout(b): a seq-217 explicit-not-servicing runner (serviced_at:0 present) is EXCLUDED',
+			P.recGenuine(PR.snapshot().argonaut, Date.now(), win) === false);
+		check('rollout(b): a mobile turn with only an explicit-not-servicing runner runs LOCAL',
+			(() => { const d = dispatch(); return d.dispatch === false && d.reason === 'no-genuine-peer'; })());
+		// (c) GENUINE seq-217 runner: fresh serviced_at -> eligible.
+		PR.forget();
+		PR.ingest({ argonaut: { name: 'Argonaut', last_seen: sNow - 5000, attended: false, attended_at: 0,
+			serviced: true, serviced_at: sNow - 5000 } }, sNow);
+		check('rollout(c): a genuine seq-217 runner (fresh serviced_at) is ELIGIBLE',
+			P.recGenuine(PR.snapshot().argonaut, Date.now(), win) === true);
+	}
+	PR.forget();
 }
 
 // ════════════════════════════════════════════════════════════════

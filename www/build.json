@@ -1,1 +1,1 @@
-{"build":"0b450896e117","note":"Sync: hand off only to a genuinely-available device (not a phantom tab); backstop local recovery; no double-run"}
+{"build":"ae59ae890866","note":"Sync: don't exclude a not-yet-updated runner from hand-off (gateway serviced_at tri-state)"}
