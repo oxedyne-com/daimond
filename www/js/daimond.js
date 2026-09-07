@@ -3648,7 +3648,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// preserved as a `.synced` sidecar rather than overwritten. Only the OPFS
 	// sandbox is synced — a real folder is the user's own disk, device-specific.
 	var SYNC_FILE_MAX        = 128 * 1024;		// carry inline in the blob up to here.
-	var SYNC_FILES_TOTAL_MAX = 8 * 1024 * 1024;	// budget for all inline file bytes.
+	var SYNC_FILES_TOTAL_MAX = 8 * 1024 * 1024;	// the standalone inline-files budget; a
+							// parcel uses `syncFilesBudget` instead (the
+							// parcel less the Diamond reference floor).
 	// The ceiling on one offloaded file. The pipeline streams now -- a slice is
 	// read, sealed, sent and dropped -- so this is no longer a memory limit but a
 	// manifest one: every chunk becomes an entry inside the sync blob, and the
@@ -3725,13 +3727,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// path rather than the exceptional one. The lever on a store that does not fit is
 	// the page ceiling and the keyframe interval (`src/diamond_delta.rs`), not this.
 	//
-	// STILL OVER-SUBSCRIBED, and left so on purpose. SYNC_FILES_TOTAL_MAX is 8 MiB, is
-	// spent FIRST, and is not clamped against the parcel, so a workspace holding 5 MiB
-	// of inline text takes the whole parcel and leaves the Diamonds nothing. Lowering
-	// the files budget would fix the arithmetic and buy a worse failure: a Diamond left
-	// out is NAMED to the user (`noteDiamondsLeft`), a file skipped for budget goes
-	// into `skipped` and is named to nobody. That budget comes down when its skip is as
-	// visible as the Diamond's.
+	// NO LONGER OVER-SUBSCRIBED. This block once recorded a deferred flaw: the inline
+	// files were spent FIRST against a free 8 MiB and were not clamped to the parcel, so
+	// a workspace of ~5 MiB of inline text took the whole parcel and left the Diamonds'
+	// references nothing — which named 33 of the owner's Diamonds "did not fit" while
+	// offload was working. The fix reserves the Diamond reference floor out of the parcel
+	// BEFORE the files spend (`syncFilesBudget`, `planDiamonds`, `collectSync`), and
+	// OFFLOADS an inline file that overflows the reduced budget instead of stranding it —
+	// so the files can no longer crowd the Diamonds out, and an overflow file travels (as
+	// a chunk manifest) or, when offload is down, is NAMED to the user (`noteFilesLeft`)
+	// as visibly as a Diamond. `SYNC_DIAMONDS_MAX` stays the fairness clamp between the
+	// Diamonds and the files they share the parcel with.
 	var SYNC_DIAMONDS_MAX    = 4 * 1024 * 1024;
 	// The budget for INLINE chat transcripts, spent freshest-first. A transcript
 	// over SYNC_FILE_MAX already offloads on its own; this bounds the SUM of the
@@ -3810,7 +3816,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// folder mode, no tools, a directory that would not list, a file skipped for
 	/// budget. An incomplete census still carries the files it did find; it simply
 	/// carries no news about the ones it did not.
-	async function collectFiles() {
+	async function collectFiles(inlineBudget) {
 		// `bytes` is what the inline files came to, so the Diamonds can be budgeted
 		// against what is left of the parcel rather than against a number chosen in
 		// ignorance of them.
@@ -3819,9 +3825,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// incomplete; this is the subset a person is owed a sentence about, and it
 		// is kept apart from the count because a name is what makes the sentence
 		// worth reading. See `noteFilesLeft`.
+		//
+		// `inlineBudget` is the room inline files may take of THE PARCEL, the reference
+		// floor for the Diamonds already subtracted (see `syncFilesBudget`). It defaults
+		// to the standalone files budget for a caller not packing a parcel. When the
+		// inline text would overflow it, the overflow OFFLOADS to chunks — the same path
+		// a large file takes — so it still travels (a manifest in the cloud index,
+		// hydrated on demand at the far end) rather than riding inline and crowding the
+		// Diamonds out of the parcel. That decision is a function of the file set and
+		// this budget alone, so every sync caller that recomputes it agrees on which
+		// files are inline, which is what keeps the baseline from recording an offloaded
+		// path as inline and a later pull from reading its absence as a deletion.
+		var budget = (typeof inlineBudget === 'number' && inlineBudget >= 0)
+			? inlineBudget : SYNC_FILES_TOTAL_MAX;
 		var out = { files: {}, large: {}, left: [], skipped: 0, oversize: [], bytes: 0, complete: false };
 		if (!filesSyncable()) return out;
 		var app; try { app = tools(); } catch (e) { return out; }
+		// Can the overflow be offloaded this round? Same test the Diamond and chat
+		// collectors use. When it is false there is nowhere to move an overflow file,
+		// so it is NAMED (noteFilesLeft) rather than silently dropped.
+		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
+			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
+			&& DaimondCloud.contentGet);
 		out.complete = true;						// until something below is missed.
 		var total = 0, largeTotal = 0, todo = [''], guard = 0;
 		while (todo.length && guard++ < 5000) {
@@ -3888,7 +3913,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					largeTotal += e.size;
 					continue;
 				}
-				if (total + content.length > SYNC_FILES_TOTAL_MAX) { out.left.push(full); out.skipped++; continue; }
+				if (total + content.length > budget) {
+					// No inline room left in the parcel. Offload it like a large file so
+					// it still travels rather than eating the Diamonds' share of the
+					// parcel; with nowhere to offload this round, NAME it (noteFilesLeft)
+					// — never a silent drop.
+					if (canOffload && largeTotal + e.size <= SYNC_CHUNK_TOTAL_MAX) {
+						out.large[full] = { size: e.size };
+						largeTotal += e.size;
+						continue;
+					}
+					out.left.push(full); out.skipped++; continue;
+				}
 				out.files[full] = content; total += content.length;
 			}
 		}
@@ -3953,7 +3989,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// devices agree on now", the fork point the next 3-way merge measures from.
 	async function commitFileBaseline() {
 		if (!filesSyncable()) return;
-		var col = await collectFiles();
+		// The SAME inline budget the parcel uses, so a file that overflows and offloads
+		// is out of `files` here too and never enters the inline baseline — which is
+		// what keeps a later complete census from reading its absence as a deletion.
+		var col = await collectFiles(await syncFilesBudget());
 		var base = {};
 		Object.keys(col.files).forEach(function (p) { base[p] = fileHash(col.files[p]); });
 		writeFilebase(base);
@@ -3987,7 +4026,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!remoteFiles || typeof remoteFiles !== 'object' || !filesSyncable()) return;
 		var app; try { app = tools(); } catch (e) { return; }
 		var base  = readJson(SYNC_FILEBASE_KEY, {});
-		var local = (await collectFiles()).files;
+		// The same inline budget the parcel and the baseline use, so `local` classifies
+		// files inline-vs-offloaded exactly as they did — the merge and its delete branch
+		// then reason about the same set of inline files everywhere.
+		var local = (await collectFiles(await syncFilesBudget())).files;
 		// What this round establishes the two devices actually HOLD IN COMMON, path by path.
 		// It is not "everything local", which is what the baseline used to be set to on the way
 		// out of here -- see the commit below.
@@ -4166,6 +4208,104 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// union, and so do the links. Everything else at an equal stamp is left as
 	// it is, which is what "the merge does not choose" means.
 
+	/// Bytes a Diamond's `@d/` reference is likely to weigh in the parcel: the JSON
+	/// envelope plus one entry per chunk, the chunk count read off the same ladder
+	/// `chunks.js` uses (`chunkSizeFor`). The estimate runs deliberately high, so the
+	/// room reserved for a reference is never less than the reference goes on to cost.
+	function estRefBytes(size) {
+		if (size == null) return 256;               // unknown: a small one, measured when it offloads
+		var ch = size <= 64 * 1024 * 1024 ? 256 * 1024
+			: (size <= 512 * 1024 * 1024 ? 1024 * 1024 : 4 * 1024 * 1024);
+		var n = Math.max(1, Math.ceil(size / ch));
+		return 160 + n * 96;
+	}
+
+	/// Walk the Diamond store ONCE, sort it as the parcel carries it, and size every
+	/// Diamond, so the reference floor the parcel must keep for the Diamonds is known
+	/// BEFORE the workspace files spend against it. Sharing this between `collectSync`
+	/// (which reserves `refReserve` out of the files' budget) and `collectDiamonds`
+	/// (which spends against the same sizes) is the whole of the fix for a heavy
+	/// workspace naming every Diamond "did not fit": the files can no longer eat the
+	/// budget the Diamonds' references need, because that budget is subtracted before
+	/// the files are collected.
+	///
+	/// `{ ok, held, sizes, models, canOffload, refReserve }`. `ok` is false only when
+	/// the store will not enumerate — send nothing, delete nothing. `sizes` is parallel
+	/// to `held`; an entry is null where an older engine cannot size a Diamond, and such
+	/// a Diamond offloads and is measured exactly when it does. `refReserve` is 0 when
+	/// offload is unavailable this round: a Diamond cannot become a reference then, so
+	/// there is nothing to reserve room for and it rides inline as it did before offload.
+	async function planDiamonds() {
+		var plan = { ok: false, held: [], sizes: [], models: {}, canOffload: false, refReserve: 0 };
+		var tombs = loadDiamondTombs(), held;
+		try { held = JSON.parse(await diamondApp().list_diamonds()); }
+		catch (e) { return plan; }
+		// A Diamond deleted here is on its way out, not on its way over.
+		held = held.filter(function (d) { return d && d.id && !tombs[d.id]; });
+		// A TRASHED Diamond still travels, whole. Trash is a state rather than a
+		// deletion, so the far device has to hold the same bytes: restoring it there
+		// must produce the Diamond, not an empty name. It sorts LAST, below every live
+		// Diamond, because when the budget cannot carry everything the thing the user is
+		// working on has the better claim on the wire. Freshest first among the living,
+		// ties broken by id, so two collects of an unchanged store pick the same set and
+		// the parcel stays the byte-stable fixed point the push-skip needs.
+		held.sort(function (a, b) {
+			var ta = trashed(a.id) ? 1 : 0, tb = trashed(b.id) ? 1 : 0;
+			return ta - tb
+				|| diamondStamp(b) - diamondStamp(a)
+				|| (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0));
+		});
+		// Whether a Diamond too large to ride inline can be offloaded to chunks this
+		// round: the transport is loaded and the identity that seals a chunk is
+		// unlocked. When it is not, a large Diamond falls back to riding inline and is
+		// budgeted the old way, so it still travels.
+		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
+			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
+			&& DaimondCloud.contentGet);
+		// MEASURE BEFORE MATERIALISING, and measure ALL of them first, because the
+		// inline set is chosen against the whole store rather than one Diamond at a
+		// time. The size is a directory walk that costs no content -- exporting every
+		// Diamond to size it held the whole store in memory and killed an iPhone's tab
+		// on every boot for four sessions. The estimate runs high, so a Diamond it
+		// rejects certainly would not have fitted; one it keeps is measured exactly
+		// when it is packed. An older engine without `export_diamond_size` reports null.
+		var sizes = [];
+		for (var m0 = 0; m0 < held.length; m0++) {
+			var sz = null;
+			try {
+				if (typeof diamondApp().export_diamond_size === 'function') {
+					sz = await diamondApp().export_diamond_size(held[m0].id);
+				}
+			} catch (e) { sz = null; }
+			sizes.push(sz);
+		}
+		// Room for the reference of EVERY Diamond, held back from the parcel before the
+		// files are collected. Zero when nothing can offload -- there are no references
+		// to reserve for then.
+		var refReserve = 0;
+		if (canOffload) for (var r0 = 0; r0 < sizes.length; r0++) refReserve += estRefBytes(sizes[r0]);
+		plan.ok         = true;
+		plan.held       = held;
+		plan.sizes      = sizes;
+		plan.models     = diamondModels();
+		plan.canOffload = canOffload;
+		plan.refReserve = refReserve;
+		return plan;
+	}
+
+	/// The inline-files budget for a parcel: the parcel ceiling less the room reserved
+	/// for the Diamonds' `@d/` references, so a heavy workspace can never spend the
+	/// bytes the Diamonds need and strand them. Async because sizing the Diamonds is.
+	/// Used by EVERY path that reads the workspace for sync (`collectSync`, the baseline
+	/// commit and the pull merge) so the inline set — and therefore what the baseline
+	/// records as shared — is the same in all of them: a file that overflowed and
+	/// offloaded is out of `files` everywhere, which is what keeps a pull from reading
+	/// its absence as a deletion.
+	async function syncFilesBudget(plan) {
+		if (!plan) plan = await planDiamonds();
+		return Math.max(0, Math.min(SYNC_FILES_TOTAL_MAX, SYNC_PARCEL_MAX - plan.refReserve));
+	}
+
 	/// Every Diamond this device holds that fits, packed for the parcel: the id,
 	/// both stamps, the whole directory, and which model it thinks with.
 	///
@@ -4197,32 +4337,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// # Arguments
 	/// * `budget` - The most exported bytes the Diamonds may take of this parcel.
-	async function collectDiamonds(budget) {
+	async function collectDiamonds(budget, plan) {
 		trail('sync collect', 'budget ' + Math.round(budget / 1024) + ' kB');
-		var out = { list: [], left: [], complete: true }, tombs = loadDiamondTombs(), held;
-		try { held = JSON.parse(await diamondApp().list_diamonds()); }
-		catch (e) { out.complete = false; return out; }   // no store to read: send nothing, delete nothing
-		var models = diamondModels();
-		// A Diamond deleted here is on its way out, not on its way over.
-		held = held.filter(function (d) { return d && d.id && !tombs[d.id]; });
-		// A TRASHED Diamond still travels, whole. Trash is a state rather than a
-		// deletion, so the far device has to hold the same bytes: restoring it
-		// there must produce the Diamond, not an empty name. It sorts LAST, below
-		// every live Diamond, because when the budget cannot carry everything the
-		// thing the user is working on has the better claim on the wire.
-		held.sort(function (a, b) {
-			var ta = trashed(a.id) ? 1 : 0, tb = trashed(b.id) ? 1 : 0;
-			return ta - tb
-				|| diamondStamp(b) - diamondStamp(a)
-				|| (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0));
-		});
-		// Whether a Diamond too large to ride inline can be offloaded to chunks
-		// this round: the transport is loaded and the identity that seals a chunk
-		// is unlocked. When it is not, a large Diamond falls back to riding inline
-		// and is budgeted the old way, so it still travels.
-		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
-			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
-			&& DaimondCloud.contentGet);
+		var out = { list: [], left: [], complete: true };
+		// The store is walked, sorted and sized ONCE per parcel by `planDiamonds`, and
+		// the plan is handed in — so the reference room reserved out of the parcel BEFORE
+		// the files spent against it (see `collectSync`) is measured from the very same
+		// figures the collection spends here. A caller that passes no plan gets one
+		// computed now, which keeps `collectDiamonds` usable on its own.
+		if (!plan) plan = await planDiamonds();
+		if (!plan.ok) { out.complete = false; return out; }   // no store to read: send nothing, delete nothing
+		var held       = plan.held;         // live Diamonds, freshest first, trashed last
+		var models     = plan.models;
+		var sizes      = plan.sizes;        // parallel to held; null where the engine cannot size one
+		var canOffload = plan.canOffload;   // may a Diamond leave as an `@d/` reference this round?
+		var refReserve = plan.refReserve;   // bytes held back for the references, 0 when offload is down
 		var liveIds = {};
 		var used = 0;
 		// A Diamond the parcel could not carry falls into two very different cases,
@@ -4260,41 +4389,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// runs latest on every device, so a small Diamond may leave as an `@d/` reference
 		// like a large one: a few hundred bytes that fit in any budget. So the inline blob
 		// is now only the CHEAP path for the freshest few; the rest offload. This mirrors
-		// `collectChatsRefs` -- pick the inline set first, offload the remainder.
+		// `collectChatsRefs` -- pick the inline set first, offload the remainder. The
+		// sizes and the reference reserve were measured once in `planDiamonds`, ahead of
+		// the files, so the reserve is already subtracted from what the files could take.
 		//
-		// MEASURE BEFORE MATERIALISING, and measure ALL of them first, because the inline
-		// set is chosen against the whole store rather than one Diamond at a time. The
-		// size is a directory walk that costs no content -- this used to export every
-		// Diamond and throw the over-budget ones away, which held the whole store in
-		// memory and killed an iPhone's tab on every boot for four sessions. The estimate
-		// runs high (bytes on disk plus paths; the JSON envelope only adds), so a Diamond
-		// it rejects certainly would not have fitted; one it keeps is measured exactly
-		// below. An older engine without `export_diamond_size` reports null and offloads.
-		var sizes = [];
-		for (var m0 = 0; m0 < held.length; m0++) {
-			var sz = null;
-			try {
-				if (typeof diamondApp().export_diamond_size === 'function') {
-					sz = await diamondApp().export_diamond_size(held[m0].id);
-				}
-			} catch (e) { sz = null; }
-			sizes.push(sz);
-		}
-		// Bytes a Diamond's `@d/` reference is likely to weigh: the JSON envelope plus one
-		// entry per chunk, the chunk count read off the same ladder chunks.js uses
-		// (`chunkSizeFor`). Room for the reference of EVERY Diamond is held back from the
-		// budget before the inline set is chosen, so the freshest small Diamonds cannot
-		// spend the budget that the ones behind them need for their references -- which is
-		// exactly how the whole store was named "did not fit" with offload working.
-		function estRefBytes(size) {
-			if (size == null) return 256;               // unknown: a small one, measured when it offloads
-			var ch = size <= 64 * 1024 * 1024 ? 256 * 1024
-				: (size <= 512 * 1024 * 1024 ? 1024 * 1024 : 4 * 1024 * 1024);
-			var n = Math.max(1, Math.ceil(size / ch));
-			return 160 + n * 96;
-		}
-		var refReserve = 0;
-		for (var r0 = 0; r0 < sizes.length; r0++) refReserve += estRefBytes(sizes[r0]);
 		// What inline may spend: the budget less the reserved reference room. When the
 		// references alone would fill the budget (a pathological store), inline gets
 		// nothing and every Diamond offloads.
@@ -4901,14 +4999,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		packingParcel = true;
 		try { persistChats(); }
 		finally { packingParcel = false; }
-		var fileCol = await collectFiles();
+		// Size the Diamonds FIRST, so the room their `@d/` references need is reserved
+		// out of the parcel BEFORE the files spend against it. A heavy workspace can then
+		// no longer fill the parcel and leave the references nothing — the bug that named
+		// 33 Diamonds "did not fit" while offload was working perfectly.
+		var plan = await planDiamonds();
+		var fileCol = await collectFiles(await syncFilesBudget(plan));
 		var chunked = await collectChunked(fileCol.large);
 		// What is left of the parcel after the inline files, and never more than the
-		// Diamonds' own share of it. Taking the files off first is deliberate: they
-		// have already been read and counted, and a budget that ignored them would
-		// let the two sections agree to overrun the ceiling between them.
+		// Diamonds' own share of it. The reference floor reserved above guarantees this
+		// is at least `plan.refReserve`, so every Diamond's reference fits even when the
+		// files took all the rest. The Diamonds reuse `plan` — the store is walked once.
 		var dCol = await collectDiamonds(
-			Math.max(0, Math.min(SYNC_DIAMONDS_MAX, SYNC_PARCEL_MAX - fileCol.bytes)));
+			Math.max(0, Math.min(SYNC_DIAMONDS_MAX, SYNC_PARCEL_MAX - fileCol.bytes)), plan);
 		var chatsList = await collectChatsRefs();
 		// RE-READ THE INDEX AFTER THE CONTENT COLLECTORS. `collectChunked` snapped
 		// the index before the Diamonds and chats wrote their `@d/`/`@c/` manifests

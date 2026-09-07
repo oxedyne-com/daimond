@@ -1,1 +1,1 @@
-{"build":"0ca7fbc03092","note":"Sync: run a hand-off for a brand-new chat instead of looping the lease (fixes spins-forever, nothing appears)"}
+{"build":"864dc78c4545","note":"Sync: reserve the diamond reference floor so a heavy file workspace can't strand diamonds"}
