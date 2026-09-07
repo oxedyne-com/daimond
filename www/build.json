@@ -1,1 +1,1 @@
-{"build":"0d7f50a310f1","note":"Hand-off no longer claim-loops on a slow-syncing parcel; sync storage kept small so it cannot leak"}
+{"build":"4d62eecd8f84","note":"Sync: retry a pull that can't apply a section instead of stranding it; fixes chat deletions not reaching a cold iOS tab"}

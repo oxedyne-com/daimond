@@ -178,6 +178,22 @@
 	// How often that is checked, which is NOT the same number: a tick equal to the
 	// threshold puts the real ceiling at twice it.
 	var CATCHUP_TICK_MS = 5000;
+	// ── The re-apply ───────────────────────────────────────────
+	// A pull that read a parcel but could not MERGE one of its sections does not
+	// adopt the version any more (see pullOnce): the client stays at the version it
+	// last fully applied, so it is not falsely caught up to work it never took. The
+	// section that failed is the news it is missing, and nothing else will fetch it
+	// -- a wake pull fires only for a HIGHER version, and the focus and idle pulls
+	// are throttled -- so this re-pulls the SAME version itself, on a backoff, until
+	// the merge finishes. The store being read (the common cause -- a cold tab that
+	// pulled before its first store read) or a transient quota clearing both end it.
+	// Bounded, so a section that fails for a reason that will NOT clear on a re-read
+	// (a genuinely malformed parcel) cannot become a hot loop: after the cap the
+	// auto-retry stands down and the version is simply left un-adopted, and the
+	// ordinary triggers (a higher version, a focus, the idle catch-up) go on trying.
+	var REAPPLY_BASE_MS  = 1500;	// First re-pull this soon after a failed merge.
+	var REAPPLY_MAX_MS   = 60000;	// The backoff never grows past this.
+	var REAPPLY_MAX_TRIES = 6;		// Auto-retries for one un-adopted version before standing down.
 	var K_VERSION = 'daimond-sync-version';		// Per-account (accounts.js prefixes it).
 	var K_LAST    = 'daimond-sync-last';		// When a sync last succeeded, for the chip.
 	// The digest of the parcel this device last got into the mailbox, so the FIRST
@@ -224,6 +240,8 @@
 	var lastSynced    = 0;		// ms of the last successful pull or push.
 	var pushTimer     = null;	// Debounce handle.
 	var focusTimer    = null;	// Focus-pull debounce handle.
+	var reapplyTimer  = null;	// The re-pull-the-same-version handle; see the re-apply.
+	var reapplyTries  = 0;		// How many auto-retries this un-adopted version has had.
 	var lastFocusPull = 0;		// ms of the last pull a focus caused.
 	// ms of the last pull that reached the gateway, whatever asked for it. The
 	// catch-up below is measured against THIS rather than against its own last
@@ -1018,7 +1036,7 @@
 		catch (e) { log('lease door adopt failed', e); }
 		// An empty mailbox is an answer: this device has heard, and there was
 		// nothing to hear. See `pulledOk`.
-		if (!j.present) { adoptVersion(0, preRead); pulledOk = true; restStatus(); return serverVersion; }
+		if (!j.present) { adoptVersion(0, preRead); reapplyDone(); pulledOk = true; restStatus(); return serverVersion; }
 		var state;
 		try {
 			// The size of what arrived, before it is opened. Three forms of this
@@ -1056,21 +1074,39 @@
 			// this is not one.
 			log('pull decrypt/parse failed; keeping local state');
 			adoptVersion(j.version | 0, preRead);
+			reapplyDone();
 			if (!quiet) restStatus();
 			return serverVersion;
 		}
 		lastFailed = await applyParcel(state);
 		pulledOk   = true;			// a parcel was read; see `pulledOk`.
-		adoptVersion(j.version | 0, preRead);
 		noteSynced();
 		// A merge that could not finish is not a sync that worked, and it is the
 		// user's business: their other device's work is sitting in the mailbox
 		// unread on this one.
+		//
+		// AND THE VERSION IS NOT ADOPTED. Adopting it here -- BEFORE this check, as
+		// it used to be -- was the strand: a section that threw (the chats section
+		// on a cold tab whose store had not been read, most often) left this device
+		// recorded as caught up to a parcel it had never merged. Nothing then
+		// re-applied it: a wake pull fires only for a HIGHER version, the mailbox
+		// was not moving, and the focus and idle pulls are throttled -- so a chat
+		// the other device deleted lived on for ever while the chip read "Synced".
+		// Leaving the cursor where it was keeps the news outstanding, and
+		// `scheduleReapply` re-pulls this same version until the merge finishes.
+		// The whole parcel is re-applied on each retry, which is safe: every
+		// section's merge is idempotent (freshest-wins / union / tombstone, all
+		// stamp-ordered), so re-applying a section that already took changes
+		// nothing. See the re-apply notes above.
 		if (lastFailed.length) {
-			log('pulled version', serverVersion, 'but could not merge', lastFailed.join(','));
+			log('pulled version', j.version | 0, 'but could not merge', lastFailed.join(','),
+				'- not adopting; scheduling a re-pull of the same version');
+			scheduleReapply();
 			if (!quiet) jam('merge');
-			return serverVersion;
+			return serverVersion;		// the last FULLY-applied version, deliberately not j.version.
 		}
+		adoptVersion(j.version | 0, preRead);
+		reapplyDone();				// a clean apply settles any re-pull that was armed.
 		unjam();
 		// A pull working says nothing about whether this device's own parcel will
 		// EVER leave -- a GET is served to everyone, a push is not -- so a standing
@@ -1821,6 +1857,44 @@
 		focusTimer = setTimeout(function () { focusTimer = null; focusPull(); }, FOCUS_DEBOUNCE_MS);
 	}
 
+	/// Re-pull the SAME version, because the last pull read a parcel it could not
+	/// fully merge and so did not adopt it. On a backoff, and bounded: a section
+	/// that will never merge (a malformed parcel) must not become a hot loop, so
+	/// after `REAPPLY_MAX_TRIES` the auto-retry stands down -- the version stays
+	/// un-adopted and the ordinary triggers go on trying, but this stops arming.
+	/// See the re-apply notes at the top of the file.
+	function scheduleReapply() {
+		if (reapplyTimer) return;				// one already coming.
+		if (reapplyTries >= REAPPLY_MAX_TRIES) {
+			log('re-apply: gave up auto-retrying after', reapplyTries,
+				'tries; version left un-adopted, ordinary triggers will retry');
+			return;
+		}
+		var grow = Math.min(REAPPLY_MAX_MS, REAPPLY_BASE_MS * Math.pow(2, reapplyTries));
+		reapplyTries++;
+		// Jittered, for the same reason the conflict backoff is: several devices that
+		// all failed the same parcel must not re-pull in the same millisecond.
+		reapplyTimer = setTimeout(function () {
+			reapplyTimer = null;
+			reapplyPull();
+		}, Math.round(grow * (0.5 + Math.random())));
+	}
+
+	/// A clean apply (or an adopted version) settled it: forget the backoff and
+	/// disarm any pending re-pull.
+	function reapplyDone() {
+		reapplyTries = 0;
+		if (reapplyTimer) { clearTimeout(reapplyTimer); reapplyTimer = null; }
+	}
+
+	async function reapplyPull() {
+		if (!ready()) { reapplyDone(); return; }
+		if (inFlight) { scheduleReapply(); return; }	// a round is running; re-arm, do not drop.
+		inFlight = true;
+		try { await pull(); }				// success clears the backoff; another failure re-arms it.
+		finally { inFlight = false; }
+	}
+
 	async function focusPull() {
 		if (!ready()) return;
 		if (inFlight) return;			// a round is already under way; it is fresher than ours
@@ -2212,10 +2286,11 @@
 				/// two failures in eight cold runs on 2026-08-24, each blamed on the product.
 				/// Waiting for this removes the race; polling for the mailbox to stay gone
 				/// only narrows it.
-				quiet:        !inFlight && !pushTimer && !focusTimer,
+				quiet:        !inFlight && !pushTimer && !focusTimer && !reapplyTimer,
 				busyWith:     inFlight ? 'a round is running'
 					: (pushTimer ? 'a push is armed'
-						: (focusTimer ? 'a focus pull is armed' : '')),
+						: (focusTimer ? 'a focus pull is armed'
+							: (reapplyTimer ? 're-applying a version that would not merge' : ''))),
 			};
 		},
 	};

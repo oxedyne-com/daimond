@@ -1588,6 +1588,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var queued  = null;      // the next list to write, replacing any earlier one
 		var usable  = false;     // the store opened and was read at least once
 		var vouched = false;     // and what it read can be believed -- see CHATS_COUNT
+		var bootPromise = null;  // the one-and-only first read, memoised; see boot/booted
 		var shadowDone = Promise.resolve();   // resolves when the last transcript-shadow pass settled
 
 		// ── The append cursor (seq 214, Stage 2) ────────────────────────────────
@@ -2443,7 +2444,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// a locked-down private window — falls back to reading localStorage and
 			/// SAYS so, rather than opening on an empty rail as though there had never
 			/// been anything there.
-			boot: async function () {
+			///
+			/// MEMOISED for the life of the page. The first call does the read; every
+			/// later call -- `booted()` awaiting it from inside a sync merge, in
+			/// particular -- gets the same promise rather than a second read. One page
+			/// instance is one account (an account switch reloads), so re-reading was
+			/// never wanted; what a caller after the first wants is to know the read
+			/// HAPPENED, which is exactly what the shared promise gives.
+			boot: function () {
+				if (bootPromise) return bootPromise;
+				bootPromise = (async function () {
 				try {
 					var old = readJson(CHATS_KEY, []);
 					if (Array.isArray(old) && old.length) {
@@ -2527,7 +2537,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// the mirror here: in Stage 1 the mirror holds summaries, and shadowing a
 				// summary would clear the chunks it stands for.
 				return mirror.slice();
+				})();
+				return bootPromise;
 			},
+			/// Resolves when the FIRST read has settled, kicking one off if nothing
+			/// has yet. `applyChats` awaits this before it refuses an unvouched store,
+			/// so a merge that raced the boot read waits for it rather than stranding.
+			/// It resolves whatever the read's verdict -- `vouched()` is the separate
+			/// question the caller asks next.
+			booted: function () { return bootPromise || ChatStore.boot(); },
 			/// What the store holds, without a read. This is what makes `persistChats()`
 			/// able to stay synchronous.
 			stored: function () { return mirror.slice(); },
@@ -5124,8 +5142,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// copy of each. Thrown rather than skipped, so `applySync` records `chats`
 		// as a failed section and sync.js declines to push this device's state over
 		// the parcel it could not merge.
+		//
+		// NOT-YET-READ IS NOT UNREADABLE, and the two used to be one throw. A
+		// wake-driven pull on a cold tab (the iOS case: a backgrounded WebKit tab
+		// re-instantiates slowly, and the account wakes it at a new version on
+		// every push) can land BEFORE the store's first read has vouched the
+		// mirror. Refusing outright recorded `chats` as failed for a store that was
+		// moments from being perfectly readable -- and sync.js then adopted the
+		// version anyway (the strand this whole change is about). So first WAIT for
+		// the first read to settle, then judge again: a store that simply had not
+		// been read yet vouches here and the merge proceeds on this very pull. A
+		// genuine read FAILURE (an empty read against a non-zero watermark, or a
+		// read that threw) leaves it unvouched AND raises the storage alarm inside
+		// `boot`/`judge` -- so this still refuses that case, exactly as before, and
+		// the caller (sync.js) then declines to adopt the version and re-pulls.
 		if (!ChatStore.vouched()) {
-			throw new Error('the chat store has not been read; not merging against it');
+			try { await ChatStore.booted(); } catch (e) { /* boot raised its own alarm */ }
+			if (!ChatStore.vouched()) {
+				throw new Error('the chat store has not been read; not merging against it');
+			}
 		}
 		var tombs = mergeTombMap(TOMBS_KEY, remote.tombs);
 		mergeTombMap(MSG_TOMBS_KEY, remote.msgTombs);
