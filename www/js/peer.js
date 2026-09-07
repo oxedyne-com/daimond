@@ -732,18 +732,67 @@
 		return best;
 	}
 
+	/// Is a presence record GENUINELY AVAILABLE to run an errand -- not merely beating,
+	/// but actively servicing the errand channel? A background browser tab keeps sending
+	/// the lightweight, non-waking presence beat (its 45 s timer, throttled to ~60 s but
+	/// still inside the freshness window) while it is throttled OUT of the errand
+	/// long-poll (`DaimondPost.parkOnce`) -- so it reads "awake" yet never collects the
+	/// errand: the PHANTOM RUNNER the owner hit (a turn "handed to gilgamesh" that
+	/// gilgamesh never ran). Genuine availability is the beat AND a recent completed
+	/// errand-channel round (`servicedAt`), which the runner stamps only while it is
+	/// really parked and collecting.
+	///
+	/// `servicedAt` reaches this record only when the gateway relays it (mirroring
+	/// `attended_at`). Until that ships, the field is ABSENT, and this falls back to the
+	/// bare beat so hand-off is not disabled wholesale -- the dispatcher-side recovery
+	/// timer (daimond.js) is then the backstop that reclaims a turn a phantom never ran.
+	/// A record that DOES carry `servicedAt` is judged strictly: a stale servicing stamp
+	/// (a tab that beat but stopped collecting) is NOT genuine.
+	function recGenuine(rec, now, windowMs) {
+		if (!rec) return false;
+		var w = windowMs || DISPATCH_FRESH_MS;
+		if ((now - leaseMs(rec.lastSeen)) > w) return false;		// not even beating
+		if (rec.servicedAt != null) {								// reported: judge it strictly
+			return (now - leaseMs(rec.servicedAt)) <= w;
+		}
+		return true;												// not reported (old gateway): the beat stands, Fix B backstops
+	}
+
+	/// The freshest GENUINELY-AVAILABLE peer (beating AND servicing errands), not this
+	/// device, or null. The candidate the auto-dispatch decision hands a turn to, so a
+	/// phantom presence-only tab is never chosen over a genuine peer or over local.
+	function freshestGenuinePeer(presence, selfId, now, windowMs) {
+		var p = presence || {}, self = String(selfId || ''), n = now == null ? Date.now() : now;
+		var w = windowMs || DISPATCH_FRESH_MS, best = null;
+		for (var id in p) {
+			if (!Object.prototype.hasOwnProperty.call(p, id)) continue;
+			if (id === self) continue;
+			var rec = p[id];
+			if (!recGenuine(rec, n, w)) continue;
+			if (!best || leaseMs(rec.lastSeen) > leaseMs(best.lastSeen)) {
+				best = { deviceId: id, name: (rec.name || ''), lastSeen: leaseMs(rec.lastSeen) };
+			}
+		}
+		return best;
+	}
+
 	/// Record this device's heartbeat. Answers whether the map changed (it always
 	/// does -- lastSeen moved -- which is what makes the beat a push). `attended` is
 	/// the attention signal (foreground + recent interaction) a live consent routes on:
 	/// `attendedAt` stamps when the device was last attended, so freshness is judged on
 	/// attention rather than on the bare beat.
-	function presenceBeat(deviceId, name, now, attended) {
+	function presenceBeat(deviceId, name, now, attended, servicing) {
 		var id = String(deviceId || '');
 		if (!id) return false;
 		var n = now == null ? Date.now() : now;
 		var prev = _presence[id];
 		var at = attended ? n : (prev ? leaseMs(prev.attendedAt) : 0);
-		_presence[id] = { name: String(name || ''), lastSeen: n, attended: !!attended, attendedAt: at };
+		// `servicing` = this device is genuinely running the errand long-poll now; stamp
+		// `servicedAt` so a peer can tell a real runner from a throttled tab that only
+		// beats. A beat with `servicing` unknown keeps the prior stamp (a transient miss
+		// is not proof it stopped); explicitly false when the listener is down.
+		var sv = servicing ? n : (prev ? leaseMs(prev.servicedAt) : 0);
+		_presence[id] = { name: String(name || ''), lastSeen: n, attended: !!attended, attendedAt: at, servicedAt: sv };
 		return true;
 	}
 
@@ -759,10 +808,16 @@
 			if (!inc) continue;
 			var cur = _presence[id];
 			if (!cur || leaseMs(inc.lastSeen) > leaseMs(cur.lastSeen)) {
-				_presence[id] = {
+				var adopted = {
 					name: String(inc.name || ''), lastSeen: leaseMs(inc.lastSeen),
 					attended: !!inc.attended, attendedAt: leaseMs(inc.attendedAt),
 				};
+				// Preserve ABSENT (do not coerce to 0), exactly as presenceIngest does: a
+				// peer arriving with no servicing field must read as "not reported" ->
+				// recGenuine falls back to the beat, NOT as serviced_at 0 -> strictly stale
+				// -> wrongly excluded. Only set the field when the incoming actually carries it.
+				if (inc.servicedAt != null) adopted.servicedAt = leaseMs(inc.servicedAt);
+				_presence[id] = adopted;
 				moved = true;
 			}
 		}
@@ -798,10 +853,17 @@
 			// PARKS rather than routing a question to a device that may be unwatched (the
 			// fail-safe the design requires).
 			var atRaw = rec.attended_at != null ? rec.attended_at : rec.attendedAt;
-			next[String(id)] = {
+			var recOut = {
 				name: String(rec.name || ''), lastSeen: seen - skew,
 				attended: !!rec.attended, attendedAt: atRaw != null ? (leaseMs(atRaw) - skew) : 0,
 			};
+			// The genuine-servicing signal the eligibility gate reads (recGenuine). The
+			// gateway relays it as `serviced_at`, skew-adjusted like last_seen. LEFT ABSENT
+			// when the gateway does not send it, so recGenuine can tell "old gateway, fall
+			// back to the beat" from "new gateway reporting a stale (or zero) servicing".
+			var svRaw = rec.serviced_at != null ? rec.serviced_at : rec.servicedAt;
+			if (svRaw != null) recOut.servicedAt = leaseMs(svRaw) - skew;
+			next[String(id)] = recOut;
 		}
 		var before = JSON.stringify(_presence);
 		_presence = next;
@@ -987,58 +1049,76 @@
 	/// `{ dispatch, peer, reason }`.
 	function autoDispatchDecision(chat, presence, opts, now) {
 		var o = opts || {}, c = chat || {};
-		var peer = freshestPeer(presence, o.selfId, now, o.freshWindowMs);
-		if (!peer) return { dispatch: false, reason: 'no-fresh-peer' };
+		var n = (now == null ? Date.now() : now);
+		var win = o.freshWindowMs || DISPATCH_FRESH_MS;
+		// The ONE candidate: the freshest GENUINELY-AVAILABLE peer -- beating AND actively
+		// servicing the errand channel. A phantom (a background tab that beats but does not
+		// collect) is excluded here, so it can never be chosen over a genuine peer or over
+		// local. This is the heart of the fix (owner 2026-09-06): a turn "handed to
+		// gilgamesh" that gilgamesh never ran was chosen on the bare beat alone.
+		var peer = freshestGenuinePeer(presence, o.selfId, n, win);
+
 		// The per-chat choice: true = always hand off, false = keep on THIS device
-		// (the opt-out), null/undefined = decide by the policy below.
+		// (the opt-out), null/undefined = decide by the reliability policy below.
 		var toggle = (o.toggle != null) ? !!o.toggle : null;
-		// An explicit opt-out pins the chat here, even on a phone with a peer awake --
-		// so it must be tested BEFORE the mobile default and before the global one.
+		// An explicit opt-out pins the chat here regardless of any peer -- tested first.
 		if (toggle === false) return { dispatch: false, reason: 'chat-local' };
-		// A NOMINATED, fresh always-on runner takes EVERY turn -- above the mobile,
-		// agentic and quick-local rules below, so a nominated runner runs the turn
-		// whatever kind it is and whether or not this device is attended. That is the
-		// durability the nomination is for: a device can drop with no chance to set up
-		// a hand-off, so turns go to the runner by default, not to whatever device
-		// happens to be in front of someone. Judged by the NOMINEE'S OWN freshness
-		// (not `freshestPeer`), so it wins even when another peer beat more recently;
-		// a nominee aged out of the window reads offline and this falls through to the
-		// policy below, which keeps a quick foreground turn local -- the present user's
-		// device is the right fallback over routing to some other peer. The per-chat
-		// opt-out above still wins, so a chat pinned local (its files live on this
-		// device) is never overridden. dispatchToPeer posts to the relay with no peer;
-		// `nominationStandDown` is what actually seats the errand on the nominee.
+
+		// A NOMINATED always-on runner takes EVERY turn WHEN IT IS GENUINELY AVAILABLE
+		// (beating AND servicing). A nominee that is merely beating -- a throttled tab --
+		// or asleep is "not responding" (owner's phrase), so this falls through to the
+		// runner-down policy rather than seating the turn on a device that will not run it.
+		// Judged on the nominee's OWN genuineness, so a fresh nominee wins even over a
+		// fresher other peer. `nominationStandDown` seats the errand on the nominee.
 		var nom = String(o.nominatedId || '');
 		if (nom && nom !== String(o.selfId || '')) {
 			var nRec = (presence || {})[nom];
-			var nNow = (now == null ? Date.now() : now);
-			var nWin = o.freshWindowMs || DISPATCH_FRESH_MS;
-			if (nRec && (nNow - leaseMs(nRec.lastSeen)) <= nWin) {
+			if (recGenuine(nRec, n, win)) {
 				return { dispatch: true, peer: { deviceId: nom, name: (nRec.name || ''), lastSeen: leaseMs(nRec.lastSeen) }, reason: 'nominee' };
 			}
 		}
-		// The toggle on, or the global default when the chat has not chosen.
-		if (toggle === true || o.globalDefault) return { dispatch: true, peer: peer, reason: 'toggle-on' };
-		// MOBILE: a persistent peer is awake, so hand EVERY turn off -- quick or
-		// agentic -- rather than run it on the phone; the answer syncs back. Desktop
-		// (no isPhone) falls through: you are already on the persistent instance.
-		if (o.isPhone) return { dispatch: true, peer: peer, reason: 'mobile-peer' };
-		// The phone is backgrounding with a turn still in flight -- move the running
-		// off it before it suspends.
-		if (o.backgrounding && o.turnInFlight) return { dispatch: true, peer: peer, reason: 'backgrounding-in-flight' };
-		// A long or agentic turn is worth the round trip; a quick one is not. The
-		// worker signal must be a GENUINE one: daimond.js seeds `workerModel`/
-		// `workerProvider` to the chat's OWN model for every active chat (newChat,
-		// startChat), so `c.workerModel` is truthy on a plain chat and a bare
-		// truthiness test dispatched EVERY turn (D2). A worker/Diamond chat is one
-		// whose worker pair DIFFERS from the chat's own -- the user deliberately chose
-		// a different model to fan work out to; a pair merely mirroring the default is
-		// not agentic and stays local for instant streaming.
+
+		// A device stepping away (backgrounding) with a turn STILL IN FLIGHT hands the
+		// running turn to a genuine peer before it suspends -- but only if one exists;
+		// no genuine peer means keep it here to be recovered on return.
+		if (o.backgrounding && o.turnInFlight) {
+			return peer ? { dispatch: true, peer: peer, reason: 'backgrounding-in-flight' }
+				: { dispatch: false, reason: 'no-genuine-peer' };
+		}
+
+		// An explicit per-chat opt-IN, or the device-wide "hand off while I am away"
+		// posture: honour it when a genuine peer exists, else run local.
+		if (toggle === true || o.globalDefault) {
+			return peer ? { dispatch: true, peer: peer, reason: 'toggle-on' }
+				: { dispatch: false, reason: 'no-genuine-peer' };
+		}
+
+		// A LONG or AGENTIC turn is worth offloading to a genuine peer even from a
+		// desktop -- the separate "a desktop fans a heavy turn out to a persistent peer"
+		// feature, distinct from the ordinary-turn reliability fallback below. Now gated
+		// on a GENUINE peer (no phantom), and falling through to the local fallback when
+		// none is genuinely available. The worker signal must be a GENUINE pair: daimond.js
+		// seeds `workerModel`/`workerProvider` to the chat's OWN model for every active
+		// chat, so a bare truthiness test would dispatch every turn (D2) -- a worker/Diamond
+		// chat is one whose worker pair DIFFERS from the chat's own.
 		var worker = (c.workerModel    && String(c.workerModel)    !== String(c.model    || ''))
 			|| (c.workerProvider && String(c.workerProvider) !== String(c.provider || ''));
 		var agentic = !!o.toolsEnabled || !!o.expectedLong || !!worker;
-		if (agentic) return { dispatch: true, peer: peer, reason: 'long-turn' };
-		return { dispatch: false, reason: 'quick-local' };
+		if (agentic && peer) return { dispatch: true, peer: peer, reason: 'long-turn' };
+
+		// THE RUNNER IS DOWN (no fresh nominee, no explicit posture). Fallback ordering
+		// by connection reliability -- desktop > laptop > mobile (owner 2026-09-06):
+		//   - MOBILE: hand to a genuine peer if one exists; else run LOCAL -- the LAST
+		//     resort, because the phone is the least reliably connected device, not the
+		//     preferred runner.
+		//   - DESKTOP / LAPTOP: run LOCAL. A desktop is itself a reliable runner, so it
+		//     does not chase another peer. (This supersedes the former agentic/long-turn
+		//     desktop->peer dispatch -- see the report's flagged decision.)
+		if (o.isPhone) {
+			return peer ? { dispatch: true, peer: peer, reason: 'mobile-peer' }
+				: { dispatch: false, reason: 'no-genuine-peer' };
+		}
+		return { dispatch: false, reason: 'desktop-local' };
 	}
 
 	// ── The nominated always-on runner (the claim guard) ───────
@@ -1852,6 +1932,12 @@
 		/// acts on it at send-time. And the shared "which peer is awake" answer.
 		autoDispatchDecision: autoDispatchDecision,
 		freshestPeer:  freshestPeer,
+		/// The genuine-availability gate: `recGenuine` -- is a presence record beating AND
+		/// servicing the errand channel (not a phantom background tab)? -- and
+		/// `freshestGenuinePeer` -- the freshest peer that passes it. What the auto-dispatch
+		/// decision selects on, so a presence-only phantom is never chosen.
+		recGenuine:    recGenuine,
+		freshestGenuinePeer: freshestGenuinePeer,
 		/// The remote-consent decisions, pure so a test drives the money-safe bound.
 		/// `attendedPeer` -- the freshest device the user is ON (foreground + recent
 		/// interaction), or null; `consentRouteDecision` -- ask that peer, resolve from

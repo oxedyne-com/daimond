@@ -1,1 +1,1 @@
-{"build":"e26d06b79dae","note":"Sync: offload overflow diamonds as references so they all travel (files no longer squeeze them out)"}
+{"build":"0b450896e117","note":"Sync: hand off only to a genuinely-available device (not a phantom tab); backstop local recovery; no double-run"}

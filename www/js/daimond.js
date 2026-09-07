@@ -14281,6 +14281,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return '';
 	}
 
+	/// The name to put on the LIVE hand-off tile header -- the device that has ACTUALLY
+	/// CLAIMED the turn (holds a live lease), or '' when none has. Unlike
+	/// `handoffTargetLabel` it does NOT fall back to the chosen/guessed target: a tile
+	/// must not say "Handed off to gilgamesh" while gilgamesh has taken no lease and may
+	/// never run it (owner report 2026-09-06). Until a real claim the header stays generic
+	/// and the footer says "Sent to your other devices".
+	function handoffClaimLabel(m) {
+		try {
+			var holder = (window.DaimondLease && DaimondLease.holder) ? DaimondLease.holder(m.iturn) : null;
+			if (holder) { var hn = deviceLabelFor(holder); if (hn) return hn; }
+		} catch (e) { /* presence/lease not up */ }
+		return '';
+	}
+
 	/// Draw a turn HANDED TO A PEER as its own hand-off tile, live for the whole
 	/// wait: a header naming the device, a spinner and the §5 status/control in the
 	/// body. This is what a handed-off turn looks like in the flow from the moment
@@ -14298,7 +14312,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// stands (the parcel synced back before its report was collected): treat that
 		// as done here too, so the spinner does not linger beside the reply.
 		try { if (current && dispatchedAnswerPresent(current, m)) return; } catch (e) { /* draw it */ }
-		var dl   = handoffTargetLabel(m);
+		// Name the runner ONLY once a real lease claim exists; until then the header is
+		// generic and the footer carries "Sent to your other devices" (owner 2026-09-06).
+		var dl   = handoffClaimLabel(m);
 		var line = dl ? tOr('chat.handed_off', 'Handed off to {name}', { name: dl })
 			: tOr('chat.who_handoff', 'Hand-off');
 		var tile = buildTile('handoff', { expanded: true, who: line });
@@ -14952,8 +14968,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (c.id) ChatStore.compact(c.id);   // drop the tombstoned placeholder from the chunks (Stage 2)
 			}
 		}
-		// The placeholder is gone: its index entry goes with it.
+		// The placeholder is gone: its index entry goes with it, and any armed
+		// dispatcher-side recovery backstop (Fix B) has nothing left to recover.
 		delete _dispatchedIx[String(turnId)];
+		try { clearDispatchFallback(turnId); } catch (e) { /* no timer armed */ }
 	}
 
 	/// Redraw the interrupted badges, so a state change (a lease claimed, a report
@@ -15003,22 +15021,47 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 	}
 
+	// The turnIds a LOCAL recovery is running RIGHT NOW on this device, so the two
+	// recovery drivers -- the Fix B backstop timer (`runDispatchFallback`) and the
+	// visibilitychange rescue (`peerCollectOnReturn`) -- can never both run the same
+	// orphan and double-bill it. It is the ONE guard that is safe here, because it is
+	// SYNCHRONOUS: the other guards do not close the window. `chat._generating` is set
+	// LATE, inside runTurn after a long async prelude (finished -> leaseTake ->
+	// reconstruct -> leaseRenew -> scopeChatTo), so two drivers both pass it before
+	// either sets it; `_recovering` guards only `peerCollectOnReturn`, not the timer;
+	// and the take-if-vacant lease treats two SAME-holder self-recoveries as mutually
+	// reclaimable (holder === self is not "foreign"), so both claim. Adding the turnId
+	// here before the first await, and clearing it in the finally, dedupes at the one
+	// point both drivers funnel through. (Found by adversarial QA, 2026-09-07: two
+	// concurrent same-device recoveries billed the turn twice.)
+	var _localRecovering = Object.create(null);
+
 	/// Run ONE orphaned dispatched turn locally, through the same lease as a peer.
-	/// Money-safe: `runErrand` with `allowSelf` still TAKES the lease (a peer that
-	/// already holds it wins the take-if-vacant merge and this stands down), still
-	/// checks `finished` first, and on completion pushes the answer, posts the done
-	/// report, ACKS the relay errand (so no peer re-collects and re-runs it) and
-	/// releases the lease. On done, drop the empty "dispatched" placeholder so the
-	/// real answer stands alone.
+	/// Money-safe: a SYNCHRONOUS per-turnId in-flight guard stops the two local
+	/// recovery drivers double-running it (see `_localRecovering`); and `runErrand`
+	/// with `allowSelf` still TAKES the lease (a peer that already holds it wins the
+	/// take-if-vacant merge and this stands down), still checks `finished` first, and on
+	/// completion pushes the answer, posts the done report, ACKS the relay errand (so no
+	/// peer re-collects and re-runs it) and releases the lease. On done, drop the empty
+	/// "dispatched" placeholder so the real answer stands alone.
 	async function recoverOneLocally(chat, m) {
 		if (chat._generating) return;			// a live turn already owns this chat
-		var errand = errandForRecovery(chat, m);
-		var res = null;
-		try { res = await DaimondPeer.runErrand(errand, peerRunErrandDeps({ allowSelf: true })); }
-		catch (e) { return; }					// a failed recovery leaves the footer as it was
-		if (res && res.done) {
-			try { dropDispatchedPlaceholder(String(m.iturn)); } catch (e) { /* nothing drawn */ }
-			renderDispatchedBadges();
+		var tid = String((m && m.iturn) || '');
+		// SYNCHRONOUS dedupe, BEFORE the first await: if a local recovery of this turn is
+		// already in flight on this device, do not start a second (the double-bill QA hit).
+		if (tid && _localRecovering[tid]) return;
+		if (tid) _localRecovering[tid] = true;
+		try {
+			var errand = errandForRecovery(chat, m);
+			var res = null;
+			try { res = await DaimondPeer.runErrand(errand, peerRunErrandDeps({ allowSelf: true })); }
+			catch (e) { return; }				// a failed recovery leaves the footer as it was
+			if (res && res.done) {
+				try { dropDispatchedPlaceholder(String(m.iturn)); } catch (e) { /* nothing drawn */ }
+				renderDispatchedBadges();
+			}
+		} finally {
+			if (tid) delete _localRecovering[tid];	// clear on EVERY exit -- no leaked in-flight key
 		}
 	}
 
@@ -15067,6 +15110,72 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				await recoverOneLocally(jobs[k].chat, jobs[k].m);
 			}
 		} finally { _recovering = false; }
+	}
+
+	// ── Fix B: the dispatcher-side recovery-timer backstop ─────
+	//
+	// After the phone hands a turn off, nothing recovers it while the tab stays
+	// FOREGROUND: recovery-on-return fires only on a visibilitychange, and the
+	// no-peer-awake deadline is ~15 minutes away. So a hand-off to a peer that never
+	// claims (a phantom background tab; or a genuine peer that then stalls) leaves the
+	// spinner on "Sent to your other devices" for the whole deadline while the owner
+	// watches (owner report 2026-09-06). This arms ONE short timer per dispatch: about
+	// one freshness window on (DISPATCH_FRESH_MS + 5 s ~ 95 s), by which a genuine peer
+	// would have claimed, run it HERE if none did. It is the LAST-RESORT backstop, not
+	// the preferred path -- the phone being the least reliably connected device -- so it
+	// fires only when no peer took the turn. Money-safe: it goes through the SAME
+	// recoverOneLocally -> runErrand({allowSelf}) take-if-vacant lease, so a peer that
+	// DID claim in the meantime wins the merge and this device stands down.
+	var _dispatchFallbackTimers = Object.create(null);
+
+	/// Arm the recovery backstop for one dispatched turn. Idempotent per turn.
+	function scheduleDispatchFallback(chatId, turnId) {
+		var tid = String(turnId || '');
+		if (!tid || _dispatchFallbackTimers[tid]) return;
+		var wait = ((window.DaimondPeer && DaimondPeer.DISPATCH_FRESH_MS) || 90000) + 5000;
+		_dispatchFallbackTimers[tid] = setTimeout(function () {
+			delete _dispatchFallbackTimers[tid];
+			runDispatchFallback(chatId, tid);
+		}, wait);
+	}
+
+	/// Clear a turn's backstop timer -- its answer arrived, or it was taken back.
+	function clearDispatchFallback(turnId) {
+		var tid = String(turnId || '');
+		if (_dispatchFallbackTimers[tid]) { try { clearTimeout(_dispatchFallbackTimers[tid]); } catch (e) {} delete _dispatchFallbackTimers[tid]; }
+	}
+
+	/// The backstop body: learn server truth (a peer's claim or answer), then, if the
+	/// turn is STILL dispatched, NOT finished, and NOT held by a live foreign lease, run
+	/// it locally through the same money-safe lease as recovery-on-return.
+	async function runDispatchFallback(chatId, turnId) {
+		try {
+			if (!window.DaimondPeer || !DaimondPeer.recoverDecision || !DaimondPeer.runErrand) return;
+			var tid = String(turnId || '');
+			// Pull the lease door and collect the post box first, so a peer's claim (lease)
+			// or answer (parcel) is seen before the decision -- the same order
+			// peerCollectOnReturn uses, so the two recovery drivers read identical truth.
+			try { if (window.DaimondPost && DaimondPost.collect) await DaimondPost.collect(); } catch (e) { /* offline */ }
+			try { if (window.DaimondSync && DaimondSync.pull) await DaimondSync.pull(); } catch (e) { /* offline */ }
+			var chat = null;
+			for (var i = 0; i < chats.length; i++) if (chats[i] && chats[i].id === chatId) { chat = chats[i]; break; }
+			if (!chat || chat.diamondId || !chat.messages) return;
+			var m = null;
+			for (var j = 0; j < chat.messages.length; j++) {
+				var x = chat.messages[j];
+				if (x && x.why === DaimondPeer.REASON_DISPATCHED && String(x.iturn) === tid) { m = x; break; }
+			}
+			if (!m) return;					// placeholder gone: already answered / dropped
+			var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(tid) : null;
+			var fin   = dispatchedTurnFinished(chat, tid);
+			// recoverDecision stands down if a peer holds a LIVE foreign lease or the turn
+			// is finished -- so a genuine peer that DID claim keeps it; the phone reclaims
+			// only a turn nobody ran. dropDispatchedPlaceholder on completion stamps the
+			// "Ran here — hand-off to X didn't finish" provenance (seq 207), so the owner
+			// can always tell where it ran.
+			if (!DaimondPeer.recoverDecision(m, lease, fin, selfDeviceId(), Date.now())) return;
+			await recoverOneLocally(chat, m);
+		} catch (e) { /* the 15-min deadline + [Run here] remain the ultimate backstop */ }
 	}
 
 	/// Start LISTENING for dispatched errands: park on the gateway's Post channel and
@@ -15203,6 +15312,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			).then(function (res) {
 				if (!res || !res.ok) { try { appendError((res && res.why) || 'could not hand this to a peer'); } catch (e) { /* drawn best-effort */ } }
 			});
+			// Arm the last-resort recovery backstop: if no peer claims this within ~one
+			// freshness window, run it here rather than let the spinner hang to the
+			// 15-min deadline (Fix B). Money-safe via the take-if-vacant lease.
+			try { scheduleDispatchFallback(chat.id, umid); } catch (e) { /* recovery-on-return still nets it */ }
 			return true;
 		} catch (e) { return false; }		// any hiccup: run locally
 	}
@@ -15315,8 +15428,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// gateway path (beatPresence) forwards it too, so once the gateway relays
 			// `attended`/`attended_at` a runner can route to an attended peer live.
 			var att = isAttended();
-			DaimondPresence.beat(id, name, Date.now(), att);
-			try { if (window.DaimondSync && DaimondSync.beatPresence) DaimondSync.beatPresence(id, name, att); } catch (e) { /* the next beat carries it */ }
+			// Genuinely servicing the errand channel (a park round or collect completed
+			// recently AND parking is on), NOT merely awake -- so a peer can exclude a
+			// throttled background tab that beats but never collects (peer.js recGenuine).
+			var svc = false;
+			try { svc = !!(window.DaimondPost && DaimondPost.servicing && DaimondPost.servicing(DaimondPeer.DISPATCH_FRESH_MS)); } catch (e) { svc = false; }
+			DaimondPresence.beat(id, name, Date.now(), att, svc);
+			try { if (window.DaimondSync && DaimondSync.beatPresence) DaimondSync.beatPresence(id, name, att, svc); } catch (e) { /* the next beat carries it */ }
 		} catch (e) { /* a missed beat is safe */ }
 	}
 	function startPresenceBeat() {
@@ -15394,6 +15512,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!mine.length) return;
 		var tombs = loadMsgTombs();
 		if (mine.every(function (m) { return tombs[m.mid]; })) return;
+		// Was this a HAND-OFF being run here after the fact (a [Run here] on a dispatched
+		// turn)? Capture where it was sent BEFORE the placeholder is dropped, so the
+		// resulting answer records "Ran here — hand-off to X didn't finish" rather than
+		// looking like a plain local turn the owner cannot place (owner report 2026-09-06;
+		// this is the [Run here] twin of the fell-back stamp dropDispatchedPlaceholder
+		// already does for the auto-recovery path).
+		var fellBack = '';
+		mine.forEach(function (m) {
+			if (m.why === 'dispatched') fellBack = handoffTargetLabel(m) || fellBack;
+		});
+		var contOpts = fellBack ? { turnId: iturn, handoffFellBack: fellBack } : undefined;
 		// What actually arrived before the road went. Read off the record rather than off the
 		// screen, so this works after a reload as well as in the sitting that lost it.
 		var partial = '';
@@ -15410,7 +15539,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			touchChat(chat); persistChats();
 			if (chat.id) ChatStore.compact(chat.id);   // remove the retracted turn from the chunks (Stage 2)
 			renderHistory(chat.messages);
-			runTurn(chat, text);
+			runTurn(chat, text, contOpts);
 			return;
 		}
 		// The badge and the button come off, and the partial becomes an ordinary answer. Nothing
@@ -21360,6 +21489,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// re-run — and the "handed off then ran here" provenance had nothing to
 				// hang on. See dropDispatchedPlaceholder.
 				if (opts.turnId) amsg.iturn = String(opts.turnId);
+				// A hand-off run HERE after the fact ([Run here] on a dispatched turn):
+				// carry where it was sent, so the answer draws "Ran here — hand-off to X
+				// didn't finish" instead of reading as a plain local turn (appendAssistantText).
+				if (opts.handoffFellBack) amsg.handoffFellBack = String(opts.handoffFellBack);
 				chat.messages.push(amsg);
 			}
 				stampMessages(chat.messages, chat.id);

@@ -1674,6 +1674,7 @@
 		}
 		await save();
 		render();
+		_servicedAt = Date.now();		// a collect completed: this device is servicing the channel
 		return { ok: true, got: got, notes: notes, unreadable: unread, more: more };
 	}
 
@@ -1836,6 +1837,7 @@
 	var _parkOff  = '';			// why parking stopped, or ''
 	var _parkGen  = 0;			// torn down and restarted, so a stale park is ignored
 	var _parks    = 0;			// parks made, for a verifier
+	var _servicedAt = 0;		// last time a park long-poll round or a collect actually completed
 
 	/// Start parking. Idempotent, and refuses where parking has been turned off.
 	function parkStart() {
@@ -1889,6 +1891,10 @@
 					+ 'so this is an ordinary pull. Parking is off.');
 				return;
 			}
+			// A genuine park round completed: this device is actively servicing the errand
+			// channel right now. Stamp it so presence can tell a real runner from a
+			// throttled background tab that only beats (peer.js recGenuine).
+			_servicedAt = Date.now();
 			if (r.json.changed) await round();
 			var spent = Date.now() - began;
 			if (spent < PARK_FLOOR_MS) await sleep(PARK_FLOOR_MS - spent);
@@ -2491,6 +2497,15 @@
 		parkStart: parkStart,
 		parkStop:  function () { parkStop(''); },
 		parking:   function () { return { on: _parking, off: _parkOff, parks: _parks }; },
+		/// When this device last completed an errand-channel round (a park long-poll or a
+		/// collect), epoch-ms, or 0. The genuine-servicing signal presence carries so a
+		/// peer can tell a real runner from a background tab that only beats. `servicing`
+		/// answers whether that was within `windowMs` (default 90 s) AND parking is on.
+		servicedAt: function () { return _servicedAt; },
+		servicing:  function (windowMs) {
+			var w = windowMs || 90000;
+			return _parking && _servicedAt > 0 && (Date.now() - _servicedAt) <= w;
+		},
 		/// The parcel's two halves, for sync.js. `snapshot` answers null while the
 		/// identity is locked, and the caller must leave the section OFF when it
 		/// does -- an empty record reads to the other device as a deletion.

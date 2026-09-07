@@ -1281,50 +1281,63 @@ async function runPresenceAcceptance(P, PR, check) {
 	check('freshestPeer excludes this device',
 		P.freshestPeer({ phone: { name: 'me', lastSeen: T } }, 'phone', T) === null);
 
-	// ── autoDispatchDecision: the policy. ──
+	// ── autoDispatchDecision: the policy (rewritten to the owner's authoritative
+	// fallback rule, 2026-09-06). When the runner is down: MOBILE hands to a
+	// GENUINELY-AVAILABLE peer, else runs LOCAL (last resort); DESKTOP/laptop runs
+	// LOCAL (a desktop is itself a reliable runner and does not chase a peer). A fresh
+	// GENUINE nominee still wins first. Eligibility is genuine availability (beating
+	// AND servicing), so a phantom presence-only tab is never chosen. `fresh`/`stale`
+	// carry no servicedAt, so recGenuine falls back to the bare beat -- a `fresh` peer
+	// is genuine here, which is what these branch tests need. ──
 	const quickChat = { id: 'c', provider: 'openrouter', model: 'm' };
 	const workerChat = { id: 'c2', workerModel: 'w' };
-	check('fresh peer + LONG turn (tools) -> dispatch',
+	// A presence map whose peer beats but is a PHANTOM (stale servicing stamp).
+	const phantomP = { argonaut: { name: 'argonaut', lastSeen: T, servicedAt: T - 5 * 60 * 1000 } };
+	check('DESKTOP + AGENTIC (tools) turn + genuine peer -> dispatch to that peer (long-turn, feature kept)',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', toolsEnabled: true }, T); return d.dispatch === true && d.reason === 'long-turn' && d.peer.name === 'argonaut'; })());
-	check('fresh peer + QUICK turn -> run local',
-		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone' }, T); return d.dispatch === false && d.reason === 'quick-local'; })());
-	check('STALE peer -> run local (never dispatch into the void)',
-		(() => { const d = P.autoDispatchDecision(quickChat, stale, { selfId: 'phone', toolsEnabled: true }, T); return d.dispatch === false && d.reason === 'no-fresh-peer'; })());
-	check('no presence -> run local',
-		P.autoDispatchDecision(quickChat, {}, { selfId: 'phone', toolsEnabled: true }, T).dispatch === false);
-	check('TOGGLE on -> dispatch even a quick turn',
+	check('DESKTOP + AGENTIC (tools) turn + only a PHANTOM peer -> run LOCAL (no genuine peer)',
+		(() => { const d = P.autoDispatchDecision(quickChat, phantomP, { selfId: 'phone', toolsEnabled: true }, T); return d.dispatch === false && d.reason === 'desktop-local'; })());
+	check('DESKTOP + ORDINARY quick turn, runner down -> run LOCAL',
+		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone' }, T); return d.dispatch === false && d.reason === 'desktop-local'; })());
+	check('DESKTOP + no peer at all -> run LOCAL',
+		P.autoDispatchDecision(quickChat, {}, { selfId: 'phone' }, T).dispatch === false);
+	check('OPT-IN (toggle true) + genuine peer -> dispatch (toggle-on)',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', toggle: true }, T); return d.dispatch === true && d.reason === 'toggle-on'; })());
-	check('global default on (chat unset) -> dispatch a quick turn',
+	check('OPT-IN (toggle true) but only a PHANTOM peer -> run LOCAL (phantom excluded)',
+		(() => { const d = P.autoDispatchDecision(quickChat, phantomP, { selfId: 'phone', toggle: true }, T); return d.dispatch === false && d.reason === 'no-genuine-peer'; })());
+	check('step-away posture (globalDefault) + genuine peer -> dispatch',
 		P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', globalDefault: true }, T).dispatch === true);
 	check('per-chat toggle OFF overrides a global default ON',
 		P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', toggle: false, globalDefault: true }, T).dispatch === false);
-	check('backgrounding with a turn in flight -> dispatch',
+	check('backgrounding with a turn in flight + genuine peer -> dispatch',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', backgrounding: true, turnInFlight: true }, T); return d.dispatch === true && d.reason === 'backgrounding-in-flight'; })());
-	check('a worker chat is agentic -> dispatch',
-		P.autoDispatchDecision(workerChat, fresh, { selfId: 'phone' }, T).reason === 'long-turn');
+	check('a genuine WORKER chat on DESKTOP dispatches to a genuine peer (long-turn, feature kept)',
+		(() => { const d = P.autoDispatchDecision(workerChat, fresh, { selfId: 'phone' }, T); return d.dispatch === true && d.reason === 'long-turn'; })());
 
-	// ── The nominated always-on runner: it takes EVERY turn, above quick-local,
-	// so a turn goes to the runner regardless of what kind it is or whether this
-	// device is attended -- the durability the nomination is for. A per-chat
-	// opt-out still wins; a stale nominee falls back to local. ──
-	check('a FRESH nominee dispatches even a QUICK foreground turn',
+	// ── The nominated always-on runner: a FRESH GENUINE nominee takes the turn,
+	// above the mobile/desktop fallback. A per-chat opt-out still wins; a nominee
+	// that is offline OR merely beating (not servicing) is "not responding" and this
+	// falls through to the fallback policy. ──
+	check('a FRESH GENUINE nominee dispatches even a QUICK foreground turn',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', nominatedId: 'argonaut' }, T); return d.dispatch === true && d.reason === 'nominee' && d.peer.deviceId === 'argonaut'; })());
-	check('a STALE nominee runs local (never dispatch into the void)',
+	check('a STALE nominee (desktop) runs local',
 		P.autoDispatchDecision(quickChat, stale, { selfId: 'phone', nominatedId: 'argonaut' }, T).dispatch === false);
+	check('a PHANTOM nominee (beats, not servicing) is "not responding" -> falls through',
+		(() => { const d = P.autoDispatchDecision(quickChat, phantomP, { selfId: 'phone', nominatedId: 'argonaut' }, T); return d.reason !== 'nominee'; })());
 	check('this device IS the nominee -> it does not dispatch a turn to itself',
 		P.autoDispatchDecision(quickChat, fresh, { selfId: 'argonaut', nominatedId: 'argonaut' }, T).dispatch === false);
 	check('a per-chat opt-out (toggle OFF) STILL wins over a fresh nominee',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', nominatedId: 'argonaut', toggle: false }, T); return d.dispatch === false && d.reason === 'chat-local'; })());
 
-	// ── The MOBILE policy: a phone hands EVERY turn to an awake peer, quick or not,
-	// because the phone is not where a turn should run when a persistent peer exists;
-	// the answer syncs back. Desktop keeps the old behaviour (it IS the instance). ──
-	check('MOBILE + fresh peer + a plain QUICK turn -> dispatch (mobile-peer), naming the peer',
+	// ── The MOBILE fallback: when the runner is down, a phone hands to a GENUINELY-
+	// AVAILABLE peer; if none is genuinely available it runs LOCAL -- the last resort,
+	// because the phone is the least reliably connected device. A phantom is excluded. ──
+	check('MOBILE + genuine peer -> dispatch (mobile-peer), naming the peer',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: true }, T); return d.dispatch === true && d.reason === 'mobile-peer' && d.peer && d.peer.name === 'argonaut'; })());
-	check('DESKTOP (no isPhone) + fresh peer + a QUICK turn -> run local, NOT mobile-peer',
-		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false }, T); return d.dispatch === false && d.reason === 'quick-local'; })());
-	check('MOBILE with NO fresh peer -> run local (never dispatch into the void)',
-		(() => { const d = P.autoDispatchDecision(quickChat, stale, { selfId: 'phone', isPhone: true }, T); return d.dispatch === false && d.reason === 'no-fresh-peer'; })());
+	check('MOBILE + only a PHANTOM peer -> run LOCAL (phantom excluded, not chosen)',
+		(() => { const d = P.autoDispatchDecision(quickChat, phantomP, { selfId: 'phone', isPhone: true }, T); return d.dispatch === false && d.reason === 'no-genuine-peer'; })());
+	check('MOBILE with NO peer -> run LOCAL (never dispatch into the void)',
+		(() => { const d = P.autoDispatchDecision(quickChat, stale, { selfId: 'phone', isPhone: true }, T); return d.dispatch === false && d.reason === 'no-genuine-peer'; })());
 
 	// ── The per-chat OPT-OUT pins a chat to THIS device, and it must beat the mobile
 	// default and the global default alike -- so it is decided before either. ──
@@ -1332,32 +1345,40 @@ async function runPresenceAcceptance(P, PR, check) {
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: true, toggle: false }, T); return d.dispatch === false && d.reason === 'chat-local'; })());
 	check('OPT-OUT beats a global default ON as well (opt-out is decided first)',
 		P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: true, toggle: false, globalDefault: true }, T).dispatch === false);
-	check('OPT-IN (toggle true) is still an override on DESKTOP (toggle-on, not quick-local)',
+	check('OPT-IN (toggle true) is still an override on DESKTOP (toggle-on, not desktop-local)',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false, toggle: true }, T); return d.dispatch === true && d.reason === 'toggle-on'; })());
 
-	// ── LAPTOP ELIGIBILITY (proposal #10). A wide desktop view is `isPhone: false`.
-	// Before this it could only hand off an agentic turn; the step-away posture, which
-	// daimond.js's `maybeAutoDispatch` passes as `globalDefault: handoffWhenAway()`,
-	// makes a laptop route its ordinary quick turns to an awake peer too, so a chat
-	// started on it survives it being closed. Off by silence, so nothing changes for a
-	// laptop that never turned it on. ──
-	check('LAPTOP (isPhone false) + step-away posture ON + fresh peer -> dispatch, naming the peer',
+	// ── LAPTOP step-away posture: `maybeAutoDispatch` passes it as
+	// `globalDefault: handoffWhenAway()`, so a laptop set to "hand off while away"
+	// routes its turns to a genuine peer; off by silence, a laptop runs its own turns
+	// locally (desktop-local). ──
+	check('LAPTOP (isPhone false) + step-away posture ON + genuine peer -> dispatch, naming the peer',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false, globalDefault: true }, T); return d.dispatch === true && d.reason === 'toggle-on' && d.peer && d.peer.name === 'argonaut'; })());
-	check('LAPTOP + posture OFF + a QUICK turn -> run local (no regression when unset)',
-		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false }, T); return d.dispatch === false && d.reason === 'quick-local'; })());
+	check('LAPTOP + posture OFF + a QUICK turn -> run local (desktop-local)',
+		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false }, T); return d.dispatch === false && d.reason === 'desktop-local'; })());
 
-	// ── THE STEP-AWAY HAND-OFF (proposal #10). Exactly the opts daimond.js's
-	// `handoffInFlightOnStepAway` passes from the `pagehide` handler for a turn still
-	// running when the laptop is closed: backgrounding, a turn in flight. The posture
-	// gate is applied in the app before this call; the pure decision picks the
-	// freshest peer, and the lease is the single-runner arbiter at run time (untouched
-	// here). ──
-	check('STEP-AWAY: laptop closing with a turn in flight -> hand to the freshest peer',
+	// ── THE STEP-AWAY HAND-OFF: the opts `handoffInFlightOnStepAway` passes from
+	// `pagehide` for a turn still running when the laptop is closed -- backgrounding, a
+	// turn in flight. A genuine peer takes it; no genuine peer keeps it here for
+	// recovery-on-return. ──
+	check('STEP-AWAY: laptop closing with a turn in flight -> hand to the genuine peer',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false, backgrounding: true, turnInFlight: true }, T); return d.dispatch === true && d.reason === 'backgrounding-in-flight' && d.peer && d.peer.name === 'argonaut'; })());
-	check('STEP-AWAY with NO fresh peer -> run local (never hand into the void)',
-		(() => { const d = P.autoDispatchDecision(quickChat, stale, { selfId: 'phone', isPhone: false, backgrounding: true, turnInFlight: true }, T); return d.dispatch === false && d.reason === 'no-fresh-peer'; })());
+	check('STEP-AWAY with NO genuine peer -> keep here for recovery (no dispatch into the void)',
+		(() => { const d = P.autoDispatchDecision(quickChat, stale, { selfId: 'phone', isPhone: false, backgrounding: true, turnInFlight: true }, T); return d.dispatch === false && d.reason === 'no-genuine-peer'; })());
 	check('STEP-AWAY still honours a per-chat OPT-OUT (a pinned chat is decided local first)',
 		P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', isPhone: false, backgrounding: true, turnInFlight: true, toggle: false }, T).dispatch === false);
+
+	// ── The genuine-availability gate (recGenuine / freshestGenuinePeer): a phantom
+	// (beats but stale servicing) is excluded; a genuine peer (beats AND services) is
+	// chosen; an absent servicing field (old gateway) falls back to the bare beat. ──
+	check('recGenuine: a phantom (beat, stale serviced) is NOT genuine',
+		P.recGenuine({ name: 'g', lastSeen: T, servicedAt: T - 5 * 60 * 1000 }, T, P.DISPATCH_FRESH_MS) === false);
+	check('recGenuine: a genuine peer (beat + fresh serviced) IS genuine',
+		P.recGenuine({ name: 'g', lastSeen: T, servicedAt: T }, T, P.DISPATCH_FRESH_MS) === true);
+	check('recGenuine: no serviced field (old gateway) falls back to the beat',
+		P.recGenuine({ name: 'g', lastSeen: T }, T, P.DISPATCH_FRESH_MS) === true);
+	check('freshestGenuinePeer skips a phantom and picks the genuine peer',
+		P.freshestGenuinePeer({ ph: { name: 'ph', lastSeen: T, servicedAt: T - 5 * 60 * 1000 }, ok: { name: 'ok', lastSeen: T - 40000, servicedAt: T - 40000 } }, 'phone', T, P.DISPATCH_FRESH_MS).deviceId === 'ok');
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1411,26 +1432,32 @@ async function runMoneySafety(phone, laptop, check) {
 		check('D1(b): still exactly ONE run/charge after a third device collects post-release', runCount === 1);
 	}
 
-	// ── D2 — a plain chat is not "agentic" merely because it mirrors its model ──
+	// ── D2 — a plain chat is not "agentic" merely because it mirrors its model, AND the
+	// desktop agentic/worker dispatch (KEPT, owner 2026-09-06) is now GENUINE-PEER-GATED ──
 	//
-	// daimond.js seeds workerModel/workerProvider to the chat's OWN model for every
-	// active chat (newChat, startChat), so a bare `c.workerModel` truthiness test
-	// dispatched EVERY quick turn. The signal must be a GENUINE worker pair.
-	console.log('\nD2 — a plain chat whose worker pair mirrors its own model stays local');
+	// daimond.js seeds workerModel/workerProvider to the chat's OWN model for every active
+	// chat, so a bare `c.workerModel` truthiness test dispatched EVERY quick turn. The
+	// signal must be a GENUINE worker pair (differs from the chat's own). A genuine worker
+	// turn on a desktop hands to a GENUINE peer; a phantom-only peer falls to local.
+	console.log('\nD2 — a mirrored worker pair stays local; a genuine one dispatches to a genuine peer');
 	{
 		const T = 1700000000000;
-		const fresh = { argonaut: { name: 'argonaut', lastSeen: T - 1000 } };
+		const fresh   = { argonaut: { name: 'argonaut', lastSeen: T - 1000 } };
+		const phantom = { argonaut: { name: 'argonaut', lastSeen: T, servicedAt: T - 5 * 60 * 1000 } };
 		const mirrored = { id: 'c', provider: 'openrouter', model: 'm', workerModel: 'm', workerProvider: 'openrouter' };
 		const dM = Pp.autoDispatchDecision(mirrored, fresh, { selfId: 'phone' }, T);
-		check('D2: a plain foreground chat with a MIRRORED worker pair stays local',
-			dM.dispatch === false && dM.reason === 'quick-local');
-		const genuine = { id: 'c2', provider: 'openrouter', model: 'm', workerModel: 'big/model', workerProvider: 'openrouter' };
-		const dG = Pp.autoDispatchDecision(genuine, fresh, { selfId: 'phone' }, T);
-		check('D2: a genuine worker chat (worker model differs) still dispatches',
+		check('D2: a MIRRORED worker pair on DESKTOP is not agentic -> local (desktop-local)',
+			dM.dispatch === false && dM.reason === 'desktop-local');
+		const worker = { id: 'c2', provider: 'openrouter', model: 'm', workerModel: 'big/model', workerProvider: 'openrouter' };
+		const dG = Pp.autoDispatchDecision(worker, fresh, { selfId: 'phone' }, T);
+		check('D2: a GENUINE worker chat on DESKTOP dispatches to a genuine peer (long-turn, kept)',
 			dG.dispatch === true && dG.reason === 'long-turn');
+		const dGp = Pp.autoDispatchDecision(worker, phantom, { selfId: 'phone' }, T);
+		check('D2: a genuine worker chat with only a PHANTOM peer -> local (no genuine peer)',
+			dGp.dispatch === false && dGp.reason === 'desktop-local');
 		// A worker PROVIDER that differs is genuine too, even with the same model name.
 		const diffProv = { id: 'c3', provider: 'openrouter', model: 'm', workerModel: 'm', workerProvider: 'anthropic' };
-		check('D2: a differing worker PROVIDER is agentic',
+		check('D2: a differing worker PROVIDER is agentic -> dispatch to a genuine peer',
 			Pp.autoDispatchDecision(diffProv, fresh, { selfId: 'phone' }, T).dispatch === true);
 	}
 
@@ -1495,6 +1522,74 @@ async function runMoneySafety(phone, laptop, check) {
 		L.adopt({ 'turn-d4': { turnId: 'turn-d4', holder: 'devLAP', mode: 'running', expiry: T + 60000, renewedAt: T } }, () => T);
 		check('D4: an unchanged pull does not fire the listener (no needless redraw)', fired === before);
 		L.forget();
+	}
+
+	// ── D5 — TWO SAME-DEVICE LOCAL RECOVERIES of one orphan must run it ONCE ──
+	//
+	// Fix B (the dispatcher-side ~95 s recovery timer, `runDispatchFallback`) and the
+	// visibilitychange rescue (`peerCollectOnReturn`) both funnel through
+	// `recoverOneLocally` -> `runErrand({allowSelf})` on the SAME device. Adversarial QA
+	// (2026-09-07) found they share no synchronous mutual exclusion: `chat._generating`
+	// is set LATE inside runTurn (after finished/leaseTake/reconstruct/leaseRenew), so
+	// both pass it before either sets it; `_recovering` guards only the visibilitychange
+	// driver; and the take-if-vacant lease treats two SAME-holder self-recoveries as
+	// mutually reclaimable (holder === self is not foreign) -> both claim, both bill.
+	// The fix is a SYNCHRONOUS per-turnId in-flight guard at the top of
+	// `recoverOneLocally`, before the first await. This models that guard over the REAL
+	// runErrand + lease, and proves (a) two concurrent recoveries run ONCE with it, and
+	// (b) WITHOUT it the same two DOUBLE-run (the mutation that proves the guard bites).
+	console.log('\nD5 — two concurrent same-device local recoveries run (and bill) the orphan exactly once');
+	{
+		const Lp = phone.DaimondLease;
+		const SELF = 'devPHONE';
+		const tick = () => new Promise((r) => setTimeout(r, 0));
+		// Deps shared by both recoveries: ONE device, ONE lease CAS, ONE answered flag.
+		// runTurn awaits a microtask before billing, so the two drivers genuinely overlap.
+		const mkRun = (sync, counters) => (extra) => Object.assign({
+			selfId: SELF, cas: Pp.syncCas(sync), allowSelf: true, now: () => 5000,
+			finished: async () => { await tick(); return counters.answered; },
+			reconstruct: async () => { await tick(); return { chat: { id: 'c', messages: [] } }; },
+			runTurn: async () => { await tick(); counters.ran += 1; },      // the BILLABLE model call
+			abort: () => {}, pushResult: async () => { counters.pushed += 1; counters.answered = true; return 7; },
+			post: async () => {}, ack: async () => { counters.acked += 1; }, now: () => 5000,
+		}, extra || {});
+		const errand = Pp.makeErrand({ turnId: 'turn-d5', chatId: 'c', prompt: 'q', eid: 'e-d5',
+			deadline: 9e15, dispatchedBy: SELF });
+
+		// (a) WITH the synchronous guard (the fix): a module-level in-flight set shared by
+		// both drivers, added before the first await and cleared in a finally -- exactly
+		// what recoverOneLocally now does.
+		{
+			Lp.forget();
+			const sync = makeLeaseSync({});
+			const c = { ran: 0, pushed: 0, acked: 0, answered: false };
+			const deps = mkRun(sync, c);
+			const inFlight = Object.create(null);
+			async function recoverOneLocally(turnId) {
+				const tid = String(turnId);
+				if (inFlight[tid]) return { ran: false, why: 'local-in-flight' };
+				inFlight[tid] = true;
+				try { return await Pp.runErrand(errand, deps()); }
+				finally { delete inFlight[tid]; }
+			}
+			const [r1, r2] = await Promise.all([recoverOneLocally('turn-d5'), recoverOneLocally('turn-d5')]);
+			check('D5(a): exactly ONE billable run across two concurrent recoveries (ran === 1)', c.ran === 1);
+			check('D5(a): exactly ONE answer pushed (pushed === 1)', c.pushed === 1);
+			check('D5(a): the second recovery short-circuits synchronously (local-in-flight)',
+				(r1.why === 'local-in-flight') !== (r2.why === 'local-in-flight'));
+		}
+
+		// (b) MUTATION control: remove the guard (call runErrand directly twice) and the
+		// SAME two recoveries double-run -- the exact bug, so the guard above is load-bearing.
+		{
+			Lp.forget();
+			const sync = makeLeaseSync({});
+			const c = { ran: 0, pushed: 0, acked: 0, answered: false };
+			const deps = mkRun(sync, c);
+			await Promise.all([Pp.runErrand(errand, deps()), Pp.runErrand(errand, deps())]);
+			check('D5(b): WITHOUT the guard the same two recoveries DOUBLE-run (ran === 2) — the guard bites', c.ran === 2);
+		}
+		Lp.forget();
 	}
 }
 
