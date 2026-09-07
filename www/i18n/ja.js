@@ -821,8 +821,8 @@
 	// 受け取られなかった荷物。何が大きすぎるのかと、その典型的な原因を書きます。
 	'sync.too_big':        '同期を止めています',
 	'sync.too_big_reason': 'この端末の荷物が大きすぎて送れないため、作業が外に出ていきません。たいていは、とても大きな Diamond か作業領域のファイルが原因です。小さくするか取り除けば、同期はひとりでに再開します。',
-	'sync.diamonds_left.one': '{n} 件の Diamond がこの端末の同期の荷物に入りきらず、空きができるまでほかの端末には届きません: {names}',
-	'sync.diamonds_left.other': '{n} 件の Diamond がこの端末の同期の荷物に入りきらず、空きができるまでほかの端末には届きません: {names}',
+	'sync.diamonds_left.one': '{n} 件の diamond がこの端末の同期の荷物に入りきらず、空きができるまでほかの端末には届きません: {names}',
+	'sync.diamonds_left.other': '{n} 件の diamond がこの端末の同期の荷物に入りきらず、空きができるまでほかの端末には届きません: {names}',
 	// A file the parcel had no room for, named the way a Diamond that did not fit is
 	// named. The same news in the same shape; not an error -- the budget is doing what
 	// it is for, and nothing at the far end is deleted.

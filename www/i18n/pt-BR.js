@@ -662,8 +662,8 @@
 	// A refused parcel. Say what is too large, and what usually makes it so.
 	'sync.too_big': 'Sincronização pausada',
 	'sync.too_big_reason': 'O pacote deste dispositivo é grande demais para ser enviado, então o trabalho dele parou de viajar. Em geral a causa é um Diamond ou um arquivo do espaço de trabalho muito grande; diminua-o ou remova-o e a sincronização volta sozinha.',
-	'sync.diamonds_left.one': '{n} Diamond não coube no pacote de sincronização deste dispositivo e não chega aos seus outros dispositivos enquanto não houver espaço para ele: {names}',
-	'sync.diamonds_left.other': '{n} Diamonds não couberam no pacote de sincronização deste dispositivo e não chegam aos seus outros dispositivos enquanto não houver espaço para eles: {names}',
+	'sync.diamonds_left.one': '{n} diamond não coube no pacote de sincronização deste dispositivo e não chega aos seus outros dispositivos enquanto não houver espaço para ele: {names}',
+	'sync.diamonds_left.other': '{n} diamonds não couberam no pacote de sincronização deste dispositivo e não chegam aos seus outros dispositivos enquanto não houver espaço para eles: {names}',
 	// A file the parcel had no room for, named the way a Diamond that did not fit is
 	// named. The same news in the same shape; not an error -- the budget is doing what
 	// it is for, and nothing at the far end is deleted.

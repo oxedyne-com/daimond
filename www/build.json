@@ -1,1 +1,1 @@
-{"build":"15dd03a9ee49","note":"Store: chunks are the transcript source of truth (Stage 2 — append writes, physical delete, transition heal)"}
+{"build":"eb022b63c8c4","note":"Sync: hold not name a diamond stranded when a large one's offload stalls; de-capitalise the notice"}

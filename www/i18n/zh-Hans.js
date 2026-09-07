@@ -817,8 +817,8 @@
 	// 被退回的包裹。要说清楚什么太大，以及通常是什么弄大的。
 	'sync.too_big':        '同步已暂停',
 	'sync.too_big_reason': '这台设备的包裹太大，发不出去，它做的事就不再往外走了。通常是某个特别大的 Diamond 或工作区文件闹的；让它小一点或删掉它，同步会自己接上。',
-	'sync.diamonds_left.one': '有 {n} 个 Diamond 装不进这台设备的同步包裹，在腾出空间之前不会传到你的其他设备：{names}',
-	'sync.diamonds_left.other': '有 {n} 个 Diamond 装不进这台设备的同步包裹，在腾出空间之前不会传到你的其他设备：{names}',
+	'sync.diamonds_left.one': '有 {n} 个 diamond 装不进这台设备的同步包裹，在腾出空间之前不会传到你的其他设备：{names}',
+	'sync.diamonds_left.other': '有 {n} 个 diamond 装不进这台设备的同步包裹，在腾出空间之前不会传到你的其他设备：{names}',
 	// A file the parcel had no room for, named the way a Diamond that did not fit is
 	// named. The same news in the same shape; not an error -- the budget is doing what
 	// it is for, and nothing at the far end is deleted.

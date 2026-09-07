@@ -4222,6 +4222,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			else out.held++;
 		}
 		out.held = 0;
+		// Did offload turn out to be unavailable THIS ROUND? True from the start when
+		// canOffload is false (store not ready, identity re-locked), and set below when
+		// an upload the gateway refused makes a large Diamond fall back to riding inline.
+		// It matters at the end: a large Diamond riding inline spends budget the small
+		// ones behind it needed, so their strand is transient, not genuine. seq 212 held
+		// the large Diamond itself but still NAMED the small ones caught in its wake --
+		// this is the other half of that fix.
+		var offloadStalled = !canOffload;
 		for (var i = 0; i < held.length; i++) {
 			var d = held[i], data;
 			liveIds[d.id] = 1;
@@ -4300,6 +4308,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { mani = await DaimondChunks.offloadBytes('d:' + d.id, new TextEncoder().encode(text)); }
 				catch (e) { mani = null; }        // gateway unreachable, store full: fall back to inline
 				if (!mani) {
+					offloadStalled = true;   // a payload that should have left is riding inline
 					// The offload could not be made this round, so the Diamond rides
 					// inline instead of not travelling at all -- exactly as it did
 					// before offload existed, budget permitting.
@@ -4351,6 +4360,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// to; drop those so the next commit sweeps them. Writes only on a real
 		// deletion, so a no-op collect leaves the index byte-identical.
 		if (window.DaimondCloud && DaimondCloud.contentReap) DaimondCloud.contentReap('@d/', liveIds);
+		// On a stalled round nothing is NAMED. A small Diamond overflowed only because a
+		// large one that should have offloaded spent its budget inline; once offload
+		// works the large payload leaves the parcel and the room comes back, so telling
+		// the user their Diamond will not travel "until there is room" is a false alarm
+		// on a picture that is about to change. Every strand becomes a HOLD, retried next
+		// sync, exactly as a large one already is -- and the honest notice the user does
+		// see is the chunk store's own `standRefused`, which names the real remedy.
+		if (offloadStalled && out.left.length) {
+			out.held += out.left.length;
+			out.left = [];
+		}
 		trail('sync collected', out.list.length + ' of ' + held.length
 			+ ', ' + Math.round(used / 1024) + ' kB, ' + out.left.length + ' left behind, '
 			+ out.held + ' held for offload');

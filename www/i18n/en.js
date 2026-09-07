@@ -1460,8 +1460,8 @@
 	// A Diamond the parcel had no room for. Named, because the only thing the user can
 	// do about it is find that Diamond, and said aloud rather than logged, because
 	// nothing else on screen would look any different.
-	'sync.diamonds_left.one':   '{n} Diamond did not fit in this device’s sync parcel and will not reach your other devices until there is room for it: {names}',
-	'sync.diamonds_left.other': '{n} Diamonds did not fit in this device’s sync parcel and will not reach your other devices until there is room for them: {names}',
+	'sync.diamonds_left.one':   '{n} diamond did not fit in this device’s sync parcel and will not reach your other devices until there is room for it: {names}',
+	'sync.diamonds_left.other': '{n} diamonds did not fit in this device’s sync parcel and will not reach your other devices until there is room for them: {names}',
 	// A file the parcel had no room for, named the way a Diamond that did not fit is
 	// named. The same news in the same shape; not an error -- the budget is doing what
 	// it is for, and nothing at the far end is deleted.
