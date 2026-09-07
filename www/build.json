@@ -1,1 +1,1 @@
-{"build":"eb022b63c8c4","note":"Sync: hold not name a diamond stranded when a large one's offload stalls; de-capitalise the notice"}
+{"build":"e26d06b79dae","note":"Sync: offload overflow diamonds as references so they all travel (files no longer squeeze them out)"}

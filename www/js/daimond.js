@@ -4230,49 +4230,97 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the large Diamond itself but still NAMED the small ones caught in its wake --
 		// this is the other half of that fix.
 		var offloadStalled = !canOffload;
+
+		// EVERY DIAMOND TRAVELS WHEN OFFLOAD WORKS. Small Diamonds used to ride inline
+		// for an old receiver's sake and were NAMED "did not fit" when the inline budget
+		// -- already eaten by the workspace files ahead of them -- had no room. The owner
+		// runs latest on every device, so a small Diamond may leave as an `@d/` reference
+		// like a large one: a few hundred bytes that fit in any budget. So the inline blob
+		// is now only the CHEAP path for the freshest few; the rest offload. This mirrors
+		// `collectChatsRefs` -- pick the inline set first, offload the remainder.
+		//
+		// MEASURE BEFORE MATERIALISING, and measure ALL of them first, because the inline
+		// set is chosen against the whole store rather than one Diamond at a time. The
+		// size is a directory walk that costs no content -- this used to export every
+		// Diamond and throw the over-budget ones away, which held the whole store in
+		// memory and killed an iPhone's tab on every boot for four sessions. The estimate
+		// runs high (bytes on disk plus paths; the JSON envelope only adds), so a Diamond
+		// it rejects certainly would not have fitted; one it keeps is measured exactly
+		// below. An older engine without `export_diamond_size` reports null and offloads.
+		var sizes = [];
+		for (var m0 = 0; m0 < held.length; m0++) {
+			var sz = null;
+			try {
+				if (typeof diamondApp().export_diamond_size === 'function') {
+					sz = await diamondApp().export_diamond_size(held[m0].id);
+				}
+			} catch (e) { sz = null; }
+			sizes.push(sz);
+		}
+		// Bytes a Diamond's `@d/` reference is likely to weigh: the JSON envelope plus one
+		// entry per chunk, the chunk count read off the same ladder chunks.js uses
+		// (`chunkSizeFor`). Room for the reference of EVERY Diamond is held back from the
+		// budget before the inline set is chosen, so the freshest small Diamonds cannot
+		// spend the budget that the ones behind them need for their references -- which is
+		// exactly how the whole store was named "did not fit" with offload working.
+		function estRefBytes(size) {
+			if (size == null) return 256;               // unknown: a small one, measured when it offloads
+			var ch = size <= 64 * 1024 * 1024 ? 256 * 1024
+				: (size <= 512 * 1024 * 1024 ? 1024 * 1024 : 4 * 1024 * 1024);
+			var n = Math.max(1, Math.ceil(size / ch));
+			return 160 + n * 96;
+		}
+		var refReserve = 0;
+		for (var r0 = 0; r0 < sizes.length; r0++) refReserve += estRefBytes(sizes[r0]);
+		// What inline may spend: the budget less the reserved reference room. When the
+		// references alone would fill the budget (a pathological store), inline gets
+		// nothing and every Diamond offloads.
+		var inlineCap = canOffload ? Math.max(0, budget - refReserve) : budget;
+		// Which Diamonds ride inline: the freshest small ones, in the store's existing
+		// order (freshest first, trashed last), while the inline cap has room. A Diamond
+		// over SYNC_FILE_MAX is never inline -- it offloads as it always did. The set is a
+		// deterministic function of the sizes, so two collects of an unchanged store pick
+		// the same set and the parcel stays the byte-stable fixed point the push-skip
+		// needs. Empty when nothing can be offloaded: then the `!canOffload` path below
+		// carries every Diamond inline and holds any that overflow, retried next round.
+		var inline = {};
+		if (canOffload) {
+			var spent = 0;
+			for (var p0 = 0; p0 < held.length; p0++) {
+				var psz = sizes[p0];
+				if (psz !== null && psz <= SYNC_FILE_MAX && spent + psz <= inlineCap) {
+					inline[held[p0].id] = 1;
+					spent += psz;
+				}
+			}
+		}
+
 		for (var i = 0; i < held.length; i++) {
 			var d = held[i], data;
 			liveIds[d.id] = 1;
-			// MEASURE BEFORE MATERIALISING. This used to export every Diamond and
-			// then check the result against the budget, so the ones over budget
-			// were built in full and thrown away -- the budget capped what was
-			// SENT and not what was HELD. With fifteen Diamonds carrying un-pruned
-			// version history that is the whole store in memory at once, which is
-			// what killed an iPhone's tab on every boot for four sessions. The
-			// size comes from a directory walk and costs no content.
-			//
-			// The estimate is deliberately HIGH -- it counts bytes on disk plus
-			// the paths, and the JSON envelope only adds -- so a Diamond it
-			// rejects certainly would not have fitted. One it accepts is measured
-			// again below, exactly, because the envelope is what actually travels.
-			var size = null;
-			try {
-				if (typeof diamondApp().export_diamond_size === 'function') {
-					size = await diamondApp().export_diamond_size(d.id);
-				}
-			} catch (e) { size = null; }        // an older engine: fall back to measuring after
+			var size = sizes[i];
 			var stamp = diamondStamp(d);
 			var ckey = '@d/' + d.id;
 			var stored = canOffload ? DaimondCloud.contentGet(ckey) : null;
 
-			// SMALL ENOUGH TO RIDE INLINE, or nowhere to offload it to. Kept inline
-			// so an old receiver degrades cleanly and only large payloads become
-			// refs. If it had a manifest from when it was larger, that manifest is
-			// now unreferenced and goes, so its chunks are swept.
-			if (!canOffload || (size !== null && size <= SYNC_FILE_MAX)) {
+			// RIDES INLINE: chosen for the inline set, or nowhere to offload it to. The
+			// cheap path -- the bytes travel in the blob and no chunk is uploaded. If it
+			// held a manifest from a round when it offloaded, that manifest is now
+			// unreferenced and goes, so its chunks are swept.
+			if (!canOffload || inline[d.id]) {
 				if (stored && DaimondCloud.contentForget) DaimondCloud.contentForget(ckey);
 				if (size !== null && used + size > budget) {
-					// Genuine only if it is inline-sized -- a large one is here because
-					// offload was not available, and that is transient (see `strand`).
-					strand(d.id, d.name, size <= SYNC_FILE_MAX);
-					continue;                    // never exported, so never held
+					// Only reachable with canOffload false -- an inline Diamond is chosen
+					// against the cap, so it fits. Held, not named: once offload is back it
+					// leaves as a reference and the room returns. seq-215 stall behaviour.
+					strand(d.id, d.name, false);
+					continue;                    // never exported, so never held twice
 				}
 				try { data = await diamondApp().export_diamond(d.id); }
 				catch (e) { out.complete = false; continue; }  // one unreadable Diamond must not hold up the rest
-				// `continue`, not `break`: one enormous Diamond must not stop the
-				// small fresh ones behind it from travelling.
+				// `continue`, not `break`: one Diamond must not stop the fresh ones behind it.
 				if (used + data.length > budget) {
-					strand(d.id, d.name, data.length <= SYNC_FILE_MAX);
+					strand(d.id, d.name, false);
 					data = null;                 // let it go before the next one is read
 					continue;
 				}
@@ -4336,14 +4384,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks, touched: stamp });
 				ref = { v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks };
 			}
-			// The reference is a few hundred bytes, so the budget essentially never
-			// binds on it -- the real ceiling on offloaded content is the chunk
-			// store's, which the commit counts it against alongside the files.
+			// The reference is a few hundred bytes and room for it was reserved out of the
+			// budget above, so it fits in all but a pathological store. The real ceiling on
+			// offloaded content is the chunk store's, which the commit counts it against
+			// alongside the files.
 			var refBytes = JSON.stringify(ref).length;
 			if (used + refBytes > budget) {
-				// The content is offloaded and only a few hundred bytes of reference
-				// would travel, so the parcel is jammed by the files ahead of it, not
-				// by this Diamond: genuine, and the user does have to act.
+				// The content is offloaded and only a few hundred bytes of reference would
+				// travel, yet even that does not fit: the parcel is genuinely full -- many
+				// Diamonds' references plus the files ahead of them exceed one parcel. The
+				// reserve is sized to keep this effectively unreachable for an ordinary
+				// store, and it is the one case a Diamond is honestly named.
 				strand(d.id, d.name, true);
 				continue;
 			}

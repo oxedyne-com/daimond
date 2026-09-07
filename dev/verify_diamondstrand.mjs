@@ -14,8 +14,11 @@
 // the chunk store's own `standRefused` be the notice the user sees.
 //
 // Four counted scenarios plus the standRefused surfacing, all headless on the real
-// collectSync. GENUINE small-overflow (D) must STILL be named — the fix must not
-// swallow real capacity.
+// collectSync. Scenario D — more small diamonds than the inline budget holds, with
+// offload working — is the owner's real "did not fit" bug: since the diamond-fit fix
+// the overflow leaves as `@d/` references and EVERY diamond travels (see
+// verify_diamondfit.mjs for that failure reproduced against his files-fill-the-parcel
+// shape). Nothing is named while offload can carry it.
 //
 //   node dev/verify_diamondstrand.mjs
 import { open, scratch } from './harness.mjs';
@@ -111,15 +114,16 @@ const C = await run(page, { available: true, offloadOk: true });
 check('C offload works: every Diamond travels, none named or held', C.sent === 9 && C.named === 0 && C.held === 0, C.trail);
 check('C offload works: no banner', !C.bannerShown);
 
-// D — GENUINE capacity: many small inline Diamonds that truly exceed the budget.
-// The fix must NOT swallow this: offload was available and no large one failed, so
-// these are named exactly as before.
+// D — MORE SMALL DIAMONDS THAN THE INLINE BUDGET HOLDS, offload working. Before the
+// diamond-fit fix these rode inline, overflowed the ~4 MiB Diamonds budget and were
+// NAMED "did not fit" — the owner's bug. Now the freshest fill the inline cap and the
+// rest leave as `@d/` references, so EVERY diamond travels and nothing is named.
 const many = [];
 for (let i = 0; i < 45; i++) many.push({ id: 'm' + i, name: 'Mini ' + i, size: 100 * KiB, stamp: 7000 - i });
 await seed(page, many);
 const D = await run(page, { available: true, offloadOk: true });
-check('D genuine overflow: real capacity is STILL named (fix does not swallow it)', D.named > 0 && D.bannerShown, D.trail);
-check('D genuine overflow: it is named, not silently held', D.held === 0, `named=${D.named} held=${D.held}`);
+check('D over-inline-budget: every diamond travels, none named (offload carries the overflow)', D.sent === 45 && D.named === 0, D.trail);
+check('D over-inline-budget: nothing named and nothing silently held', D.bannerShown === false && D.held === 0, `named=${D.named} held=${D.held} banner=${D.bannerShown}`);
 
 // ── standRefused surfacing ────────────────────────────────────────────────
 // The REAL offload path (canOffload true, identity unlocked), with the gateway made
