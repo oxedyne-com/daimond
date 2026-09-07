@@ -175,10 +175,11 @@
 		chip.dataset.state = state;
 		var label = {
 			current: t('topbar.up_to_date'),
-			// {note} is the new version's own label, when the gateway named one.
-			ready:   t('update.ready') + (note ? ' — ' + note : '') + ' ' + t('update.click_now'),
+			// The transparency note is NOT shown to the user (it is a developer commit
+			// subject, not user copy) -- the chip and banner say only that an update waits.
+			ready:   t('update.ready') + ' ' + t('update.click_now'),
 			busy:    t('update.ready_help'),
-			done:    t('update.updated') + (note ? ' — ' + note : ''),
+			done:    t('update.updated'),
 			stale:   t('update.stale'),
 		}[state] || '';
 		chip.title = label;
@@ -253,10 +254,12 @@
 		if (state === 'ready' && dismissedFor && dismissedFor === pending) want = false;
 		if (!want) { hideBanner(); return; }
 		if (!banner) buildBanner();
-		// {note} is the new build's own one-line label, when the deploy carried one.
+		// The user line is deliberately note-free: `note` carries the deploy's
+		// TRANSPARENCY-CHAIN summary (a developer commit subject), which is not
+		// user-facing copy and read as garbage in a popup. See `onFound`.
 		banner.msg.textContent = state === 'stale'
 			? t('update.stale')
-			: t('update.available') + (note ? ' — ' + note : '');
+			: t('update.available');
 		banner.go.textContent = t('update.reload');
 		banner.x.setAttribute('aria-label', t('update.dismiss'));
 		banner.x.hidden = state === 'stale';
