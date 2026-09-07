@@ -440,7 +440,7 @@ async function stopGateway() {
 // here: it makes it impossible to use one account's session for another's
 // request, which is exactly the mistake a role check must not make.
 async function call(jar, method, url, body, xff) {
-	const headers = { 'x-daimond-api': '1' };
+	const headers = { 'x-daimond-api': '2' };
 	if (jar && jar.cookie) headers.cookie = jar.cookie;
 	if (body !== undefined) headers['content-type'] = 'application/json';
 	// There is no Steel in front of a development gateway, so every request

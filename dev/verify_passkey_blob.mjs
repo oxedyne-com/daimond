@@ -36,18 +36,18 @@ async function account() {
 	const sign = msg => b64url(crypto.sign(null, Buffer.from(msg), privateKey));
 	const ts   = Math.floor(Date.now() / 1000);
 	const reg  = await fetch(`${GW}/api/account`, {
-		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 		body: JSON.stringify({ pubkey: pub, alg: 'Ed25519', ts,
 			sig: sign(`daimond-gw-account:v1:${pub}:${ts}`) }),
 	});
 	if (!reg.ok) return null;
 	const id = (await reg.json()).account_id;
 	const ch = await (await fetch(`${GW}/api/auth/challenge`, {
-		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 		body: JSON.stringify({ pubkey: pub, alg: 'Ed25519' }),
 	})).json();
 	const ver = await fetch(`${GW}/api/auth/verify`, {
-		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 		body: JSON.stringify({ challenge_id: ch.challenge_id, sig: sign(ch.challenge) }),
 	});
 	return { id, cookie: (ver.headers.get('set-cookie') || '').split(';')[0] };
@@ -55,14 +55,14 @@ async function account() {
 
 const put = (cookie, handle, blob) => fetch(`${GW}/api/passkey-blob`, {
 	method: 'POST',
-	headers: Object.assign({ 'content-type': 'application/json', 'x-daimond-api': '1' },
+	headers: Object.assign({ 'content-type': 'application/json', 'x-daimond-api': '2' },
 		cookie ? { cookie } : {}),
 	body: JSON.stringify({ handle, blob }),
 });
 const get = handle => fetch(`${GW}/api/passkey-blob?h=${encodeURIComponent(handle)}`,
-	{ headers: { 'x-daimond-api': '1' } });
+	{ headers: { 'x-daimond-api': '2' } });
 const del = (cookie, handle) => fetch(`${GW}/api/passkey-blob?h=${encodeURIComponent(handle)}`,
-	{ method: 'DELETE', headers: Object.assign({ 'x-daimond-api': '1' }, cookie ? { cookie } : {}) });
+	{ method: 'DELETE', headers: Object.assign({ 'x-daimond-api': '2' }, cookie ? { cookie } : {}) });
 
 /// A well-formed handle: 43 chars of base64url, as SHA-256 produces.
 const handleOf = seed => b64url(crypto.createHash('sha256').update(seed).digest());

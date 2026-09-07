@@ -181,7 +181,7 @@ function binding(dev) {
 /// session for another's request, which two accounts in one browser context
 /// would do silently.
 async function call(jar, method, url, body, xff) {
-	const headers = { 'x-daimond-api': '1' };
+	const headers = { 'x-daimond-api': '2' };
 	if (jar && jar.cookie) headers.cookie = jar.cookie;
 	if (body !== undefined) headers['content-type'] = 'application/json';
 	// Talking to the gateway directly, as development does, there is no Steel in

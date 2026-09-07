@@ -86,7 +86,7 @@ async function register(country) {
 	if (country) body.country = country;
 	const r = await fetch(`${GW_URL}/api/account`, {
 		method: 'POST',
-		headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+		headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 		body: JSON.stringify(body),
 	});
 	const j = await r.json();
@@ -139,7 +139,7 @@ async function seed() {
 // call is the only thing Node can make on its own -- and it must be refused.
 async function adminRaw() {
 	const r = await fetch(`${GW_URL}/api/admin?view=summary`, {
-		headers: { 'x-daimond-api': '1' },
+		headers: { 'x-daimond-api': '2' },
 	});
 	let j = null; try { j = await r.json(); } catch (e) {}
 	return { status: r.status, j };

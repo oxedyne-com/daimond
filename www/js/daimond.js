@@ -3105,6 +3105,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A dispatched-placeholder chat the parcel just introduced must be made resident,
 		// so the peer subsystem finds its placeholder (blocker B3).
 		await ensureDispatchedResident();
+		// RECONCILE A DISPATCHED PLACEHOLDER WHOSE ANSWER HAS MERGED, off the sync path
+		// and not only when a `done` report lands in the post box. A peer's answer syncs
+		// back before -- or instead of -- its report, and until this the empty placeholder
+		// sat spinning "Sent to your other devices" beside the reply: renderHistory's
+		// append fast path redraws only the new tail, so a placeholder tile drawn before
+		// the answer arrived was never re-evaluated and never cleared. Dropping it here
+		// removes the tile, carries the hand-off provenance onto the answer, and -- being
+		// a removal rather than an append -- makes the render below a full rebuild.
+		try {
+			var dispTurns = Object.keys(_dispatchedIx);
+			for (var dti = 0; dti < dispTurns.length; dti++) {
+				var dturn = dispTurns[dti];
+				var dchat = dispatchedChat(dturn);
+				if (!dchat || !dchat.messages) continue;
+				var dph = null;
+				for (var dmi = 0; dmi < dchat.messages.length; dmi++) {
+					var dm = dchat.messages[dmi];
+					if (dm.why === 'dispatched' && String(dm.iturn) === String(dturn)
+						&& !(dm.content && dm.content.trim())) { dph = dm; break; }
+				}
+				if (dph && dispatchedAnswerPresent(dchat, dph)) dropDispatchedPlaceholder(dturn);
+			}
+		} catch (e) { /* a reconcile must never break the merge */ }
 		if (current && !current._generating && chats.indexOf(current) !== -1) {
 			renderHistory(current.messages);      // another tab may have added turns
 		}
@@ -14091,7 +14114,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// prefix is proven byte-for-byte unchanged by `isAppendOf`, so the result is the
 		// same DOM. Falls through to the rebuild for a chat switch, a shortening, an edit,
 		// or a middle insertion.
-		if (sameChat && _renderSynced && Array.isArray(messages)) {
+		// A DISPATCHED PLACEHOLDER WHOSE ANSWER HAS NOW MERGED forces the full rebuild
+		// below: the append fast path would draw only the new tail (the answer) and leave
+		// the placeholder's spinner tile -- drawn before the answer arrived -- standing.
+		// The full rebuild re-runs `appendDispatchedTile`, which suppresses the spinner
+		// beside a present reply (`dispatchedAnswerPresent`). Belt-and-braces to the
+		// sync-path drop in `onChatsChangedElsewhere`, for any answer that merged without
+		// dropping the placeholder (a chat not on screen at merge time, a legacy record).
+		var _staleDispatch = false;
+		if (sameChat && current && Array.isArray(messages)) {
+			for (var _sdi = 0; _sdi < messages.length; _sdi++) {
+				var _sdm = messages[_sdi];
+				if (_sdm && _sdm.why === 'dispatched' && !(_sdm.content && _sdm.content.trim())
+					&& dispatchedAnswerPresent(current, _sdm)) { _staleDispatch = true; break; }
+			}
+		}
+		if (sameChat && _renderSynced && !_staleDispatch && Array.isArray(messages)) {
 			var nextSigs = sigsOf(messages);
 			if (isAppendOf(_renderedSigs, nextSigs)) {
 				_renderingHistory = true;
@@ -14485,8 +14523,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// at file-read time (chunks.js), so the manifests being present is the gate.
 	async function peerReconstruct(errand) {
 		var want = (errand && errand.parcelVersion) | 0;
+		// The whole catch-up -- the pull AND the materialise below -- lives inside one
+		// window, so `by` is set before either.
+		var by   = Date.now() + RECONSTRUCT_CATCHUP_MS;
 		if (window.DaimondSync && DaimondSync.pull) {
-			var by   = Date.now() + RECONSTRUCT_CATCHUP_MS;
 			var have = 0;
 			try { have = DaimondSync.version() | 0; } catch (e) { have = 0; }
 			// ALWAYS pull at least once, then loop to `want` when a target is known. A
@@ -14500,9 +14540,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (want > 0 && have < want) await new Promise(function (res) { setTimeout(res, 400); });
 			}
 		}
-		var chat = null;
-		for (var i = 0; i < chats.length; i++) if (chats[i].id === errand.chatId) { chat = chats[i]; break; }
+		function findErrandChat() {
+			for (var i = 0; i < chats.length; i++) if (chats[i].id === errand.chatId) return chats[i];
+			return null;
+		}
+		// FIND THE CHAT, MATERIALISING IT WHEN THE IN-MEMORY REBUILD HAS NOT CAUGHT UP.
+		//
+		// The pull above merged the errand's parcel into the STORE, but `applyChats`
+		// fires `onChatsChangedElsewhere` WITHOUT awaiting it, and that rebuild's first
+		// act is a real async summaries read -- so `chats[]` can still be missing a
+		// brand-new chat here while the store already holds it. Throwing then RELEASED
+		// the lease, the next device claimed and threw in turn, and the turn looped
+		// uncompleted: the live "Sent to your other devices" that no peer ever ran. So
+		// drive the rebuild from the store ourselves and retry within the catch-up
+		// window, and throw only if the chat is genuinely absent from what we pulled.
+		var chat = findErrandChat();
+		while (!chat && Date.now() < by) {
+			try { await onChatsChangedElsewhere(); } catch (e) { /* retry within the window */ }
+			chat = findErrandChat();
+			if (!chat) await new Promise(function (res) { setTimeout(res, 150); });
+		}
 		if (!chat) throw new Error('the errand names a chat this device does not hold yet');
+		// A chat that arrived through the parcel is a NON-RESIDENT summary -- an empty
+		// transcript beside a real `msgCount` (seq 213). Make it resident BEFORE building
+		// the agent, or `ensureApp` would seed the runner from an empty transcript,
+		// carrying neither the dispatched prompt nor the workspace. `loadChatMessages` is
+		// a no-op for a chat already loaded.
+		if (!chat._loaded) { try { await loadChatMessages(chat); } catch (e) { /* ensureApp reads what is resident */ } }
 		// D3 — rebuild the agent from the freshly-synced transcript (a stale app from
 		// before the sync would carry neither the dispatched prompt nor whatever the
 		// phone did since), and SEED IT WITHOUT the errand's own user prompt: runTurn

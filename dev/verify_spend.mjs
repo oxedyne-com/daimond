@@ -163,7 +163,7 @@ try {
 
 	// ── /api/ledger contract. ─────────────────────────────────────────────────
 	const led = await page.evaluate(async () => {
-		const r = await fetch('/api/ledger', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const r = await fetch('/api/ledger', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 		let j = null; try { j = await r.json(); } catch (e) {}
 		return { status: r.status, ok: !!(j && j.ok), isArray: Array.isArray(j && j.entries),
 			categorised: !!(j && Array.isArray(j.entries) && j.entries.every(x => typeof x.category === 'string')),

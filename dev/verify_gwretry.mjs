@@ -91,7 +91,7 @@ const { page } = s;
 /// looks like from inside the page.
 const killSession = () => page.evaluate(async () => {
 	await window.__realFetch('/api/auth/logout', {
-		method: 'POST', credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+		method: 'POST', credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 	});
 });
 
@@ -185,7 +185,7 @@ try {
 	await killSession();
 	const unaware = await page.evaluate(async () => {
 		const r = await window.__realFetch('/api/tools', {
-			credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+			credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 		});
 		return { status: r.status, authed: DaimondGateway.state().authed };
 	});
@@ -246,7 +246,7 @@ try {
 	const spent = await page.evaluate(async (code) => {
 		const r = await window.__realFetch('/api/pair/redeem', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 			body: JSON.stringify({ code }),
 		});
 		const j = r.status === 200 ? await r.json() : {};
@@ -653,7 +653,7 @@ try {
 		// The oracle is the GATEWAY, not the flag: does the session the bootstrap
 		// took actually serve a request?
 		const r = await window.__realFetch('/api/tools', {
-			credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+			credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 		});
 		return { mid: mid, rets: rets, authed: st.authed, pro: st.pro, served: r.status };
 	}), 'a renewal joining a bootstrap in flight', 30000);

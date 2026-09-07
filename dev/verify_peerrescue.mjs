@@ -146,10 +146,19 @@ try {
 	await a.page.click('#chat-send', { force: true });
 	await a.page.waitForTimeout(1000);
 
-	// A should have dispatched (a "dispatched" placeholder), not run locally.
-	const aChats = await untilChats(a, (cs) => countDispatched(cs) >= 1, 8000);
-	check('A dispatched the turn to the peer (did not run it locally)', countDispatched(aChats) >= 1,
-		'dispatched placeholders: ' + countDispatched(aChats));
+	// A should have dispatched (a "dispatched" placeholder), not run locally. The
+	// placeholder is transient now -- once the peer's answer merges it is reconciled
+	// away at once -- so the hand-off is proven by PROVENANCE (the answer ran on B) as
+	// well as by catching the placeholder while it stands. A local run on A
+	// (ranOn === idA) is the failure this guards.
+	const ranOnB = (cs) => allMsgs(cs).filter((m) => m.role === 'assistant' && m.content
+		&& /roundtrip/i.test(m.content) && String(m.ranOn) === String(idB)).length;
+	const ranOnA = (cs) => allMsgs(cs).filter((m) => m.role === 'assistant' && m.content
+		&& /roundtrip/i.test(m.content) && String(m.ranOn) === String(idA)).length;
+	const aChats = await untilChats(a, (cs) => countDispatched(cs) >= 1 || ranOnB(cs) >= 1, 10000);
+	check('A dispatched the turn to the peer (did not run it locally)',
+		(countDispatched(aChats) >= 1 || ranOnB(aChats) >= 1) && ranOnA(aChats) === 0,
+		'dispatched=' + countDispatched(aChats) + ' ranOnB=' + ranOnB(aChats) + ' ranOnA=' + ranOnA(aChats));
 
 	// B should wake on the Post channel, claim the lease, run and push. Observe the
 	// peer's own answer to the dispatched prompt appear on B (its content is the

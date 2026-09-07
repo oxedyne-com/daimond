@@ -587,7 +587,7 @@ if (NO_GATEWAY) {
 		// Push: offload to chunks, then the referencing blob.
 		const pushed = await page.evaluate(async () => {
 			await window.DaimondSync.push();
-			const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+			const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 			const j = await r.json();
 			return { version: j.version, present: j.present, blob: j.blob || '' };
 		});
@@ -601,7 +601,7 @@ if (NO_GATEWAY) {
 		// The blob names the file under `chunked`, and a fetched chunk is ciphertext.
 		const chunkCheck = await page.evaluate(async (mark) => {
 			const plain = await window.DaimondIdentity.unwrap(document ? (await (async () => {
-				const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+				const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 				return (await r.json()).blob;
 			})()) : '');
 			const state = JSON.parse(plain);
@@ -610,7 +610,7 @@ if (NO_GATEWAY) {
 			const addr = ref.chunks[0].addr;
 			const g = await fetch('/api/chunk', {
 				method: 'POST', credentials: 'same-origin',
-				headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+				headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 				body: JSON.stringify({ op: 'get', addr }),
 			});
 			const gj = await g.json();

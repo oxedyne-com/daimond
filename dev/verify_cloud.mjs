@@ -117,7 +117,7 @@ try {
 		await window.DaimondSync.push();
 		const g = await fetch('/api/chunk', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 			body: JSON.stringify({ op: 'get', addr }),
 		});
 		const gj = await g.json();
@@ -202,7 +202,7 @@ try {
 	const stale = await page.evaluate(async () => {
 		const r = await fetch('/api/chunk', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 			body: JSON.stringify({ op: 'commit', chunks: [], blob_version: 0 }),
 		});
 		return { status: r.status, json: await r.json().catch(() => null) };
@@ -213,7 +213,7 @@ try {
 		const mani = window.DaimondCloud.manifest('papers/alpha.txt');
 		const g = await fetch('/api/chunk', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 			body: JSON.stringify({ op: 'get', addr: mani.chunks[0].addr }),
 		});
 		return (await g.json()).present;

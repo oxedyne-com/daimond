@@ -88,7 +88,7 @@ const wake    = (pg) => pg.evaluate(() => window.DaimondSync.wake());
 /// Does the mailbox hold a parcel THIS device produced? Read-only: nothing here
 /// pushes, so a check that waits on this is waiting on the app's own triggers.
 const mailboxIsMine = (pg) => pg.evaluate(async () => {
-	const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+	const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 	const j = await r.json();
 	if (!j.present) return false;
 	try { return (await window.DaimondIdentity.unwrap(j.blob)) === JSON.stringify(await window.DaimondSync.parcel()); }

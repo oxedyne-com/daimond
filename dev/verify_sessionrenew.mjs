@@ -84,7 +84,7 @@ async function pushLanded(pg, ms = 8000) {
 /// looks like from inside the page.
 const killSession = () => page.evaluate(async () => {
 	await window.__realFetch('/api/auth/logout', {
-		method: 'POST', credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+		method: 'POST', credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 	});
 });
 
@@ -167,7 +167,7 @@ try {
 	await killSession();
 	const unaware = await page.evaluate(async () => {
 		const r = await window.__realFetch('/api/sync', {
-			credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+			credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 		});
 		return { status: r.status, authed: DaimondGateway.state().authed };
 	});
@@ -204,7 +204,7 @@ try {
 	const watch = await page.evaluate(async (start) => {
 		const readServer = async () => {
 			const r = await window.__realFetch('/api/sync', {
-				credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+				credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 			});
 			if (r.status !== 200) return -1;
 			const j = await r.json();
@@ -239,7 +239,7 @@ try {
 	}, before.version);
 	const after = await page.evaluate(async () => {
 		const r = await window.__realFetch('/api/sync', {
-			credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+			credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 		});
 		const j = r.status === 200 ? await r.json() : {};
 		let plain = '';
@@ -288,7 +288,7 @@ try {
 			DaimondGateway.autoReload(),
 		]);
 		const r = await window.__realFetch('/api/sync', {
-			credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+			credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 		});
 		return { minted: window.__gw.verify - v0, authed: DaimondGateway.state().authed, served: r.status };
 	});
@@ -425,7 +425,7 @@ try {
 		await sleep(2000);
 		back = await page.evaluate(async () => {
 			const r = await window.__realFetch('/api/sync', {
-				credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+				credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 			});
 			return { authed: DaimondGateway.state().authed, served: r.status };
 		});
@@ -473,7 +473,7 @@ try {
 		const big = c();
 		// Now take the session away underneath it, and block the way back.
 		await window.__realFetch('/api/auth/logout', {
-			method: 'POST', credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+			method: 'POST', credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 		});
 		window.fetch = function (u, o) {
 			const url = String((u && u.url) || u || '');

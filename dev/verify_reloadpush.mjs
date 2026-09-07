@@ -226,7 +226,7 @@ try {
 	// instead of from the product.
 	const sent = await b.page.evaluate(async (ms) => {
 		const mailbox = async () => {
-			const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+			const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 			const j = await r.json();
 			if (!j.present) return null;
 			try { return await window.DaimondIdentity.unwrap(j.blob); }

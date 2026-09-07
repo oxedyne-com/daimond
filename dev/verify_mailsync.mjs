@@ -169,7 +169,7 @@ try {
 	// have MOVED -- adding an account already triggers the engine's own push, so
 	// by the time this runs there may be nothing left to send.)
 	const landed = await page.evaluate(async (addr) => {
-		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 		const j = await r.json();
 		return { present: !!j.present, version: j.version || 0,
 			leaks: String(j.blob || '').indexOf(addr) !== -1 };

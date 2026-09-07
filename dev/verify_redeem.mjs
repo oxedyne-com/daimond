@@ -316,7 +316,7 @@ function binding(dev) {
 
 /// One HTTP call to the gateway, carrying a cookie jar this file owns.
 async function call(jar, method, url, body, xff) {
-	const headers = { 'x-daimond-api': '1' };
+	const headers = { 'x-daimond-api': '2' };
 	if (jar && jar.cookie) headers.cookie = jar.cookie;
 	if (body !== undefined) headers['content-type'] = 'application/json';
 	// Talking to the gateway directly there is no Steel in front to append one,
@@ -714,7 +714,7 @@ async function startServer() {
 		// browser says which account it holds a session on. Neither is derived
 		// from the other.
 		const mine = await page.evaluate(() => fetch('/api/account', {
-			credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+			credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 		}).then(r => r.json()).catch(() => ({})));
 		const listed = await call(boss.jar, 'GET', '/api/admin?view=passcodes');
 		const row = ((listed.j && listed.j.passcodes) || [])

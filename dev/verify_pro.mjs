@@ -60,18 +60,18 @@ async function account() {
 
 	const ts  = Math.floor(Date.now() / 1000);
 	const reg = await fetch(`${GW}/api/account`, {
-		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 		body: JSON.stringify({ pubkey: pub, alg: 'Ed25519', ts, sig: sign(`daimond-gw-account:v1:${pub}:${ts}`) }),
 	});
 	if (!reg.ok) return null;
 	const regJ = await reg.json();
 	const accountId = regJ.account_id;
 	const ch = await (await fetch(`${GW}/api/auth/challenge`, {
-		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 		body: JSON.stringify({ pubkey: pub, alg: 'Ed25519' }),
 	})).json();
 	const ver = await fetch(`${GW}/api/auth/verify`, {
-		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 		body: JSON.stringify({ challenge_id: ch.challenge_id, sig: sign(ch.challenge) }),
 	});
 	const cookie = (ver.headers.get('set-cookie') || '').split(';')[0];
@@ -79,7 +79,7 @@ async function account() {
 }
 
 const authed = (cookie, path_, opts = {}) => fetch(`${GW}${path_}`, {
-	...opts, headers: { ...(opts.headers || {}), cookie, 'x-daimond-api': '1' },
+	...opts, headers: { ...(opts.headers || {}), cookie, 'x-daimond-api': '2' },
 });
 
 // Mint a Pro licence the one way the gateway trusts: a signed checkout event.

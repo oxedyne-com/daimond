@@ -409,7 +409,7 @@ const GWORDS = 'thimble cartography ' + Math.random().toString(36).slice(2, 10);
 		// separately by what it returns and what it stores.
 		const boxOf = (s) => s.page.evaluate(async () => {
 			const r = await fetch('/api/post?since=0', {
-				credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+				credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 			});
 			const j = await r.json().catch(() => null);
 			return { status: r.status, rows: (j && j.rows) || [], seq: (j && j.seq) || 0 };

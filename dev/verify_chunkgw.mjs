@@ -134,7 +134,7 @@ try {
 	const bodies    = () => page.evaluate(() => window.__seen.map(e => e.body));
 	const clear     = () => page.evaluate(() => { window.__seen.length = 0; });
 	const killSess  = () => page.evaluate(() => window.__realFetch('/api/auth/logout', {
-		method: 'POST', credentials: 'same-origin', headers: { 'x-daimond-api': '1' },
+		method: 'POST', credentials: 'same-origin', headers: { 'x-daimond-api': '2' },
 	}));
 	/// The statuses seen for one chunk op, in order.
 	const ops = (tr, op) => tr.filter(e => e.url.indexOf('/api/chunk') !== -1 && e.op === op).map(e => e.status);
@@ -165,7 +165,7 @@ try {
 			}
 			const r = await fetch('/api/chunk', {
 				method: 'POST', credentials: 'same-origin',
-				headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+				headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 				body: JSON.stringify({ op: 'put', chunks: out.map(c => ({ addr: c.addr, blob: c.blob })) }),
 			});
 			const j = await r.json();
@@ -185,7 +185,7 @@ try {
 		window.__held = async function (addrs) {
 			const r = await fetch('/api/chunk', {
 				method: 'POST', credentials: 'same-origin',
-				headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+				headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 				body: JSON.stringify({ op: 'have', addrs }),
 			});
 			const j = await r.json();
@@ -194,7 +194,7 @@ try {
 		};
 		/// The account's current sync blob version — what a commit must name.
 		window.__version = async function () {
-			const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+			const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 			const j = await r.json();
 			return j.version | 0;
 		};
@@ -216,7 +216,7 @@ try {
 	const unaware = await page.evaluate(async () => {
 		const r = await window.__realFetch('/api/chunk', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 			body: JSON.stringify({ op: 'have', addrs: [] }),
 		});
 		return { status: r.status, authed: DaimondGateway.state().authed };
@@ -348,7 +348,7 @@ try {
 		const v = await window.__version();
 		const r = await window.__realFetch('/api/chunk', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 			body: JSON.stringify({
 				op: 'commit', blob_version: v,
 				chunks: [{ addr: window.__c[0].addr, size: window.__c[0].size, tier: 'p' }],

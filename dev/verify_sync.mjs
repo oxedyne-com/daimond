@@ -86,7 +86,7 @@ const check = (name, pass, detail) => {
 async function pushLanded(pg, where) {
 	const r = await pg.evaluate(async (ms) => {
 		const mailbox = async () => {
-			const res = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+			const res = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 			const j = await res.json();
 			if (!j.present) return null;
 			try { return await window.DaimondIdentity.unwrap(j.blob); }
@@ -356,12 +356,12 @@ try {
 	// rounds it took, so a push that stops landing altogether still fails here
 	// instead of being papered over by a longer wait.
 	const mailboxWas = await page.evaluate(async () => {
-		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 		return ((await r.json()).version) | 0;
 	});
 	await pushLanded(page, 'the conversation');
 	const pushed = await page.evaluate(async () => {
-		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 		const j = await r.json();
 		let name = '';
 		try { name = String(window.DaimondIdentity.displayName() || ''); } catch (e) { name = ''; }
@@ -438,7 +438,7 @@ try {
 		// The "other device" pushes over the current version, advancing it by one.
 		const otherWrite = await fetch('/api/sync', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 			body: JSON.stringify({ base_version: before, device: 'other-device', blob: 'AAAABBBBCCCCDDDD' }),
 		});
 		const otherJson = await otherWrite.json();
@@ -456,7 +456,7 @@ try {
 		const t0 = Date.now();
 		while (after <= otherJson.version && Date.now() - t0 < 15000) {
 			await window.DaimondSync.push();		// base=before → 409 → pull → retry → success.
-			const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+			const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 			after = ((await r.json()).version) | 0;
 			if (after <= otherJson.version) await new Promise(x => setTimeout(x, 250));
 		}
@@ -470,7 +470,7 @@ try {
 		conflict.after > conflict.bumped, 'bumped=' + conflict.bumped + ' after=' + conflict.after);
 	// After reconciling, the mailbox is this device's real (decryptable) state again.
 	const reopened = await page.evaluate(async () => {
-		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 		const j = await r.json();
 		try { const plain = await window.DaimondIdentity.unwrap(j.blob); JSON.parse(plain); return true; }
 		catch (e) { return false; }
@@ -495,7 +495,7 @@ try {
 	}, FILEMARK);
 	await pushLanded(page, 'the workspace file');
 	const filePush = await page.evaluate(async () => {
-		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 		const j = await r.json();
 		let plain = '';
 		try { plain = await window.DaimondIdentity.unwrap(j.blob || ''); } catch (e) { plain = ''; }
@@ -543,7 +543,7 @@ try {
 		const ver = window.DaimondSync.version();
 		await fetch('/api/sync', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 			body: JSON.stringify({ base_version: ver, device: 'other', blob: blob }),
 		});
 		await window.DaimondSync.pull();							// honour the remote deletion.
@@ -662,7 +662,7 @@ try {
 		const blob = await window.DaimondIdentity.wrap(JSON.stringify(state));
 		await fetch('/api/sync', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 			body: JSON.stringify({ base_version: window.DaimondSync.version(), device: 'other', blob: blob }),
 		});
 		await window.DaimondSync.pull();
@@ -811,7 +811,7 @@ try {
 			const blob = await window.DaimondIdentity.wrap(JSON.stringify(state));
 			await fetch('/api/sync', {
 				method: 'POST', credentials: 'same-origin',
-				headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+				headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 				body: JSON.stringify({ base_version: window.DaimondSync.version(), device: 'other', blob: blob }),
 			});
 			await window.DaimondSync.pull();
@@ -901,7 +901,7 @@ try {
 		const blob = await window.DaimondIdentity.wrap(JSON.stringify(state));
 		await fetch('/api/sync', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 			body: JSON.stringify({ base_version: window.DaimondSync.version(), device: 'old-device', blob: blob }),
 		});
 		let threw = '';
@@ -1309,7 +1309,7 @@ try {
 		const blob = await window.DaimondIdentity.wrap(JSON.stringify(state));
 		const r = await fetch('/api/sync', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
 			body: JSON.stringify({ base_version: window.DaimondSync.version(), device: 'other', blob: blob }),
 		});
 		const posted = r.status;
@@ -1750,7 +1750,7 @@ try {
 	/// each of them, because since the trash those are two different facts about
 	/// the same Diamond and a delete moves only the second.
 	const inMailbox = () => page.evaluate(async () => {
-		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 		const j = await r.json();
 		if (!j.present) return { names: [], trash: {} };
 		try {
@@ -1940,7 +1940,7 @@ try {
 
 	await pushLanded(page, 'the device roster');
 	const sealed = await page.evaluate(async () => {
-		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 		const j = await r.json();
 		return j.blob || '';
 	});
@@ -2012,7 +2012,7 @@ try {
 
 	await pushLanded(page, 'the typed device name');
 	const sealedNamed = await page.evaluate(async () => {
-		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 		const j = await r.json();
 		return { blob: j.blob || '', label: j.device || j.label || '' };
 	});
@@ -2675,10 +2675,10 @@ try {
 	const bare = await page.evaluate(async () => {
 		// The version the GATEWAY holds this instant, not this device's belief
 		// about it.
-		const r0 = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const r0 = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 		const v = ((await r0.json()).version) | 0;
 		const r = await fetch('/api/sync?above=' + v + '&ms=1000&w=wkprobe',
-			{ credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+			{ credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 		return { status: r.status, json: await r.json(), above: v };
 	});
 	check('a wake answer carries a version and nothing else — no blob, no device, no account',
