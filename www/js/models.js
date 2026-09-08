@@ -1611,7 +1611,15 @@
 	}
 
 	/// The store as it should travel: JSON-safe, deterministic, and holding no readable key.
+	///
+	/// A LOCKED (or identity-less) device publishes NOTHING here, the same rule
+	/// `DaimondPost.snapshot()` and the look record keep. The whole parcel is already
+	/// gated on an unlocked identity (`sync.ready`), so this is defence in depth rather
+	/// than the primary guard -- but it keeps the section honest on its own terms, so no
+	/// caller can put a store this device cannot currently read onto the wire, and a
+	/// `null` reads to the merge on the far side as "nothing to say" (see `applySync`).
 	function exportSync() {
+		if (window.DaimondIdentity && DaimondIdentity.isUnlocked && !DaimondIdentity.isUnlocked()) return null;
 		var out = {
 			v:     2,
 			def:   { provider: store.def.provider || '', model: store.def.model || '' },
@@ -1664,12 +1672,22 @@
 	/// key is read at the next unlock. A gap in the cache IS filled, since a key that arrives
 	/// and cannot be used until a reload is a key the user will assume did not arrive.
 	///
+	/// And a DIVERGENT identity is the one case where a fresher row must NOT win the key. A
+	/// re-minted device (a new phone) shares neither salt nor wrapping key, so a sealed key it
+	/// receives will not open on it. Where this device holds a key it CAN read and the incoming
+	/// sealed key does not unwrap here, the readable one is kept: a synced key that is a dead
+	/// credential on this device must never bury a working one — that clobber would otherwise
+	/// show only after a reload, as a device that used to run dropping into the re-enter prompt.
+	/// A row with no readable key of its own still adopts the unreadable sealed key, so it lands
+	/// in the compose-resilience "this device can't read your keys" path rather than a silent
+	/// dead end. See the adopt loop below.
+	///
 	/// A parcel with no `models` section (a v1 or early-v2 device) is a no-op, so an old device
 	/// and a new one sync happily in both directions.
 	async function applySync(remote) {
 		if (!remote || typeof remote !== 'object' || !remote.providers
 			|| typeof remote.providers !== 'object') return { added: 0, updated: 0 };
-		var added = 0, updated = 0, adopt = [];
+		var added = 0, updated = 0, adopt = [], guard = {};
 		// The tombstones first, unioned both ways: this device learns what the other
 		// deleted, and keeps its own so the next push still carries them.
 		var dead = mergeTombs(remote.tombs);
@@ -1716,6 +1734,15 @@
 					// An empty `keyEnc` on the other side is not an instruction to forget this
 					// device's key: it means that device never had one.
 					if (r.keyEnc && r.keyEnc !== mine.keyEnc) {
+						// A readable local key must survive an incoming sealed one this
+						// device cannot open (a DIVERGENT identity -- a re-minted phone
+						// shares neither salt nor wrapping key). Remember it, so the adopt
+						// phase below can put it back when the newcomer will not unwrap:
+						// losing a working key to a dead one is the clobber the merge must
+						// never do, and it would otherwise surface only after a reload,
+						// dropping the device into the re-enter prompt holding a key that
+						// used to work.
+						if (plain[id]) guard[id] = { keyEnc: mine.keyEnc, key: mine.key, plain: plain[id] };
 						mine.keyEnc = r.keyEnc;
 						mine.key    = '';
 						adopt.push(id);
@@ -1773,6 +1800,23 @@
 		if (window.DaimondIdentity && DaimondIdentity.isUnlocked()) {
 			for (var i = 0; i < adopt.length; i++) {
 				var pid = adopt[i];
+				// A row whose readable key was just replaced by an incoming sealed one:
+				// adopt the newcomer only if it OPENS on this device. If it does not (a
+				// divergent identity), put the readable key back -- a synced key we cannot
+				// read must never bury a working one. When it DOES open (an ordinary key
+				// rotation on the shared identity) nothing is restored and the in-memory
+				// key is still left alone this session, exactly as the gap-fill below.
+				if (guard[pid]) {
+					var opens = true;
+					try { await DaimondIdentity.unwrap(store.providers[pid].keyEnc); }
+					catch (e) { opens = false; }
+					if (!opens) {
+						store.providers[pid].keyEnc = guard[pid].keyEnc;
+						store.providers[pid].key    = guard[pid].key;
+						if (!plain[pid]) plain[pid] = guard[pid].plain;
+					}
+					continue;							// this session's key stays this session's
+				}
 				if (plain[pid]) continue;				// this session's key stays this session's
 				try { plain[pid] = await DaimondIdentity.unwrap(store.providers[pid].keyEnc); }
 				catch (e) { /* sealed under something this device cannot open; leave it keyless */ }

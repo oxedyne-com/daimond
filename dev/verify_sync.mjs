@@ -1417,17 +1417,37 @@ try {
 		let g = S.exportSync().providers.groq;
 		r.olderIgnored = g.keyEnc !== 'STALE-SEALED' && g.url.indexOf('groq.com') !== -1;
 
-		// A fresher one wins, wholesale.
+		// A fresher one wins, wholesale — a REAL key sealed under the shared identity,
+		// so it OPENS on this device the way a linked device's key does. A fake,
+		// non-unwrappable string here would be treated as a divergent-identity key and
+		// kept out on purpose (see `divergentKept` below), so freshest-wins is tested
+		// with the kind of key a shared identity actually produces.
+		const oldEnc   = g.keyEnc;
+		const freshEnc = await DaimondIdentity.wrap('FRESH-PLAIN-7');
 		await S.applySync({ v: 2, providers: { groq: {
 			name: 'Groq', url: 'https://api.groq.com/openai/v1/chat/completions',
-			models: ['fresh-1'], fetched: now + 60000, touched: stamp + 60000, keyEnc: 'FRESH-SEALED',
+			models: ['fresh-1'], fetched: now + 60000, touched: stamp + 60000, keyEnc: freshEnc,
 		} } });
 		g = S.exportSync().providers.groq;
-		r.newerWon = g.keyEnc === 'FRESH-SEALED' && g.models.join(',') === 'fresh-1';
+		r.newerWon = g.keyEnc === freshEnc && g.keyEnc !== oldEnc && g.models.join(',') === 'fresh-1';
 
 		// The live session keeps the key it is running on: a merge must not lock
-		// a working device out mid-turn.
+		// a working device out mid-turn. The rotated key is read at the next unlock.
 		r.sessionKeyKept = S.keyFor('groq') === PLAIN;
+
+		// A DIVERGENT identity's key must NOT clobber a readable one. A fresher row
+		// whose sealed key does NOT open on this device (a re-minted device's orphaned
+		// key, published to a device that re-entered its own) is kept LOCAL: losing a
+		// working key to a dead one is the one thing freshest-wins must never do, and it
+		// would otherwise surface only after a reload as a device that used to run
+		// dropping into the re-enter prompt. The readable key survives, keyEnc and all.
+		await S.applySync({ v: 2, providers: { groq: {
+			name: 'Groq', url: 'https://api.groq.com/openai/v1/chat/completions',
+			models: ['fresh-1'], fetched: now + 60000, touched: stamp + 120000,
+			keyEnc: 'FOREIGN-UNREADABLE-SEALED',
+		} } });
+		r.divergentKept = S.keyFor('groq') === PLAIN
+			&& S.exportSync().providers.groq.keyEnc === freshEnc;
 
 		// The default follows the freshest side, and only to somewhere real.
 		S.setDefault('groq', 'fresh-1');
@@ -1472,6 +1492,8 @@ try {
 	check('a provider only this device has survives the merge', M.localSurvived === true);
 	check('an older remote provider does not clobber a newer local one', M.olderIgnored === true);
 	check('a fresher remote provider replaces the local one', M.newerWon === true);
+	check('a fresher key that will not open here is kept local (divergent identity)',
+		M.divergentKept === true);
 	check('the running session keeps the key it holds', M.sessionKeyKept === true);
 	check('the default follows the freshest side', M.defFreshest === true);
 	check('an older default is ignored', M.defOlderIgnored === true);
