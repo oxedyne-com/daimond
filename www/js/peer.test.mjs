@@ -1370,16 +1370,22 @@ async function runPresenceAcceptance(P, PR, check) {
 	check('a genuine WORKER chat on DESKTOP dispatches to a genuine peer (long-turn, feature kept)',
 		(() => { const d = P.autoDispatchDecision(workerChat, fresh, { selfId: 'phone' }, T); return d.dispatch === true && d.reason === 'long-turn'; })());
 
-	// ── The nominated always-on runner: a FRESH GENUINE nominee takes the turn,
-	// above the mobile/desktop fallback. A per-chat opt-out still wins; a nominee
-	// that is offline OR merely beating (not servicing) is "not responding" and this
-	// falls through to the fallback policy. ──
-	check('a FRESH GENUINE nominee dispatches even a QUICK foreground turn',
+	// ── The nominated always-on runner (fix A, 2026-09-08): a nominee that is PRESENT
+	// AND BEATING takes the turn -- the SAME liveness the CLAIM arbitration uses
+	// (nominationStandDown / lastSeen), NOT recGenuine's stricter serviced_at. Dispatch
+	// and claim must agree, else the originator labels/targets a fresher peer while the
+	// beating nominee actually claims and runs (the owner's turn ran on argonaut but was
+	// labelled gilgamesh). A nominee that beats but never services is a phantom recovered
+	// by the dispatcher's backstop (dev/repro_nominee_phantom.mjs), not excluded at
+	// dispatch. An OFFLINE nominee (beat stale) still falls through to the fallback. A
+	// per-chat opt-out still wins. Scoped to the nominee: freshest-peer selection below
+	// still requires recGenuine, so seq-217's phantom protection holds for non-nominees. ──
+	check('a FRESH nominee dispatches even a QUICK foreground turn',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', nominatedId: 'argonaut' }, T); return d.dispatch === true && d.reason === 'nominee' && d.peer.deviceId === 'argonaut'; })());
-	check('a STALE nominee (desktop) runs local',
+	check('a STALE nominee (beat aged out) runs local',
 		P.autoDispatchDecision(quickChat, stale, { selfId: 'phone', nominatedId: 'argonaut' }, T).dispatch === false);
-	check('a PHANTOM nominee (beats, not servicing) is "not responding" -> falls through',
-		(() => { const d = P.autoDispatchDecision(quickChat, phantomP, { selfId: 'phone', nominatedId: 'argonaut' }, T); return d.reason !== 'nominee'; })());
+	check('a BEATING nominee is seated DIRECTLY even when its serviced_at is stale (fix A) -- backstop recovers a phantom',
+		(() => { const d = P.autoDispatchDecision(quickChat, phantomP, { selfId: 'phone', nominatedId: 'argonaut' }, T); return d.dispatch === true && d.reason === 'nominee' && d.peer.deviceId === 'argonaut'; })());
 	check('this device IS the nominee -> it does not dispatch a turn to itself',
 		P.autoDispatchDecision(quickChat, fresh, { selfId: 'argonaut', nominatedId: 'argonaut' }, T).dispatch === false);
 	check('a per-chat opt-out (toggle OFF) STILL wins over a fresh nominee',
@@ -1460,14 +1466,18 @@ async function runPresenceAcceptance(P, PR, check) {
 			P.recGenuine(oldRec, Date.now(), win) === true);
 		check('rollout(a): a mobile turn HANDS OFF to the old-build runner (was: ran local, no hand-off)',
 			(() => { const d = dispatch(); return d.dispatch === true && d.peer && d.peer.deviceId === 'argonaut'; })());
-		// (b) seq-217 EXPLICIT not-servicing: serviced_at:0 PRESENT -> still excluded.
+		// (b) seq-217 EXPLICIT not-servicing: serviced_at:0 PRESENT. recGenuine still
+		// EXCLUDES it (unchanged), so a NON-designated peer is never chosen on it -- but
+		// under fix A a BEATING NOMINEE is seated regardless of servicing, and the
+		// dispatcher's backstop recovers it if it never collects. So the same runner, when
+		// it is the account's NOMINEE, is dispatched to (not run local).
 		PR.forget();
 		PR.ingest({ argonaut: { name: 'Argonaut', last_seen: sNow - 5000, attended: false, attended_at: 0,
 			serviced: false, serviced_at: 0 } }, sNow);
-		check('rollout(b): a seq-217 explicit-not-servicing runner (serviced_at:0 present) is EXCLUDED',
+		check('rollout(b): a seq-217 explicit-not-servicing runner is EXCLUDED by recGenuine (non-nominee protection intact)',
 			P.recGenuine(PR.snapshot().argonaut, Date.now(), win) === false);
-		check('rollout(b): a mobile turn with only an explicit-not-servicing runner runs LOCAL',
-			(() => { const d = dispatch(); return d.dispatch === false && d.reason === 'no-genuine-peer'; })());
+		check('rollout(b): as the BEATING NOMINEE it is still seated (fix A); the backstop recovers it if it never services',
+			(() => { const d = dispatch(); return d.dispatch === true && d.reason === 'nominee' && d.peer && d.peer.deviceId === 'argonaut'; })());
 		// (c) GENUINE seq-217 runner: fresh serviced_at -> eligible.
 		PR.forget();
 		PR.ingest({ argonaut: { name: 'Argonaut', last_seen: sNow - 5000, attended: false, attended_at: 0,

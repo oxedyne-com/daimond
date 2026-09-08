@@ -9215,7 +9215,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var tile = buildTile('handoff', { expanded: false, who: line });
 		tile.classList.add('chat-msg-handoff');
 		tagTurn(tile);
-		postToChat(tile);
+		postTurnLead(tile);
 	}
 
 	/// A hand-off that FELL BACK to this device: the turn was dispatched to
@@ -9232,7 +9232,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var tile = buildTile('handoff', { expanded: false, who: line });
 		tile.classList.add('chat-msg-handoff');
 		tagTurn(tile);
-		postToChat(tile);
+		postTurnLead(tile);
 	}
 
 	/// Put a round's working on the record, growing the entry rather than adding one.
@@ -9616,6 +9616,43 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var q = document.getElementById('chat-queued');
 		if (q) chatOutput.insertBefore(node, q);
 		else chatOutput.appendChild(node);
+		placeFurniture();
+	}
+
+	/// Post a tile so it LEADS its turn — inserted ahead of the turn's thinking/tool/
+	/// answer tiles, right after the question that started it. The hand-off announcement
+	/// belongs at the top of the turn (the hand-off happened before any work), but it is
+	/// drawn when the answer arrives (`appendAssistantText`), by which point the turn's
+	/// thinking and tool tiles are already on the thread. So rather than append at the
+	/// end, find the first tile of THIS turn that is not the question and insert before
+	/// it. Falls back to a plain append when the turn has no other tile yet.
+	function postTurnLead(node) {
+		if (!_renderingHistory) _renderSynced = false;
+		var ph = chatOutput.querySelector('.empty-state'); if (ph) ph.remove();
+		// A non-rollable tile reaching the thread closes any open thinking tile / run,
+		// exactly as `postToChat` does, so a later same-type tile starts a fresh group.
+		if (liveThink && node !== liveThink) {
+			if (!liveThink._held) liveThink.classList.add('collapsed');
+			liveThink = null;
+		}
+		_roll = null;
+		var turn = node.dataset ? node.dataset.turn : null;
+		var before = null;
+		if (turn != null) {
+			var kids = chatOutput.children;
+			for (var i = 0; i < kids.length; i++) {
+				var k = kids[i];
+				if (!k.dataset || k.dataset.turn !== turn) continue;
+				if (k.classList && k.classList.contains('chat-msg-user')) continue;	// the question leads; the hand-off follows it
+				if (k === spinnerEl || k.id === 'chat-queued') continue;
+				before = k; break;
+			}
+		}
+		if (before) chatOutput.insertBefore(node, before);
+		else {
+			var q = document.getElementById('chat-queued');
+			if (q) chatOutput.insertBefore(node, q); else chatOutput.appendChild(node);
+		}
 		placeFurniture();
 	}
 
@@ -15069,7 +15106,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// so the dispatched footer would sit on "Sent to your other devices" and never
 		// advance to "running" or show "[Take back]". Re-render the badges whenever the
 		// lease view moves, so a sync update advances the footer the way a report does.
-		try { if (DaimondLease && DaimondLease.onChange) DaimondLease.onChange(renderDispatchedBadges); }
+		// (C) — and STAMP the actual claimant onto the placeholder first, so the
+		// originator's tile converges to the device that really runs the turn even when
+		// its initial target guess differed, and stays correct after the lease releases.
+		try { if (DaimondLease && DaimondLease.onChange) DaimondLease.onChange(function () {
+			try { stampDispatchHolders(); } catch (e) { /* the re-render still advances the footer */ }
+			renderDispatchedBadges();
+		}); }
 		catch (e) { /* no lease module: the footer still advances on a report */ }
 		return true;
 	}
@@ -15337,6 +15380,36 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { /* nothing drawn */ }
 	}
 
+	/// (C) Record the device that ACTUALLY claimed a dispatched turn onto its placeholder,
+	/// so the originator's tile names the real runner rather than its send-time guess. The
+	/// dispatch target is a best guess (the nominee or freshest peer); the lease HOLDER is
+	/// the truth. When a live claim is observed for a dispatched turn, copy the holder onto
+	/// the placeholder's toDevice/toName — which persists and syncs, so every device agrees
+	/// and the name stays correct after the lease releases (holder() then reads null). Only
+	/// writes on a real change, so it cannot loop against its own persist.
+	function stampDispatchHolders() {
+		if (!window.DaimondLease || !DaimondLease.holder) return;
+		var changed = false;
+		var turns = Object.keys(_dispatchedIx);
+		for (var i = 0; i < turns.length; i++) {
+			var tid = turns[i];
+			var holder = '';
+			try { holder = String(DaimondLease.holder(tid) || ''); } catch (e) { holder = ''; }
+			if (!holder || holder === selfDeviceId()) continue;		// no claim yet, or our own recovery
+			var c = dispatchedChat(tid);
+			if (!c || !c.messages) continue;
+			for (var j = 0; j < c.messages.length; j++) {
+				var m = c.messages[j];
+				if (m.why !== 'dispatched' || String(m.iturn) !== tid) continue;
+				if (String(m.toDevice) === holder) continue;			// already the claimant
+				m.toDevice = holder;
+				var nm = deviceLabelFor(holder); if (nm) m.toName = nm;
+				changed = true;
+			}
+		}
+		if (changed) { try { persistChats(); } catch (e) { /* the in-memory record still renders */ } }
+	}
+
 	/// Whether an errand's turn is already FINISHED on this device: a done report was
 	/// collected, or a non-empty assistant answer is merged under the turn's iturn.
 	/// The dispatching-side twin of the runner's D1(b) `finished` guard, read by the
@@ -15597,25 +15670,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var nominee  = (typeof nominatedDeviceId === 'function') ? nominatedDeviceId() : '';
 			var presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
 			// Presence freshness governs the dispatch, so make it current. If a runner is
-			// NOMINATED but NOT ALREADY GENUINE in this snapshot -- the case right after a
-			// hard refresh before presence has re-synced, OR a phone whose snapshot holds a
-			// beating nominee whose serviced_at has merely aged past the window -- do a
-			// BOUNDED, awaited refresh and re-snapshot before deciding. Only that ambiguous
-			// case waits: a nominee already genuine, or no nominee, keeps the fire-and-forget
-			// nudge and pays nothing. The race caps the wait so a slow gateway never holds
-			// the send.
+			// NOMINATED but its BEAT looks stale/absent in this snapshot -- the case right
+			// after a hard refresh, before presence has re-synced -- do a BOUNDED, awaited
+			// refresh and re-snapshot before deciding, so a set-and-alive designated runner
+			// is not misjudged offline. Only that case waits: a nominee already beating, or
+			// no nominee, keeps the fire-and-forget nudge and pays nothing. The race caps the
+			// wait so a slow gateway never holds the send.
 			//
-			// The gate is the nominee's GENUINENESS (recGenuine -- a fresh serviced_at), NOT
-			// its bare beat (nominationStandDown -- lastSeen). autoDispatchDecision seats the
-			// turn on the nominee only when recGenuine holds, so gating the refresh on the
-			// beat alone let a beating-but-serviced-stale nominee slip through un-refreshed,
-			// fail recGenuine, and be stolen by a fresher peer -- the owner's turn ran on
-			// gilgamesh though argonaut is the always-on runner (reproduced under WebKit,
-			// dev/repro_nominee_stolen.mjs). A nominee that is genuinely down is confirmed
-			// after the pull and the fallback still runs; one that only LOOKED stale here
-			// comes back servicing and wins, as the owner expects.
-			var nomStale = !!nominee && nominee !== self && DaimondPeer.recGenuine
-				&& !DaimondPeer.recGenuine((presence || {})[nominee], Date.now(), DaimondPeer.DISPATCH_FRESH_MS);
+			// The gate is the nominee's BEAT (nominationStandDown / lastSeen), matching what
+			// autoDispatchDecision now seats the nominee on -- and what the CLAIM arbitration
+			// uses. Gating on recGenuine (serviced_at) instead (seq 225) made iOS await for a
+			// signal the decision no longer needs, and a beating-but-serviced-stale nominee
+			// was then dropped for a fresher peer at dispatch while it won the claim -- the
+			// mismatch the owner hit (argonaut is the runner, gilgamesh was labelled). A
+			// beating nominee is now chosen DIRECTLY; a nominee that never services is
+			// recovered by the undeliverable→local backstop (seq 222).
+			var nomStale = !!nominee && nominee !== self && DaimondPeer.nominationStandDown
+				&& !DaimondPeer.nominationStandDown(nominee, self, presence, Date.now(), DaimondPeer.DISPATCH_FRESH_MS);
 			if (window.DaimondSync && DaimondSync.refreshPresence) {
 				if (nomStale) {
 					try {
@@ -21478,7 +21549,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The turn id: a fresh mid for an ordinary turn, or the EXISTING dispatched
 		// prompt's mid for a peer turn (D3), so the journal, the rebuild and the
 		// assistant grouping all key on the message already in the transcript.
-		var umid = reusePrompt ? String(reusePrompt.mid) : newMid();
+		// D3 — a PEER turn (opts.turnId) whose synced prompt has not landed yet must push
+		// its own copy under the TURN ID, not a fresh mid: the dispatcher's copy carries
+		// mid == turnId, so keying this one the same lets mergeMessages dedup by mid when
+		// that copy arrives (exactly one survives) instead of a SECOND user tile appearing
+		// — the doubled question the owner read as uneven spacing.
+		var umid = reusePrompt ? String(reusePrompt.mid) : (opts.turnId ? String(opts.turnId) : newMid());
 		// Scored HERE, before the message joins the record, because what is being
 		// measured is this message as a reaction to the turn before it. Counters
 		// move and the text is dropped -- see signals.js, which never keeps it and
@@ -21510,7 +21586,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// freshly-typed prompt as before.
 		if (!reusePrompt) {
 			appendUserMessage(text);
-			chat.messages.push({ role: 'user', content: text, mid: umid, ts: Date.now() });
+			var urec = { role: 'user', content: text, mid: umid, ts: Date.now() };
+			// A peer turn stamps `iturn` too (the dispatcher's copy carries it), so the two
+			// copies are identical under the turn id and dedup cleanly.
+			if (opts.turnId) urec.iturn = String(opts.turnId);
+			chat.messages.push(urec);
 		}
 		// AFTER the push, so the count includes this turn: "which turn of that
 		// chat this is, counting from one". How deep a conversation goes before

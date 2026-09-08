@@ -1069,16 +1069,20 @@
 		// An explicit opt-out pins the chat here regardless of any peer -- tested first.
 		if (toggle === false) return { dispatch: false, reason: 'chat-local' };
 
-		// A NOMINATED always-on runner takes EVERY turn WHEN IT IS GENUINELY AVAILABLE
-		// (beating AND servicing). A nominee that is merely beating -- a throttled tab --
-		// or asleep is "not responding" (owner's phrase), so this falls through to the
-		// runner-down policy rather than seating the turn on a device that will not run it.
-		// Judged on the nominee's OWN genuineness, so a fresh nominee wins even over a
-		// fresher other peer. `nominationStandDown` seats the errand on the nominee.
+		// A NOMINATED always-on runner takes EVERY turn WHEN IT IS PRESENT AND BEATING --
+		// the SAME liveness the CLAIM arbitration uses (nominationStandDown / lastSeen),
+		// NOT recGenuine's stricter serviced_at. The two must agree: the claim-time stand-
+		// down defers to a beating nominee, so the dispatch must SEAT the turn on that same
+		// device -- else iOS labels/targets a fresher peer (gilgamesh) while the beating
+		// nominee (argonaut) actually claims and runs, the mismatch the owner hit. This is
+		// SCOPED TO THE NOMINEE: the freshest-peer selection below still uses recGenuine, so
+		// a non-designated phantom (beats but never services) is never chosen over local or
+		// a genuine peer (seq 217). A nominee that beats but never services is recovered by
+		// the dispatcher's undeliverable→local + backstop (seq 222), so it cannot hang.
 		var nom = String(o.nominatedId || '');
 		if (nom && nom !== String(o.selfId || '')) {
 			var nRec = (presence || {})[nom];
-			if (recGenuine(nRec, n, win)) {
+			if (nRec && (n - leaseMs(nRec.lastSeen)) <= win) {
 				return { dispatch: true, peer: { deviceId: nom, name: (nRec.name || ''), lastSeen: leaseMs(nRec.lastSeen) }, reason: 'nominee' };
 			}
 		}
