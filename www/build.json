@@ -1,1 +1,1 @@
-{"build":"a94327e8ad36","note":"Hand-off: go straight to your designated runner; tile names the real runner and leads the turn; question not doubled"}
+{"build":"158605829eb9","note":"Diagnostics: opt-in on-device trace of the hand-off election, sync timings and retries, shared to a log for debugging"}

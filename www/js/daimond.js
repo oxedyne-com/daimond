@@ -1873,6 +1873,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					catch (e) { /* no console */ }
 				}
 				await done;
+				diag('store write', 'wrote=' + Object.keys(put).length
+					+ ' kept=' + keptN + ' compact=' + compactIds.length);
 				// A kept row is still IN the database, so it stays in the store's
 				// account of the database. Rebuilding `disk` from the list alone
 				// would forget it, and the tombstoned deletion that arrived a
@@ -1900,6 +1902,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				return true;
 			} catch (e) {
+				diag('store write FAILED', storeReason(e));
 				storageAlarm(storeReason(e));
 				return false;
 			}
@@ -2379,6 +2382,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				lt.store.put(row);
 				await lt.done;
 			}
+			diag('sweep chat tombs', chatId + ' chunk=' + hitChunk + ' legacy=' + hitLegacy);
 			return true;
 		}
 
@@ -3092,7 +3096,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!merged.some(function (m) { return m.id === c.id; })
 				&& !tombs[c.id] && !trashed(c.id)) merged.push(c);
 		});
+		// The rail before and after this rebuild, so a chat arriving on or leaving
+		// the rail is named. Ids only; the diff is what the diagnostics reader is
+		// after -- "which chat appeared / vanished on that pull".
+		var railBefore = {};
+		chats.forEach(function (c) { if (c && c.id) railBefore[c.id] = true; });
 		chats = merged;
+		try {
+			var added = merged.map(function (c) { return c && c.id; })
+				.filter(function (id) { return id && !railBefore[id]; });
+			var afterSet = {};
+			merged.forEach(function (c) { if (c && c.id) afterSet[c.id] = true; });
+			var gone = Object.keys(railBefore).filter(function (id) { return !afterSet[id]; });
+			if (added.length || gone.length) {
+				diag('rail changed', 'n=' + merged.length
+					+ (added.length ? ' +' + added.join(',') : '')
+					+ (gone.length ? ' -' + gone.join(',') : ''));
+			}
+		} catch (e) {}
 		// The array was just rebuilt (a cross-tab write, a sync merge, a restore), so
 		// the dispatched-placeholder index is rebuilt from it here -- the one place
 		// that covers every wholesale change to `chats` short of the boot load.
@@ -5159,9 +5180,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!ChatStore.vouched()) {
 			try { await ChatStore.booted(); } catch (e) { /* boot raised its own alarm */ }
 			if (!ChatStore.vouched()) {
+				diag('apply chats REFUSED', 'store not read yet');
 				throw new Error('the chat store has not been read; not merging against it');
 			}
 		}
+		// What the parcel CARRIED into this merge -- the ids and the tombstones it
+		// holds -- recorded before a single chat is touched, so the per-chat
+		// decisions below read as "the parcel had these; here is what became of
+		// each". Ids and counts only; never a name or a message.
+		try {
+			diag('apply chats', 'in=' + ((remote.chats || []).map(function (c) { return c && c.id; })
+					.filter(Boolean).join(',') || 'none')
+				+ ' tombs=' + Object.keys(remote.tombs || {}).join(',')
+				+ ' msgTombs=' + Object.keys(remote.msgTombs || {}).length);
+		} catch (e) {}
 		var tombs = mergeTombMap(TOMBS_KEY, remote.tombs);
 		mergeTombMap(MSG_TOMBS_KEY, remote.msgTombs);
 		var byId = {};
@@ -5249,7 +5281,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				r.messagesRef = null;
 			}
 			var st = byId[r.id];
-			if (!st) { byId[r.id] = r; continue; }
+			if (!st) {
+				// A chat this device had NO record of. Adopted wholesale -- the
+				// vouched() gate above is what makes that safe. See the refuse note.
+				diag('apply chat NEW', r.id + ' n=' + (Array.isArray(r.messages) ? r.messages.length : 0));
+				byId[r.id] = r;
+				continue;
+			}
 			// `st` is a SUMMARY since seq 213 -- read the local transcript and session from
 			// the authoritative legacy row so the merge unions against the real history, not
 			// an empty summary. (Durability does not rest on this: `ChatStore.write` unions
@@ -5270,13 +5308,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				localMsgs = lg.messages; localSession = localSession || lg.session;
 			}
 			var merged = slimChat((r.updatedAt || 0) >= (st.updatedAt || 0) ? r : st);
+			var localLen  = Array.isArray(localMsgs) ? localMsgs.length : 0;
+			var remoteLen = Array.isArray(r.messages) ? r.messages.length : 0;
 			merged.messages = slimMessages(mergeMessages(localMsgs, r.messages, r.id, mtombs));
+			var mergedLen = merged.messages.length;
+			// The union OUTCOME per chat. `RESURRECT` when the merged transcript is
+			// longer than either side alone -- the union has re-admitted messages one
+			// side had dropped, which is the shape of a tombstone that did not travel.
+			// A merge shorter than the local side is the deletion trail's concern (and
+			// is recorded below); here the union is the subject.
+			diag('apply chat merge', r.id + ' local=' + localLen + ' remote=' + remoteLen
+				+ ' -> ' + mergedLen + (mergedLen > Math.max(localLen, remoteLen) ? ' RESURRECT' : ''));
 			// A parcel carries no session (collectSync strips it), so the freshest-wins
 			// rule above would trade this device's model memory for the remote's nothing.
 			if (!merged.session && localSession) merged.session = localSession;
 			byId[r.id] = merged;
 		}
-		Object.keys(tombs).forEach(function (id) { delete byId[id]; });
+		Object.keys(tombs).forEach(function (id) {
+			if (byId[id]) diag('apply chat removed', id + ' by tombstone');
+			delete byId[id];
+		});
 		var out = Object.keys(byId).map(function (id) { return byId[id]; });
 		// A MERGE THAT SHORTENED A TRANSCRIPT, in the durable trail.
 		//
@@ -5287,7 +5338,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		out.forEach(function (c) {
 			if (!c || !c.id || was[c.id] === undefined) return;
 			var n = (c.messages || []).length;
-			if (n < was[c.id]) trail('sync chats SHORTER', c.id + ': ' + was[c.id] + ' -> ' + n);
+			if (n < was[c.id]) {
+				trail('sync chats SHORTER', c.id + ': ' + was[c.id] + ' -> ' + n);
+				diag('apply chat SHORTER', c.id + ': ' + was[c.id] + ' -> ' + n);
+			}
 		});
 		ChatStore.save(out);
 		onChatsChangedElsewhere(touched);
@@ -5341,6 +5395,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { await fn(); trail('sync ' + name + ' ok', heapNote()); }
 			catch (e) {
 				trail('sync ' + name + ' FAILED', (e && (e.message || e)) || '?');
+				diag('apply section FAILED', name + ': ' + ((e && (e.message || e)) || '?'));
 				failed.push(name);
 				// Loud on purpose: a merge that silently did half its work is the
 				// bug this whole function is shaped around.
@@ -12990,6 +13045,85 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					tOr('settings.trail_note', 'A safe-to-share log of what Daimond last did.')));
 			}
 
+			// ── Diagnostics: the OPT-IN, richer sync/apply trail ─────────
+			//
+			// OFF by default and per-device (www/js/diag.js). When off, the app
+			// records nothing extra and nothing can leave the device; the switch
+			// here is the only thing that turns it on. When on, this device keeps a
+			// 500-event ring of its sync/apply DECISIONS -- which chats a parcel
+			// carried, which the merge kept, skipped, removed or resurrected, how a
+			// hand-off moved -- readable in a panel below and, on request, shareable
+			// with the operator so an iPhone's behaviour becomes visible server-side.
+			// The whole point is the bug no console on a phone can show.
+			if (window.DaimondDiag) {
+				homeView.appendChild(el('div', 'admin-sec',
+					tOr('home.sec_diag', 'Diagnostics')));
+				var diagOn = DaimondDiag.on();
+				var diagPanel = el('div', '', '');
+				diagPanel.style.marginTop = '8px';
+				diagPanel.hidden = true;
+				var shareNote = el('div', 'admin-note',
+					tOr('settings.diag_share_note',
+						'Sharing sends this device’s diagnostic log — chat ids, versions and '
+							+ 'counts, never message text — to the Daimond team.'));
+				shareNote.hidden = !diagOn;
+
+				function paintDiagPanel() {
+					try {
+						DaimondDiag.renderPanel(diagPanel, {
+							device:     selfDeviceId(),
+							deviceName: deviceName(),
+							version:    (window.DaimondSync && DaimondSync.version) ? DaimondSync.version() : null,
+							chats:      Array.isArray(chats) ? chats.length : null,
+							locked:     !(window.DaimondIdentity && DaimondIdentity.isUnlocked && DaimondIdentity.isUnlocked()),
+							build:      (window.DaimondTrail && DaimondTrail.lastBuild && DaimondTrail.lastBuild()) || '',
+						});
+					} catch (e) { diagPanel.textContent = ''; }
+				}
+
+				var toggleBtn, panelBtn, shareBtn;
+				toggleBtn = item('', function () {
+					DaimondDiag.set(!DaimondDiag.on(), 'settings');
+					var now = DaimondDiag.on();
+					toggleBtn.textContent = now
+						? tOr('settings.diag_off', 'Turn diagnostics off')
+						: tOr('settings.diag_on', 'Turn diagnostics on');
+					panelBtn.hidden = !now;
+					shareBtn.hidden = !now;
+					shareNote.hidden = !now;
+					if (!now) { diagPanel.hidden = true; diagPanel.textContent = ''; }
+				});
+				toggleBtn.textContent = diagOn
+					? tOr('settings.diag_off', 'Turn diagnostics off')
+					: tOr('settings.diag_on', 'Turn diagnostics on');
+				toggleBtn.title = tOr('settings.diag_help',
+					'Off by default. When on, this device records its sync decisions so a '
+						+ 'problem that only shows on this device can be seen. No message text, '
+						+ 'no keys, no file contents — chat ids, versions and counts only.');
+
+				// The panel: a second press puts it away, mirroring the trail button
+				// so a diagnostic opened once does not sit over the panel for good.
+				panelBtn = item(tOr('settings.diag_panel', 'Open debug panel'), function () {
+					if (!diagPanel.hidden) { diagPanel.hidden = true; return; }
+					paintDiagPanel();
+					diagPanel.hidden = false;
+				});
+				panelBtn.hidden = !diagOn;
+
+				shareBtn = item(tOr('settings.diag_share', 'Share diagnostic log'), function () {
+					shareBtn.textContent = tOr('settings.diag_sharing', 'Sharing…');
+					DaimondDiag.flush().then(function (r) {
+						shareBtn.textContent = (r && r.ok)
+							? tOr('settings.diag_shared', 'Shared — thank you')
+							: tOr('settings.diag_share_fail', 'Could not share') + (r && r.why ? ': ' + r.why : '');
+					});
+				});
+				shareBtn.hidden = !diagOn;
+
+				homeView.appendChild(diagPanel);
+				homeView.appendChild(shareNote);
+			}
+
 			// Several people can share this browser, each with their own account. Switching locks
 			// this one first (its keys are forgotten), then reloads into the other.
 			if (window.DaimondAccounts) {
@@ -14640,6 +14774,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			parkCount:   mark.parkCount | 0,	// the GLOBAL park count, synced on the placeholder
 			ts:          Date.now(),
 		});
+		diag('handoff mark', (chat && chat.id) + ' turn=' + mark.iturn
+			+ ' to=' + (mark.toDevice ? mark.toDevice.slice(0, 8) : '?') + ' parks=' + (mark.parkCount | 0));
 		// The one place a dispatched placeholder is created: keep the index in step.
 		if (chat.id && mark.iturn) _dispatchedIx[String(mark.iturn)] = chat.id;
 		if (ownsChat(chat)) renderHistory(chat.messages);
@@ -14653,6 +14789,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// errand LAST carrying that version. The errand is never posted before the
 	/// prompt is on the server. Answers `{ ok, why }`.
 	async function dispatchToPeer(chat, turnId, promptText, scopePaths, opts) {
+		diag('dispatch start', 'chat=' + (chat && chat.id) + ' turn=' + turnId
+			+ (opts && opts.toName ? ' to=' + String(opts.toId || '').slice(0, 8) : ''));
 		if (!window.DaimondPeer || !DaimondPeer.buildDispatch
 			|| !window.DaimondPost || !DaimondPost.post
 			|| !window.DaimondSync  || !DaimondSync.push) {
@@ -14689,12 +14827,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		//    fall back to a bare push + version() (the receiver's progress-based catch-up
 		//    and the undeliverable→local net still cover a stale stamp).
 		var parcelVersion = 0;
+		var t0    = (opts && opts.t0) || Date.now();		// turn-send origin, if the caller gave one
+		var tFlush = Date.now();
 		try {
 			var fl = DaimondSync.flush ? await DaimondSync.flush() : null;
 			if (fl && fl.ok) { parcelVersion = fl.version | 0; }
 			else { await DaimondSync.push(); parcelVersion = DaimondSync.version() | 0; }
 		}
-		catch (e) { return { ok: false, why: 'the prompt could not be saved to the server' }; }
+		catch (e) {
+			diag('dispatch FAILED', 'turn=' + turnId + ' push/flush threw after ' + (Date.now() - tFlush) + 'ms');
+			return { ok: false, why: 'the prompt could not be saved to the server' };
+		}
+		// (a) THE FLUSH-BEFORE-POST CONFIRM LOOP (seq 222). How long the send waited
+		// for the parcel to confirm committed on the server -- a prime suspect for
+		// "hand-off is slow", since flush() loops until the version is confirmed.
+		diag('dispatch flushed', 'turn=' + turnId + ' v=' + parcelVersion
+			+ ' flush=' + (Date.now() - tFlush) + 'ms');
 		// 2. MARK the local turn peer-held. Carry the chosen target onto the mark,
 		//    so the hand-off tile names the device before a lease holder exists.
 		if (opts && (opts.toId || opts.toName)) {
@@ -14706,8 +14854,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var body;
 		try { body = await DaimondPeer.sealForSelf(plan.errand(parcelVersion)); }
 		catch (e) { return { ok: false, why: 'the errand could not be sealed: ' + (e && e.message || e) }; }
+		var tPost = Date.now();
 		var res = await DaimondPost.post(body);
-		if (!res || !res.ok) return { ok: false, why: (res && res.why) || 'the relay would not take the errand' };
+		if (!res || !res.ok) {
+			diag('dispatch FAILED', 'turn=' + turnId + ' ' + ((res && res.why) || 'relay refused'));
+			return { ok: false, why: (res && res.why) || 'the relay would not take the errand' };
+		}
+		// (c) THE ERRAND POSTED. Its own round-trip, and the TOTAL from turn-send to
+		// on-the-relay -- the whole dispatcher-side hand-off cost, before any peer
+		// has even claimed. `postToClaim`/answer timings are logged where they land.
+		diag('dispatch posted', 'turn=' + turnId + ' v=' + parcelVersion
+			+ ' post=' + (Date.now() - tPost) + 'ms send->posted=' + (Date.now() - t0) + 'ms');
 		return { ok: true, turnId: turnId, parcelVersion: parcelVersion };
 	}
 
@@ -14780,6 +14937,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var want    = (errand && errand.parcelVersion) | 0;
 		var startAt = Date.now();
 		var absBy   = startAt + RECONSTRUCT_ABS_CAP_MS;
+		diag('reconstruct start', 'chat=' + (errand && errand.chatId) + ' want=v' + want
+			+ ' have=v' + (function () { try { return (DaimondSync.version() | 0); } catch (e) { return '?'; } })());
 		function haveVer() {
 			try { return (window.DaimondSync && DaimondSync.version) ? (DaimondSync.version() | 0) : 0; }
 			catch (e) { return 0; }
@@ -14844,6 +15003,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// GENUINELY UNDELIVERABLE: the errand's chat never synced here in the window.
 			// Marked so runErrand ACKS the errand (peers stop re-claiming) and the
 			// dispatcher drops to local at once. Nothing ran, so the release is money-safe.
+			diag('reconstruct UNDELIVERABLE', 'chat=' + (errand && errand.chatId) + ' never synced');
 			var eAbsent = new Error('the errand names a chat this device could not sync in time');
 			eAbsent.undeliverable = true;
 			throw eAbsent;
@@ -14852,6 +15012,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { await loadChatMessages(chat); } catch (e) { /* one last attempt below decides */ }
 		}
 		if (!chat._loaded) {
+			diag('reconstruct UNDELIVERABLE', 'chat=' + (errand && errand.chatId) + ' not resident in time');
 			var eResident = new Error('the errand\'s chat could not be made resident in time');
 			eResident.undeliverable = true;
 			throw eResident;
@@ -14866,6 +15027,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chat.app = null;
 		var app = ensureApp(chat, String(errand.turnId || ''));
 		await scopeChatTo(app, chat.id);
+		diag('reconstruct ready', 'chat=' + chat.id + ' turn=' + (errand && errand.turnId)
+			+ ' after=' + Math.round((Date.now() - startAt) / 1000) + 's');
 		return { chat: chat, app: app };
 	}
 
@@ -15323,6 +15486,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// so the real assistant message (same iturn, different mid) stands alone.
 	/// Tombstoned, so a later merge does not resurrect it.
 	function dropDispatchedPlaceholder(turnId) {
+		// (e) THE ANSWER HAS LANDED HERE. The placeholder is dropped because the peer's
+		// reply merged back, so this is when the hand-off actually paid off on the
+		// dispatcher -- the total from turn-send is the user-visible hand-off latency.
+		if (_handoffStart[turnId]) {
+			diag('handoff answer', 'turn=' + turnId + ' send->answer=' + (Date.now() - _handoffStart[turnId]) + 'ms');
+			delete _handoffStart[turnId];
+		}
 		// The one chat holding this turn's placeholder, via the index. iturn is unique
 		// to a turn, so the old all-chats sweep only ever touched this one; the answer
 		// (same iturn) lives in it too. The index entry goes once the placeholder does.
@@ -15656,6 +15826,49 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { return false; }
 	}
 
+	/// THE ELECTION SMOKING-GUN, for the opt-in diagnostics ring. Renders exactly
+	/// what `autoDispatchDecision` saw and chose, so a hand-off to the wrong device
+	/// is diagnosable from the phone that made it: every peer in the snapshot with
+	/// its beat age, servicing age, and genuine? verdict; the nominated runner and
+	/// whether it is even present in this device's snapshot; and the decision's
+	/// reason and chosen peer. This is what tells a stale snapshot from a nominee-id
+	/// mismatch from an argonaut simply absent from iOS's presence. Ids only (short),
+	/// device labels, ages and counts -- never content. A no-op when Diagnostics is
+	/// off; built only when it is on, so the string work is not paid otherwise.
+	function electionTrace(presence, self, nominee, decision, win) {
+		if (!window.DaimondDiag || !DaimondDiag.on()) return '';
+		var now = Date.now();
+		var w = win || (window.DaimondPeer && DaimondPeer.DISPATCH_FRESH_MS) || 90000;
+		function ms(v) { return (v && typeof v.toNumber === 'function') ? v.toNumber() : (Number(v) || 0); }
+		var peers = [], nomPresent = false;
+		Object.keys(presence || {}).forEach(function (id) {
+			var rec = presence[id];
+			if (!rec) return;
+			if (id === String(self || '')) { peers.push(id.slice(0, 8) + '(self)'); return; }
+			if (id === String(nominee || '')) nomPresent = true;
+			var beat = Math.round((now - ms(rec.lastSeen)) / 1000);
+			var svc  = (rec.servicedAt != null) ? (Math.round((now - ms(rec.servicedAt)) / 1000) + 's') : 'n/r';
+			var genuine = false;
+			try { genuine = !!(DaimondPeer.recGenuine && DaimondPeer.recGenuine(rec, now, w)); } catch (e) {}
+			peers.push((rec.name || id.slice(0, 8)) + '[' + id.slice(0, 8)
+				+ ' beat=' + beat + 's svc=' + svc + ' genuine=' + (genuine ? 'Y' : 'N') + ']');
+		});
+		var nomStr = nominee
+			? (String(nominee).slice(0, 8) + (nomPresent ? ' PRESENT' : ' ABSENT-from-snapshot'))
+			: 'none';
+		var dpeer = (decision && decision.peer)
+			? ((decision.peer.name || '') + '/' + String(decision.peer.deviceId || '').slice(0, 8)) : '-';
+		return 'self=' + String(self || '').slice(0, 8) + ' nominee=' + nomStr
+			+ ' peers=[' + peers.join(' ') + ']'
+			+ ' -> dispatch=' + (decision && decision.dispatch ? 'YES' : 'no')
+			+ ' reason=' + (decision && decision.reason) + ' peer=' + dpeer;
+	}
+
+	// When each hand-off began, keyed by turn id, so the answer's arrival can be
+	// timed against the send. Bounded: entries are deleted when the placeholder is
+	// reconciled, and the map is a handful of live turns.
+	var _handoffStart = {};
+
 	/// At send-time: hand this turn to a peer instead of running it here, when the
 	/// pure policy says so. On a phone with an awake peer that is EVERY turn (the
 	/// answer syncs back); on desktop only a long/agentic turn. Answers whether it
@@ -15687,8 +15900,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// recovered by the undeliverable→local backstop (seq 222).
 			var nomStale = !!nominee && nominee !== self && DaimondPeer.nominationStandDown
 				&& !DaimondPeer.nominationStandDown(nominee, self, presence, Date.now(), DaimondPeer.DISPATCH_FRESH_MS);
+			var tSend = Date.now();		// turn-send, the origin of the hand-off latency breakdown
 			if (window.DaimondSync && DaimondSync.refreshPresence) {
 				if (nomStale) {
+					// (b) THE NOMINEE PRESENCE-REFRESH AWAIT (seq 225/226). Timed, because
+					// it blocks the send up to ~900ms and the owner reports hand-off is slow
+					// -- so how long it ACTUALLY waited (a fast refresh returns early) is one
+					// of the durations we are hunting.
+					var tRefresh = Date.now();
 					try {
 						await Promise.race([
 							Promise.resolve(DaimondSync.refreshPresence()),
@@ -15696,6 +15915,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						]);
 					} catch (e) { /* the snapshot we have stands */ }
 					presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+					diag('handoff refresh await', 'nominee ' + String(nominee).slice(0, 8)
+						+ ' stale; blocked ' + (Date.now() - tRefresh) + 'ms');
 				} else {
 					try { DaimondSync.refreshPresence(); } catch (e) { /* the local snapshot stands */ }
 				}
@@ -15721,11 +15942,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// the safety net for the residual race; this keeps most turns off it.
 				freshWindowMs: DaimondPeer.DISPATCH_FRESH_MS,
 			}, Date.now());
+			// THE SMOKING GUN: exactly what the election saw and chose. This is the
+			// line that says WHY iOS picks the device it picks.
+			diag('dispatch election', electionTrace(presence, self, nominee, d, DaimondPeer.DISPATCH_FRESH_MS));
 			if (!d.dispatch) return false;
 			// Prepared exactly as the explicit path, so the parcel push inside
 			// dispatchToPeer carries the prompt (§4.1).
 			clearComposer();
 			var umid = newMid();
+			_handoffStart[umid] = tSend;		// origin for the answer-arrival timing
 			try { appendUserMessage(text); } catch (e) { /* the record below is the truth */ }
 			chat.messages.push({ role: 'user', content: text, mid: umid, iturn: umid, ts: Date.now() });
 			touchChat(chat); persistChats();
@@ -15748,7 +15973,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				});
 			} catch (e) { /* the durable placeholder draws it after the push */ }
 			dispatchToPeer(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : [],
-				{ toId: (d.peer && d.peer.deviceId) || '', toName: (d.peer && d.peer.name) || '' }
+				{ toId: (d.peer && d.peer.deviceId) || '', toName: (d.peer && d.peer.name) || '', t0: tSend }
 			).then(function (res) {
 				if (!res || !res.ok) { try { appendError((res && res.why) || 'could not hand this to a peer'); } catch (e) { /* drawn best-effort */ } }
 			});
@@ -15817,6 +16042,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					nominatedId:   nominatedDeviceId(),
 					freshWindowMs: DaimondPeer.DISPATCH_FRESH_MS,
 				}, now);
+				diag('dispatch election', 'step-away ' + electionTrace(presence, self, nominatedDeviceId(), d, DaimondPeer.DISPATCH_FRESH_MS));
 				if (!d.dispatch) return;
 				// Best-effort: the page is going, so this is not awaited. `markTurnDispatched`
 				// inside runs first and is synchronous, so recovery-on-return sees the turn
@@ -16431,6 +16657,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// Named for what happens to the chat, not for whichever button asked.
 	function removeChat(chat) {
+		diag('chat delete', (chat && chat.id) + ' to trash');
 		detachChat(chat);
 		try { DaimondTrash.put(chat.id, 'chat'); }
 		catch (e) {
@@ -16448,6 +16675,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// without having asked.
 	function destroyChat(id) {
 		if (!id) return;
+		diag('chat destroy', id + ' for good');
 		var chat = chats.find(function (c) { return c.id === id; });
 		if (chat) detachChat(chat);
 		// A paused chat that is destroyed must not leave its flag behind: the id
@@ -36900,6 +37128,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// spending money, and only then asks for the passphrase.
 	/// One line in the durable trail. See www/js/breadcrumb.js.
 	function trail(w, d) { try { window.DaimondTrail.note(w, d); } catch (e) {} }
+
+	/// One line in the opt-in diagnostics ring (www/js/diag.js). A NO-OP when
+	/// Diagnostics is off -- `DaimondDiag.log` returns on its first line then --
+	/// so the sync/apply seams may call it unconditionally. Never carries content:
+	/// chat ids, counts and versions only. See diag.js.
+	function diag(tag, d) { try { if (window.DaimondDiag) DaimondDiag.log(tag, d); } catch (e) {} }
 
 	/// The wasm module's own memory, in whole megabytes. Empty before the module
 	/// exists, which is the honest answer rather than a zero that reads as small.

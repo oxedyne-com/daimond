@@ -45,6 +45,12 @@
 (function () {
 	'use strict';
 
+	/// One line in the opt-in diagnostics ring (www/js/diag.js). A no-op when
+	/// Diagnostics is off; ids, counts and reasons only, never content. This is
+	/// the COLLECTOR side of the hand-off picture: why this device claimed an
+	/// errand or stood down for the nominee.
+	function diag(tag, d) { try { if (window.DaimondDiag) DaimondDiag.log(tag, d); } catch (e) {} }
+
 	// The schema version the errand and report carry. Bumped when a field's
 	// meaning changes, so a peer never runs an envelope it half-understands.
 	var ENVELOPE_V = 1;
@@ -1669,6 +1675,10 @@
 		var d = deps || {}, e = errand || {};
 		var turnId = String(e.turnId);
 		var trace = [];
+		diag('collect errand', 'turn=' + turnId
+			+ ' by=' + String(e.dispatchedBy || '').slice(0, 8)
+			+ ' self=' + String(d.selfId || '').slice(0, 8)
+			+ ' nominee=' + String(d.nominatedId || 'none').slice(0, 8));
 
 		// D1(a) — NEVER run an errand THIS device dispatched, EXCEPT on a deliberate
 		// local recovery (`allowSelf`). The phone returns from the background and the
@@ -1688,6 +1698,7 @@
 		// account key), so a match to this device is our own dispatch.
 		if (!d.allowSelf && e.dispatchedBy && String(e.dispatchedBy) === String(d.selfId)) {
 			trace.push('self-dispatched');
+			diag('collect stand-down', 'turn=' + turnId + ' own dispatch');
 			return { ran: false, why: 'self-dispatched', trace: trace };
 		}
 
@@ -1701,7 +1712,11 @@
 		if (d.finished) {
 			var already = false;
 			try { already = await d.finished(e); } catch (err) { already = false; }
-			if (already) { trace.push('already-done'); return { ran: false, why: 'already-done', trace: trace }; }
+			if (already) {
+				trace.push('already-done');
+				diag('collect stand-down', 'turn=' + turnId + ' already done');
+				return { ran: false, why: 'already-done', trace: trace };
+			}
 		}
 
 		// D1(c) — DEFER TO THE NOMINATED RUNNER. When the account has named an always-on
@@ -1716,6 +1731,21 @@
 		// so it is re-collected and re-decided against live presence until the nominee runs
 		// it or its beat ages out. Only WHO attempts the claim changes; the take-if-vacant
 		// lease below is still the single-runner arbiter.
+		// THE COLLECTOR-SIDE SMOKING-GUN. Whether this device defers to the nominee is
+		// decided here against LIVE presence, and the inputs (nominee id, whether it is
+		// present in this device's snapshot, and its beat age) are exactly what tells a
+		// stand-down that SHOULD have happened from one driven by a stale or mismatched
+		// nominee id. Built only when Diagnostics is on.
+		if (window.DaimondDiag && DaimondDiag.on()) {
+			var _nom = String(d.nominatedId || '');
+			var _rec = _nom ? ((d.presence || {})[_nom]) : null;
+			var _beat = _rec ? Math.round((leaseNow(d.now) - leaseMs(_rec.lastSeen)) / 1000) + 's' : 'absent';
+			var _stand = !d.allowSelf && nominationStandDown(d.nominatedId, d.selfId, d.presence, leaseNow(d.now), d.freshWindowMs);
+			diag('collect nominee check', 'turn=' + turnId
+				+ ' nominee=' + (_nom ? _nom.slice(0, 8) : 'none')
+				+ ' present=' + (_rec ? 'Y' : 'N') + ' beat=' + _beat
+				+ ' -> ' + (_stand ? 'STAND DOWN for nominee' : 'proceed to claim'));
+		}
 		if (!d.allowSelf && nominationStandDown(d.nominatedId, d.selfId, d.presence, leaseNow(d.now), d.freshWindowMs)) {
 			trace.push('stood-down-for-nominee');
 			return { ran: false, why: 'nominee', trace: trace };
@@ -1726,14 +1756,22 @@
 		// throw the opaque "Cannot read properties of null (reading 'read')".
 		if (!d.cas || typeof d.cas.read !== 'function') {
 			trace.push('no-cas');
+			diag('collect stand-down', 'turn=' + turnId + ' no lease CAS');
 			return { ran: false, why: 'no-cas', trace: trace };
 		}
 
 		// 1. TAKE. Stand down -- never run -- if a peer already holds it.
+		var tTake = leaseNow(d.now);
 		var took = await leaseTake(turnId,
 			{ holder: d.selfId, eid: e.eid, deadline: e.deadline }, d.cas, d.now);
 		trace.push('take');
-		if (!took.won) return { ran: false, why: took.why || 'stood-down', holder: took.holder, trace: trace };
+		if (!took.won) {
+			diag('collect stand-down', 'turn=' + turnId + ' peer holds ('
+				+ (took.why || '?') + ' holder=' + String(took.holder || '').slice(0, 8) + ')');
+			return { ran: false, why: took.why || 'stood-down', holder: took.holder, trace: trace };
+		}
+		diag('collect CLAIMED', 'turn=' + turnId + ' by ' + String(d.selfId || '').slice(0, 8)
+			+ ' take=' + (leaseNow(d.now) - tTake) + 'ms');
 
 		// THE LEASE DOES NOT RENEW. It is claimed straight to the errand's DEADLINE
 		// (leaseTakeFrom), so it stays live for the whole turn with no periodic write --

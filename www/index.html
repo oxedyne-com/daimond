@@ -1513,6 +1513,10 @@
      thrown by anything below has to land in the trail rather than in a console
      nobody on a phone can open. -->
 <script src="js/breadcrumb.js"></script>
+<!-- diag.js beside breadcrumb.js: the opt-in, richer sync/apply trail. Loaded
+     early so its no-op log() is defined before any seam that calls it, and its
+     stored on/off switch is read before the first pull. -->
+<script src="js/diag.js"></script>
 <!-- safe.js next, and it must be next: it reads the trail breadcrumb.js has
      just written to decide whether this app is looping, and sync.js consults
      its answer from the first moment a session exists. -->

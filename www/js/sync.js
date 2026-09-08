@@ -308,6 +308,10 @@
 	/// One line in the durable trail, for a bug only a phone can see.
 	function trail(w, d) { try { window.DaimondTrail.note(w, d); } catch (e) {} }
 
+	/// One line in the opt-in diagnostics ring (www/js/diag.js). A no-op when
+	/// Diagnostics is off; ids, counts and versions only, never content.
+	function diag(tag, d) { try { if (window.DaimondDiag) DaimondDiag.log(tag, d); } catch (e) {} }
+
 	/// Lift a safe start, and reload so the engine gets its boot back.
 	///
 	/// A reload rather than a `start()` here: everything this file does at a boot
@@ -1016,11 +1020,16 @@
 		// and it must not overwrite the push's. See `adoptVersion`.
 		var preRead = serverVersion;
 		var res;
+		var tGet = Date.now();		// the /api/sync GET round-trip, for the sync-latency picture
 		try { res = await call('GET'); }
-		catch (e) { log('pull network error', e); restStatus(); return -1; }
-		if (res.status !== 200 || !res.json) { log('pull status', res.status); restStatus(); return -1; }
+		catch (e) { diag('pull GET error', (Date.now() - tGet) + 'ms'); log('pull network error', e); restStatus(); return -1; }
+		if (res.status !== 200 || !res.json) { diag('pull GET status', res.status + ' after ' + (Date.now() - tGet) + 'ms'); log('pull status', res.status); restStatus(); return -1; }
 		lastPullAt = Date.now();		// asked, and answered: see the catch-up in push().
 		var j = res.json;
+		// The round-trip and the sealed parcel size -- bytes only, no content. A slow
+		// GET or a large parcel is the first thing the "sync is slow" question asks.
+		diag('pull GET', (Date.now() - tGet) + 'ms present=' + (j.present ? 'Y' : 'N')
+			+ ' ' + Math.round(((j.blob || '').length) / 1024) + 'K');
 		// PRESENCE RIDES ALONGSIDE THE PARCEL, in the clear. The gateway stamps a
 		// last_seen per awake device in its own clock and includes `now` so this
 		// client can convert to its own frame; `ingest` REPLACES the local view
@@ -1036,7 +1045,7 @@
 		catch (e) { log('lease door adopt failed', e); }
 		// An empty mailbox is an answer: this device has heard, and there was
 		// nothing to hear. See `pulledOk`.
-		if (!j.present) { adoptVersion(0, preRead); reapplyDone(); pulledOk = true; restStatus(); return serverVersion; }
+		if (!j.present) { diag('pull', 'v' + (j.version | 0) + ' empty mailbox'); adoptVersion(0, preRead); reapplyDone(); pulledOk = true; restStatus(); return serverVersion; }
 		var state;
 		try {
 			// The size of what arrived, before it is opened. Three forms of this
@@ -1078,6 +1087,16 @@
 			if (!quiet) restStatus();
 			return serverVersion;
 		}
+		// The parcel PULLED, at its version and with the ids it carried, into the
+		// opt-in ring. `applyChats` records what the merge then DID with each; this
+		// records what arrived, so the two read together as "carried X, kept Y".
+		try {
+			diag('pull', 'v' + (j.version | 0)
+				+ ' chats=' + ((state.chats || []).map(function (c) { return c && c.id; })
+					.filter(Boolean).join(',') || 'none')
+				+ ' tombs=' + Object.keys(state.tombs || {}).join(',')
+				+ ' msgTombs=' + Object.keys(state.msgTombs || {}).length);
+		} catch (e) {}
 		lastFailed = await applyParcel(state);
 		pulledOk   = true;			// a parcel was read; see `pulledOk`.
 		noteSynced();
@@ -1099,6 +1118,8 @@
 		// stamp-ordered), so re-applying a section that already took changes
 		// nothing. See the re-apply notes above.
 		if (lastFailed.length) {
+			diag('pull merge FAILED', 'sections=' + lastFailed.join(',') + ' v=' + (j.version | 0)
+				+ ' -> re-pull scheduled (not adopting)');
 			log('pulled version', j.version | 0, 'but could not merge', lastFailed.join(','),
 				'- not adopting; scheduling a re-pull of the same version');
 			scheduleReapply();
@@ -1866,23 +1887,31 @@
 	function scheduleReapply() {
 		if (reapplyTimer) return;				// one already coming.
 		if (reapplyTries >= REAPPLY_MAX_TRIES) {
+			diag('re-pull GAVE UP', 'after ' + reapplyTries + ' tries; version left un-adopted');
 			log('re-apply: gave up auto-retrying after', reapplyTries,
 				'tries; version left un-adopted, ordinary triggers will retry');
 			return;
 		}
 		var grow = Math.min(REAPPLY_MAX_MS, REAPPLY_BASE_MS * Math.pow(2, reapplyTries));
 		reapplyTries++;
+		var wait = Math.round(grow * (0.5 + Math.random()));
+		// THE RE-PULL LOOP, made obvious: the try counter and the interval, so a
+		// section that keeps failing on iOS shows here as a rising count at a
+		// widening interval -- the churn the owner reports, paired with the
+		// 'pull merge FAILED sections=...' line that says WHICH section.
+		diag('re-pull armed', 'try=' + reapplyTries + '/' + REAPPLY_MAX_TRIES + ' in ' + wait + 'ms');
 		// Jittered, for the same reason the conflict backoff is: several devices that
 		// all failed the same parcel must not re-pull in the same millisecond.
 		reapplyTimer = setTimeout(function () {
 			reapplyTimer = null;
 			reapplyPull();
-		}, Math.round(grow * (0.5 + Math.random())));
+		}, wait);
 	}
 
 	/// A clean apply (or an adopted version) settled it: forget the backoff and
 	/// disarm any pending re-pull.
 	function reapplyDone() {
+		if (reapplyTries > 0) diag('re-pull settled', 'after ' + reapplyTries + ' tries');
 		reapplyTries = 0;
 		if (reapplyTimer) { clearTimeout(reapplyTimer); reapplyTimer = null; }
 	}
