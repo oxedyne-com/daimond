@@ -1969,6 +1969,7 @@
 	'turn.offline':           'The connection dropped before this finished. Nothing was lost — pick it up where it stopped.',
 	'turn.offline_early':     'The connection dropped before an answer arrived. Nothing was lost — ask again from here.',
 	'turn.peer_sent':         'Sent to your other devices.',
+	'turn.peer_sending_named': 'Sending to {name}…',
 	'turn.peer_none':         'No awake device picked this up.',
 	'turn.peer_claimed':       'Another device is picking this up.',
 	'turn.peer_claimed_named': '{name} is picking this up.',

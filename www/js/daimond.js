@@ -14419,7 +14419,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		else if (st === 'parked')        label.textContent = t('turn.peer_parked');
 		else if (st === 'failed')        label.textContent = t('turn.peer_failed');
-		else                             label.textContent = t('turn.peer_sent');	// dispatched
+		else {												// dispatched (pre-claim)
+			// Name the CHOSEN target tentatively while the errand is out but unclaimed,
+			// so the owner sees WHERE it is going -- "Sending to X…", present-progressive,
+			// an intention not a claim, so seq 217's honesty holds (no past-tense "Handed
+			// off to X" until a device has actually taken the lease). Generic only when no
+			// target was named (a re-dispatch with no chosen peer).
+			var tgt = handoffTargetLabel(m);
+			label.textContent = tgt ? t('turn.peer_sending_named', { name: tgt }) : t('turn.peer_sent');
+		}
 		foot.appendChild(label);
 		// The one control this state offers. A live claim, or a runner blocked on a
 		// question, can be TAKEN BACK; a stall or a failure can be RUN HERE; a parked
@@ -14430,6 +14438,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			tb.textContent = t('turn.peer_takeback');
 			tb.addEventListener('click', function () { peerTakeBack(m.iturn); });
 			foot.appendChild(tb);
+		} else if (st === 'dispatched') {
+			// PRE-CLAIM take-back: the errand is out but NO device holds the lease yet, so
+			// there is nothing to revoke -- pull it back and run HERE instead. Money-safe:
+			// `takeBackToLocal` goes through recoverOneLocally -> runErrand({allowSelf}),
+			// which claims the lease TAKE-IF-VACANT (and checks `finished`) BEFORE running,
+			// so a peer that wins the race to claim keeps it and this stands down -- exactly
+			// one runner, never a double-bill.
+			var tbk = document.createElement('button');
+			tbk.className = 'ti-continue';
+			tbk.textContent = t('turn.peer_takeback');
+			tbk.addEventListener('click', function () { takeBackToLocal(m.iturn); });
+			foot.appendChild(tbk);
 		} else if (st === 'parked') {
 			var rr = document.createElement('button');
 			rr.className = 'ti-continue';
@@ -14523,9 +14543,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { if (current && dispatchedAnswerPresent(current, m)) return; } catch (e) { /* draw it */ }
 		// Name the runner ONLY once a real lease claim exists; until then the header is
 		// generic and the footer carries "Sent to your other devices" (owner 2026-09-06).
-		var dl   = handoffClaimLabel(m);
-		var line = dl ? tOr('chat.handed_off', 'Handed off to {name}', { name: dl })
-			: tOr('chat.who_handoff', 'Hand-off');
+		// The header names the CLAIMANT once a real lease exists ("Handed off to X"),
+		// else the CHOSEN target tentatively ("Sending to X…") -- present-progressive, an
+		// intention not a claim, so seq 217's honesty holds. Generic only when no target.
+		var dl   = handoffClaimLabel(m);				// the real lease holder, or ''
+		var tgt  = dl ? '' : handoffTargetLabel(m);		// the chosen target, pre-claim
+		var line = dl  ? tOr('chat.handed_off', 'Handed off to {name}', { name: dl })
+			: tgt ? t('turn.peer_sending_named', { name: tgt })
+			:       tOr('chat.who_handoff', 'Hand-off');
 		var tile = buildTile('handoff', { expanded: true, who: line });
 		tile.classList.add('chat-msg-handoff');
 		var foot = document.createElement('div');
@@ -15224,6 +15249,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) { /* a revoke that could not land leaves the peer running; the UI reflects it */ }
 	}
 
+	/// PRE-CLAIM take-back: pull a dispatched turn that NO device has claimed yet back to
+	/// THIS device and run it. Unlike `peerTakeBack` (which REVOKES a live foreign lease),
+	/// there is nothing to revoke -- the take-if-vacant claim IS the mechanism. Money-safe
+	/// by construction: it goes through recoverOneLocally -> runErrand({allowSelf}), which
+	/// checks `finished` and then claims the lease TAKE-IF-VACANT before running, guarded
+	/// by the synchronous `_localRecovering` set. So if a peer wins the race to claim, the
+	/// local take loses the CAS and this stands down -- exactly one runner, no double-bill.
+	function takeBackToLocal(iturn) {
+		var tid = String(iturn || '');
+		if (!tid) return;
+		// Resolve the dispatched placeholder (the tile may be the transient send-time one,
+		// whose synthetic `m` is not yet in the array -- the index finds the durable one).
+		var chat = dispatchedChat(tid) || current;
+		if (!chat || !chat.messages) return;
+		var m = null;
+		for (var i = 0; i < chat.messages.length; i++) {
+			var x = chat.messages[i];
+			if (x && x.why === 'dispatched' && String(x.iturn) === tid) { m = x; break; }
+		}
+		if (!m) return;
+		// Cancel the backstop timer -- this IS the local run now -- and recover through the
+		// lease-guarded path (a peer that already holds a live lease makes recoverDecision
+		// stand this down; the take-if-vacant CAS arbitrates a dead heat).
+		try { clearDispatchFallback(tid); } catch (e) { /* the recovery below is the run */ }
+		recoverOneLocally(chat, m);
+	}
+
 	/// Drop the empty "dispatched" placeholder for a turn once its answer has merged,
 	/// so the real assistant message (same iturn, different mid) stands alone.
 	/// Tombstoned, so a later merge does not resurrect it.
@@ -15544,16 +15596,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var self     = selfDeviceId();
 			var nominee  = (typeof nominatedDeviceId === 'function') ? nominatedDeviceId() : '';
 			var presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
-			// Presence freshness governs the dispatch, so make it current. If a runner
-			// is NOMINATED but its beat looks stale in the snapshot -- the case right
-			// after a hard refresh, before presence has re-synced -- do a BOUNDED,
-			// awaited refresh and re-snapshot before deciding, so a freshly nominated
-			// runner is not misjudged offline and the turn wrongly run here. Only that
-			// ambiguous case waits: a nominee already fresh, or no nominee, keeps the
-			// old fire-and-forget nudge and pays nothing. The race caps the wait so a
-			// slow or absent gateway never holds the send.
-			var nomStale = !!nominee && nominee !== self && DaimondPeer.nominationStandDown
-				&& !DaimondPeer.nominationStandDown(nominee, self, presence, Date.now(), DaimondPeer.DISPATCH_FRESH_MS);
+			// Presence freshness governs the dispatch, so make it current. If a runner is
+			// NOMINATED but NOT ALREADY GENUINE in this snapshot -- the case right after a
+			// hard refresh before presence has re-synced, OR a phone whose snapshot holds a
+			// beating nominee whose serviced_at has merely aged past the window -- do a
+			// BOUNDED, awaited refresh and re-snapshot before deciding. Only that ambiguous
+			// case waits: a nominee already genuine, or no nominee, keeps the fire-and-forget
+			// nudge and pays nothing. The race caps the wait so a slow gateway never holds
+			// the send.
+			//
+			// The gate is the nominee's GENUINENESS (recGenuine -- a fresh serviced_at), NOT
+			// its bare beat (nominationStandDown -- lastSeen). autoDispatchDecision seats the
+			// turn on the nominee only when recGenuine holds, so gating the refresh on the
+			// beat alone let a beating-but-serviced-stale nominee slip through un-refreshed,
+			// fail recGenuine, and be stolen by a fresher peer -- the owner's turn ran on
+			// gilgamesh though argonaut is the always-on runner (reproduced under WebKit,
+			// dev/repro_nominee_stolen.mjs). A nominee that is genuinely down is confirmed
+			// after the pull and the fallback still runs; one that only LOOKED stale here
+			// comes back servicing and wins, as the owner expects.
+			var nomStale = !!nominee && nominee !== self && DaimondPeer.recGenuine
+				&& !DaimondPeer.recGenuine((presence || {})[nominee], Date.now(), DaimondPeer.DISPATCH_FRESH_MS);
 			if (window.DaimondSync && DaimondSync.refreshPresence) {
 				if (nomStale) {
 					try {

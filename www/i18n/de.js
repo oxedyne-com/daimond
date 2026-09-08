@@ -10,6 +10,11 @@
 	if (!window.DaimondI18n) return;
 
 	window.DaimondI18n.register('de', {
+	// REVIEW (machine-drafted, pending native review): the turn.peer_* hand-off
+	// family is otherwise en-only, so this key will show translated while its
+	// siblings fall back to English until the family is localised.
+	'turn.peer_sending_named': 'Wird an {name} gesendet…',
+
 
 	// ── Shared words ───────────────────────────────────────────
 	'common.close': 'Schließen',

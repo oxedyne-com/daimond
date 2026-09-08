@@ -12,6 +12,11 @@
 	if (!window.DaimondI18n) return;
 
 	window.DaimondI18n.register('zh-Hans', {
+	// REVIEW (machine-drafted, pending native review): the turn.peer_* hand-off
+	// family is otherwise en-only, so this key will show translated while its
+	// siblings fall back to English until the family is localised.
+	'turn.peer_sending_named': '正在发送到 {name}…',
+
 
 	// ── 通用词 ─────────────────────────────────────────────────
 	'common.close':        '关闭',

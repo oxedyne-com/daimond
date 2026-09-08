@@ -14,6 +14,11 @@
 	if (!window.DaimondI18n) return;
 
 	window.DaimondI18n.register('ko', {
+	// REVIEW (machine-drafted, pending native review): the turn.peer_* hand-off
+	// family is otherwise en-only, so this key will show translated while its
+	// siblings fall back to English until the family is localised.
+	'turn.peer_sending_named': '{name}(으)로 보내는 중…',
+
 
 	// ── 공통 낱말 ──────────────────────────────────────────────
 	'common.close':        '닫기',
