@@ -59,7 +59,16 @@ import { extDev, isExtSource } from './extdev.mjs';
 /// second copy of a path is a second thing to move.
 export const PW = process.env.DAIMOND_PW
 	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium, webkit } = await import(pathToFileURL(PW).href);
+
+/// Which engine `open()` launches. Chromium is the default and the only one the
+/// extension (MV3) flows can use; `webkit` is Playwright's bundled JavaScriptCore
+/// build -- the ACTUAL iOS Safari engine -- for verifiers that must be proven on the
+/// engine the owner runs. Set per run with DAIMOND_BROWSER / BROWSER, or per call
+/// with `open({ browser: 'webkit' })`. Named here so the whole suite reads one
+/// answer rather than each file deciding again. `firefox` is bundled too but is not
+/// wired here: nothing in this product ships against it.
+export const BROWSER = (process.env.DAIMOND_BROWSER || process.env.BROWSER || 'chromium').toLowerCase();
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const SHOTS = path.join(HERE, 'shots');
@@ -298,6 +307,10 @@ export async function open(opts = {}) {
 		// the route below for why the default is not to. Almost nothing wants this:
 		// what it buys is a dependency on GitHub's rate limiter.
 		publicLog = false,
+		// Which engine to launch, overriding the process-wide `BROWSER` for this one
+		// session. Defaults to it; a suite sets DAIMOND_BROWSER once and every session
+		// follows.
+		browser: engine = BROWSER,
 	} = opts;
 
 	// Before a browser is even launched: is the mock this run will read the mock
@@ -361,14 +374,41 @@ export async function open(opts = {}) {
 		}
 	}
 
-	const browser = await chromium.launchPersistentContext(profileDir, {
-		executablePath: CHROME,
-		headless:       false,		// the flag above decides; MV3 needs a real browser
-		args,
-		env,
-		viewport:       { width: 1500, height: 950 },
-		hasTouch:       touch,
-	});
+	// WEBKIT is Playwright's bundled JavaScriptCore build -- the engine the owner's
+	// iPhone actually runs -- and it launches differently from Chromium: no Chrome
+	// executable, and none of the Chromium `args` above (it understands none of them,
+	// and its own headless is a launch option, not a flag). It also cannot load an
+	// MV3 extension, so an extension flow under it is refused loudly rather than run
+	// as if the extension were there. Everything after this point -- the page, the
+	// event hooks, addInitScript, route, goto, the sign-in -- is cross-engine
+	// Playwright and needs no branch. The persistent-profile semantics the reload
+	// flows rest on hold under WebKit too: launchPersistentContext keeps this
+	// session's OPFS, IndexedDB and localStorage across a reload just as it does for
+	// Chromium.
+	let browser;
+	if (engine === 'webkit') {
+		if (extension) {
+			throw new Error('open({ browser: "webkit" }) cannot load the MV3 extension; '
+				+ 'run the extension flows under Chromium.');
+		}
+		browser = await webkit.launchPersistentContext(profileDir, {
+			headless:   !headed,
+			env,
+			viewport:   { width: 1500, height: 950 },
+			hasTouch:   touch,
+		});
+	} else if (engine === 'chromium') {
+		browser = await chromium.launchPersistentContext(profileDir, {
+			executablePath: CHROME,
+			headless:       false,		// the flag above decides; MV3 needs a real browser
+			args,
+			env,
+			viewport:       { width: 1500, height: 950 },
+			hasTouch:       touch,
+		});
+	} else {
+		throw new Error('unknown engine "' + engine + '"; set DAIMOND_BROWSER to chromium or webkit');
+	}
 
 	const page = browser.pages()[0] || await browser.newPage();
 	const errs   = [];

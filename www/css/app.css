@@ -4209,6 +4209,13 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	cursor: pointer;
 }
 .left-banner-x:hover { background: var(--bg-hover); color: var(--text-primary); }
+/* `display: flex` above beats the browser's own `[hidden] { display: none }`, so
+   `renderLeftBanner`'s `b.hidden = true` did NOT hide an empty banner: with nothing
+   stranded it drew a small empty box over the lower viewport (a bare `.left-banner-x`
+   worth, ~26px), reported on mobile where it sits above the nav bar. The same trap
+   `.update-chip` answers in updater.css. Answered with `display` (not `visibility`)
+   because this banner is not in a row of targets whose boxes must not shift. */
+.left-banner[hidden] { display: none; }
 
 @media (prefers-reduced-motion: no-preference) {
 	.left-banner { animation: left-banner-in 0.28s ease-out; }

@@ -1,1 +1,1 @@
-{"build":"4d62eecd8f84","note":"Sync: retry a pull that can't apply a section instead of stranding it; fixes chat deletions not reaching a cold iOS tab"}
+{"build":"8294c956dcf6","note":"iOS: clear the Trash store on every sync so emptying Trash syncs; hide the empty bottom-of-screen chip"}

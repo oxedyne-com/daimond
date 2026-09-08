@@ -117,6 +117,10 @@
 	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
 }
 .update-banner[data-state="stale"] { border-color: var(--danger); }
+/* `display: flex` above beats the UA's `[hidden] { display: none }`, exactly as it
+   does for `.update-chip` — so `hideBanner`'s `el.hidden = true` would leave an empty
+   banner box on screen. Guarded the same way `.left-banner` is (css/app.css). */
+.update-banner[hidden] { display: none; }
 .update-banner-msg { flex: 1; line-height: 1.35; }
 
 /* The one control the eye is meant to go to: a filled accent button. */

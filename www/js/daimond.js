@@ -5366,6 +5366,39 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var cloudBase = readJson(SYNC_CLOUDBASE_KEY, {});
 		await section('chats',    function () { return applyChats(remote); });
 		await section('diamonds', function () { return applyDiamonds(remote); });
+		// EMPTYING THE TRASH HAS TO REACH THE TRASH STORE, not just the chat and
+		// Diamond stores. Destroying a trashed item -- `destroyChat` /
+		// `destroyDiamond` -- tombstones it (which travels, in the two sections
+		// above) and then `DaimondTrash.forget`s it LOCALLY. The forget does not
+		// travel: `DaimondTrash.snapshot` simply omits the id, and `adopt` only ever
+		// adds or freshens the records a snapshot carries -- it never removes one the
+		// sender dropped, because an absent id is "nothing to say", not "deleted".
+		// So a receiver merged the tombstone (the chat left the rail) while its Trash
+		// panel went on holding the item, cleared only LAZILY the next time
+		// `trashList` ran and found the chat gone from the store. On a device whose
+		// owner opens the Trash panel that is invisible; on one woken only to sync in
+		// the background -- an iOS tab -- `trashList` never ran, so the purge showed
+		// as applied everywhere except there. The delete-to-trash before it had
+		// travelled fine (that IS a trash-snapshot record), which is why only the
+		// SECOND act stranded.
+		//
+		// The tombstone is the canonical deletion and the one that reliably travels,
+		// so the trash store is reconciled against it here, on every receive, rather
+		// than left to whenever a panel happens to open. Idempotent -- `forget` is a
+		// no-op on an id it does not hold -- and data-safe: only an id this device has
+		// actually tombstoned is forgotten, so a live or merely-trashed item cannot
+		// vanish, and forgetting a destroyed item's record cannot resurrect it (the
+		// tombstone keeps it dead). Runs AFTER both tomb sections above have merged,
+		// so it sees this parcel's purges too.
+		await section('trashclean', function () {
+			if (!window.DaimondTrash || !DaimondTrash.forget || !DaimondTrash.raw) return;
+			var chatTombs = loadTombMap(TOMBS_KEY);
+			var dmndTombs = loadTombMap(DIAMOND_TOMBS_KEY);
+			var records   = DaimondTrash.raw() || {};
+			Object.keys(records).forEach(function (id) {
+				if (chatTombs[id] || dmndTombs[id]) DaimondTrash.forget(id);
+			});
+		});
 		await section('files',    function () { return applyFiles(remote.files, remote.filesComplete === true); });
 		// The large files held in the chunk store, reconstructed on demand.
 		await section('chunked',  function () { return applyChunked(remote.chunked, cloudBase); });

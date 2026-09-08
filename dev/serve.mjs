@@ -55,6 +55,22 @@ function proxy(req, res) {
 		method: req.method, path: req.url, headers: req.headers,
 	};
 	const up = http.request(opts, u => {
+		// STRIP `Secure` FROM THE SESSION COOKIE, and ONLY in this dev proxy. The
+		// gateway marks `daimond_gw_sess` Secure -- correct in production, which is
+		// HTTPS. This dev server is plain http on localhost, and WebKit (unlike
+		// Chromium) refuses to STORE a Secure cookie over http even on localhost:
+		// every following request then goes without the session, the gateway answers
+		// 401, the client re-auths, the new cookie is dropped again, and `authed`
+		// flaps once a second -- so the iOS engine cannot be tested here at all. Real
+		// iOS is unaffected because production serves HTTPS and the cookie sticks.
+		// Removed here rather than in the gateway so the shipped config keeps Secure
+		// and nothing ever runs without it off loopback -- the same discipline as
+		// dev/devgw.sh's `dev_insecure`. Chromium is unaffected (it stored it anyway).
+		var sc = u.headers && u.headers['set-cookie'];
+		if (sc) {
+			u.headers['set-cookie'] = (Array.isArray(sc) ? sc : [sc])
+				.map(function (c) { return c.replace(/;\s*Secure/ig, ''); });
+		}
 		res.writeHead(u.statusCode || 502, u.headers);
 		u.pipe(res);
 	});
