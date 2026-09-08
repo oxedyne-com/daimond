@@ -1088,8 +1088,23 @@
 		var nom = String(o.nominatedId || '');
 		if (nom && nom !== String(o.selfId || '')) {
 			var nRec = (presence || {})[nom];
-			if (nRec && (n - leaseMs(nRec.lastSeen)) <= win) {
-				return { dispatch: true, peer: { deviceId: nom, name: (nRec.name || ''), lastSeen: leaseMs(nRec.lastSeen) }, reason: 'nominee' };
+			// Normally the nominee is seated only while its beat is fresh (`win` =
+			// DISPATCH_FRESH_MS). But a stale-LOOKING beat is not proof the always-on
+			// runner is down: a phone whose dispatch-time presence refresh TIMED OUT (a
+			// cold foreground GET that did not land before the send) may hold a per-device
+			// skewed snapshot where the nominee's last beat aged past `win` while a peer's
+			// did not -- and it would then misroute a live nominee's turn to that fresher
+			// peer (the owner's argonaut→gilgamesh mismatch). When the dispatcher could not
+			// CONFIRM presence it sets `presumeNomineeWindowMs` to a wide trust window: a
+			// nominee last known within it is presumed live and SEATED, and the rare truly-
+			// slept nominee is recovered by the undeliverable→local + dispatch backstop
+			// (seq 222) rather than silently handed to a peer. A CONFIRMED-stale nominee
+			// (the refresh landed and it is still aged out) leaves the window at `win` and
+			// correctly falls through as offline.
+			var nomWin = (o.presumeNomineeWindowMs && o.presumeNomineeWindowMs > win) ? o.presumeNomineeWindowMs : win;
+			if (nRec && (n - leaseMs(nRec.lastSeen)) <= nomWin) {
+				var presumed = (n - leaseMs(nRec.lastSeen)) > win;	// seated on trust, not a fresh beat
+				return { dispatch: true, peer: { deviceId: nom, name: (nRec.name || ''), lastSeen: leaseMs(nRec.lastSeen) }, reason: (presumed ? 'nominee-presumed' : 'nominee') };
 			}
 		}
 

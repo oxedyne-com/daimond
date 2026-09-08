@@ -1607,6 +1607,7 @@
 		var name = folder || a.folder || 'INBOX';
 		var f    = fld(a, name);
 		var msgs = await readMailbox(a.address, name);
+		var cloud = msgs.filter(function (m) { return m.cloud; }).length;
 		// English, and deliberately so: this file is written for the agents'
 		// file tools to read, and a digest whose column headings move with the
 		// interface language would be a moving target for every prompt.
@@ -1616,13 +1617,22 @@
 			'Synced ' + new Date(f.lastSync || Date.now()).toISOString() + '. '
 				+ msgs.length + ' message' + (msgs.length === 1 ? '' : 's') + '.',
 			'The full message is the file named in the last column.',
-			'',
-			'| UID | Date | From | Subject | File |',
-			'|----:|------|------|---------|------|',
 		];
+		if (cloud) {
+			// The oldest mail is offloaded to the cloud, so it has no local date, sender or
+			// subject to print. It is still listed — the digest is the whole mailbox — with
+			// its row marked and its UID, which is arrival order, so the lowest is the oldest.
+			lines.push(cloud + ' of these are in cloud storage (marked "cloud" in the Date column, '
+				+ 'blank date/from/subject). Bring one to this device with file_fetch on its file '
+				+ 'path before reading it.');
+		}
+		lines.push('');
+		lines.push('| UID | Date | From | Subject | File |');
+		lines.push('|----:|------|------|---------|------|');
 		msgs.slice().reverse().forEach(function (m) {
 			var cell = function (s) { return String(s || '').replace(/\|/g, '\\|').replace(/\n/g, ' '); };
-			lines.push('| ' + m.uid + ' | ' + cell(m.date) + ' | ' + cell(m.from)
+			var date = m.cloud ? 'cloud' : cell(m.date);
+			lines.push('| ' + m.uid + ' | ' + date + ' | ' + cell(m.from)
 				+ ' | ' + cell(m.subject) + ' | `' + cell(m.file) + '` |');
 		});
 		await deps.runTool('file_write', {
@@ -1646,27 +1656,80 @@
 		// means the mailbox has nothing in it.
 		if (!listing || listing.outcome !== 'done') return [];
 		var out = [];
-		var names = listing.text.split('\n').map(function (l) {
+		// Each entry keeps whether file_list said it is 'in cloud storage'. A message
+		// offloaded to the cloud is still IN the mailbox — it is the oldest mail, exactly
+		// what an "earliest" question wants — and dropping it made the digest a partial
+		// account of the box rather than the whole of it.
+		var entries = [];
+		listing.text.split('\n').forEach(function (l) {
 			var m = l.match(/^\s*(?:[-*]\s*)?(\S.*?)(?:\s+\(\d+.*\))?\s*$/);
-			return m ? m[1].trim() : '';
-		}).filter(function (n) { return n && n.indexOf(':2,') > 0; });
+			var nm = m ? m[1].trim().replace(/\/$/, '') : '';
+			if (!nm || nm.indexOf(':2,') < 0) return;
+			entries.push({ name: nm, cloud: /in cloud storage/.test(l) });
+		});
 
-		for (var i = 0; i < names.length; i++) {
-			var name = names[i].replace(/\/$/, '');
+		for (var i = 0; i < entries.length; i++) {
+			var name = entries[i].name;
+			var uid  = parseInt(name.split('.')[0], 10) || 0;
+			// A cloud-only message is folded in from the listing alone, with no body read:
+			// the point is that the digest and an oldest-by-date answer stand WITHOUT the
+			// expense of fetching. Its date is unknown until it is fetched, so it sorts by
+			// UID — which a server assigns in arrival order, so the lowest UID is the oldest.
+			if (entries[i].cloud) {
+				out.push({
+					uid:     uid,
+					file:    dir + '/' + name,
+					from:    '',
+					subject: '',
+					date:    '',
+					seen:    /:2,[^,]*S/.test(name),
+					cloud:   true,
+				});
+				continue;
+			}
 			var raw = await readText(dir + '/' + name);
 			if (raw.outcome !== 'done') continue;
 			var hs = parseHeaders(raw.text);
 			out.push({
-				uid:     parseInt(name.split('.')[0], 10) || 0,
+				uid:     uid,
 				file:    dir + '/' + name,
 				from:    decodeWords(header(hs, 'from')),
 				subject: decodeWords(header(hs, 'subject')) || t('mail.no_subject'),
 				date:    header(hs, 'date'),
 				seen:    /:2,[^,]*S/.test(name),
+				cloud:   false,
 			});
 		}
 		out.sort(function (x, y) { return x.uid - y.uid; });
 		return out;
+	}
+
+	/// Order a mailbox listing and cut it to a window, for the mail tools.
+	///
+	/// The base list from `readMailbox` is UID-ascending, which is arrival order. "newest"
+	/// (the default) reverses it; "oldest" keeps it. `since`/`before` are inclusive-of-since,
+	/// exclusive-of-before date bounds, applied only to messages whose Date header parses —
+	/// a cloud-only stub has no local date, so it is KEPT rather than dropped, since hiding
+	/// the oldest mail is exactly the failure this fixes. The date sort is stable on UID.
+	function orderMailbox(msgs, req) {
+		var order = String(req.order || 'newest').toLowerCase();
+		var since = req.since ? Date.parse(req.since) : NaN;
+		var before = req.before ? Date.parse(req.before) : NaN;
+		var epoch = function (m) { var d = Date.parse(m.date || ''); return isNaN(d) ? null : d; };
+		var list = msgs.filter(function (m) {
+			var e = epoch(m);
+			if (e === null) return true;         // undated (cloud) mail is never filtered out
+			if (!isNaN(since) && e < since) return false;
+			if (!isNaN(before) && e >= before) return false;
+			return true;
+		});
+		list = list.slice().sort(function (x, y) {
+			var ex = epoch(x), ey = epoch(y);
+			if (ex !== null && ey !== null && ex !== ey) return ex - ey;
+			return x.uid - y.uid;                // undated, or same instant: UID is arrival order
+		});
+		if (order !== 'oldest') list.reverse();
+		return list;
 	}
 
 	/// Read one folder's digest, and adopt it as what the panel SHOWS only when
@@ -3556,6 +3619,11 @@
 	}
 
 	function summariseRow(m) {
+		if (m.cloud) {
+			return 'uid ' + m.uid + (m.seen ? '' : '  [unread]')
+				+ '  (in cloud storage — its date, sender and subject are not on this device; '
+				+ 'fetch it with file_fetch ' + m.file + ' to read it)';
+		}
 		return 'uid ' + m.uid + (m.seen ? '' : '  [unread]')
 			+ '  ' + (m.date || '') + '  from ' + (m.from || '?')
 			+ '  — ' + (m.subject || '(no subject)');
@@ -3580,18 +3648,29 @@
 		var folder = req.folder || folderOf(addr);
 		var limit = (req.limit > 0) ? Math.min(req.limit | 0, 100) : 20;
 		var msgs = await readMailbox(addr, folder);
+		var order = (String(req.order || '').toLowerCase() === 'oldest') ? 'oldest' : 'newest';
+		var shown = orderMailbox(msgs, req).slice(0, limit);
+		var cloud = msgs.filter(function (m) { return m.cloud; }).length;
 		lines.push('');
-		lines.push('Recent in ' + addr + ' / ' + folder + ', newest first:');
+		lines.push((order === 'oldest' ? 'Oldest' : 'Recent') + ' in ' + addr + ' / ' + folder
+			+ (order === 'oldest' ? ', earliest first:' : ', newest first:'));
 		if (!msgs.length) {
 			lines.push('  (nothing synced yet — the user syncs mail from the Mail panel)');
 		} else {
-			msgs.slice().reverse().slice(0, limit).forEach(function (m) {
+			shown.forEach(function (m) {
 				lines.push('  ' + summariseRow(m));
 			});
 		}
+		if (cloud) {
+			lines.push('');
+			lines.push(cloud + ' of these message(s) are in cloud storage — the oldest mail, kept '
+				+ 'off this device. They have no local date, sender or subject; fetch one with '
+				+ 'file_fetch on the path shown before reading it with mail_read.');
+		}
 		lines.push('');
 		lines.push('Read one in full with mail_read (its address, folder and uid). '
-			+ 'Write or reply with mail_draft.');
+			+ 'Write or reply with mail_draft. Pass "order":"oldest" for the earliest first, '
+			+ 'and "since"/"before" (ISO dates) to bound the range.');
 		return lines.join('\n');
 	}
 
@@ -3604,21 +3683,29 @@
 		var folder = req.folder || folderOf(addr);
 		var limit = (req.limit > 0) ? Math.min(req.limit | 0, 100) : 20;
 		var msgs = await readMailbox(addr, folder);
+		var cloud = msgs.filter(function (m) { return m.cloud; }).length;
 		var hits = msgs.filter(function (m) {
 			return (String(m.from || '') + ' ' + String(m.subject || '')).toLowerCase().indexOf(q) >= 0;
 		});
+		// A cloud-only message has no local sender or subject to match, so search cannot see
+		// it — but it is still the oldest mail, so the shortfall is named rather than hidden.
+		var cloudNote = cloud ? ' ' + cloud + ' message(s) are in cloud storage and cannot be '
+			+ 'searched by sender or subject until fetched (file_fetch); if you are looking for old '
+			+ 'mail, list the folder with "order":"oldest" and fetch what you need.' : '';
 		if (!hits.length) {
 			return 'No message in ' + addr + ' / ' + folder + ' matched "' + req.query
 				+ '" in its sender or subject. ' + msgs.length + ' message(s) are synced there. '
-				+ 'This searches the sender and subject of synced mail, not the body.';
+				+ 'This searches the sender and subject of synced mail, not the body.' + cloudNote;
 		}
 		var lines = ['Matches for "' + req.query + '" in ' + addr + ' / ' + folder
 			+ ' (sender and subject of synced mail):'];
-		hits.slice().reverse().slice(0, limit).forEach(function (m) {
+		orderMailbox(hits, req).slice(0, limit).forEach(function (m) {
 			lines.push('  ' + summariseRow(m));
 		});
 		lines.push('');
-		lines.push('Read one in full with mail_read.');
+		lines.push('Read one in full with mail_read.'
+			+ ' Pass "order":"oldest" for the earliest first, and "since"/"before" (ISO dates) '
+			+ 'to bound the range.' + cloudNote);
 		return lines.join('\n');
 	}
 
@@ -3642,11 +3729,21 @@
 				return JSON.stringify({ error: 'No message with uid ' + uid + ' in ' + addr + ' / '
 					+ folder + '. Use mail_list to see what is there.' });
 			}
+			// The message IS in the mailbox — it is one the cloud holds and this device does
+			// not. That is a different answer from "no such uid": say where it is and how to
+			// bring it here, rather than letting the read below fail with a bare "could not".
+			if (hit.cloud) {
+				return JSON.stringify({ error: 'Message uid ' + uid + ' in ' + addr + ' / ' + folder
+					+ ' is in cloud storage, not on this device — it is among the oldest mail. '
+					+ 'Fetch it first with file_fetch ' + hit.file + ', then read it again.' });
+			}
 			path = hit.file;
 		}
 		var raw = await readText(path);
 		if (raw.outcome !== 'done') {
-			return JSON.stringify({ error: 'The message at ' + path + ' could not be read.' });
+			var cloudHint = /^mail\//.test(String(path)) ? ' If it is in cloud storage, bring it '
+				+ 'to this device first with file_fetch ' + path + ', then read it again.' : '';
+			return JSON.stringify({ error: 'The message at ' + path + ' could not be read.' + cloudHint });
 		}
 		return JSON.stringify({ raw_b64: b64(utf8(raw.text)) });
 	}

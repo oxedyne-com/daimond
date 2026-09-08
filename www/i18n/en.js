@@ -454,6 +454,13 @@
 	// never finished, and the turn ran here. Said so provenance is never silent.
 	'chat.ran_here_failed': 'Ran here — hand-off to {name} didn’t finish',
 	'chat.ran_here':       'Ran on this device',
+	// The hand-off tile's expanded body: a concise account of what happened when a
+	// turn ran off this device. The provenance line, then a facts row of only the
+	// figures the runner actually reported (run time, model, tokens, cost).
+	'chat.handoff_ran_on':        'Ran on {name}; the answer synced back to this device.',
+	'chat.handoff_ran_here':      'Ran on this device after the hand-off to {name} didn’t finish.',
+	'chat.handoff_ran_here_plain': 'Ran on this device.',
+	'chat.handoff_tokens':        '{n} tok',
 	'chat.who_handoff':    'Hand-off',
 	'chat.who_tool':       'Tool',
 	'chat.who_tools':      'Tools',

@@ -9183,6 +9183,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			setTurnOpen(div, !isTurnOpen(div));
 		});
 		_turn += 1;
+		// The FIRST question of a thread does not open a turn against a previous one,
+		// so it takes the ordinary within-turn gap above it, not the 12px turn
+		// separator. The `:first-child` guard in app.css that used to do this stopped
+		// firing once the System band became a permanent tile at the head of the
+		// thread -- the band, not the question, is the first child now -- so the mark
+		// travels on the tile instead (see .chat-msg-user.turn-first in app.css).
+		if (_turn === 1) div.classList.add('turn-first');
 		tagTurn(div);
 		tilePeek(div, text);
 		postToChat(div);
@@ -9263,12 +9270,66 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// body, sitting quietly in the flow above the answer that came back. It
 	/// replaces the "ran on <device>" meta the answer header used to carry, so the
 	/// provenance is said once and in one place.
-	function appendHandoff(ranOn) {
+	/// A run duration in the terse form the hand-off body uses: sub-minute in
+	/// seconds to one decimal under ten, whole seconds above; a minute or more as
+	/// `Nm Ns`. Empty for a missing or zero figure, so a body drops it rather than
+	/// claiming a run took no time.
+	function fmtRunDur(ms) {
+		var n = ms | 0;
+		if (n <= 0) return '';
+		if (n < 60000) {
+			var s = n / 1000;
+			return (s < 10 ? s.toFixed(1).replace(/\.0$/, '') : String(Math.round(s))) + 's';
+		}
+		var m = Math.floor(n / 60000), r = Math.round((n % 60000) / 1000);
+		return r ? (m + 'm ' + r + 's') : (m + 'm');
+	}
+
+	/// The body of a hand-off tile: a concise, honest account of what happened when a
+	/// turn did not run on this device. `kind` is 'peer' (it ran on another device and
+	/// the answer synced back) or 'ranhere' (a hand-off that fell back to run here);
+	/// `name` is the other device. `meta` is the answer message, which for a
+	/// dispatched turn carries the runner's own figures (`ranMs`, `ranModel`,
+	/// `ranTokIn`/`ranTokOut`, `ranCost` — stamped in `runTurn`). Only figures that
+	/// are actually present are drawn, so the body says what is known and no more; a
+	/// message from before those were stamped shows just the provenance line.
+	function handoffBody(kind, name, meta) {
+		var wrap = document.createElement('div');
+		wrap.className = 'ct-handoff';
+		var lead = document.createElement('div');
+		lead.className = 'ct-handoff-lead';
+		lead.textContent = kind === 'ranhere'
+			? (name
+				? tOr('chat.handoff_ran_here', 'Ran on this device after the hand-off to {name} didn’t finish.', { name: String(name) })
+				: tOr('chat.handoff_ran_here_plain', 'Ran on this device.'))
+			: tOr('chat.handoff_ran_on', 'Ran on {name}; the answer synced back to this device.', { name: String(name || '') });
+		wrap.appendChild(lead);
+		// The runner's own figures, each shown only if the message carries it.
+		var facts = [];
+		var d = meta ? fmtRunDur(meta.ranMs) : '';
+		if (d) facts.push(d);
+		if (meta && meta.ranModel) facts.push(String(meta.ranModel));
+		var toks = meta ? ((meta.ranTokIn | 0) + (meta.ranTokOut | 0)) : 0;
+		if (toks > 0) facts.push(tOr('chat.handoff_tokens', '{n} tok', { n: fmtCtx(toks) }));
+		if (meta && (meta.ranCost || 0) > 0) facts.push(fmtUsd(meta.ranCost));
+		if (facts.length) {
+			var row = document.createElement('div');
+			row.className = 'ct-handoff-facts';
+			row.textContent = facts.join(' · ');
+			wrap.appendChild(row);
+		}
+		return { node: wrap, peek: facts.join(' · ') };
+	}
+
+	function appendHandoff(ranOn, meta) {
 		var dl = deviceLabelFor(ranOn);
 		if (!dl) return;
 		var line = tOr('chat.handed_off', 'Handed off to {name}', { name: dl });
 		var tile = buildTile('handoff', { expanded: false, who: line });
 		tile.classList.add('chat-msg-handoff');
+		var body = handoffBody('peer', dl, meta);
+		tile._body.appendChild(body.node);
+		if (body.peek) tilePeek(tile, body.peek);
 		tagTurn(tile);
 		postTurnLead(tile);
 	}
@@ -9280,12 +9341,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// ran (owner report 2026-09-06). `toLabel` is the target's display name,
 	/// captured off the dispatch placeholder as it was dropped (see
 	/// `dropDispatchedPlaceholder`); absent, it degrades to a plain "ran here".
-	function appendRanHere(toLabel) {
+	function appendRanHere(toLabel, meta) {
 		var line = toLabel
 			? tOr('chat.ran_here_failed', 'Ran here — hand-off to {name} didn’t finish', { name: String(toLabel) })
 			: tOr('chat.ran_here', 'Ran on this device');
 		var tile = buildTile('handoff', { expanded: false, who: line });
 		tile.classList.add('chat-msg-handoff');
+		var body = handoffBody('ranhere', toLabel, meta);
+		tile._body.appendChild(body.node);
+		if (body.peek) tilePeek(tile, body.peek);
 		tagTurn(tile);
 		postTurnLead(tile);
 	}
@@ -9928,7 +9992,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		drawAsst();
 		if (pinned) chatOutput.scrollTop = chatOutput.scrollHeight;
 	}
-	function appendAssistantText(text, ranOn, handoffFellBack) {
+	function appendAssistantText(text, ranOn, handoffFellBack, meta) {
 		if (!curAsstDiv) {
 			// WHICH DEVICE RAN THE TURN, when it was not this one: a turn dispatched to
 			// the always-on runner (or grabbed by another device) carries `ranOn` on the
@@ -9942,10 +10006,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// vanishing and leaving the owner unable to tell where it ran.
 			if (_handoffTurn !== _turn) {
 				if (ranOn && String(ranOn) !== selfDeviceId()) {
-					appendHandoff(ranOn);
+					appendHandoff(ranOn, meta);
 					_handoffTurn = _turn;
 				} else if (handoffFellBack) {
-					appendRanHere(handoffFellBack);
+					appendRanHere(handoffFellBack, meta);
 					_handoffTurn = _turn;
 				}
 			}
@@ -14380,7 +14444,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				&& window.DaimondPeer && DaimondPeer.uiState) {
 				appendDispatchedTile(m);
 			} else {
-				appendAssistantText(m.content || '', m.ranOn, m.handoffFellBack);
+				appendAssistantText(m.content || '', m.ranOn, m.handoffFellBack, m);
 				var div = curAsstDiv;
 				finalizeAssistant();
 				// A turn the tab died in the middle of: show what arrived, badge it, and offer to
@@ -15727,11 +15791,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// DID claim in the meantime wins the merge and this device stands down.
 	var _dispatchFallbackTimers = Object.create(null);
 
+	// Nominee dispatch timing (send-time, maybeAutoDispatch).
+	var NOMINEE_REFRESH_CAP_MS = 4000;		// how long a stale nominee's presence refresh may block the send
+	var NOMINEE_TRUST_MS       = 300000;	// presume a set nominee live this long when the refresh could not confirm it
+	var PRESUMED_FALLBACK_MS   = 12000;		// tight backstop when a nominee was seated UNCONFIRMED (presumed live)
+
 	/// Arm the recovery backstop for one dispatched turn. Idempotent per turn.
-	function scheduleDispatchFallback(chatId, turnId) {
+	/// `fastMs` (optional) shortens the wait for a turn seated on a PRESUMED-live
+	/// nominee (an unconfirmed snapshot): if that nominee was in fact asleep it never
+	/// claims, so recover locally in seconds rather than after a full freshness window.
+	function scheduleDispatchFallback(chatId, turnId, fastMs) {
 		var tid = String(turnId || '');
 		if (!tid || _dispatchFallbackTimers[tid]) return;
-		var wait = ((window.DaimondPeer && DaimondPeer.DISPATCH_FRESH_MS) || 90000) + 5000;
+		var wait = (fastMs != null) ? fastMs
+			: ((window.DaimondPeer && DaimondPeer.DISPATCH_FRESH_MS) || 90000) + 5000;
 		_dispatchFallbackTimers[tid] = setTimeout(function () {
 			delete _dispatchFallbackTimers[tid];
 			runDispatchFallback(chatId, tid);
@@ -15901,26 +15974,43 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var nomStale = !!nominee && nominee !== self && DaimondPeer.nominationStandDown
 				&& !DaimondPeer.nominationStandDown(nominee, self, presence, Date.now(), DaimondPeer.DISPATCH_FRESH_MS);
 			var tSend = Date.now();		// turn-send, the origin of the hand-off latency breakdown
+			// Did the awaited nominee refresh actually LAND before the send? When it did not
+			// (a cold-foreground GET slower than the cap), a stale-looking nominee beat is
+			// unconfirmed, not a proof of offline -- so the decision presumes the always-on
+			// runner live over `NOMINEE_TRUST_MS` rather than misrouting to a fresher peer.
+			var refreshLanded = false;
 			if (window.DaimondSync && DaimondSync.refreshPresence) {
 				if (nomStale) {
-					// (b) THE NOMINEE PRESENCE-REFRESH AWAIT (seq 225/226). Timed, because
-					// it blocks the send up to ~900ms and the owner reports hand-off is slow
-					// -- so how long it ACTUALLY waited (a fast refresh returns early) is one
-					// of the durations we are hunting.
+					// (b) THE NOMINEE PRESENCE-REFRESH AWAIT. Capped, because it blocks the
+					// send -- but the cap is generous (NOMINEE_REFRESH_CAP_MS): a cold iOS
+					// foreground presence GET does not complete in ~900ms, so the old cap let
+					// the timeout win and the send decided on the STILL-stale snapshot, aging
+					// a live nominee (argonaut) past the 90s gate and handing the turn to the
+					// freshest peer (gilgamesh). The refresh WINS the race the instant it
+					// returns, so a warm tab pays ~100ms and only a cold open waits -- and
+					// that cold open is exactly the case that was misrouting. `refreshLanded`
+					// distinguishes "landed, nominee genuinely stale" (fall through) from
+					// "timed out, nominee unconfirmed" (presume live, below).
 					var tRefresh = Date.now();
 					try {
 						await Promise.race([
-							Promise.resolve(DaimondSync.refreshPresence()),
-							new Promise(function (r) { setTimeout(r, 900); }),
+							Promise.resolve(DaimondSync.refreshPresence()).then(function () { refreshLanded = true; }),
+							new Promise(function (r) { setTimeout(r, NOMINEE_REFRESH_CAP_MS); }),
 						]);
 					} catch (e) { /* the snapshot we have stands */ }
 					presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
 					diag('handoff refresh await', 'nominee ' + String(nominee).slice(0, 8)
-						+ ' stale; blocked ' + (Date.now() - tRefresh) + 'ms');
+						+ ' stale; blocked ' + (Date.now() - tRefresh) + 'ms; landed=' + refreshLanded);
 				} else {
 					try { DaimondSync.refreshPresence(); } catch (e) { /* the local snapshot stands */ }
 				}
 			}
+			// Presence could not be CONFIRMED (a nominee that looked stale and whose refresh
+			// did not land): trust a set nominee last known within NOMINEE_TRUST_MS over the
+			// tight 90s beat gate, so a live always-on runner is never bypassed for a peer on
+			// an unconfirmed snapshot. Zero in every confirmed case, so autoDispatchDecision
+			// keeps its normal 90s nominee gate.
+			var presumeNomWin = (nomStale && !refreshLanded) ? NOMINEE_TRUST_MS : 0;
 			var d = DaimondPeer.autoDispatchDecision(chat, presence, {
 				selfId:        self,
 				isPhone:       isPhoneViewport(),
@@ -15941,6 +16031,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// device that may have died since its last beat. Recovery-on-return is
 				// the safety net for the residual race; this keeps most turns off it.
 				freshWindowMs: DaimondPeer.DISPATCH_FRESH_MS,
+				// When presence could not be confirmed, presume a set nominee live over
+				// this wide window rather than misroute to a fresher peer (see above).
+				presumeNomineeWindowMs: presumeNomWin,
 			}, Date.now());
 			// THE SMOKING GUN: exactly what the election saw and chose. This is the
 			// line that says WHY iOS picks the device it picks.
@@ -15979,8 +16072,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 			// Arm the last-resort recovery backstop: if no peer claims this within ~one
 			// freshness window, run it here rather than let the spinner hang to the
-			// 15-min deadline (Fix B). Money-safe via the take-if-vacant lease.
-			try { scheduleDispatchFallback(chat.id, umid); } catch (e) { /* recovery-on-return still nets it */ }
+			// 15-min deadline (Fix B). Money-safe via the take-if-vacant lease. A turn
+			// seated on a PRESUMED-live nominee (unconfirmed snapshot) gets a TIGHT
+			// backstop, so a nominee that was in fact asleep recovers in seconds.
+			try {
+				var presumed = d.reason === 'nominee-presumed';
+				scheduleDispatchFallback(chat.id, umid, presumed ? PRESUMED_FALLBACK_MS : undefined);
+			} catch (e) { /* recovery-on-return still nets it */ }
 			return true;
 		} catch (e) { return false; }		// any hiccup: run locally
 	}
@@ -21740,6 +21838,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// button: `text` is the user's message; the rest is durability.
 	async function runTurn(chat, text, opts) {
 		opts = opts || {};
+		// When this turn began, so a hand-off run can record how long it took. Read only
+		// for a dispatched/errand turn (see the answer enrichment below), whose answer
+		// draws a hand-off tile on the device that dispatched it.
+		var _turnStartMs = Date.now();
 		// D3 — a peer runs a turn whose user prompt is ALREADY in the transcript (the
 		// dispatcher persist-first pushed it before the errand, §4.1). `promptInTranscript`
 		// tells this turn to anchor to that existing message (mid === `turnId`) and NOT
@@ -22157,8 +22259,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// ran (the answer syncs back onto this record) shows "ran on <that device>"
 				// rather than looking as if this device produced it. The runner writes it
 				// here from its own id; it travels on the message in the parcel.
+				var ansMsg = null;		// the answer, kept so a hand-off turn can be enriched below
 				if (turnText) {
 				var amsg = { role: 'assistant', content: turnText, mid: amid, ranOn: selfDeviceId(), ts: Date.now() };
+				ansMsg = amsg;
 				// An ERRAND run carries a turnId (the ordinary turn path passes none), so
 				// group the answer with its turn. Without this a locally-recovered errand
 				// answer had no `iturn`: the finished-guards (peerRunErrandDeps.finished,
@@ -22190,6 +22294,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var turnCost = Math.max(0, costCum - (chat.prevCost || 0));
 				chat.prevPrompt = pCum; chat.prevCompletion = cCum;
 				chat.prevCached = caCum; chat.prevCost = costCum;
+				// WHAT THIS HAND-OFF RUN COST, stamped on the answer so the device that
+				// dispatched the turn can say what happened in the hand-off tile's body
+				// rather than expanding to nothing. Only for a dispatched/errand turn
+				// (`opts.turnId`): those are the answers that sync back and draw a hand-off
+				// tile, and stamping every local answer would bloat the store for facts
+				// nothing reads. Real figures the runner already has -- its own run time,
+				// its model, and this turn's own token/cost growth -- so the body claims
+				// only what actually happened here.
+				if (ansMsg && opts.turnId) {
+					ansMsg.ranMs   = Math.max(0, Date.now() - _turnStartMs);
+					ansMsg.ranModel = respModel();
+					ansMsg.ranTokIn  = turnP;
+					ansMsg.ranTokOut = turnC;
+					ansMsg.ranCost   = turnCost;
+				}
 				chat.promptTokens = pCum; chat.completionTokens = cCum;
 				chat.cachedTokens = caCum; chat.costUsd = costCum;
 				// What the LAST request actually sent, not what the turn sent in total.

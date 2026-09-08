@@ -3858,6 +3858,14 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    tool. Minimal: a label bar with no body. */
 .ctile[data-t="handoff"] { --ct-edge: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 6%, var(--bg-secondary)); }
 .ctile[data-t="handoff"] .ctile-who { font-weight: 500; }
+/* The expanded body: a provenance line and a terse facts row, both muted — this
+   is the app saying where a turn ran, not either speaker's words. */
+.ct-handoff { display: flex; flex-direction: column; gap: 3px; }
+.ct-handoff-lead { color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1.5; }
+.ct-handoff-facts {
+	color: var(--text-muted); font-size: var(--fs-xs);
+	font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
 
 /* The label bar — the collapse control. */
 .ctile-lbl {
@@ -4051,7 +4059,13 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .chat-output .ctile { margin-top: 2px; margin-bottom: 2px; }
 .chat-output .crollup { margin-top: 2px; margin-bottom: 2px; }
 .chat-output .ctile.chat-msg-user { margin-top: 12px; margin-bottom: 2px; }
-.chat-output .ctile.chat-msg-user:first-child { margin-top: 2px; }
+/* The FIRST question of a thread opens no turn against a previous one, so it
+   takes the within-turn 2px above it, not the 12px separator -- otherwise the
+   gap between the System band and the first You reads as a phantom turn break.
+   `:first-child` no longer catches it (the System band is the first child now),
+   so `.turn-first`, set by appendUserMessage on turn 1, carries the mark. */
+.chat-output .ctile.chat-msg-user:first-child,
+.chat-output .ctile.chat-msg-user.turn-first { margin-top: 2px; }
 
 /* 6 — The You tile was taller than the rest because its inner .chat-msg-content
    still wore the old right-aligned bubble (accent-soft ground, 8px 14px pad)
