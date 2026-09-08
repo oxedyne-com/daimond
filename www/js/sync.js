@@ -178,28 +178,6 @@
 	// How often that is checked, which is NOT the same number: a tick equal to the
 	// threshold puts the real ceiling at twice it.
 	var CATCHUP_TICK_MS = 5000;
-	// ── The round budget and the resume ────────────────────────
-	// A fetch iOS suspended on a backgrounded tab never rejects until the socket
-	// resolves on resume, and while it hangs it pins `inFlight` and every re-open
-	// trigger stands down behind it. So every ordinary round carries a budget: an
-	// abort after this frees the gate whether or not the socket ever answers. The
-	// wake poll parks far longer on purpose (WAKE_POLL_MS) and passes its own.
-	var CALL_TIMEOUT_MS = 18000;
-	// On resume, a round that began before the tab was hidden -- or that has simply
-	// been in flight longer than this -- is presumed dead and broken, rather than
-	// waited out to its budget. Short, because the point of the forced resume pull
-	// is to not wait.
-	var RESUME_STALE_MS = 4000;
-	// A hidden spell shorter than this is an alt-tab glance, not a re-open: it
-	// keeps the ordinary throttled focus pull, so flipping between tabs does not
-	// become a GET storm. Longer -- or a bfcache restore, or a round left stuck --
-	// is a genuine resume, which re-arms the channel and pulls at once. This is
-	// what keeps the normal foreground cadence unchanged.
-	var RESUME_MIN_HIDDEN_MS = 3000;
-	// A cold re-open can pull before the store is readable, so the first apply can
-	// fail. The resume pull retries this soon rather than falling to the slow
-	// re-apply ladder (REAPPLY_BASE_MS and up). One prompt go, then the ladder.
-	var RESUME_RETRY_MS = 300;
 	// ── The re-apply ───────────────────────────────────────────
 	// A pull that read a parcel but could not MERGE one of its sections does not
 	// adopt the version any more (see pullOnce): the client stays at the version it
@@ -272,19 +250,6 @@
 	// second thing to know.
 	var lastPullAt    = 0;
 	var inFlight      = false;	// One sync operation at a time.
-	var inFlightAt    = 0;		// ms the current inFlight round began (0 = none).
-	// A monotonic token for the current inFlight round. A round that a resume
-	// declared dead is invalidated by bumping this, so the zombie's late `finally`
-	// (when its aborted socket finally rejects) cannot clear a fresh round's gate.
-	var inFlightTok   = 0;
-	// The AbortController of the content round in flight, so a resume can break a
-	// frozen fetch at once rather than wait out its budget. Set by `call` when the
-	// caller tracks it (pull and push); read by `onResume`.
-	var roundAbort    = null;
-	// ms the tab last went hidden (0 = visible, or never hidden this page). A
-	// round whose `inFlightAt` is at or before this began before the tab was
-	// backgrounded, which on iOS is the frozen-fetch case. See `onResume`.
-	var hiddenAt      = 0;
 	var started       = false;	// The engine has attached its listeners.
 	var catchupTimer  = null;	// The catch-up supervisor, for a device with no channel.
 	// This device has read the mailbox and knows what is in it -- a parcel it
@@ -393,28 +358,6 @@
 		} catch (e) { return 'a device'; }
 	}
 
-	// ── The one-round gate ─────────────────────────────────────
-
-	/// Take the single-round gate, stamping when it was taken and minting a token
-	/// for it. The token is the round's identity: only the round that still owns it
-	/// may release it, so a round a resume broke cannot clear a fresh one. See
-	/// `inFlightTok` and `onResume`.
-	function beginRound() {
-		inFlight   = true;
-		inFlightAt = Date.now();
-		return ++inFlightTok;
-	}
-
-	/// Release the gate, but only if this round still owns it. A zombie round whose
-	/// aborted socket rejects long after a resume replaced it lands here with a
-	/// stale token and does nothing.
-	function endRound(tok) {
-		if (tok !== inFlightTok) return;
-		inFlight   = false;
-		inFlightAt = 0;
-		roundAbort = null;
-	}
-
 	// ── Transport ──────────────────────────────────────────────
 
 	/// One request, with the one refusal this engine can put right by itself.
@@ -439,16 +382,7 @@
 	/// the reply itself. The version contract is honoured on the way past, by
 	/// `gwFetch`: a tab too old for the gateway is told to reload rather than go
 	/// on talking to it.
-	///
-	/// # Arguments
-	/// * `xtra` - `{ timeoutMs, track }`. `timeoutMs` overrides the round budget
-	///            (0 disables it) -- the wake poll parks far longer than a content
-	///            round, so it passes its own. `track` registers this round's
-	///            controller as `roundAbort` so a resume can break it at once; the
-	///            content pull and push set it, nothing else does.
-	async function call(method, body, query, xtra) {
-		xtra = xtra || {};
-		var budget = (xtra.timeoutMs !== undefined) ? xtra.timeoutMs : CALL_TIMEOUT_MS;
+	async function call(method, body, query) {
 		var opts = {
 			method:      method,
 			credentials: 'same-origin',
@@ -458,34 +392,17 @@
 			opts.headers['content-type'] = 'application/json';
 			opts.body = JSON.stringify(body);
 		}
-		// Bound the round. A fetch iOS suspended on a backgrounded tab never
-		// rejects until the socket resolves on resume, and while it hangs it pins
-		// `inFlight`; the abort lets `gwFetch` reject so the caller's `finally`
-		// clears the gate. `gwFetch` reuses `opts` verbatim on its 401 retry, so
-		// the same signal covers both attempts.
-		var ac = null, timer = null;
-		try { ac = new AbortController(); } catch (e) { ac = null; }
-		if (ac) {
-			opts.signal = ac.signal;
-			if (budget > 0) timer = setTimeout(function () { try { ac.abort(); } catch (e) {} }, budget);
-			if (xtra.track) roundAbort = ac;
-		}
-		try {
-			var r = await DaimondGateway.gwFetch(PATH + (query || ''), opts);
-			if (r.status === 426) return { status: 426, json: null };
-			var j = null;
-			try { j = await r.json(); } catch (e) { j = null; }
-			var res = { status: r.status, json: j };
-			if (r.status !== 401) { clearSessionGone(r.status); return res; }
-			// Still refused after a renewal that either failed or did not help.
-			// This device's work is not travelling and the user has to be able to
-			// find that out; see restStatus.
-			if (!sessionGone) { sessionGone = true; restStatus(); }
-			return res;
-		} finally {
-			if (timer) clearTimeout(timer);
-			if (ac && xtra.track && roundAbort === ac) roundAbort = null;
-		}
+		var r = await DaimondGateway.gwFetch(PATH + (query || ''), opts);
+		if (r.status === 426) return { status: 426, json: null };
+		var j = null;
+		try { j = await r.json(); } catch (e) { j = null; }
+		var res = { status: r.status, json: j };
+		if (r.status !== 401) { clearSessionGone(r.status); return res; }
+		// Still refused after a renewal that either failed or did not help. This
+		// device's work is not travelling and the user has to be able to find
+		// that out; see restStatus.
+		if (!sessionGone) { sessionGone = true; restStatus(); }
+		return res;
 	}
 
 	/// A request that was served is proof the session is back. Only a round that
@@ -1104,7 +1021,7 @@
 		var preRead = serverVersion;
 		var res;
 		var tGet = Date.now();		// the /api/sync GET round-trip, for the sync-latency picture
-		try { res = await call('GET', undefined, undefined, { track: true }); }
+		try { res = await call('GET'); }
 		catch (e) { diag('pull GET error', (Date.now() - tGet) + 'ms'); log('pull network error', e); restStatus(); return -1; }
 		if (res.status !== 200 || !res.json) { diag('pull GET status', res.status + ' after ' + (Date.now() - tGet) + 'ms'); log('pull status', res.status); restStatus(); return -1; }
 		lastPullAt = Date.now();		// asked, and answered: see the catch-up in push().
@@ -1231,7 +1148,7 @@
 		if (!ready() || !entitled) return;
 		if (window.DaimondCore.busy && DaimondCore.busy()) { schedule(); return; }	// never over a live turn.
 		if (inFlight) { schedule(); return; }
-		var rtok = beginRound();
+		inFlight = true;
 		try {
 			for (var attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt++) {
 				var state = await collectParcel();
@@ -1272,7 +1189,7 @@
 				// `w` names this tab's wake channel, so the gateway taps the
 				// account's OTHER devices and not this one: a device that pulled
 				// in answer to its own push would double every round.
-				try { res = await call('POST', { base_version: serverVersion, device: deviceLabel(), blob: blob, w: WAKE_ID }, undefined, { track: true }); }
+				try { res = await call('POST', { base_version: serverVersion, device: deviceLabel(), blob: blob, w: WAKE_ID }); }
 				catch (e) { log('push network error', e); restStatus(); return; }
 
 				if (res.status === 200 && res.json && res.json.ok) {
@@ -1395,7 +1312,7 @@
 			log('conflict retries exhausted; this device’s work has not been sent');
 			jam('busy');
 		} finally {
-			endRound(rtok);
+			inFlight = false;
 		}
 	}
 
@@ -1633,9 +1550,9 @@
 			return;
 		}
 		wakes++;
-		var rtok = beginRound();
+		inFlight = true;
 		try { await pull(); }
-		finally { endRound(rtok); }
+		finally { inFlight = false; }
 	}
 
 	/// Whether the channel should be running at all: sync can run, and this
@@ -1812,10 +1729,7 @@
 					// again: the backoff it would grow belongs to the live one.
 					if (gen !== wakeGen) break;
 					res = await call('GET', undefined,
-						'?above=' + (serverVersion | 0) + '&ms=' + WAKE_POLL_MS + '&w=' + encodeURIComponent(WAKE_ID),
-						// The park is DELIBERATE and up to WAKE_POLL_MS; give it that
-						// plus a margin so the content budget never cuts it short.
-						{ timeoutMs: WAKE_POLL_MS + 15000 });
+						'?above=' + (serverVersion | 0) + '&ms=' + WAKE_POLL_MS + '&w=' + encodeURIComponent(WAKE_ID));
 				} catch (e) {
 					// The gateway is down or the network went. Wait, growing,
 					// rather than spinning against a closed door.
@@ -2005,9 +1919,9 @@
 	async function reapplyPull() {
 		if (!ready()) { reapplyDone(); return; }
 		if (inFlight) { scheduleReapply(); return; }	// a round is running; re-arm, do not drop.
-		var rtok = beginRound();
+		inFlight = true;
 		try { await pull(); }				// success clears the backoff; another failure re-arms it.
-		finally { endRound(rtok); }
+		finally { inFlight = false; }
 	}
 
 	async function focusPull() {
@@ -2017,9 +1931,9 @@
 		lastFocusPull = Date.now();
 		// Held for the duration, so a push arriving mid-pull waits its turn rather
 		// than sending state that is halfway through being replaced.
-		var rtok = beginRound();
+		inFlight = true;
 		try { await pull(); }
-		finally { endRound(rtok); }
+		finally { inFlight = false; }
 	}
 
 	/// Ask the gateway what it is holding, on a device nothing else will prompt.
@@ -2040,92 +1954,9 @@
 		// Held for the duration, exactly as the focus pull holds it, so a push
 		// arriving mid-pull waits its turn rather than sending state that is
 		// halfway through being replaced.
-		var rtok = beginRound();
+		inFlight = true;
 		try { await pull(); }
-		finally { endRound(rtok); }
-	}
-
-	/// Coming back to a tab that was backgrounded, by whichever signal fired --
-	/// `visibilitychange`→visible or `pageshow`.
-	///
-	/// THIS IS THE SEQ-227 FIX. A hand-off finished on another device while this
-	/// phone was backgrounded; on re-open the wire is fast, but the phone did not
-	/// ASK for many seconds. Three things were in the way, all here:
-	///
-	///  - a round frozen by iOS (its fetch suspended on the backgrounded socket)
-	///    still held `inFlight`, so `focusPull` and `catchUp` both stood down;
-	///  - `catchUp` also defers to the wake channel, and an iOS-frozen park still
-	///    reports `wakeLive()===true` -- so it stood down for a dead channel;
-	///  - nothing re-fired until the rigid 45s wake tick.
-	///
-	/// So a resume breaks a stale round, re-arms the channel rather than trusting
-	/// a possibly-frozen park, and pulls straight away -- bypassing the `inFlight`
-	/// and focus-throttle guards and NOT deferring to the channel.
-	function onResume(why, persisted) {
-		if (!started) return;
-		var now  = Date.now();
-		var hid  = hiddenAt;			// captured before it is cleared below.
-		hiddenAt = 0;
-		// The initial `pageshow` of a fresh load is not a resume: nothing was
-		// hidden and no round is stuck, and the boot path already pulls. Only a
-		// bfcache restore (`persisted`) or a tab that had actually gone away is.
-		if (why === 'pageshow' && !persisted && !hid && !inFlight) return;
-		var hiddenMs = hid ? (now - hid) : 0;
-		// A round that began before the tab was hidden -- or that has simply been
-		// held too long -- is the frozen fetch: presumed dead and broken here
-		// rather than waited out to its budget.
-		var stale = inFlight && (
-			(hid && inFlightAt && inFlightAt <= hid)
-			|| (inFlightAt && (now - inFlightAt) >= RESUME_STALE_MS));
-		// A genuine re-open, as opposed to an alt-tab glance: a stuck round, a
-		// bfcache restore, or a spell in the background long enough that the wake
-		// park is probably frozen. Only this bypasses the focus throttle; a glance
-		// keeps the ordinary path, so the normal foreground cadence is unchanged.
-		var reopen = stale || persisted || (hiddenMs >= RESUME_MIN_HIDDEN_MS);
-		diag('resume', 'why=' + why + (persisted ? ' bfcache' : '')
-			+ ' hidden=' + (hid ? hiddenMs + 'ms' : 'n')
-			+ ' inflight=' + (inFlight ? (now - inFlightAt) + 'ms' : 'n')
-			+ (stale ? ' STALE->break' : (reopen ? ' reopen' : ' glance')));
-		if (stale) {
-			// Break the frozen round: abort its socket now (do not wait out the
-			// budget), invalidate it so its late `finally` cannot clear a fresh
-			// round, and open the gate.
-			if (roundAbort) { try { roundAbort.abort(); } catch (e) {} roundAbort = null; }
-			inFlightTok++;
-			inFlight   = false;
-			inFlightAt = 0;
-		}
-		// An alt-tab glance with nothing stuck: the ordinary throttled focus pull,
-		// cadence untouched. It pulls promptly on a real return (the throttle is
-		// measured from the last focus pull, long past) and coalesces rapid flips.
-		if (!reopen) { scheduleFocusPull(); return; }
-		// Re-arm the channel rather than trust it: an iOS-frozen park is replaced,
-		// which closes the `wakeLive()===true`-but-dead gap `catchUp` fell into.
-		try { wakeStop(); wakeStart(); } catch (e) { /* channel not wanted here */ }
-		// A round genuinely still in flight (not stale) is fresher than anything a
-		// resume could start; let it finish and let the normal focus path top up.
-		if (inFlight) { scheduleFocusPull(); return; }
-		resumePull(stale ? 'stale round broken' : (why || 'resume'));
-	}
-
-	/// The forced resume pull: pull NOW, bypassing every guard, and if the apply
-	/// does not finish (a cold re-open can pull before the store is readable),
-	/// retry it promptly ONCE rather than falling to the slow re-apply ladder.
-	async function resumePull(why) {
-		if (!ready()) return;
-		diag('resume pull', why || '');
-		// Do not inherit a backoff grown before the tab froze: clear it so a merge
-		// that fails retries at the base interval, not a widened one.
-		reapplyDone();
-		var rtok = beginRound();
-		try {
-			await pull();
-			if (lastFailed.length && ready()) {
-				diag('resume pull', 'apply incomplete (' + lastFailed.join(',') + '); prompt retry');
-				await new Promise(function (r) { setTimeout(r, RESUME_RETRY_MS); });
-				if (ready()) await pull();
-			}
-		} finally { endRound(rtok); }
+		finally { inFlight = false; }
 	}
 
 	/// A stored thing changed outside a turn: push it soon.
@@ -2320,17 +2151,10 @@
 		// Leaving the tab is a natural save point; coming back to it is a natural
 		// moment to catch up. The one listener covers both directions.
 		document.addEventListener('visibilitychange', function () {
-			if (document.hidden) { hiddenAt = Date.now(); schedule(); }
-			else onResume('visible');
+			if (document.hidden) schedule();
+			else scheduleFocusPull();
 		});
 		window.addEventListener('focus', scheduleFocusPull);
-		// iOS wakes a backgrounded tab through `pageshow`, not always a clean
-		// `visibilitychange`, and a bfcache restore ONLY raises `pageshow`. This is
-		// the seq-227 re-open: force a pull that bypasses the stalled guards. See
-		// onResume.
-		window.addEventListener('pageshow', function (e) {
-			onResume('pageshow', !!(e && e.persisted));
-		});
 		// Pausing something is a change to what this account may spend, and nothing
 		// else here would notice one: it ends no turn, touches no Diamond and
 		// leaves the tab where it was. It only announces on a REAL move -- `set`
@@ -2348,7 +2172,7 @@
 		// holding a socket for a tab that has closed. `pagehide` and not `unload`:
 		// a page restored from the back/forward cache raises `pageshow`, and the
 		// supervisor opens it again on its next tick.
-		window.addEventListener('pagehide', function () { hiddenAt = Date.now(); wakeStop(); });
+		window.addEventListener('pagehide', wakeStop);
 		// Keep the channel matching the app. See wakeWatch.
 		wakeWatcher = setInterval(wakeWatch, WAKE_WATCH_MS);
 		// And the one trigger that needs neither this device nor the gateway to

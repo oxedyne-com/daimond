@@ -1,1 +1,1 @@
-{"build":"023471a11c33","note":"seq 228: iOS re-open sync speed + even chat-tile gaps atop the nominee-presume election fix"}
+{"build":"1b41905b6b7f","note":"Revert seq-228 iOS sync-speed change: fixes scroll shaking and hand-off non-delivery; spacing + election kept"}
