@@ -37169,6 +37169,36 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// to an Oxegen identity.
 	function identityAvailable() { return !!(window.DaimondIdentity && DaimondIdentity.available()); }
 
+	/// Is there evidence an identity ALREADY existed in this account, even though
+	/// its keypair does not read right now?
+	///
+	/// The guard on the SEV-1 re-mint. When `existsSettled()` has spent its budget
+	/// and the keys still will not read, this decides between "genuine first run —
+	/// offer create" and "the keys are gone but this account HAD an identity —
+	/// recover, do not mint a fresh salt over the sealed data". Two signals, both
+	/// per-account (namespaced) and both cleared by a deliberate Forget, so a real
+	/// fresh start after forgetting reads false and is not nagged:
+	///
+	///   * the durable `everExisted()` marker written at the first create(), and
+	///   * a provider whose key is SEALED in daimond-models-v2 -- ciphertext that
+	///     only this account's identity can open, so its presence proves an identity
+	///     was here to seal it (this is the owner's case: the marker predates this
+	///     build, but the sealed provider key does not).
+	function orphanIdentityEvidence() {
+		try {
+			if (window.DaimondIdentity && DaimondIdentity.everExisted()) return true;
+		} catch (e) { /* fall through */ }
+		try {
+			var raw = localStorage.getItem('daimond-models-v2');
+			if (raw) {
+				var j  = JSON.parse(raw);
+				var ps = (j && j.providers) || {};
+				for (var id in ps) { if (ps[id] && ps[id].keyEnc) return true; }
+			}
+		} catch (e) { /* unreadable store is not evidence */ }
+		return false;
+	}
+
 	var locked = false;
 
 	/// Draw the app for a user who is entitled to see it.
@@ -37820,6 +37850,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var m = document.getElementById('identity-modal');
 		var unlock = mode === 'unlock';
 		var name = (window.DaimondIdentity && DaimondIdentity.displayName()) || '';
+		// A recover banner is a one-shot state on top of the unlock screen; any
+		// ordinary draw of the gate clears it, so it never lingers past the boot
+		// that raised it.
+		var staleRecover = document.getElementById('id-recover');
+		if (staleRecover) staleRecover.remove();
 		showTrailIfLooping();
 		renderAccountPicker(unlock);
 		renderPasskeyOption(unlock);
@@ -37894,6 +37929,66 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		m.style.display = 'flex';
 		(unlock ? document.getElementById('id-pass') : document.getElementById('id-name')).focus();
 	}
+	/// Turn the unlock screen into a RECOVER screen: the keys did not read, but this
+	/// account has held an identity, so a bare create is refused and this is shown
+	/// instead. Called straight after `showIdentity('unlock')`.
+	///
+	/// It is deliberately built ON the unlock screen rather than as a third mode: the
+	/// passphrase field stays, because the commonest cause is a cold read the retry
+	/// could not outlast and the keys are back after a reload -- so "Try again" (a
+	/// reload) is the first and safest recourse. "Start over" is the explicit,
+	/// acknowledged path for keys that are genuinely gone; it goes to the create
+	/// screen, where the replace acknowledgement in `idPrimary` still stands. Nothing
+	/// here mints or erases anything on its own.
+	function showRecover() {
+		var m = document.getElementById('identity-modal');
+		if (!m) return;
+		var card = m.querySelector('.modal-card');
+		if (!card) return;
+		if (document.getElementById('id-recover')) return;
+		// Say plainly what has happened, in place of the "welcome back" copy.
+		var title = document.getElementById('id-title');
+		var lead  = document.getElementById('id-lead');
+		if (title) title.textContent = t('recover.title');
+		if (lead)  lead.textContent  = t('recover.lead');
+
+		var box = document.createElement('div');
+		box.id = 'id-recover';
+		box.className = 'id-recover';
+
+		var acts = document.createElement('div');
+		acts.className = 'id-recover-acts';
+
+		var again = document.createElement('button');
+		again.type = 'button';
+		again.className = 'id-recover-btn';
+		again.id = 'id-recover-again';
+		again.textContent = t('recover.again');
+		again.addEventListener('click', function () { location.reload(); });
+
+		var over = document.createElement('button');
+		over.type = 'button';
+		over.className = 'id-recover-btn id-recover-danger';
+		over.id = 'id-recover-over';
+		over.textContent = t('recover.start_over');
+		over.addEventListener('click', function () {
+			// The create screen, reached deliberately. The replace acknowledgement in
+			// idPrimary fires there because the orphan evidence is still present, so a
+			// re-mint stays a considered choice and the dead keys are reconciled after.
+			showIdentity('create');
+		});
+
+		acts.appendChild(again);
+		acts.appendChild(over);
+		box.appendChild(acts);
+		// Directly under the recover title and lead, above the passphrase form, so
+		// the recover actions read as the primary offer. `#id-lead` is a direct
+		// child of the card; the sticky `.id-foot` is NOT (it sits inside the form),
+		// so inserting relative to the lead is the placement that cannot throw.
+		if (lead && lead.parentNode === card) card.insertBefore(box, lead.nextSibling);
+		else card.appendChild(box);
+	}
+
 	/// Take the gate away, and hand the keyboard to the app behind it.
 	///
 	/// Without the hand-over the focus stayed on `<body>`, so the first Tab after
@@ -38006,7 +38101,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (pass.length < 8) { err.textContent = t('identity.err_too_short'); return; }
 				if (pass !== getSecret(document.getElementById('id-pass2'))) { err.textContent = t('identity.err_mismatch'); return; }
 			}
+			// Creating an identity here overwrites this device's salt and keypair. When
+			// this account has ALREADY held one — a returning owner reached the create
+			// screen because a cold read hid the keys, or is deliberately starting over
+			// — that mint orphans everything sealed under the old identity for good.
+			// So it is confirmed explicitly rather than done on a submit, which is the
+			// silent step the SEV-1 turned on.
+			if (orphanIdentityEvidence()) {
+				var replace = await confirmDialog(t('identity.replace_body'), t('identity.replace_ok'),
+					{ title: t('identity.replace_title'), danger: true });
+				if (!replace) { err.textContent = ''; return; }
+			}
 			try { await DaimondIdentity.create(name, pass); } catch (e) { err.textContent = t('identity.err_create'); return; }
+			// The old identity is gone: any provider key sealed under it can never be
+			// read again. Clear those dead ciphertexts so the provider offers its
+			// key-entry path rather than reading present-but-sealed forever. Best-effort
+			// and only touches keys the NEW identity cannot open (see dropUnreadableKeys).
+			if (window.DaimondModels && DaimondModels.dropUnreadableKeys) {
+				try { await DaimondModels.dropUnreadableKeys(); } catch (e) { /* reconcile is a nicety */ }
+			}
 			// Encrypt any key already held in memory under the new passphrase.
 			if (cfg.apiKey) { try { cfg.apiKeyEnc = await DaimondIdentity.wrap(cfg.apiKey); saveCfg(cfg); } catch (e) { /* keep plaintext */ } }
 		} else {
@@ -41945,7 +42058,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// drawn until they are in. Rendering the app and then laying a modal
 		// over it — the old order — left every chat, name and figure legible
 		// behind the lock screen.
-		if (identityAvailable() && DaimondIdentity.exists()) {
+		//
+		// existsSettled(), NOT exists(): on a cold iOS/WebKit tab the stored keypair
+		// can read empty for a tick or two before the storage area loads, and a bare
+		// `exists()` there answers "no identity" for an identity sitting on disk —
+		// which fell through to "Create passphrase" and minted a fresh salt that
+		// orphaned every sealed provider key (the SEV-1). The settled read re-checks
+		// across a few ticks and only concludes "no keys" once they have had their
+		// chance to appear. It is awaited, so this branch waits for the answer.
+		var haveIdentity = identityAvailable() ? await DaimondIdentity.existsSettled() : false;
+		if (haveIdentity) {
 			locked = true;
 			document.body.classList.add('locked');
 			sessionNameEl.textContent = '';
@@ -41957,6 +42079,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// machine's part of starting up ends and the person's begins, so it
 			// is what "how long did it make me wait" means. Recorded, not sent:
 			// see `openMs`.
+			if (!openMs) openMs = Math.round(performance.now());
+			return;
+		}
+
+		// The keys did not read even after the settled retry. Before offering a bare
+		// create — which would mint a fresh identity OVER any sealed data still here —
+		// check whether this account has already held an identity. If it has, the read
+		// is a genuine loss (or a cold read the retry could not outlast), and minting
+		// would orphan the sealed keys for good. So show the locked recover screen and
+		// leave the create for an explicit, acknowledged choice; only a truly first
+		// run (no evidence) reaches the bare create below.
+		if (identityAvailable() && orphanIdentityEvidence()) {
+			locked = true;
+			document.body.classList.add('locked');
+			sessionNameEl.textContent = '';
+			chatInputBar.style.display = 'none';
+			try { DaimondTrail.note('lock screen', 'boot found orphan evidence, keys unread'); } catch (e) {}
+			showIdentity('unlock');
+			showRecover();
+			window.__DAIMOND_READY = true;
 			if (!openMs) openMs = Math.round(performance.now());
 			return;
 		}

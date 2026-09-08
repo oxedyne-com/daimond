@@ -311,6 +311,36 @@
 		refreshCredits();
 	}
 
+	/// Clear every stored key that the CURRENT identity cannot read, and name them.
+	///
+	/// Called after a DELIBERATE identity replacement (the boot/create guard in
+	/// daimond.js): the new keypair derives a different wrapping key, so every
+	/// `keyEnc` sealed under the old one is permanently unreadable. Left in place it
+	/// would sit as a provider that reads present-but-sealed forever; cleared, the
+	/// provider reads as keyless and the ordinary "add your key" path is offered.
+	/// Only ever run while unlocked, so a key that DOES unwrap is proven readable and
+	/// kept -- nothing is dropped that the identity can still open.
+	async function dropUnreadableKeys() {
+		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return [];
+		var cleared = [];
+		for (var id in store.providers) {
+			var p = store.providers[id];
+			if (!p.keyEnc) continue;
+			try { plain[id] = await DaimondIdentity.unwrap(p.keyEnc); }
+			catch (e) {
+				cleared.push(labelOf(id));
+				p.keyEnc = '';
+				p.key    = '';
+				delete plain[id];
+			}
+		}
+		if (cleared.length) {
+			save();
+			if (deps && deps.onChange) deps.onChange();
+		}
+		return cleared;
+	}
+
 	/// Re-seal every provider key under the passphrase that has just replaced the old one.
 	///
 	/// Called AFTER `DaimondIdentity.changePassphrase`. No read-out phase is needed, unlike
@@ -2581,6 +2611,9 @@
 		planModelSwitch: planModelSwitch,
 		init:           init,
 		unseal:         unseal,
+		/// Clear the keys the current identity cannot read, after a deliberate
+		/// identity replacement, and name them. See the reconcile in daimond.js.
+		dropUnreadableKeys: dropUnreadableKeys,
 		/// Re-wrap every key after a passphrase change. The keys never leave this module.
 		resealAfterRekey: resealAfterRekey,
 		lock:           lock,

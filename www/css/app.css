@@ -3482,6 +3482,27 @@ body.resizing { cursor: col-resize; user-select: none; }
 .id-trail-btn:hover { color: var(--text-primary); border-color: var(--accent); }
 .id-trail-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/* Recover: the keys did not read but the account is here. Sits above the
+   passphrase foot as the primary offer -- "Try again" first, then a guarded
+   "Start over". Mirrors the trail action buttons so the gate reads as one. */
+.id-recover { margin-top: 1rem; text-align: left; }
+.id-recover-acts { display: flex; gap: 0.5rem; }
+.id-recover-btn {
+	flex: 1;
+	padding: 0.55rem 0.6rem;
+	font-size: var(--fs-sm);
+	color: var(--text-primary);
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+.id-recover-btn:hover { border-color: var(--accent); }
+.id-recover-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#id-recover-again { border-color: var(--accent); color: var(--text-primary); }
+.id-recover-danger { color: var(--danger); }
+.id-recover-danger:hover { border-color: var(--danger); }
+
 /* ── An answer folded in two ──────────────────────────────────────────
    `say` returns a summary and a detail. The summary reads as an ordinary
    answer, because that is what it is; the detail sits behind a control that

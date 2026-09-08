@@ -2630,6 +2630,17 @@
 	'identity.err_no_webcrypto':    'WebCrypto is unavailable in this browser.',
 	'identity.err_storage_full':    'This device is out of storage, so the new identity could not be saved. Free some space in this browser and try again.',
 	'identity.err_unsupported_crypto': 'This browser cannot do the cryptography this account needs (Ed25519/X25519). Update your browser, or open the account in a newer one.',
+	// Shown before a create that would REPLACE an identity this account already
+	// held -- the guard on the SEV-1 re-mint. Confirmed, never silent.
+	'identity.replace_title':       'Replace this device’s identity?',
+	'identity.replace_body':        'This account already has an identity on this device, but its keys could not be read. Creating a new one replaces it, and any saved provider keys sealed under the old one can no longer be read. If you have this account on another device you can re-pair instead. Replace it here?',
+	'identity.replace_ok':          'Replace identity',
+
+	// ── Recover: keys did not read, but an identity exists here ────────
+	'recover.title':                'Your account is here, but locked',
+	'recover.lead':                 'This device has your account, but its keys could not be read just now. This usually clears on its own — try again first.',
+	'recover.again':                'Try again',
+	'recover.start_over':           'Start over on this device',
 
 	// ── Passkeys, in the interface ─────────────────────────────
 	'passkey.have_one':          'I have a passkey for Daimond',

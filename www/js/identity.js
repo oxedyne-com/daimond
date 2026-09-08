@@ -76,6 +76,13 @@
 	// above) still hold different ids — the peer's holder/dispatchedBy key. See
 	// deviceId() for why the account public key cannot serve this purpose.
 	var K_DEVID = 'daimond-id-device';	// hex random 128-bit, per-device, un-synced.
+	// A durable "an identity was once created in this account" marker. Written at
+	// the first create() and cleared only by reset(). It is the positive evidence
+	// the boot gate reads to refuse a BARE create after a premature empty read: a
+	// stored keypair that reads empty on a cold iOS tab still leaves this behind,
+	// so a re-mint that would orphan the sealed keys is turned into a recover
+	// prompt instead. See existsSettled() and daimond.js's orphan guard.
+	var K_EVER  = 'daimond-id-ever';	// '1' once an identity has existed here.
 
 	// ── In-memory state (present only while unlocked) ──────────
 	// All three are dropped by lock(); none is ever persisted.
@@ -476,6 +483,53 @@
 		return !!(localStorage.getItem(K_PRIV) && localStorage.getItem(K_PUB));
 	}
 
+	/// Has an identity ever been created in this account on this device?
+	///
+	/// A stored keypair reads empty on a cold iOS/WebKit tab (see existsSettled),
+	/// but this marker was written durably at the first create() and cleared only
+	/// by reset(). So it survives the premature empty read that makes `exists()`
+	/// answer "no", which is exactly the evidence the boot gate needs before it
+	/// decides to offer a bare "Create passphrase".
+	function everExisted() {
+		try { return !!localStorage.getItem(K_EVER); } catch (e) { return false; }
+	}
+
+	/// The retry budget for `existsSettled`. A cold-tab empty read settles within a
+	/// tick or two; this is several times that, and is only ever spent on a boot
+	/// that would otherwise fall through to "create" -- never on a returning user
+	/// whose very first read succeeds.
+	var SETTLE_TRIES = 12;	// re-reads after the first
+	var SETTLE_GAP   = 50;	// ms between them (<=600ms worst case)
+
+	function settleSleep(ms) {
+		return new Promise(function (r) { setTimeout(r, ms); });
+	}
+
+	/// `exists()` that does not trust a single cold read.
+	///
+	/// THE BUG THIS EXISTS FOR: on a freshly opened iOS/WebKit tab the first
+	/// `localStorage.getItem` calls can return EMPTY before the storage area has
+	/// finished loading from disk -- the timing family behind the seq-222/223 iOS
+	/// reports. `exists()` is presence-only, so a premature empty read makes it
+	/// answer "no identity" for an identity sitting on disk. The boot gate then
+	/// offers to CREATE one, which mints a fresh random salt and keypair and
+	/// ORPHANS every provider key the real identity had sealed -- the SEV-1.
+	///
+	/// This re-reads a bounded number of times, yielding a tick between reads, and
+	/// resolves true the moment the keypair appears. It NEVER returns a false
+	/// positive: it can only ever answer true when `exists()` itself does, so it
+	/// adds unlock outcomes where a create was wrongly about to be shown and can
+	/// never wrongly deny a genuine first run -- after the budget it returns false
+	/// and create proceeds as before.
+	async function existsSettled() {
+		if (exists()) return true;
+		for (var i = 0; i < SETTLE_TRIES; i++) {
+			await settleSleep(SETTLE_GAP);
+			if (exists()) return true;
+		}
+		return false;
+	}
+
 	/// True while the identity is unlocked and key material is in memory.
 	function isUnlocked() {
 		return !!_wrapKey && (!!_signKey || !!_signSeed);
@@ -556,8 +610,11 @@
 			localStorage.setItem(K_PRIV, wrapped);
 			localStorage.setItem(K_ALG,  alg);
 			localStorage.setItem(K_NAME, String(name || '').trim());
+			// The durable "an identity has existed here" marker, in the same group so
+			// a quota rollback takes it with the keys rather than leaving it standing.
+			localStorage.setItem(K_EVER, '1');
 		} catch (e) {
-			[K_SALT, K_PUB, K_PRIV, K_ALG, K_NAME].forEach(function (k) {
+			[K_SALT, K_PUB, K_PRIV, K_ALG, K_NAME, K_EVER].forEach(function (k) {
 				try { localStorage.removeItem(k); } catch (e2) { /* best effort */ }
 			});
 			throw new Error(tOr('identity.err_storage_full',
@@ -948,6 +1005,10 @@
 		localStorage.removeItem(K_SEALA);
 		localStorage.removeItem(K_CARD);
 		localStorage.removeItem(K_DEVID);
+		// The durable marker goes with the keys: a deliberate forget is a genuine
+		// fresh start, and leaving it would make the next create here read as a
+		// re-mint and demand the replace acknowledgement for no reason.
+		localStorage.removeItem(K_EVER);
 	}
 
 	// ── Signing / public key (for future Oxegen binding) ───────
@@ -1298,6 +1359,14 @@
 	window.DaimondIdentity = {
 		available:    available,
 		exists:       exists,
+		/// `exists()` hardened against the cold-tab premature-empty-read that lets a
+		/// stored identity look absent and orphan its keys to a fresh create. Awaited
+		/// by the boot gate before it decides between unlock and create.
+		existsSettled: existsSettled,
+		/// Durable evidence an identity was once created in this account here, read
+		/// by the boot guard so a premature empty read cannot fall through to a bare
+		/// create. Survives the read that fools `exists()`.
+		everExisted:  everExisted,
 		create:       create,
 		unlock:       unlock,
 		lock:         lock,
