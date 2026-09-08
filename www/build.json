@@ -1,1 +1,1 @@
-{"build":"7cc8968b90a6","note":"Stream a handed-off turn live and pull promptly; reconcile the device roster and re-seat the star on the live runner"}
+{"build":"01d1b240a016","note":"Sync permission asks to every device (answer anywhere unblocks the runner), and make fleet build-skew visible"}

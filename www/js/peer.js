@@ -772,19 +772,36 @@
 	/// The freshest GENUINELY-AVAILABLE peer (beating AND servicing errands), not this
 	/// device, or null. The candidate the auto-dispatch decision hands a turn to, so a
 	/// phantom presence-only tab is never chosen over a genuine peer or over local.
-	function freshestGenuinePeer(presence, selfId, now, windowMs) {
+	function freshestGenuinePeer(presence, selfId, now, windowMs, currentBuild) {
 		var p = presence || {}, self = String(selfId || ''), n = now == null ? Date.now() : now;
-		var w = windowMs || DISPATCH_FRESH_MS, best = null;
+		var w = windowMs || DISPATCH_FRESH_MS;
+		// The build the fleet SHOULD be on (this device's best-known served build). When
+		// given, a peer KNOWN to be on it is preferred over a fresher-but-superseded
+		// peer -- but a stale peer is never EXCLUDED, only de-preferred: excluding it
+		// would strand a fleet mid-rollout, when nobody is current yet. An unknown peer
+		// build ('' -- an old gateway that does not relay it, or a device not yet re-
+		// synced) is treated as neutral, never as stale. See the hand-off skew guard.
+		var cur = String(currentBuild || '');
+		var best = null, bestCurrent = null;
 		for (var id in p) {
 			if (!Object.prototype.hasOwnProperty.call(p, id)) continue;
 			if (id === self) continue;
 			var rec = p[id];
 			if (!recGenuine(rec, n, w)) continue;
-			if (!best || leaseMs(rec.lastSeen) > leaseMs(best.lastSeen)) {
-				best = { deviceId: id, name: (rec.name || ''), lastSeen: leaseMs(rec.lastSeen) };
+			var bd   = String((rec && rec.build) || '');
+			var cand = { deviceId: id, name: (rec.name || ''), lastSeen: leaseMs(rec.lastSeen), build: bd };
+			if (!best || cand.lastSeen > best.lastSeen) best = cand;
+			if (cur && bd && bd === cur && (!bestCurrent || cand.lastSeen > bestCurrent.lastSeen)) {
+				bestCurrent = cand;
 			}
 		}
-		return best;
+		var chosen = bestCurrent || best;
+		// Flag (never exclude) a chosen peer whose build is KNOWN and superseded, so the
+		// caller can log it and the in-flight tile can say the turn went to an old build.
+		if (chosen && chosen !== bestCurrent && cur && chosen.build && chosen.build !== cur) {
+			chosen.staleBuild = true;
+		}
+		return chosen;
 	}
 
 	/// Record this device's heartbeat. Answers whether the map changed (it always
@@ -792,7 +809,7 @@
 	/// the attention signal (foreground + recent interaction) a live consent routes on:
 	/// `attendedAt` stamps when the device was last attended, so freshness is judged on
 	/// attention rather than on the bare beat.
-	function presenceBeat(deviceId, name, now, attended, servicing) {
+	function presenceBeat(deviceId, name, now, attended, servicing, build) {
 		var id = String(deviceId || '');
 		if (!id) return false;
 		var n = now == null ? Date.now() : now;
@@ -803,7 +820,13 @@
 		// beats. A beat with `servicing` unknown keeps the prior stamp (a transient miss
 		// is not proof it stopped); explicitly false when the listener is down.
 		var sv = servicing ? n : (prev ? leaseMs(prev.servicedAt) : 0);
-		_presence[id] = { name: String(name || ''), lastSeen: n, attended: !!attended, attendedAt: at, servicedAt: sv };
+		// The running build id this device carries, so the fleet's build spread is
+		// visible and a peer on a superseded build can be de-preferred at hand-off. An
+		// absent build ('' or null) keeps the prior known one rather than clobbering it,
+		// exactly as `servicedAt` preserves an unreported stamp.
+		var bd = (build != null && build !== '') ? String(build) : (prev ? (prev.build || '') : '');
+		_presence[id] = { name: String(name || ''), lastSeen: n, attended: !!attended,
+			attendedAt: at, servicedAt: sv, build: bd };
 		return true;
 	}
 
@@ -828,6 +851,11 @@
 				// recGenuine falls back to the beat, NOT as serviced_at 0 -> strictly stale
 				// -> wrongly excluded. Only set the field when the incoming actually carries it.
 				if (inc.servicedAt != null) adopted.servicedAt = leaseMs(inc.servicedAt);
+				// The running build id rides with the freshest line, so a peer that
+				// updated (and beats a fresher line) carries its new build; an absent
+				// one keeps what we last knew rather than blanking it.
+				adopted.build = (inc.build != null && inc.build !== '') ? String(inc.build)
+					: (cur ? (cur.build || '') : '');
 				_presence[id] = adopted;
 				moved = true;
 			}
@@ -874,6 +902,12 @@
 			// back to the beat" from "new gateway reporting a stale (or zero) servicing".
 			var svRaw = rec.serviced_at != null ? rec.serviced_at : rec.servicedAt;
 			if (svRaw != null) recOut.servicedAt = leaseMs(svRaw) - skew;
+			// The running build id, relayed verbatim by the gateway (no clock in it, so
+			// no skew adjust). Absent -> '' (unknown), which reads as "not stale"
+			// everywhere: a gateway that does not yet relay build simply shows no skew
+			// rather than a false one. The roster's last-known build fills the gap for
+			// the display and the hand-off preference until the relay ships.
+			recOut.build = (rec.build != null) ? String(rec.build) : '';
 			next[String(id)] = recOut;
 		}
 		var before = JSON.stringify(_presence);
@@ -1033,6 +1067,61 @@
 		return { next: next, terminal: next >= mx };
 	}
 
+	// ── Broadcast consent — raise on every device, resolve from the first ──
+	//
+	// Owner rule 2026-09-09: a handed-off turn's permission ask must reach the device
+	// the user is actually AT, not only the source. A runner (argonaut) is handed a
+	// turn precisely so the user can be elsewhere (their phone); if the runner then
+	// hits a permission prompt and that prompt is trapped on the runner, the turn
+	// dead-ends and the hand-off was pointless. So the ask is BROADCAST to the whole
+	// account -- every attended device raises the tile -- and whichever device answers
+	// FIRST resolves it everywhere: its grant unblocks the runner and dismisses the
+	// tile on every other device. The two helpers here are the PURE decisions -- who
+	// raises a tile, and which grant commits -- so a test drives the money-safe bound;
+	// daimond.js owns the DOM tiles, the seal/post and the awaited promise.
+
+	/// Should THIS device raise the consent tile for a broadcast ask? Pure, and the
+	/// single fail-safe filter every device runs on a collected `consent-ask`. Because
+	/// the ask is broadcast, routing no longer names one device: EVERY attended device
+	/// raises it and the first to answer resolves it everywhere. `opts`:
+	///   resolved   -- a grant for this cid has already been seen, so a device coming
+	///                 back online must NOT re-raise an already-answered ask;
+	///   alreadyUp  -- a tile for this cid is already on this device's panel (dedup);
+	///   canAnswer  -- this device can actually show a tile now (foreground, no modal).
+	/// Fail-safe order: a resolved or expired ask is suppressed before anything draws,
+	/// a duplicate is suppressed, and a device nobody is at raises nothing (its caller
+	/// still records the ask for the dispatch status -- a dialog nobody sees would only
+	/// relocate the stall this exists to fix).
+	function askRaiseDecision(ask, selfId, now, opts) {
+		var o = ask || {}, x = opts || {};
+		var n = now == null ? Date.now() : now;
+		if (x.resolved)                            return { raise: false, why: 'resolved' };
+		if (o.deadline && n > (+o.deadline || 0))  return { raise: false, why: 'expired' };
+		if (x.alreadyUp)                           return { raise: false, why: 'dedup' };
+		if (!x.canAnswer)                          return { raise: false, why: 'unattended' };
+		return { raise: true, why: 'broadcast' };
+	}
+
+	/// The FIRST-RESPONDER resolution rule for a collected `consent-grant`, pure so the
+	/// money-safe bound is driven by a test. `pending` is the runner's awaiting record
+	/// for the grant's cid (`{ turnId }`) or null. The caller SPENDS the record on a
+	/// commit (deletes it, in the same synchronous step it reads it), so a racing second
+	/// grant for the same cid finds null here and drops -- exactly ONE resolution is ever
+	/// committed and the turn consumes it once, even if the answer reaches the runner by
+	/// more than one path. The race rule is STRICTLY FIRST-COMMITTED-WINS: whichever
+	/// grant reaches the runner first is the sole resolution; a later conflicting grant
+	/// (allow-vs-deny included) is a NO-OP -- never an override, never a re-apply. A
+	/// grant whose cid is spent/unknown, or whose turnId does not match the held act,
+	/// authorises nothing -- the forged/replayed-grant defence, enforced here as well as
+	/// at the signature. See dev/HANDOFF_CONSENT_DESIGN.md for why deny-wins would need a
+	/// shared serialisation point (a gateway/store CAS) that this client transport lacks.
+	function grantDecision(pending, grant) {
+		var g = grant || {};
+		if (!pending)                                     return { commit: false, drop: true, why: 'spent-or-unknown' };
+		if (String(g.turnId) !== String(pending.turnId))  return { commit: false, drop: true, why: 'turn-mismatch' };
+		return { commit: true, verdict: g.verdict === 'allow' ? 'allow' : 'deny', why: 'first-committed' };
+	}
+
 	// ── Smart auto-dispatch (dev/PEER_DESIGN.md §4.1, §4.2) ────
 	//
 	// The pure decision: given the chat, the presence map and the moment, should
@@ -1067,7 +1156,13 @@
 		// collect) is excluded here, so it can never be chosen over a genuine peer or over
 		// local. This is the heart of the fix (owner 2026-09-06): a turn "handed to
 		// gilgamesh" that gilgamesh never ran was chosen on the bare beat alone.
-		var peer = freshestGenuinePeer(presence, o.selfId, n, win);
+		//
+		// `currentBuild` adds a SOFT hand-off skew guard on top: among genuine peers, one
+		// known to be on the current build is preferred over a fresher-but-superseded one,
+		// so a stale peer left over from a mixed-build fleet is not silently trusted. It is
+		// a preference, not an exclusion (a stale peer still runs when no current one is
+		// available), and it never touches the lease -- money-safety is unchanged.
+		var peer = freshestGenuinePeer(presence, o.selfId, n, win, o.currentBuild);
 
 		// The per-chat choice: true = always hand off, false = keep on THIS device
 		// (the opt-out), null/undefined = decide by the reliability policy below.
@@ -1104,7 +1199,13 @@
 			var nomWin = (o.presumeNomineeWindowMs && o.presumeNomineeWindowMs > win) ? o.presumeNomineeWindowMs : win;
 			if (nRec && (n - leaseMs(nRec.lastSeen)) <= nomWin) {
 				var presumed = (n - leaseMs(nRec.lastSeen)) > win;	// seated on trust, not a fresh beat
-				return { dispatch: true, peer: { deviceId: nom, name: (nRec.name || ''), lastSeen: leaseMs(nRec.lastSeen) }, reason: (presumed ? 'nominee-presumed' : 'nominee') };
+				// The nominee is the account's explicit runner and is NOT de-preferred for
+				// its build -- but flag it when it is known to be on a superseded build, so
+				// the trace and the in-flight tile can say the always-on runner is stale.
+				var nomBuild  = String((nRec && nRec.build) || '');
+				var curB      = String(o.currentBuild || '');
+				var nomStaleB = !!(curB && nomBuild && nomBuild !== curB);
+				return { dispatch: true, peer: { deviceId: nom, name: (nRec.name || ''), lastSeen: leaseMs(nRec.lastSeen) }, reason: (presumed ? 'nominee-presumed' : 'nominee'), staleBuild: nomStaleB };
 			}
 		}
 
@@ -1112,14 +1213,14 @@
 		// running turn to a genuine peer before it suspends -- but only if one exists;
 		// no genuine peer means keep it here to be recovered on return.
 		if (o.backgrounding && o.turnInFlight) {
-			return peer ? { dispatch: true, peer: peer, reason: 'backgrounding-in-flight' }
+			return peer ? { dispatch: true, peer: peer, reason: 'backgrounding-in-flight', staleBuild: !!peer.staleBuild }
 				: { dispatch: false, reason: 'no-genuine-peer' };
 		}
 
 		// An explicit per-chat opt-IN, or the device-wide "hand off while I am away"
 		// posture: honour it when a genuine peer exists, else run local.
 		if (toggle === true || o.globalDefault) {
-			return peer ? { dispatch: true, peer: peer, reason: 'toggle-on' }
+			return peer ? { dispatch: true, peer: peer, reason: 'toggle-on', staleBuild: !!peer.staleBuild }
 				: { dispatch: false, reason: 'no-genuine-peer' };
 		}
 
@@ -1134,7 +1235,7 @@
 		var worker = (c.workerModel    && String(c.workerModel)    !== String(c.model    || ''))
 			|| (c.workerProvider && String(c.workerProvider) !== String(c.provider || ''));
 		var agentic = !!o.toolsEnabled || !!o.expectedLong || !!worker;
-		if (agentic && peer) return { dispatch: true, peer: peer, reason: 'long-turn' };
+		if (agentic && peer) return { dispatch: true, peer: peer, reason: 'long-turn', staleBuild: !!peer.staleBuild };
 
 		// THE RUNNER IS DOWN (no fresh nominee, no explicit posture). Fallback ordering
 		// by connection reliability -- desktop > laptop > mobile (owner 2026-09-06):
@@ -1145,7 +1246,7 @@
 		//     does not chase another peer. (This supersedes the former agentic/long-turn
 		//     desktop->peer dispatch -- see the report's flagged decision.)
 		if (o.isPhone) {
-			return peer ? { dispatch: true, peer: peer, reason: 'mobile-peer' }
+			return peer ? { dispatch: true, peer: peer, reason: 'mobile-peer', staleBuild: !!peer.staleBuild }
 				: { dispatch: false, reason: 'no-genuine-peer' };
 		}
 		return { dispatch: false, reason: 'desktop-local' };
@@ -2041,7 +2142,10 @@
 		/// The genuine-availability gate: `recGenuine` -- is a presence record beating AND
 		/// servicing the errand channel (not a phantom background tab)? -- and
 		/// `freshestGenuinePeer` -- the freshest peer that passes it. What the auto-dispatch
-		/// decision selects on, so a presence-only phantom is never chosen.
+		/// decision selects on, so a presence-only phantom is never chosen. Given a fifth
+		/// `currentBuild` argument it PREFERS (never requires) a peer on that build, so a
+		/// stale peer left over from a mixed-build fleet is de-preferred, and marks the
+		/// chosen record `staleBuild` when it is a known-superseded build.
 		recGenuine:    recGenuine,
 		freshestGenuinePeer: freshestGenuinePeer,
 		/// The remote-consent decisions, pure so a test drives the money-safe bound.
@@ -2053,6 +2157,13 @@
 		recAwake:             recAwake,
 		consentRouteDecision: consentRouteDecision,
 		parkOutcome:          parkOutcome,
+		/// The BROADCAST-consent decisions (owner rule 2026-09-09): `askRaiseDecision`
+		/// -- should THIS device raise the tile for a broadcast ask (fail-safe on a
+		/// resolved/expired/duplicate ask, and record-only where nobody is) -- and
+		/// `grantDecision` -- the first-committed-wins resolution rule the runner spends
+		/// a cid on, so exactly one grant resolves the turn and a racing second is a no-op.
+		askRaiseDecision:     askRaiseDecision,
+		grantDecision:        grantDecision,
 		CONSENT_DEADLINE_MS:  CONSENT_DEADLINE_MS,
 		MAX_PARKS:            MAX_PARKS,
 		/// Whether the dispatching device should RECOVER an orphaned dispatched turn

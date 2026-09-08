@@ -2725,6 +2725,16 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    there is one to clear. */
 .device-prune-all { display: block; width: 100%; margin: 6px 0 2px; padding: 6px 8px; font-size: var(--fs-2xs); text-align: left; background: transparent; color: var(--danger); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
 .device-prune-all:hover { background: var(--bg-hover); }
+/* The build each device is running: a quiet monospace tag, so the fleet's build
+   spread is legible without shouting. A device behind THIS one's build wears a
+   warning-coloured "old build — reload" tag beside it, which is the mixed-build
+   hand-off failure made visible at a glance. */
+.device-build { flex: none; font-family: var(--font-mono); font-size: var(--fs-3xs); color: var(--text-muted); white-space: nowrap; }
+.device-oldbuild { flex: none; font-size: var(--fs-3xs); text-transform: uppercase; letter-spacing: .04em; color: var(--warning, var(--danger)); border: 1px solid var(--warning, var(--danger)); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
+.device-row.is-oldbuild .device-build { color: var(--warning, var(--danger)); }
+/* The one-line fleet-skew banner over the Devices list: your devices are not all
+   on one build. Loud enough to notice, not so loud it competes with the rows. */
+.device-skew { margin: 4px 0 6px; padding: 6px 8px; font-size: var(--fs-2xs); line-height: 1.35; color: var(--warning, var(--danger)); background: var(--bg-hover); border: 1px solid var(--warning, var(--danger)); border-radius: 6px; }
 
 #id-name-row { margin-bottom: 8px; }
 #id-name { width: 100%; }

@@ -3455,6 +3455,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			created: ms(d && d.created),
 			namedAt: ms(d && d.namedAt),
 			seen:    ms(d && d.seen),
+			// The build this device was last running. It rides WITH the line on
+			// `seen` (touchSelfDevice bumps `seen` when the build changes), so a
+			// device that updates carries its new build to the fleet on the next
+			// sync -- which is what lets the Devices panel show every device's build
+			// and flag one left on a superseded build. A line from before this
+			// existed carries '' (unknown), which never reads as stale. Last in the
+			// FIXED field order, so an unchanged roster still serialises byte-for-byte
+			// for a device whose build is empty and the push still skips.
+			build:   String((d && d.build) || '').slice(0, 64),
 		};
 	}
 
@@ -3550,8 +3559,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// nothing else changes nothing here either.
 	function touchSelfDevice(reg) {
 		var id = deviceId(), now = Date.now(), me = reg[id];
-		if (!me) me = reg[id] = { name: deviceName(), label: '', created: now, namedAt: 0, seen: now };
+		var mine = '';
+		try { mine = buildId(); } catch (e) { /* the build id is not readable yet */ }
+		if (!me) me = reg[id] = { name: deviceName(), label: '', created: now, namedAt: 0, seen: now, build: mine };
 		else if (now - ms(me.seen) >= SEEN_REFRESH_MS) me.seen = now;
+		// The running build changed (this device updated): stamp it and bump `seen` so
+		// the fresher line WINS the freshest-wins merge and the new build reaches the
+		// fleet -- the same way a rename bumps `namedAt`. Only when the build is KNOWN
+		// and actually different, so an unread id never blanks a good one and an
+		// unchanged build never churns the parcel (which would push ~163K for nothing).
+		if (mine && mine !== me.build) { me.build = mine; me.seen = now; }
 		// A name chosen while pairing, on a device that had no line to put it on
 		// until this moment.
 		//
@@ -8940,6 +8957,41 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return '';
 	}
 
+	/// The build the fleet SHOULD be on, as this device best knows it: the newer id
+	/// the updater has already seen on build.json (`pending`), else the id this tab
+	/// runs. A device on any other KNOWN build is behind what this one knows is
+	/// current -- the honest "old build" signal a device can compute with no central
+	/// authority, used by the Devices panel and the hand-off skew guard.
+	function fleetCurrentBuild() {
+		try {
+			var p = window.DaimondUpdater && DaimondUpdater.pending && DaimondUpdater.pending();
+			if (p) return String(p);
+		} catch (e) { /* the updater has not polled */ }
+		return buildId();
+	}
+
+	/// A COPY of a presence map with each record's `build` filled from the roster's
+	/// last-known build where the live beat did not carry one -- so the hand-off skew
+	/// guard has a build to judge a peer on even before the gateway relays it in
+	/// presence. A live presence build always wins; the roster is only the fallback.
+	/// Returns the map unchanged when nothing needs filling.
+	function presenceWithBuilds(presence) {
+		if (!presence) return presence;
+		var reg = null, out = null;
+		Object.keys(presence).forEach(function (id) {
+			var rec = presence[id];
+			if (rec && rec.build) return;                 // the live beat already carries it
+			if (reg === null) { try { reg = loadDevices(); } catch (e) { reg = {}; } }
+			var rb = (reg[id] && reg[id].build) || '';
+			if (!rb) return;
+			if (out === null) { out = {}; Object.keys(presence).forEach(function (k) { out[k] = presence[k]; }); }
+			var copy = {}; for (var f in rec) { if (Object.prototype.hasOwnProperty.call(rec, f)) copy[f] = rec[f]; }
+			copy.build = rb;
+			out[id] = copy;
+		});
+		return out || presence;
+	}
+
 	// ── Turns ──────────────────────────────────────────────────
 	//
 	// A turn is one thing you asked and everything that came back from it: the answer, and any
@@ -11847,9 +11899,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// The dispatcher-side "a runner is blocked on a live question" marker, by turnId,
 	// so the dispatch status stops lying ("<peer> needs your permission to {act}").
 	var _openAsk      = Object.create(null);	// turnId -> ask envelope
-	// Source-side tiles raised for an incoming ask, by cid, so a re-collected ask is
-	// not re-raised (dedup) and a resolved one is retired.
+	// Tiles this device has raised for an incoming BROADCAST ask, by cid, so a
+	// re-collected ask is not re-raised (dedup) and a resolved one is retired.
 	var _askTiles     = Object.create(null);	// cid -> pending tile id
+	// The RESOLVED-cid ledger: cids for which a grant has been seen on this device.
+	// A device that was OFFLINE when the ask went out collects the ask AND the grant
+	// on reconnect; the grant (lower nothing -- higher seq than the ask) records the cid
+	// here so a re-raise of the already-answered ask is suppressed (askRaiseDecision).
+	// In memory: a stale ask past its ~60s deadline is suppressed by the deadline check
+	// regardless, and Pending.load marks any reloaded consent tile expired, so a lost
+	// ledger across a reload can never grant an act there is no longer anything to grant.
+	var _askResolved  = Object.create(null);	// cid -> true once a grant for it was seen
 
 	/// The one active runner turn, or null when it cannot be told (none, or several at
 	/// once). Like `askingTurn`, it FAILS TOWARDS SAFETY: not knowing which turn is
@@ -11910,10 +11970,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			tool: String(req.tool || ''), host: String(host || ''),
 			detail: String(req.detail != null ? req.detail : (req.url || '')),
 			deadline: Date.now() + wait, dispatchedBy: selfDeviceId(),
-			// The ONE device that should raise the tile and answer -- the source when it
-			// was preferred, else the fallback peer the decision chose. `raiseConsentFromPeer`
-			// raises only there, so the dialog lands on the source and nowhere else.
-			target: (decision.peer && decision.peer.deviceId) || '',
+			// BROADCAST (owner rule 2026-09-09): no single target. The ask is sealed to
+			// the account and every attended device raises the tile, so a handed-off
+			// turn's permission reaches the device the user is actually AT and not only
+			// the source (a prompt trapped on the unattended runner dead-ends the turn).
+			// `consentRouteDecision` is still consulted ABOVE, but only to decide ask vs
+			// PARK -- when NO device is reachable the turn parks (bounded), unchanged.
+			// An empty target is what `raiseConsentFromPeer` reads as "raise everywhere".
+			target: '',
 		});
 		var body;
 		try { body = await DaimondPeer.sealForSelf(ask); }
@@ -11943,17 +12007,45 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return false;
 	}
 
-	/// onGrant: an attended device's answer has arrived. Resolve the runner awaiting
-	/// this cid, if any. A grant whose cid has no outstanding held act -- spent,
-	/// replayed, or for another turn -- is dropped and authorises nothing.
+	/// onGrant, RUNNER side: an attended device's answer has arrived. Resolve the runner
+	/// awaiting this cid, if any. FIRST-COMMITTED-WINS and exactly-once: the read of the
+	/// pending record and its delete happen in one synchronous step (no await between),
+	/// so the FIRST grant to arrive resolves the turn and SPENDS the cid; a racing second
+	/// grant -- a conflicting allow/deny, or the same answer reaching the runner by two
+	/// paths -- finds the record gone and is dropped by `grantDecision`, authorising
+	/// nothing. A grant whose cid is spent/unknown, or bound to another turn, drops.
 	function deliverGrant(grant) {
 		try {
 			var cid = String(grant.cid || '');
-			var w = _consentWait[cid];
-			if (!w) return;							// no held act for this cid: drop
-			if (String(grant.turnId) !== String(w.turnId)) return;	// cid bound to another turn
-			w.resolve(grant.verdict === 'allow' ? 'allow' : 'deny');
+			var w   = _consentWait[cid] || null;
+			var d   = DaimondPeer.grantDecision(w, grant);
+			if (!d.commit) return;					// spent / unknown / turn-mismatch: authorises nothing
+			delete _consentWait[cid];				// SPEND, before resolving: a racing grant now drops
+			w.resolve(d.verdict);
 		} catch (e) { /* a lost grant times the runner out into a park; no double-charge */ }
+	}
+
+	/// onGrant, EVERY device: adopt a resolution reached elsewhere. Records the cid as
+	/// resolved (so a device coming back online does not re-raise the already-answered
+	/// ask), and DISMISSES this device's now-moot tile for that cid without answering it
+	/// -- `Pending.dismiss` takes the tile down without settling its parked promise, so
+	/// no second, conflicting grant is sealed for a cid the runner has already spent.
+	/// Idempotent: a device that answered locally (its tile already retired) or never
+	/// raised one simply records the cid. Runs alongside `deliverGrant` on onGrant, so
+	/// the runner both unblocks its turn and clears any tile it itself raised.
+	function adoptRemoteGrant(grant) {
+		try {
+			var cid = String(grant.cid || '');
+			if (!cid) return;
+			_askResolved[cid] = true;				// suppress a later re-raise (offline return)
+			var tileId = _askTiles[cid];
+			if (!tileId) return;					// no local tile up for this cid
+			var turnId = String(grant.turnId || '');
+			delete _askTiles[cid];
+			if (turnId) delete _openAsk[turnId];
+			try { Pending.dismiss(tileId); } catch (e) { /* a stale tile the user can close by hand */ }
+			try { renderDispatchedBadges(); } catch (e) {}
+		} catch (e) { /* a failed dismiss leaves a stale tile, never a wrong grant */ }
 	}
 
 	/// onAsk (source side): a runner's live question has arrived. Record it for the
@@ -11963,19 +12055,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function raiseConsentFromPeer(ask) {
 		try {
 			var cid = String(ask.cid || ''), turnId = String(ask.turnId || '');
-			_openAsk[turnId] = ask;								// the dispatcher's "awaiting" marker
+			_openAsk[turnId] = ask;								// the dispatcher's "awaiting" marker, EVERY device
 			try { renderDispatchedBadges(); } catch (e) {}
-			// Past its deadline: the runner has already parked; do not raise a stale tile.
-			if (ask.deadline && Date.now() > (+ask.deadline || 0)) return;
-			// TARGETED TO ONE DEVICE. When the ask names a `target` (the chat's source
-			// device by preference -- owner rule 2026-09-05), only THAT device raises
-			// the tile, so a chat's permission lands where the chat was driven from and
-			// not on every attended device that happens to collect the broadcast. An ask
-			// with no target keeps the old any-attended-device behaviour.
-			var target = String(ask.target || '');
-			if (target && target !== selfDeviceId()) return;	// not the addressee: record only
-			if (!someoneCanAnswer()) return;					// not attended: cannot raise a tile
-			if (_askTiles[cid]) return;							// dedup: a re-collected ask is not re-raised
+			// BROADCAST (owner rule 2026-09-09, superseding the single-source routing of
+			// 2026-09-05): every attended device raises the tile, so a handed-off turn's
+			// permission reaches the device the user is actually AT and answering it there
+			// unblocks the runner. `askRaiseDecision` is the fail-safe filter -- suppress
+			// an already-resolved ask (a device back online must not re-raise it), a stale
+			// one past its deadline, and a duplicate; and raise nothing on a device nobody
+			// is at (the `_openAsk` marker above still lit the dispatch badge there). The
+			// FIRST device to answer resolves it everywhere: its grant dismisses these
+			// tiles (adoptRemoteGrant) and unblocks the runner (deliverGrant).
+			var d = DaimondPeer.askRaiseDecision(ask, selfDeviceId(), Date.now(), {
+				resolved:  !!_askResolved[cid],
+				alreadyUp: !!_askTiles[cid],
+				canAnswer: someoneCanAnswer(),
+			});
+			if (!d.raise) return;
 			var txt = consentTileText(String(ask.tool || ''), String(ask.host || ''), String(ask.detail || ''));
 			var id = Pending.add({
 				kind: 'consent', headline: txt.head, detail: txt.body, priority: 'high',
@@ -11983,10 +12079,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!id) return;
 			_askTiles[cid] = id;
 			// The tile settles through the ordinary settleConsent -> _parked[id] route;
-			// its verdict seals the grant home and retires the local marker.
+			// its verdict seals the grant home and retires the local marker. A tile
+			// DISMISSED by a remote grant (adoptRemoteGrant -> Pending.dismiss) deletes
+			// `_parked[id]` without resolving, so this branch never runs for an adopted
+			// dismiss and no second, conflicting grant is posted for a spent cid.
 			new Promise(function (resolve) { _parked[id] = resolve; }).then(function (verdict) {
+				if (_askTiles[cid] !== id) return;			// already retired elsewhere (belt-and-braces)
 				delete _askTiles[cid];
 				delete _openAsk[turnId];
+				_askResolved[cid] = true;
 				try { renderDispatchedBadges(); } catch (e) {}
 				sealAndPostGrant(ask, verdict === 'allow' ? 'allow' : 'deny');
 			});
@@ -13533,6 +13634,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var devSec = el('div', 'admin-sec', t('home.sec_devices'));
 			devSec.title = t('devices.note');
 			homeView.appendChild(devSec);
+			// The build the fleet SHOULD be on, and each device's known build. THIS
+			// device is read from the live build id (always known); a peer from its
+			// live presence beat (once the gateway relays it) or, failing that, its
+			// roster line, which survives the peer being offline. '' = unknown, and is
+			// never read as stale -- a fleet whose gateway does not relay build and
+			// whose peers have not re-synced simply shows no skew rather than a false one.
+			var curBuild = fleetCurrentBuild();
+			var buildOf  = function (idv) {
+				if (idv === self) return buildId();
+				return ((presence[idv] && presence[idv].build) || (reg[idv] && reg[idv].build) || '');
+			};
+			// A one-line fleet-skew banner, so a mixed-build fleet is something the owner
+			// SEES at a glance rather than discovering across three devices by hand. Shown
+			// only when TWO OR MORE distinct builds are actually known across the fleet.
+			var seenBuilds = {};
+			ids.forEach(function (idv) { var b = buildOf(idv); if (b) seenBuilds[b] = 1; });
+			var nBuilds = Object.keys(seenBuilds).length;
+			if (nBuilds > 1) {
+				var skew = el('div', 'device-skew',
+					tOr('devices.fleet_skew',
+						'Your devices are on {n} different builds. Reload the older ones to update.',
+						{ n: nBuilds }));
+				skew.setAttribute('role', 'status');
+				homeView.appendChild(skew);
+			}
 			ids.forEach(function (id) {
 				var d = reg[id], r = el('div', 'device-row');
 				// A line not beating now reads muted (stale); one a live device has
@@ -13552,6 +13678,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				r.appendChild(el('span', 'device-id', id.slice(-4)));
 				r.appendChild(el('span', 'device-when',
 					id === self ? t('devices.this_device') : relTime(d.seen)));
+				// The build this device is running, shown on every row so the fleet's
+				// build spread is legible at a glance -- and flagged when it is a KNOWN
+				// build behind what this device knows is current, which is the mixed-build
+				// hand-off failure made visible. Unknown ('') shows nothing and never flags.
+				var rowBuild = buildOf(id);
+				if (rowBuild) {
+					var bEl = el('span', 'device-build', tOr('devices.build', 'build {id}',
+						{ id: rowBuild.slice(0, 7) }));
+					bEl.title = rowBuild;
+					r.appendChild(bEl);
+					if (curBuild && rowBuild !== curBuild) {
+						r.classList.add('is-oldbuild');
+						var ob = el('span', 'device-oldbuild',
+							tOr('devices.old_build', 'on an old build — reload'));
+						ob.title = tOr('devices.old_build_aria',
+							'This device is running an older build than yours. Reload it to update.');
+						r.appendChild(ob);
+					}
+				}
 				// A ghost is a machine that is here now under a different id, so the owner
 				// can tell it from one that is merely switched off and safely remove it.
 				if (isGhost) {
@@ -15585,11 +15730,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				renderDispatchedBadges();
 			} catch (e) { /* a report is only a nudge */ }
 		});
-		// Remote consent: an attended device raises a runner's live question and seals
-		// the answer home; a grant resolves the runner awaiting its cid. Idempotent.
+		// Remote consent: an attended device raises a runner's BROADCAST question and
+		// seals the answer home. A grant does two things on EVERY device that collects
+		// it, so onGrant runs both handlers: `deliverGrant` resolves the runner awaiting
+		// its cid (first-committed-wins, exactly once); `adoptRemoteGrant` dismisses any
+		// tile this device raised for that cid and records the cid resolved (so a device
+		// back online does not re-raise an answered ask). Idempotent on both sides.
 		try {
 			if (DaimondPeer.onAsk)   DaimondPeer.onAsk(raiseConsentFromPeer);
-			if (DaimondPeer.onGrant) DaimondPeer.onGrant(deliverGrant);
+			if (DaimondPeer.onGrant) DaimondPeer.onGrant(function (grant) {
+				deliverGrant(grant);
+				adoptRemoteGrant(grant);
+			});
 		} catch (e) { /* remote consent unavailable: a runner falls back to a park */ }
 		// D4 — a lease learned through a SYNC pull (the phone watching the peer claim,
 		// then run, its turn) moves the local lease view but touches no message record,
@@ -16225,8 +16377,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var svc  = (rec.servicedAt != null) ? (Math.round((now - ms(rec.servicedAt)) / 1000) + 's') : 'n/r';
 			var genuine = false;
 			try { genuine = !!(DaimondPeer.recGenuine && DaimondPeer.recGenuine(rec, now, w)); } catch (e) {}
-			peers.push((rec.name || id.slice(0, 8)) + '[' + id.slice(0, 8)
-				+ ' beat=' + beat + 's svc=' + svc + ' genuine=' + (genuine ? 'Y' : 'N') + ']');
+			var bd = rec.build ? (' build=' + String(rec.build).slice(0, 7)) : '';
+				peers.push((rec.name || id.slice(0, 8)) + '[' + id.slice(0, 8)
+				+ ' beat=' + beat + 's svc=' + svc + ' genuine=' + (genuine ? 'Y' : 'N') + bd + ']');
 		});
 		var nomStr = nominee
 			? (String(nominee).slice(0, 8) + (nomPresent ? ' PRESENT' : ' ABSENT-from-snapshot'))
@@ -16236,7 +16389,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return 'self=' + String(self || '').slice(0, 8) + ' nominee=' + nomStr
 			+ ' peers=[' + peers.join(' ') + ']'
 			+ ' -> dispatch=' + (decision && decision.dispatch ? 'YES' : 'no')
-			+ ' reason=' + (decision && decision.reason) + ' peer=' + dpeer;
+			+ ' reason=' + (decision && decision.reason) + ' peer=' + dpeer
+			+ (decision && decision.staleBuild ? ' STALE-BUILD-PEER' : '');
 	}
 
 	// When each hand-off began, keyed by turn id, so the answer's arrival can be
@@ -16460,10 +16614,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// an unconfirmed snapshot. Zero in every confirmed case, so autoDispatchDecision
 			// keeps its normal 90s nominee gate.
 			var presumeNomWin = (nomStale && !refreshLanded) ? NOMINEE_TRUST_MS : 0;
-			var d = DaimondPeer.autoDispatchDecision(chat, presence, {
+				presence = presenceWithBuilds(presence);
+				var d = DaimondPeer.autoDispatchDecision(chat, presence, {
 				selfId:        self,
 				isPhone:       isPhoneViewport(),
 				toolsEnabled:  chatToolsEnabled(chat),
+				// The build this device knows is current, so the election can PREFER a
+				// current-build peer over a superseded one (a warning/preference, never a
+				// hard exclusion -- see freshestGenuinePeer). The mixed-build hand-off
+				// failure, guarded: a stale peer is no longer silently trusted.
+				currentBuild:  fleetCurrentBuild(),
 				// The account's nominated always-on runner: when it is fresh it takes
 				// every turn (autoDispatchDecision's `nominee` branch), above the
 				// mobile / agentic / quick-local rules.
@@ -16601,10 +16761,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// (no fresh peer -> keep it here, to be recovered on return). This IS the
 				// §4.1 backgrounding-with-a-turn-in-flight case, and a per-chat opt-out
 				// still beats it inside the pure decision.
-				var d = DaimondPeer.autoDispatchDecision(chat, presence, {
+					presence = presenceWithBuilds(presence);
+					var d = DaimondPeer.autoDispatchDecision(chat, presence, {
 					selfId:        self,
 					backgrounding: true,
 					turnInFlight:  true,
+					// See the send-time site: prefer a current-build peer, never exclude a
+					// stale one. A step-away hand-off must still land somewhere.
+					currentBuild:  fleetCurrentBuild(),
 					// THE NOMINATED RUNNER TAKES A STEP-AWAY HAND-OFF TOO. Without this the
 					// decision skipped its nominee branch and handed the turn to the
 					// FRESHEST peer instead — so a turn in flight when a device was closed
@@ -25300,6 +25464,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// of the register, so this deny then finds nothing and does nothing.
 		drop: function (id) {
 			settleConsent(id, 'deny');
+			this.items = this.items.filter(function (x) { return x.id !== id; });
+			this.save();
+		},
+
+		/// Take one BROADCAST-consent tile down because it was ALREADY ANSWERED on
+		/// another device, not because it was answered here. Unlike `drop`, it does
+		/// NOT settle the parked promise -- settling it as a deny would seal and post a
+		/// second, conflicting grant for a cid the runner has already spent. The parked
+		/// promise is simply forgotten (nothing awaits it once the runner resolved), and
+		/// the tile leaves the panel. Called only by `adoptRemoteGrant`.
+		dismiss: function (id) {
+			delete _parked[id];
 			this.items = this.items.filter(function (x) { return x.id !== id; });
 			this.save();
 		},

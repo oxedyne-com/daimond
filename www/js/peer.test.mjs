@@ -757,6 +757,20 @@ async function main() {
 	// ══════════════════════════════════════════════════════════
 	await runRemoteConsentAcceptance(phone, laptop, stranger, check);
 
+	// ══════════════════════════════════════════════════════════
+	// BROADCAST CONSENT (owner rule 2026-09-09) — a handed-off turn's
+	// permission ask reaches EVERY device, is answerable from ANY, and
+	// the first answer resolves it everywhere. A THIRD same-account
+	// device (DESK) joins PHONE and LAPTOP so the sim is genuinely
+	// multi-device; STRANGER is the forged-grant negative control.
+	// ══════════════════════════════════════════════════════════
+	const desk = makeTab();
+	check('desk adopts the account bundle (third same-account device)',
+		desk.DaimondIdentity.importBundle(bundle));
+	const unD = await desk.DaimondIdentity.unlock(PASS_A);
+	check('desk unlocks the shared account', !!unD && unD.ok === true && desk.DaimondIdentity.isUnlocked());
+	await runBroadcastConsentAcceptance(phone, laptop, desk, stranger, check);
+
 	console.log(failures === 0 ? '\nALL PASS' : ('\n' + failures + ' FAILURE(S)'));
 	if (failures) process.exitCode = 1;
 }
@@ -2408,6 +2422,283 @@ async function runRemoteConsentAcceptance(phone, laptop, stranger, check) {
 		const ask = P.makeAsk({ turnId: 't-src', tool: 'web_type', dispatchedBy: RUN, target: SRC });
 		check('G7: makeAsk carries the target device, so the source raises the tile and no one else',
 			ask.target === SRC);
+	}
+}
+
+// ── Broadcast consent: a faithful multi-device simulator ───
+//
+// daimond.js does not load under node, so its thin remote-consent WIRING is
+// modelled here -- exactly as the fallback-liveness and PARK sections above model
+// their daimond.js glue -- while the MONEY-SAFE DECISIONS run the REAL peer.js:
+// `askRaiseDecision` (who raises a tile), `grantDecision` (first-committed-wins),
+// and the REAL seal / open / verify (so a broadcast actually round-trips the post
+// box and a stranger's grant genuinely fails to open). Each device holds the same
+// state daimond.js does -- `_consentWait` (runner side), `_askTiles`, `_askResolved`,
+// the Pending `panel` -- and routes collected rows the way `takeRow` -> `absorb`
+// -> onAsk/onGrant does. `canAnswer` mirrors `someoneCanAnswer()` (foreground); a
+// device with `online:false` collects nothing until it reconnects (the offline case).
+function makeConsentSim(tab, box, opts) {
+	const P = tab.DaimondPeer;
+	const self = tab.DaimondIdentity.deviceId();
+	const st = {
+		self, P,
+		canAnswer: !(opts && opts.canAnswer === false),		// default attended
+		online:    !(opts && opts.online === false),		// default online
+		cursor:    box.top(),								// join the box at "now": no backlog before this
+		consentWait: Object.create(null),					// cid -> { turnId, resolve }
+		askTiles:    Object.create(null),					// cid -> tileId
+		askResolved: Object.create(null),					// cid -> true
+		openAsk:     Object.create(null),					// turnId -> ask
+		panel:       [],									// [{ id, cid, ask }] — the Pending tiles up here
+		resolvedCount: 0,									// how many times a runner turn resolved (exactly-once)
+		lastVerdict:   null,								// what the runner turn resolved to
+		tileSeq: 0,
+	};
+	// Runner side: register an awaiting turn for an ask, exactly as routeConsentAsk's
+	// `_consentWait[cid] = { turnId, resolve }` does. Resolving bumps a counter so the
+	// test can prove the turn consumes the answer EXACTLY once.
+	st.awaitAsk = function (ask) {
+		return new Promise((resolve) => {
+			st.consentWait[String(ask.cid)] = {
+				turnId: String(ask.turnId),
+				resolve: (v) => { st.resolvedCount += 1; st.lastVerdict = v; resolve(v); },
+			};
+		});
+	};
+	// raiseConsentFromPeer mirror: record the ask, then the REAL askRaiseDecision.
+	st.onAsk = function (ask) {
+		const cid = String(ask.cid || ''), turnId = String(ask.turnId || '');
+		st.openAsk[turnId] = ask;
+		const d = P.askRaiseDecision(ask, st.self, Date.now(), {
+			resolved:  !!st.askResolved[cid],
+			alreadyUp: !!st.askTiles[cid],
+			canAnswer: st.canAnswer,
+		});
+		if (!d.raise) return d.why;
+		const id = st.self + '-tile' + (++st.tileSeq);
+		st.askTiles[cid] = id;
+		st.panel.push({ id, cid, ask });
+		return 'raised';
+	};
+	// onGrant mirror: deliverGrant (REAL grantDecision + spend) then adoptRemoteGrant.
+	st.onGrant = function (grant) {
+		const cid = String(grant.cid || '');
+		const w = st.consentWait[cid] || null;
+		const dec = P.grantDecision(w, grant);
+		if (dec.commit) { delete st.consentWait[cid]; w.resolve(dec.verdict); }	// SPEND then resolve
+		// adoptRemoteGrant on EVERY device: mark resolved, dismiss any local tile.
+		st.askResolved[cid] = true;
+		const tileId = st.askTiles[cid];
+		if (tileId) {
+			delete st.askTiles[cid];
+			if (grant.turnId) delete st.openAsk[String(grant.turnId)];
+			st.panel = st.panel.filter((tt) => tt.id !== tileId);
+		}
+	};
+	// A person answers a tile HERE: retire the local tile (the .then path), then seal
+	// and post the grant home over the REAL seal, exactly as sealAndPostGrant does.
+	st.answer = async function (cid, verdict) {
+		const tile = st.panel.find((tt) => tt.cid === cid);
+		if (!tile) return false;
+		delete st.askTiles[cid];
+		st.askResolved[cid] = true;
+		if (tile.ask.turnId) delete st.openAsk[String(tile.ask.turnId)];
+		st.panel = st.panel.filter((tt) => tt.id !== tile.id);
+		const grant = P.makeGrant({ cid, eid: tile.ask.eid, turnId: tile.ask.turnId, verdict, by: st.self });
+		box.post(await P.sealForSelf(grant));
+		return true;
+	};
+	// Collect the box the way takeRow does: open+verify via REAL peer.js (a stranger's
+	// row throws and is skipped, never routed), then dispatch by the sealed type tag.
+	st.collect = async function () {
+		if (!st.online) return 0;
+		let n = 0;
+		for (const row of box.collect(st.cursor)) {
+			st.cursor = Math.max(st.cursor, row.seq);
+			let obj = null;
+			try { obj = await P.openEnvelope(row.envelope); } catch (e) { continue; }
+			if (obj.t === P.T_ASK)        { st.onAsk(obj);   n++; }
+			else if (obj.t === P.T_GRANT) { st.onGrant(obj); n++; }
+		}
+		return n;
+	};
+	st.hasTile = function (cid) { return !!st.askTiles[cid]; };
+	return st;
+}
+
+// The RUNNER's routeConsentAsk mirror: broadcast the ask (target ''), post it, and
+// return the awaited verdict promise. The runner is `runner`; the ask is sealed to
+// the account and posted, and the runner also registers itself as awaiting it.
+async function runnerBroadcastAsk(runner, box, fields) {
+	const P = runner.P;
+	const ask = P.makeAsk(Object.assign({
+		dispatchedBy: runner.self, target: '', deadline: Date.now() + 60000,
+	}, fields));
+	const p = runner.awaitAsk(ask);
+	box.post(await P.sealForSelf(ask));
+	return { ask, verdict: p };
+}
+
+async function runBroadcastConsentAcceptance(phone, laptop, desk, stranger, check) {
+	const P = phone.DaimondPeer;
+
+	// ── H0. askRaiseDecision — the fail-safe raise filter, as a unit. ──
+	console.log('\nBroadcast consent — askRaiseDecision fail-safe filter');
+	{
+		const now = 1700000000000;
+		const live = { cid: 'c', deadline: now + 60000 };
+		check('H0a: an attended device with a fresh ask RAISES (broadcast, no target needed)',
+			P.askRaiseDecision(live, 'dev', now, { canAnswer: true }).raise === true);
+		check('H0b: a device nobody is at does NOT raise (record only)',
+			P.askRaiseDecision(live, 'dev', now, { canAnswer: false }).raise === false);
+		check('H0c: an ALREADY-RESOLVED ask is suppressed (offline-return: no re-raise)',
+			P.askRaiseDecision(live, 'dev', now, { canAnswer: true, resolved: true }).raise === false
+			&& P.askRaiseDecision(live, 'dev', now, { canAnswer: true, resolved: true }).why === 'resolved');
+		check('H0d: a duplicate (tile already up) is suppressed',
+			P.askRaiseDecision(live, 'dev', now, { canAnswer: true, alreadyUp: true }).raise === false);
+		check('H0e: a STALE ask past its deadline is suppressed',
+			P.askRaiseDecision({ cid: 'c', deadline: now - 1 }, 'dev', now, { canAnswer: true }).raise === false);
+	}
+
+	// ── H1/H2/H3 + the GOVERNING INVARIANT. Runner R (argonaut) is UNATTENDED; the
+	//    user is on U (their phone); a third device D is also attended. The ask must
+	//    appear on U and D (not trapped on R); answering on U must unblock R's turn;
+	//    and D's tile must DISMISS once U has answered. ──
+	console.log('\nBroadcast consent — ask reaches every attended device; first answer resolves + dismisses everywhere');
+	{
+		const box = makePostBox();
+		const R = makeConsentSim(phone,  box, { canAnswer: false });	// runner: nobody at argonaut
+		const U = makeConsentSim(laptop, box, { canAnswer: true  });	// the user's attended device
+		const D = makeConsentSim(desk,   box, { canAnswer: true  });	// a third attended device
+		const { ask, verdict } = await runnerBroadcastAsk(R, box, {
+			eid: 'e1', turnId: 't1', chatId: 'c1', tool: 'web_type', host: 'shop.test',
+			detail: 'card 4111 1111 1111 1111',
+		});
+		await R.collect(); await U.collect(); await D.collect();
+		check('H1: the ask reaches BOTH attended devices — a tile is up on U AND on D',
+			U.hasTile(ask.cid) && D.hasTile(ask.cid));
+		check('H2 (governing invariant): the UNATTENDED runner raises NO local tile but STILL records the ask',
+			!R.hasTile(ask.cid) && !!R.openAsk[ask.turnId]);
+		check('the ask carries the full uncut detail to the devices (nothing summarised)',
+			U.panel[0].ask.detail === 'card 4111 1111 1111 1111');
+
+		// The user answers on U (their attended device). The grant travels home.
+		await U.answer(ask.cid, 'allow');
+		await R.collect(); await D.collect(); await U.collect();
+		const v = await verdict;
+		check('H2: answering on U UNBLOCKS the runner R — its parked turn proceeds on U\'s verdict',
+			v === 'allow' && R.lastVerdict === 'allow');
+		check('the runner consumed the resolution EXACTLY once', R.resolvedCount === 1);
+		check('H3: D\'s now-moot tile is DISMISSED once U answered (no lingering dialog anywhere)',
+			!D.hasTile(ask.cid) && D.panel.length === 0 && U.panel.length === 0);
+		check('NEGATIVE CONTROL for broadcast: BOTH U and D had raised a tile (single-target routing would have raised on one)',
+			U.tileSeq === 1 && D.tileSeq === 1);
+	}
+
+	// ── H4. RACE: two devices answer near-simultaneously. Exactly ONE wins, the turn
+	//    acts ONCE, the loser is a no-op. Tested for allow-vs-deny (both post orders,
+	//    to show the rule is a pure function of arrival order) and allow-vs-allow. ──
+	console.log('\nBroadcast consent — race: two devices answer at once, exactly one wins, turn acts once');
+	async function raceOnce(firstVerdict, secondVerdict) {
+		const box = makePostBox();
+		const R = makeConsentSim(phone,  box, { canAnswer: false });
+		const U = makeConsentSim(laptop, box, { canAnswer: true  });
+		const D = makeConsentSim(desk,   box, { canAnswer: true  });
+		const { ask, verdict } = await runnerBroadcastAsk(R, box, {
+			eid: 'e', turnId: 'trace', chatId: 'c', tool: 'web_click', host: 'shop.test', detail: 'Buy now',
+		});
+		await U.collect(); await D.collect();
+		// Both tiles are up; both people tap. The FIRST grant posted has the lower seq,
+		// so the runner (collecting in seq order) sees it first — first-committed-wins.
+		await U.answer(ask.cid, firstVerdict);
+		await D.answer(ask.cid, secondVerdict);
+		await R.collect(); await U.collect(); await D.collect();
+		return { R, U, D, verdict: await verdict, ask };
+	}
+	{
+		const r1 = await raceOnce('allow', 'deny');
+		check('H4a: allow-vs-deny — the FIRST-committed answer wins (allow), the second is a no-op',
+			r1.verdict === 'allow' && r1.R.lastVerdict === 'allow');
+		check('H4a: the turn resolved EXACTLY once (no double-apply from the second grant)',
+			r1.R.resolvedCount === 1);
+		check('H4a: no tile lingers on any device after the race',
+			!r1.U.hasTile(r1.ask.cid) && !r1.D.hasTile(r1.ask.cid));
+
+		const r2 = await raceOnce('deny', 'allow');
+		check('H4b: deny-vs-allow — first-committed wins (deny), deterministic by arrival order',
+			r2.verdict === 'deny' && r2.R.lastVerdict === 'deny' && r2.R.resolvedCount === 1);
+
+		const r3 = await raceOnce('allow', 'allow');
+		check('H4c: allow-vs-allow — exactly one commits, the turn acts once',
+			r3.verdict === 'allow' && r3.R.resolvedCount === 1);
+	}
+
+	// ── H5. OFFLINE RETURN. A device offline when the ask went out must not re-raise an
+	//    ALREADY-RESOLVED ask when it reconnects, and must not linger a tile. ──
+	console.log('\nBroadcast consent — an offline device returns to an already-resolved ask and does NOT re-raise');
+	{
+		const box = makePostBox();
+		const R = makeConsentSim(phone,  box, { canAnswer: false });
+		const U = makeConsentSim(laptop, box, { canAnswer: true  });
+		const D = makeConsentSim(desk,   box, { canAnswer: true, online: false });	// OFFLINE at ask time
+		const { ask, verdict } = await runnerBroadcastAsk(R, box, {
+			eid: 'e', turnId: 't-off', chatId: 'c', tool: 'web_type', host: 'shop.test', detail: 'hello',
+		});
+		await R.collect(); await U.collect(); await D.collect();		// D is offline: collects nothing
+		check('H5a: the offline device raised no tile while it was away', !D.hasTile(ask.cid) && D.panel.length === 0);
+		await U.answer(ask.cid, 'allow');
+		await R.collect();
+		check('H5b: the runner resolved from the online device while D was away', (await verdict) === 'allow' && R.resolvedCount === 1);
+		// D reconnects and drains the backlog: the ask (lower seq) then the grant (higher).
+		D.online = true;
+		await D.collect();
+		check('H5c: on reconnect D ends with NO tile — the ask was raised then dismissed by the grant it also collected',
+			!D.hasTile(ask.cid) && D.panel.length === 0);
+		check('H5d: a re-delivery of the same ask to D is now SUPPRESSED (the resolved-cid ledger)',
+			D.onAsk(ask) === 'resolved');
+	}
+
+	// ── H6. NEGATIVE CONTROL: a STRANGER's grant authorises nothing. It is sealed to a
+	//    different account, so the runner cannot even open it — it never reaches
+	//    grantDecision, the turn stays parked, and nothing is consumed. ──
+	console.log('\nBroadcast consent — a stranger\'s grant is refused and never resolves the runner');
+	{
+		const box = makePostBox();
+		const R = makeConsentSim(phone,  box, { canAnswer: false });
+		const U = makeConsentSim(laptop, box, { canAnswer: true  });
+		const { ask, verdict } = await runnerBroadcastAsk(R, box, {
+			eid: 'e', turnId: 't-str', chatId: 'c', tool: 'web_type', host: 'shop.test', detail: 'x',
+		});
+		await R.collect(); await U.collect();		// drain the ask (R records its own, U raises a tile)
+		// The stranger (different account) seals a grant naming the live cid and posts it.
+		const sGrant = stranger.DaimondPeer.makeGrant({ cid: ask.cid, turnId: ask.turnId, verdict: 'allow', by: 'devEVIL' });
+		box.post(await stranger.DaimondPeer.sealForSelf(sGrant));
+		const routed = await R.collect();		// only the stranger row is new: it throws on open and is skipped
+		check('H6a: the runner routes 0 rows from the stranger\'s grant (it will not open on this account)',
+			routed === 0);
+		check('H6b: the runner\'s turn is STILL parked — a forged grant consumed nothing',
+			!!R.consentWait[ask.cid] && R.resolvedCount === 0);
+		// The genuine device then answers and the turn resolves normally.
+		await U.answer(ask.cid, 'deny');
+		await R.collect();
+		check('H6c: the genuine grant then resolves it (deny), exactly once',
+			(await verdict) === 'deny' && R.resolvedCount === 1);
+	}
+
+	// ── H7. grantDecision — the first-committed-wins CAS, as a unit. ──
+	console.log('\nBroadcast consent — grantDecision first-committed-wins, as a unit');
+	{
+		const pend = { turnId: 't1' };
+		check('H7a: a grant for the live cid COMMITS with its verdict',
+			P.grantDecision(pend, { turnId: 't1', verdict: 'allow' }).commit === true
+			&& P.grantDecision(pend, { turnId: 't1', verdict: 'allow' }).verdict === 'allow');
+		check('H7b: once the caller has SPENT the record (pending null), a second grant DROPS (no override/re-apply)',
+			P.grantDecision(null, { turnId: 't1', verdict: 'deny' }).commit === false
+			&& P.grantDecision(null, { turnId: 't1', verdict: 'deny' }).drop === true);
+		check('H7c: a grant bound to a DIFFERENT turn drops (never crosses turns)',
+			P.grantDecision(pend, { turnId: 'other', verdict: 'allow' }).commit === false);
+		check('H7d: a malformed verdict is read as DENY (fail-safe)',
+			P.grantDecision(pend, { turnId: 't1', verdict: 'yes-please' }).verdict === 'deny');
 	}
 }
 

@@ -338,6 +338,11 @@
 	'devices.replaced_aria':    'A device that is here now has taken this one’s place. It is safe to remove.',
 	'devices.prune_one':        'Remove the replaced device',
 	'devices.prune_many':       'Remove {n} replaced devices',
+	// The build each device is running, and the flag when it is behind this one.
+	'devices.build':            'build {id}',
+	'devices.old_build':        'on an old build — reload',
+	'devices.old_build_aria':   'This device is running an older build than yours. Reload it to update.',
+	'devices.fleet_skew':       'Your devices are on {n} different builds. Reload the older ones to update.',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline':             'Offline',
@@ -3055,6 +3060,10 @@
 	'update.available':  'A new version of Daimond is available.',
 	'update.reload':     'Reload',
 	'update.dismiss':    'Dismiss',
+	// The stuck-worker escape: a reload has repeatedly failed to shift the build, so
+	// name the one thing that will -- fully closing and reopening, or clearing site data.
+	'update.stuck':        'This device is stuck on an old build — reloading has not updated it. To finish updating, fully close and reopen Daimond, or clear this site’s data.',
+	'update.stuck_reload': 'Try again',
 
 	// ── Typst ──────────────────────────────────────────────────
 	// {reason} is the compiler's own diagnostic, which stays as it came.

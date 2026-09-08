@@ -53,6 +53,28 @@
 	var MAX_FORCED = 3;            // in one cooldown window, before it stops for good
 	var NKEY      = 'daimond-forced-n';
 
+	// ── The stuck-worker escape ────────────────────────────────
+	//
+	// The trap reference_daimond_pwa_sw_staleness describes: a controlling service
+	// worker from before the network-first rewrite keeps serving an OLD shell across
+	// every reload, so a deployed fix looks broken for hours and nothing SAYS why --
+	// the device silently serves stale for ever. Network-first (seq 206) governs
+	// freshness only once the browser is ON that worker; a browser still held by a
+	// pre-206 worker cannot be freed by any reload, only by unregistering it (close
+	// and reopen, or clear site data).
+	//
+	// This detects it without ever looping and without auto-wiping anything: when a
+	// reload we performed TO a newer build lands back on the SAME build it left --
+	// proof the worker served stale again -- it counts that, and after a couple in a
+	// row PROMPTS the one escape a reload cannot do. `PREV_KEY` records the build a
+	// reload is leaving (set in `apply`, read once at boot); coming back on the
+	// identical build is the stuck signal, advancing to ANY other build clears it.
+	var PREV_KEY   = 'daimond-reload-from';  // the build the last apply() reloaded away from
+	var STUCK_N    = 'daimond-stuck-n';      // consecutive reloads that did not advance the build
+	var STUCK_B    = 'daimond-stuck-build';  // the build those non-advancing reloads are stuck on
+	var STUCK_MAX  = 2;                       // this many in a row before the escape prompt shows
+	var stuck      = false;                   // a controlling worker will not advance to the served build
+
 	var booted   = null;           // the build id this tab is running
 	var pending  = null;           // a newer build id, once seen
 	var note     = '';             // a one-line "what changed", if the stamp carries one
@@ -120,6 +142,11 @@
 		}
 		applying = true;
 		try { sessionStorage.setItem(KEY, pending); } catch (e) {}
+		// The build we are reloading AWAY from. If the next boot comes back on this
+		// same id, the controlling worker served stale and the reload did not advance
+		// -- the stuck-worker signal `init` reads. Session-scoped, so it is about THIS
+		// reload only.
+		try { if (booted) sessionStorage.setItem(PREV_KEY, booted); } catch (e) {}
 		try { if (window.DaimondJournal) DaimondJournal.flush(); } catch (e) {}
 		doReload();
 		return true;
@@ -181,6 +208,7 @@
 			busy:    t('update.ready_help'),
 			done:    t('update.updated'),
 			stale:   t('update.stale'),
+			stuck:   t('update.stuck'),
 		}[state] || '';
 		chip.title = label;
 		chip.setAttribute('aria-label', label);
@@ -190,6 +218,10 @@
 	/// The update state, reflected on the chip. Stale (the gateway refuses this tab) is the loudest
 	/// and outranks the rest; otherwise ready when it could apply, "busy" while a turn must finish.
 	function reflect() {
+		// Stuck outranks stale: when a reload cannot shift the build, "reload to keep
+		// working" (stale) is the very advice that keeps failing, so the escape prompt
+		// -- close and reopen / clear site data -- is the more actionable word.
+		if (stuck)    { setChip('stuck');   syncBanner('stuck');   return; }
 		if (stale)    { setChip('stale');   syncBanner('stale');   return; }
 		if (!pending) { setChip('current'); syncBanner('current'); return; }
 		var st = busy() ? 'busy' : 'ready';
@@ -209,8 +241,9 @@
 	// foot of the window with a Reload button, shown only when a pending build is
 	// one the tab will not quietly take on its own. It is dismissible, and a
 	// dismissal stands only for the build in hand -- a newer one brings it back.
-	var banner       = null;
-	var dismissedFor = null;   // the pending build the user has waved away
+	var banner         = null;
+	var dismissedFor   = null;    // the pending build the user has waved away
+	var stuckDismissed = false;   // the stuck prompt waved away for this session (returns next boot)
 
 	function buildBanner() {
 		var b = document.createElement('div');
@@ -225,13 +258,23 @@
 		go.type = 'button';
 		// A user click, so `apply(true)` -- which flushes the journal and reloads,
 		// but still refuses to interrupt a running turn. Stale goes through `force`
-		// for its loop guard. Neither can lose work in flight.
-		go.addEventListener('click', function () { if (stale) force(); else apply(true); });
+		// for its loop guard. Stuck goes through `repair`, which clears the shell
+		// caches before its ONE guarded reload -- the only reload with a chance of
+		// shifting a worker that keeps serving stale, and itself loop-guarded so a
+		// stuck device cannot reload-storm. Neither can lose work in flight.
+		go.addEventListener('click', function () {
+			if (stuck) { repair('stuck worker: cache clear + reload'); return; }
+			if (stale) { force(); return; }
+			apply(true);
+		});
 		var x = document.createElement('button');
 		x.className = 'update-banner-x';
 		x.type = 'button';
 		x.textContent = '×';
-		x.addEventListener('click', function () { dismissedFor = pending; hideBanner(); });
+		x.addEventListener('click', function () {
+			if (stuck) stuckDismissed = true; else dismissedFor = pending;
+			hideBanner();
+		});
 		b.appendChild(msg);
 		b.appendChild(go);
 		b.appendChild(x);
@@ -247,20 +290,25 @@
 	/// gateway has refused the tab); hidden otherwise -- including `busy`, where a
 	/// reload would be wrong and the amber chip already says "waiting on this turn".
 	function syncBanner(state) {
-		var want = state === 'ready' || state === 'stale';
+		var want = state === 'ready' || state === 'stale' || state === 'stuck';
 		// A dismissal silences only the ready banner, and only for the build that
 		// was pending when it was waved away. Stale is not dismissible: ignoring
-		// the gateway's refusal is not a state the app can keep working in.
+		// the gateway's refusal is not a state the app can keep working in. Stuck is
+		// dismissible (the device can keep working on the stale build meanwhile) and
+		// returns on the next stuck observation.
 		if (state === 'ready' && dismissedFor && dismissedFor === pending) want = false;
+		if (state === 'stuck' && stuckDismissed) want = false;
 		if (!want) { hideBanner(); return; }
 		if (!banner) buildBanner();
 		// The user line is deliberately note-free: `note` carries the deploy's
 		// TRANSPARENCY-CHAIN summary (a developer commit subject), which is not
 		// user-facing copy and read as garbage in a popup. See `onFound`.
-		banner.msg.textContent = state === 'stale'
-			? t('update.stale')
-			: t('update.available');
-		banner.go.textContent = t('update.reload');
+		banner.msg.textContent = state === 'stuck'
+			? t('update.stuck')
+			: (state === 'stale' ? t('update.stale') : t('update.available'));
+		// The stuck button offers the guarded cache-clear reload -- the one worth
+		// trying -- while the message names the sure escape (close and reopen).
+		banner.go.textContent = state === 'stuck' ? t('update.stuck_reload') : t('update.reload');
 		banner.x.setAttribute('aria-label', t('update.dismiss'));
 		banner.x.hidden = state === 'stale';
 		banner.el.dataset.state = state;
@@ -377,6 +425,10 @@
 		if (!mayForce()) { trail('repair reload REFUSED', 'loop guard held'); return false; }
 		spendForce();
 		trail('repair reload', why || 'a mismatched engine pair');
+		// Record the build we are leaving, so if this reload ALSO fails to advance
+		// (a worker that will not let go), the next boot counts it toward the stuck
+		// prompt rather than losing the evidence -- repair does not go through apply().
+		try { if (booted) sessionStorage.setItem(PREV_KEY, booted); } catch (e) {}
 		var go = function () { try { location.reload(); } catch (e) {} };
 		try {
 			if (window.caches && caches.keys) {
@@ -442,10 +494,40 @@
 		try { forcedFrom = sessionStorage.getItem(FKEY); } catch (e) {}
 		if (booted && forcedFrom && forcedFrom !== booted) forgetForced();
 
-		if (booted && was && was === booted) {
+		// ── Did a reload we performed FAIL to advance the build? ──
+		//
+		// `PREV_KEY` is the build the last `apply()`/`repair()` reloaded away from.
+		// Coming back on the SAME id means the controlling worker served the stale
+		// shell again -- the reload did not take. Count these; advancing to ANY other
+		// build clears the count. Only meaningful under a controlling worker: a tab
+		// with none always fetches fresh, so it can never be "stuck on a worker".
+		var reloadFrom = null;
+		try { reloadFrom = sessionStorage.getItem(PREV_KEY); } catch (e) {}
+		try { if (reloadFrom) sessionStorage.removeItem(PREV_KEY); } catch (e) {}
+		var controlled = false;
+		try { controlled = !!(navigator.serviceWorker && navigator.serviceWorker.controller); } catch (e) {}
+		if (booted && reloadFrom && reloadFrom === booted && controlled) {
+			var sn = 0, sb = '';
+			try { sn = parseInt(localStorage.getItem(STUCK_N), 10) || 0; } catch (e) {}
+			try { sb = localStorage.getItem(STUCK_B) || ''; } catch (e) {}
+			sn = (sb === booted) ? sn + 1 : 1;    // a new stuck build restarts the count
+			try { localStorage.setItem(STUCK_N, String(sn)); } catch (e) {}
+			try { localStorage.setItem(STUCK_B, booted); } catch (e) {}
+			if (sn >= STUCK_MAX) stuck = true;
+		} else if (booted && reloadFrom && reloadFrom !== booted) {
+			// The reload advanced to another build: whatever was stuck is unstuck.
+			try { localStorage.removeItem(STUCK_N); localStorage.removeItem(STUCK_B); } catch (e) {}
+		}
+
+		if (stuck) {
+			// The reload cannot shift this worker: surface the escape prompt at once,
+			// outranking the ordinary current/done chip. No reload here -- the prompt
+			// only offers the guarded cache-clear reload and names the sure escape.
+			reflect();
+		} else if (booted && was && was === booted) {
 			note = first && typeof first.note === 'string' ? first.note : '';
 			setChip('done');
-			setTimeout(function () { if (!pending) setChip('current'); }, 6000);
+			setTimeout(function () { if (!pending && !stuck) setChip('current'); }, 6000);
 		} else if (booted) {
 			setChip('current');
 		} else if (chip) {
@@ -487,6 +569,9 @@
 	window.DaimondUpdater = {
 		pending: function () { return pending; },
 		booted:  function () { return booted; },
+		/// Is this device stuck on an old build a reload will not shift? True once a
+		/// couple of reloads in a row have failed to advance under a controlling worker.
+		stuck:   function () { return stuck; },
 		check:   poll,
 		repair:  repair,
 	};

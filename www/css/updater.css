@@ -75,6 +75,16 @@
 }
 .update-chip[data-state="stale"]:hover { background: var(--bg-hover); }
 
+/* Stuck: a reload will not shift the build. Warning-toned and pulsing, so it draws
+   the eye to the banner that names the escape. */
+.update-chip[data-state="stuck"] {
+	color: var(--warning, var(--danger));
+	opacity: 1;
+	cursor: pointer;
+	animation: update-pulse 1.4s ease-in-out infinite;
+}
+.update-chip[data-state="stuck"]:hover { background: var(--bg-hover); }
+
 /* Just applied: a brief green tick, then it settles back to "current" from updater.js. */
 .update-chip[data-state="done"] {
 	color: var(--ok);
@@ -90,7 +100,8 @@
 /* Respect a reduced-motion preference: keep the colour, drop the pulse. */
 @media (prefers-reduced-motion: reduce) {
 	.update-chip[data-state="ready"],
-	.update-chip[data-state="stale"] { animation: none; opacity: 1; }
+	.update-chip[data-state="stale"],
+	.update-chip[data-state="stuck"] { animation: none; opacity: 1; }
 }
 
 /* ── The banner ──────────────────────────────────────────────────────────────
@@ -117,6 +128,10 @@
 	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
 }
 .update-banner[data-state="stale"] { border-color: var(--danger); }
+/* Stuck: a reload cannot shift the build. Warning-toned, and the message names the
+   sure escape (close and reopen) while the button offers the guarded cache-clear
+   reload worth trying first. */
+.update-banner[data-state="stuck"] { border-color: var(--warning, var(--danger)); }
 /* `display: flex` above beats the UA's `[hidden] { display: none }`, exactly as it
    does for `.update-chip` — so `hideBanner`'s `el.hidden = true` would leave an empty
    banner box on screen. Guarded the same way `.left-banner` is (css/app.css). */
@@ -137,6 +152,7 @@
 }
 .update-banner-go:hover { background: var(--accent-hover); }
 .update-banner[data-state="stale"] .update-banner-go { background: var(--danger); }
+.update-banner[data-state="stuck"] .update-banner-go { background: var(--warning, var(--danger)); }
 
 /* Dismiss: quiet, and gone entirely on the stale banner, which may not be waved away. */
 .update-banner-x {

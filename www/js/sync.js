@@ -1528,6 +1528,14 @@
 			// stands and the dispatcher-side recovery timer is the backstop).
 			var body = { device_id: String(deviceId || ''), name: String(name || ''), attended: !!attended };
 			if (servicing) body.servicing = true;
+			// The running build id, so the gateway (once it relays this field) can show the
+			// fleet's build spread in its log and every device can de-prefer a peer on a
+			// superseded build at hand-off. A gateway that does not carry the field ignores
+			// it and the roster's last-known build stands in, exactly like `servicing`.
+			try {
+				var b = window.DaimondUpdater && DaimondUpdater.booted && DaimondUpdater.booted();
+				if (b) body.build = String(b);
+			} catch (e) { /* build not read yet: the beat still stands */ }
 			var res = await call('POST', body, '?presence=1');
 			if (res.status === 200 && res.json && res.json.presence && window.DaimondPresence) {
 				DaimondPresence.ingest(res.json.presence, res.json.now);
