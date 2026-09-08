@@ -15554,7 +15554,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// reply merged back, so this is when the hand-off actually paid off on the
 		// dispatcher -- the total from turn-send is the user-visible hand-off latency.
 		if (_handoffStart[turnId]) {
-			diag('handoff answer', 'turn=' + turnId + ' send->answer=' + (Date.now() - _handoffStart[turnId]) + 'ms');
+			var _dispatchTs = _handoffStart[turnId];
+			diag('handoff answer', 'turn=' + turnId + ' send->answer=' + (Date.now() - _dispatchTs) + 'ms');
+			// AUTO-LAND the hand-off latency and the advertised-vs-real-runner gap on the
+			// gateway, bypassing the Diagnostics toggle, now the answer has merged here.
+			try { autoLogHandoffLatency(turnId, _dispatchTs); } catch (e) { /* best-effort */ }
 			delete _handoffStart[turnId];
 		}
 		// The one chat holding this turn's placeholder, via the index. iturn is unique
@@ -15630,6 +15634,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var holder = '';
 			try { holder = String(DaimondLease.holder(tid) || ''); } catch (e) { holder = ''; }
 			if (!holder || holder === selfDeviceId()) continue;		// no claim yet, or our own recovery
+			// (trace) The FIRST time the real claimant differs from the up-front advertised
+			// target, and how long after dispatch it landed -- carried onto the answer-arrival
+			// auto-log so the advertised-vs-real gap is quantified. Best-effort.
+			try {
+				var _et = _electionTrace[tid];
+				if (_et && _et.correctedAfterMs < 0 && holder && holder !== _et.advertisedId) {
+					_et.correctedHolder  = holder;
+					_et.correctedAfterMs = Date.now() - _et.dispatchTs;
+				}
+			} catch (e) { /* trace is best-effort */ }
 			var c = dispatchedChat(tid);
 			if (!c || !c.messages) continue;
 			for (var j = 0; j < c.messages.length; j++) {
@@ -15942,6 +15956,153 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// reconciled, and the map is a handful of live turns.
 	var _handoffStart = {};
 
+	// The election trace this device recorded for each live dispatched turn, so the
+	// answer-arrival auto-log (below) can report the advertised target against the
+	// device that actually claimed it, and how long the correction took. Keyed by
+	// turnId; entries are dropped when the answer merges. A handful of live turns.
+	var _electionTrace = Object.create(null);
+
+	/// Coerce a lease-clock value (which may be a bignum with `toNumber`) to a plain
+	/// millisecond number, matching the reader `electionTrace` and peer.js use.
+	function _msNum(v) {
+		return (v && typeof v.toNumber === 'function') ? v.toNumber() : (Number(v) || 0);
+	}
+
+	/// Land a diagnostic on the gateway REGARDLESS of the Diagnostics toggle. This is
+	/// the ONE signal we cannot ask an owner to share by hand -- the election a hand-off
+	/// made, and the latency it paid -- so it BYPASSES `DaimondDiag` and the opt-in ring
+	/// entirely and posts straight to `/api/debug-trace`. Same wire shape as diag.js's
+	/// `flush` (`{v:1, device, rows:[{ts,tag,data}]}`), so the gateway handler needs no
+	/// change. Best-effort in every limb: it swallows every error and never blocks or
+	/// breaks the dispatch that called it. Ids, ages and counts only -- never content.
+	function postDebugTrace(rows) {
+		try {
+			if (!Array.isArray(rows) || !rows.length) return;
+			var device = '';
+			try { device = (window.DaimondIdentity && DaimondIdentity.deviceId()) || ''; } catch (e) { /* no id yet */ }
+			fetch('/api/debug-trace', {
+				method:      'POST',
+				credentials: 'same-origin',
+				headers:     { 'content-type': 'application/json', 'x-daimond-api': '2' },
+				body:        JSON.stringify({ v: 1, device: device, rows: rows }),
+			}).then(function () {}, function () {});		// fire-and-forget; a down endpoint is not our problem
+		} catch (e) { /* diagnostics must never break a dispatch */ }
+	}
+
+	/// AUTO-LAND THE ELECTION SMOKING-GUN, on EVERY nominee-set dispatch, bypassing the
+	/// Diagnostics toggle. Three fixes reasoned from code have failed live because the
+	/// iPhone's CLIENT-SIDE dispatch decision -- its nominee belief and its local presence
+	/// snapshot -- is invisible server-side; this makes it land on the gateway without the
+	/// owner navigating any UI. Fired whether the nominee is chosen OR bypassed, so both
+	/// the failing and the working case are captured.
+	///
+	/// The trace is the structured election object of the on-device diagnostics, emitted
+	/// as SHORT TAGGED ROWS rather than one JSON row: `debug_trace.rs` caps a row's `data`
+	/// at 400 bytes (`MAX_DATA`), and one JSON object of a 3-device election runs ~560
+	/// bytes and would truncate. The tagged rows are its lossless flattening and need no
+	/// gateway change. The object each row-set encodes is:
+	///   { kind:'election', ts, self, isPhone, nominatedId, nomineePresent,
+	///     nomineeRec:{lastSeen,servicedAt,ageMs}|null,
+	///     peers:[{id,lastSeen,servicedAt,ageMs,attended}],
+	///     decision:{reason,chosenId,chosenName},
+	///     refreshLanded, presumeNomWin, nowSkewNote,
+	///     nomineeInRoster, roster:[ids] }
+	function autoLogElection(presence, self, nominee, d, refreshLanded, presumeNomWin, isPhone) {
+		try {
+			// Only when a nominee is SET and is not this device: that is the case under
+			// investigation, and the guard keeps the post off ordinary desktop turns.
+			if (!nominee || nominee === self) return;
+			var now  = Date.now();
+			var pres = presence || {};
+			var nomRec     = pres[nominee] || null;
+			var nomPresent = !!nomRec;
+			var rosterIds = [], nomInRoster = false;
+			try {
+				var reg = loadDevices();
+				rosterIds   = Object.keys(reg);
+				nomInRoster = rosterIds.indexOf(nominee) !== -1;
+			} catch (e) { /* roster not readable */ }
+			var chosenId   = (d && d.peer && d.peer.deviceId) || '';
+			var chosenName = (d && d.peer && d.peer.name) || '';
+			// Presence could not be confirmed for a stale-looking nominee (presumeNomWin>0):
+			// the snapshot the decision read may pre-date the nominee's real beat.
+			var skewNote   = (presumeNomWin > 0) ? 'nominee-unconfirmed-snapshot' : '';
+			var rows = [];
+			// (1) THE ONE-LINE GUN: self, phone, nominee, its presence/roster standing, the
+			//     decision's reason and chosen device, and the freshness flags.
+			rows.push({ ts: now, tag: 'election', data:
+				'self=' + String(self || '').slice(0, 16)
+				+ ' phone=' + (isPhone ? 'Y' : 'N')
+				+ ' nominee=' + String(nominee).slice(0, 16)
+				+ ' present=' + (nomPresent ? 'Y' : 'N')
+				+ ' inRoster=' + (nomInRoster ? 'Y' : 'N')
+				+ ' reason=' + String((d && d.reason) || '?')
+				+ ' dispatch=' + (d && d.dispatch ? 'Y' : 'N')
+				+ ' chosen=' + (chosenId ? String(chosenId).slice(0, 16) + '/' + chosenName : 'none')
+				+ ' refreshLanded=' + (refreshLanded ? 'Y' : 'N')
+				+ ' presumeNomWin=' + (presumeNomWin | 0)
+				+ (skewNote ? ' skew=' + skewNote : '') });
+			// (2) THE NOMINEE'S OWN RECORD, so a nominee-id mismatch is told from a stale beat.
+			if (nomRec) {
+				var nls = _msNum(nomRec.lastSeen);
+				var nsv = (nomRec.servicedAt != null) ? _msNum(nomRec.servicedAt) : null;
+				rows.push({ ts: now, tag: 'election nominee', data:
+					'lastSeen=' + nls + ' servicedAt=' + (nsv == null ? 'n/r' : nsv) + ' ageMs=' + (now - nls) });
+			} else {
+				rows.push({ ts: now, tag: 'election nominee', data: 'absent-from-snapshot' });
+			}
+			// (3) EVERY DEVICE IN THE SNAPSHOT, one row each: beat age, servicing age, attended.
+			Object.keys(pres).forEach(function (id) {
+				var r = pres[id]; if (!r) return;
+				var ls = _msNum(r.lastSeen);
+				var sv = (r.servicedAt != null) ? _msNum(r.servicedAt) : null;
+				rows.push({ ts: now, tag: 'election peer', data:
+					String(id).slice(0, 16) + (id === String(self || '') ? '(self)' : '')
+					+ ' lastSeen=' + ls
+					+ ' servicedAt=' + (sv == null ? 'n/r' : sv)
+					+ ' ageMs=' + (now - ls)
+					+ ' attended=' + (r.attended ? 'Y' : 'N') });
+			});
+			// (4) THE ACCOUNT'S ROSTER VIEW of the nominee.
+			rows.push({ ts: now, tag: 'election roster', data:
+				'nomineeInRoster=' + (nomInRoster ? 'Y' : 'N')
+				+ ' ids=' + rosterIds.map(function (x) { return String(x).slice(0, 16); }).join(',') });
+			postDebugTrace(rows);
+		} catch (e) { /* best-effort: never break a dispatch */ }
+	}
+
+	/// AUTO-LAND THE HAND-OFF LATENCY when the answer for a dispatched turn finally merges
+	/// on THIS (the originating) device, so the delay is quantified and the advertised
+	/// target is proved against the device that really ran it. Reads the up-front election
+	/// trace kept for the turn (advertised target, and whether/when `stampDispatchHolders`
+	/// later corrected the holder), and the live lease holder as a fallback for the real
+	/// runner. Best-effort. Ids and counts only.
+	function autoLogHandoffLatency(turnId, dispatchTs) {
+		try {
+			var now = Date.now();
+			var et  = _electionTrace[String(turnId)] || null;
+			var advertised = et ? et.advertisedId   : '';
+			var advName    = et ? et.advertisedName : '';
+			var corrected  = et ? et.correctedHolder : '';
+			var corrAfter  = et ? et.correctedAfterMs : -1;
+			var holder = '';
+			try { holder = (window.DaimondLease && DaimondLease.holder) ? String(DaimondLease.holder(turnId) || '') : ''; }
+			catch (e) { /* lease view gone once released */ }
+			var actualRunner = corrected || holder || '';
+			var dt = _msNum(dispatchTs);
+			postDebugTrace([{ ts: now, tag: 'handoff_latency', data:
+				'turn=' + String(turnId)
+				+ ' dispatchTs=' + dt
+				+ ' answerMergedTs=' + now
+				+ ' latencyMs=' + (now - dt)
+				+ ' advertised=' + (advertised ? String(advertised).slice(0, 16) + '/' + advName : 'generic')
+				+ ' actualRunner=' + (actualRunner ? String(actualRunner).slice(0, 16) : 'unknown')
+				+ ' holderCorrected=' + (corrAfter >= 0 ? 'Y' : 'N')
+				+ ' correctedAfterMs=' + (corrAfter >= 0 ? corrAfter : -1) }]);
+		} catch (e) { /* best-effort */ }
+		try { delete _electionTrace[String(turnId)]; } catch (e) { /* map stays bounded anyway */ }
+	}
+
 	/// At send-time: hand this turn to a peer instead of running it here, when the
 	/// pure policy says so. On a phone with an awake peer that is EVERY turn (the
 	/// answer syncs back); on desktop only a long/agentic turn. Answers whether it
@@ -16038,12 +16199,40 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// THE SMOKING GUN: exactly what the election saw and chose. This is the
 			// line that says WHY iOS picks the device it picks.
 			diag('dispatch election', electionTrace(presence, self, nominee, d, DaimondPeer.DISPATCH_FRESH_MS));
+			// AUTO-LAND that smoking-gun on the gateway, bypassing the Diagnostics toggle,
+			// on EVERY nominee-set dispatch -- chosen or bypassed, dispatching or not -- so
+			// the client-side election a live iPhone made is diagnosable server-side without
+			// the owner sharing anything by hand. Before the `!d.dispatch` return, so the
+			// no-dispatch case is captured too. Guarded internally to nominee-set turns.
+			try { autoLogElection(presence, self, nominee, d, refreshLanded, presumeNomWin, isPhoneViewport()); }
+			catch (e) { /* best-effort */ }
 			if (!d.dispatch) return false;
 			// Prepared exactly as the explicit path, so the parcel push inside
 			// dispatchToPeer carries the prompt (§4.1).
 			clearComposer();
 			var umid = newMid();
 			_handoffStart[umid] = tSend;		// origin for the answer-arrival timing
+			// THE IN-FLIGHT TILE MUST ADVERTISE THE DEVICE THE CLAIM ROUTES TO, not the
+			// send-time freshest-peer GUESS (`d.peer`). When a nominee is SET, that is the
+			// nominee: `autoDispatchDecision`'s nominee branch dispatches to it and the lease
+			// claim lands on it, but when the phone's snapshot shows the nominee stale the
+			// decision falls to the freshest peer, so `d.peer` reads gilgamesh while argonaut
+			// actually runs -- the tile then advertised the wrong device until a delayed
+			// correction (owner 2026-09-07). With NO nominee set, advertise NOTHING specific:
+			// the generic seq-217 label ("Sent to your other devices"), never a guessed
+			// device. `stampDispatchHolders` still corrects the tile to the real lease holder
+			// once the claim is known, and now agrees with this up-front label.
+			var advId   = (nominee && nominee !== self) ? nominee : '';
+			var advName = advId ? deviceLabelFor(advId) : '';
+			// Keep the election trace for this turn, so the answer-arrival auto-log can report
+			// the advertised target against the device that really claimed it.
+			_electionTrace[umid] = {
+				dispatchTs:       tSend,
+				advertisedId:     advId,
+				advertisedName:   advName,
+				correctedHolder:  '',
+				correctedAfterMs: -1,
+			};
 			try { appendUserMessage(text); } catch (e) { /* the record below is the truth */ }
 			chat.messages.push({ role: 'user', content: text, mid: umid, iturn: umid, ts: Date.now() });
 			touchChat(chat); persistChats();
@@ -16056,17 +16245,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// naming the chosen peer; the durable placeholder's identical tile takes
 			// over on the post-push re-render, so the spinner is continuous.
 			try {
-				var to = d.peer || null;
 				appendDispatchedTile({
 					why:      'dispatched',
 					iturn:    umid,
 					itext:    text,
-					toDevice: (to && to.deviceId) || '',
-					toName:   (to && to.name) || '',
+					toDevice: advId,			// the nominee (who the claim routes to), or '' -> generic
+					toName:   advName,
 				});
 			} catch (e) { /* the durable placeholder draws it after the push */ }
 			dispatchToPeer(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : [],
-				{ toId: (d.peer && d.peer.deviceId) || '', toName: (d.peer && d.peer.name) || '', t0: tSend }
+				{ toId: advId, toName: advName, t0: tSend }
 			).then(function (res) {
 				if (!res || !res.ok) { try { appendError((res && res.why) || 'could not hand this to a peer'); } catch (e) { /* drawn best-effort */ } }
 			});

@@ -1,1 +1,1 @@
-{"build":"195475a4fdd4","note":"Protect a working provider key from being overwritten by a fresher but unreadable one synced from a diverged device"}
+{"build":"e9f7f9b5edbc","note":"Label the hand-off tile with the nominee, not a send-time guess; auto-log the phone election decision for diagnosis"}
