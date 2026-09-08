@@ -332,6 +332,12 @@
 	'devices.nominate_aria':    'Make {name} the always-on runner',
 	'devices.unnominate_aria':  'Clear {name} as the always-on runner',
 	'devices.nominee_note':     'Star one device as the always-on runner. Handed-off turns wait for it while it is awake, and fall to another awake device only when it is not.',
+	// A GHOST: a line a live device has replaced under a new id after re-minting its
+	// identity. It is safe to remove -- the machine is here now under the new line.
+	'devices.replaced':         'replaced',
+	'devices.replaced_aria':    'A device that is here now has taken this one’s place. It is safe to remove.',
+	'devices.prune_one':        'Remove the replaced device',
+	'devices.prune_many':       'Remove {n} replaced devices',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline':             'Offline',

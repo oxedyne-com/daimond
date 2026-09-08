@@ -129,6 +129,38 @@
 	var FOCUS_PULL_MIN_MS = 3000;
 	// A push with nothing to send asks anyway, at most this often. See push().
 	var IDLE_PULL_MIN_MS  = 5000;
+	// ── The pull budget and the resume ─────────────────────────
+	// A GET iOS suspended on a backgrounded tab never rejects until the socket
+	// resolves on resume, and while it hangs it pins `inFlight` so every re-open
+	// trigger stands down behind it. So a content PULL carries a budget: an abort
+	// after this frees the gate whether or not the socket ever answers. THIS IS
+	// PULL-ONLY. A push is NEVER given a signal and NEVER aborted -- a cancelled
+	// POST is a piece of the user's work that silently did not travel, which is the
+	// seq-228 hand-off-non-delivery regression this file was reverted for. The wake
+	// poll parks far longer on purpose and passes its own budget; see wakePoll.
+	var PULL_TIMEOUT_MS = 18000;
+	// A hidden spell shorter than this is an alt-tab glance, not a re-open: it keeps
+	// the ordinary throttled focus pull, so flipping between tabs does not become a
+	// GET storm. Longer -- or a bfcache restore, or a pull left frozen -- is a
+	// genuine resume, which re-arms the channel and pulls PROMPTLY through the one
+	// throttled focus path (never a burst). This is what keeps the normal foreground
+	// cadence unchanged.
+	var RESUME_MIN_HIDDEN_MS = 3000;
+	// While a hand-off is in flight (a turn dispatched to another device and its
+	// answer not yet here), the watching devices poll this often rather than wait out
+	// the 45s wake tick -- the net under a backgrounded iOS tab whose wake park iOS
+	// has frozen. Throttled against the last pull of ANY kind (like the catch-up), so
+	// where the wake channel IS delivering the progress pushes this mostly stands
+	// down and costs nothing; where the park is frozen, it is the thing that asks.
+	// A GET, served to every device, so it is never a per-turn charge.
+	var EXPEDITE_PULL_MS = 4000;
+	// ── The streaming progress push ────────────────────────────
+	// The minimum spacing between a runner's progress pushes, so a long turn streams
+	// as a trickle rather than a flood. Between ~1.5-3s per the streaming design: a
+	// peer watching a hand-off sees the thinking and the tool calls appear as the
+	// runner produces them, instead of a blank wait until the turn finishes. See
+	// pushProgress; the runner's own timer lives in peer.js runErrand.
+	var PROGRESS_PUSH_MIN_MS = 1800;
 	// ── Wake channel ───────────────────────────────────────────
 	// A wake is EVIDENCE that the mailbox moved, which the speculative triggers
 	// above are not, so it has a throttle of its own and a much shorter one: the
@@ -250,6 +282,21 @@
 	// second thing to know.
 	var lastPullAt    = 0;
 	var inFlight      = false;	// One sync operation at a time.
+	// The AbortController of a content PULL in flight, so a resume can break a frozen
+	// GET at once rather than wait out its budget. Set by `call` ONLY when the caller
+	// asks (the content pull does; the push NEVER does). Read by onResume. A push is
+	// never registered here, so a resume can never cancel one.
+	var pullAbort     = null;
+	// ms the tab last went hidden (0 = visible, or never hidden this page). Used by
+	// onResume to tell a genuine re-open from an alt-tab glance.
+	var hiddenAt      = 0;
+	// ms of the last progress push, to throttle the runner's streaming trickle.
+	var lastProgressAt = 0;
+	// Whether a hand-off is in flight and this device is watching for its answer: the
+	// dispatcher, and any paired device holding the dispatched placeholder. Set by
+	// daimond.js through the `expedite` verb; drives the short in-flight poll.
+	var expediting    = false;
+	var expediteTimer = null;	// The in-flight-poll interval, live only while expediting.
 	var started       = false;	// The engine has attached its listeners.
 	var catchupTimer  = null;	// The catch-up supervisor, for a device with no channel.
 	// This device has read the mailbox and knows what is in it -- a parcel it
@@ -382,7 +429,18 @@
 	/// the reply itself. The version contract is honoured on the way past, by
 	/// `gwFetch`: a tab too old for the gateway is told to reload rather than go
 	/// on talking to it.
-	async function call(method, body, query) {
+	/// # Arguments
+	/// * `xtra` - `{ timeoutMs, track }`, and BOTH are for a PULL alone. `timeoutMs`
+	///            bounds a GET iOS may have suspended on a backgrounded socket, so its
+	///            `finally` frees the gate whether or not the socket ever answers (0 or
+	///            absent disables it -- the wake poll parks far longer and passes its
+	///            own). `track` registers the GET's controller as `pullAbort` so a
+	///            resume can break it at once. A POST passes NEITHER: a push is never
+	///            given a signal and never aborted, because a cancelled POST is the
+	///            user's work silently not travelling -- the seq-228 regression. The
+	///            two callers that set these are the content pull and nothing else.
+	async function call(method, body, query, xtra) {
+		xtra = xtra || {};
 		var opts = {
 			method:      method,
 			credentials: 'same-origin',
@@ -392,17 +450,35 @@
 			opts.headers['content-type'] = 'application/json';
 			opts.body = JSON.stringify(body);
 		}
-		var r = await DaimondGateway.gwFetch(PATH + (query || ''), opts);
-		if (r.status === 426) return { status: 426, json: null };
-		var j = null;
-		try { j = await r.json(); } catch (e) { j = null; }
-		var res = { status: r.status, json: j };
-		if (r.status !== 401) { clearSessionGone(r.status); return res; }
-		// Still refused after a renewal that either failed or did not help. This
-		// device's work is not travelling and the user has to be able to find
-		// that out; see restStatus.
-		if (!sessionGone) { sessionGone = true; restStatus(); }
-		return res;
+		// Bound and track a PULL, never a push. `method === 'GET'` is the belt to the
+		// braces of "only the pull passes xtra": even if a POST caller ever passed one,
+		// no signal is attached to it here, so a push cannot be aborted by any path.
+		var ac = null, timer = null;
+		var budget = (xtra.timeoutMs !== undefined) ? xtra.timeoutMs : PULL_TIMEOUT_MS;
+		if (method === 'GET' && (xtra.timeoutMs !== undefined || xtra.track)) {
+			try { ac = new AbortController(); } catch (e) { ac = null; }
+			if (ac) {
+				opts.signal = ac.signal;
+				if (budget > 0) timer = setTimeout(function () { try { ac.abort(); } catch (e) {} }, budget);
+				if (xtra.track) pullAbort = ac;
+			}
+		}
+		try {
+			var r = await DaimondGateway.gwFetch(PATH + (query || ''), opts);
+			if (r.status === 426) return { status: 426, json: null };
+			var j = null;
+			try { j = await r.json(); } catch (e) { j = null; }
+			var res = { status: r.status, json: j };
+			if (r.status !== 401) { clearSessionGone(r.status); return res; }
+			// Still refused after a renewal that either failed or did not help. This
+			// device's work is not travelling and the user has to be able to find
+			// that out; see restStatus.
+			if (!sessionGone) { sessionGone = true; restStatus(); }
+			return res;
+		} finally {
+			if (timer) clearTimeout(timer);
+			if (ac && xtra.track && pullAbort === ac) pullAbort = null;
+		}
 	}
 
 	/// A request that was served is proof the session is back. Only a round that
@@ -1021,7 +1097,10 @@
 		var preRead = serverVersion;
 		var res;
 		var tGet = Date.now();		// the /api/sync GET round-trip, for the sync-latency picture
-		try { res = await call('GET'); }
+		// Tracked and budgeted: a GET iOS froze on a backgrounded socket aborts at the
+		// budget (freeing the gate) or the instant a resume breaks it. PULL ONLY -- the
+		// push below is never given a signal.
+		try { res = await call('GET', undefined, undefined, { track: true }); }
 		catch (e) { diag('pull GET error', (Date.now() - tGet) + 'ms'); log('pull network error', e); restStatus(); return -1; }
 		if (res.status !== 200 || !res.json) { diag('pull GET status', res.status + ' after ' + (Date.now() - tGet) + 'ms'); log('pull status', res.status); restStatus(); return -1; }
 		lastPullAt = Date.now();		// asked, and answered: see the catch-up in push().
@@ -1354,6 +1433,72 @@
 			await new Promise(function (r) { setTimeout(r, FLUSH_RETRY_MS); });
 		}
 		return { ok: false, version: serverVersion, why: 'not_confirmed' };
+	}
+
+	// ── The streaming progress push ────────────────────────────
+	//
+	// A hand-off used to be invisible until it FINISHED: the runner captured and
+	// pushed the parcel once, at completion, so a peer watching the turn saw a blank
+	// placeholder for the whole run and then the finished turn all at once. This is
+	// the push that fills that gap. The runner calls it on a throttled timer through
+	// the length of a dispatched turn (peer.js runErrand), and each call sends the
+	// transcript AS IT STANDS -- the thinking and the tool calls already in the
+	// chat's messages -- so a peer pulling mid-turn watches it unfold.
+	//
+	// IT IS THE SAME PUSH, MINUS FOUR THINGS. Same account parcel, same mailbox, same
+	// compare-and-set, same wake of the OTHER devices. What it is NOT is a new turn or
+	// a new lease -- the runner already holds the one lease, the turn is billed once
+	// where it runs, and this moves no money. And it deliberately does the LESS of the
+	// final push: it does not write the carried fixed point (`saveSig`), advance the
+	// file-merge baseline, or commit a live chunk set -- those settle the FINISHED
+	// state, and committing a live set mid-turn could sweep a chunk the turn is about
+	// to reference. The final `pushResult` does all four; this is only a frame.
+	//
+	// UNLIKE push(), IT DOES NOT STAND DOWN OVER A LIVE TURN -- streaming the live
+	// turn is the whole point. It still shares the one-round gate, so it never
+	// overlaps the final push (the runner stops the progress timer BEFORE completing),
+	// and it is a no-op when the parcel has not moved, so a quiet stretch of a turn is
+	// quiet on the wire. A conflict or a refusal simply drops the frame: the next
+	// frame, and failing that the final pushResult (which DOES pull-merge-retry),
+	// reconciles. Nothing here ever waits, so it cannot stall the turn it is watching.
+	async function pushProgress() {
+		if (!ready() || !entitled) return;
+		if (tooLarge || sessionGone) return;
+		if (Date.now() - lastProgressAt < PROGRESS_PUSH_MIN_MS) return;	// throttle the trickle
+		if (inFlight) return;			// a round is running; the next tick tries again
+		lastProgressAt = Date.now();
+		inFlight = true;
+		try {
+			var state = await collectParcel();
+			var plain = JSON.stringify(state);
+			// Nothing new since the last send (progress OR ordinary): quiet frame.
+			if (plain === lastPushed && serverVersion > 0) return;
+			var blob;
+			try { blob = await DaimondIdentity.wrap(plain); }
+			catch (e) { log('progress encrypt failed', e); return; }
+			var res;
+			// `w` names this tab's wake channel, so the gateway taps the OTHER devices --
+			// the ones watching the hand-off -- and not this runner. NO xtra: this is a
+			// POST and is never given an abort signal.
+			try { res = await call('POST', { base_version: serverVersion, device: deviceLabel(), blob: blob, w: WAKE_ID }); }
+			catch (e) { log('progress push network error', e); return; }
+			if (res.status === 200 && res.json && res.json.ok) {
+				serverVersion = res.json.version | 0;
+				lastPushed    = plain;
+				saveVersion();
+				noteSynced();
+				diag('progress push', 'v' + serverVersion);
+				return;
+			}
+			// A 409 (someone moved the mailbox on) or any refusal: drop this frame. NOT
+			// a pull-merge-retry -- that would churn the runner's live chat and could
+			// stall the turn; the final pushResult reconciles. A stale cursor after a
+			// 409 simply means later frames 409 too and the stream pauses until the
+			// final push, which is the safe direction to fail.
+			diag('progress push skipped', 'status=' + res.status);
+		} finally {
+			inFlight = false;
+		}
 	}
 
 	// ── Presence ───────────────────────────────────────────────
@@ -1936,6 +2081,87 @@
 		finally { inFlight = false; }
 	}
 
+	/// Coming back to a tab that was backgrounded, by whichever signal fired --
+	/// `visibilitychange`→visible, `focus`, or `pageshow`.
+	///
+	/// THE SAFE HALF OF THE SEQ-227 RE-OPEN. A hand-off finished on another device
+	/// while this phone was backgrounded; on re-open the wire is fast, but the phone
+	/// did not ASK until the rigid 45s wake tick, because an iOS-frozen wake park
+	/// still reports itself live. The seq-228 version of this fix fired a BURST of
+	/// immediate pulls (immediate + a 300ms retry + a wake re-arm), each ending in a
+	/// renderHistory full rebuild that wrote scrollTop mid-scroll -- the transcript
+	/// shook -- and it aborted the dispatch PUSH on resume, so a new chat's hand-off
+	/// never reached peers. It was reverted for both.
+	///
+	/// This is the version that keeps neither fault. It breaks a FROZEN PULL (a GET
+	/// only, never a push), re-arms the wake channel, and then pulls through the ONE
+	/// throttled focus path -- a single coalesced pull, never a burst -- so the pull's
+	/// re-render is the ordinary scroll-anchored one. An alt-tab glance keeps the
+	/// plain focus pull, so the normal foreground cadence is untouched.
+	function onResume(why, persisted) {
+		if (!started) return;
+		var now = Date.now();
+		var hid = hiddenAt;			// captured before it is cleared below.
+		hiddenAt = 0;
+		// The initial `pageshow` of a fresh load is not a resume: nothing was hidden
+		// and the boot path already pulls. Only a bfcache restore (`persisted`) or a
+		// tab that had actually gone away is.
+		if (why === 'pageshow' && !persisted && !hid) return;
+		var hiddenMs = hid ? (now - hid) : 0;
+		// A genuine re-open, as opposed to an alt-tab glance: a bfcache restore, or a
+		// spell in the background long enough that the wake park is probably frozen.
+		var reopen = persisted || (hiddenMs >= RESUME_MIN_HIDDEN_MS);
+		diag('resume', 'why=' + why + (persisted ? ' bfcache' : '')
+			+ ' hidden=' + (hid ? hiddenMs + 'ms' : 'n')
+			+ (reopen ? ' reopen' : ' glance'));
+		if (!reopen) { scheduleFocusPull(); return; }		// glance: ordinary cadence.
+		// Break a PULL iOS froze on the backgrounded socket, so the gate frees now
+		// rather than at the 18s budget. A push is never tracked here, so this can
+		// only ever abort a GET -- never the user's work in flight.
+		if (pullAbort) { try { pullAbort.abort(); } catch (e) {} pullAbort = null; }
+		// Re-arm the channel rather than trust it: an iOS-frozen park is replaced,
+		// which closes the `wakeLive()===true`-but-dead gap catchUp falls into.
+		try { wakeStop(); wakeStart(); } catch (e) { /* channel not wanted here */ }
+		// Pull PROMPTLY, but through the one throttled focus path: clear the focus
+		// throttle so the coalesced pull fires at once (a real return is long past the
+		// throttle window anyway), then schedule it. One pull, one scroll-safe render.
+		lastFocusPull = 0;
+		scheduleFocusPull();
+	}
+
+	/// The in-flight poll, live only while a hand-off is out and this device is
+	/// watching for its answer (see `expedite`). It pulls at EXPEDITE_PULL_MS rather
+	/// than wait out the 45s wake tick -- the net for a backgrounded iOS tab whose
+	/// wake park iOS has frozen. Throttled against the last pull of ANY kind, so where
+	/// the wake channel IS delivering the runner's progress pushes it mostly stands
+	/// down; where the park is dead, it is the thing that asks.
+	async function expeditePull() {
+		if (!expediting) return;
+		if (!ready() || !entitled) return;
+		if (inFlight) return;			// a round is running, and it is fresher than this one
+		if (Date.now() - lastPullAt < EXPEDITE_PULL_MS) return;	// the channel already asked
+		inFlight = true;
+		try { await pull(); }
+		finally { inFlight = false; }
+	}
+
+	/// Turn the in-flight poll on or off. daimond.js calls this as a hand-off's
+	/// dispatched placeholder appears and clears, so the watching devices pull
+	/// promptly for the length of the hand-off and are quiet the rest of the time.
+	function setExpedite(on) {
+		on = !!on;
+		if (on === expediting) return;
+		expediting = on;
+		if (on) {
+			if (!expediteTimer) expediteTimer = setInterval(expeditePull, EXPEDITE_PULL_MS);
+			// Ask once now rather than wait a whole tick: the hand-off just went out.
+			expeditePull();
+		} else if (expediteTimer) {
+			clearInterval(expediteTimer);
+			expediteTimer = null;
+		}
+	}
+
 	/// Ask the gateway what it is holding, on a device nothing else will prompt.
 	///
 	/// Measured against the last pull of ANY kind rather than against its own last
@@ -2149,12 +2375,21 @@
 		// push: state is consistent and the user is between actions.
 		window.addEventListener('daimond:idle', schedule);
 		// Leaving the tab is a natural save point; coming back to it is a natural
-		// moment to catch up. The one listener covers both directions.
+		// moment to catch up. The one listener covers both directions: hiding stamps
+		// `hiddenAt` (so a return can tell a re-open from a glance) and schedules the
+		// save; returning goes through onResume, which pulls promptly on a genuine
+		// re-open and keeps the plain throttled focus pull for an alt-tab glance.
 		document.addEventListener('visibilitychange', function () {
-			if (document.hidden) schedule();
-			else scheduleFocusPull();
+			if (document.hidden) { hiddenAt = Date.now(); schedule(); }
+			else onResume('visible');
 		});
 		window.addEventListener('focus', scheduleFocusPull);
+		// iOS wakes a backgrounded tab through `pageshow`, not always a clean
+		// `visibilitychange`, and a bfcache restore ONLY raises `pageshow`. Route it
+		// through the same safe resume.
+		window.addEventListener('pageshow', function (e) {
+			onResume('pageshow', !!(e && e.persisted));
+		});
 		// Pausing something is a change to what this account may spend, and nothing
 		// else here would notice one: it ends no turn, touches no Diamond and
 		// leaves the tab where it was. It only announces on a REAL move -- `set`
@@ -2172,7 +2407,7 @@
 		// holding a socket for a tab that has closed. `pagehide` and not `unload`:
 		// a page restored from the back/forward cache raises `pageshow`, and the
 		// supervisor opens it again on its next tick.
-		window.addEventListener('pagehide', wakeStop);
+		window.addEventListener('pagehide', function () { hiddenAt = Date.now(); wakeStop(); });
 		// Keep the channel matching the app. See wakeWatch.
 		wakeWatcher = setInterval(wakeWatch, WAKE_WATCH_MS);
 		// And the one trigger that needs neither this device nor the gateway to
@@ -2208,6 +2443,17 @@
 		/// committed at -- `{ ok, version, why? }`. Used by the hand-off dispatcher so
 		/// the errand's parcelVersion genuinely contains the chat it just added.
 		flush:   flush,
+		/// Stream one frame of a running turn to the mailbox. The runner of a
+		/// dispatched turn calls this on a throttled timer (peer.js runErrand) so peers
+		/// watching the hand-off see the transcript grow rather than a blank wait. The
+		/// SAME account parcel under compare-and-set -- no new turn, no new lease, no
+		/// second charge. See pushProgress.
+		pushProgress: pushProgress,
+		/// Turn the in-flight poll on/off. daimond.js calls `expedite(true)` while a
+		/// hand-off's dispatched placeholder is outstanding and `expedite(false)` when
+		/// it clears, so the watching devices pull promptly (EXPEDITE_PULL_MS) for the
+		/// length of the hand-off instead of waiting out the 45s wake tick.
+		expedite: setExpedite,
 		nudge:   nudge,
 		recheck: recheck,
 		/// The presence path, off the content parcel: `beatPresence(deviceId, name)`

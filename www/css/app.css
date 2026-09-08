@@ -2714,6 +2714,17 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 /* A small badge on the nominee's line, so the runner reads at a glance beside the
    last-seen column rather than only through the star. */
 .device-nominee { flex: none; font-size: var(--fs-3xs); text-transform: uppercase; letter-spacing: .04em; color: var(--accent); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
+/* A stale line -- a device not beating now -- reads muted; a GHOST (a stale line a
+   live device has replaced under a new id after an identity re-mint) wears a
+   "replaced" tag, so the owner can tell a machine that is merely offline from one
+   the account no longer runs, and remove the second safely. */
+.device-row.is-stale .device-name { color: var(--text-secondary); }
+.device-row.is-ghost { opacity: .8; }
+.device-ghost { flex: none; font-size: var(--fs-3xs); text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
+/* One tap to clear every replaced device at once, under the list and only when
+   there is one to clear. */
+.device-prune-all { display: block; width: 100%; margin: 6px 0 2px; padding: 6px 8px; font-size: var(--fs-2xs); text-align: left; background: transparent; color: var(--danger); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.device-prune-all:hover { background: var(--bg-hover); }
 
 #id-name-row { margin-bottom: 8px; }
 #id-name { width: 100%; }

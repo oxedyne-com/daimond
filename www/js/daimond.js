@@ -1010,7 +1010,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (tombs[m.mid]) return;
 			var had = at[m.mid];
 			if (had === undefined) { at[m.mid] = out.length; out.push(m); return; }
-			if ((out[had].elided || 0) && !(m.elided || 0)) out[had] = m;
+			var prev = out[had];
+			if ((prev.elided || 0) && !(m.elided || 0)) { out[had] = m; return; }
+			// STREAMED GROWTH CONVERGES. A turn running on another device streams its
+			// transcript in progress frames (sync.js pushProgress): the same message id
+			// arrives again, longer, as its thinking or tool output accrues. Without this
+			// the FIRST copy seen would win for ever (the rule above is first-wins), so a
+			// peer would freeze a half-written think tile or an empty tool result. Adopt
+			// the strictly-longer copy, but ONLY when the shorter is a PREFIX of it and
+			// the role is unchanged -- the exact, monotone signature of a message growing
+			// token by token. It never shrinks (an out-of-order older frame is shorter, so
+			// this keeps the longer one already held) and never rewrites words (an edit is
+			// not a prefix extension), so it cannot lose or corrupt content -- it can only
+			// let a stream catch up to itself. A completed turn sends each message once at
+			// its final length, so this branch never fires outside streaming.
+			else if (m.role === prev.role && !(m.elided || 0) && !(prev.elided || 0)) {
+				var pc = prev.content == null ? '' : String(prev.content);
+				var mc = m.content    == null ? '' : String(m.content);
+				if (mc.length > pc.length && mc.lastIndexOf(pc, 0) === 0) out[had] = m;
+			}
 		});
 		out.sort(function (x, y) {
 			if ((x.ts || 0) !== (y.ts || 0)) return (x.ts || 0) - (y.ts || 0);
@@ -3495,6 +3513,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function removeDevice(id) {
 		if (!id || id === deviceId()) return null;	// this device would only re-mint itself
 		tombstoneIn(DEVICE_TOMBS_KEY, id);
+		// A nomination on a device being taken off the list is meaningless -- the star
+		// would point at a line that is no longer here -- so clear it. The empty record
+		// propagates the clearing on its own fresher `at`, like handle and look.
+		if (id === nominatedDeviceId()) nominateDevice('');
 		var reg = loadDevices();
 		delete reg[id];
 		return saveDevices(reg);
@@ -3676,6 +3698,118 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { localStorage.setItem(NOMINATED_KEY, JSON.stringify({ id: id, at: at })); }
 			catch (e) { /* best effort */ }
 		}
+	}
+
+	// ── Reconciling the roster against who is actually here ────
+	//
+	// The roster is an add-only UNION (mergeDevices): a device that re-mints its
+	// identity -- as every device did before the identity boot-guard shipped -- writes
+	// a NEW line and leaves its OLD one behind for ever, because nothing beats a dead
+	// id back to life and nothing prunes it. So the list fills with GHOSTS: dead lines
+	// a live device has already replaced under a fresh id. A measured account carried
+	// four such ghosts, and its NOMINEE still pointed at the argonaut's dead old id --
+	// so the election found the nominee absent from presence and fell through to the
+	// freshest peer, the very thing the nomination exists to prevent (owner trace,
+	// 2026-09-08).
+	//
+	// These read the roster against the LIVE presence set (the gateway beat map) and
+	// name what is dead. `rosterLiveness` is pure -- it writes nothing -- so the
+	// classification is testable without a browser. Neither touches the lease: the
+	// money-safety is unchanged, this only marks lines for the Devices UI and moves
+	// WHICH id the election seats.
+
+	/// The name a device shows, WITHOUT the on-screen "This device" fallback: an empty
+	/// string when a line has no name at all, so a nameless line never matches another
+	/// nameless one and is never called a ghost on that account.
+	function deviceNameKey(d) {
+		return String((d && d.label) || (d && d.name) || '');
+	}
+
+	/// A presence record's last-seen as a plain ms number (bignum-safe, matching
+	/// peer.js's leaseMs -- a gateway-ingested stamp can arrive as a bignum).
+	function presenceSeenMs(rec) {
+		var v = rec && rec.lastSeen;
+		return (v && typeof v.toNumber === 'function') ? v.toNumber() : (Number(v) || 0);
+	}
+
+	/// Classify every device the account knows against who is BEATING now. Pure.
+	///
+	/// `reg` is the merged roster (id -> line), `presence` the live beat map
+	/// (id -> { name, lastSeen }), `nominee` the nominated id or '', `now` the moment
+	/// and `windowMs` the freshness bound. Answers
+	///   { live:{id:true}, stale:{id:true}, ghost:{id:true},
+	///     nomineeDead:bool, nomineeReplacement:id|'' }
+	/// A device is LIVE when it is beating within the window, STALE when it is known to
+	/// the account but not beating, and a GHOST when it is stale AND a live device
+	/// under a DIFFERENT id carries the same name -- the re-mint signature, so the
+	/// stale line is provably a superseded copy of a machine that is here now. The
+	/// nominee is DEAD when it is set and not live; its replacement is the SINGLE live
+	/// device that shares its name (or '' when none, OR when more than one -- an
+	/// ambiguous name, which two of a user's machines can legitimately share, is never
+	/// guessed).
+	function rosterLiveness(reg, presence, nominee, now, windowMs) {
+		var r = reg || {}, p = presence || {};
+		var n = now == null ? Date.now() : now;
+		var w = windowMs || (window.DaimondPeer && DaimondPeer.DISPATCH_FRESH_MS) || 90000;
+		var nom = String(nominee || '');
+		// Who is beating, and the name each live device shows -- its roster line's name
+		// when it has one, else the name it beats under (a device not yet in the roster).
+		var live = {}, liveName = {};
+		Object.keys(p).forEach(function (id) {
+			if ((n - presenceSeenMs(p[id])) > w) return;		// not beating within the window
+			live[id] = true;
+			liveName[id] = r[id] ? deviceNameKey(r[id]) : String((p[id] && p[id].name) || '');
+		});
+		// Every id worth a verdict: the roster, plus any live device not yet in it.
+		var ids = {};
+		Object.keys(r).forEach(function (id) { ids[id] = true; });
+		Object.keys(live).forEach(function (id) { ids[id] = true; });
+		var stale = {}, ghost = {};
+		Object.keys(ids).forEach(function (id) {
+			if (live[id]) return;						// beating: neither stale nor a ghost
+			stale[id] = true;
+			var nm = r[id] ? deviceNameKey(r[id]) : '';
+			if (!nm) return;							// nameless: cannot be matched to a live device
+			var replaced = Object.keys(live).some(function (lid) {
+				return lid !== id && liveName[lid] === nm;
+			});
+			if (replaced) ghost[id] = true;
+		});
+		var nomineeDead = false, nomineeReplacement = '';
+		if (nom && !live[nom]) {
+			nomineeDead = true;
+			var deadName = r[nom] ? deviceNameKey(r[nom]) : '';
+			if (deadName) {
+				var m = Object.keys(live).filter(function (lid) {
+					return lid !== nom && liveName[lid] === deadName;
+				});
+				if (m.length === 1) nomineeReplacement = m[0];		// unambiguous only
+			}
+		}
+		return { live: live, stale: stale, ghost: ghost,
+			nomineeDead: nomineeDead, nomineeReplacement: nomineeReplacement };
+	}
+
+	/// Move the nomination onto the live device that has REPLACED a dead nominee.
+	///
+	/// When the nominee id is not beating and exactly ONE live device shows its name --
+	/// the argonaut returning under a fresh id after a re-mint -- the star follows it,
+	/// so a nomination survives the re-mint older accounts already carry. Idempotent:
+	/// once the nominee beats again there is nothing to move. AMBIGUOUS-SAFE: two live
+	/// devices sharing the name is left for a manual re-star, never guessed. Money-safe:
+	/// the lease CAS is still the sole single-runner arbiter; this only changes WHICH id
+	/// the election seats, and it propagates by the ordinary freshest-`at`-wins
+	/// nomination merge. Answers the id moved to, or ''.
+	function reconcileNominee(now, windowMs) {
+		try {
+			var nominee = nominatedDeviceId();
+			if (!nominee) return '';
+			var presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+			var live = rosterLiveness(loadDevices(), presence, nominee, now, windowMs);
+			if (!live.nomineeDead || !live.nomineeReplacement) return '';
+			nominateDevice(live.nomineeReplacement);
+			return live.nomineeReplacement;
+		} catch (e) { return ''; }
 	}
 
 	// ── Workspace files (the other half of "the work") ─────────
@@ -5414,6 +5548,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The nominated runner rides beside the roster: pure localStorage, freshest-
 			// `at`-wins, so it settles here with the rest of the account's device facts.
 			adoptNomination(remote.nominated);
+			// A nominee left pointing at a device that re-minted its id is migrated onto
+			// the live device that has replaced it, so the star follows the machine across
+			// the re-mint older accounts already carry. Idempotent and ambiguous-safe (see
+			// reconcileNominee); a no-op when presence has not been fetched yet, so a
+			// background sync-only wake simply reconciles on a later round.
+			try { reconcileNominee(); } catch (e) { /* best-effort */ }
 		});
 		// Read before any section runs: `applyFiles` commits a new fork point on its way
 		// out, so a later reader gets this round's own state rather than the one both
@@ -13363,7 +13503,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function renderDevices() {
 			var reg = collectDevices();		// reading it is also how this device joins it
 			var self = deviceId();
+			// Before drawing, let a nominee stranded on a re-minted device follow the live
+			// machine that replaced it, so the star shows against the device that is
+			// actually here rather than against a dead id (owner trace, 2026-09-08).
+			try { reconcileNominee(); } catch (e) { /* best-effort */ }
 			var nominee = nominatedDeviceId();	// the account's always-on runner, or ''
+			// Who is beating now, so the list can mark a line that is no longer here and a
+			// GHOST a live device has replaced. A live device NOT yet synced into the
+			// roster still gets a row -- from its beat -- so the owner can star the machine
+			// that is here even before its line has propagated (the disjoint-roster case).
+			var presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+			var live = rosterLiveness(reg, presence, nominee, Date.now(),
+				(window.DaimondPeer && DaimondPeer.DISPATCH_FRESH_MS));
+			Object.keys(presence).forEach(function (id) {
+				if (reg[id] || !live.live[id]) return;
+				reg[id] = { name: String(presence[id].name || ''), label: '',
+					created: 0, namedAt: 0, seen: presenceSeenMs(presence[id]) };
+			});
 			var ids = Object.keys(reg).sort(function (a, b) {
 				var sa = a === self ? 1 : 0, sb = b === self ? 1 : 0;
 				if (sa !== sb) return sb - sa;
@@ -13379,6 +13535,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			homeView.appendChild(devSec);
 			ids.forEach(function (id) {
 				var d = reg[id], r = el('div', 'device-row');
+				// A line not beating now reads muted (stale); one a live device has
+				// replaced under a new id wears a "replaced" tag and is safe to remove.
+				var isStale = id !== self && !!live.stale[id];
+				var isGhost = !!live.ghost[id];
+				if (isStale) r.classList.add('is-stale');
+				if (isGhost) r.classList.add('is-ghost');
 				var shown = deviceShownName(d);
 				var nameEl = el('span', 'device-name', shown);
 				// The row shortens this with CSS ellipsis, which is fine on screen and
@@ -13390,6 +13552,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				r.appendChild(el('span', 'device-id', id.slice(-4)));
 				r.appendChild(el('span', 'device-when',
 					id === self ? t('devices.this_device') : relTime(d.seen)));
+				// A ghost is a machine that is here now under a different id, so the owner
+				// can tell it from one that is merely switched off and safely remove it.
+				if (isGhost) {
+					var g = el('span', 'device-ghost', tOr('devices.replaced', 'replaced'));
+					g.title = tOr('devices.replaced_aria',
+						'A device that is here now has taken this one’s place. It is safe to remove.');
+					r.appendChild(g);
+				}
 				// The nominee wears a small badge, so the one always-on runner is plain
 				// at a glance without reading every ✩ button.
 				if (nominee && id === nominee) {
@@ -13445,6 +13615,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				homeView.appendChild(r);
 			});
+			// One tap to clear every replaced device at once, shown only when there is a
+			// ghost to clear. Each removal tombstones the line, so it stays gone across
+			// the next sync round rather than unioning straight back (the add-only-merge
+			// resurrection the whole reconcile is written to stop).
+			var ghosts = Object.keys(live.ghost);
+			if (ghosts.length) {
+				var prune = document.createElement('button');
+				prune.className = 'device-prune-all';
+				prune.type = 'button';
+				prune.textContent = ghosts.length === 1
+					? tOr('devices.prune_one', 'Remove the replaced device')
+					: tOr('devices.prune_many', 'Remove {n} replaced devices', { n: ghosts.length });
+				prune.addEventListener('click', function () {
+					ghosts.forEach(function (gid) { try { removeDevice(gid); } catch (e) { /* best effort */ } });
+					if (window.DaimondSync && DaimondSync.nudge) {
+						try { DaimondSync.nudge(); } catch (e) { /* not syncing */ }
+					}
+					renderHome();
+				});
+				homeView.appendChild(prune);
+			}
 			// A lone device keeps its one-line note: it says something the empty
 			// list cannot. A multi-device list speaks for itself, so the prose that
 			// once stacked under it is gone -- the caveat is on the header hover, the
@@ -14381,6 +14572,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// without `renderHistory` and turns this off; the next full render turns it back on.
 	var _renderSynced = false;
 
+	// ms the reader last scrolled the thread, and how recent counts as "still
+	// scrolling". A store-driven re-render (a sync progress frame, another tab's write)
+	// that would CLEAR and rebuild the thread while the reader is mid-gesture writes
+	// scrollTop under them -- which on iOS kills the momentum, the "shaking" the
+	// reverted seq-228 resume storm caused. renderHistory defers exactly that case a
+	// beat; see the guard there. A pull-driven APPEND is unaffected (it clears nothing
+	// and touches scrollTop only when the reader is pinned to the bottom).
+	var _lastScrollAt = 0;
+	var SCROLL_SETTLE_MS = 220;
+	var _deferredRenderTimer = null;
+	try {
+		if (chatOutput && chatOutput.addEventListener) {
+			chatOutput.addEventListener('scroll', function () { _lastScrollAt = Date.now(); }, { passive: true });
+		}
+	} catch (e) { /* no thread element in this context */ }
+
 	/// A cheap per-message signature: its id and everything the drawing reads that could
 	/// change WITHOUT the id changing (content length, elision, outcome, the hand-off and
 	/// interruption marks, a fold's counts). Deliberately not a stringify of the whole
@@ -14511,6 +14718,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var wasDown  = nearBottom();
 		var keepTop  = chatOutput.scrollTop;
 
+		// DO NOT REBUILD UNDER AN ACTIVE SCROLL. A store-driven re-render (a streamed
+		// progress frame, another tab's write) that lands while the reader is mid-gesture
+		// on a scrolled-up thread would clearChat (resetting scroll to the top) and then
+		// write scrollTop back to hold their place -- and writing scrollTop mid-momentum
+		// is what iOS reads as a yank, the "shaking" the reverted resume storm caused.
+		// So when a SAME-CHAT change that is NOT a clean append arrives within a scroll's
+		// settle window and the reader is not pinned to the live end, defer it a beat and
+		// coalesce: when the gesture settles, the render runs and puts them back exactly.
+		// A chat OPEN (`!sameChat`) is never deferred -- it is the reader's own action --
+		// and an append is never deferred (it clears nothing and writes scrollTop only
+		// when pinned), so the streaming common case stays immediate. A reader pinned to
+		// the bottom is following the stream, not scrolling away, so it renders at once.
+		var nextSigs = Array.isArray(messages) ? sigsOf(messages) : [];
+		if (sameChat && !wasDown && Array.isArray(messages)
+			&& (Date.now() - _lastScrollAt) < SCROLL_SETTLE_MS
+			&& !isAppendOf(_renderedSigs, nextSigs)) {
+			if (_deferredRenderTimer) clearTimeout(_deferredRenderTimer);
+			_deferredRenderTimer = setTimeout(function () {
+				_deferredRenderTimer = null;
+				// The live messages, which may have grown again while the reader scrolled.
+				if (current && Array.isArray(current.messages)) renderHistory(current.messages);
+			}, SCROLL_SETTLE_MS);
+			return;
+		}
+		if (_deferredRenderTimer) { clearTimeout(_deferredRenderTimer); _deferredRenderTimer = null; }
+
 		// THE APPEND FAST PATH. The same chat is on screen and the only change is turns
 		// added on the end -- the common case behind every store-change nonce, a sync
 		// pull, another tab's write, a landed dispatch. Draw the new tail onto the tiles
@@ -14536,7 +14769,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		}
 		if (sameChat && _renderSynced && !_staleDispatch && Array.isArray(messages)) {
-			var nextSigs = sigsOf(messages);
+			// `nextSigs` was taken at the top of this function, before the defer guard.
 			if (isAppendOf(_renderedSigs, nextSigs)) {
 				_renderingHistory = true;
 				loadTextFolds();
@@ -14840,8 +15073,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		diag('handoff mark', (chat && chat.id) + ' turn=' + mark.iturn
 			+ ' to=' + (mark.toDevice ? mark.toDevice.slice(0, 8) : '?') + ' parks=' + (mark.parkCount | 0));
-		// The one place a dispatched placeholder is created: keep the index in step.
-		if (chat.id && mark.iturn) _dispatchedIx[String(mark.iturn)] = chat.id;
+		// The one place a dispatched placeholder is created: keep the index in step, and
+		// start the in-flight poll for the answer.
+		if (chat.id && mark.iturn) { _dispatchedIx[String(mark.iturn)] = chat.id; updateExpedite(); }
 		if (ownsChat(chat)) renderHistory(chat.messages);
 		touchChat(chat);
 		persistChats();
@@ -15181,8 +15415,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			abort: function () { try { if (ctx && ctx.chat && ctx.chat.app) ctx.chat.app.abort(); } catch (e) { /* idempotent */ } },
 			pushResult: async function () {
 				try { if (ctx && ctx.chat) captureSession(ctx.chat, ctx.app); } catch (e) { /* best effort */ }
-				try { await DaimondSync.push(); } catch (e) { /* the report still nudges */ }
+				// CONFIRM the final answer committed, resilient to a streaming progress push
+				// still settling. A progress push holds the one-round gate for a moment; a
+				// bare push() arriving in that window would see `inFlight`, defer to the
+				// debounce and return a version that PREDATES the final answer -- so the
+				// report would carry a version the peer pulls to find the answer not yet
+				// there. flush() loops past a transient gate (FLUSH_RETRY_MS x rounds) and
+				// answers the version that genuinely contains the parcel, which is exactly
+				// what the report needs. Fall back to push()+version() if flush is
+				// unavailable or could not confirm (over a live turn, too large); the
+				// receiver's own progress-based catch-up is the further net.
+				try {
+					if (DaimondSync.flush) {
+						var fl = await DaimondSync.flush();
+						if (fl && fl.ok) return fl.version | 0;
+					}
+					await DaimondSync.push();
+				} catch (e) { /* the report still nudges */ }
 				try { return DaimondSync.version() | 0; } catch (e) { return 0; }
+			},
+			// STREAM THE RUNNING TURN. Called on a timer through the run so a peer
+			// watching the hand-off sees the thinking and tool calls appear as they are
+			// produced, rather than a blank placeholder until the turn finishes. It
+			// pushes the SAME content parcel the final pushResult does -- the live
+			// chat's messages, which already hold this turn's think_log and tool_log
+			// tiles -- under compare-and-set, so it is no new turn, no new lease and no
+			// second charge. No captureSession here: the model session is settled at the
+			// end; a progress frame is only the transcript so far. Absent DaimondSync
+			// (or its pushProgress) it is a no-op, and peer.js starts no timer then.
+			pushProgress: async function () {
+				try { if (DaimondSync && DaimondSync.pushProgress) await DaimondSync.pushProgress(); }
+				catch (e) { /* a dropped frame is only a slower stream */ }
 			},
 			post: async function (report) {
 				try { var body = await DaimondPeer.sealForSelf(report); await DaimondPost.post(body); }
@@ -15397,6 +15660,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		}
 		_dispatchedIx = ix;
+		updateExpedite();
+	}
+
+	// Whether the sync engine is currently being asked to poll promptly for a
+	// hand-off's answer, so the verb is called only on a real change of state.
+	var _expediting = false;
+
+	/// A hand-off is in flight exactly while a dispatched placeholder is outstanding:
+	/// on the device that dispatched it, and on any paired device holding the synced
+	/// placeholder, `_dispatchedIx` is non-empty from the moment the turn leaves until
+	/// its answer merges (the placeholder is then dropped). Ask the sync engine to pull
+	/// promptly for that whole window and to stand down the rest of the time, so a
+	/// watching phone catches the answer in seconds rather than at the 45s wake tick --
+	/// the residual latency the streaming push does not by itself close on a tab whose
+	/// wake park iOS has frozen.
+	function updateExpedite() {
+		var on = false;
+		for (var k in _dispatchedIx) { if (Object.prototype.hasOwnProperty.call(_dispatchedIx, k)) { on = true; break; } }
+		if (on === _expediting) return;
+		_expediting = on;
+		try { if (window.DaimondSync && DaimondSync.expedite) DaimondSync.expedite(on); }
+		catch (e) { /* sync not up on this device */ }
 	}
 
 	/// The live chat holding a turn's dispatched placeholder, via the index, or null.
@@ -15609,6 +15894,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// dispatcher-side recovery backstop (Fix B) has nothing left to recover.
 		delete _dispatchedIx[String(turnId)];
 		try { clearDispatchFallback(turnId); } catch (e) { /* no timer armed */ }
+		// The hand-off is settled: if it was the last one outstanding, the in-flight
+		// poll stands down.
+		updateExpedite();
 	}
 
 	/// Redraw the interrupted badges, so a state change (a lease claimed, a report
@@ -21048,6 +21336,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		tombs:           loadTombMap,
 		tombstone:       tombstoneIn,
 		mergeTombs:      mergeTombMap,
+		// The device roster reconciled against who is actually beating. `liveness` is
+		// pure and `reconcileNominee` moves the star onto a re-minted device; both are
+		// published for `verify_rosterghost`, along with the roster primitives it drives
+		// to prove a ghost stays pruned across a sync round and a re-star seats the
+		// election. Test surface, not a public API -- the app uses these in-file.
+		roster: {
+			liveness:         rosterLiveness,
+			reconcileNominee: reconcileNominee,
+			load:             loadDevices,
+			merge:            mergeDevices,
+			remove:           removeDevice,
+			nominee:          nominatedDeviceId,
+			nominate:         nominateDevice,
+			adoptNomination:  adoptNomination,
+			shownName:        deviceShownName,
+		},
 		// The trash. `js/trash.js` owns the state and draws the panel; these four
 		// are what a chat and a Diamond are, which that module has no business
 		// knowing. See the block above `loadDiamondTombs`.

@@ -1211,6 +1211,13 @@
 
 	var LEASE_TTL_MS   = 90000;		// a lease past this is vacant (§2.4)
 	var RENEW_EVERY_MS = 30000;		// three renews per TTL, so one dropped renew is survivable
+	// How often the runner streams the running turn's transcript to the mailbox, so a
+	// peer watching the hand-off sees the thinking and tool calls unfold rather than a
+	// blank wait until the turn finishes. Faster than the liveness ticker because it is
+	// the UX cadence, not the lease cadence; the sync-side push throttles and no-ops an
+	// unchanged frame (sync.js PROGRESS_PUSH_MIN_MS), so a tick that has nothing new
+	// costs one parcel collect and nothing on the wire. See runErrand's progress timer.
+	var PROGRESS_EVERY_MS = 2000;
 	var MAX_TAKE_TRIES = 10;		// bound the CAS retry loop (was 6): more headroom under two-device churn
 	var TAKE_BACKOFF_MS = 250;		// jittered wait between take retries so a claim gets a clean window
 	// The hard ceiling on how long ONE errand's liveness ticker may run before it gives
@@ -1647,6 +1654,11 @@
 	///                calling `onProgress` on journal events so the lease renews;
 	///   abort        (): hard-stop the in-flight turn (`chat.app.abort`);
 	///   pushResult   async () -> version: `captureSession` + parcel push (append merge);
+	///   pushProgress optional async (): stream the RUNNING turn's transcript to the
+	///                mailbox on a timer, so a peer watching the hand-off sees it unfold.
+	///                The SAME account parcel under compare-and-set -- no new turn, no
+	///                new lease, no second charge; a no-op frame when nothing changed.
+	///                Absent (runner-acceptance, tests) -> no streaming, no timer.
 	///   post         async (reportEnvelope): post the report;
 	///   ack          async (): `DaimondPost.ack`, AFTER the push committed;
 	///   now          optional clock, for tests.
@@ -1799,7 +1811,7 @@
 		// hung turn's lifetime -- it never writes the parcel, so a running turn causes no
 		// churn. The check is owned HERE (not in the injected runTurn) and stopped on
 		// EVERY exit (the finally), so it can neither outlive the errand nor leak a timer.
-		var revoked = false, checkStopped = false, checkTimer = null;
+		var revoked = false, checkStopped = false, checkTimer = null, progressTimer = null;
 		var checkStart = leaseNow(d.now);
 		var maxLife = (d.maxLeaseLifeMs != null) ? d.maxLeaseLifeMs : MAX_LEASE_LIFE_MS;
 		var setT = d.setTimer   || (typeof setInterval   === 'function' ? setInterval   : null);
@@ -1807,6 +1819,11 @@
 		function stopCheck() {
 			checkStopped = true;
 			if (checkTimer != null && clrT) { try { clrT(checkTimer); } catch (err) {} checkTimer = null; }
+			// The progress timer streams the RUNNING turn; it dies with the ticker, on
+			// EVERY exit, so it can neither push a frame of a finished turn nor leak.
+			// Stopped HERE (before the final pushResult, which stopCheck precedes) so a
+			// progress frame never overlaps the final push on the one-round gate.
+			if (progressTimer != null && clrT) { try { clrT(progressTimer); } catch (err) {} progressTimer = null; }
 		}
 		// READ-ONLY: never writes the parcel (no renew, no churn). Aborts on a revoke
 		// -- the lease is no longer ours, or was released, which a sync pull adopts into
@@ -1882,6 +1899,19 @@
 			// the injected onProgress (kept so a real journal-event piggyback can check
 			// liveness between ticks); chat.app.abort is the hard stop.
 			if (setT) checkTimer = setT(function () { liveness(); if (d.heartbeat) d.heartbeat(); }, RENEW_EVERY_MS);
+			// STREAM THE RUNNING TURN. Through the length of the run, push the transcript
+			// as it stands so a peer watching the hand-off sees it unfold. A no-op dep
+			// (the runner-acceptance path, and peer.test) starts no timer, so this is
+			// invisible where it is not wired. Money-safe: `pushProgress` is the SAME
+			// account parcel under compare-and-set -- no new turn, no new lease, no
+			// second charge -- and it never waits, so it cannot stall the turn. Stopped
+			// by stopCheck on every exit, before the final pushResult.
+			if (setT && d.pushProgress) {
+				progressTimer = setT(function () {
+					if (checkStopped || revoked) return;
+					try { d.pushProgress(); } catch (err) { /* a dropped frame is only a slower stream */ }
+				}, PROGRESS_EVERY_MS);
+			}
 			try {
 				// D3 — the prompt is ALREADY in the synced transcript (the dispatcher
 				// persist-first pushed it before posting the errand, §4.1). Tell runTurn so,
