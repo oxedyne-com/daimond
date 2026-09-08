@@ -1,1 +1,1 @@
-{"build":"1b41905b6b7f","note":"Revert seq-228 iOS sync-speed change: fixes scroll shaking and hand-off non-delivery; spacing + election kept"}
+{"build":"f7a6cb2b0a88","note":"Compose resilience: a new chat always shows the input box; unreadable keys get an inline re-enter, not a dead-end"}

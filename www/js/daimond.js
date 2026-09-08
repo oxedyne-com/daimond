@@ -16662,13 +16662,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function startChat(chat, model, provider, worker) {
 		model    = (model    || chat.model    || cfg.model || '').trim();
 		provider = (provider || chat.provider || '').trim();
-		if (!model) { openSettings(t('chat.choose_model')); return; }
 		// Ask whether THIS model can actually run, not whether the default provider can. A chat
 		// on a provider whose key is sealed must say so, rather than quietly starting on someone
 		// else's key -- which is what checking `cfg` alone did.
-		var r = window.DaimondModels && DaimondModels.resolve(provider, model);
+		var r = model && window.DaimondModels && DaimondModels.resolve(provider, model);
 		if (!r) {
-			openSettings(t(provider ? 'chat.no_key_start' : 'chat.connect_start'));
+			// NEVER a silent `openSettings()+return` that leaves the composer hidden --
+			// that is the SEV-1 dead-end. Remember the attempted pair and re-draw the
+			// pending centre, which reveals the box and renders the inline recourse
+			// (re-enter key / connect a provider). See `renderPendingCentre`.
+			chat.model    = model;
+			chat.provider = provider;
+			if (current === chat) renderPendingCentre(chat);
+			if (!model) openSettings(t('chat.choose_model'));
+			else openSettings(t(provider ? 'chat.no_key_start' : 'chat.connect_start'));
 			return;
 		}
 		chat.model    = r.model;
@@ -17392,8 +17399,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// field that is now usually empty.
 		sessionNameEl.textContent = chatDisplayName(chat);
 		if ((chat.status || 'active') === 'pending') {
+			// `renderPendingCentre` owns the composer's visibility now: hidden while
+			// the chat is startable (press Start first), REVEALED when it is not, so a
+			// chat whose keys will not read is never a dead-end. See that function.
 			renderPendingCentre(chat);
-			chatInputBar.style.display = 'none';   // no input until the chat is started
 		} else {
 			chatInputBar.style.display = '';
 			// The transcript is loaded on open (seq 213, Stage 1): a resident chat draws
@@ -17428,17 +17437,74 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// draw the same one again.
 	var pendingCentreChat = null;
 
-	// Centre placeholder for a not-yet-started chat: point the user at the
-	// tile's model pulldown and Start button (controls live in one place).
+	/// Why a pending chat cannot be started right now, or `null` when it can.
+	///
+	/// A chat is startable exactly when `resolve` answers for its own provider and
+	/// model. When it does not, the reason matters: a device whose saved keys will
+	/// not read (`unreadable`) is a SEV-1 dead-end and must be said plainly, where a
+	/// user who has simply not connected a provider yet is offered the ordinary way
+	/// in. Either way the composer is revealed, never hidden behind a Start button
+	/// that would bounce -- see `renderPendingCentre`.
+	function pendingStartBlock(chat) {
+		var M = window.DaimondModels;
+		var model    = (chat.model    || cfg.model || '').trim();
+		var provider = (chat.provider || '').trim();
+		if (M && model && M.resolve(provider, model)) return null;   // startable
+		// Not startable. A key present but sealed (the wrong-salt duplicate-identity
+		// case seals every provider at once) is the dead-end the owner hit: a key IS
+		// stored, so "connect a provider" would be a lie and the fix is to re-enter it
+		// or re-pair the device.
+		var unreadable = false;
+		if (M) {
+			try {
+				unreadable = M.providers().some(function (p) { return p.hasKey && p.sealed; });
+			} catch (e) { /* module half-up: treat as no-provider */ }
+		}
+		return { unreadable: unreadable };
+	}
+
+	// Centre placeholder for a not-yet-started chat.
+	//
+	// STARTABLE: point the user at the tile's model pulldown and the Start button
+	// (controls live in one place), and keep the composer hidden until Start.
+	//
+	// NOT STARTABLE: never leave the chat with a hidden composer and a Start button
+	// that silently bounces -- that is the SEV-1 where a new chat after a refresh
+	// showed no input box and no recourse. REVEAL the composer, and render an inline
+	// message with a direct action in place of Start, so the owner can act. See
+	// `pendingStartBlock`.
 	function renderPendingCentre(chat) {
 		pendingCentreChat = chat;
 		clearChat();
 		var wrap = document.createElement('div');
 		wrap.className = 'empty-state pending-centre';
 		var h = document.createElement('h2'); h.textContent = chatDisplayName(chat);
+		wrap.appendChild(h);
+		var block = pendingStartBlock(chat);
+		if (block) {
+			// The box comes back on -- this is the whole fix. A pending chat that
+			// cannot start is still a chat the owner may type into and, above all,
+			// must be able to escape from.
+			chatInputBar.style.display = '';
+			var p = document.createElement('p');
+			p.textContent = t(block.unreadable ? 'chat.keys_unreadable' : 'chat.connect_start');
+			wrap.appendChild(p);
+			var fix = document.createElement('button');
+			fix.className = 'empty-new-session';
+			fix.textContent = t(block.unreadable ? 'chat.keys_fix' : 'chat.connect_action');
+			// Straight to the add-a-provider / key-entry form: `openSettings` with a
+			// note expands it (see that function). The one action that ends the block.
+			fix.addEventListener('click', function () {
+				openSettings(t(block.unreadable ? 'chat.no_key_start' : 'chat.connect_start'));
+			});
+			wrap.appendChild(fix);
+			chatOutput.appendChild(wrap);
+			return;
+		}
+		chatInputBar.style.display = 'none';   // no input until the chat is started
 		var p = document.createElement('p');
 		p.textContent = t('chat.pending_hint');
-		wrap.appendChild(h); wrap.appendChild(p);
+		wrap.appendChild(p);
 		var btn = document.createElement('button');
 		btn.className = 'empty-new-session';
 		btn.textContent = '▶ ' + t('tile.start');
@@ -21375,6 +21441,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!can) { openSettings(t('chat.connect_to_chat')); return; }
 		if (!current) { newChat(); }
 		var chat = current;
+		// A PENDING chat whose composer is on screen only because its keys would not
+		// read (the compose-resilience path): once a key has been re-entered `can` is
+		// true again, so typing and sending is the natural way to begin. Start it here
+		// -- the same activation the Start button does -- so the chat is `active`
+		// before the turn is built, rather than generating against a pending record.
+		if (chat.status === 'pending') { startChat(chat, chat.model, chat.provider); }
 		// A chat's scope is PERSISTENT and is not cleared here. It used to be
 		// emptied at this line, when attaching meant "for the next turn only"; it
 		// now means what it means on a Diamond -- the user put this in scope and it

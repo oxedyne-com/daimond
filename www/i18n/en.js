@@ -1970,6 +1970,12 @@
 	'chat.connect_start':  'Connect a provider to start this chat.',
 	'chat.pending_hint':   'Pick a model in this chat\u2019s tile and press \u25b6 Start to begin.',
 	'chat.start_selected': 'Start with the selected model',
+	// Shown in the pending centre when a chat cannot start because its keys will not
+	// read -- the box is revealed anyway, so the user is never dead-ended, and this
+	// says what to do about it.
+	'chat.keys_unreadable': 'This device can\u2019t read your saved keys. Re-enter your provider key, or re-pair this device, to start this chat.',
+	'chat.keys_fix':        'Re-enter key',
+	'chat.connect_action':  'Connect a provider',
 	'chat.stop':           'Stop',
 	'turn.interrupted':       'Interrupted. The browser closed before this finished.',
 	'turn.interrupted_early': 'Interrupted before it could answer.',
