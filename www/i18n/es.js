@@ -1124,6 +1124,7 @@
 	'rel.unsealed': 'Sin sellar',
 	'rel.update_ready': 'actualización lista',
 	'rel.not_published': 'sin publicar',
+	'rel.log_unreachable': 'no se pudo acceder al registro de versiones',
 	'rel.planned': 'prevista',
 	'rel.next': 'siguiente',
 	'rel.you_are_here': 'estás aquí',

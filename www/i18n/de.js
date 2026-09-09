@@ -1127,6 +1127,7 @@
 	'rel.unsealed': 'Unversiegelt',
 	'rel.update_ready': 'Update bereit',
 	'rel.not_published': 'nicht veröffentlicht',
+	'rel.log_unreachable': 'Versionsprotokoll nicht erreichbar',
 	'rel.planned': 'geplant',
 	'rel.next': 'als Nächstes',
 	'rel.you_are_here': 'du bist hier',

@@ -1829,7 +1829,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// resident-full transcript, or a union against disk that cannot shorten
 					// the row when the transcript in hand is empty.
 					appendChunks(mcS, c.id, c.messages);
-					if (c._loaded === false) {
+					if (c._loaded === false || !(c.messages || []).length) {
+						// UNIONED AGAINST DISK, so a short transcript in hand cannot shorten the
+						// legacy shadow or its summary. Two callers land here:
+						//   - a NON-RESIDENT save (`_loaded === false`) carries an empty
+						//     transcript for a scalar change (a rename, a fold, an attachment),
+						//     which must reach the shadow WITHOUT touching the messages it holds;
+						//   - a RESIDENT save whose transcript is EMPTY (Fix, same family as the
+						//     tag-loss incident): a cold IndexedDB read can leave a chat marked
+						//     resident yet empty, and the blind put below would then BLANK a
+						//     legacy row that is the sole home of a pre-seq-214 transcript. The
+						//     union honours the tombstones, so a chat whose messages were
+						//     genuinely all deleted still empties (its mids are tombstoned and
+						//     dropped), while a cold-empty read cannot shorten a row whose mids
+						//     are NOT tombstoned.
 						(function (rec, id) {
 							var g = csS.get(id);
 							g.onsuccess = function () {
@@ -2290,29 +2303,55 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		async function loadMessages(chatId) {
 			try {
 				await conn();
-				// STAGE 2 (seq 214): the CHUNKS are the source of truth, so the transcript
-				// is reconstructed from them -- which also seeds this chat's append cursor,
-				// so the save path can append only its tail.
-				var st  = await readChunkState(chatId);
-				var row = await getRow(chatId);
-				var chunkMsgs  = st.msgs;
-				var legacyMsgs = (row && Array.isArray(row.messages)) ? row.messages : [];
-				var tombs = loadMsgTombs();
-				// THE CHUNKS ARE AUTHORITATIVE for any mid they hold; the legacy fallback row
-				// only fills a GAP -- a mid a Stage-1 chat (seq 213) left in the row but never
-				// in the chunks, because Stage 1 wrote the row and the summary on every save
-				// yet only (re)built the chunks at boot over rows with no summary, so a chat
-				// that grew after its first shadow left its chunks behind. Reading the row
-				// whole is the price of that recovery, and it is the SAME read Stage 1 paid on
-				// open. The gap-fill NEVER overrides a mid the chunks already hold, so a
-				// pre-seq-211 FULL log in the row cannot un-elide the chunk copy the reader
-				// serves; and a tombstoned mid is excluded from the fill (and already gone
-				// from the chunks), so a deletion cannot be refilled from the row. (Once the
-				// row is retired -- Stage 2d -- this read and this fill go with it.)
-				var have = {};
-				chunkMsgs.forEach(function (m) { if (m && m.mid) have[m.mid] = 1; });
-				var gap = legacyMsgs.filter(function (m) { return m && m.mid && !have[m.mid] && !tombs[m.mid]; });
-				var full = gap.length ? mergeMessages(chunkMsgs, gap, chatId, tombs) : chunkMsgs;
+				// A COLD iOS/WebKit tab can hand back an EMPTY read from a store still
+				// loading from disk -- the timing family behind the seq-222/223 identity
+				// reports (see identity.js existsSettled). For a transcript that surfaces as
+				// an empty chat carrying only its system furniture. So the read is retried
+				// over the SAME bounded budget existsSettled spends: it re-reads until the
+				// rebuilt transcript is non-empty, or the budget is spent, or nothing durable
+				// says the chat should hold anything -- in which case it is a genuinely empty
+				// chat and returns at once. Never a false wait: the guard fires only when the
+				// read looks lied to (the tag-loss family).
+				var COLD_TRIES = 12;	// re-reads after the first
+				var COLD_GAP   = 50;	// ms between them (<=600ms worst case)
+				var st, row, sum, chunkMsgs, legacyMsgs, tombs, full;
+				for (var attempt = 0; ; attempt++) {
+					// STAGE 2 (seq 214): the CHUNKS are the source of truth, so the transcript
+					// is reconstructed from them -- which also seeds this chat's append cursor,
+					// so the save path can append only its tail.
+					st  = await readChunkState(chatId);
+					row = await getRow(chatId);
+					sum = await readSummary(chatId);
+					chunkMsgs  = st.msgs;
+					legacyMsgs = (row && Array.isArray(row.messages)) ? row.messages : [];
+					tombs = loadMsgTombs();
+					// THE CHUNKS ARE AUTHORITATIVE for any mid they hold; the legacy fallback
+					// row only fills a GAP -- a mid a Stage-1 chat (seq 213) left in the row but
+					// never in the chunks, because Stage 1 wrote the row and the summary on
+					// every save yet only (re)built the chunks at boot over rows with no
+					// summary, so a chat that grew after its first shadow left its chunks
+					// behind. Reading the row whole is the price of that recovery, and it is the
+					// SAME read Stage 1 paid on open. The gap-fill NEVER overrides a mid the
+					// chunks already hold, so a pre-seq-211 FULL log in the row cannot un-elide
+					// the chunk copy the reader serves; and a tombstoned mid is excluded from
+					// the fill (and already gone from the chunks), so a deletion cannot be
+					// refilled from the row. (Once the row is retired -- Stage 2d -- this read
+					// and this fill go with it.)
+					var have = {};
+					chunkMsgs.forEach(function (m) { if (m && m.mid) have[m.mid] = 1; });
+					var gap = legacyMsgs.filter(function (m) { return m && m.mid && !have[m.mid] && !tombs[m.mid]; });
+					full = gap.length ? mergeMessages(chunkMsgs, gap, chatId, tombs) : chunkMsgs;
+					if (full.length) break;			// a transcript came back
+					// Does anything DURABLE say this chat should hold messages? The summary's
+					// own count, a legacy row that still carries some, or chunks physically on
+					// disk -- any of the three makes an empty read a cold one to retry rather
+					// than a genuinely empty chat to return.
+					var expects = (sum && sum.msgCount > 0)
+						|| legacyMsgs.length > 0
+						|| (st.physical || 0) > 0;
+					if (!expects || attempt >= COLD_TRIES) break;
+					await new Promise(function (r) { setTimeout(r, COLD_GAP); });
+				}
 				// Heal the CHUNKS when the row filled a gap (a Stage-1 chat's stale chunks),
 				// so the recovery is paid once and every read after is the pure chunk path.
 				if (!sameTranscript(full, chunkMsgs)) {
@@ -2324,8 +2363,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// (which would RESURRECT once the tombstone ages out, since the reader unions
 				// the row back in). Both converge the row onto the served transcript, once,
 				// so a read is also a sweep. Bounded: nothing is written when the row already
-				// matches, which is every ordinary chat.
-				if (row && !sameTranscript(full, legacyMsgs)) {
+				// matches, which is every ordinary chat. GUARDED on a non-empty `full`: a
+				// cold-empty read must never blank a legacy row that is the sole home of a
+				// pre-seq-214 transcript (Fix, the tag-loss family).
+				if (row && full.length && !sameTranscript(full, legacyMsgs)) {
 					try {
 						row.messages = slimMessages(full);
 						var tt = tx('readwrite'); tt.store.put(row); await tt.done;
@@ -38859,6 +38900,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// decrypts the stored keys into memory, takes the lock card off the screen and
 	/// draws the app the user is now entitled to see.
 	async function completeUnlock() {
+		// A cold iOS/WebKit tab can have read the models store EMPTY at boot -- the
+		// timing family behind the seq-222/223 identity reports (see existsSettled).
+		// Re-read it over the same bounded budget BEFORE the keys are unsealed and
+		// before the composer gate (`resolve`/`pendingStartBlock`) is decided, so a
+		// user with a provider is never shown "connect a provider" against a cold
+		// read, nor left with a hidden composer. Paid once; a genuine first-run store
+		// simply stays empty.
+		if (window.DaimondModels && DaimondModels.loadSettled) {
+			try { await DaimondModels.loadSettled(); } catch (e) { /* the sync load already ran */ }
+		}
 		// Record this account's name and fingerprint in the registry, so the account picker can
 		// show WHO an account is without unlocking it. The identity's keys are namespaced to the
 		// current account, so this names the right one.
@@ -38872,6 +38923,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		locked = false;
 		document.body.classList.remove('locked');
 		renderAll();
+		// A sheet or drawer left marked open from before the lock would keep the
+		// composer hidden (`body.sheet-open .chat-input-bar { visibility: hidden }`,
+		// css/mobile.css) on a phone that resumed straight into a chat. Unlocking is a
+		// fresh app draw, so any stale sheet/drawer state is cleared here defensively.
+		try { document.body.classList.remove('sheet-open', 'drawer-open'); } catch (e) { /* no body */ }
 		updateUserRow();
 		// The CONTENT, not the drawer: unlocking is not a request to open Admin.
 		DaimondAdmin.homeContent();

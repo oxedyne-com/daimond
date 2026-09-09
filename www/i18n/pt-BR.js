@@ -1123,6 +1123,7 @@
 	'rel.unsealed': 'Não selado',
 	'rel.update_ready': 'atualização pronta',
 	'rel.not_published': 'não publicado',
+	'rel.log_unreachable': 'não foi possível acessar o registro de versões',
 	'rel.planned': 'planejado',
 	'rel.next': 'próximo',
 	'rel.you_are_here': 'você está aqui',

@@ -194,7 +194,13 @@
 		var old = null;
 		try { old = JSON.parse(localStorage.getItem(OLD_KEY) || 'null'); } catch (e) { old = null; }
 		store = { v: 2, def: { provider: '', model: '' }, providers: {} };
-		if (!old || !old.baseUrl) { save(); return; }
+		// A cold iOS/WebKit tab can read BOTH keys empty before the storage area has
+		// finished loading (the timing family behind identity.js existsSettled), and
+		// persisting the fresh empty store here would BLANK the real one on disk before
+		// `loadSettled` could re-read it. So an empty migration is left in memory only:
+		// `save()` is deferred to the first real change, which is exactly the pre-migration
+		// state, and a cold read is recovered by re-reading rather than overwritten.
+		if (!old || !old.baseUrl) { return; }
 
 		var id = idForUrl(old.baseUrl) || 'custom';
 		var models = [];
@@ -215,6 +221,43 @@
 	function save() {
 		try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) { /* quota */ }
 		if (deps && deps.onChange) deps.onChange();
+	}
+
+	/// The retry budget for `loadSettled`, mirroring identity.js's `existsSettled`.
+	/// A cold read settles within a tick or two; this is several times that, and is
+	/// only ever spent on a boot whose first read of the store came back empty.
+	var SETTLE_TRIES = 12;	// re-reads after the first
+	var SETTLE_GAP   = 50;	// ms between them (<=600ms worst case)
+
+	function settleSleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+	function hasProviders() {
+		return !!(store && store.providers && Object.keys(store.providers).length);
+	}
+
+	/// `load()` that does not trust a single cold read.
+	///
+	/// THE BUG THIS EXISTS FOR: on a freshly opened iOS/WebKit tab the first
+	/// `localStorage.getItem` calls can return EMPTY before the storage area has
+	/// finished loading from disk -- the timing family behind the seq-222/223 iOS
+	/// reports (see identity.js existsSettled). Read that way the models store looks
+	/// like "no providers configured", which would decide the composer gate
+	/// (`resolve`/`pendingStartBlock`) against a user who has one, and unseal nothing.
+	///
+	/// This re-reads a bounded number of times, yielding a tick between reads, and
+	/// returns the moment providers appear. It NEVER invents a provider: after the
+	/// budget the store is left exactly as `load()` left it, so a genuine first-run
+	/// user pays one bounded wait at boot and nothing more. Because `migrate()` no
+	/// longer persists an empty store, a cold read cannot overwrite the real one
+	/// before this recovers it.
+	async function loadSettled() {
+		load();
+		if (hasProviders()) return;
+		for (var i = 0; i < SETTLE_TRIES; i++) {
+			await settleSleep(SETTLE_GAP);
+			load();
+			if (hasProviders()) return;
+		}
 	}
 
 	/// Stamp a provider row as configured just now.
@@ -2654,6 +2697,9 @@
 		// and whether the held context cannot fit it at all. Drives the daimon "Change".
 		planModelSwitch: planModelSwitch,
 		init:           init,
+		// Re-read the store over a bounded budget when a cold tab read it empty at
+		// boot, before the composer gate is decided against it (see loadSettled).
+		loadSettled:    loadSettled,
 		unseal:         unseal,
 		/// Clear the keys the current identity cannot read, after a deliberate
 		/// identity replacement, and name them. See the reconcile in daimond.js.

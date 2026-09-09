@@ -64,16 +64,23 @@
 	/// it: not knowing the version is a smaller problem than a blank panel.
 	async function load() {
 		if (state.loaded) return state;
+		var logOk = false;
 		try {
 			var text = await (await fetch(logUrl(), { cache: 'no-store' })).text();
 			state.entries = text.split('\n').map(function (l) { return l.trim(); })
 				.filter(Boolean)
 				.map(function (l) { try { return JSON.parse(l); } catch (e) { return null; } })
 				.filter(Boolean);
+			logOk = true;
 		} catch (e) { state.entries = []; }
 		try { state.releases = await getJson(releasesUrl()); } catch (e) { state.releases = null; }
 		try { state.build = await getJson(STAMP); } catch (e) { state.build = null; }
-		state.loaded = true;
+		// Memoise ONLY a successful log read. The log is the origin this server does
+		// not control, so a transient failure (an offline moment, a GitHub-raw hiccup)
+		// left memoised would stick the panel empty for the life of the tab and make
+		// every build read "not published"; leaving `loaded` false lets the next panel
+		// open retry the fetch.
+		state.loaded = logOk;
 		return state;
 	}
 
@@ -164,19 +171,27 @@
 		// and none of them is an announcement.
 		var name = m ? m.name : (cur ? t('rel.prerelease') : (runningBuild() || t('rel.unsealed')));
 		var when = cur ? ago(cur.ts) : '';
+		// A missing `cur` has two very different causes. Either the version log could
+		// not be READ at all -- entries empty, an offline moment or a GitHub-raw hiccup,
+		// now retried on the next open (see load) -- or the log was read fine and this
+		// build is genuinely not in it yet. Only the second is "not published"; the
+		// first is the panel failing to reach the log, and must say so rather than
+		// libel a build that IS published.
+		var unreachable = !state.entries.length;
 
 		r.innerHTML = '';
 		r.appendChild(el('span', 'astat-dot' + (cur ? (behind ? ' warn' : ' ok') : '')));
 		r.appendChild(el('span', 'astat-label', t('rel.version')));
 		r.appendChild(el('span', 'astat-val', name));
 		r.appendChild(el('span', 'astat-aside',
-			cur ? (behind ? t('rel.update_ready') : (m ? when : cur.build)) : t('rel.not_published')));
+			cur ? (behind ? t('rel.update_ready') : (m ? when : cur.build))
+				: (unreachable ? t('rel.log_unreachable') : t('rel.not_published'))));
 		r.title = cur
 			? t(m ? 'rel.title_named' : 'rel.title_prerelease',
 					{ name: name, build: cur.build, date: dateOf(cur.ts) })
 				+ (behind ? ' ' + t('rel.title_behind') : '')
 				+ ' ' + t('rel.title_click')
-			: t('rel.title_unlogged');
+			: (unreachable ? t('rel.log_unreachable') : t('rel.title_unlogged'));
 	}
 
 	// ── The timeline ────────────────────────────────────────────────────

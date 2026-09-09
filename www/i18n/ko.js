@@ -1157,6 +1157,7 @@
 	'rel.unsealed':         '봉인 안 됨',
 	'rel.update_ready':     '업데이트 준비됨',
 	'rel.not_published':    '공개 안 됨',
+	'rel.log_unreachable':  '버전 로그에 연결할 수 없음',
 	'rel.planned':          '예정',
 	'rel.next':             '다음',
 	'rel.you_are_here':     '지금 여기',

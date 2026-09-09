@@ -121,7 +121,7 @@ dependencies = [
 [[package]]
 name = "dat_map"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b97fd9756068e53b3e4994242c10ba7ab0905369#b97fd9756068e53b3e4994242c10ba7ab0905369"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=3fcbe436264c86f8ec4374433741e0cfc0411c17#3fcbe436264c86f8ec4374433741e0cfc0411c17"
 dependencies = [
  "oxedyne_fe2o3_core",
  "proc-macro2",
@@ -320,7 +320,7 @@ dependencies = [
 [[package]]
 name = "new"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b97fd9756068e53b3e4994242c10ba7ab0905369#b97fd9756068e53b3e4994242c10ba7ab0905369"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=3fcbe436264c86f8ec4374433741e0cfc0411c17#3fcbe436264c86f8ec4374433741e0cfc0411c17"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -386,7 +386,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 [[package]]
 name = "oxedyne_fe2o3_core"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b97fd9756068e53b3e4994242c10ba7ab0905369#b97fd9756068e53b3e4994242c10ba7ab0905369"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=3fcbe436264c86f8ec4374433741e0cfc0411c17#3fcbe436264c86f8ec4374433741e0cfc0411c17"
 dependencies = [
  "base64 0.13.1",
  "flate2",
@@ -406,7 +406,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_geom"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b97fd9756068e53b3e4994242c10ba7ab0905369#b97fd9756068e53b3e4994242c10ba7ab0905369"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=3fcbe436264c86f8ec4374433741e0cfc0411c17#3fcbe436264c86f8ec4374433741e0cfc0411c17"
 dependencies = [
  "oxedyne_fe2o3_core",
 ]
@@ -414,7 +414,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_hash"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b97fd9756068e53b3e4994242c10ba7ab0905369#b97fd9756068e53b3e4994242c10ba7ab0905369"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=3fcbe436264c86f8ec4374433741e0cfc0411c17#3fcbe436264c86f8ec4374433741e0cfc0411c17"
 dependencies = [
  "base64 0.13.1",
  "crc32fast",
@@ -431,7 +431,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_iop_hash"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b97fd9756068e53b3e4994242c10ba7ab0905369#b97fd9756068e53b3e4994242c10ba7ab0905369"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=3fcbe436264c86f8ec4374433741e0cfc0411c17#3fcbe436264c86f8ec4374433741e0cfc0411c17"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_namex",
@@ -440,7 +440,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_jdat"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b97fd9756068e53b3e4994242c10ba7ab0905369#b97fd9756068e53b3e4994242c10ba7ab0905369"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=3fcbe436264c86f8ec4374433741e0cfc0411c17#3fcbe436264c86f8ec4374433741e0cfc0411c17"
 dependencies = [
  "bigdecimal",
  "dat_map",
@@ -455,7 +455,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_namex"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b97fd9756068e53b3e4994242c10ba7ab0905369#b97fd9756068e53b3e4994242c10ba7ab0905369"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=3fcbe436264c86f8ec4374433741e0cfc0411c17#3fcbe436264c86f8ec4374433741e0cfc0411c17"
 dependencies = [
  "base64 0.13.1",
  "num-derive",
@@ -470,7 +470,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_num"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b97fd9756068e53b3e4994242c10ba7ab0905369#b97fd9756068e53b3e4994242c10ba7ab0905369"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=3fcbe436264c86f8ec4374433741e0cfc0411c17#3fcbe436264c86f8ec4374433741e0cfc0411c17"
 dependencies = [
  "bigdecimal",
  "num-bigint",
@@ -480,7 +480,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_stds"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b97fd9756068e53b3e4994242c10ba7ab0905369#b97fd9756068e53b3e4994242c10ba7ab0905369"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=3fcbe436264c86f8ec4374433741e0cfc0411c17#3fcbe436264c86f8ec4374433741e0cfc0411c17"
 dependencies = [
  "oxedyne_fe2o3_core",
  "strum 0.25.0",
@@ -489,7 +489,7 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_text"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=b97fd9756068e53b3e4994242c10ba7ab0905369#b97fd9756068e53b3e4994242c10ba7ab0905369"
+source = "git+https://github.com/oxedyne-com/fe2o3?rev=3fcbe436264c86f8ec4374433741e0cfc0411c17#3fcbe436264c86f8ec4374433741e0cfc0411c17"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_geom",
@@ -888,18 +888,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.56"
+version = "0.8.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "556764e583adb45a9f8d413c2a147fa7e8d821e48e12b14fd560b607998b75eb"
+checksum = "d35102a9f36d089ccae9e4c6802bc118be4487b80aaffc0ab4e0cf5ce92d2873"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.56"
+version = "0.8.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2ab42fc20575779bd240faa45f94a74256f755c0fa9e89f0ede20d91d0cdfc1"
+checksum = "146c01f5ab44258da43cf276c74a2763db2ff3969c9c652c3f2de07041d0b2bc"
 dependencies = [
  "proc-macro2",
  "quote",

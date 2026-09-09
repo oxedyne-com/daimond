@@ -1156,6 +1156,7 @@
 	'rel.unsealed':         '未封印',
 	'rel.update_ready':     '更新の準備完了',
 	'rel.not_published':    '未公開',
+	'rel.log_unreachable':  'バージョンログに接続できませんでした',
 	'rel.planned':          '予定',
 	'rel.next':             '次',
 	'rel.you_are_here':     '現在地',

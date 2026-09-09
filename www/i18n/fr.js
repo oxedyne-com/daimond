@@ -1129,6 +1129,7 @@
 	'rel.unsealed': 'Non scellé',
 	'rel.update_ready': 'mise à jour prête',
 	'rel.not_published': 'non publié',
+	'rel.log_unreachable': 'journal des versions inaccessible',
 	'rel.planned': 'prévu',
 	'rel.next': 'suivant',
 	'rel.you_are_here': 'vous êtes ici',

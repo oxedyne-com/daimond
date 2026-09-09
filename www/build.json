@@ -1,1 +1,1 @@
-{"build":"01d1b240a016","note":"Sync permission asks to every device (answer anywhere unblocks the runner), and make fleet build-skew visible"}
+{"build":"8eeef65c27fe","note":"Recover cold-read transcripts and the models store; do not reload an unlocked tab; retry a failed release log"}

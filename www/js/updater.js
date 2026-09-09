@@ -134,6 +134,15 @@
 		if (applying || !pending) return false;
 		if (busy()) return false;                 // never interrupt a running turn or agent
 		if (!force) {
+			// NEVER silently reload an UNLOCKED tab. The passphrase key lives in memory
+			// only, so a reload re-seals it and the tab comes back at the login/unlock
+			// gate -- and the silent reload also pre-empts the "New version -- Reload"
+			// banner. So a backgrounded desktop that learned of a new build would reload
+			// itself and drop to login. Instead the update stays pending: the banner
+			// offers Reload on focus and the user reloads on click (which comes back
+			// through here with `force`). A LOCKED tab has nothing to lose and still
+			// auto-updates; a forced or stale reload via `force()` is untouched.
+			try { if (window.DaimondIdentity && DaimondIdentity.isUnlocked()) return false; } catch (e) {}
 			// A soft update applies at a quiet moment: a hidden tab, or a foreground
 			// one left untouched for QUIESCE_MS -- never over a half-typed prompt, and
 			// (via the busy() check above) never over a running turn.

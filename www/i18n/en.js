@@ -3025,6 +3025,7 @@
 	'rel.unsealed':         'Unsealed',
 	'rel.update_ready':     'update ready',
 	'rel.not_published':    'not published',
+	'rel.log_unreachable':  'couldn’t reach the version log',
 	'rel.planned':          'planned',
 	'rel.next':             'next',
 	'rel.you_are_here':     'you are here',

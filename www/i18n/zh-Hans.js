@@ -1152,6 +1152,7 @@
 	'rel.unsealed':         '未封存',
 	'rel.update_ready':     '更新已就绪',
 	'rel.not_published':    '未发布',
+	'rel.log_unreachable':  '无法访问版本日志',
 	'rel.planned':          '计划中',
 	'rel.next':             '下一个',
 	'rel.you_are_here':     '你在这里',
