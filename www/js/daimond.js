@@ -3080,6 +3080,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return out;
 	}
 
+	// A sync pull rebuilt the rail while this tab was hidden. A backgrounded tab that is
+	// throttled or suspended paints nothing and may not run its render at merge time, so a
+	// chat that arrived while away could sit invisible until a manual refresh (owner
+	// observation: gilgamesh pulled the parcel but never showed it). Set here, consumed on
+	// the next visibilitychange -> visible, which repaints from the store.
+	var _syncedWhileHidden = false;
+
 	// Another tab changed the chats: adopt anything new without disturbing a
 	// turn in flight here. Chats this tab already holds keep their live
 	// DaimondApp; chats it has never seen are added; chats deleted elsewhere go.
@@ -3237,6 +3244,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			updateMeters();
 		}
 		renderSessionList();
+		// A hidden tab paints nothing, so note that a merge happened while away: the
+		// visibilitychange handler repaints from the store on return. The render above has
+		// already updated the DOM, so this is belt-and-braces for a browser that discards a
+		// hidden tab's unpainted frame -- a synced chat is never invisible until a manual
+		// refresh.
+		try { if (typeof document !== 'undefined' && document.hidden) _syncedWhileHidden = true; }
+		catch (e) { /* no document */ }
 	}
 	// Another tab changed the Diamonds. Re-read the rail from the store, which
 	// is the truth; a turn in flight here is not disturbed, because nothing but
@@ -3866,8 +3880,62 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var live = rosterLiveness(loadDevices(), presence, nominee, now, windowMs);
 			if (!live.nomineeDead || !live.nomineeReplacement) return '';
 			nominateDevice(live.nomineeReplacement);
+			// The old id is now PROVEN superseded: it is the account's own nominee, it is
+			// dead, and exactly one live device carries its name. Tombstone it so the add-
+			// only union cannot hand the dead star-target back on the next pull. The star
+			// has already moved to the live successor, so `removeDevice` does not clear the
+			// (now live) nomination -- it only drops the stale line.
+			try { removeDevice(nominee); } catch (e) { /* the reseat is the load-bearing half */ }
 			return live.nomineeReplacement;
 		} catch (e) { return ''; }
+	}
+
+	/// Sweep SUPERSEDED ghost lines from the roster, convergently.
+	///
+	/// A ghost is a stale line whose name a live device under a DIFFERENT id now carries
+	/// -- the re-mint signature (`rosterLiveness`). `removeDevice` TOMBSTONES it, so the
+	/// add-only union that would otherwise hand the dead line straight back on the next
+	/// pull cannot (`deviceRemoved`, `mergeDevices`): the tombstone rides `deviceTombs` in
+	/// the parcel, so every device converges on the same pruned roster. That is why a
+	/// local delete is not enough -- without the tombstone a peer re-offers the ghost.
+	///
+	/// "Asleep is not a ghost" is carried by the ghost test ITSELF: a line is swept only
+	/// when a live device under a DIFFERENT id shares its name -- the re-mint signature.
+	/// A merely-asleep machine has no live same-name twin, so it is STALE, never a ghost,
+	/// and is preserved. Age is not consulted: on this fleet no two real machines share a
+	/// name, so a live same-name twin is proof of a re-mint however recent the silence
+	/// (owner, 2026-09-09). Never removes self (this device re-mints itself back in on its
+	/// own beat). Answers the ids removed.
+	function pruneGhosts(now, windowMs) {
+		var out = [];
+		try {
+			var n = now == null ? Date.now() : now;
+			var presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+			var reg  = loadDevices();
+			var live = rosterLiveness(reg, presence, nominatedDeviceId(), n, windowMs);
+			var self = deviceId();
+			Object.keys(live.ghost).forEach(function (id) {
+				if (id === self) return;						// never this device
+				if (!reg[id]) return;
+				removeDevice(id);
+				out.push(id);
+			});
+		} catch (e) { /* best-effort: a stranded ghost is cosmetic, never a hazard */ }
+		return out;
+	}
+
+	/// Reseat a stranded star onto its live successor, then sweep superseded ghosts.
+	///
+	/// The single call the app makes wherever the roster meets presence -- the sync
+	/// merge, the Devices panel, and (the load-bearing addition) the dispatch election --
+	/// so a re-minted fleet converges on a live nominee and a clean roster without any
+	/// caller reasoning about it. Money-safe: neither step touches the lease or the
+	/// consent CAS; both only change WHICH id the election seats and which dead lines
+	/// linger. Answers `{ moved, pruned }` for the tests.
+	function reconcileRoster(now, windowMs) {
+		var moved  = reconcileNominee(now, windowMs);
+		var pruned = pruneGhosts(now, windowMs);
+		return { moved: moved, pruned: pruned };
 	}
 
 	// ── Workspace files (the other half of "the work") ─────────
@@ -5607,11 +5675,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// `at`-wins, so it settles here with the rest of the account's device facts.
 			adoptNomination(remote.nominated);
 			// A nominee left pointing at a device that re-minted its id is migrated onto
-			// the live device that has replaced it, so the star follows the machine across
-			// the re-mint older accounts already carry. Idempotent and ambiguous-safe (see
-			// reconcileNominee); a no-op when presence has not been fetched yet, so a
+			// the live device that has replaced it, and long-dead same-name ghost lines are
+			// swept, so the star follows the machine across the re-mint older accounts carry
+			// and the roster converges clean. Idempotent and ambiguous-safe (see
+			// reconcileRoster); a no-op when presence has not been fetched yet, so a
 			// background sync-only wake simply reconciles on a later round.
-			try { reconcileNominee(); } catch (e) { /* best-effort */ }
+			try { reconcileRoster(); } catch (e) { /* best-effort */ }
 		});
 		// Read before any section runs: `applyFiles` commits a new fork point on its way
 		// out, so a later reader gets this round's own state rather than the one both
@@ -13646,9 +13715,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var reg = collectDevices();		// reading it is also how this device joins it
 			var self = deviceId();
 			// Before drawing, let a nominee stranded on a re-minted device follow the live
-			// machine that replaced it, so the star shows against the device that is
-			// actually here rather than against a dead id (owner trace, 2026-09-08).
-			try { reconcileNominee(); } catch (e) { /* best-effort */ }
+			// machine that replaced it, and sweep long-dead ghost lines, so the star shows
+			// against the device that is actually here and the list is not all dead rows
+			// (owner trace, 2026-09-08).
+			try { reconcileRoster(); } catch (e) { /* best-effort */ }
 			var nominee = nominatedDeviceId();	// the account's always-on runner, or ''
 			// Who is beating now, so the list can mark a line that is no longer here and a
 			// GHOST a live device has replaced. A live device NOT yet synced into the
@@ -16371,6 +16441,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { if (window.DaimondSync && DaimondSync.refreshPresence) DaimondSync.refreshPresence(); } catch (e) { /* local snapshot stands */ }
 				startErrandListener();
 				peerCollectOnReturn();
+				// REPAINT WHAT ARRIVED WHILE HIDDEN. A chat that synced into the store while
+				// this tab was backgrounded may not have had its in-memory rebuild/render run
+				// (a throttled or suspended tab), so it would stay invisible until a manual
+				// refresh. Rebuild from the store on return, so the rail and the open transcript
+				// reflect what came in while away. Only when a merge actually ran while hidden,
+				// so an ordinary tab switch pays nothing.
+				if (_syncedWhileHidden) {
+					_syncedWhileHidden = false;
+					try { Promise.resolve(onChatsChangedElsewhere()).catch(function () {}); }
+					catch (e) { /* the rail is not up yet */ }
+				}
 			}
 		});
 	} catch (e) { /* no document */ }
@@ -16656,6 +16737,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// keeps its normal 90s nominee gate.
 			var presumeNomWin = (nomStale && !refreshLanded) ? NOMINEE_TRUST_MS : 0;
 				presence = presenceWithBuilds(presence);
+				// RE-SEAT A GHOST NOMINEE ONTO ITS LIVE SUCCESSOR BEFORE THE ELECTION READS IT.
+				// The star an older account carries points at the argonaut's DEAD pre-re-mint id;
+				// autoDispatchDecision looks that id up in the presence map, finds it absent, skips
+				// the nominee branch and falls through to the freshest genuine peer -- the hand-off
+				// LOTTERY the owner hit (roster all ghosts, star on a dead id, 2026-09-08). The
+				// stored reconcile ran only on the sync merge and the Devices panel, NEITHER on
+				// this path, so the election kept reading the raw dead id. Reconciling here, against
+				// the presence just refreshed above, migrates the star onto the live same-name
+				// device (unambiguous only) and sweeps the dead lines -- so `nominee` below is a
+				// device that can actually be seated. Money-safe: the lease CAS is still the sole
+				// single-runner arbiter; this only changes WHICH id the election seats.
+				try { reconcileRoster(); } catch (e) { /* the raw nominee still stands */ }
+				nominee = (typeof nominatedDeviceId === 'function') ? nominatedDeviceId() : nominee;
 				var d = DaimondPeer.autoDispatchDecision(chat, presence, {
 				selfId:        self,
 				isPhone:       isPhoneViewport(),
@@ -21549,6 +21643,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		roster: {
 			liveness:         rosterLiveness,
 			reconcileNominee: reconcileNominee,
+			reconcileRoster:  reconcileRoster,
+			pruneGhosts:      pruneGhosts,
 			load:             loadDevices,
 			merge:            mergeDevices,
 			remove:           removeDevice,
