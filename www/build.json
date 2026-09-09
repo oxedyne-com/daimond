@@ -1,1 +1,1 @@
-{"build":"acd46f574cb5","note":"Prune ghost devices, re-seat the star on the live device, sweep re-minted twins, repaint synced background tabs"}
+{"build":"fbc1c7cf6cb1","note":"Seat hand-off from live presence: worker, else another live desktop, else local; never fall straight to local"}

@@ -9102,6 +9102,70 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return out || presence;
 	}
 
+	/// Does a device name read as a MOBILE-VIEW (phone) device? Coarse on purpose: an
+	/// iOS / Android / "mobile" name is a phone. This is the client-only classifier the
+	/// hand-off routing uses to keep a mobile-view device from being seated as another
+	/// device's worker (owner rule 2026-09-09). The gateway does not relay a mobile flag,
+	/// so the beat's label is the signal for a peer; this device knows its own view
+	/// precisely below.
+	function isMobileViewName(s) {
+		return /iphone|ipad|ipod|android|\bios\b|\bmobile\b/i.test(String(s || ''));
+	}
+
+	/// Whether a live presence entry is a MOBILE-VIEW device. This device knows its own
+	/// view exactly (isPhoneViewport); a PEER is classified from the label it beats under
+	/// (or its roster line as a fallback). Unknown reads as NON-mobile, so a live desktop
+	/// is never wrongly withheld and the phone never falls to local while a real desktop is
+	/// present -- the owner's primary complaint. A durable per-device flag carried in the
+	/// blob is a Phase-B refinement; for Phase A the name is the client-only signal.
+	function presenceIsMobileView(id, rec) {
+		try { if (String(id) === selfDeviceId()) return isPhoneViewport(); } catch (e) { /* fall through */ }
+		var nm = (rec && rec.name) || '';
+		if (!nm) { try { var r = loadDevices()[id]; nm = (r && (r.label || r.name)) || ''; } catch (e) { nm = ''; } }
+		return isMobileViewName(nm);
+	}
+
+	/// A COPY of a presence map with each record stamped `mobileView`, so the election's
+	/// pure `handoffTarget` can exclude a mobile-view device without reaching for the
+	/// roster itself. Returns the map unchanged when nothing needs stamping.
+	function presenceWithMobile(presence) {
+		if (!presence) return presence;
+		var out = null;
+		Object.keys(presence).forEach(function (id) {
+			var rec = presence[id];
+			var mv  = presenceIsMobileView(id, rec);
+			if (rec && !!rec.mobileView === mv) return;			// already correct
+			if (out === null) { out = {}; Object.keys(presence).forEach(function (k) { out[k] = presence[k]; }); }
+			var copy = {}; for (var f in rec) { if (Object.prototype.hasOwnProperty.call(rec, f)) copy[f] = rec[f]; }
+			copy.mobileView = mv;
+			out[id] = copy;
+		});
+		return out || presence;
+	}
+
+	/// The presence map the election reads: build filled from the roster where the beat
+	/// did not carry one, and each record classified mobile-view. One call, so both
+	/// send-time and step-away paths annotate identically.
+	function annotatePresence(presence) {
+		return presenceWithMobile(presenceWithBuilds(presence));
+	}
+
+	/// The preferred worker resolved to a LABEL, never a raw id. The star (the account's
+	/// nominated always-on runner) is stored as a device id, but a re-mint can turn that
+	/// id into a dead ghost; so the election matches its LABEL -- the name the device is
+	/// known by, from live presence then the roster -- against whoever carries it in live
+	/// presence. Answers '' when no nominee is set or its label is unknown (a bare id
+	/// slice is not a label to match on).
+	function preferredWorkerLabel() {
+		try {
+			var nom = nominatedDeviceId();
+			if (!nom) return '';
+			var lbl = deviceLabelFor(nom);
+			if (!lbl || lbl === String(nom).slice(0, 6)) return '';
+			return lbl;
+		} catch (e) { return ''; }
+	}
+
 	// ── Turns ──────────────────────────────────────────────────
 	//
 	// A turn is one thing you asked and everything that came back from it: the answer, and any
@@ -16414,8 +16478,77 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// "Ran here — hand-off to X didn't finish" provenance (seq 207), so the owner
 			// can always tell where it ran.
 			if (!DaimondPeer.recoverDecision(m, lease, fin, selfDeviceId(), Date.now())) return;
+			// NO PREMATURE LOCAL (owner rule 2026-09-09): a seated desktop that never claimed
+			// within the backstop window must not send the phone straight to a local run while
+			// ANOTHER live non-mobile desktop is available. Try the next live desktop first --
+			// re-dispatch to it, EXCLUDING every device already tried for this turn -- and fall
+			// to local only when no other live desktop remains. Money-safe: recoverDecision
+			// above already confirmed no live foreign lease holds it, so nothing is running, and
+			// the re-dispatch goes through the same take-if-vacant lease.
+			if (await retryNextDesktopBeforeLocal(chat, m)) return;
 			await recoverOneLocally(chat, m);
 		} catch (e) { /* the 15-min deadline + [Run here] remain the ultimate backstop */ }
+	}
+
+	// How many DIFFERENT live desktops one turn may be re-seated on before it falls to a
+	// local run. Bounds the chase so a fleet of unreachable-but-beating desktops cannot
+	// loop the backstop for ever; each retry excludes the ones already tried, so it
+	// converges to local well within this.
+	var DISPATCH_RETRY_MAX = 3;
+
+	/// Try to hand a stalled dispatched turn to the NEXT live non-mobile desktop rather
+	/// than running it locally. Re-resolves the target from LIVE presence, excluding every
+	/// device already tried for this turn (the advertised one, the last lease holder, and
+	/// any prior retry recorded on the placeholder). Answers true when it re-dispatched to
+	/// another desktop (so the caller does NOT run local), false when none remains (run
+	/// local). The lease is still the single-runner arbiter, so this only changes WHERE the
+	/// next attempt is seated, never how many run.
+	async function retryNextDesktopBeforeLocal(chat, m) {
+		try {
+			if (!window.DaimondPeer || !DaimondPeer.handoffTarget) return false;
+			var self = selfDeviceId();
+			var tid  = String((m && m.iturn) || '');
+			if (!tid) return false;
+			// Every device this turn has already been handed to, tried or not.
+			var tried = Array.isArray(m.triedDevices) ? m.triedDevices.slice() : [];
+			var advertised = String(m.toDevice || '');
+			if (advertised && tried.indexOf(advertised) === -1) tried.push(advertised);
+			try {
+				var h = (window.DaimondLease && DaimondLease.holder) ? String(DaimondLease.holder(tid) || '') : '';
+				if (h && tried.indexOf(h) === -1) tried.push(h);
+			} catch (e) { /* the lease view is gone once released */ }
+			if (tried.length >= DISPATCH_RETRY_MAX) return false;		// bounded chase; fall to local
+			var exclude = {};
+			tried.forEach(function (d) { if (d) exclude[d] = true; });
+			exclude[self] = true;										// never seat this device as its own worker
+			var presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+			presence = annotatePresence(presence);
+			var res = DaimondPeer.handoffTarget(presence, {
+				selfId:         self,
+				windowMs:       DaimondPeer.DISPATCH_FRESH_MS,
+				currentBuild:   fleetCurrentBuild(),
+				preferredLabel: preferredWorkerLabel(),
+				nominatedId:    nominatedDeviceId(),
+				exclude:        exclude,
+			}, Date.now());
+			if (!res || !res.target || res.target.deviceId === self) return false;	// no other desktop -> local
+			var next  = res.target.deviceId;
+			var label = res.target.name || deviceLabelFor(next);
+			// Record the retry so the NEXT backstop excludes this seat too, and persist so a
+			// reload does not re-chase a device already tried.
+			m.triedDevices = tried.concat([next]);
+			try { touchChat(chat); persistChats(); } catch (e) { /* the in-memory record still guides the next retry */ }
+			diag('dispatch retry', 'turn=' + tid + ' next=' + String(next).slice(0, 8)
+				+ ' tried=' + tried.length + ' reason=' + res.reason);
+			var parkCount = (m.parkCount | 0) || 0;
+			dispatchToPeer(chat, tid, String(m.itext || ''), Array.isArray(chat.holds) ? chat.holds : [],
+				{ toId: next, toName: label, parkCount: parkCount })
+				.then(function (r) { if (!r || !r.ok) { try { runDispatchFallback(chat.id, tid); } catch (e) {} } });
+			// Re-arm the backstop for the new seat, so a desktop that ALSO never claims is
+			// retried (or finally falls local once the chase is exhausted).
+			try { scheduleDispatchFallback(chat.id, tid); } catch (e) { /* recovery-on-return still nets it */ }
+			return true;
+		} catch (e) { return false; }
 	}
 
 	/// Start LISTENING for dispatched errands: park on the gateway's Post channel and
@@ -16736,24 +16869,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// an unconfirmed snapshot. Zero in every confirmed case, so autoDispatchDecision
 			// keeps its normal 90s nominee gate.
 			var presumeNomWin = (nomStale && !refreshLanded) ? NOMINEE_TRUST_MS : 0;
-				presence = presenceWithBuilds(presence);
-				// RE-SEAT A GHOST NOMINEE ONTO ITS LIVE SUCCESSOR BEFORE THE ELECTION READS IT.
-				// The star an older account carries points at the argonaut's DEAD pre-re-mint id;
-				// autoDispatchDecision looks that id up in the presence map, finds it absent, skips
-				// the nominee branch and falls through to the freshest genuine peer -- the hand-off
-				// LOTTERY the owner hit (roster all ghosts, star on a dead id, 2026-09-08). The
-				// stored reconcile ran only on the sync merge and the Devices panel, NEITHER on
-				// this path, so the election kept reading the raw dead id. Reconciling here, against
-				// the presence just refreshed above, migrates the star onto the live same-name
-				// device (unambiguous only) and sweeps the dead lines -- so `nominee` below is a
-				// device that can actually be seated. Money-safe: the lease CAS is still the sole
-				// single-runner arbiter; this only changes WHICH id the election seats.
-				try { reconcileRoster(); } catch (e) { /* the raw nominee still stands */ }
+				presence = annotatePresence(presence);
+				// ROUTING READS LIVE PRESENCE, NOT THE STORED DEVICE LIST (owner redesign
+				// 2026-09-09). The star an older account carries points at the argonaut's DEAD
+				// pre-re-mint id; `handoffTarget` never seats that raw id unless it is ITSELF
+				// live in presence, and otherwise matches the star's LABEL against whoever
+				// carries it in live presence -- so a ghost id is ignored and the machine that
+				// is HERE NOW is seated. `reconcileRoster` is kept for roster HYGIENE (it moves
+				// the star onto a live successor id and sweeps dead lines for the Devices panel),
+				// but routing no longer DEPENDS on it: the label resolution below is the
+				// authority and is ghost-proof on its own. Money-safe: the lease CAS is still
+				// the sole single-runner arbiter; this only changes WHICH live device is seated.
+				try { reconcileRoster(); } catch (e) { /* routing does not depend on this */ }
 				nominee = (typeof nominatedDeviceId === 'function') ? nominatedDeviceId() : nominee;
 				var d = DaimondPeer.autoDispatchDecision(chat, presence, {
 				selfId:        self,
 				isPhone:       isPhoneViewport(),
 				toolsEnabled:  chatToolsEnabled(chat),
+				// The star as a LABEL, resolved against live presence each dispatch -- never a
+				// raw id a re-mint can turn into a ghost. This is what seats the live device
+				// carrying the preferred worker's name even when the stored star id is dead.
+				preferredLabel: preferredWorkerLabel(),
 				// The build this device knows is current, so the election can PREFER a
 				// current-build peer over a superseded one (a warning/preference, never a
 				// hard exclusion -- see freshestGenuinePeer). The mixed-build hand-off
@@ -16896,11 +17032,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// (no fresh peer -> keep it here, to be recovered on return). This IS the
 				// §4.1 backgrounding-with-a-turn-in-flight case, and a per-chat opt-out
 				// still beats it inside the pure decision.
-					presence = presenceWithBuilds(presence);
+					presence = annotatePresence(presence);
 					var d = DaimondPeer.autoDispatchDecision(chat, presence, {
 					selfId:        self,
 					backgrounding: true,
 					turnInFlight:  true,
+					// The star as a LABEL, ghost-proof (see the send-time site).
+					preferredLabel: preferredWorkerLabel(),
 					// See the send-time site: prefer a current-build peer, never exclude a
 					// stale one. A step-away hand-off must still land somewhere.
 					currentBuild:  fleetCurrentBuild(),

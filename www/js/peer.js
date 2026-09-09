@@ -1145,24 +1145,143 @@
 	// Broadening WHICH turns route changes nothing about HOW routing works -- the
 	// single-runner guarantee is the lease's (below), never this decision's.
 
+	/// A label, normalised for a match: trimmed and lower-cased, so "Argonaut" beat
+	/// under one device matches the roster label the star was resolved from however
+	/// their casing or padding happened to differ.
+	function normLabel(s) { return String(s == null ? '' : s).trim().toLowerCase(); }
+
+	/// Among candidate records ALREADY filtered to seatable, non-mobile peers, pick the
+	/// one to seat: the freshest, but PREFERRING one on `cur` (the current build) over a
+	/// fresher-but-superseded one, and marking the chosen record `staleBuild` when its
+	/// build is known and superseded. Mirrors freshestGenuinePeer's soft skew guard, so
+	/// a mixed-build fleet de-prefers (never excludes) a stale peer.
+	function freshestWithBuild(cands, cur) {
+		var best = null, bestCurrent = null;
+		for (var i = 0; i < cands.length; i++) {
+			var c = cands[i];
+			if (!best || c.lastSeen > best.lastSeen) best = c;
+			if (cur && c.build && c.build === cur && (!bestCurrent || c.lastSeen > bestCurrent.lastSeen)) bestCurrent = c;
+		}
+		var chosen = bestCurrent || best;
+		if (chosen && chosen !== bestCurrent && cur && chosen.build && chosen.build !== cur) chosen.staleBuild = true;
+		return chosen;
+	}
+
+	// ── Present-derived hand-off target (owner redesign 2026-09-09) ──
+	//
+	// WHO RUNS A HANDED-OFF TURN is resolved from LIVE PRESENCE ONLY -- who is beating
+	// now, with their label, mobile-view flag and servicing flag -- and NEVER from the
+	// stored, add-only device list in the account blob. That list fills with ghost ids
+	// from device identity re-mints and, on the owner's live trace, had ZERO overlap
+	// with the live set: the "worker" star pointed at a phantom, the election returned
+	// generic, and the turn ran LOCALLY on the phone though a fresh live desktop was
+	// right there. The fallback chain here is the owner's binding rule, in this exact
+	// order:
+	//   (a) the preferred worker -- the star's LIVE nominated id if it is beating, else
+	//       the star's LABEL matched against whoever carries it in live presence (so a
+	//       dead re-mint id is IGNORED and the machine that is HERE NOW is seated);
+	//   (b) ELSE any other live, non-mobile-view, genuinely-servicing desktop;
+	//   (c) ELSE run local on the phone -- the LAST resort only.
+	// A mobile-view device is NEVER seated as another device's worker. `exclude` lets the
+	// no-premature-local retry re-resolve past a seated desktop that failed to claim, so
+	// the next live desktop is tried before local.
+
+	/// Resolve the hand-off target from live presence and the fallback chain. Pure.
+	/// Answers `{ target, reason }` where `target` is `{ deviceId, name, lastSeen, build,
+	/// staleBuild? }` or null (→ run local), and `reason` is one of
+	/// `nominee` / `nominee-presumed` / `worker` / `other-desktop` / `local`.
+	function handoffTarget(presence, opts, now) {
+		var o = opts || {}, p = presence || {};
+		var self = String(o.selfId || '');
+		var n = now == null ? Date.now() : now;
+		var w = o.windowMs || DISPATCH_FRESH_MS;
+		var nomWin = (o.presumeNomineeWindowMs && o.presumeNomineeWindowMs > w) ? o.presumeNomineeWindowMs : w;
+		var cur = String(o.currentBuild || '');
+		var pref = normLabel(o.preferredLabel);
+		var nom = String(o.nominatedId || '');
+		var exclude = o.exclude || {};
+
+		// (a) THE PREFERRED WORKER by its raw nominated id, when that id is itself a LIVE,
+		// non-mobile presence entry. Judged on the BARE BEAT (not recGenuine) -- the SAME
+		// liveness the CLAIM arbitration uses (nominationStandDown / lastSeen) -- so a
+		// beating nominee whose serviced_at is stale in this snapshot is still seated on the
+		// nominee (repro_nominee_stolen), and one last known within the presume window (an
+		// unconfirmed cold snapshot) is trusted live (repro_nominee_unconfirmed). A ghost id
+		// absent from presence simply misses this, and the label match below recovers it.
+		if (nom && nom !== self && !exclude[nom]) {
+			var nr = p[nom];
+			if (nr && !nr.mobileView && (n - leaseMs(nr.lastSeen)) <= nomWin) {
+				var presumed = (n - leaseMs(nr.lastSeen)) > w;		// seated on trust, not a fresh beat
+				var nb = String(nr.build || '');
+				var nomStale = !!(cur && nb && nb !== cur);
+				return { target: { deviceId: nom, name: (nr.name || ''), lastSeen: leaseMs(nr.lastSeen), build: nb, staleBuild: nomStale },
+					reason: presumed ? 'nominee-presumed' : 'nominee' };
+			}
+		}
+
+		// (a') THE PREFERRED WORKER by LABEL, resolved against LIVE presence -- the ghost-
+		// proof heart of the fix. The star is a preferred LABEL (daimond.js resolves it from
+		// the nomination against the roster), matched here against every BEATING non-mobile
+		// device, so a dead re-mint id in any stored list is ignored and the machine that
+		// carries the label and is HERE NOW is seated. Bare beat within `w`.
+		if (pref) {
+			var byLabel = [];
+			for (var id in p) {
+				if (!Object.prototype.hasOwnProperty.call(p, id)) continue;
+				if (id === self || exclude[id]) continue;
+				var r = p[id];
+				if (!r || r.mobileView) continue;
+				if ((n - leaseMs(r.lastSeen)) > w) continue;
+				if (normLabel(r.name) !== pref) continue;
+				byLabel.push({ deviceId: id, name: (r.name || ''), lastSeen: leaseMs(r.lastSeen), build: String(r.build || '') });
+			}
+			if (byLabel.length) return { target: freshestWithBuild(byLabel, cur), reason: 'worker' };
+		}
+
+		// (b) ANY OTHER LIVE, non-mobile, GENUINELY-SERVICING desktop. recGenuine (beating
+		// AND servicing, with the bare-beat fallback on an old gateway that does not relay
+		// serviced_at) excludes a phantom background tab, so a non-designated peer that beats
+		// but never collects is never seated over local (seq 217). Mobile-view devices are
+		// never seated as another device's worker.
+		var desks = [];
+		for (var id2 in p) {
+			if (!Object.prototype.hasOwnProperty.call(p, id2)) continue;
+			if (id2 === self || exclude[id2]) continue;
+			var r2 = p[id2];
+			if (!r2 || r2.mobileView) continue;
+			if (!recGenuine(r2, n, w)) continue;
+			desks.push({ deviceId: id2, name: (r2.name || ''), lastSeen: leaseMs(r2.lastSeen), build: String(r2.build || '') });
+		}
+		if (desks.length) return { target: freshestWithBuild(desks, cur), reason: 'other-desktop' };
+
+		// (c) NO live non-mobile desktop is available: run local (the last resort).
+		return { target: null, reason: 'local' };
+	}
+
 	/// Decide whether to dispatch, and to whom. Pure. Answers
-	/// `{ dispatch, peer, reason }`.
+	/// `{ dispatch, peer, reason, staleBuild? }`. The TARGET is resolved from live
+	/// presence by `handoffTarget` (the owner's fallback chain, ghosts ignored, mobile
+	/// excluded); this function owns only the "should we hand off at all" gating -- the
+	/// per-chat opt-out, the always-on-worker rule, the step-away and posture rules, the
+	/// agentic rule, and the mobile-vs-desktop last-resort split.
 	function autoDispatchDecision(chat, presence, opts, now) {
 		var o = opts || {}, c = chat || {};
 		var n = (now == null ? Date.now() : now);
 		var win = o.freshWindowMs || DISPATCH_FRESH_MS;
-		// The ONE candidate: the freshest GENUINELY-AVAILABLE peer -- beating AND actively
-		// servicing the errand channel. A phantom (a background tab that beats but does not
-		// collect) is excluded here, so it can never be chosen over a genuine peer or over
-		// local. This is the heart of the fix (owner 2026-09-06): a turn "handed to
-		// gilgamesh" that gilgamesh never ran was chosen on the bare beat alone.
-		//
-		// `currentBuild` adds a SOFT hand-off skew guard on top: among genuine peers, one
-		// known to be on the current build is preferred over a fresher-but-superseded one,
-		// so a stale peer left over from a mixed-build fleet is not silently trusted. It is
-		// a preference, not an exclusion (a stale peer still runs when no current one is
-		// available), and it never touches the lease -- money-safety is unchanged.
-		var peer = freshestGenuinePeer(presence, o.selfId, n, win, o.currentBuild);
+
+		// The present-derived target and how it was reached. A ghost id in any stored list
+		// is never seated -- routing reads presence, not the blob device list.
+		var res = handoffTarget(presence, {
+			selfId:                 o.selfId,
+			windowMs:               win,
+			currentBuild:           o.currentBuild,
+			preferredLabel:         o.preferredLabel,
+			nominatedId:            o.nominatedId,
+			presumeNomineeWindowMs: o.presumeNomineeWindowMs,
+			exclude:                o.exclude,
+		}, n);
+		var target = res.target;
+		var isWorker = !!(target && (res.reason === 'nominee' || res.reason === 'nominee-presumed' || res.reason === 'worker'));
 
 		// The per-chat choice: true = always hand off, false = keep on THIS device
 		// (the opt-out), null/undefined = decide by the reliability policy below.
@@ -1170,83 +1289,46 @@
 		// An explicit opt-out pins the chat here regardless of any peer -- tested first.
 		if (toggle === false) return { dispatch: false, reason: 'chat-local' };
 
-		// A NOMINATED always-on runner takes EVERY turn WHEN IT IS PRESENT AND BEATING --
-		// the SAME liveness the CLAIM arbitration uses (nominationStandDown / lastSeen),
-		// NOT recGenuine's stricter serviced_at. The two must agree: the claim-time stand-
-		// down defers to a beating nominee, so the dispatch must SEAT the turn on that same
-		// device -- else iOS labels/targets a fresher peer (gilgamesh) while the beating
-		// nominee (argonaut) actually claims and runs, the mismatch the owner hit. This is
-		// SCOPED TO THE NOMINEE: the freshest-peer selection below still uses recGenuine, so
-		// a non-designated phantom (beats but never services) is never chosen over local or
-		// a genuine peer (seq 217). A nominee that beats but never services is recovered by
-		// the dispatcher's undeliverable→local + backstop (seq 222), so it cannot hang.
-		var nom = String(o.nominatedId || '');
-		if (nom && nom !== String(o.selfId || '')) {
-			var nRec = (presence || {})[nom];
-			// Normally the nominee is seated only while its beat is fresh (`win` =
-			// DISPATCH_FRESH_MS). But a stale-LOOKING beat is not proof the always-on
-			// runner is down: a phone whose dispatch-time presence refresh TIMED OUT (a
-			// cold foreground GET that did not land before the send) may hold a per-device
-			// skewed snapshot where the nominee's last beat aged past `win` while a peer's
-			// did not -- and it would then misroute a live nominee's turn to that fresher
-			// peer (the owner's argonaut→gilgamesh mismatch). When the dispatcher could not
-			// CONFIRM presence it sets `presumeNomineeWindowMs` to a wide trust window: a
-			// nominee last known within it is presumed live and SEATED, and the rare truly-
-			// slept nominee is recovered by the undeliverable→local + dispatch backstop
-			// (seq 222) rather than silently handed to a peer. A CONFIRMED-stale nominee
-			// (the refresh landed and it is still aged out) leaves the window at `win` and
-			// correctly falls through as offline.
-			var nomWin = (o.presumeNomineeWindowMs && o.presumeNomineeWindowMs > win) ? o.presumeNomineeWindowMs : win;
-			if (nRec && (n - leaseMs(nRec.lastSeen)) <= nomWin) {
-				var presumed = (n - leaseMs(nRec.lastSeen)) > win;	// seated on trust, not a fresh beat
-				// The nominee is the account's explicit runner and is NOT de-preferred for
-				// its build -- but flag it when it is known to be on a superseded build, so
-				// the trace and the in-flight tile can say the always-on runner is stale.
-				var nomBuild  = String((nRec && nRec.build) || '');
-				var curB      = String(o.currentBuild || '');
-				var nomStaleB = !!(curB && nomBuild && nomBuild !== curB);
-				return { dispatch: true, peer: { deviceId: nom, name: (nRec.name || ''), lastSeen: leaseMs(nRec.lastSeen) }, reason: (presumed ? 'nominee-presumed' : 'nominee'), staleBuild: nomStaleB };
-			}
-		}
+		// THE PREFERRED WORKER (a live nominee or the star's label) takes EVERY turn, above
+		// the step-away / posture / agentic / quick-local rules -- it is the account's chosen
+		// always-on runner, and the CLAIM arbitration defers to it, so the dispatch must seat
+		// it too or iOS labels a fresher peer while the worker actually runs.
+		if (isWorker) return { dispatch: true, peer: target, reason: res.reason, staleBuild: !!target.staleBuild };
 
 		// A device stepping away (backgrounding) with a turn STILL IN FLIGHT hands the
-		// running turn to a genuine peer before it suspends -- but only if one exists;
-		// no genuine peer means keep it here to be recovered on return.
+		// running turn to a live desktop before it suspends -- but only if one exists;
+		// none means keep it here to be recovered on return.
 		if (o.backgrounding && o.turnInFlight) {
-			return peer ? { dispatch: true, peer: peer, reason: 'backgrounding-in-flight', staleBuild: !!peer.staleBuild }
+			return target ? { dispatch: true, peer: target, reason: 'backgrounding-in-flight', staleBuild: !!target.staleBuild }
 				: { dispatch: false, reason: 'no-genuine-peer' };
 		}
 
 		// An explicit per-chat opt-IN, or the device-wide "hand off while I am away"
-		// posture: honour it when a genuine peer exists, else run local.
+		// posture: honour it when a live desktop exists, else run local.
 		if (toggle === true || o.globalDefault) {
-			return peer ? { dispatch: true, peer: peer, reason: 'toggle-on', staleBuild: !!peer.staleBuild }
+			return target ? { dispatch: true, peer: target, reason: 'toggle-on', staleBuild: !!target.staleBuild }
 				: { dispatch: false, reason: 'no-genuine-peer' };
 		}
 
-		// A LONG or AGENTIC turn is worth offloading to a genuine peer even from a
-		// desktop -- the separate "a desktop fans a heavy turn out to a persistent peer"
-		// feature, distinct from the ordinary-turn reliability fallback below. Now gated
-		// on a GENUINE peer (no phantom), and falling through to the local fallback when
-		// none is genuinely available. The worker signal must be a GENUINE pair: daimond.js
-		// seeds `workerModel`/`workerProvider` to the chat's OWN model for every active
-		// chat, so a bare truthiness test would dispatch every turn (D2) -- a worker/Diamond
-		// chat is one whose worker pair DIFFERS from the chat's own.
-		var worker = (c.workerModel    && String(c.workerModel)    !== String(c.model    || ''))
+		// A LONG or AGENTIC turn is worth offloading to a live desktop even from another
+		// desktop -- the separate "fan a heavy turn out to a persistent peer" feature. The
+		// worker signal must be a GENUINE pair: daimond.js seeds `workerModel`/`workerProvider`
+		// to the chat's OWN model for every active chat, so a bare truthiness test would
+		// dispatch every turn (D2) -- a worker/Diamond chat is one whose pair DIFFERS from
+		// the chat's own.
+		var agenticWorker = (c.workerModel    && String(c.workerModel)    !== String(c.model    || ''))
 			|| (c.workerProvider && String(c.workerProvider) !== String(c.provider || ''));
-		var agentic = !!o.toolsEnabled || !!o.expectedLong || !!worker;
-		if (agentic && peer) return { dispatch: true, peer: peer, reason: 'long-turn', staleBuild: !!peer.staleBuild };
+		var agentic = !!o.toolsEnabled || !!o.expectedLong || !!agenticWorker;
+		if (agentic && target) return { dispatch: true, peer: target, reason: 'long-turn', staleBuild: !!target.staleBuild };
 
-		// THE RUNNER IS DOWN (no fresh nominee, no explicit posture). Fallback ordering
-		// by connection reliability -- desktop > laptop > mobile (owner 2026-09-06):
-		//   - MOBILE: hand to a genuine peer if one exists; else run LOCAL -- the LAST
-		//     resort, because the phone is the least reliably connected device, not the
-		//     preferred runner.
-		//   - DESKTOP / LAPTOP: run LOCAL. A desktop is itself a reliable runner, so it
-		//     does not chase another peer. (This supersedes the former agentic/long-turn
-		//     desktop->peer dispatch -- see the report's flagged decision.)
+		// THE RUNNER IS DOWN (no preferred worker, no posture). Fallback ordering by
+		// connection reliability -- desktop > laptop > mobile (owner 2026-09-06):
+		//   - MOBILE: hand to a live non-mobile desktop if one exists; else run LOCAL -- the
+		//     LAST resort, because the phone is the least reliably connected device. Never
+		//     fall to local while a live non-mobile desktop is present (the owner's rule).
+		//   - DESKTOP / LAPTOP: run LOCAL. A desktop is itself a reliable runner.
 		if (o.isPhone) {
-			return peer ? { dispatch: true, peer: peer, reason: 'mobile-peer', staleBuild: !!peer.staleBuild }
+			return target ? { dispatch: true, peer: target, reason: 'mobile-peer', staleBuild: !!target.staleBuild }
 				: { dispatch: false, reason: 'no-genuine-peer' };
 		}
 		return { dispatch: false, reason: 'desktop-local' };
@@ -2138,6 +2220,12 @@
 		/// Should this turn be auto-handed to a peer, and which one? Pure; daimond.js
 		/// acts on it at send-time. And the shared "which peer is awake" answer.
 		autoDispatchDecision: autoDispatchDecision,
+		/// Resolve the hand-off target from LIVE PRESENCE ONLY, by the owner's fallback
+		/// chain -- preferred worker (live nominee id, else the star's label) → any other
+		/// live non-mobile servicing desktop → local. A ghost id in any stored list is
+		/// ignored; a mobile-view device is never seated. `exclude` re-resolves past a
+		/// seated desktop that failed to claim, so the next desktop is tried before local.
+		handoffTarget: handoffTarget,
 		freshestPeer:  freshestPeer,
 		/// The genuine-availability gate: `recGenuine` -- is a presence record beating AND
 		/// servicing the errand channel (not a phantom background tab)? -- and
