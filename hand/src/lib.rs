@@ -82,6 +82,18 @@ pub const ROOT_FILE: &str = "root.txt";
 /// Absent, and a terminal gets [`ROOT_FILE`] exactly as before.
 pub const TERMINAL_ROOT_FILE: &str = "terminal-root.txt";
 
+/// The file, beside the journal, naming the tree the VERIFY verb resolves in.
+///
+/// The granted root is where a command may touch and is the folder the page
+/// opened; a repository's verifiers live in `dev/` under ITS root, which is a
+/// different tree, and a workspace that holds several projects has no
+/// `dev/` of its own at all.  This file names that tree for the one verb that
+/// runs unfenced, so a daimon seated in a wide workspace can still run the
+/// repository's own verifiers.  The file is written by the person, like
+/// [`ROOT_FILE`], and absent it is every hand built before this one: the verb
+/// resolves in the granted root exactly as it always did.
+pub const VERIFY_ROOT_FILE: &str = "verify-root.txt";
+
 /// The version string this build reports, taken from the manifest at compile time.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

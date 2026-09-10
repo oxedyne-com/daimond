@@ -160,12 +160,16 @@ const MARKER_RESERVE: usize = 128;
 /// somebody else's.
 use daimond_hand::ROOT_FILE;
 use daimond_hand::TERMINAL_ROOT_FILE;
+use daimond_hand::VERIFY_ROOT_FILE;
 
 /// The variable that names the granted root, which takes precedence over the file.
 const ROOT_VAR: &str = "DAIMOND_HAND_ROOT";
 
 /// The terminal ceiling's variable, for the same reason [`ROOT_VAR`] exists.
 const TERMINAL_ROOT_VAR: &str = "DAIMOND_HAND_TERMINAL_ROOT";
+
+/// The verify root's variable, for the same reason [`ROOT_VAR`] exists.
+const VERIFY_ROOT_VAR: &str = "DAIMOND_HAND_VERIFY_ROOT";
 
 /// Daimond's own directory inside a workspace.
 ///
@@ -209,6 +213,8 @@ struct Serve {
     term_ceilings: Vec<PathBuf>,
     /// Whether `terminal-root.txt` pinned that list, which is a decision the user already made.
     term_pinned: bool,
+    /// The tree the verify verb resolves in, where the person pinned one.
+    verify_root: Option<PathBuf>,
     /// What is re-executed to apply the fence before a command exists.
     ///
     /// [`Launcher::SelfExe`] everywhere but in a test, where `/proc/self/exe`
@@ -308,21 +314,33 @@ fn report() -> Outcome<()> {
     // because a list of what the compartment enforces, printed above a verb that steps
     // around it, would be a report that told the truth twice and the whole truth never.
     println!("Verifiers it will run, OUTSIDE the fence:");
+    let vtree = journal::default_dir().ok()
+        .and_then(|d| verify_root(&d));
     match journal::default_dir().and_then(|d| granted_root(&d)) {
-        Ok(root) => match verify::catalogue(&root) {
-            Ok(v) if v.is_empty() => println!(
-                "  - none: there is no dev/verify_*.mjs in that folder, so the \
-                verify verb refuses on this machine."),
-            Ok(v) => {
-                println!("  {} in {}", v.len(), root.join(verify::DEV_DIR).display());
-                println!(
-                    "  Each is run by NAME, looked up in that directory, with an argument \
-                    vector this program builds; a page cannot name a path, a program or an \
-                    argument. They run unfenced deliberately -- a fenced command cannot \
-                    reach the display server, so a verifier that drives a browser cannot \
-                    run at all -- and each run is journalled with fence:none.");
-            },
-            Err(e) => println!("  - none: {}", e.msgs().join(" ")),
+        Ok(root) => {
+            // The tree the verb actually resolves in: a pinned verify root when
+            // the person wrote one, else the granted root.  The report says the
+            // pin, because a report that listed the wrong folder's verifiers
+            // would be a report of a hand this machine does not have.
+            let vroot = vtree.unwrap_or_else(|| root.clone());
+            if vroot != root {
+                println!("  (pinned by verify-root.txt: {})", vroot.display());
+            }
+            match verify::catalogue(&vroot) {
+                Ok(v) if v.is_empty() => println!(
+                    "  - none: there is no dev/verify_*.mjs in that folder, so the \
+                    verify verb refuses on this machine."),
+                Ok(v) => {
+                    println!("  {} in {}", v.len(), vroot.join(verify::DEV_DIR).display());
+                    println!(
+                        "  Each is run by NAME, looked up in that directory, with an argument \
+                        vector this program builds; a page cannot name a path, a program or an \
+                        argument. They run unfenced deliberately -- a fenced command cannot \
+                        reach the display server, so a verifier that drives a browser cannot \
+                        run at all -- and each run is journalled with fence:none.");
+                },
+                Err(e) => println!("  - none: {}", e.msgs().join(" ")),
+            }
         },
         Err(_) => println!("  - none, since no folder is granted."),
     }
@@ -668,6 +686,38 @@ fn terminal_ceiling(dir: &Path) -> Option<PathBuf> {
                 machine, so it was ignored and a terminal gets the granted root.", raw);
             None
         },
+    }
+}
+
+/// The tree the VERIFY verb resolves in, where the person pinned one.
+///
+/// Same precedence and same failure posture as [`terminal_ceiling`]: the
+/// variable if it names anything, else the file, else nothing and the verb
+/// gets the granted root exactly as every hand before this one did.  A path
+/// that is not an absolute directory is IGNORED with a line on stderr rather
+/// than refused, because a hand that stopped serving over a typo in a file
+/// the person owns would be a hand that cannot be recovered from the browser.
+fn verify_root(dir: &Path) -> Option<PathBuf> {
+    let raw = match std::env::var(VERIFY_ROOT_VAR) {
+        Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => match named_in_file(dir, VERIFY_ROOT_FILE) {
+            Some(s) => s,
+            None    => return None,
+        },
+    };
+    let p = PathBuf::from(&raw);
+    if !p.is_absolute() {
+        eprintln!("daimond-hand: the verify root '{}' is not an absolute path, so it \
+            was ignored and verify gets the granted root.", raw);
+        return None;
+    }
+    match fs::canonicalize(&p) {
+        Ok(c) if c.is_dir() => Some(c),
+        _ => {
+            eprintln!("daimond-hand: the verify root '{}' is not a directory on this \
+                machine, so it was ignored and verify gets the granted root.", raw);
+            None
+        }
     }
 }
 
@@ -1335,6 +1385,8 @@ struct Desk {
     term_ceilings: Vec<PathBuf>,
     /// Whether the installer PINNED that list to one folder, rather than offering a choice.
     term_pinned: bool,
+    /// The tree the verify verb resolves in, where the person pinned one.
+    verify_root: Option<PathBuf>,
     /// What the page can check that folder's identity against.
     ws:     Identity,
     /// The operating system, in the wire's own vocabulary.
@@ -1460,6 +1512,15 @@ impl Desk {
         }
         caps.extend(self.sys.caps());
         caps.push(fmt!("root:{}", self.root.display()));
+        // The tree the verify verb resolves in, said only where the person pinned
+        // one and it differs from the granted root, for the same reason
+        // `terminal-root:` is conditional: a page reading no `verify-root:` gets
+        // the behaviour every build before this one had.
+        if let Some(v) = &self.verify_root {
+            if v != &self.root {
+                caps.push(fmt!("verify-root:{}", v.display()));
+            }
+        }
         // The CEILING, not where a terminal opens. Said only where it differs from the
         // granted root, so a page reading no `terminal-root:` gets the behaviour every
         // build before this one had rather than a second name for the same folder.
@@ -1484,8 +1545,10 @@ impl Desk {
         caps.push(self.ws.cap());
         // Whether this folder holds verifiers at all. A page that knows the answer can say
         // "not on this computer" once, instead of letting a model find it out one refusal at
-        // a time -- which is what `fence:` beside it is for.
-        caps.push(verify::cap(&self.root));
+        // a time -- which is what `fence:` beside it is for.  Asked of the tree the verb
+        // will actually resolve in, so a pinned root is reflected here too.
+        let vroot = self.verify_root.clone().unwrap_or_else(|| self.root.clone());
+        caps.push(verify::cap(&vroot));
         // That this hand can be ASKED what it is still running, and told to stop
         // one of them. A page that cannot see the capability cannot know whether
         // silence means "nothing is running" or "this hand is older than the
@@ -1818,7 +1881,15 @@ impl Desk {
             return Ok(());
         }
 
-        let script = match verify::resolve(&self.root, &name) {
+        // The tree this hand resolves verifiers in: the one the person pinned,
+        // else the granted root. Computed ONCE, before anything below, because
+        // the lookup, the capability, the provenance gate and the spawn's
+        // working directory must all answer for the same tree -- a vroot that
+        // changed between two of them would resolve a script in one tree and
+        // prove it against another.
+        let vroot = self.verify_root.clone().unwrap_or_else(|| self.root.clone());
+
+        let script = match verify::resolve(&vroot, &name) {
             Ok(s)  => s,
             Err(s) => { self.refuse(&id, s); return Ok(()); },
         };
@@ -1845,7 +1916,7 @@ impl Desk {
 
         let job = verify::Job {
             id:     id.clone(),
-            root:   self.root.clone(),
+            root:   vroot,
             script,
             breaks,
             node,
@@ -2312,6 +2383,7 @@ where
         root:   cfg.root.clone(),
         term_ceilings: cfg.term_ceilings.clone(),
         term_pinned: cfg.term_pinned,
+        verify_root: cfg.verify_root.clone(),
         ws,
         os,
         runner: Runner::with_launcher(cfg.launcher.clone()),
@@ -2580,12 +2652,14 @@ fn configure() -> Outcome<Serve> {
     // built before 2026-08-26, and it serves exactly as it did.
     let term_pinned   = terminal_ceiling(&dir).is_some();
     let term_ceilings = terminal_ceilings(&dir, &root);
+    let verify_root   = verify_root(&dir);
     Ok(Serve {
         journal:  JournalCfg::at(dir),
         fence:    Fence::detect(),
         root,
         term_ceilings,
         term_pinned,
+        verify_root,
         launcher: Launcher::SelfExe,
     })
 }
@@ -3099,6 +3173,7 @@ mod tests {
                 root:     res!(fs::canonicalize(&root)),
                 term_ceilings: vec![res!(fs::canonicalize(&root))],
                 term_pinned: false,
+                verify_root: None,
                 launcher: res!(test_launcher()),
             },
             jdir,
@@ -3938,6 +4013,7 @@ mod tests {
             root:     res!(fs::canonicalize(&root)),
             term_ceilings: vec![res!(fs::canonicalize(&root))],
             term_pinned: false,
+            verify_root: None,
             launcher: res!(test_launcher()),
         };
         let (w, _r) = tokio::io::duplex(1 << 16);
@@ -4056,6 +4132,58 @@ mod tests {
         assert!(is_browser_arg("--parent-window=12345"));
         assert!(!is_browser_arg("--report"));
         assert!(!is_browser_arg("/etc/passwd"));
+        Ok(())
+    }
+
+    /// A verify root the person wrote is honoured, one they did not is absent,
+    /// and one that names nothing on this machine is ignored rather than fatal.
+    #[test]
+    fn a_verify_root_is_the_persons_pin_or_nothing() -> Outcome<()> {
+        let dir = res!(scratch("verify-root-00"));
+        let tree = dir.join("app");
+        res!(fs::create_dir_all(&tree));
+
+        // Absent: every hand before this one, and the verb's fallback.
+        assert!(verify_root(&dir).is_none());
+
+        // Present and real: the pin, canonicalised.
+        res!(fs::write(dir.join(VERIFY_ROOT_FILE),
+            fmt!("{}", tree.display())), IO, File);
+        let got = ok!(verify_root(&dir).ok_or_else(|| err!(
+            "a verify-root.txt naming a real directory was ignored"; Test, Invalid)));
+        assert_eq!(got, res!(fs::canonicalize(&tree)));
+
+        // Present but naming nothing: ignored with a line on stderr, not a
+        // refusal, because a hand that stopped serving over a typo in a file
+        // the person owns could not be recovered from the browser.
+        res!(fs::write(dir.join(VERIFY_ROOT_FILE),
+            "no/such/path/anywhere"), IO, File);
+        assert!(verify_root(&dir).is_none());
+        Ok(())
+    }
+
+    /// A comment header in verify-root.txt does not become the root, matching
+    /// how the installer writes root.txt and the other two read it back.
+    #[test]
+    fn a_verify_root_skips_the_comment_lines() -> Outcome<()> {
+        let dir = res!(scratch("verify-root-01"));
+        let tree = dir.join("app");
+        res!(fs::create_dir_all(&tree));
+        res!(fs::write(dir.join(VERIFY_ROOT_FILE), fmt!(
+            "# pinned by the installer\n# another line\n{}", tree.display())), IO, File);
+        let got = ok!(verify_root(&dir).ok_or_else(|| err!(
+            "the first non-comment line was not read as the verify root"; Test, Invalid)));
+        assert_eq!(got, res!(fs::canonicalize(&tree)));
+        Ok(())
+    }
+
+    /// A relative verify root is ignored rather than joined onto somewhere,
+    /// because a relative root here is a path the person did not mean.
+    #[test]
+    fn a_relative_verify_root_is_ignored() -> Outcome<()> {
+        let dir = res!(scratch("verify-root-02"));
+        res!(fs::write(dir.join(VERIFY_ROOT_FILE), "just/a/name"), IO, File);
+        assert!(verify_root(&dir).is_none());
         Ok(())
     }
 }

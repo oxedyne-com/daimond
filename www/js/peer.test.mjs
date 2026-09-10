@@ -730,6 +730,16 @@ async function main() {
 	await runRecoveryAcceptance(phone.DaimondPeer, phone.DaimondLease, check);
 
 	// ══════════════════════════════════════════════════════════
+	// FIRE-AND-FORGET — once a desktop CLAIMS the lease it runs the
+	// turn to COMPLETION and syncs the result WITHOUT the phone
+	// staying awake. The phone dispatches, may background mid-turn
+	// (its watch/expedite loop frozen), renders the result on its next
+	// wake/pull without ever having DRIVEN the turn, and a wake
+	// re-check NEVER double-runs. (owner deferred fix 2026-09-10.)
+	// ══════════════════════════════════════════════════════════
+	await runFireAndForgetAcceptance(phone.DaimondPeer, phone.DaimondLease, check);
+
+	// ══════════════════════════════════════════════════════════
 	// THE NOMINATED RUNNER — a claim guard that defers to one device
 	// when it is FRESHLY awake, without ever stranding a turn: an
 	// offline or stale nominee is no barrier, and the stand-down is
@@ -981,6 +991,142 @@ async function runRecoveryAcceptance(P, L, check) {
 		});
 		check('automatic path refuses this device\'s OWN errand (D1a intact)',
 			res.ran === false && res.why === 'self-dispatched' && ran === 0);
+	}
+}
+
+// FIRE-AND-FORGET. After a desktop CLAIMS a handed-off turn, the RUNNER (the desktop)
+// drives it to completion — reconstruct → runTurn → pushResult → report → release —
+// entirely on the desktop, streaming progress on its OWN timer. The phone takes NO
+// part in the run: it dispatches, may background (its watch/expedite loop frozen), and
+// renders the answer on its next wake by pulling the parcel and collecting the report.
+// A wake re-check of its own errand never re-runs it. These properties are exactly what
+// let the owner put the phone away, and each check below fails if the turn were made to
+// depend on the phone driving it.
+async function runFireAndForgetAcceptance(P, L, check) {
+	const NOW  = 1_700_000_000_000;
+	const TURN = 't-faf', CHAT = 'c-faf', ANS = 'the thing is done';
+	const tick0 = async (n) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+
+	// The shared gateway PARCEL: the durable transcript the runner pushes its result
+	// into and the phone later pulls. A pull is a copy of the committed messages into
+	// the reader's own view — the ordinary append-only sync, modelled minimally.
+	let parcel = { version: 0, messages: [] };
+	const gatewayPush = (msgs) => { parcel = { version: parcel.version + 1, messages: JSON.parse(JSON.stringify(msgs)) }; return parcel.version; };
+	const hasAnswer = (msgs) => (msgs || []).some((m) => m && m.role === 'assistant'
+		&& String(m.iturn) === TURN && (m.content || '').trim());
+
+	// ── (a) DESKTOP CLAIMS, PHONE BACKGROUNDS MID-TURN → the turn still COMPLETES on
+	//    the desktop and the result is IN SYNC. The phone is modelled as doing NOTHING
+	//    for the whole run (its JS is throttled while backgrounded): it passes no dep,
+	//    ticks nothing, pulls nothing. The desktop's own progress timer is fired mid-run
+	//    to prove the stream is desktop-driven and needs no phone. ──
+	{
+		console.log('\nFire-and-forget — the desktop completes a handed-off turn while the phone is backgrounded');
+		L.forget();
+		const sync = makeLeaseSync({});
+		const timer = makeFakeTimer();
+		// The prompt is already in the reconstructed transcript (the dispatcher pushed it
+		// persist-first), exactly as the real runner reconstructs it (promptInTranscript).
+		const deskChat = { id: CHAT, messages: [{ role: 'user', content: 'do the thing', mid: TURN, iturn: TURN, ts: NOW - 10 }] };
+		let phoneTicks = 0;			// the phone's watch loop — must stay 0 (it is backgrounded)
+		let progressPushes = 0, reported = null;
+		let releaseTurn;
+		const turnGate = new Promise((r) => { releaseTurn = r; });
+		const errand = P.makeErrand({ turnId: TURN, chatId: CHAT, prompt: 'do the thing',
+			eid: 'e-faf', deadline: NOW + P.DISPATCH_DEADLINE_MS, dispatchedBy: 'PHONE' });
+		const running = P.runErrand(errand, {
+			selfId: 'DESK', cas: P.syncCas(sync), now: () => NOW,
+			setTimer: timer.set, clearTimer: timer.clear,
+			finished:    async () => false,
+			reconstruct: async () => ({ chat: deskChat }),
+			// The turn is "still running" until the test releases the gate — the window in
+			// which the phone backgrounds. It folds the answer only once released.
+			runTurn: async (ctx, prompt, opts) => {
+				await opts.onProgress();				// a read-only liveness tick
+				await turnGate;
+				P.foldAssistant(ctx.chat, { mid: 'a-faf', turnId: TURN, text: ANS, ts: NOW });
+			},
+			abort: () => {},
+			pushProgress: async () => { progressPushes++; },						// desktop-owned stream
+			pushResult:   async () => gatewayPush(deskChat.messages),				// commit to the parcel
+			post:         async (r) => { reported = r; },
+			ack:          async () => {},
+		});
+		await tick0(6);				// let take / reconstruct / claimed→running / the timers start
+		// MID-TURN. The phone is backgrounded and drives nothing. Fire the DESKTOP's own
+		// 2s progress timer a few times: the stream advances with no phone involvement.
+		const prog = timer.handles.find((h) => h.live && h.ms === 2000);
+		check('(a) the desktop started its OWN progress-streaming timer (no phone needed to stream)', !!prog);
+		if (prog) { for (let i = 0; i < 3; i++) await prog.fn(); }
+		check('(a) mid-turn the desktop streamed on its own and the phone drove nothing',
+			progressPushes >= 1 && phoneTicks === 0);
+		check('(a) the answer is NOT in sync yet (the turn is still running)', !hasAnswer(parcel.messages));
+		// The phone stays backgrounded through the finish: release the turn and let the
+		// desktop complete with the phone still doing nothing.
+		releaseTurn();
+		const res = await running;
+		check('(a) the desktop RAN the turn and it COMPLETED (res.done), phone still idle',
+			res.ran === true && res.done === true && phoneTicks === 0);
+		check('(a) the ANSWER is now in the synced parcel — the result reached sync with no phone',
+			hasAnswer(parcel.messages));
+		check('(a) a DONE report was posted and the lease RELEASED (the runner finished cleanly)',
+			!!reported && reported.status === 'done' && sync.leases()[TURN].mode === 'released');
+		check('(a) every progress/liveness timer was stopped — nothing left driving the turn',
+			timer.live() === 0);
+
+		// ── (b) THE PHONE RENDERS THE COMPLETED TURN ON ITS NEXT WAKE/PULL, without ever
+		//    having driven it. On wake it pulls the parcel (the answer merges beside its
+		//    dispatched placeholder) and reads the done report; recoverDecision then says
+		//    DO NOT run it here, and uiState reads 'done'. ──
+		console.log('\nFire-and-forget — the phone renders the finished turn on wake, having driven nothing');
+		const phoneChat = { id: CHAT, messages: [
+			{ role: 'user', content: 'do the thing', mid: TURN, iturn: TURN, ts: NOW - 10 },
+			// the local "dispatched" placeholder the phone drew at send time
+			{ role: 'assistant', content: '', why: 'dispatched', iturn: TURN, ts: NOW - 9 },
+		] };
+		check('(b) before the wake pull the phone holds only the empty dispatched placeholder',
+			!hasAnswer(phoneChat.messages));
+		// THE WAKE PULL: copy the committed parcel into the phone's view (append-only union).
+		const seen = new Set(phoneChat.messages.map((m) => m.mid));
+		for (const m of parcel.messages) if (!seen.has(m.mid)) phoneChat.messages.push(JSON.parse(JSON.stringify(m)));
+		const doneReport = reported;					// collected from the post box on the same wake
+		const dPlaceholder = { why: 'dispatched', iturn: TURN, deadline: NOW + P.DISPATCH_DEADLINE_MS };
+		const leaseRec = sync.leases()[TURN];			// released
+		check('(b) after the wake pull the phone SHOWS the answer (rendered, not driven)',
+			hasAnswer(phoneChat.messages));
+		check('(b) recoverDecision tells the phone NOT to run a FINISHED turn (no phone-driven re-run)',
+			P.recoverDecision(dPlaceholder, leaseRec, /* finished */ true, 'PHONE', NOW + 1000) === false);
+		check('(b) uiState reads the dispatched turn as "done" once its report is in',
+			P.uiState(dPlaceholder, leaseRec, doneReport, 'PHONE', NOW + 1000) === 'done');
+
+		// ── (c) A WAKE RE-CHECK NEVER DOUBLE-RUNS. The phone, back in the foreground,
+		//    re-collects its OWN self-posted errand and routes it to the runner: the
+		//    automatic path stands down on its own dispatch (D1a). And any OTHER device
+		//    that re-collects it after completion stands down on `finished` (D1b). Either
+		//    way the turn ran exactly once and the lease is not re-claimed. ──
+		console.log('\nFire-and-forget — a wake re-check re-collects the errand but never re-runs it');
+		let selfRuns = 0;
+		const selfRes = await P.runErrand(errand, {			// allowSelf omitted → the automatic path
+			selfId: 'PHONE', cas: P.syncCas(sync), now: () => NOW + 2000,
+			finished:    async () => true,					// the done report/answer are in
+			reconstruct: async () => { selfRuns = -99; return {}; },
+			runTurn:     async () => { selfRuns++; },
+			abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {},
+		});
+		check('(c) the phone does NOT re-run its OWN dispatch on wake (self-dispatch stand-down)',
+			selfRes.ran === false && selfRes.why === 'self-dispatched' && selfRuns === 0);
+		let peerRuns = 0;
+		const peerRes = await P.runErrand(errand, {			// a different device, after completion
+			selfId: 'DESK2', cas: P.syncCas(sync), now: () => NOW + 2000,
+			finished:    async () => true,					// a done report exists for the turn
+			reconstruct: async () => { peerRuns = -99; return {}; },
+			runTurn:     async () => { peerRuns++; },
+			abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {},
+		});
+		check('(c) another device that re-collects a FINISHED turn stands down (no second run/charge)',
+			peerRes.ran === false && peerRes.why === 'already-done' && peerRuns === 0);
+		check('(c) the lease still names the desktop as its released holder — no re-claim on wake',
+			sync.leases()[TURN].holder === 'DESK' && sync.leases()[TURN].mode === 'released');
 	}
 }
 

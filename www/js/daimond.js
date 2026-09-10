@@ -3647,9 +3647,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Any device on the roster, not only this one. A user standing at their
 	/// laptop is exactly who wants to say which of these lines is the phone, and
 	/// the stamp is what carries that back to the phone.
-	function renameDevice(id, label) {
+	///
+	/// `derived` seeds a line for a device known only from its presence beat -- one the
+	/// panel drew from the live beat map before its roster line had synced here (the
+	/// disjoint-roster case). Without it a rename on such a device found no line and
+	/// silently did nothing; with it the name has somewhere to live and travels on the
+	/// next parcel like any other.
+	function renameDevice(id, label, derived) {
+		if (!DEVICE_ID_RE.test(String(id || ''))) return null;
 		var reg = loadDevices(), d = reg[id];
-		if (!d) return null;
+		if (!d) {
+			var seed = String(derived || '').slice(0, DEVICE_NAME_MAX);
+			if (!seed) return null;			// nothing to seed a line from
+			var t0 = Date.now();
+			d = reg[id] = { name: seed, label: '', created: t0, namedAt: 0, seen: t0, build: '' };
+		}
 		var next = String(label == null ? '' : label).trim().slice(0, DEVICE_NAME_MAX);
 		if (next === d.label) return reg;			// nothing changed, nothing to push
 		d.label   = next;
@@ -12110,6 +12122,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		delete _runnerParked[tid];	// consumed by runErrand's parkRequested before this runs
 	}
 
+	/// Is a handed-off turn for this chat running on THIS device right now? A runner
+	/// reconstructs the errand's chat into a DETACHED `ctx.chat` and never sets the
+	/// on-screen `current` -- that is `selectChat`'s alone -- so a gather round gated on
+	/// `current` would never run on the device actually executing the turn. This is the
+	/// runner's answer to the question `current === chat` answers on screen: the chat is
+	/// live here because a live errand names it. `_runnerCtx` is registered around
+	/// `runErrand` (runnerCtxBegin/End) and carries the errand's chatId.
+	function chatIsActiveErrand(chatId) {
+		var want = String(chatId || '');
+		if (!want) return false;
+		var ids = Object.keys(_runnerCtx);
+		for (var i = 0; i < ids.length; i++) {
+			var rc = _runnerCtx[ids[i]];
+			if (rc && String(rc.chatId) === want) return true;
+		}
+		return false;
+	}
+
+	/// May a gather round steer this chat here -- because the reader is looking at it,
+	/// or because this device is the runner executing its handed-off turn? Replaces the
+	/// bare `current === chat` guard so a fan-out's next round runs on the runner, where
+	/// the turn is, rather than being stranded until the chat happens to be on screen.
+	function chatShowingOrRunning(chat) {
+		if (!chat) return false;
+		if (current && current.id === chat.id) return true;
+		return chatIsActiveErrand(chat.id);
+	}
+
 	/// PARK this runner turn: record the intent, hard-abort the in-flight turn, and
 	/// answer 'deny' so the pending act does not happen while the turn tears down.
 	/// runErrand then reports parked/terminal and releases the lease.
@@ -13603,6 +13643,41 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				homeView.appendChild(shareNote);
 			}
 
+			// ── TRAINING WHEELS — remove after beta. ─────────────────────
+			//
+			// "Share all data for debugging": the temporary, owner-requested debug
+			// aid. OFF by default and per-device. When on, this device ships its
+			// DECRYPTED diagnostics -- the whole lot -- to the developer, with the
+			// provider key and master key reduced to fingerprints, and a prominent
+			// header indicator warns while it is on. The switch is here; everything
+			// else lives in www/js/debugshare.js and lifts out in one pass. See its
+			// header. Guarded on the global so a build without the script is inert.
+			if (window.DEBUG_SHARE) {
+				homeView.appendChild(el('div', 'admin-sec',
+					tOr('home.sec_debugshare', 'Debug data sharing')));
+				var dsOn = DEBUG_SHARE.isOn();
+				var dsNote = el('div', 'admin-note',
+					tOr('settings.debugshare_note',
+						'Beta training-wheel, to be removed. When on, this shares ALL your '
+							+ 'Daimond data — your chats, costs, devices and settings — with the '
+							+ 'developer for debugging. Your keys are never shared. Off by default.'));
+				var dsBtn = item('', function () {
+					DEBUG_SHARE.setEnabled(!DEBUG_SHARE.isOn());
+					var now = DEBUG_SHARE.isOn();
+					dsBtn.textContent = now
+						? tOr('settings.debugshare_off', 'Stop sharing data for debugging')
+						: tOr('settings.debugshare_on', 'Share all data for debugging (temporary)');
+				}, true);
+				dsBtn.textContent = dsOn
+					? tOr('settings.debugshare_off', 'Stop sharing data for debugging')
+					: tOr('settings.debugshare_on', 'Share all data for debugging (temporary)');
+				dsBtn.title = tOr('settings.debugshare_help',
+					'Beta only, and temporary. When on, everything on this device — chats, '
+						+ 'costs, devices, settings — is shared with the developer to debug a '
+						+ 'problem. Your provider key and passphrase key are never shared.');
+				homeView.appendChild(dsNote);
+			}
+
 			// Several people can share this browser, each with their own account. Switching locks
 			// this one first (its keys are forgotten), then reloads into the other.
 			if (window.DaimondAccounts) {
@@ -13842,7 +13917,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var isGhost = !!live.ghost[id];
 				if (isStale) r.classList.add('is-stale');
 				if (isGhost) r.classList.add('is-ghost');
-				var shown = deviceShownName(d);
+				// What the row is CALLED. The user's own name for the device wins; failing
+				// that, a LIVE device's OWN broadcast label -- what it beats under, carried in
+				// presence -- is preferred over the stored `name`. That `name` is a generic
+				// self-description ("Chrome on Linux") that two machines derive identically, so
+				// resting on it collapses two live desktops onto one indistinguishable line
+				// (owner trace, 2026-09-10); the presence label is each device's own and tells
+				// them apart. A device not beating has no presence label and keeps its stored
+				// name. Display only -- `deviceNameKey` (the ghost-sweep keying) is untouched.
+				var liveLabel = (live.live[id] && presence[id]) ? String(presence[id].name || '') : '';
+				var shown = (d && d.label) || liveLabel || (d && d.name) || t('devices.unknown');
 				var nameEl = el('span', 'device-name', shown);
 				// The row shortens this with CSS ellipsis, which is fine on screen and
 				// says nothing to a mouse that never hovers or a screen reader that
@@ -13918,7 +14002,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				b.textContent = '✎';		// a pencil, matching the drawer's line icons
 				b.title = t('devices.rename_aria', { name: shown });
 				b.setAttribute('aria-label', b.title);
-				b.addEventListener('click', function () { askDeviceName(id); });
+				b.addEventListener('click', function () { askDeviceName(id, shown); });
 				r.appendChild(b);
 				// Not on this device's own row. Removing the line the app is
 				// writing would only re-mint it on the next collect, so the
@@ -14080,19 +14164,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// An empty box is not a cancelled edit: it clears the name, which is a
 		/// rename like any other and carries a stamp, so the clearing travels to
 		/// the other devices too. Cancelling is what leaves everything alone.
-		async function askDeviceName(id) {
+		async function askDeviceName(id, shown) {
 			var d = loadDevices()[id];
-			if (!d) return;
-			var derived = d.name || t('devices.unknown');
+			// A live device can be on the panel from its presence beat alone, before its
+			// roster line has reached this device (the disjoint-roster case the display
+			// already handles). Rename has to work on it too, so the derived name -- and the
+			// current value -- fall back to what the row is showing rather than returning
+			// early, which is what left the pencil dead on those rows (owner trace, 2026-09-10).
+			var derived = (d && d.name) || String(shown || '') || t('devices.unknown');
 			var chosen = await promptDialog(t('devices.rename_title'), {
 				message:     t('devices.rename_body', { derived: derived }),
-				value:       d.label || '',
+				value:       (d && d.label) || '',
 				placeholder: derived,
 				okLabel:     t('common.save'),
 				validate:    function () { return ''; },	// empty is how a name is cleared
 			});
 			if (chosen == null) return;					// cancelled, Escape, or the scrim
-			renameDevice(id, chosen);
+			renameDevice(id, chosen, derived);
 			// The name is the user's own words, so it travels only inside the sealed
 			// parcel — this asks for that parcel to go now rather than at the next
 			// change, and does nothing at all when sync is off.
@@ -15650,6 +15738,84 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return { chat: chat, app: app };
 	}
 
+	// How long the runner waits for a handed-off turn's fan-out to settle before it
+	// reports the errand done. The ABSOLUTE cap sits well below the lease deadline, so a
+	// wedged fan-out hands back rather than holding the lease to its end; the STALL cap
+	// ends the wait when nothing is progressing at all (a worker parked for a consent no
+	// one will grant on a runner), while a live worker or a running round keeps resetting
+	// it so a genuinely iterating turn is never cut short.
+	var AGENTIC_SETTLE_ABS_CAP_MS = 10 * 60 * 1000;
+	var AGENTIC_SETTLE_STALL_MS   = 60 * 1000;
+
+	/// Is this chat's agentic fan-out still in flight? True while a worker of its is
+	/// queued or running, a batch of its is awaiting its last worker, a gather round is
+	/// pending across the setTimeout gap (`roundPending`), or a turn of it is generating.
+	/// The runner waits on exactly this going false before it reports the errand done, so
+	/// a turn that fanned out is never called finished with its workers unresolved.
+	function chatAgenticActive(chatId) {
+		var want = String(chatId || '');
+		if (!want) return false;
+		if (Workers.roundPending && Workers.roundPending[want]) return true;
+		for (var i = 0; i < chats.length; i++) {
+			if (chats[i] && chats[i].id === want && chats[i]._generating) return true;
+		}
+		for (var j = 0; j < Workers.runs.length; j++) {
+			var r = Workers.runs[j];
+			if (r && String(r.chatId) === want
+				&& (r.status === 'queued' || r.status === 'running')) return true;
+		}
+		var bk = Object.keys(Workers.batches);
+		for (var k = 0; k < bk.length; k++) {
+			var b = Workers.batches[bk[k]];
+			if (b && String(b.chatId) === want) return true;
+		}
+		return false;
+	}
+
+	/// Is anything actually PROGRESSING this chat's fan-out -- a live worker, a running
+	/// round, or a round pending -- rather than merely waiting (a batch held open by a
+	/// worker parked for a consent that will not come)? The stall clock resets on
+	/// progress and runs on its absence, so a genuinely iterating turn waits as long as
+	/// it needs while a wedged one is handed back at the stall cap.
+	function chatAgenticProgressing(chatId) {
+		var want = String(chatId || '');
+		if (Workers.roundPending && Workers.roundPending[want]) return true;
+		for (var i = 0; i < chats.length; i++) {
+			if (chats[i] && chats[i].id === want && chats[i]._generating) return true;
+		}
+		for (var j = 0; j < Workers.runs.length; j++) {
+			var r = Workers.runs[j];
+			if (r && String(r.chatId) === want
+				&& (r.status === 'queued' || r.status === 'running')) return true;
+		}
+		return false;
+	}
+
+	/// Drive a handed-off agentic turn's fan-out to completion ON THE RUNNER, so the
+	/// errand reports `done` only after the whole iteration has settled -- not after the
+	/// fan-out was merely launched. The rounds themselves run through the ordinary
+	/// gather path (`gather` -> `deliverToChat`), whose on-screen guard now also admits
+	/// the runner (`chatShowingOrRunning`); this only WAITS on them, reading worker and
+	/// batch state, so it re-dispatches nothing and cannot double-run. Bounded by an
+	/// absolute cap and a stall cap, so a fan-out wedged on a consent no one will grant
+	/// hands the turn back rather than holding the lease open to its deadline.
+	async function drainAgenticRounds(chat) {
+		if (!chat || !chat.id) return;
+		var id = chat.id;
+		if (!chatAgenticActive(id)) return;			// the common non-dispatching turn returns at once
+		var startAt = Date.now();
+		var absBy   = startAt + AGENTIC_SETTLE_ABS_CAP_MS;
+		var stallBy = startAt + AGENTIC_SETTLE_STALL_MS;
+		function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+		while (chatAgenticActive(id)) {
+			var now = Date.now();
+			if (now > absBy) break;						// absolute ceiling, well under the lease deadline
+			if (chatAgenticProgressing(id)) stallBy = now + AGENTIC_SETTLE_STALL_MS;
+			else if (now > stallBy) break;				// held open with nothing progressing
+			await pause(120);
+		}
+	}
+
 	/// Build the deps `DaimondPeer.runErrand` runs an errand over. Shared by the
 	/// collector's onErrand handler (a PEER running a dispatched errand) and by the
 	/// dispatching device's own recovery-on-return (`allowSelf`), so BOTH go through
@@ -15731,6 +15897,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// D3 — the prompt is already in the reconstructed transcript, so tell
 				// runTurn to run against it rather than append a second copy.
 				await runTurn(c.chat, prompt, { promptInTranscript: !!(ropts && ropts.promptInTranscript), turnId: ropts && ropts.turnId });
+				// The turn has ended, but if it fanned out workers the answer is not in
+				// yet: the gather round that reads their reports runs a macrotask later,
+				// and on a runner it runs at all only because `chatShowingOrRunning` now
+				// admits it. Wait for the whole fan-out to settle here, INSIDE the errand
+				// turn runErrand awaits -- so `done` is posted after the real end of the
+				// turn, not after the fan-out was merely launched, and the workers' output
+				// is synced back in `pushResult` rather than stranded in the runner's
+				// local transcript. A turn that fanned out nothing returns from here at once.
+				await drainAgenticRounds(c.chat);
 			},
 			abort: function () { try { if (ctx && ctx.chat && ctx.chat.app) ctx.chat.app.abort(); } catch (e) { /* idempotent */ } },
 			pushResult: async function () {
@@ -16399,6 +16574,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 			}
 			for (var k = 0; k < jobs.length; k++) {
+				// NO PREMATURE LOCAL, on the WAKE path too (owner rule 2026-09-09). The
+				// backstop timer (runDispatchFallback) already prefers re-handing an orphan
+				// to the NEXT live non-mobile desktop before running it here; the wake path
+				// did NOT, so a phone returning to the foreground grabbed the turn and ran it
+				// LOCALLY even with a live desktop right there. A turn run on the phone then
+				// STALLS the instant the phone backgrounds again (iOS throttles its JS) and
+				// only advances while it is foregrounded -- the fire-and-forget failure the
+				// owner hit. recoverDecision above already confirmed no live foreign lease
+				// holds this turn, so nothing is running; the re-dispatch goes through the
+				// SAME take-if-vacant lease, so it stays single-runner and cannot double-bill.
+				// Run local only when NO other live desktop remains -- the phone is the last
+				// resort, exactly as the backstop decides it. But on the WAKE path re-hand
+				// ONLY to a desktop that has genuinely SERVICED recently (requireGenuine): a
+				// desktop that is merely BEATING but idle would take the turn and leave this
+				// returning user waiting a whole backstop cycle, so a bare-beating phantom
+				// recovers LOCALLY at once here instead. The seq-222 backstop below keeps
+				// seq-225 beat-based seating for the timer-driven retry.
+				try { if (await retryNextDesktopBeforeLocal(jobs[k].chat, jobs[k].m, { requireGenuine: true })) continue; }
+				catch (e) { /* fall through to the local recovery net */ }
 				await recoverOneLocally(jobs[k].chat, jobs[k].m);
 			}
 		} finally { _recovering = false; }
@@ -16503,7 +16697,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// another desktop (so the caller does NOT run local), false when none remains (run
 	/// local). The lease is still the single-runner arbiter, so this only changes WHERE the
 	/// next attempt is seated, never how many run.
-	async function retryNextDesktopBeforeLocal(chat, m) {
+	async function retryNextDesktopBeforeLocal(chat, m, opts) {
 		try {
 			if (!window.DaimondPeer || !DaimondPeer.handoffTarget) return false;
 			var self = selfDeviceId();
@@ -16534,6 +16728,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!res || !res.target || res.target.deviceId === self) return false;	// no other desktop -> local
 			var next  = res.target.deviceId;
 			var label = res.target.name || deviceLabelFor(next);
+			// WAKE-PATH STRICTNESS (owner decision 2026-09-10, option 2). On the
+			// visibilitychange rescue the user is already looking at a stalled turn, so a
+			// re-hand must go to a desktop that has ACTUALLY SERVICED recently -- a fresh,
+			// present serviced_at -- not one that is merely BEATING. `recGenuine` is NOT strict
+			// enough here: it trusts the bare beat when serviced_at is ABSENT (its old-gateway
+			// fallback, peer.js), and the gateway stamps serviced_at=0 for a seq-217 device that
+			// is aware but NOT servicing (gateway presence.rs) -- so neither an absent nor a zero
+			// serviced_at is proof of servicing. Require serviced_at PRESENT, non-zero and fresh:
+			// only a desktop genuinely running errands right now takes the re-hand; a merely-
+			// beating phantom (serviced_at null or 0) recovers LOCALLY at once on wake. seq 225
+			// seats the SEND on the bare beat so a cold iOS foreground is not misrouted, and the
+			// seq-222 backstop re-hands on the bare beat on its own timer -- both unchanged (they
+			// pass no opts). Against an old gateway that never relays serviced_at every peer reads
+			// null, so the wake path always recovers local -- the safe default, the backstop still
+			// covering a genuine peer. An already-orphaned turn on wake carries no cold-GET latency
+			// to protect, so it can be stricter HERE without reintroducing the send-time misroute.
+			if (opts && opts.requireGenuine) {
+				var grec = presence[next];
+				var svc  = grec ? _msNum(grec.servicedAt) : 0;		// null/absent and 0 both -> 0
+				var served = !!grec && svc > 0
+					&& (Date.now() - svc) <= (DaimondPeer.DISPATCH_FRESH_MS || 90000);
+				if (!served) {
+					diag('dispatch retry', 'turn=' + tid + ' next=' + String(next).slice(0, 8)
+						+ ' beating-not-serviced on wake -> local now');
+					return false;
+				}
+			}
 			// Record the retry so the NEXT backstop excludes this seat too, and persist so a
 			// reload does not re-chase a device already tried.
 			m.triedDevices = tried.concat([next]);
@@ -21786,6 +22007,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			load:             loadDevices,
 			merge:            mergeDevices,
 			remove:           removeDevice,
+			rename:           renameDevice,
 			nominee:          nominatedDeviceId,
 			nominate:         nominateDevice,
 			adoptNomination:  adoptNomination,
@@ -24300,7 +24522,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var canRun = !workersHeld()
 				&& b.depth < this.MAX_GATHER_DEPTH
 				&& !chat._generating
-				&& current && current.id === chat.id
+				&& chatShowingOrRunning(chat)
 				&& !!(window.DaimondModels && DaimondModels.resolve(chat.provider, chat.model));
 			if (!canRun) {
 				// No turn. The reports go in as an assistant message, which is what they
@@ -24323,11 +24545,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Deferred for the reason the Diamond path defers: this runs inside the
 			// finishing worker's `finally`, and re-entering the turn machinery from
 			// under it races the bookkeeping.
+			//
+			// A gather round is a fresh turn started a macrotask from now. On a runner
+			// (no on-screen `current`) `drainAgenticRounds` waits on the chat settling
+			// before the errand reports `done`, so the round is marked pending across the
+			// gap between the last worker finishing here and the round's turn going busy
+			// -- otherwise, in that one macrotask, no worker is live, the batch is already
+			// deleted and `_generating` is not yet set, and the drain would read the chat
+			// settled and report `done` before the round had run. Cleared when the round's
+			// turn resolves: by then it has either dispatched its own next fan-out (its
+			// workers already queued) or produced the final answer, so there is no idle
+			// gap left for the drain to mistake for completion.
+			self.roundPending[b.chatId] = true;
 			setTimeout(function () {
 				var c = chats.find(function (x) { return x.id === b.chatId; });
-				if (!c || c._generating) return;
+				if (!c || c._generating) { delete self.roundPending[b.chatId]; return; }
 				self.gatherDepth[c.id] = (b.depth | 0) + 1;
-				runTurn(c, instruction);
+				Promise.resolve(runTurn(c, instruction))
+					.catch(function () { /* the round's own error handling stands */ })
+					.then(function () { delete self.roundPending[b.chatId]; });
 			}, 0);
 		},
 
@@ -24337,6 +24573,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// fan-out in flight, not about the conversation, and a reload that revived it
 		/// would re-arm a cap against a round nobody is running.
 		gatherDepth: {},
+
+		/// A gather round has been scheduled for this chat id but its turn has not yet
+		/// gone busy. Set in `deliverToChat` across the setTimeout gap and cleared when the
+		/// round's turn resolves. Read by `chatAgenticActive` so a runner draining a
+		/// fan-out does not read the chat as settled in the one macrotask between the last
+		/// worker finishing and the round starting. Not persisted, like `batches`: a fact
+		/// about a fan-out in flight, meaningless across a reload.
+		roundPending: {},
 
 		/// Does this chat have a worker that has not finished?
 		///
@@ -43151,6 +43395,64 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		e.preventDefault();
 		e.returnValue = '';
 	});
+
+	// ── TRAINING WHEELS — remove after beta. ─────────────────────
+	//
+	// The one data seam for the temporary debug-sharing feature (the toggle is in
+	// Settings; everything else is www/js/debugshare.js). This hands that module a
+	// function returning THIS closure's decrypted, private-scope state -- the
+	// transcripts, config, roster, presence and election it cannot otherwise see --
+	// which the module redacts (keys to fingerprints) and ships only while the
+	// owner has the switch on. READS existing state only; touches nothing. Lifts
+	// out with the module in one grep of `DEBUG_SHARE`.
+	if (window.DEBUG_SHARE && DEBUG_SHARE.registerProvider) {
+		DEBUG_SHARE.registerProvider(async function () {
+			var transcripts = null;
+			try { transcripts = await chatsWithTranscripts(storedChats()); } catch (e) { transcripts = null; }
+			var roster = null;
+			try { roster = loadDevices(); } catch (e) {}
+			var presence = null;
+			try { presence = (window.DaimondPresence && DaimondPresence.snapshot && DaimondPresence.snapshot()) || null; } catch (e) {}
+			var election = null;
+			try {
+				election = {
+					self:      selfDeviceId(),
+					nominated: nominatedDeviceId(),
+					trace:     _electionTrace,
+				};
+			} catch (e) {}
+			// The config goes whole; the module's redactor fingerprints `apiKey`,
+			// `apiKeyEnc`, `pushToken` and anything else key-shaped before it ships.
+			var config = null;
+			try { config = JSON.parse(JSON.stringify(cfg)); } catch (e) { config = null; }
+			var tokenStats = null;
+			try {
+				tokenStats = (Array.isArray(chats) ? chats : []).map(function (c) {
+					var win = 0;
+					try {
+						win = (window.DaimondPricing && DaimondPricing.contextWindow)
+							? (DaimondPricing.contextWindow(c.model, c.provider || '') || 0) : 0;
+					} catch (e) {}
+					return {
+						id:       c.id,
+						name:     c.name,
+						model:    c.model || '',
+						provider: c.provider || '',
+						messages: Array.isArray(c.messages) ? c.messages.length : (c.msgCount || 0),
+						contextWindow: win,
+					};
+				});
+			} catch (e) {}
+			return {
+				config:      config,
+				transcripts: transcripts,
+				roster:      roster,
+				presence:    presence,
+				election:    election,
+				tokenStats:  tokenStats,
+			};
+		});
+	}
 
 	boot().then(handleCheckoutReturn);
 })();

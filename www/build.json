@@ -1,1 +1,1 @@
-{"build":"fbc1c7cf6cb1","note":"Seat hand-off from live presence: worker, else another live desktop, else local; never fall straight to local"}
+{"build":"359fae6841a4","note":"Fire-and-forget hand-off, Devices-panel fixes, agentic gather-on-runner, and a temporary debug-share toggle"}

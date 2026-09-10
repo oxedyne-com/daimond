@@ -1517,6 +1517,12 @@
      early so its no-op log() is defined before any seam that calls it, and its
      stored on/off switch is read before the first pull. -->
 <script src="js/diag.js"></script>
+<!-- TRAINING WHEELS — remove after beta. debugshare.js: the temporary,
+     owner-requested "share all data for debugging" aid. Classic script, so it
+     defines window.DEBUG_SHARE before the deferred daimond.js module registers
+     its data provider. Off by default; near-zero footprint when off. Lifts out
+     by deleting this tag and www/js/debugshare.js. -->
+<script src="js/debugshare.js"></script>
 <!-- safe.js next, and it must be next: it reads the trail breadcrumb.js has
      just written to decide whether this app is looping, and sync.js consults
      its answer from the first moment a session exists. -->
