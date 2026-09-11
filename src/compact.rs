@@ -101,6 +101,23 @@ pub const FOLD_AT:     f64 = 0.65;	// default, overridden by the user's own figu
 pub const FOLD_AT_MIN: f64 = 0.1;	// below this a fold leaves nothing standing
 pub const FOLD_AT_MAX: f64 = 0.95;	// above it the provider refuses before the fold runs
 
+/// The most context any one round will carry, whatever the model's window.
+///
+/// `fold_at` is a FRACTION of the window, so a model with a very large window folds only
+/// near a very large figure: at 0.65 a 1,310,720-token window does not fold until ~852k,
+/// which on a long agentic turn means every round re-sends a context grown to half a million
+/// tokens -- billed in full even though almost all of it is cached, and that carry is where a
+/// big-window bill goes.  This ceiling caps the EFFECTIVE budget below the window's fraction,
+/// so the same turn folds at the cap and the per-round carry stays bounded.
+///
+/// 200k rather than lower: it sits above the default window's own fraction (131,072 * 0.65 =
+/// ~85k), so a default- or small-window model reaches the cap only when its fraction already
+/// would -- nothing about those changes.  It is the largest working context that still holds
+/// a big window's carry to well under half of what was observed (~524k on GLM), so a long
+/// turn folds a handful of times rather than never, and a shorter turn never reaches it at
+/// all.  A lower value would fold more often, and each fold busts the prefix cache once.
+pub const ABSOLUTE_CAP: u64 = 200_000;
+
 /// Fraction of the budget kept verbatim at the end of the conversation.
 ///
 /// The recent exchanges are the ones that must survive intact: a model that has just been
@@ -242,17 +259,22 @@ impl Limits {
 
 	/// The largest prompt this turn should send, in tokens.
 	///
-	/// Two ceilings, and the lower wins.  The first is the fraction of the window a fold is
-	/// meant to trigger at.  The second is what is left of the window once the reply the
-	/// model is allowed to generate has been subtracted -- on a small window the reply is
-	/// the bigger share, and a budget that ignored it would leave the prompt legal and the
-	/// call still refused.
+	/// Ceilings, and the lowest wins.  The first is the fraction of the window a fold is
+	/// meant to trigger at, itself held under [`ABSOLUTE_CAP`] so a very large window cannot
+	/// let the per-round carry balloon.  The second is what is left of the window once the
+	/// reply the model is allowed to generate has been subtracted -- on a small window the
+	/// reply is the bigger share, and a budget that ignored it would leave the prompt legal
+	/// and the call still refused.
 	///
 	/// # Arguments
 	/// * `max_completion` - The cap the client puts on generated tokens.
 	pub fn budget(&self, max_completion: u32) -> u64 {
 		let w = if self.window == 0 { DEFAULT_WINDOW } else { self.window };
-		let by_fraction = (w as f64 * self.fold_at.clamp(FOLD_AT_MIN, FOLD_AT_MAX)) as u64;
+		// The window's fraction, but never above the absolute ceiling: on a large-window model
+		// the fraction folds far too late, so the carry -- not any one message -- is what runs
+		// the bill up.  See [`ABSOLUTE_CAP`].
+		let by_fraction = ((w as f64 * self.fold_at.clamp(FOLD_AT_MIN, FOLD_AT_MAX)) as u64)
+			.min(ABSOLUTE_CAP);
 		// Never more than half the window to the reply, however big the client's cap is.
 		// A cap larger than the whole window is not a reason to leave no budget for the
 		// conversation; it is a reason to ignore most of the cap.
@@ -1321,6 +1343,26 @@ fn unfence(raw: &str) -> &str {
 // │ Recognising the failure                                        │
 // └───────────────────────────────────────────────────────────────┘
 
+/// Should the conversation be folded before this round goes out?
+///
+/// A fold the caller forces always happens.  Otherwise it is size, read TWO ways against the
+/// same budget: the byte estimate the gauge can compute up front, and the provider's real
+/// `prompt_tokens` from the last round.  The estimate UNDER-counts -- the ratio is an average
+/// and a growing tool log tokenises dearer than prose -- so a turn can sit under the estimated
+/// budget while the real prompt already passed it, which is the case the absolute cap in
+/// [`Limits::budget`] exists to catch and which the estimate alone would miss until a refusal.
+/// Either figure over the budget folds, so the cap is enforced against what the provider
+/// actually charged and not only what this app guessed.
+///
+/// # Arguments
+/// * `est_tokens` - The gauge's byte-based estimate of the prompt about to be sent.
+/// * `real_tokens` - The provider's `prompt_tokens` from the last round, or 0 if none yet.
+/// * `budget` - The largest prompt this turn should send; see [`Limits::budget`].
+/// * `forced` - Whether the caller has asked for a fold regardless of size.
+pub fn needs_fold(est_tokens: u64, real_tokens: u64, budget: u64, forced: bool) -> bool {
+	forced || est_tokens > budget || real_tokens > budget
+}
+
 /// Whether a failed round looks like the context window being exceeded.
 ///
 /// Two ways of telling, and the first is now the ordinary one.  The provider's own words
@@ -1408,6 +1450,48 @@ mod tests {
 		l.fold_at = 0.0;
 		assert_eq!((100_000.0 * FOLD_AT_MIN) as u64, l.budget(0));
 	}
+
+	#[test]
+	fn test_a_large_window_folds_at_the_cap_not_its_fraction_00() {
+		// GLM-5.3's real window. At 0.65 the fraction is ~852k, which on a long agentic turn
+		// never fires and lets the per-round carry balloon -- the whole reason for the cap.
+		let mut l = Limits::default();
+		l.window = 1_310_720;
+		// The fraction would be far larger, so the cap is what the budget returns.
+		assert_eq!(ABSOLUTE_CAP, l.budget(0));
+		assert!((l.window as f64 * FOLD_AT) as u64 > ABSOLUTE_CAP,
+			"the fraction must be the bigger of the two for this test to mean anything");
+	}
+
+	#[test]
+	fn test_a_small_window_still_folds_at_its_fraction_00() {
+		// Below the cap the fraction wins unchanged: the default window and a small one both
+		// behave exactly as before the cap existed.
+		let mut l = Limits::default();
+		l.window = 131_072;
+		assert_eq!((131_072.0 * FOLD_AT) as u64, l.budget(0));
+		assert!((131_072.0 * FOLD_AT) as u64 <= ABSOLUTE_CAP);
+		l.window = 100_000;
+		assert_eq!(65_000, l.budget(0));
+	}
+
+	#[test]
+	fn test_the_real_token_trigger_folds_where_the_estimate_would_not_00() {
+		let budget = ABSOLUTE_CAP;
+		// The estimate under-counts: it sits under budget while the provider's real prompt_tokens
+		// from the last round has already passed it. The estimate alone would not fold; the real
+		// figure must.
+		assert!(needs_fold(budget - 1, budget + 1, budget, false));
+		// Both under: a short turn that never approaches the cap is left alone.
+		assert!(!needs_fold(budget - 1, budget - 1, budget, false));
+		// No real reading yet (0) and the estimate under budget: still no fold.
+		assert!(!needs_fold(budget - 1, 0, budget, false));
+		// The estimate alone over budget still folds, as it always did.
+		assert!(needs_fold(budget + 1, 0, budget, false));
+		// A forced fold happens whatever the sizes.
+		assert!(needs_fold(0, 0, budget, true));
+	}
+
 	use super::*;
 
 	/// No fold open, which is what every size in these tests is measured against unless the test

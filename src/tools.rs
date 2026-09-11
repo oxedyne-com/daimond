@@ -7978,10 +7978,20 @@ fn uint_arg(args: &str, key: &str, default: usize, max: usize) -> usize {
 /// back, and past `FILE_TEXT_MAX` that is paging a truncation -- the later pages of a 1.2 MB
 /// file did not exist to be asked for.  `dev/BLOCKERS.md` B18.
 fn read_ask(args: &str) -> (usize, usize) {
-    (
-        uint_arg(args, "offset", 1, usize::MAX).max(1),
-        uint_arg(args, "limit", READ_LINES_DEFAULT, READ_LINES_MAX).max(1),
-    )
+    let offset = uint_arg(args, "offset", 1, usize::MAX).max(1);
+    // An explicit `end` names the last line wanted, inclusive.  It saves the caller the
+    // `limit` arithmetic -- and the off-by-one re-read that arithmetic invites when a model
+    // knows a range by its two ends and computes the count wrong.  It wins over `limit` when
+    // both are given, because a caller that named both ends has named the range itself; a
+    // backwards `end` (before `offset`) collapses to the single line at `offset` rather than
+    // underflowing.
+    let limit = if arg_given(args, "end") {
+        let end = uint_arg(args, "end", offset, usize::MAX).max(offset);
+        (end - offset + 1).min(READ_LINES_MAX)
+    } else {
+        uint_arg(args, "limit", READ_LINES_DEFAULT, READ_LINES_MAX).max(1)
+    };
+    (offset, limit)
 }
 
 /// What a machine read puts on the wire for the window it wants.
@@ -10868,7 +10878,7 @@ impl Tool {
     /// The tool's JSON-Schema `parameters` object.
     fn parameters(&self) -> &'static str {
         match self {
-            Tool::FileRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute"},"offset":{"type":"integer","description":"1-based line number to start at (default 1). Use the offset the previous page's notice gave you."},"limit":{"type":"integer","description":"How many lines to return (default 2000, maximum 10000). Fewer are returned when the output budget runs out first, and the result says so."},"as":{"type":"string","enum":["image","base64"],"description":"For a picture or other binary. Omit to be told what the file is without being shown it. 'image' attaches the picture to look at, and only works if you can see. 'base64' returns the bytes encoded, for embedding as a data: URI."}},"required":["path"]}"#,
+            Tool::FileRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute"},"offset":{"type":"integer","description":"1-based line number to start at (default 1). Use the offset the previous page's notice gave you."},"limit":{"type":"integer","description":"How many lines to return (default 2000, maximum 10000). Fewer are returned when the output budget runs out first, and the result says so."},"end":{"type":"integer","description":"1-based last line to return, inclusive: read exactly 'offset' to 'end'. Give this instead of 'limit' when you know a range by its two ends, e.g. a function you saw at lines 40-90. Overrides 'limit' if both are given."},"as":{"type":"string","enum":["image","base64"],"description":"For a picture or other binary. Omit to be told what the file is without being shown it. 'image' attaches the picture to look at, and only works if you can see. 'base64' returns the bytes encoded, for embedding as a data: URI."}},"required":["path"]}"#,
             Tool::FileWrite => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute"},"content":{"type":"string","description":"Full file content"}},"required":["path","content"]}"#,
             Tool::FileEdit => r#"{"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string","description":"Exact substring to replace (must be unique)"},"new_string":{"type":"string","description":"Replacement text"}},"required":["path","old_string","new_string"]}"#,
             Tool::FileList => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory (default '.')"}}}"#,
@@ -11476,22 +11486,30 @@ impl Tool {
                 };
                 let data = String::from_utf8_lossy(&bytes).to_string();
                 let mut old = old;
+                let mut new = new;
                 let mut count = data.matches(&old).count();
+                // A block copied straight out of `file_read` carries this tool's own line-number
+                // prefix, which is not in the file, so the verbatim match found nothing. Rather
+                // than refuse and spend a round teaching the model to strip it -- what this did
+                // until 2026-09-11, and what turned three failed edits into three whole-file
+                // rewrites of a crystal page in one session -- strip the prefix and match again.
+                // Verbatim comes FIRST, so a file that genuinely holds "12\ttext" matches as
+                // itself; the strip runs only when the prefix cannot be the file's own.
                 if count == 0 {
-                    // Before reporting an absence, ask whether the model handed back a block
-                    // it copied out of `file_read` with the line numbers still on it. That is
-                    // the commonest way this fails and the bare message never said so.
                     if let Some(clean) = without_read_prefix(&old) {
-                        if data.matches(&clean).count() == 1 {
-                            return Err(err!(
-                                "file_edit: old_string was not found, but it IS in '{}' once \
-                                the line numbers are removed. The numbers and the TAB after \
-                                them are `file_read`'s, not the file's. Send the line without \
-                                them.", path;
-                                Invalid, Input, NotFound));
+                        let c = data.matches(&clean).count();
+                        if c >= 1 {
+                            old   = clean;
+                            count = c;
+                            // The replacement came from the same read and carries the same
+                            // prefix; it must lose it too, or the display numbers land in the
+                            // file. Reached only because the stripped `old_string` matched --
+                            // proof the file has no display numbers of its own -- so a fresh,
+                            // unnumbered `new_string` is left exactly as sent.
+                            if let Some(clean_new) = without_read_prefix(&new) {
+                                new = clean_new;
+                            }
                         }
-                        count = data.matches(&clean).count();
-                        old = clean;
                     }
                 }
                 if count == 0 {
@@ -13217,8 +13235,12 @@ impl Tool {
             None    => text.len(),
         };
         // A bare read of a large file is a peek. See `READ_BIG_BYTES` for the 80,016 bytes
-        // that bought nothing.
-        let bare = !arg_given(args, "offset") && !arg_given(args, "limit");
+        // that bought nothing.  A named range in ANY of its three spellings -- `offset`,
+        // `limit`, or `end` -- is a caller answering the peek's question itself, so none of
+        // them is bare.
+        let bare = !arg_given(args, "offset")
+            && !arg_given(args, "limit")
+            && !arg_given(args, "end");
         let peek = bare && size > READ_BIG_BYTES;
         let limit = if peek { READ_PEEK_LINES } else { limit };
         numbered_view(path, text, offset, limit, budget, peek, whole)
@@ -13348,18 +13370,32 @@ impl Tool {
         let data = res!(std::fs::read_to_string(&abs)
             .map_err(|e| err!(e, "file_edit: cannot read '{}'.", path; IO, File, Read)));
         let mut old = old;
+        let mut new = new;
         let mut count = data.matches(&old).count();
+        // A model that copied a block straight out of `file_read` hands back `old_string` with
+        // this tool's own line-number prefix on every line -- characters that are not in the
+        // file, so the verbatim match above found nothing. Rather than refuse and spend a whole
+        // round teaching the model to strip them (which is what this did until 2026-09-11, and
+        // what turned three failed edits into three whole-file rewrites in one session), strip
+        // the prefix and match again. The verbatim attempt comes FIRST, so a file that genuinely
+        // holds "12\ttext" as its own bytes matches as itself and never reaches here: the strip
+        // runs only when the prefix cannot be the file's own.
         if count == 0 {
             if let Some(clean) = without_read_prefix(&old) {
-                if data.matches(&clean).count() == 1 {
-                    return Err(err!(
-                        "file_edit: old_string was not found, but it IS in '{}' once the line \
-                        numbers are removed. The numbers and the TAB after them are \
-                        `file_read`'s, not the file's. Send the line without them.", path;
-                        Invalid, Input, NotFound));
+                let c = data.matches(&clean).count();
+                if c >= 1 {
+                    old   = clean;
+                    count = c;
+                    // The replacement was copied from the same read, so it carries the same
+                    // prefix and must lose it too, or the display numbers would be written into
+                    // the file. Stripped only when EVERY line carries the prefix (see
+                    // `without_read_prefix`), and only reached because the stripped `old_string`
+                    // matched -- proof the file has no display numbers of its own -- so a fresh,
+                    // unnumbered `new_string` is left exactly as it was sent.
+                    if let Some(clean_new) = without_read_prefix(&new) {
+                        new = clean_new;
+                    }
                 }
-                count = data.matches(&clean).count();
-                old = clean;
             }
         }
         if count == 0 {
@@ -21499,23 +21535,109 @@ mod tests {
         let out = Tool::FileRead.execute_sync(r#"{"path":"n.txt"}"#, &c).expect("read");
         let numbered = out.as_text().lines().nth(1).expect("a second line").to_string();
         assert!(numbered.starts_with("2\t"), "the prefix is not there: {:?}", numbered);
-        // Quoting the numbered line back must FAIL, since those characters are not in the file.
-        // It failing loudly is the whole safeguard: a silent mismatch would be a silent edit.
-        let e = Tool::FileEdit.execute_sync(
-            &fmt!(r#"{{"path":"n.txt","old_string":"{}","new_string":"x"}}"#,
-                json_escape(&numbered)), &c);
-        assert!(e.is_err(), "a numbered line must not match the file's own bytes");
-        // With the prefix stripped it is the file's own bytes, and the edit lands.
+        // Quoting the numbered line back now LANDS, rather than failing with "not found" and
+        // forcing a rewrite.  The prefix is not in the file, so the verbatim match misses;
+        // `file_edit` then strips this tool's own prefix and edits the file's own bytes.  This
+        // reverses the pre-2026-09-11 contract, where the same call failed loudly -- the failure
+        // that turned three copied-block edits into three whole-file rewrites in one session.
         Tool::FileEdit.execute_sync(
-            r#"{"path":"n.txt","old_string":"beta","new_string":"gamma"}"#, &c).expect("edit");
+            &fmt!(r#"{{"path":"n.txt","old_string":"{}","new_string":"x"}}"#,
+                json_escape(&numbered)), &c).expect("a copied numbered line must now edit");
+        let after = std::fs::read_to_string(c.workspace.resolve("n.txt").expect("resolve"))
+            .expect("read back");
+        assert_eq!("alpha\nx\n", after, "the strip must edit the file's own bytes, not the prefix");
+        // With the prefix stripped by hand it is still the file's own bytes, and still lands.
+        Tool::FileEdit.execute_sync(
+            r#"{"path":"n.txt","old_string":"x","new_string":"gamma"}"#, &c).expect("edit");
         let after = std::fs::read_to_string(c.workspace.resolve("n.txt").expect("resolve"))
             .expect("read back");
         assert_eq!("alpha\ngamma\n", after);
-        // The description is the only place the model is told, so it must say so.
+        // The description still tells the model to strip: doing so by hand keeps display numbers
+        // out of `new_string`, and the auto-strip is a net under the mistake, not a licence.
         assert!(Tool::FileRead.description().contains("strip"),
             "file_read does not warn about the prefix");
         assert!(Tool::FileEdit.description().contains("strip"),
             "file_edit does not warn about the prefix");
+    }
+
+    #[test]
+    fn test_a_block_copied_from_a_read_with_its_numbers_still_on_it_edits_without_a_rewrite() {
+        let c = ctx();
+        put(&c, "b.txt", "one\ntwo\nthree\nfour\n");
+        let page = Tool::FileRead.execute_sync(r#"{"path":"b.txt"}"#, &c).expect("read").as_text().to_string();
+        // Two lines copied out of the read EXACTLY as they appear -- prefix and all.
+        let l2 = page.lines().nth(1).expect("line 2");
+        let l3 = page.lines().nth(2).expect("line 3");
+        let old = fmt!("{}\n{}", l2, l3);
+        assert!(old.starts_with("2\t") && old.contains("\n3\t"),
+            "the copied block should still carry the prefix: {:?}", old);
+        // The replacement is the same block with the words changed, prefix left on -- the
+        // mistake this fix forgives rather than answering with "old_string not found".
+        let new = "2\tTWO\n3\tTHREE";
+        Tool::FileEdit.execute_sync(
+            &fmt!(r#"{{"path":"b.txt","old_string":"{}","new_string":"{}"}}"#,
+                json_escape(&old), json_escape(new)), &c).expect("the copied block must edit");
+        let after = std::fs::read_to_string(c.workspace.resolve("b.txt").expect("resolve"))
+            .expect("read back");
+        assert_eq!("one\nTWO\nTHREE\nfour\n", after,
+            "neither the old nor the new display prefix may reach the file");
+    }
+
+    #[test]
+    fn test_a_genuine_tab_numbered_data_line_is_matched_as_itself_not_stripped() {
+        let c = ctx();
+        put(&c, "d.txt", "1\tApple\n2\tBanana\n");
+        // The file's OWN bytes carry a number and a tab. The verbatim match runs first and wins,
+        // so the data's numbers are never mistaken for this tool's display prefix and stripped.
+        Tool::FileEdit.execute_sync(
+            r#"{"path":"d.txt","old_string":"2\tBanana","new_string":"2\tCherry"}"#, &c)
+            .expect("a verbatim data edit lands");
+        let after = std::fs::read_to_string(c.workspace.resolve("d.txt").expect("resolve"))
+            .expect("read back");
+        assert_eq!("1\tApple\n2\tCherry\n", after,
+            "a real tab-numbered data line must keep its number");
+    }
+
+    #[test]
+    fn test_read_ask_reads_an_end_line_as_an_inclusive_count() {
+        assert_eq!((10, 5), read_ask(r#"{"offset":10,"end":14}"#), "offset..=end is five lines");
+        assert_eq!((1, 3), read_ask(r#"{"end":3}"#), "end counts from line one by default");
+        assert_eq!((7, 1), read_ask(r#"{"offset":7,"end":2}"#), "a backwards end collapses to one");
+        assert_eq!((5, 5), read_ask(r#"{"offset":5,"limit":2,"end":9}"#), "end wins over limit");
+        assert_eq!((1, READ_LINES_DEFAULT), read_ask(r#"{"path":"x"}"#), "a bare read is unchanged");
+    }
+
+    #[test]
+    fn test_a_read_with_an_end_line_returns_exactly_that_inclusive_range() {
+        let c = ctx();
+        let body: String = (1..=50).map(|n| fmt!("line {}\n", n)).collect();
+        put(&c, "r.txt", &body);
+        let out = Tool::FileRead
+            .execute_sync(r#"{"path":"r.txt","offset":10,"end":14}"#, &c).expect("read").as_text().to_string();
+        let got = read_lines(&out);
+        let want: Vec<(usize, String)> = (10..=14).map(|n| (n, fmt!("line {}", n))).collect();
+        assert_eq!(want, got, "an end line must return exactly offset..=end: {}", out);
+    }
+
+    #[test]
+    fn test_an_end_range_on_a_big_file_is_honoured_in_full_and_not_peeked() {
+        let c = ctx();
+        let body: String = (1..=8000).map(|n| fmt!("line {:05}\n", n)).collect();
+        assert!(body.len() > READ_BIG_BYTES, "the fixture is too small to trip the peek");
+        put(&c, "big.txt", &body);
+        // A bare read of a big file peeks -- the case the range is here to avoid.
+        let bare = Tool::FileRead.execute_sync(r#"{"path":"big.txt"}"#, &c).expect("bare").as_text().to_string();
+        assert_eq!(READ_PEEK_LINES, read_lines(&bare).len(), "a bare big read should peek: {}", bare);
+        assert!(bare.contains("rather than"), "the peek notice is missing: {}", bare);
+        // A named end range is the caller answering the peek's question itself: full honour.
+        let ranged = Tool::FileRead
+            .execute_sync(r#"{"path":"big.txt","offset":100,"end":109}"#, &c).expect("ranged").as_text().to_string();
+        let got = read_lines(&ranged);
+        assert_eq!(10, got.len(), "the end range was not honoured in full: {}", ranged);
+        assert_eq!(100, got[0].0, "the range started at the wrong line");
+        assert_eq!(109, got[9].0, "the range ended at the wrong line");
+        assert!(!ranged.contains("rather than"),
+            "a named range must not carry the peek notice: {}", ranged);
     }
 
     #[test]

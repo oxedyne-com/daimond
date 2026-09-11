@@ -1,1 +1,1 @@
-{"build":"4122c2ee1373","note":"Debug feed: telemetry priority lane so live numbers are never starved behind a snapshot"}
+{"build":"400c1b804350","note":"Burn fix: 200K per-round context ceiling + real-token fold, plus lossless read/edit and line-range tool reads"}

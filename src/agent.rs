@@ -1372,9 +1372,13 @@ impl Agent {
             (l.budget(cap), l.tail_budget(cap), l.fold_model.clone())
         };
         let before = compact::conversation_bytes(&session.messages, &open);
-        if !why.forces()
-            && self.gauge.tokens(compact::conversation_bytes(working, &open) + schema) <= budget
-        {
+        // Size read two ways -- the up-front byte estimate and the provider's real prompt_tokens
+        // from the last round -- because the estimate under-counts and can sit under budget while
+        // the real carry has passed it. `last_prompt_tokens` refreshes after this round's own send,
+        // so a fold prompted by it is corrected within the round and does not repeat once the carry
+        // is back under. See `compact::needs_fold`.
+        let est = self.gauge.tokens(compact::conversation_bytes(working, &open) + schema);
+        if !compact::needs_fold(est, session.last_prompt_tokens, budget, why.forces()) {
             return false;
         }
 
