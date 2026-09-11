@@ -23833,6 +23833,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				});
 			}
 		} catch (e) { /* best-effort */ }
+		// TRAINING WHEELS — remove with the DEBUG_SHARE module. The debug feed's
+		// diamond×model cross: the ledger carries no Diamond and the signal index
+		// keeps Diamond and model apart, so this is the only place both are in hand
+		// with the spend. A no-op unless the share switch is on, so an ordinary turn
+		// pays only a guarded call. Lifts out in one grep of `DEBUG_SHARE`.
+		try {
+			if (entry && window.DEBUG_SHARE && DEBUG_SHARE.noteCross) {
+				DEBUG_SHARE.noteCross(diamondId || '', entry.m || '', entry.u || 0);
+			}
+		} catch (e) { /* best-effort */ }
 		// Rewritten after each metered turn rather than on a timer: it is built
 		// from counters, so it costs a string and a file write, and a digest
 		// that lags the work it describes is worth less than no digest at all.

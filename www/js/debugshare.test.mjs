@@ -338,21 +338,106 @@ async function main() {
 			!!tel && !!tel.stats && tel.stats.live === null);
 	}
 
-	console.log('debugshare: elision — a long string is capped and structure is preserved');
+	console.log('debugshare: elision — a giant string is byte-capped, a readable one is kept');
 	{
 		const env = makeEnv();
 		const DS = env.win.DEBUG_SHARE;
-		const long = 'x'.repeat(1000);
-		const tree = { a: { b: [ { text: long, keep: 'short' } ] }, n: 42 };
-		const out = DS._elide(tree);
-		const capped = out.a.b[0].text;
-		check('the long string is truncated to the 400-char cap plus a tail',
-			capped.length < long.length && capped.indexOf('x'.repeat(400)) === 0);
-		check('the elision tail names how many characters were cut',
-			capped.indexOf('…[+600 chars]') !== -1);
-		check('a short string is left untouched', out.a.b[0].keep === 'short');
-		check('structure and non-strings are preserved', out.n === 42
-			&& Array.isArray(out.a.b) && out.a.b.length === 1);
+		const giant = 'x'.repeat(5000);					// a giant tool payload, > 2 KB
+		const readable = 'hello '.repeat(200);			// 1200 bytes, an ordinary message
+		const tree = { a: { b: [ { out: giant, msg: readable, keep: 'short' } ] }, n: 42 };
+		const res = DS._elide(tree);
+		const capped = res.a.b[0].out;
+		check('the giant string is capped at the 2048-byte cap plus a tail',
+			capped.length < giant.length && capped.indexOf('x'.repeat(2048)) === 0);
+		check('the elision tail names the bytes dropped', capped.indexOf('…[+2952 bytes]') !== -1);	// 5000 − 2048
+		check('a readable under-cap message is left WHOLE', res.a.b[0].msg === readable);
+		check('a short string is left untouched', res.a.b[0].keep === 'short');
+		check('structure and non-strings are preserved', res.n === 42
+			&& Array.isArray(res.a.b) && res.a.b.length === 1);
+	}
+
+	console.log('debugshare: assemble — giant transcript payloads elided, structured state COMPLETE');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		const bigInstr = 'I'.repeat(3000);				// a long but structured config field
+		const bigRead  = 'SRC'.repeat(4000);			// a 12 KB verbatim read in a transcript
+		const readable = 'why does sync loop? '.repeat(50);	// 1000 bytes, under cap
+		const signals = { v: 1, diamonds: { dA: { turns: 5, usd: 0.5, missed: 1 } },
+			models: { 'anthropic/claude-3.5': { turns: 7, usd: 0.7 } }, tools: {}, days: {}, intents: {}, len: { sum: 0, n: 0 } };
+		const state = {
+			config: { instructions: bigInstr, apiKey: RAW_API_KEY },
+			transcripts: [ { id: 'c', name: 'Long chat', messages: [
+				{ role: 'user', content: readable },
+				{ role: 'assistant', content: bigRead } ] } ],
+			roster: { dev1: { name: 'phone', seen: 9 } },
+		};
+		const bundle = DS._assemble({ ledger: [], trail: [], diag: [], signals: signals }, state);
+		const json = JSON.stringify(bundle);
+		check('config (structured) stays COMPLETE — a long instructions field is not elided',
+			json.indexOf(bigInstr) !== -1);
+		check('a giant transcript payload IS elided', json.indexOf(bigRead) === -1
+			&& json.indexOf('…[+') !== -1);
+		check('a readable transcript message under the cap is kept whole',
+			json.indexOf(readable) !== -1);
+		check('the signal index travels complete in the snapshot',
+			json.indexOf('"signals"') !== -1 && json.indexOf('dA') !== -1);
+		check('the roster travels complete', json.indexOf('phone') !== -1);
+		check('the config apiKey is still fingerprinted, never raw', json.indexOf(RAW_API_KEY) === -1
+			&& /"apiKey":"\[redacted /.test(json));
+	}
+
+	console.log('debugshare: telemetry — per-Diamond and per-model signal breakdowns');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		env.localStorage.setItem('daimond-signals', JSON.stringify({ v: 1,
+			diamonds: { dA: { turns: 5, usd: 0.50, missed: 1 }, dB: { turns: 2, usd: 0.20 } },
+			models: { modelX: { turns: 7, usd: 0.70 } }, tools: {}, days: {}, intents: {}, len: { sum: 0, n: 0 } }));
+		const b = DS._signalBreakdown(DS._publicSources().signals);
+		const dA = b.diamonds.find((x) => x.diamondId === 'dA');
+		const dB = b.diamonds.find((x) => x.diamondId === 'dB');
+		check('per-Diamond breakdown has a row per Diamond', b.diamonds.length === 2 && !!dA && !!dB);
+		check('per-Diamond turns/usd/missed are read straight from the index',
+			dA.turns === 5 && Math.abs(dA.usd - 0.5) < 1e-9 && dA.missed === 1
+			&& dB.turns === 2 && Math.abs(dB.usd - 0.2) < 1e-9);
+		check('per-model (signals) usd/turns are read from the index',
+			b.models.length === 1 && b.models[0].model === 'modelX'
+			&& Math.abs(b.models[0].usd - 0.7) < 1e-9 && b.models[0].turns === 7);
+		// The whole thing rides telemetry.
+		const tel = DS._gatherTelemetry();
+		check('telemetry carries the per-Diamond breakdown', Array.isArray(tel.stats.diamonds)
+			&& tel.stats.diamonds.length === 2);
+		check('telemetry carries the per-model signal breakdown', Array.isArray(tel.stats.signalModels)
+			&& tel.stats.signalModels.length === 1);
+	}
+
+	console.log('debugshare: telemetry — diamond×model cross accumulates while sharing is on');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => providerState());
+		// A cross note is a no-op while OFF, so nothing is recorded until on.
+		DS.noteCross('dA', 'modelX', 0.10);
+		check('noteCross is a no-op while sharing is off', DS._crossBreakdown().length === 0);
+		DS.setEnabled(true);
+		DS.noteCross('dA', 'modelX', 0.10);
+		DS.noteCross('dA', 'modelX', 0.10);		// dA×modelX: 2 turns, 0.20
+		DS.noteCross('dA', 'modelY', 0.20);		// dA×modelY: 1 turn,  0.20
+		DS.noteCross('dB', 'modelX', 0.05);		// dB×modelX: 1 turn,  0.05
+		const cross = DS._crossBreakdown();
+		const axX = cross.find((c) => c.diamondId === 'dA' && c.model === 'modelX');
+		const axY = cross.find((c) => c.diamondId === 'dA' && c.model === 'modelY');
+		const bxX = cross.find((c) => c.diamondId === 'dB' && c.model === 'modelX');
+		check('the cross has a row per (Diamond, model) pair', cross.length === 3);
+		check('dA×modelX summed 2 turns and 0.20', axX && axX.turns === 2 && Math.abs(axX.usd - 0.20) < 1e-9);
+		check('dA×modelY recorded 1 turn and 0.20', axY && axY.turns === 1 && Math.abs(axY.usd - 0.20) < 1e-9);
+		check('dB×modelX recorded 1 turn and 0.05', bxX && bxX.turns === 1 && Math.abs(bxX.usd - 0.05) < 1e-9);
+		check('the cross is sorted dearest first', cross[cross.length - 1].usd <= cross[0].usd);
+		// And it rides telemetry.
+		const tel = DS._gatherTelemetry();
+		check('telemetry carries the diamond×model cross', Array.isArray(tel.stats.cross)
+			&& tel.stats.cross.length === 3);
 	}
 
 	console.log('debugshare: elision — an assembled snapshot caps a huge transcript read');

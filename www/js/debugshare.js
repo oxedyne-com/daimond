@@ -59,6 +59,8 @@
 	//   MIN_INTERVAL_MS 10s -> we drain one post every 11s
 	var ENABLED_KEY = 'daimond-debugshare';		// per-device opt-in; '1' is on
 	var LEDGER_KEY  = 'daimond-ledger';			// the cost ledger, read directly
+	var SIGNALS_KEY = 'daimond-signals';		// the per-Diamond / per-model signal index
+	var CROSS_KEY   = 'daimond-debug-cross';	// our own diamond×model spend cross (while on)
 	var ENDPOINT    = '/api/debug-trace';
 	var CLIENT_API  = 2;						// matches CLIENT_API in gateway.js / diag.js
 
@@ -70,12 +72,16 @@
 	var TELEMETRY_MS = 30000;					// stream telemetry cadence while on
 	var RESNAP_MS    = 300000;					// periodic full re-snapshot (5 min)
 
-	// A transcript embeds whole source-file reads verbatim, so a snapshot was ~7 MB
-	// / 25k chunks and drained for ~12 min, starving telemetry behind it. Every
-	// string past this cap is truncated to head + a "[+N chars]" tail before the
-	// bundle ships, which the operator still reads but which fits in a few posts.
-	// daimond.js has no `TOOL_ELISION_CAP` to reuse, so the figure lives here.
-	var ELISION_CAP = 400;
+	// A transcript embeds whole source-file reads and command outputs verbatim, so
+	// a snapshot was ~7 MB / 25k chunks and drained for ~12 min, starving telemetry
+	// behind it. The one lever is SIZE -- the handler's 11 s / 400-row / 360-byte
+	// caps mean we cannot post faster -- so a giant string is hard-capped to this
+	// many bytes with a "[+N bytes]" tail that keeps its size visible. The cap is
+	// generous enough to leave an ordinary readable message whole and only bites a
+	// giant tool payload. daimond.js has no `TOOL_ELISION_CAP` to reuse, so it
+	// lives here. Only the free-form arrays (transcripts, trail, diag) are elided;
+	// the structured state stays complete.
+	var ELISION_CAP = 2048;
 
 	// Field names whose VALUE is a secret and must be fingerprinted, never shipped
 	// raw. Matched on the key name, case-insensitively, anywhere in the bundle --
@@ -88,6 +94,7 @@
 	var enabled  = read(ENABLED_KEY) === '1';
 	var provider = null;			// registered by daimond.js: () -> (obj | Promise<obj>)
 	var statsFn  = null;			// registered by daimond.js: () -> live-stats obj (sync, cheap)
+	var crossIx  = {};				// diamondId -> model -> {turns, usd}, filled while on
 	var queue    = [];				// pending posts, each an array of {ts,tag,data} rows
 	var draining = false;
 	var telTimer = null, snapTimer = null;
@@ -97,6 +104,27 @@
 
 	function read(k)  { try { return localStorage.getItem(k); } catch (e) { return null; } }
 	function write(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+	// Restore the diamond×model cross from a previous session, so a device that was
+	// already sharing keeps its tally across a reload.
+	try { crossIx = JSON.parse(read(CROSS_KEY) || '{}') || {}; } catch (e) { crossIx = {}; }
+	function saveCross() { try { write(CROSS_KEY, JSON.stringify(crossIx)); } catch (e) {} }
+
+	/// Record one metered turn's spend against its (Diamond, model) pair -- the one
+	/// cross the ledger (which carries no Diamond) and the signal index (which holds
+	/// Diamond and model separately) cannot answer: which Diamond spent what on
+	/// which model. Called from daimond.js's `recordSpend`, and a no-op unless
+	/// sharing is on, so an off device pays only a guarded call and a flag test.
+	function noteCross(diamondId, model, usd) {
+		if (!enabled) return;
+		var id = diamondId || '(none)';
+		var m  = model || '(unknown)';
+		var d  = crossIx[id] || (crossIx[id] = {});
+		var r  = d[m] || (d[m] = { turns: 0, usd: 0 });
+		r.turns += 1;
+		r.usd   += usd || 0;
+		saveCross();
+	}
 
 	// ── Fingerprinting and redaction ─────────────────────────────
 
@@ -147,18 +175,34 @@
 		return out;
 	}
 
-	/// A deep copy of `obj` with every over-long string truncated to its first
-	/// `ELISION_CAP` characters plus a `…[+N chars]` tail naming how much was cut.
-	/// Structure-preserving, so the operator still sees the shape of a transcript --
-	/// only the verbatim source-file reads inside it are shortened. Cycle-safe and
-	/// depth-bounded, like `redact()`, since the state it walks is arbitrary.
+	/// The UTF-8 byte length of a string -- what the transport actually pays, and
+	/// so what the cap is measured in. Falls back gracefully where TextEncoder is
+	/// absent.
+	function byteLen(s) {
+		try { return new TextEncoder().encode(s).length; }
+		catch (e) {
+			try { return unescape(encodeURIComponent(s)).length; }
+			catch (e2) { return s.length; }
+		}
+	}
+
+	/// A deep copy of `obj` with every string past `ELISION_CAP` bytes hard-capped
+	/// to its first `ELISION_CAP` characters plus a `…[+N bytes]` tail naming how
+	/// many bytes were dropped -- so the size stays visible and a giant file-read or
+	/// command output no longer bloats the bundle, while an ordinary readable
+	/// message (under the cap) passes through whole. Structure-preserving, so the
+	/// operator still sees the shape of a transcript; cycle-safe and depth-bounded,
+	/// like `redact()`, since the state it walks is arbitrary.
 	function elide(obj, seen, depth) {
 		seen = seen || [];
 		depth = depth || 0;
 		if (typeof obj === 'string') {
-			return obj.length > ELISION_CAP
-				? obj.slice(0, ELISION_CAP) + '…[+' + (obj.length - ELISION_CAP) + ' chars]'
-				: obj;
+			var bytes = byteLen(obj);
+			if (bytes <= ELISION_CAP) return obj;
+			// Tool payloads are overwhelmingly ASCII, so a character slice at the cap
+			// is at or under the byte cap; the tail reports the exact bytes dropped.
+			var head = obj.slice(0, ELISION_CAP);
+			return head + '…[+' + (bytes - byteLen(head)) + ' bytes]';
 		}
 		if (obj == null || typeof obj !== 'object') return obj;
 		if (depth > 40 || seen.indexOf(obj) !== -1) return '[elided:cycle-or-deep]';
@@ -184,7 +228,11 @@
 		try { trail = (window.DaimondTrail && DaimondTrail.rows && DaimondTrail.rows()) || []; } catch (e) {}
 		var diag = [];
 		try { diag = (window.DaimondDiag && DaimondDiag.rows && DaimondDiag.rows()) || []; } catch (e) {}
-		return { ledger: ledger, trail: trail, diag: diag };
+		// The per-Diamond / per-model signal index -- turns, spend and misses. Small
+		// and structured, so it travels whole and drives the live breakdowns.
+		var signals = null;
+		try { signals = JSON.parse(read(SIGNALS_KEY) || 'null'); } catch (e) { signals = null; }
+		return { ledger: ledger, trail: trail, diag: diag, signals: signals };
 	}
 
 	/// Assemble a full snapshot from a `sources` object and the provider's state.
@@ -199,21 +247,25 @@
 			ts:         Date.now(),
 			iso:        new Date().toISOString(),
 			// From the provider (daimond.js) -- the decrypted, private-scope state.
+			// Only `transcripts` carries the giant verbatim tool outputs, so only it
+			// is elided; the rest is small, structured and travels COMPLETE.
 			config:      state.config || null,
-			transcripts: state.transcripts || null,
+			transcripts: elide(state.transcripts || null),
 			roster:      state.roster || null,
 			presence:    state.presence || null,
 			election:    state.election || null,
 			tokenStats:  state.tokenStats || null,
-			// From this module's own public reads.
+			// From this module's own public reads. The signal index is structured
+			// and complete; trail and diag are free-form logs, so their rows are
+			// elided against a stray giant string while their shape is kept.
+			signals:     sources.signals || null,
 			ledger:      sources.ledger || [],
-			trail:       sources.trail || [],
-			diag:        sources.diag || [],
+			trail:       elide(sources.trail || []),
+			diag:        elide(sources.diag || []),
 		};
-		// Elide first, so the transcripts' verbatim source-file reads are capped
-		// before the bundle is chunked; then redact, so a secret-named field is a
-		// fingerprint regardless of what elision left of it.
-		return redact(elide(raw));
+		// Redact after eliding, so a secret-named field is a fingerprint regardless
+		// of what elision left of it.
+		return redact(raw);
 	}
 
 	/// Gather the full decrypted state: the provider's output plus this module's
@@ -268,6 +320,42 @@
 		});
 	}
 
+	/// The per-Diamond and per-model breakdowns from the signal index -- turns,
+	/// spend and misses each. `ix.diamonds` answers "which Diamond spent what" over
+	/// all history; `ix.models` answers "which model cost what". Both are small
+	/// maps, so they go every tick. Returns empty arrays when there is no index.
+	function signalBreakdown(signals) {
+		var out = { diamonds: [], models: [] };
+		if (!signals || typeof signals !== 'object') return out;
+		var d = signals.diamonds || {};
+		Object.keys(d).forEach(function (id) {
+			var r = d[id] || {};
+			out.diamonds.push({ diamondId: id, turns: r.turns || 0, usd: r.usd || 0, missed: r.missed || 0 });
+		});
+		var m = signals.models || {};
+		Object.keys(m).forEach(function (model) {
+			var r = m[model] || {};
+			out.models.push({ model: model, turns: r.turns || 0, usd: r.usd || 0, missed: r.missed || 0 });
+		});
+		return out;
+	}
+
+	/// The diamond×model cross this module has accumulated while sharing was on --
+	/// `[{diamondId, model, turns, usd}]`, dearest first -- so the operator reads
+	/// which Diamond spent what on which model. Empty until turns are recorded.
+	function crossBreakdown() {
+		var out = [];
+		Object.keys(crossIx).forEach(function (id) {
+			var byModel = crossIx[id] || {};
+			Object.keys(byModel).forEach(function (model) {
+				var r = byModel[model] || {};
+				out.push({ diamondId: id, model: model, turns: r.turns || 0, usd: r.usd || 0 });
+			});
+		});
+		out.sort(function (a, b) { return b.usd - a.usd; });
+		return out;
+	}
+
 	/// The live numbers from daimond.js's stats seam, or null when none is
 	/// registered or it throws. Sync and cheap by contract -- no transcripts.
 	function liveStats() {
@@ -289,9 +377,13 @@
 		var ledDelta  = s.ledger.slice(lastLedgerLen);
 		var trailNew  = s.trail.slice(lastTrailLen);
 		var diagNew   = s.diag.slice(lastDiagLen);
+		var sig = signalBreakdown(s.signals);
 		var stats = {
-			models: aggregateLedger(s.ledger),
-			live:   liveStats(),
+			models:       aggregateLedger(s.ledger),	// per-model, from the cost ledger
+			diamonds:     sig.diamonds,					// per-Diamond, from the signal index
+			signalModels: sig.models,					// per-model, from the signal index
+			cross:        crossBreakdown(),				// diamond×model, accumulated while on
+			live:         liveStats(),					// context/worker, from the stats seam
 		};
 		if (!ledDelta.length && !trailNew.length && !diagNew.length && !stats) return null;
 		lastLedgerLen = s.ledger.length;
@@ -586,17 +678,21 @@
 		setEnabled:       setEnabled,
 		registerProvider: registerProvider,
 		registerStats:    registerStats,
+		noteCross:        noteCross,
 		snapshotNow:      snapshotNow,
 		// Exposed for the verifier (www/js/debugshare.test.mjs):
 		_fingerprint: fingerprint,
 		_redact:      redact,
 		_elide:       elide,
+		_byteLen:     byteLen,
 		_assemble:    assemble,
 		_chunk:       chunk,
 		_publicSources: publicSources,
 		_gatherSnapshot: gatherSnapshot,
 		_gatherTelemetry: gatherTelemetry,
 		_aggregateLedger: aggregateLedger,
+		_signalBreakdown: signalBreakdown,
+		_crossBreakdown:  crossBreakdown,
 		_queueLen:    function () { return queue.length; },
 	};
 })();
