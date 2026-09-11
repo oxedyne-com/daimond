@@ -105,8 +105,19 @@ function makeEnv() {
 	};
 
 	const win = {};
-	win.addEventListener = () => {};
-	win.dispatchEvent = () => true;
+	// Capture registered window listeners so a test can fire a synthetic `storage`
+	// event (the same-device cross-tab path) and a `daimond:debugshare` can be observed.
+	const listeners = {};
+	win.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
+	const events = [];
+	win.dispatchEvent = (ev) => { events.push(ev); return true; };
+	// A stand-in for the sync engine: `setEnabled` (a LOCAL flip) must nudge it so the
+	// flag reaches the fleet; a count lets a test assert the nudge happened.
+	let nudges = 0;
+	win.DaimondSync = { nudge: () => { nudges += 1; } };
+	const fireStorage = (key) => {
+		(listeners.storage || []).forEach((fn) => fn({ key }));
+	};
 
 	// The capture: every POST body, parsed.
 	const posts = [];
@@ -136,7 +147,11 @@ function makeEnv() {
 			setTimeout, clearTimeout, noInterval, noClear, console);
 	}
 	loadScript('debugshare.js');
-	return { win, document, localStorage, posts, topActions, store };
+	return {
+		win, document, localStorage, posts, topActions, store,
+		fireStorage, events,
+		nudges: () => nudges,
+	};
 }
 
 const indicatorOf = (topActions) =>
@@ -458,6 +473,215 @@ async function main() {
 			json.indexOf('…[+') !== -1);
 		check('the capped snapshot is far smaller than the raw read',
 			json.length < bigRead.length);
+	}
+
+	console.log('debugshare: cross-device — a synced ON value mounts the eye and starts collection');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		env.localStorage.setItem('daimond-ledger', JSON.stringify([{ id: 'ledS', cost: 1 }]));
+		DS.registerProvider(async () => providerState());
+		check('a fresh device is OFF and says NOTHING on the parcel', DS.isOn() === false
+			&& DS.syncSnapshot() === null);
+		// A parcel arrives from another device that turned sharing ON.
+		DS.adoptSync({ on: true, at: Date.now() });
+		check('a synced ON turns the flag on', DS.isOn() === true);
+		check('a synced ON mounts the header indicator', indicatorOf(env.topActions) !== null);
+		await sleep(40);
+		check('a synced ON starts collection (a snapshot is posted)', env.posts.length >= 1);
+		// It now rides this device's OWN parcel, so it propagates onward.
+		const snap = DS.syncSnapshot();
+		check('after adopting, this device carries { on:true, at } on its parcel',
+			snap && snap.on === true && typeof snap.at === 'number' && snap.at > 0);
+	}
+
+	console.log('debugshare: cross-device — a synced OFF stops the fleet (eye gone, collection stopped)');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => providerState());
+		DS.setEnabled(true);					// this device had it on
+		await sleep(40);
+		check('the device is ON before the OFF arrives', DS.isOn() === true);
+		const onAt = Number(env.store.get('daimond-debugshare-at'));
+		// A FRESHER parcel from another device turns it off.
+		DS.adoptSync({ on: false, at: onAt + 1000 });
+		check('a synced OFF turns the flag off', DS.isOn() === false);
+		check('a synced OFF unmounts the indicator', indicatorOf(env.topActions) === null);
+		check('a synced OFF clears the post queue (collection stopped)', DS._queueLen() === 0);
+		check('the OFF now rides this device’s own parcel', DS.syncSnapshot().on === false);
+	}
+
+	console.log('debugshare: cross-device — freshest-at-wins; a stale or equal parcel is ignored');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => providerState());
+		DS.setEnabled(true);					// local decision at time T
+		const T = Number(env.store.get('daimond-debugshare-at'));
+		// An OLDER parcel must NOT override the local decision.
+		DS.adoptSync({ on: false, at: T - 5000 });
+		check('a STALE OFF does not override a newer local ON', DS.isOn() === true);
+		// An EQUAL stamp must not flip either (strictly-fresher wins).
+		DS.adoptSync({ on: false, at: T });
+		check('an EQUAL-stamp OFF does not flip the flag', DS.isOn() === true);
+		// A malformed parcel is a no-op, never a throw.
+		DS.adoptSync(null); DS.adoptSync({}); DS.adoptSync({ on: false });		// missing at
+		check('a malformed or at-less parcel is a no-op', DS.isOn() === true);
+		// A genuinely FRESHER value does win.
+		DS.adoptSync({ on: false, at: T + 1 });
+		check('a strictly-fresher OFF wins', DS.isOn() === false);
+	}
+
+	console.log('debugshare: cross-device — a local flip stamps and nudges the sync engine');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => providerState());
+		const before = env.nudges();
+		DS.setEnabled(true);
+		check('a local ON stamps the decision', Number(env.store.get('daimond-debugshare-at')) > 0);
+		check('a local ON nudges the sync engine so it reaches the fleet', env.nudges() === before + 1);
+		DS.setEnabled(false);
+		check('a local OFF nudges the sync engine too', env.nudges() === before + 2);
+		// adopting a synced value must NOT restamp (no ping-pong) — the stamp is written
+		// verbatim, so it equals what arrived.
+		const remoteAt = Date.now() + 10000;
+		DS.adoptSync({ on: true, at: remoteAt });
+		check('adopting a synced value writes the remote stamp VERBATIM (no restamp)',
+			Number(env.store.get('daimond-debugshare-at')) === remoteAt);
+		const n = env.nudges();
+		DS.adoptSync({ on: true, at: remoteAt });		// same/again
+		check('adopting does not itself nudge (no push storm)', env.nudges() === n);
+	}
+
+	console.log('debugshare: cross-device — the parcel field carries ONLY the flag, never a key');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => providerState());
+		DS.setEnabled(true);
+		const snap = DS.syncSnapshot();
+		const keys = Object.keys(snap).sort();
+		check('the parcel field is exactly { at, on }', JSON.stringify(keys) === JSON.stringify(['at', 'on']));
+		const json = JSON.stringify(snap);
+		check('the parcel field carries NO raw provider key', json.indexOf(RAW_API_KEY) === -1
+			&& json.indexOf(RAW_API_KEY_ENC) === -1);
+		check('the parcel field carries NO raw master key', json.indexOf(RAW_MASTER_KEY) === -1);
+		check('the parcel field has no key/secret-named property',
+			!/apikey|token|secret|passphrase|master|salt|wrapped|seal|priv|mnemonic|seed/i.test(json));
+	}
+
+	console.log('debugshare: cross-tab — the storage event mirrors the flip WITHOUT restamping or nudging');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => providerState());
+		// Another tab on THIS device flipped the flag: it wrote the key + stamp and
+		// nudged. This tab only sees the storage event and must mirror the effect.
+		const nBefore = env.nudges();
+		env.store.set('daimond-debugshare', '1');
+		env.store.set('daimond-debugshare-at', String(Date.now()));
+		env.fireStorage('daimond-debugshare');
+		check('a cross-tab ON mounts the indicator here', indicatorOf(env.topActions) !== null);
+		check('a cross-tab flip does NOT re-nudge the sync engine', env.nudges() === nBefore);
+		// And OFF the same way.
+		env.store.set('daimond-debugshare', '0');
+		env.fireStorage('daimond-debugshare');
+		check('a cross-tab OFF unmounts the indicator here', indicatorOf(env.topActions) === null);
+		check('a cross-tab OFF is off', DS.isOn() === false);
+	}
+
+	console.log('debugshare: windowing — recent turns kept, older dropped-count recorded, structured state COMPLETE');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		// A chat with far more than the per-chat cap of turns; each turn distinct.
+		const msgs = [];
+		for (let i = 0; i < 120; i++) {
+			msgs.push({ role: i % 2 ? 'assistant' : 'user', content: 'turn-' + i });
+		}
+		const windowed = DS._windowTranscripts([{ id: 'c', name: 'long', updatedAt: 100, messages: msgs }]);
+		const w = windowed[0];
+		check('a chat is capped to the last MAX_MSGS_PER_CHAT (40) turns', w.messages.length === 40);
+		check('the turns KEPT are the most recent (tail)', w.messages[0].content === 'turn-80'
+			&& w.messages[39].content === 'turn-119');
+		check('the oldest turn is gone', JSON.stringify(w.messages).indexOf('turn-0"') === -1);
+		check('droppedOlderTurns records exactly how many were cut', w.droppedOlderTurns === 80);
+		check('non-message fields are preserved', w.id === 'c' && w.name === 'long' && w.updatedAt === 100);
+		check('the input array is not mutated', msgs.length === 120);
+		// A short chat is left whole with no drop marker.
+		const shortW = DS._windowTranscripts([{ id: 's', messages: [{ role: 'user', content: 'hi' }] }])[0];
+		check('a short chat keeps all its turns', shortW.messages.length === 1);
+		check('a short chat carries NO droppedOlderTurns marker', !('droppedOlderTurns' in shortW));
+		// A null/absent transcripts value passes through untouched.
+		check('a null transcripts value passes through', DS._windowTranscripts(null) === null);
+	}
+
+	console.log('debugshare: windowing — a total byte budget spends freshest-first across chats');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		// Two chats, each with one enormous message so the ~700 KiB budget cannot hold
+		// both. The FRESHER chat (higher updatedAt) must be the one kept.
+		const big = 'Z'.repeat(600 * 1024);				// ~600 KiB each
+		const chats = [
+			{ id: 'old',   updatedAt: 10, messages: [{ role: 'user', content: big }] },
+			{ id: 'fresh', updatedAt: 99, messages: [{ role: 'user', content: big }] },
+		];
+		const w = DS._windowTranscripts(chats);
+		const byId = {}; w.forEach((c) => { byId[c.id] = c; });
+		check('the freshest chat keeps its turn', byId['fresh'].messages.length === 1);
+		check('the older chat is dropped once the budget is spent', byId['old'].messages.length === 0
+			&& byId['old'].droppedOlderTurns === 1);
+		check('windowing preserves the input order of the array',
+			w[0].id === 'old' && w[1].id === 'fresh');
+	}
+
+	console.log('debugshare: windowing — the SNAPSHOT windows transcripts but leaves telemetry/structured state whole');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		const msgs = [];
+		for (let i = 0; i < 100; i++) msgs.push({ role: 'user', content: 'msg-' + i });
+		const signals = { v: 1, diamonds: { dA: { turns: 5, usd: 0.5 } },
+			models: { modelX: { turns: 7, usd: 0.7 } }, tools: {}, days: {}, intents: {}, len: { sum: 0, n: 0 } };
+		const state = {
+			config:      { model: 'anthropic/claude-3.5', maxOut: 4096 },
+			transcripts: [{ id: 'c', updatedAt: 5, messages: msgs }],
+			roster:      { dev1: { name: 'phone' } },
+			presence:    { dev1: { lastSeen: 9 } },
+			election:    { self: 'dev1', nominated: 'dev2' },
+			tokenStats:  [{ id: 'c', messages: 100, contextWindow: 200000 }],		// TRUE full count
+		};
+		const bundle = DS._assemble({ ledger: [{ id: 'L' }], trail: [], diag: [], signals }, state);
+		check('the snapshot windows the transcript to 40 turns', bundle.transcripts[0].messages.length === 40);
+		check('the snapshot records droppedOlderTurns on the windowed chat',
+			bundle.transcripts[0].droppedOlderTurns === 60);
+		check('kept transcript turns are the most recent', bundle.transcripts[0].messages[39].content === 'msg-99');
+		// Structured state is COMPLETE and unwindowed.
+		check('config travels complete', bundle.config && bundle.config.maxOut === 4096);
+		check('roster travels complete', !!bundle.roster.dev1);
+		check('presence + election travel complete', !!bundle.presence.dev1 && bundle.election.nominated === 'dev2');
+		check('the signal index travels complete', !!bundle.signals && !!bundle.signals.diamonds.dA);
+		check('tokenStats keeps the TRUE full message count (never windowed)',
+			bundle.tokenStats[0].messages === 100);
+	}
+
+	console.log('debugshare: windowing — telemetry stats are NOT windowed (live numbers stay complete)');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		// A ledger far larger than any transcript window; the per-model aggregation must
+		// still sum EVERY turn -- telemetry is never windowed.
+		const ledger = [];
+		for (let i = 0; i < 300; i++) ledger.push({ t: i, m: 'modelX', p: 10, c: 5, u: 0.01 });
+		env.localStorage.setItem('daimond-ledger', JSON.stringify(ledger));
+		DS.registerStats(() => ({ contextActual: 42, contextWindow: 200000 }));
+		const tel = DS._gatherTelemetry();
+		check('telemetry aggregates ALL 300 ledger turns (unwindowed)',
+			tel.stats.models[0].model === 'modelX' && tel.stats.models[0].turns === 300);
+		check('the live numbers ride telemetry whole', tel.stats.live && tel.stats.live.contextActual === 42);
 	}
 
 	console.log('');

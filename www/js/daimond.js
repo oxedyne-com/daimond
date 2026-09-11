@@ -5402,6 +5402,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// handle, carried so an offline or freshly paired device learns the choice.
 			// `null` when never set, which reads to the merge as "nothing to say".
 			nominated:    nominationSnapshot(),
+			// TRAINING WHEELS -- rides out with the DEBUG_SHARE module in one grep. The
+			// "share all data for debugging" flag, an account-level fact carried so
+			// turning it on one device turns it on across the fleet and turning it off
+			// anywhere stops the fleet. Freshest-`at`-wins `{ on, at }`, verbatim -- the
+			// same shape and merge rule as `nominated` -- so a value both devices already
+			// agree on is byte-identical and the push-skip holds. Only the boolean and
+			// its stamp travel: no key or secret. `null` on a device that has never
+			// touched the toggle (or a build without the module), read as "nothing to
+			// say", so a fresh device cannot clear a fleet another device just armed.
+			debugShare:   (window.DEBUG_SHARE && DEBUG_SHARE.syncSnapshot)
+			                  ? DEBUG_SHARE.syncSnapshot() : null,
 			// What the account has spent, turn by turn.
 			//
 			// The provider keys and their credit bases already travel, so without
@@ -5772,6 +5783,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// so cannot be touched from here.
 		await section('perms',    function () {
 			if (window.DaimondHandMode && DaimondHandMode.adoptPolicy) DaimondHandMode.adoptPolicy(remote.perms);
+		});
+		// TRAINING WHEELS -- rides out with the DEBUG_SHARE module in one grep. The
+		// account-level "share all data for debugging" flag: freshest-`at`-wins, and
+		// when the fresher value differs the module mounts/unmounts its indicator and
+		// starts/stops collection to match -- so ON reaches every device's eye and OFF
+		// stops the fleet. Verbatim on the way in (no restamp), so a value this device
+		// already holds moves nothing. A parcel without the field is a device that
+		// predates it (or a build without the module), so it applies as a no-op -- the
+		// same tolerance as `perms` and `models` above.
+		await section('debugshare', function () {
+			if (window.DEBUG_SHARE && DEBUG_SHARE.adoptSync) DEBUG_SHARE.adoptSync(remote.debugShare);
 		});
 		// If the Workspace panel is open, show what just landed — including any
 		// file that arrived as a cloud reference rather than as bytes. Drawing is

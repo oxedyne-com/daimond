@@ -15,9 +15,19 @@
  * election state, the error/console trail, context/token stats and the app
  * config -- and ships them to the developer so a beta bug can be read directly.
  * A prominent header indicator is shown the whole time it is on, so it is never
- * secretly collecting. Off by default and per-device; when off, nothing is
- * gathered and nothing is posted, and the only footprint is the toggle and (when
- * on) the indicator.
+ * secretly collecting. Off by default; when off, nothing is gathered and nothing
+ * is posted, and the only footprint is the toggle and (when on) the indicator.
+ *
+ * ACCOUNT-SYNCED, NOT PER-DEVICE. The flag is one account-level fact, carried on
+ * the existing sync parcel (daimond.js `collectSync`/`applySync`) as the freshest-
+ * `at`-wins scalar `debugShare: { on, at }` -- the same shape and merge rule as the
+ * nominated runner. Turning it on ANY device turns it on across every linked device
+ * (the eye appears and collection starts on each), and turning it off ANYWHERE stops
+ * the fleet. Only the boolean and its stamp ride; no key or secret is added to the
+ * parcel by this. A device that never touched the toggle says nothing (`null`), so it
+ * cannot clear a fleet another device has just armed; the timestamp arbitrates the
+ * rest, so a device that was offline adopts the freshest decision when it next syncs.
+ * The same-device cross-tab `storage` path is kept beside it.
  *
  * ZERO-KNOWLEDGE PRESERVED. The client decrypts locally and ships the decrypted
  * diagnostics; the master/passphrase-derived key never leaves the device. The
@@ -57,7 +67,8 @@
 	//   MAX_ROWS   1000     -> we put at most 400 rows in a post
 	//   MAX_DATA   400      -> we keep a base64 slice at 360 bytes
 	//   MIN_INTERVAL_MS 10s -> we drain one post every 11s
-	var ENABLED_KEY = 'daimond-debugshare';		// per-device opt-in; '1' is on
+	var ENABLED_KEY = 'daimond-debugshare';		// the flag itself; '1' is on
+	var STAMP_KEY   = 'daimond-debugshare-at';	// ms of the last LOCAL decision, for freshest-wins
 	var LEDGER_KEY  = 'daimond-ledger';			// the cost ledger, read directly
 	var SIGNALS_KEY = 'daimond-signals';		// the per-Diamond / per-model signal index
 	var CROSS_KEY   = 'daimond-debug-cross';	// our own diamond×model spend cross (while on)
@@ -83,6 +94,21 @@
 	// the structured state stays complete.
 	var ELISION_CAP = 2048;
 
+	// Windowing the transcripts, which is a SEPARATE lever from the per-payload
+	// elision above. Elision caps each STRING; it does nothing about turn COUNT, and
+	// an account with hundreds of turns still shipped every one -- a live trace saw a
+	// ~5.7 MB / ~15,900-chunk snapshot drain for ~7 minutes, and the small per-round
+	// telemetry the developer actually reads starved behind it. So the snapshot keeps
+	// only the MOST RECENT turns: each chat's last `MAX_MSGS_PER_CHAT`, and across all
+	// chats a total `TRANSCRIPT_BUDGET_BYTES` spent freshest-first. A row carries 360
+	// base64 bytes (= 270 raw), so a ~700 KiB transcript budget plus the small
+	// structured state lands the whole snapshot near the ~2,800-row / one-minute
+	// target. ONLY the transcript prose is windowed; every structured section (config,
+	// roster, presence, election, signals, ledger, tokenStats) and ALL telemetry stay
+	// complete and unwindowed -- the live numbers are never cut.
+	var MAX_MSGS_PER_CHAT       = 40;			// keep each chat's last N turns
+	var TRANSCRIPT_BUDGET_BYTES = 700 * 1024;	// total cap across all chats' kept turns
+
 	// Field names whose VALUE is a secret and must be fingerprinted, never shipped
 	// raw. Matched on the key name, case-insensitively, anywhere in the bundle --
 	// so even an unexpected key/token buried in a transcript or config is caught.
@@ -104,6 +130,22 @@
 
 	function read(k)  { try { return localStorage.getItem(k); } catch (e) { return null; } }
 	function write(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+	/// A plain positive-millisecond number, or 0. Bignum-safe -- a stamp that
+	/// round-tripped through the gateway can arrive as a bignum object with a
+	/// `toNumber`, like the presence stamps peer.js reads.
+	function ms(v) {
+		var n = (v && typeof v.toNumber === 'function') ? v.toNumber() : Number(v);
+		return (isFinite(n) && n > 0) ? n : 0;
+	}
+
+	/// Best-effort nudge to the sync engine, so a local flip is pushed to the
+	/// fleet promptly rather than only on the next debounce. Guarded on the global,
+	/// so a build without sync (or a test) pays only a property test.
+	function nudgeSync() {
+		try { if (window.DaimondSync && window.DaimondSync.nudge) window.DaimondSync.nudge(); }
+		catch (e) {}
+	}
 
 	// Restore the diamond×model cross from a previous session, so a device that was
 	// already sharing keeps its tally across a reload.
@@ -215,6 +257,62 @@
 		return out;
 	}
 
+	/// The JSON byte length of one message, for the windowing budget. Never throws --
+	/// a message that will not serialise counts as zero, so it can never stall the walk.
+	function msgBytes(m) {
+		try { return byteLen(JSON.stringify(m) || ''); } catch (e) { return 0; }
+	}
+
+	/// Window transcripts down to a bounded, RECENT slice, so a snapshot of an account
+	/// with hundreds of turns drains in about a minute instead of starving the live
+	/// telemetry behind it. Two bounds, both keeping the NEWEST turns: each chat keeps
+	/// only its last `MAX_MSGS_PER_CHAT` messages (a transcript is append-only, so the
+	/// tail is the most recent turns), and across chats -- freshest `updatedAt` first --
+	/// messages are kept, newest of each chat first, until the running total reaches
+	/// `TRANSCRIPT_BUDGET_BYTES`, after which a chat keeps none. Each windowed chat
+	/// carries `droppedOlderTurns`, the count of messages cut, so the operator reads it
+	/// as a window rather than a short chat. Only the `messages` array is touched; every
+	/// other chat field is preserved. Returns a NEW array and does not mutate the input;
+	/// a non-array (e.g. `null`) is returned unchanged. Budget is measured on the RAW
+	/// message, before `elide` shrinks any giant payload, so the wire never exceeds it.
+	function windowTranscripts(chats) {
+		if (!Array.isArray(chats)) return chats;
+		// Freshest chats first, so the byte budget is spent on the most recent
+		// conversations; a stable tiebreak keeps equal/absent stamps in original order.
+		var order = chats.map(function (c, i) { return { c: c, i: i }; });
+		order.sort(function (a, b) {
+			var au = ms(a.c && a.c.updatedAt), bu = ms(b.c && b.c.updatedAt);
+			return (au !== bu) ? (bu - au) : (a.i - b.i);
+		});
+		var budget = TRANSCRIPT_BUDGET_BYTES;
+		var byIndex = {};
+		order.forEach(function (entry) {
+			var c = entry.c || {};
+			var msgs = Array.isArray(c.messages) ? c.messages : [];
+			var total = msgs.length;
+			// Per-chat tail cap first: at most the last N turns of THIS chat.
+			var tail = total > MAX_MSGS_PER_CHAT ? msgs.slice(total - MAX_MSGS_PER_CHAT) : msgs.slice();
+			// Then the cross-chat byte budget, still keeping the newest and dropping the
+			// oldest: walk the tail newest-first and stop when the next (older) turn will
+			// not fit, so a budget already spent by fresher chats leaves this one empty.
+			var out = [];
+			for (var j = tail.length - 1; j >= 0; j--) {
+				var b = msgBytes(tail[j]);
+				if (budget - b < 0) break;
+				budget -= b;
+				out.unshift(tail[j]);
+			}
+			var rec = {};
+			Object.keys(c).forEach(function (k) { if (k !== 'messages') rec[k] = c[k]; });
+			rec.messages = out;
+			var dropped = total - out.length;
+			if (dropped > 0) rec.droppedOlderTurns = dropped;
+			byIndex[entry.i] = rec;
+		});
+		// Restore the input's original order.
+		return chats.map(function (c, i) { return byIndex[i]; });
+	}
+
 	// ── Assembling a bundle ──────────────────────────────────────
 
 	/// The always-safe sources this module reads on its own, off public globals:
@@ -247,10 +345,12 @@
 			ts:         Date.now(),
 			iso:        new Date().toISOString(),
 			// From the provider (daimond.js) -- the decrypted, private-scope state.
-			// Only `transcripts` carries the giant verbatim tool outputs, so only it
-			// is elided; the rest is small, structured and travels COMPLETE.
+			// Only `transcripts` carries the giant verbatim tool outputs and the deep
+			// turn history, so it alone is WINDOWED (recent turns only, see
+			// windowTranscripts) and then elided; the rest is small, structured and
+			// travels COMPLETE.
 			config:      state.config || null,
-			transcripts: elide(state.transcripts || null),
+			transcripts: elide(windowTranscripts(state.transcripts || null)),
 			roster:      state.roster || null,
 			presence:    state.presence || null,
 			election:    state.election || null,
@@ -595,12 +695,15 @@
 
 	function isOn() { return enabled; }
 
-	/// Turn the feature on or off. On: show the indicator, start the timers, and
-	/// post a full snapshot. Off: hide the indicator, stop the timers, drop any
-	/// queued posts, and reset the telemetry cursors -- nothing more leaves the
-	/// device. Idempotent and safe to call before the DOM exists (the indicator is
-	/// simply not mounted then, and mounts on the next `on`).
-	function setEnabled(v) {
+	/// Apply the on/off EFFECT without recording a decision or nudging sync. On:
+	/// show the indicator, start the timers, and post a full snapshot. Off: hide the
+	/// indicator, stop the timers, drop any queued posts, and reset the telemetry
+	/// cursors -- nothing more leaves the device. Idempotent and safe to call before
+	/// the DOM exists (the indicator is simply not mounted then, and mounts on the
+	/// next `on`). This is the shared body: `setEnabled` wraps it with a fresh stamp
+	/// for a LOCAL decision, and `adoptSync` calls it after writing the remote stamp
+	/// verbatim, so an adopted value never restamps and cannot ping-pong.
+	function applyState(v) {
 		enabled = !!v;
 		write(ENABLED_KEY, enabled ? '1' : '0');
 		try {
@@ -621,6 +724,49 @@
 			stopTimers();
 			queue = [];
 			unmountIndicator();
+		}
+	}
+
+	/// Turn the feature on or off from a LOCAL action (the Settings toggle). Stamps
+	/// the decision with the clock -- which is how this choice wins over an older one
+	/// on every linked device (see `adoptSync`) -- applies the effect, and nudges the
+	/// sync engine so the flag reaches the fleet without waiting for the next push.
+	function setEnabled(v) {
+		var on = !!v;
+		// Stamp BEFORE applying, so a snapshot the effect kicks off already carries the
+		// new decision when `collectSync` reads `syncSnapshot()`.
+		write(STAMP_KEY, String(Date.now()));
+		applyState(on);
+		nudgeSync();
+	}
+
+	/// The flag as it rides the sync parcel: `{ on, at }`, or `null` when this device
+	/// has never touched the toggle. Verbatim -- no restamp -- so a value this device
+	/// already agrees with serialises to the same bytes and the push-skip still holds.
+	/// `null` (never touched) reads to the other side as "nothing to say", so a fresh
+	/// device cannot clear a fleet another device has just armed.
+	function syncSnapshot() {
+		var at = ms(read(STAMP_KEY));
+		if (!at) return null;
+		return { on: enabled, at: at };
+	}
+
+	/// Adopt a flag that arrived from another device: the fresher `at` wins, STRICTLY,
+	/// and is written VERBATIM, so a record this device already holds moves nothing and
+	/// the next parcel is byte-identical. When the fresher value differs from what this
+	/// device shows, the effect is applied through `applyState` -- the indicator mounts
+	/// or unmounts and collection starts or stops -- so the eye and the collection match
+	/// the fleet. Only the boolean and its stamp are touched; no key or secret is read
+	/// or written here.
+	function adoptSync(rec) {
+		if (!rec || typeof rec !== 'object') return;
+		var at = ms(rec.at);
+		if (!at) return;
+		var on = !!rec.on;
+		var mineAt = ms(read(STAMP_KEY));
+		if (at > mineAt) {
+			write(STAMP_KEY, String(at));		// verbatim: no restamp, so no ping-pong
+			if (on !== enabled) applyState(on);
 		}
 	}
 
@@ -662,13 +808,16 @@
 		}
 	} catch (e) {}
 
-	// A switch flipped in one tab reaches the others, so turning it off in one
-	// place stops collection everywhere.
+	// A switch flipped in one tab reaches the others of the SAME device, so turning
+	// it off in one place stops collection everywhere on this machine. The sibling
+	// tab that flipped it already stamped `STAMP_KEY` and nudged sync, so this one
+	// only mirrors the EFFECT -- `applyState`, never `setEnabled` -- and does not
+	// restamp. (Cross-DEVICE propagation is `syncSnapshot`/`adoptSync` on the parcel.)
 	try {
 		window.addEventListener('storage', function (e) {
 			if (e && e.key === ENABLED_KEY) {
 				var now = read(ENABLED_KEY) === '1';
-				if (now !== enabled) setEnabled(now);
+				if (now !== enabled) applyState(now);
 			}
 		});
 	} catch (e) {}
@@ -676,6 +825,10 @@
 	window.DEBUG_SHARE = {
 		isOn:             isOn,
 		setEnabled:       setEnabled,
+		// Cross-device flag sync, ridden on the existing parcel by daimond.js
+		// (`collectSync` reads `syncSnapshot`, `applySync` calls `adoptSync`).
+		syncSnapshot:     syncSnapshot,
+		adoptSync:        adoptSync,
 		registerProvider: registerProvider,
 		registerStats:    registerStats,
 		noteCross:        noteCross,
@@ -684,6 +837,7 @@
 		_fingerprint: fingerprint,
 		_redact:      redact,
 		_elide:       elide,
+		_windowTranscripts: windowTranscripts,
 		_byteLen:     byteLen,
 		_assemble:    assemble,
 		_chunk:       chunk,
