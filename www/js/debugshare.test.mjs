@@ -272,6 +272,109 @@ async function main() {
 		check('no further posts after off', onEnv.posts.length === before);
 	}
 
+	console.log('debugshare: telemetry — per-model aggregation numbers are exact');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		// A small fixture ledger with hand-checkable sums. Entry shape {t,m,p,c,ca,u,r}.
+		env.localStorage.setItem('daimond-ledger', JSON.stringify([
+			{ t: 1, m: 'modelX', p: 100, c: 50, ca: 20, u: 0.10, r: 1 },
+			{ t: 2, m: 'modelX', p: 300, c: 80, ca: 60, u: 0.30 },			// not reported
+			{ t: 3, m: 'modelY', p: 50,  c: 10, ca: 0,  u: 0.05, r: 1 },
+		]));
+		const rows = DS._aggregateLedger(DS._publicSources().ledger);
+		const byModel = {};
+		rows.forEach((r) => { byModel[r.model] = r; });
+		const x = byModel['modelX'], y = byModel['modelY'];
+		check('aggregation has one row per model', rows.length === 2 && !!x && !!y);
+		check('modelX turns/prompt/completion/cached summed', x.turns === 2
+			&& x.prompt === 400 && x.completion === 130 && x.cached === 80);
+		check('modelX cachedPct is 100*cached/prompt', x.cachedPct === 20);		// 100*80/400
+		check('modelX maxPromptTurn is the largest single turn', x.maxPromptTurn === 300);
+		check('modelX reportedPct is 100*count(r)/turns', x.reportedPct === 50);	// 1 of 2
+		check('modelX usd summed', Math.abs(x.usd - 0.40) < 1e-9);
+		check('modelY cachedPct is 0 with no cache', y.cachedPct === 0);
+		check('modelY maxPromptTurn with one turn', y.maxPromptTurn === 50);
+		check('modelY reportedPct is 100 when the only turn reported', y.reportedPct === 100);
+	}
+
+	console.log('debugshare: telemetry — stats ride every tick when a stats seam is registered');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		env.localStorage.setItem('daimond-ledger', JSON.stringify([
+			{ t: 1, m: 'modelX', p: 100, c: 50, ca: 20, u: 0.10, r: 1 },
+		]));
+		DS.registerStats(() => ({
+			contextActual: 123, contextWindow: 200000, foldAt: 0,
+			activeModel: 'modelX', provider: 'openrouter',
+			workerState: { active: 0, queued: 0, busy: false }, activity: 'idle',
+		}));
+		const first = DS._gatherTelemetry();
+		check('telemetry is sent with a stats block', !!first && !!first.stats);
+		check('stats carries the per-model aggregation', Array.isArray(first.stats.models)
+			&& first.stats.models.length === 1 && first.stats.models[0].model === 'modelX');
+		check('stats carries the live numbers from the seam',
+			first.stats.live && first.stats.live.contextActual === 123
+			&& first.stats.live.contextWindow === 200000
+			&& first.stats.live.activeModel === 'modelX');
+		// A SECOND tick with no new ledger/trail/diag rows still sends, because stats
+		// is present -- the whole point of the change.
+		const second = DS._gatherTelemetry();
+		check('a quiet tick still sends when stats is present', !!second && !!second.stats);
+		check('the quiet tick carries no new ledger rows', Array.isArray(second.ledger)
+			&& second.ledger.length === 0);
+		check('the quiet tick still carries the aggregation', Array.isArray(second.stats.models)
+			&& second.stats.models.length === 1);
+	}
+
+	console.log('debugshare: telemetry — a live seam that throws is null-safe');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerStats(() => { throw new Error('boom'); });
+		const tel = DS._gatherTelemetry();
+		check('a throwing stats seam yields live:null, not a crash',
+			!!tel && !!tel.stats && tel.stats.live === null);
+	}
+
+	console.log('debugshare: elision — a long string is capped and structure is preserved');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		const long = 'x'.repeat(1000);
+		const tree = { a: { b: [ { text: long, keep: 'short' } ] }, n: 42 };
+		const out = DS._elide(tree);
+		const capped = out.a.b[0].text;
+		check('the long string is truncated to the 400-char cap plus a tail',
+			capped.length < long.length && capped.indexOf('x'.repeat(400)) === 0);
+		check('the elision tail names how many characters were cut',
+			capped.indexOf('…[+600 chars]') !== -1);
+		check('a short string is left untouched', out.a.b[0].keep === 'short');
+		check('structure and non-strings are preserved', out.n === 42
+			&& Array.isArray(out.a.b) && out.a.b.length === 1);
+	}
+
+	console.log('debugshare: elision — an assembled snapshot caps a huge transcript read');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		const bigRead = 'SOURCE'.repeat(5000);		// a verbatim file read, ~30 KB
+		const state = {
+			config: null,
+			transcripts: [ { id: 'chatA', name: 'x', messages: [
+				{ role: 'user', content: bigRead } ] } ],
+		};
+		const bundle = DS._assemble({ ledger: [], trail: [], diag: [] }, state);
+		const json = JSON.stringify(bundle);
+		check('the assembled snapshot no longer holds the whole read',
+			json.indexOf('SOURCE'.repeat(5000)) === -1);
+		check('the assembled snapshot keeps the capped head and a tail',
+			json.indexOf('…[+') !== -1);
+		check('the capped snapshot is far smaller than the raw read',
+			json.length < bigRead.length);
+	}
+
 	console.log('');
 	if (failures) { console.log('FAILURES: ' + failures); process.exit(1); }
 	console.log('all debugshare checks passed');

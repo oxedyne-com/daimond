@@ -43454,5 +43454,46 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 	}
 
+	// The live-stats seam for the same debug feed. Unlike the provider above this
+	// is called EVERY telemetry tick, so it must be cheap and synchronous and read
+	// no transcripts -- just the live context/token/worker numbers off the active
+	// chat's wasm handle. Lifts out with the module in one grep of `DEBUG_SHARE`.
+	if (window.DEBUG_SHARE && DEBUG_SHARE.registerStats) {
+		DEBUG_SHARE.registerStats(function () {
+			var chat = current || null;
+			var app  = (chat && chat.app) ? chat.app : null;
+			var contextActual = null, contextWindow = null, foldAt = null;
+			// `last_prompt_tokens` is the last turn's prompt count, i.e. the size of
+			// the context as the engine last sent it, in TOKENS.
+			try {
+				if (app) {
+					contextActual = app.last_prompt_tokens || 0;
+					contextWindow = app.context_window || 0;
+					foldAt        = app.fold_at || 0;
+				}
+			} catch (e) {}
+			// TODO(debug-feed): expose context estimate — needs a wasm getter. The
+			// pre-turn byte/token gauge (`gauge.tokens`) is not surfaced to JS, so the
+			// estimate is left out here rather than adding a wasm getter.
+			var workerState = null;
+			try {
+				workerState = {
+					active: (Workers && Workers.active) || 0,
+					queued: (Workers && Workers.queue) ? Workers.queue.length : 0,
+					busy:   !!(Workers && Workers.busy && Workers.busy()),
+				};
+			} catch (e) {}
+			return {
+				contextActual: contextActual,
+				contextWindow: contextWindow,
+				foldAt:        foldAt,
+				activeModel:   chat ? (chat.model || '') : '',
+				provider:      chat ? (chat.provider || '') : '',
+				workerState:   workerState,
+				activity:      workerState ? (workerState.busy ? 'busy' : 'idle') : null,
+			};
+		});
+	}
+
 	boot().then(handleCheckoutReturn);
 })();

@@ -3256,6 +3256,28 @@
 	'settings.trail_help':  'Event names and a clock only: no keys, no message text, nothing from your files. Safe to paste into a bug report.',
 	'settings.trail_empty': 'Nothing recorded yet.',
 
+	// The diagnostics switch and its share button, in the same admin section.
+	// See diag.js and the settings panel in daimond.js.
+	'settings.diag_off':        'Turn diagnostics off',
+	'settings.diag_on':         'Turn diagnostics on',
+	'settings.diag_help':       'Off by default. When on, this device records its sync decisions so a problem that only shows on this device can be seen. No message text, no keys, no file contents — chat ids, versions and counts only.',
+	'settings.diag_panel':      'Open debug panel',
+	'settings.diag_share':      'Share diagnostic log',
+	'settings.diag_sharing':    'Sharing…',
+	'settings.diag_shared':     'Shared — thank you',
+	'settings.diag_share_fail': 'Could not share',
+	'settings.diag_share_note': 'Sharing sends this device’s diagnostic log — chat ids, versions and counts, never message text — to the Daimond team.',
+
+	// ── TRAINING WHEELS — the temporary debug-data-sharing feature ──
+	// Remove these with www/js/debugshare.js and the DEBUG_SHARE touch points in
+	// daimond.js. Kept here (not in daimond.js) because register() replaces the
+	// table rather than merging, so a second registrant would wipe the catalogue.
+	'home.sec_debugshare':      'Debug data sharing',
+	'settings.debugshare_on':   'Share all data for debugging (temporary)',
+	'settings.debugshare_off':  'Stop sharing data for debugging',
+	'settings.debugshare_note': 'Beta training-wheel, to be removed. When on, this shares ALL your Daimond data — your chats, costs, devices and settings — with the developer for debugging. Your keys are never shared. Off by default.',
+	'settings.debugshare_help': 'Beta only, and temporary. When on, everything on this device — chats, costs, devices, settings — is shared with the developer to debug a problem. Your provider key and passphrase key are never shared.',
+
 	// ── The email doorbell ─────────────────────────────────────
 	// One email, at most once a day, saying something is waiting. On by default
 	// for a beta account, which is why the switch and the notice both exist: a

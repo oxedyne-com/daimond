@@ -70,6 +70,13 @@
 	var TELEMETRY_MS = 30000;					// stream telemetry cadence while on
 	var RESNAP_MS    = 300000;					// periodic full re-snapshot (5 min)
 
+	// A transcript embeds whole source-file reads verbatim, so a snapshot was ~7 MB
+	// / 25k chunks and drained for ~12 min, starving telemetry behind it. Every
+	// string past this cap is truncated to head + a "[+N chars]" tail before the
+	// bundle ships, which the operator still reads but which fits in a few posts.
+	// daimond.js has no `TOOL_ELISION_CAP` to reuse, so the figure lives here.
+	var ELISION_CAP = 400;
+
 	// Field names whose VALUE is a secret and must be fingerprinted, never shipped
 	// raw. Matched on the key name, case-insensitively, anywhere in the bundle --
 	// so even an unexpected key/token buried in a transcript or config is caught.
@@ -80,6 +87,7 @@
 	// ── State ──
 	var enabled  = read(ENABLED_KEY) === '1';
 	var provider = null;			// registered by daimond.js: () -> (obj | Promise<obj>)
+	var statsFn  = null;			// registered by daimond.js: () -> live-stats obj (sync, cheap)
 	var queue    = [];				// pending posts, each an array of {ts,tag,data} rows
 	var draining = false;
 	var telTimer = null, snapTimer = null;
@@ -139,6 +147,30 @@
 		return out;
 	}
 
+	/// A deep copy of `obj` with every over-long string truncated to its first
+	/// `ELISION_CAP` characters plus a `…[+N chars]` tail naming how much was cut.
+	/// Structure-preserving, so the operator still sees the shape of a transcript --
+	/// only the verbatim source-file reads inside it are shortened. Cycle-safe and
+	/// depth-bounded, like `redact()`, since the state it walks is arbitrary.
+	function elide(obj, seen, depth) {
+		seen = seen || [];
+		depth = depth || 0;
+		if (typeof obj === 'string') {
+			return obj.length > ELISION_CAP
+				? obj.slice(0, ELISION_CAP) + '…[+' + (obj.length - ELISION_CAP) + ' chars]'
+				: obj;
+		}
+		if (obj == null || typeof obj !== 'object') return obj;
+		if (depth > 40 || seen.indexOf(obj) !== -1) return '[elided:cycle-or-deep]';
+		seen = seen.concat([obj]);
+		if (Array.isArray(obj)) {
+			return obj.map(function (v) { return elide(v, seen, depth + 1); });
+		}
+		var out = {};
+		Object.keys(obj).forEach(function (k) { out[k] = elide(obj[k], seen, depth + 1); });
+		return out;
+	}
+
 	// ── Assembling a bundle ──────────────────────────────────────
 
 	/// The always-safe sources this module reads on its own, off public globals:
@@ -178,7 +210,10 @@
 			trail:       sources.trail || [],
 			diag:        sources.diag || [],
 		};
-		return redact(raw);
+		// Elide first, so the transcripts' verbatim source-file reads are capped
+		// before the bundle is chunked; then redact, so a secret-named field is a
+		// fingerprint regardless of what elision left of it.
+		return redact(elide(raw));
 	}
 
 	/// Gather the full decrypted state: the provider's output plus this module's
@@ -193,15 +228,72 @@
 		});
 	}
 
-	/// A lightweight telemetry object: only what is NEW since the last tick --
-	/// ledger deltas, new trail rows, new diagnostic rows. No transcripts. Redacted
-	/// like everything else. Returns null when there is nothing new to send.
+	/// Fold the whole cost ledger into one row per model -- the discriminator the
+	/// developer reads every tick. `ledger` is the raw array this module reads off
+	/// `daimond-ledger`, entries shaped `{t,m,p,c,ca,u,r,e}`: `p` prompt tokens
+	/// (cumulative per turn), `c` completion, `ca` cached, `u` USD, `r` set when
+	/// the provider reported the cost. `cachedPct` is cache hit-rate on the prompt,
+	/// `maxPromptTurn` the largest single-turn prompt, `reportedPct` how much of the
+	/// spend the provider priced rather than this client guessing.
+	function aggregateLedger(ledger) {
+		var by = {};	// model id → accumulator
+		for (var i = 0; i < ledger.length; i++) {
+			var e = ledger[i];
+			if (!e) continue;
+			var m = e.m || '';
+			if (!by[m]) by[m] = { model: m, turns: 0, prompt: 0, completion: 0,
+				cached: 0, usd: 0, maxPromptTurn: 0, reported: 0 };
+			var a = by[m];
+			a.turns      += 1;
+			a.prompt     += e.p || 0;
+			a.completion += e.c || 0;
+			a.cached     += e.ca || 0;
+			a.usd        += e.u || 0;
+			if ((e.p || 0) > a.maxPromptTurn) a.maxPromptTurn = e.p || 0;
+			if (e.r) a.reported += 1;
+		}
+		return Object.keys(by).map(function (m) {
+			var a = by[m];
+			return {
+				model:         a.model,
+				turns:         a.turns,
+				prompt:        a.prompt,
+				completion:    a.completion,
+				cached:        a.cached,
+				cachedPct:     a.prompt ? 100 * a.cached / a.prompt : 0,
+				usd:           a.usd,
+				maxPromptTurn: a.maxPromptTurn,
+				reportedPct:   a.turns ? 100 * a.reported / a.turns : 0,
+			};
+		});
+	}
+
+	/// The live numbers from daimond.js's stats seam, or null when none is
+	/// registered or it throws. Sync and cheap by contract -- no transcripts.
+	function liveStats() {
+		if (!statsFn) return null;
+		try {
+			var v = statsFn();
+			return (v && typeof v === 'object') ? v : null;
+		} catch (e) { return null; }
+	}
+
+	/// A lightweight telemetry object, sent EVERY tick: the ledger/trail/diag rows
+	/// that are new since the last tick, plus a `stats` block -- per-model ledger
+	/// aggregation and the live context/worker numbers -- that goes every time so
+	/// the developer sees the figures that matter even on a quiet tick. No
+	/// transcripts. Redacted like everything else. Returns null only when there is
+	/// genuinely nothing to say (no new rows and no stats seam).
 	function gatherTelemetry() {
 		var s = publicSources();
 		var ledDelta  = s.ledger.slice(lastLedgerLen);
 		var trailNew  = s.trail.slice(lastTrailLen);
 		var diagNew   = s.diag.slice(lastDiagLen);
-		if (!ledDelta.length && !trailNew.length && !diagNew.length) return null;
+		var stats = {
+			models: aggregateLedger(s.ledger),
+			live:   liveStats(),
+		};
+		if (!ledDelta.length && !trailNew.length && !diagNew.length && !stats) return null;
 		lastLedgerLen = s.ledger.length;
 		lastTrailLen  = s.trail.length;
 		lastDiagLen   = s.diag.length;
@@ -213,6 +305,7 @@
 			ledger: ledDelta,
 			trail:  trailNew,
 			diag:   diagNew,
+			stats:  stats,
 		});
 	}
 
@@ -445,6 +538,14 @@
 		if (typeof fn === 'function') provider = fn;
 	}
 
+	/// Register the live-stats seam daimond.js supplies: a cheap, synchronous
+	/// function returning the current context/token/worker numbers (never
+	/// transcripts). Telemetry calls it every tick. Called once at boot, beside
+	/// `registerProvider`.
+	function registerStats(fn) {
+		if (typeof fn === 'function') statsFn = fn;
+	}
+
 	// If the switch was left on from a previous session, restore the indicator and
 	// resume collection once the DOM is ready.
 	function bootRestore() {
@@ -484,14 +585,18 @@
 		isOn:             isOn,
 		setEnabled:       setEnabled,
 		registerProvider: registerProvider,
+		registerStats:    registerStats,
 		snapshotNow:      snapshotNow,
 		// Exposed for the verifier (www/js/debugshare.test.mjs):
 		_fingerprint: fingerprint,
 		_redact:      redact,
+		_elide:       elide,
 		_assemble:    assemble,
 		_chunk:       chunk,
 		_publicSources: publicSources,
 		_gatherSnapshot: gatherSnapshot,
+		_gatherTelemetry: gatherTelemetry,
+		_aggregateLedger: aggregateLedger,
 		_queueLen:    function () { return queue.length; },
 	};
 })();
