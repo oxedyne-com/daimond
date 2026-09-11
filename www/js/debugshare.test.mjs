@@ -67,7 +67,8 @@ function makeNode(tag) {
 	return node;
 }
 
-function makeEnv() {
+function makeEnv(cfg) {
+	cfg = cfg || {};
 	const store = new Map();
 	const localStorage = {
 		getItem: (k) => (store.has(k) ? store.get(k) : null),
@@ -119,11 +120,17 @@ function makeEnv() {
 		(listeners.storage || []).forEach((fn) => fn({ key }));
 	};
 
-	// The capture: every POST body, parsed.
+	// The capture: every POST body, parsed. When `cfg.gateFetch` is set, each POST
+	// resolves only when the test releases it, so a snapshot can be held mid-drain and
+	// a telemetry post injected behind it -- the priority-lane property under test.
 	const posts = [];
+	const resolvers = [];
 	const fetchImpl = (url, opts) => {
 		try { posts.push({ url, body: JSON.parse((opts && opts.body) || '{}') }); }
 		catch (e) { posts.push({ url, body: null }); }
+		if (cfg.gateFetch) {
+			return new Promise((resolve) => { resolvers.push(() => resolve({ ok: true, status: 200 })); });
+		}
 		return Promise.resolve({ ok: true, status: 200 });
 	};
 
@@ -134,6 +141,14 @@ function makeEnv() {
 	// mid-test; setTimeout is real, for the drainer's first-post path.
 	const noInterval = () => 1;
 	const noClear = () => {};
+	// The drainer paces itself with `setTimeout(step, POST_GAP_MS)`. `cfg.fastTimers`
+	// records every requested delay -- so a test can assert the 11 s rate cap is
+	// honoured -- while firing the callback near-instantly, so a multi-post drain can
+	// be observed without waiting real seconds.
+	const timerDelays = [];
+	const setTimeoutImpl = cfg.fastTimers
+		? (fn, ms) => { timerDelays.push(ms); return setTimeout(fn, 1); }
+		: setTimeout;
 
 	function loadScript(rel) {
 		const bodyText = readFileSync(join(HERE, rel), 'utf8');
@@ -144,12 +159,22 @@ function makeEnv() {
 			'with (window) {\n' + bodyText + '\n}');
 		fn(win, document, localStorage, fetchImpl, btoa, atob,
 			TextEncoder, TextDecoder, CustomEventShim,
-			setTimeout, clearTimeout, noInterval, noClear, console);
+			setTimeoutImpl, clearTimeout, noInterval, noClear, console);
 	}
 	loadScript('debugshare.js');
+	// Release every gated POST currently in flight, let the microtasks and the (fast)
+	// pacing timer run, and repeat until nothing new is queued -- so a gated drain runs
+	// to completion in order without waiting the real 11 s between posts.
+	async function drainAll() {
+		for (let guard = 0; guard < 2000; guard++) {
+			if (!resolvers.length) { await sleep(3); if (!resolvers.length) break; }
+			resolvers.splice(0).forEach((r) => r());
+			await sleep(3);
+		}
+	}
 	return {
 		win, document, localStorage, posts, topActions, store,
-		fireStorage, events,
+		fireStorage, events, timerDelays, drainAll,
 		nudges: () => nudges,
 	};
 }
@@ -682,6 +707,91 @@ async function main() {
 		check('telemetry aggregates ALL 300 ledger turns (unwindowed)',
 			tel.stats.models[0].model === 'modelX' && tel.stats.models[0].turns === 300);
 		check('the live numbers ride telemetry whole', tel.stats.live && tel.stats.live.contextActual === 42);
+	}
+
+	console.log('debugshare: priority — telemetry jumps ahead of a snapshot backlog, rate cap kept');
+	{
+		const env = makeEnv({ gateFetch: true, fastTimers: true });
+		const DS = env.win.DEBUG_SHARE;
+		env.localStorage.setItem('daimond-ledger', JSON.stringify([{ t: 1, m: 'modelX', p: 10, c: 5, u: 0.01 }]));
+		// A big STRUCTURED config (config is never elided) makes the snapshot span several
+		// posts, so a genuine backlog sits behind the first in-flight post.
+		DS.registerProvider(async () => ({
+			config:      { instructions: 'I'.repeat(300000), model: 'anthropic/claude-3.5' },
+			transcripts: [{ id: 'c', name: 'x', updatedAt: 1, messages: [{ role: 'user', content: 'hi' }] }],
+			roster: {}, presence: {}, election: {}, tokenStats: [],
+		}));
+		DS.setEnabled(true);
+		await sleep(20);	// the snapshot is gathered; post #1 is in flight (gated), the rest queued
+		const backlog = DS._snapQueueLen();
+		check('a multi-post snapshot leaves a backlog behind the first post', backlog >= 2);
+		check('nothing is on the telemetry lane yet', DS._telQueueLen() === 0);
+		// A telemetry tick arrives mid-snapshot.
+		DS._telemetryTick();
+		check('the telemetry post is queued on the priority lane', DS._telQueueLen() === 1);
+		check('the telemetry enqueue leaves the snapshot backlog untouched', DS._snapQueueLen() === backlog);
+		// Drain everything, in order, without waiting the real 11 s between posts.
+		await env.drainAll();
+		const kinds = env.posts.map((p) => {
+			const tag = (p.body && p.body.rows && p.body.rows[0] && p.body.rows[0].tag) || '';
+			return tag.indexOf('ds telemetry') === 0 ? 'telemetry' : 'snapshot';
+		});
+		const telCount = kinds.filter((k) => k === 'telemetry').length;
+		check('exactly one telemetry post reached the wire', telCount === 1);
+		check('the first post was the snapshot already in flight', kinds[0] === 'snapshot');
+		check('telemetry drained BEFORE the remaining snapshot backlog', kinds[1] === 'telemetry');
+		check('every remaining snapshot post followed the telemetry',
+			kinds.slice(2).every((k) => k === 'snapshot') && kinds.length === backlog + 2);
+		// The rate cap: the drainer never asked to post faster than the 11 s gap.
+		const paceDelays = env.timerDelays.filter((d) => d > 0);
+		check('the drainer paced every post at the 11 s rate cap',
+			paceDelays.length >= 1 && paceDelays.every((d) => d === 11000));
+	}
+
+	console.log('debugshare: priority — turning off clears BOTH lanes');
+	{
+		const env = makeEnv({ gateFetch: true });
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => ({ config: { instructions: 'I'.repeat(300000) },
+			transcripts: [], roster: {}, presence: {}, election: {}, tokenStats: [] }));
+		DS.setEnabled(true);
+		await sleep(20);
+		DS._telemetryTick();
+		check('both lanes hold posts before off', DS._snapQueueLen() >= 1 && DS._telQueueLen() === 1);
+		DS.setEnabled(false);
+		check('turning off empties the snapshot lane', DS._snapQueueLen() === 0);
+		check('turning off empties the telemetry lane', DS._telQueueLen() === 0);
+		check('_queueLen reflects both lanes cleared', DS._queueLen() === 0);
+	}
+
+	console.log('debugshare: snapshot — the raw ledger is trimmed to a recent tail, not shipped whole');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		const ledger = [];
+		for (let i = 0; i < 400; i++) ledger.push({ t: i, m: 'modelX', p: 10, c: 5, u: 0.01, id: 'led-' + i });
+		const bundle = DS._assemble({ ledger, trail: [], diag: [], signals: null }, providerState());
+		check('the snapshot keeps only the ledger TAIL (20 entries), not all 400',
+			Array.isArray(bundle.ledger) && bundle.ledger.length === 20);
+		check('the tail is the MOST RECENT entries', bundle.ledger[19].id === 'led-399'
+			&& bundle.ledger[0].id === 'led-380');
+		check('the snapshot records how many older ledger entries were dropped',
+			bundle.ledgerDropped === 380);
+		const json = JSON.stringify(bundle);
+		check('an old ledger entry is NOT in the snapshot',
+			json.indexOf('"led-0"') === -1 && json.indexOf('"led-100"') === -1);
+		check('a recent ledger entry IS in the tail', json.indexOf('"led-399"') !== -1);
+		// The aggregates that replace the raw ledger still sum EVERY turn via telemetry.
+		const agg = DS._aggregateLedger(ledger);
+		check('the per-model aggregate still summarises all 400 turns',
+			agg.length === 1 && agg[0].model === 'modelX' && agg[0].turns === 400);
+		// The trim is a real size cut: the snapshot is far smaller than the raw ledger alone.
+		check('the trimmed snapshot is smaller than the raw ledger it used to embed',
+			json.length < JSON.stringify(ledger).length);
+		// A short ledger is kept whole with nothing dropped.
+		const small = DS._assemble({ ledger: [{ id: 'only', u: 1 }], trail: [], diag: [] }, {});
+		check('a ledger under the tail cap is kept whole',
+			small.ledger.length === 1 && small.ledgerDropped === 0);
 	}
 
 	console.log('');

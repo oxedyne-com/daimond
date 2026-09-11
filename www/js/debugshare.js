@@ -109,6 +109,15 @@
 	var MAX_MSGS_PER_CHAT       = 40;			// keep each chat's last N turns
 	var TRANSCRIPT_BUDGET_BYTES = 700 * 1024;	// total cap across all chats' kept turns
 
+	// The snapshot no longer ships the whole raw cost ledger. Telemetry carries the
+	// per-model / per-Diamond AGGREGATES of it every tick (see aggregateLedger and
+	// signalBreakdown), so the raw ~400-entry array was pure duplicated bulk that
+	// pushed the snapshot past the one-minute drain target and starved the live
+	// numbers behind it. Only the most recent turns are kept, as a tail the operator
+	// can spot-check against the aggregates; the count dropped is recorded so the
+	// tail is read as a window, not a short ledger.
+	var SNAPSHOT_LEDGER_TAIL = 20;				// raw ledger entries kept in a snapshot
+
 	// Field names whose VALUE is a secret and must be fingerprinted, never shipped
 	// raw. Matched on the key name, case-insensitively, anywhere in the bundle --
 	// so even an unexpected key/token buried in a transcript or config is caught.
@@ -121,7 +130,14 @@
 	var provider = null;			// registered by daimond.js: () -> (obj | Promise<obj>)
 	var statsFn  = null;			// registered by daimond.js: () -> live-stats obj (sync, cheap)
 	var crossIx  = {};				// diamondId -> model -> {turns, usd}, filled while on
-	var queue    = [];				// pending posts, each an array of {ts,tag,data} rows
+	// Two lanes, not one FIFO. Telemetry (small, frequent, the live per-round numbers)
+	// drains first and completely; the snapshot lane (a large multi-thousand-row bundle)
+	// drains only when the telemetry lane is empty. So a telemetry post enqueued while a
+	// snapshot is mid-drain jumps ahead of the remaining snapshot backlog and reaches the
+	// gateway within a post-cycle or two, instead of waiting minutes behind it. Both share
+	// the one drainer and its 11 s pacing, so the handler's rate cap is never exceeded.
+	var telQueue  = [];				// priority lane: telemetry posts, each an array of rows
+	var snapQueue = [];				// snapshot lane: drained only when telQueue is empty
 	var draining = false;
 	var telTimer = null, snapTimer = null;
 	var indicator = null;
@@ -339,6 +355,14 @@
 	function assemble(sources, state) {
 		sources = sources || {};
 		state = state || {};
+		// The raw cost ledger is NOT shipped whole any more: telemetry's per-model and
+		// per-Diamond aggregates already summarise it every tick, so a full ~400-entry
+		// copy in the snapshot was duplicated bulk that delayed the drain. Keep only the
+		// most recent tail for a spot-check, and record how many older entries were cut.
+		var fullLedger = sources.ledger || [];
+		var ledgerTail = fullLedger.length > SNAPSHOT_LEDGER_TAIL
+			? fullLedger.slice(fullLedger.length - SNAPSHOT_LEDGER_TAIL)
+			: fullLedger;
 		var raw = {
 			v:          1,
 			kind:       'snapshot',
@@ -357,11 +381,13 @@
 			tokenStats:  state.tokenStats || null,
 			// From this module's own public reads. The signal index is structured
 			// and complete; trail and diag are free-form logs, so their rows are
-			// elided against a stray giant string while their shape is kept.
-			signals:     sources.signals || null,
-			ledger:      sources.ledger || [],
-			trail:       elide(sources.trail || []),
-			diag:        elide(sources.diag || []),
+			// elided against a stray giant string while their shape is kept. The
+			// ledger is a recent tail only -- telemetry carries its aggregates.
+			signals:       sources.signals || null,
+			ledger:        ledgerTail,
+			ledgerDropped: fullLedger.length - ledgerTail.length,
+			trail:         elide(sources.trail || []),
+			diag:          elide(sources.diag || []),
 		};
 		// Redact after eliding, so a secret-named field is a fingerprint regardless
 		// of what elision left of it.
@@ -574,25 +600,34 @@
 		}).then(function () {}, function () {});
 	}
 
-	/// Drain the post queue one batch every `POST_GAP_MS`, so the handler's rate
-	/// cap never refuses us. Stops the instant the feature is turned off (the
-	/// queue is cleared by `setEnabled`, and this checks `enabled` each round).
+	/// True while either lane holds a pending post.
+	function pending() { return telQueue.length > 0 || snapQueue.length > 0; }
+
+	/// Drain the two lanes one batch every `POST_GAP_MS`, so the handler's rate cap
+	/// never refuses us. The telemetry lane is always taken first and emptied before
+	/// any snapshot batch is sent, so a telemetry post that arrives mid-snapshot is
+	/// the very next thing on the wire. Stops the instant the feature is turned off
+	/// (both lanes are cleared by `applyState`, and this checks `enabled` each round).
 	function drain() {
 		if (draining) return;
 		draining = true;
 		(function step() {
-			if (!enabled || !queue.length) { draining = false; return; }
-			var rows = queue.shift();
+			if (!enabled || !pending()) { draining = false; return; }
+			// Telemetry jumps the queue: the priority lane wins whenever it has anything.
+			var rows = telQueue.length ? telQueue.shift() : snapQueue.shift();
 			postRows(rows).then(function () {
-				if (!enabled || !queue.length) { draining = false; return; }
+				if (!enabled || !pending()) { draining = false; return; }
 				setTimeout(step, POST_GAP_MS);
 			});
 		})();
 	}
 
-	function enqueue(posts) {
+	/// Enqueue a bundle's posts onto the telemetry lane when `priority` is true, else
+	/// the snapshot lane, and kick the drainer. A no-op when off.
+	function enqueue(posts, priority) {
 		if (!enabled || !posts || !posts.length) return;
-		for (var i = 0; i < posts.length; i++) queue.push(posts[i]);
+		var q = priority ? telQueue : snapQueue;
+		for (var i = 0; i < posts.length; i++) q.push(posts[i]);
 		drain();
 	}
 
@@ -608,7 +643,7 @@
 	function telemetryTick() {
 		if (!enabled) return;
 		var tel = gatherTelemetry();
-		if (tel) enqueue(chunk(tel));
+		if (tel) enqueue(chunk(tel), true);		// priority lane -- ahead of any snapshot backlog
 	}
 
 	// ── The header indicator ─────────────────────────────────────
@@ -722,7 +757,8 @@
 			snapshotNow();
 		} else {
 			stopTimers();
-			queue = [];
+			telQueue = [];
+			snapQueue = [];
 			unmountIndicator();
 		}
 	}
@@ -833,6 +869,8 @@
 		registerStats:    registerStats,
 		noteCross:        noteCross,
 		snapshotNow:      snapshotNow,
+		// Exposed for the verifier: drive one telemetry tick without the 30 s timer.
+		_telemetryTick:   telemetryTick,
 		// Exposed for the verifier (www/js/debugshare.test.mjs):
 		_fingerprint: fingerprint,
 		_redact:      redact,
@@ -847,6 +885,9 @@
 		_aggregateLedger: aggregateLedger,
 		_signalBreakdown: signalBreakdown,
 		_crossBreakdown:  crossBreakdown,
-		_queueLen:    function () { return queue.length; },
+		_queueLen:    function () { return telQueue.length + snapQueue.length; },
+		// Exposed for the verifier so it can assert lane ordering directly.
+		_telQueueLen:  function () { return telQueue.length; },
+		_snapQueueLen: function () { return snapQueue.length; },
 	};
 })();
