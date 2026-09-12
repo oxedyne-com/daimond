@@ -69,7 +69,11 @@ export CARGO_HOME="$WORK/cargo-home"
 mkdir -p "$CARGO_HOME"
 
 echo "── cloning the public mirror into a path of its own"
-git clone -q "$MIRROR" "$WORK/a/deeper/nested/clone"
+# --no-local: a path clone copies loose objects one by one, and the commit that
+# step 3b just made runs `gc --auto` detached in the mirror, which packs and
+# deletes those objects mid-copy (2026-09-12: "failed to copy file ... objects/91/…").
+# The pack transport reads a consistent snapshot.
+git clone -q --no-local "$MIRROR" "$WORK/a/deeper/nested/clone"
 cd "$WORK/a/deeper/nested/clone"
 
 # The sealed manifest names the pkg files, so the clone must carry the manifest
