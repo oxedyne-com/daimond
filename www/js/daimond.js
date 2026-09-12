@@ -302,7 +302,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// wrapped `pushTokenEnc` is the only form that reaches storage. See `saveCfg`.
 		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0,
 			crystalKb: 0, crystalPageKb: 0, tools: true,
-			foldModel: '', foldProvider: '', foldAt: 0, contextCap: 0,
+			foldModel: '', foldProvider: '', foldAt: 0, contextCap: 0, spendCap: 0,
 			// Whether a chat tile shows the first thing you said in it.
 			//
 			// ON, and it is the one default here worth arguing. Chats have no
@@ -357,6 +357,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The ceiling `foldAt`'s fraction is held under, in TOKENS. Zero is the engine's
 				// own figure, as an absent field is -- the same rule `foldAt` travels by.
 				if (typeof j.contextCap === 'number') cfg.contextCap = j.contextCap;
+				// The most one TURN may spend, in US DOLLARS. Zero is the engine's own figure, by
+				// the rule `foldAt` and `contextCap` travel by.
+				if (typeof j.spendCap === 'number') cfg.spendCap = j.spendCap;
 				// The push credential. The host and the user name it travels as are not
 				// secrets and are read as written; the token is only ever read WRAPPED,
 				// and a plaintext `pushToken` sitting in the stored blob -- which nothing
@@ -431,6 +434,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			foldProvider: c.foldProvider || '',
 			foldAt:       c.foldAt || 0,
 			contextCap:   c.contextCap || 0,
+			spendCap:     c.spendCap || 0,
 			// Written on every save, not only by the push panel: this function
 			// rebuilds the stored object from scratch, so a field it does not know
 			// about is a field the next unrelated save DELETES.
@@ -2927,10 +2931,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// ordinary `done`.
 	function endedHow(w) {
 		switch (w) {
-			case 'stopped': return 'stopped';
-			case 'capped':  return 'round_limit';
-			case 'failed':  return 'error';
-			default:        return 'done';		// answered | silent
+			case 'stopped':    return 'stopped';
+			// A turn that ran its rounds AND its three continuations -- `TurnEnd::Capped` is
+			// still the word for it, since what the reader needs is that the rounds ran out and
+			// not how many legs it took to do it. The leg count rides on `continued` events.
+			case 'capped':     return 'round_limit';
+			// AND A TURN STOPPED ON MONEY IS ITS OWN CASE, not a round limit. The remedy is a
+			// different setting, so collapsing the two would send a reader to raise the one
+			// ceiling that cannot help.
+			case 'spend_cap':  return 'spend_cap';
+			case 'failed':     return 'error';
+			default:           return 'done';		// answered | silent
 		}
 	}
 
@@ -21756,6 +21767,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Keep it equal to the engine's figure.
 	var DEFAULT_CONTEXT_CAP = 120000;
 	var CONTEXT_CAP_MIN = 16000, CONTEXT_CAP_MAX = 1000000;
+
+	/// The most one TURN may spend before the engine stops it, in US dollars:
+	/// `compact::DEFAULT_SPEND_CAP_USD`, and the band `Agent::set_spend_cap_usd` holds a choice
+	/// inside.
+	///
+	/// It is the ceiling that holds a runaway, and the round limit is not: a turn that reaches
+	/// `compact::DEFAULT_MAX_ROUNDS` carries itself on up to `compact::MAX_CONTINUATIONS` times,
+	/// so six hundred rounds is a thing the app will do unattended. Keep it equal to the engine's
+	/// figure, which goes stale the same way `DEFAULT_CONTEXT_CAP` does.
+	var DEFAULT_SPEND_CAP = 5;
+	var SPEND_CAP_MIN = 0.01, SPEND_CAP_MAX = 1000;
 
 	/// The window this chat is really folding against, and where in it the fold happens.
 	///
@@ -41815,6 +41837,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		RoundLimit.render();
 		FoldPoint.render();
 		ContextCap.render();
+		SpendCap.render();
 		FoldModel.render();
 		CrystalCap.render();
 		CrystalPageCap.render();
@@ -42116,6 +42139,102 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			stored.contextCap = n;
 			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
 			catch (e) { /* quota or unavailable \u2014 the choice holds for this session */ }
+			chats.forEach(function (c) { c.app = null; });
+			resetDiamondApps();
+			this.render();
+		},
+	};
+
+	/// What one TURN may spend before Daimond stops it, in US dollars.
+	///
+	/// **The ceiling that holds a runaway, and the round limit is not.** A turn that reaches the
+	/// round limit now carries itself on up to three times rather than handing the user a Continue
+	/// button, so the rounds no longer bound what a turn costs -- and the figure that does has to
+	/// be the payer's: five dollars is a day's work on a cheap model and two legs on an expensive
+	/// one, and nothing in the app can know which was meant.
+	///
+	/// It applies only where the provider reports what a round cost. Several report nothing and a
+	/// local model costs nothing, so a turn with no price is held by its rounds alone; see
+	/// `Agent::over_the_spend_cap` for why a guessed price would be worse than none.
+	var SpendCap = {
+		/// The ladder offered, in US dollars. The user's own figure is added when it is off the
+		/// ladder, so opening the panel never silently changes their setting.
+		STEPS: [0.5, 1, 2, 5, 10, 25, 50],
+
+		/// Build the row once, under the context-ceiling row it belongs beside.
+		mount: function () {
+			if (document.getElementById('cfg-spend-cap')) return true;
+			var form = document.getElementById('byok-form');
+			var section = form && form.parentNode;
+			if (!section) return false;
+			var lab = document.createElement('label');
+			lab.className = 'cfg-fieldlabel';
+			lab.setAttribute('for', 'cfg-spend-cap');
+			var sel = document.createElement('select');
+			sel.className = 'settings-select';
+			sel.id = 'cfg-spend-cap';
+			var note = document.createElement('p');
+			note.className = 'cfg-fieldnote';
+			note.id = 'cfg-spend-cap-note';
+			section.insertBefore(lab, form);
+			section.insertBefore(sel, form);
+			section.insertBefore(note, form);
+			sel.addEventListener('change', function () { SpendCap.save(sel.value); });
+			return true;
+		},
+
+		/// How a figure in dollars is written on the ladder: cents where there are any.
+		money: function (usd) {
+			return '$' + (usd < 1 ? usd.toFixed(2) : String(usd));
+		},
+
+		/// Fill the pulldown from what is stored, and say what the row is.
+		render: function () {
+			if (!this.mount()) return;
+			var lab = document.querySelector('label[for="cfg-spend-cap"]');
+			if (lab) lab.textContent = tOr('settings.spend_cap', 'Stop a turn at');
+			var note = document.getElementById('cfg-spend-cap-note');
+			if (note) {
+				note.textContent = tOr('settings.spend_cap_note',
+					'The most one turn may spend before Daimond stops it.');
+			}
+			var sel = document.getElementById('cfg-spend-cap');
+			// WHY THERE IS A CEILING AT ALL rides on hover, because the reason is not obvious from
+			// the row: the round limit stopped being the thing that ends a runaway turn.
+			sel.title = tOr('settings.spend_cap_help',
+				'A turn that reaches the round limit carries itself on, so this is the ceiling '
+					+ 'that holds a runaway. It applies only where the provider reports what a '
+					+ 'round cost.');
+			sel.innerHTML = '';
+			var mine = Number(cfg.spendCap || 0);
+			var steps = this.STEPS.slice();
+			if (mine > 0 && steps.indexOf(mine) === -1) steps.push(mine);
+			steps.sort(function (a, b) { return a - b; });
+			var mk = function (value, label) {
+				var o = document.createElement('option');
+				o.value = String(value); o.textContent = label;
+				sel.appendChild(o);
+			};
+			mk(0, tOr('settings.spend_cap_auto', 'Default') + ' \u2014 '
+				+ SpendCap.money(DEFAULT_SPEND_CAP));
+			steps.forEach(function (n) { mk(n, SpendCap.money(n)); });
+			sel.value = String(mine);
+			if (sel.selectedIndex === -1) sel.value = '0';
+		},
+
+		/// Record a choice and rebuild every agent, for the reason `FoldPoint.save` gives: the
+		/// ceiling is put on an app when it is built, so a chat holding an old one would go on
+		/// spending what it used to.
+		save: function (raw) {
+			var usd = Math.max(0, Number(raw) || 0);
+			// Held at the band the engine holds it at, so what the panel shows back is what is in
+			// force. A zero is not clamped: it is how "the user has not chosen" travels.
+			var n = usd ? Math.min(SPEND_CAP_MAX, Math.max(SPEND_CAP_MIN, usd)) : 0;
+			cfg.spendCap = n;
+			var stored = readJson(CFG_KEY, {}) || {};
+			stored.spendCap = n;
+			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
+			catch (e) { /* quota or unavailable — the choice holds for this session */ }
 			chats.forEach(function (c) { c.app = null; });
 			resetDiamondApps();
 			this.render();
@@ -43069,6 +43188,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				app.set_context_cap(cfg.contextCap || 0);
 			}
 		} catch (e) { /* an older wasm build has no setter */ }
+		// And what one TURN may spend, by the same rule. Not a fold setting, and put here anyway:
+		// this is the one function every freshly built agent passes through, and a ceiling applied
+		// on some paths and not others is a ceiling that does not hold.
+		try {
+			if (typeof app.set_spend_cap_usd === 'function') {
+				app.set_spend_cap_usd(cfg.spendCap || 0);
+			}
+		} catch (e) { /* an older wasm build has no setter */ }
 		// Same provider or nothing. See `FoldModel`: the fold rides on the conversation's
 		// own key, so a model id belonging to somebody else's endpoint is not a fold with
 		// a different model — it is a request that fails, or one answered by whatever that
@@ -43307,6 +43434,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		RoundLimit.render();
 		FoldPoint.render();
 		ContextCap.render();
+		SpendCap.render();
 		FoldModel.render();
 		CrystalCap.render();
 		CrystalPageCap.render();

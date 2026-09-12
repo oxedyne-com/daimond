@@ -1,1 +1,1 @@
-{"build":"51ac660f4112","note":"Retire prior-turn tool traffic, 120K ceiling, file_edit edits[], per-peer chunk refs, idle sync churn stopped"}
+{"build":"625c887c02e1","note":"KaTeX equations in chats (#11), workers may verify, turns auto-continue past the round cap under a spend ceiling"}

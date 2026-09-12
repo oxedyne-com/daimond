@@ -992,6 +992,21 @@ pub enum AgentEvent {
     /// (`[daimond: …; retrying in …]`, src/llm.rs); this is the same courtesy one layer down, in
     /// a form the page can draw as furniture rather than as prose.
     Roading { name: String, attempt: u32, of: u32, wait_ms: u64 },
+    /// The turn reached its round limit and carried on anyway, rather than ending there.
+    ///
+    /// Its own variant for the reason [`Compacted`](Self::Compacted) has one, and it is the same
+    /// reason: this is something the APP did to the turn, between two rounds, and the model
+    /// neither said it nor is ever told about it.  A turn that silently ran to six hundred rounds
+    /// would be indistinguishable, in the record and on the bill, from four turns the user asked
+    /// for -- and the one figure anybody chasing the cost of a long turn needs is how many of
+    /// those hundred-and-fifty-round legs there were.
+    ///
+    /// It rides beside the forced fold rather than replacing it: the fold at the cap still runs,
+    /// and is still drawn, because the next leg re-sends whatever it left.
+    ///
+    /// `n` counts from one and never exceeds `compact::MAX_CONTINUATIONS`; `rounds_so_far` is the
+    /// whole turn's count, legs included, not this leg's.
+    Continued { n: usize, rounds_so_far: usize },
     /// The provider stopped generating because the reply reached the output limit.
     ///
     /// Said outright rather than inferred.  A tool call cut at the limit arrives as
@@ -1114,6 +1129,11 @@ impl AgentEvent {
                 m.insert(dat!("attempt"), Dat::U64(*attempt as u64));
                 m.insert(dat!("of"),      Dat::U64(*of      as u64));
                 m.insert(dat!("wait_ms"), Dat::U64(*wait_ms));
+            }
+            Self::Continued { n, rounds_so_far } => {
+                m.insert(dat!("type"), dat!("continued"));
+                m.insert(dat!("n"), Dat::U64(*n as u64));
+                m.insert(dat!("rounds"), Dat::U64(*rounds_so_far as u64));
             }
             Self::Truncated => {
                 m.insert(dat!("type"), dat!("truncated"));

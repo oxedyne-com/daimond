@@ -9279,8 +9279,9 @@ fn ask_result(a: &Asked) -> String {
 /// refusals below are read in a test rather than only in a transcript.
 ///
 /// **A DISPATCHED WORKER MAY NOT PUBLISH, APPROVED OR NOT**, and that is the one thing here that
-/// is not about the arguments.  [`Tool::verify_spec`] refuses a worker because a verifier runs
-/// outside the fence; this refuses one for a nearer reason.  Every other gate on this panel ends
+/// is not about the arguments.  `verify` refused a worker on the ground that a verifier runs
+/// outside the fence until the owner lifted that on 2026-09-12; this refusal stands on a nearer
+/// footing and is not touched by it.  Every other gate on this panel ends
 /// in a question, and the whole of the owner's ruling is that the question gets asked -- but a
 /// worker is the turn with nobody watching, several run at once, and `parkConsent` would put a
 /// public post about the user's own product on a tile for somebody to approve out of the context
@@ -10280,6 +10281,12 @@ impl Tool {
             // person reading the Tools panel should see that Daimond can check its own work as
             // well as do it -- but it is the narrower claim of the two: it runs THIS
             // repository's own verifiers, and refuses where the granted folder holds none.
+            //
+            // **A DISPATCHED WORKER'S BELT IS THIS VECTOR TOO, and `offered` does not withhold
+            // this one.**  On the owner's ruling of 2026-09-12 a worker checks its own work before
+            // reporting it, so the tool it checks with has to survive into the schema array a
+            // worker is actually sent -- a tool held and not offered is a tool the model does not
+            // know exists, which is the lesson `file_show` left two lines of filter behind it for.
             Tool::Verify,
             // The Mail panel, for the reason `social_read` is here: a surface the user reads and
             // a model cannot reach is a surface the model denies.  Offered to a chat as well as
@@ -10919,7 +10926,7 @@ impl Tool {
             Tool::FileFetch   => "Download one file from cloud storage onto this device, so the other file tools can reach it. The workspace is one set of files and this device holds as much of it as it can; file_list marks the rest 'in cloud storage', and file_read refuses them and says how big they are. This is the only thing that moves those bytes, and it may transfer a great deal of data at the user's expense — so fetch a file when you actually need its contents, one at a time, and never speculatively or in bulk. Once it has arrived, read it as you would any other file.",
             Tool::Shell       => "Run a shell command in the workspace and return its stdout/stderr and exit code. Output costs context for the rest of the turn, so a result over 16000 bytes comes back as its head and its tail with the size and the middle cut out; ask a narrower question -- grep -n, sed -n, wc -l, head, tail -- or, where you have decided the whole of it is worth it, run the same command again with 'max_bytes' set to the size it named.",
             Tool::Runs        => "Say what the machine hand is STILL RUNNING, and stop one of them. A command can outlive itself: 'bash dev/world.sh 3 --up' starts a server in the background and exits, so 'run' answers with an exit code while processes go on holding ports. Nothing else on this computer can reach them -- the compartment a command runs in scopes signals to itself, so a later command's 'kill' is refused by the kernel and cannot even find the process id. This tool is the only route, because the hand keeps a record of what IT started. With no arguments it lists every run still going, each with an identifier, whether it is 'running' (the command has not finished) or 'standing' (it finished and its processes did not), how long it has been that way, and the command line. 'stop' signals one, named by that identifier and nothing else -- never a process id, a program name or a pattern -- which is what keeps this from being 'pkill' with extra steps. 'signal' chooses 'term' (ask, the default), 'kill' (insist) or 'int' (as Ctrl-C). THE ANSWER TO A STOP IS ALWAYS A FRESH LISTING taken after the signal, and it is the only evidence you have: a run still in that listing did not stop, and you must not say it did. Ask for a listing before you finish any task in which you started something in the background.",
-            Tool::Verify      => "Run one of this repository's own verifiers and report what it PROVED. 'name' is the script's short name in 'dev/' -- 'graph' for dev/verify_graph.mjs -- never a path or a command line. It drives the real app in a real browser, which is how work a person would otherwise have to look at gets checked. THE ANSWER IS ALWAYS THREE NUMBERS and you carry all three: checks passed clean; breaks confirmed red, the deliberate breakages that DID turn a passing check red, which is the only thing that makes its pass mean anything; and BREAKS THAT PROVED NOTHING, a break that changed no verdict -- the check it aims at cannot be made to fail, so report those checks as UNMEASURED, by name. It runs the verifier once per declared break plus once clean, so give 'timeout_ms' for a slow one rather than reaching for 'clean_only'. 'clean_only' skips every break and is labelled NOT PROVEN and IS NOT EVIDENCE: say it ran and that its instrument was not proved, never a passing count. 'break' runs one break the verifier declares; an undeclared name is refused with the list. It refuses with no machine hand, where the granted folder holds no verifiers, where the script differs from the commit (use 'run'), and to a dispatched worker.",
+            Tool::Verify      => "Run one of this repository's own verifiers and report what it PROVED. 'name' is the script's short name in 'dev/' -- 'graph' for dev/verify_graph.mjs -- never a path or a command line. It drives the real app in a real browser, which is how work a person would otherwise have to look at gets checked. THE ANSWER IS ALWAYS THREE NUMBERS and you carry all three: checks passed clean; breaks confirmed red, the deliberate breakages that DID turn a passing check red, which is the only thing that makes its pass mean anything; and BREAKS THAT PROVED NOTHING, a break that changed no verdict -- the check it aims at cannot be made to fail, so report those checks as UNMEASURED, by name. It runs the verifier once per declared break plus once clean, so give 'timeout_ms' for a slow one rather than reaching for 'clean_only'. 'clean_only' skips every break and is labelled NOT PROVEN and IS NOT EVIDENCE: say it ran and that its instrument was not proved, never a passing count. 'break' runs one break the verifier declares; an undeclared name is refused with the list. It refuses with no machine hand, where the granted folder holds no verifiers, and where the script differs from the commit (use 'run').",
             Tool::Run         => "Run one command on the user's machine and return its output and exit code. 'argv' is an ARRAY -- the program, then each argument separately: [\"cargo\",\"test\",\"--lib\"]. THERE IS NO SHELL: a ';', '|', '>', '&&', '$(...)' or backtick reaches the program as a literal argument, and '~' is not expanded, so write every path out in full from '/'. 'cwd' is workspace-relative as the file tools' paths are, and an absolute one is refused. 'stdin' feeds input; to chain two commands call this twice, and decide between them when you have seen the first result. It needs Daimond's machine hand, a companion program the user installs once. Where there is none, or the hand cannot contain the command, it REFUSES and says which: believe it, say what you wanted to run, and carry on with the file tools. Otherwise it runs inside the granted folder and nowhere else, and whether it reaches the network or the user is asked first is the permission mode they chose -- the note about this computer says which. Read a failing command's stderr before running it again. Output over 16000 bytes comes back as head and tail with the middle cut: ask a narrower question (grep -n, sed -n, wc -l, head, tail), or re-run with 'max_bytes' set to the size it named.",
             Tool::SpawnAgent  => "Ask for a worker to carry out one bounded task in its own context, with the full workspace file tools. NOTHING STARTS UNTIL THIS TURN ENDS: every worker asked for in a turn begins when you stop. You cannot see a worker's result in this turn and cannot wait for one -- their reports reach you as a later turn. So ask for every worker you want, finish your own answer, and stop. One call per worker.",
             Tool::WebOpen     => "Show a web page to the user in Daimond's Web panel. This makes the page VISIBLE; it does not mean you can operate it. Most sites refuse to be shown inside another page at all, and a page that is shown can still be beyond your reach unless a browser driver is attached. To READ a page's text, use web_fetch, which always works. To find out whether you can act on this one, call web_snapshot: if it refuses, believe the refusal and say so rather than guessing at clicks.",
@@ -14557,27 +14564,23 @@ impl Tool {
     /// Available on the native build for its tests: it is pure string composition, and the
     /// checks it makes are the ones worth holding to.
     ///
-    /// **A DISPATCHED WORKER DOES NOT GET THIS**, and it is the one policy this function
-    /// carries.  Every other tool a worker holds runs inside the fence; this one runs a process
-    /// outside it, and a worker is the turn with nobody watching -- `markAlone` in
-    /// `www/js/daimond.js` marks each one on dispatch for exactly this class of act.  The
-    /// daimon that dispatched it is supervised, is answerable for the work, and is where the
-    /// decision to run an unfenced script belongs.  The refusal says so, so a worker reports
-    /// rather than retries.
+    /// **A DISPATCHED WORKER GETS THIS, on the owner's ruling of 2026-09-12.**  It was refused
+    /// one until then, on the ground that a verifier runs a process outside the fence every other
+    /// tool works inside and a worker is the turn with nobody watching.  What the refusal actually
+    /// bought was the opposite of supervision: every round of checking ran in the DISPATCHING
+    /// daimon's context, read by the model that did not do the work and paid for out of the one
+    /// context in the app that is scarce -- while a worker that reached for `run` instead met
+    /// [`verifier_refusal`], which told it to use `verify`, which refused it.  A worker now
+    /// composes the request a daimon composes, under the same budget, shaped by the same
+    /// [`Tool::verify_result`], and booked by [`call_outcome`] the same way.  Nothing composed
+    /// here is a program, a path or an argument, so there is no fence for a worker to be outside
+    /// of -- the selector argument below is the whole of the reason that is true.
     ///
     /// # Arguments
     /// * `args` - The raw tool arguments.
     /// * `id` - The identifier every answer about this sequence is tagged with.
-    /// * `alone` - Whether this turn is a dispatched worker, acting with nobody watching.
     #[cfg(any(target_arch = "wasm32", test))]
-    fn verify_spec(args: &str, id: &str, alone: bool) -> Result<String, String> {
-        if alone {
-            return Err(fmt!(
-                "Refused: verify runs a script OUTSIDE the fence every other tool works inside, \
-                and you are working alone with nobody watching. That decision belongs to the \
-                daimon that dispatched you. Say in your answer which verifier you wanted run and \
-                what you expected it to prove, and let it run it."));
-        }
+    fn verify_spec(args: &str, id: &str) -> Result<String, String> {
         let name = match extract_json_string(args, "name") {
             Some(n) => n,
             None    => return Err(fmt!(
@@ -14716,7 +14719,7 @@ impl Tool {
                 verifiers; it is not a general test runner. Tell the user which folder they \
                 granted, and use 'run' for the project's own test command instead."));
         }
-        let spec = match Self::verify_spec(args, &Self::run_id("verify", ctx), ctx.is_unsupervised()) {
+        let spec = match Self::verify_spec(args, &Self::run_id("verify", ctx)) {
             Ok(s)  => s,
             Err(r) => return Ok(r),
         };
@@ -19648,13 +19651,13 @@ mod tests {
             r#"{"name":"-rf"}"#,
             r#"{"name":""}"#,
         ] {
-            match Tool::verify_spec(bad, "v-1", false) {
+            match Tool::verify_spec(bad, "v-1") {
                 Err(r) => assert!(r.starts_with("Refused:"), "{} -> {}", bad, r),
                 Ok(s)  => panic!("{} composed a request: {}", bad, s),
             }
         }
         // And the absence of the argument is its own sentence, not a silent default.
-        match Tool::verify_spec(r#"{}"#, "v-1", false) {
+        match Tool::verify_spec(r#"{}"#, "v-1") {
             Err(r) => assert!(r.contains("needs 'name'"), "{}", r),
             Ok(s)  => panic!("a nameless call composed a request: {}", s),
         }
@@ -19665,7 +19668,7 @@ mod tests {
     /// has changed and this test is where it shows.
     #[test]
     fn test_verify_composes_a_selector_and_not_a_command() {
-        let spec = match Tool::verify_spec(r#"{"name":"graph"}"#, "v-1", false) {
+        let spec = match Tool::verify_spec(r#"{"name":"graph"}"#, "v-1") {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
@@ -19684,20 +19687,20 @@ mod tests {
     /// wire says which of the three shapes was asked for so the two ends cannot disagree.
     #[test]
     fn test_verify_break_is_a_selector_and_clean_only_is_the_other_shape() {
-        let one = match Tool::verify_spec(r#"{"name":"graph","break":"nolinks"}"#, "v", false) {
+        let one = match Tool::verify_spec(r#"{"name":"graph","break":"nolinks"}"#, "v") {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
         assert!(one.contains(r#""breaks":"one""#) && one.contains(r#""break":"nolinks""#), "{}", one);
-        let none = match Tool::verify_spec(r#"{"name":"graph","clean_only":true}"#, "v", false) {
+        let none = match Tool::verify_spec(r#"{"name":"graph","clean_only":true}"#, "v") {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
         assert!(none.contains(r#""breaks":"none""#), "{}", none);
         // A break that is not spellable is refused here rather than sent.
-        assert!(Tool::verify_spec(r#"{"name":"graph","break":"../x"}"#, "v", false).is_err());
+        assert!(Tool::verify_spec(r#"{"name":"graph","break":"../x"}"#, "v").is_err());
         // The two arguments want opposite runs, and one of them is the run that proves nothing.
-        match Tool::verify_spec(r#"{"name":"graph","break":"nolinks","clean_only":true}"#, "v", false) {
+        match Tool::verify_spec(r#"{"name":"graph","break":"nolinks","clean_only":true}"#, "v") {
             Err(r) => assert!(r.contains("proves nothing"), "{}", r),
             Ok(s)  => panic!("both were accepted: {}", s),
         }
@@ -19707,13 +19710,13 @@ mod tests {
     #[test]
     fn test_verify_budget_is_bounded() {
         let big = match Tool::verify_spec(
-            r#"{"name":"graph","timeout_ms":999999999}"#, "v", false) {
+            r#"{"name":"graph","timeout_ms":999999999}"#, "v") {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
         assert!(big.contains(&fmt!(r#""timeout_ms":{}"#, Tool::VERIFY_BUDGET_MAX_MS)),
             "an unbounded budget went out: {}", big);
-        let plain = match Tool::verify_spec(r#"{"name":"graph"}"#, "v", false) {
+        let plain = match Tool::verify_spec(r#"{"name":"graph"}"#, "v") {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
@@ -19721,20 +19724,57 @@ mod tests {
             "{}", plain);
     }
 
-    /// The one tool that runs outside the fence is not handed to the turn with nobody watching.
+    /// **A dispatched worker checks its own work, on the owner's ruling of 2026-09-12.**
+    ///
+    /// This test is the one that pinned the refusal, rewritten to pin what replaced it.  Three
+    /// halves, because a lift that did only one of them would leave the ruling half-applied and
+    /// look done: the request is COMPOSED for a worker, the schema is OFFERED to one, and the
+    /// result is BOOKED as work that was done rather than as a refusal.
+    ///
+    /// The request is compared against a watched turn's byte for byte rather than merely asserted
+    /// to exist, since the ruling is that a worker gets the same budget and the same selector and
+    /// not a narrower verb of its own.
     #[test]
-    fn test_a_worker_working_alone_is_not_given_the_unfenced_verb() {
-        match Tool::verify_spec(r#"{"name":"graph"}"#, "v", true) {
-            Err(r) => {
-                assert!(r.starts_with("Refused:"), "{}", r);
-                assert!(r.contains("OUTSIDE the fence"), "the reason is not given: {}", r);
-                assert!(r.contains("daimon that dispatched you"),
-                    "the worker is not told what to do instead: {}", r);
-            },
-            Ok(s) => panic!("a worker acting alone composed a verify request: {}", s),
-        }
-        // And the turns that ARE watched still get it.
-        assert!(Tool::verify_spec(r#"{"name":"graph"}"#, "v", false).is_ok());
+    fn test_a_worker_verifies_its_own_work_and_is_charged_for_it() {
+        // COMPOSED, and identically: `verify_spec` no longer asks whose turn this is.
+        let asked = r#"{"name":"graph","break":"nolinks","timeout_ms":60000}"#;
+        let spec = match Tool::verify_spec(asked, "v-1") {
+            Ok(s)  => s,
+            Err(r) => panic!("a worker's verify call was refused: {}", r),
+        };
+        assert!(!spec.contains("Refused"), "{}", spec);
+        assert!(spec.contains(r#""breaks":"one""#) && spec.contains(r#""timeout_ms":60000"#),
+            "a worker was given a narrower verb than the daimon's: {}", spec);
+
+        // OFFERED.  A worker's belt is `Tool::browser` with the mark set, and `offered` withholds
+        // the two tools whose subject is the reader.  `verify`'s subject is the WORK, so it has to
+        // survive that filter -- withheld from the offer, a worker never learns the tool exists.
+        let worker = ToolRegistry::new(Tool::browser(), ctx());
+        worker.ctx.set_unsupervised();
+        assert!(worker.offered().contains(&Tool::Verify),
+            "a worker is not offered 'verify', so the ruling reaches it only if it guesses");
+        let defs = worker.definitions_json().expect("a worker holds tools");
+        assert!(defs.contains("\"verify\""),
+            "a worker is not SENT the verify schema, so it cannot call the tool: {}",
+            &defs[..defs.len().min(200)]);
+        // The control on that filter: the withholding it does do is still done.
+        assert!(!defs.contains("\"file_show\""),
+            "the offer filter stopped withholding the document panel, so the assertion above \
+             proves nothing about `verify` in particular");
+
+        // CHARGED.  `call_outcome` reads the opening of a tool reply and decides which column of
+        // the fold's ledger the call lands in.  A worker's verify result must land in the same one
+        // a daimon's does, or a worker that checked its work is booked as one that was refused.
+        let w = ctx();
+        w.set_unsupervised();
+        let trailered = r#"{"stdout":"  ok   a\n[verify: 27 checks passed, 0 failed, 2 breaks confirmed red, 0 breaks proved nothing]\n","exit":2}"#;
+        let theirs = Tool::verify_result("graph", trailered, &w);
+        assert_eq!(CallOutcome::Done, call_outcome(&theirs),
+            "a worker's verify is booked as a refusal: {}", theirs);
+        assert!(!theirs.contains("THIS IS NOT EVIDENCE"), "{}", theirs);
+        assert!(theirs.trim_end().ends_with("0 breaks proved nothing]"),
+            "the three numbers are not the last thing the worker reads, so its report cannot \
+             name them: {}", theirs);
     }
 
     /// **The check this whole tool exists for.**  A report with no trailer is a report whose
@@ -21753,12 +21793,21 @@ mod tests {
                 {"old_string":"nowhere","new_string":"x"},
                 {"old_string":"three","new_string":"3"}
             ]}"#, &c);
-        let msg = fmt!("{}", e.expect_err("a missing old_string must refuse the call"));
+        let whole = fmt!("{}", e.expect_err("a missing old_string must refuse the call"));
         assert_eq!("one\ntwo\nthree\n",
             std::fs::read_to_string(c.workspace.resolve("n.rs").expect("resolve")).expect("read"),
             "an edit landed although the call was refused");
-        assert!(msg.contains("2:"), "the refusal does not number the failing edit: {}", msg);
-        assert!(!msg.contains("1:") && !msg.contains("3:"),
+        // The hunk numbers are read off the SENTENCE and not off the whole error.  A house error
+        // Displays the source locations it passed through, and `src/tools.rs:10193:` ends in a
+        // digit and a colon -- so a bare `contains("3:")` went red the moment a line was added
+        // anywhere above the `err!` that wrote this message, which is a test about nothing.
+        let msg = match whole.split_once("file_edit:") {
+            Some((_, tail)) => tail.to_string(),
+            None            => panic!("the refusal does not name the tool: {}", whole),
+        };
+        assert!(msg.contains("2: old_string not found"),
+            "the refusal does not number the failing edit: {}", msg);
+        assert!(!msg.contains("1: old_string") && !msg.contains("3: old_string"),
             "the refusal blames edits that were fine: {}", msg);
         assert!(msg.contains("nothing was changed"),
             "the refusal does not say the file is untouched: {}", msg);

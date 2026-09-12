@@ -200,6 +200,7 @@ pub enum TurnEnd {
 	Answered,   // a reply with no tool call in it, which is how a turn is meant to end
 	Stopped,    // the user cancelled while the reply was streaming
 	Capped,     // the tool-round budget ran out with work still going
+	SpendCapped,// the turn spent past the per-turn ceiling, with work still going
 	Silent,     // the final message carried no text at all
 	Failed,     // the provider or the transport ended the turn
 }
@@ -216,6 +217,7 @@ impl TurnEnd {
 			Self::Answered	=> "answered",
 			Self::Stopped	=> "stopped",
 			Self::Capped	=> "capped",
+			Self::SpendCapped	=> "spend_cap",
 			Self::Silent	=> "silent",
 			Self::Failed	=> "failed",
 		}
@@ -460,6 +462,24 @@ impl Agent {
             compact::ABSOLUTE_CAP
         } else {
             tokens.clamp(compact::CONTEXT_CAP_MIN, compact::CONTEXT_CAP_MAX)
+        };
+    }
+
+    /// Set the most one of this agent's turns may spend, in US dollars.
+    ///
+    /// **The ceiling that actually holds a runaway**, now that the round limit is a breath rather
+    /// than a full stop: see [`compact::MAX_CONTINUATIONS`].  Held inside
+    /// [`compact::SPEND_CAP_MIN_USD`]..[`compact::SPEND_CAP_MAX_USD`] here rather than only where
+    /// it is read, for the reason [`Agent::set_fold_at`] gives: a control drawn from the getter
+    /// must show the figure the arithmetic used.
+    ///
+    /// # Arguments
+    /// * `usd` - The ceiling; zero or less restores the shipped default.
+    pub fn set_spend_cap_usd(&self, usd: f64) {
+        self.limits.borrow_mut().spend_cap_usd = if usd <= 0.0 {
+            compact::DEFAULT_SPEND_CAP_USD
+        } else {
+            usd.clamp(compact::SPEND_CAP_MIN_USD, compact::SPEND_CAP_MAX_USD)
         };
     }
 
@@ -1005,7 +1025,31 @@ impl Agent {
         // guess.  Cleared whenever a fold rebuilds the list, because a fold moves every index in
         // it and a stale mark would retire the wrong messages -- the newest ones.
         let mut round_at: Vec<usize> = Vec::new();
-        for _ in 0..max_rounds {
+        // ROUNDS IN THIS LEG, which is not `rounds`.  A turn reaching the cap now takes its own
+        // Continue -- see `compact::MAX_CONTINUATIONS` -- so the turn is made of up to four legs
+        // of `max_rounds` each, and it is the LEG that the cap measures while `rounds` goes on
+        // counting the whole turn for the audit, the note and the feed.
+        let mut leg = 0usize;
+        let mut continuations = 0usize;
+        // WHAT THE SESSION HAD SPENT BEFORE THIS TURN OPENED.  `session.cost_usd` is the whole
+        // conversation's bill, and the ceiling is PER TURN -- measured against the session's total
+        // it would end every turn of a long chat the moment the chat itself got expensive.
+        let opening_cost = session.cost_usd;
+        loop {
+            // THE CAP IS MET AT THE TOP OF A ROUND and not after the loop, because what happens
+            // there is no longer one thing: either the turn carries on into another leg or it
+            // ends, and both want the same forced fold in front of them.
+            if leg == max_rounds {
+                if let Some(out) = self.at_the_cap(
+                    session, &mut working, &mut round_at, schema, registry, &claims,
+                    rounds, max_rounds, &mut continuations, opening_cost, on_event).await
+                {
+                    return out;
+                }
+                leg = 0;
+                continue;
+            }
+            leg += 1;
             rounds += 1;
             // Fold before the request rather than after the refusal. Checked every round,
             // because a single turn of fifty file reads can outgrow the window on its own,
@@ -1329,9 +1373,128 @@ impl Agent {
                 working.push(msg.clone());
                 session.messages.push(msg);
             }
+
+            // AND THE SEAM IS WHERE THE MONEY IS CHECKED.  The round's cost has just been added
+            // and the next request has not gone out, so this is the last moment a ceiling can stop
+            // the turn without paying for another round first.
+            if let Some((spent, cap)) = self.over_the_spend_cap(session, opening_cost) {
+                self.stop_on_spend(session, spent, cap, rounds, &claims, registry, on_event).await;
+                return Ok(());
+            }
+        }
+    }
+
+    /// Has this turn spent past its ceiling, and if so by what?
+    ///
+    /// **A turn that reports no cost is never stopped by this**, and that is deliberate rather than
+    /// an oversight: `cost_usd` is whatever the provider chose to put in the response, several
+    /// endpoints put nothing there at all, and a local model costs nothing by definition.  A
+    /// ceiling enforced on a figure of zero would either never fire or, if it were made to guess,
+    /// end turns over a price nobody quoted.  The round count is the backstop for those.
+    ///
+    /// # Arguments
+    /// * `opening_cost` - The session's bill before this turn opened, so the figure is the TURN's.
+    fn over_the_spend_cap(&self, session: &Session, opening_cost: f64) -> Option<(f64, f64)> {
+        let spent = session.cost_usd - opening_cost;
+        if spent <= 0.0 {
+            return None;
+        }
+        let cap = self.limits.borrow().spend_cap_usd;
+        if cap > 0.0 && spent > cap { Some((spent, cap)) } else { None }
+    }
+
+    /// End the turn because it has spent its ceiling, saying both figures.
+    ///
+    /// Its own ending rather than [`TurnEnd::Capped`]: a user whose turn stopped on money and was
+    /// told it had run out of rounds would raise the round limit, which is the one remedy that
+    /// cannot work.
+    async fn stop_on_spend(
+        &self,
+        session:    &mut Session,
+        spent:      f64,
+        cap:        f64,
+        rounds:     usize,
+        claims:     &Claims,
+        registry:   &ToolRegistry,
+        on_event:   &mut impl FnMut(AgentEvent),
+    ) {
+        let msg = fmt!("Stopped after spending US${:.2} of this turn's US${:.2} ceiling.",
+            spent, cap);
+        on_event(AgentEvent::Error(msg));
+        session.messages.push(compact::spend_limit_note(spent, cap));
+        let ending = self.audit(TurnEnd::SpendCapped, rounds, claims, Some(registry)).await;
+        self.ended(ending, on_event);
+        on_event(AgentEvent::Done);
+    }
+
+    /// The tool-round cap has been met: either carry the turn on into another leg, or end it.
+    ///
+    /// `None` means carry on, and the caller resets its leg counter; `Some` is the turn's ending
+    /// and is returned straight out of [`Agent::run_tool_loop`].
+    ///
+    /// **A fold runs either way, and this is the one place a fold pays for itself twice.**  A
+    /// capped leg is by definition the longest this conversation has had -- a hundred and fifty
+    /// rounds of tool calls -- and whatever happens next re-sends every one of them: another leg
+    /// on each of its own hundred and fifty rounds, or the user's next turn on each of its.  One
+    /// summary against a hundred and fifty carries of a log nobody is going to read again.
+    ///
+    /// `Fold::Capped` rather than `IfNeeded`: the estimate is precisely what did not fire for the
+    /// whole of this leg -- the prompt sat just under the ceiling, which is how a turn reaches the
+    /// round limit at all -- so a fold that waited for it would not happen here either.  And not
+    /// `Refused`, because nothing was refused: see [`Fold::teaches_window`].
+    ///
+    /// # Arguments
+    /// * `rounds` - The whole turn's count, legs included, not this leg's.
+    /// * `continuations` - How many legs the turn has already taken; raised when it takes another.
+    async fn at_the_cap(
+        &self,
+        session:        &mut Session,
+        working:        &mut Vec<ChatMessage>,
+        round_at:       &mut Vec<usize>,
+        schema:         u64,
+        registry:       &ToolRegistry,
+        claims:         &Claims,
+        rounds:         usize,
+        max_rounds:     usize,
+        continuations:  &mut usize,
+        opening_cost:   f64,
+        on_event:       &mut impl FnMut(AgentEvent),
+    )
+        -> Option<Outcome<()>>
+    {
+        self.fold_if_needed(session, working, schema, Fold::Capped, on_event).await;
+        // THE FOLD MOVED EVERY INDEX IN `round_at`, which the next leg reads to decide what is old
+        // enough to retire.  Cleared for the reason the in-loop fold clears it: a stale mark
+        // retires the NEWEST messages, which is the worst thing it could do.
+        round_at.clear();
+        // AND THEN IT CARRIES ON, which is the whole of the owner's ruling of 2026-09-12.  The
+        // user used to be handed a half-finished task and a Continue button, so a long job only
+        // ran as fast as somebody was watching; the app takes that press itself now.
+        //
+        // AFTER the fold rather than before it, so the next leg runs on the summary the fold just
+        // wrote rather than on the log it replaced.
+        // AND THE MONEY IS CHECKED AGAIN HERE, after the fold rather than only at the seam before
+        // it: the fold's summary is written by a MODEL, so the cap itself costs something, and a
+        // turn that was a cent under the ceiling at the seam can be over it by the time the next
+        // leg would start.  Checked before the continuation is granted, because granting one is
+        // what commits the user to another `max_rounds` of spending.
+        if let Some((spent, cap)) = self.over_the_spend_cap(session, opening_cost) {
+            self.stop_on_spend(session, spent, cap, rounds, claims, registry, on_event).await;
+            return Some(Ok(()));
+        }
+        if *continuations < compact::MAX_CONTINUATIONS {
+            *continuations += 1;
+            // Said out loud rather than left to be read out of a round count nobody sees.  Not an
+            // `Error`: nothing failed, and the turn is still running.
+            on_event(AgentEvent::Continued { n: *continuations, rounds_so_far: rounds });
+            // NOTHING IS WRITTEN INTO THE CONVERSATION.  The model never met this boundary, and a
+            // note telling it that one was pushed back is a durable sentence about the app's own
+            // bookkeeping -- re-sent on every round of every leg after it, and the one thing it
+            // could plausibly provoke is the wrap-up the continuation exists to avoid.
+            return None;
         }
 
-        // Exceeded the tool-round budget.
+        // Out of continuations, so the turn is over.
         //
         // Recorded in the SYSTEM voice, because that is whose it is. It used to be pushed
         // as an assistant message reading "[Reached the tool-call round limit (25).]", so
@@ -1340,25 +1503,18 @@ impl Agent {
         // record, a turn that gave up. The boundary belongs to the app, so it is said in
         // the app's voice, and it says the work may be unfinished rather than that it is
         // over.
-        // FOLDED BEFORE THE TURN IS HANDED BACK, and this is the one place a fold pays for
-        // itself twice.  A capped turn is by definition the longest this conversation has had --
-        // a hundred and fifty rounds of tool calls -- and the note below invites the user to
-        // carry on, so the NEXT turn opens by re-sending every one of those rounds, and then
-        // re-sends them again on each of its own hundred and fifty. Folding here is one summary
-        // against a hundred and fifty carries of a log nobody is going to read again.
         //
-        // `Capped` rather than `IfNeeded`: the estimate is precisely what did not fire for the
-        // whole of this turn -- the prompt sat just under the ceiling, which is how a turn reaches
-        // the round limit at all -- so a fold that waited for it would not happen here either.
-        // And not `Refused`, because nothing was refused: see `Fold::teaches_window`.
-        self.fold_if_needed(session, &mut working, schema, Fold::Capped, on_event).await;
-        let msg = fmt!("Reached the tool-call round limit ({}).", max_rounds);
+        // It names the WHOLE turn's rounds and its continuations rather than `max_rounds` alone:
+        // a reader told "150" after six hundred rounds of work has been handed the wrong figure,
+        // and a model told it would reasonably expect another Continue to get further.
+        let msg = fmt!("Reached the tool-call round limit ({} rounds: {} plus {} continuations).",
+            rounds, max_rounds, continuations);
         on_event(AgentEvent::Error(msg.clone()));
-        session.messages.push(compact::round_limit_note(max_rounds));
-        let ending = self.audit(TurnEnd::Capped, rounds, &claims, Some(registry)).await;
+        session.messages.push(compact::continuation_limit_note(rounds, *continuations));
+        let ending = self.audit(TurnEnd::Capped, rounds, claims, Some(registry)).await;
         self.ended(ending, on_event);
         on_event(AgentEvent::Done);
-        Ok(())
+        Some(Ok(()))
     }
 
 
@@ -2731,6 +2887,27 @@ mod tests {
         crate::llm::tests::Reply::Sse { chunks, reset_after: None }
     }
 
+    /// A tool round whose usage block reports a price, which most of them do not.
+    ///
+    /// The spend ceiling is enforced on the provider's own figure and on nothing else, so a test
+    /// for it has to produce one: see `Agent::over_the_spend_cap`.
+    ///
+    /// # Arguments
+    /// * `usd` - What this one round reports costing.
+    fn round_costing(usd: f64) -> crate::llm::tests::Reply {
+        match tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]) {
+            crate::llm::tests::Reply::Sse { mut chunks, reset_after } => {
+                // Before the [DONE] the round ends with, because that is where a provider puts it.
+                let last = chunks.len().saturating_sub(1);
+                chunks.insert(last, fmt!(
+                    "data: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":11,\
+                     \"completion_tokens\":2,\"cost\":{}}}}}\n\n", usd));
+                crate::llm::tests::Reply::Sse { chunks, reset_after }
+            }
+            other => other,
+        }
+    }
+
     /// Run one turn against a scripted provider, and hand back what the turn came to.
     async fn ran(
         script:     Vec<crate::llm::tests::Reply>,
@@ -2966,9 +3143,204 @@ mod tests {
         ], &registry, 2).await;
 
         assert_eq!(TurnEnd::Capped, end.how, "{:?}", end);
-        assert_eq!(2, end.rounds, "{:?}", end);
-        assert_eq!(2, end.calls, "{:?}", end);
+        // THE WHOLE TURN'S ROUNDS, legs included: the ceiling was two and the turn ran eight,
+        // because the cap is taken three times over before the turn is handed back.  A figure of
+        // two here would be the one thing this ending exists to avoid -- a reader deciding
+        // whether to raise the ceiling, told a quarter of what the turn actually cost.
+        let legs = 1 + compact::MAX_CONTINUATIONS;
+        assert_eq!(2 * legs, end.rounds, "{:?}", end);
+        assert_eq!(2 * legs, end.calls, "{:?}", end);
         assert!(end.missing.is_empty(), "{:?}", end);
+    }
+
+    #[tokio::test]
+    async fn test_a_capped_turn_carries_itself_on_three_times_and_then_stops_00() {
+        // THE OWNER'S RULING OF 2026-09-12.  The round limit used to be a full stop: the user was
+        // handed a half-finished task and a Continue button, so a long job ran only as fast as
+        // somebody was watching it.  It is a breath now, taken three times and then not again.
+        let registry = one_tool();
+        let end = ran(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+        ], &registry, 1).await;
+
+        // Four legs of one round, and not a fifth: the backstop has to hold, because each leg
+        // costs another `max_rounds` of a prompt already at the context ceiling.
+        assert_eq!(1 + compact::MAX_CONTINUATIONS, end.rounds,
+            "the turn did not run exactly its legs: {:?}", end);
+        assert_eq!(TurnEnd::Capped, end.how,
+            "a turn out of continuations must still end at the round limit: {:?}", end);
+    }
+
+    #[tokio::test]
+    async fn test_each_continuation_is_announced_and_the_last_cap_is_not_one_00() {
+        // The continuations are the figure anybody chasing what a long turn cost has to have: a
+        // turn that silently ran to six hundred rounds is, in the record and on the bill,
+        // indistinguishable from four turns the user asked for.
+        let registry = one_tool();
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(1);
+        let mut session = Session::new(fmt!("s1"), fmt!("legs"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("carry on"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let legs: Vec<(usize, usize)> = events.iter().filter_map(|e| match e {
+            AgentEvent::Continued { n, rounds_so_far } => Some((*n, *rounds_so_far)),
+            _ => None,
+        }).collect();
+        // THREE, not four.  The fourth cap is the end of the turn and is announced as one; a
+        // `Continued` there would tell the page a leg had started that never runs.
+        assert_eq!(compact::MAX_CONTINUATIONS, legs.len(), "{:?}", legs);
+        // Counting from one, and carrying the TURN's rounds rather than the leg's -- a leg number
+        // beside a count that restarts at each leg says nothing about how long the turn is.
+        assert_eq!(vec![(1, 1), (2, 2), (3, 3)], legs, "{:?}", legs);
+        // AND THE END IS STILL SAID, which is what the user reads.  Nothing is written into the
+        // conversation for a continuation, so the ONE system note a capped turn leaves is the one
+        // at the end -- otherwise every leg would leave a sentence the model re-reads for the rest
+        // of the chat.
+        let notes = session.messages.iter().filter(|m| match m {
+            ChatMessage::System { content } => content.as_text().contains("tool-call rounds"),
+            _ => false,
+        }).count();
+        assert_eq!(1, notes, "a continuation wrote itself into the conversation");
+    }
+
+    #[test]
+    fn test_the_stop_after_three_continuations_names_both_figures_00() {
+        // A model told only "the round limit" after six hundred rounds would reasonably expect
+        // another Continue to get further, and the continuation count is what says it will not.
+        let n = compact::continuation_limit_note(600, 3);
+        let said = match &n {
+            ChatMessage::System { content } => content.as_text().into_owned(),
+            other => panic!("the note was not in the app's own voice: {:?}", other),
+        };
+        assert!(said.contains("600"), "{}", said);
+        assert!(said.contains("3 times"), "{}", said);
+        // In the APP's voice, for the reason `round_limit_note` gives: a boundary the app imposed
+        // must not read, on the next turn, as something the assistant chose.
+        assert!(said.contains("Daimond"), "{}", said);
+        assert!(said.contains("did not choose to stop"), "{}", said);
+    }
+
+    #[test]
+    fn test_the_spend_ceiling_is_five_dollars_until_the_user_says_otherwise_00() {
+        // The figure that actually holds a runaway, now that the round limit carries a turn on by
+        // itself. It has to be visible and movable: five dollars is a day's work on a cheap model
+        // and two legs on an expensive one, and only the payer knows which they meant.
+        assert_eq!(5.0, compact::DEFAULT_SPEND_CAP_USD);
+        let a = dead_agent();
+        assert_eq!(compact::DEFAULT_SPEND_CAP_USD, a.limits().spend_cap_usd);
+
+        a.set_spend_cap_usd(2.5);
+        assert_eq!(2.5, a.limits().spend_cap_usd);
+        // Zero is how "the user has not chosen" travels, exactly as it does for the context
+        // ceiling, so the shipped figure is named in one place.
+        a.set_spend_cap_usd(0.0);
+        assert_eq!(compact::DEFAULT_SPEND_CAP_USD, a.limits().spend_cap_usd);
+        // Held at the band HERE and not only where it is read, so a control drawn from the getter
+        // shows the figure the arithmetic used.
+        a.set_spend_cap_usd(0.0001);
+        assert_eq!(compact::SPEND_CAP_MIN_USD, a.limits().spend_cap_usd);
+        a.set_spend_cap_usd(1.0e9);
+        assert_eq!(compact::SPEND_CAP_MAX_USD, a.limits().spend_cap_usd);
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_past_its_spend_ceiling_stops_at_the_round_seam_00() {
+        // Two rounds at three dollars each against a five-dollar ceiling: the first is under it and
+        // the second is not, so the turn stops at the seam after the second rather than buying a
+        // third round first. The round limit is ten and nowhere near reached -- what is under test
+        // is the money, and a turn stopped by the rounds would pass this for the wrong reason.
+        let registry = one_tool();
+        let (port, _seen) = crate::llm::tests::start_stub(vec![round_costing(3.0)]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(10);
+        a.set_spend_cap_usd(5.0);
+        let mut session = Session::new(fmt!("s1"), fmt!("spend"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("do the work"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let end = match a.ending() {
+            Some(e) => e,
+            None    => panic!("a turn ran and said nothing about how it ended"),
+        };
+        // ITS OWN ENDING, not `Capped`: a user whose turn stopped on money and was told it ran out
+        // of rounds would raise the round limit, which is the one remedy that cannot work.
+        assert_eq!(TurnEnd::SpendCapped, end.how, "{:?}", end);
+        assert_eq!(2, end.rounds, "the turn bought a round past its ceiling: {:?}", end);
+        // AND BOTH FIGURES ARE SAID. A ceiling the reader cannot see is one they cannot move.
+        let said = session.messages.iter().filter_map(|m| match m {
+            ChatMessage::System { content } => {
+                let t = content.as_text().into_owned();
+                if t.contains("spent") { Some(t) } else { None }
+            }
+            _ => None,
+        }).next().unwrap_or_default();
+        assert!(said.contains("6.00"), "{}", said);
+        assert!(said.contains("5.00"), "{}", said);
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_whose_provider_quotes_no_price_is_never_stopped_on_money_00() {
+        // DELIBERATE, and the reason is in `over_the_spend_cap`: several endpoints report no cost
+        // at all and a local model costs nothing by definition. A ceiling enforced on a figure of
+        // zero either never fires or, made to guess, ends turns over a price nobody quoted. So a
+        // priceless turn runs to its ROUNDS -- which is what the backstop is for.
+        let registry = one_tool();
+        let a = {
+            let (port, _seen) = crate::llm::tests::start_stub(vec![
+                tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+            ]).await;
+            let mut llm = crate::llm::tests::stub_client(port);
+            llm.retry.max_attempts = 1;
+            let a = Agent::new(llm, "You are Daimond.");
+            a.set_max_rounds(1);
+            // A ceiling a round of ANY reported price would break, so only a figure of zero can
+            // carry this turn to its round limit.
+            a.set_spend_cap_usd(compact::SPEND_CAP_MIN_USD);
+            let mut session = Session::new(fmt!("s1"), fmt!("free"), fmt!("model"));
+            let _ = a.run_turn(&mut session, fmt!("do the work"), &registry, &mut |_| {}).await;
+            a
+        };
+        let end = match a.ending() {
+            Some(e) => e,
+            None    => panic!("a turn ran and said nothing about how it ended"),
+        };
+        assert_eq!(TurnEnd::Capped, end.how,
+            "a turn with no reported cost was stopped on money: {:?}", end);
+        assert_eq!(1 + compact::MAX_CONTINUATIONS, end.rounds, "{:?}", end);
+    }
+
+    #[tokio::test]
+    async fn test_the_spend_ceiling_is_read_again_before_a_continuation_is_granted_00() {
+        // Granting a continuation commits the user to another `max_rounds` of spending, so the
+        // ceiling is read at that point as well as at the seam -- and the fold the cap forces is
+        // itself a paid model call, so a turn a cent under the line at the seam can be over it by
+        // the time the next leg would start.
+        let registry = one_tool();
+        let (port, _seen) = crate::llm::tests::start_stub(vec![round_costing(9.0)]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(1);
+        a.set_spend_cap_usd(5.0);
+        let mut session = Session::new(fmt!("s1"), fmt!("leg-money"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("do the work"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        assert_eq!(Some(TurnEnd::SpendCapped), a.ending().map(|e| e.how),
+            "a turn nine dollars over its ceiling took another leg");
+        let legs = events.iter().filter(|e| matches!(e, AgentEvent::Continued { .. })).count();
+        assert_eq!(0, legs, "a continuation was announced for a turn that had spent its ceiling");
     }
 
     #[tokio::test]
@@ -3009,16 +3381,17 @@ mod tests {
     }
 
     #[test]
-    fn test_an_ending_travels_as_one_of_five_words_00() {
+    fn test_an_ending_travels_as_one_of_six_words_00() {
         // Spelled once, for the reason `CallOutcome::wire` is: the browser knows these words and
         // no others, so a second speller would not fail loudly -- it would draw an ending nobody
         // recognises, which is the silence this whole mechanism replaces.
         let all = [
-            (TurnEnd::Answered, "answered"),
-            (TurnEnd::Stopped,  "stopped"),
-            (TurnEnd::Capped,   "capped"),
-            (TurnEnd::Silent,   "silent"),
-            (TurnEnd::Failed,   "failed"),
+            (TurnEnd::Answered,    "answered"),
+            (TurnEnd::Stopped,     "stopped"),
+            (TurnEnd::Capped,      "capped"),
+            (TurnEnd::SpendCapped, "spend_cap"),
+            (TurnEnd::Silent,      "silent"),
+            (TurnEnd::Failed,      "failed"),
         ];
         for (end, word) in all {
             assert_eq!(word, end.wire(), "{:?}", end);
@@ -3027,6 +3400,29 @@ mod tests {
         // `stream_sse` always reports a stream that ran to its end. It is spelled here so the two
         // halves of the seam agree about a word only one of them can produce.
         assert_eq!("stopped", TurnEnd::Stopped.wire());
+    }
+
+    #[test]
+    fn test_the_page_knows_the_two_words_a_stopped_turn_can_arrive_as_00() {
+        // THE FEED'S `endedHow` IS THE SECOND SPELLER this mechanism warns about, and a word it
+        // does not know is not an error -- it is drawn as `done`, which is the silence the ending
+        // exists to replace. So the page is asked, here, in a millisecond.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("www/js/daimond.js");
+        let src = match std::fs::read_to_string(&path) {
+            Ok(s)  => s,
+            Err(e) => { eprintln!("the page could not be read ({}), so the mapping was not \
+                checked: {}", path.display(), e); return; },
+        };
+        for end in [TurnEnd::Capped, TurnEnd::SpendCapped] {
+            let want = fmt!("case '{}':", end.wire());
+            assert!(src.contains(&want),
+                "the page does not map {:?}; `endedHow` should carry `{}`", end, want);
+        }
+        // AND THE TWO ARE NOT COLLAPSED. The remedy differs -- one is a round limit to raise and
+        // one is a ceiling in dollars -- so a reader sent to the wrong setting has been told the
+        // wrong thing about what stopped their turn.
+        assert!(src.contains("return 'round_limit';"), "the round-limit case lost its word");
+        assert!(src.contains("return 'spend_cap';"), "the spend-ceiling case lost its word");
     }
 
     // ── A reply that ran out of room ────────────────────────────────────

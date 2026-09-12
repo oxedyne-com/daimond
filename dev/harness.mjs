@@ -57,8 +57,48 @@ import { extDev, isExtSource } from './extdev.mjs';
 /// Exported because a file that launches a browser of its own -- rather than
 /// through `open()` -- would otherwise write this path down a second time, and a
 /// second copy of a path is a second thing to move.
+const HERE0 = path.dirname(fileURLToPath(import.meta.url));
+/// The first of these that can be OPENED wins, because `existsSync` cannot tell
+/// a file from a fence: inside Daimond's run fence `~/.red-pw` stats `true` (the
+/// directory list is permitted) while opening the file is EACCES, so a
+/// stat-based choice picks a path the import can never read. The second
+/// candidate lives INSIDE the granted tree (the oxegen checkout beside this
+/// one), so a daimon's fenced `run` and the hand's unfenced `verify` both reach
+/// it without an environment variable either of them may not have.
+function firstThatOpens(candidates) {
+	for (const p of candidates) {
+		try { fs.closeSync(fs.openSync(p, 'r')); return p; } catch (e) { /* next */ }
+	}
+	return candidates[0];			// nothing opens: return the first, so the
+						// import fails naming IT rather than `undefined`
+}
+
+/// The first of these that can be CREATED (or already written), with the same
+/// open-not-stat discipline as `firstThatOpens`: scratch is written, not read,
+/// so a fence that permits a stat but refuses a mkdir must fall through to the
+/// candidate inside the granted tree.
+function firstWritable(candidates) {
+	for (const dir of candidates) {
+		try {
+			fs.mkdirSync(dir, { recursive: true });
+			const probe = path.join(dir, '.write-probe');
+			fs.closeSync(fs.openSync(probe, 'w'));
+			fs.rmSync(probe, { force: true });
+			return { dir };
+		} catch (e) { /* try the next */ }
+	}
+	return { dir: candidates[0] };		// nothing writable: name the first in
+						// the failure, never `undefined`
+}
 export const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
+	|| firstThatOpens([
+		path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs'),
+		// Three levels up from dev/ (daimond → oxedyne → apps) reaches the
+		// oxegen checkout beside this one; two reach oxedyne, where no
+		// node_modules lives, and the fallback would silently pick the
+		// unreadable first candidate instead.
+		path.resolve(HERE0, '../../../oxegen/node_modules/playwright-core/index.mjs'),
+	]);
 const { chromium, webkit } = await import(pathToFileURL(PW).href);
 
 /// Which engine `open()` launches. Chromium is the default and the only one the
@@ -85,7 +125,13 @@ export const MOCK  = process.env.DAIMOND_MOCK
 export const MODEL = 'mock/fast';
 export const PASS  = 'testpass1234';
 export const CHROME = process.env.DAIMOND_CHROME
-	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
+	|| firstThatOpens([
+		`${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`,
+		// The system Chrome, for a seat whose `~/.cache` is fenced: the same
+		// open-not-stat discipline as PW, and the one browser every Linux seat
+		// this tree has been developed on has installed anyway.
+		'/usr/bin/google-chrome-stable',
+	]);
 
 const MOCK_LOG = process.env.DAIMOND_MOCK_LOG || path.join(HERE, 'mockllm.log');
 
@@ -99,7 +145,13 @@ const MOCK_LOG = process.env.DAIMOND_MOCK_LOG || path.join(HERE, 'mockllm.log');
 /// 803 profile dirs, 5.1 GB, five of six gigabytes of fleet swap).  Disk is
 /// where this belongs.  Override with DAIMOND_SCRATCH.
 export const SCRATCH = process.env.DAIMOND_SCRATCH
-	|| path.join(os.homedir(), '.cache/daimond');
+	|| firstWritable([
+		path.join(os.homedir(), '.cache/daimond'),
+		// Inside the granted tree, so a daimon's fenced `run` and the hand's
+		// unfenced `verify` child both reach it: `~/.cache` is fence-denied to
+		// the former and the child may carry no environment at all.
+		path.resolve(HERE0, '../.scratch'),
+	]).dir;
 
 /// A path under the scratch root, with its parent created.
 export function scratch(...parts) {

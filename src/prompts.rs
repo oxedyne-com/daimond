@@ -265,9 +265,12 @@ impl Role {
 	/// [`Tool::FileShow`](crate::tools::Tool::FileShow) refuses it for that reason --
 	/// several workers run at once and the panel is one panel.
 	///
-	/// This exists so [`SHOW_NOTE`], [`FOLD_NOTE`] and [`VERIFY_NOTE`] do not reach the actor
-	/// all three are false for -- and the third answers here for a reason of its own: a worker
-	/// holds `Tool::Verify` and is refused it at the call, for working with nobody watching.
+	/// This exists so [`SHOW_NOTE`] and [`FOLD_NOTE`] do not reach the actor both are false for.
+	/// [`VERIFY_NOTE`] is gated here too, and no longer because the answer is the same: **on the
+	/// owner's ruling of 2026-09-12 a worker MAY run a verifier**, and `Tool::verify_spec`'s
+	/// refusal of one is gone.  What is left is a question of price -- the note costs 97 tokens on
+	/// every request of every round, and a worker is told the rule in one sentence of
+	/// [`DEFAULT_WORKER`] instead, paid for once.
 	/// [`DEFAULT_CHAT`] records the same lesson from the other side: the paragraph
 	/// about dispatching workers is in the chat's own default rather than composed in,
 	/// because it is false for the daimon. Text placed in the wrong default reaches
@@ -299,9 +302,10 @@ impl Role {
 	/// parses.
 	///
 	/// [`SHOW_NOTE`], [`FOLD_NOTE`] and [`VERIFY_NOTE`] are the pieces here that are NOT
-	/// appended to every role with tools, because each is false for a worker -- it cannot
-	/// take the panel, its report goes to a machine, and `verify` refuses it for working
-	/// with nobody watching: see [`can_show`](Role::can_show).
+	/// appended to every role with tools.  The first two are FALSE for a worker -- it cannot take
+	/// the panel and its report goes to a machine.  The third is true of a worker since the ruling
+	/// of 2026-09-12 and is withheld on cost rather than on truth, which [`DEFAULT_WORKER`]
+	/// covers in a sentence: see [`can_show`](Role::can_show).
 	pub fn compose(&self, text: &str) -> String {
 		self.compose_for(text, "")
 	}
@@ -531,13 +535,17 @@ pub const FOLD_NOTE: &str =
 /// until the turn is over.
 ///
 /// **Composed for [`Role::can_show`] and not for [`Role::has_tools`]**, on [`FOLD_NOTE`]'s
-/// precedent and not on a guess. A worker HOLDS `Tool::Verify` -- its registry is built from
-/// [`crate::tools::Tool::browser`] -- and `Tool::verify_spec` refuses it anyway, in those words:
-/// *"you are working alone with nobody watching. That decision belongs to the daimon that
-/// dispatched you."* So the roles that can run a verifier are exactly the two whose reader is a
-/// person, which is the question [`can_show`](Role::can_show) already answers. Telling a worker
-/// otherwise would spend a turn on a refusal, which is the failure [`SHOW_NOTE`] was written
-/// against.
+/// precedent -- and the reason for that gate CHANGED on 2026-09-12 while the gate stayed where it
+/// was, so it is worth saying which reason holds it now. It used to be truth: a worker held
+/// `Tool::Verify` and `Tool::verify_spec` refused it anyway, for working alone with nobody
+/// watching, so telling a worker to reach for the tool would have spent a turn on a refusal. **The
+/// owner lifted that refusal on 2026-09-12: a worker runs a verifier inside its own loop, under
+/// the daimon's fence, budget and result-shaping.** What holds the gate now is price. This note is
+/// 97 tokens on every request of every round and there are several workers to a daimon's turn, and
+/// the thing a worker needs from it is one clause rather than the argument -- so the worker is told
+/// in one sentence of [`DEFAULT_WORKER`], and the two roles whose reader is a person keep the
+/// note. A worker that reaches for `run` instead still meets
+/// [`crate::tools::verifier_refusal`], which names the tool and the call.
 ///
 /// **What the tokens bought**, at a budget of 110 rather than the one sentence [`SEARCH_NOTE`]
 /// gets: the second sentence, which is the whole note. The rule alone -- use `verify` -- is
@@ -827,6 +835,13 @@ pub const DEFAULT_DAIMON: &str =
 /// to write a summary still writes it as a covering note, because nothing has told it that the
 /// transcript behind the note is thrown away -- and the daimon that dispatched it then reports a
 /// turn it cannot see, or sends the task back for work that was already done.
+///
+/// **The verify sentence arrived with the owner's ruling of 2026-09-12**, which lifted the refusal
+/// that had stopped a worker running a verifier at all (see `Tool::verify_spec`).  It asks for the
+/// NUMBERS and not for a verdict, because a worker that reports "verified" has handed the reviewer
+/// the one summary it cannot act on -- and this is the worker's whole share of the instruction:
+/// [`VERIFY_NOTE`] costs 97 tokens on every request of every round and is still composed in for the
+/// two roles with a reader, so the worker is told the rule in one sentence it pays for once.
 pub const DEFAULT_WORKER: &str =
 	"You are a worker agent dispatched to carry out exactly one task. You have \
 	 the workspace file tools. You cannot ask questions — the task is all you \
@@ -841,7 +856,10 @@ pub const DEFAULT_WORKER: &str =
 	 It is also READ AND CHECKED by the agent that sent you, which will open what \
 	 you changed and may send the task back. So write it to be verified rather than \
 	 believed: name the files you touched, the commands you ran and what they \
-	 answered, and say plainly what you could not do. A summary that reports success \
+	 answered, and say plainly what you could not do. Check your own work before you \
+	 report it: where the work has verifiers of its own, `verify` runs one, and the \
+	 report names the verifier and the numbers it gave rather than calling the work \
+	 good. A summary that reports success \
 	 without saying what would show it is the one thing a reviewer cannot use.\n\n\
 	 NOTHING ELSE OF YOURS REACHES THAT AGENT — not this conversation, not a tool \
 	 result, not a file you read. The report is the whole of what it will ever see, \
@@ -1579,13 +1597,16 @@ mod tests {
 		assert!(n <= 260, "the fold note is about {} tokens, over its budget: {}", n, FOLD_NOTE);
 	}
 
-	/// **The verifier instruction reaches exactly the roles that can run a verifier.**
+	/// **The verifier ARGUMENT reaches the two roles that pay for it, and the worker is told the
+	/// rule in a sentence instead.**
 	///
-	/// Gated on [`Role::can_show`] and not on [`Role::has_tools`]. A worker HOLDS
-	/// `Tool::Verify` -- its registry is built from [`crate::tools::Tool::browser`] -- and
-	/// `Tool::verify_spec` refuses it all the same, for working alone with nobody watching. So
-	/// the two roles that can actually run one are the two whose reader is a person, and telling
-	/// a worker to check its work this way would spend a turn on a refusal.
+	/// This used to assert that only a role which CAN run a verifier is told to reach for one,
+	/// which was true while `Tool::verify_spec` refused a dispatched worker. The owner lifted that
+	/// refusal on 2026-09-12: a worker runs a verifier in its own loop now, so the gate is no
+	/// longer about capability. It is about price -- 97 tokens on every request of every round,
+	/// several workers to a daimon's turn -- and the worker's share of the instruction is one
+	/// sentence of [`DEFAULT_WORKER`], pinned by
+	/// [`test_a_worker_is_told_to_check_its_own_work_and_to_report_the_numbers`].
 	///
 	/// Asserted across EVERY role rather than on the daimon alone: a note appended
 	/// unconditionally passes any test that only looks at a role which should have it.
@@ -1595,7 +1616,7 @@ mod tests {
 	/// `verify` both appear in half a dozen other places in the same string, so a composed-prompt
 	/// assertion would pass with the note cut out entirely.
 	#[test]
-	fn test_only_a_role_that_can_run_a_verifier_is_told_to_reach_for_it() {
+	fn test_the_verify_argument_reaches_the_roles_that_pay_for_it() {
 		for r in Role::all() {
 			let composed = r.compose("");
 			assert_eq!(composed.contains(VERIFY_NOTE), r.can_show(),
@@ -2751,6 +2772,35 @@ mod tests {
 	/// report is folded back.  A worker that has not been told so writes a covering note over a
 	/// transcript nobody will read, and the daimon then reports a turn it cannot see -- or sends
 	/// the task back for work that was already done.
+	/// **A worker checks its own work, and the report carries the numbers rather than a verdict.**
+	///
+	/// The owner's ruling of 2026-09-12 lifted `Tool::verify_spec`'s refusal of a worker, and a
+	/// capability nothing tells the model about is a capability nobody uses: before this, every
+	/// round of checking ran in the dispatching daimon's context.
+	///
+	/// Asserted on the WORKER and denied of nothing, because the two roles with a reader carry
+	/// [`VERIFY_NOTE`] and would satisfy a loose `contains("verify")` on their own.  The second
+	/// half is the one that matters to the reviewer: "verified" is an adjective, and a report that
+	/// offers one instead of the three numbers is the report the daimon has to redo.
+	#[test]
+	fn test_a_worker_is_told_to_check_its_own_work_and_to_report_the_numbers() {
+		let w = Role::Worker.compose("");
+		assert!(w.contains("`verify` runs one"),
+			"a worker is not told which tool checks its work, so the ruling of 2026-09-12 \
+			reaches it only if it guesses: {}", w);
+		assert!(w.contains("Check your own work before you report it"),
+			"a worker is not told to check BEFORE reporting, which is the only point in the \
+			turn where checking changes the report: {}", w);
+		assert!(w.contains("names the verifier and the numbers it gave"),
+			"the report is not told to carry the verifier and its numbers, so 'verified' \
+			satisfies the instruction: {}", w);
+		// And the sentence sits in the paragraph about the REPORT, not somewhere a user rewriting
+		// their worker prompt would keep by accident -- the two are checked together because the
+		// instruction is about what the report says.
+		assert!(w.contains("READ AND CHECKED"),
+			"the report paragraph is gone and the verify sentence is orphaned: {}", w);
+	}
+
 	#[test]
 	fn test_a_worker_is_told_that_only_its_report_reaches_the_daimon() {
 		let p = Role::Worker.compose("");

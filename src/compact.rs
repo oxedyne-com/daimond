@@ -74,6 +74,21 @@ use std::collections::BTreeMap;
 /// figure and their own decision.
 pub const DEFAULT_MAX_ROUNDS: usize = 150;
 
+/// How many times a turn that reaches the round limit is allowed to carry on by itself.
+///
+/// **The round limit was a full stop and is now a breath.**  A turn stopped at 150 rounds left
+/// the user holding a half-finished task and a Continue button, so the work carried on only as
+/// fast as somebody was watching -- and the next turn re-sent the whole log anyway, which is
+/// what the forced fold at the cap was written to bound.  On the owner's ruling of 2026-09-12
+/// the app takes that press itself, up to three times, so a long task runs to
+/// `DEFAULT_MAX_ROUNDS * (1 + MAX_CONTINUATIONS)` rounds unattended.
+///
+/// Three, not unlimited.  Each continuation costs another hundred and fifty rounds of a prompt
+/// that was already at the context ceiling, and the thing that actually stops a runaway is the
+/// spend ceiling -- see [`Limits::spend_cap_usd`], which is checked at the same seam.  The round
+/// count is the backstop for a turn that is looping cheaply.
+pub const MAX_CONTINUATIONS: usize = 3;
+
 /// What window to assume when nobody has said what the model's is.
 ///
 /// The smallest window in Daimond's own price table, so assuming it is the assumption that
@@ -132,6 +147,26 @@ pub const ABSOLUTE_CAP: u64 = 120_000;
 /// published window's fraction reaches it.
 pub const CONTEXT_CAP_MIN: u64 =     16_000;
 pub const CONTEXT_CAP_MAX: u64 = 1_000_000;
+
+/// What one turn may spend before the app stops it, in US dollars.
+///
+/// **This, and not the round count, is what actually holds a runaway.**  A turn now takes its own
+/// Continue at the round limit -- see [`MAX_CONTINUATIONS`] -- so the rounds alone no longer bound
+/// what a turn costs, and the figure that does has to be one the user sets: five dollars is a
+/// great deal of work on a cheap model and two long legs on an expensive one, and only the person
+/// paying knows which of those they meant.
+///
+/// Five is the shipped default on the owner's ruling of 2026-09-12.  It is deliberately well above
+/// an ordinary turn and well below a night's accident.
+pub const DEFAULT_SPEND_CAP_USD: f64 = 5.0;
+
+/// The band a chosen per-turn spend ceiling is held inside.
+///
+/// The floor is a cent rather than zero, because zero is how "the user has not chosen" travels
+/// everywhere else in [`Limits`] and a ceiling of nothing would end every turn at its first round.
+/// The roof is where a ceiling stops being one.
+pub const SPEND_CAP_MIN_USD: f64 =    0.01;
+pub const SPEND_CAP_MAX_USD: f64 = 1000.0;
 
 /// Fraction of the budget kept verbatim at the end of the conversation.
 ///
@@ -254,6 +289,8 @@ pub struct Limits {
 	pub fold_at:    f64,
 	/// Most tokens any one round may carry, whatever the window; see [`ABSOLUTE_CAP`].
 	pub context_cap: u64,
+	/// Most one turn may spend, in US dollars; see [`DEFAULT_SPEND_CAP_USD`].
+	pub spend_cap_usd: f64,
 	/// Fraction of the budget kept verbatim at the end.
 	pub keep:       f64,
 	/// Model to fold with; empty means the chat's own.
@@ -267,6 +304,7 @@ impl Default for Limits {
 			window:     0,
 			fold_at:    FOLD_AT,
 			context_cap: ABSOLUTE_CAP,
+			spend_cap_usd: DEFAULT_SPEND_CAP_USD,
 			keep:       KEEP,
 			fold_model: String::new(),
 		}
@@ -935,6 +973,41 @@ pub fn round_limit_note(max_rounds: usize) -> ChatMessage {
 		"[Daimond stopped the previous turn after {} tool-call rounds, which is its \
 		 limit. The assistant did not choose to stop and the task may be unfinished; \
 		 say where it had got to before carrying on.]", max_rounds))
+}
+
+/// What goes into the conversation when a turn is stopped after using up its continuations.
+///
+/// Said separately from [`round_limit_note`] because it is a different fact: that note reports a
+/// boundary the app could have pushed back and chose not to, while this one reports a boundary
+/// with nothing left behind it.  A model told only "the round limit" after six hundred rounds
+/// would reasonably expect another Continue to get further, and the figure is what says it will
+/// not -- see [`MAX_CONTINUATIONS`].
+///
+/// # Arguments
+/// * `rounds` - Rounds the whole turn ran, continuations included.
+/// * `continuations` - How many times it carried on by itself.
+pub fn continuation_limit_note(rounds: usize, continuations: usize) -> ChatMessage {
+	ChatMessage::system(fmt!(
+		"[Daimond stopped the previous turn after {} tool-call rounds, having already \
+		 carried it on {} times by itself, which is its limit. The assistant did not choose \
+		 to stop and the task may be unfinished; say where it had got to before carrying on.]",
+		rounds, continuations))
+}
+
+/// What goes into the conversation when a turn is stopped because it spent its ceiling.
+///
+/// In the app's voice, for the reason [`round_limit_note`] gives.  It names both figures: a
+/// ceiling the model cannot see is one it cannot take account of, and the next turn's first act
+/// is usually to decide how much more work to attempt.
+///
+/// # Arguments
+/// * `spent` - What the turn reported spending, in US dollars.
+/// * `cap` - The per-turn ceiling it passed, in US dollars.
+pub fn spend_limit_note(spent: f64, cap: f64) -> ChatMessage {
+	ChatMessage::system(fmt!(
+		"[Daimond stopped the previous turn after it had spent about US${:.2}, which is past \
+		 the US${:.2} a turn is allowed. The assistant did not choose to stop and the task may \
+		 be unfinished; say where it had got to before carrying on.]", spent, cap))
 }
 
 
@@ -2910,6 +2983,40 @@ mod tests {
 		let want = fmt!("var DEFAULT_CONTEXT_CAP = {};", ABSOLUTE_CAP);
 		assert!(src.contains(&want),
 			"the page does not carry the engine's ceiling; it should read `{}`", want);
+	}
+
+	#[test]
+	fn test_the_browsers_copy_of_the_spend_ceiling_is_the_engines_00() {
+		// The same question as the ceiling above, about the figure the control calls "Default".  A
+		// page offering a default of five against an engine holding ten is a control that reports
+		// a ceiling nobody is held to.
+		let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("www/js/daimond.js");
+		let src = match std::fs::read_to_string(&path) {
+			Ok(s)  => s,
+			Err(e) => { eprintln!("the page could not be read ({}), so the copy was not \
+				checked: {}", path.display(), e); return; },
+		};
+		let want = fmt!("var DEFAULT_SPEND_CAP = {};", DEFAULT_SPEND_CAP_USD);
+		assert!(src.contains(&want),
+			"the page does not carry the engine's spend ceiling; it should read `{}`", want);
+		let band = fmt!("var SPEND_CAP_MIN = {}, SPEND_CAP_MAX = {};",
+			SPEND_CAP_MIN_USD, SPEND_CAP_MAX_USD);
+		assert!(src.contains(&band),
+			"the page holds a chosen ceiling in a different band from the engine; it should read \
+			 `{}`", band);
+	}
+
+	#[test]
+	fn test_the_spend_ceiling_is_a_setting_and_the_band_holds_it_00() {
+		// Five dollars by default, on the owner's ruling of 2026-09-12, and movable: it is the one
+		// ceiling that bounds what a turn costs now that a capped turn carries itself on.
+		assert_eq!(5.0, DEFAULT_SPEND_CAP_USD);
+		assert_eq!(DEFAULT_SPEND_CAP_USD, Limits::default().spend_cap_usd);
+		// A band that is not a band would make the setter's clamp a no-op, which is how a control
+		// comes to offer a figure the engine silently replaces.
+		assert!(SPEND_CAP_MIN_USD > 0.0 && SPEND_CAP_MIN_USD < DEFAULT_SPEND_CAP_USD,
+			"{} is not below the default", SPEND_CAP_MIN_USD);
+		assert!(SPEND_CAP_MAX_USD > DEFAULT_SPEND_CAP_USD);
 	}
 
 	#[test]

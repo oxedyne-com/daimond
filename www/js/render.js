@@ -714,26 +714,291 @@
 		return segs;
 	}
 
+	// ── Math (LaTeX spans) ─────────────────────────────────────
+	//
+	// A model answering with `$x^2$` or `$$x^2$$` used to print as literal
+	// dollars: `marked` treats the delimiters as ordinary text and the chat had
+	// no KaTeX, so the reader saw the markup.  The pass here extracts every
+	// CLOSED equation span out of the raw markdown BEFORE `marked` can mangle
+	// it, parks the LaTeX behind an inert placeholder, and substitutes real
+	// KaTeX markup back in AFTER sanitisation.  KaTeX's own output is trusted
+	// post-sanitise by construction and the sanitiser never sees it: `trust:
+	// false` kills \href and friends, and `throwOnError: false` turns a bad
+	// expression into a styled error span with no payload — there is nothing
+	// left for a sanitiser to remove, so a later reader must NOT "improve" the
+	// order to run the substitution before scrub, or the whitelist would have
+	// to admit KaTeX's subtree (see the XSS checks in dev/verify_render.mjs).
+	// A span with no closing delimiter is left alone: mid-stream a half-written
+	// `$$` must not vanish, and `settled` does not gate this pass — "unclosed"
+	// simply means "not yet".  Without KaTeX vendored the feature degrades to
+	// exactly today's literal dollars rather than to nothing.
+
+	// One opening delimiter.  A set-free scan because a bag of regex
+	// alternatives at one `exec` would mispair a closing `$$` with an earlier
+	// opening `$`.  The inline dollar's first guard lives in the pattern (no
+	// whitespace after the opening `$`); the closing side has BOTH guards
+	// (no whitespace before, no digit after).
+	var MATH_OPEN = [
+		{ re: /\$\$/y,      display: true  },
+		{ re: /\\\[/y,      display: true  },
+		{ re: /\$(?!\s)/y,  display: false },
+		{ re: /\\\(/y,      display: false },
+	];
+
+	var MATH_CLOSE = [
+		{ re: /\$\$/y,      display: true,  len: 2 },
+		{ re: /\\\]/y,      display: true,  len: 2 },
+		{ re: /(?<!\s)\$(?!\d)/y, display: false, len: 1 },
+		{ re: /\\\)/y,      display: false, len: 2 },
+	];
+
+	/// Every closed `$…$`, `$$…$$`, `\(…\)` and `\[…\]` span in `src`, in
+	/// document order, each with the raw LaTeX (delimiters excluded), whether it
+	/// is display mode, and the half-open range the whole delimited span
+	/// occupies.  Fenced code and inline code are skipped (the same rule that
+	/// keeps a `<details>` inside a fence from being a fold), and a `\$`
+	/// escape stays literal.
+	/// Inline-code ranges: each `…` span, so LaTeX being *discussed* in
+	/// backticks never renders as an equation once the close search works.
+	/// Non-greedy and paired, so a stray single backtick touches nothing.
+	function tickRanges(src) {
+		var out = [], re = /`([^`\n]*)`/g, m;
+		while ((m = re.exec(src)) !== null) {
+			out.push([m.index, m.index + m[0].length]);
+		}
+		return out;
+	}
+
+	function mathSpans(src) {
+		// Inline code joins fenced code as a no-math zone: once the close
+		// search actually works, `` `$x^2$` `` would otherwise turn the code
+		// the reader is quoting into an equation, and LaTeX discussed in
+		// backticks is common in exactly the chats that use LaTeX.
+		var fenced = fencedRanges(src).concat(tickRanges(src)), out = [];
+		for (var i = 0; i < src.length; i++) {
+			if (inRanges(fenced, i)) continue;
+			// `\$` stays literal — and ONLY `\$`: the previous guard also
+			// swallowed `\(` and `\[`, which are two of the four delimiter
+			// families this pass exists to read, so they could never open.
+			if (src.charAt(i) === '\\' && src.charAt(i + 1) === '$') { i++; continue; }
+			var open = null;
+			for (var o = 0; o < MATH_OPEN.length; o++) {
+				var or = MATH_OPEN[o].re;
+				or.lastIndex = i;
+				var om = or.exec(src);
+				// A sticky match ANSWERS at the offset it was anchored at
+				// (m.index), and leaves lastIndex pointing past it — so the
+				// anchor test is on m.index, never on lastIndex after a match.
+				if (om && om.index === i) { open = MATH_OPEN[o]; break; }
+			}
+			if (!open) continue;
+			// The opener's WIDTH is the matched text's length, never the pattern
+			// source's length: `/\$(?!\s)/y` matches one character while its
+			// source is eight, and a `from` computed from the latter lands past
+			// a short close so the span never closes.
+			var from = i + om[0].length;
+			for (var c = 0; c < MATH_CLOSE.length; c++) {
+				var cr = MATH_CLOSE[c];
+				if (cr.display !== open.display) continue;
+				// The close is a FORWARD SEARCH from `from`: exec over the
+				// remainder with the guards kept and the sticky flag dropped,
+				// the offset added back. Anchoring at `from` answers only "is
+				// the close exactly here", and searching the WHOLE string —
+				// an earlier build's mistake — returns the first `$` behind
+				// the opener, so a message that starts with maths never
+				// rendered anything at all.
+				var rest = src.slice(from), m;
+				m = (new RegExp(cr.re.source)).exec(rest);
+				// A `$$`-closed span must close on `$$`: if the `$$`-probe
+				// found nothing but a `$` sits at exactly `from`, the peek did
+				// not land on `$$` and there is no close (a lone `$` inside
+				// the text is not one).
+				if (!m && cr.len === 2) {
+					var single = new RegExp('\\$(?!\\d)');
+					var sm = single.exec(rest);
+					if (sm && sm.index === 0) { m = null; }
+				}
+				if (m) {
+					m.index += from;
+					// THE FOLD WINS. A span whose range swallows `<details>` or
+					// `<summary>` markup would replace the fold's own markup
+					// with a placeholder, and the fold the contract protects
+					// would be destroyed by the attempt to typeset across it.
+					// Such a span is refused whole: the dollars stay literal,
+					// exactly as they read before the feature existed, and the
+					// fold keeps folding.
+					var whole = src.slice(i, m.index + m[0].length);
+					if (/<\/?(details|summary)/i.test(whole)) {
+						i = m.index + m[0].length - 1;
+						break;
+					}
+					out.push({
+						display: open.display,
+						tex: src.slice(from, m.index),
+						start: i,
+						end: m.index + m[0].length,
+					});
+					i = m.index + m[0].length - 1;
+					break;
+				}
+			}
+		}
+		return out;
+	}
+
+	/// `src` with every closed math span replaced by an inert placeholder, with
+	/// the recorded spans returned alongside.  Inert means PASS-THROUGH: `@` is
+	/// not markdown punctuation, no angle brackets reach the sanitiser, and the
+	/// token is not an HTML signature, so it survives both passes as text and is
+	/// substituted AFTER the scrub — the substitution only ever renders KaTeX's
+	/// own trusted markup, never model-authored HTML.
+	function extractMath(src) {
+		var spans = mathSpans(src), newsrc = '', at = 0;
+		// A per-call nonce makes the placeholder UNGUESSABLE: a model typing a
+		// literal `@@MATH0@@` into a message that also holds real mathematics
+		// must not be able to collide with a recorded ordinal and have its
+		// words replaced by an equation. Random per call, so nothing outside
+		// this invocation can predict it.
+		var nonce = Math.random().toString(36).slice(2, 8);
+		for (var i = 0; i < spans.length; i++) {
+			var sp = spans[i];
+			var tok = '@@MATH' + nonce + '-' + i + '@@';
+			newsrc += src.slice(at, sp.start) + tok;
+			at = sp.end;
+		}
+		return { text: newsrc + src.slice(at), spans: spans, nonce: nonce };
+	}
+
+	/// `src` with every recorded placeholder (only those actually recorded)
+	/// replaced by rendered KaTeX, or — when KaTeX is absent or a render throws
+	/// — by the original LaTeX source with its delimiters restored, HTML-escaped.
+	/// Any other `@@MATHn@@` in the text was written by the model and is left
+	/// untouched, byte for byte; the pass never invents a replacement.
+	/// Rendered-equation cache: the chat re-renders the whole growing answer on
+	/// every streaming frame, so without this every equation in a long answer
+	/// re-parses and re-renders dozens of times a second. Bounded, because an
+	/// unbounded cache grows with every turn a chat ever renders.
+	var mathCache = {}, mathCacheN = 0;
+	var MATH_CACHE_MAX = 500;
+
+	function substituteMath(src, spans, nonce) {
+		if (!spans || !spans.length) return src;
+		var e = escapeHtml, katex = typeof window.katex !== 'undefined' ? window.katex : null;
+		var out = '', at = 0;
+		// The token pattern is built from THIS call's nonce, so a token the
+		// model typed — matching the shape but not the nonce — is never one of
+		// ours and passes through untouched.
+		var tokRe = new RegExp('@@MATH' + nonce + '-(\\d+)@@', 'g');
+		// Pre-count every ordinal's occurrences: a placeholder appearing more
+		// than once (a `$$` pair straddling a fold, where the two halves land in
+		// different segments) must degrade EVERY occurrence to the literal
+		// source, because neither half is closed mathematics and rendering
+		// either as an equation would show a reader a fragment as typeset.
+		var seen = {}, m0;
+		while ((m0 = tokRe.exec(src)) !== null) {
+			var n0 = parseInt(m0[1], 10);
+			seen[n0] = (seen[n0] || 0) + 1;
+		}
+		var looked = [];
+		for (var i = 0; i < spans.length; i++) { looked.push(i); }
+		tokRe.lastIndex = 0;
+		var m;
+		while ((m = tokRe.exec(src)) !== null) {
+			var n = parseInt(m[1], 10), sp = spans[n];
+			if (!sp) continue;					// not one we recorded
+			looked[n] = -1;
+			out += src.slice(at, m.index);
+			var dup = seen[n] > 1;
+			var tag = sp.display ? 'div' : 'span';
+			var cls = sp.display ? 'md-math md-math-block' : 'md-math';
+			if (katex && !dup) {
+				try {
+					var cacheKey = (sp.display ? 'D' : 'I') + '|' + sp.tex;
+					var cached = mathCache[cacheKey];
+					if (cached === undefined) {
+						if (mathCacheN >= MATH_CACHE_MAX) { mathCache = {}; mathCacheN = 0; }
+						cached = katex.renderToString(sp.tex, {
+							displayMode: sp.display,
+							output: 'htmlAndMathml',
+							throwOnError: false,
+							trust: false,
+							strict: 'ignore',
+							maxSize: 100,
+							maxExpand: 100,
+						});
+						mathCache[cacheKey] = cached;
+						mathCacheN++;
+					}
+					out += '<' + tag + ' class="' + cls + '">'
+						+ cached + '</' + tag + '>';
+					at = m.index + m[0].length;
+					continue;
+				} catch (e2) { /* render threw — fall through to literal */ }
+			}
+			// The degrade path: yesterday's behaviour, exactly — the dollars and
+			// the LaTeX, escaped, so what a reader without KaTeX sees is what a
+			// reader saw before the feature existed.
+			out += e((sp.display ? '$$' : '$') + sp.tex + (sp.display ? '$$' : '$'));
+			at = m.index + m[0].length;
+		}
+		// A recorded span whose token never appeared (a placeholder that marked
+		// swallowed — a `<details>` summary edge) falls back to the SAME literal,
+		// so extraction and substitution can never disagree about a span.
+		for (var k = 0; k < looked.length; k++) {
+			if (looked[k] === -1) continue;
+			var sp2 = spans[k];
+			out += e((sp2.display ? '$$' : '$') + sp2.tex + (sp2.display ? '$$' : '$'));
+		}
+		return out + src.slice(at);
+	}
+
 	// ── Public render ──────────────────────────────────────────
 
 	/// Render markdown `text` to a sanitised HTML string.
 	function md(text) {
 		var src = (text == null) ? '' : String(text);
+		// Math first, before marked can do anything with the dollars: every
+		// closed `$…$`, `$$…$$`, `\(…\)` and `\[…\]` span is moved out of the
+		// stream into a placeholder, so marked never sees an underscore that it
+		// could turn into emphasis or a `>` that could end the paragraph.  A
+		// span still open is left exactly as written until its close lands.
+		// The `$` test is the streaming fast path: most answers carry no
+		// mathematics at all, and the whole extract-substitute machinery
+		// costs real time on every frame of a growing answer, so a source
+		// with none of the three opener characters never enters it.  `$`,
+		// `\\` (both paren families) and `[`/`]`?  Only `$` and `\\` can open
+		// a span; the bracket families need `\\` too, so the two suffice.
+		var mth = null;
+		if (src.indexOf('$') < 0 && src.indexOf('\\') < 0) {
+			mth = null;					// no opener, no pass
+		} else {
+			try { mth = extractMath(src); }
+			catch (e) { mth = null; }
+		}
+		if (mth) src = mth.text;
 		var html;
 		try {
 			html = marked.parse(src, { breaks: true });
 		} catch (e) {
-			return escapeHtml(src);
+			// marked threw on the PLACEHOLDER text; return the original source
+			// escaped, never the mangled half.
+			return escapeHtml((text == null) ? '' : String(text));
 		}
 		// Sanitise the model-authored markup first, then apply the
-		// trusted code-block transform (which builds its own markup
-		// from already-escaped source).
+		// trusted code-transform (which builds its own markup
+		// from already-escaped source), then put the math back —
+		// KaTeX's output is trusted by the options above and is
+		// never walked by the whitelist, which is the point.
 		try {
 			html = sanitize(html);
-		} catch (e) { return escapeHtml(src); }
+		} catch (e) { return escapeHtml((text == null) ? '' : String(text)); }
 		try {
 			html = enhanceCodeBlocks(html);
 		} catch (e) { /* keep unenhanced html */ }
+		if (mth) {
+			try { html = substituteMath(html, mth.spans, mth.nonce); }
+			catch (e) { /* keep the literal placeholders */ }
+		}
 		return html;
 	}
 
@@ -788,5 +1053,6 @@
 		md: md, escapeHtml: escapeHtml, sanitize: sanitize,
 		foldScan: foldScan, foldSegments: foldSegments, summaryText: summaryText,
 		seamText: seamText, seamLine: seamLine,
+		extractMath: extractMath, mathSpans: mathSpans,
 	};
 })();

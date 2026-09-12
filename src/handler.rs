@@ -813,6 +813,10 @@ fn event_to_ws(ev: &AgentEvent) -> Option<(&'static str, Vec<Dat>)> {
         // reach this wire unnoticed.
         AgentEvent::Roading { .. } => ("roading", vec![]),
         AgentEvent::Truncated => ("truncated", vec![]),
+        // The leg number before the running total, for the reason `compacted` gives: which
+        // continuation this is can be drawn without reading a sentence.
+        AgentEvent::Continued { n, rounds_so_far } =>
+            ("continued", vec![Dat::U64(*n as u64), Dat::U64(*rounds_so_far as u64)]),
         AgentEvent::Done      => ("done",  vec![]),
         AgentEvent::Error(msg) => ("error", vec![dat!(msg.clone())]),
     })

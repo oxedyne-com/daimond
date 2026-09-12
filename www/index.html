@@ -1539,6 +1539,14 @@
 <!-- journal.js: the write-ahead log for in-flight work. Loaded early so it is
      ready before the first turn. -->
 <script src="js/journal.js"></script>
+<!-- KaTeX, vendored (js/vendor/katex.min.js + KATEX-LICENSE): the chat's
+     equation renderer. Loaded BEFORE render.js so window.katex exists the
+     first time a message renders; render.js degrades to literal LaTeX when
+     it is absent, so nothing here is load-order load-bearing. The stylesheet
+     sits beside the app's own and its fonts are at css/fonts/ — the vendored
+     CSS references them relatively and is never edited. -->
+<link rel="stylesheet" href="css/katex.min.css">
+<script src="js/vendor/katex.min.js"></script>
 <script src="js/marked.min.js"></script>
 <script src="js/render.js"></script>
 <!-- crystal.js beside render.js: it is the other renderer. It owns the sandboxed

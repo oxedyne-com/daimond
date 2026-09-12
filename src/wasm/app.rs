@@ -943,6 +943,29 @@ impl DaimondApp {
         self.agent.set_context_cap(if tokens > 0.0 { tokens as u64 } else { 0 });
     }
 
+    /// The most one turn may spend, in US dollars.
+    ///
+    /// **The ceiling that holds a runaway now that the round limit does not.**  A turn that reaches
+    /// the round cap carries itself on -- see [`crate::agent::compact::MAX_CONTINUATIONS`] -- so
+    /// six hundred rounds of an expensive model is a thing the app will now do unattended, and the
+    /// figure that stops it has to be the user's: five dollars is a day's work on a cheap model and
+    /// two legs on a costly one.
+    ///
+    /// Not enforced on a turn whose provider reported no cost at all; see
+    /// `Agent::over_the_spend_cap` for why a guessed price would be worse than none.
+    ///
+    /// `f64` for the reason [`DaimondApp::set_context_window`] gives, and because the figure is
+    /// money.  Zero restores the shipped default, as it does for
+    /// [`DaimondApp::set_context_cap`]; anything outside
+    /// [`crate::agent::compact::SPEND_CAP_MIN_USD`]..[`crate::agent::compact::SPEND_CAP_MAX_USD`]
+    /// is held at the band rather than refused.
+    ///
+    /// # Arguments
+    /// * `usd` - The ceiling; zero leaves the default.
+    pub fn set_spend_cap_usd(&self, usd: f64) {
+        self.agent.set_spend_cap_usd(usd);
+    }
+
     /// Fold this agent's conversations with a different model from the one it chats
     /// with; empty means the chat's own.
     ///
@@ -985,6 +1008,15 @@ impl DaimondApp {
     #[wasm_bindgen(getter)]
     pub fn context_cap(&self) -> f64 {
         self.agent.limits().context_cap as f64
+    }
+
+    /// The most one of this agent's turns may spend, in US dollars.
+    ///
+    /// See [`DaimondApp::set_spend_cap_usd`].  Read back rather than remembered by the caller, so a
+    /// control shows the figure that is in force after the band has been applied.
+    #[wasm_bindgen(getter)]
+    pub fn spend_cap_usd(&self) -> f64 {
+        self.agent.limits().spend_cap_usd
     }
 
     /// Fold this conversation now, because the user asked.
@@ -2614,6 +2646,11 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
         }
         AgentEvent::Truncated => {
             set("type", &JsValue::from_str("truncated"));
+        }
+        AgentEvent::Continued { n, rounds_so_far } => {
+            set("type",   &JsValue::from_str("continued"));
+            set("n",      &JsValue::from_f64(*n as f64));
+            set("rounds", &JsValue::from_f64(*rounds_so_far as f64));
         }
         AgentEvent::Done => {
             set("type", &JsValue::from_str("done"));

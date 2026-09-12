@@ -3831,6 +3831,37 @@ details.md-fold[open] > summary {
    below a border reads as the fold not having ended. */
 details.md-fold > :last-child { margin-bottom: 0; }
 
+/* ── Math drawn by KaTeX ───────────────────────────────────────────────
+   `substituteMath` wraps every rendered equation in a `.md-math` span (inline)
+   or a `.md-math-block` div (display) whose KaTeX markup is trusted by
+   construction -- see dev/verify_render.mjs section 9. The block form is a
+   block, so a display equation reads as a display equation. Both scroll
+   rather than overflow, which is what saves a long equation from shoving the
+   chat column wider than the view: a horizontal scroll on the equation is
+   cheaper than a horizontal scroll on every line below it. */
+
+/* An inline equation or a display one, in the reader's own ink -- KaTeX's
+   output is sized in ems, so it inherits the message's size and colour.
+   ORDER IS LOAD-BEARING: both classes sit on one element in the display case
+   (`md-math md-math-block`), equal specificity, so the LATER rule wins the
+   shared `display` — the block form must therefore come after the inline one,
+   or a display equation shrinks to fit as inline-block and sits flush-left,
+   which is exactly what the 2026-09-11 LOOK caught in pixels and the DOM
+   confirmed (a 65px block in a 624px column). */
+/* Inline math may not draw its own block margins, but a wide inline render
+   must still escape the paragraph rather than be clipped by it. */
+.md-math {
+	display: inline-block;
+	max-width: 100%;
+	overflow-x: auto;
+}
+.md-math-block {
+	display: block;
+	margin: 8px auto;
+	text-align: center;
+	max-width: 100%;
+	overflow-x: auto;
+}
 /* The model's own working. Same disclosure as a two-depth answer, quieter: it
    is not addressed to the reader, so it must not compete with the reply above
    it. Pre-wrap because reasoning arrives with its own line breaks and nothing

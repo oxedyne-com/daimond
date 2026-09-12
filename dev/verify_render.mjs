@@ -76,6 +76,18 @@
 //   node dev/verify_render.mjs --break noopen       # 6: `open` thrown away
 //   node dev/verify_render.mjs --break bareselector # 7: the app's own details
 //   node dev/verify_render.mjs --break quietsummary # 7: the fold's label gone quiet
+//   node dev/verify_render.mjs --break nomath        # 9: THE DEFECT AS SHIPPED, again — no extraction
+//   node dev/verify_render.mjs --break dropsubst     # 9: placeholders reach the screen
+//   node dev/verify_render.mjs --break submath      # 9: extraction moved after marked
+//   node dev/verify_render.mjs --break currency     # 9: "$5 and $10" becomes mathematics
+//   node dev/verify_render.mjs --break halfdollars  # 9: unclosed $$ treated as closed
+//   node dev/verify_render.mjs --break trusthref    # 9: \href under trust:true
+//   node dev/verify_render.mjs --break expandbomb   # 9: maxExpand removed, a \def bomb hangs
+//   node dev/verify_render.mjs --break mathscript   # 9: raw tex emitted instead of rendered
+//   node dev/verify_render.mjs --break foldstraddle # 9: a $$ pair eats the fold markup
+//   node dev/verify_render.mjs --break escdollar    # 9: \$ opens a span
+//   node dev/verify_render.mjs --break markercollision # 9: a guessable nonce
+//   node dev/verify_render.mjs --break flushleft     # 9o: display maths flush-left
 //   node dev/verify_render.mjs                      # and then, clean
 //
 //   eval "$(bash dev/world.sh 5 --up)"
@@ -211,6 +223,115 @@ const BREAKS = {
 		find: 'details.md-fold > summary {\n\tpadding: 4px 0;\n\tcolor: var(--text-primary);',
 		with: 'details.md-fold > summary {\n\tpadding: 4px 0;\n\tcolor: var(--text-muted);',
 	}],
+
+	// ── The math breaks (#11) ─────────────────────────────────────────
+	// Each one simulates the defect it is named for, as an exact edit to
+	// js/render.js served in place of the real file. The checks they
+	// redden are in the §9 math section below.
+
+	// THE DEFECT AS IT SHIPPED: no extraction at all, dollars literal.
+	nomath: [{
+		file: 'js/render.js',
+		find: "\t\tvar mth = null;\n\t\tif (src.indexOf('$') < 0 && src.indexOf('\\\\') < 0) {\n\t\t\tmth = null;					// no opener, no pass\n\t\t} else {\n\t\t\ttry { mth = extractMath(src); }\n\t\t\tcatch (e) { mth = null; }\n\t\t}",
+		with: "\t\tvar mth = null;",
+	}],
+	// Placeholders reach the screen, fast: substitution is skipped by a no-op
+	// call rather than by deleting the line — deleting it made every cell
+	// carry its token through marked's slow path and the run outlived its
+	// budget without measuring anything.
+	dropsubst: [{
+		file: 'js/render.js',
+		find: "\t\t\ttry { html = substituteMath(html, mth.spans, mth.nonce); }",
+		with: "\t\t\ttry { html = html.replace(mth.nonce, mth.nonce); } // substitution skipped by the break",
+	}],
+	// Extraction AFTER marked: the underscore becomes emphasis before the
+	// math pass can protect it — the ordering bug.
+	submath: [{
+		file: 'js/render.js',
+		find: "\t\tvar mth = null;\n\t\tif (src.indexOf('$') < 0 && src.indexOf('\\\\') < 0) {\n\t\t\tmth = null;					// no opener, no pass\n\t\t} else {\n\t\t\ttry { mth = extractMath(src); }\n\t\t\tcatch (e) { mth = null; }\n\t\t}\n\t\tif (mth) src = mth.text;\n\t\tvar html;\n\t\ttry {\n\t\t\thtml = marked.parse(src, { breaks: true });\n\t\t} catch (e) {\n\t\t\t// marked threw on the PLACEHOLDER text; return the original source\n\t\t\t// escaped, never the mangled half.\n\t\t\treturn escapeHtml((text == null) ? '' : String(text));\n\t\t}",
+		with: "\t\tvar html;\n\t\ttry {\n\t\t\thtml = marked.parse(src, { breaks: true });\n\t\t} catch (e) {\n\t\t\treturn escapeHtml((text == null) ? '' : String(text));\n\t\t}\n\t\tvar mth = null;\n\t\tif (src.indexOf('$') >= 0 || src.indexOf('\\\\') >= 0) {\n\t\t\ttry { mth = extractMath(html); }\n\t\t\tcatch (e) { mth = null; }\n\t\t}\n\t\tif (mth) html = mth.text;",
+	}],
+	// The closing-dollar guards removed: "$5 and $10" becomes mathematics.
+	currency: [{
+		file: 'js/render.js',
+		find: "\t\t{ re: /(?<!\\s)\\$(?!\\d)/y, display: false, len: 1 },",
+		with: "\t\t{ re: /\\$/y, display: false, len: 1 },",
+	}],
+	// An unclosed $$ treated as closed: a half-written display span
+	// mid-stream must stay literal, not render a fragment.
+	halfdollars: [{
+		file: 'js/render.js',
+		find: "\t\t\t\tvar rest = src.slice(from), m;\n\t\t\t\tm = (new RegExp(cr.re.source)).exec(rest);",
+		with: "\t\t\t\tvar rest = src.slice(from), m;\n\t\t\t\tm = (new RegExp(cr.re.source + '|$')).exec(rest);",
+	}],
+	// trust:false swapped out: the \\href trust boundary must hold.
+	trusthref: [{
+		file: 'js/render.js',
+		find: "\t\t\t\t\t\t\ttrust: false,",
+		with: "\t\t\t\t\t\t\ttrust: true,",
+	}],
+	// A cap so low that LEGITIMATE macro mathematics exceeds it: the shipped
+	// cap degrades only bombs; this one degrades an ordinary \\def that a real
+	// model would write, which is the observable defect of a mis-set cap.
+	// (The literal `Infinity` form hung past the budget — KaTeX without a
+	// bound does not error, it churns — and a cap of 3 still spared the
+	// non-macro fixtures, reddening nothing.)
+	expandbomb: [{
+		file: 'js/render.js',
+		find: "\t\t\t\t\t\t\tmaxExpand: 100,",
+		with: "\t\t\t\t\t\t\tmaxExpand: 1,",
+	}],
+	// The macro fixture the expandbomb cap must degrade: a plain \\def + use,
+	// the shape a model writes when it wants one symbol twice. Under the
+	// shipped cap this renders; under a mis-set cap it errors — which is the
+	// red the break aims at, in a cell an ordinary reader would meet.
+	// The fold-wins refusal removed: a $$ pair straddling a <details>
+	// would swallow the fold's own markup.
+	foldstraddle: [{
+		file: 'js/render.js',
+		find: "\t\t\t\t\tvar whole = src.slice(i, m.index + m[0].length);\n\t\t\t\t\tif (/<\\/?(details|summary)/i.test(whole)) {\n\t\t\t\t\t\ti = m.index + m[0].length - 1;\n\t\t\t\t\t\tbreak;\n\t\t\t\t\t}",
+		with: "\t\t\t\t\t/* fold-wins refusal removed by the break */",
+	}],
+	// The \\$ escape guard removed: "\\$5" would open a span.
+	escdollar: [{
+		file: 'js/render.js',
+		find: "\t\t\tif (src.charAt(i) === '\\\\' && src.charAt(i + 1) === '$') { i++; continue; }",
+		with: "\t\t\t/* \\$ escape guard removed by the break */",
+	}],
+	// The nonce replaced with a guessable constant: a model-typed token
+	// of the right shape could collide with a recorded ordinal.
+	markercollision: [{
+		file: 'js/render.js',
+		find: "\t\tvar nonce = Math.random().toString(36).slice(2, 8);",
+		with: "\t\tvar nonce = 'aaaaaa';",
+	}],
+	// No execution from inside mathematics: the substitution emits the RAW
+	// TEX unescaped instead of KaTeX's inert markup — a `$…$` payload must
+	// never become a live node. The break poisons the cache lookup so the
+	// model's own tex is what gets concatenated into the output.
+	mathscript: [{
+		file: 'js/render.js',
+		find: "\t\t\t\t\tvar cached = mathCache[cacheKey];",
+		with: "\t\t\t\t\tvar cached = sp.tex; // the break: raw tex instead of rendered",
+	}],
+	// Display centring defeated where it actually lives: the VENDORED
+	// katex.min.css is the centring source (.katex-display is display:block
+	// with text-align:center there; the wrapper's own text-align proved
+	// redundant — breaking it moved nothing). Break the vendor rule and the
+	// equation flushes left, reddening 9o.
+	flushleft: [{
+		file: 'css/app.css',
+		find: '.md-math-block {\n\tdisplay: block;\n\tmargin: 8px auto;\n\ttext-align: center;\n\tmax-width: 100%;\n\toverflow-x: auto;\n}',
+		with: '.md-math-block {\n\tdisplay: block;\n\tmargin: 8px auto;\n\ttext-align: left;\n\tmax-width: 100%;\n\toverflow-x: auto;\n}',
+	}, {
+		file: 'css/katex.min.css',
+		find: 'katex-display{display:block;margin:1em 0;text-align:center}',
+		with: 'katex-display{display:block;margin:1em 0;text-align:left}',
+	}, {
+		file: 'css/katex.min.css',
+		find: '.katex-display>.katex{display:block;text-align:center;white-space:nowrap}',
+		with: '.katex-display>.katex{display:block;text-align:left;white-space:nowrap}',
+	}],
 };
 
 if (BREAK && !BREAKS[BREAK]) {
@@ -226,7 +347,12 @@ function damaged(src, spec) {
 			+ 'so nothing was broken and the run below would prove nothing.');
 		process.exit(2);
 	}
-	return src.replace(spec.find, spec.with);
+	// A FUNCTION replacer, never a string: `String.replace` reads `$`
+	// patterns in a string replacement (`$$` folds, `$'` splices the tail),
+	// and several math breaks carry dollars in `with` — a string replacer
+	// would corrupt the served file into a syntax error and redden every
+	// check by breaking the parse rather than the defect.
+	return src.replace(spec.find, () => spec.with);
 }
 
 const TYPE = { '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript' };
@@ -616,6 +742,206 @@ try {
 		.filter(e => !/Failed to load resource/.test(e));
 	check('nothing threw while it was on screen', errs.length === 0, errs.slice(0, 3).join(' | '));
 
+	// ── §9 The math samples (#11) ─────────────────────────────────────
+	// Rendered into their own probe box beside the fold one, measured in
+	// one pass. Fixtures built with D = '$' so quoting can never eat a
+	// dollar (the lane's own lesson: test data is code).
+	const D = '$', DD = D + D;
+	const MX = {
+		BARE:      D + 'x_i^2' + D + ' stays',
+		DISPLAY:   DD + 'E = mc^2' + DD,
+		PARENS:    'inline \\(a + b\\) here',
+		BRACKETS:  'display \\[c + d\\] here',
+		STARS:     D + 'a*b*c' + D + ' emphasis test',
+		MONEY:     'That costs $5 and $10 today.',
+		ESCAPED:   'pay \\$5 and ' + D + 'x' + D + ' too',
+		UNCLOSED:  'half ' + DD + 'x^2 written',
+		COLLISION: 'real ' + D + 'x^2' + D + ' and typed @@MATHaaaaaa-0@@ tail',
+		STRADDLE:  'lead ' + DD + 'x^2 <details>\n<summary>g</summary>\n\ny^2' + DD + ' tail',
+		INFOLD:    '<details>\n<summary>g</summary>\n\n' + D + 'x^2' + D + ' inside\n\n</details>',
+		HREF:      D + '\\href{javascript:window.__mathleak=1}{c}' + D,
+		BOMB:      DD + '\\def\\a{\\a}\\a' + DD,
+		// A legitimate one-symbol macro, the shape a model writes when it wants
+		// E=mc^2 twice: this MUST render under the shipped cap, and is what a
+		// mis-set cap takes away from an ordinary reader.
+		MACRO:     DD + '\\def\\E{E = mc^2}\\E\\E' + DD,
+		SCRIPT:    D + '<img src=x onerror="window.__mathpwned=1">' + D,
+	};
+	await page.evaluate((mx) => {
+		const old = document.getElementById('math-probe');
+		if (old) old.remove();
+		const box = document.createElement('div');
+		box.id = 'math-probe';
+		box.className = 'chat-msg-content';
+		box.style.cssText = 'position:fixed;left:0;top:0;width:640px;z-index:2147483647;'
+			+ 'background:var(--bg-primary,#000);padding:8px';
+		document.body.appendChild(box);
+		for (const [k, text] of Object.entries(mx)) {
+			const cell = document.createElement('div');
+			cell.dataset.mx = k;
+			cell.innerHTML = window.DaimondRender.md(text);
+			box.appendChild(cell);
+		}
+	}, MX);
+	await page.waitForTimeout(900);
+
+	const hasKatex = await page.evaluate(() => typeof window.katex !== 'undefined');
+	const mskip = [];
+	const mcheck = (name, pass, detail) => {
+		if (!pass && !hasKatex && ['9a','9b','9c','9i','9j','9k','9l'].includes(name.slice(0,2))) {
+			mskip.push(name);
+			console.log('  SKIP ' + name + ' — no window.katex (vendored file absent?); NOT PASSED');
+			return;
+		}
+		check(name, pass, detail);
+	};
+
+	const mx = await page.evaluate(() => {
+		const box = document.getElementById('math-probe');
+		const cell = (k) => box.querySelector(`[data-mx="${k}"]`);
+		const katexIn = (k) => cell(k) ? cell(k).querySelectorAll('.md-math .katex, .md-math-block .katex').length : -1;
+		const text = (k) => cell(k) ? cell(k).textContent : '';
+		var displayRects = null, bracketsRects = null;
+		return {
+			bare:      { n: katexIn('BARE'), mathml: cell('BARE') ? !!cell('BARE').querySelector('.md-math math') : false,
+			             em: cell('BARE') ? cell('BARE').querySelectorAll('.md-math em').length : -1 },
+			display:   { n: katexIn('DISPLAY'), block: cell('DISPLAY') ? !!cell('DISPLAY').querySelector('.md-math-block') : false,
+			             // Centring ground truth: the equation ink's horizontal
+			             // middle vs the block's own middle. The centring source
+			             // is the VENDORED katex.min.css (.katex-display is
+			             // display:block with text-align:center there — the
+			             // wrapper's own text-align is redundant), so the raw
+			             // rects print in the detail to adjudicate any pixel
+			             // reading against page-coordinate numbers.
+			             ctr: (() => {
+			             	const b = cell('DISPLAY'); if (!b) return null;
+			             	const blk = b.querySelector('.md-math-block'); if (!blk) return null;
+			             	const k = blk.querySelector('.katex-html .base') || blk.querySelector('.katex-html'); if (!k) return null;
+			             	const bb = blk.getBoundingClientRect(), kb = k.getBoundingClientRect();
+			             	const off = ((kb.left - bb.left + kb.width / 2) - bb.width / 2) / Math.max(bb.width, 1);
+			             	displayRects = [Math.round(bb.left), Math.round(bb.width), Math.round(kb.left), Math.round(kb.width)];
+			             	return Math.abs(off);
+			             })(),
+			             rects: displayRects,
+			             alignWrap: (() => { const b = cell('DISPLAY'); const blk = b ? b.querySelector('.md-math-block') : null; return blk ? getComputedStyle(blk).textAlign : null; })(),
+			             alignDisp: (() => { const b = cell('DISPLAY'); const d = b ? b.querySelector('.katex-display') : null; return d ? getComputedStyle(d).textAlign : null; })(),
+			             bracketsRect: (() => {
+			             	const b = cell('BRACKETS'); if (!b) return null;
+			             	const blk = b.querySelector('.md-math-block'); if (!blk) return null;
+			             	const k = blk.querySelector('.katex-html .base') || blk.querySelector('.katex-html'); if (!k) return null;
+			             	const bb = blk.getBoundingClientRect(), kb = k.getBoundingClientRect();
+			             	bracketsRects = [Math.round(bb.left), Math.round(bb.width), Math.round(kb.left), Math.round(kb.width)];
+			             	return bracketsRects;
+			             })() },
+			parens:    { n: katexIn('PARENS') },
+			brackets:  { n: katexIn('BRACKETS') },
+			stars:     { tex: text('STARS'), em: cell('STARS') ? cell('STARS').querySelectorAll('.md-math em').length : -1 },
+			money:     { n: katexIn('MONEY'), t: text('MONEY') },
+			macro:     { n: katexIn('MACRO'), error: cell('MACRO') ? !!cell('MACRO').querySelector('.katex-error') : true },
+			escaped:   { t: text('ESCAPED'), n: katexIn('ESCAPED') },
+			unclosed:  { n: katexIn('UNCLOSED'), t: text('UNCLOSED') },
+			collision: { typedSurvives: text('COLLISION').includes('@@MATHaaaaaa-0@@'), realRenders: katexIn('COLLISION') > 0 },
+			straddle:  { fold: !!cell('STRADDLE').querySelector('details'), n: katexIn('STRADDLE') },
+			infold:    { fold: !!cell('INFOLD').querySelector('details'), n: katexIn('INFOLD') },
+			href:      { leak: !!cell('HREF') && /href="javascript:/i.test(cell('HREF').innerHTML),
+			             fired: !!window.__mathleak },
+			bomb:      { literal: text('BOMB').includes('$$\\def'), capped: /Too many expansions/i.test(text('BOMB')),
+			             errorSpan: cell('BOMB') ? !!cell('BOMB').querySelector('.katex-error') : false,
+			             // The macro's words are unsafe only in BODY TEXT; inside
+			             // KaTeX's own error span they are the bounded degrade.
+			             rawOutside: (() => {
+			             	const c = cell('BOMB'); if (!c) return true;
+			             	const err = c.querySelector('.katex-error');
+			             	const errText = err ? err.textContent : '';
+			             	return c.textContent.replace(errText, '').indexOf('def\\a') >= 0;
+			             })() },
+			script:    { img: cell('SCRIPT') ? cell('SCRIPT').querySelectorAll('.md-math img').length : -1,
+			             fired: !!window.__mathpwned, ph: text('COLLISION') + (box.textContent.match(/@@MATH[^@]*@@/g) || []).join(',') },
+			// Every cell EXCEPT COLLISION's: that cell's own fixture deliberately
+			// holds a typed marker whose SURVIVAL is 9g's subject — counting it
+			// here would make 9m fail on the very bytes 9g exists to protect.
+			toks:      (() => {
+				const all = (box.textContent.match(/@@MATH/g) || []).length;
+				const col = box.querySelector('[data-mx="COLLISION"]');
+				const inCol = col ? ((col.textContent.match(/@@MATH/g) || []).length) : 0;
+				return all - inCol;
+			})(),
+		};
+	});
+
+	mcheck('9a bare inline mathematics renders KaTeX with MathML',
+		mx.bare.n >= 1 && mx.bare.mathml && mx.bare.em === 0,
+		`katex=${mx.bare.n} mathml=${mx.bare.mathml}`);
+	mcheck('9b display mathematics renders as a block',
+		mx.display.n >= 1 && mx.display.block, `katex=${mx.display.n}`);
+	mcheck('9o a display equation is centred in its block, not flush-left',
+		mx.display.ctr !== null && mx.display.ctr <= 0.2,
+		`centre-offset=${mx.display.ctr === null ? 'n/a' : mx.display.ctr.toFixed(3)} `
+			+ `align(wrapper)=${mx.display.alignWrap} align(display)=${mx.display.alignDisp} rects(display)=${JSON.stringify(mx.display.rects)} brackets=${JSON.stringify(mx.bracketsRect)}`);
+	// Printed every run: the aligns and rects are the ground truth a pixel
+	// reading is adjudicated against, and a passing check never shows detail.
+	console.log("  9o ground truth: wrapper="+mx.display.alignWrap+" display="+mx.display.alignDisp+" offset="+mx.display.ctr+" rects="+JSON.stringify(mx.display.rects)+" brackets="+JSON.stringify(mx.display.bracketsRect));
+	try { fs.writeFileSync(path.join(HERE, ".math-ground-truth.json"),
+		JSON.stringify({ break: BREAK, wrapper: mx.display.alignWrap, display: mx.display.alignDisp,
+		offset: mx.display.ctr, rects: mx.display.rects, brackets: mx.display.bracketsRect })); } catch (e) { /* diagnostic only */ }
+	mcheck('9c both paren delimiter families render',
+		mx.parens.n >= 1 && mx.brackets.n >= 1, `\\(…\\)=${mx.parens.n} \\[…\\]=${mx.brackets.n}`);
+	mcheck('9d money never becomes mathematics',
+		mx.money.n === 0 && mx.money.t.includes('$5') && mx.money.t.includes('$10'),
+		`katex=${mx.money.n} text="${mx.money.t.slice(0, 40)}"`);
+	mcheck('9e an escaped dollar stays literal beside real mathematics',
+		mx.escaped.t.includes('$5') && mx.escaped.n === 1,
+		`text="${mx.escaped.t}" katex=${mx.escaped.n}`);
+	mcheck('9f an unclosed display span mid-stream stays literal',
+		mx.unclosed.n === 0 && mx.unclosed.t.includes('$$'),
+		`katex=${mx.unclosed.n}`);
+	mcheck('9g a typed placeholder token of the right shape cannot collide',
+		mx.collision.typedSurvives && mx.collision.realRenders,
+		`typed survives=${mx.collision.typedSurvives} real renders=${mx.collision.realRenders}`);
+	mcheck('9h a display pair straddling a fold leaves the fold intact',
+		mx.straddle.fold && mx.straddle.n === 0,
+		`fold=${mx.straddle.fold} typeset=${mx.straddle.n}`);
+	mcheck('9i mathematics inside a fold body renders and the fold survives',
+		mx.infold.fold && mx.infold.n >= 1, `fold=${mx.infold.fold} katex=${mx.infold.n}`);
+	mcheck('9j trust:false holds — no javascript: href from \\href',
+		!mx.href.leak && !mx.href.fired, `leak=${mx.href.leak} fired=${mx.href.fired}`);
+	mcheck('9n a legitimate one-symbol macro renders under the shipped cap',
+		mx.macro.n >= 1 && !mx.macro.error,
+		`katex=${mx.macro.n} error=${mx.macro.error}`);
+	mcheck('9k a \\def bomb is bounded, degrading safely — never hanging, never leaking',
+		// KaTeX's bounded error span is the SAFE degrade: it may echo the
+		// failing macro in its own visible text (that is how KaTeX reports
+		// errors), so raw macros are asserted absent only OUTSIDE that span.
+		// The literal-dollars degrade is the other safe arm. What is never
+		// acceptable: a raw macro in body text, or no answer at all.
+		(mx.bomb.capped || mx.bomb.errorSpan) && !mx.bomb.rawOutside,
+		`capped=${mx.bomb.capped} errorSpan=${mx.bomb.errorSpan} rawOutside=${mx.bomb.rawOutside}`);
+	mcheck('9l an execution payload inside mathematics never executes',
+		mx.script.img === 0 && !mx.script.fired,
+		`img=${mx.script.img} fired=${mx.script.fired}`);
+	mcheck('9m no placeholder token reaches the screen',
+		mx.toks === 0, `@@MATH occurrences=${mx.toks}`);
+	if (mskip.length) {
+		console.log(`\nMATH PREFLIGHT: ${mskip.length} check(s) SKIPPED, not passed — `
+			+ `window.katex is absent (${mskip.join(', ')}). A masked skip is not a green gate.`);
+	}
+
+	// The LOOK must see the probe: a fresh world opens with the signup modal
+	// over the right of the column, and a screenshot of an occluded probe is
+	// not evidence of anything. Hide the app's chrome-level layers for the
+	// shot; the probe itself is z-index 2147483647, above anything left.
+	// Light first, then dark, so the LAST shot on disk is the app's default
+	// theme — a reader comparing shots reads the dark one as the baseline.
+	await page.evaluate(() => {
+		document.documentElement.setAttribute('data-theme', 'light');
+		document.querySelectorAll(
+			'.modal, .pal-box, .pop, [role="dialog"], #identity-modal, #settings-modal, .veil'
+		).forEach((el) => { el.style.display = 'none'; });
+	});
+	await shot(s, 'render-fold-light');
+	await page.evaluate(() => {
+		document.documentElement.setAttribute('data-theme', 'dark');
+	});
 	await shot(s, 'render-fold' + (BREAK ? '-' + BREAK : ''));
 } catch (e) {
 	// A run that cannot get to the end of itself IS a failure, and one that says
