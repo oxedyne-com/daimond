@@ -988,8 +988,7 @@
 		// it. Same seam the Diamond and chat collectors use (`offloadAllowed`).
 		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
 			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
-			&& DaimondCloud.contentGet && DaimondCloud.contentSet
-			&& window.DaimondCore && DaimondCore.syncMayCommitChunks && DaimondCore.syncMayCommitChunks());
+			&& DaimondCloud.contentGet && DaimondCloud.contentSet);
 		if (!canOffload) return rec;
 		var msgs = rec.msgs || {};
 		var addrs = Object.keys(msgs);

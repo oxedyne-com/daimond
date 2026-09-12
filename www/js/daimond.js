@@ -4212,7 +4212,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// so it is NAMED (noteFilesLeft) rather than silently dropped.
 		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
 			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
-			&& DaimondCloud.contentGet && offloadAllowed());
+			&& DaimondCloud.contentGet);
 		out.complete = true;						// until something below is missed.
 		var total = 0, largeTotal = 0, todo = [''], guard = 0;
 		while (todo.length && guard++ < 5000) {
@@ -4628,7 +4628,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// so it still travels.
 		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
 			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
-			&& DaimondCloud.contentGet && offloadAllowed());
+			&& DaimondCloud.contentGet);
 		// MEASURE BEFORE MATERIALISING, and measure ALL of them first, because the
 		// inline set is chosen against the whole store rather than one Diamond at a
 		// time. The size is a directory walk that costs no content -- exporting every
@@ -5283,7 +5283,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// nothing declares, and the gateway sweeps it while the parcel still names it.
 		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
 			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
-			&& DaimondCloud.contentGet && offloadAllowed());
+			&& DaimondCloud.contentGet);
 		// Serialise each transcript once, then decide inline-vs-ref against the
 		// budget below. The model's own conversation never travels (collectSync
 		// stripped it before), so `session` is nulled here as it was in the inline map.

@@ -1,1 +1,1 @@
-{"build":"dae1ed646c3f","note":"Gateway keeps its file handles valid across GC compaction; the debug feed now streams events through outages."}
+{"build":"63f19d3042ef","note":"Desktops with a folder open can offload transcripts again, so their sync no longer exceeds the front door."}
