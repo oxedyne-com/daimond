@@ -367,6 +367,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return cfg;
 	}
 
+	// TRAINING WHEELS — the debug feed's `settings`. One event per CHANGED key,
+	// old -> new, found by diffing what is about to be written against what is
+	// stored. A secret-named key NEVER carries its value, not even a fingerprint:
+	// it reports the LENGTHS either side, which is enough to see that a key was
+	// replaced and nothing at all about what it is. Guarded on `isOn` so an
+	// ordinary save pays a property test rather than a parse. Lifts out in one
+	// grep of `DEBUG_SHARE`.
+	function dsScalar(v) {
+		if (v === undefined || v === null) return '';
+		if (typeof v === 'boolean' || typeof v === 'number') return v;
+		return String(v).slice(0, 80);
+	}
+	function dsSettingsDiff(next) {
+		try {
+			if (!(window.DEBUG_SHARE && DEBUG_SHARE.isOn && DEBUG_SHARE.isOn())) return;
+			var prev = {};
+			try { prev = JSON.parse(localStorage.getItem(CFG_KEY) || '{}') || {}; } catch (e) { prev = {}; }
+			Object.keys(next).forEach(function (k) {
+				if (prev[k] === next[k]) return;
+				// `set`, not `key`: the module's redactor matches a field NAMED `key`
+				// and would fingerprint the setting's own name.
+				if (/key|token|secret|pass|salt/i.test(k)) {
+					dsEvent('settings', { set: k, wasLen: String(prev[k] == null ? '' : prev[k]).length,
+						nowLen: String(next[k] == null ? '' : next[k]).length });
+				} else {
+					dsEvent('settings', { set: k, was: dsScalar(prev[k]), now: dsScalar(next[k]) });
+				}
+			});
+		} catch (e) { /* the feed must never break a save */ }
+	}
+
 	// Persist the config. When a passphrase identity is in use the API key is
 	// stored *encrypted* (`apiKeyEnc`) and never in the clear; otherwise it is
 	// stored plaintext (the skippable, browser-only path).
@@ -382,7 +413,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// reload, and the panel says so rather than quietly forgetting it.
 	function saveCfg(c) {
 		try {
-		localStorage.setItem(CFG_KEY, JSON.stringify({
+		var stored = {
 			baseUrl:   c.baseUrl || '',
 			apiKey:    c.apiKeyEnc ? '' : (c.apiKey || ''),
 			apiKeyEnc: c.apiKeyEnc || '',
@@ -402,7 +433,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			pushHost:     c.pushHost || '',
 			pushUser:     c.pushUser || '',
 			pushTokenEnc: c.pushTokenEnc || '',
-		}));
+		};
+		// BEFORE the write, so the diff has the previous value to compare against.
+		dsSettingsDiff(stored);
+		localStorage.setItem(CFG_KEY, JSON.stringify(stored));
 		}
 		// Quota: the in-memory `cfg` the caller passed is still authoritative for
 		// this session, so the panel keeps working; only the reload-survival is lost.
@@ -4117,6 +4151,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return true;
 	}
 
+	/// Whether this device may put content into chunk storage this round.
+	///
+	/// A chunk only survives if the index naming it is committed, and only a device
+	/// that merged the account's index may commit -- `applyChunked` refuses the merge
+	/// on exactly this condition, and `syncMayCommitChunks` is this same predicate. A
+	/// device that cannot commit but offloads anyway uploads chunks nothing ever
+	/// declares, and the gateway's `collect_orphan_chunks` deletes them a day later
+	/// while the parcel it pushed still points at them. So what cannot be declared is
+	/// not uploaded either: one condition gates the merge, the commit and the offload.
+	function offloadAllowed() { return !!window.DaimondCloud && filesSyncable(); }
+
+	/// Why this device may not commit or offload, in one word for the log:
+	/// `tools-missing`, `folder-mounted`, `cloud-missing`, or '' when it may.
+	/// Derived from `offloadAllowed`'s own parts, so an empty answer and a true
+	/// predicate cannot drift apart.
+	function offloadBlockedReason() {
+		if (filesSyncable()) return window.DaimondCloud ? '' : 'cloud-missing';
+		if (!window.DaimondTools) return 'tools-missing';
+		return 'folder-mounted';				// a real root is open, or would not answer
+	}
+
 	/// Walk the OPFS workspace and read every syncable text file into
 	/// `{ path: content }`, skipping dotfiles, Daimond's own `diamonds` store, binary
 	/// files, and anything over the per-file or total budget.
@@ -4157,7 +4212,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// so it is NAMED (noteFilesLeft) rather than silently dropped.
 		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
 			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
-			&& DaimondCloud.contentGet);
+			&& DaimondCloud.contentGet && offloadAllowed());
 		out.complete = true;						// until something below is missed.
 		var total = 0, largeTotal = 0, todo = [''], guard = 0;
 		while (todo.length && guard++ < 5000) {
@@ -4567,12 +4622,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				|| (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0));
 		});
 		// Whether a Diamond too large to ride inline can be offloaded to chunks this
-		// round: the transport is loaded and the identity that seals a chunk is
-		// unlocked. When it is not, a large Diamond falls back to riding inline and is
-		// budgeted the old way, so it still travels.
+		// round: the transport is loaded, the identity that seals a chunk is unlocked,
+		// and this device may DECLARE what it uploads (`offloadAllowed`). When it is
+		// not, a large Diamond falls back to riding inline and is budgeted the old way,
+		// so it still travels.
 		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
 			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
-			&& DaimondCloud.contentGet);
+			&& DaimondCloud.contentGet && offloadAllowed());
 		// MEASURE BEFORE MATERIALISING, and measure ALL of them first, because the
 		// inline set is chosen against the whole store rather than one Diamond at a
 		// time. The size is a directory walk that costs no content -- exporting every
@@ -5222,9 +5278,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `fileHash`, the same cheap fingerprint the file merge trusts.
 	async function collectChatsRefs() {
 		var chats = storedChats();
+		// `offloadAllowed` is in here for the same reason it is in the Diamond plan: a
+		// transcript uploaded by a device that cannot commit the index is a chunk
+		// nothing declares, and the gateway sweeps it while the parcel still names it.
 		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
 			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
-			&& DaimondCloud.contentGet);
+			&& DaimondCloud.contentGet && offloadAllowed());
 		// Serialise each transcript once, then decide inline-vs-ref against the
 		// budget below. The model's own conversation never travels (collectSync
 		// stripped it before), so `session` is nulled here as it was in the inline map.
@@ -17195,6 +17254,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				correctedHolder:  '',
 				correctedAfterMs: -1,
 			};
+			// TRAINING WHEELS — the debug feed's `handoff`, the ELECTION half: what
+			// this device decided at send time, which the lease events then either
+			// bear out or contradict. Ids only, short.
+			dsEvent('handoff', {
+				act:  'elect',
+				turn: String(umid).slice(0, 24),
+				self: String(self || '').slice(0, 12),
+				to:   String(advId || '').slice(0, 12),
+				peer: String((d && d.peer && (d.peer.id || d.peer)) || '').slice(0, 12),
+				why:  String((d && d.reason) || '').slice(0, 24),
+			});
 			try { appendUserMessage(text); } catch (e) { /* the record below is the truth */ }
 			chat.messages.push({ role: 'user', content: text, mid: umid, iturn: umid, ts: Date.now() });
 			touchChat(chat); persistChats();
@@ -22006,7 +22076,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// else's may do it -- and this is exactly the condition under which
 		/// applyChunked merges. A device that refused the other device's index and
 		/// then committed its own swept the account's cloud files away.
-		syncMayCommitChunks: function () { return !!window.DaimondCloud && filesSyncable(); },
+		syncMayCommitChunks: offloadAllowed,
+		// And, when it may not, which of the three conditions is in the way, so the
+		// refusal in sync.js says so instead of being read as a mystery.
+		syncCommitBlockedReason: offloadBlockedReason,
 		// The tombstone machinery, shared. A store that syncs by UNION needs a
 		// record of what was deleted, or absence reads as "that device never had
 		// it" and the row comes straight back on the next pull. Chats, Diamonds,
@@ -23176,6 +23249,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// number reported below was already being kept.
 		var telT0 = Date.now();
 		tel('turn.send', turnsIn(chat));
+		// TRAINING WHEELS — the debug feed's `turn.start`. Ids, model and shape
+		// only; the prompt itself is never an event (transcripts ride the periodic
+		// elided snapshot instead).
+		dsEvent('turn.start', {
+			turn:  String(umid),
+			chat:  String(chat.id || ''),
+			dia:   String(chat.diamondId || ''),
+			model: String(chat.model || '').slice(0, 48),
+			prov:  String(chat.provider || '').slice(0, 24),
+			ho:    opts.turnId ? 1 : 0,
+		});
 		// The composer stays live: what is typed while this runs is queued, not lost.
 		chat._aborted = false;
 
@@ -23267,6 +23351,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// chat left running in the background is found on the right step.
 				step += 1;
 				writing = false;
+				// TRAINING WHEELS — the debug feed's `round`, one per tool-call round.
+				// `ctx` is `last_prompt_tokens`: what the LAST request actually sent,
+				// which is also what the feed's fold inference watches for a drop. The
+				// tool NAME travels; its arguments never do, for the reason below.
+				dsEvent('round', {
+					turn: String(umid), r: step,
+					ctx:  (app && app.last_prompt_tokens) || 0,
+					win:  (app && app.context_window) || 0,
+					tool: String(ev.name || '').slice(0, 40),
+				});
 				// Which tool, as a number from the module's table. The ARGUMENTS
 				// are right here and are never touched: they carry the path, the
 				// query and the content, which is the whole of what this design
@@ -23282,6 +23376,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// and not a reading of the result: the tool's OUTPUT is not looked at here
 				// and never leaves.
 				if (ev.outcome !== 'done') tel('tool.fail', telOrd('TOOLS', ev.name || ''));
+				// TRAINING WHEELS — the debug feed's `tool`. The engine's own outcome
+				// word, the SIZES of the arguments and the result, and nothing of
+				// either's content: a tool result is a file read or a command's output.
+				dsEvent('tool', {
+					turn: String(umid), r: step,
+					name: String(ev.name || '').slice(0, 40),
+					ab:   (pendingTool && pendingTool.args ? String(pendingTool.args).length : 0),
+					rb:   String(ev.content || '').length,
+					out:  String(ev.outcome || '').slice(0, 16),
+				});
 				// Stored WITH the outcome, so the history exception above stops growing.
 				if (pendingTool) {
 					pendingTool.content = ev.content || '';
@@ -23373,6 +23477,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (!owns()) return;
 				appendCompacted(chat.messages[chat.messages.length - 1].content);
 			} else if (ev.type === 'compacted') {
+				// TRAINING WHEELS — the debug feed's `fold`, the REAL one: the engine
+				// said so, so it is not marked `inferred`. Emitted whether or not
+				// `worthSaying` draws it, because a fold that happened is a fold that
+				// happened; and `noteRealFold` stands the feed's own drop-inference
+				// down for this turn, so the two never report the same fold twice.
+				dsEvent('fold', { turn: String(umid), folded: ev.folded || 0,
+					kept: ev.kept || 0, trigger: 'real' });
+				try { if (window.DEBUG_SHARE && DEBUG_SHARE.noteRealFold) DEBUG_SHARE.noteRealFold(String(umid)); }
+				catch (e) { /* the feed must never break a turn */ }
 				// Persisted, so a reload still shows that the history was folded --
 				// otherwise the thread silently loses messages between two visits.
 				// Once per state, though: see `worthSaying`.
@@ -23686,6 +23799,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// was going wrong and giving up late means it was too slow, which
 				// are two different fixes, so a Stop is not folded into a failure.
 				var telSecs = Math.round((Date.now() - telT0) / 1000);
+				// TRAINING WHEELS — the debug feed's `turn.end`. Here for the reason
+				// the line above gives: every ending arrives here and nowhere else.
+				// The four token counters are this turn's own growth, computed in the
+				// `try` above (`var`, so they are in scope here) and zero on a turn
+				// that died before them.
+				dsEvent('turn.end', {
+					turn: String(umid),
+					r:    step,
+					p:    turnP  || 0,
+					c:    turnC  || 0,
+					ca:   turnCa || 0,
+					usd:  Math.round((turnCost || 0) * 1e6) / 1e6,
+					ms:   Date.now() - telT0,
+					out:  chat._aborted ? 'stopped'
+						: (threw || sawError) ? (capFail ? 'cap' : 'error') : 'done',
+				});
 				if (chat._aborted) {
 					tel('turn.stop', telSecs);
 				} else if (threw || sawError) {
@@ -24639,6 +24768,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			this.active++;
 			run.status = 'running';
 			this.render();
+			// TRAINING WHEELS — the debug feed's `worker`, opening. The TASK is not
+			// carried: it is model-facing prose and belongs in the elided snapshot,
+			// not in an event stream meant to be grepped.
+			dsEvent('worker', {
+				w:     String(run.id || ''),
+				dia:   String(run.diamondId || ''),
+				model: String(run.model || '').slice(0, 48),
+				at:    'start',
+			});
 			var self = this;
 			// The worker cannot see the conversation that dispatched it, so hand
 			// it what it would otherwise be missing: the house rules, and the
@@ -24898,6 +25036,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// `diamondId` -- see `agentDiamondChip` -- and bills nobody, which is what an
 				// ordinary chat's own turn does two thousand lines up.
 				recordSpend(run.model, _pt, _ct, _ca, _cost, run.provider, run.diamondId || '');
+				// TRAINING WHEELS — the debug feed's `worker`, closing. After
+				// `recordSpend`, so the figures reported are the ones actually billed,
+				// and reading `run.status`, which is the app's own word for how it
+				// ended (done / stopped / paused / error).
+				dsEvent('worker', {
+					w:     String(run.id || ''),
+					model: String(run.model || '').slice(0, 48),
+					at:    'end',
+					out:   String(run.status || '').slice(0, 16),
+					p:     _pt, c: _ct, ca: _ca,
+					usd:   Math.round((_cost || 0) * 1e6) / 1e6,
+					r:     (run.ended && run.ended.rounds) || 0,
+				});
 				run.promptTokens = (run.priorPrompt || 0) + _pt;
 				run.completionTokens = (run.priorCompletion || 0) + _ct;
 				run.cachedTokens = (run.priorCached || 0) + _ca;
@@ -37984,6 +38135,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} else if (ev.type === 'tool_call') {
 				step += 1;
 				writing = false;
+				// TRAINING WHEELS — the debug feed's `round`, the DAIMON's agentic loop.
+				// Keyed on the Diamond's own record, which is the turn here; the chat
+				// path's `round` is keyed on the turn's mid.
+				dsEvent('round', {
+					turn: String(rec.id || ''), r: step,
+					ctx:  (rec.app && rec.app.last_prompt_tokens) || 0,
+					win:  (rec.app && rec.app.context_window) || 0,
+					tool: String(ev.name || '').slice(0, 40),
+					dia:  1,
+				});
 				busySay(rec, tOr('chat.busy_tool', 'Running {tool}, step {n}…',
 					{ tool: ev.name || '?', n: step }));
 				if ((ev.name || '') === 'spawn_agent') {
@@ -38003,6 +38164,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					content: '', mid: newMid(), ts: Date.now() });
 				if (onScreen()) renderToolCall(ev.name || '', ev.args || '', ev.id || '');
 			} else if (ev.type === 'tool_result') {
+				// TRAINING WHEELS — the debug feed's `tool`, the daimon's half. Sizes
+				// and the engine's outcome word; never the result, which is a file
+				// read or a command's output.
+				dsEvent('tool', {
+					turn: String(rec.id || ''), r: step,
+					name: String(ev.name || '').slice(0, 40),
+					rb:   String(ev.content || '').length,
+					out:  String(ev.outcome || '').slice(0, 16),
+					dia:  1,
+				});
 				var last = rec.messages[rec.messages.length - 1];
 				// The outcome is stored with the log, as it is in a chat: this conversation
 				// is durable, and a reload must not have to guess at prose to redraw it.
@@ -38053,6 +38224,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					mid: newMid(), ts: Date.now() });
 				if (onScreen()) appendCompacted(rec.messages[rec.messages.length - 1].content);
 			} else if (ev.type === 'compacted') {
+				// TRAINING WHEELS — the debug feed's `fold`, the daimon's half. REAL, so
+				// the feed's own drop-inference stands down for this turn.
+				dsEvent('fold', { turn: String(rec.id || ''), folded: ev.folded || 0,
+					kept: ev.kept || 0, trigger: 'real', dia: 1 });
+				try { if (window.DEBUG_SHARE && DEBUG_SHARE.noteRealFold) DEBUG_SHARE.noteRealFold(String(rec.id || '')); }
+				catch (e) { /* the feed must never break a turn */ }
 				// The fold notes2 asks for by name: *"automatically and visibly folded at
 				// the context threshold"*. Visibly is this line, once per state --
 				// see `worthSaying`.
@@ -39429,6 +39606,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		trail('afterUnlock done');
 		hideIdentity();
 		try { DaimondTrail.note('unlocked'); } catch (e) { /* no trail is not an error */ }
+		// TRAINING WHEELS — the debug feed's `boot`. HERE rather than in `boot()`:
+		// this is the moment the app is genuinely up, with an identity, a config and
+		// a decrypted store behind it, which is what the event claims.
+		dsEvent('boot', {
+			ua:  (typeof navigator !== 'undefined' && /iPhone|iPad|Android/i.test(navigator.userAgent || '')) ? 'mobile' : 'desktop',
+			sw:  (typeof navigator !== 'undefined' && navigator.serviceWorker && navigator.serviceWorker.controller) ? 1 : 0,
+			vis: (typeof document !== 'undefined' && document.visibilityState) || '',
+			fold: cfg.foldAt || 0,
+			model: String(cfg.model || '').slice(0, 48),
+		});
 		// Only now is the user entitled to see their content.
 		locked = false;
 		document.body.classList.remove('locked');
@@ -43430,6 +43617,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	// ── TRAINING WHEELS — remove after beta. ─────────────────────
 	//
+	// The EVENT seam. One guarded call, so a call site is one line and the whole
+	// feed lifts out in one grep of `DEBUG_SHARE`. `DEBUG_SHARE.event` is itself a
+	// no-op when sharing is off and never throws into its caller, so this guard is
+	// belt-and-braces against the module being absent altogether (a build with the
+	// script tag removed) rather than against the feed misbehaving.
+	function dsEvent(kind, payload) {
+		try {
+			if (window.DEBUG_SHARE && DEBUG_SHARE.event) DEBUG_SHARE.event(kind, payload);
+		} catch (e) { /* the feed must never break the app */ }
+	}
+
 	// The one data seam for the temporary debug-sharing feature (the toggle is in
 	// Settings; everything else is www/js/debugshare.js). This hands that module a
 	// function returning THIS closure's decrypted, private-scope state -- the

@@ -2,11 +2,11 @@
  *
  * ============================================================================
  * TRAINING WHEELS — remove after beta. This whole file, its <script> tag in
- * index.html, and the two `DEBUG_SHARE` touch points in daimond.js (the
- * Settings toggle and the one `registerProvider` call) are a temporary,
- * owner-requested debug aid. Deleting the file, its script tag, and grepping
- * `DEBUG_SHARE` / `TRAINING WHEELS` out of daimond.js lifts the feature in one
- * obvious pass. Nothing else depends on it.
+ * index.html, and the `DEBUG_SHARE` touch points in daimond.js, gateway.js,
+ * peer.js and sync.js are a temporary, owner-requested debug aid. Every one of
+ * those touch points is a guarded one-liner beside a comment that says so, so
+ * deleting the file, its script tag, and grepping `DEBUG_SHARE` out of those
+ * four files lifts the feature in one obvious pass. Nothing else depends on it.
  * ============================================================================
  *
  * WHAT IT DOES. When a person turns "Share all data for debugging" on, in
@@ -55,6 +55,36 @@
  * it streams lightweight TELEMETRY on a short timer -- ledger deltas, new trail
  * errors, new diagnostic rows -- and re-snapshots periodically or when the
  * transcript/roster shape changes. Full transcripts are not sent every tick.
+ *
+ * EVENTS, ADDED 2026-09-12. Snapshots and telemetry are AGGREGATES: they say
+ * what the account looks like now, and a reader has to re-derive from them what
+ * actually happened. The interesting facts -- a fold fired, a tool failed, a
+ * gateway call 500'd, a turn cost six dollars -- were buried in base64 chunk
+ * sets that needed a script to reassemble, and an outage lost exactly the rows
+ * that explained the outage. So every meaningful act now ALSO emits one small
+ * self-describing JSON event at its source, through the single seam
+ * `DEBUG_SHARE.event(kind, payload)`:
+ *
+ *   - One row per event, `{ts, tag:'ev <kind>', data:<JSON <= 360 bytes>}`, NOT
+ *     base64 -- so the gateway's log file is greppable as it stands.
+ *   - Every event carries the envelope `{v, d, n, b, t}`: schema version, short
+ *     device id, a PERSISTED per-device sequence number, the build id, and the
+ *     wall clock. `n` is what makes redelivery idempotent for the reader, which
+ *     is what lets a failed post simply be retried.
+ *   - A DURABLE OUTBOX (localStorage, memory fallback, 5,000 events) holds them.
+ *     Rows leave it only when a post is known to have landed, so an outage, a
+ *     reload or a tab kill loses nothing; on overflow the OLDEST go and one
+ *     `feed.drop` records how many.
+ *   - Events drain AHEAD of telemetry and snapshots, at the same 11 s pacing,
+ *     with exponential backoff to five minutes while the endpoint is down.
+ *   - SELF-PROTECTION. Every entry point is wrapped. An exception inside the
+ *     feed queues one `feed.fault` and turns collection off for the session --
+ *     the drainer keeps running, so the fault itself still reaches the gateway
+ *     -- and the caller's own code path continues. The app never breaks because
+ *     the feed did.
+ *
+ * The message TEXT is still not an event: transcripts stay in the periodic
+ * elided snapshot. Content on every tick is what made the seed useless.
  */
 (function () {
 	'use strict';
@@ -82,6 +112,38 @@
 
 	var TELEMETRY_MS = 30000;					// stream telemetry cadence while on
 	var RESNAP_MS    = 300000;					// periodic full re-snapshot (5 min)
+
+	// ── The event feed ──
+	//
+	// An event is ONE row, so its JSON must fit the handler's per-field cap with
+	// the same margin the base64 slices keep: 360 bytes against MAX_DATA 400. A
+	// payload past it is truncated field-by-field and marked `tr:1` rather than
+	// dropped -- a clipped event still says a thing happened, and a dropped one
+	// says nothing at all.
+	var EVENT_KEY    = 'daimond-debugshare-outbox';	// the durable outbox
+	var SEQ_KEY      = 'daimond-debugshare-seq';	// the per-device sequence `n`
+	var BUILD_KEY    = 'daimond-build-seen';		// breadcrumb.js's confirmed build id
+	var MAX_EVENT_BYTES = 360;
+	var OUTBOX_CAP   = 5000;					// events held before the oldest are dropped
+	var BACKOFF_MAX_MS = 300000;				// 5 min, the ceiling on repeated-failure backoff
+	var PERSIST_MS   = 250;						// trailing debounce on writing the outbox out
+	var ERRORS_PER_MIN = 20;					// error-capture rate cap, with a `dropped` count
+	var ERR_WINDOW_MS  = 60000;
+	var BEAT_TICK_MS = 30000;					// the beat timer's period ...
+	var BEAT_TURN_MS = 30000;					// ... a beat this often while a turn runs ...
+	var BEAT_IDLE_MS = 300000;					// ... and this often when nothing is running
+	var MAX_MSG_CHARS = 200;					// an `error` message, clipped
+	// A device id and a build id are ENVELOPE fields, present on every event, so
+	// they are the two strings that must never crowd out the payload.
+	var MAX_DEV_CHARS   = 12;
+	var MAX_BUILD_CHARS = 24;
+	// A context drop of more than this fraction between two rounds of one turn is
+	// read as a fold, because the fold itself happens in Rust and emits nothing a
+	// JS caller can see (see `inferFold`). Such an event is marked `inferred:1`.
+	var FOLD_DROP = 0.30;
+	// A REAL fold (the engine's `compacted` event) within this window suppresses
+	// the inferred one, so a fold that IS reported is not also guessed at.
+	var FOLD_REAL_MS = 20000;
 
 	// A transcript embeds whole source-file reads and command outputs verbatim, so
 	// a snapshot was ~7 MB / 25k chunks and drained for ~12 min, starving telemetry
@@ -139,7 +201,19 @@
 	var telQueue  = [];				// priority lane: telemetry posts, each an array of rows
 	var snapQueue = [];				// snapshot lane: drained only when telQueue is empty
 	var draining = false;
-	var telTimer = null, snapTimer = null;
+	var telTimer = null, snapTimer = null, beatTimer = null;
+	// The event lane, which is neither of the above: DURABLE. Its rows leave only
+	// when a post has landed, and they survive a reload -- see `loadOutbox`.
+	var outbox      = [];			// [{ts, tag, data}], oldest first
+	var persistTimer = null;
+	var failStreak  = 0;			// consecutive failed event posts, for the backoff
+	var dropOwed    = 0;			// events overflowed but not yet reported by feed.drop
+	var dropping    = false;		// re-entry guard: a feed.drop must not recurse
+	var feedOff     = false;		// the feed threw; collection is off for this session
+	var lastBeatAt  = 0;
+	var errWindowAt = 0, errCount = 0, errDropped = 0;
+	var lastCtx     = {};			// turn id -> last round's prompt tokens, for `inferFold`
+	var lastRealFold = {};			// turn id -> when a REAL fold was last reported
 	var indicator = null;
 	// Telemetry cursors, so a tick sends only what is NEW since the last one.
 	var lastLedgerLen = 0, lastTrailLen = 0, lastDiagLen = 0;
@@ -166,6 +240,18 @@
 	// Restore the diamond×model cross from a previous session, so a device that was
 	// already sharing keeps its tally across a reload.
 	try { crossIx = JSON.parse(read(CROSS_KEY) || '{}') || {}; } catch (e) { crossIx = {}; }
+
+	// AND THE OUTBOX, which is the durability claim made good: whatever the last
+	// session queued and could not deliver is here, in order, and drains from the
+	// front the moment `bootRestore` kicks the drainer. Loaded unconditionally --
+	// an off device's outbox was emptied when it was turned off, so this is empty.
+	//
+	// ONE CAVEAT, stated rather than engineered around: two tabs of the same device
+	// each keep their own in-memory outbox and each write this key, so the loser of
+	// a concurrent write loses only the PERSISTED copy -- its own events still go
+	// out from memory, and a redelivery is idempotent for the reader because `n`
+	// is per-device and monotonic.
+	outbox = loadOutbox();
 	function saveCross() { try { write(CROSS_KEY, JSON.stringify(crossIx)); } catch (e) {} }
 
 	/// Record one metered turn's spend against its (Diamond, model) pair -- the one
@@ -581,6 +667,367 @@
 		return posts;
 	}
 
+	// ── The event feed ─────────────────────────────────────────
+	//
+	// One fact, one row, at the point it happened. Everything below is reached
+	// through `event(kind, payload)`, which is a no-op when the feature is off
+	// and which cannot throw into its caller: see `event` and `fault`.
+
+	/// A string clipped to `n` characters, with the ANSI colouring fe2o3's `err!`
+	/// wraps a wasm-side error in stripped out -- in a log file those escapes are
+	/// noise in front of the only words that matter.
+	function clip(s, n) {
+		var v = String(s == null ? '' : s)
+			.replace(/\[[0-9;]*m/g, '')
+			.replace(/\[[0-9]{1,2}(;[0-9]{1,2})*m/g, '')
+			.replace(/\s+/g, ' ')
+			.trim();
+		return v.length > n ? v.slice(0, n) : v;
+	}
+
+	/// This device's id, short. An envelope field, so it is bounded: a long id
+	/// would eat the payload's share of the 360 bytes.
+	function shortDevice() { return clip(deviceId(), MAX_DEV_CHARS); }
+
+	/// The build this tab is running, as the app best knows it: the updater's
+	/// answer, else the id the LAST boot confirmed (breadcrumb.js writes it, and
+	/// it is readable synchronously, which `build.json` is not).
+	function buildTag() {
+		try {
+			if (window.DaimondUpdater && DaimondUpdater.booted && DaimondUpdater.booted()) {
+				return clip(DaimondUpdater.booted(), MAX_BUILD_CHARS);
+			}
+		} catch (e) { /* the updater has not polled */ }
+		return clip(read(BUILD_KEY) || '', MAX_BUILD_CHARS);
+	}
+
+	/// The next sequence number for this device, persisted BEFORE the event is
+	/// queued. Monotonic across reloads, which is what makes a redelivered post
+	/// harmless: the reader keys on `(device, n)` and keeps the first copy.
+	function nextSeq() {
+		var n = 0;
+		try { n = parseInt(read(SEQ_KEY) || '0', 10) || 0; } catch (e) { n = 0; }
+		n = (n > 0 ? n : 0) + 1;
+		write(SEQ_KEY, String(n));
+		return n;
+	}
+
+	/// The outbox as the last session left it. A parse failure yields an empty
+	/// queue rather than a throw: a corrupt outbox must not stop the app booting.
+	function loadOutbox() {
+		var rows = [];
+		try { rows = JSON.parse(read(EVENT_KEY) || '[]') || []; } catch (e) { rows = []; }
+		if (!Array.isArray(rows)) return [];
+		// Only well-formed rows, so one bad entry cannot make every later post
+		// unpostable. A row is `{ts, tag, data}` and nothing else.
+		return rows.filter(function (r) {
+			return r && typeof r.tag === 'string' && typeof r.data === 'string';
+		}).slice(-OUTBOX_CAP).map(function (r) {
+			return { ts: ms(r.ts) || Date.now(), tag: r.tag, data: r.data };
+		});
+	}
+
+	function persistNow() {
+		try { if (persistTimer) clearTimeout(persistTimer); } catch (e) {}
+		persistTimer = null;
+		try { write(EVENT_KEY, JSON.stringify(outbox)); }
+		catch (e) {
+			// Quota. Half an outbox that persists beats a whole one that does not:
+			// the oldest half goes, which is the same rule the overflow cap follows.
+			try {
+				outbox.splice(0, Math.ceil(outbox.length / 2));
+				write(EVENT_KEY, JSON.stringify(outbox));
+			} catch (e2) { /* memory-only from here; the queue still drains */ }
+		}
+	}
+
+	/// Write the outbox out on a trailing debounce. A burst of three hundred
+	/// events costs one serialisation rather than three hundred; the window it
+	/// opens is at most `PERSIST_MS`, and anything lost in it would have been
+	/// REDELIVERED rather than dropped, since `n` makes a repeat idempotent.
+	function persistSoon() {
+		if (persistTimer) return;
+		try { persistTimer = setTimeout(persistNow, PERSIST_MS); }
+		catch (e) { persistNow(); }
+	}
+
+	/// Append one finished row and kick the drainer. Overflow drops the OLDEST --
+	/// a live device's recent history is what a reader wants -- and records the
+	/// count in one `feed.drop`.
+	function pushRow(tag, data) {
+		outbox.push({ ts: Date.now(), tag: tag, data: data });
+		if (outbox.length > OUTBOX_CAP) {
+			var cut = outbox.length - OUTBOX_CAP;
+			outbox.splice(0, cut);
+			dropOwed += cut;
+			if (!dropping) {
+				dropping = true;
+				try { emit('feed.drop', { count: dropOwed }); dropOwed = 0; }
+				finally { dropping = false; }
+			}
+		}
+		persistSoon();
+		if (enabled) drain();
+	}
+
+	/// JSON, or a throw. Deliberately NOT swallowed: a payload that will not
+	/// serialise is a fault, and `event` turns it into one.
+	function str(o) { return JSON.stringify(o); }
+
+	/// The event's JSON, cut to `MAX_EVENT_BYTES`. The LARGEST string field goes
+	/// first and only far enough to fit, so a short tool name survives a long
+	/// error message being trimmed; `tr:1` marks that something was cut. The
+	/// envelope is never sacrificed -- an event with no payload left still says
+	/// which device, which build, and where in the sequence it sits.
+	function fit(obj) {
+		var s = str(obj);
+		if (byteLen(s) <= MAX_EVENT_BYTES) return s;
+		var o = {};
+		Object.keys(obj).forEach(function (k) { o[k] = obj[k]; });
+		o.tr = 1;
+		for (var guard = 0; guard < 32; guard++) {
+			s = str(o);
+			var over = byteLen(s) - MAX_EVENT_BYTES;
+			if (over <= 0) return s;
+			var bigK = '', bigN = 0;
+			Object.keys(o).forEach(function (k) {
+				if (k === 'v' || k === 'd' || k === 'n' || k === 'b' || k === 't' || k === 'tr') return;
+				// The capability triple is never a string, so it is never a candidate
+				// here -- said out loud because it is the part of a beat that must not
+				// be trimmable, and a later change that stringified it would silently
+				// make it so.
+				if (typeof o[k] !== 'string') return;
+				var n = byteLen(o[k]);
+				if (n > bigN) { bigN = n; bigK = k; }
+			});
+			if (!bigK) break;
+			// Characters, not bytes: a multi-byte string loses at least `over`
+			// bytes this way, never fewer, so the loop always converges.
+			var keep = o[bigK].length - over - 1;
+			if (keep > 0) o[bigK] = o[bigK].slice(0, keep);
+			else delete o[bigK];
+		}
+		s = str(o);
+		if (byteLen(s) <= MAX_EVENT_BYTES) return s;
+		// Nothing left but the envelope, and it is still worth sending.
+		return str({ v: o.v, d: o.d, n: o.n, b: o.b, t: o.t, tr: 1 });
+	}
+
+	/// THE THREE CAPABILITY FACTS a stuck device cannot otherwise be seen to be
+	/// missing: whether the tool surface exists at all, whether a workspace folder
+	/// is actually mounted, and whether this device may commit a chunk set. The
+	/// third is the one that matters most -- a device whose chunk index has not
+	/// merged refuses every commit, silently, and that state was invisible until
+	/// it cost a turn. `null` means the answer is not knowable yet (the core has
+	/// not loaded), which is a different thing from `false`.
+	function capabilities() {
+		var cap = { tools: false, folder: false, mayCommit: null };
+		try { cap.tools = !!window.DaimondTools; } catch (e) {}
+		try { cap.folder = !!(window.DaimondFiles && DaimondFiles.folder && DaimondFiles.folder()); } catch (e) {}
+		try {
+			if (window.DaimondCore && DaimondCore.syncMayCommitChunks) {
+				cap.mayCommit = !!DaimondCore.syncMayCommitChunks();
+			}
+		} catch (e) { /* the core is not up; `null` stands */ }
+		return cap;
+	}
+
+	/// Build, redact, fit and queue one event. The envelope wins over a payload
+	/// key of the same name, so a caller cannot overwrite `n` or `t` by accident.
+	/// `boot` and `beat` additionally carry `capabilities()`, added HERE rather
+	/// than at the call sites so neither kind can be emitted without them.
+	/// Throws on a payload that will not serialise; only `event` calls this.
+	function emit(kind, payload) {
+		var ev = {
+			v: 1,
+			d: shortDevice(),
+			n: nextSeq(),
+			b: buildTag(),
+			t: Date.now(),
+		};
+		if (kind === 'boot' || kind === 'beat') {
+			var cap = capabilities();
+			ev.tools     = cap.tools;
+			ev.folder    = cap.folder;
+			ev.mayCommit = cap.mayCommit;
+		}
+		if (payload && typeof payload === 'object') {
+			Object.keys(payload).forEach(function (k) {
+				if (k === 'v' || k === 'd' || k === 'n' || k === 'b' || k === 't') return;
+				if (payload[k] === undefined) return;
+				ev[k] = payload[k];
+			});
+		}
+		pushRow('ev ' + kind, fit(redact(ev)));
+		return true;
+	}
+
+	/// THE ONE SEAM. Every call site in the app reaches the feed through this and
+	/// nothing else. A no-op when sharing is off or the feed has faulted; never
+	/// throws into its caller.
+	function event(kind, payload) {
+		if (!enabled || feedOff || !kind) return false;
+		try {
+			var ok = emit(kind, payload);
+			if (kind === 'round') inferFold(payload);
+			return ok;
+		} catch (e) { fault(e); return false; }
+	}
+
+	/// The feed itself threw. One `feed.fault` is queued and collection stops for
+	/// the session -- but the DRAINER is left running, so the fault reaches the
+	/// gateway rather than sitting in a queue nobody empties. Idempotent: a second
+	/// fault in the same session says nothing, since the first already said it.
+	function fault(e) {
+		if (feedOff) return;
+		feedOff = true;
+		try { stopTimers(); } catch (e2) {}
+		try {
+			var row = {
+				v: 1, d: shortDevice(), n: nextSeq(), b: buildTag(), t: Date.now(),
+				msg: clip((e && e.message) || e || 'feed fault', MAX_MSG_CHARS),
+			};
+			pushRow('ev feed.fault', fit(redact(row)));
+		} catch (e2) { /* a feed that cannot report its own fault is simply off */ }
+	}
+
+	/// A FOLD HAPPENS IN RUST and the JS side is told only when the engine emits
+	/// `compacted`; a fold the engine performs silently shows up here as nothing
+	/// but a context that got smaller. So a round whose `ctx` has dropped by more
+	/// than `FOLD_DROP` against the previous round of the same turn is reported as
+	/// a fold and MARKED `inferred:1`, which is the honest label for a fact that
+	/// was deduced rather than observed. A real fold reported within
+	/// `FOLD_REAL_MS` suppresses the guess, so the two never double up.
+	function inferFold(p) {
+		if (!p || typeof p !== 'object') return;
+		var id = String(p.turn || p.chat || '');
+		var ctx = Number(p.ctx) || 0;
+		if (!id || ctx <= 0) return;
+		var was = lastCtx[id] || 0;
+		lastCtx[id] = ctx;
+		if (was <= 0 || ctx >= was * (1 - FOLD_DROP)) return;
+		var real = lastRealFold[id] || 0;
+		if (real && (Date.now() - real) < FOLD_REAL_MS) return;
+		emit('fold', { turn: id, before: was, after: ctx, trigger: 'est', inferred: 1 });
+	}
+
+	/// Record that the engine reported a REAL fold for this turn, so the inference
+	/// above stands down. Called beside the `fold` event in daimond.js.
+	function noteRealFold(id) {
+		try {
+			if (!id) return;
+			lastRealFold[String(id)] = Date.now();
+			lastCtx[String(id)] = 0;			// the next round re-seeds the baseline
+		} catch (e) { fault(e); }
+	}
+
+	// ── Error capture ──────────────────────────────────────────
+	//
+	// The three ways a failure reaches the page: an uncaught throw, a rejected
+	// promise nobody awaited, and the app's own `console.error`. All three become
+	// `error` events, rate-capped at `ERRORS_PER_MIN` so a render loop failing
+	// once a frame cannot fill the outbox -- the overflow is counted and reported
+	// on the next event that IS admitted, as `dropped`.
+	//
+	// The hooks are installed once, at load, and are INERT while sharing is off:
+	// they read nothing and queue nothing. `console.error` is wrapped so the
+	// app's own logging happens FIRST and unconditionally, before this looks at
+	// the arguments at all.
+
+	/// One argument of a `console.error` call, as a short string. Only primitives
+	/// and an Error's `message` are read: the name-based redactor cannot see into
+	/// a stringified config object, so an object is named and never unpacked.
+	function argWord(a) {
+		try {
+			if (a == null) return String(a);
+			if (typeof a === 'string') return a;
+			if (typeof a === 'number' || typeof a === 'boolean') return String(a);
+			if (a.message) return String(a.message);
+			if (Array.isArray(a)) return '[array:' + a.length + ']';
+			return '[' + ((a.constructor && a.constructor.name) || 'object') + ']';
+		} catch (e) { return '[unreadable]'; }
+	}
+
+	function noteError(msg, where) {
+		if (!enabled || feedOff) return;
+		var now = Date.now();
+		if (now - errWindowAt >= ERR_WINDOW_MS) { errWindowAt = now; errCount = 0; }
+		if (errCount >= ERRORS_PER_MIN) { errDropped += 1; return; }
+		errCount += 1;
+		var p = { msg: clip(msg, MAX_MSG_CHARS) };
+		if (where) p.at = clip(where, 80);
+		if (errDropped) { p.dropped = errDropped; errDropped = 0; }
+		event('error', p);
+	}
+
+	/// A gateway call that did not answer 2xx, or threw. Path, status and elapsed
+	/// ms only -- NEVER the request body, which carries the parcel and the prompt.
+	function noteFetchFail(path, status, lapsed, err) {
+		if (!enabled || feedOff) return;
+		var p = { path: clip(path, 64), status: status | 0, ms: lapsed | 0 };
+		if (err) p.err = clip(err, 120);
+		event('fetch.fail', p);
+	}
+
+	// ── The beat ───────────────────────────────────────────────
+
+	/// Where this device is, on a clock rather than on an event: build (in the
+	/// envelope), context against the window and the fold point, worker state,
+	/// credits when the gateway has said, and how deep the outbox is. Every 30 s
+	/// while a turn runs, every 5 min when nothing does -- one timer, with the
+	/// due time decided here, so a turn starting mid-interval is picked up within
+	/// one tick rather than after five minutes.
+	function beatTick() {
+		if (!enabled || feedOff) return;
+		var busy = false;
+		try { busy = !!(window.DaimondCore && DaimondCore.busy && DaimondCore.busy()); } catch (e) {}
+		var now = Date.now();
+		var due = busy ? BEAT_TURN_MS : BEAT_IDLE_MS;
+		if (lastBeatAt && (now - lastBeatAt) < (due - 500)) return;
+		lastBeatAt = now;
+		var live = liveStats() || {};
+		var wk = live.workerState || null;
+		var credits = null;
+		try {
+			var gs = (window.DaimondGateway && DaimondGateway.state) ? DaimondGateway.state() : null;
+			if (gs && typeof gs.credits === 'number') credits = gs.credits;
+		} catch (e) { /* the gateway has not answered */ }
+		event('beat', {
+			ctx:   live.contextActual || 0,
+			win:   live.contextWindow || 0,
+			fold:  live.foldAt || 0,
+			model: clip(live.activeModel || '', 48),
+			wk:    wk ? (wk.active | 0) : 0,
+			wq:    wk ? (wk.queued | 0) : 0,
+			busy:  busy ? 1 : 0,
+			cr:    (credits == null) ? undefined : credits,
+			ob:    outbox.length,
+		});
+	}
+
+	/// One post's worth of events, taken from the FRONT of the outbox and never
+	/// splitting one: a row is a whole event or it is not in the post. Bounded by
+	/// both the row cap and the body cap, with the margins the chunker keeps.
+	function eventBatch() {
+		var out = [], bytes = 0;
+		for (var i = 0; i < outbox.length && out.length < MAX_ROWS_POST; i++) {
+			var r = outbox[i];
+			var rowBytes = r.tag.length + r.data.length + 48;	// JSON overhead per row
+			if (out.length && (bytes + rowBytes) > MAX_BODY_BYTES) break;
+			out.push({ ts: r.ts, tag: r.tag, data: r.data });
+			bytes += rowBytes;
+		}
+		return out;
+	}
+
+	/// How long to wait after a failed event post: the ordinary gap, doubling per
+	/// consecutive failure, to a five-minute ceiling. Reset by the first success.
+	function backoffMs() {
+		var n = failStreak > 0 ? failStreak : 1;
+		var wait = POST_GAP_MS * Math.pow(2, n - 1);
+		return wait > BACKOFF_MAX_MS ? BACKOFF_MAX_MS : wait;
+	}
+
 	// ── Posting and draining ─────────────────────────────────────
 
 	function deviceId() {
@@ -588,8 +1035,11 @@
 		catch (e) { return ''; }
 	}
 
-	/// POST one batch of rows. Fire-and-forget on the network, but the promise
-	/// resolves so the drainer can pace itself. A down endpoint is not our problem.
+	/// POST one batch of rows. The promise resolves to whether the post LANDED --
+	/// which the snapshot and telemetry lanes ignore, since a missed aggregate is
+	/// replaced by the next one, and which the EVENT lane depends on: an event is
+	/// removed from the outbox only when this says true. A thrown fetch and a
+	/// non-2xx answer are the same thing here, and both mean "still ours".
 	function postRows(rows) {
 		var body = JSON.stringify({ v: 1, device: deviceId(), rows: rows });
 		return fetch(ENDPOINT, {
@@ -597,11 +1047,22 @@
 			credentials: 'same-origin',
 			headers:     { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
 			body:        body,
-		}).then(function () {}, function () {});
+		}).then(function (r) {
+			// A stub or a build whose fetch resolves nothing counts as delivered:
+			// the alternative is an outbox that never empties.
+			if (!r) return true;
+			if (typeof r.ok === 'boolean') return r.ok;
+			return !(r.status >= 400);
+		}, function () { return false; });
 	}
 
-	/// True while either lane holds a pending post.
-	function pending() { return telQueue.length > 0 || snapQueue.length > 0; }
+	/// True while any lane holds something to send. Nothing is pending while the
+	/// feature is off: `applyState` clears all three, and an off device must put
+	/// nothing on the wire.
+	function pending() {
+		if (!enabled) return false;
+		return outbox.length > 0 || telQueue.length > 0 || snapQueue.length > 0;
+	}
 
 	/// Drain the two lanes one batch every `POST_GAP_MS`, so the handler's rate cap
 	/// never refuses us. The telemetry lane is always taken first and emptied before
@@ -612,11 +1073,34 @@
 		if (draining) return;
 		draining = true;
 		(function step() {
-			if (!enabled || !pending()) { draining = false; return; }
+			if (!pending()) { draining = false; return; }
+			// EVENTS FIRST, and they are the only DURABLE lane: the rows stay in the
+			// outbox until the post is known to have landed, so an outage costs a
+			// retry rather than the events that explain it. A failure backs the next
+			// attempt off; a success resets the backoff and removes exactly the rows
+			// that went, which is why the batch is spliced by LENGTH off the front
+			// and never by identity -- nothing else removes from the front.
+			if (outbox.length) {
+				var batch = eventBatch();
+				postRows(batch).then(function (ok) {
+					var wait = POST_GAP_MS;
+					if (ok) {
+						outbox.splice(0, batch.length);
+						failStreak = 0;
+						persistNow();
+					} else {
+						failStreak += 1;
+						wait = backoffMs();
+					}
+					if (!pending()) { draining = false; return; }
+					setTimeout(step, wait);
+				});
+				return;
+			}
 			// Telemetry jumps the queue: the priority lane wins whenever it has anything.
 			var rows = telQueue.length ? telQueue.shift() : snapQueue.shift();
 			postRows(rows).then(function () {
-				if (!enabled || !pending()) { draining = false; return; }
+				if (!pending()) { draining = false; return; }
 				setTimeout(step, POST_GAP_MS);
 			});
 		})();
@@ -631,9 +1115,10 @@
 		drain();
 	}
 
-	/// Assemble and enqueue a full snapshot. A no-op when off.
+	/// Assemble and enqueue a full snapshot. A no-op when off, or once the feed
+	/// has faulted -- a feed that threw collects nothing more this session.
 	function snapshotNow() {
-		if (!enabled) return Promise.resolve(false);
+		if (!enabled || feedOff) return Promise.resolve(false);
 		return gatherSnapshot().then(function (bundle) {
 			enqueue(chunk(bundle));
 			return true;
@@ -641,7 +1126,7 @@
 	}
 
 	function telemetryTick() {
-		if (!enabled) return;
+		if (!enabled || feedOff) return;
 		var tel = gatherTelemetry();
 		if (tel) enqueue(chunk(tel), true);		// priority lane -- ahead of any snapshot backlog
 	}
@@ -719,13 +1204,16 @@
 
 	function startTimers() {
 		stopTimers();
+		if (feedOff) return;			// a faulted feed collects nothing more
 		try { telTimer  = setInterval(telemetryTick, TELEMETRY_MS); } catch (e) {}
 		try { snapTimer = setInterval(function () { snapshotNow(); }, RESNAP_MS); } catch (e) {}
+		try { beatTimer = setInterval(function () { try { beatTick(); } catch (e2) { fault(e2); } }, BEAT_TICK_MS); } catch (e) {}
 	}
 	function stopTimers() {
 		try { if (telTimer) clearInterval(telTimer); } catch (e) {}
 		try { if (snapTimer) clearInterval(snapTimer); } catch (e) {}
-		telTimer = null; snapTimer = null;
+		try { if (beatTimer) clearInterval(beatTimer); } catch (e) {}
+		telTimer = null; snapTimer = null; beatTimer = null;
 	}
 
 	function isOn() { return enabled; }
@@ -755,10 +1243,23 @@
 			lastDiagLen   = s.diag.length;
 			startTimers();
 			snapshotNow();
+			// NO IMMEDIATE BEAT. The snapshot that has just been queued carries the
+			// same state and more, and `boot` -- emitted by daimond.js at start and
+			// unlock -- is what says which build this device is on. The beat's job is
+			// the CLOCK: it says a quiet device is still there. So the first one is
+			// the timer's, not this.
+			lastBeatAt = 0;
 		} else {
 			stopTimers();
 			telQueue = [];
 			snapQueue = [];
+			// AND THE OUTBOX. Off means nothing more leaves this device, and a queue
+			// held back to be posted the next time sharing is armed would be exactly
+			// that -- data collected while on, delivered after the person said stop.
+			outbox = [];
+			failStreak = 0;
+			dropOwed = 0;
+			persistNow();
 			unmountIndicator();
 		}
 	}
@@ -832,6 +1333,10 @@
 		startTimers();
 		// A boot snapshot lands the current state the moment the app is up.
 		snapshotNow();
+		// And whatever the LAST session could not deliver goes now, ahead of it: the
+		// outbox is already loaded, and this is the moment it starts moving again.
+		lastBeatAt = 0;
+		drain();
 	}
 	try {
 		if (typeof document !== 'undefined' && document.addEventListener) {
@@ -858,6 +1363,67 @@
 		});
 	} catch (e) {}
 
+	// ── The error hooks ──────────────────────────────────────────
+	//
+	// Installed once, at load, and inert while sharing is off. breadcrumb.js keeps
+	// its own listeners for the same two events and its own twenty-line ring; this
+	// does not touch that storage and does not replace it -- it mirrors the same
+	// facts into the event stream, where they sit in sequence beside the turn that
+	// produced them.
+	try {
+		window.addEventListener('error', function (e) {
+			try {
+				var where = '';
+				if (e && e.filename) {
+					where = String(e.filename).replace(/^https?:\/\/[^/]+/, '') + ':' + (e.lineno || 0);
+				}
+				noteError((e && e.message) || 'error', where);
+			} catch (e2) { fault(e2); }
+		});
+	} catch (e) {}
+	try {
+		window.addEventListener('unhandledrejection', function (e) {
+			try {
+				var r = e && e.reason;
+				noteError((r && r.message) || argWord(r) || 'rejection', 'unhandledrejection');
+			} catch (e2) { fault(e2); }
+		});
+	} catch (e) {}
+
+	// `console.error` is WRAPPED, not replaced: the original runs first and
+	// unconditionally, before a single argument is looked at, so a broken feed
+	// cannot cost the developer their console. The re-entry guard matters because
+	// anything below that logs would otherwise call straight back into here.
+	try {
+		if (typeof console !== 'undefined' && typeof console.error === 'function' && !console.error._ds) {
+			var origError = console.error;
+			var inConsole = false;
+			var wrapped = function () {
+				try { origError.apply(console, arguments); } catch (e) {}
+				if (inConsole) return;
+				inConsole = true;
+				try {
+					var parts = [];
+					for (var i = 0; i < arguments.length && i < 4; i++) parts.push(argWord(arguments[i]));
+					noteError(parts.join(' '), 'console.error');
+				} catch (e) { /* never from the app's own logging */ }
+				inConsole = false;
+			};
+			wrapped._ds = true;
+			console.error = wrapped;
+		}
+	} catch (e) {}
+
+	// The outbox is written on a trailing debounce, so the page going away is the
+	// one moment it must be written NOW -- everything queued in the last quarter
+	// second is exactly what a crash-and-reload needs to still have.
+	try {
+		window.addEventListener('pagehide', function () { try { persistNow(); } catch (e) {} });
+		window.addEventListener('visibilitychange', function () {
+			try { if (document.visibilityState === 'hidden') persistNow(); } catch (e) {}
+		});
+	} catch (e) {}
+
 	window.DEBUG_SHARE = {
 		isOn:             isOn,
 		setEnabled:       setEnabled,
@@ -869,6 +1435,19 @@
 		registerStats:    registerStats,
 		noteCross:        noteCross,
 		snapshotNow:      snapshotNow,
+		// THE EVENT SEAM. One call, `DEBUG_SHARE.event(kind, payload)`, from every
+		// call site in the app; a no-op when sharing is off and never a throw into
+		// the caller. `noteFetchFail` is the gateway wrapper's shorthand for the
+		// `fetch.fail` kind, and `noteRealFold` tells the fold inference to stand
+		// down because the engine reported a fold itself.
+		event:            event,
+		noteFetchFail:    noteFetchFail,
+		noteRealFold:     noteRealFold,
+		/// Is the feed still collecting? False once it has faulted, even while the
+		/// share switch is on -- see `fault`.
+		feedOk:           function () { return !feedOff; },
+		/// How many events are waiting to go out.
+		outboxDepth:      function () { return outbox.length; },
 		// Exposed for the verifier: drive one telemetry tick without the 30 s timer.
 		_telemetryTick:   telemetryTick,
 		// Exposed for the verifier (www/js/debugshare.test.mjs):
@@ -886,6 +1465,18 @@
 		_signalBreakdown: signalBreakdown,
 		_crossBreakdown:  crossBreakdown,
 		_queueLen:    function () { return telQueue.length + snapQueue.length; },
+		// Exposed for the verifier: the event lane, its persistence, and the two
+		// timed collectors, so the outage/reload/fault rules can be driven without
+		// waiting out an interval.
+		_outbox:      function () { return outbox.slice(); },
+		_persistNow:  persistNow,
+		_beatTick:    beatTick,
+		_capabilities: capabilities,
+		_noteError:   noteError,
+		_fit:         fit,
+		_eventBatch:  eventBatch,
+		_backoffMs:   function (n) { failStreak = n; return backoffMs(); },
+		_drain:       drain,
 		// Exposed for the verifier so it can assert lane ordering directly.
 		_telQueueLen:  function () { return telQueue.length; },
 		_snapQueueLen: function () { return snapQueue.length; },

@@ -69,7 +69,9 @@ function makeNode(tag) {
 
 function makeEnv(cfg) {
 	cfg = cfg || {};
-	const store = new Map();
+	// `cfg.store` REUSES a previous env's Map, which is what a reload is: the same
+	// device's localStorage, a brand new module instance on top of it.
+	const store = cfg.store || new Map();
 	const localStorage = {
 		getItem: (k) => (store.has(k) ? store.get(k) : null),
 		setItem: (k, v) => store.set(k, String(v)),
@@ -123,15 +125,31 @@ function makeEnv(cfg) {
 	// The capture: every POST body, parsed. When `cfg.gateFetch` is set, each POST
 	// resolves only when the test releases it, so a snapshot can be held mid-drain and
 	// a telemetry post injected behind it -- the priority-lane property under test.
+	// `cfg.respond(index, record)` decides each POST's status, so a test can make
+	// the endpoint fail for a window and then recover -- the outage the durable
+	// outbox exists for. The status is recorded ON the captured post, so a test can
+	// separate what was SENT from what actually ARRIVED.
 	const posts = [];
 	const resolvers = [];
+	// A test that deliberately leaves the endpoint refusing must be able to STOP
+	// the module at the end of its block: the drainer's whole point is that it
+	// retries for ever, and under `fastTimers` for ever arrives immediately. A
+	// halted env answers no POST at all, so the drain chain parks and nothing
+	// keeps the process alive. It touches no module state, which is what lets the
+	// reload test halt the first instance without emptying the store it is about
+	// to hand to the second.
+	let halted = false;
 	const fetchImpl = (url, opts) => {
-		try { posts.push({ url, body: JSON.parse((opts && opts.body) || '{}') }); }
-		catch (e) { posts.push({ url, body: null }); }
+		if (halted) return new Promise(() => {});
+		const rec = { url, body: null, status: 200 };
+		try { rec.body = JSON.parse((opts && opts.body) || '{}'); } catch (e) { rec.body = null; }
+		rec.status = cfg.respond ? cfg.respond(posts.length, rec) : 200;
+		posts.push(rec);
+		const reply = { ok: rec.status >= 200 && rec.status < 300, status: rec.status };
 		if (cfg.gateFetch) {
-			return new Promise((resolve) => { resolvers.push(() => resolve({ ok: true, status: 200 })); });
+			return new Promise((resolve) => { resolvers.push(() => resolve(reply)); });
 		}
-		return Promise.resolve({ ok: true, status: 200 });
+		return Promise.resolve(reply);
 	};
 
 	function CustomEventShim(type, init) { this.type = type; this.detail = init && init.detail; }
@@ -175,6 +193,7 @@ function makeEnv(cfg) {
 	return {
 		win, document, localStorage, posts, topActions, store,
 		fireStorage, events, timerDelays, drainAll,
+		halt: () => { halted = true; },
 		nudges: () => nudges,
 	};
 }
@@ -792,6 +811,414 @@ async function main() {
 		const small = DS._assemble({ ledger: [{ id: 'only', u: 1 }], trail: [], diag: [] }, {});
 		check('a ledger under the tail cap is kept whole',
 			small.ledger.length === 1 && small.ledgerDropped === 0);
+	}
+
+	// ══════════════════════════════════════════════════════════════
+	// The EVENT feed. Snapshots say what the account looks like; events say what
+	// it DID. The three rules below are the design's own (2026-09-11 §"Robustness
+	// rules"), and they are the reason the outbox is durable rather than clever.
+	// ══════════════════════════════════════════════════════════════
+
+	console.log('debugshare: events — the envelope, the tag, and the 360-byte cap');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 200 });
+		const DS = env.win.DEBUG_SHARE;
+		// OFF is off: the seam is a no-op and queues nothing.
+		check('event() is a no-op while sharing is off', DS.event('tool', { name: 'read' }) === false);
+		check('nothing is queued while off', DS.outboxDepth() === 0);
+
+		DS.setEnabled(true);
+		check('event() queues while on', DS.event('tool', { name: 'read', out: 'done' }) === true);
+		const rows = DS._outbox();
+		check('exactly one event was queued', rows.length === 1);
+		check('the row is tagged "ev <kind>"', rows[0].tag === 'ev tool');
+		check('the tag is inside the handler’s 48-char bound', rows[0].tag.length <= 48);
+		const e1 = JSON.parse(rows[0].data);
+		check('the envelope carries the schema version', e1.v === 1);
+		check('the envelope carries a sequence number', typeof e1.n === 'number' && e1.n > 0);
+		check('the envelope carries a millisecond clock', typeof e1.t === 'number' && e1.t > 0);
+		check('the payload rides beside the envelope', e1.name === 'read' && e1.out === 'done');
+		check('the data is plain JSON, not base64', rows[0].data.charAt(0) === '{');
+
+		// The sequence is monotonic and persisted, which is what makes a redelivered
+		// post harmless for the reader.
+		DS.event('tool', { name: 'write' });
+		const e2 = JSON.parse(DS._outbox()[1].data);
+		check('the sequence advances by one per event', e2.n === e1.n + 1);
+		check('the sequence is persisted', Number(env.store.get('daimond-debugshare-seq')) === e2.n);
+
+		// A payload the envelope also names cannot overwrite the envelope.
+		DS.event('tool', { n: 999999, t: 1, v: 7, name: 'clash' });
+		const e3 = JSON.parse(DS._outbox()[2].data);
+		check('a payload cannot overwrite the envelope’s n/t/v',
+			e3.n === e2.n + 1 && e3.v === 1 && e3.t > 1 && e3.name === 'clash');
+
+		// The cap. A giant string is cut, `tr:1` marks it, and the envelope survives.
+		DS.event('error', { msg: 'E'.repeat(4000), at: 'js/daimond.js:1' });
+		const big = DS._outbox()[3];
+		const e4 = JSON.parse(big.data);
+		check('a giant event is cut to the 360-byte cap', DS._byteLen(big.data) <= 360);
+		check('a cut event is marked tr:1', e4.tr === 1);
+		check('the cut event keeps its whole envelope', e4.v === 1 && e4.n > 0 && typeof e4.t === 'number');
+		check('the cut event keeps the small field and trims the large one',
+			e4.at === 'js/daimond.js:1' && e4.msg.length < 4000);
+		check('EVERY queued event is within the 360-byte cap',
+			DS._outbox().every((r) => DS._byteLen(r.data) <= 360));
+	}
+
+	console.log('debugshare: events — the redactor fingerprints a secret-named field');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 200 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		DS.event('settings', { apiKey: RAW_API_KEY, model: 'anthropic/claude-3.5' });
+		const data = DS._outbox()[0].data;
+		check('an event carrying an apiKey does NOT carry it raw', data.indexOf(RAW_API_KEY) === -1);
+		check('the apiKey appears as a fingerprint', /"apiKey":"\[redacted /.test(data));
+		check('the fingerprint keeps the first six characters', data.indexOf('sk-or-') !== -1);
+		check('a non-secret field beside it is untouched', data.indexOf('anthropic/claude-3.5') !== -1);
+	}
+
+	console.log('debugshare: events — RULE 1: exactly-once, in order, across an outage');
+	{
+		// The endpoint fails for a window and then recovers. A post the endpoint
+		// REFUSED did not arrive, so what a reader sees is the rows of the ACCEPTED
+		// posts only -- which is what the assertions below are taken over.
+		let outageUntil = 4;
+		const env = makeEnv({
+			fastTimers: true,
+			respond: (i) => (i < outageUntil ? 500 : 200),
+		});
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => ({ config: null, transcripts: [], roster: {} }));
+		DS.setEnabled(true);
+		for (let i = 0; i < 300; i++) DS.event('round', { turn: 'T1', r: i, ctx: 1000 + i });
+		check('300 events are queued', DS.outboxDepth() === 300);
+		// Drain, through the outage and out the other side.
+		for (let guard = 0; guard < 900 && DS.outboxDepth() > 0; guard++) await sleep(3);
+		check('the outbox empties once the endpoint recovers', DS.outboxDepth() === 0);
+		check('the endpoint really did refuse a window of posts',
+			env.posts.filter((p) => p.status === 500).length >= 1);
+
+		// What ARRIVED: every row of every accepted post, in the order it landed.
+		const arrived = [];
+		env.posts.forEach((p) => {
+			if (p.status !== 200) return;
+			((p.body && p.body.rows) || []).forEach((r) => {
+				if ((r.tag || '').indexOf('ev round') !== 0) return;
+				arrived.push(JSON.parse(r.data));
+			});
+		});
+		const ns = arrived.map((e) => e.n);
+		check('every one of the 300 events arrived', arrived.length === 300);
+		check('no n arrived twice', new Set(ns).size === ns.length);
+		check('they arrived in sequence', ns.every((n, i) => i === 0 || n > ns[i - 1]));
+		check('their payloads arrived in the order they were made',
+			arrived.every((e, i) => e.r === i));
+		check('the whole run carries one device id',
+			new Set(arrived.map((e) => e.d)).size === 1);
+		// And the backoff really did widen while the endpoint was down.
+		const paced = env.timerDelays.filter((d) => d > 11000);
+		check('a repeated failure backs the next attempt off past the 11 s gap', paced.length >= 1);
+		check('the backoff is capped at five minutes', DS._backoffMs(30) === 300000);
+		check('the first failure waits the ordinary gap', DS._backoffMs(1) === 11000);
+		check('the second waits twice it', DS._backoffMs(2) === 22000);
+	}
+
+	console.log('debugshare: events — RULE 2: the outbox survives a reload');
+	{
+		// Nothing leaves: every post is refused, so the queue is still full when the
+		// module is torn down and rebuilt on the SAME localStorage.
+		const first = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS1 = first.win.DEBUG_SHARE;
+		DS1.setEnabled(true);
+		for (let i = 0; i < 40; i++) DS1.event('tool', { name: 'read', r: i });
+		DS1._persistNow();
+		const depthBefore = DS1.outboxDepth();
+		const seqBefore = Number(first.store.get('daimond-debugshare-seq'));
+		check('the queue is held while the endpoint refuses', depthBefore === 40);
+		first.halt();		// the old instance stops retrying; its store is untouched
+
+		// The reload: a new module instance over the same store.
+		let allowed = 0;
+		const second = makeEnv({ store: first.store, fastTimers: true, respond: () => { allowed += 1; return 200; } });
+		const DS2 = second.win.DEBUG_SHARE;
+		check('the reloaded module comes up still sharing', DS2.isOn() === true);
+		check('the reloaded module recovered the whole outbox', DS2.outboxDepth() === 40);
+		check('the sequence continues where it left off, never restarting',
+			(JSON.parse(DS2._outbox()[0].data).n) === seqBefore - 39);
+		DS2.event('tool', { name: 'after-reload' });
+		check('the next event takes the NEXT number, not a repeat',
+			JSON.parse(DS2._outbox()[40].data).n === seqBefore + 1);
+
+		// And it drains from where it was.
+		DS2.registerProvider(async () => ({ config: null, transcripts: [] }));
+		DS2._drain();
+		for (let guard = 0; guard < 600 && DS2.outboxDepth() > 0; guard++) await sleep(3);
+		check('the recovered outbox drains after the reload', DS2.outboxDepth() === 0);
+		const landed = [];
+		second.posts.forEach((p) => {
+			if (p.status !== 200) return;
+			((p.body && p.body.rows) || []).forEach((r) => {
+				if ((r.tag || '').indexOf('ev tool') === 0) landed.push(JSON.parse(r.data));
+			});
+		});
+		check('all 41 events reach the wire after the reload', landed.length === 41);
+		check('nothing queued before the reload was lost',
+			landed.filter((e) => typeof e.r === 'number').length === 40);
+		check('and none of them arrived twice',
+			new Set(landed.map((e) => e.n)).size === 41);
+	}
+
+	console.log('debugshare: events — RULE 3: the feed cannot break the app');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		DS.event('tool', { name: 'before' });
+		check('the feed is healthy before the fault', DS.feedOk() === true);
+
+		// The app's own call: it reaches the feed with a payload that throws when it
+		// is read, and then goes on to do its own work and return its own answer.
+		let appDid = 0;
+		const appCall = () => {
+			DS.event('tool', { name: 'poison', bad: { get boom() { throw new Error('provider blew up'); } } });
+			appDid += 1;
+			return 'the answer';
+		};
+		const answer = appCall();
+		check('the app’s own call completes', appDid === 1);
+		check('the app’s own call returns its own answer', answer === 'the answer');
+		check('the feed turned itself off', DS.feedOk() === false);
+		const faults = DS._outbox().filter((r) => r.tag === 'ev feed.fault');
+		check('exactly one feed.fault is queued', faults.length === 1);
+		check('the fault says what threw', JSON.parse(faults[0].data).msg.indexOf('provider blew up') !== -1);
+		check('the fault carries the ordinary envelope', JSON.parse(faults[0].data).n > 0);
+
+		// Off means off: nothing more is collected, and a second fault says nothing.
+		const depth = DS.outboxDepth();
+		check('a later event is refused by the off feed', DS.event('tool', { name: 'after' }) === false);
+		appCall();
+		check('a second fault queues nothing more', DS.outboxDepth() === depth);
+		check('the app’s call still completed the second time', appDid === 2);
+		env.halt();
+	}
+
+	console.log('debugshare: events — a post never exceeds 400 rows or 200 KiB');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 200 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => ({ config: null, transcripts: [] }));
+		DS.setEnabled(true);
+		for (let i = 0; i < 900; i++) DS.event('round', { turn: 'T', r: i, tool: 'read_file' });
+		for (let guard = 0; guard < 900 && DS.outboxDepth() > 0; guard++) await sleep(3);
+		check('900 events all drain', DS.outboxDepth() === 0);
+		const evPosts = env.posts.filter((p) =>
+			((p.body && p.body.rows) || []).some((r) => (r.tag || '').indexOf('ev ') === 0));
+		check('they went in more than one post', evPosts.length >= 3);
+		check('no post exceeds 400 rows',
+			evPosts.every((p) => p.body.rows.length <= 400));
+		check('no post exceeds 200 KiB',
+			evPosts.every((p) => Buffer.byteLength(JSON.stringify(p.body), 'utf8') <= 200 * 1024));
+		check('a post carries only WHOLE events — every row parses on its own',
+			evPosts.every((p) => p.body.rows.every((r) => {
+				try { return typeof JSON.parse(r.data).n === 'number'; } catch (e) { return false; }
+			})));
+		// And a batch taken straight off the outbox honours the same bound.
+		for (let i = 0; i < 500; i++) DS.event('round', { turn: 'T2', r: i });
+		check('one batch is capped at 400 rows', DS._eventBatch().length === 400);
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: events — overflow drops the OLDEST and says how many');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		for (let i = 0; i < 5040; i++) DS.event('round', { turn: 'T', r: i });
+		const rows = DS._outbox();
+		check('the outbox is capped at 5,000 events', rows.length === 5000);
+		const drops = rows.filter((r) => r.tag === 'ev feed.drop');
+		check('a feed.drop records the overflow', drops.length >= 1);
+		check('the drop carries a count', JSON.parse(drops[0].data).count >= 1);
+		// The OLDEST went: the first surviving round is not round 0.
+		const firstRound = rows.find((r) => r.tag === 'ev round');
+		check('the oldest events are the ones dropped', JSON.parse(firstRound.data).r > 0);
+		check('the newest event survived',
+			JSON.parse(rows[rows.length - 1].data).r === 5039
+			|| rows[rows.length - 1].tag === 'ev feed.drop');
+		DS.setEnabled(false);
+		check('turning off empties the outbox — nothing more leaves the device',
+			DS.outboxDepth() === 0);
+	}
+
+	console.log('debugshare: events — error capture, rate-capped, with a dropped count');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		DS._noteError('TypeError: x is not a function', 'js/daimond.js:120');
+		const first = JSON.parse(DS._outbox()[0].data);
+		check('an error becomes an `error` event', DS._outbox()[0].tag === 'ev error');
+		check('the error carries its message', first.msg.indexOf('x is not a function') !== -1);
+		check('the error carries source:line', first.at === 'js/daimond.js:120');
+		// The message is bounded at 200 characters.
+		DS._noteError('Z'.repeat(900), '');
+		check('a long message is clipped to 200 characters',
+			JSON.parse(DS._outbox()[1].data).msg.length === 200);
+		// Twenty a minute, then a count instead of a flood.
+		const before = DS.outboxDepth();
+		for (let i = 0; i < 60; i++) DS._noteError('flood ' + i, '');
+		check('the rate cap admits at most 20 errors a minute', DS.outboxDepth() - before <= 18);
+		// The next window reports what it swallowed.
+		const admitted = DS._outbox().filter((r) => r.tag === 'ev error').map((r) => JSON.parse(r.data));
+		check('every admitted error is a well-formed event', admitted.every((e) => e.n > 0 && e.msg));
+		check('the events stay within the 360-byte cap even under a flood',
+			DS._outbox().every((r) => DS._byteLen(r.data) <= 360));
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: events — a failed gateway call becomes fetch.fail, with no body');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		DS.noteFetchFail('/api/sync', 500, 1234, 'HTTP 500');
+		DS.noteFetchFail('/api/account', 0, 30000, 'Failed to fetch');
+		const rows = DS._outbox().filter((r) => r.tag === 'ev fetch.fail').map((r) => JSON.parse(r.data));
+		check('a non-2xx gateway call becomes a fetch.fail', rows.length === 2);
+		check('it carries the path, the status and the elapsed ms',
+			rows[0].path === '/api/sync' && rows[0].status === 500 && rows[0].ms === 1234);
+		check('a thrown fetch is reported with status 0 and its message',
+			rows[1].status === 0 && rows[1].err === 'Failed to fetch');
+		check('a fetch.fail carries NO request body',
+			DS._outbox().every((r) => r.data.indexOf('body') === -1));
+
+		// The `sync` kind, including the four COMMIT outcomes sync.js reports. The
+		// emission itself lives in sync.js, which this node harness does not load;
+		// what is proved here is that each outcome survives the envelope, the
+		// redactor and the cap as its own greppable row.
+		['refused', 'swept', 'refused-by-gateway', 'failed'].forEach(function (outcome) {
+			DS.event('sync', { dir: 'push', commit: outcome, at: 41 });
+		});
+		DS.event('sync', { dir: 'pull', to: 42, ms: 310, from: 'devAAA' });
+		const syncs = DS._outbox().filter((r) => r.tag === 'ev sync').map((r) => JSON.parse(r.data));
+		check('every commit outcome becomes its own sync event', syncs.length === 5);
+		check('the four commit outcomes survive whole',
+			syncs.slice(0, 4).map((e) => e.commit).join(',') === 'refused,swept,refused-by-gateway,failed');
+		check('a commit event names the version it was refused at', syncs[0].at === 41);
+		check('a pull event carries direction, version and round trip',
+			syncs[4].dir === 'pull' && syncs[4].to === 42 && syncs[4].ms === 310);
+		check('a sync event stays within the 360-byte cap',
+			DS._outbox().filter((r) => r.tag === 'ev sync').every((r) => DS._byteLen(r.data) <= 360));
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: events — the beat, and a fold inferred from a context drop');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerStats(() => ({
+			contextActual: 120000, contextWindow: 200000, foldAt: 150000,
+			activeModel: 'anthropic/claude-3.5',
+			workerState: { active: 2, queued: 1, busy: true },
+		}));
+		DS.setEnabled(true);
+		DS._beatTick();
+		const beat = DS._outbox().filter((r) => r.tag === 'ev beat').map((r) => JSON.parse(r.data))[0];
+		check('a beat is emitted', !!beat);
+		check('the beat carries context, window and the fold point',
+			beat.ctx === 120000 && beat.win === 200000 && beat.fold === 150000);
+		check('the beat carries the worker state', beat.wk === 2 && beat.wq === 1);
+		check('the beat carries the outbox depth', typeof beat.ob === 'number');
+		check('the beat carries the build in its envelope', typeof beat.b === 'string');
+		// The capability triple. A device that cannot commit a chunk set was
+		// invisible until it cost a turn; `mayCommit` is the fact that says so, and
+		// `null` (the core is not up) is deliberately not `false`.
+		check('the beat says whether the tool surface exists', beat.tools === false);
+		check('the beat says whether a workspace folder is mounted', beat.folder === false);
+		check('the beat says mayCommit is UNKNOWN when the core is absent', beat.mayCommit === null);
+
+		// A context that falls by more than 30% between two rounds of one turn is a
+		// fold nothing in JS was told about.
+		DS.event('round', { turn: 'TF', r: 1, ctx: 100000 });
+		DS.event('round', { turn: 'TF', r: 2, ctx: 40000 });
+		const folds = DS._outbox().filter((r) => r.tag === 'ev fold').map((r) => JSON.parse(r.data));
+		check('a context drop over 30% is reported as a fold', folds.length === 1);
+		check('the inferred fold carries before and after', folds[0].before === 100000 && folds[0].after === 40000);
+		check('an inferred fold is MARKED inferred', folds[0].inferred === 1);
+		// A small drop is not a fold.
+		DS.event('round', { turn: 'TF', r: 3, ctx: 38000 });
+		check('an ordinary shrink is not read as a fold',
+			DS._outbox().filter((r) => r.tag === 'ev fold').length === 1);
+		// And a REAL fold stands the inference down.
+		DS.noteRealFold('TG');
+		DS.event('round', { turn: 'TG', r: 1, ctx: 90000 });
+		DS.event('round', { turn: 'TG', r: 2, ctx: 10000 });
+		check('a fold the engine reported suppresses the inferred one',
+			DS._outbox().filter((r) => r.tag === 'ev fold').length === 1);
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: events — boot and beat carry the capability triple');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		// The three globals the triple is read off, as a capable device has them.
+		env.win.DaimondTools = { run: () => {} };
+		env.win.DaimondFiles = { folder: () => ({ name: 'workspace' }) };
+		env.win.DaimondCore  = { syncMayCommitChunks: () => true };
+		DS.setEnabled(true);
+		DS.event('boot', { ua: 'desktop' });
+		const boot = JSON.parse(DS._outbox()[0].data);
+		check('boot carries tools', boot.tools === true);
+		check('boot carries folder', boot.folder === true);
+		check('boot carries mayCommit', boot.mayCommit === true);
+		check('boot keeps its own payload beside them', boot.ua === 'desktop');
+
+		// A device that may NOT commit says so, and that is the state the addition
+		// exists for: false, not absent, and not null.
+		env.win.DaimondCore.syncMayCommitChunks = () => false;
+		env.win.DaimondFiles.folder = () => null;
+		DS._beatTick();
+		const beat2 = DS._outbox().filter((r) => r.tag === 'ev beat').map((r) => JSON.parse(r.data)).pop();
+		check('a beat reports mayCommit false when the device may not commit', beat2.mayCommit === false);
+		check('a beat reports folder false when nothing is mounted', beat2.folder === false);
+		check('a beat still reports tools true', beat2.tools === true);
+		// A core that throws is unknown, not false.
+		env.win.DaimondCore.syncMayCommitChunks = () => { throw new Error('not up'); };
+		check('a core that throws leaves mayCommit unknown', DS._capabilities().mayCommit === null);
+		check('the capability triple never pushes an event past the cap',
+			DS._outbox().every((r) => DS._byteLen(r.data) <= 360));
+		check('the feed survived all of it', DS.feedOk() === true);
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: events — the event lane drains AHEAD of a snapshot backlog');
+	{
+		const env = makeEnv({ gateFetch: true, fastTimers: true, respond: () => 200 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => ({
+			config: { instructions: 'I'.repeat(300000), model: 'anthropic/claude-3.5' },
+			transcripts: [], roster: {}, presence: {}, election: {}, tokenStats: [],
+		}));
+		DS.setEnabled(true);
+		await sleep(20);				// post #1 is in flight (gated), the snapshot backlog behind it
+		const backlog = DS._snapQueueLen();
+		check('a multi-post snapshot leaves a backlog', backlog >= 2);
+		DS.event('turn.start', { turn: 'T9', model: 'anthropic/claude-3.5' });
+		check('the event is on the durable lane, not a post queue', DS.outboxDepth() === 1);
+		await env.drainAll();
+		const kinds = env.posts.map((p) => {
+			const tag = (p.body && p.body.rows && p.body.rows[0] && p.body.rows[0].tag) || '';
+			if (tag.indexOf('ev ') === 0) return 'event';
+			return tag.indexOf('ds telemetry') === 0 ? 'telemetry' : 'snapshot';
+		});
+		check('the first post was the snapshot already in flight', kinds[0] === 'snapshot');
+		check('the event post jumped the snapshot backlog', kinds[1] === 'event');
+		check('the snapshot backlog followed it',
+			kinds.slice(2).every((k) => k === 'snapshot'));
+		check('the outbox is empty once it has landed', DS.outboxDepth() === 0);
 	}
 
 	console.log('');

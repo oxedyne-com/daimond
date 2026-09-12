@@ -1,1 +1,1 @@
-{"build":"400c1b804350","note":"Burn fix: 200K per-round context ceiling + real-token fold, plus lossless read/edit and line-range tool reads"}
+{"build":"dae1ed646c3f","note":"Gateway keeps its file handles valid across GC compaction; the debug feed now streams events through outages."}

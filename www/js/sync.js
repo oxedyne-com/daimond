@@ -1208,6 +1208,17 @@
 		adoptVersion(j.version | 0, preRead);
 		reapplyDone();				// a clean apply settles any re-pull that was armed.
 		unjam();
+		// TRAINING WHEELS — remove with the DEBUG_SHARE module. The debug feed's
+		// `sync`, pull half: direction, the version this device moved to, and the
+		// round trip. Counts and versions only -- never a section's contents, which
+		// are the chats. A no-op unless the share switch is on. Lifts out in one
+		// grep of `DEBUG_SHARE`.
+		try {
+			if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
+				DEBUG_SHARE.event('sync', { dir: 'pull', to: serverVersion | 0,
+					ms: Date.now() - tGet, from: String(j.device || '').slice(0, 12) });
+			}
+		} catch (e) { /* the feed must never break a sync */ }
 		// A pull working says nothing about whether this device's own parcel will
 		// EVER leave -- a GET is served to everyone, a push is not -- so a standing
 		// refusal stays on the chip rather than being painted over with "Synced".
@@ -1301,7 +1312,27 @@
 					// condition gates both, so what cannot be merged cannot be
 					// declared.
 					var mayCommit = !!(DaimondCore.syncMayCommitChunks && DaimondCore.syncMayCommitChunks());
-					if (!mayCommit) log('chunk index not merged on this device — not committing a live set');
+					// TRAINING WHEELS — the debug feed's `sync`, COMMIT half. A device
+					// whose chunk index has not merged refuses every commit and says so
+					// only to a console nobody is reading; that state is what stood
+					// behind a lost turn, so each of the four outcomes is now an event.
+					// Lifts out in one grep of `DEBUG_SHARE`.
+					var dsCommit = function (outcome, why) {
+						try {
+							if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
+								var ev = { dir: 'push', commit: outcome, at: serverVersion | 0 };
+								if (why) ev.why = why;
+								DEBUG_SHARE.event('sync', ev);
+							}
+						} catch (e) { /* the feed must never break a sync */ }
+					};
+					if (!mayCommit) {
+						// NAME THE CONDITION. Which of the three it is decides what the
+						// user can do about it, and the line said only that something was.
+						var why = (DaimondCore.syncCommitBlockedReason && DaimondCore.syncCommitBlockedReason()) || 'unknown';
+						log('chunk index not merged on this device — not committing a live set (' + why + ')');
+						dsCommit('refused', why);
+					}
 					else {
 						try {
 							if (window.DaimondChunks && state.chunked) {
@@ -1312,14 +1343,23 @@
 								// happened from one that did not.
 								var swept = await DaimondChunks.commit(state.chunked, serverVersion, tiers);
 								if (!swept) log('chunk commit refused at version', serverVersion);
+								dsCommit(swept ? 'swept' : 'refused-by-gateway');
 							}
 						}
-						catch (e) { log('chunk commit failed', e); }
+						catch (e) { log('chunk commit failed', e); dsCommit('failed'); }
 					}
 					tooLarge = false;					// whatever would not fit, fits now
 					unjam();							// and whatever would not reconcile, has
 					noteSynced();
 					setStatus('synced', t('sync.synced'), 2200);
+					// TRAINING WHEELS — the debug feed's `sync`, push half. The parcel's
+					// SIZE in bytes and the version it landed at; never its contents.
+					try {
+						if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
+							DEBUG_SHARE.event('sync', { dir: 'push', to: serverVersion | 0,
+								bytes: (plain && plain.length) | 0, tries: attempt + 1 });
+						}
+					} catch (e) { /* the feed must never break a sync */ }
 					log('pushed version', serverVersion);
 					return;
 				}

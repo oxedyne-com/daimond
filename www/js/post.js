@@ -981,9 +981,15 @@
 	async function snapshotRefs() {
 		if (!_st) return null;
 		var rec = JSON.parse(JSON.stringify(_st));
+		// ...and whether this device may DECLARE what it uploads. The gateway sweeps
+		// every held chunk the committed index does not name, and only a device that
+		// merged that index may commit it, so a message tail offloaded from a device
+		// that cannot commit is deleted a day later with the parcel still pointing at
+		// it. Same seam the Diamond and chat collectors use (`offloadAllowed`).
 		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
 			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
-			&& DaimondCloud.contentGet && DaimondCloud.contentSet);
+			&& DaimondCloud.contentGet && DaimondCloud.contentSet
+			&& window.DaimondCore && DaimondCore.syncMayCommitChunks && DaimondCore.syncMayCommitChunks());
 		if (!canOffload) return rec;
 		var msgs = rec.msgs || {};
 		var addrs = Object.keys(msgs);

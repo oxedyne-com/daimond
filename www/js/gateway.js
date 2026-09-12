@@ -678,14 +678,47 @@
 			&& FORGE_401.indexOf(body.error) !== -1);
 	}
 
-	/// The one gateway request, as described above.
+	// TRAINING WHEELS -- remove with the DEBUG_SHARE module. Every gateway call in
+	// the app goes through `gwFetch`, so this is the ONE place a failed one can be
+	// recorded for the debug feed: the path (query stripped), the status and how
+	// long it took. NEVER the request body -- that carries the sync parcel and the
+	// user's prompt, and this design exists to keep both off the wire. A no-op
+	// unless the share switch is on. Lifts out in one grep of `DEBUG_SHARE`.
+	function dsFetchFail(path, status, ms, err) {
+		try {
+			if (window.DEBUG_SHARE && DEBUG_SHARE.noteFetchFail) {
+				DEBUG_SHARE.noteFetchFail(String(path || '').split('?')[0], status, ms, err);
+			}
+		} catch (e) { /* the feed must never break a gateway call */ }
+	}
+
+	/// The one gateway request, timed, with a failed one recorded for the debug
+	/// feed. A 423 is THIS file's own pause refusal (`refusedReply`) and never
+	/// left the device, so it is not a gateway failure and is not reported; every
+	/// other non-2xx is, and so is a fetch that threw, which is the case the seed
+	/// went blind on because it had no durable buffer to write it into.
+	async function gwFetch(path, opts, own) {
+		var t0 = Date.now();
+		var r;
+		try { r = await gwFetchNet(path, opts, own); }
+		catch (e) {
+			dsFetchFail(path, 0, Date.now() - t0, (e && e.message) || String(e));
+			throw e;
+		}
+		if (r && (r.status < 200 || r.status >= 300) && r.status !== 423) {
+			dsFetchFail(path, r.status, Date.now() - t0, '');
+		}
+		return r;
+	}
+
+	/// The request itself, as described above.
 	///
 	/// # Arguments
 	/// * `path` - The gateway path, query and all.
 	/// * `opts` - The `fetch` options, reused as given on the retry.
 	/// * `own`  - True when `bootstrap()` is making this call ITSELF, which is
 	///            the one case that must not renew. See the note above.
-	async function gwFetch(path, opts, own) {
+	async function gwFetchNet(path, opts, own) {
 		// A paused node never reaches the network. Here as well as in the guard
 		// over `fetch`, because this is the one copy of the gateway rule and a
 		// reader looking for what a call does looks here.

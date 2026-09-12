@@ -1578,17 +1578,44 @@
 	// wrong merge could still be caught -- swap the merge for freshest-scalar and the
 	// take double-claims. That is on purpose.
 
+	// TRAINING WHEELS — remove with the DEBUG_SHARE module. The debug feed's
+	// `handoff`: the lease IS the hand-off, so its three acts -- claim, release,
+	// rescue -- are the whole of what this device did about somebody else's turn.
+	// Ids (short), the verdict and the reason; never a prompt, an answer, or an
+	// envelope. A no-op unless the share switch is on. Lifts out in one grep of
+	// `DEBUG_SHARE`.
+	function dsHandoff(payload) {
+		try {
+			if (window.DEBUG_SHARE && DEBUG_SHARE.event) DEBUG_SHARE.event('handoff', payload);
+		} catch (e) { /* the feed must never break an arbitration */ }
+	}
+
 	/// TAKE the lease for a turn, based on a parcel snapshot already read. Answers
-	/// `{ won, holder, why }`. Stands down -- never runs -- when a live foreign
-	/// lease exists (the merge drops the claim), when the deadline has passed, or
-	/// when the CAS could not be won in bounds.
+	/// `{ won, holder, why }`. The arbitration is `leaseTakeFromCas` below; this is
+	/// only the reporting skin over it, so a hand-off that stood down leaves a
+	/// trace of having done so.
+	async function leaseTakeFrom(snap, turnId, opts, cas, nowFn) {
+		var res = await leaseTakeFromCas(snap, turnId, opts, cas, nowFn);
+		dsHandoff({
+			act:    'claim',
+			turn:   String(turnId).slice(0, 24),
+			won:    res && res.won ? 1 : 0,
+			holder: String((res && res.holder) || '').slice(0, 12),
+			why:    String((res && res.why) || '').slice(0, 16),
+		});
+		return res;
+	}
+
+	/// The arbitration. Stands down -- never runs -- when a live foreign lease
+	/// exists (the merge drops the claim), when the deadline has passed, or when
+	/// the CAS could not be won in bounds.
 	///
 	/// The fold is `mergeLeases(MY claim /*local*/, server leases /*incoming*/)`:
 	/// the server's existing foreign lease is the INCOMING that beats my fresh
 	/// claim, so the merge -- and nothing else -- decides the race. This argument
 	/// order is load-bearing; reversed, a loser would keep its own claim and double
 	/// bill, which is exactly what the freshest-scalar mutation test proves.
-	async function leaseTakeFrom(snap, turnId, opts, cas, nowFn) {
+	async function leaseTakeFromCas(snap, turnId, opts, cas, nowFn) {
 		var o = opts || {};
 		var holder = String(o.holder || '');
 		var tid    = String(turnId);
@@ -1697,9 +1724,21 @@
 	}
 
 	/// COMPLETE (mode 'done') or RELEASE (mode 'released', which is vacant) a lease
-	/// this device holds. `release` is also how the phone takes a turn back from a
-	/// live peer (§3.3): the peer's read-only liveness check sees it released and aborts.
+	/// this device holds, with the act reported to the debug feed.
 	async function leaseSet(turnId, holder, mode, cas, nowFn) {
+		var res = await leaseSetCas(turnId, holder, mode, cas, nowFn);
+		dsHandoff({
+			act:  mode === 'released' ? 'release' : 'complete',
+			turn: String(turnId).slice(0, 24),
+			ok:   res && res.ok ? 1 : 0,
+			why:  String((res && res.why) || '').slice(0, 16),
+		});
+		return res;
+	}
+
+	/// The write itself. `release` is also how the phone takes a turn back from a
+	/// live peer (§3.3): the peer's read-only liveness check sees it released and aborts.
+	async function leaseSetCas(turnId, holder, mode, cas, nowFn) {
 		var tid = String(turnId), h = String(holder);
 		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
 			var snap = await cas.read();
@@ -1728,6 +1767,18 @@
 	/// cleanly. `renewedAt` is stamped now so the same-holder merge keeps the released
 	/// record over the peer's live one.
 	async function leaseRevoke(turnId, cas, nowFn) {
+		var res = await leaseRevokeCas(turnId, cas, nowFn);
+		dsHandoff({
+			act:  'rescue',
+			turn: String(turnId).slice(0, 24),
+			ok:   res && res.ok ? 1 : 0,
+			why:  String((res && res.why) || '').slice(0, 16),
+		});
+		return res;
+	}
+
+	/// The write itself.
+	async function leaseRevokeCas(turnId, cas, nowFn) {
 		var tid = String(turnId);
 		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
 			var snap = await cas.read();
