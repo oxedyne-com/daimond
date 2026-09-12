@@ -54,6 +54,14 @@
 
 	var PATH        = '/api/chunk';
 	var HAVE_BATCH  = 64;							// Upload at most this many pieces per request.
+	// How many addresses one `have` query carries. The gateway takes 20,000 in a
+	// batch (`MAX_HAVE_BATCH`, gateway/src/handlers/chunk.rs) under a 16 MiB body
+	// cap, but Steel's front door ahead of it is the tighter ceiling at 8 MiB, and
+	// the presence sweep asks about EVERY address the account's manifests name --
+	// hundreds for one large file, thousands for a store. 2,000 hex addresses is
+	// about 134 kB of JSON, far under either door, and a bigger store simply takes
+	// more than one call.
+	var HAVE_QUERY_BATCH = 2000;
 
 	function log(/* ...args */) {
 		try { if (window.console && console.debug) console.debug.apply(console, ['[chunks]'].concat([].slice.call(arguments))); }
@@ -141,12 +149,39 @@
 		return { status: r.status, json: j };
 	}
 
-	/// Of the given addresses, those the gateway does not hold.
+	/// Of the given addresses, those the gateway does not hold, and whether it
+	/// actually answered.
+	///
+	/// `ok` false means the QUESTION COULD NOT BE PUT -- unreachable, refused,
+	/// a body that came back as something other than a list -- and not that the
+	/// store holds nothing. The two callers want opposite things from that.
+	/// `offloadFile` reads an unanswered query as "holds none", because being
+	/// wrong there costs one re-upload and never a file. The manifest-presence
+	/// sweep in daimond.js reads it as "say nothing": on the same reading it
+	/// would re-offload every Diamond, chat and file the account has, on a
+	/// moment's network trouble. Neither answer is right for both, so this
+	/// carries the distinction rather than deciding it.
+	async function presence(addrs) {
+		var out = { ok: true, missing: [] }, list = addrs || [];
+		for (var i = 0; i < list.length; i += HAVE_QUERY_BATCH) {
+			var slice = list.slice(i, i + HAVE_QUERY_BATCH);
+			var res = await call({ op: 'have', addrs: slice });
+			if (res.status !== 200 || !res.json || !Array.isArray(res.json.missing)) {
+				out.ok = false;
+				out.missing = out.missing.concat(slice);
+				continue;
+			}
+			out.missing = out.missing.concat(res.json.missing);
+		}
+		return out;
+	}
+
+	/// Of the given addresses, those the gateway does not hold, reading an
+	/// unanswered query as "holds none" -- see `presence` for why that is the
+	/// right reading HERE and the wrong one for the presence sweep.
 	async function missing(addrs) {
-		if (!addrs.length) return [];
-		var res = await call({ op: 'have', addrs: addrs });
-		if (res.status !== 200 || !res.json || !Array.isArray(res.json.missing)) return addrs.slice();
-		return res.json.missing;
+		if (!addrs || !addrs.length) return [];
+		return (await presence(addrs)).missing;
 	}
 
 	/// Upload a batch of {addr, blob} pieces.
@@ -1028,6 +1063,11 @@
 		materialiseStream: materialiseStream,	// (manifest, write) -> bool
 		materialiseBytes:  materialiseBytes,	// (manifest) -> Uint8Array|null, one item whole
 		materialiseV1:     materialiseV1,		// (manifest) -> text|null, old files only
+		/// Which of these addresses the gateway no longer holds, batched, and
+		/// whether it answered at all: `{ok, missing}`. Read by the
+		/// manifest-presence sweep in daimond.js, which stands still rather than
+		/// re-uploading the account when `ok` is false.
+		presence:          presence,
 		chunkSizeFor:      chunkSizeFor,
 		commit:            commit,				// ({path: manifest}, version) -> {swept,...}|null
 		/// A deletion this client declined to confirm, carried out on a person's
@@ -1046,5 +1086,8 @@
 		_b64urlEncode: b64urlEncode,
 		_b64urlDecode: b64urlDecode,
 		_sha256Hex:    sha256Hex,
+		/// The fail-OPEN reading of the same query, the one `offloadFile` uses.
+		/// Exposed only so a test can hold the two readings side by side.
+		_missing:      missing,
 	};
 })();

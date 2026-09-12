@@ -5362,6 +5362,87 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return out;
 	}
 
+	/// Check the manifests the collectors are about to REUSE against the store
+	/// that is meant to be holding them, once for the whole push, and drop any
+	/// whose chunks have gone -- so the item is offloaded again from the copy on
+	/// this device rather than its dead addresses being re-sent for ever.
+	///
+	/// THE COLLECTORS REUSE ON A CHANGE-KEY, NEVER ON PRESENCE. A Diamond whose
+	/// `touched` has not moved, a chat whose transcript fingerprints the same, a
+	/// file of the same size and mtime: each hands back the stored manifest
+	/// without asking whether the gateway still holds a byte of what it names.
+	/// That is right while a store is a store, and wrong from the moment a sweep
+	/// has taken a chunk, because no round after that ever asks again. Eighteen
+	/// addresses of one account's committed index were in exactly that state, on
+	/// every push, and every device that pulled those chats showed them empty.
+	///
+	/// ONE QUESTION FOR THE WHOLE PUSH. Every address every reusable manifest
+	/// names goes through `DaimondChunks.presence` in batches of `HAVE_QUERY_BATCH`
+	/// (js/chunks.js, 2,000 -- about 134 kB of JSON against the 8 MiB front door),
+	/// so a quiet round costs a call or two and never one per item.
+	///
+	/// AND IT FAILS SAFE. An unanswered `have` is not evidence of absence, and
+	/// reading it as one would re-upload the whole account the first time the
+	/// network hiccupped -- a far worse round than the one this fixes. So an
+	/// unanswered query reuses every manifest exactly as before, and says so.
+	///
+	/// A WORKSPACE PATH IS DROPPED ONLY WHERE THIS DEVICE HOLDS THE FILE, because
+	/// dropping is half a fix and the re-offload is the other half: a path
+	/// resident in cloud storage alone has nothing here to offload, and forgetting
+	/// its manifest would only take away the reference. A `.synced` sidecar, an
+	/// `@m/` mail manifest and a `.peer` entry are left alone for that same
+	/// reason -- no local content answers for any of them.
+	async function verifyManifestPresence() {
+		if (!window.DaimondCloud || !window.DaimondChunks || !DaimondChunks.presence) return;
+		if (!DaimondCloud.available || !DaimondCloud.available()) return;
+		var ix = DaimondCloud.index(), keys = Object.keys(ix);
+		var addrs = [], owners = {}, reusable = 0;
+		for (var i = 0; i < keys.length; i++) {
+			var k = keys[i], m = ix[k];
+			if (!m || !Array.isArray(m.chunks) || !m.chunks.length) continue;
+			// Only what this device could offload again if the answer is bad.
+			if (/\.peer$/.test(k) || /\.synced$/.test(k) || /^@m\//.test(k)) continue;
+			reusable++;
+			for (var c = 0; c < m.chunks.length; c++) {
+				var a = m.chunks[c] && m.chunks[c].addr;
+				if (!a) continue;
+				if (!owners[a]) { owners[a] = []; addrs.push(a); }
+				owners[a].push(k);
+			}
+		}
+		if (!addrs.length) return;
+		var res = null;
+		try { res = await DaimondChunks.presence(addrs); }
+		catch (e) { res = null; }
+		if (!res || !res.ok) {
+			// Said, not swallowed: a push that could not put the question is a push
+			// whose reuse is unverified, and the next one asks again.
+			clog('manifest presence unanswered: ' + reusable + ' manifest(s) reused unchecked');
+			return;
+		}
+		var stale = {}, n = 0;
+		for (var mi = 0; mi < res.missing.length; mi++) {
+			var own = owners[res.missing[mi]];
+			if (!own) continue;						// an address nothing names: not ours to mind
+			n++;
+			for (var oi = 0; oi < own.length; oi++) stale[own[oi]] = 1;
+		}
+		if (!n) return;
+		var sk = Object.keys(stale), dropped = 0;
+		for (var si = 0; si < sk.length; si++) {
+			var key = sk[si];
+			if (!/^@[dc]\//.test(key)) {
+				var f = null;
+				try { f = await DaimondCloud.fileAt(key); } catch (e) { f = null; }
+				if (!f) continue;					// nothing here to offload again
+			}
+			if (DaimondCloud.contentForget && DaimondCloud.contentForget(key)) dropped++;
+		}
+		clog('manifest refs missing: ' + n + ', re-offloading ' + dropped + ' item(s)');
+		trail('sync manifest stale', n + ' ref(s), ' + dropped + ' item(s) re-offloading');
+		dsEvent('sync', { dir: 'push', refs_missing: n, reoffload: dropped });
+	}
+
 	async function collectSync() {
 		// persistChats() nudges the sync engine, and this IS the sync engine
 		// asking for the parcel: without the flag every push would arm the next
@@ -5369,6 +5450,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		packingParcel = true;
 		try { persistChats(); }
 		finally { packingParcel = false; }
+		// Before anything is reused: are the stored manifests still backed by
+		// chunks the gateway holds? A manifest that survives its content is the
+		// one thing every collector below takes on trust.
+		await verifyManifestPresence();
 		// Size the Diamonds FIRST, so the room their `@d/` references need is reserved
 		// out of the parcel BEFORE the files spend against it. A heavy workspace can then
 		// no longer fill the parcel and leave the references nothing — the bug that named
@@ -5489,6 +5574,62 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		};
 	}
 
+	/// Record, beside our own manifest, the chunk addresses a PEER's parcel named
+	/// for this chat -- so the index this device commits NAMES them and the
+	/// gateway's sweep leaves them standing.
+	///
+	/// THE UNION IS A THIRD TRANSCRIPT. A device that merges a peer's messages
+	/// into a copy it already holds keeps neither side's manifest: it re-offloads
+	/// the union under addresses of its own, and until now its committed index
+	/// named only those. The gateway deletes every chunk the committing index
+	/// does not name, so the phone's push swept the desktops' uploads of the very
+	/// same conversation -- identical content at two sets of addresses, because a
+	/// seal draws a fresh IV per device, and one set gone on every round. That is
+	/// the divergence `dev/verify_contentoffload.mjs` names as invariant 3b's
+	/// residual; this closes the sweep half of it.
+	///
+	/// BOUNDED BY CONSTRUCTION. One entry per chat, holding exactly the refs the
+	/// LATEST pulled parcel carried for it and OUR OWN manifest does not already
+	/// name -- replaced on every pull, never appended to. Dropped when nothing is
+	/// left to add: the parcel carried no reference (the peer's transcript now
+	/// rides inline, or it dropped the chat), or the reference was adopted as our
+	/// own `@c/<id>`, or every address in it is one of ours already. That last
+	/// case is what makes a device's own parcel applied back to itself a no-op,
+	/// which the fixed point in `dev/verify_contentoffload.mjs` rests on. A chat
+	/// the parcel did not mention keeps whatever it has: silence in one parcel is
+	/// not the peer retracting anything.
+	///
+	/// ONLY THE ADDRESSES, deliberately. The record is never read back as a
+	/// manifest -- nothing materialises from it and no collector reuses it -- so
+	/// it carries what the commit needs and no more, and its `size` is the sum of
+	/// what it actually holds so the tier plan weighs it honestly.
+	function notePeerRef(chatId, ref, adoptedAsOwn) {
+		if (!chatId || !window.DaimondCloud || !DaimondCloud.peerKey) return;
+		var key = DaimondCloud.peerKey(chatId);
+		try {
+			var novel = [], bytes = 0;
+			if (ref && !adoptedAsOwn) {
+				var ours = {}, own = DaimondCloud.contentGet('@c/' + chatId);
+				((own && own.chunks) || []).forEach(function (c) { if (c && c.addr) ours[c.addr] = 1; });
+				(ref.chunks || []).forEach(function (c) {
+					if (!c || !c.addr || ours[c.addr]) return;
+					novel.push({ addr: c.addr, size: c.size | 0 });
+					bytes += c.size | 0;
+				});
+			}
+			if (!novel.length) {
+				if (DaimondCloud.contentForget) DaimondCloud.contentForget(key);
+				return;
+			}
+			DaimondCloud.contentSet(key, {
+				v:      ref.v,
+				size:   bytes,
+				chunks: novel,
+				peer:   true,		// declared live, never reused as a manifest.
+			});
+		} catch (e) { /* an index that would not write is retried next pull */ }
+	}
+
 	/// Merge the chats out of a pulled parcel. Tombstones union first so a
 	/// deletion on either device wins; then remote chats merge into stored chats
 	/// by the same freshest-wins, union-the-transcript rule the cross-tab path
@@ -5577,6 +5718,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// same transcript -- the reference's content key matches the one stored
 			// beside our own copy -- there is nothing to fetch and nothing to union.
 			// Otherwise fetch, decode and parse this one, then let the bytes go.
+			// WHAT THE PARCEL CARRIED, read before the merge nulls it. A chat with
+			// no reference in THIS parcel is a chat whose peer no longer names any
+			// chunk for it, and `notePeerRef` drops the entry on that; a chat the
+			// parcel never mentioned at all is left alone, because silence in an
+			// asymmetric topology is not a retraction.
+			var carried = (src.messagesRef && Array.isArray(src.messagesRef.chunks)
+				&& src.messagesRef.chunks.length) ? src.messagesRef : null;
+			var adoptedAsOwn = false;
 			if (r.messagesRef && !Array.isArray(r.messages)) {
 				var incomingRef = r.messagesRef;
 				var willUnion = !!byId[r.id];			// a local copy this transcript will merge into
@@ -5617,11 +5766,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 								chunks: incomingRef.chunks,
 								fp:     fileHash(JSON.stringify(r.messages)),
 							});
+							adoptedAsOwn = true;
 						} catch (e) { /* the collector will re-offload; only efficiency is lost */ }
 					}
 				}
 				r.messagesRef = null;
 			}
+			notePeerRef(r.id, carried, adoptedAsOwn);
 			var st = byId[r.id];
 			if (!st) {
 				// A chat this device had NO record of. Adopted wholesale -- the
@@ -38745,6 +38896,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// spending money, and only then asks for the passphrase.
 	/// One line in the durable trail. See www/js/breadcrumb.js.
 	function trail(w, d) { try { window.DaimondTrail.note(w, d); } catch (e) {} }
+	/// One line in the chunk transport's voice. The presence sweep lives here
+	/// rather than in js/chunks.js -- it needs the cloud index and the collectors'
+	/// change-keys -- but it is part of that story, so it greps with it.
+	function clog(msg) {
+		try { if (window.console && console.debug) console.debug('[chunks] ' + msg); } catch (e) {}
+	}
 
 	/// One line in the opt-in diagnostics ring (www/js/diag.js). A NO-OP when
 	/// Diagnostics is off -- `DaimondDiag.log` returns on its first line then --

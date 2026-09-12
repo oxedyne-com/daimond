@@ -140,16 +140,36 @@
 	/// still exists, so a deleted item's manifest does not linger and go on
 	/// naming chunks nothing refers to. Writes only when something actually goes,
 	/// so a collect where nothing was deleted leaves the index byte-identical.
+	///
+	/// A `.peer` sidecar is reaped WITH ITS ITEM, never on its own: the id it is
+	/// judged by is the item's, with the suffix taken off. Without that the chat
+	/// collector -- which enumerates chat ids, not sidecar keys -- deleted every
+	/// peer entry on the very collect that was meant to commit it, which is the
+	/// whole of what the entry exists to stop.
 	function contentReap(prefix, live) {
 		var ix = index(), changed = false;
 		Object.keys(ix).forEach(function (k) {
 			if (k.slice(0, prefix.length) !== prefix) return;
-			var id = k.slice(prefix.length);
+			var id = k.slice(prefix.length).replace(/\.peer$/, '');
 			if (!live || !live[id]) { delete ix[k]; changed = true; }
 		});
 		if (changed) setIndex(ix);
 		return changed;
 	}
+
+	/// The index key under which a chat records the chunk addresses a PEER's
+	/// parcel named for it -- the addresses this device did not upload, will not
+	/// upload, and until now did not declare.
+	///
+	/// WHY IT HAS TO EXIST. A device that unions a peer's transcript into a copy
+	/// it already holds keeps neither side's manifest: the union is a third
+	/// transcript, so it re-offloads under addresses of its own and its committed
+	/// index names only those. The gateway sweeps every chunk the committing
+	/// index does not name, so the phone's commit deleted the desktops' uploads
+	/// -- an identical transcript at two sets of addresses, one of them swept, on
+	/// every round. Naming the peer's addresses beside our own costs a few
+	/// hundred bytes of index and closes it.
+	function peerKey(chatId) { return '@c/' + chatId + '.peer'; }
 
 	/// The manifest for a path, or null if cloud storage does not hold it.
 	function manifest(path) {
@@ -790,6 +810,7 @@
 		contentSet:   contentSet,
 		contentForget: contentForget,
 		contentReap:  contentReap,
+		peerKey:      peerKey,
 		fetch:        fetchDown,
 		evict:        evict,
 		pin:          pin,

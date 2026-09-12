@@ -1,1 +1,1 @@
-{"build":"efaae4ebc6db","note":"The debug feed now carries every console line, and the gateway keeps fourteen days of trace history."}
+{"build":"76d530495e5c","note":"Chats reuse only chunks the server still holds, and a device names the chunks it merged from a peer."}

@@ -1,7 +1,7 @@
 // verify_contentoffload.mjs — the v3 content offload: large Diamonds and chat
 // transcripts move out to content-addressed chunks and leave a `dataRef` /
 // `messagesRef` inline, under reserved `@d/<id>` / `@c/<id>` manifests co-located
-// in the cloud index. This attacks the six invariants that guard it.
+// in the cloud index. This attacks the eight invariants that guard it.
 //
 // The chunk store is STUBBED at `DaimondGateway.gwFetch` (the same late-bound
 // hook verify_chunks tier 1 uses) with an in-memory content-addressed map, so
@@ -24,6 +24,10 @@
 //   5. MATERIALISE-ON-DEMAND — strict-older / identical-key means zero getChunk;
 //      a missing chunk lands metadata-only, non-destructively.
 //   6. TIER — content keys sort ahead of files in the tier plan.
+//   7. PRESENCE — a manifest reused on its change-key is checked against the store
+//      before its addresses are re-sent, and an unanswered check reuses it as before.
+//   8. THE PEER'S REFS — a device that unions a peer's chat names the peer's chunk
+//      addresses in the index it commits, so its own sweep does not delete them.
 import { open } from './harness.mjs';
 
 const ok = [], bad = [];
@@ -366,10 +370,10 @@ try {
 		`sameKey=${residual.sameKey} sameAddrs=${residual.sameAddrs}`);
 	note(`device-B union addrs ${JSON.stringify(residual.addrB)}`);
 	note(`other-device union addrs ${JSON.stringify(residual.addrOther)}`);
-	note('CONSEQUENCE: each device commits only its own addresses as live; the gateway,');
-	note('sweeping every chunk the committing index does not name, can delete the other');
-	note('device\'s copy of an identical transcript. Not parcel churn (the key-check');
-	note('converges in ~2 rounds) but cross-device chunk divergence with a sweep hole.');
+	note('CONSEQUENCE: each device offloads the union under addresses of its own, so two');
+	note('copies of one transcript sit in the store. The SWEEP half of that is closed —');
+	note('the committing index now names the peer\'s addresses too (invariant 8) — and what');
+	note('is left is the duplication itself, which costs storage and never a transcript.');
 
 	// ═══════════════════════════════════════════════════════════════
 	// INVARIANT 4 — the iOS parcel ceiling
@@ -538,6 +542,213 @@ try {
 	});
 	check('content sorts ahead of files: an allowance covering content keeps Diamonds/chats free',
 		ordering.contentAllFree === true, `contentAllFree=${ordering.contentAllFree}, file(${ordering.fileKey})=${ordering.filePaid ? 'paid' : 'free/none'}`);
+
+
+	// ═══════════════════════════════════════════════════════════════
+	// INVARIANT 7 — a reused manifest is checked for PRESENCE
+	// ═══════════════════════════════════════════════════════════════
+	//
+	// The collectors reuse a stored manifest on a change-key -- `touched` for a
+	// Diamond, the transcript fingerprint for a chat, size-and-mtime for a file --
+	// and until now never asked whether the store still held what it named. A swept
+	// chunk therefore had its dead address re-sent on every push for ever, and every
+	// device that pulled the item showed it empty. One account's committed index
+	// named eighteen such addresses.
+	console.log('\n— invariant 7: a reused manifest is checked for presence —');
+
+	// A quiet round first, so every manifest is stored and nothing is owed.
+	await page.evaluate(() => window.DaimondCore.collectSync());
+	await page.evaluate(() => window.__reset());
+	const quiet = await page.evaluate(async () => {
+		const p = await window.DaimondCore.collectSync();
+		return { puts: window.__puts, haves: window.__haves, chats: (p.chats || []).length };
+	});
+	check('A3. everything present: the presence question is asked and NOTHING is re-uploaded',
+		quiet.puts === 0 && quiet.haves > 0, `${quiet.puts} put(s), ${quiet.haves} have call(s)`);
+
+	// Sweep one address out from under a chat whose manifest the collector reuses.
+	const swept = await page.evaluate(() => {
+		const ix = window.DaimondCloud.index();
+		const key = Object.keys(ix).find(k => /^@c\//.test(k) && !/\.peer$/.test(k)
+			&& (ix[k].chunks || []).length);
+		const before = (ix[key].chunks || []).map(c => c.addr);
+		delete window.__store[before[0]];			// the gateway swept it
+		window.__ds = [];
+		window.DEBUG_SHARE = { event: (kind, payload) => window.__ds.push({ kind, payload }) };
+		return { key, before };
+	});
+	note(`swept ${swept.before[0].slice(0, 12)}… from under ${swept.key}`);
+
+	await page.evaluate(() => window.__reset());
+	const healed = await page.evaluate(async (sw) => {
+		const parcel = await window.DaimondCore.collectSync();
+		const cid = sw.key.slice('@c/'.length);
+		const entry = (parcel.chats || []).find(c => c.id === cid);
+		const now = (window.DaimondCloud.contentGet(sw.key) || {}).chunks || [];
+		return {
+			puts:      window.__puts,
+			refAddrs:  ((entry && entry.messagesRef && entry.messagesRef.chunks) || []).map(c => c.addr),
+			nowAddrs:  now.map(c => c.addr),
+			allHeld:   now.every(c => c.addr in window.__store),
+			ds:        window.__ds,
+		};
+	}, swept);
+	check('A1. the manifest naming a swept chunk is re-offloaded',
+		healed.puts > 0 && healed.nowAddrs[0] !== swept.before[0],
+		`${healed.puts} put(s), ${swept.before[0].slice(0, 8)}… → ${(healed.nowAddrs[0] || '').slice(0, 8)}…`);
+	check('A1. and the parcel carries the NEW address, every piece of it held',
+		healed.refAddrs.length > 0
+			&& JSON.stringify(healed.refAddrs) === JSON.stringify(healed.nowAddrs)
+			&& healed.allHeld,
+		`ref ${healed.refAddrs.length} addr(s), all held=${healed.allHeld}`);
+	const ev = (healed.ds || []).find(e => e.kind === 'sync' && e.payload && e.payload.refs_missing);
+	check('A1. and the feed is told how much was missing and how much moved',
+		!!ev && ev.payload.dir === 'push' && ev.payload.refs_missing >= 1 && ev.payload.reoffload >= 1,
+		ev ? `refs_missing=${ev.payload.refs_missing} reoffload=${ev.payload.reoffload}` : 'no event');
+
+	// FAIL SAFE. Sweep another address, then refuse the `have`. An unanswered
+	// question is not evidence of absence: re-uploading the account on a network
+	// hiccup is a far worse round than the one this fixes.
+	const refused = await page.evaluate(async () => {
+		const ix = window.DaimondCloud.index();
+		const key = Object.keys(ix).find(k => /^@c\//.test(k) && !/\.peer$/.test(k)
+			&& (ix[k].chunks || []).length);
+		const before = (ix[key].chunks || []).map(c => c.addr);
+		delete window.__store[before[0]];
+		const real = window.DaimondGateway.gwFetch;
+		window.DaimondGateway.gwFetch = async function (path_, opts) {
+			const body = JSON.parse(opts.body);
+			if (body.op === 'have') { window.__haves++; return { status: 503, json: async () => ({ error: 'busy' }) }; }
+			return real.call(this, path_, opts);
+		};
+		window.__reset();
+		const parcel = await window.DaimondCore.collectSync();
+		window.DaimondGateway.gwFetch = real;
+		const cid = key.slice('@c/'.length);
+		const entry = (parcel.chats || []).find(c => c.id === cid);
+		return {
+			puts:  window.__puts,
+			kept:  JSON.stringify(((entry && entry.messagesRef && entry.messagesRef.chunks) || []).map(c => c.addr))
+					=== JSON.stringify(before),
+			still: JSON.stringify((window.DaimondCloud.contentGet(key) || {}).chunks.map(c => c.addr)) === JSON.stringify(before),
+		};
+	});
+	check('A2. a `have` that could not be answered leaves every manifest reused, unchanged',
+		refused.kept === true && refused.still === true, `ref kept=${refused.kept} index kept=${refused.still}`);
+	check('A2. and re-uploads NOTHING — the world is not pushed over a network hiccup',
+		refused.puts === 0, `${refused.puts} put(s)`);
+
+	// And the very next round, once the gateway answers again, does the healing.
+	await page.evaluate(() => window.__reset());
+	const later = await page.evaluate(async () => {
+		await window.DaimondCore.collectSync();
+		const ix = window.DaimondCloud.index();
+		// The Diamonds and chats only: a `.peer` entry is the peer's to heal, and a
+		// workspace path with no file on this device has nothing here to offload
+		// again — both are skipped by the sweep, on purpose.
+		const bad = Object.keys(ix).filter(k => /^@[dc]\/[^.]*$/.test(k))
+			.filter(k => (ix[k].chunks || []).some(c => !(c.addr in window.__store)));
+		return { puts: window.__puts, bad };
+	});
+	check('A2. and the next answered round heals what the refused one left',
+		later.puts > 0 && later.bad.length === 0,
+		`${later.puts} put(s), ${later.bad.length} manifest(s) still naming a missing chunk`);
+
+	// ═══════════════════════════════════════════════════════════════
+	// INVARIANT 8 — a peer's refs are NAMED by the committing index
+	// ═══════════════════════════════════════════════════════════════
+	//
+	// Invariant 3b's residual: two devices that compute the identical union land
+	// the same content key at DIFFERENT addresses, because a seal draws a fresh IV
+	// per device. The device that commits names only its own, and the gateway
+	// sweeps the rest -- so the phone's push deleted the desktops' uploads of the
+	// very same conversation. The peer's refs are now recorded beside our own.
+	console.log('\n— invariant 8: the committing index names the peer\'s refs —');
+
+	const peerRefs = await page.evaluate(async () => {
+		const store = window.DaimondCore.chatStore();
+		const cid = 'peerchat';
+		const mine = [];
+		for (let i = 0; i < 380; i++) mine.push({ role: 'user', content: 'mine ' + i + ' ' + 'p'.repeat(400), mid: 'pm' + i, ts: 2000 + i });
+		const list = store.stored();
+		list.push({ id: cid, name: 'Peer Chat', model: 'mock/fast', updatedAt: 7000, messages: mine, session: null });
+		store.save(list);
+		await window.DaimondCore.collectSync();				// our own manifest exists
+
+		const theirs = [];
+		for (let i = 0; i < 380; i++) theirs.push({ role: 'assistant', content: 'theirs ' + i + ' ' + 'q'.repeat(400), mid: 'pt' + i, ts: 3000 + i });
+		const theirRef = await window.DaimondChunks.offloadBytes('c:' + cid, new TextEncoder().encode(JSON.stringify(theirs)));
+		await window.DaimondCore.applySync({ v: 3, tombs: {}, msgTombs: {}, diamonds: [], diamondTombs: {},
+			chats: [{ id: cid, name: 'Peer Chat', model: 'mock/fast', updatedAt: 7000, messages: null, messagesRef: theirRef, session: null }] });
+
+		const pk = window.DaimondCloud.peerKey(cid);
+		const entry = window.DaimondCloud.index()[pk] || null;
+		const ours  = window.DaimondCloud.contentGet('@c/' + cid) || {};
+		return {
+			cid, pk,
+			theirAddrs: (theirRef.chunks || []).map(c => c.addr),
+			peerAddrs:  ((entry && entry.chunks) || []).map(c => c.addr),
+			ownAddrs:   (ours.chunks || []).map(c => c.addr),
+			adopted:    ours.key === theirRef.key,
+		};
+	});
+	check('B1. after unioning a peer\'s chat the index NAMES the peer\'s refs',
+		peerRefs.peerAddrs.length > 0
+			&& JSON.stringify(peerRefs.peerAddrs) === JSON.stringify(peerRefs.theirAddrs),
+		`peer ${peerRefs.peerAddrs.length} addr(s) under ${peerRefs.pk}`);
+	check('B1. and they are the peer\'s, not ours — the union is still our own manifest',
+		peerRefs.adopted === false
+			&& peerRefs.peerAddrs.every(a => peerRefs.ownAddrs.indexOf(a) < 0),
+		`adopted=${peerRefs.adopted}`);
+
+	const committed = await page.evaluate(async (pr) => {
+		window.__reset();
+		const parcel = await window.DaimondCore.collectSync();
+		const tiers = window.DaimondCloud.tierPlan(window.DaimondCloud.allowance());
+		await window.DaimondChunks.commit(parcel.chunked, 1, tiers);
+		const body = window.__commits[window.__commits.length - 1] || { chunks: [] };
+		const named = new Set((body.chunks || []).map(c => c.addr));
+		const ours = (window.DaimondCloud.contentGet('@c/' + pr.cid) || {}).chunks || [];
+		return {
+			peerNamed: pr.peerAddrs.every(a => named.has(a)),
+			ownNamed:  ours.map(c => c.addr).every(a => named.has(a)),
+			entries:   (body.chunks || []).length,
+		};
+	}, peerRefs);
+	check('B2. the commit payload names the peer\'s addresses, so the sweep leaves them',
+		committed.peerNamed === true, `${committed.entries} live entries`);
+	check('B2. alongside our own union\'s — both copies survive the same commit',
+		committed.ownNamed === true);
+
+	const pruned = await page.evaluate(async (pr) => {
+		// The peer's NEXT parcel carries a different reference for the same chat:
+		// the entry is replaced, never appended to.
+		const other = [];
+		for (let i = 0; i < 400; i++) other.push({ role: 'assistant', content: 'later ' + i + ' ' + 'z'.repeat(400), mid: 'pl' + i, ts: 4000 + i });
+		const ref2 = await window.DaimondChunks.offloadBytes('c:' + pr.cid, new TextEncoder().encode(JSON.stringify(other)));
+		await window.DaimondCore.applySync({ v: 3, tombs: {}, msgTombs: {}, diamonds: [], diamondTombs: {},
+			chats: [{ id: pr.cid, name: 'Peer Chat', model: 'mock/fast', updatedAt: 7001, messages: null, messagesRef: ref2, session: null }] });
+		const after2 = window.DaimondCloud.index()[pr.pk] || null;
+		const addrs2 = ((after2 && after2.chunks) || []).map(c => c.addr);
+
+		// And a parcel that carries the transcript INLINE names no chunk at all,
+		// so the entry goes: the peer no longer refers to anything.
+		await window.DaimondCore.applySync({ v: 3, tombs: {}, msgTombs: {}, diamonds: [], diamondTombs: {},
+			chats: [{ id: pr.cid, name: 'Peer Chat', model: 'mock/fast', updatedAt: 7002, messages: other, session: null }] });
+		const after3 = window.DaimondCloud.index()[pr.pk] || null;
+		return {
+			replaced: JSON.stringify(addrs2) === JSON.stringify((ref2.chunks || []).map(c => c.addr)),
+			kept:     addrs2.length,
+			carried:  (ref2.chunks || []).length,
+			held:     pr.peerAddrs.some(a => addrs2.indexOf(a) >= 0),
+			gone:     after3 === null,
+		};
+	}, peerRefs);
+	check('B3. the peer\'s next parcel REPLACES the entry — never more than it carries',
+		pruned.replaced === true && pruned.held === false,
+		`${pruned.kept} kept of ${pruned.carried} carried, stale addrs held=${pruned.held}`);
+	check('B3. and a parcel that references nothing for the chat prunes it away',
+		pruned.gone === true);
 
 } catch (e) {
 	check('no exception during the run', false, String(e && e.stack || e).slice(0, 400));
