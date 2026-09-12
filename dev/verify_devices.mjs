@@ -61,7 +61,12 @@ try {
 		const p = await DaimondCore.collectSync();
 		return {
 			devices: p.devices,
-			id:      localStorage.getItem('daimond-device-id'),
+			id:      DaimondIdentity.deviceId(),
+			// What the OTHER half of the app keys on: presence beats under peer.js's
+			// selfDeviceId, which is identity.js's id. The two must be one.
+			presence:   Object.keys((window.DaimondPresence && DaimondPresence.snapshot()) || {}),
+			identityId: DaimondIdentity.deviceId(),
+			legacyId:   localStorage.getItem('daimond-device-id'),
 			stored:  localStorage.getItem('daimond-devices'),
 		};
 	});
@@ -69,8 +74,16 @@ try {
 	check('the parcel carries a devices roster', !!mine.devices && typeof mine.devices === 'object',
 		JSON.stringify(mine.devices || null).slice(0, 120));
 	check('a fresh install knows exactly one device — itself', ids.length === 1, ids.join(','));
-	check('this device\'s id is 16 hex characters, kept in localStorage',
-		/^[0-9a-f]{16}$/.test(mine.id || ''), String(mine.id));
+	check('this device\'s id is 32 hex characters, kept in localStorage',
+		/^[0-9a-f]{32}$/.test(mine.id || ''), String(mine.id));
+	// ONE id space. The roster used to key on an id of this file's own while presence,
+	// the lease and every errand used identity.js's -- so no roster line was ever found
+	// in presence, every line read stale, and this device's own row read "replaced".
+	check('the roster is keyed by the SAME id presence and the lease use — one id space',
+		mine.id === mine.identityId && mine.presence.indexOf(mine.id) !== -1,
+		'roster=' + String(mine.id) + ' presence=[' + mine.presence.join(',') + ']');
+	check('and nothing is left keyed by the legacy 16-hex id',
+		!mine.legacyId, String(mine.legacyId));
 	check('the roster is keyed by that id', ids[0] === mine.id, ids[0] + ' vs ' + mine.id);
 	const me = (mine.devices || {})[ids[0]] || {};
 	check('its line names the environment, in words', typeof me.name === 'string' && me.name.length > 2,
@@ -84,16 +97,98 @@ try {
 	const s2 = await open({ name: 'devices2', profile: PROFILES[1] });
 	const other = await s2.page.evaluate(async () => {
 		const p = await DaimondCore.collectSync();
-		return { id: localStorage.getItem('daimond-device-id'), devices: p.devices };
+		return { id: DaimondIdentity.deviceId(), devices: p.devices };
 	}).catch(() => null);
 	await s2.close();
 	check('a second install of the same browser mints a DIFFERENT id — nothing is derived from the machine',
-		!!other && /^[0-9a-f]{16}$/.test(other.id) && other.id !== mine.id,
+		!!other && /^[0-9a-f]{32}$/.test(other.id) && other.id !== mine.id,
 		(other && other.id) + ' vs ' + mine.id);
+	// The DESCRIPTION is the environment, so both installs derive the same words -- but
+	// each line's name ends in four hex of its OWN id, or two of a user's Linux Chromes
+	// would be two rows reading identically and a label match could not tell them apart.
 	const otherName = other && ((other.devices || {})[other.id] || {}).name;
+	const stem = (n) => String(n || '').replace(/ \u00b7 [0-9a-f]{4}$/, '');
 	check('but describes itself the same way, because the description IS the environment',
-		typeof otherName === 'string' && otherName.length > 2 && otherName === me.name,
+		typeof otherName === 'string' && stem(otherName).length > 2 && stem(otherName) === stem(me.name),
 		otherName + ' vs ' + me.name);
+	check('while the two derived names still DIFFER — each carries its own id tail',
+		otherName !== me.name && / \u00b7 [0-9a-f]{4}$/.test(String(me.name))
+			&& String(me.name).slice(-4) === String(mine.id).slice(-4),
+		otherName + ' vs ' + me.name);
+
+	// ── (1b) The one-shot legacy-id migration ───────────────────────
+	// A device upgrading across the id unification holds a roster line under the id
+	// this file used to mint. What that line carries -- the name its owner typed, when
+	// the machine was created, which build it was on -- belongs on the identity-id
+	// line, and the old line has to go without a peer handing it back.
+	const mig = await page.evaluate(async () => {
+		const R = DaimondCore.roster;
+		const LEGACY = '569d927e449602ea';		// the width and shape the old mint produced
+		const PEER   = 'aaaa1111bbbb2222';		// another device's labelled line, untouched
+		const ID     = DaimondIdentity.deviceId();
+		const now    = Date.now();
+		['daimond-devices', 'daimond-device-tombs', 'daimond-device-super', 'daimond-nominated']
+			.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+		const reg = {};
+		reg[LEGACY] = { name: 'Google Chrome on Linux', label: 'Kitchen laptop',
+			created: now - 9e8, namedAt: now - 8e8, seen: now - 1e6, build: 'abc1234def56' };
+		reg[PEER]   = { name: 'Safari on iOS', label: 'Phone', created: now - 9e8,
+			namedAt: now - 7e8, seen: now - 2e6, build: '' };
+		try { localStorage.setItem('daimond-devices', JSON.stringify(reg)); } catch (e) {}
+		try { localStorage.setItem('daimond-device-id', LEGACY); } catch (e) {}
+		R.nominate(LEGACY);						// the star, on the id about to be retired
+		const out = { LEGACY, PEER, ID };
+		const after = await DaimondCore.collectSync();
+		out.devices   = after.devices;
+		out.stored    = R.load();
+		out.supers    = R.supers();
+		out.tombs     = Object.keys(DaimondCore.tombs('daimond-device-tombs'));
+		out.nominee   = R.nominee();
+		out.legacyKey = localStorage.getItem('daimond-device-id');
+		// Idempotent: a second collect must not mint the legacy line back or move the star.
+		await DaimondCore.collectSync();
+		out.stored2  = R.load();
+		out.nominee2 = R.nominee();
+		// And a peer still holding the old line re-offers it on the next pull. The
+		// tombstone is what stops the add-only union handing it back.
+		const inc = {};
+		inc[LEGACY] = { name: 'Google Chrome on Linux', label: 'Kitchen laptop',
+			created: now - 9e8, namedAt: now - 8e8, seen: now - 1e6, build: 'abc1234def56' };
+		R.merge(inc);
+		out.afterMerge = R.load();
+		return out;
+	});
+	check('the legacy line\'s NAME moves onto the identity-id line',
+		!!mig.stored[mig.ID] && mig.stored[mig.ID].label === 'Kitchen laptop',
+		JSON.stringify(mig.stored[mig.ID] || null));
+	check('so do its created, namedAt and build stamps',
+		!!mig.stored[mig.ID] && mig.stored[mig.ID].created < Date.now() - 8e8
+			&& mig.stored[mig.ID].namedAt > 1.7e12,
+		JSON.stringify(mig.stored[mig.ID] || null));
+	check('the legacy line is gone from the roster',
+		!mig.stored[mig.LEGACY], Object.keys(mig.stored).join(','));
+	check('and tombstoned, with a supersession record naming what replaced it',
+		mig.tombs.indexOf(mig.LEGACY) !== -1 && mig.supers[mig.LEGACY] === mig.ID,
+		'tombs=' + mig.tombs.join(',') + ' super=' + JSON.stringify(mig.supers));
+	check('a peer re-offering the old line does NOT resurrect it — nothing re-mints it',
+		!mig.afterMerge[mig.LEGACY], Object.keys(mig.afterMerge).join(','));
+	check('the nomination is re-keyed onto the new id, not left on a tombstoned line',
+		mig.nominee === mig.ID, mig.nominee + ' vs ' + mig.ID);
+	check('the legacy localStorage key is removed, so the migration runs once',
+		!mig.legacyKey, String(mig.legacyKey));
+	check('a second collect changes nothing — the migration is idempotent',
+		!mig.stored2[mig.LEGACY] && mig.nominee2 === mig.ID
+			&& mig.stored2[mig.ID].label === 'Kitchen laptop',
+		Object.keys(mig.stored2).join(',') + ' nominee=' + mig.nominee2);
+	check('a labelled PEER line is untouched by the migration',
+		!!mig.stored[mig.PEER] && mig.stored[mig.PEER].label === 'Phone',
+		JSON.stringify(mig.stored[mig.PEER] || null));
+
+	// Back to a clean roster for the merge checks below, which count what is there.
+	await page.evaluate(() => {
+		['daimond-devices', 'daimond-device-tombs', 'daimond-device-super', 'daimond-nominated']
+			.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+	});
 
 	// ── (2) Byte-stable between real changes ────────────────────────
 	const stable = await page.evaluate(async () => {
@@ -132,7 +227,7 @@ try {
 		} });
 		out.afterFresh = roster();
 		// This device's own line is not rolled back by a stale remote copy of it.
-		const self = localStorage.getItem('daimond-device-id');
+		const self = DaimondIdentity.deviceId();
 		const before = roster()[self];
 		await DaimondCore.applySync({ v: 2, devices: {
 			[self]: { name: 'Somebody else\'s idea', created: 1, seen: 1 },
@@ -345,8 +440,13 @@ try {
 				((b.getAttribute('aria-label') || b.title || b.textContent || '').trim())),
 			rename:  r.querySelectorAll('button.device-rename').length,
 		}));
-		const notes = [...document.querySelectorAll('#admin-home .admin-note')].map(e => e.textContent);
-		return { secs, rows, notes, self: localStorage.getItem('daimond-device-id') };
+		// The caveat under the list became the Devices header's `title` (the prose was
+		// taken off the page on purpose), so BOTH are read: a note that is only hoverable
+		// is still the note, and reading `.admin-note` alone measured nothing.
+		const notes = [...document.querySelectorAll('#admin-home .admin-note')].map(e => e.textContent)
+			.concat([...document.querySelectorAll('#admin-home .admin-sec')].map(e => e.title || ''))
+			.filter(Boolean);
+		return { secs, rows, notes, self: DaimondIdentity.deviceId() };
 	});
 	check('the Admin drawer has a Devices section', view.secs.some(x => /device/i.test(x)),
 		view.secs.join(' | '));
@@ -380,13 +480,23 @@ try {
 	// THE PROPERTY. This list is what has SYNCED, and the note has to say so in
 	// three parts, because every row above it carries a ✕: syncing is what puts
 	// a device here, a device that holds the account without syncing is
-	// therefore MISSING from it (so absence is not proof of no access), and
-	// taking a line off the list does not sign that device out.
+	// therefore MISSING from it (so absence is not proof of no access), and the
+	// note must state the LIMIT of what the ✕ does.
 	//
 	// This was `/sync/ && /appears/` and went red when the copy said "is not
 	// listed" instead of "never appears here" -- the same claim in other words.
 	// `/sync/` alone would pass for a note that called these paired devices and
 	// left a user believing the ✕ revoked one.
+	//
+	// The THIRD clause changed on 2026-09-12, when Remove became real: the gateway
+	// now refuses a removed device's beats, parks and wakes, so "nothing here signs a
+	// device out" became the false sentence and asserting it would have pinned the
+	// copy to a claim the code had stopped making. What is still true, and is what a
+	// user needs told, is the residual limit -- the keys travelled at pairing and
+	// cannot be taken back, so a removed device KEEPS the copy of the work already on
+	// it. The check asserts the honest sentence, whichever way the feature goes: the
+	// note must either say nothing here signs a device out, or say what removing does
+	// NOT take with it.
 	const noteIsHonest = (n) => {
 		const bits = n.split(/(?<=[.!?:;])\s+/);
 		const neg  = /\b(not|no|never|nothing|none|cannot)\b|n[’']t\b/i;
@@ -396,14 +506,17 @@ try {
 			scope:   /sync/i.test(n),
 			// One that holds the account and has not synced is absent from it.
 			absent:  bits.some(b => /sync/i.test(b) && neg.test(b) && list.test(b)),
-			// And nothing on this list ends a device's access.
-			signout: bits.some(b => neg.test(b)
-				&& /\bsigns?[- ]?(a |the )?(device |it )?out\b|\brevokes?\b|\bcuts? off\b|\bdeauthor/i.test(b)),
+			// Either the old truth (nothing here revokes) or the new one (it does, and
+			// here is what it cannot take back).
+			limit:   bits.some(b => neg.test(b)
+					&& /\bsigns?[- ]?(a |the )?(device |it )?out\b|\brevokes?\b|\bdeauthor/i.test(b))
+				|| bits.some(b => /\bkeeps?\b/i.test(b)
+					&& /\bcop(y|ies)\b|\bwork\b|\balready\b/i.test(b)),
 		};
 	};
 	const honest = view.notes.map(noteIsHonest)
-		.find(h => h.scope && h.absent && h.signout);
-	check('and the copy says these are devices that SYNC, that one which has not is missing, and that nothing here signs a device out',
+		.find(h => h.scope && h.absent && h.limit);
+	check('and the copy says these are devices that SYNC, that one which has not is missing, and what removing one cannot take back',
 		!!honest,
 		view.notes.filter(n => /sync|device/i.test(n)).join(' | ').slice(0, 200));
 	// Two of a user's devices can easily describe themselves identically
@@ -428,7 +541,7 @@ try {
 	// This device can be named too, and naming it must not cost it the one mark
 	// that says which line the user is standing on.
 	const selfNamed = await page.evaluate(async () => {
-		const self = localStorage.getItem('daimond-device-id');
+		const self = DaimondIdentity.deviceId();
 		DaimondAdmin.home();
 		const row = [...document.querySelectorAll('#admin-home .device-row')]
 			.find(r => ((r.querySelector('.device-id') || {}).textContent || '') === self.slice(-4));
@@ -463,12 +576,90 @@ try {
 		!!selfNamed && /\w/.test(selfNamed.opened.placeholder) && selfNamed.opened.value === '',
 		JSON.stringify(selfNamed && selfNamed.opened));
 
+	// ── (4b) REMOVAL IS REAL (owner ruling 2026-09-12) ──────────────
+	// The gateway is what enforces a removal -- it refuses the id for presence, for
+	// the post-box park and for the wake relay -- so this page cannot prove the
+	// enforcement (there is no gateway here; `gateway/src/handlers/sync.rs` tests it).
+	// What IS the page's own and IS provable here: the confirm names the device AND
+	// its id tail, the gateway is called BEFORE the roster line is tombstoned, and a
+	// call that fails leaves the line alone rather than hiding a device that is still
+	// running and still taking turns.
+	const removal = await page.evaluate(async () => {
+		const out = {};
+		const self = DaimondIdentity.deviceId();
+		// A second device to remove, named, so the confirm has a label to quote.
+		const reg = JSON.parse(localStorage.getItem('daimond-devices') || '{}');
+		const other = Object.keys(reg).find(id => id !== self);
+		out.other = other || '';
+		if (!other) return out;
+		reg[other].label = 'Old laptop';
+		localStorage.setItem('daimond-devices', JSON.stringify(reg));
+
+		// STUB the gateway door, recording what it was asked and what it answered.
+		const calls = [];
+		const realRemove = DaimondSync.removeDevice;
+		DaimondSync.removeDevice = async (id) => { calls.push(id); return { ok: false }; };
+
+		async function pressRemove() {
+			DaimondAdmin.home();
+			const row = [...document.querySelectorAll('#admin-home .device-row')]
+				.find(r => ((r.querySelector('.device-id') || {}).textContent || '') === other.slice(-4));
+			const btn = row && row.querySelector('.device-remove');
+			if (!btn) return null;
+			btn.click();
+			await new Promise(r => setTimeout(r, 120));
+			const dlg  = document.querySelector('.dlg');
+			const body = dlg ? dlg.innerText.replace(/\s+/g, ' ').trim() : '';
+			const ok   = dlg && dlg.querySelector('.dlg-ok');
+			if (!ok) return { body: body };
+			ok.click();
+			await new Promise(r => setTimeout(r, 220));
+			return { body: body };
+		}
+
+		// 1. A REFUSED call must not tombstone the line.
+		const first = await pressRemove();
+		out.confirm = (first && first.body) || '';
+		out.askedOnFailure = calls.slice();
+		out.stillThere = !!JSON.parse(localStorage.getItem('daimond-devices') || '{}')[other];
+		// Whatever notice it raised, out of the way.
+		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		await new Promise(r => setTimeout(r, 80));
+
+		// 2. A call that SUCCEEDS tombstones it.
+		DaimondSync.removeDevice = async (id) => { calls.push(id); return { ok: true }; };
+		await pressRemove();
+		out.asked = calls.slice();
+		out.gone  = !JSON.parse(localStorage.getItem('daimond-devices') || '{}')[other];
+		out.tombstoned = !!JSON.parse(localStorage.getItem('daimond-device-tombs') || '{}')[other];
+
+		DaimondSync.removeDevice = realRemove;
+		return out;
+	});
+	check('the remove confirm names the device AND its id tail, so the wrong twin is not removed',
+		!!removal.other && /Old laptop/.test(removal.confirm)
+			&& removal.confirm.includes(removal.other.slice(-4)),
+		JSON.stringify(removal.confirm).slice(0, 240));
+	check('it says the removal is real -- not "it reappears the next time it syncs"',
+		/pair it again|pairs? again/i.test(removal.confirm) && !/reappears/i.test(removal.confirm),
+		JSON.stringify(removal.confirm).slice(0, 240));
+	check('the GATEWAY is called, with that device id',
+		Array.isArray(removal.asked) && removal.asked.length === 2
+			&& removal.asked.every(id => id === removal.other),
+		JSON.stringify(removal.asked));
+	check('a gateway call that FAILED leaves the line alone -- a hidden device still taking turns is the bug, not the fix',
+		removal.askedOnFailure.length === 1 && removal.stillThere === true,
+		JSON.stringify({ asked: removal.askedOnFailure, stillThere: removal.stillThere }));
+	check('a call that succeeded tombstones the roster line, so the union merge cannot hand it back',
+		removal.gone === true && removal.tombstoned === true,
+		JSON.stringify({ gone: removal.gone, tombstoned: removal.tombstoned }));
+
 	await shot(s, 'devices-roster');
 
 	// Back to one device: the quiet line has to answer the question in the other
 	// direction too, or a user with one device learns nothing at all.
 	const alone = await page.evaluate(() => {
-		const self = localStorage.getItem('daimond-device-id');
+		const self = DaimondIdentity.deviceId();
 		const keep = JSON.parse(localStorage.getItem('daimond-devices') || '{}')[self];
 		localStorage.setItem('daimond-devices', JSON.stringify({ [self]: keep }));
 		DaimondAdmin.home();
@@ -503,16 +694,16 @@ try {
 		DaimondPairing.stashName('  Kitchen laptop  ');
 		out.stash = localStorage.getItem('daimond-pair-label');
 		// The reload boundary: a device that has just redeemed has no line at all.
-		localStorage.removeItem('daimond-device-id');
+		localStorage.removeItem('daimond-id-device');
 		localStorage.setItem('daimond-devices', '{}');
 		const reg = (await DaimondCore.collectSync()).devices || {};
-		out.self       = reg[localStorage.getItem('daimond-device-id')] || null;
+		out.self       = reg[DaimondIdentity.deviceId()] || null;
 		out.stashAfter = localStorage.getItem('daimond-pair-label');
 		// And the next device to mint a line does not inherit it.
-		localStorage.removeItem('daimond-device-id');
+		localStorage.removeItem('daimond-id-device');
 		localStorage.setItem('daimond-devices', '{}');
 		const reg2 = (await DaimondCore.collectSync()).devices || {};
-		out.second = reg2[localStorage.getItem('daimond-device-id')] || null;
+		out.second = reg2[DaimondIdentity.deviceId()] || null;
 		return out;
 	});
 	check('the redeem dialog offers a name for the device being linked',

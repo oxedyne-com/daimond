@@ -134,6 +134,25 @@ try {
 		return route.continue();
 	});
 
+	// AND THE GATE ACTUALLY BITES ON THIS ENGINE. Every withhold below is a no-op if
+	// `page.route` does not intercept, and a no-op reads as the PRODUCT failing: run
+	// under `DAIMOND_BROWSER=webkit` this file scored 13 ok / 3 failed on a tree whose
+	// default-engine score was 16 / 0, the first red line being "B held the content pull
+	// past 8 s -- aborted content pulls: 0" (measured 2026-09-12). That is the gate
+	// saying nothing, not the runner giving up. So the interception is proven once, on a
+	// throwaway pull, before any property rests on it.
+	{
+		gate.blocking = true;
+		const before = gate.aborted;
+		await b.page.evaluate(() => fetch('/api/sync', { credentials: 'same-origin' })
+			.then(() => null).catch(() => null));
+		gate.blocking = false;
+		check('the network gate intercepts this engine\'s requests (the withholds below are real)',
+			gate.aborted > before, 'aborted on the probe pull: ' + (gate.aborted - before)
+			+ ' (0 means page.route is inert here -- run this file under its default engine)');
+		gate.aborted = 0;
+	}
+
 	const idA = await devId(a.page), idB = await devId(b.page);
 	check('A and B are distinct paired devices of one account', !!idA && !!idB && idA !== idB,
 		JSON.stringify({ idA, idB }));

@@ -1951,13 +1951,17 @@ try {
 	// stay INSIDE the sealed blob while it does. The second device is simulated
 	// the way this file simulates one everywhere else: by swapping what this
 	// browser holds.
-	const DEV_B = 'bbbb2222cccc3333';
+	// Swapping what THIS browser holds means swapping identity.js's own per-device key:
+	// since the id spaces were joined (2026-09-12) that one key is what the roster, the
+	// presence beat and the lease all read, and the roster's old `daimond-device-id` is
+	// read by nothing but its one-shot migration.
+	const DEV_B = 'bbbb2222cccc3333bbbb2222cccc3333';
 	const roster0 = await page.evaluate(() => ({
-		self: localStorage.getItem('daimond-device-id'),
+		self: localStorage.getItem('daimond-id-device'),
 		reg:  localStorage.getItem('daimond-devices') || '{}',
 	}));
 	check('this device is on its own roster before any of it travels',
-		/^[0-9a-f]{16}$/.test(roster0.self || '') && !!JSON.parse(roster0.reg)[roster0.self],
+		/^[0-9a-f]{32}$/.test(roster0.self || '') && !!JSON.parse(roster0.reg)[roster0.self],
 		roster0.reg.slice(0, 120));
 
 	await pushLanded(page, 'the device roster');
@@ -1972,7 +1976,7 @@ try {
 
 	// Device B: another install of the app, which has never seen this roster.
 	const bSaw = await page.evaluate(async (b) => {
-		localStorage.setItem('daimond-device-id', b);
+		localStorage.setItem('daimond-id-device', b);
 		localStorage.setItem('daimond-devices', '{}');
 		await window.DaimondSync.pull();
 		return JSON.parse(localStorage.getItem('daimond-devices') || '{}');
@@ -1983,7 +1987,7 @@ try {
 
 	// Device A again, knowing only itself, exactly as it was left.
 	const aSaw = await page.evaluate(async (r) => {
-		localStorage.setItem('daimond-device-id', r.self);
+		localStorage.setItem('daimond-id-device', r.self);
 		localStorage.setItem('daimond-devices', r.reg);
 		await window.DaimondSync.pull();
 		return JSON.parse(localStorage.getItem('daimond-devices') || '{}');
@@ -2010,7 +2014,7 @@ try {
 		const mine = JSON.parse(localStorage.getItem('daimond-devices') || '{}');
 		const out  = { aBefore: mine[r.self] };
 		// Device B, naming device A's line through the drawer, as a user would.
-		localStorage.setItem('daimond-device-id', r.b);
+		localStorage.setItem('daimond-id-device', r.b);
 		DaimondAdmin.home();
 		const row = [...document.querySelectorAll('#admin-home .device-row')]
 			.find(x => ((x.querySelector('.device-id') || {}).textContent || '') === r.self.slice(-4));
@@ -2046,7 +2050,7 @@ try {
 	// Back to device A, with the roster it had before any of this: its own line
 	// is the FRESHER one, and it still has to take the name.
 	const aNamed = await page.evaluate(async (r) => {
-		localStorage.setItem('daimond-device-id', r.self);
+		localStorage.setItem('daimond-id-device', r.self);
 		localStorage.setItem('daimond-devices', r.reg);
 		const before = JSON.parse(r.reg)[r.self];
 		await window.DaimondSync.pull();

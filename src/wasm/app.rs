@@ -966,6 +966,72 @@ impl DaimondApp {
         self.agent.set_spend_cap_usd(usd);
     }
 
+    /// Hold this agent to a dispatched worker's ceiling, whatever the chat is set to.
+    ///
+    /// **A worker has always run on the chat's own figures**, because `Workers.start` applies the
+    /// user's settings to a worker's app exactly as it does to the chat's, and the only mark that
+    /// ever said a worker was different is [`DaimondApp::set_unsupervised`] -- which governs what
+    /// it may ASK, not what it may spend.  So one dispatched errand inherited 150 rounds times four
+    /// legs, a 120,000-token carry and the whole of the user's per-turn dollar ceiling, with
+    /// several of them running at once and nobody reading any of them.
+    ///
+    /// Every figure is a ceiling rather than a setting -- see
+    /// [`crate::agent::compact::Limits::hold_to_worker`] -- so this may be called before or after
+    /// the chat's settings reach the app and a user's tighter leash is kept either way.  One-way,
+    /// like [`DaimondApp::set_unsupervised`].
+    pub fn set_worker_limits(&self) {
+        self.agent.set_worker_limits();
+    }
+
+    /// Set the compaction and worker-preset figures from one flat JSON object.
+    ///
+    /// One door for a dozen knobs that were compile-time constants until 2026-09-12, so that the
+    /// tune loop in `dev/tune/` can turn each measure off and say what it was worth.  Absent keys
+    /// and zeroes are left alone, so `{}` changes nothing and the shipped defaults live in
+    /// `compact.rs` rather than being restated in the page.
+    ///
+    /// # Arguments
+    /// * `json` - A flat JSON object; empty changes nothing.
+    ///
+    /// # Errors
+    /// Rejects text that is not an object rather than silently tuning nothing: a settings string
+    /// with a typo in it that quietly measures the default is how an arm reports a figure about
+    /// the wrong engine.
+    pub fn set_tune(&self, json: String) -> Result<(), JsValue> {
+        match self.agent.set_tune(&json) {
+            Ok(())  => Ok(()),
+            Err(e)  => Err(to_js_err(e)),
+        }
+    }
+
+    /// What bounds this agent's turns, as the JSON object a worker dock can draw.
+    ///
+    /// `worker` says whether the figures beside it are a worker's ceiling or the user's own
+    /// settings, which is the one thing a reader of a worker's tile cannot otherwise tell: a
+    /// worker that stopped at sixty rounds and a chat that stopped at a hundred and fifty both
+    /// report "reached the tool-call round limit", and until this there was nothing to show which
+    /// limit that was.  Read back out of the engine rather than remembered by the caller, so the
+    /// figures shown are the ones the arithmetic used after every band and ceiling has been
+    /// applied.
+    #[wasm_bindgen(getter)]
+    pub fn turn_limits(&self) -> String {
+        let l = self.agent.limits();
+        // THE TUNED FIGURES ARE ECHOED TOO, and they have to be: a trial that set them through
+        // `DaimondApp::set_tune` has no other way to confirm the engine took what it was handed,
+        // and a measurement against an arm that silently stayed on the defaults is a figure about
+        // the wrong engine. Read out of `Limits` after every band and ceiling, as the rest are.
+        fmt!("{{\"worker\":{},\"max_rounds\":{},\"continuations\":{},\"context_cap\":{},\
+            \"keep\":{},\"spend_cap_usd\":{},\"fold_at\":{},\"retire_prior\":{},\
+            \"written_age\":{},\"result_age\":{},\"result_cap\":{},\"sweep_every\":{},\
+            \"worker_max_rounds\":{},\"worker_continuations\":{},\"worker_context_cap\":{},\
+            \"worker_keep\":{},\"worker_spend_usd\":{}}}",
+            l.worker, l.max_rounds, l.max_continuations, l.context_cap, l.keep, l.spend_cap_usd,
+            l.fold_at, l.retire_prior,
+            l.written_age, l.result_age, l.result_cap, l.sweep_every,
+            l.worker_max_rounds, l.worker_continuations, l.worker_context_cap,
+            l.worker_keep, l.worker_spend_usd)
+    }
+
     /// Fold this agent's conversations with a different model from the one it chats
     /// with; empty means the chat's own.
     ///

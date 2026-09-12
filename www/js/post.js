@@ -1163,10 +1163,26 @@
 	/// not the one that is already parked.
 	var WAKE_ID = 'p' + Math.random().toString(36).slice(2, 10);
 
+	/// This device's id, for the park's `device` parameter. Read from identity.js at
+	/// call time rather than cached: a device that is not unlocked yet has none, and an
+	/// empty id simply parks as an older client did -- the gateway then refuses nothing
+	/// by id, which is the same behaviour the park had before the removal existed.
+	function selfDeviceIdForPark() {
+		try { return String((window.DaimondIdentity && DaimondIdentity.deviceId()) || ''); }
+		catch (e) { return ''; }
+	}
+
 	/// One relay request. Through `DaimondGateway.gwFetch`, which is THE ONE COPY
 	/// of the session rule -- renew once, retry once -- so nothing here carries a
 	/// second version of it.
-	async function call(method, body, query) {
+	///
+	/// `timeoutMs`, where given, is a CLIENT-SIDE DEADLINE: the request is aborted
+	/// when it passes and the error thrown carries `timedOut`. `fetch` has no
+	/// timeout of its own, and a GET nothing ever answers hangs for as long as the
+	/// operating system keeps the socket -- a phone once sat forty-one minutes on a
+	/// dead `/api/post`, servicing nothing and beating presence the whole time. See
+	/// `PARK_DEADLINE_MS`.
+	async function call(method, body, query, timeoutMs) {
 		var opts = {
 			method:      method,
 			credentials: 'same-origin',
@@ -1176,7 +1192,33 @@
 			opts.headers['content-type'] = 'application/json';
 			opts.body = JSON.stringify(body);
 		}
-		var r = await DaimondGateway.gwFetch(PATH + (query || ''), opts);
+		var ctl = null, timer = null, fired = false;
+		if (timeoutMs > 0) {
+			try { ctl = new AbortController(); } catch (e) { ctl = null; }
+			if (ctl) {
+				opts.signal = ctl.signal;
+				timer = setTimeout(function () {
+					fired = true;
+					try { ctl.abort(); } catch (e) { /* already gone */ }
+				}, timeoutMs);
+			}
+		}
+		var r;
+		try {
+			r = await DaimondGateway.gwFetch(PATH + (query || ''), opts);
+		} catch (e) {
+			// The deadline, not the network: tell them apart, because one is a
+			// black-holed request to retry with a backoff and the other is an
+			// ordinary outage.
+			if (fired) {
+				var to = new Error('the request passed its deadline');
+				to.timedOut = true;
+				throw to;
+			}
+			throw e;
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
 		return { status: r.status, json: j };
@@ -1838,17 +1880,57 @@
 	/// must not turn this into a spin. Without it a fast answer is a loop bounded
 	/// only by the network.
 	var PARK_FLOOR_MS = 1000;
+	/// THE WATCHDOG. `fetch` has no timeout, so a park whose request is black-holed --
+	/// the socket accepted and then nothing, which is what a front door being restarted
+	/// behind a proxy looks like -- hangs for as long as the operating system keeps the
+	/// connection. A phone once sat FORTY-ONE MINUTES on a dead `/api/post`: it beat
+	/// presence the whole time, looked like the freshest available peer, and serviced
+	/// nothing, so every errand handed to it was handed into a hole. The gateway answers
+	/// a park within `PARK_MS` or says "nothing yet", so anything past that window plus
+	/// slack is not a slow answer, it is no answer.
+	var PARK_DEADLINE_MS = PARK_MS + 10000;
+	/// A failed park waits before the next, doubling to a minute. The first wait is the
+	/// five seconds this always took; the doubling is what stops a device whose front
+	/// door is down retrying every five seconds for an hour.
+	var PARK_BACKOFF_MS  = 5000;
+	var PARK_BACKOFF_CAP = 60000;
 	var _parking  = false;		// is a park in flight or scheduled?
 	var _parkOff  = '';			// why parking stopped, or ''
 	var _parkGen  = 0;			// torn down and restarted, so a stale park is ignored
 	var _parks    = 0;			// parks made, for a verifier
+	var _parkFails = 0;			// consecutive failed parks, which is what the backoff reads
+	var _parkTimeouts = 0;		// parks the watchdog cut, for a verifier
 	var _servicedAt = 0;		// last time a park long-poll round or a collect actually completed
+
+	/// How long to wait after `n` consecutive failures. Doubling, capped.
+	function parkBackoff(n) {
+		var k = n > 1 ? n - 1 : 0;
+		if (k > 10) k = 10;					// 5 s << 10 is already past the cap
+		var ms = PARK_BACKOFF_MS * Math.pow(2, k);
+		return ms > PARK_BACKOFF_CAP ? PARK_BACKOFF_CAP : ms;
+	}
+
+	/// Tell the debug feed a park was cut. Through `event` rather than
+	/// `noteFetchFail`, deliberately: that helper tags a status-0 failure `aborted`
+	/// when the page is hidden, and a runner's window is hidden nearly all the time --
+	/// so the one signal that says the errand channel is dead would be filed as an
+	/// ordinary navigation and hidden from the reader by default. `gwFetch` reports the
+	/// abort itself, as a bare status 0; this is the line beside it that says WHY.
+	function noteParkTimeout(ms) {
+		try {
+			if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
+				DEBUG_SHARE.event('fetch.fail', { path: PATH, status: 0, ms: ms | 0,
+					err: 'park-timeout' });
+			}
+		} catch (e) { /* the feed is not a dependency of the transport */ }
+	}
 
 	/// Start parking. Idempotent, and refuses where parking has been turned off.
 	function parkStart() {
 		if (_parking || _parkOff) return false;
 		_parking = true;
 		_parkGen++;
+		_parkFails = 0;			// a deliberate start is not a continuation of an old outage
 		parkOnce(_parkGen);
 		return true;
 	}
@@ -1865,9 +1947,16 @@
 		if (why) _parkOff = why;
 	}
 
-	/// Lift a stop that a working request has disproved. Never lifts `no_park`.
+	/// Lift a stop that a working request has disproved. Never lifts `no_park`, and
+	/// never lifts `removed`.
+	///
+	/// Both are facts nothing this client does will change. `no_park` is the front
+	/// door dropping the query string; `removed` is the account having removed this
+	/// device (owner ruling 2026-09-12), which the gateway will go on refusing for
+	/// ever -- so re-arming the park on it would be exactly the hammering this check
+	/// exists to prevent, against a door that is never going to open.
 	function parkAgain() {
-		if (_parkOff && _parkOff !== 'no_park') _parkOff = '';
+		if (_parkOff && _parkOff !== 'no_park' && _parkOff !== 'removed') _parkOff = '';
 	}
 
 	async function parkOnce(gen) {
@@ -1878,16 +1967,38 @@
 			var began = Date.now();
 			var r;
 			try {
+				// `device` names WHICH device is parking, so the gateway can refuse a
+				// device the account has REMOVED (owner ruling 2026-09-12) and can evict
+				// this very park the instant the removal lands -- the park is the errand
+				// listener's door, which is how a handed-off turn reaches a device, so it
+				// is the second door a removed device must not hold. Optional on the wire:
+				// a gateway that does not read it parks exactly as before.
 				r = await call('GET', undefined, '?above=' + st.through
-					+ '&ms=' + PARK_MS + '&w=' + encodeURIComponent(WAKE_ID));
+					+ '&ms=' + PARK_MS + '&w=' + encodeURIComponent(WAKE_ID)
+					+ '&device=' + encodeURIComponent(selfDeviceIdForPark()), PARK_DEADLINE_MS);
 			} catch (e) {
-				// The network went. Not a reason to give up on the transport, so this
-				// waits and tries again rather than turning parking off for good.
-				await sleep(5000);
+				// The network went, or the watchdog cut a request nothing was ever going
+				// to answer. Neither is a reason to give up on the transport, so this
+				// waits and tries again rather than turning parking off for good -- but
+				// the wait DOUBLES, so a front door that is down is not hammered, and a
+				// cut park is reported: until it was, a hole in the errand channel was
+				// indistinguishable from a quiet one.
+				if (e && e.timedOut) { _parkTimeouts++; noteParkTimeout(Date.now() - began); }
+				await sleep(parkBackoff(++_parkFails));
 				continue;
 			}
 			if (gen !== _parkGen) return;
 			if (r.status === 401 || r.status === 426) { parkStop('session'); return; }
+			// REMOVED FROM THE ACCOUNT. Parking stops for good -- the door will refuse
+			// this device for ever -- and the one event that wipes and locks is raised
+			// where it is raised for the presence beat, so both doors reach the same
+			// handler. Keyed on the flag, not the status alone.
+			if (r.status === 410 && r.json && r.json.removed === true) {
+				parkStop('removed');
+				try { window.dispatchEvent(new CustomEvent('daimond:device-removed')); }
+				catch (e) { /* the beat says the same thing */ }
+				return;
+			}
 			if (r.status !== 200 || !r.json) { await sleep(5000); continue; }
 			// THE CHECK THIS WHOLE BLOCK EXISTS FOR.
 			if (r.json.waited !== true) {
@@ -1900,6 +2011,7 @@
 			// channel right now. Stamp it so presence can tell a real runner from a
 			// throttled background tab that only beats (peer.js recGenuine).
 			_servicedAt = Date.now();
+			_parkFails  = 0;		// an answered park clears the outage
 			if (r.json.changed) await round();
 			var spent = Date.now() - began;
 			if (spent < PARK_FLOOR_MS) await sleep(PARK_FLOOR_MS - spent);
@@ -2501,7 +2613,11 @@
 		/// `no_park` means the front door dropped the query string.
 		parkStart: parkStart,
 		parkStop:  function () { parkStop(''); },
-		parking:   function () { return { on: _parking, off: _parkOff, parks: _parks }; },
+		parking:   function () { return { on: _parking, off: _parkOff, parks: _parks,
+			fails: _parkFails, timeouts: _parkTimeouts, deadlineMs: PARK_DEADLINE_MS }; },
+		/// How long to wait after `n` consecutive failed parks. Published for
+		/// www/js/park.test.mjs, which has to prove the doubling without waiting it out.
+		parkBackoff: parkBackoff,
 		/// When this device last completed an errand-channel round (a park long-poll or a
 		/// collect), epoch-ms, or 0. The genuine-servicing signal presence carries so a
 		/// peer can tell a real runner from a background tab that only beats. `servicing`
@@ -2593,7 +2709,8 @@
 				through: _st ? _st.through : 0,
 				acked:   _st ? _st.acked : 0,
 				solo:    !syncReady(),
-				park:    { on: _parking, off: _parkOff, parks: _parks },
+				park:    { on: _parking, off: _parkOff, parks: _parks,
+					fails: _parkFails, timeouts: _parkTimeouts },
 				unread:  unread(),
 			};
 		},

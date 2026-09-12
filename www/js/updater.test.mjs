@@ -120,6 +120,10 @@ function makeTab(cfg) {
 		removeItem: (k) => m.delete(k),
 	});
 
+	// The runner exemption reads this device's id straight out of localStorage, so a
+	// tab that is to be treated as a runner needs one.
+	if (cfg.selfId) local.set('daimond-device-id', cfg.selfId);
+
 	const chip = makeNode('button');
 	chip.id = 'update-chip';
 	const body = makeNode('body');
@@ -156,6 +160,11 @@ function makeTab(cfg) {
 			composerHasText: () => !!cfg.state.typed,
 		},
 		DaimondSync: { state: () => ({ quiet: cfg.state.quiet !== false }) },
+		// The unlock gate, and the two things the runner exemption needs to be sure
+		// of. Absent by default, so every scenario that is not about the runner sees
+		// the tab it always saw: locked, no posture, no exemption.
+		DaimondIdentity: { isUnlocked: () => !!cfg.state.unlocked },
+		DaimondRunner:   { on: () => !!cfg.state.runner },
 		DEBUG_SHARE: { event: (kind, payload) => events.push({ kind, payload }) },
 		fetch(url, opts) {
 			fetchCalls.push({ url, opts });
@@ -165,6 +174,9 @@ function makeTab(cfg) {
 			return Promise.resolve({ ok: true, json: () => Promise.resolve(s) });
 		},
 	};
+	// Left OFF deliberately in the `noLease` scenario: a runner that cannot find out
+	// whether it holds a lease must not be reloaded.
+	if (!cfg.noLease) win.DaimondLease = { heldBy: () => !!cfg.state.lease };
 	win.window = win;
 	cfg.state = cfg.state || {};
 
@@ -405,6 +417,71 @@ async function main() {
 		await settle();
 		check('coming back online re-reads the stamp', tab.fetchCalls.length === n1 + 1);
 		check('and the newer build it found is pending', tab.U().pending() === NEWER.build);
+	}
+
+	console.log('\nupdater: an UNLOCKED tab is still left alone unless it is an idle runner');
+	{
+		// The condition that was always here: unlocked means no silent reload, because
+		// the tab comes back at the unlock gate in front of somebody who did not ask.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { unlocked: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('the newer build is pending', tab.U().pending() === NEWER.build);
+		check('no countdown started on an unlocked tab', tab.U().countdown() === 0);
+		await tab.clock.advance(10 * MIN);
+		check('and it never reloaded', tab.reloads.n === 0);
+	}
+
+	console.log('\nupdater: an idle nominated runner IS reloaded, unlocked and all');
+	{
+		const tab = await boot({ stamps: [BOOTED, NEWER], selfId: 'd-aaa',
+			state: { unlocked: true, runner: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('the newer build is pending', tab.U().pending() === NEWER.build);
+		check('a countdown is running', tab.U().countdown() === 20);
+		check('the countdown is still announced', /update\.reloading_in/.test(tab.bannerText() || ''));
+		await tab.clock.advance(21000);
+		check('the runner reloaded onto the new build', tab.reloads.n === 1);
+	}
+
+	console.log('\nupdater: a runner holding a turn lease is NOT reloaded');
+	{
+		const tab = await boot({ stamps: [BOOTED, NEWER], selfId: 'd-aaa',
+			state: { unlocked: true, runner: true, lease: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('the newer build is pending', tab.U().pending() === NEWER.build);
+		check('no countdown while it is running somebody\'s turn', tab.U().countdown() === 0);
+		await tab.clock.advance(10 * MIN);
+		check('and it never reloaded', tab.reloads.n === 0);
+		// Letting the lease go lets the update through, so the refusal is the LEASE and
+		// not the posture.
+		tab.state.lease = false;
+		await tab.clock.advance(11000);		// one tick of "is it safe yet?"
+		check('letting the lease go lets the update through', tab.U().countdown() > 0,
+			'countdown=' + tab.U().countdown());
+	}
+
+	console.log('\nupdater: a runner that cannot tell is not reloaded');
+	{
+		const tab = await boot({ stamps: [BOOTED, NEWER], selfId: 'd-aaa', noLease: true,
+			state: { unlocked: true, runner: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('no countdown with no way to read the lease', tab.U().countdown() === 0);
+		await tab.clock.advance(10 * MIN);
+		check('and it never reloaded', tab.reloads.n === 0);
+	}
+	{
+		// No device id: the lease question cannot be asked of anybody, so the ordinary
+		// refusal stands.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { unlocked: true, runner: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('no countdown with no device id', tab.U().countdown() === 0);
+		await tab.clock.advance(10 * MIN);
+		check('and it never reloaded', tab.reloads.n === 0);
 	}
 
 	console.log('\nupdater: the poll is jittered, so a fleet does not read in lockstep');

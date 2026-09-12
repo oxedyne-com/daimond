@@ -25,6 +25,72 @@
 	var mq = window.matchMedia('(max-width: 760px)');
 	function isPhone() { return mq.matches; }
 
+	// ── Is this MACHINE a mobile one? ──────────────────────────
+	//
+	// `isPhone` is a LAYOUT question -- is the viewport narrow -- and it was being
+	// read as a hardware one. A desktop window dragged under 760px then routed like a
+	// phone, and the hand-off election judged a PEER's mobility from the name its
+	// owner had typed, so a phone called "Jason's phone" was seatable as a worker.
+	// Mobility is a property of the device, decided ONCE from real signals and beaten
+	// to the fleet (daimond.js presenceTick), never inferred from a label or a width.
+	//
+	// The signals, any two of which make a phone or tablet and none of which a
+	// desktop browser offers together:
+	//
+	//   coarse pointer   a finger, not a mouse -- true on a touchscreen laptop too,
+	//                    which is why it does not decide alone;
+	//   no hover         a pointer that cannot rest over a thing;
+	//   touch points     maxTouchPoints > 0, same caveat as coarse;
+	//   UA mobility      `navigator.userAgentData.mobile` where the browser offers it
+	//                    (Chromium), else the platform string -- the only DIRECT
+	//                    statement of the fact, so it decides on its own;
+	//   iPadOS           a Mac-shaped UA with touch points: an iPad asking for the
+	//                    desktop site, which no real Mac can be.
+	//
+	// Decided at first call and cached: a device does not stop being a phone, and a
+	// flag that moved would make the fleet's view of a seat flicker.
+	var _isMobile = null;
+	function isMobileDevice() {
+		if (_isMobile !== null) return _isMobile;
+		_isMobile = detectMobile();
+		return _isMobile;
+	}
+
+	/// The one-off measurement behind `isMobileDevice`. Every probe is guarded: an
+	/// engine missing one of these must read as DESKTOP rather than throw, because a
+	/// device that cannot say is better seated than wrongly excluded.
+	function detectMobile() {
+		var ua = '', uaMobile = null, touch = 0, coarse = false, noHover = false, standalone = false;
+		try { ua = String(navigator.userAgent || ''); } catch (e) { ua = ''; }
+		try {
+			if (navigator.userAgentData && typeof navigator.userAgentData.mobile === 'boolean') {
+				uaMobile = navigator.userAgentData.mobile;
+			}
+		} catch (e) { uaMobile = null; }
+		try { touch = navigator.maxTouchPoints | 0; } catch (e) { touch = 0; }
+		try { coarse  = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); } catch (e) { coarse = false; }
+		try { noHover = !!(window.matchMedia && window.matchMedia('(hover: none)').matches); } catch (e) { noHover = false; }
+		// A home-screen PWA is not itself proof of a phone (a desktop can install one),
+		// so it only ever adds to the touch evidence below.
+		try {
+			standalone = !!((window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+				|| window.navigator.standalone);
+		} catch (e) { standalone = false; }
+		// A direct statement settles it, either way: Chromium's client hint is the fact
+		// itself, not a proxy for it.
+		if (uaMobile !== null) return uaMobile;
+		// An iPhone / Android / iPad names itself. Safari on iPadOS does not (it sends a
+		// Mac UA), so a Mac WITH touch points is an iPad asking for the desktop site.
+		if (/iphone|ipod|android.*mobile|\bmobile safari\b/i.test(ua)) return true;
+		if (/ipad/i.test(ua)) return true;
+		if (/\bandroid\b/i.test(ua)) return true;
+		if (/macintosh|mac os x/i.test(ua) && touch > 0) return true;
+		// No statement and no name: two independent touch signals, which a mouse-driven
+		// desktop never has. A touchscreen laptop has coarse+touch but keeps hover.
+		var signals = (coarse ? 1 : 0) + (noHover ? 1 : 0) + (touch > 0 ? 1 : 0) + (standalone && coarse ? 1 : 0);
+		return signals >= 3;
+	}
+
 	// ── The drawer ─────────────────────────────────────────────
 	function openDrawer()  { document.body.classList.add('drawer-open'); }
 	function closeDrawer() { document.body.classList.remove('drawer-open'); }
@@ -554,6 +620,10 @@
 		/// chip to fill in. See `goTo` and `here`.
 		goTo: goTo, here: here, markHere: markHere,
 		isPhone: isPhone,
+		/// Is this MACHINE a phone or tablet? A hardware question, decided once from
+		/// real signals, unlike `isPhone`, which is the layout's 760px question and
+		/// moves when a window is resized. The presence beat carries this.
+		isMobileDevice: isMobileDevice,
 	};
 
 	if (document.readyState === 'loading') {

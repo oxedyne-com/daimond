@@ -892,6 +892,16 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    colour rather than the warn colour for the same reason. */
 .ti-handoff { border: none; background: none; padding: 4px 0; margin-top: 0; }
 .ti-handoff .ti-label { color: var(--text-secondary); }
+/* THE STREAMED VIEW of a turn running on another device: the tail the runner has
+   sent so far, replaced in place by each frame. Pre-wrapped and monospaced because
+   it is a transcript in progress rather than finished prose, and capped in height
+   with the overflow pinned to the bottom so a long turn does not push its own
+   status line off the screen. */
+.handoff-stream { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain;
+	white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono, monospace);
+	font-size: var(--fs-xs); line-height: 1.45; color: var(--text-secondary);
+	margin: 2px 0 6px; padding: 8px 10px; border-radius: var(--radius-sm);
+	background: var(--surface-2, rgba(127, 127, 127, 0.08)); }
 /* The inline hand-off spinner: the SAME three dots the thread's turn spinner
    uses (`.chat-spinner-dot`, animated, resting under reduced motion), set inline
    beside the status word rather than on their own centred line. */
@@ -1152,8 +1162,27 @@ button.tag-pool { cursor: pointer; }
    crystal face the source order puts the box at the top of the page -- above
    the document it is meant to sit under. Ordered explicitly rather than moved
    in the markup, because the chat face wants the source order it already has. */
+/* WHERE THE NEXT TURN WILL RUN. Quiet by default -- it is a standing fact, not a
+   notice -- and a WARNING only in the one state that asks something of the user: a
+   phone about to run the turn itself, which must stay foregrounded for it to finish.
+   Under the composer, inside its border, so it reads as part of the one control. */
+.seat-line {
+	padding: 0 12px 8px;
+	font-size: var(--fs-xs);
+	color: var(--text-muted);
+	line-height: 1.4;
+}
+.seat-line.seat-warn { color: var(--warn); }
+/* The same statement inside a hand-off tile, where it is about ONE turn rather than
+   about the next one. Indented under the status it qualifies. */
+.seat-note { margin-top: 4px; font-size: var(--fs-xs); color: var(--text-muted); }
+.seat-note.seat-warn { color: var(--warn); }
+.seat-line .seat-why { opacity: 0.85; }
+:root[data-cfull] .panel.ai .seat-line { display: none !important; }
+
 .panel.ai.crystal-face .crystal-view   { order: 1; }
 .panel.ai.crystal-face .chat-input-bar { order: 2; }
+.panel.ai.crystal-face .seat-line      { order: 3; }
 
 /* ── Full screen: the crystal, alone ─────────────────────────────────
    A capp is an application, and an application inside a panel inside an app

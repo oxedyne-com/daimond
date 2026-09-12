@@ -277,6 +277,11 @@
 
 	function read(k)  { try { return localStorage.getItem(k); } catch (e) { return null; } }
 	function write(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+	/// The same write, THROWING. `write` swallows, which is right for a flag nobody
+	/// misses -- and wrong for the outbox, whose whole point is durability: its quota
+	/// fallback was written against a function that cannot fail, so the fallback was
+	/// dead code and a full device simply stopped persisting the queue, silently.
+	function writeOrThrow(k, v) { localStorage.setItem(k, v); }
 
 	/// A plain positive-millisecond number, or 0. Bignum-safe -- a stamp that
 	/// round-tripped through the gateway can arrive as a bignum object with a
@@ -787,14 +792,27 @@
 	function persistNow() {
 		try { if (persistTimer) clearTimeout(persistTimer); } catch (e) {}
 		persistTimer = null;
-		try { write(EVENT_KEY, JSON.stringify(outbox)); }
+		try { writeOrThrow(EVENT_KEY, JSON.stringify(outbox)); }
 		catch (e) {
 			// Quota. Half an outbox that persists beats a whole one that does not:
 			// the oldest half goes, which is the same rule the overflow cap follows.
+			//
+			// AND IT IS COUNTED. The overflow cap in `pushRow` says `feed.drop` when it
+			// drops; this path dropped the same way and said nothing, so a reader saw a
+			// run of sequence numbers that simply were not there and had no way to tell
+			// a quota from a gateway losing them. The rows went from the FRONT, so what
+			// is missing is the oldest -- which is what `feed.drop` already means.
+			var cut = Math.ceil(outbox.length / 2);
 			try {
-				outbox.splice(0, Math.ceil(outbox.length / 2));
-				write(EVENT_KEY, JSON.stringify(outbox));
+				outbox.splice(0, cut);
+				writeOrThrow(EVENT_KEY, JSON.stringify(outbox));
 			} catch (e2) { /* memory-only from here; the queue still drains */ }
+			if (cut > 0 && !dropping) {
+				dropping = true;
+				try { emit('feed.drop', { count: cut, why: 'quota' }); }
+				catch (e3) { /* a drop that cannot be reported is still a drop */ }
+				finally { dropping = false; }
+			}
 		}
 	}
 

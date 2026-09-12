@@ -435,6 +435,7 @@ impl Agent {
     /// * `tokens` - The window the provider publishes for this model.
     pub fn set_context_window(&self, tokens: u64) {
         self.limits.borrow_mut().window = tokens;
+        self.hold_worker();
     }
 
     /// Set how many tool-call rounds one turn may take.
@@ -445,6 +446,7 @@ impl Agent {
     pub fn set_max_rounds(&self, n: usize) {
         if n > 0 {
             self.limits.borrow_mut().max_rounds = n;
+            self.hold_worker();
         }
     }
 
@@ -463,6 +465,7 @@ impl Agent {
         } else {
             tokens.clamp(compact::CONTEXT_CAP_MIN, compact::CONTEXT_CAP_MAX)
         };
+        self.hold_worker();
     }
 
     /// Set the most one of this agent's turns may spend, in US dollars.
@@ -481,6 +484,7 @@ impl Agent {
         } else {
             usd.clamp(compact::SPEND_CAP_MIN_USD, compact::SPEND_CAP_MAX_USD)
         };
+        self.hold_worker();
     }
 
     /// Set the fraction of the window at which this agent folds.
@@ -496,6 +500,104 @@ impl Agent {
     pub fn set_fold_at(&self, f: f64) {
         if f > 0.0 {
             self.limits.borrow_mut().fold_at = f.clamp(compact::FOLD_AT_MIN, compact::FOLD_AT_MAX);
+            self.hold_worker();
+        }
+    }
+
+    /// Hold this agent to what a dispatched worker may have: sixty rounds, one continuation, a
+    /// 48,000-token carry, a tail of three tenths and a dollar.
+    ///
+    /// **The mark is sticky and every figure is a ceiling**, so this may be called before or after
+    /// the user's own settings reach the app and the answer is the same.  `Workers.start` applies
+    /// the chat's settings to a worker's app and then calls this, which is the order that reads
+    /// most naturally; it is the stickiness rather than the order that makes a user's 150 rounds
+    /// unable to reach a worker.  See [`compact::Limits::hold_to_worker`] for why a worker gets
+    /// its own figures at all.
+    ///
+    /// One-way, like [`crate::wasm::app::DaimondApp::set_unsupervised`], and for the same reason:
+    /// an errand does not become a conversation part way through.
+    pub fn set_worker_limits(&self) {
+        self.limits.borrow_mut().hold_to_worker();
+    }
+
+    /// Set any of the compaction and worker-preset figures from one flat JSON object.
+    ///
+    /// **One setter for every knob**, because the alternative is a dozen wasm methods and a dozen
+    /// JS call sites for figures nobody changes in ordinary use.  What they are for is
+    /// MEASUREMENT: the three retire measures and the worker preset were compile-time constants,
+    /// so nothing could say what any of them was worth -- an arm of a trial could not turn one off
+    /// and compare.  See `dev/tune/` for the loop that reads them.
+    ///
+    /// A key that is absent is left alone, and so is a zero -- the same rule [`Agent::set_fold_at`]
+    /// and its siblings follow, so `{}` is a no-op and a partial object is a partial change.  The
+    /// exceptions are the two that are meaningfully false or zero: `retire_prior` is a boolean and
+    /// `worker_continuations` of nought means one leg and no more.
+    ///
+    /// The worker ceiling is re-asserted afterwards, so a tune that arrives mid-run cannot lift a
+    /// worker back over its own figures -- the rule every other setter here follows.
+    ///
+    /// # Arguments
+    /// * `json` - A flat JSON object; empty, or `{}`, changes nothing.
+    pub fn set_tune(&self, json: &str) -> Outcome<()> {
+        let text = json.trim();
+        if text.is_empty() {
+            return Ok(());
+        }
+        if !(text.starts_with('{') && text.ends_with('}')) {
+            return Err(err!("set_tune: expected a flat JSON object, got {} byte(s) \
+                starting {:?}", text.len(), text.chars().take(24).collect::<String>();
+                Invalid, Input));
+        }
+        {
+            let mut l = self.limits.borrow_mut();
+            // The retire measures.
+            if let Some(b) = crate::llm::extract_json_bool(text, "retire_prior") {
+                l.retire_prior = b;
+            }
+            if let Some(n) = crate::llm::extract_json_number(text, "written_age") {
+                if n > 0 { l.written_age = n as usize; }
+            }
+            if let Some(n) = crate::llm::extract_json_number(text, "result_age") {
+                if n > 0 { l.result_age = n as usize; }
+            }
+            if let Some(n) = crate::llm::extract_json_number(text, "result_cap") {
+                if n > 0 { l.result_cap = n as usize; }
+            }
+            // A cadence of nought is a modulo by zero at the sweep, so it is floored here as
+            // well as there -- a figure read back out of `limits()` has to be the one used.
+            if let Some(n) = crate::llm::extract_json_number(text, "sweep_every") {
+                if n > 0 { l.sweep_every = n as usize; }
+            }
+            // The worker preset.
+            if let Some(n) = crate::llm::extract_json_number(text, "worker_max_rounds") {
+                if n > 0 { l.worker_max_rounds = n as usize; }
+            }
+            // Nought legs IS a choice, so this one is taken as written.
+            if let Some(n) = crate::llm::extract_json_number(text, "worker_continuations") {
+                l.worker_continuations = n as usize;
+            }
+            if let Some(n) = crate::llm::extract_json_number(text, "worker_context_cap") {
+                if n > 0 { l.worker_context_cap = n; }
+            }
+            if let Some(f) = crate::llm::extract_json_f64(text, "worker_keep") {
+                if f > 0.0 { l.worker_keep = f; }
+            }
+            if let Some(f) = crate::llm::extract_json_f64(text, "worker_spend_usd") {
+                if f > 0.0 { l.worker_spend_usd = f; }
+            }
+        }
+        self.hold_worker();
+        Ok(())
+    }
+
+    /// Re-assert the worker ceiling after a setting has been written.
+    ///
+    /// Nothing on a chat's agent: `hold_to_worker` has never been called, so the mark is off and
+    /// this is a borrow and a branch.
+    fn hold_worker(&self) {
+        let mut l = self.limits.borrow_mut();
+        if l.worker {
+            l.hold_to_worker();
         }
     }
 
@@ -715,7 +817,11 @@ impl Agent {
         // from a conversation an interjection has since added a user message to.
         self.prior_end.set(session.messages.len().saturating_sub(1));	// the sentence just pushed
         let mut prior = session.messages.clone();
-        compact::retire_upto(&mut prior, self.prior_end.get());
+        // Under a switch, so the measure can be turned off and its worth measured rather than
+        // asserted -- see `Agent::set_tune`. On by default, which is what shipped.
+        if self.limits.borrow().retire_prior {
+            compact::retire_upto(&mut prior, self.prior_end.get());
+        }
         working.extend(prior);
 
         if registry.is_empty() {
@@ -1065,10 +1171,34 @@ impl Agent {
             // the write has happened and the file can be read again.
             //
             // In batches rather than every round; see `compact::IN_TURN_RETIRE_EVERY`.
+            //
+            // THE FOUR FIGURES ARE READ OFF `Limits`, not off the constants they default to, so
+            // that `Agent::set_tune` can move them and a measurement can have an arm with the
+            // sweeps effectively off. Lifted out of the borrow in one go: the loop awaits below,
+            // and a `RefCell` borrow held across an await is a panic waiting for a second caller.
+            // A sweep cadence of zero would be a modulo by zero, so the floor is one round.
+            let (written_age, result_age, result_cap, sweep_every) = {
+                let l = self.limits.borrow();
+                (l.written_age, l.result_age, l.result_cap, l.sweep_every.max(1))
+            };
             let swept = round_at.len();
-            if swept > compact::IN_TURN_RETIRE_AGE && swept % compact::IN_TURN_RETIRE_EVERY == 0 {
-                let horizon = round_at[swept - 1 - compact::IN_TURN_RETIRE_AGE];
+            if swept > written_age && swept % sweep_every == 0 {
+                let horizon = round_at[swept - 1 - written_age];
                 compact::retire_written(&mut working, horizon);
+            }
+            // AND THE RESULTS THE TURN HAS FINISHED READING, which is where the bytes actually are.
+            // The write bodies above are the dearest thing in a long turn AFTER the results, and
+            // the results were carried whole to the end of it: a turn that read twenty files
+            // re-sent all twenty on every round after the last of them, which is how a prompt
+            // settles at 77.5K and stays there for eighty-five rounds.
+            //
+            // A longer horizon than the bodies get, and the same batch: see
+            // `compact::IN_TURN_RESULT_AGE` for why eight rounds rather than three, and
+            // `compact::IN_TURN_RETIRE_EVERY` for why both run every tenth round rather than every
+            // round. One cache miss for the pair of them.
+            if swept > result_age && swept % sweep_every == 0 {
+                let horizon = round_at[swept - 1 - result_age];
+                compact::retire_results(&mut working, horizon, result_cap);
             }
             let mut sent = compact::conversation_bytes(&working, &self.llm.open_folds());
 
@@ -1381,6 +1511,36 @@ impl Agent {
                 self.stop_on_spend(session, spent, cap, rounds, &claims, registry, on_event).await;
                 return Ok(());
             }
+
+            // AND THE MODEL IS TOLD WHAT IS LEFT OF IT, because a turn that hits a ceiling stops in
+            // the middle of the work and nothing could see it coming: a model cannot count its own
+            // rounds and cannot see the bill.  Told the figures, it can report what it has rather
+            // than be cut off mid-file.
+            //
+            // In the LAST TOOL RESULT and never in the system prompt: that prompt is the cached
+            // prefix, and a figure that moves every tenth round would cost the whole standing
+            // context at the full input rate on every round after it moved.  See
+            // `compact::note_budget`.  On the sweeps' own cadence, so the round that rewrites old
+            // messages is the round that rewrites this one.
+            if swept % sweep_every == 0 {
+                let (rounds_left, usd_left) = {
+                    let l = self.limits.borrow();
+                    let legs = l.max_continuations.saturating_sub(continuations);
+                    let left = (max_rounds.saturating_sub(leg)) + legs * max_rounds;
+                    // NOTHING IS SAID ABOUT MONEY WHERE NONE IS REPORTED, for the reason
+                    // `over_the_spend_cap` does not enforce a ceiling there: several endpoints put
+                    // no cost in the response and a local model has none, so a figure would be a
+                    // claim about a price nobody quoted.
+                    let spent = session.cost_usd - opening_cost;
+                    let usd = if l.spend_cap_usd > 0.0 && spent > 0.0 {
+                        Some(l.spend_cap_usd - spent)
+                    } else {
+                        None
+                    };
+                    (left, usd)
+                };
+                compact::note_budget(&mut working, rounds_left, usd_left);
+            }
         }
     }
 
@@ -1482,7 +1642,11 @@ impl Agent {
             self.stop_on_spend(session, spent, cap, rounds, claims, registry, on_event).await;
             return Some(Ok(()));
         }
-        if *continuations < compact::MAX_CONTINUATIONS {
+        // THE FIGURE IS THE AGENT'S AND NOT THE CONSTANT, because a worker's is not a chat's: see
+        // `compact::WORKER_CONTINUATIONS`.  A chat's is `compact::MAX_CONTINUATIONS` by default and
+        // nothing else writes it, so this is the same three it has always been.
+        let legs = self.limits.borrow().max_continuations;
+        if *continuations < legs {
             *continuations += 1;
             // Said out loud rather than left to be read out of a round count nobody sees.  Not an
             // `Error`: nothing failed, and the turn is still running.
@@ -1689,7 +1853,13 @@ impl Agent {
         // AND THE PRIOR TURNS STAY RETIRED.  `sent` is rebuilt from the whole record, so without
         // this a fold would hand the model back every byte `run_turn` had just retired -- and the
         // prompt it produced would be over the budget the fold was called to get under.
-        compact::retire_upto(&mut sent, self.prior_end.get().min(session.messages.len()));
+        //
+        // The same switch the outbound seam is under, and it has to be the SAME switch: retiring
+        // here while the turn did not would hand the fold a shorter history than the turn is
+        // carrying, and a fold is the one place that difference becomes permanent.
+        if self.limits.borrow().retire_prior {
+            compact::retire_upto(&mut sent, self.prior_end.get().min(session.messages.len()));
+        }
         let mut elided = compact::elide_bulk(&mut sent, ceiling,
             compact::MIN_KEEP_MESSAGES, &open);
         elided += compact::elide_bulk(&mut sent, ceiling, 1, &open);
@@ -2014,6 +2184,47 @@ mod tests {
         assert_eq!(agent.system_prompt, "You are Daimond, an AI assistant.");
     }
 
+    // ── What bounds a worker's turn ─────────────────────────────────
+
+    #[test]
+    fn test_a_worker_keeps_its_ceiling_when_the_chats_settings_arrive_00() {
+        // THE ORDER IN `Workers.start` IS SETTINGS THEN PRESET, and the preset has to survive a
+        // setting that arrives after it as well -- a re-mint rebuilds the app and applies the
+        // user's figures again. So the mark is sticky and every setter re-asserts it.
+        let a = make_test_agent();
+        a.set_worker_limits();
+        a.set_max_rounds(150);
+        a.set_context_cap(200_000);
+        a.set_spend_cap_usd(5.0);
+        a.set_context_window(1_310_720);
+        let l = a.limits();
+        assert!(l.worker);
+        assert_eq!(60,     l.max_rounds, "the chat's round setting reached a worker");
+        assert_eq!(1,      l.max_continuations);
+        assert_eq!(48_000, l.context_cap, "the chat's carry ceiling reached a worker");
+        assert_eq!(1.0,    l.spend_cap_usd, "the chat's dollar ceiling reached a worker");
+        assert_eq!(48_000, l.budget(0), "a worker's per-round carry is not bounded");
+        // A tighter setting is still the user's, whichever order it arrives in.
+        a.set_max_rounds(15);
+        assert_eq!(15, a.limits().max_rounds);
+    }
+
+    #[test]
+    fn test_a_chat_is_not_held_to_a_workers_ceiling_00() {
+        // The other half, and the one a mistake here would make invisible: nothing may lower a
+        // conversation the user is sitting in front of.
+        let a = make_test_agent();
+        a.set_max_rounds(150);
+        a.set_context_cap(200_000);
+        a.set_spend_cap_usd(5.0);
+        let l = a.limits();
+        assert!(!l.worker);
+        assert_eq!(150, l.max_rounds);
+        assert_eq!(200_000, l.context_cap);
+        assert_eq!(5.0, l.spend_cap_usd);
+        assert_eq!(compact::MAX_CONTINUATIONS, l.max_continuations);
+    }
+
     // ── Speaking into a running turn ────────────────────────────────
 
     #[test]
@@ -2333,6 +2544,179 @@ mod tests {
         assert_eq!(compact::CONTEXT_CAP_MAX, a.limits().context_cap);
     }
 
+    #[test]
+    fn test_the_tune_carries_every_figure_and_defaults_to_todays_constants_00() {
+        // THE DEFAULTS ARE THE POINT OF THIS HALF.  Ten compile-time constants became fields so a
+        // measurement could move them, and the whole claim of that change is that a tree nobody
+        // tunes behaves exactly as it did.  So the defaults are asserted against the constants
+        // themselves rather than against figures restated here, which would pass a rename.
+        let a = make_test_agent();
+        let l = a.limits();
+        assert!(l.retire_prior, "a default agent does not retire its prior turns");
+        assert_eq!(compact::IN_TURN_RETIRE_AGE,   l.written_age);
+        assert_eq!(compact::IN_TURN_RESULT_AGE,   l.result_age);
+        assert_eq!(compact::IN_TURN_RESULT_CAP,   l.result_cap);
+        assert_eq!(compact::IN_TURN_RETIRE_EVERY, l.sweep_every);
+        assert_eq!(compact::WORKER_MAX_ROUNDS,    l.worker_max_rounds);
+        assert_eq!(compact::WORKER_CONTINUATIONS, l.worker_continuations);
+        assert_eq!(compact::WORKER_CONTEXT_CAP,   l.worker_context_cap);
+        assert_eq!(compact::WORKER_KEEP,          l.worker_keep);
+        assert_eq!(compact::WORKER_SPEND_CAP_USD, l.worker_spend_usd);
+
+        // An empty tune, and an empty object, are both no-ops -- that is how "the user has not
+        // chosen" reaches here from the page, on every single app that is built.
+        if let Err(e) = a.set_tune("") { panic!("an empty tune must change nothing: {}", e); }
+        if let Err(e) = a.set_tune("{}") { panic!("an empty object must change nothing: {}", e); }
+        assert_eq!(compact::IN_TURN_RESULT_AGE, a.limits().result_age);
+        assert!(a.limits().retire_prior);
+
+        // AND IT ROUND-TRIPS.  Every key the loop sets, in one object, read back out of the
+        // getter a control and a trial both draw from.
+        let tune = r#"{"retire_prior":false,"written_age":6,"result_age":16,"result_cap":4096,
+            "sweep_every":5,"worker_max_rounds":100,"worker_continuations":2,
+            "worker_context_cap":96000,"worker_keep":0.45,"worker_spend_usd":2.5}"#;
+        if let Err(e) = a.set_tune(tune) { panic!("the tune was refused: {}", e); }
+        let l = a.limits();
+        assert!(!l.retire_prior, "retire_prior stayed on");
+        assert_eq!(6,      l.written_age);
+        assert_eq!(16,     l.result_age);
+        assert_eq!(4_096,  l.result_cap);
+        assert_eq!(5,      l.sweep_every);
+        assert_eq!(100,    l.worker_max_rounds);
+        assert_eq!(2,      l.worker_continuations);
+        assert_eq!(96_000, l.worker_context_cap);
+        assert_eq!(0.45,   l.worker_keep);
+        assert_eq!(2.5,    l.worker_spend_usd);
+        // A SECOND TUNE IS A PARTIAL CHANGE, not a reset: an absent key is left alone, which is
+        // what lets an arm be written as the one figure it varies.
+        if let Err(e) = a.set_tune(r#"{"result_age":20}"#) { panic!("{}", e); }
+        assert_eq!(20, a.limits().result_age);
+        assert_eq!(6,  a.limits().written_age);
+        // Not an object is refused rather than silently tuning nothing: an arm that measured the
+        // default while reporting itself as tuned is a figure about the wrong engine.
+        assert!(a.set_tune("result_age=20").is_err(), "a tune that is not an object was taken");
+
+        // AND THE WORKER PRESET IS READ OFF THESE FIELDS.  In `Workers.start`'s own order:
+        // `applyFoldSettings` -- which is where the tune reaches the app -- runs BEFORE
+        // `set_worker_limits`, so a loosened preset is in place by the time the hold is taken.
+        let w = make_test_agent();
+        if let Err(e) = w.set_tune(r#"{"worker_max_rounds":100,"worker_context_cap":96000,
+            "worker_keep":0.4,"worker_spend_usd":5}"#) { panic!("{}", e); }
+        w.set_worker_limits();
+        assert_eq!(100,    w.limits().max_rounds,  "the tuned worker round ceiling did not hold");
+        assert_eq!(96_000, w.limits().context_cap, "the tuned worker carry did not hold");
+        assert_eq!(0.4,    w.limits().keep);
+        assert_eq!(5.0,    w.limits().spend_cap_usd);
+        // A LATER SETTING STILL CANNOT LIFT IT ABOVE THE TUNED FIGURE, which is the stickiness
+        // `hold_worker` exists for -- the tune moves the ceiling, it does not remove it.
+        w.set_max_rounds(150);
+        assert_eq!(100, w.limits().max_rounds);
+
+        // AND A TUNE THAT ARRIVES AFTER THE HOLD CANNOT LOOSEN WHAT IS ALREADY HELD.  Every
+        // figure in `hold_to_worker` is a `min`, so raising the preset on an agent already at the
+        // old ceiling leaves it there -- which is why the page tunes before it holds, and why a
+        // trial that got the order wrong would silently measure `cur`.
+        let late = make_test_agent();
+        late.set_worker_limits();
+        if let Err(e) = late.set_tune(r#"{"worker_context_cap":96000}"#) { panic!("{}", e); }
+        assert_eq!(compact::WORKER_CONTEXT_CAP, late.limits().context_cap,
+            "a tune after the hold raised a ceiling");
+    }
+
+    #[tokio::test]
+    async fn test_a_tune_that_keeps_the_prior_turn_sends_its_results_whole_00() {
+        // The mirror of `test_a_turn_sends_a_retired_history_and_stores_a_whole_one_00`, and it is
+        // the measure's OFF switch that is under test: a trial arm cannot ask what retiring the
+        // prior turn is worth unless it can run the same fixture without it.
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(vec![plain_answer()]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        if let Err(e) = a.set_tune(r#"{"retire_prior":false}"#) { panic!("{}", e); }
+        let mut session = Session::new(fmt!("s1"), fmt!("retire"), fmt!("model"));
+        let body = "source line\n".repeat(2_000);
+        session.messages.push(ChatMessage::user("read it"));
+        session.messages.push(ChatMessage::Assistant {
+            content:    MessageContent::text(""),
+            tool_calls: vec![crate::protocol::ToolCall {
+                id: fmt!("r1"), name: fmt!("file_read"),
+                arguments: fmt!(r#"{{"path":"src/a.rs","offset":1,"end":200}}"#),
+            }],
+        });
+        session.messages.push(ChatMessage::tool(fmt!("r1"), body.clone()));
+        session.messages.push(ChatMessage::assistant("I have read it."));
+        let _ = a.run_turn(&mut session, fmt!("now change it"), &registry, &mut |_| {}).await;
+
+        let bodies = match seen.lock() {
+            Ok(g)  => g.bodies.clone(),
+            Err(e) => panic!("the stub's record: {}", e),
+        };
+        assert!(!bodies.is_empty(), "no request reached the provider");
+        let sent = bodies.join("\n");
+        // THE WHOLE READ WENT OUT, which is exactly what the shipped default prevents.
+        assert!(sent.contains("source line\\nsource line"),
+            "the prior turn was retired although the tune turned that off");
+        assert!(!sent.contains("file_read src/a.rs 1-200"),
+            "a stub naming the call was sent as well as the body");
+    }
+
+    #[tokio::test]
+    async fn test_an_off_tune_leaves_a_long_turns_write_bodies_where_they_are_00() {
+        // THE SAME TWELVE ROUNDS, TWICE.  The in-turn sweep fires at round ten on the shipped
+        // figures, so a twelve-round turn is the shortest fixture that shows the measure working;
+        // the `off` arm of the tune loop sets the two ages past any turn's length, and the proof
+        // that it is off is that the bytes of the eleventh request are the UNSWEPT ones.
+        //
+        // Asserted against what the provider was SENT, never against the session: the owner's
+        // ruling is that the transcript keeps every word whichever way this is tuned.
+        let body = "x".repeat(4_000);
+        let args = fmt!(r#"{{"path":"a.txt","content":"{}"}}"#, body);
+        let ran_with = |tune: &'static str, args: String| async move {
+            let registry = one_tool();
+            let mut script: Vec<crate::llm::tests::Reply> = (0..12)
+                .map(|_| tool_round(&[("file_write", args.as_str())]))
+                .collect();
+            script.push(plain_answer());
+            let (port, seen) = crate::llm::tests::start_stub(script).await;
+            let mut llm = crate::llm::tests::stub_client(port);
+            llm.retry.max_attempts = 1;
+            let a = Agent::new(llm, "You are Daimond.");
+            a.set_max_rounds(20);
+            if !tune.is_empty() {
+                if let Err(e) = a.set_tune(tune) { panic!("the tune was refused: {}", e); }
+            }
+            let mut session = Session::new(fmt!("s1"), fmt!("sweep"), fmt!("model"));
+            let _ = a.run_turn(&mut session, fmt!("write them all"), &registry, &mut |_| {}).await;
+            let bodies = match seen.lock() {
+                Ok(g)  => g.bodies.clone(),
+                Err(e) => panic!("the stub's record: {}", e),
+            };
+            bodies
+        };
+
+        // The shipped figures: the sweep fires and the old write bodies are gone from the request.
+        let shipped = ran_with("", args.clone()).await;
+        assert!(shipped.len() > compact::IN_TURN_RETIRE_EVERY,
+            "the turn did not reach the sweep: {} requests", shipped.len());
+        let last = match shipped.last() { Some(b) => b.clone(), None => panic!("no request") };
+        assert!(last.contains("retired"),
+            "the shipped sweep did not retire a write body, so the off arm proves nothing");
+        let kept_shipped = last.matches(&body).count();
+
+        // The `off` arm: both ages past any turn's length, which is as off as the engine allows.
+        let off = ran_with(r#"{"written_age":100000,"result_age":100000}"#, args.clone()).await;
+        let last_off = match off.last() { Some(b) => b.clone(), None => panic!("no request") };
+        assert!(!last_off.contains("retired"),
+            "the off tune still retired something");
+        let kept_off = last_off.matches(&body).count();
+        assert!(kept_off > kept_shipped,
+            "the off arm carried {} whole bodies and the shipped one {} -- the tune changed \
+            nothing", kept_off, kept_shipped);
+        // Every one of the twelve, whole, which is the unswept run by definition.
+        assert_eq!(12, kept_off, "the off arm dropped a write body anyway");
+    }
+
     #[tokio::test]
     async fn test_a_turn_sends_a_retired_history_and_stores_a_whole_one_00() {
         // The owner's ruling, at the new seam: the model gets the shortened version and his
@@ -2372,6 +2756,51 @@ mod tests {
             "a finished turn's file read was re-sent whole");
         assert!(sent.contains("file_read src/a.rs 1-200"),
             "the retired result does not name the call that made it");
+    }
+
+    #[tokio::test]
+    async fn test_a_long_turn_is_told_what_is_left_of_it_00() {
+        // A turn that reaches a ceiling stops in the middle of the work, and nothing could see it
+        // coming: a model cannot count its own rounds and cannot see the bill.  So the figures are
+        // put where it will read them and where they cost nothing to change -- the last tool
+        // result, never the system prompt, which is the cached prefix.
+        let registry = one_tool();
+        let mut script: Vec<crate::llm::tests::Reply> =
+            (0..compact::IN_TURN_RETIRE_EVERY).map(|_| round_costing(0.05)).collect();
+        script.push(plain_answer());
+        let (port, seen) = crate::llm::tests::start_stub(script).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(60);
+        let mut session = Session::new(fmt!("s1"), fmt!("budget"), fmt!("model"));
+        let _ = a.run_turn(&mut session, fmt!("do the work"), &registry, &mut |_| {}).await;
+
+        let bodies = match seen.lock() {
+            Ok(g)  => g.bodies.clone(),
+            Err(e) => panic!("the stub's record: {}", e),
+        };
+        assert!(bodies.len() > compact::IN_TURN_RETIRE_EVERY,
+            "the turn did not reach the round the line is said on: {} requests", bodies.len());
+        // THE LAST REQUEST, because that is the one the line was written for: it is appended at the
+        // seam of round ten and the eleventh request is the first to carry it.
+        let last = match bodies.last() {
+            Some(b) => b.clone(),
+            None    => panic!("no request reached the provider"),
+        };
+        // 50 left of this leg and three more legs of 60, which is what the app will actually run
+        // unattended -- see `compact::MAX_CONTINUATIONS`. Ten rounds at five cents of a
+        // five-dollar ceiling.
+        let want = "[turn budget: 230 rounds and US$4.50 left; if short, report now]";
+        assert!(last.contains(want), "the turn was not told what was left of it: {}",
+            &last[last.len().saturating_sub(600)..]);
+        // AND IT IS SAID ONCE AND NOWHERE ELSE: not in the system prompt, which is the cached
+        // prefix, and not twice in the same request.
+        assert_eq!(1, last.matches("[turn budget:").count(), "the line was said more than once");
+        // AND THE TRANSCRIPT DOES NOT CARRY IT. The figure is true of one round of one turn; stored,
+        // it would be re-sent for the life of the conversation and be wrong every time.
+        assert!(!session.messages.iter().any(|m| m.text().contains("[turn budget:")),
+            "the app's own bookkeeping was written into the user's transcript");
     }
 
     /// What the compactor is told when the user has not said otherwise.

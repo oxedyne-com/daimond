@@ -203,13 +203,48 @@
 		return syncQuiet();
 	}
 
-	/// The conditions that were already here, unchanged, and each for the reason
-	/// set out in the long note that used to sit inside `apply`: never silently
-	/// reload an UNLOCKED tab, because the passphrase key lives in memory only and
-	/// the tab would come back at the unlock gate; and never reload a foreground
-	/// tab the user is still working in.
+	/// THE ONE EXEMPTION FROM THE UNLOCKED REFUSAL: an idle nominated runner.
+	///
+	/// The refusal below is right for an ordinary tab -- a reload sends it back to
+	/// the unlock gate, and the person sitting in front of it has to type their
+	/// passphrase for a reason they never asked for. A RUNNER is the case where
+	/// standing still is worse: nobody is sitting in front of it, it runs other
+	/// devices' turns, and refusing to reload an unlocked tab meant the one machine
+	/// the account depends on was also the one machine that never updated. It drifts
+	/// a build behind, then two, and a phone hands a turn to a runner speaking an
+	/// older wire.
+	///
+	/// The cost is real and is NOT hidden: the runner comes back locked and does not
+	/// run another turn until somebody unlocks it. That is written down in the
+	/// guide (www/guide/runner.html) as one of the two things that can still stop a
+	/// runner, because it is a thing the owner has to know rather than discover.
+	///
+	/// IDLE MEANS POSITIVELY IDLE. Every part of it must be KNOWN, so an unreadable
+	/// answer is not idle: no posture, no lease module, no device id -- each reads
+	/// false and the ordinary refusal stands. A turn in flight is already covered by
+	/// `busy()` in `safeNow`; this adds the one `busy()` cannot see, which is a turn
+	/// this device is holding a lease on for ANOTHER device.
+	function runnerIdle() {
+		try {
+			if (!(window.DaimondRunner && DaimondRunner.on && DaimondRunner.on())) return false;
+			var L = window.DaimondLease;
+			if (!L || !L.heldBy) return false;		// cannot tell, so not idle
+			var me = '';
+			try { me = localStorage.getItem('daimond-device-id') || ''; } catch (e) { me = ''; }
+			if (!me) return false;
+			return !L.heldBy(me);
+		} catch (e) { return false; }
+	}
+
+	/// The conditions that were already here, and each for the reason set out in the
+	/// long note that used to sit inside `apply`: never silently reload an UNLOCKED
+	/// tab, because the passphrase key lives in memory only and the tab would come
+	/// back at the unlock gate; and never reload a foreground tab the user is still
+	/// working in. An idle runner is the one exemption -- see `runnerIdle`.
 	function quietEnough() {
-		try { if (window.DaimondIdentity && DaimondIdentity.isUnlocked()) return false; } catch (e) {}
+		try {
+			if (window.DaimondIdentity && DaimondIdentity.isUnlocked() && !runnerIdle()) return false;
+		} catch (e) {}
 		if (!document.hidden && quietFor() < QUIESCE_MS) return false;
 		return true;
 	}

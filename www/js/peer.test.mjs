@@ -781,6 +781,15 @@ async function main() {
 	check('desk unlocks the shared account', !!unD && unD.ok === true && desk.DaimondIdentity.isUnlocked());
 	await runBroadcastConsentAcceptance(phone, laptop, desk, stranger, check);
 
+	streamedViewChecks(phone);
+	// ══════════════════════════════════════════════════════════
+	// THE BLOCKER (owner ruling 2026-09-12) — what stopped the runner is
+	// copied to every device, answerable from any one of them, cleared
+	// everywhere by the first answer; and a runner that restarted, or was
+	// refused by the provider, hands the turn back instead of hanging it.
+	// ══════════════════════════════════════════════════════════
+	await runBlockerAcceptance(phone.DaimondPeer, phone.DaimondLease, check);
+
 	console.log(failures === 0 ? '\nALL PASS' : ('\n' + failures + ' FAILURE(S)'));
 	if (failures) process.exitCode = 1;
 }
@@ -1171,6 +1180,110 @@ async function runNominationAcceptance(P, L, check) {
 			P.nominationStandDown(NOMINEE, OTHER, nom, NOW + W + 1, W) === false);
 	}
 
+	// ── Colliding LABELS must never decide who runs the turn. ──
+	//
+	// A derived device name is the browser and the platform and nothing else, so two of a
+	// user's Linux Chromes say "Google Chrome on Linux" identically. Seating the fresher
+	// of them on a name they share is a lottery dressed as a preference, and it picks
+	// which machine RUNS AND BILLS the turn. The nominee's ID still seats it; the LABEL
+	// seats only when it picks out exactly one live desktop.
+	{
+		const SAME  = 'Google Chrome on Linux';
+		const TWIN1 = 'f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1';
+		const TWIN2 = 'f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2';
+		const PHONE = 'e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0';
+		const desk = (name, age) => ({ name, lastSeen: NOW - age, servicedAt: NOW - age,
+			attended: false, mobileView: false });
+		const twins = { [PHONE]: { name: 'iPhone', lastSeen: NOW, servicedAt: NOW, attended: true, mobileView: true },
+			[TWIN1]: desk(SAME, 6000), [TWIN2]: desk(SAME, 500) };
+		// The nominee's own id is live: it is seated, whatever anybody is called.
+		const byId = P.handoffTarget(twins, { selfId: PHONE, windowMs: W, nominatedId: TWIN1,
+			preferredLabel: SAME }, NOW);
+		check('(g) the nominee is seated BY ID even when two live desktops share its label',
+			byId.reason === 'nominee' && byId.target && byId.target.deviceId === TWIN1,
+			'reason=' + byId.reason + ' peer=' + (byId.target && byId.target.deviceId || '').slice(0, 4));
+		// The nominee's id is NOT live, and its label is ambiguous: no seat by label.
+		const byLabel = P.handoffTarget(twins, { selfId: PHONE, windowMs: W,
+			nominatedId: 'd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0', preferredLabel: SAME }, NOW);
+		check('(g) an AMBIGUOUS label seats nobody as the worker -- no lottery on a shared name',
+			byLabel.reason !== 'worker', 'reason=' + byLabel.reason);
+		check('(g) it falls through to a genuinely-servicing desktop instead, never local',
+			byLabel.reason === 'other-desktop' && !!twins[byLabel.target && byLabel.target.deviceId],
+			'reason=' + byLabel.reason + ' peer=' + (byLabel.target && byLabel.target.deviceId || '').slice(0, 4));
+		// Distinct labels -- what `deviceSelfName` now mints -- and the label seats again,
+		// on the device that carries it rather than on the fresher of the two.
+		const named = { [PHONE]: twins[PHONE],
+			[TWIN1]: desk(SAME + ' \u00b7 1f1f', 6000), [TWIN2]: desk(SAME + ' \u00b7 2f2f', 500) };
+		const unique = P.handoffTarget(named, { selfId: PHONE, windowMs: W,
+			nominatedId: 'd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0', preferredLabel: SAME + ' \u00b7 1f1f' }, NOW);
+		check('(g) a UNIQUE label still seats its device, not the fresher twin',
+			unique.reason === 'worker' && unique.target && unique.target.deviceId === TWIN1,
+			'reason=' + unique.reason + ' peer=' + (unique.target && unique.target.deviceId || '').slice(0, 4));
+		// And the stand-down is by ID only: a device that merely shares the nominee's
+		// label must not defer to it, or both twins would wait for each other.
+		check('(g) nominationStandDown matches by id only -- a same-label twin is not the nominee',
+			P.nominationStandDown(TWIN1, TWIN2, twins, NOW, W) === true
+			&& P.nominationStandDown(TWIN1, TWIN1, twins, NOW, W) === false);
+	}
+
+	// ── MOBILITY IS THE DEVICE'S OWN ANSWER, not its name and not its window width. ──
+	//
+	// Seating used to judge a peer's mobility from the NAME it beat under
+	// (daimond.js isMobileViewName) and this device's from its VIEWPORT (mobile.js
+	// isPhone, width <= 760). Both are wrong about the thing they decide: a phone its
+	// owner named "gilgamesh" was seatable as a worker and was handed turns it could
+	// not hold, and a desktop window dragged narrow routed like a phone. Every device
+	// now decides its own mobility at boot from real signals and beats `mobile`, and
+	// the election reads that FIRST -- falling back to the old inference (carried here
+	// as `mobileView`) only where the field is ABSENT, which is a peer on a build that
+	// predates it.
+	console.log('\nMobility — the beat\'s own `mobile` flag decides the seat, not the label or the width');
+	{
+		const PHONE  = 'aa11aa11aa11aa11aa11aa11aa11aa11';	// the dispatcher
+		const GIL    = 'bb22bb22bb22bb22bb22bb22bb22bb22';	// a PHONE called "gilgamesh"
+		const NARROW = 'cc33cc33cc33cc33cc33cc33cc33cc33';	// a DESKTOP in a narrow window
+		const live = (extra) => Object.assign({ lastSeen: NOW, servicedAt: NOW, attended: false }, extra);
+		// (a) A phone wearing a desktop's name. The old inference reads "gilgamesh" as a
+		// desktop (mobileView false); the device's own `mobile:true` overrules it.
+		const mislabelled = { [GIL]: live({ name: 'gilgamesh', mobile: true, mobileView: false }) };
+		const mis = P.handoffTarget(mislabelled, { selfId: PHONE, windowMs: W }, NOW);
+		check('(mob a) a PHONE named "gilgamesh" is NOT seated -- its own mobile:true beats its label',
+			mis.reason === 'local' && mis.target === null, 'reason=' + mis.reason);
+		// (b) A desktop whose window is under 760px. The viewport inference stamps it
+		// mobileView:true; its own `mobile:false` overrules that and it is seated.
+		const narrowed = { [NARROW]: live({ name: 'argonaut', mobile: false, mobileView: true }) };
+		const nar = P.handoffTarget(narrowed, { selfId: PHONE, windowMs: W }, NOW);
+		check('(mob b) a NARROW desktop window with mobile:false IS seated -- the flag beats the viewport',
+			nar.reason === 'other-desktop' && nar.target && nar.target.deviceId === NARROW,
+			'reason=' + nar.reason);
+		// (c) The nominee gate reads the same flag: a nominated phone is not seated even
+		// by id, so a mislabelled star cannot hand a phone its own turns.
+		const nomPhone = P.handoffTarget(mislabelled, { selfId: PHONE, windowMs: W, nominatedId: GIL }, NOW);
+		check('(mob c) a NOMINATED device that beats mobile:true is still not seated',
+			nomPhone.reason === 'local' && nomPhone.target === null, 'reason=' + nomPhone.reason);
+		// (d) And the label path: a unique preferred label on a mobile device seats nobody.
+		const byLabelPhone = P.handoffTarget(mislabelled, { selfId: PHONE, windowMs: W,
+			preferredLabel: 'gilgamesh' }, NOW);
+		check('(mob d) the preferred LABEL cannot seat a device that beats mobile:true either',
+			byLabelPhone.reason === 'local', 'reason=' + byLabelPhone.reason);
+		// (e) MIXED-BUILD FLEET: a peer that sends no `mobile` field at all falls back to
+		// the old inference, so hand-off is not disabled by an old build on either side.
+		const oldBuild = { [GIL]: live({ name: 'iPhone', mobileView: true }),
+			[NARROW]: live({ name: 'argonaut', mobileView: false }) };
+		const mixed = P.handoffTarget(oldBuild, { selfId: PHONE, windowMs: W }, NOW);
+		check('(mob e) with NO mobile field the old name/viewport inference still stands in',
+			mixed.reason === 'other-desktop' && mixed.target && mixed.target.deviceId === NARROW,
+			'reason=' + mixed.reason);
+		// (f) recMobileView as a unit: the flag is final both ways, absent defers, and
+		// absent on both reads as NON-mobile (a live desktop is never wrongly withheld).
+		check('(mob f) recMobileView: the flag is final both ways; absent defers to mobileView; nothing reads desktop',
+			P.recMobileView({ mobile: true,  mobileView: false }) === true
+			&& P.recMobileView({ mobile: false, mobileView: true }) === false
+			&& P.recMobileView({ mobileView: true }) === true
+			&& P.recMobileView({}) === false
+			&& P.recMobileView(null) === false);
+	}
+
 	// ── End to end through runErrand: the real CLAIM decision, not a smoke test. ──
 	// A non-nominee with a freshly-awake nominee stands down BEFORE the lease take:
 	// it never reconstructs, never runs, never touches the lease, and answers
@@ -1483,6 +1596,7 @@ async function runPresenceAcceptance(P, PR, check) {
 	PR.adopt({ argonaut: { name: 'argonaut', lastSeen: T - 5000 } });
 	check('a stale incoming beat does NOT overwrite a fresher one (freshest-scalar)',
 		PR.snapshot().argonaut.lastSeen === T - 1000);
+
 	// A NEWER beat does win.
 	PR.adopt({ argonaut: { name: 'argonaut', lastSeen: T - 100 } });
 	check('a fresher incoming beat wins', PR.snapshot().argonaut.lastSeen === T - 100);
@@ -1644,6 +1758,41 @@ async function runPresenceAcceptance(P, PR, check) {
 			serviced: true, serviced_at: sNow - 5000 } }, sNow);
 		check('rollout(c): a genuine seq-217 runner (fresh serviced_at) is ELIGIBLE',
 			P.recGenuine(PR.snapshot().argonaut, Date.now(), win) === true);
+	}
+
+	// ── The device's own MOBILITY answer travels with the beat. ──
+	//
+	// A beat that CAN say is authoritative; one that cannot must leave the field
+	// ABSENT rather than assert "desktop", exactly as `servicedAt` does -- coercing
+	// absence to false would seat a phone on an old build, and to true would strand a
+	// fleet mid-rollout. Written, relayed and adopted, the flag survives all three.
+	{
+		PR.forget();
+		// (the 7th argument is the runner posture; mobility is the 8th)
+		PR.beat('ph', 'Jason\'s phone', T, false, false, '', false, true);
+		PR.beat('dk', 'gilgamesh',      T, false, true,  '', false, false);
+		PR.beat('un', 'old-build',      T, false, true);
+		check('a beat records the device\'s own `mobile` flag, both ways',
+			PR.snapshot().ph.mobile === true && PR.snapshot().dk.mobile === false);
+		PR.beat('dk', 'gilgamesh', T + 1, false, true, '');
+		check('a later beat that OMITS `mobile` keeps the known value (absent is not false)',
+			PR.snapshot().dk.mobile === false);
+		check('a device that never said carries NO `mobile` field at all (the inference stands in)',
+			!('mobile' in PR.snapshot().un));
+		// The gateway relay: present -> verbatim, absent -> absent.
+		const sNow2 = Date.now();
+		PR.forget();
+		PR.ingest({ g1: { name: 'gilgamesh', last_seen: sNow2, mobile: true },
+			g2: { name: 'karri', last_seen: sNow2 } }, sNow2);
+		check('ingest relays `mobile` verbatim and leaves it ABSENT where the gateway did not send it',
+			PR.snapshot().g1.mobile === true && !('mobile' in PR.snapshot().g2));
+		// The parcel merge takes it up on a fresher line, and keeps it on an older one.
+		PR.adopt({ g2: { name: 'karri', lastSeen: PR.snapshot().g2.lastSeen + 1000, mobile: false } });
+		check('adopt takes up an arriving `mobile` on the freshest line',
+			PR.snapshot().g2.mobile === false);
+		PR.adopt({ g2: { name: 'karri', lastSeen: PR.snapshot().g2.lastSeen + 1000 } });
+		check('a fresher line with NO `mobile` keeps what was last known (never blanks it)',
+			PR.snapshot().g2.mobile === false);
 	}
 	PR.forget();
 }
@@ -2845,6 +2994,306 @@ async function runBroadcastConsentAcceptance(phone, laptop, desk, stranger, chec
 			P.grantDecision(pend, { turnId: 'other', verdict: 'allow' }).commit === false);
 		check('H7d: a malformed verdict is read as DENY (fail-safe)',
 			P.grantDecision(pend, { turnId: 't1', verdict: 'yes-please' }).verdict === 'deny');
+	}
+}
+
+// ════════════════════════════════════════════════════════════
+// THE STREAMED VIEW — what a frame says, and what a watcher does with it
+// ------------------------------------------------------------
+// The owner's complaint (2026-09-12): a turn typed on one device and run on
+// another appeared only when the next whole-parcel sync landed. The runner now
+// sends a small frame every couple of seconds and the watching device draws it.
+// The two decisions in that are pure and live in peer.js, so they are tested
+// here rather than through a browser: `progressTail` is what a frame SAYS, and
+// `foldProgress` is what a watcher DOES with one that arrives.
+// ════════════════════════════════════════════════════════════
+function streamedViewChecks(tab) {
+	const P = tab.DaimondPeer;
+
+	console.log('\nThe streamed view — the frame a runner sends');
+	{
+		const msgs = [
+			{ role: 'user',      content: 'earlier turn', mid: 't0', iturn: 't0' },
+			{ role: 'assistant', content: 'earlier answer', mid: 'a0' },
+			{ role: 'user',      content: 'the dispatched prompt', mid: 't1', iturn: 't1' },
+			{ role: 'think_log', content: 'x'.repeat(4000), mid: 'k1' },
+			{ role: 'tool_log',  name: 'file_read', args: '{"path":"/very/long/'
+				+ 'p'.repeat(400) + '"}', outcome: 'ok', mid: 'l1' },
+			{ role: 'assistant', content: 'PARTIAL ANSWER so far', mid: 'a1' },
+		];
+		const tail = P.progressTail(msgs, 't1', 48 * 1024);
+		check('S1a: the frame holds the daimon\'s text for THIS turn',
+			tail.includes('PARTIAL ANSWER so far'));
+		check('S1b: a PREVIOUS turn is not in the frame (the tail starts at this turn)',
+			!tail.includes('earlier answer') && !tail.includes('earlier turn'));
+		check('S1c: thinking is collapsed to a COUNT, not 4,000 characters of it',
+			tail.includes('[thinking 4000 chars]') && !tail.includes('x'.repeat(100)));
+		check('S1d: a tool call is one labelled line naming the tool',
+			/\[tool file_read .*-> ok\]/.test(tail));
+		check('S1e: a tool\'s arguments are clipped, so one big argument cannot be the frame',
+			tail.length < 1200 && !tail.includes('p'.repeat(200)));
+		check('S1f: a turn this device does not hold says nothing (a quiet frame, not an error)',
+			P.progressTail(msgs, 'not-a-turn', 4096) === '' && P.progressTail([], 't1', 4096) === '');
+
+		// The budget: the tail is the LAST n characters, because what falls off the
+		// front is what the watcher already received in an earlier frame.
+		const long = [
+			{ role: 'user',      content: 'p', mid: 't2', iturn: 't2' },
+			{ role: 'assistant', content: 'START' + 'y'.repeat(5000) + 'END', mid: 'a2' },
+		];
+		const cut = P.progressTail(long, 't2', 1000);
+		check('S1g: the frame is cut to the budget and keeps the END of the transcript',
+			cut.length === 1000 && cut.endsWith('END') && !cut.includes('START'));
+	}
+
+	console.log('\nThe streamed view — what a watcher does with an arriving frame');
+	{
+		const f1 = { turn: 't1', seq: 1, tail: 'first' };
+		const v1 = P.foldProgress(null, f1);
+		check('S2a: the first frame becomes the view', v1 && v1.seq === 1 && v1.tail === 'first');
+		const v2 = P.foldProgress(v1, { turn: 't1', seq: 2, tail: 'first and second' });
+		check('S2b: a newer frame REPLACES the one before it (the tail is the whole tail)',
+			v2 && v2.seq === 2 && v2.tail === 'first and second');
+		check('S2c: a frame already held changes nothing (no redraw is owed)',
+			P.foldProgress(v2, { turn: 't1', seq: 2, tail: 'first and second' }) === null);
+		check('S2d: a LATE frame never rewinds the view',
+			P.foldProgress(v2, { turn: 't1', seq: 1, tail: 'first' }) === null);
+		check('S2e: a frame for ANOTHER turn is not this watcher\'s',
+			P.foldProgress(v2, { turn: 't9', seq: 99, tail: 'someone else' }) === null);
+		check('S2f: an empty tail is not a view (nothing is drawn over something)',
+			P.foldProgress(v2, { turn: 't1', seq: 3, tail: '' }) === null);
+		// The close: the real transcript has landed, so the streamed view stands down
+		// and no frame still in flight can reopen it.
+		const done = P.foldProgress(v2, { turn: 't1', final: true });
+		check('S2g: `final` closes the streamed view', done && done.final === true && done.tail === '');
+		check('S2h: a frame arriving after the close is ignored (the answer is not overdrawn)',
+			P.foldProgress(done, { turn: 't1', seq: 9, tail: 'too late' }) === null);
+		check('S2i: a malformed frame is ignored rather than thrown on',
+			P.foldProgress(v2, null) === null && P.foldProgress(v2, {}) === null);
+	}
+}
+
+// ══════════════════════════════════════════════════════════
+// THE BLOCKER ON THE LEASE (owner ruling 2026-09-12) — what stopped the
+// runner is copied to every device, answered from any one of them, and
+// cleared everywhere by the first answer; the runner keeps local control.
+// ══════════════════════════════════════════════════════════
+/// Drives the real `DaimondLease.block`/`unblock` over the same compare-and-set the
+/// claim goes through, plus the three pure decisions a tile and a runner rest on.
+/// `L` is a tab's DaimondLease, `P` its DaimondPeer.
+async function runBlockerAcceptance(P, L, check) {
+	const TID = 'turn-blocked';
+
+	// ── B1. WRITE and CLEAR, through the lease's own CAS. ──
+	{
+		L.forget();
+		const cas = makeCas({});
+		const took = await L.take(TID, { holder: 'RUNNER', eid: 'e1' }, cas, () => 1000);
+		check('B1a: the runner holds the lease before it can block on anything', took.won === true);
+		const w = await L.block(TID, 'RUNNER',
+			{ kind: 'consent', tool: 'web_type', host: 'shop.test', detail: 'buy it', since: 1001 },
+			cas, () => 1002);
+		check('B1a2: the blocker write lands', w.ok === true && w.blocked === true);
+		const rec = cas.peekLeases()[TID];
+		check('B1b: the blocker is ON THE LEASE, so every device reads it from the door it already reads',
+			!!rec.blocker && rec.blocker.kind === 'consent' && rec.blocker.detail === 'buy it');
+		check('B1c: blocking is NOT a state change -- mode, deadline and expiry are untouched',
+			rec.mode === 'claimed' && rec.holder === 'RUNNER' && rec.expiry === 1000 + L.LEASE_TTL_MS);
+		check('B1d: `blocker()` reads the live one back off the turn',
+			(L.blocker(TID, 1003) || {}).kind === 'consent');
+		const c = await L.unblock(TID, 'RUNNER', cas, () => 1004);
+		check('B1e: the clear lands and the record keeps the claim',
+			c.ok === true && !cas.peekLeases()[TID].blocker && cas.peekLeases()[TID].mode === 'claimed');
+		check('B1f: `blocker()` now reads nothing', L.blocker(TID, 1005) === null);
+	}
+
+	// ── B2. ONLY THE HOLDER MAY WRITE. A watching device that tried would be two
+	//    devices describing one turn, which is what the CAS exists to stop. ──
+	{
+		L.forget();
+		const cas = makeCas({});
+		await L.take(TID, { holder: 'RUNNER', eid: 'e2' }, cas, () => 1000);
+		const w = await L.block(TID, 'WATCHER', { kind: 'lock', detail: 'x' }, cas, () => 1001);
+		check('B2a: a NON-holder\'s blocker write is refused (not_ours)',
+			w.ok === false && w.why === 'not_ours');
+		check('B2b: and nothing was written', !cas.peekLeases()[TID].blocker);
+		// A released lease carries no blocker either: the question dies with the turn.
+		await L.release(TID, 'RUNNER', cas, () => 1002);
+		const w2 = await L.block(TID, 'RUNNER', { kind: 'lock', detail: 'x' }, cas, () => 1003);
+		check('B2c: a blocker cannot be raised on a RELEASED lease', w2.ok === false);
+	}
+
+	// ── B3. THE BLOCKER TRAVELS BY THE ORDINARY MERGE, and a watching device's
+	//    adopt keeps it -- that is the whole of "copied to every other device". ──
+	{
+		L.forget();										// this tab is now the WATCHER
+		const runnerSide = {
+			[TID]: {
+				turnId: TID, eid: 'e3', holder: 'RUNNER', mode: 'running',
+				deadline: 9000, expiry: 9000, renewedAt: 1100,
+				blocker: { kind: 'ask', detail: 'Which one?', options: ['A', 'B'], since: 1099 },
+			},
+		};
+		const moved = L.adopt(runnerSide, () => 1200);
+		check('B3a: a pulled lease carrying a blocker MOVES the watcher\'s view', moved === true);
+		const b = L.blocker(TID, 1200);
+		check('B3b: the watcher reads the runner\'s question and its options',
+			!!b && b.kind === 'ask' && b.options.length === 2 && b.options[0] === 'A');
+		check('B3c: and `uiState` says BLOCKED, not "running" and not "sent to your other devices"',
+			P.uiState({ why: P.REASON_DISPATCHED, iturn: TID }, L.record(TID), null, 'PHONE', 1200, null)
+				=== 'blocked');
+		// A blocker on a DEAD lease is not shown: the question died with the turn.
+		check('B3d: past the expiry the blocker is gone, so no stale question can be answered',
+			L.blocker(TID, 99999) === null
+			&& P.uiState({ why: P.REASON_DISPATCHED, iturn: TID }, L.record(TID), null, 'PHONE', 99999, null)
+				=== 'failed');
+		// And a `done` report still settles it: a blocker must never outrank the answer.
+		check('B3e: a done report outranks a blocker (the turn finished, whatever it asked)',
+			P.uiState({ why: P.REASON_DISPATCHED, iturn: TID }, L.record(TID),
+				{ t: 'report', status: 'done' }, 'PHONE', 1200, null) === 'done');
+		L.forget();
+	}
+
+	// ── B4. FIRST ANSWER WINS, and the kinds cannot cross. ──
+	{
+		const pend = { turnId: 't1', kind: 'consent' };
+		check('B4a: the first answer for the live cid COMMITS with its verdict',
+			P.blockerAnswerDecision(pend, { turnId: 't1', kind: 'consent', verdict: 'allow' }).commit === true
+			&& P.blockerAnswerDecision(pend, { turnId: 't1', kind: 'consent', verdict: 'allow' }).verdict === 'allow');
+		check('B4b: once the runner has SPENT the record, a second answer DROPS -- never an override',
+			P.blockerAnswerDecision(null, { turnId: 't1', kind: 'consent', verdict: 'deny' }).commit === false);
+		check('B4c: an ASK answer cannot resolve a CONSENT (kind-mismatch)',
+			P.blockerAnswerDecision(pend, { turnId: 't1', kind: 'ask', choice: 'A' }).why === 'kind-mismatch');
+		check('B4d: an answer bound to another turn drops',
+			P.blockerAnswerDecision(pend, { turnId: 'other', kind: 'consent', verdict: 'allow' }).commit === false);
+		const pendAsk = { turnId: 't2', kind: 'ask' };
+		check('B4e: an ask answer commits its CHOICE',
+			P.blockerAnswerDecision(pendAsk, { turnId: 't2', kind: 'ask', choice: 'Second' }).choice === 'Second');
+		check('B4f: an ask answer with no choice authorises nothing',
+			P.blockerAnswerDecision(pendAsk, { turnId: 't2', kind: 'ask', choice: '  ' }).commit === false);
+		// A grant from a build that predates the blocker carries no kind at all, and
+		// must still resolve the consent it was written for.
+		check('B4g: a kind-less grant (an older build) still resolves a consent',
+			P.blockerAnswerDecision(pend, { turnId: 't1', verdict: 'deny' }).commit === true);
+	}
+
+	// ── B5. THE TILE FORMATTER, lifted out and driven as a unit. ──
+	{
+		const consent = P.blockerTileSpec(
+			P.makeBlocker({ kind: 'consent', tool: 'web_type', host: 'shop.test', detail: 'card number' }),
+			'argonaut');
+		check('B5a: a consent offers GRANT and DENY, and is answerable away from the runner',
+			consent.controls.join(',') === 'grant,deny' && consent.answerable === true
+			&& consent.host === 'shop.test' && consent.name === 'argonaut');
+		const ask = P.blockerTileSpec(
+			P.makeBlocker({ kind: 'ask', detail: 'Which way?', options: [{ label: 'On the device' }, { label: 'In the cloud' }] }),
+			'argonaut');
+		check('B5b: an ask offers a button per option, carrying the LABELS',
+			ask.controls.join(',') === 'choose' && ask.options.join('|') === 'On the device|In the cloud');
+		for (const kind of ['fsa', 'lock', 'provider']) {
+			const s = P.blockerTileSpec(P.makeBlocker({ kind: kind, detail: 'x' }), 'argonaut');
+			check('B5c: a ' + kind + ' blocker is REPORT-ONLY -- "Run here instead" and nothing that pretends to reach across',
+				s.controls.join(',') === 'runhere' && s.answerable === false);
+		}
+		check('B5d: an unknown kind degrades to a report, never to a dead button',
+			P.blockerTileSpec({ kind: 'telepathy', detail: 'x' }, '').controls.join(',') === 'runhere');
+		// The caps are where the record is BUILT, because the lease door has one
+		// ceiling for every turn's record and a runaway detail would fail the CLAIM.
+		const big = P.makeBlocker({ kind: 'ask', detail: 'z'.repeat(5000),
+			options: ['a', 'b', 'c', 'd', 'e', 'f'] });
+		check('B5e: a runaway detail is cut where the record is built, and the options bounded',
+			big.detail.length <= 601 && big.options.length === 4);
+		check('B5f: an unknown kind normalises to `lock` -- a report, the fail-safe reading',
+			P.makeBlocker({ kind: 'telepathy' }).kind === 'lock');
+	}
+
+	// ── B6. A RUNNER THAT RESTARTED releases its OWN stale lease, so the
+	//    originator re-seats at once instead of watching the 15-minute deadline. ──
+	{
+		const mine = {
+			't-a': { holder: 'SELF', mode: 'running',  expiry: 9000, renewedAt: 1 },
+			't-b': { holder: 'SELF', mode: 'claimed',  expiry: 9000, renewedAt: 1 },
+			't-c': { holder: 'PEER', mode: 'running',  expiry: 9000, renewedAt: 1 },
+			't-d': { holder: 'SELF', mode: 'released', expiry: 0,    renewedAt: 1 },
+			't-e': { holder: 'SELF', mode: 'running',  expiry: 10,   renewedAt: 1 },
+		};
+		const out = P.staleOwnLeaseDecision(mine, 'SELF', {}, 1000).sort();
+		check('B6a: on boot, every LIVE lease under our own name with no turn running is released',
+			out.join(',') === 't-a,t-b');
+		check('B6b: a PEER\'s lease is never ours to free, and a released/expired one needs nothing',
+			out.indexOf('t-c') < 0 && out.indexOf('t-d') < 0 && out.indexOf('t-e') < 0);
+		check('B6c: a turn GENUINELY running here is left alone -- a second tab must not free it',
+			P.staleOwnLeaseDecision(mine, 'SELF', { 't-a': true }, 1000).join(',') === 't-b');
+		check('B6d: with no id of our own, nothing is released', P.staleOwnLeaseDecision(mine, '', {}, 1000).length === 0);
+	}
+
+	// ── B6b. AN ASK RAISED WHILE HIDDEN IS RE-RAISED ON RETURN. The second half of
+	//    the ruling: a question a device could not draw must not be lost.
+	{
+		const live = { t: 'consent-ask', cid: 'c-live', turnId: 't-1', deadline: 5000, tool: 'web_type' };
+		const old  = { t: 'consent-ask', cid: 'c-old',  turnId: 't-2', deadline: 900,  tool: 'web_type' };
+		const done = { t: 'consent-ask', cid: 'c-done', turnId: 't-3', deadline: 5000, tool: 'web_type' };
+		const up   = { t: 'consent-ask', cid: 'c-up',   turnId: 't-4', deadline: 5000, tool: 'web_type' };
+		const open = { 't-1': live, 't-2': old, 't-3': done, 't-4': up };
+		const raised = P.reRaiseDecision(open, 'SELF', 1000,
+			{ resolved: { 'c-done': true }, up: { 'c-up': 9 }, canAnswer: true });
+		check('B6e: on return, the still-open ask is raised -- the one the hidden device never drew',
+			raised.length === 1 && raised[0].cid === 'c-live');
+		check('B6f: an EXPIRED, an ANSWERED and an ALREADY-DRAWN ask are each left alone',
+			!raised.some((a) => a.cid === 'c-old' || a.cid === 'c-done' || a.cid === 'c-up'));
+		check('B6g: a device nobody is at still raises nothing -- the filter is the same one',
+			P.reRaiseDecision(open, 'SELF', 1000, { resolved: {}, up: {}, canAnswer: false }).length === 0);
+		check('B6h: a non-ask in the map is ignored rather than drawn',
+			P.reRaiseDecision({ 't-9': { t: 'report' } }, 'SELF', 1000, { canAnswer: true }).length === 0);
+	}
+
+	// ── B7. A PROVIDER REFUSAL IS NOT A CRASH. Classified, so the turn is handed
+	//    back with a sentence rather than left to the deadline. ──
+	{
+		check('B7a: a 401 is a provider refusal', P.runnerErrorKind({ status: 401 }) === 'provider');
+		check('B7b: a 402 is a provider refusal', P.runnerErrorKind(new Error('HTTP 402 payment required')) === 'provider');
+		check('B7c: "insufficient credits" is a provider refusal',
+			P.runnerErrorKind(new Error('Insufficient credits on this account')) === 'provider');
+		check('B7d: a withdrawn folder grant is an FSA hand-back',
+			P.runnerErrorKind(new Error('Read/write permission was not granted.')) === 'fsa');
+		check('B7e: a lock under the turn is a hand-back',
+			P.runnerErrorKind(new Error('peer: Daimond is locked, so nothing can be sealed for a peer.')) === 'lock');
+		check('B7f: an ordinary crash is NOT classified, so the errand still waits on the relay',
+			P.runnerErrorKind(new Error('Cannot read properties of undefined')) === null);
+		check('B7g: the sentence names the machine and says the turn is theirs again',
+			P.runnerErrorWhy('provider', 'argonaut').indexOf('argonaut') >= 0
+			&& P.runnerErrorWhy('fsa', '').indexOf('the other device') >= 0);
+	}
+
+	// ── B8. runErrand HANDS BACK a classified failure: report + release, and the
+	//    errand is left ON the relay (no ack) so another device may still take it. ──
+	{
+		L.forget();
+		const cas = makeCas({});
+		const posted = [];
+		const out = await P.runErrand(
+			{ eid: 'e8', turnId: 'turn-402', chatId: 'c', prompt: 'p', deadline: 0 },
+			{
+				selfId: 'RUNNER', selfName: 'argonaut', cas: cas,
+				reconstruct: async () => ({}),
+				runTurn: async () => { throw Object.assign(new Error('provider said no'), { status: 402 }); },
+				post: async (r) => { posted.push(r); },
+				ack: async () => { posted.push({ t: 'ack' }); },
+				pushResult: async () => 1,
+				now: () => 2000,
+				setTimer: () => null, clearTimer: () => {},
+			});
+		check('B8a: the run reports the hand-back rather than a silent crash',
+			out.error === true && out.handback === 'provider');
+		check('B8b: an ERROR report went home, carrying the sentence',
+			posted.length === 1 && posted[0].status === 'error' && /argonaut/.test(posted[0].why));
+		check('B8c: the lease was RELEASED, so the originator can re-seat at once',
+			cas.peekLeases()['turn-402'].mode === 'released');
+		check('B8d: and the errand was NOT acked -- another device may still take it',
+			!posted.some((p) => p.t === 'ack'));
+		check('B8e: the trace says what happened, in order',
+			out.trace.join(',') === 'take,reconstruct,handback,report,release');
+		L.forget();
 	}
 }
 

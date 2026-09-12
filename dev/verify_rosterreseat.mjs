@@ -5,18 +5,19 @@
 // prune: `reconcileNominee` ran only on the sync merge and the Devices panel, and it
 // swept nothing. This proves the wiring that closes that:
 //
-//   (a) a roster of ONLY ghost ids plus a live successor: after reconcileRoster the
-//       star sits on the LIVE id, the dead lines are gone, and they do NOT resurrect
-//       when a later add-only sync re-offers them (the tombstone survives the merge);
-//   (b) a genuinely-offline REAL device is preserved — both the plain-asleep case
-//       (no live same-name twin) and the harder one (a same-name twin IS live, but the
-//       silent device has only just slept), so "superseded/re-minted" is told from
-//       "offline";
+//   (a) a roster of only SUPERSEDED ids plus a live successor, with the migration's
+//       records to say so: after reconcileRoster the star sits on the LIVE id, the
+//       superseded lines are gone, and they do NOT resurrect when a later add-only sync
+//       re-offers them (the tombstone survives the merge);
+//   (b) a genuinely-offline REAL device is preserved — both the plain-asleep case and
+//       the one that used to be swept: a live device SHARES its name. A name is not
+//       evidence of supersession (two of a user's Linux Chromes derive the same one),
+//       so the silent device is STALE and keeps the label its owner typed;
 //   (c) a chat that syncs while document.hidden is rendered on the rail regardless of
 //       visibility, and is repainted again on the next visibilitychange -> visible;
-//   (d) the ELECTION resolves a ghost nominee to its live successor deterministically:
-//       flipping which peer beats fresher changes the RAW outcome (the lottery) but
-//       never the reconciled one — the successor is seated either way.
+//   (d) the ELECTION resolves a superseded nominee to its recorded successor
+//       deterministically: flipping which peer beats fresher changes the RAW outcome
+//       (the lottery) but never the reconciled one — the successor is seated either way.
 //
 // Drives the REAL www/js/daimond.js (DaimondCore.roster) and www/js/peer.js
 // (autoDispatchDecision). Client-only; no gateway, no turn billed. Run:
@@ -45,15 +46,14 @@ try {
 		const R = DaimondCore.roster, PR = DaimondPresence, P = DaimondPeer;
 		const W = P.DISPATCH_FRESH_MS, now = Date.now();
 		PR.forget();
-		['daimond-devices', 'daimond-nominated', 'daimond-device-tombs'].forEach(k => {
-			try { localStorage.removeItem(k); } catch (e) {}
-		});
+		['daimond-devices', 'daimond-nominated', 'daimond-device-tombs', 'daimond-device-super']
+			.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
 		const SELF = DaimondIdentity.deviceId();
-		const NOM_DEAD = 'a1a1a1a1a1a1a1a1';		// argonaut's dead OLD id (the star)
-		const GHOST_2  = 'a2a2a2a2a2a2a2a2';		// a second superseded argonaut line
+		const NOM_DEAD = 'a1a1a1a1a1a1a1a1';		// argonaut's retired 16-hex id (the star)
+		const GHOST_2  = 'a2a2a2a2a2a2a2a2';		// a second retired argonaut line
 		const GHOST_3  = 'a3a3a3a3a3a3a3a3';		// a third
-		const LIVE_ARG = 'b2b2b2b2b2b2b2b2';		// argonaut, back under a NEW id
-		const LIVE_GIL = 'c3c3c3c3c3c3c3c3';		// a genuinely different machine
+		const LIVE_ARG = 'b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2';	// argonaut, under its identity id
+		const LIVE_GIL = 'c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3';	// a genuinely different machine
 		const ARG = 'Chrome on Argonaut Linux', GIL = 'Chrome on Gilgamesh Linux';
 		const old = now - 40 * DAY;					// long dead; the sweep does not consult age
 		const reg = {};
@@ -62,6 +62,13 @@ try {
 		reg[GHOST_2]  = { name: ARG, label: '', created: old, namedAt: 0, seen: old };
 		reg[GHOST_3]  = { name: ARG, label: '', created: old, namedAt: 0, seen: old };
 		try { localStorage.setItem('daimond-devices', JSON.stringify(reg)); } catch (e) {}
+		// THE EVIDENCE: the one-shot id migration's own records, saying the live argonaut
+		// took all three retired lines' place. Without them nothing here is a ghost, which
+		// is the point -- a sweep acts on a record, never on a name.
+		try { localStorage.setItem('daimond-device-super', JSON.stringify({
+			[NOM_DEAD]: { to: LIVE_ARG, at: now }, [GHOST_2]: { to: LIVE_ARG, at: now },
+			[GHOST_3]: { to: LIVE_ARG, at: now },
+		})); } catch (e) {}
 		R.nominate(NOM_DEAD);
 		// The live fleet: the roster is 100% disjoint from who is beating.
 		PR.beat(SELF,     'Safari on iOS', now, true,  true);
@@ -87,20 +94,20 @@ try {
 		};
 	}, DAY);
 
-	check('(a) the roster began as only-ghost ids, disjoint from who is beating',
+	check('(a) the roster began as only superseded ids, disjoint from who is beating',
 		[a.NOM_DEAD, a.GHOST_2, a.GHOST_3].every(id => a.before.indexOf(id) !== -1)
 			&& a.before.indexOf(a.LIVE_ARG) === -1,
 		'ids=' + a.before.map(x => x.slice(0, 4)).join(','));
 	check('(a) reconcileRoster migrates the star onto the LIVE successor',
 		a.moved === a.LIVE_ARG && a.nomAfter === a.LIVE_ARG,
 		'moved=' + a.moved.slice(0, 8) + ' nominee=' + a.nomAfter.slice(0, 8));
-	check('(a) every dead ghost line is swept from the roster',
+	check('(a) every recorded-superseded line is swept from the roster',
 		[a.NOM_DEAD, a.GHOST_2, a.GHOST_3].every(id => a.afterIds.indexOf(id) === -1),
 		'left=' + a.afterIds.map(x => x.slice(0, 4)).join(','));
-	check('(a) the roster no longer holds any ghost id (the sweep was total)',
+	check('(a) the roster no longer holds any superseded id (the sweep was total)',
 		a.afterIds.every(id => [a.NOM_DEAD, a.GHOST_2, a.GHOST_3].indexOf(id) === -1),
 		'left=' + a.afterIds.map(x => x.slice(0, 4)).join(','));
-	check('(a) the swept ghosts do NOT resurrect when a sync re-offers them (tombstone holds)',
+	check('(a) the swept lines do NOT resurrect when a sync re-offers them (tombstone holds)',
 		[a.NOM_DEAD, a.GHOST_2, a.GHOST_3].every(id => a.afterMerge.indexOf(id) === -1),
 		'after re-merge=' + a.afterMerge.map(x => x.slice(0, 4)).join(','));
 
@@ -109,22 +116,22 @@ try {
 		const R = DaimondCore.roster, PR = DaimondPresence, P = DaimondPeer;
 		const W = P.DISPATCH_FRESH_MS, now = Date.now();
 		PR.forget();
-		['daimond-devices', 'daimond-nominated', 'daimond-device-tombs'].forEach(k => {
-			try { localStorage.removeItem(k); } catch (e) {}
-		});
+		['daimond-devices', 'daimond-nominated', 'daimond-device-tombs', 'daimond-device-super']
+			.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
 		const SELF   = DaimondIdentity.deviceId();
-		const ASLEEP = 'd4d4d4d4d4d4d4d4';		// a real machine, uniquely named, just asleep
-		const TWIN_OFF = 'd5d5d5d5d5d5d5d5';	// asleep, but a live device SHARES its name
-		const TWIN_ON  = 'e6e6e6e6e6e6e6e6';	// that live same-name device
+		const ASLEEP = 'd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4';		// a real machine, uniquely named, just asleep
+		const TWIN_OFF = 'd5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5';	// asleep, but a live device SHARES its name
+		const TWIN_ON  = 'e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6';	// that live same-name device
 		const MAC = 'Chrome on macOS';			// a name two of the user's machines share
 		const reg = {};
 		reg[SELF]     = { name: 'Safari on iOS',   label: '', created: 0, namedAt: 0, seen: now };
 		// Asleep two days: no live twin of "MacBook Pro (home)", so merely STALE, not a ghost.
 		reg[ASLEEP]   = { name: 'MacBook Pro (home)', label: '', created: 0, namedAt: 0, seen: now - 2 * DAY };
-		// Asleep only an hour, and a live device carries its name: the re-mint signature.
-		// On this fleet no two real machines share a name, so a live same-name twin is proof
-		// of a re-mint however recent the silence -- this line is a ghost and is swept.
-		reg[TWIN_OFF] = { name: MAC, label: '', created: 0, namedAt: 0, seen: now - 3600 * 1000 };
+		// Asleep only an hour, and a live device carries its name. That used to be read as
+		// the re-mint signature and swept the line; it is a COINCIDENCE two of a user's
+		// machines produce by default, and sweeping on it cost this device the label its
+		// owner typed. With no record against it the line is STALE and stays.
+		reg[TWIN_OFF] = { name: MAC, label: 'Spare MacBook', created: 0, namedAt: now - 9e8, seen: now - 3600 * 1000 };
 		try { localStorage.setItem('daimond-devices', JSON.stringify(reg)); } catch (e) {}
 		PR.beat(SELF,    'Safari on iOS', now, true,  true);
 		PR.beat(TWIN_ON, MAC,            now, false, true);		// the live same-name machine
@@ -134,23 +141,25 @@ try {
 		const ids    = Object.keys(R.load());
 		return {
 			ASLEEP, TWIN_OFF,
-			asleepIsGhost:  !!live.ghost[ASLEEP],		// expected false: no live twin
-			twinIsGhost:    !!live.ghost[TWIN_OFF],		// expected true: a live twin shares its name
+			asleepIsGhost:  !!live.ghost[ASLEEP],		// expected false: no record against it
+			twinIsGhost:    !!live.ghost[TWIN_OFF],		// expected false: a shared name is not a record
+			twinIsStale:    !!live.stale[TWIN_OFF],
 			pruned,
 			asleepKept: ids.indexOf(ASLEEP) !== -1,
 			twinKept:   ids.indexOf(TWIN_OFF) !== -1,
+			twinLabel:  (R.load()[TWIN_OFF] || {}).label,
 		};
 	}, DAY);
 
-	check('(b) a uniquely-named asleep device is not even classified a ghost (no live twin)',
-		!b.asleepIsGhost);
-	check('(b) INVARIANT: a lone asleep device with no live same-name twin is PRESERVED',
-		b.asleepKept);
-	check('(b) a device whose name a live device shares IS a ghost (the re-mint signature)',
-		b.twinIsGhost);
-	check('(b) and it is SWEPT immediately -- a live same-name twin is proof of a re-mint',
-		!b.twinKept && b.pruned.indexOf(b.TWIN_OFF) !== -1,
+	check('(b) a uniquely-named asleep device is not classified a ghost', !b.asleepIsGhost);
+	check('(b) INVARIANT: a lone asleep device is PRESERVED', b.asleepKept);
+	check('(b) a device whose name a LIVE device shares is STALE, not replaced',
+		b.twinIsStale && !b.twinIsGhost, 'stale=' + b.twinIsStale + ' ghost=' + b.twinIsGhost);
+	check('(b) it is NOT swept -- a shared derived name is a coincidence, not evidence',
+		b.twinKept && b.pruned.indexOf(b.TWIN_OFF) === -1,
 		'pruned=' + b.pruned.map(x => x.slice(0, 4)).join(','));
+	check('(b) and it keeps the label its owner typed, which the sweep used to cost it',
+		b.twinLabel === 'Spare MacBook', String(b.twinLabel));
 
 	// ── (d) THE ELECTION RESOLVES A GHOST NOMINEE DETERMINISTICALLY (no lottery) ─
 	// Run the whole thing twice, swapping which live peer beats fresher. The RAW
@@ -164,19 +173,20 @@ try {
 		function run(argFresher) {
 			const now = Date.now();
 			PR.forget();
-			['daimond-devices', 'daimond-nominated', 'daimond-device-tombs'].forEach(k => {
-				try { localStorage.removeItem(k); } catch (e) {}
-			});
+			['daimond-devices', 'daimond-nominated', 'daimond-device-tombs', 'daimond-device-super']
+				.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
 			const SELF = DaimondIdentity.deviceId();
-			const DEAD = 'a1a1a1a1a1a1a1a1';		// argonaut's dead old id (the star)
-			const ARGV = 'b2b2b2b2b2b2b2b2';		// argonaut back under a new id (the successor)
-			const GILV = 'c3c3c3c3c3c3c3c3';		// gilgamesh, a genuinely different peer
+			const DEAD = 'a1a1a1a1a1a1a1a1';		// argonaut's retired id (the star)
+			const ARGV = 'b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2';	// argonaut under its identity id (the successor)
+			const GILV = 'c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3';	// gilgamesh, a genuinely different peer
 			const ARG = 'Chrome on Argonaut Linux', GIL = 'Chrome on Gilgamesh Linux';
 			const old = now - 40 * DAY;
 			const reg = {};
 			reg[SELF] = { name: 'Safari on iOS', label: '', created: old, namedAt: 0, seen: now };
 			reg[DEAD] = { name: ARG, label: '', created: old, namedAt: 0, seen: old };
 			try { localStorage.setItem('daimond-devices', JSON.stringify(reg)); } catch (e) {}
+			try { localStorage.setItem('daimond-device-super',
+				JSON.stringify({ [DEAD]: { to: ARGV, at: now } })); } catch (e) {}
 			R.nominate(DEAD);
 			PR.beat(SELF, 'Safari on iOS', now, true, true);
 			// Whichever we make fresher wins the RAW freshest-peer fallthrough.
@@ -206,7 +216,7 @@ try {
 	}, DAY);
 
 	// The raw election is a lottery: it follows whichever peer beats fresher.
-	check('(d) RAW: with argonaut fresher, the ghost nominee falls through to argonaut',
+	check('(d) RAW: with argonaut fresher, the superseded nominee falls through to argonaut',
 		d.argFresh.rawReason !== 'nominee' && d.argFresh.rawPeer === d.argFresh.ARGV,
 		'reason=' + d.argFresh.rawReason + ' peer=' + d.argFresh.rawPeer.slice(0, 8));
 	check('(d) RAW: with gilgamesh fresher, it falls through to gilgamesh instead (the lottery)',

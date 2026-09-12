@@ -328,6 +328,14 @@
 			turnId:  String(o.turnId || ''),
 			verdict: o.verdict === 'allow' ? 'allow' : 'deny',
 			by:      String(o.by || ''),		// the answering device, for the UI
+			// WHICH BLOCKER this answers (owner ruling 2026-09-12). 'consent' is the
+			// original per-turn permission and stays the default, so a grant from a
+			// build that predates the blocker reads exactly as it did; 'ask' carries
+			// the `ask` tool's chosen option in `choice`. The runner matches the kind
+			// against what it is actually blocked on (`blockerAnswerDecision`), so an
+			// answer to one question can never resolve another.
+			kind:    String(o.kind || 'consent'),
+			choice:  String(o.choice == null ? '' : o.choice),
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -642,6 +650,9 @@
 	///   done           -- report status 'done': the answer, the badge clears
 	///   parked         -- report status 'parked': "needs your permission — it will
 	///                     re-run when you're back" (a survivable park, below the bound)
+	///   blocked        -- the lease carries a `blocker`: the runner is stopped on a
+	///                     permission, a question, a lock or a provider refusal, and
+	///                     the tile shows it with the runner's own controls
 	///   awaiting-consent -- an open consent-ask for this turn: the runner is blocked
 	///                     on a live question the user must answer -- "<peer> needs your
 	///                     permission to {act}", replacing "Sent to your other devices."
@@ -663,9 +674,16 @@
 			if (report.status === 'undeliverable') return 'claimed';
 			return 'failed';									// aborted / error / refused-spend: terminal
 		}
+		// A BLOCKER ON THE LEASE outranks everything the lease mode could say (it
+		// reads 'running' throughout the wait) and outranks the relayed ask, because
+		// it is the authoritative copy: the runner wrote it through the same CAS that
+		// arbitrates the claim, so every device reads one description of one turn.
+		// Owner ruling 2026-09-12: the originating user must never see a hanging turn.
+		if (liveLease(lease, n) && lease.blocker && blockerKind(lease.blocker.kind)) return 'blocked';
 		// A live question the runner is blocked on takes precedence over the lease
 		// state (which reads 'running' throughout the wait): the dispatch UI must stop
-		// saying "sent" and say what is actually holding it up.
+		// saying "sent" and say what is actually holding it up. Retained beneath the
+		// blocker for a runner on a build that posts the ask but writes no blocker.
 		if (ask && ask.t === T_ASK) return 'awaiting-consent';
 		// No report yet: read the lease.
 		if (liveLease(lease, n)) {
@@ -809,7 +827,16 @@
 	/// the attention signal (foreground + recent interaction) a live consent routes on:
 	/// `attendedAt` stamps when the device was last attended, so freshness is judged on
 	/// attention rather than on the bare beat.
-	function presenceBeat(deviceId, name, now, attended, servicing, build) {
+	///
+	/// `runner` is the nominated machine's own posture (runner.js): it has been set up
+	/// to stay awake and listening. A LIVE per-beat fact, not a stamp, because the
+	/// question it answers -- is that machine actually arranged to be a runner -- is
+	/// only ever asked of a device that is beating now.
+	///
+	/// `mobile` is the machine's own answer to whether it is a phone or a tablet. STICKY,
+	/// unlike the posture: it is a boot-time fact about the machine, so a beat that cannot
+	/// say keeps what the device already said rather than unsaying it.
+	function presenceBeat(deviceId, name, now, attended, servicing, build, runner, mobile) {
 		var id = String(deviceId || '');
 		if (!id) return false;
 		var n = now == null ? Date.now() : now;
@@ -826,7 +853,13 @@
 		// exactly as `servicedAt` preserves an unreported stamp.
 		var bd = (build != null && build !== '') ? String(build) : (prev ? (prev.build || '') : '');
 		_presence[id] = { name: String(name || ''), lastSeen: n, attended: !!attended,
-			attendedAt: at, servicedAt: sv, build: bd };
+			attendedAt: at, servicedAt: sv, build: bd, runner: !!runner };
+		// Is this MACHINE a phone or tablet? Its own answer, from real signals rather than
+		// from its label or its window width, so the election seats a seat and not a name.
+		// LEFT ABSENT when the caller cannot say, exactly as `servicedAt` is: absent must
+		// mean "fall back to the old inference", never "desktop".
+		if (mobile != null) _presence[id].mobile = !!mobile;
+		else if (prev && typeof prev.mobile === 'boolean') _presence[id].mobile = prev.mobile;
 		return true;
 	}
 
@@ -856,6 +889,15 @@
 				// one keeps what we last knew rather than blanking it.
 				adopted.build = (inc.build != null && inc.build !== '') ? String(inc.build)
 					: (cur ? (cur.build || '') : '');
+				// The runner posture rides the freshest line. Absent reads as false, not as
+				// "keep the old answer": a machine that has been disarmed beats without the
+				// field, and a remembered true would keep routing hand-offs at it.
+				adopted.runner = !!inc.runner;
+				// The device's own mobility answer, preserved ABSENT like servicedAt: an
+				// incoming line without it keeps what we last knew rather than asserting
+				// "desktop" about a device that never said.
+				if (typeof inc.mobile === 'boolean') adopted.mobile = inc.mobile;
+				else if (cur && typeof cur.mobile === 'boolean') adopted.mobile = cur.mobile;
 				_presence[id] = adopted;
 				moved = true;
 			}
@@ -908,6 +950,17 @@
 			// rather than a false one. The roster's last-known build fills the gap for
 			// the display and the hand-off preference until the relay ships.
 			recOut.build = (rec.build != null) ? String(rec.build) : '';
+			// The runner posture, relayed verbatim (no clock in it). A gateway that does
+			// not carry the field reads as false everywhere, which costs nothing: the
+			// nomination still routes hand-offs, and this only ever ADDS the knowledge
+			// that the nominated machine is arranged to be one.
+			recOut.runner = !!rec.runner;
+			// The device's OWN mobility answer, relayed verbatim (a boolean, no clock in
+			// it). LEFT ABSENT when the gateway or the peer does not send it, so the
+			// election can tell "cannot say -> fall back to the name/viewport inference"
+			// from "says desktop". Coercing absent to false would seat a phone on an old
+			// build; coercing it to true would strand a fleet mid-rollout.
+			if (typeof rec.mobile === 'boolean') recOut.mobile = rec.mobile;
 			next[String(id)] = recOut;
 		}
 		var before = JSON.stringify(_presence);
@@ -942,18 +995,39 @@
 
 	function presenceForget() { _presence = {}; }
 
+	/// Say that the presence view MOVED, so a surface drawn from it redraws at once
+	/// rather than on its own next timer. The seat line under the composer reads this:
+	/// a desktop waking or going quiet changes where the next turn will run, and a line
+	/// that told the user otherwise until the next beat would be a line they plan
+	/// against wrongly. Swallowed where there is no window (the node tests).
+	function announcePresence() {
+		try { window.dispatchEvent(new CustomEvent('daimond:presence')); }
+		catch (e) { /* no window, or no CustomEvent: the caller's own timer still redraws */ }
+	}
+
+	/// `fn` wrapped so a mutation that actually moved the view announces itself. The
+	/// three writers (beat, adopt, ingest) each answer whether anything changed, which
+	/// is exactly the condition worth a redraw.
+	function announcing(fn) {
+		return function () {
+			var moved = fn.apply(null, arguments);
+			if (moved) announcePresence();
+			return moved;
+		};
+	}
+
 	window.DaimondPresence = {
 		BEAT_MS:  PRESENCE_BEAT_MS,
 		FRESH_MS: PRESENCE_FRESH_MS,
-		beat:     presenceBeat,
+		beat:     announcing(presenceBeat),
 		/// sync.js's section contract -- freshest-scalar, NOT take-if-vacant.
 		snapshot: presenceSnapshot,
-		adopt:    presenceAdopt,
+		adopt:    announcing(presenceAdopt),
 		/// Replace the local view from the gateway's authoritative map, converting
 		/// each last_seen into this client's clock frame (skew-immune). This is the
 		/// sync path now -- presence rides its own non-waking gateway route, not the
 		/// content parcel -- so it supersedes the freshest-scalar `adopt` above.
-		ingest:   presenceIngest,
+		ingest:   announcing(presenceIngest),
 		/// The awake peers, and one device's name, for the UI and auto-dispatch.
 		awake:    presenceAwake,
 		name:     presenceName,
@@ -1102,6 +1176,37 @@
 		return { raise: true, why: 'broadcast' };
 	}
 
+	/// Which of the asks a device is holding should be RE-RAISED now? Pure, and the
+	/// answer to the second half of the owner's 2026-09-12 ruling: an ask that arrived
+	/// while the device was hidden was recorded for the dispatch badge and never drawn,
+	/// because `askRaiseDecision` (rightly) refuses to put a dialog where nobody is --
+	/// and nothing asked the question again when the person came back. So the whole open
+	/// set is re-decided on the one event at which the answer to "could somebody answer
+	/// this" has just changed.
+	///
+	/// `open` is turnId -> ask envelope; `resolved` and `up` are the two ledgers
+	/// `askRaiseDecision` reads (cid -> true / cid -> tile id). Answers the asks to
+	/// raise, in arrival order, each of which has passed the SAME filter a freshly
+	/// collected ask passes -- so a resolved, expired or already-drawn ask is never
+	/// raised twice by this path.
+	function reRaiseDecision(open, selfId, now, opts) {
+		var o = open || {}, x = opts || {}, out = [];
+		var n = now == null ? Date.now() : now;
+		for (var tid in o) {
+			if (!Object.prototype.hasOwnProperty.call(o, tid)) continue;
+			var ask = o[tid];
+			if (!ask || ask.t !== T_ASK) continue;
+			var cid = String(ask.cid || '');
+			var d = askRaiseDecision(ask, selfId, n, {
+				resolved:  !!(x.resolved && x.resolved[cid]),
+				alreadyUp: !!(x.up && x.up[cid]),
+				canAnswer: !!x.canAnswer,
+			});
+			if (d.raise) out.push(ask);
+		}
+		return out;
+	}
+
 	/// The FIRST-RESPONDER resolution rule for a collected `consent-grant`, pure so the
 	/// money-safe bound is driven by a test. `pending` is the runner's awaiting record
 	/// for the grant's cid (`{ turnId }`) or null. The caller SPENDS the record on a
@@ -1187,6 +1292,25 @@
 	// the next live desktop is tried before local.
 
 	/// Resolve the hand-off target from live presence and the fallback chain. Pure.
+	/// Is a presence record a MOBILE device -- one that must never be seated as another
+	/// device's worker?
+	///
+	/// `mobile` is the device's OWN answer, decided at its boot from real signals (touch,
+	/// pointer, UA mobility, standalone PWA -- mobile.js `isMobileDevice`) and carried on
+	/// every beat. It is read FIRST and it is final, either way: a phone its owner named
+	/// "gilgamesh" says `mobile:true` and is not seated, and a desktop window dragged
+	/// under 760px says `mobile:false` and still is.
+	///
+	/// `mobileView` is the OLD inference -- the peer's NAME, or this device's viewport
+	/// width (daimond.js `presenceIsMobileView`) -- and it stands in only while the field
+	/// is ABSENT, which is a peer on a build that predates the flag. Absent on both reads
+	/// as NON-mobile, so a live desktop is never wrongly withheld.
+	function recMobileView(rec) {
+		if (!rec) return false;
+		if (typeof rec.mobile === 'boolean') return rec.mobile;
+		return !!rec.mobileView;
+	}
+
 	/// Answers `{ target, reason }` where `target` is `{ deviceId, name, lastSeen, build,
 	/// staleBuild? }` or null (→ run local), and `reason` is one of
 	/// `nominee` / `nominee-presumed` / `worker` / `other-desktop` / `local`.
@@ -1210,7 +1334,7 @@
 		// absent from presence simply misses this, and the label match below recovers it.
 		if (nom && nom !== self && !exclude[nom]) {
 			var nr = p[nom];
-			if (nr && !nr.mobileView && (n - leaseMs(nr.lastSeen)) <= nomWin) {
+			if (nr && !recMobileView(nr) && (n - leaseMs(nr.lastSeen)) <= nomWin) {
 				var presumed = (n - leaseMs(nr.lastSeen)) > w;		// seated on trust, not a fresh beat
 				var nb = String(nr.build || '');
 				var nomStale = !!(cur && nb && nb !== cur);
@@ -1219,23 +1343,34 @@
 			}
 		}
 
-		// (a') THE PREFERRED WORKER by LABEL, resolved against LIVE presence -- the ghost-
-		// proof heart of the fix. The star is a preferred LABEL (daimond.js resolves it from
-		// the nomination against the roster), matched here against every BEATING non-mobile
-		// device, so a dead re-mint id in any stored list is ignored and the machine that
-		// carries the label and is HERE NOW is seated. Bare beat within `w`.
+		// (a') THE PREFERRED WORKER by LABEL, resolved against LIVE presence, and only when
+		// the label picks out exactly ONE live desktop. The star is a preferred LABEL
+		// (daimond.js resolves it from the nomination against the roster), matched here
+		// against every BEATING non-mobile device, so a superseded id in any stored list is
+		// ignored and the machine that carries the label and is HERE NOW is seated. Bare
+		// beat within `w`.
+		//
+		// UNIQUE OR NOTHING. A derived name is the browser and the platform and nothing
+		// else, so two of a user's Linux Chromes say the same thing; seating the fresher of
+		// them on a name they share is a lottery dressed as a preference, and it decides
+		// which machine RUNS AND BILLS the turn. Two matches fall through to (b), which
+		// seats a genuinely-servicing desktop on its own terms. A derived name now carries
+		// the device's own id tail (daimond.js deviceSelfName), so the collision is rare as
+		// well as refused.
 		if (pref) {
 			var byLabel = [];
 			for (var id in p) {
 				if (!Object.prototype.hasOwnProperty.call(p, id)) continue;
 				if (id === self || exclude[id]) continue;
 				var r = p[id];
-				if (!r || r.mobileView) continue;
+				if (!r || recMobileView(r)) continue;
 				if ((n - leaseMs(r.lastSeen)) > w) continue;
 				if (normLabel(r.name) !== pref) continue;
 				byLabel.push({ deviceId: id, name: (r.name || ''), lastSeen: leaseMs(r.lastSeen), build: String(r.build || '') });
 			}
-			if (byLabel.length) return { target: freshestWithBuild(byLabel, cur), reason: 'worker' };
+			// Through freshestWithBuild even for one, so a lone match on a superseded build
+			// still carries `staleBuild` to the caller.
+			if (byLabel.length === 1) return { target: freshestWithBuild(byLabel, cur), reason: 'worker' };
 		}
 
 		// (b) ANY OTHER LIVE, non-mobile, GENUINELY-SERVICING desktop. recGenuine (beating
@@ -1248,7 +1383,7 @@
 			if (!Object.prototype.hasOwnProperty.call(p, id2)) continue;
 			if (id2 === self || exclude[id2]) continue;
 			var r2 = p[id2];
-			if (!r2 || r2.mobileView) continue;
+			if (!r2 || recMobileView(r2)) continue;
 			if (!recGenuine(r2, n, w)) continue;
 			desks.push({ deviceId: id2, name: (r2.name || ''), lastSeen: leaseMs(r2.lastSeen), build: String(r2.build || '') });
 		}
@@ -1334,6 +1469,70 @@
 		return { dispatch: false, reason: 'desktop-local' };
 	}
 
+	/// WHERE THE NEXT TURN WILL RUN, as a line a user can read before they send.
+	///
+	/// The election was invisible: a turn left for another machine, or stayed here, and the
+	/// only way to find out which was to send and watch. On a phone that matters -- a turn
+	/// that runs locally needs the screen kept awake and in the foreground, and the user can
+	/// only plan for that if they are told BEFORE they commit to it (owner spec 2026-09-12).
+	///
+	/// Pure, and the SAME decision the send takes: `autoDispatchDecision` over the same
+	/// presence, so the line cannot promise one seat and the send take another. Answers
+	///
+	///   { where, key, label, deviceId, warn, why, reason, dispatch, staleBuild }
+	///
+	/// `where` is `runner` (the account's nominated always-on device), `desktop` (another
+	/// live desktop, the runner being absent) or `local` (here). `key` is the i18n key for
+	/// the line and `label` its `{name}`; `warn` is true only where running here is a thing
+	/// the user must act on -- a mobile device, which must stay foregrounded -- and `why`
+	/// then names the reason the line can give: `chat-local`, `runner-silent` or
+	/// `no-desktop`.
+	function seatPlan(chat, presence, opts, now) {
+		var o = opts || {}, p = presence || {};
+		var n = (now == null ? Date.now() : now);
+		var w = o.freshWindowMs || DISPATCH_FRESH_MS;
+		var d = autoDispatchDecision(chat, p, o, n);
+		if (d.dispatch && d.peer) {
+			var onRunner = (d.reason === 'nominee' || d.reason === 'nominee-presumed' || d.reason === 'worker');
+			// A nominee that is SET but not beating is named as the reason this turn is going
+			// somewhere else, so a silent runner is visible rather than merely bypassed.
+			var nom  = String(o.nominatedId || '');
+			var nrec = nom ? p[nom] : null;
+			var nomLive = !!(nrec && (n - leaseMs(nrec.lastSeen)) <= w);
+			return {
+				where:      onRunner ? 'runner' : 'desktop',
+				key:        onRunner ? 'seat.on_runner'
+					: ((nom && !nomLive) ? 'seat.on_desktop_runner_off' : 'seat.on_desktop'),
+				label:      String(d.peer.name || ''),
+				deviceId:   String(d.peer.deviceId || ''),
+				warn:       false,
+				why:        '',
+				reason:     d.reason,
+				dispatch:   true,
+				staleBuild: !!d.staleBuild,
+			};
+		}
+		// LOCAL. On a mobile device this is the state worth shouting about, so the line
+		// carries the warning and the reason; on a desktop it is the ordinary case and the
+		// line is a plain statement.
+		var mob = !!o.selfMobile;
+		var nom2  = String(o.nominatedId || '');
+		var nrec2 = nom2 ? p[nom2] : null;
+		var why = (d.reason === 'chat-local') ? 'chat-local'
+			: (nom2 && !(nrec2 && (n - leaseMs(nrec2.lastSeen)) <= w)) ? 'runner-silent'
+			: 'no-desktop';
+		return {
+			where:    'local',
+			key:      mob ? 'seat.local_mobile' : 'seat.local',
+			label:    '',
+			deviceId: String(o.selfId || ''),
+			warn:     mob,
+			why:      why,
+			reason:   d.reason,
+			dispatch: false,
+		};
+	}
+
 	// ── The nominated always-on runner (the claim guard) ───────
 	//
 	// An account may name ONE device as the runner that should pick a dispatched
@@ -1397,9 +1596,10 @@
 	// How often the runner streams the running turn's transcript to the mailbox, so a
 	// peer watching the hand-off sees the thinking and tool calls unfold rather than a
 	// blank wait until the turn finishes. Faster than the liveness ticker because it is
-	// the UX cadence, not the lease cadence; the sync-side push throttles and no-ops an
-	// unchanged frame (sync.js PROGRESS_PUSH_MIN_MS), so a tick that has nothing new
-	// costs one parcel collect and nothing on the wire. See runErrand's progress timer.
+	// the UX cadence, not the lease cadence. A tick sends ONE SMALL FRAME -- the turn's
+	// rendered tail through the progress door (sync.js pushProgressFrame), tens of
+	// kilobytes at most -- and not the whole account parcel, which is what made this
+	// cadence affordable; a tick whose tail is unchanged sends nothing at all.
 	var PROGRESS_EVERY_MS = 2000;
 	var MAX_TAKE_TRIES = 10;		// bound the CAS retry loop (was 6): more headroom under two-device churn
 	var TAKE_BACKOFF_MS = 250;		// jittered wait between take retries so a claim gets a clean window
@@ -1563,6 +1763,25 @@
 	/// machine read (they need mode/expiry/holder, not just the live holder).
 	function leaseRecord(turnId) {
 		return _leases[String(turnId)] || null;
+	}
+
+	/// Does `holder` hold a LIVE lease on any turn at all?
+	///
+	/// `leaseHolder` answers for one turnId, which is what every caller needed until
+	/// something had to ask the question the other way round: is this device running
+	/// a turn for anybody? The updater asks it before reloading a runner, because a
+	/// reload drops a turn the device is holding for another and no amount of build
+	/// drift is worth that.
+	function leaseHeldBy(holder, now) {
+		var who = String(holder || '');
+		if (!who) return false;
+		var n = now == null ? Date.now() : now;
+		for (var id in _leases) {
+			if (!Object.prototype.hasOwnProperty.call(_leases, id)) continue;
+			var r = _leases[id];
+			if (liveLease(r, n) && String(r.holder || '') === who) return true;
+		}
+		return false;
 	}
 
 	// ── The lifecycle, over a compare-and-set ──────────────────
@@ -1800,6 +2019,285 @@
 		return { ok: false, why: 'exhausted' };
 	}
 
+	// ════════════════════════════════════════════════════════════
+	// THE BLOCKER — what is stopping the runner, carried to every device.
+	// ------------------------------------------------------------
+	// Owner ruling 2026-09-12: a blocker raised on the RUNNER -- a permission
+	// popup, a question, a lock -- must be copied to the originating device and
+	// to every other device, cleared everywhere by the FIRST to respond, with
+	// the runner keeping local control. The originating user must never see a
+	// hanging turn.
+	//
+	// It rides the LEASE RECORD and not a new channel, for three reasons. The
+	// lease is already the one thing every device reads about a handed-off turn
+	// (`adoptLeaseDoor` folds it into an ordinary pull, so a watching phone sees
+	// it with no new request); it is already CAS-arbitrated, so two devices
+	// cannot write contradictory blockers; and it already dies with the turn --
+	// a released lease carries no blocker, so a stale question cannot outlive
+	// the thing it was blocking. The ANSWER travels the other way over the
+	// relay, reusing the consent-grant envelope (`makeGrant`, now carrying a
+	// `kind` and, for an `ask`, the `choice`), so there is no second transport
+	// and no second first-wins rule: `grantDecision` is still the arbiter.
+	//
+	// FIVE KINDS, two of them report-only:
+	//   consent   -- a per-turn permission the runner is holding a dialog on.
+	//                Answerable anywhere: grant or deny.
+	//   ask       -- the `ask` TOOL's question, with its options. Answerable
+	//                anywhere, because answering it is only sending the chat's
+	//                next message.
+	//   fsa       -- File System Access wants a click. NOT answerable remotely:
+	//                `requestPermission` needs a user gesture ON the runner, so
+	//                the tile REPORTS it and offers to run the turn here instead.
+	//   lock      -- the runner is locked (or reloaded mid-turn). Report-only.
+	//   provider  -- the model provider refused (401/402, out of credit).
+	//                Report-only; the turn is handed back.
+	// ════════════════════════════════════════════════════════════
+
+	var BLOCKER_KINDS = ['consent', 'ask', 'fsa', 'lock', 'provider'];
+
+	// A blocker is read by a human on another device, so its text is capped where
+	// it is built rather than where it is drawn: the lease door has a 64 KiB
+	// ceiling (gateway LEASE_MAX_BYTES) shared by every turn's record, and a
+	// runaway `detail` -- a whole page of typed text -- would push a live lease map
+	// over it and fail the CLAIM, not merely the blocker.
+	var BLOCKER_DETAIL_MAX  = 600;	// the exact string being authorised, cut with an ellipsis
+	var BLOCKER_OPTIONS_MAX = 4;	// `ask` offers two to four; the tool refuses more
+	var BLOCKER_LABEL_MAX   = 80;
+
+	/// Is `k` a blocker kind this layer knows? An unknown kind is NOT drawn with
+	/// controls -- see `blockerTileSpec` -- so a newer runner's blocker degrades to
+	/// a report on an older device rather than to a button that does nothing.
+	function blockerKind(k) {
+		return BLOCKER_KINDS.indexOf(String(k || '')) >= 0;
+	}
+
+	/// Build a blocker record for the lease. `detail` is the uncut thing a human
+	/// must read, cut HERE to a readable length; `options` is the `ask` tool's
+	/// option list, reduced to labels because a remote tile answers by label and
+	/// the means/recommendation are already in the runner's own card. `since` is
+	/// when the runner became blocked, so a tile can say how long it has waited.
+	function makeBlocker(f) {
+		var o = f || {};
+		var detail = String(o.detail == null ? '' : o.detail);
+		if (detail.length > BLOCKER_DETAIL_MAX) detail = detail.slice(0, BLOCKER_DETAIL_MAX) + '…';
+		var out = {
+			kind:   blockerKind(o.kind) ? String(o.kind) : 'lock',
+			detail: detail,
+			since:  +o.since || Date.now(),
+		};
+		// `cid` names the question the answer must quote, so a grant for a blocker
+		// the runner has already cleared authorises nothing (`grantDecision`).
+		if (o.cid)  out.cid  = String(o.cid);
+		if (o.tool) out.tool = String(o.tool);
+		if (o.host) out.host = String(o.host);
+		if (Array.isArray(o.options) && o.options.length) {
+			out.options = o.options.slice(0, BLOCKER_OPTIONS_MAX).map(function (op) {
+				var lab = (op && typeof op === 'object') ? op.label : op;
+				return String(lab == null ? '' : lab).slice(0, BLOCKER_LABEL_MAX);
+			}).filter(function (s) { return !!s; });
+			if (!out.options.length) delete out.options;
+		}
+		return out;
+	}
+
+	/// Can a blocker of this kind be ANSWERED from another device, or only
+	/// reported there? `fsa` needs a user gesture on the runner's own page
+	/// (`requestPermission` is refused without one) and `lock`/`provider` are facts
+	/// about the runner that no answer elsewhere changes -- so those three offer
+	/// "Run here instead" and nothing that pretends to reach across.
+	function blockerAnswerable(kind) {
+		return kind === 'consent' || kind === 'ask';
+	}
+
+	/// What a device should DRAW for a blocker, as data rather than as text: the
+	/// renderer owns the words (daimond.js, literal `t()` keys so
+	/// `dev/i18ncheck.mjs` can read each one out of the source) and this owns the
+	/// shape. Pure, so the decision a tile makes is under test without a DOM.
+	///
+	/// `controls` is the ordered list of what the tile offers:
+	///   'grant' / 'deny'  -- a consent, answerable here;
+	///   'choose'          -- one button per `options` entry, answerable here;
+	///   'runhere'         -- release the lease and re-seat locally (report-only).
+	/// An unknown kind draws as a report with 'runhere', never as a dead button.
+	function blockerTileSpec(blocker, name) {
+		var b = blocker || {};
+		var kind = blockerKind(b.kind) ? String(b.kind) : '';
+		var spec = {
+			kind:      kind || 'unknown',
+			name:      String(name || ''),
+			detail:    String(b.detail || ''),
+			tool:      String(b.tool || ''),
+			host:      String(b.host || ''),
+			options:   Array.isArray(b.options) ? b.options.slice(0, BLOCKER_OPTIONS_MAX) : [],
+			since:     +b.since || 0,
+			answerable: blockerAnswerable(kind),
+			controls:  [],
+		};
+		if (kind === 'consent')                          spec.controls = ['grant', 'deny'];
+		else if (kind === 'ask' && spec.options.length)  spec.controls = ['choose'];
+		else                                             spec.controls = ['runhere'];
+		return spec;
+	}
+
+	/// The live blocker on a turn, or null. A blocker on a lease that is no longer
+	/// live grants nothing and is not shown: the question died with the turn.
+	function blockerOf(turnId, now) {
+		var r = _leases[String(turnId)];
+		if (!liveLease(r, now == null ? Date.now() : now)) return null;
+		return (r && r.blocker && blockerKind(r.blocker.kind)) ? r.blocker : null;
+	}
+
+	/// WRITE (or clear) the blocker on a lease this device holds, through the SAME
+	/// compare-and-set the claim went through. `blocker` null clears it.
+	///
+	/// Only the HOLDER may write: a watching device that tried would be refused
+	/// `not_ours`, which is what stops two devices describing one turn differently.
+	/// Mode, deadline and expiry are carried forward untouched -- a blocker is not a
+	/// state change, so it must not shorten a claim or turn `running` back into
+	/// `claimed` -- and `renewedAt` is stamped now so the same-holder merge keeps
+	/// this over the runner's own earlier record on every other device.
+	async function leaseBlockCas(turnId, holder, blocker, cas, nowFn) {
+		var tid = String(turnId), h = String(holder);
+		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
+			var snap = await cas.read();
+			var now  = leaseNow(nowFn);
+			var cur  = snap.leases[tid];
+			if (!cur || cur.holder !== h || cur.mode === 'released') {
+				_leases = mergeLeases(_leases, snap.leases, now);
+				return { ok: false, why: 'not_ours' };
+			}
+			var next = {
+				turnId: tid, eid: cur.eid, holder: h, mode: cur.mode,
+				deadline: leaseMs(cur.deadline), expiry: cur.expiry,
+				renewedAt: Math.max(now, leaseMs(cur.renewedAt) + 1),
+			};
+			if (blocker) next.blocker = makeBlocker(blocker);
+			var proposed = mergeLeases({ [tid]: next }, snap.leases, now);
+			// The merge keeps the record it judges fresher; a proposal that lost is a
+			// sibling writing the same lease, so re-read and try again rather than
+			// pushing a record the merge has already discarded.
+			if (!proposed[tid] || proposed[tid].holder !== h) continue;
+			var res = await cas.write(snap.version, proposed);
+			if (res.ok) { _leases = proposed; return { ok: true, blocked: !!blocker }; }
+		}
+		return { ok: false, why: 'exhausted' };
+	}
+
+	/// Raise a blocker, with the act reported to the debug feed.
+	async function leaseBlock(turnId, holder, blocker, cas, nowFn) {
+		var res = await leaseBlockCas(turnId, holder, blocker, cas, nowFn);
+		dsHandoff({
+			act:  'block',
+			turn: String(turnId).slice(0, 24),
+			kind: String((blocker && blocker.kind) || '').slice(0, 10),
+			ok:   res && res.ok ? 1 : 0,
+			why:  String((res && res.why) || '').slice(0, 16),
+		});
+		return res;
+	}
+
+	/// Clear the blocker, whatever it was.
+	async function leaseUnblock(turnId, holder, cas, nowFn) {
+		var res = await leaseBlockCas(turnId, holder, null, cas, nowFn);
+		dsHandoff({
+			act:  'unblock',
+			turn: String(turnId).slice(0, 24),
+			ok:   res && res.ok ? 1 : 0,
+			why:  String((res && res.why) || '').slice(0, 16),
+		});
+		return res;
+	}
+
+	/// The FIRST-ANSWER-WINS rule for a blocker answer arriving at the runner.
+	/// `pending` is the runner's awaiting record (`{ turnId, kind }`) or null --
+	/// SPENT by the caller in the same synchronous step it reads it, exactly as
+	/// `grantDecision`'s is, so a second answer for one blocker finds nothing and
+	/// is a no-op. `answer` is the grant envelope.
+	///
+	/// It is `grantDecision` with the two blocker fields added: the KIND must match
+	/// what the runner is actually blocked on (an `ask` answer cannot resolve a
+	/// consent), and an `ask` answer must carry a choice. A dropped answer costs the
+	/// runner its deadline, never a wrong act.
+	function blockerAnswerDecision(pending, answer) {
+		var a = answer || {};
+		var d = grantDecision(pending, a);
+		if (!d.commit) return d;
+		var want = String(pending.kind || 'consent');
+		var got  = String(a.kind || 'consent');
+		if (want !== got) return { commit: false, drop: true, why: 'kind-mismatch' };
+		if (want === 'ask') {
+			var choice = String(a.choice == null ? '' : a.choice).trim();
+			if (!choice) return { commit: false, drop: true, why: 'no-choice' };
+			return { commit: true, kind: 'ask', choice: choice, why: 'first-committed' };
+		}
+		return { commit: true, kind: want, verdict: d.verdict, why: d.why };
+	}
+
+	/// Should THIS device, on boot, RELEASE a `running` lease it finds under its own
+	/// name? Pure, and the answer to the hang the owner reported: a runner that
+	/// locked or reloaded mid-turn left its own lease claimed to the errand deadline
+	/// (~15 min), `recoverDecision` read a live foreign lease and stood down, and the
+	/// originator watched a spinner for a quarter of an hour.
+	///
+	/// A lease is OURS and STALE when it is live, held by this device, not released,
+	/// and no turn of that id is running here -- which on a fresh page load is every
+	/// lease this device holds, because a turn is memory and the page has just
+	/// started. `running` names the set: `running[turnId]` truthy means the turn is
+	/// genuinely in flight here, so a second tab of the same device cannot release
+	/// the lease out from under the tab that is actually working.
+	function staleOwnLeaseDecision(leases, selfId, running, now) {
+		var out = [], map = leases || {}, live = running || {};
+		var self = String(selfId || ''), n = now == null ? Date.now() : now;
+		if (!self) return out;
+		for (var tid in map) {
+			if (!Object.prototype.hasOwnProperty.call(map, tid)) continue;
+			var r = map[tid];
+			if (!liveLease(r, n)) continue;
+			if (String(r.holder) !== self) continue;	// a peer's lease is never ours to free
+			if (live[tid]) continue;					// genuinely running here
+			out.push(String(tid));
+		}
+		return out;
+	}
+
+	/// Classify an error a runner's turn threw, so a failure the RUNNER cannot
+	/// recover from is handed back instead of counting as a silent crash.
+	///
+	/// A genuine crash is deliberately left to expire (the relay keeps the errand
+	/// and the phone reclaims), but three failures are not crashes and the old
+	/// reading of them cost the originator the whole deadline:
+	///   'provider'  -- the model provider refused the key or the credit (401, 402,
+	///                  "insufficient credits"). Re-running on this device would
+	///                  refuse identically, so there is nothing to wait for.
+	///   'fsa'       -- the folder grant was withdrawn or declined. Another device
+	///                  may well hold its own grant, so hand it back at once.
+	///   'lock'      -- Daimond locked under the turn; nothing can be sealed.
+	/// Anything else is `null`: unchanged behaviour, the errand stays on the relay.
+	function runnerErrorKind(err) {
+		var msg = String((err && (err.message || err.why)) || err || '');
+		var code = +((err && (err.status || err.code)) || 0);
+		if (code === 401 || code === 402) return 'provider';
+		if (/\b(401|402)\b/.test(msg)) return 'provider';
+		if (/insufficient\s+credit|out\s+of\s+credit|no\s+credit\s+remaining/i.test(msg)) return 'provider';
+		if (/invalid\s+api\s+key|unauthori[sz]ed|api\s+key\s+(is\s+)?(missing|invalid)/i.test(msg)) return 'provider';
+		if (/permission\s+(was\s+)?(not\s+granted|denied)|folder\s+access|lost\s+access\s+to\s+the\s+folder/i.test(msg)) return 'fsa';
+		if (/\bis\s+locked\b|Daimond\s+is\s+locked/i.test(msg)) return 'lock';
+		return null;
+	}
+
+	/// The sentence a handed-back failure carries home, by kind. One line, for the
+	/// originator's tile -- it is the whole of what they are told, so it says what
+	/// happened, where, and that the turn is theirs again.
+	function runnerErrorWhy(kind, name) {
+		var who = String(name || '') || 'the other device';
+		if (kind === 'provider') return 'The AI provider refused the turn on ' + who
+			+ ' -- its key or its credit. Nothing was spent; run it here or top up.';
+		if (kind === 'fsa')      return who + ' no longer has access to the folder this turn needs, '
+			+ 'so it handed the turn back.';
+		if (kind === 'lock')     return who + ' locked while this turn was running, so it handed the turn back.';
+		return 'The turn stopped on ' + who + ' and was handed back.';
+	}
+
 	/// Stage a leases section as the local view, for the sync shim ONLY: the CAS
 	/// `commit` installs the proposed section here so the next `DaimondSync.push`
 	/// sends it. Everything else reaches `_leases` through `adopt`/`take`/`renew`.
@@ -1829,6 +2327,9 @@
 		/// and the UI state machine.
 		holder:    leaseHolder,
 		record:    leaseRecord,
+		/// Is this device running a turn for anybody? The question `holder` cannot
+		/// answer, because it takes a turnId and the asker has none.
+		heldBy:    leaseHeldBy,
 		/// The lifecycle over a compare-and-set.
 		take:      leaseTake,
 		/// TAKE from a snapshot already read -- lets a test race two takes from ONE
@@ -1839,6 +2340,12 @@
 		release:   function (turnId, holder, cas, nowFn) { return leaseSet(turnId, holder, 'released', cas, nowFn); },
 		/// The phone's take-back: revoke whoever holds the lease (§3.3).
 		revoke:    leaseRevoke,
+		/// THE BLOCKER: raise what is stopping the runner onto its own lease record,
+		/// clear it when it is answered, and read the live one off a turn. Only the
+		/// holder may write; every device reads.
+		block:     leaseBlock,
+		unblock:   leaseUnblock,
+		blocker:   blockerOf,
 		/// Stage a section for the sync shim's CAS commit. Not for general use.
 		install:   leaseInstall,
 		forget:    leaseForget,
@@ -1881,6 +2388,9 @@
 	///
 	/// Pure over `deps`:
 	///   selfId       this device's id (the lease holder);
+	///   selfName     this device's label, for the sentence a handed-back failure
+	///                carries home ("The AI provider refused the turn on argonaut");
+	///                absent reads as "the other device";
 	///   cas          the lease CAS (`syncCas` over the real sync);
 	///   reconstruct  async (errand) -> ctx: pull to >= parcelVersion, find the chat,
 	///                `scopeChatTo`, apply `pause`, fetch chunks;
@@ -1888,10 +2398,12 @@
 	///                calling `onProgress` on journal events so the lease renews;
 	///   abort        (): hard-stop the in-flight turn (`chat.app.abort`);
 	///   pushResult   async () -> version: `captureSession` + parcel push (append merge);
-	///   pushProgress optional async (): stream the RUNNING turn's transcript to the
-	///                mailbox on a timer, so a peer watching the hand-off sees it unfold.
-	///                The SAME account parcel under compare-and-set -- no new turn, no
-	///                new lease, no second charge; a no-op frame when nothing changed.
+	///   pushProgress optional async (turnId): stream the RUNNING turn's transcript
+	///                tail to the progress door on a timer, so a peer watching the
+	///                hand-off sees it unfold. ONE SMALL FRAME per tick, keyed by the
+	///                turn -- no new turn, no new lease, no second charge, and not the
+	///                account parcel (which travels once, at the end, through
+	///                `pushResult`). A no-op when the tail has not changed.
 	///                Absent (runner-acceptance, tests) -> no streaming, no timer.
 	///   post         async (reportEnvelope): post the report;
 	///   ack          async (): `DaimondPost.ack`, AFTER the push committed;
@@ -2143,7 +2655,9 @@
 			if (setT && d.pushProgress) {
 				progressTimer = setT(function () {
 					if (checkStopped || revoked) return;
-					try { d.pushProgress(); } catch (err) { /* a dropped frame is only a slower stream */ }
+					// The turn id is PASSED: a frame is keyed by the turn it belongs to, so the
+					// dep cannot be left to guess which turn this device is running.
+					try { d.pushProgress(turnId); } catch (err) { /* a dropped frame is only a slower stream */ }
 				}, PROGRESS_EVERY_MS);
 			}
 			try {
@@ -2165,6 +2679,25 @@
 				// the lease, so the turn re-dispatches or ends clean rather than stranding.
 				var pkErr = d.parkRequested ? d.parkRequested(e) : null;
 				if (pkErr) { stopCheck(); return await parkAndRelease(e, d, trace, pkErr); }
+				// NOT EVERY THROW IS A CRASH (owner ruling 2026-09-12). A provider that
+				// refused the key or the credit, a withdrawn folder grant, a lock under the
+				// turn: each is a fact about THIS device that waiting cannot change, and
+				// leaving it to the 15-minute deadline is exactly the hanging turn the
+				// ruling forbids. So hand it back -- REPORT the reason, RELEASE the lease,
+				// and leave the errand ON the relay (no ack) so another device may still
+				// take it. The dispatcher's `failed` state then offers [Run here] at once.
+				var ek = runnerErrorKind(err);
+				if (ek) {
+					stopCheck();
+					var ewhy = runnerErrorWhy(ek, d.selfName);
+					trace.push('handback');
+					try { if (d.post) await d.post(makeReport({ eid: e.eid, turnId: turnId,
+						chatId: e.chatId, status: 'error', why: ewhy })); trace.push('report'); }
+					catch (e2) { /* the release below still frees the turn */ }
+					try { await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
+					catch (e2) { /* an unreleased lease still expires at its deadline */ }
+					return { ran: true, error: true, handback: ek, why: ewhy, trace: trace };
+				}
 				// A genuine crash: do NOT ack and do NOT complete, so the relay keeps the
 				// errand and the lease EXPIRES (at its deadline). The phone reclaims (§2.5).
 				return { ran: true, error: true, why: String(err && err.message || err), trace: trace };
@@ -2215,6 +2748,111 @@
 				? String(DaimondIdentity.deviceId() || '') : '';
 		} catch (e) { self = ''; }
 		return !!self && String(env.dispatchedBy) === self;
+	}
+
+	// ════════════════════════════════════════════════════════════
+	// THE STREAMED VIEW OF A RUNNING TURN
+	// ------------------------------------------------------------
+	// Two pure functions, here rather than in daimond.js because they are the whole
+	// content of the streaming path and the only part of it worth testing without a
+	// browser: what a frame SAYS (`progressTail`) and what a watcher DOES with one
+	// that arrives (`foldProgress`). The app supplies the messages and draws the
+	// result; the decisions are here.
+	// ════════════════════════════════════════════════════════════
+
+	// Tool arguments can be an entire file, and thinking can be thousands of words.
+	// Neither is what a watcher is waiting to see, so each is cut to a label: the
+	// frame carries the daimon's TEXT in full (up to the tail budget) and everything
+	// else as one line saying it happened.
+	var TOOL_ARG_CHARS = 120;
+
+	/// The rendered tail of `turnId`, as the device running it has the transcript now.
+	///
+	/// Everything after the turn's own user message, in order, each message reduced to
+	/// what a person watching would want on screen: the daimon's text verbatim, a tool
+	/// call as `[tool name ...]`, a thinking stretch COLLAPSED TO A COUNT. The last
+	/// `maxChars` of that, so a long turn costs a fixed frame and the part dropped is
+	/// the part the watcher already received in an earlier frame.
+	///
+	/// Pure and DOM-free: `messages` is the chat's array. A turn whose user message is
+	/// not in it answers '' -- the runner has nothing to say about a turn it does not
+	/// hold, which is a quiet frame and not an error.
+	function progressTail(messages, turnId, maxChars) {
+		var msgs = Array.isArray(messages) ? messages : [];
+		var id   = String(turnId || '');
+		var cap  = (maxChars | 0) > 0 ? (maxChars | 0) : 48 * 1024;
+		if (!id) return '';
+		var at = -1;
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (m && (String(m.mid || '') === id || String(m.iturn || '') === id)
+				&& m.role === 'user') { at = i; break; }
+		}
+		if (at < 0) return '';
+		var out = [];
+		for (var j = at + 1; j < msgs.length; j++) {
+			var line = progressLine(msgs[j]);
+			if (line) out.push(line);
+		}
+		var text = out.join('\n');
+		return text.length > cap ? text.slice(-cap) : text;
+	}
+
+	/// One message as the streamed view shows it, or '' for one it does not show.
+	function progressLine(m) {
+		if (!m || !m.role) return '';
+		var c = String(m.content || '');
+		switch (m.role) {
+			case 'assistant':
+				return c;
+			case 'think_log':
+				// A count, not the thinking: a watcher wants to know it IS thinking, and
+				// the thinking itself arrives with the finished turn.
+				return c ? '[thinking ' + c.length + ' chars]' : '';
+			case 'vision_log':
+				return '[looking at an image]';
+			case 'error_log':
+				return c ? '[error: ' + clipLine(c, TOOL_ARG_CHARS) + ']' : '[error]';
+			case 'tool_log':
+				var bits = ['[tool ' + (m.name || '?')];
+				if (m.args) bits.push(clipLine(String(m.args), TOOL_ARG_CHARS));
+				if (m.outcome) bits.push('-> ' + clipLine(String(m.outcome), TOOL_ARG_CHARS));
+				return bits.join(' ') + ']';
+			default:
+				return '';
+		}
+	}
+
+	/// One line of at most `n` characters, newlines folded away so a frame's line
+	/// structure is the message structure and not the content's.
+	function clipLine(s, n) {
+		var one = String(s).replace(/\s+/g, ' ').trim();
+		return one.length > n ? one.slice(0, n) + '\u2026' : one;
+	}
+
+	/// Fold an arriving frame into what a watcher is showing: answers the new state,
+	/// or null when the frame changes nothing and no redraw is owed.
+	///
+	/// A frame REPLACES the one before it -- the tail is the whole tail, not a delta --
+	/// so this is a newest-wins reducer and the rules are about what "newest" means:
+	///
+	///   * a frame for another turn is not this watcher's, and is ignored;
+	///   * a seq at or below the one in hand arrived late (the door's park and the
+	///     fallback poll can both answer, and either may be overtaken), and is ignored,
+	///     so a late frame never rewinds the view;
+	///   * `final` closes the streamed view: the real transcript has landed and is
+	///     what the reader should be looking at, so no later frame reopens it.
+	function foldProgress(state, frame) {
+		var cur = state || {};
+		if (cur.final) return null;
+		if (!frame || !frame.turn) return null;
+		if (cur.turn && String(cur.turn) !== String(frame.turn)) return null;
+		if (frame.final) return { turn: String(frame.turn), seq: cur.seq | 0, tail: '', final: true };
+		var seq = frame.seq | 0;
+		if (seq <= (cur.seq | 0)) return null;
+		var tail = String(frame.tail || '');
+		if (!tail) return null;
+		return { turn: String(frame.turn), seq: seq, tail: tail, final: false };
 	}
 
 	window.DaimondPeer = {
@@ -2277,6 +2915,14 @@
 		/// ignored; a mobile-view device is never seated. `exclude` re-resolves past a
 		/// seated desktop that failed to claim, so the next desktop is tried before local.
 		handoffTarget: handoffTarget,
+		/// Is a presence record a MOBILE device? The beat's own `mobile` flag decides
+		/// either way; the old name/viewport `mobileView` inference stands in only while
+		/// that field is absent (a peer on a build that predates it).
+		recMobileView: recMobileView,
+		/// WHERE THE NEXT TURN WILL RUN, as the line under the composer states it. The same
+		/// `autoDispatchDecision` the send takes, mapped to an i18n key, a device label and
+		/// whether running here is something the user must act on.
+		seatPlan:      seatPlan,
 		freshestPeer:  freshestPeer,
 		/// The genuine-availability gate: `recGenuine` -- is a presence record beating AND
 		/// servicing the errand channel (not a phantom background tab)? -- and
@@ -2302,7 +2948,25 @@
 		/// `grantDecision` -- the first-committed-wins resolution rule the runner spends
 		/// a cid on, so exactly one grant resolves the turn and a racing second is a no-op.
 		askRaiseDecision:     askRaiseDecision,
+		/// Which still-open asks to raise NOW -- the return-to-foreground re-decide, so
+		/// an ask that arrived while the device was hidden is not lost.
+		reRaiseDecision:      reRaiseDecision,
 		grantDecision:        grantDecision,
+		/// THE BLOCKER's pure half (owner ruling 2026-09-12): build a record
+		/// (`makeBlocker`), decide what a tile draws for it (`blockerTileSpec`),
+		/// whether it can be answered away from the runner at all
+		/// (`blockerAnswerable`), and the first-answer-wins rule the runner spends one
+		/// on (`blockerAnswerDecision`).
+		makeBlocker:          makeBlocker,
+		blockerTileSpec:      blockerTileSpec,
+		blockerAnswerable:    blockerAnswerable,
+		blockerAnswerDecision: blockerAnswerDecision,
+		/// The two runner-self-recovery decisions: which of this device's own leases a
+		/// boot should release (`staleOwnLeaseDecision`), and whether a thrown error is
+		/// a hand-back rather than a crash (`runnerErrorKind` / `runnerErrorWhy`).
+		staleOwnLeaseDecision: staleOwnLeaseDecision,
+		runnerErrorKind:       runnerErrorKind,
+		runnerErrorWhy:        runnerErrorWhy,
 		CONSENT_DEADLINE_MS:  CONSENT_DEADLINE_MS,
 		MAX_PARKS:            MAX_PARKS,
 		/// Whether the dispatching device should RECOVER an orphaned dispatched turn
@@ -2327,5 +2991,13 @@
 		/// The content address of some sealed bytes, exposed for a caller that
 		/// seals by hand.
 		addressOf:   addressOf,
+		/// THE STREAMED VIEW of a running turn, both halves pure. `progressTail(messages,
+		/// turnId, maxChars)` is what a runner's frame SAYS -- the turn's rendered tail,
+		/// the daimon's text verbatim, tool calls as labels, thinking as a count, cut to
+		/// the last `maxChars`. `foldProgress(state, frame)` is what a watcher DOES with
+		/// an arriving frame: newest-wins replacement, a late or foreign frame ignored,
+		/// and `final` closing the streamed view once the real transcript has landed.
+		progressTail: progressTail,
+		foldProgress: foldProgress,
 	};
 })();

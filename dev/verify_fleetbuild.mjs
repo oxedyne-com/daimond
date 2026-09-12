@@ -87,7 +87,7 @@ try {
 				oldClass:  r.classList.contains('is-oldbuild'),
 			};
 		};
-		const self = localStorage.getItem('daimond-device-id');
+		const self = DaimondIdentity.deviceId();
 		return {
 			self:  read(self),
 			p1:    read(P1),

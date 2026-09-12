@@ -1168,18 +1168,40 @@ fn covers(grant: &str, path: &str) -> bool {
 pub async fn machine_briefing(ctx: &crate::tools::ToolContext) -> String {
 	let st = match crate::wasm::hand::status().await {
 		Ok(s)  => s,
-		Err(_) => return String::new(),
+		Err(_) => {
+			crate::tools::note_machine_rooted(false);
+			return NO_MACHINE_NOTE.to_string();
+		},
 	};
 	// Composed from the context by the same function `Tool::run` composes it with, so the model
 	// cannot be briefed about one network and then handed another.
 	let mode = crate::tools::mode();
 	let step = crate::tools::net_step(
 		mode, ctx.net_risk(), ctx.is_unsupervised(), ctx.net_consent());
-	match Machine::paired(&st) {
+	let note = match Machine::paired(&st) {
 		Some(m) => machine_note(&m, &ctx.no_write, step, mode),
 		None    => String::new(),
-	}
+	};
+	// THE ONE PLACE THE FACT IS ESTABLISHED, and `ToolRegistry::offered` reads it back to decide
+	// whether the machine tools are worth their schema -- see `tools::note_machine_rooted`.  The
+	// predicate is this note's own emptiness rather than `Machine::rooted`, because `machine_note`
+	// returns nothing for every case in which a command would be refused anyway: no hand, a root
+	// that is not a path, or bounds that describe nowhere on the machine.
+	crate::tools::note_machine_rooted(!note.is_empty());
+	if note.is_empty() { NO_MACHINE_NOTE.to_string() } else { note }
 }
+
+/// What a turn with nowhere to run a command is told, in place of the paragraph about folders.
+///
+/// **It is here because the tools are not.**  `ToolRegistry::offered` withholds `run`, `runs` and
+/// `verify` where no folder on this computer is reachable -- about 1,600 tokens of schema that
+/// could only ever earn a refusal -- and a capability a model cannot see is a capability it probes
+/// for and then reports as broken.  One sentence instead, for the same reason
+/// `ToolRegistry::locked_pack_note` is one sentence.
+pub const NO_MACHINE_NOTE: &str =
+	"## This computer\n\nNo folder on this computer is reachable from this page, so run, runs and \
+	 verify are not on your belt at all: do not reach for them and do not report a command as \
+	 having failed. Use your file tools, which work regardless.";
 
 /// The reducer's role: fold exactly one delta into the current crystal and emit the
 /// whole new crystal.  A fresh reducer holds no history, so it cannot itself rot.
@@ -2096,6 +2118,12 @@ mod tests {
 		// anything: mark one folder in and the machine is described.
 		assert!(machine_note(&machine(), &crate::tools::chat_bounds("chats/c1/work",
 			&[fmt!("books")], &[]), NetStep::Give, Mode::default()).contains("/home/u/ws/books"));
+		// ONE SENTENCE IS NOT "NOT ONE WORD", and the layer above this one now says it:
+		// `machine_briefing` answers with `NO_MACHINE_NOTE` where this function answers with
+		// silence, because `ToolRegistry::offered` has taken the three machine tools out of the
+		// request and a model that cannot see a tool probes for it. The sentence costs a fraction
+		// of the ~6,600 characters of schema it buys back.
+		assert!(NO_MACHINE_NOTE.len() < 400, "{}", NO_MACHINE_NOTE.len());
 	}
 
 	#[test]

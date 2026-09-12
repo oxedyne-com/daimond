@@ -178,6 +178,17 @@
 	// runner produces them, instead of a blank wait until the turn finishes. See
 	// pushProgress; the runner's own timer lives in peer.js runErrand.
 	var PROGRESS_PUSH_MIN_MS = 1800;
+	// The most a single frame may carry, in characters of PLAINTEXT tail. The
+	// gateway's own ceiling is 64 KiB of ciphertext and it refuses a frame over it
+	// (413, naming the ceiling); this keeps the ordinary frame comfortably under,
+	// so the refusal path is for a surprise and not for every long turn. A tail is
+	// the END of the transcript, so trimming it loses the oldest lines, which the
+	// watching device already has from the frame before.
+	var PROGRESS_TAIL_MAX = 48 * 1024;
+	// How long a watching device asks the progress door to hold its read. The frame
+	// then arrives within a moment of being stored rather than at the next poll, and
+	// the gateway clamps this to its own maximum anyway.
+	var PROGRESS_WAIT_MS  = 25000;
 	// ── Wake channel ───────────────────────────────────────────
 	// A wake is EVIDENCE that the mailbox moved, which the speculative triggers
 	// above are not, so it has a throttle of its own and a much shorter one: the
@@ -1787,8 +1798,9 @@
 	/// for identity. A missed beat is safe -- the freshness window and the lease
 	/// catch a peer that actually slept -- so an error is swallowed rather than
 	/// surfaced. Answers the response JSON, or null.
-	async function beatPresence(deviceId, name, attended, servicing) {
+	async function beatPresence(deviceId, name, attended, servicing, runner, mobile) {
 		if (!ready() || !entitled) return null;
+		if (_removedSelf) return null;		// removed: the door will only refuse it again
 		try {
 			// `attended` is the attention signal (foreground + recent interaction) a
 			// live consent routes on. `servicing` says this device is genuinely running
@@ -1800,6 +1812,18 @@
 			// stands and the dispatcher-side recovery timer is the backstop).
 			var body = { device_id: String(deviceId || ''), name: String(name || ''), attended: !!attended };
 			if (servicing) body.servicing = true;
+			// The nominated machine's own posture (runner.js): set up to stay awake and
+			// listening, so every other device can tell the nomination from a machine that
+			// is actually arranged to honour it. Sent only when true, so an ordinary
+			// device's beat is unchanged on the wire.
+			if (runner) body.runner = true;
+			// `mobile` is this MACHINE's own answer about whether it is a phone or tablet,
+			// the signal the hand-off election seats a worker on. Sent EXPLICITLY, both ways,
+			// because the alternative the gateway relayed was the device's NAME: a phone
+			// called "gilgamesh" read as a desktop and was handed turns it could not hold.
+			// Omitted only when this device genuinely cannot say, which a gateway relays as
+			// absent so the peer falls back to the old inference rather than to "desktop".
+			if (typeof mobile === 'boolean') body.mobile = mobile;
 			// The running build id, so the gateway (once it relays this field) can show the
 			// fleet's build spread in its log and every device can de-prefer a peer on a
 			// superseded build at hand-off. A gateway that does not carry the field ignores
@@ -1809,6 +1833,12 @@
 				if (b) body.build = String(b);
 			} catch (e) { /* build not read yet: the beat still stands */ }
 			var res = await call('POST', body, '?presence=1');
+			// REMOVED. The beat is the door a removed device meets first and most often,
+			// so it is where the device finds out -- and, because the gateway refuses the
+			// beat before it records it, the same answer is what takes this device out of
+			// every other device's presence map. `notedRemoval` raises the one event that
+			// wipes and locks, once.
+			if (notedRemoval(res)) return null;
 			if (res.status === 200 && res.json && res.json.presence && window.DaimondPresence) {
 				DaimondPresence.ingest(res.json.presence, res.json.now);
 			}
@@ -1828,6 +1858,62 @@
 			}
 			return res.json || null;
 		} catch (e) { log('presence refresh failed', e); return null; }
+	}
+
+	// ── Removal: the device that really is gone ────────────────
+	// Owner ruling 2026-09-12: "Remove device" must REALLY remove. Pairing copies the
+	// account keypair whole, so nothing on the removed device can be revoked -- what
+	// the gateway can do is refuse the id at every door a device reaches it by, and
+	// tell the device so at its next beat. `?removed=1` is a QUERY DOOR on this route,
+	// exactly as presence and the lease took theirs: a new path would need the Steel
+	// front door's own route table brought forward before a browser could reach it.
+
+	/// Remove a device from this account, on the gateway. After this the gateway
+	/// refuses that id's presence beats and post-box parks (410, `removed:true`) and
+	/// stops waking it -- which is what makes the removal real rather than a line off
+	/// a list. Answers `{ ok }`.
+	async function removeDeviceRemote(deviceId) {
+		var id = String(deviceId || '');
+		if (!id) return { ok: false, why: 'no-device' };
+		if (!ready()) return { ok: false, why: 'offline' };
+		try {
+			var res = await call('POST', { device: id }, '?removed=1');
+			return { ok: !!(res && res.status === 200 && res.json && res.json.ok),
+				status: (res && res.status) | 0 };
+		} catch (e) { log('device removal failed', e); return { ok: false, why: 'error' }; }
+	}
+
+	// THIS DEVICE WAS REMOVED. Raised ONCE, the first time any door answers 410 with
+	// `removed:true`, and it is the end of this device's life on the account: the
+	// event is what daimond.js wipes the account's key material and locks on. Latched,
+	// because every door will answer the same way and a second wipe is noise.
+	var _removedSelf = false;
+
+	/// Did this answer say THIS DEVICE has been removed? Keyed on the flag rather than
+	/// the status alone, so a proxy that rewrote a 410 could not turn a removal into an
+	/// ordinary failure -- and so an unrelated 410 from somewhere else cannot lock a
+	/// device nobody removed.
+	function notedRemoval(res) {
+		var removed = !!(res && res.status === 410 && res.json && res.json.removed === true);
+		if (!removed || _removedSelf) return removed;
+		_removedSelf = true;
+		log('this device was removed from the account');
+		try { window.dispatchEvent(new CustomEvent('daimond:device-removed')); }
+		catch (e) { /* no window: the next door says the same thing */ }
+		return true;
+	}
+
+	/// Has this device been told it is removed? Read by the beat loops, so they stop
+	/// asking rather than hammering a door that will refuse them for ever.
+	function removedSelf() { return _removedSelf; }
+
+	/// This device's id, for the doors that name it -- the wake socket, and (in
+	/// post.js) the errand park. Read at call time rather than cached: a device that is
+	/// not unlocked yet has none, and an empty id is exactly what an older client sent,
+	/// so the door refuses nothing by id and behaves as it always did.
+	function selfDeviceIdForDoor() {
+		try { return String((window.DaimondIdentity && DaimondIdentity.deviceId()) || ''); }
+		catch (e) { return ''; }
 	}
 
 	// ── The lease door ─────────────────────────────────────────
@@ -1926,6 +2012,139 @@
 		_leaseVer = (lease.version) | 0;
 		var map = lease.blob ? (await leaseUnseal(lease.blob)) : null;
 		try { DaimondLease.adopt(map || {}); } catch (e) { log('lease adopt failed', e); }
+	}
+
+	// ── The streaming progress door (`?progress=<turnId>`) ─────
+	//
+	// WHAT IT REPLACED, and why the replacement is not the same push made smaller.
+	// The runner used to stream a handed-off turn by pushing the WHOLE content parcel
+	// every two seconds (pushProgress, below), and the watching device pulled the
+	// whole parcel back: megabytes each way for a few hundred new characters. Worse,
+	// the push was a compare-and-set on the parcel, so a 409 from ANY other device
+	// DROPPED the frame, and one refusal for size (`tooLarge`) stopped the stream for
+	// the rest of the turn. A watcher then saw nothing until the turn ended, which is
+	// the complaint this door answers.
+	//
+	// A frame here is the turn's rendered TAIL -- the daimon's text so far, its tool
+	// calls as one-line summaries, its thinking as a count -- sealed under the account
+	// key, at most PROGRESS_TAIL_MAX of plaintext, written to a record of its own per
+	// turn. The gateway assigns the seq, so there is nothing to be stale against and
+	// no frame can be refused by another device's activity. The full parcel push is
+	// still what settles the FINISHED turn (pushResult); this is only the view.
+	var PROG_AAD  = 'daimond/peer/progress/1';
+	var PROG_MARK = 'dprog1';
+
+	/// Seal a frame for the door, or '' when there is no key to seal it with. The
+	/// marker guards against ever reading some other blob as a progress frame, as
+	/// the lease's does.
+	async function progSeal(obj) {
+		if (!window.DaimondIdentity || !DaimondIdentity.wrapBytesAad
+			|| (DaimondIdentity.isUnlocked && !DaimondIdentity.isUnlocked())) return '';
+		var plain = new TextEncoder().encode(JSON.stringify({ k: PROG_MARK, v: obj }));
+		return b64FromBytes(await DaimondIdentity.wrapBytesAad(plain, PROG_AAD));
+	}
+
+	/// Open a frame, or null when it is empty, unopenable, or not a frame.
+	async function progUnseal(b64) {
+		if (!b64) return null;
+		if (!window.DaimondIdentity || !DaimondIdentity.unwrapBytesAad
+			|| (DaimondIdentity.isUnlocked && !DaimondIdentity.isUnlocked())) return null;
+		try {
+			var pt  = await DaimondIdentity.unwrapBytesAad(bytesFromB64(b64), PROG_AAD);
+			var obj = JSON.parse(new TextDecoder().decode(pt));
+			return (obj && obj.k === PROG_MARK && obj.v) ? obj.v : null;
+		} catch (e) { return null; }
+	}
+
+	// This device's own frame counter per turn, carried INSIDE the sealed frame. The
+	// gateway's seq is what a watcher orders by; this is what the runner can say
+	// about its own sending, and what the feed event reports.
+	var _progSeq = {};
+
+	/// PUT one frame of `turnId`'s transcript tail. Answers
+	/// `{ ok, seq, bytes, ms, why? }` -- never throws, because a dropped frame is a
+	/// slower stream and nothing more.
+	///
+	/// On a `413` the tail is halved and sent ONCE more: the gateway names its
+	/// ceiling, so the runner fits it rather than stopping. Every other refusal is
+	/// reported and the next tick tries again with a fresher tail.
+	async function pushProgressFrame(turnId, tail) {
+		var out = { ok: false, seq: 0, bytes: 0, ms: 0 };
+		if (!ready() || !entitled || sessionGone) return out;
+		if (!turnId || !tail) return out;
+		var t0 = Date.now();
+		var q  = '?progress=' + encodeURIComponent(String(turnId));
+		var text = String(tail);
+		if (text.length > PROGRESS_TAIL_MAX) text = text.slice(-PROGRESS_TAIL_MAX);
+		for (var attempt = 0; attempt < 2; attempt++) {
+			var seq = (_progSeq[turnId] | 0) + 1;
+			var blob;
+			try { blob = await progSeal({ turn: String(turnId), seq: seq, tail: text }); }
+			catch (e) { out.why = 'seal'; return out; }
+			if (!blob) { out.why = 'locked'; return out; }
+			var res;
+			try { res = await call('PUT', { blob: blob, w: WAKE_ID }, q); }
+			catch (e) { out.why = 'network'; return out; }
+			if (res.status === 200 && res.json && res.json.ok) {
+				_progSeq[turnId] = seq;
+				out.ok    = true;
+				out.seq   = res.json.seq | 0;
+				out.bytes = blob.length;
+				out.ms    = Date.now() - t0;
+				noteSynced();
+				feedProgress(turnId, out);
+				return out;
+			}
+			// The ceiling, named by the gateway: halve the tail and send once more.
+			// NOT a stop -- stopping on one oversized frame is the fault this door
+			// removes, and the next frame would be oversized too.
+			if (res.status === 413 && attempt === 0) {
+				text = text.slice(-Math.max(2048, Math.floor(text.length / 2)));
+				continue;
+			}
+			out.why = 'status=' + res.status;
+			diag('progress frame skipped', out.why);
+			return out;
+		}
+		return out;
+	}
+
+	/// Read `turnId`'s latest frame, newer than `since`. `waitMs > 0` asks the door
+	/// to PARK rather than answer "nothing" at once, so the frame arrives within a
+	/// moment of being stored. Answers `{ seq, tail }`, or null where there is
+	/// nothing newer (the door's 204) or it could not be opened.
+	async function getProgressFrame(turnId, since, waitMs) {
+		if (!ready() || !entitled || sessionGone || !turnId) return null;
+		var q = '?progress=' + encodeURIComponent(String(turnId))
+			+ '&since=' + (since | 0) + '&w=' + encodeURIComponent(WAKE_ID);
+		if (waitMs > 0) q += '&wait=' + (waitMs | 0);
+		var res;
+		// A parked read is held by the gateway on purpose, so it is given a budget
+		// past the park rather than the ordinary pull timeout.
+		try {
+			res = await call('GET', undefined, q,
+				{ timeoutMs: (waitMs > 0) ? (waitMs + 10000) : 0 });
+		} catch (e) { return null; }
+		if (!res || res.status !== 200 || !res.json || !res.json.blob) return null;
+		var frame = await progUnseal(res.json.blob);
+		if (!frame || String(frame.turn || '') !== String(turnId)) return null;
+		return { seq: res.json.seq | 0, tail: String(frame.tail || '') };
+	}
+
+	/// Report a frame to the debug-share feed: how big it was and how long it took,
+	/// so the streaming path is visible in the feed rather than inferred from the
+	/// transcript that eventually appears.
+	function feedProgress(turnId, out) {
+		try {
+			if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
+				DEBUG_SHARE.event('progress', {
+					turn:  String(turnId).slice(0, 16),
+					seq:   out.seq,
+					bytes: out.bytes,
+					ms:    out.ms,
+				});
+			}
+		} catch (e) { /* the feed never breaks a frame */ }
 	}
 
 	// ── Wake channel ───────────────────────────────────────────
@@ -2064,7 +2283,13 @@
 		var url;
 		try {
 			url = (location.protocol === 'https:' ? 'wss://' : 'ws://')
-				+ location.host + WS_PATH + '?w=' + encodeURIComponent(WAKE_ID);
+				+ location.host + WS_PATH + '?w=' + encodeURIComponent(WAKE_ID)
+				// WHICH DEVICE holds this socket, so a removal can refuse it and evict it
+				// (owner ruling 2026-09-12): the socket is the third door a REMOVED device
+				// reaches the account by, and without the id the relay would go on pushing
+				// parcel versions at it until the socket happened to die. Empty on a device
+				// with no identity yet, which upgrades exactly as an older client did.
+				+ '&device=' + encodeURIComponent(selfDeviceIdForDoor());
 		} catch (e) { wakeMode = 'poll'; wakePoll(); return; }
 
 		var sock, opened = false, gen = wakeGen;
@@ -2729,6 +2954,13 @@
 		/// SAME account parcel under compare-and-set -- no new turn, no new lease, no
 		/// second charge. See pushProgress.
 		pushProgress: pushProgress,
+		/// The streaming progress door, off the content parcel: `pushProgressFrame(turnId,
+		/// tail)` PUTs one small sealed frame of a running turn's rendered tail and
+		/// `getProgressFrame(turnId, since, waitMs)` reads the latest one (parking for
+		/// `waitMs` so it arrives promptly). This is what streams a hand-off; the whole
+		/// parcel travels only at the turn's end. See the progress door above.
+		pushProgressFrame: pushProgressFrame,
+		getProgressFrame:  getProgressFrame,
 		/// Turn the in-flight poll on/off. daimond.js calls `expedite(true)` while a
 		/// hand-off's dispatched placeholder is outstanding and `expedite(false)` when
 		/// it clears, so the watching devices pull promptly (EXPEDITE_PULL_MS) for the
@@ -2742,6 +2974,14 @@
 		/// beat, for a dispatch-time refresh. Both ingest through DaimondPresence.
 		beatPresence:    beatPresence,
 		refreshPresence: refreshPresence,
+		/// REAL REMOVAL (owner ruling 2026-09-12). `removeDevice(id)` tells the gateway
+		/// to refuse that device at every door it reaches the account by -- presence,
+		/// the post-box park, the wake relay -- so a removal is a revocation of the
+		/// device's SEAT rather than a line off a list. `removedSelf()` is whether THIS
+		/// device has been told it is removed, so a caller can stop asking;
+		/// `daimond:device-removed` fires once when it first is.
+		removeDevice:    removeDeviceRemote,
+		removedSelf:     removedSelf,
 		/// The lease door, off the content parcel: `leaseGet()` reads the door's
 		/// {version, leases}; `leaseCommit(base, proposed)` compare-and-sets it. The
 		/// peer lease CAS (daimond.js peerSyncShim) binds to these, and `leaseVersion`

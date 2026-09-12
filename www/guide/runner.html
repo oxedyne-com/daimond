@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en" data-guide-locale="en" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>The runner — Daimond guide</title>
+<link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../css/variables.css">
+<link rel="stylesheet" href="../css/guide.css">
+<script src="frame.js"></script>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond guide, home">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Guide pages">
+			<a href="index.html">Getting started</a>
+			<a href="interface.html">The interface</a>
+			<a href="models.html">Models &amp; credits</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="capps.html">Capps</a>
+			<a href="email-web-files.html">Email, Web &amp; files</a>
+			<a href="accounts.html">Accounts</a>
+			<a href="sync.html">Cross-device sync</a>
+			<a href="runner.html" aria-current="page">The runner</a>
+			<a href="spending.html">Spending</a>
+			<a href="machine-operations.html">Machine Operations</a>
+			<a href="social.html">Social</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>The runner</h1>
+	<p class="lede">A turn started on your phone can be run by one of your other devices. The runner is the device you name to do it: one machine that stays on, stays signed in, and picks up the work rather than leaving it to whichever device happens to answer first.</p>
+
+	<p>Without a runner, a handed-off turn goes to the freshest awake device. That is usually fine and occasionally wrong: a laptop you are about to close can take a turn and then take it with it. Naming a runner makes the choice yours.</p>
+
+	<h2 id="s1">What a runner is</h2>
+	<p>Two separate things, and you need both.</p>
+	<ul>
+		<li><strong>The nomination</strong> says <em>which</em> device the account prefers. It is one choice for the whole account, made from any device, and it travels to the others with your ordinary sync.</li>
+		<li><strong>The posture</strong> is the machine's own answer: <em>yes, I am the runner</em>. It is kept on that device only and never travels, because it commits that machine to staying awake and listening. You nominate from the phone; the consequences land on the desktop, so the desktop is asked separately.</li>
+	</ul>
+
+	<h2 id="s2">Nominating a device</h2>
+	<p>Open <span class="ui">Settings</span> and then <span class="ui">Devices</span>. Each device in the list has a star at the end of its row. Press the hollow <span class="ui">✩</span> beside the device you want, and it fills in: <span class="ui">✭</span>, with a small <span class="ui">runner</span> badge on the row. Pressing it again clears the nomination.</p>
+	<p>There is exactly one runner at a time. Starring a second device clears the first, so you cannot end up with two and no way to tell which is in charge. Choose the machine that is usually on — a desktop that stays awake, not a laptop that travels.</p>
+
+	<h2 id="s3">Saying yes on the runner itself</h2>
+	<p>The next time the nominated device is running Daimond, it asks: <span class="ui">Make this device the runner?</span> Answer <span class="ui">This device is the runner</span> and it holds the posture from then on. While it does, that device:</p>
+	<ul>
+		<li>keeps its screen from sleeping, and asks again whenever its window comes back to the front, because browsers hand that permission back when a window is hidden;</li>
+		<li>starts listening for handed-off turns as soon as it is unlocked, instead of waiting for you to open a panel;</li>
+		<li>tells your other devices that it is set up for this, so they can tell a nominated machine from one that is merely named.</li>
+	</ul>
+	<p>The question is asked once. If you say no, it is not asked again unless you clear the nomination and make it afresh. Clearing the nomination, or moving it to another device, drops the posture here with it.</p>
+
+	<h2 id="s4">Keeping the browser out of the way</h2>
+	<p>A browser does not keep a background tab running at full speed. Chrome slows a hidden tab's timers to about one wake-up a minute, treats a window sitting behind another as backgrounded, and can park a whole page to save memory. A slowed runner is worse than no runner: it still reports itself awake, and it collects nothing.</p>
+	<p>So give the runner a browser of its own. On a Linux or macOS machine, <span class="ui">dev/runner-chrome.sh</span> in the Daimond source tree starts one: a separate Chrome profile, opened as an app window rather than a tab, with each of those throttles turned off. Run it with <span class="ui">--dry-run</span> first if you would rather read the command than trust it.</p>
+	<p>To have it start with your desktop session, run it once with <span class="ui">--install</span>. That writes a small <span class="ui">systemd --user</span> service called <span class="ui">daimond-runner</span>, which restarts the browser if it ever exits and starts it again when you log in. It then tells you the two commands to enable it.</p>
+	<div class="note"><strong>Two settings the script cannot reach.</strong> Turn <strong>Memory Saver</strong> off in that Chrome profile, under Settings and then Performance, or add the Daimond site to its exceptions — no command-line option does this reliably. And leave the window <strong>open and not minimised</strong>: behind your other windows is fine, but a minimised window is treated as hidden and stops being drawn at all.</div>
+
+	<h2 id="s5">What you see on your other devices</h2>
+	<p>Send from the phone and the turn says where it went. First <span class="ui">Sent to your other devices.</span>, then the runner's own name as it picks the turn up — <span class="ui">Argonaut is picking this up.</span> — and then <span class="ui">Argonaut is doing this.</span> while it runs. The answer appears on the phone when it is finished, like any other.</p>
+	<p>Two buttons sit beside that line the whole time. <span class="ui">Take back</span> returns the turn to the device you are holding, and <span class="ui">Run here</span> runs it locally if nothing picked it up. Naming your devices in <span class="ui">Settings</span> and then <span class="ui">Devices</span> is what makes these lines read as <span class="ui">Argonaut</span> rather than <em>your other device</em>.</p>
+
+	<h2 id="s6">Which device actually gets the turn</h2>
+	<p>The runner is a preference, not a requirement. A turn handed off looks for, in order:</p>
+	<ol class="steps">
+		<li><h3 id="s7">The runner</h3><p>If the nominated device is awake, it gets the turn. It is checked on the plainest test there is — is it reporting in — so a runner that is busy with something else is still the runner.</p></li>
+		<li><h3 id="s8">Another awake desktop</h3><p>If the runner is off or asleep, any other awake device that is actually listening takes it. A phone is never given another device's turn.</p></li>
+		<li><h3 id="s9">The device you are on</h3><p>If nothing else can take it, the turn runs where you started it. This is the last resort, not a failure: you get your answer either way, on the device in your hand.</p></li>
+	</ol>
+
+	<h2 id="s10">Two things that can still stop a runner</h2>
+	<p>Both of them need a moment of your attention on the runner itself, and neither shows up on the device you are using.</p>
+	<ul>
+		<li><strong>A folder permission waiting for a click.</strong> If a turn needs a workspace folder the browser has not granted access to, the runner raises that request on its own screen and waits. Nobody is there to answer it, so the turn sits. Open a folder on the runner once, and grant it there, and later turns find the permission already given.</li>
+		<li><strong>A locked runner after a reload.</strong> Your passphrase is held in memory and nowhere else, so any reload — including the automatic one that moves the runner onto a new build — brings it back at the unlock screen. It will not run another turn until somebody unlocks it. If your runner has stopped taking turns and nothing else explains it, go and look at its screen first.</li>
+	</ul>
+	<p>Both are the same shape of problem: a runner is a machine with nobody in front of it, and anything that needs a person needs that person to walk over. <a href="sync.html">Cross-device sync</a> covers what travels between your devices, and <a href="accounts.html">Accounts</a> covers the passphrase and what it protects.</p>
+
+	<div class="next">
+		<a href="sync.html">&larr; Cross-device sync</a>
+		<a href="spending.html">Next: Spending &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
+	<nav aria-label="Guide pages">
+		<a href="index.html">Getting started</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Models</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="capps.html">Capps</a>
+		<a href="email-web-files.html">Email, Web &amp; files</a>
+		<a href="accounts.html">Accounts</a>
+		<a href="sync.html">Cross-device sync</a>
+		<a href="runner.html">The runner</a>
+		<a href="spending.html">Spending</a>
+		<a href="machine-operations.html">Machine Operations</a>
+		<a href="social.html">Social</a>
+	</nav>
+</footer>
+</body>
+</html>

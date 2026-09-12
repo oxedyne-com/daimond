@@ -733,6 +733,13 @@
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
 					</button>
 				</div>
+				<!-- WHERE THE NEXT TURN WILL RUN. One line, always there while a chat is
+				     open, written from the latest presence beats: the device the turn is
+				     going to, or that it is running here and this screen must stay open.
+				     Under the composer because it is a statement about the thing the
+				     composer is about to do, and a live region because it changes on its
+				     own as devices wake and go quiet. Filled by `renderSeatLine`. -->
+				<div class="seat-line" id="seat-line" role="status" aria-live="polite" hidden></div>
 				<!-- Crystal view: the Diamond command surface (steer + fold), shown in
 				     place of the chat when a Diamond is selected. Built in JS. -->
 				<div class="crystal-view" id="crystal-view" style="display:none">
@@ -1691,6 +1698,11 @@
      (the sequential double-bill is closed, proven in live two-context QA). See
      dev/PEER_DESIGN.md. -->
 <script src="js/peer.js"></script>
+<!-- runner.js AFTER peer.js: the nominated runner's own per-machine posture --
+     keep this computer awake and listening -- which reads the nomination peer.js
+     routes hand-offs by. It owns no roster state; it reads two localStorage keys
+     daimond.js writes and never writes them. -->
+<script src="js/runner.js"></script>
 
 <!-- The phone shell (drawer + sheet). Classic, before the module, so
      window.DaimondSheet/DaimondShell exist when the app wires into them. -->

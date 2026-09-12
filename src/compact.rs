@@ -168,6 +168,29 @@ pub const DEFAULT_SPEND_CAP_USD: f64 = 5.0;
 pub const SPEND_CAP_MIN_USD: f64 =    0.01;
 pub const SPEND_CAP_MAX_USD: f64 = 1000.0;
 
+// What a dispatched worker may have, whatever the chat is set to
+//
+// A worker runs on the chat's own `Limits` -- `Workers.start` applies the user's settings to the
+// worker's app exactly as it does to the chat's -- and the only mark that ever said a worker was
+// different is `set_unsupervised`, which governs asking rather than spending.  So a worker
+// inherited 150 rounds times four legs, a 120,000-token carry and a five-dollar ceiling: six
+// hundred rounds of an agent nobody is reading, dispatched several at a time, each one of them
+// allowed to cost what the user's whole turn is allowed to cost.  A live one measured on
+// 2026-09-12 was 85 rounds in at 77.5K tokens a round, US$2.14 spent, with another 652 calls of
+// headroom.
+//
+// The figures are a CEILING and not a setting: [`Limits::hold_to_worker`] lowers whatever it is
+// given and never raises it, so a user who has chosen a tighter leash than these keeps theirs.
+// A worker is a bounded errand by construction -- it is dispatched with one task, cannot ask a
+// question, and reports back -- so the work it cannot finish inside these is work that should
+// come back to the daimon rather than run on unwatched.
+
+pub const WORKER_MAX_ROUNDS:    usize = 60;
+pub const WORKER_CONTINUATIONS: usize = 1;	// one breath, not three
+pub const WORKER_CONTEXT_CAP:   u64   = 48_000;
+pub const WORKER_KEEP:          f64   = 0.3;
+pub const WORKER_SPEND_CAP_USD: f64   = 1.0;
+
 /// Fraction of the budget kept verbatim at the end of the conversation.
 ///
 /// The recent exchanges are the ones that must survive intact: a model that has just been
@@ -291,10 +314,35 @@ pub struct Limits {
 	pub context_cap: u64,
 	/// Most one turn may spend, in US dollars; see [`DEFAULT_SPEND_CAP_USD`].
 	pub spend_cap_usd: f64,
+	/// Times a turn at the round cap may carry itself on; see [`MAX_CONTINUATIONS`].
+	pub max_continuations: usize,
 	/// Fraction of the budget kept verbatim at the end.
 	pub keep:       f64,
 	/// Model to fold with; empty means the chat's own.
 	pub fold_model: String,
+	// A worker's ceiling
+	pub worker:     bool,	// held to the worker figures, which a user setting may lower only
+
+	// ── What compaction does, as data rather than as constants ──
+	//
+	// Every figure below was a compile-time constant read at its call site, so the three
+	// retire measures and the worker preset could not be turned off, varied, or measured
+	// against each other.  They are here so that one tune -- `Agent::set_tune` -- can move
+	// any of them, and so that an arm of a measurement can be "as off as the engine allows"
+	// rather than a rebuild.  The DEFAULTS are today's constants exactly; nothing about a
+	// tree nobody tunes changes.
+	pub retire_prior: bool,		// retire a turn's predecessors on the way out; see `retire_upto`
+	pub written_age:  usize,	// rounds a write's body must be old; see `IN_TURN_RETIRE_AGE`
+	pub result_age:   usize,	// rounds a result must be old; see `IN_TURN_RESULT_AGE`
+	pub result_cap:   usize,	// bytes left whole however old; see `IN_TURN_RESULT_CAP`
+	pub sweep_every:  usize,	// rounds between sweeps; see `IN_TURN_RETIRE_EVERY`
+
+	// The worker preset, which `hold_to_worker` reads
+	pub worker_max_rounds:    usize,
+	pub worker_continuations: usize,
+	pub worker_context_cap:   u64,
+	pub worker_keep:          f64,
+	pub worker_spend_usd:     f64,
 }
 
 impl Default for Limits {
@@ -305,8 +353,20 @@ impl Default for Limits {
 			fold_at:    FOLD_AT,
 			context_cap: ABSOLUTE_CAP,
 			spend_cap_usd: DEFAULT_SPEND_CAP_USD,
+			max_continuations: MAX_CONTINUATIONS,
 			keep:       KEEP,
 			fold_model: String::new(),
+			worker:     false,
+			retire_prior: true,
+			written_age:  IN_TURN_RETIRE_AGE,
+			result_age:   IN_TURN_RESULT_AGE,
+			result_cap:   IN_TURN_RESULT_CAP,
+			sweep_every:  IN_TURN_RETIRE_EVERY,
+			worker_max_rounds:    WORKER_MAX_ROUNDS,
+			worker_continuations: WORKER_CONTINUATIONS,
+			worker_context_cap:   WORKER_CONTEXT_CAP,
+			worker_keep:          WORKER_KEEP,
+			worker_spend_usd:     WORKER_SPEND_CAP_USD,
 		}
 	}
 }
@@ -367,6 +427,41 @@ impl Limits {
 		}
 		self.window = learnt;
 		true
+	}
+
+	/// Hold these limits down to what a dispatched worker may have, and remember that they are
+	/// held.
+	///
+	/// **Every figure is lowered and none is ever raised**, which is what makes the order of the
+	/// calls in `Workers.start` not matter: the preset is applied after the user's own settings,
+	/// and a user who asked for 30 rounds keeps 30 rather than being given 60.  It is re-applied
+	/// after every later setter -- see [`crate::agent::Agent::set_max_rounds`] and its siblings --
+	/// so a setting that arrives mid-run cannot lift a worker back over the ceiling either.
+	///
+	/// Idempotent, because it is called again on every setting: each field is a `min` against a
+	/// figure that is already at or below the ceiling.  A zero is read as "the user has not
+	/// chosen" exactly as [`Limits::budget`] reads it, so the shipped default is what the ceiling
+	/// is taken against rather than nought.
+	pub fn hold_to_worker(&mut self) {
+		self.worker = true;
+		// READ OFF THESE LIMITS rather than off the constants, so a tune can move the preset --
+		// see `crate::agent::Agent::set_tune`.  Zero is how "nobody has chosen" travels
+		// everywhere else here, so it means the shipped figure rather than a ceiling of nothing:
+		// a preset of nought rounds would end every worker before its first call.
+		let rounds = if self.worker_max_rounds == 0 { WORKER_MAX_ROUNDS } else { self.worker_max_rounds };
+		let wcap   = if self.worker_context_cap == 0 { WORKER_CONTEXT_CAP } else { self.worker_context_cap };
+		let wkeep  = if self.worker_keep <= 0.0 { WORKER_KEEP } else { self.worker_keep };
+		let wspend = if self.worker_spend_usd <= 0.0 { WORKER_SPEND_CAP_USD } else { self.worker_spend_usd };
+		self.max_rounds = self.max_rounds.min(rounds).max(1);
+		// A continuation count of zero IS a choice -- one leg and no more -- so it is not read
+		// as absent the way the four above are.
+		self.max_continuations = self.max_continuations.min(self.worker_continuations);
+		let cap = if self.context_cap == 0 { ABSOLUTE_CAP } else { self.context_cap };
+		self.context_cap = cap.min(wcap).clamp(CONTEXT_CAP_MIN, CONTEXT_CAP_MAX);
+		self.keep = self.keep.min(wkeep);
+		let spend = if self.spend_cap_usd <= 0.0 { DEFAULT_SPEND_CAP_USD } else { self.spend_cap_usd };
+		self.spend_cap_usd = spend.min(wspend)
+			.clamp(SPEND_CAP_MIN_USD, SPEND_CAP_MAX_USD);
 	}
 
 	/// How much of the budget is kept verbatim, in tokens.
@@ -1171,6 +1266,31 @@ pub const IN_TURN_RETIRE_EVERY: usize = 10;
 /// fifty a capped turn runs.
 pub const IN_TURN_RETIRE_AGE: usize = 3;
 
+/// Rounds a tool RESULT must be old before it is retired mid-turn.
+///
+/// **The result is what a long turn is mostly made of**, and until now nothing aged one: the
+/// arguments were retired at three rounds and the results were carried whole to the end of the
+/// turn, so a worker that read twenty files re-sent all twenty on every round after the last of
+/// them.  A measured turn sat at 77.5K tokens a round for 85 rounds with nothing ever too big to
+/// fold, which is the same arithmetic `ABSOLUTE_CAP` was lowered for -- 97% of it a cache hit,
+/// cheap per token and ruinous in total.
+///
+/// Longer than [`IN_TURN_RETIRE_AGE`] and deliberately so.  A write's body is on disk the moment
+/// its reply comes back, so three rounds is generous for an ARGUMENT; a result is working memory,
+/// and a model reads back over the last several rounds of it -- a file it read four rounds ago is
+/// a file it is probably still editing.  Eight rounds is past that and still leaves a 60-round
+/// worker seven eighths of its turn under the sweep.
+pub const IN_TURN_RESULT_AGE: usize = 8;
+
+/// Bytes of a tool result left whole mid-turn, however old it is.
+///
+/// The stub costs a line, so retiring a result already near that size would buy nothing and lose
+/// the content: two kilobytes is a couple of screenfuls of output, and a result that big is a
+/// file read, a listing or a command's output -- all of which can be asked for again, which is
+/// what the stub says.  Below it are the one-line confirmations a turn is mostly made of by
+/// COUNT, and they are not what it is made of by size.
+pub const IN_TURN_RESULT_CAP: usize = 2_048;
+
 /// Bytes of tool-call arguments left whole; above it the bulky value is retired.
 ///
 /// A call's arguments are usually a path and a flag -- tens of bytes -- and the ones that are
@@ -1179,6 +1299,16 @@ pub const IN_TURN_RETIRE_AGE: usize = 3;
 /// [`elide_bulk`] deliberately leaves `tool_calls` alone so it cannot orphan a reply, and
 /// leaving the ARGUMENTS alone is not what that guarantee requires.
 pub const ARG_RETIRE_CAP: usize = 512;
+
+/// How the turn's budget line opens, and the marker that finds an earlier one to remove.
+///
+/// On its own line inside the last tool result, so removing it is a truncation rather than a
+/// rewrite and a result that happens to contain the word "budget" is not mistaken for one.
+///
+/// **Not `[budget]`, which is taken.**  `crate::tools` already appends that marker to a result
+/// whose output ran past the turn's BYTE budget, and a strip that could truncate one of those
+/// would delete a real result's last line.  Two markers, two subjects.
+const BUDGET_NOTE_OPEN: &str = "\n[turn budget: ";
 
 /// The tail every retired tool RESULT ends with.
 ///
@@ -1325,6 +1455,124 @@ pub fn retire_written(msgs: &mut [ChatMessage], end: usize) -> usize {
 		i += 1 + calls.len();
 	}
 	n
+}
+
+/// Retire the big, old tool RESULTS in `msgs[..end]`, leaving everything else alone.
+///
+/// The other in-turn half, beside [`retire_written`], and the one that carries the weight: a
+/// turn's results are most of its bytes and nothing aged them at all.  A result older than the
+/// caller's horizon and larger than `over` is replaced by [`result_stub`] -- the tool, what it was
+/// called on, what became of it, the size of what went, and that it can be called again.  The
+/// stored transcript is not touched, by the ruling at the top of this section: the lossy form is
+/// the REQUEST's.
+///
+/// **A picture is left where it is.**  [`result_stub`] would take one, and between turns it
+/// should; mid-turn a screenshot is usually the thing being worked on, and the size gate here is
+/// the text's so that a result whose bytes are all in an image does not qualify on its caption.
+/// `sighted` and the fold are what bound pictures.
+///
+/// Returns how many results were retired.
+///
+/// # Arguments
+/// * `msgs` - The SENT copy of the conversation, edited in place.
+/// * `end` - One past the last message that may be retired; the caller's round horizon.
+/// * `over` - Bytes a result must exceed to be worth retiring; see [`IN_TURN_RESULT_CAP`].
+pub fn retire_results(msgs: &mut [ChatMessage], end: usize, over: usize) -> usize {
+	let end = end.min(msgs.len());
+	let mut n = 0;
+	let mut i = 0;
+	while i < end {
+		// Cloned for the reason `retire_upto` clones: the replies are rewritten while the calls
+		// that name them are read.
+		let calls = match &msgs[i] {
+			ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() =>
+				tool_calls.clone(),
+			_ => { i += 1; continue; },
+		};
+		for (k, tc) in calls.iter().enumerate() {
+			let j = i + 1 + k;
+			if j >= end {
+				break;
+			}
+			// ANSWERED BY THIS CALL, or nothing is touched. The reply has to be the one the call
+			// names, or a stub would be filed against the wrong tool -- and an unanswered call is
+			// a call that may still be in flight.
+			match &msgs[j] {
+				ChatMessage::Tool { tool_call_id, content, .. } => {
+					if *tool_call_id != tc.id || content.text_len() <= over {
+						continue;
+					}
+				},
+				_ => continue,
+			}
+			if let Some(stub) = result_stub(tc, &msgs[j]) {
+				msgs[j] = msgs[j].with_content(MessageContent::text(stub));
+				n += 1;
+			}
+		}
+		i += 1 + calls.len();
+	}
+	n
+}
+
+/// Say what is left of the turn, in the LAST tool result rather than in the system prompt.
+///
+/// **The system prompt is the cached prefix, and a figure that changes every tenth round is the
+/// worst possible thing to put in it**: every round after the change pays the whole standing
+/// context at the full input rate instead of the cached one, which is the bill this module exists
+/// to reduce.  A tool result at the tail of the conversation invalidates nothing before itself, and
+/// it is also where an instruction is most likely to be acted on.
+///
+/// Why say it at all: a turn that reaches its ceiling stops in the middle of the work, and the
+/// model has no way to see that coming -- it cannot count its own rounds and cannot see the bill.
+/// Told how much is left, it can report what it has found rather than being cut off mid-file.
+///
+/// Any earlier line is removed first, so the model reads ONE figure rather than a history of them
+/// and the note cannot accumulate over a long turn.  A result carrying a picture is skipped: the
+/// note would have to rebuild the message to keep the image, and the next text result is along in
+/// a moment.
+///
+/// **The figures are named, and the precedent says not to name a figure.**  `tools`' own output
+/// budget line deliberately states none, because a model told how many bytes it had left spent up
+/// to them.  A countdown is the opposite case: there is nothing here to spend faster, the only act
+/// the line asks for is to report sooner, and a model that cannot see the end coming is the reason
+/// a capped turn ends mid-file.
+///
+/// Returns whether a line was written.
+///
+/// # Arguments
+/// * `msgs` - The SENT copy of the conversation, edited in place.
+/// * `rounds_left` - Rounds the turn may still take, its remaining legs included.
+/// * `usd_left` - Dollars left of the per-turn ceiling, or `None` where the provider reports no
+///   cost at all -- in which case the ceiling is not enforced either, and a figure would be a
+///   claim about money nobody quoted.
+pub fn note_budget(msgs: &mut [ChatMessage], rounds_left: usize, usd_left: Option<f64>) -> bool {
+	let mut last = None;
+	for i in 0..msgs.len() {
+		let text = match &msgs[i] {
+			ChatMessage::Tool { content, .. } if !content.has_image() =>
+				content.as_text().into_owned(),
+			_ => continue,
+		};
+		match text.find(BUDGET_NOTE_OPEN) {
+			Some(cut) => msgs[i] = msgs[i].with_content(
+				MessageContent::text(text[..cut].to_string())),
+			None => {},
+		}
+		last = Some(i);
+	}
+	let i = match last {
+		Some(i) => i,
+		None    => return false,	// a turn with no tool result has nowhere to say this
+	};
+	let money = match usd_left {
+		Some(usd) => fmt!(" and US${:.2}", usd.max(0.0)),
+		None      => String::new(),
+	};
+	let whole = fmt!("{}{}{} rounds{} left; if short, report now]",
+		msgs[i].content().as_text(), BUDGET_NOTE_OPEN, rounds_left, money);
+	msgs[i] = msgs[i].with_content(MessageContent::text(whole));
+	true
 }
 
 /// Does this tool's arguments object carry a whole file, rather than a path and a flag?
@@ -1865,6 +2113,69 @@ mod tests {
 		let mut l = Limits::default();
 		l.window = 100_000;
 		assert_eq!(65_000, l.budget(0));
+	}
+
+	#[test]
+	fn test_a_worker_is_held_to_its_own_ceiling_00() {
+		// The figures PINNED, for the reason the fold fraction is pinned above: the bug was that a
+		// worker had the chat's, so a test reading `assert_eq!(WORKER_MAX_ROUNDS, l.max_rounds)`
+		// would pass just as well on a preset that set sixty to a hundred and fifty.
+		let mut l = Limits::default();
+		l.hold_to_worker();
+		assert!(l.worker, "nothing marks this agent as a worker");
+		assert_eq!(60,     l.max_rounds);
+		assert_eq!(1,      l.max_continuations);
+		assert_eq!(48_000, l.context_cap);
+		assert_eq!(0.3,    l.keep);
+		assert_eq!(1.0,    l.spend_cap_usd);
+		// And the ceiling is what the per-round carry is actually bounded by, which is the figure
+		// the bill is made of: a worker on a million-token window carries 48,000 and not 852,000.
+		l.window = 1_310_720;
+		assert_eq!(48_000, l.budget(0));
+	}
+
+	#[test]
+	fn test_a_users_settings_cannot_lift_a_worker_00() {
+		// THE WHOLE OF THE DEFECT. `Workers.start` applies the chat's settings to a worker's app,
+		// so the preset has to be a ceiling: a user who has asked for 150 rounds and five dollars
+		// must not get six hundred rounds of an unwatched agent for each worker dispatched.
+		let mut l = Limits::default();
+		l.max_rounds = 150;
+		l.max_continuations = MAX_CONTINUATIONS;
+		l.context_cap = 200_000;
+		l.spend_cap_usd = 5.0;
+		l.keep = 0.8;
+		l.hold_to_worker();
+		assert_eq!(60,     l.max_rounds);
+		assert_eq!(1,      l.max_continuations);
+		assert_eq!(48_000, l.context_cap);
+		assert_eq!(0.3,    l.keep);
+		assert_eq!(1.0,    l.spend_cap_usd);
+		// A TIGHTER CHOICE IS THE USER'S AND IS KEPT. The preset lowers; it does not set.
+		let mut l = Limits::default();
+		l.max_rounds = 20;
+		l.context_cap = 24_000;
+		l.spend_cap_usd = 0.25;
+		l.keep = 0.2;
+		l.hold_to_worker();
+		assert_eq!(20,     l.max_rounds);
+		assert_eq!(24_000, l.context_cap);
+		assert_eq!(0.2,    l.keep);
+		assert_eq!(0.25,   l.spend_cap_usd);
+		// Idempotent, because every setter re-asserts it; a second pass must not ratchet.
+		let once = l.clone();
+		l.hold_to_worker();
+		assert_eq!(once.max_rounds, l.max_rounds);
+		assert_eq!(once.context_cap, l.context_cap);
+		assert_eq!(once.spend_cap_usd, l.spend_cap_usd);
+		// A zero is "the user has not chosen", so the ceiling is taken against the shipped figure
+		// rather than against nought -- which would leave a worker unable to run a round.
+		let mut l = Limits::default();
+		l.context_cap = 0;
+		l.spend_cap_usd = 0.0;
+		l.hold_to_worker();
+		assert_eq!(48_000, l.context_cap);
+		assert_eq!(1.0,    l.spend_cap_usd);
 	}
 
 	#[test]
@@ -2915,6 +3226,92 @@ mod tests {
 			"the stale boundary took nothing extra, so this test proves nothing");
 	}
 
+	/// Eighty rounds of a worker's turn, built round by round the way `run_tool_loop` builds one,
+	/// with the in-turn sweeps applied on the same cadence the loop applies them.
+	///
+	/// Returns what each round would SEND -- the conversation as it stood at the top of the round,
+	/// which is the figure the bill is made of, since a turn is charged for its carry once per
+	/// round, cached or not -- and the conversation the turn ended holding.
+	///
+	/// # Arguments
+	/// * `rounds` - How many rounds to run.
+	/// * `sweep` - Whether to retire old results, so the same fixture measures both.
+	fn worker_turn(rounds: usize, sweep: bool) -> (Vec<u64>, Vec<ChatMessage>) {
+		let mut working = vec![user("find where the limits are applied and fix the worker preset")];
+		let mut round_at: Vec<usize> = Vec::new();
+		let mut sent = Vec::new();
+		for r in 1..=rounds {
+			round_at.push(working.len());
+			let swept = round_at.len();
+			// Exactly the loop's own arithmetic, so the fixture cannot flatter the sweep by
+			// retiring more often or reaching further back than the app does.
+			if swept > IN_TURN_RETIRE_AGE && swept % IN_TURN_RETIRE_EVERY == 0 {
+				retire_written(&mut working, round_at[swept - 1 - IN_TURN_RETIRE_AGE]);
+			}
+			if sweep && swept > IN_TURN_RESULT_AGE && swept % IN_TURN_RETIRE_EVERY == 0 {
+				retire_results(&mut working, round_at[swept - 1 - IN_TURN_RESULT_AGE],
+					IN_TURN_RESULT_CAP);
+			}
+			sent.push(conversation_bytes(&working, &shut()));
+			// A working turn's shape: mostly file reads, a write every fifth round, a listing
+			// every seventh.  The reads are what a coding turn is made of and what it re-sends.
+			let id = fmt!("c{}", r);
+			let (call, args, reply) = if r % 5 == 0 {
+				(	"file_write",
+					fmt!("{{\"path\":\"src/f{}.rs\",\"content\":\"{}\"}}",
+						r, "z".repeat(4_000)),
+					fmt!("Wrote src/f{}.rs (4000 bytes).", r))
+			} else if r % 7 == 0 {
+				(	"file_list",
+					fmt!("{{\"path\":\"src/sub{}\"}}", r),
+					"one.rs\ntwo.rs\nthree.rs\n".repeat(12))
+			} else {
+				(	"file_read",
+					fmt!("{{\"path\":\"src/f{}.rs\"}}", r),
+					fmt!("// src/f{}.rs\n{}", r, "let x = compute(&thing);\n".repeat(330)))
+			};
+			working.push(asks(&id, call, &args));
+			working.push(replies(&id, &reply));
+		}
+		(sent, working)
+	}
+
+	#[test]
+	fn test_a_long_turn_stops_re_sending_what_it_finished_reading_00() {
+		// THE FIXTURE IS THE MEASUREMENT. An 80-round worker turn, the same one twice, with and
+		// without the result sweep -- so the figure asserted is a difference in what the provider
+		// is sent per round and not a property of a function.
+		let (was, whole) = worker_turn(80, false);
+		let (now, swept) = worker_turn(80, true);
+		assert_eq!(80, was.len());
+		let mean = |v: &[u64]| v.iter().sum::<u64>() / v.len() as u64;
+		let (mw, mn) = (mean(&was), mean(&now));
+		// Printed as well as asserted: the number is the reason the change exists, and a reader of
+		// the test should not have to re-derive it.
+		println!("per-round sent bytes over 80 rounds: mean {} -> {}, last {} -> {}",
+			mw, mn, was[79], now[79]);
+		// The last round is where the whole carry has accumulated, so it is the honest headline.
+		assert!(now[79] * 3 < was[79],
+			"the last round still carries most of the turn: {} -> {}", was[79], now[79]);
+		assert!(mn * 2 < mw, "the mean per-round carry did not halve: {} -> {}", mw, mn);
+		// AND IT IS STILL GROWING, not flat: the sweep leaves the recent rounds whole, so a turn
+		// that needed folding still gets folded. A sweep that had flattened this would have taken
+		// the working memory with it.
+		assert!(now[79] > now[9], "the sweep left nothing to carry at all");
+		// THE WORKING MEMORY IS INTACT, which is the property and not the saving. The last eight
+		// rounds of the turn must be byte-for-byte what they were, and they are checked against the
+		// unswept fixture rather than against a size nobody can read.
+		assert_eq!(whole.len(), swept.len(), "the sweep added or removed a message");
+		let tail_from = whole.len() - 2 * IN_TURN_RESULT_AGE;
+		for i in tail_from..whole.len() {
+			assert_eq!(whole[i].content().text_len(), swept[i].content().text_len(),
+				"message {} of the last eight rounds was retired out from under the model", i);
+		}
+		// And something WAS taken, further back, or the loop above proves nothing.
+		assert!(swept[..tail_from].iter().any(|m| m.text().ends_with(RESULT_RETIRED_TAIL)),
+			"no result was retired at all");
+	}
+
 	#[test]
 	fn test_in_turn_retirement_takes_bodies_and_leaves_results_00() {
 		// The in-turn half is narrower on purpose: the model is still reading this turn's
@@ -2939,6 +3336,79 @@ mod tests {
 					"{}", tool_calls[0].arguments),
 			other => panic!("{:?}", other.role()),
 		}
+	}
+
+	#[test]
+	fn test_the_turns_budget_is_said_once_in_the_last_result_00() {
+		let mut v = vec![
+			user("go"),
+			asks("a", "file_read", "{\"path\":\"src/a.rs\"}"), replies("a", "first"),
+			asks("b", "file_read", "{\"path\":\"src/b.rs\"}"), replies("b", "second"),
+		];
+		assert!(note_budget(&mut v, 47, Some(0.82)));
+		assert_eq!(
+			"second\n[turn budget: 47 rounds and US$0.82 left; if short, report now]",
+			v[4].text());
+		// NOTHING ELSE MOVED. The system prompt is the cached prefix and the earlier rounds are
+		// what the prefix cache is made of: a note anywhere but the tail costs a miss on every
+		// round after it.
+		assert_eq!("first", v[2].text());
+		assert_eq!("go", v[0].text());
+
+		// Ten rounds later, and the reason the earlier line is taken out: the model must read one
+		// figure rather than a history of them, and a turn of sixty rounds would otherwise carry
+		// six.
+		v.push(asks("c", "file_read", "{\"path\":\"src/c.rs\"}"));
+		v.push(replies("c", "third"));
+		assert!(note_budget(&mut v, 37, Some(0.61)));
+		assert_eq!("second", v[4].text(), "the earlier budget line was left behind");
+		assert_eq!("third\n[turn budget: 37 rounds and US$0.61 left; if short, report now]",
+			v[6].text());
+		// Said again on the same round count with the same figures: still one line.
+		assert!(note_budget(&mut v, 37, Some(0.61)));
+		assert_eq!(1, v[6].text().matches("[turn budget:").count(), "{}", v[6].text());
+
+		// NO MONEY WHERE NONE IS REPORTED. Several endpoints put no cost in the response and the
+		// ceiling is not enforced on such a turn either, so a figure would be a claim about a price
+		// nobody quoted.
+		assert!(note_budget(&mut v, 37, None));
+		assert_eq!("third\n[turn budget: 37 rounds left; if short, report now]",
+			v[6].text());
+
+		// A turn with nothing to append to is left alone rather than growing a message of its own.
+		let mut bare = vec![user("hello")];
+		assert!(!note_budget(&mut bare, 47, Some(1.0)));
+		assert_eq!(1, bare.len());
+		assert_eq!("hello", bare[0].text());
+	}
+
+	#[test]
+	fn test_an_old_result_is_retired_and_a_small_or_new_one_is_not_00() {
+		// Three rules in one fixture, because they are one decision: old enough, big enough, and
+		// answered by the call that names it.
+		let mut v = vec![
+			user("go"),
+			asks("r1", "file_read", "{\"path\":\"src/a.rs\"}"),
+			replies("r1", &"line\n".repeat(2_000)),		// old and big
+			asks("r2", "file_list", "{\"path\":\"src\"}"),
+			replies("r2", "a.rs\nb.rs\n"),				// old and small
+			asks("r3", "file_read", "{\"path\":\"src/c.rs\"}"),
+			replies("r3", &"line\n".repeat(2_000)),		// big, and inside the horizon
+		];
+		let n = retire_results(&mut v, 5, IN_TURN_RESULT_CAP);
+		assert_eq!(1, n, "the sweep took more or less than the one old big result");
+		let stub = v[2].text();
+		assert!(stub.starts_with("[file_read src/a.rs"), "{}", stub);
+		assert!(stub.ends_with(RESULT_RETIRED_TAIL), "{}", stub);
+		assert!(stub.contains("10000 bytes"), "the stub does not say what went: {}", stub);
+		assert_eq!("a.rs\nb.rs\n", v[4].text(), "a result smaller than the stub was retired");
+		assert_eq!(10_000, v[6].content().text_len(),
+			"a result inside the horizon was retired out from under the model");
+		// IDEMPOTENT, because the sweep runs again every tenth round. A count of a count grows,
+		// and a stub re-stubbed would also cost a cache miss for nothing.
+		let again = v.clone();
+		assert_eq!(0, retire_results(&mut v, 5, IN_TURN_RESULT_CAP));
+		assert_eq!(again[2].text(), v[2].text());
 	}
 
 	#[test]

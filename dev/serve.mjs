@@ -78,12 +78,28 @@ function proxy(req, res) {
 	// gateway is not running" and knows only the phrase cannot tell an absent
 	// gateway from one it was never entitled to reach, and the whole point of the
 	// world's own port is that the second case no longer exists.
+	// AND NOT AFTER THE ANSWER HAS STARTED. An upstream error once the status line is
+	// out cannot be answered with a status line: `writeHead` throws
+	// ERR_HTTP_HEADERS_SENT from inside an event handler, which is an uncaught
+	// exception, and THE WHOLE DEV SERVER EXITS -- every page in every browser the run
+	// holds open goes "Connection refused" at once, and the next run of anything at all
+	// cannot reach the app. That is not a hypothetical: a PARKED request (the wake
+	// channel's `?above=`, and the progress door's `?wait=`) is held open for tens of
+	// seconds by design, so a page closing at the end of a run aborts one mid-flight and
+	// the upstream errors with the response already begun. The refusal below is for a
+	// gateway that was never reached; once it has been, there is nothing to say and the
+	// socket is simply let go.
 	up.on('error', () => {
+		if (res.headersSent) { try { res.destroy(); } catch (e) {} return; }
 		res.writeHead(502, { 'content-type': 'application/json' });
 		res.end(JSON.stringify({ error: `No gateway is running on 127.0.0.1:${GATEWAY.port}, `
 			+ `which is this world's own. No other world's gateway is reachable from here: `
 			+ `start one on this port (DAIMOND_GW_PORT), or use the browser-only features.` }));
 	});
+	// A client that goes away mid-answer takes its upstream request with it, rather than
+	// leaving the gateway writing into a socket nobody is reading. Same reason as above:
+	// parked requests make this the ordinary case and not the rare one.
+	res.on('close', () => { try { up.destroy(); } catch (e) {} });
 	req.pipe(up);
 }
 

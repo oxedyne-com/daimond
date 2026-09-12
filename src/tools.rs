@@ -2649,6 +2649,37 @@ impl Machine {
     }
 }
 
+// What the hand last said, for a decision that cannot await it
+//
+// `ToolRegistry::offered` has to decide whether the machine tools are worth their schema BEFORE
+// the request goes out, and asking the hand is an `await` it does not have -- it is called from
+// `definitions_json`, from `tool_names` and from the Tools panel alike.  So the answer is recorded
+// where it IS asked: `prompts::machine_briefing` is composed once per turn, before the schema
+// array is built, from the same `status()` call `Tool::run` makes.
+//
+// `None` is "nobody has asked yet" and OFFERS the tools, which is the only safe default: a build
+// with no briefing composer, or the moment before the first one runs, must not withhold a tool the
+// user can actually use.  Wasm is single-threaded, so a thread-local is the whole of the sharing
+// story, and on the native build nothing writes it at all -- `run` is not in that build's belt.
+
+thread_local! {
+    /// Whether a folder on this computer was reachable when the turn was briefed.
+    static MACHINE_ROOTED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Record whether a command has anywhere to run, as the turn's briefing found out.
+///
+/// # Arguments
+/// * `rooted` - Whether the hand named a folder that a fence could be built inside.
+pub fn note_machine_rooted(rooted: bool) {
+    MACHINE_ROOTED.with(|c| c.set(Some(rooted)));
+}
+
+/// Whether a command has anywhere to run, as last established; `None` until something asked.
+pub fn machine_rooted_seen() -> Option<bool> {
+    MACHINE_ROOTED.with(|c| c.get())
+}
+
 /// The value of a `key:<value>` capability entry, where the hand sent one.
 ///
 /// # Arguments
@@ -10091,47 +10122,140 @@ fn without_read_prefix(old: &str) -> Option<String> {
 	if stripped == 0 { None } else { Some(out) }
 }
 
+/// The spellings of a hunk's pair that are read as a hunk, the schema's own first.
+///
+/// A model that has understood "replace this with that" has not necessarily remembered which two
+/// words this tool names them by, and the cost of guessing wrong is a whole round: the call is
+/// refused, the model re-reads the schema and sends again.  Measured 2026-09-12 on build
+/// `4d4fd190f1ef`, two refusals before a third attempt parsed.  Every pair here says the same
+/// thing, so the only question is whether the tool will hear it.
+const HUNK_PAIRS: [(&str, &str); 4] = [
+    ("old_string",	"new_string"),	// the schema's own
+    ("old",			"new"),
+    ("search",		"replace"),		// `doc_edit`'s `find`/`replace` half-remembered
+    ("from",		"to"),
+];
+
+/// One hunk read out of an object, under whichever of [`HUNK_PAIRS`] it was written with.
+///
+/// `None` where no pair is there to read, which includes a pair whose `old` is empty: an empty
+/// string matches at every position, so it is a missing argument and not an insertion point.
+fn hunk_of(one: &str) -> Option<(String, String)> {
+    for (o, n) in HUNK_PAIRS {
+        match extract_json_string(one, o) {
+            Some(old) if !old.is_empty() => {
+                return Some((old, extract_json_string(one, n).unwrap_or_default()));
+            },
+            _ => (),
+        }
+    }
+    None
+}
+
+/// The `edits` value as a list of hunk objects, in whichever of four shapes it arrived.
+///
+/// `None` only where the key is not there at all, so a caller can tell an `edits` that was never
+/// written from one written empty -- which is the difference between falling back to the
+/// top-level pair and refusing.
+///
+/// The shapes past the schema's own are what an OpenAI-dialect model sends when it is composing
+/// JSON inside JSON: the array as a STRING is the common one, since the argument object is itself
+/// a string by the time it leaves the provider, and a single object where a list was asked for is
+/// the other.
+fn edit_asks(args: &str) -> Option<Vec<String>> {
+    if let Some(a) = crate::llm::extract_json_objects(args, "edits") {
+        return Some(a);
+    }
+    if let Some(o) = crate::llm::find_json_object(args, "edits") {
+        return Some(vec![o]);
+    }
+    match extract_json_string(args, "edits") {
+        Some(enc) => {
+            let t = enc.trim();
+            if t.starts_with('[') {
+                Some(crate::llm::split_top_level_objects(t))
+            } else if t.starts_with('{') {
+                Some(vec![t.to_string()])
+            } else {
+                // A string that is not JSON at all -- prose, or one hunk written as plain text.
+                // `edits` IS there, so the caller refuses rather than reading a top-level pair
+                // that was probably not meant.
+                Some(Vec::new())
+            }
+        },
+        None => None,
+    }
+}
+
+/// The keys an argument object carried, for a refusal to name.
+fn shape_of(args: &str) -> String {
+    let keys = crate::llm::json_top_level_keys(args);
+    if keys.is_empty() {
+        return "no keys at all".to_string();
+    }
+    fmt!("the keys {}", keys.iter()
+        .map(|k| fmt!("'{}'", k))
+        .collect::<Vec<_>>()
+        .join(", "))
+}
+
+/// What a correct call looks like, for a refusal to show rather than describe.
+const EDIT_EXAMPLE: &str =
+    "{\"path\":\"src/a.rs\",\"edits\":[{\"old_string\":\"let x = 1;\",\"new_string\":\"let x = 2;\"}]}";
+
 /// The hunks a `file_edit` call asks for, in the order they are to be applied.
 ///
-/// Two shapes reach here and both are legal.  `edits` is a JSON array of
-/// `{"old_string","new_string"}` objects -- the shape `doc_edit` already takes -- and it exists
-/// because a single-hunk edit tool forces one round per hunk: a daimon spends ~150 rounds on a
-/// turn, and a ten-hunk change was ten of them, or else a whole-file rewrite after the first
-/// failure.  The bare `old_string` / `new_string` pair the tool opened with still works, because
-/// a model that has learnt the single form must not be broken by the addition.
+/// `edits` is a JSON array of `{"old_string","new_string"}` objects -- the shape `doc_edit`
+/// already takes -- and it exists because a single-hunk edit tool forces one round per hunk: a
+/// daimon spends ~150 rounds on a turn, and a ten-hunk change was ten of them, or else a
+/// whole-file rewrite after the first failure.  The bare `old_string` / `new_string` pair the
+/// tool opened with still works, because a model that has learnt the single form must not be
+/// broken by the addition.
+///
+/// **Generous in what it accepts, exact in what it refuses.**  Every shape [`edit_asks`] and
+/// [`HUNK_PAIRS`] between them allow says the same thing, and a refusal over the spelling costs a
+/// round for nothing.  What it will not do is guess: a refusal names the keys it was actually
+/// sent and shows one call that works, so the next attempt is informed rather than another try.
+/// The all-or-nothing rule is untouched -- every hunk is read before any is applied, and one
+/// unreadable hunk refuses the call.
 ///
 /// # Arguments
 /// * `args` - The tool's arguments, as the model sent them.
 /// * `path` - Named only so a refusal can say which file was left alone.
 fn edit_hunks(args: &str, path: &str) -> Outcome<Vec<(String, String)>> {
-    if let Some(asks) = crate::llm::extract_json_objects(args, "edits") {
+    if let Some(asks) = edit_asks(args) {
         let mut out = Vec::new();
         for (i, one) in asks.iter().enumerate() {
-            let old = match extract_json_string(one, "old_string") {
-                Some(s) if !s.is_empty() => s,
-                // An empty `old_string` matches everywhere, so it is a missing argument rather
-                // than an insertion point, and saying which hunk is what lets the model fix it.
-                _ => return Err(err!(
-                    "file_edit: edit {} of {} carries no 'old_string', so there is nothing to \
-                    look for. Nothing has been changed in '{}'.", i + 1, asks.len(), path;
-                    Invalid, Input, Missing)),
-            };
-            out.push((old, extract_json_string(one, "new_string").unwrap_or_default()));
+            match hunk_of(one) {
+                Some(h) => out.push(h),
+                None    => return Err(err!(
+                    "file_edit: edit {} of {} carries no pair to apply -- it has {}, and none of \
+                    them is an 'old_string' with a 'new_string'. Nothing has been changed in \
+                    '{}'. One that works: {}", i + 1, asks.len(), shape_of(one), path,
+                    EDIT_EXAMPLE; Invalid, Input, Missing)),
+            }
         }
-        if out.is_empty() {
-            return Err(err!("file_edit: 'edits' is empty, so there is nothing to do.";
-                Invalid, Input));
+        if !out.is_empty() {
+            return Ok(out);
         }
-        return Ok(out);
+        // `edits` arrived empty, and a top-level pair beside it is a model that hedged between
+        // the two forms rather than one that asked for nothing.  Taking it costs nothing and
+        // saves the round that refusing it would spend.
+        if let Some(h) = hunk_of(args) {
+            return Ok(vec![h]);
+        }
+        return Err(err!(
+            "file_edit: 'edits' is empty, so there is nothing to do. Nothing has been changed in \
+            '{}'. One call that works: {}", path, EDIT_EXAMPLE; Invalid, Input));
     }
-    let old = match extract_json_string(args, "old_string") {
-        Some(s) => s,
-        None => return Err(err!(
-            "file_edit: give either 'edits' -- a JSON array of objects each with an 'old_string' \
-            and a 'new_string' -- or one 'old_string' and 'new_string' at the top level. Neither \
-            was readable, so nothing has been changed in '{}'.", path; Invalid, Input, Missing)),
-    };
-    Ok(vec![(old, extract_json_string(args, "new_string").unwrap_or_default())])
+    match hunk_of(args) {
+        Some(h) => Ok(vec![h]),
+        None    => Err(err!(
+            "file_edit: no edit was readable, so nothing has been changed in '{}'. The call \
+            carried {}. Give one 'old_string' and 'new_string' at the top level, or 'edits' -- a \
+            JSON array of objects each with an 'old_string' and a 'new_string'. One that works: \
+            {}", path, shape_of(args), EDIT_EXAMPLE; Invalid, Input, Missing)),
+    }
 }
 
 /// `data` with every hunk applied, or one refusal naming every hunk that could not be placed.
@@ -15262,8 +15386,22 @@ impl ToolRegistry {
     /// refusal that tells it what to do instead, and not "tool 'file_show' is not available here."
     pub fn offered(&self) -> Vec<Tool> {
         let unsupervised = self.ctx.is_unsupervised();
+        // AND NOT THE MACHINE TOOLS WHERE THERE IS NO MACHINE FOLDER.  `run`, `runs` and `verify`
+        // come to about 1,600 tokens of schema between them -- `run`'s description alone is a
+        // paragraph -- and they rode on every request of every round of every turn on a page with
+        // no hand attached, which is most pages and every phone.  All three refuse in that case
+        // and say why, so what was paid for was the chance to be refused: see `Tool::run`'s own
+        // check on `Machine::rooted`, and `reach_of`'s.
+        //
+        // `machine_rooted_seen` and not a fresh `status()` call: this is synchronous and is asked
+        // once per round.  The briefing establishes the fact once per turn, before the schema is
+        // built, and `prompts::NO_MACHINE_NOTE` then tells the model in one sentence that the
+        // tools are not there -- without which the model does not merely fail to run a command,
+        // it probes for a tool it cannot see and reports the app as broken.
+        let nowhere_to_run = machine_rooted_seen() == Some(false);
         self.tools.iter()
             .filter(|t| !(unsupervised && matches!(t, Tool::FileShow | Tool::Ask)))
+            .filter(|t| !(nowhere_to_run && matches!(t, Tool::Run | Tool::Runs | Tool::Verify)))
             // AND NOT A TOOL THE ACCOUNT HAS NOT BOUGHT, which is the prefix half of the gate
             // `guard` already holds.  A locked tool's description and schema were sent on every
             // request of every round -- the four mail tools and the Typst compiler come to
@@ -21847,6 +21985,89 @@ mod tests {
             "the schema still insists on a single hunk, so 'edits' alone would be rejected: {}", sch);
     }
 
+    /// **Every shape that says the same thing edits, and a refusal says what arrived.**
+    ///
+    /// Two `file_edit` calls were refused in one turn on build `4d4fd190f1ef`, 2026-09-12, before
+    /// a third found a shape the parser would take -- two rounds of the user's money spent on the
+    /// spelling of two argument names.  The refusal said only that neither of the two shapes it
+    /// knew was readable, and did not say what it had actually been sent, so there was nothing in
+    /// it to correct from.
+    #[test]
+    fn test_file_edit_takes_every_shape_a_model_plausibly_sends() {
+        let shapes: [(&str, &str); 8] = [
+            ("the schema's own list",
+                r#"{"path":"v.rs","edits":[{"old_string":"old","new_string":"new"}]}"#),
+            ("the list as a JSON-encoded string",
+                r#"{"path":"v.rs","edits":"[{\"old_string\":\"old\",\"new_string\":\"new\"}]"}"#),
+            ("one object where a list was asked for",
+                r#"{"path":"v.rs","edits":{"old_string":"old","new_string":"new"}}"#),
+            ("one object, JSON-encoded",
+                r#"{"path":"v.rs","edits":"{\"old_string\":\"old\",\"new_string\":\"new\"}"}"#),
+            ("old/new",
+                r#"{"path":"v.rs","edits":[{"old":"old","new":"new"}]}"#),
+            ("search/replace",
+                r#"{"path":"v.rs","edits":[{"search":"old","replace":"new"}]}"#),
+            ("from/to",
+                r#"{"path":"v.rs","edits":[{"from":"old","to":"new"}]}"#),
+            // The model hedged: both forms in one call, the list empty.
+            ("an empty list beside a top-level pair",
+                r#"{"path":"v.rs","edits":[],"old_string":"old","new_string":"new"}"#),
+        ];
+        for (what, args) in shapes {
+            let c = ctx();
+            put(&c, "v.rs", "keep\nold\n");
+            let out = match Tool::FileEdit.execute_sync(args, &c) {
+                Ok(o)  => o.as_text().to_string(),
+                Err(e) => panic!("{}: refused {}: {}", what, args, e),
+            };
+            assert_eq!("Edited v.rs.", out, "{}: the reply changed shape", what);
+            assert_eq!("keep\nnew\n",
+                std::fs::read_to_string(c.workspace.resolve("v.rs").expect("resolve"))
+                    .expect("read"),
+                "{}: the file is not what the edit asked for", what);
+        }
+        // ALL OR NOTHING still holds through the new shapes: a second hunk that cannot be placed
+        // refuses the first as well, whatever the pair was spelt.
+        let c = ctx();
+        put(&c, "w.rs", "keep\nold\n");
+        let e = Tool::FileEdit.execute_sync(
+            r#"{"path":"w.rs","edits":[{"old":"old","new":"new"},{"old":"absent","new":"x"}]}"#, &c)
+            .err().expect("an unplaceable hunk must refuse the whole call");
+        let said = fmt!("{}", e);
+        assert!(said.contains("2: old_string not found"),
+            "the refusal does not name the hunk that failed: {}", said);
+        assert_eq!("keep\nold\n",
+            std::fs::read_to_string(c.workspace.resolve("w.rs").expect("resolve")).expect("read"),
+            "a refused call wrote part of itself");
+    }
+
+    /// **A refusal names the keys it was sent and shows one call that works.**
+    #[test]
+    fn test_file_edit_refuses_by_naming_the_shape_it_was_given() {
+        let c = ctx();
+        put(&c, "r.rs", "keep\nold\n");
+        // Neither a pair nor an `edits` of any shape: the only honest answer is what arrived.
+        let e = Tool::FileEdit.execute_sync(
+            r#"{"path":"r.rs","replacement":"new","target":"old"}"#, &c)
+            .err().expect("an unreadable call must refuse");
+        let said = fmt!("{}", e);
+        for want in ["'replacement'", "'target'", "'path'", "old_string", "new_string"] {
+            assert!(said.contains(want), "the refusal does not carry {}: {}", want, said);
+        }
+        // And one whose LIST is there but whose hunk is not a hunk: the hunk's own keys, and
+        // which of them it was.
+        let e2 = Tool::FileEdit.execute_sync(
+            r#"{"path":"r.rs","edits":[{"old_string":"old","new_string":"new"},{"line":3,"text":"x"}]}"#,
+            &c).err().expect("a hunk with no pair must refuse");
+        let said2 = fmt!("{}", e2);
+        assert!(said2.contains("edit 2 of 2"), "the refusal does not say which hunk: {}", said2);
+        assert!(said2.contains("'line'") && said2.contains("'text'"),
+            "the refusal does not name the hunk's keys: {}", said2);
+        assert_eq!("keep\nold\n",
+            std::fs::read_to_string(c.workspace.resolve("r.rs").expect("resolve")).expect("read"),
+            "a refused call wrote part of itself");
+    }
+
     /// **The numbered-prefix strip is per hunk**, since a model copies several blocks from one read.
     #[test]
     fn test_file_edit_strips_the_read_prefix_from_every_hunk() {
@@ -26981,6 +27202,71 @@ mod tests {
         assert!(note.contains("Tools panel"), "the note does not say where to buy it: {}", note);
 
         set_locked_packs("");
+    }
+
+    /// **The machine tools are not in the request where there is no machine.**
+    ///
+    /// All three refuse with no rooted folder and say why, so a page with no hand attached -- most
+    /// pages, and every phone -- paid ~1,600 tokens of schema on every round of every turn for the
+    /// chance to be refused.
+    #[test]
+    fn test_the_machine_tools_are_withheld_where_nothing_can_run() {
+        // PUT BACK EVEN IF AN ASSERT BELOW FAILS. The answer lives in a thread-local and the test
+        // harness reuses threads, so a test that left it at `false` would withhold `verify` from a
+        // later test on the same thread -- a second failure, in another file, caused by this one.
+        struct Forget;
+        impl Drop for Forget {
+            fn drop(&mut self) { MACHINE_ROOTED.with(|c| c.set(None)); }
+        }
+        let _forget = Forget;
+
+        let machine = [Tool::Run, Tool::Runs, Tool::Verify];
+        let reg = ToolRegistry::new(Tool::daimon(), ctx());
+
+        // The control: nobody has asked the hand yet, so nothing is withheld. This is the state a
+        // build with no briefing composer is in, and it must be the generous one.
+        MACHINE_ROOTED.with(|c| c.set(None));
+        assert_eq!(None, machine_rooted_seen());
+        for t in &machine {
+            assert!(reg.offered().contains(t),
+                "{} is withheld before anything has asked the hand", t.name());
+        }
+        let whole = reg.definitions_json().expect("the belt did not empty");
+
+        // A hand that named a folder: still offered, which is the other half of the gate.
+        note_machine_rooted(true);
+        for t in &machine {
+            assert!(reg.offered().contains(t), "{} is withheld on a paired hand", t.name());
+        }
+
+        // And nowhere to run: out of the offer, out of the sentence, out of the schema array.
+        note_machine_rooted(false);
+        let names = reg.tool_names();
+        let defs  = reg.definitions_json().expect("the belt did not empty");
+        for t in &machine {
+            assert!(!reg.offered().contains(t), "{} is still offered", t.name());
+            assert!(!names.iter().any(|n| n == t.name()),
+                "{} is still named to the model", t.name());
+            assert!(!defs.contains(&fmt!("\"name\":\"{}\"", t.name())),
+                "{}'s schema is still in the request", t.name());
+            // The belt is unchanged, because it is also what the Tools panel shows a person and
+            // what `DaimondApp::briefing` reads to decide whether to mention a machine at all.
+            assert!(reg.tools.contains(t), "{} left the belt", t.name());
+        }
+        assert!(reg.offered().contains(&Tool::FileRead),
+            "withholding the machine tools withheld a file tool");
+        // WHAT IT SAVES, measured on the daimon's own belt rather than estimated.
+        let saved = whole.len() - defs.len();
+        println!("machine tool schemas withheld: {} characters of {}", saved, whole.len());
+        assert!(saved > 4_000,
+            "the three schemas are smaller than the reason for withholding them: {}", saved);
+        // The model is told, or it probes for a tool it cannot see and reports the app as broken.
+        let note = crate::prompts::NO_MACHINE_NOTE;
+        for t in &machine {
+            assert!(note.contains(t.name()), "the note does not name {}: {}", t.name(), note);
+        }
+
+        MACHINE_ROOTED.with(|c| c.set(None));
     }
 
     /// **The prefix a daimon pays on every round, measured rather than assumed.**

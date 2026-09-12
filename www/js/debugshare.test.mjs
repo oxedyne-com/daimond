@@ -72,9 +72,22 @@ function makeEnv(cfg) {
 	// `cfg.store` REUSES a previous env's Map, which is what a reload is: the same
 	// device's localStorage, a brand new module instance on top of it.
 	const store = cfg.store || new Map();
+	// `cfg.quota(key, nth)` makes a write fail the way a full localStorage does. The
+	// outbox is by far the largest thing this module writes, so it is the write that
+	// actually hits the quota on a real device -- and what it does about it is a
+	// property worth proving rather than assuming.
+	let writes = 0;
 	const localStorage = {
 		getItem: (k) => (store.has(k) ? store.get(k) : null),
-		setItem: (k, v) => store.set(k, String(v)),
+		setItem: (k, v) => {
+			writes += 1;
+			if (cfg.quota && cfg.quota(k, writes)) {
+				const e = new Error('QuotaExceededError');
+				e.name = 'QuotaExceededError';
+				throw e;
+			}
+			store.set(k, String(v));
+		},
 		removeItem: (k) => store.delete(k),
 	};
 	const head = makeNode('head');
@@ -1217,7 +1230,48 @@ async function main() {
 		check('a worker end event carries the sent (capped) report size', worker.sb === 8192);
 		check('every row sent this section stays inside the cap',
 			DS._outbox().every((r) => DS._byteLen(r.data) <= 360));
+
+		// A WORKER'S OWN `round`/`tool` rows, keyed `w` rather than `turn` -- a worker
+		// has no turn id the feed already knows. Before 2026-09-12 the worker sink
+		// emitted nothing between its `start` and `end` rows at all: a worker running
+		// thirty tool calls left no trace of any of them, only that it had begun and,
+		// eventually, finished.
+		DS.event('round', { w: 'w9', r: 5 });
+		const wround = JSON.parse(DS._outbox().filter((r) => r.tag === 'ev round').pop().data);
+		check('a worker\'s round row carries its worker id, not a turn id', wround.w === 'w9' && !wround.turn);
+		check('a worker\'s round row is comfortably under the 360-byte cap', DS._byteLen(JSON.stringify(wround)) <= 360);
+		DS.event('tool', { w: 'w9', r: 5, name: 'read_file', out: 'refused' });
+		const wtool = JSON.parse(DS._outbox().filter((r) => r.tag === 'ev tool').pop().data);
+		check('a worker\'s tool row carries the tool\'s name and the engine\'s own outcome word',
+			wtool.w === 'w9' && wtool.name === 'read_file' && wtool.out === 'refused');
+		check('a worker\'s tool row is comfortably under the 360-byte cap', DS._byteLen(JSON.stringify(wtool)) <= 360);
 		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: a worker\'s round/tool events and its honest ending, read from the source');
+	{
+		// `Workers.start`'s sink cannot be driven here without a wasm DaimondApp --
+		// see dev/verify_worker_status.mjs for the pure functions lifted out of it.
+		// What is provable without one is that the sink emits these events at all,
+		// and at the right two seams: read from the source, as the doSteer checks
+		// above do, for the same reason -- the property belongs to a 44,000-line IIFE
+		// this harness cannot load.
+		const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		const startFn = src.slice(src.indexOf('start: async function (run) {'));
+		const body = startFn.slice(0, startFn.indexOf('\n\t\tstop: function (run) {'));
+		check('a worker emits a round row on a tool call, keyed by its own id',
+			/dsEvent\('round', wroundPayload\)/.test(body) && /w: String\(run\.id \|\| ''\)/.test(body));
+		check('a worker emits a tool row on a tool result, name and outcome only',
+			/dsEvent\('tool', \{ w: String\(run\.id \|\| ''\)/.test(body));
+		check('the round the turn actually ended on is caught even when unthrottled',
+			/wroundPayload && wroundSent !== wstep/.test(body));
+		// THE ENDING IS THE ENGINE'S, NOT A BLANKET 'done'. Before 2026-09-12
+		// `run.status = 'done'` ran unconditionally once a turn returned without
+		// throwing, whatever `TurnEnd` the engine actually reported.
+		check('a worker\'s status is read from the engine\'s own ending, not written as done',
+			/run\.status = run\.ended \? workerEndStatus\(run\.ended\.how\) : 'done'/.test(body));
+		check('a finished batch counts capped and spend_cap workers as terminal too',
+			/s === 'capped' \|\| s === 'spend_cap'/.test(src));
 	}
 
 	console.log('debugshare: events — boot and beat carry the capability triple');
@@ -1541,6 +1595,69 @@ async function main() {
 		DS.noteFetchFail('/api/debug-trace?account=oxedyne', 429, 5, '');
 		check('the feed\'s own post never becomes a fetch.fail', fails().length === before);
 		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: a quota that halves the outbox says so, and the daimon path closes its turns');
+	{
+		// THE ONE DROP NOBODY WAS TOLD ABOUT. `pushRow`'s overflow cap says `feed.drop`;
+		// `persistNow`'s quota fallback dropped the oldest half the same way and said
+		// nothing at all, so a reader met a run of sequence numbers that were simply
+		// absent and could not tell a full device from a gateway losing posts. The
+		// endpoint refuses here, so nothing leaves the outbox and what is left in it is
+		// the whole of what the module decided.
+		let quotaLeft = 1;
+		const env = makeEnv({
+			fastTimers: true, respond: () => 500,
+			quota: (k) => (k === 'daimond-debugshare-outbox' && quotaLeft > 0)
+				? (quotaLeft -= 1, true) : false,
+		});
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		for (let i = 0; i < 8; i++) DS.event('tool', { turn: 'Q1', name: 'run' });
+		await sleep(40);
+		env.halt();
+		const drops = DS._outbox().filter((r) => r.tag === 'ev feed.drop').map((r) => JSON.parse(r.data));
+		check('a quota drop is announced', drops.length === 1, drops.length + ' announcement(s)');
+		check('and it names the quota as the reason', drops.length === 1 && drops[0].why === 'quota');
+		check('and says how many rows went', drops.length === 1 && drops[0].count >= 1);
+		check('the rows that survived are still there',
+			DS._outbox().some((r) => r.tag === 'ev tool'));
+	}
+
+	console.log('debugshare: the DAIMON\'s turn emits what a chat\'s turn emits');
+	{
+		// Read from the source, for the reason the gateway check below gives: the
+		// property belongs to daimond.js, a 44,000-line IIFE this harness cannot load,
+		// and it is exactly the property that failed in production. On build
+		// 4d4fd190f1ef, 2026-09-12, a daimon turn that ran 30 tool calls left NO row of
+		// any kind in the feed: `doSteer` emitted `ended` only from the engine's own
+		// event and had no `turn.start`/`turn.end` at all, so a turn that died -- or
+		// whose wasm trapped, which is what happened -- was invisible, and the lens had
+		// to invent a daimon's turns out of its `ended` rows.
+		const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		const steer = src.slice(src.indexOf('async function doSteer('));
+		const body  = steer.slice(0, steer.indexOf('\n\tasync function ', 1));
+		for (const kind of ['turn.start', 'round', 'tool', 'ended', 'fold', 'turn.end']) {
+			check('doSteer emits ' + kind, body.indexOf("dsEvent('" + kind + "'") !== -1);
+		}
+		// BOTH exits, because `doSteer` has no `finally`: a failure before the turn and
+		// a turn that came back are two different lines and each has to close the turn.
+		check('and closes the turn at both of its exits',
+			(src.match(/closeFeedTurn\(/g) || []).length === 2);	// the failure exit and the success one
+		// A turn whose end the engine never reported still ends.
+		check('a turn the engine never ended is still ended',
+			body.indexOf("how: (out === 'error') ? 'threw' : 'quiet'") !== -1);
+		// The gather depth, which is what tells a worker-report hand-back from a steer
+		// somebody typed -- the distinction the whole investigation turned on.
+		check('the start says how deep the hand-back is', /dsEvent\('turn\.start', \{[^}]*d:\s*depth/.test(body));
+
+		// A WORKER THAT DIES BEFORE ITS LOOP. Both early exits in `Workers.start` return
+		// before the `try` whose `finally` emits the close AND before that `finally`
+		// calls `gather`, so a batch with one such worker was never gathered at all.
+		check('a worker that dies early is closed and gathered',
+			(src.match(/closeEarly\(\)/g) || []).length === 2);	// the two early exits
+		check('and the early close gathers the batch it leaves behind',
+			/closeEarly = function \(\) \{[\s\S]*?self2\.gather\(run\.batch\)/.test(src));
 	}
 
 	console.log('debugshare: fetch.fail — gateway.js reports only from gwFetch, never from the global wrapper');

@@ -320,11 +320,24 @@
 	'devices.rename_title': 'Name this device',
 	'devices.rename_body':  'A name to tell this device from the others. Empty the box to go back to “{derived}”.',
 	'devices.rename_aria':  'Rename {name}',
-	'devices.note':        'Devices that have synced this account. One that holds the account but has never synced is not listed. Nothing here signs a device out. A linked device holds the same keys as this one, so it has to be dealt with there.',
+	// Rewritten 2026-09-12, when Remove became real. The old wording said "Nothing
+	// here signs a device out", which was true of a roster tombstone and is false of
+	// a removal the gateway enforces. What is still true -- and still worth saying --
+	// is the limit: a removed device keeps the copy of your work it already holds,
+	// because the keys travelled with it at pairing and nothing can take them back.
+	'devices.note':        'Devices that have synced this account. One that holds the account but has never synced is not listed. Removing a device cuts it off: it stops syncing, stops being offered your turns, and locks itself the next time it asks. It keeps the copy of your work already on it, and to use it again you pair it again.',
 	'devices.remove_aria': 'Remove {name}',
-	'devices.remove_body': '“{name}” comes off this list. That does not sign the device out. It holds the same keys as this one, so it reappears the next time it syncs.',
+	// REMOVAL IS REAL as of 2026-09-12: the gateway refuses the id, so the device
+	// cannot beat, cannot be woken and cannot take a handed-off turn, and it locks
+	// itself the next time it asks. The confirm names the device AND its id tail,
+	// because two of a user's Linux Chromes derive the same words and removing the
+	// wrong one costs a re-pair.
+	'devices.remove_body': '“{name}” ({tail}) is removed from this account. It stops syncing, stops being offered your turns, and locks itself the next time it asks. To use it again you pair it again.',
 	'devices.remove':      'Remove',
 	'devices.remove_title':'Remove this device',
+	'devices.remove_failed': 'That device could not be removed — the gateway did not answer. It is still on the account; try again when you are online.',
+	'devices.removed_self_title': 'This device was removed',
+	'devices.removed_self_body': 'This device was removed from the account. Pair again to use it.',
 	// The always-on runner: one nominated device picks up handed-off turns, so a
 	// device that may be closed mid-turn does not grab one.
 	'devices.nominee':          'runner',
@@ -332,6 +345,12 @@
 	'devices.nominate_aria':    'Make {name} the always-on runner',
 	'devices.unnominate_aria':  'Clear {name} as the always-on runner',
 	'devices.nominee_note':     'Star one device as the always-on runner. Handed-off turns wait for it while it is awake, and fall to another awake device only when it is not.',
+	// Asked on the NOMINATED MACHINE ITSELF, once, because holding a screen wake
+	// lock for the life of the process and listening for ever are consequences that
+	// land here rather than on the phone the nomination was made from (runner.js).
+	'runner.confirm_title':     'Make this device the runner?',
+	'runner.confirm':           'This device is the runner. Keep it awake and listening for turns handed to it, even when its window is in the background. Leave it switched on and signed in.',
+	'runner.confirm_ok':        'This device is the runner',
 	// A GHOST: a line a live device has replaced under a new id after re-minting its
 	// identity. It is safe to remove -- the machine is here now under the new line.
 	'devices.replaced':         'replaced',
@@ -2006,10 +2025,47 @@
 	'turn.peer_consent_named': '{name} needs your permission to {act}.',
 	'turn.peer_parked':        'This needed your permission — it will re-run when you’re back.',
 	'turn.peer_rerun':         'Re-run',
+	// WHERE THE NEXT TURN WILL RUN -- the line under the composer. Stated before the
+	// send, not after it: a turn that runs on the phone itself needs the screen kept
+	// awake and in the foreground, and the user can only plan for that if they are
+	// told while they can still do something about it.
+	// The line names its own key (DaimondPeer.seatPlan chooses which of the five the
+	// latest beats imply), so the call site cannot be read for it. The set is closed.
+	// i18n-indirect: daimond.js plan.key = seat.on_runner seat.on_desktop seat.on_desktop_runner_off seat.local seat.local_mobile
+	'seat.on_runner':            'Next turn runs on {name}',
+	'seat.on_desktop':           'Next turn runs on {name}',
+	'seat.on_desktop_runner_off': 'Next turn runs on {name} (runner offline)',
+	'seat.local':                'Runs here',
+	'seat.local_mobile':         'Runs here — keep this screen open',
+	'seat.why_no_desktop':       'No other device is awake to take it.',
+	'seat.why_runner_silent':    'Your runner is not beating.',
+	'seat.why_chat_local':       'This chat is pinned to this device.',
+	'seat.tile_local_mobile':    'Running here — keep this screen open. {why}',
+	'seat.retry':                '{from} did not pick it up; trying {to}',
 	'turn.consent_act_type':   'type into {host}',
 	'turn.consent_act_click':  'act on {host}',
 	'turn.consent_act_search': 'search the web',
 	'turn.consent_act_reach':  'reach {host}',
+	// ── A blocker on a handed-off turn (owner ruling 2026-09-12) ──
+	// What stopped the runner, shown on EVERY device with the runner's own
+	// controls. The first three are answerable anywhere; the last three are
+	// reports about the runner, which only "Run here instead" answers.
+	'turn.block_consent':      'Your other device needs your permission to {act}.',
+	'turn.block_consent_named': '{name} needs your permission to {act}.',
+	'turn.block_ask':          'Your other device is asking: {q}',
+	'turn.block_ask_named':    '{name} is asking: {q}',
+	'turn.block_fsa':          'Your other device needs a click to grant folder access.',
+	'turn.block_fsa_named':    '{name} needs a click to grant folder access.',
+	'turn.block_lock':         'Your other device is locked.',
+	'turn.block_lock_named':   '{name} is locked.',
+	'turn.block_provider':     'Your other device’s AI provider refused the turn.',
+	'turn.block_provider_named': '{name}’s AI provider refused the turn.',
+	'turn.block_unknown':      'Your other device is waiting on something.',
+	'turn.block_unknown_named': '{name} is waiting on something.',
+	'turn.block_allow':        'Allow',
+	'turn.block_deny':         'Deny',
+	'turn.block_runhere':      'Run here instead',
+	'turn.block_runhere_help': 'Take this turn off that device and run it here.',
 	'turn.continue':          'Continue',
 	'turn.continue_help':     'Run this turn again from your message.',
 	'astat.no_model':         'No model connected',

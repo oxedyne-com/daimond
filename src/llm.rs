@@ -2233,7 +2233,7 @@ pub(crate) fn parse_usage(json: &str) -> Option<Usage> {
 /// Scans for `"key":{...}` and returns the inner object string
 /// (including the braces).  Used to extract the `usage` object
 /// from the final SSE chunk.
-fn find_json_object(json: &str, key: &str) -> Option<String> {
+pub(crate) fn find_json_object(json: &str, key: &str) -> Option<String> {
     let needle = fmt!("\"{}\":", key);
     let pos = match json.find(&needle) {
         Some(p) => p,
@@ -2571,6 +2571,46 @@ pub(crate) fn extract_json_string(json: &str, key: &str) -> Option<String> {
         }
         return None;
     }
+}
+
+/// The keys of a JSON object's own top level, in the order they were written.
+///
+/// For a refusal that has to say what it was actually sent.  A tool that answers "neither shape
+/// was readable" and then does not say which shape DID arrive leaves the model guessing, and a
+/// model guessing spends rounds: measured 2026-09-12, two refused `file_edit` calls before a
+/// third found a shape that parsed.  Nested objects and arrays are stepped over, so what comes
+/// back is the argument names and nothing from inside them.
+pub(crate) fn json_top_level_keys(json: &str) -> Vec<String> {
+    let bytes = json.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut depth = 0i32;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' | b'[' => { depth += 1; i += 1; },
+            b'}' | b']' => { depth -= 1; i += 1; },
+            b'"' => {
+                // The key's own text, then whether a colon follows it: a string in the value
+                // position is not a key, and at depth 1 the two are told apart by that colon.
+                let from = i + 1;
+                let mut j = from;
+                while j < bytes.len() {
+                    if bytes[j] == b'\\' { j += 2; continue; }
+                    if bytes[j] == b'"' { break; }
+                    j += 1;
+                }
+                let end = j.min(bytes.len());
+                let mut k = end + 1;
+                while k < bytes.len() && bytes[k].is_ascii_whitespace() { k += 1; }
+                if depth == 1 && k < bytes.len() && bytes[k] == b':' && end > from {
+                    out.push(json[from..end].to_string());
+                }
+                i = end + 1;
+            },
+            _ => i += 1,
+        }
+    }
+    out
 }
 
 /// Convert a JDAT DaticleMap to a minimal JSON string.
@@ -3093,7 +3133,19 @@ fn seam_line(line: &str) -> Option<String> {
     }
     let lead = emphasis_at(s);
     s = &s[lead.len()..];
-    if s.len() < 4 || !s[..4].eq_ignore_ascii_case("fold") {
+    // BY BYTES, NEVER BY A SLICE.  `&s[..4]` panicked on every answer whose first line began
+    // with three ASCII characters and then a multi-byte one -- `OK \u{2014} but ...` -- because
+    // byte 4 fell inside the em dash.  A panic here traps the wasm in the middle of the turn,
+    // the JS `await` never settles, and every piece of end-of-turn bookkeeping is skipped:
+    // measured 2026-09-12 on build 4d4fd190f1ef, where it cost a turn its `ended` event, its
+    // workers their `end` events and the Diamond its busy flag, permanently.  `fold` is four
+    // ASCII bytes, so a line that starts with it has a boundary at 4 and one that does not is
+    // not a seam whatever it has there.
+    let word = match s.as_bytes().get(..4) {
+        Some(w) => w,
+        None    => return None,
+    };
+    if !word.eq_ignore_ascii_case(b"fold") {
         return None;
     }
     let after = s[4..].trim_start_matches([' ', '\t']);
@@ -4147,7 +4199,7 @@ fn find_json_array(json: &str, key: &str) -> Option<String> {
 }
 
 /// Split a JSON array's text into its top-level `{...}` object elements.
-fn split_top_level_objects(arr: &str) -> Vec<String> {
+pub(crate) fn split_top_level_objects(arr: &str) -> Vec<String> {
     let bytes = arr.as_bytes();
     let mut out = Vec::new();
     let mut depth = 0i32;
@@ -4429,6 +4481,56 @@ pub mod tests {
         assert!(got.contains(&fmt!("<summary>{}</summary>\n\n", sum)), "no blank line after the \
             summary: {:?}", got);
         assert!(got.contains("\n\n</details>"), "no blank line before the close: {:?}", got);
+    }
+
+    /// **The seam reads a line BY BYTES, because a slice of one panics.**
+    ///
+    /// `panicked at src/llm.rs:3096:25: byte index 4 is not a char boundary; it is inside
+    /// '\u{2014}' (bytes 3..6)` -- observed on build `4d4fd190f1ef`, 2026-09-12, on an answer
+    /// opening `OK \u{2014} but right now ...`.  A panic in here is not a lost fold: it traps the
+    /// wasm mid-turn, the JS `await` on the turn never settles, and the end-of-turn bookkeeping
+    /// on the other side of it -- the `ended` event, a worker's `end`, the Diamond's busy flag --
+    /// is skipped for good.  So the line is read as four bytes and never sliced at four.
+    ///
+    /// Every case here is a line whose fourth BYTE falls inside a character, at each of the three
+    /// places the reader walks before it compares: after the indent, after the hashes and after
+    /// the emphasis run.
+    #[test]
+    fn test_the_seam_does_not_panic_on_a_multibyte_fourth_byte() {
+        let lines = [
+            "OK \u{2014} but right now let me also read the mock interplay",
+            "\u{2014}\u{2014} a rule, not a fold",
+            "No\u{2014}",
+            "ab\u{e9}",
+            "\u{1f600}",
+            "## \u{2014} a heading that is not one",
+            "**\u{2014} emphasised, and not a fold**",
+            "_\u{4e16}\u{754c}_",
+            "fol\u{2014}",
+            "\u{2014}",
+            "",
+            "   \u{2014} indented past the marker",
+        ];
+        for line in lines {
+            // The refusal is the assertion; reaching it at all is the regression.
+            assert!(seam_line(line).is_none(), "{:?} seamed", line);
+        }
+        // And through the public door, which is how it reached production: the word the guard
+        // looks for is in the text, so `seam_text` walks every line of it.
+        let body = "x. ".repeat(120);
+        let text = fmt!("OK \u{2014} but right now let me also read the mock interplay, which \
+            the fold above does not cover.\n\n{}", body);
+        let _ = seam_text(&text);
+        // A real seam still seams with a multi-byte summary, or the fix could be a refusal.
+        let sum  = "The store wins on scans \u{2014} so I take the file, not the row.";
+        let lead = "Take one file per Diamond: isolation is worth more here than scan speed.";
+        let good = fmt!("{}\n\n**Fold:** {}\n\n{}", lead, sum, body);
+        let got = match seam_text(&good) {
+            Some(g) => g,
+            None    => panic!("a qualifying answer with an em dash in its summary did not seam"),
+        };
+        assert_eq!(folds(&got).len(), 1, "one fold, from {:?}", got);
+        assert_eq!(folds(&got)[0].key(), fmt!("0:{}", sum));
     }
 
     /// **A `<details>` inside a fenced region is markup being SHOWN, not a fold.**

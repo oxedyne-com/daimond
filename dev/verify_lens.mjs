@@ -583,6 +583,10 @@ const RT_BLOCK = block(RT_BT, DEV_RT, [
 	rtRow(9,  'fold', { turn: 'daimonT1', r: 7, folded: 30, kept: 10, trigger: 'real', dia: 1 }, NOW - 30500),
 	rtRow(10, 'round', { turn: 'daimonT1', r: 10, ctx: 95000, win: 200000, ca: 55000, msgs: 22, dia: 1 }, NOW - 29000),
 	rtRow(11, 'ended', { turn: 'daimonT1', rounds: 10, how: 'round_limit', dia: 1 }, NOW - 28900),
+	// A WORKER's own round samples, keyed `w` rather than `turn` -- no `ctx`,
+	// unlike a chat's or daimon's.
+	rtRow(12, 'round', { w: 'w7', r: 1 }, NOW - 28000),
+	rtRow(13, 'round', { w: 'w7', r: 5 }, NOW - 27000),
 ]);
 fs.writeFileSync(path.join(ROOT2, 'traces', `${ACCOUNT}-${DEV_RT}.log`), RT_BLOCK);
 
@@ -629,6 +633,9 @@ const roundEvents = lens2('events', '--since', '24h', '--kind', 'round');
 check('`lens events --kind round` summarises the sampled rounds per turn',
 	/turn daimonT1: rounds 1-10 sampled \(3\), max prompt 95k/.test(roundEvents),
 	roundEvents.trim().split('\n').slice(-3).join(' | '));
+check('and a worker\'s own rounds, by its id rather than a turn',
+	/worker w7: rounds 1-5 sampled \(2\)/.test(roundEvents),
+	roundEvents.trim().split('\n').slice(-4).join(' | '));
 
 fs.rmSync(ROOT2, { recursive: true, force: true });
 
