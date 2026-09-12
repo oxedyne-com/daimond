@@ -18,6 +18,26 @@
 //   (c) offline submit   → queued, with its mode, nothing on the wire;
 //   (d) reconnect        → the flush drains the queue, each note in its own mode.
 //
+// And two more, added because the queue had no way out of a refusal:
+//
+//   (e) A NOTE THE FORGE REFUSES LEAVES THE FLUSH. Every check above is about a
+//       send that will eventually work, and the queue was built for exactly
+//       that: it re-sends everything waiting at every panel open and every
+//       reconnect. A note the forge REFUSES never stops being waiting, so it
+//       was re-sent for ever -- two 400s on the owner's desktop at every boot,
+//       with the row still saying "Waiting to send". So a settled refusal
+//       (malformed/unpermitted/unsupported/absent/no_proposal, or 400/403/404/
+//       405) is written onto the note, the flush skips it, the row says what
+//       the forge said, and SEND NOW is what puts it back on the wire -- once.
+//       The count at the network is what makes this provable: "not re-sent"
+//       and "re-sent and hidden" look identical on the screen.
+//
+//   (f) A NOTE THE FORGE WOULD REFUSE IS NEVER QUEUED. The forge takes no
+//       proposal with an empty body (`NO_BODY`), and the compose box asked only
+//       for a first line -- so a one-line note written with the "what goes with
+//       it" row closed was queued, refused, and kept. It is refused at the box
+//       now, where the words are still in front of the person who can fix them.
+//
 // The model is not run for real: `DaimondTriage.polish` is overridden in the page
 // to return a fixed draft, so what is proved is improve.js's WIRING -- that a
 // polished note posts what the drafting returned, through the same door a verbatim
@@ -26,6 +46,8 @@
 //   eval "$(bash dev/world.sh 8 --env)"
 //   node dev/verify_composemerge.mjs
 //   node dev/verify_composemerge.mjs --break noflush
+//   node dev/verify_composemerge.mjs --break resendsrefused
+//   node dev/verify_composemerge.mjs --break queuesnobody
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -87,8 +109,26 @@ const BREAKS = {
 	// immediate sends and the offline queueing are untouched -- and only (d) reddens.
 	noflush: [{
 		file: 'js/improve.js',
-		find: '\t\t\tvar q = load().notes.slice();		// a snapshot of ids; the list changes under us',
+		find: '\t\t\tvar q = sendable();',
 		with: '\t\t\tvar q = [];		// snapshot severed by the break',
+	}],
+	// The flush takes every queued note again, refused or not -- which is what it
+	// did, and is the whole defect. (a)-(d) stay green; only (e) reddens.
+	resendsrefused: [{
+		file: 'js/improve.js',
+		find: '\t\t\tvar q = sendable();',
+		with: '\t\t\tvar q = load().notes.slice();',
+	}, {
+		file: 'js/improve.js',
+		find: '\t\t\t\tif (!rec || rec.refused) continue;\t// taken, or refused meanwhile',
+		with: '\t\t\t\tif (!rec) continue;',
+	}],
+	// The compose box asks for a title and nothing else, so a body-less note is
+	// queued exactly as it used to be. Only (f) reddens.
+	queuesnobody: [{
+		file: 'js/improve.js',
+		find: '\t\t\tif (!cut.body.trim()) {',
+		with: '\t\t\tif (false) {',
 	}],
 };
 
@@ -130,6 +170,13 @@ const SECRET = 'mock-voice-ada-0000000000000';
 let nextNew = 100;
 const asked = [];
 
+// When set, every POST that OPENS a proposal is refused with this token and this
+// sentence -- the shape the real forge answers a body-less proposal with. A flag
+// rather than a second stand-in, because (e) needs the SAME forge to refuse and
+// then accept the same note: a retry that went to a different server would prove
+// the client can talk to two servers and nothing about the retry.
+let refusing = null;
+
 async function improveRoute(r) {
 	const req = r.request();
 	const u   = new URL(req.url());
@@ -141,8 +188,8 @@ async function improveRoute(r) {
 
 	const json = (obj) => r.fulfill({ status: 200, contentType: 'application/json',
 		body: typeof obj === 'string' ? obj : JSON.stringify(obj) });
-	const refuse = (status, error) => r.fulfill({ status, contentType: 'application/json',
-		body: JSON.stringify({ error, said: 'The forge refused: ' + error + '.' }) });
+	const refuse = (status, error, said) => r.fulfill({ status, contentType: 'application/json',
+		body: JSON.stringify({ error, said: said || ('The forge refused: ' + error + '.') }) });
 
 	if (method === 'GET') {
 		if (q.get('n') !== null) {
@@ -156,6 +203,7 @@ async function improveRoute(r) {
 	if (!headers[HDR]) return refuse(401, 'unvoiced');
 
 	const n = q.get('n');
+	if (n === null && refusing) return refuse(400, refusing.error, refusing.said);
 	const num = n !== null ? Number(n) : nextNew++;
 	return json({ number: num, title: 'Proposal ' + num, body: 'b', state: 'open', author: 'ada',
 		comments: 0, opened: 1, changed: 2, discussion: [], votes: { for: 0, against: 0 },
@@ -345,6 +393,142 @@ try {
 		newPosts.some(t => t === 'offline verbatim note about a crash')
 		&& newPosts.some(t => /^Polished:/.test(t)),
 		JSON.stringify(newPosts));
+
+	// ── (e) A refusal the forge will repeat takes the note out of the flush ──
+	//
+	// Counted at the network throughout. The claim is about REQUESTS THAT ARE NOT
+	// MADE, and a client that made them and swallowed the answers would look
+	// exactly the same on the screen.
+
+	/// The one queued row, as it is drawn.
+	const qRow = () => page.evaluate(() => {
+		const row = document.querySelector('#improve-queue .imp-queue-row');
+		if (!row) return null;
+		const st = row.querySelector('.imp-note-state');
+		return {
+			id:     row.dataset.note,
+			state:  st ? st.dataset.state : '',
+			says:   st ? (st.textContent || '').trim() : '',
+			send:   !!row.querySelector('[data-act="improve-resend"]'),
+			drop:   !!row.querySelector('.imp-note-drop, [data-act="improve-drop"]'),
+		};
+	});
+
+	refusing = { error: 'malformed', said: 'The proposal has no body.' };
+	before = opens().length;
+	await typeAndClick('the forge will not take this one\nand it will not change its mind.', 'improve-post');
+	await page.waitForTimeout(600);
+	check('(e) a refused note cost exactly one request', opens().length - before === 1,
+		`${opens().length - before} posts`);
+	let qr = await qRow();
+	check('(e) the note is STILL in the queue: the forge has no copy of it',
+		await page.evaluate(() => window.DaimondImprove.notes().length) === 1);
+	const marked = await page.evaluate(() => {
+		const n = window.DaimondImprove.notes()[0];
+		return n && n.refused ? { why: n.refused.why, said: n.refused.said, at: n.refused.at } : null;
+	});
+	check('(e) and it is marked refused, with the forge\'s token and sentence kept',
+		!!marked && marked.why === 'malformed' && /no body/.test(marked.said || '') && marked.at > 0,
+		JSON.stringify(marked));
+	check('(e) the row says the forge would not take it, not "waiting to send"',
+		!!qr && qr.state === 'refused' && /no body/.test(qr.says) && !/[Ww]aiting/.test(qr.says),
+		JSON.stringify(qr));
+	check('(e) and both controls are still on the row: Send now, and Delete',
+		!!qr && qr.send === true && qr.drop === true, JSON.stringify(qr));
+
+	// The defect itself: every panel open and every reconnect used to put it back
+	// on the wire. Three drains, and the network must not move.
+	before = opens().length;
+	await page.evaluate(() => window.DaimondImprove.flushQueue());
+	await page.evaluate(() => window.DaimondImprove.onOpen());
+	await setOnline(true, true);
+	await page.waitForTimeout(700);
+	check('(e) a flush, a panel open and a reconnect send it NOWHERE',
+		opens().length - before === 0, `${opens().length - before} posts`);
+	check('(e) and it is still there, still refused, rather than quietly dropped',
+		await page.evaluate(() => window.DaimondImprove.notes().length) === 1
+		&& await page.evaluate(() => !!window.DaimondImprove.notes()[0].refused));
+
+	// Send now is the way back onto the wire, and it is ONE attempt.
+	before = opens().length;
+	await page.click('#improve-queue .imp-queue-row [data-act="improve-resend"]');
+	await page.waitForTimeout(700);
+	check('(e) Send now retries, exactly once', opens().length - before === 1,
+		`${opens().length - before} posts`);
+	qr = await qRow();
+	check('(e) refused again, so the refusal is written back and the flush stays off it',
+		!!qr && qr.state === 'refused'
+		&& await page.evaluate(() => !!window.DaimondImprove.notes()[0].refused),
+		JSON.stringify(qr));
+	before = opens().length;
+	await page.evaluate(() => window.DaimondImprove.flushQueue());
+	await page.waitForTimeout(400);
+	check('(e) and a flush after the second refusal still sends nothing',
+		opens().length - before === 0, `${opens().length - before} posts`);
+
+	// And when the forge stops refusing, the same press sends it and success still
+	// takes the note off the queue -- which is what makes the refusal a state and
+	// not a grave.
+	refusing = null;
+	before = opens().length;
+	await page.click('#improve-queue .imp-queue-row [data-act="improve-resend"]');
+	for (let i = 0; i < 40 && await page.evaluate(() => window.DaimondImprove.notes().length > 0); i++) {
+		await page.waitForTimeout(150);
+	}
+	check('(e) once the forge takes it, Send now posts it', opens().length - before === 1,
+		`${opens().length - before} posts`);
+	check('(e) and success still removes the note from the queue',
+		await page.evaluate(() => window.DaimondImprove.notes().length) === 0);
+	// The number the stand-in has just handed out, rather than one counted by hand:
+	// every accepted open above moves it, so a literal here would be a check that
+	// re-breaks whenever a section is added earlier in the file.
+	const gotN = nextNew - 1;
+	check('(e) the proposal it became is in the store',
+		await page.evaluate((n) => window.DaimondImprove.forge.props().some(p => p.n === n), gotN),
+		'#' + gotN);
+	await shot(s, 'composemerge-refused' + (BREAK ? '-' + BREAK : ''));
+
+	// ── (f) A note with no body never enters the queue ──────────
+	//
+	// The "what goes with it" line IS a body, so it has to be off for the box to
+	// be able to produce a body-less note at all -- which is exactly the state the
+	// owner's two refused notes were written in.
+	await page.evaluate(() => {
+		const box = document.getElementById('improve-box');
+		box.value = 'x';
+		box.dispatchEvent(new Event('input', { bubbles: true }));
+	});
+	await page.waitForTimeout(150);
+	await page.click('#panel-social [data-act="improve-with-off"]');
+	await page.waitForTimeout(150);
+	check('(f) the "what goes with it" row is closed, so a one-line note has no body',
+		await page.evaluate(() => /\n/.test(window.DaimondImprove.outgoing()) === false));
+
+	before = opens().length;
+	await typeAndClick('one line and nothing under it', 'improve-post');
+	await page.waitForTimeout(500);
+	check('(f) nothing reached the forge', opens().length - before === 0,
+		`${opens().length - before} posts`);
+	check('(f) and nothing was queued: the note the forge would refuse was never taken',
+		await page.evaluate(() => window.DaimondImprove.notes().length) === 0);
+	const said = await page.evaluate(() => {
+		const n = document.getElementById('improve-say');
+		return n ? (n.textContent || '').trim() : '';
+	});
+	check('(f) the box says what is missing, naming the body', /body/i.test(said), said);
+	check('(f) and the words are still in the box for the person to finish',
+		await page.evaluate(() => document.getElementById('improve-box').value) === 'one line and nothing under it');
+	// A polished note is NOT held to this: the model writes the body, so the box
+	// never sees one. The check is the pair of (f), and without it the guard could
+	// be sitting on both verbs and nothing here would notice.
+	before = opens().length;
+	await stubPolish();
+	await typeAndClick('one line, to be polished', 'improve-polish');
+	for (let i = 0; i < 40 && await page.evaluate(() => window.DaimondImprove.notes().length > 0); i++) {
+		await page.waitForTimeout(150);
+	}
+	check('(f) a one-line POLISH note is untouched by the rule and still posts',
+		opens().length - before === 1, `${opens().length - before} posts`);
 
 	const errs = errors(s).filter(e => !/Failed to load resource/.test(e));
 	check('nothing above was reached by way of an unhandled error', errs.length === 0,

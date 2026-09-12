@@ -1,1 +1,1 @@
-{"build":"63f19d3042ef","note":"Desktops with a folder open can offload transcripts again, so their sync no longer exceeds the front door."}
+{"build":"efaae4ebc6db","note":"The debug feed now carries every console line, and the gateway keeps fourteen days of trace history."}

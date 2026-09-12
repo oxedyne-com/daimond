@@ -75,7 +75,7 @@
  *     Rows leave it only when a post is known to have landed, so an outage, a
  *     reload or a tab kill loses nothing; on overflow the OLDEST go and one
  *     `feed.drop` records how many.
- *   - Events drain AHEAD of telemetry and snapshots, at the same 11 s pacing,
+ *   - Events drain AHEAD of telemetry and snapshots, at the same `DRAIN_MS` pacing,
  *     with exponential backoff to five minutes while the endpoint is down.
  *   - SELF-PROTECTION. Every entry point is wrapped. An exception inside the
  *     feed queues one `feed.fault` and turns collection off for the session --
@@ -85,6 +85,30 @@
  *
  * The message TEXT is still not an event: transcripts stay in the periodic
  * elided snapshot. Content on every tick is what made the seed useless.
+ *
+ * THE CONSOLE, ADDED 2026-09-12. The feed carried `console.error` and nothing
+ * else. A real console on build 63f19d3042ef showed two i18n warnings, a `[sync]`
+ * line explaining a refusal to commit, two 429s on our own endpoint and two 400s
+ * from `/api/improve`; what reached the developer was the two 400s, as
+ * `fetch.fail`, and none of the rest. Every level is now wrapped -- log, info, debug, warn, error -- the
+ * original running first and unconditionally, and each call becomes one
+ * `ev console` row `{lvl, msg, src}`. Three bounds keep it from being a firehose:
+ * an identical (lvl, msg) inside a minute is ONE event carrying `x:<count>`, a
+ * device admits at most `CONSOLE_PER_MIN` distinct lines a minute and counts the
+ * rest into the next beat's `cdrop`, and a message that looks like it carries a
+ * secret is fingerprinted rather than shipped. The wrap does not recurse: the
+ * feed's own logging goes to the ORIGINALS, and the capture holds a guard.
+ *
+ * AND THE POST CLOCK IS ONE CLOCK. The handler refuses a post that arrives inside
+ * its minimum interval, and the drainer paced itself correctly WHILE IT RAN but
+ * consulted nothing when it started: a drain that had just emptied put the next
+ * arrival straight on the wire, which is how a boot restore and a telemetry tick
+ * drew two 429s a minute apart. `lastPostAt` is now stamped by every post of every
+ * lane and checked by every drain that starts, so the gap holds across the lanes
+ * and across a drainer that stopped. One constant, `DRAIN_MS`, is that gap for
+ * every lane. A 429 that arrives anyway -- an older gateway, a skewed clock --
+ * doubles it, is counted into the beat as `throttled`, and says so once per burst
+ * as `feed.throttled`.
  */
 (function () {
 	'use strict';
@@ -96,7 +120,7 @@
 	//   MAX_BODY   256 KiB  -> we keep a post under 200 KiB
 	//   MAX_ROWS   1000     -> we put at most 400 rows in a post
 	//   MAX_DATA   400      -> we keep a base64 slice at 360 bytes
-	//   MIN_INTERVAL_MS 10s -> we drain one post every 11s
+	//   MIN_INTERVAL_MS 2s  -> we drain one post every 3s, ONE clock for every lane
 	var ENABLED_KEY = 'daimond-debugshare';		// the flag itself; '1' is on
 	var STAMP_KEY   = 'daimond-debugshare-at';	// ms of the last LOCAL decision, for freshest-wins
 	var LEDGER_KEY  = 'daimond-ledger';			// the cost ledger, read directly
@@ -108,7 +132,13 @@
 	var MAX_DATA_BYTES = 360;
 	var MAX_ROWS_POST  = 400;
 	var MAX_BODY_BYTES = 200 * 1024;
-	var POST_GAP_MS    = 11000;
+	// THE ONE DRAIN INTERVAL, shared by every lane. The gateway floor is 2 s
+	// (gateway/src/handlers/debug_trace.rs MIN_INTERVAL_MS); 3 s leaves margin for
+	// clock skew between the device and the handler. A device that meets an OLDER
+	// gateway -- one still refusing a second post inside ten seconds -- is not
+	// special-cased: its 429s double the gap through `gapMs`, so it degrades to
+	// the pace that gateway will take instead of spamming it.
+	var DRAIN_MS       = 3000;			// the minimum gap between ANY two posts, all lanes
 
 	var TELEMETRY_MS = 30000;					// stream telemetry cadence while on
 	var RESNAP_MS    = 300000;					// periodic full re-snapshot (5 min)
@@ -132,7 +162,20 @@
 	var BEAT_TICK_MS = 30000;					// the beat timer's period ...
 	var BEAT_TURN_MS = 30000;					// ... a beat this often while a turn runs ...
 	var BEAT_IDLE_MS = 300000;					// ... and this often when nothing is running
-	var MAX_MSG_CHARS = 200;					// an `error` message, clipped
+	var MAX_MSG_CHARS = 200;					// an `error` or `console` message, clipped
+	var MAX_SRC_CHARS = 60;						// and where it came from
+	// The console lanes. A dedupe window and the rate window are deliberately the
+	// same minute: a line repeating faster than once a minute is one event with a
+	// count, and a device that finds sixty DISTINCT things to say in a minute is
+	// saying too much for a feed that posts every ten seconds.
+	var CONSOLE_PER_MIN   = 60;					// distinct lines admitted per minute
+	var CONSOLE_WINDOW_MS = 60000;				// ... over this window, with a `cdrop` count
+	var CONSOLE_DEDUPE_MS = 60000;				// identical (lvl,msg) inside this is one event
+	var CONSOLE_LEVELS    = ['log', 'info', 'debug', 'warn', 'error'];
+	// A request the browser abandoned because the page was going away is a status
+	// 0 that means nothing was wrong. It is marked rather than dropped, and the
+	// reader hides it by default.
+	var UNLOAD_GRACE_MS = 2000;
 	// A device id and a build id are ENVELOPE fields, present on every event, so
 	// they are the two strings that must never crowd out the payload.
 	var MAX_DEV_CHARS   = 12;
@@ -147,7 +190,7 @@
 
 	// A transcript embeds whole source-file reads and command outputs verbatim, so
 	// a snapshot was ~7 MB / 25k chunks and drained for ~12 min, starving telemetry
-	// behind it. The one lever is SIZE -- the handler's 11 s / 400-row / 360-byte
+	// behind it. The one lever is SIZE -- the handler's interval / 400-row / 360-byte
 	// caps mean we cannot post faster -- so a giant string is hard-capped to this
 	// many bytes with a "[+N bytes]" tail that keeps its size visible. The cap is
 	// generous enough to leave an ordinary readable message whole and only bites a
@@ -197,7 +240,7 @@
 	// drains only when the telemetry lane is empty. So a telemetry post enqueued while a
 	// snapshot is mid-drain jumps ahead of the remaining snapshot backlog and reaches the
 	// gateway within a post-cycle or two, instead of waiting minutes behind it. Both share
-	// the one drainer and its 11 s pacing, so the handler's rate cap is never exceeded.
+	// the one drainer and its `DRAIN_MS` pacing, so the handler's rate cap is never exceeded.
 	var telQueue  = [];				// priority lane: telemetry posts, each an array of rows
 	var snapQueue = [];				// snapshot lane: drained only when telQueue is empty
 	var draining = false;
@@ -212,6 +255,20 @@
 	var feedOff     = false;		// the feed threw; collection is off for this session
 	var lastBeatAt  = 0;
 	var errWindowAt = 0, errCount = 0, errDropped = 0;
+	// The console lane: what is held for dedupe, what this minute has admitted,
+	// and what it had to drop. `inConsole` is the recursion guard -- anything the
+	// feed itself logs while capturing must not come back through here.
+	var conHeld     = {};			// (lvl|msg) -> {lvl, msg, src, at, x}
+	var conWindowAt = 0, conCount = 0, conDropped = 0;
+	var conTimer    = null;
+	var inConsole   = false, conFlushing = false;
+	var origLog     = {};			// the console methods as they were, by level
+	// The ONE post clock, and what the gateway has said about it. `lastPostAt` is
+	// stamped by every post of every lane; `throttleStreak` doubles the gap while
+	// 429s continue and is cleared by the first post that lands.
+	var lastPostAt     = 0;
+	var throttleStreak = 0, throttledCount = 0, postFailCount = 0, throttleBurst = false;
+	var pagehideAt     = 0;			// when the page last said it was going away
 	var lastCtx     = {};			// turn id -> last round's prompt tokens, for `inferFold`
 	var lastRealFold = {};			// turn id -> when a REAL fold was last reported
 	var indicator = null;
@@ -960,13 +1017,151 @@
 		event('error', p);
 	}
 
+	// ── Console capture ────────────────────────────────────────
+	//
+	// EVERY level, not just `error`. The lines a reader most wants -- `i18n: no
+	// string for "..."`, `[sync] chunk index not merged on this device` -- are
+	// warnings and logs, and neither was collected. So all five methods are
+	// wrapped, the ORIGINAL always runs first, and what this side does afterwards
+	// is bounded three ways: the dedupe window, the per-minute cap, and a secret
+	// test on the text.
+
+	/// Does this message look like it carries a secret VALUE? `redact` matches
+	/// field NAMES and a console line is one string, so it cannot see a key
+	/// logged beside its name; these two patterns are that gap, and their
+	/// vocabulary is `SECRET_RE`'s. Deliberately narrow: a message merely
+	/// MENTIONING a token is still worth reading, and only a name sitting against
+	/// a value, or a provider-key-shaped run of characters, is treated as live.
+	var SECRET_TEXT_RE  = /(?:api[_-]?key|token|secret|passphrase|password|master[_-]?key|mnemonic|private[_-]?key|salt|sealed|wrapped)["'\s]*[:=]/i;
+	var SECRET_SHAPE_RE = /\b(?:sk|pk|ghp|xox[abps])[-_][A-Za-z0-9_-]{12,}/;
+	function looksSecret(msg) {
+		return SECRET_TEXT_RE.test(msg) || SECRET_SHAPE_RE.test(msg);
+	}
+
+	/// `file:line` for the frame that logged, sampled from a thrown-away stack.
+	/// Only ever taken for a line that is actually being ADMITTED -- a repeat
+	/// inside the dedupe window and a line over the cap both return before this
+	/// -- so the cost is bounded by `CONSOLE_PER_MIN`. Empty where the engine
+	/// gives no usable stack, which is not a failure: `srcOf` falls back.
+	function stackSrc() {
+		var st = '';
+		try { st = (new Error()).stack || ''; } catch (e) { return ''; }
+		var lines = String(st).split('\n');
+		for (var i = 0; i < lines.length && i < 12; i++) {
+			if (lines[i].indexOf('debugshare.js') !== -1) continue;
+			var m = /([A-Za-z0-9_.-]+\.(?:js|mjs)):(\d+)(?::\d+)?/.exec(lines[i]);
+			if (m) return clip(m[1] + ':' + m[2], MAX_SRC_CHARS);
+		}
+		return '';
+	}
+
+	/// Where a console line came from: the stack frame where there is one, else
+	/// the bracketed prefix the app puts on its own logs (`[sync]`, `[improve]`),
+	/// which is the next most useful thing a reader can sort by.
+	function srcOf(args) {
+		var src = stackSrc();
+		if (src) return src;
+		try {
+			var a0 = (args && args.length) ? args[0] : '';
+			if (typeof a0 === 'string') {
+				var m = /^\s*(\[[^\]]{1,40}\])/.exec(a0);
+				if (m) return clip(m[1], MAX_SRC_CHARS);
+			}
+		} catch (e) { /* an argument that will not be read has no source */ }
+		return '';
+	}
+
+	/// Emit every held line whose dedupe window has closed -- or all of them when
+	/// `force` is set, which is what the beat and `pagehide` do so nothing sits in
+	/// memory waiting for a repeat that never comes. Guarded, because `event`
+	/// reaches `drain`, and anything down there that logs would otherwise re-enter
+	/// mid-walk.
+	function flushConsole(now, force) {
+		if (conFlushing) return;
+		conFlushing = true;
+		try {
+			now = now || Date.now();
+			var keys = Object.keys(conHeld);
+			for (var i = 0; i < keys.length; i++) {
+				var h = conHeld[keys[i]];
+				if (!force && (now - h.at) < CONSOLE_DEDUPE_MS) continue;
+				delete conHeld[keys[i]];
+				var p = { lvl: h.lvl, msg: h.msg };
+				if (h.src) p.src = h.src;
+				if (h.x > 1) p.x = h.x;			// the whole window in one row
+				event('console', p);
+			}
+		} finally { conFlushing = false; }
+	}
+
+	function scheduleConsoleFlush() {
+		if (conTimer) return;
+		try {
+			conTimer = setTimeout(function () {
+				conTimer = null;
+				try { flushConsole(Date.now(), true); } catch (e) { fault(e); }
+			}, CONSOLE_DEDUPE_MS);
+		} catch (e) { /* no timer: the beat and `pagehide` still flush */ }
+	}
+
+	/// One console call, from the wrapper. A repeat of a line already held costs
+	/// a counter and nothing else; a new line costs an entry, a stack sample and
+	/// one of the minute's sixty slots. Over the cap, the line is counted into
+	/// `conDropped` and the next beat says how many were lost.
+	function noteConsole(lvl, args) {
+		if (!enabled || feedOff) return;
+		var now = Date.now();
+		flushConsole(now);
+		var msg = '';
+		try {
+			var parts = [];
+			for (var i = 0; i < args.length && i < 4; i++) parts.push(argWord(args[i]));
+			msg = clip(parts.join(' '), MAX_MSG_CHARS);
+		} catch (e) { return; }
+		if (!msg) return;
+		if (looksSecret(msg)) msg = fingerprint(msg);
+		var key = lvl + '|' + msg;
+		var held = conHeld[key];
+		if (held) { held.x += 1; return; }
+		if (now - conWindowAt >= CONSOLE_WINDOW_MS) { conWindowAt = now; conCount = 0; }
+		if (conCount >= CONSOLE_PER_MIN) { conDropped += 1; return; }
+		conCount += 1;
+		conHeld[key] = { lvl: lvl, msg: msg, src: srcOf(args), at: now, x: 1 };
+		scheduleConsoleFlush();
+	}
+
 	/// A gateway call that did not answer 2xx, or threw. Path, status and elapsed
 	/// ms only -- NEVER the request body, which carries the parcel and the prompt.
+	///
+	/// THE FEED'S OWN POSTS ARE NOT GATEWAY FAILURES. They do not reach here today
+	/// -- gateway.js reports only from `gwFetch`, and the global `fetch` wrapper at
+	/// `guardFetch` reports nothing -- and this line is what keeps that true if a
+	/// later wrapper starts reporting: a 429 on our own endpoint is feed health,
+	/// counted in the beat, and a `fetch.fail` about it would be the feed
+	/// describing itself to itself.
+	///
+	/// An ABORTED request is marked rather than dropped. A reload or a navigation
+	/// kills every call in flight and each arrives here as a status 0 that means
+	/// nothing was wrong, so one is tagged `aborted:1` when the page is hidden or
+	/// said `pagehide` within `UNLOAD_GRACE_MS`; the reader hides those by default.
 	function noteFetchFail(path, status, lapsed, err) {
 		if (!enabled || feedOff) return;
-		var p = { path: clip(path, 64), status: status | 0, ms: lapsed | 0 };
+		var clean = String(path || '').split('?')[0];
+		if (clean === ENDPOINT) return;
+		var p = { path: clip(clean, 64), status: status | 0, ms: lapsed | 0 };
 		if (err) p.err = clip(err, 120);
+		if (!p.status && unloading()) p.aborted = 1;
 		event('fetch.fail', p);
+	}
+
+	/// Is the page on its way out? Either it is hidden, or it said `pagehide`
+	/// within the grace window -- a navigation fires that before the requests it
+	/// is about to kill actually fail.
+	function unloading() {
+		try {
+			if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return true;
+		} catch (e) { /* no document */ }
+		return !!(pagehideAt && (Date.now() - pagehideAt) < UNLOAD_GRACE_MS);
 	}
 
 	// ── The beat ───────────────────────────────────────────────
@@ -985,6 +1180,9 @@
 		var due = busy ? BEAT_TURN_MS : BEAT_IDLE_MS;
 		if (lastBeatAt && (now - lastBeatAt) < (due - 500)) return;
 		lastBeatAt = now;
+		// Nothing held for dedupe should outlive a beat: a line logged once and
+		// never repeated would otherwise wait out its whole minute.
+		flushConsole(now, true);
 		var live = liveStats() || {};
 		var wk = live.workerState || null;
 		var credits = null;
@@ -1002,6 +1200,14 @@
 			busy:  busy ? 1 : 0,
 			cr:    (credits == null) ? undefined : credits,
 			ob:    outbox.length,
+			// FEED HEALTH, which nothing else reports: how often the gateway has
+			// refused a post for rate (429), how often one failed for any other
+			// reason, and how many console lines the cap dropped since the last
+			// beat. A steady state that shows any of these is a bug in the pacing,
+			// which is exactly what these numbers are here to make visible.
+			throttled: throttledCount,
+			postFail:  postFailCount,
+			cdrop:     (function () { var n = conDropped; conDropped = 0; return n; })(),
 		});
 	}
 
@@ -1024,8 +1230,24 @@
 	/// consecutive failure, to a five-minute ceiling. Reset by the first success.
 	function backoffMs() {
 		var n = failStreak > 0 ? failStreak : 1;
-		var wait = POST_GAP_MS * Math.pow(2, n - 1);
+		var wait = gapMs() * Math.pow(2, n - 1);
 		return wait > BACKOFF_MAX_MS ? BACKOFF_MAX_MS : wait;
+	}
+
+	/// The minimum gap between any two posts of any lane. The ordinary value is
+	/// the handler's ten-second minimum with a margin; a 429 says the margin was
+	/// not enough for this device's clock, so the gap doubles per refusal until
+	/// one lands.
+	function gapMs() {
+		var wait = DRAIN_MS * Math.pow(2, throttleStreak);
+		return wait > BACKOFF_MAX_MS ? BACKOFF_MAX_MS : wait;
+	}
+
+	/// Milliseconds still owed to the post clock, 0 when a post may go now.
+	function gapLeft() {
+		if (!lastPostAt) return 0;
+		var left = (lastPostAt + gapMs()) - Date.now();
+		return left > 0 ? left : 0;
 	}
 
 	// ── Posting and draining ─────────────────────────────────────
@@ -1042,6 +1264,9 @@
 	/// non-2xx answer are the same thing here, and both mean "still ours".
 	function postRows(rows) {
 		var body = JSON.stringify({ v: 1, device: deviceId(), rows: rows });
+		// Stamped BEFORE the request, not after it: the handler's window starts
+		// when the post arrives, and a slow reply must not buy a second one.
+		lastPostAt = Date.now();
 		return fetch(ENDPOINT, {
 			method:      'POST',
 			credentials: 'same-origin',
@@ -1050,10 +1275,34 @@
 		}).then(function (r) {
 			// A stub or a build whose fetch resolves nothing counts as delivered:
 			// the alternative is an outbox that never empties.
-			if (!r) return true;
-			if (typeof r.ok === 'boolean') return r.ok;
-			return !(r.status >= 400);
-		}, function () { return false; });
+			if (!r) return settle(true, 0);
+			var status = r.status | 0;
+			if (typeof r.ok === 'boolean') return settle(r.ok, status);
+			return settle(!(status >= 400), status);
+		}, function () { return settle(false, 0); });
+	}
+
+	/// What one post's answer means for the clock: a 429 doubles the gap and is
+	/// announced once per burst, any other failure is counted, and a post that
+	/// landed clears both. The two counters do not overlap -- a refusal for rate
+	/// is not also a failure -- so a beat's `throttled` and `postFail` can be read
+	/// as the two separate things they are.
+	function settle(ok, status) {
+		if (ok) {
+			throttleStreak = 0;
+			throttleBurst  = false;
+		} else if (status === 429) {
+			throttledCount += 1;
+			throttleStreak += 1;
+			if (!throttleBurst) {
+				throttleBurst = true;
+				try { event('feed.throttled', { n: throttledCount, gap: gapMs() }); }
+				catch (e) { /* the announcement is not worth a fault */ }
+			}
+		} else {
+			postFailCount += 1;
+		}
+		return { ok: ok, status: status };
 	}
 
 	/// True while any lane holds something to send. Nothing is pending while the
@@ -1064,7 +1313,7 @@
 		return outbox.length > 0 || telQueue.length > 0 || snapQueue.length > 0;
 	}
 
-	/// Drain the two lanes one batch every `POST_GAP_MS`, so the handler's rate cap
+	/// Drain the two lanes one batch every `DRAIN_MS`, so the handler's rate cap
 	/// never refuses us. The telemetry lane is always taken first and emptied before
 	/// any snapshot batch is sent, so a telemetry post that arrives mid-snapshot is
 	/// the very next thing on the wire. Stops the instant the feature is turned off
@@ -1072,8 +1321,19 @@
 	function drain() {
 		if (draining) return;
 		draining = true;
-		(function step() {
+		step(false);
+
+		/// `paced` is true only when the pacing timer itself called this, which
+		/// means the gap has already been served. A drain entered any OTHER way --
+		/// a boot restore, a telemetry tick, an event pushed while the drainer was
+		/// idle -- consults the clock first. That is the 429: the old drainer paced
+		/// itself perfectly while it ran and asked nothing when it started again.
+		function step(paced) {
 			if (!pending()) { draining = false; return; }
+			if (!paced) {
+				var owed = gapLeft();
+				if (owed > 0) { setTimeout(function () { step(true); }, owed); return; }
+			}
 			// EVENTS FIRST, and they are the only DURABLE lane: the rows stay in the
 			// outbox until the post is known to have landed, so an outage costs a
 			// retry rather than the events that explain it. A failure backs the next
@@ -1082,9 +1342,9 @@
 			// and never by identity -- nothing else removes from the front.
 			if (outbox.length) {
 				var batch = eventBatch();
-				postRows(batch).then(function (ok) {
-					var wait = POST_GAP_MS;
-					if (ok) {
+				postRows(batch).then(function (res) {
+					var wait = gapMs();
+					if (res.ok) {
 						outbox.splice(0, batch.length);
 						failStreak = 0;
 						persistNow();
@@ -1093,7 +1353,7 @@
 						wait = backoffMs();
 					}
 					if (!pending()) { draining = false; return; }
-					setTimeout(step, wait);
+					setTimeout(function () { step(true); }, wait);
 				});
 				return;
 			}
@@ -1101,9 +1361,9 @@
 			var rows = telQueue.length ? telQueue.shift() : snapQueue.shift();
 			postRows(rows).then(function () {
 				if (!pending()) { draining = false; return; }
-				setTimeout(step, POST_GAP_MS);
+				setTimeout(function () { step(true); }, gapMs());
 			});
-		})();
+		}
 	}
 
 	/// Enqueue a bundle's posts onto the telemetry lane when `priority` is true, else
@@ -1259,6 +1519,13 @@
 			outbox = [];
 			failStreak = 0;
 			dropOwed = 0;
+			// And whatever the console lane was holding for its dedupe window. Those
+			// lines were captured while on and would otherwise be emitted by the next
+			// flush after the person said stop.
+			conHeld = {};
+			conDropped = 0;
+			try { if (conTimer) clearTimeout(conTimer); } catch (e) {}
+			conTimer = null;
 			persistNow();
 			unmountIndicator();
 		}
@@ -1390,37 +1657,63 @@
 		});
 	} catch (e) {}
 
-	// `console.error` is WRAPPED, not replaced: the original runs first and
+	// EVERY console method is WRAPPED, not replaced: the original runs first and
 	// unconditionally, before a single argument is looked at, so a broken feed
-	// cannot cost the developer their console. The re-entry guard matters because
-	// anything below that logs would otherwise call straight back into here.
+	// cannot cost the developer their console. The re-entry guard is shared by all
+	// five, because anything below that logs -- the gateway wrapper, a stub fetch,
+	// this file itself -- would otherwise call straight back into here; and the
+	// feed's own logging uses `origLog`, which is the wrap's other side.
+	//
+	// `error` keeps its `error` event as well as its `console` one. The two say
+	// different things: `error` is the rate-capped fault trail a reader scans
+	// first, and `console` is the transcript of what the tab actually printed.
 	try {
-		if (typeof console !== 'undefined' && typeof console.error === 'function' && !console.error._ds) {
-			var origError = console.error;
-			var inConsole = false;
-			var wrapped = function () {
-				try { origError.apply(console, arguments); } catch (e) {}
-				if (inConsole) return;
-				inConsole = true;
-				try {
-					var parts = [];
-					for (var i = 0; i < arguments.length && i < 4; i++) parts.push(argWord(arguments[i]));
-					noteError(parts.join(' '), 'console.error');
-				} catch (e) { /* never from the app's own logging */ }
-				inConsole = false;
-			};
-			wrapped._ds = true;
-			console.error = wrapped;
+		if (typeof console !== 'undefined') {
+			CONSOLE_LEVELS.forEach(function (lvl) {
+				var orig = console[lvl];
+				if (typeof orig !== 'function' || orig._ds) return;
+				origLog[lvl] = orig;
+				var wrapped = function () {
+					try { orig.apply(console, arguments); } catch (e) {}
+					if (inConsole) return;
+					inConsole = true;
+					try {
+						noteConsole(lvl, arguments);
+						if (lvl === 'error') {
+							var parts = [];
+							for (var i = 0; i < arguments.length && i < 4; i++) {
+								parts.push(argWord(arguments[i]));
+							}
+							noteError(parts.join(' '), 'console.error');
+						}
+					} catch (e) { /* never from the app's own logging */ }
+					inConsole = false;
+				};
+				wrapped._ds = true;
+				console[lvl] = wrapped;
+			});
 		}
 	} catch (e) {}
 
 	// The outbox is written on a trailing debounce, so the page going away is the
 	// one moment it must be written NOW -- everything queued in the last quarter
 	// second is exactly what a crash-and-reload needs to still have.
+	//
+	// It is also when a request that was in flight is about to fail for no reason
+	// at all, so the moment is remembered: `noteFetchFail` reads it to tell an
+	// abandoned call from a real one.
 	try {
-		window.addEventListener('pagehide', function () { try { persistNow(); } catch (e) {} });
+		window.addEventListener('pagehide', function () {
+			pagehideAt = Date.now();
+			try { flushConsole(Date.now(), true); } catch (e) {}
+			try { persistNow(); } catch (e) {}
+		});
 		window.addEventListener('visibilitychange', function () {
-			try { if (document.visibilityState === 'hidden') persistNow(); } catch (e) {}
+			try {
+				if (document.visibilityState !== 'hidden') return;
+				try { flushConsole(Date.now(), true); } catch (e) {}
+				persistNow();
+			} catch (e) {}
 		});
 	} catch (e) {}
 
@@ -1473,6 +1766,16 @@
 		_beatTick:    beatTick,
 		_capabilities: capabilities,
 		_noteError:   noteError,
+		// The console lane, driven without waiting out a dedupe window.
+		_noteConsole: function (lvl, args) { noteConsole(lvl, args || []); },
+		_flushConsole: function (force) { flushConsole(Date.now(), force !== false); },
+		_looksSecret: looksSecret,
+		/// What the last beat would report: the 429s, the other post failures, and
+		/// the console lines the cap dropped.
+		_health:      function () {
+			return { throttled: throttledCount, postFail: postFailCount, cdrop: conDropped,
+				gap: gapMs(), lastPostAt: lastPostAt };
+		},
 		_fit:         fit,
 		_eventBatch:  eventBatch,
 		_backoffMs:   function (n) { failStreak = n; return backoffMs(); },

@@ -83,8 +83,21 @@ function makeEnv(cfg) {
 	topActions.className = 'top-actions';
 	body.appendChild(topActions);
 
+	// THE MODULE'S OWN CONSOLE. It wraps whatever it is handed, so handing it
+	// node's real one would (a) capture this harness's own `check` output and
+	// (b) leave the FIRST env's wrapper installed on the shared object, where the
+	// `_ds` mark makes every later env skip wrapping entirely. One shim per env
+	// keeps the wrap isolated, and `logged` records that the ORIGINAL ran -- which
+	// is the property that matters most: a broken feed must never cost a log line.
+	const logged = [];
+	const consoleShim = {};
+	['log', 'info', 'debug', 'warn', 'error'].forEach((lvl) => {
+		consoleShim[lvl] = function () { logged.push(lvl + ':' + [].slice.call(arguments).join(' ')); };
+	});
+
 	const document = {
 		readyState: 'complete',
+		visibilityState: 'visible',
 		head, body,
 		addEventListener() {},
 		createElement: (tag) => makeNode(tag),
@@ -121,6 +134,9 @@ function makeEnv(cfg) {
 	const fireStorage = (key) => {
 		(listeners.storage || []).forEach((fn) => fn({ key }));
 	};
+	// The page going away, which is what turns a killed request into an `aborted`
+	// one rather than a failure.
+	const firePagehide = () => { (listeners.pagehide || []).forEach((fn) => fn({})); };
 
 	// The capture: every POST body, parsed. When `cfg.gateFetch` is set, each POST
 	// resolves only when the test releases it, so a snapshot can be held mid-drain and
@@ -159,8 +175,8 @@ function makeEnv(cfg) {
 	// mid-test; setTimeout is real, for the drainer's first-post path.
 	const noInterval = () => 1;
 	const noClear = () => {};
-	// The drainer paces itself with `setTimeout(step, POST_GAP_MS)`. `cfg.fastTimers`
-	// records every requested delay -- so a test can assert the 11 s rate cap is
+	// The drainer paces itself with `setTimeout(step, DRAIN_MS)`. `cfg.fastTimers`
+	// records every requested delay -- so a test can assert the 3 s rate cap is
 	// honoured -- while firing the callback near-instantly, so a multi-post drain can
 	// be observed without waiting real seconds.
 	const timerDelays = [];
@@ -177,12 +193,12 @@ function makeEnv(cfg) {
 			'with (window) {\n' + bodyText + '\n}');
 		fn(win, document, localStorage, fetchImpl, btoa, atob,
 			TextEncoder, TextDecoder, CustomEventShim,
-			setTimeoutImpl, clearTimeout, noInterval, noClear, console);
+			setTimeoutImpl, clearTimeout, noInterval, noClear, consoleShim);
 	}
 	loadScript('debugshare.js');
 	// Release every gated POST currently in flight, let the microtasks and the (fast)
 	// pacing timer run, and repeat until nothing new is queued -- so a gated drain runs
-	// to completion in order without waiting the real 11 s between posts.
+	// to completion in order without waiting the real 3 s between posts.
 	async function drainAll() {
 		for (let guard = 0; guard < 2000; guard++) {
 			if (!resolvers.length) { await sleep(3); if (!resolvers.length) break; }
@@ -192,7 +208,7 @@ function makeEnv(cfg) {
 	}
 	return {
 		win, document, localStorage, posts, topActions, store,
-		fireStorage, events, timerDelays, drainAll,
+		fireStorage, firePagehide, console: consoleShim, logged, events, timerDelays, drainAll,
 		halt: () => { halted = true; },
 		nudges: () => nudges,
 	};
@@ -749,7 +765,7 @@ async function main() {
 		DS._telemetryTick();
 		check('the telemetry post is queued on the priority lane', DS._telQueueLen() === 1);
 		check('the telemetry enqueue leaves the snapshot backlog untouched', DS._snapQueueLen() === backlog);
-		// Drain everything, in order, without waiting the real 11 s between posts.
+		// Drain everything, in order, without waiting the real 3 s between posts.
 		await env.drainAll();
 		const kinds = env.posts.map((p) => {
 			const tag = (p.body && p.body.rows && p.body.rows[0] && p.body.rows[0].tag) || '';
@@ -761,10 +777,10 @@ async function main() {
 		check('telemetry drained BEFORE the remaining snapshot backlog', kinds[1] === 'telemetry');
 		check('every remaining snapshot post followed the telemetry',
 			kinds.slice(2).every((k) => k === 'snapshot') && kinds.length === backlog + 2);
-		// The rate cap: the drainer never asked to post faster than the 11 s gap.
+		// The rate cap: the drainer never asked to post faster than the 3 s gap.
 		const paceDelays = env.timerDelays.filter((d) => d > 0);
-		check('the drainer paced every post at the 11 s rate cap',
-			paceDelays.length >= 1 && paceDelays.every((d) => d === 11000));
+		check('the drainer paced every post at the 3 s rate cap',
+			paceDelays.length >= 1 && paceDelays.every((d) => d === 3000));
 	}
 
 	console.log('debugshare: priority — turning off clears BOTH lanes');
@@ -918,11 +934,11 @@ async function main() {
 		check('the whole run carries one device id',
 			new Set(arrived.map((e) => e.d)).size === 1);
 		// And the backoff really did widen while the endpoint was down.
-		const paced = env.timerDelays.filter((d) => d > 11000);
-		check('a repeated failure backs the next attempt off past the 11 s gap', paced.length >= 1);
+		const paced = env.timerDelays.filter((d) => d > 3000);
+		check('a repeated failure backs the next attempt off past the 3 s gap', paced.length >= 1);
 		check('the backoff is capped at five minutes', DS._backoffMs(30) === 300000);
-		check('the first failure waits the ordinary gap', DS._backoffMs(1) === 11000);
-		check('the second waits twice it', DS._backoffMs(2) === 22000);
+		check('the first failure waits the ordinary gap', DS._backoffMs(1) === 3000);
+		check('the second waits twice it', DS._backoffMs(2) === 6000);
 	}
 
 	console.log('debugshare: events — RULE 2: the outbox survives a reload');
@@ -1219,6 +1235,283 @@ async function main() {
 		check('the snapshot backlog followed it',
 			kinds.slice(2).every((k) => k === 'snapshot'));
 		check('the outbox is empty once it has landed', DS.outboxDepth() === 0);
+	}
+
+	console.log('debugshare: console — every level is captured, and the ORIGINAL always runs');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		env.console.log('plain line');
+		env.console.info('an info line');
+		env.console.debug('[improve] a debug line');
+		env.console.warn('i18n: no string for "home.sec_diag"');
+		env.console.error('TypeError: boom');
+		DS._flushConsole();
+		const rows = DS._outbox().filter((r) => r.tag === 'ev console').map((r) => JSON.parse(r.data));
+		check('all five console levels become events', rows.length === 5);
+		check('each event names its level',
+			rows.map((r) => r.lvl).join(',') === 'log,info,debug,warn,error');
+		check('the warning the owner saw is carried verbatim',
+			rows[3].msg === 'i18n: no string for "home.sec_diag"');
+		check('the original console ran first, for every level',
+			env.logged.length >= 5 && env.logged[0] === 'log:plain line'
+			&& env.logged[4].indexOf('error:TypeError') === 0);
+		check('a console event carries a source', rows.every((r) => typeof r.src === 'string' && r.src));
+		check('the source is bounded at 60 characters', rows.every((r) => r.src.length <= 60));
+		check('console.error still ALSO becomes an `error` event',
+			DS._outbox().filter((r) => r.tag === 'ev error').length === 1);
+		check('a console event stays within the 360-byte cap',
+			DS._outbox().filter((r) => r.tag === 'ev console').every((r) => DS._byteLen(r.data) <= 360));
+		// Multiple arguments join, and a long line is clipped like any message.
+		env.console.warn('[sync]', 'chunk index not merged on this device', 42);
+		DS._flushConsole();
+		const joined = JSON.parse(DS._outbox().filter((r) => r.tag === 'ev console').pop().data);
+		check('several arguments join into one message',
+			joined.msg === '[sync] chunk index not merged on this device 42');
+		env.console.log('L'.repeat(900));
+		DS._flushConsole();
+		check('a long console line is clipped to 200 characters',
+			JSON.parse(DS._outbox().filter((r) => r.tag === 'ev console').pop().data).msg.length === 200);
+		// A line held for its dedupe window when the person says stop is NOT
+		// delivered afterwards: it was captured while on, and off means off.
+		env.console.warn('held when the switch went off');
+		DS.setEnabled(false);
+		DS._flushConsole();
+		check('a line still held when sharing stops is dropped, not delivered later',
+			DS._outbox().length === 0);
+		// Nothing is captured while sharing is off either: the call, and no event.
+		const quiet = DS._outbox().length;
+		env.console.warn('nobody is listening');
+		DS._flushConsole();
+		check('nothing is captured while sharing is off', DS._outbox().length === quiet);
+		check('but the original still ran', env.logged.pop() === 'warn:nobody is listening');
+	}
+
+	console.log('debugshare: console — the source is the stack frame, else the bracketed prefix');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		env.console.warn('i18n: no string for "social.queue.other"');
+		DS._flushConsole();
+		const stacked = JSON.parse(DS._outbox().filter((r) => r.tag === 'ev console').pop().data);
+		check('a stack sample gives file:line', /\.(?:js|mjs):\d+$/.test(stacked.src), stacked.src);
+		// An engine that offers no usable stack falls back to the prefix the app
+		// puts on its own logs, which is the next most useful thing to sort by.
+		const realError = env.win.Error;
+		env.win.Error = function () { this.stack = ''; };
+		env.console.log('[sync] chunk index not merged on this device');
+		DS._flushConsole();
+		env.win.Error = realError;
+		const bracketed = JSON.parse(DS._outbox().filter((r) => r.tag === 'ev console').pop().data);
+		check('with no stack, the bracketed prefix is the source', bracketed.src === '[sync]');
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: console — a repeat inside the window is ONE event with a count');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		for (let i = 0; i < 40; i++) env.console.warn('i18n: no string for "home.sec_diag"');
+		env.console.warn('a different warning');
+		check('a repeat queues nothing until the window closes', DS.outboxDepth() === 0);
+		DS._flushConsole();
+		const rows = DS._outbox().filter((r) => r.tag === 'ev console').map((r) => JSON.parse(r.data));
+		check('forty identical lines are one event', rows.length === 2);
+		check('and it says how many there were', rows[0].x === 40);
+		check('a single line carries no count', rows[1].x === undefined);
+		check('the original ran all forty-one times', env.logged.length === 41);
+		// The same message at a DIFFERENT level is a different line.
+		env.console.error('a different warning');
+		DS._flushConsole();
+		check('the same text at another level is its own event',
+			DS._outbox().filter((r) => r.tag === 'ev console').length === 3);
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: console — sixty a minute, and the next beat says what it dropped');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		for (let i = 0; i < 75; i++) env.console.log('distinct line ' + i);
+		DS._flushConsole();
+		const rows = DS._outbox().filter((r) => r.tag === 'ev console');
+		check('the cap admits sixty distinct lines a minute', rows.length === 60, rows.length + ' admitted');
+		check('the original ran for every one of the seventy-five', env.logged.length === 75);
+		check('the fifteen it dropped are counted', DS._health().cdrop === 15);
+		DS._beatTick();
+		const beat = JSON.parse(DS._outbox().filter((r) => r.tag === 'ev beat').pop().data);
+		check('the next beat reports the dropped count', beat.cdrop === 15);
+		check('and clears it, so the count is per-beat', DS._health().cdrop === 0);
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: console — the capture cannot re-enter itself');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		// An argument that logs WHILE it is being read: `argWord` reaches for
+		// `.message`, and this getter answers by logging. Without the guard that is
+		// the capture calling itself from inside itself.
+		let reentries = 0;
+		const noisy = { get message() { reentries++; env.console.error('re-entrant line'); return 'noisy'; } };
+		env.console.log(noisy);
+		DS._flushConsole();
+		const rows = DS._outbox().filter((r) => r.tag === 'ev console').map((r) => JSON.parse(r.data));
+		check('the re-entrant log really did happen', reentries >= 1);
+		check('only the outer line became an event', rows.length === 1 && rows[0].msg === 'noisy');
+		check('the re-entrant line is not in the feed',
+			DS._outbox().every((r) => r.data.indexOf('re-entrant') === -1));
+		check('the feed is still collecting', DS.feedOk() === true);
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: console — a line that looks like a secret is fingerprinted, never shipped');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		env.console.warn('provider refused: apiKey=' + RAW_API_KEY);
+		env.console.log('bearer ' + RAW_API_KEY);
+		env.console.log('the token was refreshed');		// a mention, not a value
+		DS._flushConsole();
+		const wire = JSON.stringify(DS._outbox());
+		check('a key logged beside its name never reaches the outbox', wire.indexOf(RAW_API_KEY) === -1);
+		check('what is kept is a fingerprint', /\[redacted [^"]+\]/.test(wire));
+		check('a key-SHAPED token is caught by its shape alone',
+			DS._looksSecret('bearer sk-or-v1-aaaaaaaaaaaaaaaa') === true);
+		check('a message that merely mentions a token is kept whole',
+			wire.indexOf('the token was refreshed') !== -1);
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: rate — ONE post per 3 s window, across both lanes');
+	{
+		const env = makeEnv({ gateFetch: true, fastTimers: true, respond: () => 200 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => ({
+			config: { instructions: 'I'.repeat(120000), model: 'anthropic/claude-3.5' },
+			transcripts: [], roster: {}, presence: {}, election: {}, tokenStats: [],
+		}));
+		DS.setEnabled(true);					// the snapshot lane fills
+		DS.event('turn.start', { turn: 'T1', model: 'anthropic/claude-3.5' });
+		DS.event('turn.end', { turn: 'T1', outcome: 'done' });
+		await env.drainAll();
+		check('both lanes emptied', DS.outboxDepth() === 0 && DS._queueLen() === 0);
+		check('more than one post was needed', env.posts.length >= 3, env.posts.length + ' post(s)');
+		// The pacing itself: every post but the first was asked for at the shared
+		// interval, and nothing was ever asked for sooner.
+		const pacing = env.timerDelays.filter((d) => d >= 3000);
+		check('every post after the first waited a full window',
+			pacing.length >= env.posts.length - 1,
+			pacing.length + ' pacing wait(s) for ' + env.posts.length + ' post(s)');
+		// 0 is the boot deferral and 250 the outbox persist debounce; neither is a post.
+		check('no lane ever asked to post inside another lane\'s window',
+			env.timerDelays.every((d) => d === 0 || d === 250 || d >= 3000),
+			JSON.stringify(env.timerDelays.filter((d) => d !== 0 && d !== 250 && d < 3000)));
+	}
+
+	console.log('debugshare: rate — a drain that STARTS inside the window waits out the remainder');
+	{
+		// The 429 itself: the old drainer paced perfectly while it ran and asked
+		// nothing when it started again, so a boot restore and a telemetry tick a
+		// moment later were two posts inside one window.
+		const env = makeEnv({ fastTimers: true, respond: () => 200 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => providerState());
+		DS.setEnabled(true);
+		await sleep(60);
+		const sent = env.posts.length;
+		check('the boot snapshot went out at once', sent >= 1, sent + ' post(s)');
+		const mark = env.timerDelays.length;
+		DS.event('turn.start', { turn: 'T2' });		// a fresh drain, the clock still hot
+		await sleep(60);
+		const owed = env.timerDelays.slice(mark).filter((d) => d > 250 && d <= 3000);
+		check('the fresh drain waited out the remaining window before posting', owed.length >= 1,
+			JSON.stringify(env.timerDelays.slice(mark)));
+		check('and then it posted', env.posts.length === sent + 1);
+		check('no 429 was provoked', DS._health().throttled === 0);
+	}
+
+	console.log('debugshare: rate — a 429 widens the gap, is counted, and is announced once');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 429 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		DS.event('turn.start', { turn: 'T3' });
+		await sleep(40);
+		env.halt();
+		const throttles = DS._outbox().filter((r) => r.tag === 'ev feed.throttled');
+		check('a 429 is announced', throttles.length >= 1);
+		check('and only once per burst', throttles.length === 1, throttles.length + ' announcement(s)');
+		check('the 429s are counted', DS._health().throttled >= 1);
+		check('a 429 is NOT counted as a post failure', DS._health().postFail === 0);
+		check('the gap widened past the ordinary interval', DS._health().gap > 3000,
+			String(DS._health().gap));
+		check('the wait asked for widened with it',
+			env.timerDelays.some((d) => d > 3000));
+		DS._beatTick();
+		const beat = JSON.parse(DS._outbox().filter((r) => r.tag === 'ev beat').pop().data);
+		check('the beat carries the feed health', beat.throttled >= 1 && beat.postFail === 0);
+		check('the events themselves are still in the outbox, unlost',
+			DS._outbox().some((r) => r.tag === 'ev turn.start'));
+	}
+
+	console.log('debugshare: rate — an ordinary failure is postFail, not throttled');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		DS.event('turn.start', { turn: 'T4' });
+		await sleep(40);
+		env.halt();
+		check('a 500 counts as a post failure', DS._health().postFail >= 1);
+		check('and not as a throttle', DS._health().throttled === 0);
+		check('the gap stays at the ordinary interval', DS._health().gap === 3000);
+	}
+
+	console.log('debugshare: fetch.fail — an aborted request is marked, and the feed never reports itself');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		const fails = () => DS._outbox().filter((r) => r.tag === 'ev fetch.fail').map((r) => JSON.parse(r.data));
+		DS.noteFetchFail('/api/sync', 0, 12, 'Failed to fetch');
+		check('a status 0 on a live page is a plain failure', fails().pop().aborted === undefined);
+		env.document.visibilityState = 'hidden';
+		DS.noteFetchFail('/api/sync', 0, 12, 'Failed to fetch');
+		check('a status 0 while the page is hidden is marked aborted', fails().pop().aborted === 1);
+		DS.noteFetchFail('/api/sync', 500, 12, 'HTTP 500');
+		check('a real status while hidden is NOT marked aborted', fails().pop().aborted === undefined);
+		env.document.visibilityState = 'visible';
+		env.firePagehide();
+		DS.noteFetchFail('/api/parcel', 0, 3, 'Failed to fetch');
+		check('a status 0 just after pagehide is marked aborted', fails().pop().aborted === 1);
+		// The feed's own endpoint is feed health, counted in the beat; a fetch.fail
+		// about it would be the feed describing itself to itself.
+		const before = fails().length;
+		DS.noteFetchFail('/api/debug-trace?account=oxedyne', 429, 5, '');
+		check('the feed\'s own post never becomes a fetch.fail', fails().length === before);
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: fetch.fail — gateway.js reports only from gwFetch, never from the global wrapper');
+	{
+		// The feed posts through the global `fetch`, which gateway.js wraps in
+		// `guardFetch`. That wrapper must not report failures, or every debug-trace
+		// post would arrive as a fetch.fail about itself. Read from the source,
+		// because the property belongs to that file and this harness does not load it.
+		const gw = readFileSync(join(HERE, 'gateway.js'), 'utf8');
+		const guard = gw.slice(gw.indexOf('function guardFetch()'));
+		const guardBody = guard.slice(0, guard.indexOf('wrapped.__daimondPause'));
+		check('the global fetch wrapper reports nothing to the feed',
+			guardBody.indexOf('dsFetchFail') === -1 && guardBody.indexOf('DEBUG_SHARE') === -1);
+		check('gwFetch is the one place a failure is reported',
+			(gw.match(/dsFetchFail\(/g) || []).length === 3);	// the definition and its two calls
 	}
 
 	console.log('');

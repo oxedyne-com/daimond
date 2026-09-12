@@ -254,7 +254,27 @@
 			// doing double duty; `n` doing this one as well would be the same
 			// mistake with the same consequence.
 			into: intoList(r.into),
+			// Why the forge will not take this one, or null
+			//
+			// Kept across a reload, and that is the whole reason it is cleaned
+			// here rather than left on whatever the send wrote: a record this
+			// function does not copy is a field that survives until the next
+			// boot and then quietly vanishes -- and a refusal that vanished
+			// would put the note back in the flush, which is the defect this
+			// field exists to end.
+			refused: cleanRefusal(r.refused),
 		};
+	}
+
+	/// A stored refusal, defended against whatever was in storage. `said` is the
+	/// forge's own sentence and is DRAWN, never branched on -- so it is bounded
+	/// here like any other stranger's characters.
+	function cleanRefusal(v) {
+		if (!v || typeof v !== 'object') return null;
+		var why  = (typeof v.why === 'string')  ? v.why.slice(0, 40)   : '';
+		var said = (typeof v.said === 'string') ? v.said.slice(0, 200) : '';
+		if (!why && !said) return null;
+		return { why: why, said: said, at: ms(v.at) || Date.now() };
 	}
 
 	/// The proposal numbers on a stored note's `into`, cleaned. Whole numbers
@@ -998,6 +1018,30 @@
 		return true;
 	}
 
+	/// Write onto a queued note why the forge will not take it, so the flush stops
+	/// offering it and the row can say what happened.
+	///
+	/// THE NOTE IS NOT DROPPED. These characters exist nowhere else -- the forge
+	/// refused them, so there is no copy at the other end -- and a note deleted
+	/// because a send failed is somebody's report thrown away by a retry policy.
+	/// It stays, with Send now and Delete both still on it, and the person
+	/// decides.
+	function markRefused(id, a) {
+		var rec = find(id);
+		if (!rec) return false;
+		rec.refused = cleanRefusal({ why: a && a.why, said: a && a.said, at: Date.now() })
+			|| { why: 'gateway', said: '', at: Date.now() };
+		save();
+		return true;
+	}
+
+	/// The notes a flush would try: everything queued except what the forge has
+	/// already refused. What `flushQueue` reports as waiting, so a count on the
+	/// screen is never larger than the number of notes that can still go.
+	function sendable() {
+		return load().notes.filter(function (n) { return !n.refused; });
+	}
+
 	/// One queued note by id, or null.
 	function find(id) {
 		var s = load();
@@ -1076,6 +1120,19 @@
 			'Waiting to send; it will go when the forge is reachable.');
 	}
 
+	/// Take one failed send onto the note, and answer with what to say about it.
+	///
+	/// THE SENTENCE IS THE POINT. A refusal the forge will repeat is not "waiting
+	/// to send" -- saying so was true of the queue and false about the note, and
+	/// it is what left two 400s being re-sent at every boot on the owner's
+	/// desktop with nothing on the screen ever admitting it. So a settled refusal
+	/// says why, and is written onto the note so the flush leaves it alone.
+	function refusedOrKept(rec, a) {
+		if (!settled(a)) return keptAfter(a);
+		markRefused(rec.id, a);
+		return a.said ? saying(a) + ' ' + a.said : saying(a);
+	}
+
 	/// Put one already-stored note on the wire and take the answer back into the
 	/// record. THE ONE DOOR a note leaves by, whether the press came from the box,
 	/// from the queue, or from a daimon that was told yes -- so a fourth caller
@@ -1113,9 +1170,26 @@
 		if (!text) { flash(tOr('social.nothing', 'Write something first.')); return null; }
 		// A verbatim post needs a first line to be its title; a polished one does
 		// not, because the model writes the title.
-		if (mode !== 'polish' && !split(text)) {
-			flash(tOr('social.no_title', 'First line is the title — write one, then what happened.'));
-			return null;
+		if (mode !== 'polish') {
+			var cut = split(text);
+			if (!cut) {
+				flash(tOr('social.no_title', 'First line is the title — write one, then what happened.'));
+				return null;
+			}
+			// AND A BODY, because the forge refuses a proposal without one
+			// (`NO_BODY`, oregami views/proposals.rs) and a note the forge will
+			// refuse must never enter the queue: before this, a one-line note
+			// was queued, 400ed, kept, and re-sent at every boot for ever. The
+			// test is `trim()` because the forge trims before it looks.
+			//
+			// This reads the CUT rather than the box, so the "what goes with it"
+			// line counts as a body exactly as it does on the wire -- a one-line
+			// note with that row open posts a body and is not refused here.
+			if (!cut.body.trim()) {
+				flash(tOr('social.no_body',
+					'Write what happened under the first line — the forge will not take a proposal with no body.'));
+				return null;
+			}
 		}
 		if (!hasVoice()) { flash(tOr('social.novoice_set', 'No voice yet — set one in Settings to post.')); return null; }
 		var rec = store(text, mode);
@@ -1145,7 +1219,7 @@
 		// row, so its build is overwritten here.
 		parts.build = rec.build || '';
 		var a = await through(rec, parts);
-		if (!a.ok) flash(keptAfter(a));
+		if (!a.ok) flash(refusedOrKept(rec, a));
 		return a.ok;
 	}
 
@@ -1163,7 +1237,7 @@
 			return false;
 		}
 		var a = await through(rec, { title: got.title, body: got.body || '', build: rec.build || '' });
-		if (!a.ok) flash(keptAfter(a));
+		if (!a.ok) flash(refusedOrKept(rec, a));
 		return a.ok;
 	}
 
@@ -1173,6 +1247,12 @@
 		var rec = find(id);
 		if (!rec) return false;
 		if (!hasVoice()) { flash(tOr('social.novoice_set', 'No voice yet — set one in Settings to post.')); return false; }
+		// A press is a fresh judgement and outranks the record. The refusal comes
+		// off and the note goes on the wire ONCE; if the forge refuses again the
+		// send writes the refusal back, so a press cannot start the loop this
+		// field ends. The person may have edited nothing -- they may simply know
+		// the repository was full and is not now.
+		if (rec.refused) { delete rec.refused; save(); }
 		var ok = await sendOne(rec);
 		render();
 		return ok;
@@ -1190,16 +1270,21 @@
 	var _flushing = false;
 
 	async function flushQueue() {
-		if (_flushing || !onLine()) return { sent: 0, waiting: load().notes.length };
-		if (!hasVoice()) return { sent: 0, waiting: load().notes.length };
+		if (_flushing || !onLine()) return { sent: 0, waiting: sendable().length };
+		if (!hasVoice()) return { sent: 0, waiting: sendable().length };
 		_flushing = true;
 		var sent = 0;
 		try {
-			var q = load().notes.slice();		// a snapshot of ids; the list changes under us
+			// A snapshot of ids; the list changes under us. Refused notes are not
+			// in it: the forge has already read those characters and rejected
+			// them, so sending them again spends a request to get the same 400,
+			// at every panel open and every reconnect, for as long as the note
+			// sits there. Only a press (`resend`) puts one back on the wire.
+			var q = sendable();
 			for (var i = 0; i < q.length; i++) {
 				if (!onLine()) break;
 				var rec = find(q[i].id);
-				if (!rec) continue;				// taken meanwhile
+				if (!rec || rec.refused) continue;	// taken, or refused meanwhile
 				var ok = await sendOne(rec);
 				if (ok) sent++;
 			}
@@ -1207,7 +1292,7 @@
 			_flushing = false;
 			render();
 		}
-		return { sent: sent, waiting: load().notes.length };
+		return { sent: sent, waiting: sendable().length };
 	}
 
 	/// Delete one note. It is only on this device, so this is the whole of it --
@@ -1315,12 +1400,41 @@
 	/// The three reasons a `throttled` carries. Anything else is read as none.
 	var BECAUSE = { address: 1, voice: 1, failing: 1 };
 
+	/// The refusals a RETRY CANNOT MEND. The forge read the request and rejected
+	/// what was in it, so the same characters get the same answer for ever --
+	/// which is why a note that earns one leaves the flush (`markRefused`) rather
+	/// than going back on the wire at every boot.
+	///
+	/// `throttled`, `unvoiced`, `internal` and `offline` are deliberately NOT
+	/// here: each of those is a refusal about the moment rather than about the
+	/// note, and a note held back for one of them is exactly what the queue is
+	/// for.
+	var FINAL = { malformed: 1, unpermitted: 1, unsupported: 1, absent: 1, no_proposal: 1 };
+
+	/// The statuses that say the same thing when the token does not reach us --
+	/// a refusal generated this side of the forge, or one whose body this build
+	/// could not read. 429 and 5xx are absent for the reason above.
+	var FINAL_STATUS = { 400: 1, 403: 1, 404: 1, 405: 1 };
+
+	/// Will this refusal still be a refusal the next time the same note is sent?
+	function settled(a) {
+		if (!a || a.ok) return false;
+		return !!(FINAL[a.why] || FINAL_STATUS[a.status]);
+	}
+
 	/// One exchange with the forge, as this panel reads it.
 	///
-	/// `{ ok: true, data }`, or `{ ok: false, why, because, status }` where `why`
-	/// is one of the nine tokens, `gateway` for a refusal this side generated, or
-	/// `offline` for a request that never got an answer at all. Three sources of
-	/// refusal and one shape, because every caller has to handle all three.
+	/// `{ ok: true, data }`, or `{ ok: false, why, because, said, status }` where
+	/// `why` is one of the nine tokens, `gateway` for a refusal this side
+	/// generated, or `offline` for a request that never got an answer at all.
+	/// Three sources of refusal and one shape, because every caller has to handle
+	/// all three.
+	///
+	/// `said` is the forge's own sentence about this refusal, carried through
+	/// UNREAD. It is what a person is shown beside a note the forge will not
+	/// take -- "the forge could not read it" says nothing a reporter can act on,
+	/// where "the body is empty" says exactly what to change. Nothing branches
+	/// on it, per contract §3.1; it is drawn and nothing else.
 	async function ask(path, opts) {
 		var v = voice();
 		var r;
@@ -1347,6 +1461,7 @@
 				ok:      false,
 				why:     data.error,
 				because: (typeof data.because === 'string' && BECAUSE[data.because]) ? data.because : '',
+				said:    (typeof data.said === 'string') ? data.said : '',
 				status:  r.status,
 			};
 		}
@@ -1951,10 +2066,19 @@
 
 			var state = document.createElement('span');
 			state.className = 'imp-note-state';
-			state.dataset.state = 'waiting';
-			state.textContent = (n.mode === 'polish')
-				? tOr('social.q_polish', 'Waiting to polish and post')
-				: tOr('social.q_verbatim', 'Waiting to post');
+			// A refused note is not waiting for anything, and the row must not go
+			// on saying it is. Send now and Delete stay exactly where they were:
+			// the refusal is a fact about the last attempt, not a lock.
+			if (n.refused) {
+				state.dataset.state = 'refused';
+				state.textContent = tOr('social.q_refused', 'The forge would not take this: {said}',
+					{ said: n.refused.said || saying({ why: n.refused.why }) });
+			} else {
+				state.dataset.state = 'waiting';
+				state.textContent = (n.mode === 'polish')
+					? tOr('social.q_polish', 'Waiting to polish and post')
+					: tOr('social.q_verbatim', 'Waiting to post');
+			}
 			foot.appendChild(state);
 
 			if (hasVoice()) {

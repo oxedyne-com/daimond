@@ -368,6 +368,10 @@
 }
 .imp-note-foot { display: flex; align-items: center; gap: 6px; margin-top: 5px; flex-wrap: wrap; }
 .imp-note-state { font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+/* A note the forge will not take. It reads as a problem rather than as another
+   line of housekeeping, because the row's own controls are what resolve it:
+   Send now after an edit elsewhere, or Delete. */
+.imp-note-state[data-state="refused"] { color: var(--warn); }
 /* `.imp-note-send` and `.imp-note-copy` are the one pill (top of file). */
 .imp-note-drop { margin-left: auto; }
 

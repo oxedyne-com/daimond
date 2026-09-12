@@ -3246,6 +3246,9 @@
 	// The sync switch and the durable trail, both reachable from the admin
 	// panel. See safe.js and breadcrumb.js.
 	'home.sec_sync':        'Syncing and diagnostics',
+	// The Diagnostics section heading on Home, shipped since seq 8742862 with
+	// only daimond.js's English fallback behind it.
+	'home.sec_diag':        'Diagnostics',
 	'settings.sync':        'Syncing',
 	'settings.sync_on_note': 'Sending your work to your other devices.',
 	'settings.sync_off_note': 'Not syncing — your work stays here.',
@@ -3428,11 +3431,19 @@
 	'social.polish_wait':  'The model could not draft it just now; it is still waiting to send.',
 	'social.waiting_here': 'Waiting to send; it will go when the forge is reachable.',
 	// The queue: notes that could not be sent yet.
+	// `tn` looks up `.one`/`.other`, so the bare key was never read; the count is
+	// in the parentheses, which reads the same either way.
 	'social.queue':        'Waiting to send ({n})',
+	'social.queue.one':    'Waiting to send ({n})',
+	'social.queue.other':  'Waiting to send ({n})',
 	'social.q_verbatim':   'Waiting to post',
 	'social.q_polish':     'Waiting to polish and post',
 	'social.send_now':     'Send now',
 	'social.send_now_help': 'Try to send this one now, in the way it was written.',
+	// A note the forge has REFUSED, which is not a note waiting for the network.
+	// `{said}` is the forge's own sentence about what was wrong with it, in the
+	// forge's English: keep the placeholder and do not translate around it.
+	'social.q_refused':    'The forge would not take this: {said}',
 	// The Settings view: the voice, and the drafts the model prepared.
 	'social.set_voice':    'Your voice',
 	'social.set_drafts':   'Prepared drafts',
@@ -3767,6 +3778,10 @@
 	'social.title_hint':   'First line is the title; what happened goes below.',
 	'social.no_title':     'First line is the title — write one, then what happened.',
 	'social.nothing':      'Write something first.',
+	// Said instead of queueing a one-line note. The forge refuses a proposal with
+	// an empty body, so a note like that could never be sent and must not be
+	// taken as though it could.
+	'social.no_body':      'Write what happened under the first line — the forge will not take a proposal with no body.',
 	// Said after a refusal. Nothing is queued and nothing is tried again, so a
 	// translation must not promise a retry.
 	'social.kept_here':    'Kept here; nothing tried again.',

@@ -33,10 +33,17 @@
 //   6. PULL IS IDEMPOTENT. The timer runs it every five minutes forever; a
 //      second pull over the same files must add no byte to the archive.
 //
-//   7. EVERY QUESTION ANSWERS. status, turns, errors, events, snapshot, watch
-//      and digest, each against data whose right answer is known here -- and
-//      status and digest inside their size caps, because those two are read by a
-//      language model at every pickup and the cap IS the feature.
+//   7. EVERY QUESTION ANSWERS. status, turns, errors, console, events, snapshot,
+//      watch and digest, each against data whose right answer is known here --
+//      and status and digest inside their size caps, because those two are read
+//      by a language model at every pickup and the cap IS the feature.
+//
+//   8. THE CONSOLE IS THE CONSOLE. `ev console` rows carry what the tab printed,
+//      at every level, with `x` for the repeats inside a minute. warn and error
+//      join `errors` and the rest do not; an ABORTED request -- the status 0 a
+//      reload leaves behind -- is hidden unless it is asked for; and the beat's
+//      feed health reaches `status` and `digest`, because a throttled feed is
+//      why a count below it would be short.
 
 import { execFileSync }	from 'node:child_process';
 import fs			from 'node:fs';
@@ -172,10 +179,30 @@ const A_BLOCK1 = block(A_BT1, DEV_A, [
 	...telRows.slice(0, telHalf).map(r => row(r.ts, r.tag, r.data)),
 ]);
 
+// What the tab printed, which before this lane reached the developer as one
+// line in five. The warning repeated twice inside its minute, so it is ONE row
+// carrying `x`; the `[sync]` line is an ordinary log and belongs to the
+// transcript, not to the errors; and the two fetch failures differ only in
+// whether the page was going away when they happened.
 const A_BLOCK2 = block(A_BT2, DEV_A, [
 	// The retried post: the same `(d,n)` the gateway already filed.
 	evRow(2, 'turn.end', { model: 'fixture/model-a', rounds: 3, prompt: 9000,
 		completion: 300, cached: 7000, usd: 0.02, outcome: 'done' }, NOW - 110000),
+	evRow(4, 'console', { lvl: 'warn', msg: 'i18n: no string for "home.sec_diag"',
+		src: 'i18n.js:156', x: 2 }, NOW - 100000),
+	evRow(5, 'console', { lvl: 'log',
+		msg: '[sync] chunk index not merged on this device — not committing a live set',
+		src: 'sync.js:351' }, NOW - 99000),
+	evRow(6, 'console', { lvl: 'error', msg: 'RangeError: fixture stack depth',
+		src: 'fixture.js:88' }, NOW - 98000),
+	evRow(7, 'console', { lvl: 'debug', msg: '[improve] queue drawn', src: 'improve.js:166' }, NOW - 97000),
+	evRow(8, 'fetch.fail', { path: '/api/parcel', status: 0, ms: 12, aborted: 1 }, NOW - 96000),
+	evRow(9, 'fetch.fail', { path: '/api/improve', status: 400, ms: 30 }, NOW - 95000),
+	// The beat, and deliberately OLDER than every telemetry tick: the feed's own
+	// health is the beat's to state, and a tick arriving after it says nothing
+	// about the feed and must not hide what the beat said.
+	evRow(10, 'beat', { ctx: 12345, win: 200000, busy: 0, ob: 3,
+		throttled: 2, postFail: 1, cdrop: 5 }, NOW - 94000),
 	...telRows.slice(telHalf).map(r => row(r.ts, r.tag, r.data)),
 ]);
 
@@ -298,6 +325,16 @@ check('device A reports the live context numbers',
 
 const statusLines = lens('status').trim().split('\n');
 check('status stays inside its 40-line cap', statusLines.length <= 40, statusLines.length + ' line(s)');
+check('status counts the console at warn and error',
+	statusLines.some(l => /^console \(1h\): 2 warn, 1 err/.test(l)),
+	statusLines.find(l => /^console/.test(l)));
+check('status reports the feed\'s own health from the beat',
+	statusLines.some(l => /^feed: throttled 2, postFail 1, console dropped 5 \(last beat\)/.test(l)),
+	statusLines.find(l => /^feed:/.test(l)));
+check('status --json carries the same two',
+	st.console1h.warn === 2 && st.console1h.error === 1
+		&& (st.devices.find(d => d.device === DEV_A) || {}).health.throttled === 2,
+	JSON.stringify(st.console1h));
 
 // Coverage, which is a different number per device AND per source. The archive
 // holds rows from nine hours back and TICKS from one; a window reaching past
@@ -373,15 +410,59 @@ check('the breadcrumb page error is reported', /fixture blew up/.test(msgs));
 check('the failed turn is reported', /turn ended in error/.test(msgs));
 check('a benign diagnostics row is NOT an error', !/sync push/.test(msgs), msgs.slice(0, 80));
 check('errors are deduplicated by message',
-	errs.every(e => e.count >= 1) && errs.length === 3, errs.length + ' distinct');
+	errs.every(e => e.count >= 1) && errs.length === 6, errs.length + ' distinct');
 check('--grep narrows the errors',
 	lensJson('errors', '--since', '24h', '--grep', 'TypeError').length === 1);
+
+// The console joins the errors at warn and error, and only there. A `log` is the
+// transcript; an aborted request is a reload, not a fault.
+const conErr = errs.filter(e => e.kind.indexOf('console.') === 0);
+check('a console warning is an error the app printed',
+	conErr.some(e => e.kind === 'console.warn' && /home\.sec_diag/.test(e.msg)),
+	conErr.map(e => e.kind).join(','));
+check('a console error is too',
+	conErr.some(e => e.kind === 'console.error' && /RangeError/.test(e.msg)));
+check('the repeat count is the count', 
+	(conErr.find(e => e.kind === 'console.warn') || {}).count === 2);
+check('a console log is NOT an error', !/chunk index not merged/.test(msgs), msgs.slice(0, 60));
+check('a real 400 is an error', errs.some(e => e.kind === 'fetch.fail' && /\/api\/improve/.test(e.msg)));
+check('an ABORTED request is not, by default',
+	!errs.some(e => /\/api\/parcel/.test(e.msg)), errs.map(e => e.msg.slice(0, 20)).join('|'));
+check('--aborted asks for it back',
+	lensJson('errors', '--since', '24h', '--aborted').some(e => /\/api\/parcel/.test(e.msg)));
+
+// ── console ──────────────────────────────────────────────────────────
+
+const con = lensJson('console', '--since', '24h');
+check('console defaults to warn and error', con.length === 2,
+	con.map(c => c.lvl).join(','));
+check('it carries the level, the message and the source',
+	con[0].lvl === 'warn' && /home\.sec_diag/.test(con[0].msg) && con[0].src === 'i18n.js:156',
+	JSON.stringify(con[0]));
+check('a repeated line carries its count', con[0].x === 2);
+const all = lensJson('console', '--since', '24h', '--lvl', 'all');
+check('--lvl all is every level', all.length === 4, all.map(c => c.lvl).join(','));
+check('the [sync] line the console showed is there',
+	all.some(c => c.lvl === 'log' && /chunk index not merged/.test(c.msg) && c.src === 'sync.js:351'));
+check('--lvl names one level', lensJson('console', '--since', '24h', '--lvl', 'debug').length === 1);
+check('--grep narrows the console',
+	lensJson('console', '--since', '24h', '--lvl', 'all', '--grep', 'improve').length === 1);
+check('--device narrows it too',
+	lensJson('console', '--since', '24h', '--lvl', 'all', '--device', DEV_B).length === 0);
+const conText = lens('console', '--since', '24h', '--lvl', 'all');
+check('without --json it is one legible line each, with a total',
+	/x2/.test(conText) && /i18n\.js:156/.test(conText) && /4 distinct line\(s\), 5 printed/.test(conText),
+	conText.trim().split('\n').pop());
+check('a window with nothing in it says so, not nothing at all',
+	/^console: nothing at warn\/error since/.test(lens('console', '--since', '30s')),
+	lens('console', '--since', '30s').trim());
 
 // ── events ───────────────────────────────────────────────────────────
 
 const evs = lensJson('events', '--since', '24h');
-check('every event row is in the stream once', evs.length === 6,
+check('every event row is in the stream once', evs.length === 13,
 	evs.length + ': ' + evs.map(e => e.kind || e.tag).join(','));
+check('--kind selects the console rows', lensJson('events', '--since', '24h', '--kind', 'console').length === 4);
 check('--kind selects one event kind',
 	lensJson('events', '--since', '24h', '--kind', 'turn.start').length === 1);
 check('--kind reaches a generic gateway row too',
@@ -420,6 +501,12 @@ check('digest states when the archive begins, from the ticks',
 check('digest gives each device its own coverage stamp',
 	digest.split('\n').filter(l => / since \d\d:\d\dZ /.test(l)).length === 2,
 	digest.split('\n').filter(l => / since /.test(l)).length + ' device line(s)');
+check('digest names the console and the feed health',
+	/console \(1h\): 2 warn, 1 err/.test(digest) && /throttled 2 postFail 1 cdrop 5/.test(digest),
+	digest.split('\n').filter(l => /console|throttled/.test(l)).join(' | '));
+check('digest --json carries the feed health',
+	lensJson('digest').console1h.warn === 2 && lensJson('digest').feedHealth[0].postFail === 1,
+	JSON.stringify(lensJson('digest').feedHealth));
 check('digest --json carries the same figures',
 	Math.abs(lensJson('digest').spend24h - 2.22) < 1e-9
 		&& lensJson('digest').turns24h === 6,
