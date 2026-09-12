@@ -1,1 +1,1 @@
-{"build":"76d530495e5c","note":"Chats reuse only chunks the server still holds, and a device names the chunks it merged from a peer."}
+{"build":"84224133a563","note":"Devices now update themselves when a new build is live, and say which chunks no device can restore."}

@@ -3061,6 +3061,10 @@
 	'update.available':  'A new version of Daimond is available.',
 	'update.reload':     'Reload',
 	'update.dismiss':    'Dismiss',
+	// The countdown in front of an automatic reload. {s} is whole seconds.
+	'update.reloading_in': 'reloading in {s}s',
+	'update.cancel':       'Not now',
+	'update.reload_now':   'Reload now',
 	// The stuck-worker escape: a reload has repeatedly failed to shift the build, so
 	// name the one thing that will -- fully closing and reopening, or clearing site data.
 	'update.stuck':        'This device is stuck on an old build — reloading has not updated it. To finish updating, fully close and reopen Daimond, or clear this site’s data.',

@@ -25,7 +25,9 @@
 //      a missing chunk lands metadata-only, non-destructively.
 //   6. TIER — content keys sort ahead of files in the tier plan.
 //   7. PRESENCE — a manifest reused on its change-key is checked against the store
-//      before its addresses are re-sent, and an unanswered check reuses it as before.
+//      before its addresses are re-sent; an unanswered check reuses it as before; and
+//      what is missing is reported by kind, by restorability, by the id of each lost
+//      chat or Diamond, and only once per sitting while the set stands still.
 //   8. THE PEER'S REFS — a device that unions a peer's chat names the peer's chunk
 //      addresses in the index it commits, so its own sweep does not delete them.
 import { open } from './harness.mjs';
@@ -653,6 +655,115 @@ try {
 	check('A2. and the next answered round heals what the refused one left',
 		later.puts > 0 && later.bad.length === 0,
 		`${later.puts} put(s), ${later.bad.length} manifest(s) still naming a missing chunk`);
+
+	// A count that leaves out the kinds it cannot fix is a count nobody can reason
+	// from: the first live run said "refs missing: 65, re-offloading 0" and nothing
+	// in the line told the owner whether that was a bug or the truth.
+	const census = await page.evaluate(async () => {
+		// A chat whose manifest survives its text: the shape of the owner's loss.
+		const store = window.DaimondCore.chatStore();
+		const list = store.stored();
+		list.push({ id: 'lostchat-aaaabbbbcccc', name: 'Lost', model: 'mock/fast', updatedAt: 9000, messages: [], session: null });
+		store.save(list);
+		window.DaimondCloud.contentSet('@c/lostchat-aaaabbbbcccc', {
+			v: 2, size: 900, key: 'lostkey', fp: 'lostfp',
+			chunks: [{ addr: 'dead0'.padEnd(64, '0'), size: 900 }] });
+		// And a mail manifest, which no collect could ever rebuild from here.
+		window.DaimondCloud.contentSet('@m/deadmail', {
+			v: 2, size: 10, key: 'mk', chunks: [{ addr: 'dead1'.padEnd(64, '1'), size: 10 }] });
+
+		window.__ds = [];
+		window.__lines = [];
+		window.DEBUG_SHARE = { event: (kind, payload) => window.__ds.push({ kind, payload }) };
+		const realDebug = console.debug;
+		console.debug = function (...a) { if (String(a[0]).indexOf('[chunks]') === 0) window.__lines.push(a.join(' ')); realDebug.apply(console, a); };
+		window.__reset();
+		await window.DaimondCore.collectSync();
+		const first = { lines: window.__lines.slice(), ds: window.__ds.slice() };
+		// The lost chat's entry is dropped by the collector on that very round (an
+		// empty transcript rides inline), so the set MOVES once. Settle it, then
+		// measure a push whose unrestorable set is the one before it, unchanged.
+		window.__lines = []; window.__ds = [];
+		await window.DaimondCore.collectSync();
+		const settling = { lines: window.__lines.slice(), ds: window.__ds.slice() };
+		window.__lines = []; window.__ds = [];
+		await window.DaimondCore.collectSync();
+		const second = { lines: window.__lines.slice(), ds: window.__ds.slice() };
+		console.debug = realDebug;
+		return { first, settling, second };
+	});
+	const line = (census.first.lines.find(l => l.indexOf('refs missing:') >= 0) || '');
+	const evc  = (census.first.ds.find(e => e.kind === 'sync' && e.payload && e.payload.refs_missing) || { payload: {} }).payload;
+	note(line);
+	check('A4. the line breaks the missing refs down by kind AND restorability',
+		/@m\/ \d+ unrestorable/.test(line) && /@c\/ \d+ no-local-text/.test(line), line || 'no line');
+	check('A4. and the parts sum to the total it opens with',
+		(() => {
+			const total = Number((/refs missing: (\d+)/.exec(line) || [])[1]);
+			const parts = [...line.matchAll(/[\w@./-]+ (\d+) [a-z-]+/g)].map(m => Number(m[1]));
+			// The leading "missing: N" is not a part; the parts live inside the brackets.
+			const inner = (/\(([^)]*)\)/.exec(line) || ['', ''])[1];
+			const sum = [...inner.matchAll(/ (\d+) /g)].map(m => Number(m[1])).reduce((a, b) => a + b, 0);
+			return total > 0 && sum === total && parts.length > 0;
+		})(), line);
+	check('A4. the event carries the same census and an unrestorable total',
+		!!evc.miss_kinds && (evc.miss_kinds['@m'] | 0) >= 1 && (evc.miss_kinds['@c'] | 0) >= 1
+			&& evc.unrestorable >= 2,
+		`miss_kinds=${JSON.stringify(evc.miss_kinds)} unrestorable=${evc.unrestorable}`);
+	const named = (census.first.lines.find(l => l.indexOf('no local text for:') >= 0) || '');
+	check('A5. a chat whose text is gone is named by id, so the owner can look it up',
+		named.indexOf('c/lostchat-aaa') >= 0, named || 'no line');
+	check('A5. and the id travels in the feed event too, capped at ten',
+		Array.isArray(evc.miss_ids) && evc.miss_ids.length >= 1 && evc.miss_ids.length <= 10
+			&& evc.miss_ids.some(x => x.indexOf('c/lostchat') === 0),
+		`${(evc.miss_ids || []).length} id(s)`);
+	check('A6. a set that MOVED is said again — the lost chat leaves it on its own round',
+		census.settling.lines.some(l => l.indexOf('refs missing:') >= 0),
+		`${census.settling.lines.length} line(s)`);
+	check('A6. and then the SAME unrestorable set, push after push, says nothing again',
+		census.second.lines.length === 0
+			&& !census.second.ds.some(e => e.payload && e.payload.refs_missing),
+		`${census.second.lines.length} line(s), ${census.second.ds.length} event(s)`);
+
+	// A set that CHANGES is news, and is said again.
+	const changed = await page.evaluate(async () => {
+		window.DaimondCloud.contentSet('@m/deadmail2', {
+			v: 2, size: 10, key: 'mk2', chunks: [{ addr: 'dead2'.padEnd(64, '2'), size: 10 }] });
+		window.__lines = [];
+		const realDebug = console.debug;
+		console.debug = function (...a) { if (String(a[0]).indexOf('[chunks]') === 0) window.__lines.push(a.join(' ')); realDebug.apply(console, a); };
+		await window.DaimondCore.collectSync();
+		console.debug = realDebug;
+		return window.__lines.slice();
+	});
+	check('A6. but one more unrestorable manifest makes it news again',
+		changed.some(l => l.indexOf('refs missing:') >= 0), `${changed.length} line(s)`);
+
+	// The cap proper: twelve lost chats name ten and COUNT the rest, because a
+	// line nobody reads to the end names nothing.
+	const capped = await page.evaluate(async () => {
+		const store = window.DaimondCore.chatStore();
+		const list = store.stored();
+		for (let k = 0; k < 12; k++) {
+			const id = 'lost-' + String(k).padStart(2, '0') + '-yyyyyyyyyy';
+			list.push({ id, name: 'Lost ' + k, model: 'mock/fast', updatedAt: 9100 + k, messages: [], session: null });
+			window.DaimondCloud.contentSet('@c/' + id, { v: 2, size: 900, key: 'lk' + k, fp: 'lf' + k,
+				chunks: [{ addr: ('bad' + k).padEnd(64, '9'), size: 900 }] });
+		}
+		store.save(list);
+		window.__lines = []; window.__ds = [];
+		const realDebug = console.debug;
+		console.debug = function (...a) { if (String(a[0]).indexOf('[chunks]') === 0) window.__lines.push(a.join(' ')); realDebug.apply(console, a); };
+		await window.DaimondCore.collectSync();
+		console.debug = realDebug;
+		const named = window.__lines.find(l => l.indexOf('no local text for:') >= 0) || '';
+		const ev = (window.__ds.find(e => e.payload && e.payload.miss_ids) || { payload: {} }).payload;
+		return { named, ids: (ev.miss_ids || []).length };
+	});
+	check('A5. twelve lost chats name ten and count the remainder',
+		(capped.named.match(/[cd]\//g) || []).length === 10 && /\(\+\d+ more\)/.test(capped.named)
+			&& capped.ids === 10,
+		capped.named.slice(0, 150) || 'no line');
 
 	// ═══════════════════════════════════════════════════════════════
 	// INVARIANT 8 — a peer's refs are NAMED by the committing index

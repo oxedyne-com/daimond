@@ -5392,6 +5392,58 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// its manifest would only take away the reference. A `.synced` sidecar, an
 	/// `@m/` mail manifest and a `.peer` entry are left alone for that same
 	/// reason -- no local content answers for any of them.
+	/// Which family a manifest key belongs to, for the census the log line carries.
+	function manifestKind(key) {
+		if (/\.peer$/.test(key))   return '.peer';
+		if (/\.synced$/.test(key)) return '.synced';
+		var m = /^(@[dcm])\//.exec(key);
+		return m ? m[1] + '/' : 'file';
+	}
+
+	/// Unrestorable missing-ref sets already named this sitting, by signature.
+	///
+	/// A set that nothing here can heal is the SAME set on the next push and the
+	/// one after: sixty-five addresses of a mailbox nobody holds the plaintext
+	/// for do not become sixty-four by being logged again. Saying it once is the
+	/// difference between a standing fact the owner can act on and a line that
+	/// cries wolf on every round. A set that CHANGES is news and is said again.
+	var missReported = {};
+
+	/// Check the manifests the collectors are about to REUSE against the store
+	/// that is meant to be holding them, once for the whole push, and drop any
+	/// whose chunks have gone -- so the item is offloaded again from the copy on
+	/// this device rather than its dead addresses being re-sent for ever.
+	///
+	/// THE COLLECTORS REUSE ON A CHANGE-KEY, NEVER ON PRESENCE. A Diamond whose
+	/// `touched` has not moved, a chat whose transcript fingerprints the same, a
+	/// file of the same size and mtime: each hands back the stored manifest
+	/// without asking whether the gateway still holds a byte of what it names.
+	/// That is right while a store is a store, and wrong from the moment a sweep
+	/// has taken a chunk, because no round after that ever asks again. Eighteen
+	/// addresses of one account's committed index were in exactly that state, on
+	/// every push, and every device that pulled those chats showed them empty.
+	///
+	/// ONE QUESTION FOR THE WHOLE PUSH. Every address every manifest names goes
+	/// through `DaimondChunks.presence` in batches of `HAVE_QUERY_BATCH`
+	/// (js/chunks.js, 2,000 -- about 134 kB of JSON against the 8 MiB front door),
+	/// so a quiet round costs a call or two and never one per item.
+	///
+	/// AND IT FAILS SAFE. An unanswered `have` is not evidence of absence, and
+	/// reading it as one would re-upload the whole account the first time the
+	/// network hiccupped -- a far worse round than the one this fixes. So an
+	/// unanswered query reuses every manifest exactly as before, and says so.
+	///
+	/// WHAT IS ASKED ABOUT AND WHAT IS ACTED ON ARE NOT THE SAME SET. Everything
+	/// is asked about, because a count that quietly leaves out the kinds it cannot
+	/// fix is a count nobody can reason from -- the first live run reported
+	/// sixty-five missing refs and re-offloaded none of them, and nothing in the
+	/// line said whether that was a bug or the truth. Only what this device could
+	/// offload AGAIN is dropped: a chat or Diamond whose text is still here, or a
+	/// workspace file still on disk. An `@m/` mail manifest, a `.synced` sidecar,
+	/// a `.peer` entry and an item whose local copy is gone are NAMED and left
+	/// alone -- dropping one would take away the last record of where its chunks
+	/// were and let the next commit sweep whatever of it the store still holds,
+	/// which is a worse answer than a standing line in the log.
 	async function verifyManifestPresence() {
 		if (!window.DaimondCloud || !window.DaimondChunks || !DaimondChunks.presence) return;
 		if (!DaimondCloud.available || !DaimondCloud.available()) return;
@@ -5400,8 +5452,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		for (var i = 0; i < keys.length; i++) {
 			var k = keys[i], m = ix[k];
 			if (!m || !Array.isArray(m.chunks) || !m.chunks.length) continue;
-			// Only what this device could offload again if the answer is bad.
-			if (/\.peer$/.test(k) || /\.synced$/.test(k) || /^@m\//.test(k)) continue;
 			reusable++;
 			for (var c = 0; c < m.chunks.length; c++) {
 				var a = m.chunks[c] && m.chunks[c].addr;
@@ -5420,27 +5470,114 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			clog('manifest presence unanswered: ' + reusable + ' manifest(s) reused unchecked');
 			return;
 		}
-		var stale = {}, n = 0;
+		// Each missing address is counted ONCE, against the first manifest that
+		// names it, so the kinds sum to the total the line opens with.
+		var stale = {}, kindOf = {}, n = 0;
 		for (var mi = 0; mi < res.missing.length; mi++) {
 			var own = owners[res.missing[mi]];
 			if (!own) continue;						// an address nothing names: not ours to mind
 			n++;
+			kindOf[manifestKind(own[0])] = (kindOf[manifestKind(own[0])] | 0) + 1;
 			for (var oi = 0; oi < own.length; oi++) stale[own[oi]] = 1;
 		}
 		if (!n) return;
-		var sk = Object.keys(stale), dropped = 0;
+
+		// What is still HERE to offload again. Chat message counts come off the
+		// summaries the mirror already holds; the Diamond list is read only if a
+		// Diamond is actually among the stale, and a store that will not enumerate
+		// leaves them restorable, which is what they were before this.
+		var msgs = {};
+		try {
+			(ChatStore.stored() || []).forEach(function (c) { if (c && c.id) msgs[c.id] = chatMsgCount(c); });
+		} catch (e) { /* unread mirror: every chat reads as gone, and is only NAMED */ }
+		var sk = Object.keys(stale).sort(), dHeld = null;
+		if (sk.some(function (k2) { return /^@d\//.test(k2); })) {
+			dHeld = {};
+			try {
+				JSON.parse(await diamondApp().list_diamonds()).forEach(function (d) { if (d && d.id) dHeld[d.id] = 1; });
+			} catch (e) { dHeld = null; }			// cannot say: treat as restorable
+		}
+
+		var dropped = 0, lost = [], lostItems = 0, reasonOf = {}, held = [];
 		for (var si = 0; si < sk.length; si++) {
-			var key = sk[si];
-			if (!/^@[dc]\//.test(key)) {
+			var key = sk[si], kind = manifestKind(key), id = key.replace(/^@[dcm]\//, '');
+			var reason = 'unrestorable';
+			if (kind === '@c/')       reason = (msgs[id] | 0) > 0 ? 'reoffload' : 'no-local-text';
+			else if (kind === '@d/')  reason = (!dHeld || dHeld[id]) ? 'reoffload' : 'no-local-text';
+			else if (kind === 'file') {
 				var f = null;
 				try { f = await DaimondCloud.fileAt(key); } catch (e) { f = null; }
-				if (!f) continue;					// nothing here to offload again
+				reason = f ? 'reoffload' : 'no-local-file';
 			}
-			if (DaimondCloud.contentForget && DaimondCloud.contentForget(key)) dropped++;
+			reasonOf[key] = reason;
+			if (reason === 'reoffload') {
+				if (DaimondCloud.contentForget && DaimondCloud.contentForget(key)) dropped++;
+				continue;
+			}
+			held.push(key);
+			// NAME THE ITEM, not merely its kind. A chat or a Diamond whose text is
+			// no longer on this device is one the owner has LOST, and an id they can
+			// look up is the whole difference between a number and something they
+			// can act on. Capped, because a line nobody reads to the end names
+			// nothing: the rest are counted in the census beside it.
+			if (kind === '@c/' || kind === '@d/') {
+				lostItems++;
+				if (lost.length < MANIFEST_LOST_NAMED) lost.push(kind.charAt(1) + '/' + id.slice(0, 12));
+			}
 		}
-		clog('manifest refs missing: ' + n + ', re-offloading ' + dropped + ' item(s)');
-		trail('sync manifest stale', n + ' ref(s), ' + dropped + ' item(s) re-offloading');
-		dsEvent('sync', { dir: 'push', refs_missing: n, reoffload: dropped });
+
+		// THE CENSUS COUNTS ADDRESSES, not manifests, so its parts sum to the
+		// number the line opens with -- one manifest of sixty dead chunks and sixty
+		// manifests of one are the same loss and read as the same figure. Each
+		// address is attributed to the first manifest that names it, which is also
+		// how the total was counted above.
+		var census = {}, unrestorable = 0;
+		for (var ci = 0; ci < res.missing.length; ci++) {
+			var co = owners[res.missing[ci]];
+			if (!co) continue;
+			var ck = co[0], cr = reasonOf[ck] || 'unrestorable';
+			var row = manifestKind(ck) + ' ' + cr;
+			census[row] = (census[row] | 0) + 1;
+			if (cr !== 'reoffload') unrestorable++;
+		}
+
+		// The unrestorable half is a STANDING fact, so it is said once a sitting:
+		// the signature is exactly the set of manifests this device could not heal,
+		// so the line returns the moment that set gains or loses one. A push that
+		// actually moved something always speaks.
+		var sig = held.join('|');
+		var fresh = dropped > 0 || !missReported[sig];
+		missReported[sig] = 1;
+		if (!fresh) return;
+
+		var breakdown = Object.keys(census).sort(function (a, b) { return census[b] - census[a]; })
+			.map(function (row) {
+				var sp = row.indexOf(' ');
+				return row.slice(0, sp) + ' ' + census[row] + ' ' + row.slice(sp + 1);
+			}).join(', ');
+		clog('manifest refs missing: ' + n + (breakdown ? ' (' + breakdown + ')' : '')
+			+ ', re-offloading ' + dropped + ' item(s)');
+		if (lost.length) {
+			clog('no local text for: ' + lost.join(', ')
+				+ (lostItems > lost.length ? ' (+' + (lostItems - lost.length) + ' more)' : ''));
+		}
+		trail('sync manifest stale', n + ' ref(s), ' + dropped + ' re-offloading, ' + unrestorable + ' unrestorable');
+		dsEvent('sync', {
+			dir:           'push',
+			refs_missing:  n,
+			reoffload:     dropped,
+			miss_kinds:    kindCounts(kindOf),
+			unrestorable:  unrestorable,
+			miss_ids:      lost,
+		});
+	}
+
+	/// The kind census as the feed carries it: `@c/` reads `@c`, because a key in
+	/// a JSON object is read by eye and the slash only ever made it longer.
+	function kindCounts(kinds) {
+		var out = {};
+		Object.keys(kinds).forEach(function (k) { out[k.replace(/\/$/, '')] = kinds[k]; });
+		return out;
 	}
 
 	async function collectSync() {
@@ -38896,6 +39033,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// spending money, and only then asks for the passphrase.
 	/// One line in the durable trail. See www/js/breadcrumb.js.
 	function trail(w, d) { try { window.DaimondTrail.note(w, d); } catch (e) {} }
+	/// The most lost items one push names by id. A line nobody reads to the end
+	/// names nothing; the rest are counted in the kind census beside it.
+	var MANIFEST_LOST_NAMED = 10;
+
 	/// One line in the chunk transport's voice. The presence sweep lives here
 	/// rather than in js/chunks.js -- it needs the cloud index and the collectors'
 	/// change-keys -- but it is part of that story, so it greps with it.

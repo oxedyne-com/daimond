@@ -15,6 +15,12 @@
  * is lossless because the durability journal already makes every boot a clean recovery; this
  * just chooses a good time to do it, and never interrupts a running turn to do it.
  *
+ * 2026-09-12: the automatic path no longer reloads the instant it may. It watches a wider
+ * safety question on a ten-second tick -- adding a sync round in flight to the turn, the fold,
+ * the worker and the half-typed prompt it already asked about -- and counts twenty seconds down
+ * behind a banner the user can defer. Three guards bound it: nothing within a minute of boot,
+ * nothing twice within ten minutes, and nothing at all while this tab's own build id is unknown.
+ *
  * There is deliberately no way to REFUSE a version. A web app cannot coherently run an old build
  * against a new server, and the new build is the same app, from the same people, the user is
  * already trusting. The only question is WHEN, never WHETHER: the chip offers "now" on a click,
@@ -94,6 +100,54 @@
 	var graceTimer = null;
 	function quietFor() { return Date.now() - lastActive; }
 
+	// ── The scheduled reload (2026-09-12) ───────────────────────
+	//
+	// What was here took a soft update the instant a hidden or quiesced tab looked
+	// safe, and "safe" meant only: no turn running, nothing half-typed. Two things
+	// were missing from that. A reload landing mid-push throws the sync round away
+	// -- the parcel goes again, but the device reads as stalled in between -- and a
+	// reload with no warning is, to anyone who happens to be looking at it, indis-
+	// tinguishable from a crash. So the automatic path now re-asks a WIDER safety
+	// question on a ten-second tick and, when the answer comes good, counts down
+	// twenty seconds behind a banner the user can wave off.
+	//
+	// None of this touches the forced paths. The gateway refusing the tab, a
+	// mismatched engine pair, and the user's own click all still reload at once:
+	// those are not "an update is available", they are "you cannot keep working",
+	// and a countdown in front of one only delays the fix.
+	var TICK_MS     = 10000;        // re-ask "is it safe yet?" this often
+	var COUNT_MS    = 20000;        // the visible countdown before an automatic reload
+	var DEFER_MS    = 600000;       // Cancel puts it off this long -- not off for good
+	var GIVEUP_MS   = 1800000;      // never safe for this long: stop trying, leave a button
+	var BOOT_MS     = 60000;        // never reload within this of boot
+	var GAP_MS      = 600000;       // and never more than one automatic reload per this
+	var SKEY        = 'daimond-soft-at';   // when the last automatic reload went, across boots
+	var bootedAt    = Date.now();
+	var tick        = null;         // the safety re-evaluation interval
+	var countTimer  = null;         // the one-second countdown
+	var countLeft   = 0;            // seconds still to run on it
+	var deferUntil  = 0;            // Cancel, or a reload just taken
+	var unsafeSince = 0;            // when this pending build first found the tab unsafe
+	var gaveUp      = false;        // unsafe for GIVEUP_MS: a button only, until the next build
+
+	// TRAINING WHEELS -- remove with the DEBUG_SHARE module. One guarded line per
+	// call site, as in sync.js and peer.js; lifts out in one grep of `DEBUG_SHARE`.
+	// Nothing in this file depends on the feed existing or on it answering.
+	function share(kind, payload) {
+		try {
+			if (window.DEBUG_SHARE && DEBUG_SHARE.event) DEBUG_SHARE.event(kind, payload);
+		} catch (e) {}
+	}
+
+	/// Does this look like a build id at all? Deliberately loose: the stamp is
+	/// written by dev/stamp-build.mjs and the verifiers serve short synthetic ids,
+	/// so it turns away only the obviously-not -- empty, enormous, or with a space
+	/// in it. Its job is to stop a reload being taken on a 404 page or an error
+	/// string that happened to parse.
+	function looksLikeBuild(id) {
+		return typeof id === 'string' && id.length >= 3 && id.length <= 64 && !/\s/.test(id);
+	}
+
 	/// Read the stamp, never from cache -- the whole point is to see the server's current truth.
 	/// Any failure (offline, no stamp deployed, bad JSON) resolves to null and is simply ignored;
 	/// a broken check must never break the app or nag the user.
@@ -122,6 +176,146 @@
 		return !!(C && C.composerHasText && C.composerHasText());
 	}
 
+	/// Is a sync round running, or armed to start? `quiet` is sync.js's own answer
+	/// and counts the armed debounce timers too, which `inFlight` alone does not --
+	/// a reload in the gap before the push fires loses the push just as surely.
+	/// Unknown means yes: no sync module is not a reason to hold an update.
+	function syncQuiet() {
+		try {
+			var S = window.DaimondSync;
+			if (!S || !S.state) return true;
+			var st = S.state();
+			return !st || st.quiet !== false;
+		} catch (e) { return true; }
+	}
+
+	/// Everything an automatic reload must not land on top of. `busy()` already
+	/// answers for the chat turn, the daimon's steer, a fold and a live worker (see
+	/// `DaimondCore.busy`, which asks all four); this adds the two it cannot know
+	/// about -- what the user has typed and not sent, and a sync round in flight.
+	///
+	/// The debug feed is deliberately NOT a condition. Its outbox is persisted
+	/// (`loadOutbox` at boot) and it flushes its console buffer on `pagehide`, so a
+	/// reload costs it nothing and waiting on it would only hold updates back.
+	function safeNow() {
+		if (busy()) return false;
+		if (composerHasText()) return false;
+		return syncQuiet();
+	}
+
+	/// The conditions that were already here, unchanged, and each for the reason
+	/// set out in the long note that used to sit inside `apply`: never silently
+	/// reload an UNLOCKED tab, because the passphrase key lives in memory only and
+	/// the tab would come back at the unlock gate; and never reload a foreground
+	/// tab the user is still working in.
+	function quietEnough() {
+		try { if (window.DaimondIdentity && DaimondIdentity.isUnlocked()) return false; } catch (e) {}
+		if (!document.hidden && quietFor() < QUIESCE_MS) return false;
+		return true;
+	}
+
+	/// May an automatic reload be taken at all, whatever the tab is doing? Four
+	/// refusals that are nothing to do with safety: a build id this tab never read
+	/// (there is no update to be sure of), a tab that has only just started, one
+	/// the user has just waved off, and one that reloaded itself recently enough
+	/// that doing it again would be a loop rather than an update. The last is in
+	/// localStorage because it has to survive the reload it guards against.
+	function softAllowed() {
+		if (!booted) return false;
+		var now = Date.now();
+		if (now - bootedAt < BOOT_MS) return false;
+		if (now < deferUntil) return false;
+		var last = 0;
+		try { last = parseInt(localStorage.getItem(SKEY), 10) || 0; } catch (e) {}
+		return now - last >= GAP_MS;
+	}
+
+	function counting() { return countTimer !== null; }
+
+	/// The automatic path. It never reloads itself -- it arms the tick, and the
+	/// tick is what eventually starts a countdown.
+	function softTry() {
+		if (applying || !pending || gaveUp) return false;
+		if (!tick) tick = setInterval(evaluate, TICK_MS);
+		evaluate();
+		return false;
+	}
+
+	/// One pass of "is it safe yet?".
+	function evaluate() {
+		if (applying || !pending) { disarm(); return; }
+		if (counting()) return;
+		if (!softAllowed() || !safeNow() || !quietEnough()) {
+			if (!unsafeSince) unsafeSince = Date.now();
+			// Half an hour of never finding a safe moment is not a moment that is
+			// coming -- a desktop left with a half-typed prompt will sit like that
+			// for days. Stop asking and leave the user a button; a check that finds
+			// a DIFFERENT build starts the whole thing over.
+			if (Date.now() - unsafeSince >= GIVEUP_MS) { gaveUp = true; disarm(); reflect(); }
+			return;
+		}
+		unsafeSince = 0;
+		startCount();
+	}
+
+	function startCount() {
+		countLeft = Math.round(COUNT_MS / 1000);
+		// The timer is armed BEFORE the first paint, because `reflect` asks
+		// `counting()` which asks this very handle -- painted first, the banner's
+		// opening second would say "ready" and the countdown would appear a second
+		// late, which is a second of an unannounced reload.
+		countTimer = setInterval(function () {
+			countLeft--;
+			// Safety is re-asked every second of the countdown and not merely before
+			// it: twenty seconds is long enough for a turn to start or a key to be
+			// pressed, and a countdown that ignored that would be the very reload
+			// this file exists to avoid.
+			if (!safeNow() || !quietEnough()) { stopCount(); return; }
+			if (countLeft <= 0) { stopCount(); takeIt(); return; }
+			syncBanner('soon');
+		}, 1000);
+		reflect();
+	}
+
+	function stopCount() {
+		if (countTimer) clearInterval(countTimer);
+		countTimer = null;
+		countLeft  = 0;
+		reflect();
+	}
+
+	/// Cancel is "not now", never "not this build" -- there is no way to refuse a
+	/// version, only to choose when (see the file header). Ten minutes, after which
+	/// the tick picks it up again.
+	function cancelCount() {
+		deferUntil   = Date.now() + DEFER_MS;
+		dismissedFor = pending;
+		stopCount();
+	}
+
+	function disarm() {
+		if (tick) clearInterval(tick);
+		tick = null;
+		stopCount();
+	}
+
+	/// The automatic reload itself. The timestamp goes down BEFORE the reload, so
+	/// the once-per-GAP_MS guard survives the thing it is guarding.
+	function takeIt() {
+		try { localStorage.setItem(SKEY, String(Date.now())); } catch (e) {}
+		share('update', { live: pending, mine: booted, at: 'reload' });
+		doApply();
+	}
+
+	/// THE SEAM FOR A PUSH. Polling is how a tab learns of a deploy today; when the
+	/// gateway's wake channel starts carrying the live build id, it calls this and
+	/// the poll becomes a backstop rather than the mechanism. It joins the same path
+	/// a read of the stamp takes, so nothing downstream can tell the two apart.
+	function noteLiveBuild(id) {
+		if (!looksLikeBuild(id)) return;
+		onFound({ build: id, note: '' });
+	}
+
 	/// Apply the pending update by reloading. `force` is a user click: it may reload a foreground
 	/// tab, but even then it will NOT interrupt a running turn -- work in flight is never lost to
 	/// an update. The automatic path is stricter still: only a hidden, idle tab, with nothing
@@ -131,25 +325,17 @@
 	/// guard spent on an attempt that was deferred is a guard that then refuses
 	/// the reload it was waiting for.
 	function apply(force) {
+		// The automatic caller gets the scheduler, not a reload: it arms the tick,
+		// which watches for a safe moment and counts down in front of the user. A
+		// forced caller -- a click, the gateway's refusal -- goes straight through.
+		return force ? doApply() : softTry();
+	}
+
+	function doApply() {
 		if (applying || !pending) return false;
 		if (busy()) return false;                 // never interrupt a running turn or agent
-		if (!force) {
-			// NEVER silently reload an UNLOCKED tab. The passphrase key lives in memory
-			// only, so a reload re-seals it and the tab comes back at the login/unlock
-			// gate -- and the silent reload also pre-empts the "New version -- Reload"
-			// banner. So a backgrounded desktop that learned of a new build would reload
-			// itself and drop to login. Instead the update stays pending: the banner
-			// offers Reload on focus and the user reloads on click (which comes back
-			// through here with `force`). A LOCKED tab has nothing to lose and still
-			// auto-updates; a forced or stale reload via `force()` is untouched.
-			try { if (window.DaimondIdentity && DaimondIdentity.isUnlocked()) return false; } catch (e) {}
-			// A soft update applies at a quiet moment: a hidden tab, or a foreground
-			// one left untouched for QUIESCE_MS -- never over a half-typed prompt, and
-			// (via the busy() check above) never over a running turn.
-			if (!document.hidden && quietFor() < QUIESCE_MS) return false;
-			if (composerHasText()) return false;
-		}
 		applying = true;
+		disarm();
 		try { sessionStorage.setItem(KEY, pending); } catch (e) {}
 		// The build we are reloading AWAY from. If the next boot comes back on this
 		// same id, the controlling worker served stale and the reload did not advance
@@ -194,7 +380,7 @@
 		if (checking || stale) return;
 		checking = true;
 		chip.title = t('update.checking');
-		readStamp().then(function (j) {
+		checkStamp().then(function (j) {
 			checking = false;
 			onFound(j);
 			if (!pending && !stale) {
@@ -233,6 +419,14 @@
 		if (stuck)    { setChip('stuck');   syncBanner('stuck');   return; }
 		if (stale)    { setChip('stale');   syncBanner('stale');   return; }
 		if (!pending) { setChip('current'); syncBanner('current'); return; }
+		// Having given up, the banner is the ONLY way this build gets taken, so it is
+		// shown whatever the tab is doing -- including mid-turn, which is the state
+		// that caused the giving up. Painting `busy` here would hide the one control
+		// left, which is how a device sits on a superseded build for a week.
+		if (gaveUp) { setChip('ready'); syncBanner('ready'); return; }
+		// A countdown wears the ready chip -- there is no separate chip art for it,
+		// and the banner beneath is where the seconds are said.
+		if (counting()) { setChip('ready'); syncBanner('soon'); return; }
 		var st = busy() ? 'busy' : 'ready';
 		setChip(st);
 		syncBanner(st);
@@ -274,6 +468,7 @@
 		go.addEventListener('click', function () {
 			if (stuck) { repair('stuck worker: cache clear + reload'); return; }
 			if (stale) { force(); return; }
+			if (counting()) stopCount();
 			apply(true);
 		});
 		var x = document.createElement('button');
@@ -281,6 +476,9 @@
 		x.type = 'button';
 		x.textContent = '×';
 		x.addEventListener('click', function () {
+			// Mid-countdown this button is Cancel, not Dismiss: it defers the reload
+			// rather than merely hiding the word about it.
+			if (counting()) { cancelCount(); hideBanner(); return; }
 			if (stuck) stuckDismissed = true; else dismissedFor = pending;
 			hideBanner();
 		});
@@ -299,7 +497,7 @@
 	/// gateway has refused the tab); hidden otherwise -- including `busy`, where a
 	/// reload would be wrong and the amber chip already says "waiting on this turn".
 	function syncBanner(state) {
-		var want = state === 'ready' || state === 'stale' || state === 'stuck';
+		var want = state === 'ready' || state === 'stale' || state === 'stuck' || state === 'soon';
 		// A dismissal silences only the ready banner, and only for the build that
 		// was pending when it was waved away. Stale is not dismissible: ignoring
 		// the gateway's refusal is not a state the app can keep working in. Stuck is
@@ -309,6 +507,20 @@
 		if (state === 'stuck' && stuckDismissed) want = false;
 		if (!want) { hideBanner(); return; }
 		if (!banner) buildBanner();
+		// The countdown: what is about to happen, when, and the two ways to change
+		// it. Said in the banner because the chip's whole message lives in a `title`
+		// nobody hovers -- the reason the banner exists at all, above.
+		if (state === 'soon') {
+			banner.msg.textContent = t('update.ready') + ' — ' + t('update.reloading_in', { s: countLeft });
+			banner.go.textContent  = t('update.reload_now');
+			banner.x.textContent   = t('update.cancel');
+			banner.x.setAttribute('aria-label', t('update.cancel'));
+			banner.x.hidden = false;
+			banner.el.dataset.state = 'soon';
+			banner.el.hidden = false;
+			return;
+		}
+		banner.x.textContent = '×';
 		// The user line is deliberately note-free: `note` carries the deploy's
 		// TRANSPARENCY-CHAIN summary (a developer commit subject), which is not
 		// user-facing copy and read as garbage in a popup. See `onFound`.
@@ -325,17 +537,44 @@
 	}
 
 	function onFound(j) {
-		if (!j || j.build === booted || j.build === pending) return;
+		if (!j || !looksLikeBuild(j.build) || j.build === booted || j.build === pending) return;
 		pending = j.build;
 		note = typeof j.note === 'string' ? j.note : '';
+		// A NEW build starts the patience over: whatever made the tab unsafe for
+		// half an hour, this is a different update and deserves its own half hour.
+		gaveUp      = false;
+		unsafeSince = 0;
+		share('update', { live: pending, mine: booted, at: 'ready' });
 		reflect();
-		apply(false);                             // try now; may simply wait for a hidden moment
+		apply(false);                             // arm the watch; it waits for a safe moment
+	}
+
+	/// One stamp read, with the feed told only when there is something to say --
+	/// the id moved, or the read failed. A check that confirms what the tab already
+	/// knows is the overwhelmingly common case, and reporting it would bury the two
+	/// that matter.
+	function checkStamp() {
+		return readStamp().then(function (j) {
+			if (!j) share('update.check', { live: null, mine: booted, status: 'fail' });
+			else if (booted && j.build !== booted) {
+				share('update.check', { live: j.build, mine: booted, status: 'differs' });
+			}
+			return j;
+		});
 	}
 
 	/// One check. Once an update is known, stop asking and just watch for a safe moment to apply.
 	function poll() {
 		if (pending) { apply(false); return; }
-		readStamp().then(onFound);
+		checkStamp().then(onFound);
+	}
+
+	/// The poll, spread out. Every tab in a fleet hears of a deploy within the same
+	/// couple of minutes and would otherwise re-read the stamp in lockstep for as
+	/// long as they stay open.
+	function schedulePoll() {
+		var wait = POLL_MS + Math.floor(Math.random() * (POLL_MS / 4));
+		setTimeout(function () { poll(); schedulePoll(); }, wait);
 	}
 
 	/// The gateway has refused this tab as too old (426, or it advertised a floor above our version).
@@ -549,12 +788,15 @@
 		document.addEventListener('keydown', bump, true);
 		document.addEventListener('pointerdown', bump, true);
 
-		setInterval(poll, POLL_MS);
+		schedulePoll();
 		document.addEventListener('visibilitychange', function () {
 			if (!document.hidden) poll();         // shown: re-check, and reflect any pending state
 			else if (pending) apply(false);       // hidden: the ideal moment to apply invisibly
 		});
 		window.addEventListener('focus', poll);
+		// A tab that was offline when the deploy landed learns of it the moment the
+		// connection comes back, rather than up to two minutes later.
+		window.addEventListener('online', poll);
 		// When a turn ends the app is idle again; a deferred update can go, and the chip settles.
 		window.addEventListener('daimond:idle', function () {
 			// THROUGH `force`, not `apply(true)`. This line used to force a reload
@@ -578,10 +820,22 @@
 	window.DaimondUpdater = {
 		pending: function () { return pending; },
 		booted:  function () { return booted; },
+		/// Seconds left on an automatic reload's countdown, or 0 when none is running.
+		countdown: function () { return countLeft; },
+		/// Has the watch given up on ever finding a safe moment for this build?
+		gaveUp:  function () { return gaveUp; },
+		/// Everything an automatic reload must not land on top of, as one answer.
+		safe:    safeNow,
+		noteLiveBuild: noteLiveBuild,
 		/// Is this device stuck on an old build a reload will not shift? True once a
 		/// couple of reloads in a row have failed to advance under a controlling worker.
 		stuck:   function () { return stuck; },
 		check:   poll,
 		repair:  repair,
 	};
+
+	/// The name the wake channel will reach for when the gateway starts pushing the
+	/// live build id. One seam, so that change lands in the gateway and in `sync.js`
+	/// without touching this file.
+	window.DaimondUpdate = { noteLiveBuild: noteLiveBuild };
 })();

@@ -171,6 +171,20 @@
 .update-banner-x:hover { background: var(--bg-hover); color: var(--text-primary); }
 .update-banner-x[hidden] { display: none; }
 
+/* Counting down to an automatic reload. The dismiss button carries a WORD here
+   ("Not now") rather than a cross, because it defers the reload rather than
+   merely hiding the sentence about it -- so it is given room and a border, and
+   is not the 26px square a cross needs. */
+.update-banner[data-state="soon"] .update-banner-x {
+	width: auto;
+	height: auto;
+	padding: 6px 12px;
+	border: 1px solid var(--border);
+	font-size: 13px;
+	line-height: 1.2;
+	color: var(--text-primary);
+}
+
 @media (prefers-reduced-motion: no-preference) {
 	.update-banner { animation: update-banner-in 0.28s ease-out; }
 }
