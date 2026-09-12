@@ -123,6 +123,14 @@ pub struct Agent {
     /// agent's prompt at all -- it is what a DIFFERENT, tool-less model is told when the
     /// conversation is folded.  Shared on clone for the same reason [`Interjections`] is.
     pub fold_prompt:     Rc<RefCell<String>>,
+    /// How many of the session's messages predate the turn in flight.
+    ///
+    /// The boundary [`compact::retire_upto`] is given.  Recorded rather than worked out from the
+    /// conversation, because the one structural clue -- the last user message -- is also what an
+    /// INTERJECTION is, and taking that as the boundary mid-turn would retire the results of the
+    /// very turn it interrupted.  Not shared on clone: it belongs to whichever agent is running
+    /// the turn.
+    prior_end:           Cell<usize>,
     // How the last turn ended.  Shared on clone rather than copied, exactly as the
     // interjection queue is: the page holds a clone of the agent and has to be able to read
     // the ending of the turn it just watched, which a detached cell would not carry.  Written
@@ -153,12 +161,21 @@ pub enum Fold {
 	/// The user pressed Fold.  Fold regardless of the estimate, and learn nothing about
 	/// the window from it.
 	ByHand,
+	/// The turn hit its round limit.  Fold regardless of the estimate -- the next turn is about
+	/// to re-send this whole log -- and learn nothing about the window, because nothing was
+	/// refused.
+	Capped,
 }
 
 impl Fold {
 	/// Should the estimate be overridden and the conversation folded anyway?
 	fn forces(self) -> bool {
 		!matches!(self, Self::IfNeeded)
+	}
+
+	/// Is this the fold that runs because a turn was stopped at its round limit?
+	pub fn at_the_cap(self) -> bool {
+		matches!(self, Self::Capped)
 	}
 
 	/// Does this fold carry news about how big the window really is?
@@ -323,6 +340,7 @@ impl Agent {
             limits:          Rc::new(RefCell::new(Limits::default())),
             gauge:           Rc::new(Gauge::default()),
             fold_prompt:     Rc::new(RefCell::new(String::new())),
+            prior_end:       Cell::new(0),
             ending:          Rc::new(RefCell::new(None)),
         }
     }
@@ -428,6 +446,23 @@ impl Agent {
         }
     }
 
+    /// Set the most context any one round of this agent's turns may carry, in tokens.
+    ///
+    /// The ceiling `fold_at`'s fraction is held under; see [`compact::ABSOLUTE_CAP`].  Held inside
+    /// [`compact::CONTEXT_CAP_MIN`]..[`compact::CONTEXT_CAP_MAX`] here rather than only in
+    /// [`compact::Limits::budget`], for the reason [`Agent::set_fold_at`] gives: a control drawn
+    /// from the getter must show the figure the arithmetic used.
+    ///
+    /// # Arguments
+    /// * `tokens` - The ceiling; zero restores the shipped default.
+    pub fn set_context_cap(&self, tokens: u64) {
+        self.limits.borrow_mut().context_cap = if tokens == 0 {
+            compact::ABSOLUTE_CAP
+        } else {
+            tokens.clamp(compact::CONTEXT_CAP_MIN, compact::CONTEXT_CAP_MAX)
+        };
+    }
+
     /// Set the fraction of the window at which this agent folds.
     ///
     /// Held inside [`compact::FOLD_AT_MIN`]..[`compact::FOLD_AT_MAX`] here rather than only in
@@ -508,6 +543,10 @@ impl Agent {
         // the user at rest, between turns, pressing a button.
         let mut working = vec![ChatMessage::system(self.system_prompt.clone())];
         working.extend(session.messages.iter().cloned());
+        // WHAT COUNTS AS PRIOR, for a fold with no turn behind it.  The last thing the user said
+        // is still the boundary: a reader pressing Fold has just been answered and may ask about
+        // that answer next, so the newest turn keeps its results and everything older is retired.
+        self.prior_end.set(compact::prior_end(&session.messages));
         self.fold_if_needed(session, &mut working, 0, Fold::ByHand, on_event).await
     }
 
@@ -641,7 +680,23 @@ impl Agent {
             }
             working.push(ChatMessage::system(sys));
         }
-        working.extend(session.messages.iter().cloned());
+        // RETIRED ON THE WAY OUT, and this is the seam.  Everything before the sentence just
+        // pushed belongs to a turn that has ENDED: its tool results have been read and acted on,
+        // and its file writes are on disk.  Carried whole they are re-sent on every one of this
+        // turn's rounds -- a hundred and fifty of them, at the cached-input rate, which is how a
+        // turn came to cost five dollars without any single request ever being too big.
+        //
+        // On the COPY, never on `session.messages`: the owner's ruling is that the model gets the
+        // shortened version and his transcript keeps every word.  See `compact::retire_upto` and
+        // the note at the elision in `fold_if_needed`, which is the same rule at a later seam.
+        //
+        // The boundary is recorded because a fold may rebuild `working` from the session later in
+        // the turn, and that rebuild has to retire the same prefix rather than work it out again
+        // from a conversation an interjection has since added a user message to.
+        self.prior_end.set(session.messages.len().saturating_sub(1));	// the sentence just pushed
+        let mut prior = session.messages.clone();
+        compact::retire_upto(&mut prior, self.prior_end.get());
+        working.extend(prior);
 
         if registry.is_empty() {
             return self.run_streaming(session, working, on_event).await;
@@ -946,12 +1001,31 @@ impl Agent {
         // slip back into working out what happened by reading what the model said about it.
         let mut claims = Claims::default();
         let mut rounds = 0usize;
+        // WHERE EACH ROUND STARTED IN `working`, so "three rounds old" is a position rather than a
+        // guess.  Cleared whenever a fold rebuilds the list, because a fold moves every index in
+        // it and a stale mark would retire the wrong messages -- the newest ones.
+        let mut round_at: Vec<usize> = Vec::new();
         for _ in 0..max_rounds {
             rounds += 1;
             // Fold before the request rather than after the refusal. Checked every round,
             // because a single turn of fifty file reads can outgrow the window on its own,
             // without any earlier turn being large at all.
-            self.fold_if_needed(session, &mut working, schema, Fold::IfNeeded, on_event).await;
+            if self.fold_if_needed(session, &mut working, schema, Fold::IfNeeded, on_event).await {
+                round_at.clear();
+            }
+            round_at.push(working.len());
+            // THE WRITE BODIES THIS TURN HAS ALREADY FINISHED WITH.  A `file_write` carries the
+            // whole of a file in its ARGUMENTS, and nothing aged them: `elide_bulk` clips a tool
+            // RESULT and leaves `tool_calls` untouched, so a turn that wrote twenty files carried
+            // twenty files in every round after the last of them.  The result has come back, so
+            // the write has happened and the file can be read again.
+            //
+            // In batches rather than every round; see `compact::IN_TURN_RETIRE_EVERY`.
+            let swept = round_at.len();
+            if swept > compact::IN_TURN_RETIRE_AGE && swept % compact::IN_TURN_RETIRE_EVERY == 0 {
+                let horizon = round_at[swept - 1 - compact::IN_TURN_RETIRE_AGE];
+                compact::retire_written(&mut working, horizon);
+            }
             let mut sent = compact::conversation_bytes(&working, &self.llm.open_folds());
 
             // Stream this round's assistant text as it arrives; the tool
@@ -1266,6 +1340,18 @@ impl Agent {
         // record, a turn that gave up. The boundary belongs to the app, so it is said in
         // the app's voice, and it says the work may be unfinished rather than that it is
         // over.
+        // FOLDED BEFORE THE TURN IS HANDED BACK, and this is the one place a fold pays for
+        // itself twice.  A capped turn is by definition the longest this conversation has had --
+        // a hundred and fifty rounds of tool calls -- and the note below invites the user to
+        // carry on, so the NEXT turn opens by re-sending every one of those rounds, and then
+        // re-sends them again on each of its own hundred and fifty. Folding here is one summary
+        // against a hundred and fifty carries of a log nobody is going to read again.
+        //
+        // `Capped` rather than `IfNeeded`: the estimate is precisely what did not fire for the
+        // whole of this turn -- the prompt sat just under the ceiling, which is how a turn reaches
+        // the round limit at all -- so a fold that waited for it would not happen here either.
+        // And not `Refused`, because nothing was refused: see `Fold::teaches_window`.
+        self.fold_if_needed(session, &mut working, schema, Fold::Capped, on_event).await;
         let msg = fmt!("Reached the tool-call round limit ({}).", max_rounds);
         on_event(AgentEvent::Error(msg.clone()));
         session.messages.push(compact::round_limit_note(max_rounds));
@@ -1410,6 +1496,12 @@ impl Agent {
                     if compact::conversation_bytes(&new, &open) < before {
                         session.messages = new;
                         folded = cut;
+                        // AND THE BOUNDARY COMES WITH IT. A fold renumbers the conversation, so
+                        // the index recorded at the top of the turn now names a different message
+                        // -- a later one, because the list got shorter, which is the turn in
+                        // flight. See `compact::prior_end_after_fold`.
+                        self.prior_end.set(compact::prior_end_after_fold(
+                            self.prior_end.get(), cut));
                     }
                 },
                 // Refused rather than allowed to orphan a tool call. Eliding below still
@@ -1438,6 +1530,10 @@ impl Agent {
         // stubs, which is a second silent loss standing behind the first. Nothing clips that
         // list now, so there is no arrangement of turns in which it can happen.
         let mut sent = session.messages.clone();
+        // AND THE PRIOR TURNS STAY RETIRED.  `sent` is rebuilt from the whole record, so without
+        // this a fold would hand the model back every byte `run_turn` had just retired -- and the
+        // prompt it produced would be over the budget the fold was called to get under.
+        compact::retire_upto(&mut sent, self.prior_end.get().min(session.messages.len()));
         let mut elided = compact::elide_bulk(&mut sent, ceiling,
             compact::MIN_KEEP_MESSAGES, &open);
         elided += compact::elide_bulk(&mut sent, ceiling, 1, &open);
@@ -1983,6 +2079,143 @@ mod tests {
         let moved = a.fold_by_hand(&mut s, &mut sink).await;
         assert!(!moved, "a two-message conversation reported a fold");
         assert_eq!(s.messages.len(), 1, "the one message was folded away");
+    }
+
+    #[test]
+    fn test_the_round_cap_forces_a_fold_and_teaches_nothing_00() {
+        // The estimate is exactly what did not fire for the whole of a capped turn -- the prompt
+        // sat just under the ceiling for a hundred and fifty rounds -- so a fold at the cap that
+        // consulted it would not happen either.  And nothing was refused, so it must not move the
+        // window: `learn_from_refusal` only ever moves it DOWN.
+        assert!(Fold::Capped.forces(), "a fold at the cap that consults the estimate is a no-op");
+        assert!(!Fold::Capped.teaches_window(), "a round limit was read as a provider refusal");
+        assert!(Fold::Capped.at_the_cap());
+        assert!(!Fold::ByHand.at_the_cap());
+    }
+
+    #[tokio::test]
+    async fn test_a_capped_turn_hands_the_next_one_a_folded_conversation_00() {
+        // THE CONTINUATION IS WHERE A CAPPED TURN COSTS ITS MONEY.  The note it ends with invites
+        // the user to carry on, so the next turn opens by re-sending every round of the longest
+        // turn the conversation has had -- and then re-sends it again on each of its own rounds.
+        //
+        // The window is the default one and the history is well under its budget, so NO fold can
+        // fire from the estimate: what is under test is the one at the cap, and a fold from any
+        // other cause would pass this test for the wrong reason.
+        let registry = one_tool();
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_context_window(131_072);
+        a.set_max_rounds(1);
+        let mut session = Session::new(fmt!("s1"), fmt!("capped"), fmt!("model"));
+        // 200,000 bytes of plain conversation: over the fold's TAIL budget, which is what a forced
+        // fold cuts against, and comfortably under the budget the estimate would fold at.
+        for i in 0..40 {
+            session.messages.push(ChatMessage::user(fmt!("step {}", i)));
+            session.messages.push(ChatMessage::Assistant {
+                content: MessageContent::text("x".repeat(5_000)), tool_calls: Vec::new(),
+            });
+        }
+        let held = session.messages.len();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("carry on"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        assert_eq!(Some(TurnEnd::Capped), a.ending().map(|e| e.how),
+            "the turn did not end at the round limit, so nothing here is about the cap");
+        // The conversation the NEXT turn will send: folded, and the round-limit note last.
+        assert!(session.messages.len() < held,
+            "the session still holds {} messages of {}, so nothing was folded at the cap",
+            session.messages.len(), held);
+        let folded = session.messages.iter()
+            .position(|m| m.text().contains("folded the earlier part of this conversation"));
+        let at = match folded {
+            Some(i) => i,
+            None    => panic!("no fold notice in a conversation of {} messages",
+                session.messages.len()),
+        };
+        assert!(at < session.messages.len() - 1,
+            "the notice is the last thing in the conversation, so the note was folded away");
+        assert!(session.messages.last().map(|m| m.text().contains("round")).unwrap_or(false),
+            "the round-limit note is not where the next turn will read it");
+        // AND IN THAT ORDER.  The fold has to happen before the turn is handed back, or the next
+        // turn opens on the unfolded log whatever the session ends up holding.
+        let fold_at  = events.iter().position(|e| matches!(e, AgentEvent::Compacted { .. }));
+        let limit_at = events.iter().position(|e| match e {
+            AgentEvent::Error(m) => m.contains("round limit"),
+            _ => false,
+        });
+        match (fold_at, limit_at) {
+            (Some(f), Some(l)) => assert!(f < l,
+                "the fold was announced after the limit was: {:?}", events),
+            other => panic!("a capped turn announced {:?} of the two", other),
+        }
+    }
+
+    #[test]
+    fn test_the_context_ceiling_is_settable_and_held_in_its_band_00() {
+        // The third of the three figures that decide what a turn carries, and the only one the
+        // owner could not see: `fold_at` is a FRACTION, so on a large window it folds near a large
+        // number, and this is the ceiling it is held under.
+        let a = make_test_agent();
+        assert_eq!(compact::ABSOLUTE_CAP, a.limits().context_cap);
+        a.set_context_cap(60_000);
+        assert_eq!(60_000, a.limits().context_cap);
+        // Zero restores the shipped figure, as it does for `fold_at` -- that is how "the user has
+        // not chosen" travels from the page.
+        a.set_context_cap(0);
+        assert_eq!(compact::ABSOLUTE_CAP, a.limits().context_cap);
+        // Held at the band HERE and not only in `budget`, so a control drawn from the getter shows
+        // the figure the arithmetic used.
+        a.set_context_cap(1);
+        assert_eq!(compact::CONTEXT_CAP_MIN, a.limits().context_cap);
+        a.set_context_cap(u64::MAX);
+        assert_eq!(compact::CONTEXT_CAP_MAX, a.limits().context_cap);
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_sends_a_retired_history_and_stores_a_whole_one_00() {
+        // The owner's ruling, at the new seam: the model gets the shortened version and his
+        // transcript keeps every word.  `elide_bulk` already obeyed it; retirement runs on every
+        // turn rather than only on an oversized one, so it is the seam that would do the damage.
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(vec![plain_answer()]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        let mut session = Session::new(fmt!("s1"), fmt!("retire"), fmt!("model"));
+        let body = "source line\n".repeat(2_000);
+        session.messages.push(ChatMessage::user("read it"));
+        session.messages.push(ChatMessage::Assistant {
+            content:    MessageContent::text(""),
+            tool_calls: vec![crate::protocol::ToolCall {
+                id: fmt!("r1"), name: fmt!("file_read"),
+                arguments: fmt!(r#"{{"path":"src/a.rs","offset":1,"end":200}}"#),
+            }],
+        });
+        session.messages.push(ChatMessage::tool(fmt!("r1"), body.clone()));
+        session.messages.push(ChatMessage::assistant("I have read it."));
+        let _ = a.run_turn(&mut session, fmt!("now change it"), &registry, &mut |_| {}).await;
+
+        // THE RECORD. Every byte of the read is still in the user's own transcript.
+        assert!(session.messages.iter().any(|m| m.text().len() >= body.len()),
+            "the stored conversation was shortened: {:?}",
+            session.messages.iter().map(|m| m.text().len()).collect::<Vec<_>>());
+        // THE REQUEST. The body did not go out, and what went in its place names the call.
+        let bodies = match seen.lock() {
+            Ok(g)  => g.bodies.clone(),
+            Err(e) => panic!("the stub's record: {}", e),
+        };
+        assert!(!bodies.is_empty(), "no request reached the provider");
+        let sent = bodies.join("\n");
+        assert!(!sent.contains("source line\\nsource line"),
+            "a finished turn's file read was re-sent whole");
+        assert!(sent.contains("file_read src/a.rs 1-200"),
+            "the retired result does not name the call that made it");
     }
 
     /// What the compactor is told when the user has not said otherwise.

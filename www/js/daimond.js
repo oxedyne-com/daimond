@@ -302,7 +302,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// wrapped `pushTokenEnc` is the only form that reaches storage. See `saveCfg`.
 		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0,
 			crystalKb: 0, crystalPageKb: 0, tools: true,
-			foldModel: '', foldProvider: '', foldAt: 0,
+			foldModel: '', foldProvider: '', foldAt: 0, contextCap: 0,
 			// Whether a chat tile shows the first thing you said in it.
 			//
 			// ON, and it is the one default here worth arguing. Chats have no
@@ -354,6 +354,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// what `set_fold_at` already does with a zero -- so it is passed through
 				// rather than special-cased here.
 				if (typeof j.foldAt === 'number') cfg.foldAt = j.foldAt;
+				// The ceiling `foldAt`'s fraction is held under, in TOKENS. Zero is the engine's
+				// own figure, as an absent field is -- the same rule `foldAt` travels by.
+				if (typeof j.contextCap === 'number') cfg.contextCap = j.contextCap;
 				// The push credential. The host and the user name it travels as are not
 				// secrets and are read as written; the token is only ever read WRAPPED,
 				// and a plaintext `pushToken` sitting in the stored blob -- which nothing
@@ -427,6 +430,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			foldModel:    c.foldModel || '',
 			foldProvider: c.foldProvider || '',
 			foldAt:       c.foldAt || 0,
+			contextCap:   c.contextCap || 0,
 			// Written on every save, not only by the push panel: this function
 			// rebuilds the stored object from scratch, so a field it does not know
 			// about is a field the next unrelated save DELETES.
@@ -2897,6 +2901,39 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 	}
 
+	/// Keep the head and tail of a worker's FINAL ANSWER, byte-safe, for the report handed
+	/// back to the daimon that dispatched it -- see `gather`. Bytes, not characters: the
+	/// cap is a wire-size promise (~8 KB), and a character count would let one emoji-heavy
+	/// paragraph blow it. Never corrupts a multi-byte character split by the cut --
+	/// `TextDecoder` with `fatal: false` turns an incomplete trailing sequence into one
+	/// U+FFFD rather than invalid bytes or a thrown error.
+	function capReportBytes(text, head, tail) {
+		var enc = new TextEncoder();
+		var bytes = enc.encode(text || '');
+		if (bytes.length <= head + tail) {
+			return { text: text || '', rawBytes: bytes.length, sentBytes: bytes.length };
+		}
+		var dec = new TextDecoder('utf-8', { fatal: false });
+		var headText = dec.decode(bytes.subarray(0, head));
+		var tailText = dec.decode(bytes.subarray(bytes.length - tail));
+		var out = headText + '\n\n[… ' + withCommas(bytes.length - head - tail) + ' bytes elided …]\n\n' + tailText;
+		return { text: out, rawBytes: bytes.length, sentBytes: enc.encode(out).length };
+	}
+
+	/// The debug feed's word for how a turn ended, from the engine's own `TurnEnd::wire()`
+	/// value (`answered`/`stopped`/`capped`/`silent`/`failed` -- src/agent.rs). Collapsed to
+	/// the four the feed distinguishes: a round-limited turn is the one operationally
+	/// distinct case a reader chasing the prompt-token-carry cost needs to see apart from an
+	/// ordinary `done`.
+	function endedHow(w) {
+		switch (w) {
+			case 'stopped': return 'stopped';
+			case 'capped':  return 'round_limit';
+			case 'failed':  return 'error';
+			default:        return 'done';		// answered | silent
+		}
+	}
+
 	/// Keep the head and tail of a long log body, replacing the middle with a marker that
 	/// says how much went. Neutral wording, because unlike a tool result an error dump was
 	/// not necessarily handed to the model.
@@ -3644,8 +3681,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// This device's own line, refreshed. Its `seen` only moves once it is stale
-	/// enough to be worth moving (see SEEN_REFRESH_MS), so a collect that changes
-	/// nothing else changes nothing here either.
+	/// enough to be worth moving (see SEEN_REFRESH_MS), and the push-skip masks it
+	/// out besides (`compareKey` in sync.js), so a collect that changes nothing else
+	/// changes nothing the wire can see.
 	function touchSelfDevice(reg) {
 		var id = deviceId(), now = Date.now(), me = reg[id];
 		var mine = '';
@@ -3705,8 +3743,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// The roster as it goes into the parcel, and as the drawer draws it: this
 	/// device's line refreshed, the rest exactly as they were merged.
+	///
+	/// WHO SENT IT, marked on the one line that can say so. A receiver has to know
+	/// which device a parcel came from to record that device's chunk refs under
+	/// its own slot (`notePeerRef`), and nothing else in the parcel says: every
+	/// section is a merged account fact, and `seen` only moves once it is stale,
+	/// so "the freshest line" is not the sender. `deviceEntry` is a whitelist, so
+	/// the mark is dropped by `mergeDevices` and by `saveDevices` -- it exists
+	/// only in the copy that travels, can never persist in a stored roster, and is
+	/// deterministic, so the push-skip comparison still holds.
 	function collectDevices() {
-		return saveDevices(touchSelfDevice(loadDevices()));
+		var out = saveDevices(touchSelfDevice(loadDevices()));
+		var me = deviceId();
+		if (out[me]) {
+			var mine = {}, k;
+			for (k in out[me]) { if (Object.prototype.hasOwnProperty.call(out[me], k)) mine[k] = out[me][k]; }
+			mine.self = 1;				// last, so the field order stays fixed.
+			out[me] = mine;
+		}
+		return out;
 	}
 
 	/// Merge a roster that arrived from another device.
@@ -4026,11 +4081,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	//
 	// 5 MiB rather than that 6 MiB, and the margin is not caution. FIRST, this bounds
 	// only the sections spent against it below -- the inline files, the Diamonds and
-	// (since 2026-09-06) the inline chat transcripts, which have their own
-	// SYNC_CHATS_INLINE_MAX. The mailboxes, the model tables, the device list, the
+	// the inline chat transcripts. All THREE spend from this one budget now: the
+	// transcripts had SYNC_CHATS_INLINE_MAX to themselves until 2026-09-12, counted
+	// nowhere else, so the arithmetic here was 5 MiB plus 2 MiB and the sections could
+	// sum past the front door between them while each read as inside its own ceiling.
+	// The mailboxes, the model tables, the device list, the
 	// LEDGER (one entry per turn, forever) and the chunk manifest still ride outside
 	// it and are capped by nothing -- the ledger is the one of those that grows
-	// without bound and is the next to watch. SECOND, every byte
+	// without bound and is the next to watch. What they cannot now do is go unnoticed:
+	// sync.js weighs the whole body before the push and refuses one over the door,
+	// naming every section's bytes. SECOND, every byte
 	// counted against it is counted with `String.length`, which is UTF-16 code units,
 	// and the wire carries UTF-8: a parcel of Japanese transcripts weighs half again
 	// as much on the wire as it does here. A ceiling set at the arithmetic maximum is
@@ -4091,12 +4151,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// a 413 (measured 2026-09-06: 200 chats of 30 KiB made 6.2 MiB of a 6.9 MiB
 	// parcel, over Steel's 8 MiB front door once base64-wrapped). Files and Diamonds
 	// are budgeted against the parcel this way in collectSync; chats were the
-	// section that escaped it. Two against a parcel of five leaves room for the
-	// files, the Diamonds and the sections that ride uncapped beside them; the
-	// freshest chats -- the dispatched turn's own among them -- stay inline, and the
-	// tail becomes `messagesRef` chunks the other device hydrates on demand. Without
-	// a reachable chunk store there is nowhere to move them, so the budget cannot
-	// bind and the too-large chip (sync.js showTooLarge) stays the honest end state.
+	// section that escaped it. The freshest chats -- the dispatched turn's own among
+	// them -- stay inline, and the tail becomes `messagesRef` chunks the other device
+	// hydrates on demand. Without a reachable chunk store there is nowhere to move
+	// them, so the budget cannot bind and the too-large refusal (sync.js) stays the
+	// honest end state.
+	//
+	// NO LONGER A BUDGET OF ITS OWN. This was spent here and counted nowhere else, so
+	// the parcel's real arithmetic was SYNC_PARCEL_MAX + this -- and the three inline
+	// sections could sum past Steel's 8 MiB front door while each read as inside its
+	// own ceiling, which is exactly how a phone's parcel reached ~8.09 MB of body with
+	// nothing over budget. `collectSync` now hands `collectChatsRefs` what is LEFT of
+	// the parcel after the files and the Diamonds, and this stays as the fairness
+	// clamp between the chats and the sections that ride uncapped beside them: two of
+	// five, so a heavy chat store cannot take the whole remainder either.
 	var SYNC_CHATS_INLINE_MAX = 2 * 1024 * 1024;
 	var SYNC_FILEBASE_KEY    = 'daimond-sync-filebase';
 	// The fork point is one `path -> hash` entry per file both devices agree on, and
@@ -4533,7 +4601,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///   preserves the loser as `.synced` -- could never run at all.
 	async function applyChunked(remoteChunked, base) {
 		if (!window.DaimondCloud || !filesSyncable()) return;
-		DaimondCloud.merge(remoteChunked, base || {});
+		// This device's roster id goes through so the merge can refuse a peer's
+		// record of OUR OWN addresses: our manifest is the authority on those, and a
+		// second-hand copy would name whatever we uploaded before our last change.
+		DaimondCloud.merge(remoteChunked, base || {}, deviceId());
 		await DaimondCloud.refreshPaths();
 	}
 
@@ -4676,9 +4747,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Every Diamond this device holds that fits, packed for the parcel: the id,
 	/// both stamps, the whole directory, and which model it thinks with.
 	///
-	/// `{ list, left, complete }`. `left` names the Diamonds this parcel could not
-	/// carry, so the caller can say so; `complete` is false when anything at all was
-	/// missed, including a Diamond that would not export.
+	/// `{ list, left, complete, held, bytes }`. `left` names the Diamonds this parcel
+	/// could not carry, so the caller can say so; `complete` is false when anything at
+	/// all was missed, including a Diamond that would not export; `bytes` is what the
+	/// section actually spent of the parcel -- inline payloads and references both --
+	/// so the sections collected AFTER this one can be budgeted against what is left
+	/// rather than against a budget of their own (see `collectSync`).
 	///
 	/// WHY THERE IS A BUDGET AT ALL. A Diamond carries its crystal, every version of
 	/// it, its log and its sidecars, and the whole store rides in one array with
@@ -4706,7 +4780,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `budget` - The most exported bytes the Diamonds may take of this parcel.
 	async function collectDiamonds(budget, plan) {
 		trail('sync collect', 'budget ' + Math.round(budget / 1024) + ' kB');
-		var out = { list: [], left: [], complete: true };
+		var out = { list: [], left: [], complete: true, bytes: 0 };
 		// The store is walked, sorted and sized ONCE per parcel by `planDiamonds`, and
 		// the plan is handed in — so the reference room reserved out of the parcel BEFORE
 		// the files spent against it (see `collectSync`) is measured from the very same
@@ -4910,6 +4984,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			out.held += out.left.length;
 			out.left = [];
 		}
+		out.bytes = used;
 		trail('sync collected', out.list.length + ' of ' + held.length
 			+ ', ' + Math.round(used / 1024) + ' kB, ' + out.left.length + ' left behind, '
 			+ out.held + ' held for offload');
@@ -5143,7 +5218,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// older copy of, is replaced wholesale; and where the two copies are equally
 	/// fresh, their tags and their links are unioned rather than one side's
 	/// being dropped.
-	async function applyDiamonds(remote) {
+	async function applyDiamonds(remote, from) {
 		var tombs = mergeTombMap(DIAMOND_TOMBS_KEY, remote.diamondTombs);
 		var incoming = Array.isArray(remote.diamonds) ? remote.diamonds : [];
 		var deletions = Object.keys(tombs);
@@ -5183,6 +5258,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// receiver reaching a v3-only entry drops it here rather than
 			// corrupting anything, and it lands when the Diamond next updates.
 			if (!r || !r.id || (r.data == null && !r.dataRef) || tombs[r.id]) continue;
+			// NAME THE SENDER'S CHUNKS FOR EVERY DIAMOND IT CARRIES, whichever way the
+			// stamps fall. A Diamond had no peer mechanism at all: the sender's manifest
+			// was adopted only where this device IMPORTED (below), so three devices
+			// holding an equal-stamp Diamond held three address sets and the committer
+			// named one. The other two were swept on every commit and re-uploaded at up
+			// to about 1.2 MB each on the round after -- and every device re-fetched the
+			// same bytes on the pull after that.
+			//
+			// A STRICTLY OLDER copy counts as much as an equal one: the sender's parcel
+			// still references those chunks, so they must live until it has pulled ours
+			// and adopted our addresses. An entry carrying its export INLINE references
+			// no chunk, and the note then prunes the slot.
+			var dref = (r.dataRef && Array.isArray(r.dataRef.chunks) && r.dataRef.chunks.length)
+				? r.dataRef : null;
+			notePeerRef('@d/' + r.id, dref, false, from);
 			var mine = local[r.id];
 			// STRICTLY newer: equal stamps keep what is here, so a Diamond that
 			// has not moved is not rewritten on every pull.
@@ -5248,6 +5338,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						chunks:  r.dataRef.chunks,
 						touched: diamondStamp(r),
 					});
+					// Our own manifest now names the sender's addresses exactly, so the
+					// peer slot beside it is a second record of one address set. Dropped,
+					// rather than left to prune itself on the next pull.
+					if (DaimondCloud.contentForget && DaimondCloud.peerKeyFor) {
+						DaimondCloud.contentForget(DaimondCloud.peerKeyFor('@d/' + r.id, from));
+					}
 				} catch (e) { /* the collector will re-offload; only efficiency is lost */ }
 			}
 			// Best effort: the model may be one this device has no key for, and
@@ -5276,7 +5372,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// devices would silently diverge. So the manifest is reused only when a
 	/// fingerprint of the serialised messages matches the one stored beside it —
 	/// `fileHash`, the same cheap fingerprint the file merge trusts.
-	async function collectChatsRefs() {
+	///
+	/// # Arguments
+	/// * `inlineBudget` - The most bytes of transcript that may ride INLINE in this
+	///   parcel. Defaults to the standalone `SYNC_CHATS_INLINE_MAX` for a caller not
+	///   packing a parcel; `collectSync` passes what is left of the parcel after the
+	///   files and the Diamonds, which is what stops the three inline sections summing
+	///   past the front door. Overflow offloads; nothing is dropped.
+	async function collectChatsRefs(inlineBudget) {
 		var chats = storedChats();
 		// `offloadAllowed` is in here for the same reason it is in the Diamond plan: a
 		// transcript uploaded by a device that cannot commit the index is a chunk
@@ -5309,6 +5412,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// collects of the same state pick the same inline set and the parcel stays
 		// the fixed point the push-skip needs. Off when nothing can be offloaded --
 		// the budget cannot bind with nowhere to move a transcript to.
+		//
+		// THE BUDGET IS WHAT IS LEFT OF THE PARCEL, not a separate allowance. It was
+		// SYNC_CHATS_INLINE_MAX flat, spent here and nowhere else, so the three inline
+		// sections were budgeted against 5 MiB + 2 MiB and could sum past the 8 MiB
+		// front door between them while each one read as inside its own ceiling.
+		var budget = (inlineBudget === undefined || inlineBudget === null)
+			? SYNC_CHATS_INLINE_MAX : Math.max(0, inlineBudget | 0);
 		var inline = {};
 		if (canOffload) {
 			var order = recs.slice().sort(function (a, b) {
@@ -5321,7 +5431,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var rec = order[r];
 				// A transcript over the per-chat threshold always offloads; a smaller
 				// one rides inline only while the budget still has room for it.
-				if (rec.len <= SYNC_FILE_MAX && spent + rec.len <= SYNC_CHATS_INLINE_MAX) {
+				if (rec.len <= SYNC_FILE_MAX && spent + rec.len <= budget) {
 					inline[rec.c.id] = 1;
 					spent += rec.len;
 				}
@@ -5390,11 +5500,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// dropping is half a fix and the re-offload is the other half: a path
 	/// resident in cloud storage alone has nothing here to offload, and forgetting
 	/// its manifest would only take away the reference. A `.synced` sidecar, an
-	/// `@m/` mail manifest and a `.peer` entry are left alone for that same
+	/// `@m/` mail manifest and a `.peer` slot are left alone for that same
 	/// reason -- no local content answers for any of them.
 	/// Which family a manifest key belongs to, for the census the log line carries.
 	function manifestKind(key) {
-		if (/\.peer$/.test(key))   return '.peer';
+		if (/\.peer(\.|$)/.test(key)) return '.peer';
 		if (/\.synced$/.test(key)) return '.synced';
 		var m = /^(@[dcm])\//.exec(key);
 		return m ? m[1] + '/' : 'file';
@@ -5440,7 +5550,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// line said whether that was a bug or the truth. Only what this device could
 	/// offload AGAIN is dropped: a chat or Diamond whose text is still here, or a
 	/// workspace file still on disk. An `@m/` mail manifest, a `.synced` sidecar,
-	/// a `.peer` entry and an item whose local copy is gone are NAMED and left
+	/// a `.peer` slot and an item whose local copy is gone are NAMED and left
 	/// alone -- dropping one would take away the last record of where its chunks
 	/// were and let the next commit sweep whatever of it the store still holds,
 	/// which is a worse answer than a standing line in the log.
@@ -5604,7 +5714,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// files took all the rest. The Diamonds reuse `plan` — the store is walked once.
 		var dCol = await collectDiamonds(
 			Math.max(0, Math.min(SYNC_DIAMONDS_MAX, SYNC_PARCEL_MAX - fileCol.bytes)), plan);
-		var chatsList = await collectChatsRefs();
+		// ONE BUDGET FOR THE THREE INLINE SECTIONS, and this is the last of them to
+		// spend it. The inline transcripts had SYNC_CHATS_INLINE_MAX to themselves,
+		// spent here and counted nowhere else, so the parcel's arithmetic was 5 MiB for
+		// the files and the Diamonds PLUS 2 MiB for the chats -- and the three could sum
+		// past Steel's 8 MiB front door between them while each read as comfortably
+		// inside its own ceiling. That is how a phone's parcel reached ~8.09 MB of body
+		// with no section over budget. So what the chats may take inline is what is LEFT
+		// of the parcel, and SYNC_CHATS_INLINE_MAX stays as the fairness clamp it was --
+		// the chats cannot take the whole remainder either.
+		//
+		// THE OVERFLOW TRAVELS. A transcript that no longer fits inline becomes a
+		// `messagesRef` chunk the far device hydrates on demand, which is the path a
+		// large transcript already took; nothing is dropped and nothing is shed. With no
+		// reachable chunk store `collectChatsRefs` cannot offload at all and carries
+		// every transcript inline regardless, and the too-large refusal (sync.js) is
+		// then the honest end state -- the same as before this.
+		var chatsCap = Math.max(0, Math.min(SYNC_CHATS_INLINE_MAX,
+			SYNC_PARCEL_MAX - fileCol.bytes - dCol.bytes));
+		var chatsList = await collectChatsRefs(chatsCap);
 		// RE-READ THE INDEX AFTER THE CONTENT COLLECTORS. `collectChunked` snapped
 		// the index before the Diamonds and chats wrote their `@d/`/`@c/` manifests
 		// into it, and the ONE commit in sync.js declares its live set from what
@@ -5672,8 +5800,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			                  ? DaimondHandMode.snapshotPolicy() : null,
 			// Which devices sync this account. Deterministic by construction — the
 			// ids are sorted and each line has a fixed field order — and this
-			// device's own stamp only moves when it is stale, so the parcel is the
-			// same bytes between real changes and the push skip still holds.
+			// device's own stamp only moves when it is stale AND is masked out of
+			// the push comparison besides (`compareKey`, sync.js), so the stamp alone
+			// can never put the parcel back on the wire.
 			devices:      collectDevices(),
 			// And which lines were taken off the list on purpose, so a removal on
 			// one device is not undone by the next parcel from the other.
@@ -5711,9 +5840,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		};
 	}
 
-	/// Record, beside our own manifest, the chunk addresses a PEER's parcel named
-	/// for this chat -- so the index this device commits NAMES them and the
-	/// gateway's sweep leaves them standing.
+	/// Record, beside our own manifest, the chunk addresses ONE PEER DEVICE's
+	/// parcel named for this chat or Diamond -- so the index this device commits
+	/// NAMES them and the gateway's sweep leaves them standing.
 	///
 	/// THE UNION IS A THIRD TRANSCRIPT. A device that merges a peer's messages
 	/// into a copy it already holds keeps neither side's manifest: it re-offloads
@@ -5725,28 +5854,41 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the divergence `dev/verify_contentoffload.mjs` names as invariant 3b's
 	/// residual; this closes the sweep half of it.
 	///
-	/// BOUNDED BY CONSTRUCTION. One entry per chat, holding exactly the refs the
-	/// LATEST pulled parcel carried for it and OUR OWN manifest does not already
-	/// name -- replaced on every pull, never appended to. Dropped when nothing is
-	/// left to add: the parcel carried no reference (the peer's transcript now
-	/// rides inline, or it dropped the chat), or the reference was adopted as our
-	/// own `@c/<id>`, or every address in it is one of ours already. That last
-	/// case is what makes a device's own parcel applied back to itself a no-op,
-	/// which the fixed point in `dev/verify_contentoffload.mjs` rests on. A chat
-	/// the parcel did not mention keeps whatever it has: silence in one parcel is
-	/// not the peer retracting anything.
+	/// A DIAMOND NEEDS IT TOO, and had no mechanism at all. `applyDiamonds` adopts
+	/// the sender's manifest only where it IMPORTS, so three devices holding an
+	/// equal-stamp Diamond held three address sets and the committer named one --
+	/// nine `@d` addresses swept on every commit, each re-uploaded at up to about
+	/// 1.2 MB and re-fetched by every device on the next pull. So `itemKey` is the
+	/// item's own content key, `@c/<id>` or `@d/<id>`, and one function answers
+	/// for both.
+	///
+	/// BOUNDED BY CONSTRUCTION. One entry per item PER DEVICE, holding exactly
+	/// the refs that device's LATEST parcel carried for it and OUR OWN manifest
+	/// does not already name -- replaced on every pull from that device, never
+	/// appended to. Dropped when nothing is left to add: the parcel carried no
+	/// reference (the peer's content now rides inline, or it dropped the item), or
+	/// the reference was adopted as our own, or every address in it is one of ours
+	/// already. That last case is what makes a device's own parcel applied back to
+	/// itself a no-op, which the fixed point in `dev/verify_contentoffload.mjs`
+	/// rests on. An item the parcel did not mention keeps whatever it has: silence
+	/// in one parcel is not the peer retracting anything, and in a topology where
+	/// a folder-mounted desktop pushes a partial census it is not even unusual.
+	///
+	/// A falsy `dev` writes the UNATTRIBUTED slot, which is what a parcel from a
+	/// device too old to say who it is still gets -- one slot per item, replaced
+	/// by whichever such device pulled last, exactly as this began.
 	///
 	/// ONLY THE ADDRESSES, deliberately. The record is never read back as a
 	/// manifest -- nothing materialises from it and no collector reuses it -- so
 	/// it carries what the commit needs and no more, and its `size` is the sum of
 	/// what it actually holds so the tier plan weighs it honestly.
-	function notePeerRef(chatId, ref, adoptedAsOwn) {
-		if (!chatId || !window.DaimondCloud || !DaimondCloud.peerKey) return;
-		var key = DaimondCloud.peerKey(chatId);
+	function notePeerRef(itemKey, ref, adoptedAsOwn, dev) {
+		if (!itemKey || !window.DaimondCloud || !DaimondCloud.peerKeyFor) return;
+		var key = DaimondCloud.peerKeyFor(itemKey, dev);
 		try {
 			var novel = [], bytes = 0;
 			if (ref && !adoptedAsOwn) {
-				var ours = {}, own = DaimondCloud.contentGet('@c/' + chatId);
+				var ours = {}, own = DaimondCloud.contentGet(itemKey);
 				((own && own.chunks) || []).forEach(function (c) { if (c && c.addr) ours[c.addr] = 1; });
 				(ref.chunks || []).forEach(function (c) {
 					if (!c || !c.addr || ours[c.addr]) return;
@@ -5758,13 +5900,50 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (DaimondCloud.contentForget) DaimondCloud.contentForget(key);
 				return;
 			}
+			// A SLOT THAT HAS NOT MOVED IS NOT REWRITTEN. `contentSet` serialises the
+			// whole index to localStorage, and this now runs once per chat AND once per
+			// Diamond on every pull -- a quiet round on a store of thirty Diamonds would
+			// otherwise write the index thirty times over for no change at all, on the
+			// phone that can least afford it. The steady state after convergence is
+			// exactly this case: the peer's parcel is a fixed point, so it carries the
+			// same addresses round after round.
+			var was = DaimondCloud.contentGet(key);
+			if (was && was.size === bytes && (was.chunks || []).length === novel.length
+				&& novel.every(function (c, i) { return was.chunks[i] && was.chunks[i].addr === c.addr; })) {
+				return;
+			}
 			DaimondCloud.contentSet(key, {
 				v:      ref.v,
 				size:   bytes,
 				chunks: novel,
 				peer:   true,		// declared live, never reused as a manifest.
+				dev:    dev || '',	// whose addresses these are, for the log and the eye.
 			});
 		} catch (e) { /* an index that would not write is retried next pull */ }
+	}
+
+	/// Which device SENT this parcel, or `''` when it does not say.
+	///
+	/// `collectDevices` marks the sender's own roster line on the way out, and
+	/// `deviceEntry` -- the whitelist every merged line goes through -- drops the
+	/// mark, so it can never persist in a stored roster or make a second device
+	/// read as this one. The roster id is the right one to key a peer slot by
+	/// (NOT `selfDeviceId`, which is identity.js's separate per-device id): it is
+	/// what `peerReap` judges a departure against.
+	///
+	/// Our OWN line is skipped, so a device applying its own parcel back to itself
+	/// -- which the fixed point does on every round -- never opens a slot keyed by
+	/// itself. An unmarked parcel reads as `''`, the unattributed slot.
+	function parcelSender(remote) {
+		var reg = (remote && remote.devices && typeof remote.devices === 'object') ? remote.devices : null;
+		if (!reg) return '';
+		var ids = Object.keys(reg), self = deviceId();
+		for (var i = 0; i < ids.length; i++) {
+			var id = ids[i];
+			if (id === self || !DEVICE_ID_RE.test(id)) continue;
+			if (reg[id] && typeof reg[id] === 'object' && reg[id].self) return id;
+		}
+		return '';
 	}
 
 	/// Merge the chats out of a pulled parcel. Tombstones union first so a
@@ -5772,7 +5951,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// by the same freshest-wins, union-the-transcript rule the cross-tab path
 	/// uses; then the in-memory array and the UI are reconciled without
 	/// disturbing a turn in flight.
-	async function applyChats(remote) {
+	async function applyChats(remote, from) {
 		// REFUSE RATHER THAN GUESS.
 		//
 		// The merge below reads "this device has no record under that id" as "the
@@ -5857,8 +6036,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Otherwise fetch, decode and parse this one, then let the bytes go.
 			// WHAT THE PARCEL CARRIED, read before the merge nulls it. A chat with
 			// no reference in THIS parcel is a chat whose peer no longer names any
-			// chunk for it, and `notePeerRef` drops the entry on that; a chat the
-			// parcel never mentioned at all is left alone, because silence in an
+			// chunk for it, and `notePeerRef` drops THAT DEVICE's slot on it; a chat
+			// the parcel never mentioned at all is left alone, because silence in an
 			// asymmetric topology is not a retraction.
 			var carried = (src.messagesRef && Array.isArray(src.messagesRef.chunks)
 				&& src.messagesRef.chunks.length) ? src.messagesRef : null;
@@ -5909,7 +6088,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				r.messagesRef = null;
 			}
-			notePeerRef(r.id, carried, adoptedAsOwn);
+			notePeerRef('@c/' + r.id, carried, adoptedAsOwn, from);
 			var st = byId[r.id];
 			if (!st) {
 				// A chat this device had NO record of. Adopted wholesale -- the
@@ -6013,6 +6192,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	async function applySync(remote) {
 		var failed = [];
 		if (!remote || typeof remote !== 'object') return { failed: ['parcel'] };
+		// WHOSE PARCEL THIS IS, read before the roster below merges the mark away.
+		// The chat and Diamond sections record this device's chunk refs under its
+		// own peer slot, so each pull replaces one device's refs and leaves the
+		// others standing; '' is a sender too old to say, and keeps the single
+		// unattributed slot this began as.
+		var from = parcelSender(remote);
 		/// Run one section, and NOTE a failure rather than let it out.
 		///
 		/// Both ends go into the durable trail. A section that reports its start
@@ -6051,13 +6236,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// reconcileRoster); a no-op when presence has not been fetched yet, so a
 			// background sync-only wake simply reconciles on a later round.
 			try { reconcileRoster(); } catch (e) { /* best-effort */ }
+			// AND THE PEER SLOTS FOLLOW THE ROSTER. A device taken off the list -- here
+			// or on the other machine, which is why this runs after the tombstones are
+			// merged -- cannot be holding anything alive, so the slots naming its
+			// addresses go with it. Without this the one way the per-device scheme could
+			// grow without bound is a fleet of retired machines. A removal made on THIS
+			// device takes effect on its next pull, which is every minute or two.
+			try {
+				if (window.DaimondCloud && DaimondCloud.peerReap) DaimondCloud.peerReap(loadDevices());
+			} catch (e) { /* best-effort: the next pull reaps */ }
 		});
 		// Read before any section runs: `applyFiles` commits a new fork point on its way
 		// out, so a later reader gets this round's own state rather than the one both
 		// devices last agreed on.
 		var cloudBase = readJson(SYNC_CLOUDBASE_KEY, {});
-		await section('chats',    function () { return applyChats(remote); });
-		await section('diamonds', function () { return applyDiamonds(remote); });
+		await section('chats',    function () { return applyChats(remote, from); });
+		await section('diamonds', function () { return applyDiamonds(remote, from); });
 		// EMPTYING THE TRASH HAS TO REACH THE TRASH STORE, not just the chat and
 		// Diamond stores. Destroying a trashed item -- `destroyChat` /
 		// `destroyDiamond` -- tombstones it (which travels, in the two sections
@@ -14304,8 +14498,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				nameEl.setAttribute('aria-label', shown);
 				r.appendChild(nameEl);
 				r.appendChild(el('span', 'device-id', id.slice(-4)));
+				// WHEN IT WAS LAST HERE, from the BEAT where there is one. The roster's
+				// `seen` travels only on a parcel that had something else to say (see
+				// `compareKey` in sync.js), so a device that is beating with no news of its
+				// own would read "2 days ago" while sitting there awake. The presence beat
+				// is the live fact and is preferred for a live row; the roster stamp is the
+				// durable fallback for a device that is not beating, which is the only row
+				// the words are really about.
+				var whenMs = (live.live[id] && presence[id]) ? presenceSeenMs(presence[id]) : 0;
+				if (!whenMs) whenMs = d.seen;
 				r.appendChild(el('span', 'device-when',
-					id === self ? t('devices.this_device') : relTime(d.seen)));
+					id === self ? t('devices.this_device') : relTime(whenMs)));
 				// The build this device is running, shown on every row so the fleet's
 				// build spread is legible at a glance -- and flagged when it is a KNOWN
 				// build behind what this device knows is current, which is the mixed-build
@@ -21545,27 +21748,50 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `compact::FOLD_AT_MAX`, which is where the engine clamps whatever it is handed.
 	var FOLD_AT_MIN = 0.1, FOLD_AT_MAX = 0.95;
 
+	/// The most context one round may carry whatever the window, in tokens:
+	/// `compact::ABSOLUTE_CAP`, and the band `Agent::set_context_cap` holds a choice inside.
+	///
+	/// Named here for the same reason `DEFAULT_FOLD_AT` is -- a tile drawn before its agent is
+	/// built still has to mark the fold in the right place -- and it goes stale the same way.
+	/// Keep it equal to the engine's figure.
+	var DEFAULT_CONTEXT_CAP = 120000;
+	var CONTEXT_CAP_MIN = 16000, CONTEXT_CAP_MAX = 1000000;
+
 	/// The window this chat is really folding against, and where in it the fold happens.
 	///
 	/// Not simply what the provider publishes. A provider that refuses an oversized prompt
 	/// teaches the agent a SMALLER window (`Limits::learn_from_refusal`), and from then on
 	/// a meter drawn from the published figure is measuring against a window this chat has
 	/// already been told it does not have — reading comfortable while the next turn folds.
+	///
+	/// `foldAt` IS THE EFFECTIVE FOLD POINT AND NOT THE CHOSEN FRACTION. `Limits::budget` takes
+	/// the LOWER of the window's fraction and a ceiling in tokens, so on a large window the
+	/// fraction is not where the conversation folds at all: at 0.65 of 1,310,720 the mark would
+	/// sit at 65% while the engine folds at about 9%. Every caller of this draws or says "it
+	/// folds at X", so the effective point is what they must be handed.
 	function chatWindow(s) {
 		var app = s && s.app;
+		var at  = DEFAULT_FOLD_AT, cap = DEFAULT_CONTEXT_CAP, cw = 0;
 		if (app) {
-			try {
-				var learnt = app.context_window || 0;
-				if (learnt > 0) {
-					return { window: learnt, foldAt: app.fold_at || DEFAULT_FOLD_AT };
-				}
-			} catch (e) { /* an older wasm build has no getter */ }
+			try { at = app.fold_at || DEFAULT_FOLD_AT; } catch (e) { /* older wasm: no getter */ }
+			try { cap = app.context_cap || DEFAULT_CONTEXT_CAP; } catch (e) { /* ditto */ }
+			try { cw = app.context_window || 0; } catch (e) { /* ditto */ }
 		}
-		var cw = window.DaimondPricing
-			? DaimondPricing.contextWindow(s.model, s.provider || '') : null;
-		var at = DEFAULT_FOLD_AT;
-		if (app) { try { at = app.fold_at || DEFAULT_FOLD_AT; } catch (e) { /* ditto */ } }
-		return { window: cw || 0, foldAt: at };
+		if (!cw) {
+			cw = (window.DaimondPricing
+				? DaimondPricing.contextWindow(s.model, s.provider || '') : 0) || 0;
+		}
+		return { window: cw, foldAt: foldPoint(cw, at, cap), chosenFoldAt: at, cap: cap };
+	}
+
+	/// Where the conversation actually folds, as a fraction of the window.
+	///
+	/// The lower of the two ceilings `Limits::budget` takes, expressed back as a fraction so the
+	/// bar and the sentence can both use it. With no window published there is no denominator and
+	/// the chosen fraction is all there is to say.
+	function foldPoint(cw, at, cap) {
+		if (!cw) return at;
+		return Math.min(at, (cap || DEFAULT_CONTEXT_CAP) / cw);
 	}
 
 	/// The window a DAIMON'S conversation is folding against.
@@ -22368,6 +22594,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// And, when it may not, which of the three conditions is in the way, so the
 		// refusal in sync.js says so instead of being read as a mystery.
 		syncCommitBlockedReason: offloadBlockedReason,
+		// This device's own line in the roster `devices` section of the parcel.
+		// sync.js masks that line's `seen` stamp out of the push-skip comparison --
+		// `touchSelfDevice` moves it every five minutes whether or not anything else
+		// moved, and on an idle device it was the ONLY thing that ever did, so the
+		// skip never took and a parcel with nothing in it went up every 300 s. See
+		// `compareKey` in sync.js.
+		syncSelfDeviceId: deviceId,
 		// The tombstone machinery, shared. A store that syncs by UNION needs a
 		// record of what was deleted, or absence reads as "that device never had
 		// it" and the row comes straight back on the next pull. Chats, Diamonds,
@@ -23576,6 +23809,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var sawError = false, threw = false;
 		var telErr = null;                       // what threw, for the one number that says which class
 		var turnText = '';
+		// The feed's `round`, throttled. A daimon-length turn can run ~150 rounds; sending
+		// one for every round would queue that many events for one turn. Every 5th round,
+		// plus whichever round the turn actually ends on (see the `ended` arm), keeps the
+		// token curve's shape visible at a fraction of the volume.
+		var roundSent = 0, roundPayload = null;
 		// A minted credits key is capped at the balance behind it, so it can be refused
 		// part-way through a session for a reason the user did not cause and cannot check.
 		// That refusal is held back rather than written into the conversation, and answered
@@ -23641,14 +23879,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				writing = false;
 				// TRAINING WHEELS — the debug feed's `round`, one per tool-call round.
 				// `ctx` is `last_prompt_tokens`: what the LAST request actually sent,
-				// which is also what the feed's fold inference watches for a drop. The
-				// tool NAME travels; its arguments never do, for the reason below.
-				dsEvent('round', {
+				// which is also what the feed's fold inference watches for a drop --
+				// its name is load-bearing, see `inferFold` in debugshare.js. `ca` is
+				// the cumulative cached share and `msgs` this chat's own message count,
+				// both cheap tells for the prompt-token-carry cost this exists to
+				// diagnose. The tool NAME travels; its arguments never do, for the
+				// reason below. THROTTLED — see `roundSent` above — so only every 5th
+				// round is sent; `roundPayload` is kept regardless, so the round the
+				// turn actually ends on is still caught, below in the `ended` arm.
+				roundPayload = {
 					turn: String(umid), r: step,
 					ctx:  (app && app.last_prompt_tokens) || 0,
 					win:  (app && app.context_window) || 0,
+					ca:   (app && app.cached_tokens) || 0,
+					msgs: chat.messages.length,
 					tool: String(ev.name || '').slice(0, 40),
-				});
+				};
+				if (step === 1 || step % 5 === 0) { dsEvent('round', roundPayload); roundSent = step; }
 				// Which tool, as a number from the module's table. The ARGUMENTS
 				// are right here and are never touched: they carry the path, the
 				// query and the content, which is the whole of what this design
@@ -23753,6 +24000,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					chat.messages.push(endLog);
 					pendingEnd = endLog;
 				}
+				// TRAINING WHEELS — the debug feed's `ended`. The round the turn actually
+				// stopped on may not be one of the throttled ones above, so it is caught
+				// here rather than lost: `roundSent !== step` means the last round sent
+				// was an earlier one.
+				if (roundPayload && roundSent !== step) dsEvent('round', roundPayload);
+				dsEvent('ended', { turn: String(umid), rounds: step, how: endedHow(ev.how) });
 			} else if (ev.type === 'unseeable') {
 				// A conversation is not re-routed -- there is no second model for it to move
 				// to and its history would have to move with it. What it gets is the fact,
@@ -23770,7 +24023,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// `worthSaying` draws it, because a fold that happened is a fold that
 				// happened; and `noteRealFold` stands the feed's own drop-inference
 				// down for this turn, so the two never report the same fold twice.
-				dsEvent('fold', { turn: String(umid), folded: ev.folded || 0,
+				dsEvent('fold', { turn: String(umid), r: step, folded: ev.folded || 0,
 					kept: ev.kept || 0, trigger: 'real' });
 				try { if (window.DEBUG_SHARE && DEBUG_SHARE.noteRealFold) DEBUG_SHARE.noteRealFold(String(umid)); }
 				catch (e) { /* the feed must never break a turn */ }
@@ -24806,10 +25059,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 			// The reports themselves, composed before any decision about where they
 			// go. Both surfaces get the same text, because it is the same thing.
+			//
+			// `r.report` -- the worker's final answer, head+tail capped -- not `r.text`,
+			// the whole of its narration: see the `finally` block in `start` where it is
+			// computed. A worker that ran no tools and produced no `ended` event at all
+			// (an error before its first turn) has no `report`, so `r.text` is the
+			// fallback rather than a blank reply the daimon would read as silence.
 			var parts = mine.slice().reverse().map(function (r) {
 				var head = '### ' + (r.name || r.id)
 					+ (r.status === 'done' ? '' : ' — ' + r.status);
-				var body = (r.text || '').trim();
+				var body = (r.report != null ? r.report : (r.text || '')).trim();
 				return head + '\n' + (body || '(no report)');
 			});
 			var instruction = 'The ' + (mine.length === 1 ? 'worker you dispatched has'
@@ -25189,7 +25448,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			var sink = function (ev) {
 				if (!ev || !ev.type) return;
-				if (ev.type === 'text') { run.text += (ev.content || ''); if (window.DaimondJournal) DaimondJournal.agentDelta(run.id, ev.content || ''); }
+				if (ev.type === 'text') {
+					run.text += (ev.content || '');
+					// The text SINCE THE LAST TOOL RESULT -- reset below, every time one
+					// arrives. By the time the run ends this is exactly the worker's final
+					// answer, whether or not it ran any tools at all: see `gather`, which
+					// reports this (capped) rather than the whole of `run.text`.
+					run._tail = (run._tail || '') + (ev.content || '');
+					if (window.DaimondJournal) DaimondJournal.agentDelta(run.id, ev.content || '');
+				}
 				else if (ev.type === 'tool_call') { run.tools.push({ name: ev.name || '', status: 'running' }); }
 				else if (ev.type === 'tool_result') {
 					// The engine's word, kept as the word: a tile that only knew ok/not-ok
@@ -25198,12 +25465,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					for (var i = run.tools.length - 1; i >= 0; i--) {
 						if (run.tools[i].status === 'running') { run.tools[i].status = outcome; break; }
 					}
+					run._tail = '';		// the final answer starts counting again from here
 				} else if (ev.type === 'thinking') {
 					// A worker's working, kept ON THE RUN and never appended to `run.text`.
-					// `run.text` is what the worker SAID -- it is gathered, sent back to the
-					// daimon that dispatched it, and billed as the report. Reasoning folded
-					// into it would be delivered as the worker's answer and re-read by
-					// another model as if the worker had written it.
+					// `run.text` is the worker's whole narration, kept for the tile's UI;
+					// `run.report` -- the text since its last tool result, capped -- is what
+					// is gathered and sent back to the daimon that dispatched it, and billed
+					// as the report. Reasoning folded into either would be delivered as the
+					// worker's answer and re-read by another model as if the worker had
+					// written it.
 					run.thinking = (run.thinking || '') + (ev.content || '');
 					// ONE REDRAW A FRAME, not one a delta. Reasoning now arrives as it is
 					// produced -- 1,378 pieces in one measured round -- and this tile
@@ -25281,7 +25551,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// since the recovery fold sums deltas and would otherwise show both attempts.
 					// The ending goes with them: the dead attempt's tally is not this
 					// worker's, and one left standing would be read as the retry's.
-					run.text = ''; run.tools = []; run.ended = null;
+					run.text = ''; run.tools = []; run.ended = null; run._tail = '';
 					if (window.DaimondJournal) {
 						try {
 							await DaimondJournal.clearAgent(run.id);
@@ -25324,10 +25594,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// `diamondId` -- see `agentDiamondChip` -- and bills nobody, which is what an
 				// ordinary chat's own turn does two thousand lines up.
 				recordSpend(run.model, _pt, _ct, _ca, _cost, run.provider, run.diamondId || '');
+				// `run.report` is what `gather` hands back to the daimon: the worker's
+				// FINAL answer -- `_tail`, the text since its last tool result, or the
+				// whole of `run.text` if it never ran one -- head+tail capped to ~8 KB.
+				// `run.text` itself is untouched, for the tile's own UI.
+				var _capped = capReportBytes((run._tail != null ? run._tail : run.text || '').trim(), 2048, 6144);
+				run.report = _capped.text;
 				// TRAINING WHEELS — the debug feed's `worker`, closing. After
 				// `recordSpend`, so the figures reported are the ones actually billed,
 				// and reading `run.status`, which is the app's own word for how it
-				// ended (done / stopped / paused / error).
+				// ended (done / stopped / paused / error). `rb`/`sb` are the report's
+				// raw and sent byte counts, so a lens reader can see the cap actually
+				// biting on a chatty worker.
 				dsEvent('worker', {
 					w:     String(run.id || ''),
 					model: String(run.model || '').slice(0, 48),
@@ -25336,6 +25614,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					p:     _pt, c: _ct, ca: _ca,
 					usd:   Math.round((_cost || 0) * 1e6) / 1e6,
 					r:     (run.ended && run.ended.rounds) || 0,
+					rb:    _capped.rawBytes, sb: _capped.sentBytes,
 				});
 				run.promptTokens = (run.priorPrompt || 0) + _pt;
 				run.completionTokens = (run.priorCompletion || 0) + _ct;
@@ -38412,6 +38691,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var step = 0;        // tool-call rounds so far, for the caption
 		var writing = false; // prose is arriving, so the caption has said so once
 		var sawError = false;
+		// The feed's `round`, throttled -- this is the loop that runs ~150 rounds; see
+		// the same pair in `runTurn`.
+		var roundSent = 0, roundPayload = null;
 		var onEvent = function (ev) {
 			if (!ev || !ev.type) return;
 			if (ev.type === 'text') {
@@ -38425,14 +38707,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				writing = false;
 				// TRAINING WHEELS — the debug feed's `round`, the DAIMON's agentic loop.
 				// Keyed on the Diamond's own record, which is the turn here; the chat
-				// path's `round` is keyed on the turn's mid.
-				dsEvent('round', {
+				// path's `round` is keyed on the turn's mid. THROTTLED, same rule as
+				// `runTurn`'s: this is the loop measured running ~150 rounds deep.
+				roundPayload = {
 					turn: String(rec.id || ''), r: step,
 					ctx:  (rec.app && rec.app.last_prompt_tokens) || 0,
 					win:  (rec.app && rec.app.context_window) || 0,
+					ca:   (rec.app && rec.app.cached_tokens) || 0,
+					msgs: rec.messages.length,
 					tool: String(ev.name || '').slice(0, 40),
 					dia:  1,
-				});
+				};
+				if (step === 1 || step % 5 === 0) { dsEvent('round', roundPayload); roundSent = step; }
 				busySay(rec, tOr('chat.busy_tool', 'Running {tool}, step {n}…',
 					{ tool: ev.name || '?', n: step }));
 				if ((ev.name || '') === 'spawn_agent') {
@@ -38502,6 +38788,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					rec.messages.push(dEnd);
 					if (onScreen()) appendEnding(dEnd);
 				}
+				// TRAINING WHEELS — the debug feed's `ended`, the daimon's half. See the
+				// same pair in `runTurn`'s `ended` arm.
+				if (roundPayload && roundSent !== step) dsEvent('round', roundPayload);
+				dsEvent('ended', { turn: String(rec.id || ''), rounds: step, how: endedHow(ev.how), dia: 1 });
 			} else if (ev.type === 'unseeable') {
 				// The daimon is NOT re-routed: its conversation is durable and there is no
 				// second model configured for it. What this buys it is that the picture
@@ -38514,7 +38804,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} else if (ev.type === 'compacted') {
 				// TRAINING WHEELS — the debug feed's `fold`, the daimon's half. REAL, so
 				// the feed's own drop-inference stands down for this turn.
-				dsEvent('fold', { turn: String(rec.id || ''), folded: ev.folded || 0,
+				dsEvent('fold', { turn: String(rec.id || ''), r: step, folded: ev.folded || 0,
 					kept: ev.kept || 0, trigger: 'real', dia: 1 });
 				try { if (window.DEBUG_SHARE && DEBUG_SHARE.noteRealFold) DEBUG_SHARE.noteRealFold(String(rec.id || '')); }
 				catch (e) { /* the feed must never break a turn */ }
@@ -41524,6 +41814,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		ReplyLength.render();
 		RoundLimit.render();
 		FoldPoint.render();
+		ContextCap.render();
 		FoldModel.render();
 		CrystalCap.render();
 		CrystalPageCap.render();
@@ -41732,6 +42023,99 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			stored.foldAt = f;
 			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
 			catch (e) { /* quota or unavailable — the choice holds for this session */ }
+			chats.forEach(function (c) { c.app = null; });
+			resetDiamondApps();
+			this.render();
+		},
+	};
+
+	/// The ceiling the fold fraction is held under, in tokens, and the reason the fraction alone
+	/// was never the whole answer.
+	///
+	/// `fold_at` is a FRACTION of the window, so on a model with a very large window it folds
+	/// near a very large number -- and a long agentic turn then re-sends a context grown to
+	/// hundreds of thousands of tokens on every one of its rounds, billed in full even though
+	/// almost all of it is a cache hit. That carry, and not any single message, is where a big
+	/// window's bill comes from. `compact::ABSOLUTE_CAP` has held it since the cap was written,
+	/// and until now it was a constant nothing in the product named: a reader watching the meter
+	/// had no way to know why a conversation on a million-token model folded at a tenth of it.
+	///
+	/// In THOUSANDS of tokens, because that is how a context window is quoted; the engine is
+	/// handed the count.
+	var ContextCap = {
+		/// The ladder offered, in thousands of tokens. The user's own figure is added when it is
+		/// off the ladder, so opening the panel never silently changes their setting.
+		STEPS: [60, 90, 120, 160, 200, 400],
+
+		/// Build the row once, under the fold-point row it belongs beside.
+		mount: function () {
+			if (document.getElementById('cfg-context-cap')) return true;
+			var form = document.getElementById('byok-form');
+			var section = form && form.parentNode;
+			if (!section) return false;
+			var lab = document.createElement('label');
+			lab.className = 'cfg-fieldlabel';
+			lab.setAttribute('for', 'cfg-context-cap');
+			var sel = document.createElement('select');
+			sel.className = 'settings-select';
+			sel.id = 'cfg-context-cap';
+			var note = document.createElement('p');
+			note.className = 'cfg-fieldnote';
+			note.id = 'cfg-context-cap-note';
+			section.insertBefore(lab, form);
+			section.insertBefore(sel, form);
+			section.insertBefore(note, form);
+			sel.addEventListener('change', function () { ContextCap.save(sel.value); });
+			return true;
+		},
+
+		/// Fill the pulldown from what is stored, and say what the row is.
+		render: function () {
+			if (!this.mount()) return;
+			var lab = document.querySelector('label[for="cfg-context-cap"]');
+			if (lab) lab.textContent = tOr('settings.context_cap', 'Carry at most');
+			var note = document.getElementById('cfg-context-cap-note');
+			if (note) {
+				note.textContent = tOr('settings.context_cap_note',
+					'The most one round carries, however big the model\u2019s window.');
+			}
+			var sel = document.getElementById('cfg-context-cap');
+			// What moving it costs, either way, rides on hover: this is the setting that decides
+			// what a long turn is billed, and neither direction is free.
+			sel.title = tOr('settings.context_cap_help',
+				'A long turn re-sends its whole conversation every round, so this is what it '
+					+ 'costs. Lower carries less and folds more often; higher keeps more of the '
+					+ 'work word for word.');
+			sel.innerHTML = '';
+			var mine = Math.round((cfg.contextCap || 0) / 1000);
+			var steps = this.STEPS.slice();
+			if (mine > 0 && steps.indexOf(mine) === -1) steps.push(mine);
+			steps.sort(function (a, b) { return a - b; });
+			var mk = function (value, label) {
+				var o = document.createElement('option');
+				o.value = String(value); o.textContent = label;
+				sel.appendChild(o);
+			};
+			mk(0, tOr('settings.context_cap_auto', 'Default') + ' \u2014 '
+				+ Math.round(DEFAULT_CONTEXT_CAP / 1000) + 'k');
+			steps.forEach(function (n) { mk(n, String(n) + 'k'); });
+			sel.value = String(mine);
+			if (sel.selectedIndex === -1) sel.value = '0';
+		},
+
+		/// Record a choice and rebuild every agent, for the reason `FoldPoint.save` gives: the
+		/// ceiling is put on an app when it is built, so a chat holding an old one would go on
+		/// carrying what it used to.
+		save: function (raw) {
+			var k = Math.max(0, Math.round(Number(raw) || 0));
+			// Held at the band the engine holds it at, so what the panel shows back is what is in
+			// force. A zero is not clamped: it is how "the user has not chosen" travels.
+			var n = k ? Math.min(CONTEXT_CAP_MAX, Math.max(CONTEXT_CAP_MIN, k * 1000)) : 0;
+			cfg.contextCap = n;
+			var stored = readJson(CFG_KEY, {}) || {};
+			stored.contextCap = n;
+			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
+			catch (e) { /* quota or unavailable \u2014 the choice holds for this session */ }
 			chats.forEach(function (c) { c.app = null; });
 			resetDiamondApps();
 			this.render();
@@ -42678,6 +43062,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			if (typeof app.set_fold_at === 'function') app.set_fold_at(cfg.foldAt || 0);
 		} catch (e) { /* an older wasm build has no setter */ }
+		// And the ceiling that fraction is held under, by the same rule: zero means the engine's
+		// own figure, so `compact::ABSOLUTE_CAP` is named in one place and not restated here.
+		try {
+			if (typeof app.set_context_cap === 'function') {
+				app.set_context_cap(cfg.contextCap || 0);
+			}
+		} catch (e) { /* an older wasm build has no setter */ }
 		// Same provider or nothing. See `FoldModel`: the fold rides on the conversation's
 		// own key, so a model id belonging to somebody else's endpoint is not a fold with
 		// a different model — it is a request that fails, or one answered by whatever that
@@ -42915,6 +43306,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		ReplyLength.render();
 		RoundLimit.render();
 		FoldPoint.render();
+		ContextCap.render();
 		FoldModel.render();
 		CrystalCap.render();
 		CrystalPageCap.render();

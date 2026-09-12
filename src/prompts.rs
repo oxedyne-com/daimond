@@ -822,6 +822,11 @@ pub const DEFAULT_DAIMON: &str =
 
 /// A dispatched worker's role: one bounded task, in its own context, over the
 /// user's real workspace, ending in a summary terse enough to fold.
+///
+/// The closing paragraph is the one a reader might think redundant.  A worker that has been told
+/// to write a summary still writes it as a covering note, because nothing has told it that the
+/// transcript behind the note is thrown away -- and the daimon that dispatched it then reports a
+/// turn it cannot see, or sends the task back for work that was already done.
 pub const DEFAULT_WORKER: &str =
 	"You are a worker agent dispatched to carry out exactly one task. You have \
 	 the workspace file tools. You cannot ask questions — the task is all you \
@@ -837,7 +842,11 @@ pub const DEFAULT_WORKER: &str =
 	 you changed and may send the task back. So write it to be verified rather than \
 	 believed: name the files you touched, the commands you ran and what they \
 	 answered, and say plainly what you could not do. A summary that reports success \
-	 without saying what would show it is the one thing a reviewer cannot use.";
+	 without saying what would show it is the one thing a reviewer cannot use.\n\n\
+	 NOTHING ELSE OF YOURS REACHES THAT AGENT — not this conversation, not a tool \
+	 result, not a file you read. The report is the whole of what it will ever see, \
+	 so it carries all four: what changed, the files, how it was verified, and any \
+	 question left open.";
 
 // ── What machine this is ─────────────────────────────────────────────────────
 //
@@ -2734,6 +2743,24 @@ mod tests {
 		let p = Role::Compactor.compose("");
 		assert!(p.contains("Never say a file was changed"), "{}", p);
 		assert!(p.contains("context window"), "{}", p);
+	}
+
+	/// **A worker's closing report is the whole of what its daimon ever sees.**
+	///
+	/// The worker's transcript, its tool results and the files it read are discarded; only the
+	/// report is folded back.  A worker that has not been told so writes a covering note over a
+	/// transcript nobody will read, and the daimon then reports a turn it cannot see -- or sends
+	/// the task back for work that was already done.
+	#[test]
+	fn test_a_worker_is_told_that_only_its_report_reaches_the_daimon() {
+		let p = Role::Worker.compose("");
+		assert!(p.contains("NOTHING ELSE OF YOURS REACHES THAT AGENT"),
+			"a worker is not told its transcript is discarded: {}", p);
+		// And what the report has to carry, so "be terse" cannot be read as "leave things out".
+		for part in ["what changed", "the files", "how it was verified", "question left open"] {
+			assert!(p.contains(part),
+				"the report is not told to carry {:?}: {}", part, p);
+		}
 	}
 
 	#[test]

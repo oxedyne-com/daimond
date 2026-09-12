@@ -1176,6 +1176,50 @@ async function main() {
 		DS.setEnabled(false);
 	}
 
+	console.log('debugshare: events — ended, and the round/worker payloads daimond.js actually sends');
+	{
+		// `ended` is a NEW kind (2026-09-12): the turn-loop's own word for how it
+		// stopped, closing the gap `round`/`fold`/`turn.end` left open. The seam
+		// treats every kind the same, so the test is the same shape as any other
+		// kind's: it reaches the outbox, keeps its payload, and fits the cap.
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		DS.setEnabled(true);
+		DS.event('ended', { turn: 'T1', rounds: 42, how: 'done' });
+		const ended = DS._outbox().filter((r) => r.tag === 'ev ended').map((r) => JSON.parse(r.data));
+		check('an ended event reaches the outbox', ended.length === 1);
+		check('it carries the turn, the round count and how it stopped',
+			ended[0].turn === 'T1' && ended[0].rounds === 42 && ended[0].how === 'done');
+		// The other three endings daimond.js's `endedHow` maps to.
+		DS.event('ended', { turn: 'T2', rounds: 9, how: 'round_limit' });
+		DS.event('ended', { turn: 'T3', rounds: 1, how: 'stopped' });
+		DS.event('ended', { turn: 'T4', rounds: 3, how: 'error' });
+		const hows = DS._outbox().filter((r) => r.tag === 'ev ended')
+			.map((r) => JSON.parse(r.data).how);
+		check('round_limit, stopped and error all travel',
+			hows.indexOf('round_limit') >= 0 && hows.indexOf('stopped') >= 0 && hows.indexOf('error') >= 0);
+
+		// `round`, as daimond.js now shapes it: `ctx` kept for `inferFold` (see
+		// above), `ca` and `msgs` added alongside it. Fold inference must not trip
+		// over the extra fields.
+		DS.event('round', { turn: 'TR', r: 1, ctx: 50000, win: 200000, ca: 12000, msgs: 4, tool: 'read_file' });
+		const round = JSON.parse(DS._outbox().filter((r) => r.tag === 'ev round').pop().data);
+		check('a round carries the cached share', round.ca === 12000);
+		check('a round carries the message count', round.msgs === 4);
+		check('a round is comfortably under the 360-byte cap', DS._byteLen(JSON.stringify(round)) <= 360);
+
+		// `worker`, as the closing half now carries it: `rb`/`sb`, the report's raw
+		// and sent byte counts, after the 2 KB/6 KB head+tail cap in daimond.js.
+		DS.event('worker', { w: 'w1', model: 'anthropic/claude-3.5', at: 'end', out: 'done',
+			p: 5000, c: 200, ca: 1000, usd: 0.01, r: 7, rb: 24000, sb: 8192 });
+		const worker = JSON.parse(DS._outbox().filter((r) => r.tag === 'ev worker').pop().data);
+		check('a worker end event carries the raw report size', worker.rb === 24000);
+		check('a worker end event carries the sent (capped) report size', worker.sb === 8192);
+		check('every row sent this section stays inside the cap',
+			DS._outbox().every((r) => DS._byteLen(r.data) <= 360));
+		DS.setEnabled(false);
+	}
+
 	console.log('debugshare: events — boot and beat carry the capability triple');
 	{
 		const env = makeEnv({ fastTimers: true, respond: () => 500 });

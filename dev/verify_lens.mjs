@@ -198,6 +198,21 @@ const A_BLOCK2 = block(A_BT2, DEV_A, [
 	evRow(7, 'console', { lvl: 'debug', msg: '[improve] queue drawn', src: 'improve.js:166' }, NOW - 97000),
 	evRow(8, 'fetch.fail', { path: '/api/parcel', status: 0, ms: 12, aborted: 1 }, NOW - 96000),
 	evRow(9, 'fetch.fail', { path: '/api/improve', status: 400, ms: 30 }, NOW - 95000),
+	// ONE PATH, THREE STATUSES, three faults. A 409 is "pull, merge and commit
+	// again", a 413 is a parcel over the front door's ceiling and a 502 is the
+	// gateway down: the remedies have nothing in common, and a reader that saw
+	// `/api/sync N` x3 could not tell which had happened.
+	evRow(11, 'fetch.fail', { path: '/api/sync', status: 409, ms: 40 }, NOW - 93500),
+	evRow(12, 'fetch.fail', { path: '/api/sync', status: 413, ms: 41 }, NOW - 93400),
+	evRow(13, 'fetch.fail', { path: '/api/sync', status: 502, ms: 42 }, NOW - 93300),
+	// AN UNANNOUNCED RELOAD. A status 0 the client could not tag -- the page never
+	// said `pagehide`, so `aborted` is absent -- with the boot it died in front of
+	// two seconds later. Read as aborted on the boot's evidence.
+	evRow(14, 'fetch.fail', { path: '/api/chunks', status: 0, ms: 9 }, NOW - 93000),
+	evRow(15, 'boot', { b: BUILD_A }, NOW - 91000),
+	// And the control: the same shape with no boot behind it is still a fault, or
+	// the inference above would swallow every network failure there is.
+	evRow(16, 'fetch.fail', { path: '/api/credits', status: 0, ms: 11 }, NOW - 97500),
 	// The beat, and deliberately OLDER than every telemetry tick: the feed's own
 	// health is the beat's to state, and a tick arriving after it says nothing
 	// about the feed and must not hide what the beat said.
@@ -410,7 +425,7 @@ check('the breadcrumb page error is reported', /fixture blew up/.test(msgs));
 check('the failed turn is reported', /turn ended in error/.test(msgs));
 check('a benign diagnostics row is NOT an error', !/sync push/.test(msgs), msgs.slice(0, 80));
 check('errors are deduplicated by message',
-	errs.every(e => e.count >= 1) && errs.length === 6, errs.length + ' distinct');
+	errs.every(e => e.count >= 1) && errs.length === 10, errs.length + ' distinct');
 check('--grep narrows the errors',
 	lensJson('errors', '--since', '24h', '--grep', 'TypeError').length === 1);
 
@@ -430,6 +445,26 @@ check('an ABORTED request is not, by default',
 	!errs.some(e => /\/api\/parcel/.test(e.msg)), errs.map(e => e.msg.slice(0, 20)).join('|'));
 check('--aborted asks for it back',
 	lensJson('errors', '--since', '24h', '--aborted').some(e => /\/api\/parcel/.test(e.msg)));
+
+// A `fetch.fail` groups by PATH AND STATUS. The generic dedupe flattens every
+// digit to `N`, which made three faults on one path one line with a count -- and
+// 409, 413 and 502 on `/api/sync` have nothing in common but the path.
+const syncFails = errs.filter(e => e.kind === 'fetch.fail' && /\/api\/sync/.test(e.msg));
+check('three statuses on one path are three faults, not one line x3',
+	syncFails.length === 3 && syncFails.every(e => e.count === 1),
+	syncFails.map(e => e.msg + ' x' + e.count).join(' | '));
+check('and each names its own status, so the remedy is legible',
+	['409', '413', '502'].every(s => syncFails.some(e => e.msg.indexOf(s) >= 0)),
+	syncFails.map(e => e.msg).join(' | '));
+
+// A status 0 the client could not tag, with the boot it died in front of two
+// seconds later: aborted on the boot's evidence.
+check('a status 0 just before a boot is read as a reload, not a fault',
+	!errs.some(e => /\/api\/chunks/.test(e.msg)), errs.map(e => e.msg.slice(0, 24)).join('|'));
+check('and --aborted still shows it',
+	lensJson('errors', '--since', '24h', '--aborted').some(e => /\/api\/chunks/.test(e.msg)));
+check('a status 0 with NO boot behind it is still a fault',
+	errs.some(e => /\/api\/credits/.test(e.msg)), errs.map(e => e.msg.slice(0, 24)).join('|'));
 
 // ── console ──────────────────────────────────────────────────────────
 
@@ -460,7 +495,7 @@ check('a window with nothing in it says so, not nothing at all',
 // ── events ───────────────────────────────────────────────────────────
 
 const evs = lensJson('events', '--since', '24h');
-check('every event row is in the stream once', evs.length === 13,
+check('every event row is in the stream once', evs.length === 19,
 	evs.length + ': ' + evs.map(e => e.kind || e.tag).join(','));
 check('--kind selects the console rows', lensJson('events', '--since', '24h', '--kind', 'console').length === 4);
 check('--kind selects one event kind',
@@ -511,6 +546,91 @@ check('digest --json carries the same figures',
 	Math.abs(lensJson('digest').spend24h - 2.22) < 1e-9
 		&& lensJson('digest').turns24h === 6,
 	JSON.stringify([lensJson('digest').spend24h, lensJson('digest').turns24h]));
+
+// ── round/fold/ended — the turn-loop events added 2026-09-12 ─────────
+//
+// Its own archive, deliberately separate from the fixture universe above: a
+// turn joined by `turn` id across `round`/`fold`/`ended`/`turn.end` touches
+// `turnRecords`' whole merge, and folding it into the shared device A/B
+// fixtures would ripple through every count that reads `turns`/`events`/
+// `status` unfiltered. Two turns: an ordinary chat turn that DOES close with
+// a `turn.end` (the real short keys daimond.js sends, not the long ones
+// above), and a daimon-shaped turn that never gets one -- only `round`,
+// `fold` and `ended` -- which is the gap this lane closes.
+
+const ROOT2 = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-verify-rt-'));
+fs.mkdirSync(path.join(ROOT2, 'traces'), { recursive: true });
+const DEV_RT = 'devRT0000000000000000000000000rt';
+const RT_BT = NOW - 40000;
+const rtRow = (n, kind, extra, t) =>
+	row(t, 'ev ' + kind, JSON.stringify(Object.assign({ v: 1, d: DEV_RT, n, b: BUILD_A, t }, extra)));
+const RT_BLOCK = block(RT_BT, DEV_RT, [
+	// The chat turn: rounds 1 and 5 sampled (throttled to every 5th), round 6
+	// caught at `ended` because the turn stopped on one the throttle skipped --
+	// exactly the catch-up `runTurn`'s `ended` arm does. One real fold partway
+	// through, `turn.end` with the actual short field names, and the same
+	// turn's `ended` alongside it (both arms fire for a chat turn).
+	rtRow(1, 'round', { turn: 'chatT1', r: 1, ctx: 20000, win: 200000, ca: 5000, msgs: 2, tool: 'read_file' }, NOW - 39000),
+	rtRow(2, 'round', { turn: 'chatT1', r: 4, ctx: 38000, win: 200000, ca: 9000, msgs: 8 }, NOW - 37000),
+	rtRow(3, 'fold', { turn: 'chatT1', r: 4, folded: 12, kept: 4, trigger: 'real' }, NOW - 36500),
+	rtRow(4, 'round', { turn: 'chatT1', r: 6, ctx: 15000, win: 200000, ca: 9000, msgs: 10 }, NOW - 35000),
+	rtRow(5, 'turn.end', { turn: 'chatT1', r: 6, p: 15000, c: 800, ca: 9000, usd: 0.03, ms: 1200, out: 'done' }, NOW - 34900),
+	rtRow(6, 'ended', { turn: 'chatT1', rounds: 6, how: 'done' }, NOW - 34800),
+	// The daimon turn: no `turn.end` at all, ever -- only `round`/`fold`/`ended`,
+	// `dia: 1`. Rounds 1, 5 and 10 sampled; it stops on the round-call limit.
+	rtRow(7,  'round', { turn: 'daimonT1', r: 1,  ctx: 20000, win: 200000, ca: 4000, msgs: 2, dia: 1 }, NOW - 33000),
+	rtRow(8,  'round', { turn: 'daimonT1', r: 5,  ctx: 60000, win: 200000, ca: 30000, msgs: 14, dia: 1 }, NOW - 31000),
+	rtRow(9,  'fold', { turn: 'daimonT1', r: 7, folded: 30, kept: 10, trigger: 'real', dia: 1 }, NOW - 30500),
+	rtRow(10, 'round', { turn: 'daimonT1', r: 10, ctx: 95000, win: 200000, ca: 55000, msgs: 22, dia: 1 }, NOW - 29000),
+	rtRow(11, 'ended', { turn: 'daimonT1', rounds: 10, how: 'round_limit', dia: 1 }, NOW - 28900),
+]);
+fs.writeFileSync(path.join(ROOT2, 'traces', `${ACCOUNT}-${DEV_RT}.log`), RT_BLOCK);
+
+function lens2(...args) {
+	return execFileSync('node', [LENS, ...args], {
+		encoding: 'utf8',
+		env: Object.assign({}, process.env, { DAIMOND_LENS_HOME: ROOT2, DAIMOND_LENS_REMOTE: '' }),
+	});
+}
+function lensJson2(...args) {
+	return JSON.parse(lens2(...args, '--json').trim());
+}
+
+lensJson2('pull', '--no-rsync');
+const rtTurns = lensJson2('turns', '--since', '24h');
+const chatT1 = rtTurns.find(t => t.turn === 'chatT1');
+const daimonT1 = rtTurns.find(t => t.turn === 'daimonT1');
+
+check('a turn.end read by its real short field names carries rounds, tokens and cost',
+	!!chatT1 && chatT1.rounds === 6 && chatT1.prompt === 15000 && chatT1.cached === 9000
+		&& Math.abs(chatT1.usd - 0.03) < 1e-9 && chatT1.outcome === 'done',
+	JSON.stringify(chatT1));
+check('its max per-round prompt and fold count are joined on by turn id',
+	!!chatT1 && chatT1.maxPrompt === 38000 && chatT1.folds === 1,
+	JSON.stringify(chatT1 && [chatT1.maxPrompt, chatT1.folds]));
+check('its `ended` event is not a second turn (de-duplicated by turn id)',
+	rtTurns.filter(t => t.turn === 'chatT1').length === 1, String(rtTurns.filter(t => t.turn === 'chatT1').length));
+
+check('a daimon turn with no turn.end at all is still a turn, from `ended` alone',
+	!!daimonT1 && daimonT1.src === 'ended' && daimonT1.rounds === 10 && daimonT1.outcome === 'round_limit',
+	JSON.stringify(daimonT1));
+check('its max per-round prompt and fold count are joined the same way',
+	!!daimonT1 && daimonT1.maxPrompt === 95000 && daimonT1.folds === 1,
+	JSON.stringify(daimonT1 && [daimonT1.maxPrompt, daimonT1.folds]));
+check('a daimon turn states no USD it cannot know, rather than reporting zero',
+	!!daimonT1 && daimonT1.usd === null, JSON.stringify(daimonT1 && daimonT1.usd));
+
+const rtLine = lens2('turns', '--since', '24h');
+check('`lens turns` prints the round count, the max and the fold count',
+	/r6\s+max 38k\s+f1/.test(rtLine) && /r10\s+max 95k\s+f1/.test(rtLine),
+	rtLine.trim().split('\n').filter(l => /chatT1|r6|r10/.test(l) || true).slice(0, 2).join(' | '));
+
+const roundEvents = lens2('events', '--since', '24h', '--kind', 'round');
+check('`lens events --kind round` summarises the sampled rounds per turn',
+	/turn daimonT1: rounds 1-10 sampled \(3\), max prompt 95k/.test(roundEvents),
+	roundEvents.trim().split('\n').slice(-3).join(' | '));
+
+fs.rmSync(ROOT2, { recursive: true, force: true });
 
 // ── An unknown command must not look like success ────────────────────
 

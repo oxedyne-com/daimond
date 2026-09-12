@@ -129,6 +129,23 @@
 	var FOCUS_PULL_MIN_MS = 3000;
 	// A push with nothing to send asks anyway, at most this often. See push().
 	var IDLE_PULL_MIN_MS  = 5000;
+	// ── The front door, in bytes of HTTP BODY ──────────────────
+	//
+	// Steel terminates TLS in FRONT of the gateway on jarrah and the key is absent
+	// from the deployed config, so fe2o3_steel's `http_max_body_bytes` default
+	// stands. It is the smallest of the three ceilings over a parcel -- the
+	// gateway's own /api/sync `max_bytes` is 32 MiB and its body cap 16 MiB -- so it
+	// is the only one anything ever reaches, and a parcel over it 413s or, worse,
+	// looks like a connection reset, because Steel answers and closes while the
+	// browser is still writing the body.
+	//
+	// WHAT IS MEASURED AGAINST IT IS NOT THE PARCEL. The body is a JSON envelope
+	// carrying base64 of the SEALED parcel: four bytes for every three of
+	// ciphertext, and the ciphertext is the UTF-8 of the parcel plus a 12-byte IV
+	// and a 16-byte GCM tag. `wireBytes` does that arithmetic; daimond.js
+	// `SYNC_PARCEL_MAX` is the budget derived FROM it, which is a different number
+	// and in different units (UTF-16 code units, counted with String.length).
+	var WIRE_DOOR_BYTES   = 8 * 1024 * 1024;
 	// ── The pull budget and the resume ─────────────────────────
 	// A GET iOS suspended on a backgrounded tab never rejects until the socket
 	// resolves on resume, and while it hangs it pins `inFlight` so every re-open
@@ -235,11 +252,17 @@
 	var K_SIG     = 'daimond-sync-sig';
 	// What this build writes into it. A stored value that does not say this is
 	// from another format and reads as no fixed point at all -- which sends.
-	var SIG_V     = 1;
+	//
+	// 2 since the digest is taken over the COMPARISON KEY rather than the parcel
+	// (see compareKey): a v1 digest is of different bytes, and letting it stand
+	// would have a freshly updated page read "nothing to send" wrongly in one
+	// direction or push once for nothing in the other. One push on the first boot
+	// after the update, and never again.
+	var SIG_V     = 2;
 
 	// ── State ──────────────────────────────────────────────────
 	var serverVersion = 0;		// The version this device last saw on the server.
-	var lastPushed    = null;	// JSON of the state last pushed, to skip no-op pushes.
+	var lastPushed    = null;	// comparison key of the state last pushed (see compareKey).
 	// THE SAME FACT, CARRIED ACROSS A RELOAD, and consulted by the first push of a
 	// page and by nothing else.
 	//
@@ -861,6 +884,162 @@
 	/// nothing between them are byte-identical -- which is the whole contract the
 	/// no-op guard in push() rests on. Attached last, so its position in the
 	/// serialisation never moves either.
+	/// What this module compares when it asks "has anything changed since the last
+	/// push" -- the parcel with this device's OWN `seen` stamp masked out. What is
+	/// SENT is always the parcel itself; only the comparison reads this.
+	///
+	/// NOT THE PARCEL ITSELF, AND THAT IS THE FIX. `touchSelfDevice` (daimond.js)
+	/// moves this device's roster `seen` every SEEN_REFRESH_MS -- five minutes --
+	/// whether or not anything else moved. On a device nobody is typing at, that is
+	/// the only thing that ever moves, so the skip in `push` never took: two idle
+	/// desktops each put their whole ~8 MB parcel on the wire every 300 s with no
+	/// turn behind it, every push woke the others, and each of those pulled and
+	/// re-collected. Measured on the owner's fleet, 2026-09-12.
+	///
+	/// MASKED, NOT FROZEN. The stamp is still written locally, so this device's own
+	/// list is right and the roster bound still works, and it still rides out on the
+	/// next push that has a reason of its own. What it can no longer do is BE the
+	/// reason.
+	///
+	/// AND IT IS NOT HOW A DEVICE IS KNOWN TO BE ALIVE. Liveness is the presence
+	/// door below -- `beatPresence` / `refreshPresence`, read back through
+	/// `DaimondPresence` -- which left the parcel for exactly this reason (see
+	/// "PRESENCE IS NOT IN THE PARCEL" in collectParcel). `rosterLiveness`, the
+	/// dispatch election and the hand-off seat all read that beat and never this
+	/// stamp; the roster `seen` is the "last seen" words on a row, and a row for a
+	/// beating device reads its stamp from the beat. So nothing that DECIDES
+	/// anything is slowed by this, and a live device is still live within
+	/// DISPATCH_FRESH_MS.
+	///
+	/// The key is built preserving every field and key order, so two collects of an
+	/// otherwise unchanged account still give byte-identical keys -- which is the
+	/// whole point of having one. A build whose core cannot name this device falls
+	/// back to the parcel, which is the behaviour this replaces.
+	function compareKey(state) {
+		var plain = JSON.stringify(state);
+		var id = '';
+		try {
+			if (DaimondCore.syncSelfDeviceId) id = String(DaimondCore.syncSelfDeviceId() || '');
+		} catch (e) { id = ''; }
+		if (!id || !state || !state.devices || !state.devices[id]) return plain;
+		var src = state.devices, devs = {};
+		Object.keys(src).forEach(function (k) {
+			if (k !== id) { devs[k] = src[k]; return; }
+			var line = src[k] || {}, copy = {};
+			Object.keys(line).forEach(function (f) { copy[f] = (f === 'seen' ? 0 : line[f]); });
+			devs[k] = copy;
+		});
+		var out = {};
+		Object.keys(state).forEach(function (k) { out[k] = (k === 'devices' ? devs : state[k]); });
+		return JSON.stringify(out);
+	}
+
+	// ── What the parcel will weigh on the wire ─────────────────
+	//
+	// Every budget in daimond.js is counted in `String.length` -- UTF-16 code units
+	// -- and the wire carries UTF-8 base64 of ciphertext. So a parcel that is
+	// comfortably inside SYNC_PARCEL_MAX can still be over the front door, and the
+	// only evidence anybody had of that was a 413 (or a reset) after the bytes had
+	// been encrypted and sent. One account's phone measured 6,065,784 UTF-16 units
+	// and ~8.09 MB of body: 300 KB under the door, with four sections spending
+	// against budgets that sum to more than the door allows. These three functions
+	// are so that the number is known BEFORE the push, said in one line, and
+	// refused here rather than at the far end.
+
+	/// The UTF-8 byte length of a string, WITHOUT encoding it.
+	///
+	/// `new TextEncoder().encode(s).length` is the obvious answer and the wrong one
+	/// at this size: it allocates a second copy of an 8 MB parcel beside the string
+	/// and the sealed blob, on the device least able to afford it (see the release
+	/// dance in pullOnce for how seriously this file takes that). A scan costs one
+	/// pass and no memory.
+	///
+	/// A surrogate PAIR is one code point of four bytes; a lone surrogate is
+	/// replaced by U+FFFD on encoding, which is three -- so it is counted as three,
+	/// the same as the encoder would write.
+	function utf8Len(s) {
+		var n = 0, len = s.length;
+		for (var i = 0; i < len; i++) {
+			var c = s.charCodeAt(i);
+			if (c < 0x80) { n += 1; continue; }
+			if (c < 0x800) { n += 2; continue; }
+			if (c >= 0xD800 && c <= 0xDBFF && i + 1 < len) {
+				var d = s.charCodeAt(i + 1);
+				if (d >= 0xDC00 && d <= 0xDFFF) { n += 4; i++; continue; }
+			}
+			n += 3;
+		}
+		return n;
+	}
+
+	/// The HTTP body a push would write for a parcel of `pbytes` UTF-8 bytes.
+	///
+	/// base64(IV(12) || AES-GCM(parcel) || tag(16)) inside the same JSON envelope
+	/// `push` sends, measured with an empty blob and the real blob length added --
+	/// so the device label and the wake id are counted as they will actually travel
+	/// rather than guessed at. base64 is ASCII and btoa pads, so 4 per 3 is exact.
+	///
+	/// It takes the COUNT rather than the string because the caller needs that
+	/// count as well (see parcelSizes) and the scan is the expensive half.
+	function wireBytes(pbytes) {
+		var sealed = pbytes + 12 + 16;
+		var b64    = 4 * Math.ceil(sealed / 3);
+		var env    = utf8Len(JSON.stringify(
+			{ base_version: serverVersion, device: deviceLabel(), blob: '', w: WAKE_ID }));
+		return env + b64;
+	}
+
+	/// Where the parcel's bytes actually are, section by section, in UTF-8 bytes.
+	///
+	/// Compact keys, because this rides in a 360-byte feed event: `f` files,
+	/// `c` chats, `ci` the transcripts still INLINE inside them, `k` the chunk
+	/// index, `d` diamonds, `l` ledger, `md` models, `ml` mail, `o` everything
+	/// else. A section weighing nothing is left out rather than reported as zero.
+	///
+	/// ONE SECTION AT A TIME, and never the whole parcel again. `plain` is already
+	/// live when this runs; stringifying the sections into one object would put a
+	/// second whole copy beside it. Each section's text is released before the next
+	/// is taken, so the extra live bytes are the LARGEST section and not the sum.
+	///
+	/// `o` is arrived at by subtraction from the parcel that is already in hand, so
+	/// it cannot drift from the total the way a tenth measurement would: whatever
+	/// this function has not learned to name turns up there by construction. That
+	/// matters, because the sections it does not name -- the ledger aside -- are
+	/// exactly the ones no budget bounds.
+	var SECTION_KEYS = { files: 'f', chats: 'c', chunked: 'k', diamonds: 'd',
+		ledger: 'l', models: 'md', mail: 'ml' };
+	function parcelSizes(state, total) {
+		var out = {}, named = 0;
+		if (!state || typeof state !== 'object') return out;
+		Object.keys(SECTION_KEYS).forEach(function (k) {
+			var n = 0;
+			try { n = (state[k] === undefined || state[k] === null) ? 0 : utf8Len(JSON.stringify(state[k])); }
+			catch (e) { n = 0; }
+			named += n;
+			if (n) out[SECTION_KEYS[k]] = n;
+		});
+		// The transcripts riding INLINE, which is the half of `chats` a budget is
+		// meant to bound -- a chat that offloaded leaves a `messagesRef` of a few
+		// hundred bytes here and its weight is in the chunk store, not the parcel.
+		var ci = 0;
+		try {
+			var list = state.chats || [];
+			for (var i = 0; i < list.length; i++) {
+				if (list[i] && list[i].messages) ci += utf8Len(JSON.stringify(list[i].messages));
+			}
+		} catch (e) { ci = 0; }
+		if (ci) out.ci = ci;
+		var other = (total | 0) - named;
+		if (other > 0) out.o = other;
+		return out;
+	}
+
+	/// The section sizes as one line, largest first, for the console.
+	function sizesLine(sizes) {
+		return Object.keys(sizes).sort(function (a, b) { return sizes[b] - sizes[a]; })
+			.map(function (k) { return k + '=' + Math.round(sizes[k] / 1024) + 'K'; }).join(' ');
+	}
+
 	async function collectParcel() {
 		var state = await DaimondCore.collectSync();
 		try { if (window.DaimondPause) state.pause = DaimondPause.snapshot(); }
@@ -1243,12 +1422,14 @@
 			for (var attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt++) {
 				var state = await collectParcel();
 				var plain = JSON.stringify(state);
+				// What is SENT is `plain`; what is COMPARED is the key. See compareKey.
+				var cmp   = compareKey(state);
 				// `lastPushed === null` is "this page has not sent anything yet",
 				// which is the only moment the carried digest is asked about. Note
 				// the short-circuit: on every push after the first, `sigOf` is
 				// never called at all.
-				var known = (plain === lastPushed)
-					|| (lastPushed === null && !!bootSig && (await sigOf(plain)) === bootSig);
+				var known = (cmp === lastPushed)
+					|| (lastPushed === null && !!bootSig && (await sigOf(cmp)) === bootSig);
 				if (known && serverVersion > 0) {
 					// Nothing new to send -- but the round is not wasted, and this
 					// is the trigger that has to catch up.
@@ -1270,6 +1451,46 @@
 					return;
 				}
 
+				// WHAT THIS WILL WEIGH, BEFORE A BYTE OF IT IS ENCRYPTED. Counted
+				// here rather than inferred from a 413: the refusal comes back after
+				// the whole body has been written, Steel may close mid-write so the
+				// browser reports a reset instead, and neither says WHICH section
+				// grew. See wireBytes and parcelSizes.
+				var pbytes = utf8Len(plain);			// scanned once; both of the next two want it
+				var wire   = wireBytes(pbytes);
+				var sizes  = parcelSizes(state, pbytes);
+				log('parcel', Math.round(wire / 1024) + 'K on the wire of'
+					+ ' ' + Math.round(WIRE_DOOR_BYTES / 1024) + 'K allowed —', sizesLine(sizes));
+				diag('push size', Math.round(wire / 1024) + 'K ' + sizesLine(sizes));
+
+				// OVER THE FRONT DOOR: refuse it HERE. Sending it cannot work, and
+				// the two ways it fails -- a 413, or a reset from a door that answered
+				// and closed mid-body -- are a wasted encryption of the whole parcel
+				// and, in the reset case, an error that names nothing. Nothing is
+				// dropped or shed to get under the door: the parcel stands as it is,
+				// the chip carries the same too-large refusal a 413 raises, and the
+				// section sizes say where the bytes went.
+				if (wire > WIRE_DOOR_BYTES) {
+					tooLarge   = true;
+					lastPushed = cmp;			// don't spin on the same oversize state
+					restStatus();
+					log('parcel over the front door (' + Math.round(wire / 1024) + 'K >'
+						+ ' ' + Math.round(WIRE_DOOR_BYTES / 1024) + 'K) — refused here, not sent');
+					// TRAINING WHEELS — the debug feed's `sync`, commit half, in the
+					// same shape the chunk-commit refusals use, so one filter finds
+					// every round that did not land. Lifts out in one grep of
+					// DEBUG_SHARE.
+					try {
+						if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
+							var ev = { dir: 'push', commit: 'refused', why: 'too-large',
+								wire: wire, door: WIRE_DOOR_BYTES, at: serverVersion | 0 };
+							Object.keys(sizes).forEach(function (k) { ev[k] = sizes[k]; });
+							DEBUG_SHARE.event('sync', ev);
+						}
+					} catch (e) { /* the feed must never break a sync */ }
+					return;
+				}
+
 				var blob;
 				try { blob = await DaimondIdentity.wrap(plain); }
 				catch (e) { log('encrypt failed', e); return; }
@@ -1284,7 +1505,7 @@
 
 				if (res.status === 200 && res.json && res.json.ok) {
 					serverVersion = res.json.version | 0;
-					lastPushed = plain;
+					lastPushed = cmp;
 					saveVersion();
 					// Beside the version, and only here: this is the one place a
 					// parcel is known to have reached the mailbox. A parcel the
@@ -1292,7 +1513,7 @@
 					// arm below deliberately does not write it -- storing that
 					// digest would have the next page skip a push that never
 					// happened.
-					saveSig(await sigOf(plain));
+					saveSig(await sigOf(cmp));
 					// The pushed state is now the shared fork point for the file merge.
 					try { if (DaimondCore.syncCommitBaseline) await DaimondCore.syncCommitBaseline(); }
 					catch (e) { /* baseline advances next time */ }
@@ -1356,8 +1577,15 @@
 					// SIZE in bytes and the version it landed at; never its contents.
 					try {
 						if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
-							DEBUG_SHARE.event('sync', { dir: 'push', to: serverVersion | 0,
-								bytes: (plain && plain.length) | 0, tries: attempt + 1 });
+							// `bytes` is the parcel in UTF-16 units, which is what every
+							// budget in daimond.js counts; `wire` is the body that actually
+							// travelled. The two differ by half again on a parcel of
+							// Japanese transcripts, and reading one as the other is how a
+							// parcel inside its budget reached the door anyway.
+							var pev = { dir: 'push', to: serverVersion | 0,
+								bytes: (plain && plain.length) | 0, wire: wire, tries: attempt + 1 };
+							Object.keys(sizes).forEach(function (k) { pev[k] = sizes[k]; });
+							DEBUG_SHARE.event('sync', pev);
 						}
 					} catch (e) { /* the feed must never break a sync */ }
 					log('pushed version', serverVersion);
@@ -1411,7 +1639,7 @@
 					// or one enormous workspace file -- and for it to be actionable it
 					// has to be visible. It used to be a console line.
 					tooLarge   = true;
-					lastPushed = plain;			// don't spin on the same oversize state.
+					lastPushed = cmp;			// don't spin on the same oversize state.
 					restStatus();
 					log('blob too large (413); not retrying this payload');
 					return;
@@ -1458,16 +1686,19 @@
 		}
 		for (var i = 0; i < FLUSH_MAX_ROUNDS; i++) {
 			if (tooLarge) return { ok: false, version: serverVersion, why: 'too_large' };
-			var plain;
-			try { plain = JSON.stringify(await collectParcel()); }
+			var cmp;
+			// Through compareKey, like push(): a `seen` stamp that moved between the
+			// collect and this comparison is not a parcel the mailbox is missing, and
+			// reading it as one would spin every round of this loop.
+			try { cmp = compareKey(await collectParcel()); }
 			catch (e) { return { ok: false, version: serverVersion, why: 'collect_failed' }; }
 			// Already committed: the parcel we hold is what the mailbox holds, at
 			// serverVersion (lastPushed is set only after a 200 that moved the version).
-			if (plain === lastPushed && serverVersion > 0) return { ok: true, version: serverVersion };
+			if (cmp === lastPushed && serverVersion > 0) return { ok: true, version: serverVersion };
 			try { await push(); } catch (e) { return { ok: false, version: serverVersion, why: 'push_failed' }; }
 			// Confirm against the live parcel: a change under us forces another round.
 			var after = null;
-			try { after = JSON.stringify(await collectParcel()); }
+			try { after = compareKey(await collectParcel()); }
 			catch (e) { after = null; }
 			if (after !== null && after === lastPushed && serverVersion > 0) return { ok: true, version: serverVersion };
 			await new Promise(function (r) { setTimeout(r, FLUSH_RETRY_MS); });
@@ -1511,8 +1742,9 @@
 		try {
 			var state = await collectParcel();
 			var plain = JSON.stringify(state);
+			var cmp   = compareKey(state);
 			// Nothing new since the last send (progress OR ordinary): quiet frame.
-			if (plain === lastPushed && serverVersion > 0) return;
+			if (cmp === lastPushed && serverVersion > 0) return;
 			var blob;
 			try { blob = await DaimondIdentity.wrap(plain); }
 			catch (e) { log('progress encrypt failed', e); return; }
@@ -1524,7 +1756,7 @@
 			catch (e) { log('progress push network error', e); return; }
 			if (res.status === 200 && res.json && res.json.ok) {
 				serverVersion = res.json.version | 0;
-				lastPushed    = plain;
+				lastPushed    = cmp;
 				saveVersion();
 				noteSynced();
 				diag('progress push', 'v' + serverVersion);
@@ -2346,7 +2578,7 @@
 	// That failure was hypothesised and disproved on 2026-08-27; it must not be
 	// introduced by the cure for a different one.
 
-	/// The digest of a parcel, or '' where one could not be taken.
+	/// The digest of a parcel's comparison key, or '' where one could not be taken.
 	///
 	/// `DaimondCloud.sha256` rather than a fourth copy of six lines that already
 	/// exist in cloud.js and chunks.js. A build without cloud.js therefore carries
@@ -2517,6 +2749,17 @@
 		leaseGet:     leaseGet,
 		leaseCommit:  leaseCommit,
 		leaseVersion: function () { return _leaseVer | 0; },
+		/// The pure arithmetic this file decides things with, for the one test that
+		/// can measure it: `www/js/synckey.test.mjs`. The push-skip's comparison key,
+		/// the UTF-8 scan, the wire estimate, the section census and the door they
+		/// are all measured against. Reached by nothing in the app.
+		forTest: {
+			compareKey:  compareKey,
+			utf8Len:     utf8Len,
+			wireBytes:   wireBytes,
+			parcelSizes: parcelSizes,
+			door:        WIRE_DOOR_BYTES,
+		},
 		/// Exactly what a push would send, and exactly what a pull would merge.
 		///
 		/// A verifier comparing `DaimondCore.collectSync()` is comparing the core

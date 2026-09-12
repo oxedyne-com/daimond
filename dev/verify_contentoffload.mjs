@@ -30,6 +30,9 @@
 //      chat or Diamond, and only once per sitting while the set stands still.
 //   8. THE PEER'S REFS — a device that unions a peer's chat names the peer's chunk
 //      addresses in the index it commits, so its own sweep does not delete them.
+//   9. ONE BUDGET — the inline files, the inline Diamonds and the inline transcripts
+//      spend from SYNC_PARCEL_MAX between them rather than from 5 MiB + 2 MiB, the
+//      overflow offloads, and no chat goes missing either way.
 import { open } from './harness.mjs';
 
 const ok = [], bad = [];
@@ -571,7 +574,7 @@ try {
 	// Sweep one address out from under a chat whose manifest the collector reuses.
 	const swept = await page.evaluate(() => {
 		const ix = window.DaimondCloud.index();
-		const key = Object.keys(ix).find(k => /^@c\//.test(k) && !/\.peer$/.test(k)
+		const key = Object.keys(ix).find(k => /^@c\//.test(k) && !/\.peer(\.|$)/.test(k)
 			&& (ix[k].chunks || []).length);
 		const before = (ix[key].chunks || []).map(c => c.addr);
 		delete window.__store[before[0]];			// the gateway swept it
@@ -613,7 +616,7 @@ try {
 	// hiccup is a far worse round than the one this fixes.
 	const refused = await page.evaluate(async () => {
 		const ix = window.DaimondCloud.index();
-		const key = Object.keys(ix).find(k => /^@c\//.test(k) && !/\.peer$/.test(k)
+		const key = Object.keys(ix).find(k => /^@c\//.test(k) && !/\.peer(\.|$)/.test(k)
 			&& (ix[k].chunks || []).length);
 		const before = (ix[key].chunks || []).map(c => c.addr);
 		delete window.__store[before[0]];
@@ -645,7 +648,7 @@ try {
 	const later = await page.evaluate(async () => {
 		await window.DaimondCore.collectSync();
 		const ix = window.DaimondCloud.index();
-		// The Diamonds and chats only: a `.peer` entry is the peer's to heal, and a
+		// The Diamonds and chats only: a `.peer` slot is the peer's to heal, and a
 		// workspace path with no file on this device has nothing here to offload
 		// again — both are skipped by the sweep, on purpose.
 		const bad = Object.keys(ix).filter(k => /^@[dc]\/[^.]*$/.test(k))
@@ -860,6 +863,364 @@ try {
 		`${pruned.kept} kept of ${pruned.carried} carried, stale addrs held=${pruned.held}`);
 	check('B3. and a parcel that references nothing for the chat prunes it away',
 		pruned.gone === true);
+
+	// ── C. TWO PEERS, ONE CHAT, AND NEITHER MAY EVICT THE OTHER ──
+	//
+	// The reported account has THREE devices: two folder-mounted desktops that
+	// never commit the chunk index (normal -- they hold no mergeable index) and a
+	// phone that commits for them. One slot per chat is right for two devices and
+	// wrong for three: pulling B's parcel forgot A's refs for the same chats, so
+	// the phone's commit swept them, the desktops re-uploaded, and the round came
+	// back on every push (`committed 729, swept 45`, then `refs_missing 29
+	// {@c:17,@d:9}` on the desktops minutes later). The slot is now per device.
+	//
+	// A PARCEL SAYS WHO SENT IT by marking its own roster line, which is the only
+	// thing in a parcel that can: every other section is a merged account fact.
+	const DEV_A = 'a1a1a1a1a1a1a1a1', DEV_B = 'b2b2b2b2b2b2b2b2';
+	const twoPeers = await page.evaluate(async (devs) => {
+		const roster = (self_) => {
+			const out = {};
+			out[devs.A] = { name: 'Desk A', label: '', created: 1, namedAt: 0, seen: 100, build: '' };
+			out[devs.B] = { name: 'Desk B', label: '', created: 1, namedAt: 0, seen: 100, build: '' };
+			out[self_].self = 1;
+			return out;
+		};
+		const store = window.DaimondCore.chatStore();
+		const cid = 'threeway';
+		const mine = [];
+		for (let i = 0; i < 380; i++) mine.push({ role: 'user', content: 'ours ' + i + ' ' + 'w'.repeat(400), mid: 'tw' + i, ts: 5000 + i });
+		const list = store.stored();
+		list.push({ id: cid, name: 'Three Way', model: 'mock/fast', updatedAt: 8000, messages: mine, session: null });
+		store.save(list);
+		await window.DaimondCore.collectSync();				// our own manifest exists
+
+		const mk = async (tag, n) => {
+			const msgs = [];
+			for (let i = 0; i < n; i++) msgs.push({ role: 'assistant', content: tag + ' ' + i + ' ' + tag.repeat(400), mid: tag + i, ts: 6000 + i });
+			return await window.DaimondChunks.offloadBytes('c:' + cid, new TextEncoder().encode(JSON.stringify(msgs)));
+		};
+		const refA = await mk('aa', 380);
+		const refB = await mk('bb', 390);
+		const parcel = (dev, ref, at) => ({
+			v: 3, tombs: {}, msgTombs: {}, diamonds: [], diamondTombs: {}, devices: roster(dev),
+			chats: [{ id: cid, name: 'Three Way', model: 'mock/fast', updatedAt: at, messages: null, messagesRef: ref, session: null }],
+		});
+		await window.DaimondCore.applySync(parcel(devs.A, refA, 8000));
+		await window.DaimondCore.applySync(parcel(devs.B, refB, 8001));
+
+		const ix = window.DaimondCloud.index();
+		const slot = (d) => ((ix[window.DaimondCloud.peerKey(cid, d)] || {}).chunks || []).map(c => c.addr);
+		return {
+			cid,
+			keyA: window.DaimondCloud.peerKey(cid, devs.A),
+			slotA: slot(devs.A), slotB: slot(devs.B),
+			wantA: (refA.chunks || []).map(c => c.addr),
+			wantB: (refB.chunks || []).map(c => c.addr),
+			// The old single slot must not be in use at all now that both sides say
+			// who they are, or the refs would still be fighting over it.
+			legacy: !!ix[window.DaimondCloud.peerKey(cid)],
+			owner: window.DaimondCloud.peerOwner(window.DaimondCloud.peerKey(cid, devs.A)),
+		};
+	}, { A: DEV_A, B: DEV_B });
+	check('C1. two peers\' refs for the SAME chat both survive -- one slot each',
+		twoPeers.slotA.length > 0 && twoPeers.slotB.length > 0
+			&& JSON.stringify(twoPeers.slotA) === JSON.stringify(twoPeers.wantA)
+			&& JSON.stringify(twoPeers.slotB) === JSON.stringify(twoPeers.wantB),
+		`A ${twoPeers.slotA.length}/${twoPeers.wantA.length}, B ${twoPeers.slotB.length}/${twoPeers.wantB.length}`);
+	check('C1. the slot is keyed by device, and the unattributed one is unused',
+		twoPeers.legacy === false && twoPeers.owner === DEV_A,
+		`${twoPeers.keyA} owner=${twoPeers.owner}`);
+
+	const twoCommit = await page.evaluate(async (tp) => {
+		window.__reset();
+		const parcel = await window.DaimondCore.collectSync();
+		const tiers = window.DaimondCloud.tierPlan(window.DaimondCloud.allowance());
+		await window.DaimondChunks.commit(parcel.chunked, 1, tiers);
+		const body = window.__commits[window.__commits.length - 1] || { chunks: [] };
+		const named = new Set((body.chunks || []).map(c => c.addr));
+		const ours = (window.DaimondCloud.contentGet('@c/' + tp.cid) || {}).chunks || [];
+		return {
+			a: tp.slotA.every(x => named.has(x)),
+			b: tp.slotB.every(x => named.has(x)),
+			own: ours.map(c => c.addr).every(x => named.has(x)),
+			entries: (body.chunks || []).length,
+		};
+	}, twoPeers);
+	check('C2. and the ONE commit names all three address sets, so nothing is swept',
+		twoCommit.a === true && twoCommit.b === true && twoCommit.own === true,
+		`A=${twoCommit.a} B=${twoCommit.b} ours=${twoCommit.own}, ${twoCommit.entries} live entries`);
+
+	// A DEVICE THAT LEAVES THE ROSTER takes its slot with it -- the one way the
+	// per-device scheme could grow without bound is a fleet of retired machines.
+	const departed = await page.evaluate(async (devs) => {
+		const roster = {};
+		roster[devs.B] = { name: 'Desk B', label: '', created: 1, namedAt: 0, seen: 200, build: '', self: 1 };
+		// A real clock: `mergeTombMap` prunes a tombstone past its TTL, so a
+		// fixture stamped in 1970 is thrown away before it removes anything.
+		const tombs = {}; tombs[devs.A] = Date.now();
+		await window.DaimondCore.applySync({ v: 3, tombs: {}, msgTombs: {}, diamonds: [],
+			diamondTombs: {}, devices: roster, deviceTombs: tombs, chats: [] });
+		const ix = window.DaimondCloud.index();
+		return { a: !!ix[window.DaimondCloud.peerKey('threeway', devs.A)],
+			b: !!ix[window.DaimondCloud.peerKey('threeway', devs.B)] };
+	}, { A: DEV_A, B: DEV_B });
+	check('C3. a device taken off the roster loses its slot, and only its own',
+		departed.a === false && departed.b === true, `A held=${departed.a} B held=${departed.b}`);
+
+	// A SLOT THAT HAS NOT MOVED IS NOT REWRITTEN. `contentSet` serialises the whole
+	// index, and the note now runs once per chat AND once per Diamond on every
+	// pull; the steady state is a peer whose parcel is a fixed point, carrying the
+	// same addresses round after round. Rewriting the index once per item for that
+	// is a cost the phone can least afford.
+	const quietSlot = await page.evaluate(async (devs) => {
+		const roster = {};
+		roster[devs.B] = { name: 'Desk B', label: '', created: 1, namedAt: 0, seen: 250, build: '', self: 1 };
+		const cid = 'threeway';
+		const pk = window.DaimondCloud.peerKey(cid, devs.B);
+		const held = JSON.stringify(window.DaimondCloud.index()[pk] || null);
+		// The SAME reference the last parcel carried, offloaded again: identical
+		// content, so identical addresses.
+		const ref = (window.DaimondCloud.index()[pk] || {});
+		// The guard is in `notePeerRef`, so the question is whether it reached
+		// `contentSet` at all -- counting index writes would also count the chunked
+		// merge's own, which happens on every pull whatever this does.
+		let wrote = [];
+		const realSet = window.DaimondCloud.contentSet;
+		window.DaimondCloud.contentSet = function (k, rec) { wrote.push(k); return realSet(k, rec); };
+		try {
+			await window.DaimondCore.applySync({ v: 3, tombs: {}, msgTombs: {}, diamonds: [],
+				diamondTombs: {}, devices: roster,
+				chats: [{ id: cid, name: 'Three Way', model: 'mock/fast', updatedAt: 8001,
+					messages: null, messagesRef: { v: ref.v, size: ref.size, key: 'same', chunks: ref.chunks },
+					session: null }] });
+		} finally { window.DaimondCloud.contentSet = realSet; }
+		return { pk, wrote, kept: JSON.stringify(window.DaimondCloud.index()[pk] || null) === held, had: held !== 'null' };
+	}, { B: DEV_B });
+	check('C4. a peer slot carrying the SAME addresses is kept, and not written again',
+		quietSlot.had === true && quietSlot.kept === true && quietSlot.wrote.indexOf(quietSlot.pk) < 0
+			&& !quietSlot.wrote.some(k => /\.peer(\.|$)/.test(k)),
+		`slot kept=${quietSlot.kept}, index writes for [${quietSlot.wrote.join(',')}]`);
+
+	// ── D. A DIAMOND'S THREE ADDRESS SETS ────────────────────────
+	//
+	// A Diamond had no peer mechanism at all: `applyDiamonds` adopts the sender's
+	// manifest only where it IMPORTS, so an EQUAL-stamp Diamond -- which is every
+	// quiet round, since the stamp does not move -- left three devices holding
+	// three address sets with the committer naming one. Nine `@d` addresses were
+	// swept on every commit and re-uploaded at up to ~1.2 MB each on the next.
+	// A SECOND PAIR of devices, because C3 has just taken `DEV_A` off the roster
+	// for good and `peerReap` is right to refuse its slots from then on.
+	const DEV_C = 'c1c1c1c1c1c1c1c1', DEV_D = 'd2d2d2d2d2d2d2d2';
+	const dia = await page.evaluate(async (devs) => {
+		const roster = (self_) => {
+			const out = {};
+			out[devs.A] = { name: 'Desk C', label: '', created: 1, namedAt: 0, seen: 100, build: '' };
+			out[devs.B] = { name: 'Desk D', label: '', created: 1, namedAt: 0, seen: 100, build: '' };
+			out[self_].self = 1;
+			return out;
+		};
+		const ix0 = window.DaimondCloud.index();
+		// Any Diamond the collectors have a manifest for: the peer slot hangs off that
+		// key, so a Diamond whose manifest an earlier invariant dropped is no fixture.
+		const dkey = Object.keys(ix0).find(k => /^@d\//.test(k) && !/\.peer(\.|$)/.test(k)
+			&& ((ix0[k].chunks || []).length));
+		const id = dkey.slice(3);
+		const stamp = (ix0[dkey] || {}).touched || 0;
+		// Each peer's own seal of the identical export: THE SAME CONTENT KEY at
+		// different addresses, which is exactly what a fresh IV per device gives --
+		// and what leaves all three devices naming different chunks for one Diamond.
+		const mk = async (tag) => {
+			const m = await window.DaimondChunks.offloadBytes(
+				'd:' + id, new TextEncoder().encode('export-' + tag + '-' + 'x'.repeat(40000)));
+			return { v: m.v, size: m.size, key: (ix0[dkey] || {}).key, chunks: m.chunks };
+		};
+		const refA = await mk('aa'), refB = await mk('bb');
+		const parcel = (dev, ref) => ({
+			v: 3, tombs: {}, msgTombs: {}, chats: [], diamondTombs: {}, devices: roster(dev),
+			// EQUAL `touched`, so nothing is imported and nothing is adopted: the quiet
+			// round that was losing the other two copies on every commit.
+			diamonds: [{ id, updated: 0, touched: stamp, model: null, dataRef: ref }],
+		});
+		await window.DaimondCore.applySync(parcel(devs.A, refA));
+		await window.DaimondCore.applySync(parcel(devs.B, refB));
+		const ix = window.DaimondCloud.index();
+		const slot = (d) => ((ix[window.DaimondCloud.peerKeyFor(dkey, d)] || {}).chunks || []).map(c => c.addr);
+		const slotA = slot(devs.A), slotB = slot(devs.B);
+		window.__reset();
+		const out = await window.DaimondCore.collectSync();
+		const tiers = window.DaimondCloud.tierPlan(window.DaimondCloud.allowance());
+		await window.DaimondChunks.commit(out.chunked, 1, tiers);
+		const body = window.__commits[window.__commits.length - 1] || { chunks: [] };
+		const named = new Set((body.chunks || []).map(c => c.addr));
+		// Read AFTER the collect: `verifyManifestPresence` runs in there and may have
+		// re-offloaded this Diamond, in which case its own addresses are the new ones.
+		const ours = (window.DaimondCloud.contentGet(dkey) || {}).chunks || [];
+		return {
+			id, stamp, dkey,
+			slotA, slotB,
+			wantA: (refA.chunks || []).map(c => c.addr),
+			wantB: (refB.chunks || []).map(c => c.addr),
+			namedA: slotA.every(a => named.has(a)),
+			namedB: slotB.every(a => named.has(a)),
+			namedOwn: ours.every(c => named.has(c.addr)),
+			ownN: ours.length,
+			failed: [],
+		};
+	}, { A: DEV_C, B: DEV_D });
+	check('D1. an equal-stamp Diamond records BOTH peers\' refs, per device',
+		dia.slotA.length > 0 && dia.slotB.length > 0
+			&& JSON.stringify(dia.slotA) === JSON.stringify(dia.wantA)
+			&& JSON.stringify(dia.slotB) === JSON.stringify(dia.wantB),
+		`${dia.dkey} A ${dia.slotA.length}/${dia.wantA.length} B ${dia.slotB.length}/${dia.wantB.length}`);
+	check('D2. and the commit names all THREE of the Diamond\'s address sets',
+		dia.namedA === true && dia.namedB === true && dia.namedOwn === true && dia.ownN > 0,
+		`A=${dia.namedA} B=${dia.namedB} ours=${dia.namedOwn} (${dia.ownN} own addr)`);
+
+	// ── E. PEER KNOWLEDGE PROPAGATES ─────────────────────────────
+	//
+	// `merge` dropped every remote content key, so a `.peer` slot never crossed a
+	// device: only a machine that had pulled X's OWN parcel could name X's chunks,
+	// and which parcel that was came down to luck -- on the reported account the
+	// committer was the phone and the two desktops each pushed half the picture. A
+	// slot is the one content key that travels, because it is the one the device
+	// holding it is not the author of.
+	const carried = await page.evaluate(async (devs) => {
+		const cid = 'threeway', self_ = 'd4d4d4d4d4d4d4d4', foreign = 'c3c3c3c3c3c3c3c3';
+		const pk = window.DaimondCloud.peerKey(cid, foreign);
+		const mineKey = '@c/' + cid;
+		const heldKey = window.DaimondCloud.peerKey(cid, devs.B);
+		const selfKey = window.DaimondCloud.peerKey(cid, self_);
+		const before = window.DaimondCloud.index();
+		const held = before[heldKey] || null, mine = before[mineKey] || null;
+		const a = (n) => String(n).repeat(64).slice(0, 64);
+		const remote = {};
+		// A device this one has never heard from: its slot is the peer knowledge that
+		// has to cross.
+		remote[pk] = { v: 2, size: 64, chunks: [{ addr: a(9), size: 64 }], peer: true, dev: foreign };
+		// A slot we already hold, and OUR OWN manifest, and a slot the peer holds about
+		// US: none of the three may be taken. Our own pull of B is our own observation
+		// of B, our manifest is the authority on our addresses, and a peer's record of
+		// them would name whatever we uploaded before our last change, for ever.
+		remote[heldKey] = { v: 2, size: 1, chunks: [{ addr: a(7), size: 1 }], peer: true, dev: devs.B };
+		remote[mineKey] = { v: 2, size: 9, key: 'bogus', chunks: [{ addr: a(8), size: 9 }] };
+		remote[selfKey] = { v: 2, size: 1, chunks: [{ addr: a(6), size: 1 }], peer: true, dev: self_ };
+		const out = window.DaimondCloud.merge(remote, {}, self_);
+		return {
+			adopted: ((out[pk] || {}).chunks || []).map(c => c.addr),
+			heldKept: JSON.stringify(out[heldKey] || null) === JSON.stringify(held),
+			hadHeld:  !!held,
+			mineKept: JSON.stringify(out[mineKey] || null) === JSON.stringify(mine),
+			hadMine:  !!mine,
+			selfTaken: !!out[selfKey],
+		};
+	}, { B: DEV_B });
+	check('E1. a remote `.peer` slot for an UNSEEN device is carried through the merge',
+		carried.adopted.length === 1 && /^9+$/.test(carried.adopted[0] || ''),
+		carried.adopted.join(',') || 'nothing adopted');
+	check('E1. while a slot this device already holds keeps its OWN observation',
+		carried.hadHeld === true && carried.heldKept === true,
+		`hadHeld=${carried.hadHeld} kept=${carried.heldKept}`);
+	check('E1. a remote copy of our OWN manifest is still dropped',
+		carried.hadMine === true && carried.mineKept === true,
+		`hadMine=${carried.hadMine} kept=${carried.mineKept}`);
+	check('E1. and a peer\'s slot ABOUT THIS DEVICE is refused -- our manifest answers for us',
+		carried.selfTaken === false);
+	// ═══════════════════════════════════════════════════════════════
+	// INVARIANT 9 — ONE BUDGET FOR THE THREE INLINE SECTIONS
+	// ═══════════════════════════════════════════════════════════════
+	//
+	// The inline transcripts used to have SYNC_CHATS_INLINE_MAX (2 MiB) to
+	// themselves, spent in collectChatsRefs and counted nowhere else, while the
+	// inline files and the Diamonds shared SYNC_PARCEL_MAX (5 MiB). So the parcel's
+	// real arithmetic was 7 MiB against an 8 MiB front door that the UTF-8 and base64
+	// inflation takes 6,291,236 parcel bytes to fill -- the three sections could sum
+	// past it between them while every one of them read as inside its own ceiling.
+	// That is how an account's phone packed ~8.09 MB of body with no section over
+	// budget.
+	//
+	// The budget is shared now: the chats get what is LEFT of the parcel after the
+	// files and the Diamonds, clamped by their own share as a fairness bound. This
+	// section fills the parcel with inline files FIRST, so the remainder genuinely
+	// binds, and then asserts three things -- the sum fits, the overflow travels as
+	// refs, and NO CHAT IS LOST either way.
+	console.log('\n— invariant 9: one budget for files + Diamonds + inline chats —');
+
+	const shared = await page.evaluate(async () => {
+		const mod = await import('/pkg/oxedyne_daimond.js');
+		// ~4 MB of inline workspace files: each under SYNC_FILE_MAX (128 KiB) so it
+		// rides inline rather than offloading, which is what makes them spend the
+		// budget the chats are about to ask for.
+		const para = 'x'.repeat(1000);
+		let body = '';
+		while (body.length < 100 * 1024) body += para;
+		for (let i = 0; i < 40; i++) await mod.write_file('bulk/big-' + i + '.md', body);
+		// And ~6 MB of SMALL transcripts: each well under SYNC_FILE_MAX, so none of
+		// them offloads on its own account and only the shared budget decides.
+		const store = window.DaimondCore.chatStore();
+		const list = store.stored().filter((c) => String(c.id).indexOf('small-') !== 0);
+		const small = [];
+		for (let k = 0; k < 60; k++) {
+			const msgs = [];
+			for (let i = 0; i < 10; i++) msgs.push({ role: i % 2 ? 'assistant' : 'user',
+				content: 'small ' + k + ' msg ' + i + ' ' + 'z'.repeat(9500),
+				mid: 's' + k + 'm' + i, ts: 2000 + i });
+			const id = 'small-' + String(k).padStart(2, '0');
+			list.push({ id, name: 'Small ' + k, model: 'mock/fast', updatedAt: 9000 + k,
+				messages: msgs, session: null });
+			small.push(id);
+		}
+		store.save(list);
+
+		const pc = await window.DaimondCore.collectSync();
+		const len = (v) => (v === undefined || v === null) ? 0 : JSON.stringify(v).length;
+		// The three sections that spend the parcel, each measured as the parcel
+		// carries it (String.length, which is the unit every budget here counts in).
+		let filesBytes = 0;
+		Object.keys(pc.files || {}).forEach((k) => { filesBytes += len(pc.files[k]); });
+		let dInline = 0;
+		(pc.diamonds || []).forEach((d) => { if (d.data != null) dInline += len(d.data); });
+		let cInline = 0, cRefs = 0, inlineIds = [], refIds = [];
+		(pc.chats || []).forEach((c) => {
+			if (c.messages != null) { cInline += len(c.messages); inlineIds.push(c.id); }
+			else if (c.messagesRef) { cRefs += len(c.messagesRef); refIds.push(c.id); }
+		});
+		const carried = (pc.chats || []).map((c) => c.id);
+		return {
+			filesBytes, dInline, cInline, cRefs,
+			inline: inlineIds.length, refs: refIds.length,
+			seeded: small.length,
+			missing: small.filter((id) => carried.indexOf(id) < 0),
+			// Every seeded chat accounted for, one way or the other.
+			unaccounted: small.filter((id) => inlineIds.indexOf(id) < 0 && refIds.indexOf(id) < 0),
+			parcelMax: 5 * 1024 * 1024,
+			chatsShare: 2 * 1024 * 1024,
+			plain: JSON.stringify(pc).length,
+		};
+	});
+	note(`files ${Math.round(shared.filesBytes / 1024)} kB inline, Diamonds ${Math.round(shared.dInline / 1024)} kB inline, `
+		+ `chats ${Math.round(shared.cInline / 1024)} kB inline + ${shared.refs} ref(s); parcel ${Math.round(shared.plain / 1024)} kB`);
+
+	const spent = shared.filesBytes + shared.dInline + shared.cInline;
+	check('C1. the files really did fill most of the parcel, so the remainder BINDS',
+		shared.filesBytes > 3 * 1024 * 1024,
+		`${Math.round(shared.filesBytes / 1024)} kB of a ${Math.round(shared.parcelMax / 1024)} kB parcel`);
+	check('C2. THE THREE INLINE SECTIONS TOGETHER FIT THE PARCEL — one budget, not three',
+		spent <= shared.parcelMax,
+		`${Math.round(spent / 1024)} kB of ${Math.round(shared.parcelMax / 1024)} kB`);
+	check('C3. and the inline chats took the REMAINDER, not their own flat share',
+		shared.cInline <= Math.max(0, shared.parcelMax - shared.filesBytes - shared.dInline)
+		&& shared.cInline < shared.chatsShare,
+		`${Math.round(shared.cInline / 1024)} kB, remainder `
+		+ `${Math.round(Math.max(0, shared.parcelMax - shared.filesBytes - shared.dInline) / 1024)} kB, `
+		+ `own share ${Math.round(shared.chatsShare / 1024)} kB`);
+	check('C4. the overflow went to chunk refs — it travels, it is not dropped',
+		shared.refs > 0 && shared.cRefs > 0, `${shared.refs} ref(s), ${shared.inline} inline`);
+	check('C5. AND NOT ONE SEEDED CHAT IS MISSING FROM THE PARCEL',
+		shared.missing.length === 0, shared.missing.slice(0, 5).join(',') || `${shared.seeded} carried`);
+	check('C5. every one of them accounted for as inline OR as a ref, never neither',
+		shared.unaccounted.length === 0, shared.unaccounted.slice(0, 5).join(','));
+	check('C6. and the whole parcel is inside the arithmetic maximum the ceiling is derived from',
+		shared.plain <= 6291236, `${shared.plain} of 6,291,236`);
 
 } catch (e) {
 	check('no exception during the run', false, String(e && e.stack || e).slice(0, 400));

@@ -18,6 +18,16 @@
         ids, so without the suffix rule the reap deleted every peer
         entry on the collect that was meant to commit it.
 
+     C. A slot is PER DEVICE -- `@c/<id>.peer.<device>` -- so two
+        peers' refs for ONE chat both stand, a Diamond gets the same
+        treatment, and a device taken off the roster loses its slots
+        and only its own.
+
+     D. A peer slot is the ONE content key `merge` carries across a
+        device, because it is the one the holder is not the author
+        of. Our own manifest, and a peer's record of OUR addresses,
+        are still dropped.
+
    The collectors themselves are proven in the browser, against the
    real cloud index and a real commit: dev/verify_contentoffload.mjs,
    invariants 7 and 8.
@@ -178,6 +188,71 @@ console.log('\n— B: a peer sidecar is reaped with its chat, not instead of it 
 	check('the deleted chat loses its manifest', !ix['@c/gone']);
 	check('and its peer entry goes with it — bounded, never orphaned',
 		!ix[C.peerKey('gone')]);
+}
+
+console.log('\n— C: a slot PER DEVICE, reaped with the roster —');
+{
+	const win = makeTab();
+	const C = win.DaimondCloud;
+	const A = 'a1a1a1a1a1a1a1a1', B = 'b2b2b2b2b2b2b2b2';
+	check('a device-keyed slot is the item key, the suffix and the device',
+		C.peerKey('abc', A) === '@c/abc.peer.' + A
+			&& C.peerKeyFor('@d/xyz', B) === '@d/xyz.peer.' + B);
+	check('and a Diamond slot still reads as content, so every file mechanism skips it',
+		C.isContentKey(C.peerKeyFor('@d/xyz', B)) === true);
+	check('the owner is readable back off the key, and a bare item is not a slot',
+		C.peerOwner(C.peerKey('abc', A)) === A && C.peerOwner(C.peerKey('abc')) === ''
+			&& C.peerOwner('@c/abc') === null);
+
+	// Two peers holding different addresses for ONE chat, which is what a single
+	// slot could not express: pulling B's parcel forgot A's refs, and the next
+	// commit swept them.
+	C.contentSet('@c/live', { v: 2, size: 10, key: 'k1', chunks: [{ addr: addr(1), size: 10 }], fp: 'f' });
+	C.contentSet(C.peerKey('live', A), { v: 2, size: 10, chunks: [{ addr: addr(2), size: 10 }], peer: true, dev: A });
+	C.contentSet(C.peerKey('live', B), { v: 2, size: 10, chunks: [{ addr: addr(3), size: 10 }], peer: true, dev: B });
+	C.contentSet(C.peerKeyFor('@d/dia', A), { v: 2, size: 10, chunks: [{ addr: addr(4), size: 10 }], peer: true, dev: A });
+
+	C.contentReap('@c/', { live: 1 });
+	let ix2 = C.index();
+	check('a reap keyed on the chat id keeps BOTH devices\' slots',
+		!!ix2[C.peerKey('live', A)] && !!ix2[C.peerKey('live', B)]);
+
+	const reaped = C.peerReap({ [B]: 1 });
+	ix2 = C.index();
+	check('a device off the roster loses its slots, chat and Diamond alike',
+		reaped === true && !ix2[C.peerKey('live', A)] && !ix2[C.peerKeyFor('@d/dia', A)]);
+	check('and the device still on it keeps its own', !!ix2[C.peerKey('live', B)]);
+	check('our own manifest is never a peer slot, so the reap cannot touch it',
+		!!ix2['@c/live']);
+	check('a reap that changes nothing writes nothing', C.peerReap({ [B]: 1 }) === false);
+}
+
+console.log('\n— D: a peer slot is the one content key that crosses a merge —');
+{
+	const win = makeTab();
+	const C = win.DaimondCloud;
+	const SELF = 'd4d4d4d4d4d4d4d4', X = 'c3c3c3c3c3c3c3c3', B = 'b2b2b2b2b2b2b2b2';
+	C.contentSet('@c/chat', { v: 2, size: 10, key: 'mine', chunks: [{ addr: addr(1), size: 10 }], fp: 'f' });
+	C.contentSet(C.peerKey('chat', B), { v: 2, size: 10, chunks: [{ addr: addr(2), size: 10 }], peer: true, dev: B });
+
+	const remote = {};
+	remote['@c/chat'] = { v: 2, size: 9, key: 'theirs', chunks: [{ addr: addr(7), size: 9 }], fp: 'g' };
+	remote[C.peerKey('chat', X)] = { v: 2, size: 9, chunks: [{ addr: addr(8), size: 9 }], peer: true, dev: X };
+	remote[C.peerKey('chat', B)] = { v: 2, size: 9, chunks: [{ addr: addr(9), size: 9 }], peer: true, dev: B };
+	remote[C.peerKey('chat', SELF)] = { v: 2, size: 9, chunks: [{ addr: addr(6), size: 9 }], peer: true, dev: SELF };
+	remote['@c/unknown'] = { v: 2, size: 9, key: 'u', chunks: [{ addr: addr(5), size: 9 }], fp: 'h' };
+
+	const out = C.merge(remote, {}, SELF);
+	check('a slot for a device this one has never pulled from is CARRIED',
+		!!out[C.peerKey('chat', X)]
+			&& out[C.peerKey('chat', X)].chunks[0].addr === addr(8));
+	check('a slot this device already holds keeps its own observation',
+		out[C.peerKey('chat', B)].chunks[0].addr === addr(2));
+	check('a peer\'s slot ABOUT THIS DEVICE is refused', !out[C.peerKey('chat', SELF)]);
+	check('a remote copy of a manifest we hold is still dropped',
+		out['@c/chat'].key === 'mine');
+	check('and a remote manifest we do not hold at all is still dropped',
+		!out['@c/unknown']);
 }
 
 console.log(failures === 0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`);

@@ -1,1 +1,1 @@
-{"build":"84224133a563","note":"Devices now update themselves when a new build is live, and say which chunks no device can restore."}
+{"build":"51ac660f4112","note":"Retire prior-turn tool traffic, 120K ceiling, file_edit edits[], per-peer chunk refs, idle sync churn stopped"}

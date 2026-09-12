@@ -923,6 +923,26 @@ impl DaimondApp {
         self.agent.set_fold_at(fraction);
     }
 
+    /// The most context one round may carry, in tokens, whatever the model's window.
+    ///
+    /// **The figure that decides what a long turn costs, and until now the only one of the three
+    /// the user could not see.**  `fold_at` is a FRACTION, so on a million-token window it folds
+    /// near a million; this is the ceiling that fraction is held under, and a turn whose prompt
+    /// settles just below it re-sends that prompt on every round of the turn at the cached-input
+    /// rate.  Lower it and a long turn folds and carries less; raise it and it keeps more of
+    /// itself word for word and costs more per round.
+    ///
+    /// `f64` for the reason [`DaimondApp::set_context_window`] gives.  Zero restores the shipped
+    /// default, as zero does for [`DaimondApp::set_fold_at`]; anything outside
+    /// [`crate::agent::compact::CONTEXT_CAP_MIN`]..[`crate::agent::compact::CONTEXT_CAP_MAX`] is
+    /// held at the band rather than refused.
+    ///
+    /// # Arguments
+    /// * `tokens` - The ceiling; zero leaves the default.
+    pub fn set_context_cap(&self, tokens: f64) {
+        self.agent.set_context_cap(if tokens > 0.0 { tokens as u64 } else { 0 });
+    }
+
     /// Fold this agent's conversations with a different model from the one it chats
     /// with; empty means the chat's own.
     ///
@@ -955,6 +975,16 @@ impl DaimondApp {
     #[wasm_bindgen(getter)]
     pub fn fold_at(&self) -> f64 {
         self.agent.limits().fold_at
+    }
+
+    /// The ceiling the fraction above is held under, in tokens.
+    ///
+    /// A meter drawn from `fold_at` alone marks the fold in the wrong place on any model with a
+    /// large window: the conversation folds at whichever of the two comes FIRST.  See
+    /// [`DaimondApp::set_context_cap`].
+    #[wasm_bindgen(getter)]
+    pub fn context_cap(&self) -> f64 {
+        self.agent.limits().context_cap as f64
     }
 
     /// Fold this conversation now, because the user asked.
@@ -1874,6 +1904,15 @@ impl DaimondApp {
                 }
                 s.push_str(&machine);
             }
+        }
+        // What the account has NOT bought, in one sentence, because the tools themselves are no
+        // longer in the request at all -- see `ToolRegistry::offered`.  Absent, and free, on an
+        // account that holds every pack its belt is sold under.
+        if let Some(packs) = registry.locked_pack_note() {
+            if !s.is_empty() {
+                s.push_str("\n\n");
+            }
+            s.push_str(&packs);
         }
         s
     }

@@ -135,6 +135,11 @@
 		return true;
 	}
 
+	/// The device segment of a peer sidecar key, as written by `peerKeyFor`. A
+	/// device id is sixteen hex characters (daimond.js:DEVICE_ID_RE), so it can
+	/// never swallow the `.peer` in front of it.
+	var PEER_RE = /\.peer(?:\.([0-9a-f]{16}))?$/;
+
 	/// Drop every content manifest under `prefix` whose id is not in `live`.
 	/// Called by the Diamond and chat collectors once they have enumerated what
 	/// still exists, so a deleted item's manifest does not linger and go on
@@ -150,26 +155,71 @@
 		var ix = index(), changed = false;
 		Object.keys(ix).forEach(function (k) {
 			if (k.slice(0, prefix.length) !== prefix) return;
-			var id = k.slice(prefix.length).replace(/\.peer$/, '');
+			var id = k.slice(prefix.length).replace(PEER_RE, '');
 			if (!live || !live[id]) { delete ix[k]; changed = true; }
 		});
 		if (changed) setIndex(ix);
 		return changed;
 	}
 
-	/// The index key under which a chat records the chunk addresses a PEER's
-	/// parcel named for it -- the addresses this device did not upload, will not
-	/// upload, and until now did not declare.
+	// ── A peer device's refs ────────────────────────────────────
+	//
+	// WHY THEY HAVE TO EXIST. A device that unions a peer's transcript into a copy
+	// it already holds keeps neither side's manifest: the union is a third
+	// transcript, so it re-offloads under addresses of its own and its committed
+	// index names only those. The gateway sweeps every chunk the committing index
+	// does not name, so the phone's commit deleted the desktops' uploads -- an
+	// identical transcript at two sets of addresses, one of them swept, on every
+	// round. Naming the peer's addresses beside our own costs a few hundred bytes
+	// of index and closes it.
+	//
+	// AND ONE SLOT PER CHAT WAS NOT ENOUGH. The first cut held exactly one entry
+	// per chat, replaced on every pull, which is right for two devices and wrong
+	// for three: pulling device B's parcel forgot device A's refs for the same
+	// chats, and the next commit swept them. The account this was reported from
+	// has three -- two folder-mounted desktops that never commit the index and a
+	// phone that commits for them -- and the sweep came back on every push
+	// (`committed 729, swept 45`, then `refs_missing 29 {@c:17,@d:9}` minutes
+	// later on the desktops). So the slot is PER DEVICE, the committing index
+	// names the union of them all, and each pull replaces only the sending
+	// device's own.
+
+	/// The index key under which an item records the chunk addresses ONE PEER
+	/// DEVICE's parcel named for it -- the addresses this device did not upload,
+	/// will not upload, and until the peer-ref work did not declare.
 	///
-	/// WHY IT HAS TO EXIST. A device that unions a peer's transcript into a copy
-	/// it already holds keeps neither side's manifest: the union is a third
-	/// transcript, so it re-offloads under addresses of its own and its committed
-	/// index names only those. The gateway sweeps every chunk the committing
-	/// index does not name, so the phone's commit deleted the desktops' uploads
-	/// -- an identical transcript at two sets of addresses, one of them swept, on
-	/// every round. Naming the peer's addresses beside our own costs a few
-	/// hundred bytes of index and closes it.
-	function peerKey(chatId) { return '@c/' + chatId + '.peer'; }
+	/// `itemKey` is the item's own content key, `@c/<id>` or `@d/<id>`, so one
+	/// shape covers a chat and a Diamond. A falsy `dev` is the UNATTRIBUTED slot:
+	/// a parcel from a device that does not say who it is still gets its refs
+	/// named, in exactly the one-slot-per-item way this started as.
+	function peerKeyFor(itemKey, dev) { return itemKey + '.peer' + (dev ? '.' + dev : ''); }
+
+	/// The same, for a chat named by its bare id.
+	function peerKey(chatId, dev) { return peerKeyFor('@c/' + chatId, dev); }
+
+	/// Which device a peer sidecar speaks for: the id, `''` for the unattributed
+	/// slot, or null for a key that is not a sidecar at all.
+	function peerOwner(key) {
+		var m = PEER_RE.exec(String(key));
+		return m ? (m[1] || '') : null;
+	}
+
+	/// Drop every peer sidecar whose device is no longer on the roster.
+	///
+	/// A device the account has stopped syncing with cannot be holding anything
+	/// alive, and its slots would otherwise name its addresses for ever -- the
+	/// one way the per-device scheme could grow without bound. The UNATTRIBUTED
+	/// slot is never reaped here: there is no device named on it to judge.
+	function peerReap(live) {
+		var ix = index(), changed = false;
+		Object.keys(ix).forEach(function (k) {
+			var dev = peerOwner(k);
+			if (!dev || (live && live[dev])) return;
+			delete ix[k]; changed = true;
+		});
+		if (changed) setIndex(ix);
+		return changed;
+	}
 
 	/// The manifest for a path, or null if cloud storage does not hold it.
 	function manifest(path) {
@@ -427,7 +477,7 @@
 	/// records the remote one at `<path>.synced`, mirroring the sidecar rule for
 	/// inline files. No download is needed to preserve it, because the sidecar
 	/// is only a second reference to chunks the gateway already holds.
-	function merge(remoteIx, baseline) {
+	function merge(remoteIx, baseline, selfDev) {
 		var local = index(), base = baseline || {}, out = {}, seen = {};
 		remoteIx = (remoteIx && typeof remoteIx === 'object') ? remoteIx : {};
 
@@ -439,9 +489,27 @@
 			// device, never reconciled across devices: the reference that travels
 			// rides inline with its Diamond or chat, so a remote copy here is nothing
 			// to adopt and nothing to sidecar. Keep whatever this device holds and
-			// drop the rest.
+			// drop the rest -- except a peer sidecar, which is the one key here that
+			// this device did not author and so the one that crosses.
 			if (isContentKey(p)) {
-				if (Object.prototype.hasOwnProperty.call(local, p)) out[p] = local[p];
+				if (Object.prototype.hasOwnProperty.call(local, p)) { out[p] = local[p]; return; }
+				// A PEER SIDECAR IS THE ONE CONTENT KEY THAT TRAVELS, because it is
+				// the one this device is not the author of: it says "device X's parcel
+				// names these addresses for this item", which is a fact about X and
+				// true wherever it is read. Dropping it here was half the three-device
+				// sweep: only a device that had pulled X's own parcel could name X's
+				// chunks, so the committer's knowledge depended on which parcel it
+				// happened to have seen last.
+				//
+				// LOCAL WINS WHERE THERE IS ONE, and that is the bound: this device's
+				// own pull of X's parcel is its own observation of X, replaced on each
+				// pull, so a peer's second-hand copy never overwrites it and the slots
+				// cannot multiply. Never a slot for OURSELVES -- our manifest is the
+				// authority on our own addresses, and adopting a peer's record of them
+				// would name whatever we uploaded before our last change, for ever.
+				var owner = peerOwner(p);
+				if (owner !== null && owner !== '' && owner !== String(selfDev || '')
+					&& Object.prototype.hasOwnProperty.call(remoteIx, p)) out[p] = remoteIx[p];
 				return;
 			}
 			var l = local[p], r = remoteIx[p];
@@ -811,6 +879,9 @@
 		contentForget: contentForget,
 		contentReap:  contentReap,
 		peerKey:      peerKey,
+		peerKeyFor:   peerKeyFor,
+		peerOwner:    peerOwner,
+		peerReap:     peerReap,
 		fetch:        fetchDown,
 		evict:        evict,
 		pin:          pin,
