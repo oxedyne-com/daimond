@@ -3609,6 +3609,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// while the migration works through them.
 	var DEVICE_ID_RE      = /^(?:[0-9a-f]{16}|[0-9a-f]{32})$/;
 
+	/// This machine's name, once the Hand has said hello and named it (see
+	/// `applyHandHostname`). Empty until then, and for the whole of a session with
+	/// no Hand -- a browser cannot read a hostname on its own.
+	var _handHostname = '';
+
 	/// A millisecond stamp, or 0 when there is none to be had.
 	///
 	/// NOT `n | 0`: an epoch-ms value is far past 32 bits, and the truncation is
@@ -3672,6 +3677,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return '';
 	}
 
+	/// The short word for a browser brand, however it named itself.
+	///
+	/// `navigator.userAgentData.brands` hands back "Google Chrome" and "Microsoft
+	/// Edge" verbatim, which is where "Google Chrome on Linux" came from -- the
+	/// vendor's own name, not the one a person would say out loud. Tested first
+	/// against the same tokens `uaBrand` uses on the user-agent string, so the two
+	/// paths agree; a name neither recognises just loses a vendor prefix.
+	function shortBrand(name) {
+		var n = String(name || '');
+		if (/\bFirefox\b/i.test(n))        return 'Firefox';
+		if (/\bEdge\b/i.test(n))           return 'Edge';
+		if (/\bOpera\b/i.test(n))          return 'Opera';
+		if (/\bSamsung\b/i.test(n))        return 'Samsung Internet';
+		if (/\bChrome\b/i.test(n))         return 'Chrome';
+		if (/\bSafari\b/i.test(n))         return 'Safari';
+		return n.replace(/^Google\s+/i, '').replace(/^Microsoft\s+/i, '');
+	}
+
 	/// The platform a user-agent string names. Coarse on purpose: "Windows", not
 	/// a version — the roster answers "which of my devices", not "what is
 	/// installed on it".
@@ -3688,8 +3711,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// How this device describes itself, worked out once when it first joins the
 	/// roster. Only what the browser volunteers about itself is used — brands and
 	/// platform, nothing measured, nothing that would narrow this browser down to
-	/// this browser. An environment that says nothing recognisable is simply
-	/// "This device", which is still an honest answer to "how many".
+	/// this browser — UNLESS the machine hand has named this computer, which is a
+	/// name the user already knows and not a fingerprint. An environment that says
+	/// nothing recognisable is simply "This device", which is still an honest
+	/// answer to "how many".
 	function deviceName() {
 		var brand = '', plat = '';
 		try {
@@ -3708,25 +3733,54 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var ua = '';
 		try { ua = String(navigator.userAgent || ''); } catch (e) { ua = ''; }
 		if (!brand) brand = uaBrand(ua);
+		brand = shortBrand(brand);
 		if (!plat)  plat  = uaPlatform(ua);
+		if (_handHostname) return t('devices.on_host', { brand: brand || t('devices.unknown'), host: _handHostname });
 		if (brand && plat) return t('devices.on_platform', { brand: brand, platform: plat });
 		return brand || plat || t('devices.unknown');
 	}
 
 	/// How THIS device describes itself when its line is first minted: what it says
-	/// about itself, with four hex of its own id on the end -- "Google Chrome on Linux
-	/// · 7e2a".
+	/// about itself, with four hex of its own id on the end -- "Chrome on Linux ·
+	/// 7e2a" -- or, once the machine hand has named this computer, "Chrome on
+	/// argonaut" with no tail at all, because two machines do not share a hostname
+	/// the way two Linux Chromes share a platform string.
 	///
-	/// `deviceName()` reads the browser and the platform and nothing else, by design, so
-	/// two of a user's Linux Chromes derive the same words. A fleet where two rows read
-	/// identically cannot be told apart by eye, and routing that matched a device by its
-	/// label seated whichever twin beat fresher. The suffix is the id's own tail, which
-	/// is already printed beside every row, so the two are distinct from the moment they
-	/// mint -- and a name its owner has typed is never touched by this.
+	/// Without a hostname, `deviceName()` reads the browser and the platform and
+	/// nothing else, by design, so two of a user's Linux Chromes derive the same
+	/// words. A fleet where two rows read identically cannot be told apart by eye,
+	/// and routing that matched a device by its label seated whichever twin beat
+	/// fresher. The suffix is the id's own tail, which is already printed beside
+	/// every row, so the two are distinct from the moment they mint -- and a name
+	/// its owner has typed is never touched by this.
 	function deviceSelfName(id) {
-		var base = deviceName(), tail = String(id || '').slice(-4);
+		var base = deviceName();
+		if (_handHostname) return base.slice(0, DEVICE_NAME_MAX);
+		var tail = String(id || '').slice(-4);
 		if (!tail) return base;
 		return String(base + ' · ' + tail).slice(0, DEVICE_NAME_MAX);
+	}
+
+	/// The machine hand has just said hello and named this computer: fold that
+	/// into this device's own roster line, but ONLY while nobody has typed a name
+	/// for it -- a label the user gave always wins and this never overwrites one.
+	///
+	/// Idempotent: a hand that reconnects with the same hostname, or a call before
+	/// this device has a roster line at all (`touchSelfDevice` mints one, and
+	/// `deviceSelfName` reads `_handHostname` itself), changes nothing. `seen` is
+	/// bumped when the name does change, the same way a build change bumps it, so
+	/// the freshest-wins merge carries the new name to the rest of the fleet.
+	function applyHandHostname(host) {
+		host = String(host || '').trim();
+		if (!host || host === _handHostname) return;
+		_handHostname = host;
+		var id = deviceId(), reg = loadDevices(), me = reg[id];
+		if (!me || me.label) return;
+		var name = deviceSelfName(id);
+		if (name === me.name) return;
+		me.name = name;
+		me.seen = Date.now();
+		saveDevices(reg);
 	}
 
 	/// One roster line, cleaned: two names that fit, and stamps that are stamps.
@@ -45503,6 +45557,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			onStart: function (id, pid) { runLive('[running, process ' + pid + ']\n'); },
 			onChunk: function (id, stream, data) { runLive(data); },
 			onEnd:   function (id, exit) { runLive('\n[exit code: ' + exit + ']\n'); },
+			// The hand's hello named this computer: fold it into this device's own
+			// derived name (see `applyHandHostname`). Fires only once the link is
+			// actually open -- nothing here opens it early.
+			onHost:  function (host) { applyHandHostname(host); },
 			// What the relay has to say about the hand itself — that it stopped,
 			// that it was never installed — rather than about the command. It is
 			// written for the model, and a person watching the panel is owed it too.

@@ -163,6 +163,11 @@
 	/// it is not in.
 	var WS_CAP = 'ws:';
 
+	/// The prefix this MACHINE's name arrives under, inside `caps` -- see
+	/// `hostname()` in `hand/src/main.rs`. A hand too old to send it, or a
+	/// machine that would not say, means this prefix is simply absent.
+	var HOST_CAP = 'host:';
+
 	/// What the hand publishes where it could not establish an identity at all.
 	///
 	/// A literal word, and a token can never be it: a token is 32 hexadecimal characters. One
@@ -753,6 +758,11 @@
 		// something else now, so it is dropped rather than reused.
 		wsProof = null;
 		met = true;
+		// THE MACHINE'S NAME, the moment the hand first says it -- so the caller can put it
+		// on this device's own roster line without polling `status` itself or opening a
+		// link that would otherwise stay closed until something else needed it.
+		var host = capValue(state.caps, HOST_CAP);
+		if (host && deps.onHost) { try { deps.onHost(host); } catch (e) {} }
 	}
 
 	/// The granted root, as the `caps` list carries it. See `ROOT_CAP`.

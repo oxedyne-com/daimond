@@ -311,6 +311,9 @@
 	// holds the same keys as this one, so there is nothing to revoke and the
 	// wording must not imply there is.
 	'devices.on_platform': '{brand} on {platform}',
+	// Once the machine hand has named this computer -- a name the user already
+	// knows, not the coarse platform guess above.
+	'devices.on_host':     '{brand} on {host}',
 	'devices.unknown':     'This device',
 	'devices.this_device': 'this device',
 	'devices.only_this':   'Only this device syncs this account.',

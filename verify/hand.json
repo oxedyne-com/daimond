@@ -1,6 +1,6 @@
 {
 	"algo": "sha-256",
-	"source": "1c92dd61b0bbcca98f3ca1d21c8d910ec7e9510b6be1c129144b554f04e8ad22",
+	"source": "61a4855c39a4852a1f1ab2e3631bd76e89248adcf7482a6fd805de9eaf5f2e84",
 	"toolchain": "1.90.0",
 	"build": "cargo build --release --manifest-path hand/Cargo.toml",
 	"binary": "hand/target/release/daimond-hand",
@@ -21,7 +21,7 @@
 		"src/fence.rs": "ebb286d1e1c25bddb11c158f36dea54e5919246acecadfbc59e8dea267d2dd02",
 		"src/journal.rs": "dc4c93c3c522c024bfd8a911326c2b4325e2d93c1b1195fc461f6cfc45233346",
 		"src/lib.rs": "a3aaf122528513d77c5160114068109bfd304a11d95cb43fa4c13d42ddbfa915",
-		"src/main.rs": "04feb49a94a8a1461dc61a4afa14ea82ab7c451c8f7c1275cc68b949496be603",
+		"src/main.rs": "3c4d85ee0b3a01aec364389053ef5adb04b12c636248bc1db72728345154058d",
 		"src/pty.rs": "f70f80b1d110b3e813701fb018df3a1585fab28178d1b92637a269e3d266dbf6",
 		"src/seccomp.rs": "9c4ab27ecebf6fd6833daff1f53839aa03cd422f5b71928410de6e7ab51bb76a",
 		"src/verify.rs": "d55b97d11d69d9bb00cdd6391b4437f43e67a68954cfbaa3f5b556b8acf802a8",

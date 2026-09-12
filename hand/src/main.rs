@@ -2548,6 +2548,33 @@ fn hidden_in_home(p: &Path) -> Option<String> {
     hidden_under(p, &home)
 }
 
+/// This computer's name, or `None` where it will not say.
+///
+/// `/etc/hostname` first because it is a file the fence can be given and `gethostname` is a
+/// syscall the seccomp filter would have to allow; `HOSTNAME` after it, which a shell exports
+/// and a bare service does not. An empty or absurd answer is treated as no answer -- a briefing
+/// that names the machine wrongly is worse than one that does not name it.
+fn hostname() -> Option<String> {
+    let from_file = std::fs::read_to_string("/etc/hostname").ok();
+    let raw = match from_file {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => std::env::var("HOSTNAME").unwrap_or_default(),
+    };
+    clean_hostname(&raw)
+}
+
+/// Trims a candidate hostname and refuses one that is empty, absurdly long, or
+/// carries whitespace, so a malformed `/etc/hostname` or `HOSTNAME` cannot reach a
+/// briefing as if it were a real name. Split out from [`hostname`] so the rule can
+/// be tested without touching a real file or the environment.
+fn clean_hostname(raw: &str) -> Option<String> {
+    let h = raw.trim().to_string();
+    if h.is_empty() || h.len() > 64 || h.contains(char::is_whitespace) {
+        return None;
+    }
+    Some(h)
+}
+
 /// The first hidden component of `p` below `home`, where there is one.
 ///
 /// Separate from [`hidden_in_home`] so a test can ask the question without
@@ -2556,25 +2583,6 @@ fn hidden_in_home(p: &Path) -> Option<String> {
 /// # Arguments
 /// * `p`    - The path.
 /// * `home` - The home directory it may be under.
-/// This computer's name, or `None` where it will not say.
-///
-/// `/etc/hostname` first because it is a file the fence can be given and `gethostname` is a
-/// syscall the seccomp filter would have to allow; `HOSTNAME` after it, which a shell exports
-/// and a bare service does not. An empty or absurd answer is treated as no answer -- a briefing
-/// that names the machine wrongly is worse than one that does not name it.
-fn hostname() -> Option<String> {
-    let from_file = std::fs::read_to_string("/etc/hostname").ok()
-        .map(|s| s.trim().to_string());
-    let h = match from_file {
-        Some(s) if !s.is_empty() => s,
-        _ => std::env::var("HOSTNAME").unwrap_or_default().trim().to_string(),
-    };
-    if h.is_empty() || h.len() > 64 || h.contains(char::is_whitespace) {
-        return None;
-    }
-    Some(h)
-}
-
 fn hidden_under(p: &Path, home: &Path) -> Option<String> {
     let rest = match p.strip_prefix(home) {
         Ok(r)  => r,
@@ -4132,6 +4140,21 @@ mod tests {
         assert!(is_browser_arg("--parent-window=12345"));
         assert!(!is_browser_arg("--report"));
         assert!(!is_browser_arg("/etc/passwd"));
+        Ok(())
+    }
+
+    /// A hostname is trimmed and passed through; an empty, over-long, or
+    /// whitespace-bearing candidate is refused rather than briefed as if it were
+    /// real.
+    #[test]
+    fn a_hostname_is_cleaned_or_refused() -> Outcome<()> {
+        assert_eq!(clean_hostname("argonaut\n"), Some(fmt!("argonaut")));
+        assert_eq!(clean_hostname("  gilgamesh  "), Some(fmt!("gilgamesh")));
+        assert_eq!(clean_hostname(""), None);
+        assert_eq!(clean_hostname("   "), None);
+        assert_eq!(clean_hostname("two words"), None);
+        assert_eq!(clean_hostname(&"x".repeat(65)), None);
+        assert_eq!(clean_hostname(&"x".repeat(64)), Some("x".repeat(64)));
         Ok(())
     }
 
