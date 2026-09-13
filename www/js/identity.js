@@ -19,8 +19,18 @@
    snooping: an onlooker who opens DevTools or reads localStorage
    finds only a random salt, a public key, a fingerprint, and two
    AES-GCM ciphertexts (the wrapped private key and the wrapped API
-   key). The passphrase is never stored, and the derived wrapping
-   key exists only in memory while unlocked and is non-extractable.
+   key). The passphrase is never stored.
+
+   ONE THING IS STORED THAT WAS NOT, SINCE 2026-09-13: the derived
+   wrapping key, as bytes, in the TAB's sessionStorage, so a tab
+   that is reloaded onto a new build comes back unlocked instead of
+   at the lock screen (see `K_STAY`). It lives as long as that tab
+   and is cleared on lock, on sign-out, on forget-me and on the
+   gateway removing this device; the key the app HOLDS is still
+   non-extractable, and the passphrase is still nowhere. What moves
+   is that a machine left unlocked stays unlocked across a reload
+   rather than locking itself -- which is the per-device setting's
+   whole subject, default on for a desktop and off for a phone.
 
    It does NOT protect against a compromised browser, a malicious
    extension, a keylogger, or any attacker who observes the
@@ -83,6 +93,27 @@
 	// so a re-mint that would orphan the sealed keys is turned into a recover
 	// prompt instead. See existsSettled() and daimond.js's orphan guard.
 	var K_EVER  = 'daimond-id-ever';	// '1' once an identity has existed here.
+
+	// ── Staying unlocked across a reload (2026-09-13) ───────────
+	//
+	// A pushed update reloads the tab, and a reload used to mean the lock screen:
+	// the wrapping key lives in memory, and memory does not survive a load. That
+	// cost was acceptable while only a nominated runner was ever reloaded unlocked;
+	// from today every idle desktop is (see updater.js), so every idle desktop
+	// would come back asking for a passphrase nobody typed it for.
+	//
+	// So the DERIVED key material — never the passphrase, which this file has never
+	// held — is kept in the TAB's sessionStorage. That storage is the only one the
+	// right shape for the job: it survives a reload of this tab, it dies with the
+	// tab, and no other tab can read it. It is NOT localStorage, which would leave
+	// the key on disk for whoever opens the browser next.
+	//
+	// What is stored opens exactly what the passphrase opens, so the trade is plain
+	// and it is the one the per-device setting names: a machine left on an unlocked
+	// tab stays unlocked across a reload instead of locking itself. Default ON for a
+	// desktop, OFF for a phone, and when it is off nothing is written at all.
+	var K_STAY = 'daimond-stay-unlocked';	// '1' | '0': this device's answer, never synced.
+	var S_KEY  = 'daimond-id-session';	// sessionStorage: { k, alg }, this TAB only.
 
 	// ── In-memory state (present only while unlocked) ──────────
 	// All three are dropped by lock(); none is ever persisted.
@@ -159,6 +190,86 @@
 		}
 	}
 
+	// ── The remembered session ─────────────────────────────────
+
+	/// TRAINING WHEELS — the debug feed, as in updater.js and sync.js. One guarded
+	/// line per call site; nothing here depends on the feed existing or answering.
+	function share(kind, payload) {
+		try {
+			// Named through `window` throughout: this file is loaded as a classic
+			// script by the page and as a plain function body by its tests, and a bare
+			// global resolves in the first but not the second.
+			if (window.DEBUG_SHARE && window.DEBUG_SHARE.event) window.DEBUG_SHARE.event(kind, payload);
+		} catch (e) { /* the feed is a nicety */ }
+	}
+
+	/// This TAB's storage, or null where it cannot be reached — a private window, a
+	/// host that has none. Every caller reads null as "nothing is remembered".
+	function tabStore() {
+		try { return window.sessionStorage || null; } catch (e) { return null; }
+	}
+
+	/// Is this a phone or a tablet? The shell's own measurement, which is taken from
+	/// touch, pointer and UA mobility rather than from the window's width. A device
+	/// that cannot say reads as a desktop, which is mobile.js's own doctrine.
+	function mobileDevice() {
+		try {
+			return !!(window.DaimondShell && window.DaimondShell.isMobileDevice
+				&& window.DaimondShell.isMobileDevice());
+		} catch (e) { return false; }
+	}
+
+	/// Does this device keep its unlocked session across a reload? Default ON for a
+	/// desktop, OFF for a phone: a phone is carried, is reloaded by the browser
+	/// whenever it feels like reclaiming the tab, and is the device most likely to
+	/// be handed to somebody.
+	function stayUnlocked() {
+		var v = null;
+		try { v = localStorage.getItem(K_STAY); } catch (e) { v = null; }
+		if (v === '1') return true;
+		if (v === '0') return false;
+		return !mobileDevice();
+	}
+
+	/// Set it. Turning it off drops what is already remembered, so the answer is
+	/// true of this tab from the moment it is given and not only of the next one.
+	function setStayUnlocked(on) {
+		try { localStorage.setItem(K_STAY, on ? '1' : '0'); } catch (e) { /* private mode */ }
+		if (!on) forgetSession();
+		return stayUnlocked();
+	}
+
+	/// Keep the derived key material where a reload of THIS TAB will find it.
+	/// Refuses silently when the setting is off — "off" means nothing is written,
+	/// not written-and-ignored.
+	function rememberSession(bits, alg) {
+		if (!stayUnlocked()) return false;
+		var s = tabStore();
+		if (!s || !bits) return false;
+		try {
+			s.setItem(S_KEY, JSON.stringify({ k: b64enc(bits), alg: String(alg || '') }));
+			return true;
+		} catch (e) { return false; }
+	}
+
+	/// Drop it. Called by `lock`, which every deliberate end of a session goes
+	/// through — the Lock button, signing out, forget-me, and the gateway telling
+	/// this device it has been removed.
+	function forgetSession() {
+		var s = tabStore();
+		if (!s) return;
+		try { s.removeItem(S_KEY); } catch (e) { /* nothing to drop */ }
+	}
+
+	/// Is there key material in this tab for a reload to come back on? Published for
+	/// the settings row, which says what the device will do, and for a test that has
+	/// to prove nothing is kept.
+	function sessionHeld() {
+		var s = tabStore();
+		if (!s) return false;
+		try { return !!s.getItem(S_KEY); } catch (e) { return false; }
+	}
+
 	// ── Cryptographic primitives ───────────────────────────────
 
 	/// Derive the AES-GCM 256 wrapping key from a passphrase and salt
@@ -182,6 +293,43 @@
 			base,
 			{ name: 'AES-GCM', length: AES_BITS },
 			false,				// non-extractable.
+			['encrypt', 'decrypt'],
+		);
+	}
+
+	/// The PBKDF2 output itself, as bytes. Derived by the two paths that may be
+	/// asked to remember it for this tab — `unlock` and `create` — and by the
+	/// passphrase change, which has to replace what they remembered. Everything
+	/// else takes `deriveWrapKey` and never sees the bytes.
+	async function deriveWrapBits(passphrase, saltBytes) {
+		var base = await crypto.subtle.importKey(
+			'raw',
+			utf8(passphrase),
+			{ name: 'PBKDF2' },
+			false,
+			['deriveBits'],
+		);
+		var bits = await crypto.subtle.deriveBits(
+			{
+				name:       'PBKDF2',
+				salt:       saltBytes,
+				iterations: PBKDF2_ITERATIONS,
+				hash:       'SHA-256',
+			},
+			base,
+			AES_BITS,
+		);
+		return new Uint8Array(bits);
+	}
+
+	/// The AES-GCM key those bytes are — non-extractable, as everywhere else here,
+	/// so what is imported cannot be read back out of the key object.
+	function wrapKeyFromBits(bits) {
+		return crypto.subtle.importKey(
+			'raw',
+			bits,
+			{ name: 'AES-GCM' },
+			false,
 			['encrypt', 'decrypt'],
 		);
 	}
@@ -555,6 +703,23 @@
 		catch (e) { /* no window */ }
 	}
 
+	/// Announce at a moment the app can HEAR. This file is loaded before the modules
+	/// that listen for `daimond:unlock` — runner.js, post.js, daimond.js — so a
+	/// restore that fired the instant it finished would fire at nobody: classic
+	/// scripts run in order, and the restore's microtasks land between two of them.
+	/// Only the boot restore needs this; a typed unlock happens long after load.
+	function announceWhenReady(what) {
+		var d = null;
+		try { d = window.document || null; } catch (e) { d = null; }
+		if (d && d.readyState === 'loading') {
+			try {
+				d.addEventListener('DOMContentLoaded', function () { announce(what); });
+				return;
+			} catch (e) { /* fall through and announce now */ }
+		}
+		announce(what);
+	}
+
 	/// The public-key fingerprint for display, or null. Works whether or not the
 	/// identity is unlocked, since it is public.
 	///
@@ -587,7 +752,8 @@
 
 		// Fresh per-install salt.
 		var salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-		var wrapKey = await deriveWrapKey(passphrase, salt);
+		var bits = await deriveWrapBits(passphrase, salt);
+		var wrapKey = await wrapKeyFromBits(bits);
 
 		// Device keypair (Ed25519, else ECDSA P-256).
 		var gen = await generatePair();
@@ -633,7 +799,10 @@
 		// Leave unlocked: keep the wrapping key and the signing key.
 		_wrapKey = wrapKey;
 		_signKey = gen.pair.privateKey;
+		rememberSession(bits, alg);
+		try { bits.fill(0); } catch (e) { /* best effort, as in lock() */ }
 		announce('unlock');
+		share('unlock', { via: 'typed' });
 
 		// The sealing key is made here so a new identity can be messaged from the
 		// moment it exists. A failure is not fatal to creating an identity — an
@@ -828,7 +997,8 @@
 		// A new passphrase gets a new salt, so the old derived key is useless
 		// even against a copy of the old ciphertext.
 		var salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-		var newKey = await deriveWrapKey(newPass, salt);
+		var newBits = await deriveWrapBits(newPass, salt);
+		var newKey = await wrapKeyFromBits(newBits);
 		var wrapped = await seal(newKey, pkcs8);
 
 		// The passphrase is already proven (the open above), so an import failure
@@ -877,9 +1047,100 @@
 		_wrapKey  = newKey;
 		_signKey  = signKey;
 		_signSeed = signSeed;
+		// The remembered material is the OLD key, which opens nothing now. Replaced
+		// rather than dropped, so a reload of this tab still comes back unlocked.
+		rememberSession(newBits, alg);
+		try { newBits.fill(0); } catch (e) { /* best effort */ }
 		await loadSealingKey(newKey);
 		try { await ensureSealingKey(); } catch (e) { /* a rekey is not a failure for this */ }
 		return { ok: true };
+	}
+
+	/// Import a recovered pkcs8 private key for signing, answering `{ key, seed }`
+	/// — the seed half set only on an engine whose WebCrypto cannot load the curve.
+	/// Null when neither can, which is the honest 'unsupported' and never a wrong
+	/// passphrase.
+	///
+	/// The AES-GCM open that precedes every call here ALREADY PROVED the passphrase,
+	/// so a failure from this point is an engine that cannot load a key of this
+	/// algorithm (old Android Chrome, older Firefox, for Ed25519) — hence the
+	/// pure-JS fallback rather than turning the user away.
+	async function signKeyFrom(pkcs8, alg) {
+		try {
+			return {
+				key: await crypto.subtle.importKey('pkcs8', pkcs8, importAlg(alg), false, ['sign']),
+				seed: null,
+			};
+		} catch (e) { /* not a passphrase problem: try the fallback */ }
+		var fb = curveFallback();
+		if (alg === 'Ed25519' && fb) {
+			try { return { key: null, seed: fb.edSeedFromPkcs8(pkcs8) }; }
+			catch (e2) { /* the fallback cannot read it either */ }
+		}
+		return null;
+	}
+
+	/// Restore THIS TAB's unlocked session after a reload, with no passphrase typed.
+	///
+	/// The one door past the lock screen that does not go through a passphrase or a
+	/// passkey, and it opens only on what this tab itself stored at its last unlock
+	/// (see the note above `K_STAY`). Three things can have changed underneath it —
+	/// the setting turned off in another tab, the passphrase changed, the keys
+	/// replaced — and each drops what is remembered rather than guessing.
+	///
+	/// Answers the same shape `unlock` does, with `via` so a caller can tell the two
+	/// apart; `{ ok: false, reason: 'none' }` is the ordinary cold boot and not a
+	/// failure.
+	async function restore() {
+		if (!available() || !exists()) return { ok: false, reason: 'none' };
+		if (isUnlocked()) {
+			return { ok: true, via: 'memory', fingerprint: fingerprint(), name: displayName() };
+		}
+		var store = tabStore();
+		var raw = null;
+		if (store) { try { raw = store.getItem(S_KEY); } catch (e) { raw = null; } }
+		if (!raw) return { ok: false, reason: 'none' };
+		// Asked again HERE rather than trusted from the time it was written: the
+		// setting is per device, and another tab can have turned it off since.
+		if (!stayUnlocked()) { forgetSession(); return { ok: false, reason: 'off' }; }
+
+		var rec = null;
+		try { rec = JSON.parse(raw); } catch (e) { rec = null; }
+		var privRaw = localStorage.getItem(K_PRIV);
+		var alg     = (rec && rec.alg) || localStorage.getItem(K_ALG) || 'Ed25519';
+		if (!rec || !rec.k || !privRaw) { forgetSession(); return { ok: false, reason: 'none' }; }
+
+		var wrapKey;
+		try { wrapKey = await wrapKeyFromBits(b64dec(rec.k)); }
+		catch (e) { forgetSession(); return { ok: false, reason: 'stale' }; }
+
+		var pkcs8;
+		try {
+			pkcs8 = await open(wrapKey, privRaw);
+		} catch (e) {
+			// The remembered key no longer opens the stored one: the passphrase was
+			// changed, or the identity replaced, somewhere this tab did not see.
+			forgetSession();
+			return { ok: false, reason: 'stale' };
+		}
+
+		var sk = await signKeyFrom(pkcs8, alg);
+		if (!sk) return { ok: false, reason: 'unsupported' };
+
+		_wrapKey  = wrapKey;
+		_signKey  = sk.key;
+		_signSeed = sk.seed;
+		announceWhenReady('unlock');
+		// The lens reads this to tell a restored unlock from a typed one, which is
+		// the difference between a reload that cost the user nothing and one that
+		// sent them back to the gate.
+		share('unlock', { via: 'session' });
+
+		await loadSealingKey(wrapKey);
+		try { await ensureSealingKey(); } catch (e) { /* a restore is not a failure for this */ }
+		refreshFingerprint();
+
+		return { ok: true, via: 'session', fingerprint: fingerprint(), name: displayName() };
 	}
 
 	/// Unlock an existing identity with a passphrase. Derives the
@@ -899,7 +1160,8 @@
 			return { ok: false };
 		}
 
-		var wrapKey = await deriveWrapKey(passphrase, b64dec(saltRaw));
+		var bits    = await deriveWrapBits(passphrase, b64dec(saltRaw));
+		var wrapKey = await wrapKeyFromBits(bits);
 
 		var pkcs8;
 		try {
@@ -910,39 +1172,21 @@
 			return { ok: false };
 		}
 
-		// Import the recovered private key for signing (non-extractable).
-		//
-		// The AES-GCM open above ALREADY PROVED the passphrase, so a failure from
-		// here on is NOT a wrong passphrase — it is an engine that cannot load a
-		// key of this algorithm (old Android Chrome, older Firefox, for Ed25519).
-		// So try WebCrypto, and on an Ed25519 account fall back to the pure-JS
-		// signer rather than turning the user away; only when neither can load the
-		// key do we surface the honest 'unsupported' reason, never 'wrong pass'.
-		var signKey  = null;
-		var signSeed = null;
-		try {
-			signKey = await crypto.subtle.importKey(
-				'pkcs8',
-				pkcs8,
-				importAlg(alg),
-				false,
-				['sign'],
-			);
-		} catch (e) {
-			var fb = curveFallback();
-			if (alg === 'Ed25519' && fb) {
-				try { signSeed = fb.edSeedFromPkcs8(pkcs8); }
-				catch (e2) { signSeed = null; }
-			}
-			if (!signSeed) {
-				return { ok: false, reason: 'unsupported' };
-			}
+		var sk = await signKeyFrom(pkcs8, alg);
+		if (!sk) {
+			return { ok: false, reason: 'unsupported' };
 		}
 
 		_wrapKey   = wrapKey;
-		_signKey   = signKey;
-		_signSeed  = signSeed;
+		_signKey   = sk.key;
+		_signSeed  = sk.seed;
+		// What a reload of this tab comes back on, where the device says so. Written
+		// from the bits rather than the key object, which is non-extractable for the
+		// same reason it always was; the bytes are zeroed below either way.
+		rememberSession(bits, alg);
+		try { bits.fill(0); } catch (e) { /* best effort, as in lock() */ }
 		announce('unlock');
+		share('unlock', { via: 'typed' });
 
 		// Both of these run at every unlock, and both are why an identity made by
 		// an earlier build catches up without the user doing anything: the one
@@ -985,6 +1229,11 @@
 		if (fb) { fb.zero(_signSeed); fb.zero(_sealScalar); }
 		_signSeed   = null;
 		_sealScalar = null;
+		// And what a reload would have come back on. THIS IS THE WHOLE OF "cleared on
+		// Lock, on sign-out, on forget-me, and on a 410 removal": every one of those
+		// ends here (daimond.js `lockApp`, `onThisDeviceRemoved`, and `reset` below),
+		// so none of them needs to know the key exists.
+		forgetSession();
 		if (was) announce('lock');		// so a decrypted store can drop what it holds.
 	}
 
@@ -1355,6 +1604,26 @@
 		return true;
 	}
 
+	// ── The boot attempt ───────────────────────────────────────
+	//
+	// Tried here, at load, rather than waited for: the app's boot gate decides
+	// between the lock screen and the workspace, and the earlier this has answered
+	// the fewer ways there are for the two to disagree. It is cheap — no PBKDF2, one
+	// AES-GCM open — and on the overwhelmingly common cold boot there is nothing
+	// stored and it answers at once.
+	//
+	// `_restoring` is the promise, published so the gate can await the answer rather
+	// than race it.
+	var _restoring = null;
+	function restoreAtBoot() {
+		if (_restoring) return _restoring;
+		_restoring = Promise.resolve()
+			.then(restore)
+			.catch(function () { return { ok: false, reason: 'none' }; });
+		return _restoring;
+	}
+	try { restoreAtBoot(); } catch (e) { /* inert where there is no storage at all */ }
+
 	// ── Public surface ─────────────────────────────────────────
 	window.DaimondIdentity = {
 		available:    available,
@@ -1371,6 +1640,20 @@
 		unlock:       unlock,
 		lock:         lock,
 		isUnlocked:   isUnlocked,
+		/// Come back unlocked from THIS TAB's last unlock, with no passphrase typed.
+		/// Awaited by the boot gate before it shows the lock screen; see the note
+		/// above `K_STAY` for what is kept and for how long.
+		restore:      restore,
+		/// The attempt already made at load, as a promise. Awaiting this is how a
+		/// caller asks "is this boot a restored one?" without starting a second.
+		restoring:    restoreAtBoot,
+		/// Does this device keep its unlocked session across a reload? Per-device,
+		/// default ON for a desktop and OFF for a phone.
+		stayUnlocked:    stayUnlocked,
+		setStayUnlocked: setStayUnlocked,
+		/// Is there key material in this tab for a reload to come back on? Read by
+		/// the updater before it reloads an unlocked desktop.
+		sessionHeld:     sessionHeld,
 		/// The rendering of this device's public key that a person reads. It
 		/// decides nothing; equality is always the full key. See the note above
 		/// `fingerprintOf` for why there is exactly one implementation of it.

@@ -181,6 +181,37 @@ try {
 		check('EXTRA (seq 217): a beating-but-serviced-stale phantom desktop is NOT seated -> local',
 			res.reason === 'local' && res.target === null, 'reason=' + res.reason);
 	}
+	// ── EXTRA: THE RUNNER POSTURE, between the star and the generic scan ───────────
+	//
+	// A phantom is excluded above because it only BEATS. A machine that beats AND says
+	// `runner:true` is the opposite case: it has been armed (runner.js holds a wake lock
+	// and keeps the errand long-poll open), and its servicing stamp can lapse for a
+	// round without that ceasing to be true. Live, on 2026-09-13, the phone held no
+	// nominee record and argonaut's stamp was stale, so BOTH the star branch and the
+	// generic scan missed it and the phone ran the turn itself.
+	{
+		const pres = {}; pres[IOS] = phone('iPhone', 1000);
+		pres[ARG] = { name: 'argonaut', lastSeen: now - 1000, servicedAt: now - (W + 30000),
+			attended: false, mobile: false, runner: true };
+		const res = P.handoffTarget(pres, { selfId: IOS, windowMs: W }, now);
+		check('EXTRA: an ARMED runner is seated on the posture, with no nominee and a stale stamp',
+			res.reason === 'runner-posture' && res.target && res.target.deviceId === ARG,
+			'reason=' + res.reason);
+		// ORDERING. A live star elsewhere still wins: the posture sits BELOW (a) and (a').
+		pres[GIL] = { name: 'gilgamesh', lastSeen: now - 500, servicedAt: now - 500,
+			attended: false, mobile: false };
+		const starred = P.handoffTarget(pres, { selfId: IOS, windowMs: W, nominatedId: GIL }, now);
+		check('EXTRA: an explicit star still outranks another machine\u2019s posture',
+			starred.reason === 'nominee' && starred.target.deviceId === GIL,
+			'reason=' + starred.reason);
+		// And the posture outranks the GENERIC scan: with the star gone, argonaut (armed,
+		// stale stamp) is chosen over gilgamesh (genuine, no posture).
+		const unstarred = P.handoffTarget(pres, { selfId: IOS, windowMs: W }, now);
+		check('EXTRA: the posture outranks a merely-genuine desktop',
+			unstarred.reason === 'runner-posture' && unstarred.target.deviceId === ARG,
+			'reason=' + unstarred.reason + ' peer=' + (unstarred.target && unstarred.target.deviceId));
+	}
+
 } catch (e) {
 	check('the run finished without throwing', false, String((e && e.stack) || e));
 }

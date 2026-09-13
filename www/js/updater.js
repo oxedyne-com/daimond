@@ -21,6 +21,14 @@
  * behind a banner the user can defer. Three guards bound it: nothing within a minute of boot,
  * nothing twice within ten minutes, and nothing at all while this tab's own build id is unknown.
  *
+ * 2026-09-13: the unlocked refusal is lifted for every idle DESKTOP, not only for a
+ * nominated runner -- an un-starred desktop sat nine hours on a superseded build --
+ * because identity.js now brings a desktop back UNLOCKED (the derived key is kept in
+ * the tab's sessionStorage, default on for a desktop and off for a phone). Phones keep
+ * the narrow runner exemption. The safety question is unchanged and is asked of every
+ * device: no turn, worker or fold, nothing half-typed, sync quiet, no lease held for
+ * another device, a minute since boot, and at most one automatic reload in ten.
+ *
  * There is deliberately no way to REFUSE a version. A web app cannot coherently run an old build
  * against a new server, and the new build is the same app, from the same people, the user is
  * already trusting. The only question is WHEN, never WHETHER: the chip offers "now" on a click,
@@ -203,47 +211,84 @@
 		return syncQuiet();
 	}
 
-	/// THE ONE EXEMPTION FROM THE UNLOCKED REFUSAL: an idle nominated runner.
-	///
-	/// The refusal below is right for an ordinary tab -- a reload sends it back to
-	/// the unlock gate, and the person sitting in front of it has to type their
-	/// passphrase for a reason they never asked for. A RUNNER is the case where
-	/// standing still is worse: nobody is sitting in front of it, it runs other
-	/// devices' turns, and refusing to reload an unlocked tab meant the one machine
-	/// the account depends on was also the one machine that never updated. It drifts
-	/// a build behind, then two, and a phone hands a turn to a runner speaking an
-	/// older wire.
-	///
-	/// The cost is real and is NOT hidden: the runner comes back locked and does not
-	/// run another turn until somebody unlocks it. That is written down in the
-	/// guide (www/guide/runner.html) as one of the two things that can still stop a
-	/// runner, because it is a thing the owner has to know rather than discover.
-	///
-	/// IDLE MEANS POSITIVELY IDLE. Every part of it must be KNOWN, so an unreadable
-	/// answer is not idle: no posture, no lease module, no device id -- each reads
-	/// false and the ordinary refusal stands. A turn in flight is already covered by
-	/// `busy()` in `safeNow`; this adds the one `busy()` cannot see, which is a turn
-	/// this device is holding a lease on for ANOTHER device.
-	function runnerIdle() {
+	/// Is this a phone or a tablet? The shell's own measurement — touch, pointer and
+	/// UA mobility, not the window's width, so a desktop dragged narrow is still a
+	/// desktop. A device that cannot say reads as a desktop, which is mobile.js's
+	/// own doctrine and the reading that keeps a machine updated.
+	function mobileDevice() {
 		try {
-			if (!(window.DaimondRunner && DaimondRunner.on && DaimondRunner.on())) return false;
+			return !!(window.DaimondShell && window.DaimondShell.isMobileDevice
+				&& window.DaimondShell.isMobileDevice());
+		} catch (e) { return false; }
+	}
+
+	/// This device's id, the identity's own. NOT `daimond-device-id`, which is the
+	/// roster key from before the two id spaces were joined on 2026-09-12 and which
+	/// the migration REMOVES -- so reading it meant `idleUnlocked` below answered
+	/// false on every migrated device, and the runner exemption this file added was
+	/// inert from the day it shipped. runner.js took the same correction (fc69584).
+	function selfId() {
+		try {
+			var id = window.DaimondIdentity && window.DaimondIdentity.deviceId
+				? String(window.DaimondIdentity.deviceId() || '') : '';
+			if (id) return id;
+		} catch (e) { /* fall through to the key it writes */ }
+		try { return localStorage.getItem('daimond-id-device') || ''; } catch (e) { return ''; }
+	}
+
+	/// Is this device running a turn for ANOTHER device right now? `busy()` in
+	/// `safeNow` covers a turn of this device's own; this covers the one it cannot
+	/// see, which is a lease held on somebody else's behalf.
+	///
+	/// POSITIVELY IDLE, so every part must be KNOWN: no lease module and no device
+	/// id each read as "holding", and the ordinary refusal stands. A reload that
+	/// dropped a turn another device is waiting on is worse than any build drift.
+	function leaseFree() {
+		try {
 			var L = window.DaimondLease;
 			if (!L || !L.heldBy) return false;		// cannot tell, so not idle
-			var me = '';
-			try { me = localStorage.getItem('daimond-device-id') || ''; } catch (e) { me = ''; }
+			var me = selfId();
 			if (!me) return false;
 			return !L.heldBy(me);
 		} catch (e) { return false; }
 	}
 
-	/// The conditions that were already here, and each for the reason set out in the
-	/// long note that used to sit inside `apply`: never silently reload an UNLOCKED
-	/// tab, because the passphrase key lives in memory only and the tab would come
-	/// back at the unlock gate; and never reload a foreground tab the user is still
-	/// working in. An idle runner is the one exemption -- see `runnerIdle`.
+	/// Does this machine hold the runner posture AND nothing to run? The phone's
+	/// exemption, and nothing else's -- see `idleUnlocked`.
+	function runnerIdle() {
+		try {
+			if (!(window.DaimondRunner && DaimondRunner.on && DaimondRunner.on())) return false;
+		} catch (e) { return false; }
+		return leaseFree();
+	}
+
+	/// MAY AN UNLOCKED TAB BE RELOADED? (2026-09-13)
+	///
+	/// It could not, for one good reason: the wrapping key lived in memory alone, so
+	/// a reload sent the tab back to the unlock gate and the person in front of it
+	/// typed a passphrase for something they never asked for. The runner was made the
+	/// one exemption, because nobody sits in front of a runner and a runner that never
+	/// updates is the one machine the account depends on drifting a build behind.
+	///
+	/// Both halves of that were wrong for a desktop. The exemption was too narrow --
+	/// gilgamesh, un-starred and idle, sat nine hours on a superseded build -- and the
+	/// reason for the refusal no longer holds: identity.js keeps the derived key in
+	/// the TAB's sessionStorage and comes back unlocked (`DaimondIdentity.restore`).
+	///
+	/// So: every idle DESKTOP is reloadable, locked or not. A phone is not, beyond the
+	/// runner exemption it already had: it is carried, it is reloaded by the browser
+	/// whenever it wants the tab back, and it is the device most likely to be handed
+	/// to somebody -- which is why the stay-unlocked setting defaults off there.
+	function idleUnlocked() {
+		return mobileDevice() ? runnerIdle() : leaseFree();
+	}
+
+	/// The two conditions that were always here, one of them narrowed: never reload an
+	/// unlocked tab on a device that should not be reloaded unlocked (`idleUnlocked`),
+	/// and never reload a foreground tab the user is still working in.
 	function quietEnough() {
 		try {
-			if (window.DaimondIdentity && DaimondIdentity.isUnlocked() && !runnerIdle()) return false;
+			if (window.DaimondIdentity && DaimondIdentity.isUnlocked() && !idleUnlocked()) return false;
 		} catch (e) {}
 		if (!document.hidden && quietFor() < QUIESCE_MS) return false;
 		return true;

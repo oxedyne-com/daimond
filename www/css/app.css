@@ -1177,7 +1177,6 @@ button.tag-pool { cursor: pointer; }
    about the next one. Indented under the status it qualifies. */
 .seat-note { margin-top: 4px; font-size: var(--fs-xs); color: var(--text-muted); }
 .seat-note.seat-warn { color: var(--warn); }
-.seat-line .seat-why { opacity: 0.85; }
 :root[data-cfull] .panel.ai .seat-line { display: none !important; }
 
 .panel.ai.crystal-face .crystal-view   { order: 1; }
@@ -2701,7 +2700,14 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    device out; the cross tidies a register of what has been seen. It is drawn as
    the milder of the two acts on the row -- a danger colour on hover, and no
    ground of its own -- rather than as a destructive button. */
-.device-row { display: flex; align-items: baseline; gap: 6px; padding: 5px 8px; font-size: var(--fs-sm); color: var(--text-primary); }
+/* WRAPPING, because the row has to fit the column it is in. Eleven children,
+   every one of them `flex: none; white-space: nowrap` bar the name, so the only
+   thing that could ever give was the name -- and once it had given everything,
+   the row simply ran off the edge: a row measured 450px inside a 380px drawer on
+   the owner's own desktop (trace, 2026-09-13). */
+.device-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; row-gap: 2px; padding: 5px 8px; font-size: var(--fs-sm); color: var(--text-primary); }
+/* Nothing above a phone's width: the break is the second line's doing. */
+.device-break { display: none; }
 /* The name shrinks first and the id takes the slack, so the id sits with the
    name it belongs to and the last-seen column stays flush right. */
 .device-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2740,6 +2746,12 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .device-nominate { flex: none; align-self: center; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; margin-left: 2px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: var(--fs-2xl); line-height: 1; cursor: pointer; opacity: .75; }
 .device-row:hover .device-nominate, .device-nominate:hover, .device-nominate:focus-visible { opacity: 1; color: var(--text-primary); background: var(--bg-hover); }
 .device-nominate.is-nominee { opacity: 1; color: var(--accent); }
+/* This device's own row only -- see the JS comment above where it is built. Same
+   quiet icon-button footing as the star beside it; lit once the setting is on
+   rather than only on hover, so a glance at the row says which way it is set. */
+.device-stay { flex: none; align-self: center; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; margin-left: 2px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: var(--fs-lg); line-height: 1; cursor: pointer; opacity: .75; }
+.device-row:hover .device-stay, .device-stay:hover, .device-stay:focus-visible { opacity: 1; background: var(--bg-hover); }
+.device-stay.is-on { opacity: 1; color: var(--accent); }
 /* A small badge on the nominee's line, so the runner reads at a glance beside the
    last-seen column rather than only through the star. */
 .device-nominee { flex: none; font-size: var(--fs-3xs); text-transform: uppercase; letter-spacing: .04em; color: var(--accent); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
@@ -2764,6 +2776,42 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 /* The one-line fleet-skew banner over the Devices list: your devices are not all
    on one build. Loud enough to notice, not so loud it competes with the rows. */
 .device-skew { margin: 4px 0 6px; padding: 6px 8px; font-size: var(--fs-2xs); line-height: 1.35; color: var(--warning, var(--danger)); background: var(--bg-hover); border: 1px solid var(--warning, var(--danger)); border-radius: 6px; }
+
+/* ── A DEVICE ROW AT A PHONE'S WIDTH: TWO LINES ──────────────────────────────
+   A name, an id, a last-seen stamp, a build, a role tag, a warning tag and four
+   controls do not share one line on a phone and stay readable -- the owner read
+   the list on an iPhone and called it indecipherable (2026-09-13). So the row
+   folds: the name and its tags on the first line with the controls flush right,
+   and the id, the build and when it was last here underneath.
+
+   `order` and not DOM order, because the desktop row is the same elements in the
+   same sequence and only this width rearranges them. The controls go to 44px,
+   which is a finger rather than a mouse. */
+@media (max-width: 480px) {
+	.device-row { align-items: center; padding: 6px 8px; }
+	/* Line 1. */
+	.device-row > .device-name { order: 1; flex: 1 1 auto; }
+	.device-row > .device-nominee,
+	.device-row > .device-ghost { order: 2; align-self: center; }
+	.device-row > .copy-id,
+	.device-row > .device-nominate,
+	.device-row > .device-stay,
+	.device-row > .device-rename,
+	.device-row > .device-remove { flex: none; width: 44px; height: 44px; margin-left: 0; }
+	/* After the group, or the reset above would undo the `auto` that pushes the
+	   whole cluster of controls to the right-hand edge of the first line. */
+	.device-row > .copy-id { order: 3; margin-left: auto; }
+	.device-row > .device-nominate { order: 4; }
+	.device-row > .device-stay { order: 4; }
+	.device-row > .device-rename { order: 5; }
+	.device-row > .device-remove { order: 6; }
+	/* Line 2 starts here. */
+	.device-break { display: block; order: 7; flex: 0 0 100%; height: 0; }
+	.device-row > .device-id { order: 8; flex: 0 0 auto; }
+	.device-row > .device-when { order: 9; text-align: left; }
+	.device-row > .device-build { order: 10; }
+	.device-row > .device-oldbuild { order: 11; }
+}
 
 #id-name-row { margin-bottom: 8px; }
 #id-name { width: 100%; }

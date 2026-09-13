@@ -1762,15 +1762,25 @@ impl DaimondApp {
     }
 
     /// Cumulative prompt tokens billed to this session.
+    ///
+    /// Borrows the session, so it is a POST-TURN read: [`DaimondApp::run_turn`] holds the
+    /// session mutably for the whole turn, and a bare `borrow()` reading mid-turn would panic
+    /// the `RefCell` -- which is exactly what happened live, on [`DaimondApp::last_prompt_tokens`],
+    /// when the browser's stats seam read a getter while a turn was in flight.  `try_borrow`
+    /// instead, so a mid-turn read draws zero rather than crashing the page; mid-turn,
+    /// [`DaimondApp::live_prompt_tokens`] is the figure to read.
     #[wasm_bindgen(getter)]
     pub fn prompt_tokens(&self) -> f64 {
-        self.session.borrow().prompt_tokens as f64
+        self.session.try_borrow().map(|s| s.prompt_tokens as f64).unwrap_or(0.0)
     }
 
     /// Cumulative completion tokens billed to this session.
+    ///
+    /// Post-turn only; see [`DaimondApp::prompt_tokens`] for why this reads with `try_borrow`
+    /// rather than a bare `borrow()`.  Mid-turn, read [`DaimondApp::live_completion_tokens`].
     #[wasm_bindgen(getter)]
     pub fn completion_tokens(&self) -> f64 {
-        self.session.borrow().completion_tokens as f64
+        self.session.try_borrow().map(|s| s.completion_tokens as f64).unwrap_or(0.0)
     }
 
     /// Cumulative prompt tokens for the turn IN FLIGHT, safe to read while it
@@ -1796,21 +1806,24 @@ impl DaimondApp {
     /// Cumulative prompt tokens this session's provider served from its cache.
     ///
     /// Borrows the session, so it is a POST-TURN read only: `run_turn` holds the
-    /// session mutably for the whole turn and reading it mid-turn panics the
-    /// `RefCell`.  Mid-turn, read [`DaimondApp::live_cached_tokens`].
+    /// session mutably for the whole turn, so this reads with `try_borrow` and draws
+    /// zero rather than panicking the `RefCell` on a mid-turn read.  Mid-turn, read
+    /// [`DaimondApp::live_cached_tokens`].
     #[wasm_bindgen(getter)]
     pub fn cached_tokens(&self) -> f64 {
-        self.session.borrow().cached_tokens as f64
+        self.session.try_borrow().map(|s| s.cached_tokens as f64).unwrap_or(0.0)
     }
 
     /// Cumulative USD the provider says this session actually cost.
     ///
     /// Zero means no provider reported a figure -- never that the session was
-    /// free -- so a caller reading zero prices the turn from its own table.
-    /// Post-turn only, exactly as [`DaimondApp::cached_tokens`].
+    /// free -- so a caller reading zero prices the turn from its own table. The
+    /// same zero is what a mid-turn `try_borrow` failure draws, exactly as
+    /// [`DaimondApp::cached_tokens`]; post-turn is the only reading that tells the
+    /// two apart, so a live figure wants [`DaimondApp::live_cost_usd`] instead.
     #[wasm_bindgen(getter)]
     pub fn cost_usd(&self) -> f64 {
-        self.session.borrow().cost_usd
+        self.session.try_borrow().map(|s| s.cost_usd).unwrap_or(0.0)
     }
 
     /// Prompt tokens of the LAST request this session made — one round, not the
@@ -1831,9 +1844,16 @@ impl DaimondApp {
     /// Zero means no round of this session ever reported a prompt count — never
     /// that the last request was empty — so a caller reading zero should draw
     /// nothing rather than a full meter.
+    ///
+    /// Read with `try_borrow` rather than a bare `borrow()`: the browser's sync
+    /// pull-merge / stats seam calls this getter from JS while [`DaimondApp::run_turn`]
+    /// may be sitting mid-`await` with the session already borrowed mutably, and a bare
+    /// `borrow()` there panics the `RefCell` -- seen live as three `RefCell already
+    /// mutably borrowed` panics at 2026-09-13 01:26-01:30Z.  A failed borrow draws zero,
+    /// same as the "no round has reported yet" case below, rather than crashing the page.
     #[wasm_bindgen(getter)]
     pub fn last_prompt_tokens(&self) -> f64 {
-        self.session.borrow().last_prompt_tokens as f64
+        self.session.try_borrow().map(|s| s.last_prompt_tokens as f64).unwrap_or(0.0)
     }
 
     /// Cumulative cached prompt tokens for the turn IN FLIGHT, safe to read

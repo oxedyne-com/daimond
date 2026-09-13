@@ -3608,6 +3608,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// roster, a stored nomination and a peer still carrying old lines all decode
 	// while the migration works through them.
 	var DEVICE_ID_RE      = /^(?:[0-9a-f]{16}|[0-9a-f]{32})$/;
+	// The LEGACY width on its own. Nothing has minted one of these since the id
+	// spaces were joined, so a line still keyed this way is a record a device wrote
+	// BEFORE it reloaded -- which is why the Devices panel does not draw one as a
+	// device (`renderDevices`).
+	var LEGACY_ID_RE      = /^[0-9a-f]{16}$/;
 
 	/// This machine's name, once the Hand has said hello and named it (see
 	/// `applyHandHostname`). Empty until then, and for the whole of a session with
@@ -4335,6 +4340,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// consent CAS; both only change WHICH id the election seats and which dead lines
 	/// linger. Answers `{ moved, pruned }` for the tests.
 	function reconcileRoster(now, windowMs) {
+		// NOTHING IS DECIDED AGAINST AN EMPTY PRESENCE MAP. Both halves read the roster
+		// AGAINST who is beating, so with no beats yet every line reads stale: a superseded
+		// line is then a ghost, `removeDevice` tombstones it, and -- if it is the account's
+		// nominee -- the star is CLEARED and the empty record propagates on its own fresher
+		// `at`, un-starring the fleet from a device that had simply not beaten yet. The
+		// sync merge calls this on a pull, which on a cold boot runs before the first
+		// presence beat, so that window is real. A later round reconciles with evidence.
+		var presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+		if (!Object.keys(presence).length) return { moved: '', pruned: [] };
 		var moved  = reconcileNominee(now, windowMs);
 		var pruned = pruneGhosts(now, windowMs);
 		return { moved: moved, pruned: pruned };
@@ -14944,11 +14958,43 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				reg[id] = { name: String(presence[id].name || ''), label: '',
 					created: 0, namedAt: 0, seen: presenceSeenMs(presence[id]) };
 			});
+			// WHEN A ROW WILL SAY IT WAS LAST HERE -- computed once, because it is also
+			// what the list is ORDERED by. It was ordered by the roster's `seen` and
+			// worded from the presence beat, and those two disagree for any device that
+			// is awake with nothing to say: the owner's list read "just now / 2m ago /
+			// 1m ago" down the page (trace, 2026-09-13). One source for both.
+			var whenOf = function (idv) {
+				var w = (live.live[idv] && presence[idv]) ? presenceSeenMs(presence[idv]) : 0;
+				return w || (reg[idv] ? ms(reg[idv].seen) : 0);
+			};
 			var ids = Object.keys(reg).sort(function (a, b) {
 				var sa = a === self ? 1 : 0, sb = b === self ? 1 : 0;
 				if (sa !== sb) return sb - sa;
-				return reg[b].seen - reg[a].seen;
+				return whenOf(b) - whenOf(a);
 			});
+			// ONE ROW PER DEVICE, and a pre-migration SHADOW is not a device.
+			//
+			// A machine that has not reloaded since the id spaces were joined beats
+			// presence under its identity id while its roster line is still keyed by the
+			// legacy one, and nothing can join the two until that machine runs
+			// `migrateLegacySelfLine` for itself. So it arrives as TWO lines: the live one
+			// from its beat, carrying no build, and the dead one from the roster, carrying
+			// the build and therefore the "reload me" tag -- pinned, in other words, on
+			// the half of the pair that cannot be reloaded. That is what the owner met on
+			// 2026-09-13 and called indecipherable.
+			//
+			// Nothing mints a legacy-width id any more, so a legacy line that is not
+			// beating is never a device in its own right: the machine is either here under
+			// its identity id or gone. It is still READ -- it is the only thing that knows
+			// a build a peer has not re-synced yet, and the skew line below names it by
+			// that -- but it is not a row. A line a migration record calls superseded is
+			// already swept by `reconcileRoster` above; this is the case with no record,
+			// because the device that would have written one has not reloaded.
+			var shadow = {};
+			ids.forEach(function (idv) {
+				if (idv !== self && LEGACY_ID_RE.test(idv) && !live.live[idv]) shadow[idv] = true;
+			});
+			ids = ids.filter(function (idv) { return !shadow[idv]; });
 			if (!ids.length) return;
 			// The caveat that used to sit under the list as a paragraph -- what the
 			// list is, and that nothing here signs a device out -- rides on the
@@ -14968,17 +15014,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (idv === self) return buildId();
 				return ((presence[idv] && presence[idv].build) || (reg[idv] && reg[idv].build) || '');
 			};
-			// A one-line fleet-skew banner, so a mixed-build fleet is something the owner
-			// SEES at a glance rather than discovering across three devices by hand. Shown
-			// only when TWO OR MORE distinct builds are actually known across the fleet.
-			var seenBuilds = {};
-			ids.forEach(function (idv) { var b = buildOf(idv); if (b) seenBuilds[b] = 1; });
-			var nBuilds = Object.keys(seenBuilds).length;
-			if (nBuilds > 1) {
-				var skew = el('div', 'device-skew',
-					tOr('devices.fleet_skew',
-						'Your devices are on {n} different builds. Reload the older ones to update.',
-						{ n: nBuilds }));
+			// What a device is CALLED, wherever this function needs to say so. The user's
+			// own name wins; failing that a LIVE device's own broadcast label -- what it
+			// beats under -- is preferred over the stored `name`, which is a generic
+			// self-description ("Chrome on Linux") two machines derive identically.
+			var shownName = function (idv) {
+				var dv = reg[idv] || {};
+				var liveLabel = (live.live[idv] && presence[idv]) ? String(presence[idv].name || '') : '';
+				return dv.label || liveLabel || dv.name || t('devices.unknown');
+			};
+			// WHICH devices are behind, by name. "Your devices are on 2 different builds.
+			// Reload the older ones to update." is true and useless: the owner still had to
+			// compare seven-character prefixes across three machines to find out which one
+			// to reload, and reported exactly that. Read across the WHOLE roster and not
+			// just the rows, because a shadow line (above) is the only thing that knows the
+			// build of a peer that has not re-synced -- which is the device that needs it.
+			var olderNames = [], olderBuild = '', seenName = {};
+			Object.keys(reg).forEach(function (idv) {
+				var b = buildOf(idv);
+				if (!b || !curBuild || b === curBuild) return;
+				var nm = shownName(idv);
+				if (seenName[nm]) return;
+				seenName[nm] = true;
+				olderNames.push(nm);
+				if (!olderBuild) olderBuild = b;
+			});
+			if (olderNames.length) {
+				var skew = el('div', 'device-skew', olderNames.length === 1
+					? tOr('devices.skew_one', '{name} is on build {id} — reload it.',
+						{ name: olderNames[0], id: olderBuild.slice(0, 7) })
+					: tOr('devices.skew_many', '{names} are on older builds — reload them.',
+						{ names: olderNames.join(', ') }));
 				skew.setAttribute('role', 'status');
 				homeView.appendChild(skew);
 			}
@@ -14994,16 +15060,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var isGhost = id !== self && !!live.ghost[id];
 				if (isStale) r.classList.add('is-stale');
 				if (isGhost) r.classList.add('is-ghost');
-				// What the row is CALLED. The user's own name for the device wins; failing
-				// that, a LIVE device's OWN broadcast label -- what it beats under, carried in
-				// presence -- is preferred over the stored `name`. That `name` is a generic
-				// self-description ("Chrome on Linux") that two machines derive identically, so
-				// resting on it collapses two live desktops onto one indistinguishable line
-				// (owner trace, 2026-09-10); the presence label is each device's own and tells
-				// them apart. A device not beating has no presence label and keeps its stored
-				// name. Display only -- nothing is keyed on a name any more.
-				var liveLabel = (live.live[id] && presence[id]) ? String(presence[id].name || '') : '';
-				var shown = (d && d.label) || liveLabel || (d && d.name) || t('devices.unknown');
+				// What the row is CALLED -- see `shownName`, which the skew line above reads
+				// too. Display only; nothing is keyed on a name any more.
+				var shown = shownName(id);
 				var nameEl = el('span', 'device-name', shown);
 				// The row shortens this with CSS ellipsis, which is fine on screen and
 				// says nothing to a mouse that never hovers or a screen reader that
@@ -15011,16 +15070,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				nameEl.title = shown;
 				nameEl.setAttribute('aria-label', shown);
 				r.appendChild(nameEl);
+				// WHERE THE SECOND LINE STARTS on a phone. Empty, zero-height, and
+				// `display: none` above 480px, so the desktop row is the single line it has
+				// always been; at a phone's width it is the flex break that puts the id, the
+				// build and the last-seen words under the name instead of off the edge.
+				r.appendChild(el('span', 'device-break'));
 				r.appendChild(el('span', 'device-id', id.slice(-4)));
-				// WHEN IT WAS LAST HERE, from the BEAT where there is one. The roster's
-				// `seen` travels only on a parcel that had something else to say (see
-				// `compareKey` in sync.js), so a device that is beating with no news of its
-				// own would read "2 days ago" while sitting there awake. The presence beat
-				// is the live fact and is preferred for a live row; the roster stamp is the
-				// durable fallback for a device that is not beating, which is the only row
-				// the words are really about.
-				var whenMs = (live.live[id] && presence[id]) ? presenceSeenMs(presence[id]) : 0;
-				if (!whenMs) whenMs = d.seen;
+				// WHEN IT WAS LAST HERE, from the BEAT where there is one -- `whenOf`, which
+				// the ordering above reads as well, so the list cannot be sorted by one stamp
+				// and worded from another. The roster's `seen` travels only on a parcel that
+				// had something else to say (see `compareKey` in sync.js), so a device that is
+				// beating with no news of its own would read "2 days ago" while sitting there
+				// awake; the roster stamp is the durable fallback for a device that is not
+				// beating, which is the only row the words are really about.
+				var whenMs = whenOf(id);
 				r.appendChild(el('span', 'device-when',
 					id === self ? t('devices.this_device') : relTime(whenMs)));
 				// The build this device is running, shown on every row so the fleet's
@@ -15035,8 +15098,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					r.appendChild(bEl);
 					if (curBuild && rowBuild !== curBuild) {
 						r.classList.add('is-oldbuild');
+						// Two words, not six: the chip shares a line with a name, an id, a
+						// stamp and four controls, and "on an old build — reload" was a third
+						// of what pushed a row 450px wide into a 380px drawer. The sentence
+						// it used to be is on the hover and in the skew line above.
 						var ob = el('span', 'device-oldbuild',
-							tOr('devices.old_build', 'on an old build — reload'));
+							tOr('devices.old_build', 'old build'));
 						ob.title = tOr('devices.old_build_aria',
 							'This device is running an older build than yours. Reload it to update.');
 						r.appendChild(ob);
@@ -15080,6 +15147,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				nom.setAttribute('aria-pressed', isNominee ? 'true' : 'false');
 				nom.addEventListener('click', function () { setNominee(isNominee ? '' : id); });
 				r.appendChild(nom);
+				// This device's own row only -- the setting is per-tab, held in THIS
+				// browser's storage, so a control on any other row would change nothing
+				// there and only look like it worked. Off by default on a phone and on
+				// by default on a desktop; see the note above `stayUnlocked` in identity.js.
+				if (id === self && window.DaimondIdentity && DaimondIdentity.setStayUnlocked) {
+					var isStay = !!(DaimondIdentity.stayUnlocked && DaimondIdentity.stayUnlocked());
+					var stay = document.createElement('button');
+					stay.className = 'device-stay' + (isStay ? ' is-on' : '');
+					stay.type = 'button';
+					stay.textContent = isStay ? '\u{1F513}' : '\u{1F512}';	// open / closed padlock
+					stay.title = t('devices.stay_unlocked') + ' — ' + t('devices.stay_unlocked_help');
+					stay.setAttribute('aria-label', t('devices.stay_unlocked'));
+					stay.setAttribute('aria-pressed', isStay ? 'true' : 'false');
+					stay.addEventListener('click', function () {
+						DaimondIdentity.setStayUnlocked(!isStay);
+						renderHome();
+					});
+					r.appendChild(stay);
+				}
 				// Every row, not only this device's: the name carries a stamp of
 				// its own, so one typed here reaches the device it names.
 				var b = document.createElement('button');
@@ -16655,6 +16741,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var nd = document.createElement('div');
 			nd.className = 'seat-note' + (note.warn ? ' seat-warn' : '');
 			nd.textContent = note.text;
+			if (note.why) nd.title = note.why;
 			tile._body.appendChild(nd);
 		}
 		tagTurn(tile);
@@ -16676,9 +16763,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		if (st === 'no-peer-awake' && isMobileDeviceSelf()) {
 			var plan = seatPlanNow();
-			var why  = (plan && plan.why === 'runner-silent') ? t('seat.why_runner_silent')
+			var why  = (plan && plan.why === 'runner-silent')
+				? t('seat.why_runner_silent',
+					{ name: (plan.runnerId && deviceLabelFor(plan.runnerId)) || t('devices.unknown') })
 				: t('seat.why_no_desktop');
-			return { text: t('seat.tile_local_mobile', { why: why }), warn: true };
+			// One clause on the tile, the reason on its tooltip -- the seat line's rule.
+			return { text: t('seat.tile_local_mobile'), why: why, warn: true };
 		}
 		return null;
 	}
@@ -18453,22 +18543,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The seat line's TEXT, as `{ text, why, warn }` -- lifted out of the render so the
 	/// wording is testable without a DOM. `plan` is `DaimondPeer.seatPlan`'s answer.
 	/// `label` stands in for a device whose presence line carries no name.
-	function seatLineText(plan, label) {
+	function seatLineText(plan, label, runnerLabel) {
 		if (!plan) return null;
 		var nm = String(label || plan.label || '') || t('devices.unknown');
+		// The reason, where there is one to give. It is NEVER part of `text`: the line is
+		// one short clause and the reason is its tooltip (owner, 2026-09-13 -- the line
+		// read as "overly verbose"), so a caller that cannot show a tooltip simply shows
+		// the clause.
+		//
+		// `runner-silent` NAMES the machine. A device at its lock screen cannot beat --
+		// the gateway session is taken by signing a challenge with the sealed key -- so
+		// "argonaut is not awake" is the whole of what the fleet can honestly say about
+		// it, and saying that much is the difference between a diagnosis and "no other
+		// device is awake to take it" (the line the owner read while argonaut sat locked).
+		var rn = String(runnerLabel || '') || t('devices.unknown');
+		var why = plan.why === 'runner-silent' ? t('seat.why_runner_silent', { name: rn })
+			: plan.why === 'chat-local'    ? t('seat.why_chat_local')
+			: plan.why === 'no-desktop'    ? t('seat.why_no_desktop')
+			:                                '';
 		if (plan.where !== 'local') {
-			return { text: t(plan.key, { name: nm }), why: '', warn: false };
+			return { text: t(plan.key, { name: nm }), why: why, warn: false };
 		}
-		// LOCAL. The reason is only written where it changes what the user does: on a
-		// phone, where the turn needs this screen. A desktop running its own turn is the
-		// ordinary case and needs no explanation.
-		var why = '';
-		if (plan.warn) {
-			why = plan.why === 'runner-silent' ? t('seat.why_runner_silent')
-				: plan.why === 'chat-local'    ? t('seat.why_chat_local')
-				:                                t('seat.why_no_desktop');
-		}
-		return { text: t(plan.key), why: why, warn: !!plan.warn };
+		// LOCAL. The reason is worth carrying only where it changes what the user does:
+		// on a phone, where the turn needs this screen. A desktop running its own turn is
+		// the ordinary case and has nothing to explain.
+		return { text: t(plan.key), why: (plan.warn ? why : ''), warn: !!plan.warn };
 	}
 
 	/// The plan as it stands right now, or null when nothing can be said (no chat open,
@@ -18493,16 +18592,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var plan = seatPlanNow();
 		if (!plan) { el.hidden = true; el.textContent = ''; return; }
 		var lab = plan.deviceId && plan.where !== 'local' ? (deviceLabelFor(plan.deviceId) || plan.label) : plan.label;
-		var txt = seatLineText(plan, lab);
+		var rlab = plan.runnerId ? (deviceLabelFor(plan.runnerId) || '') : '';
+		var txt = seatLineText(plan, lab, rlab);
 		if (!txt) { el.hidden = true; el.textContent = ''; return; }
-		el.textContent = '';
-		el.appendChild(document.createTextNode(txt.text));
-		if (txt.why) {
-			var w = document.createElement('span');
-			w.className = 'seat-why';
-			w.textContent = ' ' + txt.why;
-			el.appendChild(w);
-		}
+		el.textContent = txt.text;
+		// The reason hovers; it does not lengthen the line.
+		if (txt.why) el.title = txt.why; else el.removeAttribute('title');
 		el.classList.toggle('seat-warn', !!txt.warn);
 		el.hidden = false;
 	}
@@ -18870,7 +18965,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				turn: String(umid).slice(0, 24),
 				self: String(self || '').slice(0, 12),
 				to:   String(advId || '').slice(0, 12),
-				peer: String((d && d.peer && (d.peer.id || d.peer)) || '').slice(0, 12),
+				// THE TARGET'S ID, through `DaimondPeer.peerIdOf`. A `handoffTarget`
+				// record names the device in `deviceId`, never `id`, so `d.peer.id ||
+				// d.peer` fell through to the object itself and every elected dispatch
+				// reported `peer:"[object Obje"` -- the one field this row exists for.
+				peer:     String(DaimondPeer.peerIdOf(d && d.peer)).slice(0, 12),
+				peerName: String(DaimondPeer.peerLabelOf(d && d.peer)).slice(0, 24),
 				why:  String((d && d.reason) || '').slice(0, 24),
 			});
 			try { appendUserMessage(text); } catch (e) { /* the record below is the truth */ }
@@ -23754,6 +23854,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		tombs:           loadTombMap,
 		tombstone:       tombstoneIn,
 		mergeTombs:      mergeTombMap,
+		// WHERE THE NEXT TURN WILL RUN, as the line under the composer states it. Published
+		// for dev/verify_runnerseat, which has to read a REAL phone's plan against a REAL
+		// desktop's beat -- the pure `DaimondPeer.seatPlan` cannot prove that the options
+		// this device actually assembles (its nominee record, its own mobility answer, the
+		// presence map it ingested) add up to the right seat. Test surface, not an API.
+		seat: {
+			planNow:  seatPlanNow,
+			lineText: seatLineText,
+			opts:     seatOpts,
+		},
 		// The device roster reconciled against who is actually beating. `liveness` is
 		// pure and `reconcileNominee` moves the star onto a re-minted device; both are
 		// published for `verify_rosterghost`, along with the roster primitives it drives
@@ -25010,7 +25120,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var writing = false;   // prose is arriving, so the caption has said so once
 		var sawError = false, threw = false;
 		var telErr = null;                       // what threw, for the one number that says which class
-		var turnText = '';
+		var turnText = '';   // THE CURRENT SEGMENT ONLY — reset on every `tool_call`; see below
 		// The feed's `round`, throttled. A daimon-length turn can run ~150 rounds; sending
 		// one for every round would queue that many events for one turn. Every 5th round,
 		// plus whichever round the turn actually ends on (see the `ended` arm), keeps the
@@ -25057,6 +25167,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (!owns()) return;
 				appendAssistantText(ev.content || '');
 			} else if (ev.type === 'tool_call') {
+				// PROSE BEFORE THIS CALL IS NOT THE ANSWER — it is the model thinking
+				// on its way to a tool, exactly what `demoteToWorking` draws when the
+				// chat is on screen. That drawing is DOM only: nothing was ever put on
+				// the record, so a turn with no viewer watching (a background runner)
+				// dropped it outright, and even an ON-SCREEN turn kept it live only in
+				// `turnText`, which this handler used to carry unbroken into the FINAL
+				// answer. A round that opened with "1" before a hallucinated tool call
+				// and then answered properly next round stored "1\n\n1\n2…40" as the
+				// reply (2026-09-13 01:26Z). Logged the way real `thinking` content is
+				// (`logThinking`, above) — same "model's own working, a different
+				// door" the comment on `demoteToWorking` already draws — so the
+				// segment survives a reload instead of vanishing, and `turnText` (and
+				// the `_liveTurn` progress frame it feeds) starts the next round clean.
+				if (turnText) { logThinking(chat, turnText); turnText = ''; if (umid) _liveTurn[String(umid)] = turnText; }
 				pendingCallId = 't' + (++toolSeq);
 				// A tool call's arguments ARE a JSON string, so a reply that stops at
 				// the length limit part-way through one arrives as a MALFORMED CALL,
@@ -45815,6 +45939,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// across a few ticks and only concludes "no keys" once they have had their
 		// chance to appear. It is awaited, so this branch waits for the answer.
 		var haveIdentity = identityAvailable() ? await DaimondIdentity.existsSettled() : false;
+		// A tab that kept its unlocked session across the reload (Settings › Devices,
+		// "Stay unlocked") comes back in through here, not through the lock screen:
+		// `restore()` has already opened the wrapping key and fired `daimond:unlock`
+		// itself, so the only thing left to do is run the same completion every other
+		// unlock path runs -- unseal the provider keys, connect the gateway, draw the
+		// app -- rather than showing a passphrase prompt for a tab that never left.
+		if (haveIdentity) {
+			var back = await DaimondIdentity.restoring();
+			if (back && back.ok) {
+				await completeUnlock();
+				window.__DAIMOND_READY = true;
+				return;
+			}
+		}
 		if (haveIdentity) {
 			locked = true;
 			document.body.classList.add('locked');

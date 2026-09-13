@@ -351,6 +351,11 @@ export async function open(opts = {}) {
 		// touch-target rules are written against. Without it a 900px window is a
 		// mouse, and a rule that only lifts a control for a finger looks absent.
 		touch     = false,
+		// A USER AGENT OF THIS RUN'S CHOOSING. WebKit offers no `isMobile` (that is
+		// Chromium's), so the only way to give the engine an iPhone's own statement
+		// about itself -- which mobile.js `detectMobile` reads FIRST and treats as
+		// final -- is the UA string. Left unset, each engine keeps its own.
+		ua        = null,
 		// Called with the page before it is navigated, for a verifier that serves
 		// a damaged file through `page.route`. It has to run BEFORE `goto`, which
 		// is the whole reason it cannot be done by the caller afterwards.
@@ -448,6 +453,7 @@ export async function open(opts = {}) {
 			env,
 			viewport:   { width: 1500, height: 950 },
 			hasTouch:   touch,
+			...(ua ? { userAgent: ua } : {}),
 		});
 	} else if (engine === 'chromium') {
 		browser = await chromium.launchPersistentContext(profileDir, {
@@ -457,6 +463,7 @@ export async function open(opts = {}) {
 			env,
 			viewport:       { width: 1500, height: 950 },
 			hasTouch:       touch,
+			...(ua ? { userAgent: ua } : {}),
 		});
 	} else {
 		throw new Error('unknown engine "' + engine + '"; set DAIMOND_BROWSER to chromium or webkit');

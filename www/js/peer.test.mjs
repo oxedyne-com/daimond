@@ -1665,6 +1665,43 @@ async function runPresenceAcceptance(P, PR, check) {
 	check('a per-chat opt-out (toggle OFF) STILL wins over a fresh nominee',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', nominatedId: 'argonaut', toggle: false }, T); return d.dispatch === false && d.reason === 'chat-local'; })());
 
+	// ── THE RUNNER POSTURE IS A SEAT ON ITS OWN (owner, 2026-09-13). ──
+	//
+	// `runner:true` -- the machine's own claim, carried on every beat and relayed
+	// verbatim by the gateway -- was written by three functions and read by none. The
+	// live fault it let through: the phone held NO nominee record (the star lives in the
+	// nominating device's localStorage and reaches a phone only on a full parcel round)
+	// and argonaut's `serviced_at` was stale, so the nominee branch could not fire and
+	// the generic desktop scan excluded it as a phantom. The phone ran the turn itself
+	// beside a machine that had said it was arranged to take one.
+	const armedP = { argonaut: { name: 'argonaut', lastSeen: T, servicedAt: T - 5 * 60 * 1000,
+		mobile: false, runner: true } };
+	check('an ARMED runner is seated with NO nominee record and a STALE servicing stamp',
+		(() => { const d = P.autoDispatchDecision(quickChat, armedP, { selfId: 'phone', isPhone: true }, T);
+			return d.dispatch === true && d.reason === 'runner-posture' && d.peer.deviceId === 'argonaut'; })());
+	check('the posture is WORKER-GRADE: it takes an ordinary quick turn from a DESKTOP too',
+		(() => { const d = P.autoDispatchDecision(quickChat, armedP, { selfId: 'gilgamesh' }, T);
+			return d.dispatch === true && d.reason === 'runner-posture'; })());
+	check('an armed runner whose BEAT has aged out is NOT seated (the posture is not a promise)',
+		(() => { const cold = { argonaut: Object.assign({}, armedP.argonaut, { lastSeen: T - P.DISPATCH_FRESH_MS - 60000 }) };
+			return P.autoDispatchDecision(quickChat, cold, { selfId: 'phone', isPhone: true }, T).dispatch === false; })());
+	check('an armed MOBILE device is never seated as a worker',
+		(() => { const ph = { gilgamesh: Object.assign({}, armedP.argonaut, { name: 'gilgamesh', mobile: true }) };
+			return P.autoDispatchDecision(quickChat, ph, { selfId: 'phone', isPhone: true }, T).dispatch === false; })());
+	check('an EXPLICIT star outranks another machine\u2019s posture',
+		(() => { const both = Object.assign({}, armedP,
+				{ gilgamesh: { name: 'gilgamesh', lastSeen: T, servicedAt: T, mobile: false } });
+			const d = P.autoDispatchDecision(quickChat, both, { selfId: 'phone', isPhone: true, nominatedId: 'gilgamesh' }, T);
+			return d.reason === 'nominee' && d.peer.deviceId === 'gilgamesh'; })());
+	check('the per-chat opt-out STILL wins over a posture',
+		P.autoDispatchDecision(quickChat, armedP, { selfId: 'phone', isPhone: true, toggle: false }, T).dispatch === false);
+	check('`exclude` re-resolves past an armed runner that failed to claim',
+		(() => { const d = P.autoDispatchDecision(quickChat, armedP,
+				{ selfId: 'phone', isPhone: true, exclude: { argonaut: true } }, T);
+			return d.dispatch === false; })());
+	check('recRunner reads the beat\u2019s own flag, and absent is NOT a posture',
+		P.recRunner({ runner: true }) === true && P.recRunner({}) === false && P.recRunner(null) === false);
+
 	// ── The MOBILE fallback: when the runner is down, a phone hands to a GENUINELY-
 	// AVAILABLE peer; if none is genuinely available it runs LOCAL -- the last resort,
 	// because the phone is the least reliably connected device. A phantom is excluded. ──
@@ -3294,6 +3331,32 @@ async function runBlockerAcceptance(P, L, check) {
 		check('B8e: the trace says what happened, in order',
 			out.trace.join(',') === 'take,reconstruct,handback,report,release');
 		L.forget();
+	}
+
+	// ── B9. THE FEED'S `peer` FIELD. A hand-off target is `{ deviceId, name, ... }`
+	//    and has no `id`, so the call site's `t.id || t` reached the OBJECT and the
+	//    debug feed carried `peer:"[object Obje"` on every elected dispatch --
+	//    twelve characters of a template where the device should have been. ──
+	console.log('\nThe debug feed — a hand-off target reads as an id, never as a template');
+	{
+		const target = { deviceId: 'aabbccddeeff0011', name: 'argonaut', lastSeen: 1, build: 'b1' };
+		check('B9a: a handoffTarget record answers its deviceId',
+			P.peerIdOf(target) === 'aabbccddeeff0011');
+		check('B9b: and NOT the object -- the bug was exactly this slice',
+			String(P.peerIdOf(target)).slice(0, 12) === 'aabbccddeeff'
+			&& String(P.peerIdOf(target)).slice(0, 12) !== '[object Obje');
+		check('B9c: its label travels beside the id, so a reader knows the machine',
+			P.peerLabelOf(target) === 'argonaut');
+		check('B9d: a bare id string is answered verbatim (a caller that already resolved one)',
+			P.peerIdOf('ffee0011') === 'ffee0011' && P.peerLabelOf('ffee0011') === '');
+		check('B9e: an object carrying `id` rather than `deviceId` still resolves',
+			P.peerIdOf({ id: 'legacy01' }) === 'legacy01');
+		check('B9f: no target at all is the empty string, never "null" or "undefined"',
+			P.peerIdOf(null) === '' && P.peerIdOf(undefined) === ''
+			&& P.peerLabelOf(null) === '');
+		check('B9g: an object with NEITHER field is empty -- never the template',
+			P.peerIdOf({ name: 'nameless' }) === ''
+			&& String(P.peerIdOf({ name: 'nameless' })).indexOf('object') === -1);
 	}
 }
 

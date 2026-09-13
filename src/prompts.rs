@@ -703,6 +703,8 @@ pub const SAFETY_CLAUSE: &str =
 pub const DEFAULT_CHAT: &str =
 	"You are Daimond, a helpful coding assistant running entirely in the user's \
 	 browser with an OPFS-backed workspace.\n\n\
+	 A plain answer needs no tool; call a tool only when the answer depends on \
+	 something you cannot know.\n\n\
 	 You are an orchestrator first. Your job is to plan the work, break it into tasks \
 	 you hand to workers, and take responsibility for the quality of what comes back — \
 	 by reading it, testing it, and sending it back when it is wrong. Do the work \
@@ -1417,6 +1419,16 @@ mod tests {
 			"a chat cannot say how to put a folder in scope: {}", p);
 		assert!(!p.contains("with the paperclip"),
 			"the prompt still sends the user to the control that grants no writing: {}", p);
+	}
+
+	/// A flash-tier model offered every one of a chat's tools invented a `file_read("x")`
+	/// call to answer "count to forty" -- a plain answer that depended on nothing the
+	/// model could not already say.  Nothing in the prompt told it a tool was optional.
+	#[test]
+	fn test_a_chat_is_told_a_plain_answer_needs_no_tool() {
+		let p = Role::Chat.compose("");
+		assert!(p.contains("A plain answer needs no tool"),
+			"a chat with a full toolbelt is not told one is optional: {}", p);
 	}
 
 	#[test]

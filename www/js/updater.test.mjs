@@ -21,7 +21,11 @@
          this tab's own build id is unknown;
      (f) half an hour of never being safe leaves a button, not
          a reload;
-     (g) a failed check is silent.
+     (g) a failed check is silent;
+     (h) an idle unlocked DESKTOP reloads itself whether or
+         not it is the nominated runner, a phone does not
+         beyond the runner exemption, and an unlocked device
+         holding a lease for another is never reloaded.
 
    The browser-side companion is dev/verify_updates.mjs, which
    covers the chip, the forced (stale) path and the loop guard
@@ -120,9 +124,13 @@ function makeTab(cfg) {
 		removeItem: (k) => m.delete(k),
 	});
 
-	// The runner exemption reads this device's id straight out of localStorage, so a
-	// tab that is to be treated as a runner needs one.
-	if (cfg.selfId) local.set('daimond-device-id', cfg.selfId);
+	// The lease question is asked of THIS device, so a tab that is to be treated as
+	// idle needs an id. `daimond-id-device` is the identity's key, which is what the
+	// module reads; `cfg.legacyId` seeds `daimond-device-id` instead -- the roster key
+	// from before the two id spaces were joined, which the migration removes -- so a
+	// scenario can prove that reading it is not enough.
+	if (cfg.selfId) local.set('daimond-id-device', cfg.selfId);
+	if (cfg.legacyId) local.set('daimond-device-id', cfg.legacyId);
 
 	const chip = makeNode('button');
 	chip.id = 'update-chip';
@@ -163,7 +171,10 @@ function makeTab(cfg) {
 		// The unlock gate, and the two things the runner exemption needs to be sure
 		// of. Absent by default, so every scenario that is not about the runner sees
 		// the tab it always saw: locked, no posture, no exemption.
-		DaimondIdentity: { isUnlocked: () => !!cfg.state.unlocked },
+		// `deviceId` is the identity's own answer, which the module asks before it
+		// falls back to the stored key. Given only where a scenario wants that path.
+		DaimondIdentity: { isUnlocked: () => !!cfg.state.unlocked,
+			deviceId: () => (cfg.idSelfId || '') },
 		DaimondRunner:   { on: () => !!cfg.state.runner },
 		DEBUG_SHARE: { event: (kind, payload) => events.push({ kind, payload }) },
 		fetch(url, opts) {
@@ -174,9 +185,12 @@ function makeTab(cfg) {
 			return Promise.resolve({ ok: true, json: () => Promise.resolve(s) });
 		},
 	};
-	// Left OFF deliberately in the `noLease` scenario: a runner that cannot find out
+	// Left OFF deliberately in the `noLease` scenario: a device that cannot find out
 	// whether it holds a lease must not be reloaded.
 	if (!cfg.noLease) win.DaimondLease = { heldBy: () => !!cfg.state.lease };
+	// A phone says so through the shell. Absent is a desktop, which is mobile.js's
+	// own doctrine for a device that cannot say.
+	if (cfg.mobile) win.DaimondShell = { isMobileDevice: () => true };
 	win.window = win;
 	cfg.state = cfg.state || {};
 
@@ -419,17 +433,93 @@ async function main() {
 		check('and the newer build it found is pending', tab.U().pending() === NEWER.build);
 	}
 
-	console.log('\nupdater: an UNLOCKED tab is still left alone unless it is an idle runner');
+	console.log('\nupdater: an idle UNLOCKED DESKTOP reloads itself, starred or not');
 	{
-		// The condition that was always here: unlocked means no silent reload, because
-		// the tab comes back at the unlock gate in front of somebody who did not ask.
-		const tab = await boot({ stamps: [BOOTED, NEWER], state: { unlocked: true } });
+		// The 2026-09-13 ruling. Nothing nominates this tab and nothing is running on
+		// it; it is simply a desktop left alone, which is what gilgamesh was for nine
+		// hours on a superseded build.
+		const tab = await boot({ stamps: [BOOTED, NEWER], selfId: 'd-aaa',
+			state: { unlocked: true } });
 		await tab.clock.advance(65000);
 		await learn(tab);
 		check('the newer build is pending', tab.U().pending() === NEWER.build);
-		check('no countdown started on an unlocked tab', tab.U().countdown() === 0);
+		check('a countdown is running on an un-starred desktop', tab.U().countdown() === 20);
+		check('the countdown is announced', /update\.reloading_in/.test(tab.bannerText() || ''));
+		check('it offers Cancel', /update\.cancel/.test(tab.bannerText() || ''));
+		await tab.clock.advance(21000);
+		check('the unlocked desktop reloaded onto the new build', tab.reloads.n === 1);
+	}
+	{
+		// The id comes from the IDENTITY first. Nothing is in localStorage here, so a
+		// countdown proves the identity was asked.
+		const tab = await boot({ stamps: [BOOTED, NEWER], idSelfId: 'd-bbb',
+			state: { unlocked: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('the identity\'s own device id is enough', tab.U().countdown() === 20);
+	}
+	{
+		// And the LEGACY roster key is not. It is removed by the id migration, so a
+		// module reading it answers "cannot tell" on every migrated device -- which is
+		// what made the runner exemption inert from the day it shipped.
+		const tab = await boot({ stamps: [BOOTED, NEWER], legacyId: 'd-ccc',
+			state: { unlocked: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('the legacy roster key alone is not this device\'s id', tab.U().countdown() === 0);
+		await tab.clock.advance(10 * MIN);
+		check('and nothing reloaded on it', tab.reloads.n === 0);
+	}
+	{
+		// No id at all: the lease question cannot be asked of anybody, so the ordinary
+		// refusal stands.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { unlocked: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('an unlocked tab with no device id is left alone', tab.U().countdown() === 0);
 		await tab.clock.advance(10 * MIN);
 		check('and it never reloaded', tab.reloads.n === 0);
+	}
+	{
+		// A LOCKED desktop needs no id and no lease module: it cannot be running a
+		// turn for anybody, and this is the path that has always worked.
+		const tab = await boot({ stamps: [BOOTED, NEWER], noLease: true, state: {} });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('a locked desktop still reloads with no lease module at all',
+			tab.U().countdown() === 20);
+	}
+
+	console.log('\nupdater: a PHONE keeps the narrow exemption it had');
+	{
+		// Unlocked, idle, and not the runner: a phone is left alone where a desktop is
+		// not. It is carried, the browser reloads it when it wants the tab back, and
+		// the stay-unlocked setting is off there by default.
+		const tab = await boot({ stamps: [BOOTED, NEWER], selfId: 'd-aaa', mobile: true,
+			state: { unlocked: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('the newer build is pending', tab.U().pending() === NEWER.build);
+		check('no countdown on an unlocked phone', tab.U().countdown() === 0);
+		await tab.clock.advance(10 * MIN);
+		check('and the phone never reloaded', tab.reloads.n === 0);
+	}
+	{
+		// The exemption it keeps: a phone nominated as the runner, idle, still updates.
+		const tab = await boot({ stamps: [BOOTED, NEWER], selfId: 'd-aaa', mobile: true,
+			state: { unlocked: true, runner: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('an idle runner PHONE is still reloaded', tab.U().countdown() === 20);
+		await tab.clock.advance(21000);
+		check('and it took the build', tab.reloads.n === 1);
+	}
+	{
+		// A LOCKED phone is reloaded as it always was: there is no session to lose.
+		const tab = await boot({ stamps: [BOOTED, NEWER], mobile: true, state: {} });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('a locked phone still takes an update', tab.U().countdown() === 20);
 	}
 
 	console.log('\nupdater: an idle nominated runner IS reloaded, unlocked and all');
@@ -445,7 +535,7 @@ async function main() {
 		check('the runner reloaded onto the new build', tab.reloads.n === 1);
 	}
 
-	console.log('\nupdater: a runner holding a turn lease is NOT reloaded');
+	console.log('\nupdater: an unlocked device holding a turn lease is NOT reloaded');
 	{
 		const tab = await boot({ stamps: [BOOTED, NEWER], selfId: 'd-aaa',
 			state: { unlocked: true, runner: true, lease: true } });
@@ -463,7 +553,7 @@ async function main() {
 			'countdown=' + tab.U().countdown());
 	}
 
-	console.log('\nupdater: a runner that cannot tell is not reloaded');
+	console.log('\nupdater: an unlocked device that cannot tell is not reloaded');
 	{
 		const tab = await boot({ stamps: [BOOTED, NEWER], selfId: 'd-aaa', noLease: true,
 			state: { unlocked: true, runner: true } });
@@ -474,12 +564,14 @@ async function main() {
 		check('and it never reloaded', tab.reloads.n === 0);
 	}
 	{
-		// No device id: the lease question cannot be asked of anybody, so the ordinary
-		// refusal stands.
-		const tab = await boot({ stamps: [BOOTED, NEWER], state: { unlocked: true, runner: true } });
+		// The same of a desktop that is nobody's runner: an unreadable lease is a held
+		// lease, whatever the posture says.
+		const tab = await boot({ stamps: [BOOTED, NEWER], selfId: 'd-aaa', noLease: true,
+			state: { unlocked: true } });
 		await tab.clock.advance(65000);
 		await learn(tab);
-		check('no countdown with no device id', tab.U().countdown() === 0);
+		check('an unlocked desktop with no lease module is left alone',
+			tab.U().countdown() === 0);
 		await tab.clock.advance(10 * MIN);
 		check('and it never reloaded', tab.reloads.n === 0);
 	}

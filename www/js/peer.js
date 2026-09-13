@@ -1311,6 +1311,21 @@
 		return !!rec.mobileView;
 	}
 
+	/// Does a presence record DECLARE THE RUNNER POSTURE -- has that machine been set
+	/// up (runner.js: a held wake lock and a kept-open errand long-poll) to take a
+	/// handed-off turn?
+	///
+	/// It is the machine's OWN claim about itself, carried on every beat and relayed
+	/// verbatim, and it is the only seating signal that needs nothing stored on the
+	/// deciding device. That is why it exists: the star lives in the nominating
+	/// device's localStorage and reaches a phone only on the next full parcel round,
+	/// so a phone that has not yet taken one -- or that lost the record -- cannot
+	/// name the runner at all, and fell to `local/no-desktop` beside an armed
+	/// argonaut (owner, 2026-09-13). A posture on the wire cannot be missed that way.
+	function recRunner(rec) {
+		return !!(rec && rec.runner);
+	}
+
 	/// Answers `{ target, reason }` where `target` is `{ deviceId, name, lastSeen, build,
 	/// staleBuild? }` or null (→ run local), and `reason` is one of
 	/// `nominee` / `nominee-presumed` / `worker` / `other-desktop` / `local`.
@@ -1373,6 +1388,32 @@
 			if (byLabel.length === 1) return { target: freshestWithBuild(byLabel, cur), reason: 'worker' };
 		}
 
+		// (a'') A PEER THAT DECLARES THE RUNNER POSTURE, seated on the BARE BEAT and with
+		// NOTHING stored here. `runner` rode the wire from the day it shipped and was read
+		// by nobody: the election seated a nominee id or a `recGenuine` desktop, so the one
+		// machine that had said in as many words "I am arranged to take a turn" was the one
+		// machine the decision ignored. Live: argonaut armed and beating, the phone holding
+		// no nominee record and argonaut's `serviced_at` stale -- (a) missed for want of the
+		// record, (b) excluded it as a phantom, and the phone ran the turn itself.
+		//
+		// The posture OUTRANKS the servicing stamp on purpose. `serviced_at` answers "is this
+		// tab collecting errands right now", which a runner holding a wake lock can fail
+		// momentarily (a backoff round, a reload, a throttled tick) without ceasing to be the
+		// runner; the posture answers "is this machine arranged to collect", which is the
+		// question seating asks. Money-safety is untouched either way -- the lease CAS is
+		// still the single-runner arbiter, and the dispatcher-side recovery timer reclaims a
+		// turn nobody ran. It sits BELOW the star, so an explicit nomination still wins.
+		var runners = [];
+		for (var id3 in p) {
+			if (!Object.prototype.hasOwnProperty.call(p, id3)) continue;
+			if (id3 === self || exclude[id3]) continue;
+			var r3 = p[id3];
+			if (!r3 || !recRunner(r3) || recMobileView(r3)) continue;
+			if ((n - leaseMs(r3.lastSeen)) > w) continue;
+			runners.push({ deviceId: id3, name: (r3.name || ''), lastSeen: leaseMs(r3.lastSeen), build: String(r3.build || '') });
+		}
+		if (runners.length) return { target: freshestWithBuild(runners, cur), reason: 'runner-posture' };
+
 		// (b) ANY OTHER LIVE, non-mobile, GENUINELY-SERVICING desktop. recGenuine (beating
 		// AND servicing, with the bare-beat fallback on an old gateway that does not relay
 		// serviced_at) excludes a phantom background tab, so a non-designated peer that beats
@@ -1416,7 +1457,10 @@
 			exclude:                o.exclude,
 		}, n);
 		var target = res.target;
-		var isWorker = !!(target && (res.reason === 'nominee' || res.reason === 'nominee-presumed' || res.reason === 'worker'));
+		// `runner-posture` is worker-grade: a machine arranged to be the runner is the seat
+		// for every turn exactly as the star is, which is the whole point of arming it.
+		var isWorker = !!(target && (res.reason === 'nominee' || res.reason === 'nominee-presumed'
+			|| res.reason === 'worker' || res.reason === 'runner-posture'));
 
 		// The per-chat choice: true = always hand off, false = keep on THIS device
 		// (the opt-out), null/undefined = decide by the reliability policy below.
@@ -1493,20 +1537,25 @@
 		var w = o.freshWindowMs || DISPATCH_FRESH_MS;
 		var d = autoDispatchDecision(chat, p, o, n);
 		if (d.dispatch && d.peer) {
-			var onRunner = (d.reason === 'nominee' || d.reason === 'nominee-presumed' || d.reason === 'worker');
+			var onRunner = (d.reason === 'nominee' || d.reason === 'nominee-presumed'
+				|| d.reason === 'worker' || d.reason === 'runner-posture');
 			// A nominee that is SET but not beating is named as the reason this turn is going
 			// somewhere else, so a silent runner is visible rather than merely bypassed.
 			var nom  = String(o.nominatedId || '');
 			var nrec = nom ? p[nom] : null;
 			var nomLive = !!(nrec && (n - leaseMs(nrec.lastSeen)) <= w);
+			var fallback = !onRunner && nom && !nomLive;
 			return {
 				where:      onRunner ? 'runner' : 'desktop',
 				key:        onRunner ? 'seat.on_runner'
-					: ((nom && !nomLive) ? 'seat.on_desktop_runner_off' : 'seat.on_desktop'),
+					: (fallback ? 'seat.on_desktop_runner_off' : 'seat.on_desktop'),
 				label:      String(d.peer.name || ''),
 				deviceId:   String(d.peer.deviceId || ''),
 				warn:       false,
-				why:        '',
+				// The line names the seat in one clause; WHY it is a fallback rather than the
+				// starred runner rides the tooltip (owner, 2026-09-13). Empty on an ordinary
+				// seat, which has nothing to explain.
+				why:        fallback ? 'runner-silent' : '',
 				reason:     d.reason,
 				dispatch:   true,
 				staleBuild: !!d.staleBuild,
@@ -1528,6 +1577,15 @@
 			deviceId: String(o.selfId || ''),
 			warn:     mob,
 			why:      why,
+			// THE RUNNER THE LINE IS TALKING ABOUT, so `runner-silent` can NAME it.
+			// A locked device cannot beat at all -- the gateway session is taken by
+			// SIGNING a challenge with the sealed key (gateway.js bootstrapOnce), so a
+			// tab at its lock screen is indistinguishable from one asleep or closed.
+			// Naming the machine is therefore the whole of what the fleet can honestly
+			// say, and it is what the owner needed: "argonaut is not awake", not "no
+			// other device is awake to take it" while argonaut sat at a lock screen
+			// (2026-09-13).
+			runnerId: nom2,
 			reason:   d.reason,
 			dispatch: false,
 		};
@@ -1763,6 +1821,28 @@
 	/// machine read (they need mode/expiry/holder, not just the live holder).
 	function leaseRecord(turnId) {
 		return _leases[String(turnId)] || null;
+	}
+
+	/// The DEVICE ID of a hand-off target, whatever shape the caller is holding.
+	///
+	/// `handoffTarget` answers `{ deviceId, name, lastSeen, build }` and nothing in
+	/// that record is called `id`, so a call site reaching for `t.id || t` handed
+	/// `String()` the whole object and the feed carried `peer:"[object Obje"` --
+	/// twelve characters of a template, on every elected dispatch, where the one
+	/// field the event exists to report should have been. A bare id string is
+	/// answered verbatim, so a caller that already resolved one needs no branch.
+	function peerIdOf(t) {
+		if (!t) return '';
+		if (typeof t === 'string') return t;
+		return String(t.deviceId || t.id || '');
+	}
+
+	/// The human LABEL of a hand-off target, or '' where it has none. Beside
+	/// `peerIdOf` because an id of twelve hex characters tells a reader of the feed
+	/// which device only if they already know the fleet.
+	function peerLabelOf(t) {
+		if (!t || typeof t === 'string') return '';
+		return String(t.name || t.label || '');
 	}
 
 	/// Does `holder` hold a LIVE lease on any turn at all?
@@ -2919,6 +2999,15 @@
 		/// either way; the old name/viewport `mobileView` inference stands in only while
 		/// that field is absent (a peer on a build that predates it).
 		recMobileView: recMobileView,
+		/// Does a presence record declare the RUNNER POSTURE -- that machine's own claim,
+		/// carried on every beat, that it is arranged to take a handed-off turn? The one
+		/// seating signal that needs nothing stored on the deciding device.
+		recRunner:     recRunner,
+		/// The device id and the label of a hand-off target, read from whatever shape
+		/// the caller holds -- a `handoffTarget` record or a bare id string. The feed's
+		/// `peer` field went out as "[object Obje" for want of these.
+		peerIdOf:      peerIdOf,
+		peerLabelOf:   peerLabelOf,
 		/// WHERE THE NEXT TURN WILL RUN, as the line under the composer states it. The same
 		/// `autoDispatchDecision` the send takes, mapped to an i18n key, a device label and
 		/// whether running here is something the user must act on.

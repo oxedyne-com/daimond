@@ -90,6 +90,10 @@ try {
 		servicedAt: now - (ageMs || 0), attended: false, mobile: false });
 	const phone = (name, ageMs) => ({ name, lastSeen: now - (ageMs || 0),
 		servicedAt: now - (ageMs || 0), attended: true, mobile: true });
+	// A machine ARMED AS THE RUNNER (runner.js posture on its beat) whose errand-channel
+	// stamp is stale -- the live shape of the 2026-09-13 fault.
+	const armed = (name, ageMs) => ({ name, lastSeen: now - (ageMs || 0),
+		servicedAt: 0, attended: false, mobile: false, runner: true });
 	const plan = (presence, opts) => P.seatPlan({ id: 'c', provider: 'openrouter', model: 'm' },
 		presence, Object.assign({ selfId: PHONE, isPhone: true, selfMobile: true,
 			freshWindowMs: W }, opts || {}), now);
@@ -137,6 +141,42 @@ try {
 			'why=' + silent.why);
 	}
 
+	// ── (i) THE RUNNER POSTURE IS A SEAT ON ITS OWN (owner, 2026-09-13). ──
+	//
+	// THE LIVE FAULT. The phone's line said "Runs here -- keep this screen open" with the
+	// reason `no-desktop` while argonaut was beside it: beating, starred, and ARMED. Two
+	// things had to be true at once and both were. The star lives in the NOMINATING
+	// device's localStorage and reaches a phone only on a full parcel round, so the phone
+	// held no nominee record and (a) could not fire; and argonaut's `serviced_at` was
+	// stale, so the generic desktop scan excluded it as a phantom. `runner:true` -- the
+	// machine's own claim that it is arranged to take a turn -- rode every beat and was
+	// read by nothing.
+	{
+		const p = plan({ [ARG]: armed('argonaut', 10000) });		// NO nominatedId: the phone knows nothing
+		check('(i) an ARMED runner is the seat with NO nominee record stored here',
+			p.where === 'runner' && p.key === 'seat.on_runner' && p.label === 'argonaut',
+			'key=' + p.key + ' reason=' + p.reason + ' label=' + p.label);
+		check('(i) and it is seated as the RUNNER, not as a generic desktop',
+			p.reason === 'runner-posture', 'reason=' + p.reason);
+		// The exact line the owner saw, and the proof it no longer appears.
+		check('(i) the phone no longer says "runs here" beside an armed runner',
+			p.where !== 'local' && p.why !== 'no-desktop', 'where=' + p.where + ' why=' + p.why);
+		// A STALE servicing stamp is what the posture outranks; a stale BEAT is not.
+		const cold = plan({ [ARG]: armed('argonaut', W + 60000) });
+		check('(i) an armed runner that has stopped BEATING is still not a seat',
+			cold.where === 'local', 'where=' + cold.where);
+		// An armed MOBILE device is never a seat: the posture does not override mobility.
+		const armedPhone = plan({ [GIL]: Object.assign(armed('gilgamesh', 1000), { mobile: true }) });
+		check('(i) an armed MOBILE device is still never seated as a worker',
+			armedPhone.where === 'local', 'where=' + armedPhone.where);
+		// An explicit star still outranks a bare posture elsewhere.
+		const both = plan({ [ARG]: armed('argonaut', 20000), [GIL]: desk('gilgamesh', 1000) },
+			{ nominatedId: GIL });
+		check('(i) an explicit star still wins over another machine\u2019s posture',
+			both.label === 'gilgamesh' && both.reason === 'nominee',
+			'label=' + both.label + ' reason=' + both.reason);
+	}
+
 	// ── (e) A DESKTOP RUNNING ITS OWN TURN IS THE ORDINARY CASE. ──
 	{
 		const p = P.seatPlan({ id: 'c', provider: 'openrouter', model: 'm' }, {},
@@ -176,10 +216,22 @@ try {
 		check('(h) each reason the line can give is in en.js',
 			['seat.why_no_desktop', 'seat.why_runner_silent', 'seat.why_chat_local',
 				'seat.tile_local_mobile'].every((k) => !!en && !!en[k]));
-		check('(h) the tile repeats the request and carries the reason',
-			!!en && /keep this screen/i.test(String(en['seat.tile_local_mobile']))
-				&& String(en['seat.tile_local_mobile']).indexOf('{why}') >= 0,
+		// ONE SHORT CLAUSE, AND THE REASON ON A TOOLTIP (owner, 2026-09-13: the line read
+		// as "overly verbose"). So the reason must NOT be interpolated into any seat
+		// string, and the renderer must put it on `title` instead.
+		check('(h) the tile repeats the request in one clause',
+			!!en && /keep this open/i.test(String(en['seat.tile_local_mobile']))
+				&& String(en['seat.tile_local_mobile']).indexOf('{why}') < 0,
 			String(en && en['seat.tile_local_mobile']));
+		check('(h) no seat line interpolates the reason inline',
+			Object.keys(en || {}).filter((k) => k.indexOf('seat.') === 0
+				&& String(en[k]).indexOf('{why}') >= 0).length === 0);
+		check('(h) the renderer hands the reason to `title`, not to the line',
+			/el\.title = txt\.why/.test(js) && !/seat-why/.test(js));
+		check('(h) each seat line is ONE clause -- no sentence-ending full stop mid-line',
+			['seat.on_runner', 'seat.on_desktop', 'seat.on_desktop_runner_off', 'seat.local',
+				'seat.local_mobile', 'seat.tile_local_mobile']
+				.every((k) => en && !/\.\s/.test(String(en[k])) && String(en[k]).length <= 40));
 	}
 
 	// ── (g) EVERY KEY THE PLAN CAN NAME IS IN en.js, WITH ITS {name}. ──
@@ -201,8 +253,8 @@ try {
 				&& String(en['seat.retry']).indexOf('{to}') >= 0,
 			String(en && en['seat.retry']));
 		check('(g) the phone’s local line asks for the screen, the desktop’s does not',
-			!!en && /keep this screen/i.test(String(en['seat.local_mobile']))
-				&& !/keep this screen/i.test(String(en['seat.local'])),
+			!!en && /keep this open/i.test(String(en['seat.local_mobile']))
+				&& !/keep this open/i.test(String(en['seat.local'])),
 			String(en && en['seat.local_mobile']));
 	}
 } catch (e) {

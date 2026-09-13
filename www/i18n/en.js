@@ -354,6 +354,11 @@
 	'runner.confirm_title':     'Make this device the runner?',
 	'runner.confirm':           'This device is the runner. Keep it awake and listening for turns handed to it, even when its window is in the background. Leave it switched on and signed in.',
 	'runner.confirm_ok':        'This device is the runner',
+	// STAYING UNLOCKED ACROSS A RELOAD (2026-09-13). An idle desktop now takes an
+	// update on its own, which reloads the tab; this is the per-device answer to what
+	// it comes back as. On for a desktop, off for a phone. See identity.js `K_STAY`.
+	'devices.stay_unlocked':      'Stay unlocked across reloads',
+	'devices.stay_unlocked_help': 'When Daimond updates itself, this device comes back where it was instead of asking for your passphrase again. The key is held for this tab only and is gone when you close it, when you lock, or when you sign out. Turn it off to be asked every time.',
 	// A GHOST: a line a live device has replaced under a new id after re-minting its
 	// identity. It is safe to remove -- the machine is here now under the new line.
 	'devices.replaced':         'replaced',
@@ -362,9 +367,10 @@
 	'devices.prune_many':       'Remove {n} replaced devices',
 	// The build each device is running, and the flag when it is behind this one.
 	'devices.build':            'build {id}',
-	'devices.old_build':        'on an old build — reload',
+	'devices.old_build':        'old build',
 	'devices.old_build_aria':   'This device is running an older build than yours. Reload it to update.',
-	'devices.fleet_skew':       'Your devices are on {n} different builds. Reload the older ones to update.',
+	'devices.skew_one':         '{name} is on build {id} — reload it.',
+	'devices.skew_many':        '{names} are on older builds — reload them.',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline':             'Offline',
@@ -482,7 +488,7 @@
 	// turn ran on another device; `chat.ran_on` is the older header-meta phrasing,
 	// kept for any path that still reads it.
 	'chat.ran_on':         'ran on {name}',
-	'chat.handed_off':     'Handed off to {name}',
+	'chat.handed_off':     '{name} is on it',
 	// A hand-off that fell back to this device: it was sent to {name}, that device
 	// never finished, and the turn ran here. Said so provenance is never silent.
 	'chat.ran_here_failed': 'Ran here — hand-off to {name} didn’t finish',
@@ -2035,15 +2041,18 @@
 	// The line names its own key (DaimondPeer.seatPlan chooses which of the five the
 	// latest beats imply), so the call site cannot be read for it. The set is closed.
 	// i18n-indirect: daimond.js plan.key = seat.on_runner seat.on_desktop seat.on_desktop_runner_off seat.local seat.local_mobile
-	'seat.on_runner':            'Next turn runs on {name}',
-	'seat.on_desktop':           'Next turn runs on {name}',
-	'seat.on_desktop_runner_off': 'Next turn runs on {name} (runner offline)',
+	// ONE SHORT CLAUSE EACH (owner, 2026-09-13: the line was "overly verbose"). The
+	// reason rides the `title` tooltip, not the line -- it explains a seat the user can
+	// already read, so it is worth a hover and not a second clause under every composer.
+	'seat.on_runner':            'Next turn: {name}',
+	'seat.on_desktop':           'Next turn: {name}',
+	'seat.on_desktop_runner_off': 'Next turn: {name}',
 	'seat.local':                'Runs here',
-	'seat.local_mobile':         'Runs here — keep this screen open',
+	'seat.local_mobile':         'Runs here — keep this open',
 	'seat.why_no_desktop':       'No other device is awake to take it.',
-	'seat.why_runner_silent':    'Your runner is not beating.',
+	'seat.why_runner_silent':    '{name} is not awake — it may be at its lock screen.',
 	'seat.why_chat_local':       'This chat is pinned to this device.',
-	'seat.tile_local_mobile':    'Running here — keep this screen open. {why}',
+	'seat.tile_local_mobile':    'Runs here — keep this open',
 	'seat.retry':                '{from} did not pick it up; trying {to}',
 	'turn.consent_act_type':   'type into {host}',
 	'turn.consent_act_click':  'act on {host}',

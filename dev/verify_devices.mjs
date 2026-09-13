@@ -46,8 +46,14 @@ const check = (name, pass, detail) => {
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
 };
 
-const A = 'aaaa1111bbbb2222';		// a fabricated second device
-const B = 'cccc3333dddd4444';		// and a third
+// Two fabricated peers, at IDENTITY width. They were 16 hex, which is what this file
+// used to mint, and 16 hex no longer names a device: since the id spaces were joined
+// the panel reads a legacy-width line that is not beating as a pre-migration shadow of
+// a machine and does not draw it (`renderDevices`), so fixtures at the old width
+// stopped being rows. The last four characters are unchanged, because several checks
+// below read the id tail the panel shows.
+const A = 'aaaa1111bbbb2222aaaa1111bbbb2222';	// a fabricated second device
+const B = 'cccc3333dddd4444cccc3333dddd4444';	// and a third
 
 const s = await open({ name: 'devices', profile: PROFILES[0] });
 const { page } = s;
