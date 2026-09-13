@@ -4662,13 +4662,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// path as inline and a later pull from reading its absence as a deletion.
 		var budget = (typeof inlineBudget === 'number' && inlineBudget >= 0)
 			? inlineBudget : SYNC_FILES_TOTAL_MAX;
-		// `pending` is what is riding inline THIS ROUND ONLY, because its chunks are not
-		// confirmed held yet: it is queued for offload beside being carried, so nothing
-		// is ever in neither place, and the round after it confirms it rides as a ref.
+		// `pending` is what was queued for offload THIS ROUND, because its chunks are not
+		// confirmed held yet; the round after it confirms them, it rides as a ref. Most
+		// of it is carried inline as well, so nothing is ever in neither place.
+		// `held` counts the remainder -- queued for offload, but past the hard budget, so
+		// absent from `files` until the round that carries it as a reference. A held file
+		// is never named, and is one of the reasons the census calls itself incomplete.
 		// `softCap` is what the inline section actually spent to, reported so a log line
 		// can say which ceiling bound the round.
 		var out = { files: {}, large: {}, left: [], skipped: 0, oversize: [], bytes: 0,
-			complete: false, pending: [], softCap: budget };
+			complete: false, pending: [], held: 0, softCap: budget };
 		if (!filesSyncable()) return out;
 		var app; try { app = tools(); } catch (e) { return out; }
 		// Can the overflow be offloaded this round? Same test the Diamond and chat
@@ -4766,6 +4769,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// index is the ordinary state of an offloaded file that is also on
 						// disk, which is every large file the account has.
 						if (offloadConfirmed(full, e.size, null)) continue;
+						// AND THE HARD BUDGET STILL BINDS. This branch fell through to the
+						// inline assignment below with no test of `budget` at all -- the test
+						// was only on the `else if` arm, where there is nowhere to offload to --
+						// so `total` was bounded by nothing and a workspace of any size rode
+						// inline in full. The owner's phone packed 9,860,533 bytes of files into
+						// a 5 MiB parcel, 13.6 MB on an 8 MiB wire, on every boot.
+						//
+						// Past it the file is HELD: queued for offload above, so it travels as a
+						// reference next round, and never NAMED -- naming it would tell the user
+						// to act on a picture that is about to change, which is the false alarm
+						// `strand` already distinguishes for the Diamonds. `complete` must go
+						// false with it: the file is on disk and absent from `files`, and only an
+						// incomplete census stops a peer reading that absence as a deletion.
+						if (total + content.length > budget) {
+							out.pending.push(full); out.held++; out.complete = false; continue;
+						}
 						out.pending.push(full);
 					} else if (total + content.length > budget) {
 						// Past the HARD budget with nowhere to offload: this is the old
@@ -5255,6 +5274,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the large Diamond itself but still NAMED the small ones caught in its wake --
 		// this is the other half of that fix.
 		var offloadStalled = !canOffload;
+		// IS THERE ROOM FOR THE REFERENCES AT ALL? The reserve was held back from the
+		// parcel before the files spent against it, so an ordinary round hands this
+		// collector at least `refReserve` and every Diamond's few hundred bytes fit. A
+		// round that hands it LESS is a round where the files overflowed their budget
+		// regardless -- the owner's phone was handed exactly zero -- and the Diamonds
+		// then took the offload arm, reused their manifests, and were NAMED because even
+		// a reference would not fit in nothing. That is a transient strand, not a
+		// genuine one: the files shed their overflow next round and the room returns.
+		// So it is HELD, like a stalled one, and the banner says nothing.
+		var crowded = canOffload && budget < refReserve;
 
 		// EVERY DIAMOND TRAVELS WHEN OFFLOAD WORKS. Small Diamonds used to ride inline
 		// for an old receiver's sake and were NAMED "did not fit" when the inline budget
@@ -5412,7 +5441,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// on a picture that is about to change. Every strand becomes a HOLD, retried next
 		// sync, exactly as a large one already is -- and the honest notice the user does
 		// see is the chunk store's own `standRefused`, which names the real remedy.
-		if (offloadStalled && out.left.length) {
+		if (crowded) {
+			diag('parcel diamonds crowded', Math.round(budget / 1024) + 'kB for '
+				+ Math.round(refReserve / 1024) + 'kB of references: nothing named, '
+				+ out.left.length + ' held for next round');
+		}
+		if ((offloadStalled || crowded) && out.left.length) {
 			out.held += out.left.length;
 			out.left = [];
 		}
@@ -6024,6 +6058,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			kindOf[manifestKind(own[0])] = (kindOf[manifestKind(own[0])] | 0) + 1;
 			for (var oi = 0; oi < own.length; oi++) stale[own[oi]] = 1;
 		}
+		// THE SWEEP'S ANSWER IS ALSO A CONFIRMATION, and it used to be thrown away.
+		// `_offloadConfirmed` is per-sitting memory, empty at boot, and was written only
+		// by `collectChunked` -- which runs AFTER `collectFiles` in the same round. So
+		// the first collect of every sitting knew nothing about the manifests the cloud
+		// index was already holding and carried their files inline, although the query
+		// just above had asked the gateway about every address those manifests name and
+		// been told it holds them. That is the same evidence `collectChunked` accepts
+		// for a reused manifest -- a change-key match under an ANSWERED sweep -- taken
+		// at the point in the round where `collectFiles` can still act on it.
+		//
+		// FILES ONLY. A Diamond, a chat and a mailbox are confirmed by their own
+		// collectors against their own change-keys (`touched`, a transcript
+		// fingerprint), and those run after this anyway; `_offloadConfirmed` is keyed by
+		// workspace PATH, which is exactly what a file manifest's index key is.
+		// `offloadConfirmed` re-reads the manifest and checks its size, so a file edited
+		// since the upload is not confirmed by anything written here.
+		//
+		// NOTHING IS PERSISTED. This is one sitting's observation, not a fact about the
+		// account: writing it into the cloud index would change the parcel's bytes and
+		// break the fixed point the push-skip depends on.
+		for (var ci = 0; ci < keys.length; ci++) {
+			var ck = keys[ci];
+			if (!ix[ck] || !Array.isArray(ix[ck].chunks) || !ix[ck].chunks.length) continue;
+			if (manifestKind(ck) !== 'file') continue;
+			if (stale[ck]) { delete _offloadConfirmed[ck]; continue; }
+			_offloadConfirmed[ck] = ix[ck].key;
+		}
 		if (!n) return;
 
 		// What is still HERE to offload again. Chat message counts come off the
@@ -6195,7 +6256,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// no longer fill the parcel and leave the references nothing — the bug that named
 		// 33 Diamonds "did not fit" while offload was working perfectly.
 		var plan = await planDiamonds();
-		var fileCol = await collectFiles(await syncFilesBudget(plan));
+		var filesBudget = await syncFilesBudget(plan);
+		var fileCol = await collectFiles(filesBudget);
+		// THE ONE LINE THAT WOULD HAVE NAMED THIS DEFECT. The inline files overspending
+		// the budget they were handed is what left the Diamonds a share of zero, and
+		// nothing anywhere said it had happened: the parcel was simply refused at the
+		// front door and 25 Diamonds were named. It cannot happen now -- `collectFiles`
+		// holds the overflow -- so this is the assertion that says if it ever does.
+		if (fileCol.bytes > filesBudget) {
+			diag('parcel files overspent', fileCol.bytes + ' B of inline files against a budget of '
+				+ filesBudget + ' B, so the Diamonds were handed what is left of nothing');
+		}
 		var chunked = await collectChunked(fileCol.large);
 		// What is left of the parcel after the inline files, and never more than the
 		// Diamonds' own share of it. The reference floor reserved above guarantees this
@@ -6243,13 +6314,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (window.DaimondCloud) chunked = DaimondCloud.index();
 		noteFilesLeft(fileCol.left);
 		noteDiamondsLeft(dCol.left);
-		// A FILE RIDING INLINE ONLY UNTIL ITS CHUNKS ARE CONFIRMED owes one more round.
+		// A FILE QUEUED FOR OFFLOAD THIS ROUND owes one more round, whether it rode
+		// inline beside the queue or was HELD off the parcel for want of room.
 		// `collectChunked` above has just offloaded it, so the NEXT collect demotes it to
 		// a reference and the parcel shrinks -- but nothing else would ask for that
 		// collect, and on a quiet device the big parcel would stand until something
-		// changed. So say so, and nudge once.
+		// changed. So say so, with the held count beside the queued one, and nudge once.
 		if (fileCol.pending && fileCol.pending.length) {
-			diag('parcel inline pending', fileCol.pending.length + ' file(s) inline until their chunks confirm'
+			diag('parcel inline pending', fileCol.pending.length + ' file(s) queued for offload, '
+				+ (fileCol.held | 0) + ' held off this parcel'
 				+ ' (cap ' + Math.round(fileCol.softCap / 1024) + 'kB)');
 			try { if (DaimondSync && DaimondSync.nudge) setTimeout(function () { DaimondSync.nudge(); }, 0); }
 			catch (e) { /* the next ordinary round does it */ }

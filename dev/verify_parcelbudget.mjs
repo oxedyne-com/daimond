@@ -108,15 +108,64 @@ check('the Diamonds\' cap can actually bind — it is below the parcel it is spe
 // workspace. What it cannot see is the toast on the screen; what it can see is that
 // every branch which drops a file for budget records its NAME, that `collectSync`
 // hands those names to a teller, and that the teller says them out loud.
-const collectFiles = APP.slice(APP.indexOf('async function collectFiles()'),
+// THE ANCHOR TAKES NO ARGUMENT LIST. It was `'async function collectFiles()'` and the
+// function has taken an inline budget since the parcel was split into sections, so
+// `indexOf` answered -1, the slice read from the top of the file, and the three
+// checks below passed on an empty string for four weeks. A brittle anchor that goes
+// GREEN when it breaks is worse than no check: it is a check that lies.
+const collectFiles = APP.slice(APP.indexOf('async function collectFiles('),
 	APP.indexOf('async function writeSyncFile'));
-const drops = [...collectFiles.matchAll(/>\s*(SYNC_CHUNK_TOTAL_MAX|SYNC_FILES_TOTAL_MAX)\)\s*\{([^}]*)\}/g)];
-check('the budget branches that drop a file were found in collectFiles',
+check('collectFiles was found to read', collectFiles.length > 0 && collectFiles.length < 20000,
+	collectFiles.length + ' chars');
+// `> budget` as well as the two named constants: the budget is now handed in, so a
+// branch that drops or holds a file tests the ARGUMENT and not a ceiling by name.
+const drops = [...collectFiles.matchAll(/>\s*(SYNC_CHUNK_TOTAL_MAX|SYNC_FILES_TOTAL_MAX|budget)\)\s*\{([^}]*)\}/g)];
+check('the budget branches that drop or hold a file were found in collectFiles',
 	drops.length >= 3, drops.length + ' branch(es)');
-const silent = drops.filter((m) => !/out\.left\.push/.test(m[2]));
-check('EVERY FILE THE PARCEL CANNOT CARRY IS RECORDED BY NAME, not merely counted',
+// A branch either NAMES the file or HOLDS it, and a hold is not a silent drop: the
+// file is queued for offload, travels as a reference next round, and the census goes
+// incomplete so no peer may read its absence as a deletion. What is forbidden is a
+// branch that does neither.
+const silent = drops.filter((m) => !/out\.left\.push/.test(m[2]) && !/out\.held\+\+/.test(m[2]));
+check('EVERY FILE THE PARCEL CANNOT CARRY IS EITHER NAMED OR HELD, never merely counted',
 	silent.length === 0,
 	silent.map((m) => m[0].replace(/\s+/g, ' ')).join(' | '));
+// And a HELD file leaves the census incomplete. Absence plus `complete` is what
+// entitles the other device to delete, so a hold that kept the word would turn a
+// file this parcel simply had no room for into a deletion on the far side.
+const holds = drops.filter((m) => /out\.held\+\+/.test(m[2]));
+check('and a HELD file makes the census incomplete, so nothing deletes it by absence',
+	holds.length > 0 && holds.every((m) => /out\.complete = false/.test(m[2])),
+	holds.length + ' hold branch(es)');
+
+// ── 2c. THE PENDING BRANCH TESTS THE HARD BUDGET BEFORE IT CARRIES ───
+//
+// The defect this is written for. A file past the SOFT cap was queued for offload
+// and then fell through to `out.files[full] = content` with no test of `budget`
+// anywhere on that arm -- the hard test was on the `else if`, the arm where there is
+// nowhere to offload to. So `total` was bounded by nothing: the owner's phone packed
+// 9,860,533 bytes of workspace files into a 5 MiB parcel, 13.6 MB onto an 8 MiB
+// wire, and was refused at its own front door after every boot.
+const pendArm = collectFiles.slice(collectFiles.indexOf('if (offloadConfirmed('),
+	collectFiles.indexOf('out.files[full] = content'));
+check('the offload-pending branch tests the HARD budget before a file rides inline',
+	pendArm.length > 0 && /total \+ content\.length > budget/.test(pendArm),
+	pendArm.length + ' chars between the confirm test and the inline assignment');
+
+// ── 2d. AND A CROWDED DIAMONDS BUDGET HOLDS RATHER THAN NAMES ────────
+//
+// The other half of the same round. The files having overspent, `collectDiamonds`
+// was handed a budget of zero, every Diamond took the offload arm, and every one was
+// then NAMED because even a few hundred bytes of reference would not fit in nothing.
+// `offloadStalled` was false -- offload was working perfectly -- so the hold
+// conversion at the end did not fire and 25 Diamonds were named on a picture that
+// was about to change.
+const collectDiamonds = APP.slice(APP.indexOf('async function collectDiamonds('),
+	APP.indexOf('// \u2500\u2500 Something of yours the last parcel could not carry'));
+check('collectDiamonds was found to read', collectDiamonds.length > 0);
+check('a Diamonds budget with no room for the references HOLDS rather than NAMES',
+	/var crowded = canOffload && budget < refReserve;/.test(collectDiamonds)
+		&& /\(offloadStalled \|\| crowded\) && out\.left\.length/.test(collectDiamonds));
 check('and the names are handed to a teller when the parcel is packed',
 	/noteFilesLeft\(fileCol\.left\)/.test(APP));
 const teller = APP.slice(APP.indexOf('function noteFilesLeft'),
