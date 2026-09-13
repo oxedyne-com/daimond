@@ -12,16 +12,24 @@
    unlocked tab. Presence said "available" the whole time.
 
    So the posture is a SECOND, LOCAL answer, and it is the
-   machine's own: "yes, I am the runner -- keep me awake and
-   keep me listening." Per-computer, in localStorage, never in
-   the sync parcel -- exactly like the autonomous posture
-   (daimond.js `AUTONOMOUS_KEY`) and for the same reason:
-   arming the desktop must not arm the phone.
+   machine's own: "yes, I am the runner -- keep me listening."
+   Per-computer, in localStorage, never in the sync parcel --
+   exactly like the autonomous posture (daimond.js
+   `AUTONOMOUS_KEY`) and for the same reason: arming the desktop
+   must not arm the phone.
 
-   WHY IT IS ASKED FOR RATHER THAN ASSUMED. Holding a screen
-   wake lock for the life of the process and parking a long-poll
-   for ever are things a person should say yes to on the machine
-   it happens on. The nomination can be made from the phone; the
+   THE SCREEN LOCK IS NOT FOR THE LIFE OF THE PROCESS. A runner
+   only needs the DISPLAY on while it is actually working a turn
+   -- a lease held, or `DaimondCore.busy()` -- plus a short grace
+   after, so a quick run of turns does not flap the lock on and
+   off. Idle, an armed runner holds no screen lock at all: the
+   machine must not be allowed to SUSPEND (that stops everything,
+   including this), but its screen sleeping is fine and normal.
+
+   WHY IT IS ASKED FOR RATHER THAN ASSUMED. Parking a long-poll
+   for ever, and taking a screen lock whenever a turn lands, are
+   things a person should say yes to on the machine it happens
+   on. The nomination can be made from the phone; the
    consequences land here.
 
    READ-ONLY ON EVERYTHING IT DOES NOT OWN. The nominee and this
@@ -135,10 +143,39 @@
 		return { act: 'ask', why: 'nominee-unasked' };
 	}
 
-	/// Should the screen wake lock be held right now? The posture is the whole of
-	/// it: a runner is kept awake whatever it is doing, unlike the per-turn lock
-	/// `DaimondWake` holds while a turn is in flight.
-	function wantsWake(st) { return !!(st && st.posture); }
+	// A just-ended turn keeps the screen lock this much longer, so a rapid run of
+	// short turns does not release and retake it every tick.
+	var GRACE_MS = 60000;
+
+	/// Should the screen wake lock be held right now? Gated on the posture -- an
+	/// un-armed machine holds no lock regardless of activity -- and, armed, held
+	/// only while a turn is actually in flight (`st.servicing`) or within
+	/// `GRACE_MS` of the last one seen (`st.graceUntil`). Idle beyond that is
+	/// genuinely idle: this is what makes the runner's screen lock different from
+	/// the per-turn one `DaimondWake` itself counts while any turn runs anywhere.
+	///
+	/// # Arguments
+	/// * `st.graceUntil` - ms epoch until which a just-ended turn still counts, 0 for none.
+	/// * `st.now`        - ms epoch "now" (a parameter so a test owns the clock).
+	function wantsWake(st) {
+		st = st || {};
+		if (!st.posture) return false;
+		if (st.servicing) return true;
+		var now = st.now == null ? Date.now() : st.now;
+		return !!(st.graceUntil) && now < st.graceUntil;
+	}
+
+	/// Is a turn in flight on THIS device right now? Either arbitration says so is
+	/// enough: a live lease this device holds (peer.js), claimed just before the
+	/// first token lands, or `DaimondCore.busy()`, which covers everything after
+	/// and everything a lease never sees (a local, undispatched turn).
+	function servicingNow() {
+		try { if (window.DaimondLease && DaimondLease.heldBy && DaimondLease.heldBy(self())) return true; }
+		catch (e) { /* section not loaded yet; busy() still might know */ }
+		try { if (window.DaimondCore && DaimondCore.busy && DaimondCore.busy()) return true; }
+		catch (e) { /* not loaded yet */ }
+		return false;
+	}
 
 	/// Should parking be started on boot? Only with the posture set AND the identity
 	/// unlocked -- a locked tab has no keys to open an errand with, so parking it
@@ -155,18 +192,24 @@
 		return isRunner();
 	}
 
-	/// Hold a wake lock for the life of the process while the posture is set, and
-	/// let it go the moment it is not. `DaimondWake` is COUNTED, so this takes
-	/// exactly one count and gives exactly one back -- a second hold would be a
-	/// count that never reaches zero.
+	var _graceUntil = 0;	// ms epoch; a just-ended turn keeps the lock until this passes
+
+	/// Hold a wake lock while the posture is armed AND a turn is actually being
+	/// serviced (or was, within `GRACE_MS`), and let it go the moment neither is
+	/// true. `DaimondWake` is COUNTED, so this takes exactly one count and gives
+	/// exactly one back -- a second hold would be a count that never reaches zero.
 	///
 	/// The browser drops the lock whenever the page is hidden and hands it back to
-	/// nobody, so `regain` is asked on every return to visible. That is why the
-	/// posture is a lock "for process life" and not one request at boot.
+	/// nobody, so `regain` is asked on every return to visible -- but only while
+	/// still wanted, which is only ever while servicing or within grace: an idle
+	/// armed runner holds nothing to regain.
 	function syncWake() {
 		var W = window.DaimondWake;
 		if (!W) return false;				// daimond.js has not loaded yet; the tick retries
-		var want = isRunner();
+		var now = Date.now();
+		var svc = servicingNow();
+		if (svc) _graceUntil = now + GRACE_MS;
+		var want = wantsWake({ posture: isRunner(), servicing: svc, graceUntil: _graceUntil, now: now });
 		if (want && !_held)  { try { W.hold(); } catch (e) { return false; } _held = true; }
 		if (!want && _held)  { try { W.release(); } catch (e) { /* gone with the page */ } _held = false; }
 		if (want && _held)   { try { W.regain(); } catch (e) { /* inert where unsupported */ } }
@@ -240,8 +283,10 @@
 	try {
 		document.addEventListener('visibilitychange', function () {
 			if (document.visibilityState !== 'visible') return;
-			// The lock is gone -- the browser takes it back on hidden and returns it to
-			// nobody -- so a runner that was backgrounded asks again here. Parking is
+			// The browser takes a held lock back on hidden and returns it to nobody, so
+			// a runner backgrounded MID-TURN asks again here; `syncWake` only regains
+			// when still wanted, which is only while servicing (or within grace), so an
+			// idle armed runner coming back to the front regains nothing. Parking is
 			// re-armed too: a throttled background tab may have lost its loop.
 			syncWake();
 			startPark();
@@ -263,6 +308,8 @@
 		decide:    decide,
 		wantsWake: wantsWake,
 		wantsPark: wantsPark,
+		/// Is a turn in flight on this device right now (lease held, or busy)?
+		servicing: servicingNow,
 		/// One pass of the state machine, answering the act it took.
 		reconcile: reconcile,
 		/// Arm or disarm outright, for a settings control.
@@ -273,7 +320,7 @@
 		/// What is actually held, for a verifier that has to prove any of this.
 		state:     function () {
 			return { posture: isRunner(), wake: _held, asked: get(ASK_KEY) || '',
-				nominee: nominee(), self: self() };
+				nominee: nominee(), self: self(), graceUntil: _graceUntil };
 		},
 	};
 })();

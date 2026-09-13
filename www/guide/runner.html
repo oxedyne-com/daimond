@@ -57,7 +57,7 @@
 	<h2 id="s3">Saying yes on the runner itself</h2>
 	<p>The next time the nominated device is running Daimond, it asks: <span class="ui">Make this device the runner?</span> Answer <span class="ui">This device is the runner</span> and it holds the posture from then on. While it does, that device:</p>
 	<ul>
-		<li>keeps its screen from sleeping, and asks again whenever its window comes back to the front, because browsers hand that permission back when a window is hidden;</li>
+		<li>takes a screen lock only for as long as it is actually working a turn, asking again whenever its window comes back to the front because browsers hand that permission back when a window is hidden; idle, its screen is free to sleep like any other, but the machine itself must not be allowed to suspend, or it stops running altogether;</li>
 		<li>starts listening for handed-off turns as soon as it is unlocked, instead of waiting for you to open a panel;</li>
 		<li>tells your other devices that it is set up for this, so they can tell a nominated machine from one that is merely named.</li>
 	</ul>

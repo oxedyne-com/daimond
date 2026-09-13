@@ -3021,11 +3021,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The head and tail bytes a worker's report is clipped to, from `cfg.tune`.
 	///
 	/// Read rather than held, because the tune is a string the user or a trial arm may change
-	/// between dispatches and a figure cached at load would be the one before the change. The
-	/// defaults are the literals this replaced -- 2 KB of the opening and 6 KB of the close --
-	/// so an install that has tuned nothing clips exactly as it always did.
+	/// between dispatches and a figure cached at load would be the one before the change.
+	///
+	/// RAISED TO 4 KB / 12 KB ON 2026-09-13, from the 2 KB / 6 KB this replaced: the tune loop's
+	/// `wloose` arm, with a report four times the size, scored 1.00/1.00 on the two worker tasks
+	/// where the tighter clip scored 0.33/0.67.
 	function reportClip() {
-		var head = 2048, tail = 6144;
+		var head = 4096, tail = 12288;
 		try {
 			var t = JSON.parse((cfg && cfg.tune) || '{}') || {};
 			if (typeof t.worker_report_head === 'number' && t.worker_report_head > 0) {
@@ -23333,7 +23335,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Named here for the same reason `DEFAULT_FOLD_AT` is -- a tile drawn before its agent is
 	/// built still has to mark the fold in the right place -- and it goes stale the same way.
 	/// Keep it equal to the engine's figure.
-	var DEFAULT_CONTEXT_CAP = 120000;
+	var DEFAULT_CONTEXT_CAP = 80000;
 	var CONTEXT_CAP_MIN = 16000, CONTEXT_CAP_MAX = 1000000;
 
 	/// The most one TURN may spend before the engine stops it, in US dollars:

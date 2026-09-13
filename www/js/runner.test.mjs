@@ -85,13 +85,22 @@ function makeTab(cfg) {
 
 	const timers = new Map();
 	let seq = 0;
+	// A fake "now", advanced only by `ticks` -- by the longest interval firing that
+	// pass, i.e. TICK_MS -- so the grace window (GRACE_MS, read off the module's
+	// own real clock everywhere else) can be crossed deterministically, in ticks,
+	// with no real delay.
+	let nowMs = 1_700_000_000_000;
 	const clock = {
 		setInterval(fn, ms) { const id = ++seq; timers.set(id, { fn, every: ms }); return id; },
 		clearInterval(id) { timers.delete(id); },
 		setTimeout(fn) { const id = ++seq; timers.set(id, { fn, every: 0 }); return id; },
 		clearTimeout(id) { timers.delete(id); },
+		now: () => nowMs,
 		async ticks(n = 1) {
 			for (let i = 0; i < n; i++) {
+				let step = 0;
+				for (const t of timers.values()) step = Math.max(step, t.every || 0);
+				nowMs += step;
 				for (const t of [...timers.values()]) { try { t.fn(); } catch (e) { /* noted below */ } }
 				await settle();
 			}
@@ -102,6 +111,11 @@ function makeTab(cfg) {
 	const wake = { held: 0, asks: 0, regains: 0 };
 	const park = { starts: 0 };
 	const asked = { n: 0, msgs: [] };
+	// This device's own activity, the thing the new posture actually gates the
+	// screen lock on -- `DaimondLease.heldBy` (a claimed turn) and `DaimondCore.busy`
+	// (everything after). Either flips `state.busy`/`state.lease` and the module
+	// reads it straight through the fakes below.
+	const state = { busy: !!cfg.busy, lease: !!cfg.lease };
 
 	const docOn = {}, winOn = {};
 	const document = {
@@ -123,9 +137,16 @@ function makeTab(cfg) {
 		},
 		DaimondCore: {
 			confirm(msg) { asked.n++; asked.msgs.push(msg); return Promise.resolve(!!cfg.answer); },
+			busy() { return !!state.busy; },
+		},
+		DaimondLease: {
+			heldBy(id) { return !!state.lease && id === cfg.self; },
 		},
 		DaimondIdentity: { isUnlocked: () => !!cfg.unlocked },
 		DaimondPost: { parkStart() { park.starts++; return true; } },
+		// The module's own `Date.now()` resolves to this through `with (window)`,
+		// so a test crosses GRACE_MS in ticks rather than in real wall-clock time.
+		Date: { now: () => clock.now() },
 	};
 	win.window = win;
 
@@ -163,6 +184,11 @@ function makeTab(cfg) {
 		posture: () => local.get(KEY) === '1',
 		askedKey: () => local.get(ASK) || '',
 		nominate: (id) => { if (id) local.set(NOM, JSON.stringify({ id, at: 2 })); else local.delete(NOM); },
+		// Toggle this device's own activity -- what the screen lock is now gated on,
+		// on top of the posture. `setBusy` stands in for `DaimondCore.busy()`;
+		// `setLeaseHeld` for a lease `DaimondLease.heldBy(self)` would report live.
+		setBusy: (on) => { state.busy = !!on; },
+		setLeaseHeld: (on) => { state.lease = !!on; },
 		visible: async () => {
 			document.visibilityState = 'visible';
 			(docOn.visibilitychange || []).forEach((f) => f({}));
@@ -194,13 +220,12 @@ async function main() {
 		check('the question names what it costs',
 			/awake/i.test(tab.asked.msgs[0] || '') && /background/i.test(tab.asked.msgs[0] || ''));
 		check('the posture is on', tab.posture() === true);
-		check('exactly one wake-lock count is held', tab.wake.held === 1);
+		check('armed but idle holds no screen lock', tab.wake.held === 0, 'held=' + tab.wake.held);
 		check('parking started', tab.park.starts >= 1);
 		await tab.clock.ticks(4);
 		check('it is not asked again while armed', tab.asked.n === 1);
-		check('still exactly one count after four ticks', tab.wake.held === 1,
+		check('still idle, still no lock after four ticks', tab.wake.held === 0,
 			'held=' + tab.wake.held);
-		check('the lock is re-asked on the tick', tab.wake.regains >= 4);
 	}
 
 	console.log('\nrunner: a NO is remembered');
@@ -217,12 +242,17 @@ async function main() {
 	console.log('\nrunner: un-nominating clears the posture and forgets the asking');
 	{
 		const tab = await boot({ self: 'd-aaa', nominee: 'd-aaa', answer: true, unlocked: true });
-		check('armed to begin with', tab.posture() === true && tab.wake.held === 1);
+		check('armed to begin with', tab.posture() === true);
+		tab.setBusy(true);
+		await tab.clock.ticks(1);
+		check('servicing a turn holds the lock', tab.wake.held === 1, 'held=' + tab.wake.held);
 		tab.nominate('');
 		await tab.clock.ticks(1);
 		check('the posture is cleared', tab.posture() === false);
-		check('the wake lock is given back', tab.wake.held === 0, 'held=' + tab.wake.held);
+		check('the wake lock is given back even mid-turn, because the posture is gone',
+			tab.wake.held === 0, 'held=' + tab.wake.held);
 		check('the asking is forgotten', tab.askedKey() === '');
+		tab.setBusy(false);
 		// Re-nominating must ASK again rather than silently re-arm.
 		tab.nominate('d-aaa');
 		await tab.clock.ticks(1);
@@ -234,21 +264,73 @@ async function main() {
 	{
 		const tab = await boot({ self: 'd-aaa', nominee: 'd-aaa', answer: true, unlocked: true });
 		check('armed to begin with', tab.posture() === true);
+		tab.setBusy(true);
+		await tab.clock.ticks(1);
+		check('servicing a turn holds the lock', tab.wake.held === 1);
 		tab.nominate('d-ccc');
 		await tab.clock.ticks(1);
 		check('the posture is cleared', tab.posture() === false);
 		check('the lock is released', tab.wake.held === 0);
 	}
 
-	console.log('\nrunner: the lock is re-asked on every return to visible');
+	console.log('\nrunner: an idle armed runner holds no screen lock, but a turn takes one and grace holds it briefly after');
 	{
 		const tab = await boot({ self: 'd-aaa', nominee: 'd-aaa', answer: true, unlocked: true });
+		check('idle after arming holds no lock', tab.wake.held === 0, 'held=' + tab.wake.held);
+
+		tab.setBusy(true);
+		await tab.clock.ticks(1);
+		check('a turn starting takes the lock', tab.wake.held === 1, 'held=' + tab.wake.held);
+
+		tab.setBusy(false);
+		await tab.clock.ticks(1);
+		check('just after the turn ends the lock is still held (grace)', tab.wake.held === 1,
+			'held=' + tab.wake.held);
+
+		await tab.clock.ticks(2);
+		check('still within grace a couple more ticks on', tab.wake.held === 1,
+			'held=' + tab.wake.held);
+
+		await tab.clock.ticks(1);
+		check('once the grace window elapses the lock is released', tab.wake.held === 0,
+			'held=' + tab.wake.held);
+
+		await tab.clock.ticks(2);
+		check('it stays released while idle', tab.wake.held === 0, 'held=' + tab.wake.held);
+	}
+
+	console.log('\nrunner: a held lease counts as servicing too, not only DaimondCore.busy');
+	{
+		const tab = await boot({ self: 'd-aaa', nominee: 'd-aaa', answer: true, unlocked: true });
+		check('idle: no lock', tab.wake.held === 0);
+		tab.setLeaseHeld(true);
+		await tab.clock.ticks(1);
+		check('a held lease alone takes the lock', tab.wake.held === 1, 'held=' + tab.wake.held);
+	}
+
+	console.log('\nrunner: the lock is re-asked on every return to visible, but only while servicing');
+	{
+		const tab = await boot({ self: 'd-aaa', nominee: 'd-aaa', answer: true, unlocked: true });
+		tab.setBusy(true);
+		await tab.clock.ticks(1);
+		check('servicing a turn holds the lock', tab.wake.held === 1);
 		const before = tab.wake.regains;
 		tab.hide();
 		await tab.visible();
-		check('hidden then visible re-asks for the lock', tab.wake.regains > before,
+		check('hidden then visible mid-turn re-asks for the lock', tab.wake.regains > before,
 			before + ' -> ' + tab.wake.regains);
 		check('it is still exactly one count', tab.wake.held === 1, 'held=' + tab.wake.held);
+
+		// Idle (the turn is done and grace has fully elapsed): the same cycle
+		// regains nothing, because nothing is wanted any more.
+		tab.setBusy(false);
+		await tab.clock.ticks(5);
+		check('idle again: the lock was released', tab.wake.held === 0, 'held=' + tab.wake.held);
+		const before2 = tab.wake.regains;
+		tab.hide();
+		await tab.visible();
+		check('idle: visibility churn regains nothing', tab.wake.regains === before2,
+			before2 + ' -> ' + tab.wake.regains);
 	}
 
 	console.log('\nrunner: parking at boot waits for the identity');
@@ -269,7 +351,8 @@ async function main() {
 		check('the posture survived the reload', second.posture() === true);
 		check('it was not asked again', second.asked.n === 0);
 		check('it parked straight away', second.park.starts >= 1, 'starts=' + second.park.starts);
-		check('and it holds the lock again', second.wake.held === 1);
+		check('surviving armed is not by itself a screen lock', second.wake.held === 0,
+			'held=' + second.wake.held);
 	}
 
 	console.log('\nrunner: a blank device id changes nothing');
@@ -298,8 +381,12 @@ async function main() {
 			R.decide({ self: 'a', nominee: 'a', asked: 'a' }).why === 'declined');
 		check('the nominee, armed -> hold',
 			R.decide({ self: 'a', nominee: 'a', posture: true }).why === 'armed');
-		check('the wake lock follows the posture alone',
-			R.wantsWake({ posture: true }) === true && R.wantsWake({ posture: false }) === false);
+		check('the wake lock needs the posture AND (servicing or unexpired grace)',
+			R.wantsWake({ posture: true, servicing: true }) === true
+			&& R.wantsWake({ posture: false, servicing: true }) === false
+			&& R.wantsWake({ posture: true, servicing: false, graceUntil: 0 }) === false
+			&& R.wantsWake({ posture: true, servicing: false, graceUntil: 5000, now: 1000 }) === true
+			&& R.wantsWake({ posture: true, servicing: false, graceUntil: 5000, now: 9000 }) === false);
 		check('parking needs the posture AND the identity',
 			R.wantsPark({ posture: true, unlocked: true }) === true
 			&& R.wantsPark({ posture: true, unlocked: false }) === false

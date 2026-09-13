@@ -125,20 +125,24 @@ pub const FOLD_AT_MAX: f64 = 0.95;	// above it the provider refuses before the f
 /// big-window bill goes.  This ceiling caps the EFFECTIVE budget below the window's fraction,
 /// so the same turn folds at the cap and the per-round carry stays bounded.
 ///
-/// It sits above the default window's own fraction (131,072 * 0.65 = ~85k), so a default- or
-/// small-window model reaches the cap only when its fraction already would -- nothing about
-/// those changes.  A lower value folds more often, and each fold busts the prefix cache once.
+/// A lower value folds more often, and each fold busts the prefix cache once.
 ///
 /// IT WAS 200,000 UNTIL 2026-09-12, AND 200,000 WAS ABOVE THE LINE IT WAS DRAWN TO HOLD.  A
 /// GLM turn settled at a per-round prompt of about 182k -- under the cap, so no fold ever
 /// fired, for a hundred and fifty rounds, each carrying the lot.  A ceiling only a runaway
-/// reaches is not a ceiling.  120,000 is low enough that a long agentic turn meets it and
-/// folds, and still comfortably above the 85k a default window folds at on its own.
+/// reaches is not a ceiling.
+///
+/// LOWERED AGAIN TO 80,000 ON 2026-09-13, off the tune loop's own measurement over 190 trials:
+/// the `cap80` arm cut cost by 27% against `cur` with no utility lost.  This moved the cap
+/// BELOW the default window's own fraction (131,072 * 0.65 = ~85k) for the first time, so a
+/// default-window chat now folds at this cap rather than at its own fraction too -- exactly
+/// the behaviour the 190 trials measured and found no utility lost in, not an accident of this
+/// figure sitting where it used to.
 ///
 /// It is now the DEFAULT of [`Limits::context_cap`] rather than the figure itself, because the
 /// owner has to be able to see it and move it: a number that decides what a turn costs, and
 /// that nothing in the product names, is a number nobody can act on.
-pub const ABSOLUTE_CAP: u64 = 120_000;
+pub const ABSOLUTE_CAP: u64 = 80_000;
 
 /// The band a chosen context ceiling is held inside.
 ///
@@ -185,9 +189,13 @@ pub const SPEND_CAP_MAX_USD: f64 = 1000.0;
 // question, and reports back -- so the work it cannot finish inside these is work that should
 // come back to the daimon rather than run on unwatched.
 
-pub const WORKER_MAX_ROUNDS:    usize = 60;
+// Raised on 2026-09-13 from 60 rounds / 48,000 -- the `wloose` arm of the same tune loop
+// scored 1.00/1.00 on the two worker tasks where the tighter preset scored 0.33/0.67, with
+// re-reads after retirement the likely cause (`stubRR` 0.30 under the old preset, 0.00-0.07
+// under the others measured).
+pub const WORKER_MAX_ROUNDS:    usize = 100;
 pub const WORKER_CONTINUATIONS: usize = 1;	// one breath, not three
-pub const WORKER_CONTEXT_CAP:   u64   = 48_000;
+pub const WORKER_CONTEXT_CAP:   u64   = 96_000;
 pub const WORKER_KEEP:          f64   = 0.3;
 pub const WORKER_SPEND_CAP_USD: f64   = 1.0;
 
@@ -439,9 +447,10 @@ impl Limits {
 	/// so a setting that arrives mid-run cannot lift a worker back over the ceiling either.
 	///
 	/// Idempotent, because it is called again on every setting: each field is a `min` against a
-	/// figure that is already at or below the ceiling.  A zero is read as "the user has not
-	/// chosen" exactly as [`Limits::budget`] reads it, so the shipped default is what the ceiling
-	/// is taken against rather than nought.
+	/// figure that is already at or below the ceiling -- `context_cap` aside, where the ceiling
+	/// can now be the looser of the two; see the comment at that field below.  A zero is read as
+	/// "the user has not chosen" exactly as [`Limits::budget`] reads it, so the shipped default
+	/// is what the ceiling is taken against rather than nought.
 	pub fn hold_to_worker(&mut self) {
 		self.worker = true;
 		// READ OFF THESE LIMITS rather than off the constants, so a tune can move the preset --
@@ -456,8 +465,20 @@ impl Limits {
 		// A continuation count of zero IS a choice -- one leg and no more -- so it is not read
 		// as absent the way the four above are.
 		self.max_continuations = self.max_continuations.min(self.worker_continuations);
-		let cap = if self.context_cap == 0 { ABSOLUTE_CAP } else { self.context_cap };
-		self.context_cap = cap.min(wcap).clamp(CONTEXT_CAP_MIN, CONTEXT_CAP_MAX);
+		// UNLIKE THE OTHER FOUR, THE CHAT'S OWN FIGURE CAN NOW BE THE TIGHTER ONE: since
+		// 2026-09-13 `WORKER_CONTEXT_CAP` (96,000) sits ABOVE `ABSOLUTE_CAP` (80,000), so a plain
+		// `min` against whatever the chat holds would floor every untouched worker at the chat's
+		// generic default and the raised preset would never be reached.  Nobody having chosen a
+		// cap is not the same as somebody having chosen the shipped default on purpose, so both
+		// "zero" and "exactly the shipped default" read as no choice at all here -- the worker
+		// gets its own preset -- and only a figure the user moved AWAY from that default still
+		// binds it tighter.
+		let cap = if self.context_cap == 0 || self.context_cap == ABSOLUTE_CAP {
+			wcap
+		} else {
+			self.context_cap.min(wcap)
+		};
+		self.context_cap = cap.clamp(CONTEXT_CAP_MIN, CONTEXT_CAP_MAX);
 		self.keep = self.keep.min(wkeep);
 		let spend = if self.spend_cap_usd <= 0.0 { DEFAULT_SPEND_CAP_USD } else { self.spend_cap_usd };
 		self.spend_cap_usd = spend.min(wspend)
@@ -1278,9 +1299,13 @@ pub const IN_TURN_RETIRE_AGE: usize = 3;
 /// Longer than [`IN_TURN_RETIRE_AGE`] and deliberately so.  A write's body is on disk the moment
 /// its reply comes back, so three rounds is generous for an ARGUMENT; a result is working memory,
 /// and a model reads back over the last several rounds of it -- a file it read four rounds ago is
-/// a file it is probably still editing.  Eight rounds is past that and still leaves a 60-round
-/// worker seven eighths of its turn under the sweep.
-pub const IN_TURN_RESULT_AGE: usize = 8;
+/// a file it is probably still editing.
+///
+/// DOUBLED TO 16 ON 2026-09-13.  Eight left a worker re-reading what the sweep had just retired
+/// -- the tune loop's `stubRR` (stub re-read rate) sat at 0.30 under the old figure against
+/// 0.00-0.07 on every other arm measured, and the tight preset was the worst arm overall, 0.75
+/// against 0.83-0.88.  Sixteen is still well inside a hundred-round worker's turn.
+pub const IN_TURN_RESULT_AGE: usize = 16;
 
 /// Bytes of a tool result left whole mid-turn, however old it is.
 ///
@@ -2119,19 +2144,19 @@ mod tests {
 	fn test_a_worker_is_held_to_its_own_ceiling_00() {
 		// The figures PINNED, for the reason the fold fraction is pinned above: the bug was that a
 		// worker had the chat's, so a test reading `assert_eq!(WORKER_MAX_ROUNDS, l.max_rounds)`
-		// would pass just as well on a preset that set sixty to a hundred and fifty.
+		// would pass just as well on a preset that set a hundred to a hundred and fifty.
 		let mut l = Limits::default();
 		l.hold_to_worker();
 		assert!(l.worker, "nothing marks this agent as a worker");
-		assert_eq!(60,     l.max_rounds);
+		assert_eq!(100,    l.max_rounds);
 		assert_eq!(1,      l.max_continuations);
-		assert_eq!(48_000, l.context_cap);
+		assert_eq!(96_000, l.context_cap);
 		assert_eq!(0.3,    l.keep);
 		assert_eq!(1.0,    l.spend_cap_usd);
 		// And the ceiling is what the per-round carry is actually bounded by, which is the figure
-		// the bill is made of: a worker on a million-token window carries 48,000 and not 852,000.
+		// the bill is made of: a worker on a million-token window carries 96,000 and not 852,000.
 		l.window = 1_310_720;
-		assert_eq!(48_000, l.budget(0));
+		assert_eq!(96_000, l.budget(0));
 	}
 
 	#[test]
@@ -2146,9 +2171,9 @@ mod tests {
 		l.spend_cap_usd = 5.0;
 		l.keep = 0.8;
 		l.hold_to_worker();
-		assert_eq!(60,     l.max_rounds);
+		assert_eq!(100,    l.max_rounds);
 		assert_eq!(1,      l.max_continuations);
-		assert_eq!(48_000, l.context_cap);
+		assert_eq!(96_000, l.context_cap);
 		assert_eq!(0.3,    l.keep);
 		assert_eq!(1.0,    l.spend_cap_usd);
 		// A TIGHTER CHOICE IS THE USER'S AND IS KEPT. The preset lowers; it does not set.
@@ -2174,7 +2199,7 @@ mod tests {
 		l.context_cap = 0;
 		l.spend_cap_usd = 0.0;
 		l.hold_to_worker();
-		assert_eq!(48_000, l.context_cap);
+		assert_eq!(96_000, l.context_cap);
 		assert_eq!(1.0,    l.spend_cap_usd);
 	}
 
@@ -2182,12 +2207,14 @@ mod tests {
 	fn test_the_fold_band_is_the_one_the_budget_uses_00() {
 		// The clamp was written twice -- once as literals inside `budget` and once wherever a
 		// caller decided what to offer -- and a band held in two places is a band that drifts.
+		// The window is small enough that even FOLD_AT_MAX's fraction sits under ABSOLUTE_CAP,
+		// so the band is what this fixture is measuring and not the cap.
 		let mut l = Limits::default();
-		l.window = 100_000;
+		l.window = 50_000;
 		l.fold_at = 9.0;
-		assert_eq!((100_000.0 * FOLD_AT_MAX) as u64, l.budget(0));
+		assert_eq!((50_000.0 * FOLD_AT_MAX) as u64, l.budget(0));
 		l.fold_at = 0.0;
-		assert_eq!((100_000.0 * FOLD_AT_MIN) as u64, l.budget(0));
+		assert_eq!((50_000.0 * FOLD_AT_MIN) as u64, l.budget(0));
 	}
 
 	#[test]
@@ -2204,14 +2231,17 @@ mod tests {
 
 	#[test]
 	fn test_a_small_window_still_folds_at_its_fraction_00() {
-		// Below the cap the fraction wins unchanged: the default window and a small one both
-		// behave exactly as before the cap existed.
+		// Below the cap the fraction wins unchanged. DEFAULT_WINDOW no longer qualifies as
+		// "small" for this: at 0.65 its own fraction is ~85k, which since 2026-09-13 sits ABOVE
+		// the 80,000 cap -- see `test_a_large_window_folds_at_the_cap_not_its_fraction_00`'s
+		// sibling case, now true of the default window too. 100,000 and 60,000 both still clear
+		// the cap, so they are the fixtures here instead.
 		let mut l = Limits::default();
-		l.window = 131_072;
-		assert_eq!((131_072.0 * FOLD_AT) as u64, l.budget(0));
-		assert!((131_072.0 * FOLD_AT) as u64 <= ABSOLUTE_CAP);
 		l.window = 100_000;
-		assert_eq!(65_000, l.budget(0));
+		assert_eq!((100_000.0 * FOLD_AT) as u64, l.budget(0));
+		assert!((100_000.0 * FOLD_AT) as u64 <= ABSOLUTE_CAP);
+		l.window = 60_000;
+		assert_eq!((60_000.0 * FOLD_AT) as u64, l.budget(0));
 	}
 
 	#[test]
@@ -3298,14 +3328,15 @@ mod tests {
 		// that needed folding still gets folded. A sweep that had flattened this would have taken
 		// the working memory with it.
 		assert!(now[79] > now[9], "the sweep left nothing to carry at all");
-		// THE WORKING MEMORY IS INTACT, which is the property and not the saving. The last eight
-		// rounds of the turn must be byte-for-byte what they were, and they are checked against the
-		// unswept fixture rather than against a size nobody can read.
+		// THE WORKING MEMORY IS INTACT, which is the property and not the saving. The last
+		// IN_TURN_RESULT_AGE rounds of the turn must be byte-for-byte what they were, and they
+		// are checked against the unswept fixture rather than against a size nobody can read.
 		assert_eq!(whole.len(), swept.len(), "the sweep added or removed a message");
 		let tail_from = whole.len() - 2 * IN_TURN_RESULT_AGE;
 		for i in tail_from..whole.len() {
 			assert_eq!(whole[i].content().text_len(), swept[i].content().text_len(),
-				"message {} of the last eight rounds was retired out from under the model", i);
+				"message {} of the last IN_TURN_RESULT_AGE rounds was retired out from under \
+				 the model", i);
 		}
 		// And something WAS taken, further back, or the loop above proves nothing.
 		assert!(swept[..tail_from].iter().any(|m| m.text().ends_with(RESULT_RETIRED_TAIL)),
@@ -3494,7 +3525,7 @@ mod tests {
 		// It was a constant at 200,000, and 200,000 was above the line it was drawn to hold: a
 		// real turn settled at ~182k per round, under the cap, so no fold ever fired and the
 		// whole of it was re-sent a hundred and fifty times.
-		assert_eq!(120_000, ABSOLUTE_CAP);
+		assert_eq!(80_000, ABSOLUTE_CAP);
 		assert_eq!(ABSOLUTE_CAP, Limits::default().context_cap);
 		let mut l = Limits::default();
 		l.window = 1_310_720;

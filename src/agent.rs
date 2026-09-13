@@ -509,8 +509,8 @@ impl Agent {
         }
     }
 
-    /// Hold this agent to what a dispatched worker may have: sixty rounds, one continuation, a
-    /// 48,000-token carry, a tail of three tenths and a dollar.
+    /// Hold this agent to what a dispatched worker may have: a hundred rounds, one continuation,
+    /// a 96,000-token carry, a tail of three tenths and a dollar.
     ///
     /// **The mark is sticky and every figure is a ceiling**, so this may be called before or after
     /// the user's own settings reach the app and the answer is the same.  `Workers.start` applies
@@ -1201,7 +1201,7 @@ impl Agent {
             // settles at 77.5K and stays there for eighty-five rounds.
             //
             // A longer horizon than the bodies get, and the same batch: see
-            // `compact::IN_TURN_RESULT_AGE` for why eight rounds rather than three, and
+            // `compact::IN_TURN_RESULT_AGE` for why sixteen rounds rather than three, and
             // `compact::IN_TURN_RETIRE_EVERY` for why both run every tenth round rather than every
             // round. One cache miss for the pair of them.
             if swept > result_age && swept % sweep_every == 0 {
@@ -2210,11 +2210,11 @@ mod tests {
         a.set_context_window(1_310_720);
         let l = a.limits();
         assert!(l.worker);
-        assert_eq!(60,     l.max_rounds, "the chat's round setting reached a worker");
+        assert_eq!(100,    l.max_rounds, "the chat's round setting reached a worker");
         assert_eq!(1,      l.max_continuations);
-        assert_eq!(48_000, l.context_cap, "the chat's carry ceiling reached a worker");
+        assert_eq!(96_000, l.context_cap, "the chat's carry ceiling reached a worker");
         assert_eq!(1.0,    l.spend_cap_usd, "the chat's dollar ceiling reached a worker");
-        assert_eq!(48_000, l.budget(0), "a worker's per-round carry is not bounded");
+        assert_eq!(96_000, l.budget(0), "a worker's per-round carry is not bounded");
         // A tighter setting is still the user's, whichever order it arrives in.
         a.set_max_rounds(15);
         assert_eq!(15, a.limits().max_rounds);
