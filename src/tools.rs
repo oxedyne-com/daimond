@@ -1463,10 +1463,11 @@ pub fn crystal_hot_cap_message(new_hot: usize) -> String {
     fmt!(
         "The HOT part of this crystal -- `title`, `summary`, `open` and every section marked \
         \"hot\": true -- rides in your system message on every round and may not exceed {} \
-        bytes; this write would leave it at {}. Nothing has to be deleted: take the \"hot\" flag \
-        off a section and it becomes cold, which keeps every word of it and costs nothing per \
-        round, because crystal_read fetches a cold section and recall searches all of them. The \
-        whole crystal may still be up to {} bytes.",
+        bytes; this write would leave it at {}. MOVE A SECTION TO COLD -- set \"hot\": false, or \
+        drop the `!` from its heading -- or shorten the hot part. Nothing has to be deleted: a \
+        cold section keeps every word of it and costs nothing per round, because crystal_read \
+        fetches a cold section and recall searches all of them. The whole crystal may still be \
+        up to {} bytes.",
         crystal_hot_cap(), new_hot, crystal_cap(),
     )
 }
@@ -4182,6 +4183,39 @@ pub fn call_outcome(reply: &str) -> CallOutcome {
     }
 }
 
+/// The `DOMException.name` a browser throws when a file-system grant has been withdrawn.
+pub const WITHDRAWN_GRANT: &str = "NotAllowedError";
+
+/// Does this thrown exception's NAME say a file-system grant was withdrawn?
+///
+/// The name is compared WHOLE.  A substring test over the same word is what turned a search
+/// result into a revoked grant on 2026-09-13, and `NotAllowedError` appears in this codebase's own
+/// prose often enough that a loose test will meet it again.
+pub fn is_withdrawn_grant(name: &str) -> bool {
+    name == WITHDRAWN_GRANT
+}
+
+/// Whether a tool call's OWN failure says the browser took the open folder away.
+///
+/// **Two terms, and the first is the one the defect turned on.**  A call that SUCCEEDED says
+/// nothing about the grant however its result reads: on 2026-09-13 a `file_search` for
+/// `on the user's screen|ask_result|drawn` matched the sentence in `src/wasm/opfs.rs` that names
+/// `NotAllowedError`, the alarm fired on a result rather than on a failure, the page dropped to the
+/// sandbox, and every later read of the user's folder was refused against a grant the browser had
+/// never touched.  So the outcome is asked first, and a `Done` is never a loss.
+///
+/// The second term is the exception the file edge caught
+/// ([`crate::wasm::opfs::take_thrown`]), not the words the tool returned.  A failed `file_edit`
+/// whose `old_string` quoted that sentence would fail for its own reasons and say that word in its
+/// error; only something thrown is evidence about the grant.
+///
+/// # Arguments
+/// * `outcome` - What became of the call, read from the reply by [`call_outcome`].
+/// * `thrown` - The name of the exception the file edge caught, empty when nothing threw.
+pub fn folder_loss_reported(outcome: CallOutcome, thrown: &str) -> bool {
+    outcome != CallOutcome::Done && is_withdrawn_grant(thrown)
+}
+
 /// What a call says about one path, once it has returned.
 ///
 /// **Read off the ARGUMENTS, never off the reply.**  A reply is a sentence the tool composed, and
@@ -4954,6 +4988,12 @@ pub(crate) async fn root_entries(ctx: &ToolContext) -> Vec<(String, bool)> {
 /// * `path` - The same path, scoped, which is the one browser storage is asked about.
 #[cfg(target_arch = "wasm32")]
 async fn wrong_root_note(ctx: &ToolContext, raw: &str, path: &str) -> Option<String> {
+    // A grant the browser has just withdrawn is not a path spelled against the wrong root. The
+    // sentence below would send the model to correct a path that was right, and the probes it
+    // makes to compose it would fail for the same reason the call did.
+    if is_withdrawn_grant(&crate::wasm::opfs::thrown()) {
+        return None;
+    }
     if matches!(crate::wasm::opfs::exists(ctx.root, path).await, Ok(true)) {
         return None;
     }
@@ -19355,6 +19395,10 @@ impl ToolRegistry {
         // array written as a quoted string -- both on the bank, both costing a whole round.
         let args = self.family.get().normalise_args(name, args_json);
         let args_json: &str = args.as_ref();
+        // ARMED BEFORE THE CALL, so the alarm below can only ever be about this one. An exception
+        // an earlier call caught and recovered from is not evidence about this one's folder.
+        #[cfg(target_arch = "wasm32")]
+        crate::wasm::opfs::arm_folder_watch();
         let out = match Tool::from_name(name) {
             // A tool must be REGISTERED, not merely known. Resolving by name
             // alone let a caller run a tool it was never offered: a chat that
@@ -19380,9 +19424,17 @@ impl ToolRegistry {
         // sees the failure whoever provoked it. Saying so here, rather than in the panel's own
         // listing, is the difference between the user being told and the agent failing quietly
         // against a folder the panel still names.
+        //
+        // ON THE CALL'S OUTCOME AND ON WHAT IT THREW, never on what it returned: see
+        // `folder_loss_reported`, and turn 53, where a SEARCH HIT cost the user their folder.
         #[cfg(target_arch = "wasm32")]
-        if crate::wasm::opfs::is_folder_lost(&out.as_text()) {
-            crate::wasm::opfs::notify_folder_lost();
+        {
+            let thrown = crate::wasm::opfs::take_thrown();
+            if crate::wasm::opfs::folder_open()
+                && folder_loss_reported(call_outcome(&out.as_text()), &thrown)
+            {
+                crate::wasm::opfs::notify_folder_lost();
+            }
         }
         Ok(self.guided(name, args_json, out))
     }
@@ -19510,6 +19562,102 @@ mod tests {
     use crate::llm::parse_json_string_array;
 
     use oxedyne_fe2o3_jdat::prelude::*;
+
+    // ── A withdrawn folder grant ─────────────────────────────────
+
+    /// The folder is lost only when the CALL failed and the browser threw the name that says so.
+    #[test]
+    fn test_a_folder_is_lost_only_on_a_failed_calls_own_withdrawn_grant_00() {
+        // TURN 53, 2026-09-13. A `file_search` for `on the user\'s screen|ask_result|drawn`
+        // matched the sentence in `src/wasm/opfs.rs` that names the exception, and the alarm read
+        // the HIT as a revoked grant: the page dropped to the sandbox and every later `code/`
+        // read was refused against a grant the browser had never touched.
+        let hit = fmt!(
+            "src/wasm/opfs.rs:167: The browser reports a withdrawn grant as a `{}`, which\n\
+             src/wasm/opfs.rs:174: reaches here inside the error text the tool returns.\n",
+            WITHDRAWN_GRANT);
+        assert_eq!(call_outcome(&hit), CallOutcome::Done,
+            "a search that found its lines is a success: {}", hit);
+        assert!(!folder_loss_reported(call_outcome(&hit), ""),
+            "a successful search is not evidence about the grant: {}", hit);
+        // Nor even if something threw during it and the tool recovered: the call still worked.
+        assert!(!folder_loss_reported(CallOutcome::Done, WITHDRAWN_GRANT),
+            "a call that succeeded cannot have lost the folder it read");
+
+        // The case the alarm exists for: the read itself failed, and what it caught was the
+        // withdrawal.
+        let failed = error_line(&fmt!(
+            "OPFS: open file \'code/src/tools.rs\' failed: {}: The request is not allowed by the \
+             user agent or the platform in the current context.", WITHDRAWN_GRANT));
+        assert_eq!(call_outcome(&failed), CallOutcome::Failed, "{}", failed);
+        assert!(folder_loss_reported(call_outcome(&failed), WITHDRAWN_GRANT),
+            "a read that failed on a withdrawn grant must raise the alarm: {}", failed);
+
+        // A read that failed any OTHER way costs nobody their folder -- dropping it on every
+        // failure is the bug on the other side of this one.
+        assert!(!folder_loss_reported(call_outcome(&failed), "NotFoundError"),
+            "a missing file is not a revoked grant");
+        // Including a failure whose OWN words carry the name, which a `file_edit` quoting this
+        // file back at itself does.
+        let quoting = error_line(&fmt!(
+            "file_edit: old_string not found: `a withdrawn grant as a {}`", WITHDRAWN_GRANT));
+        assert_eq!(call_outcome(&quoting), CallOutcome::Failed, "{}", quoting);
+        assert!(!folder_loss_reported(call_outcome(&quoting), ""),
+            "the words a tool returns are the workspace\'s words: {}", quoting);
+
+        // And a refusal, which is a door saying no rather than a folder going away.
+        let refused = refusal_line("file_read: that path is outside the fence.");
+        assert_eq!(call_outcome(&refused), CallOutcome::Refused, "{}", refused);
+        assert!(!folder_loss_reported(call_outcome(&refused), ""), "{}", refused);
+
+        // The name is compared WHOLE. The substring is what went wrong.
+        assert!(is_withdrawn_grant(WITHDRAWN_GRANT));
+        assert!(!is_withdrawn_grant("NotAllowed"));
+        assert!(!is_withdrawn_grant("NotAllowedErrorish"));
+        assert!(!is_withdrawn_grant(""));
+    }
+
+    /// No source file decides a withdrawn grant by searching a tool RESULT for the word.
+    ///
+    /// The rule and its one caller are three lines apart, and the defect was not in either of
+    /// them but in what the caller was handed.  A grep is the only check that stays true when
+    /// somebody adds a second caller.
+    #[test]
+    fn test_nothing_reads_a_withdrawn_grant_out_of_a_tool_result_00() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut found: Vec<String> = Vec::new();
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(e)  => e,
+                Err(_) => continue,
+            };
+            for ent in entries.flatten() {
+                let path = ent.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().map(|e| e != "rs").unwrap_or(true) {
+                    continue;
+                }
+                let text = match std::fs::read_to_string(&path) {
+                    Ok(t)  => t,
+                    Err(_) => continue,
+                };
+                for (n, line) in text.lines().enumerate() {
+                    // The shape of the defect: a containment test over the exception's name.
+                    // The name may be COMPARED (`== WITHDRAWN_GRANT`) as much as it likes.
+                    if line.contains("contains(\"NotAllowed") || line.contains("indexOf(\'NotAllowed") {
+                        found.push(fmt!("{}:{}: {}", path.display(), n + 1, line.trim()));
+                    }
+                }
+            }
+        }
+        assert!(found.is_empty(),
+            "a withdrawn grant is decided by what was THROWN, never by matching a result: {:?}",
+            found);
+    }
 
     // ── One filesystem, four places ──────────────────────────────
 

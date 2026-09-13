@@ -103,6 +103,15 @@ thread_local! {
     /// primary account leaves this empty and uses the root exactly as a single-account install
     /// always did, so nothing has to move when accounts are introduced.
     static ACCOUNT_NS: RefCell<String> = const { RefCell::new(String::new()) };
+
+    /// The NAME of the exception the last failing call at this edge caught, empty when nothing
+    /// threw.
+    ///
+    /// A withdrawn folder grant is a `DOMException` whose `name` says so, and the name is the
+    /// only evidence about the grant that a tool result cannot forge.  Read and cleared by
+    /// [`take_thrown`]; cleared before each tool call by [`arm_folder_watch`], so the
+    /// alarm can only ever be about the call that has just failed.
+    static THROWN: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 /// Point every OPFS operation at the given account's subdirectory (empty for the primary account,
@@ -162,17 +171,66 @@ pub fn notify_folder_lost() {
     }
 }
 
-/// Whether a failed tool call failed *because the real folder was taken away*.
+/// The name of the exception the edge caught since the watch was armed, and clear it.
 ///
-/// The browser reports a withdrawn grant as a `NotAllowedError`, which reaches here inside the
-/// error text the tool returns.  A folder that is merely missing a file, or a path outside the
-/// jail, is an ordinary error and must not be mistaken for a lost grant -- dropping the user's
-/// folder on any failure at all would be its own bug.
+/// TAKEN rather than read, so one withdrawal is judged once and a later call cannot inherit an
+/// earlier call's evidence.  [`arm_folder_watch`] clears it before each tool call, which is the
+/// other half of that.
 ///
-/// # Arguments
-/// * `result` - The text a tool call produced, whether it succeeded or failed.
-pub fn is_folder_lost(result: &str) -> bool {
-    workspace_mode() == "folder" && result.contains("NotAllowed")
+/// **The NAME the browser threw, never the text a tool returned.**  The rule used to be a
+/// containment test for the name over every tool result, success or failure, and on 2026-09-13 a
+/// `file_search` whose hits included this file's own doc comment was read as a revoked grant: the
+/// page dropped to the sandbox and every later `code/` read was refused against a grant the
+/// browser had never touched.  A result's words are the workspace's words; only an exception is
+/// evidence about the grant.  [`crate::tools::folder_loss_reported`] holds the rule that reads it.
+pub fn take_thrown() -> String {
+    THROWN.with(|c| {
+        let name = c.borrow().clone();
+        c.borrow_mut().clear();
+        name
+    })
+}
+
+/// The same, left where it is, for a caller that must not spend the evidence.
+///
+/// A tool that catches its own failure and composes a better sentence needs to know what it
+/// caught, and the alarm at the dispatch door still has to be able to read it afterwards.
+pub fn thrown() -> String {
+    THROWN.with(|c| c.borrow().clone())
+}
+
+/// Forget what an earlier call threw, so the next one is judged on its own failure.
+pub fn arm_folder_watch() {
+    THROWN.with(|c| c.borrow_mut().clear());
+}
+
+/// A JS failure as a sentence, recording the exception's NAME on the way past.
+///
+/// `js_str` alone loses the name: a `DOMException` is not a JS string, so it renders through
+/// `Debug` and arrives as prose that the alarm would have to guess at.  The name is a
+/// machine-readable field and is read as one.
+fn js_err(e: &JsValue) -> String {
+    if let Some(name) = crate::wasm::js_prop(e, "name") {
+        THROWN.with(|c| {
+            let mut cur = c.borrow_mut();
+            // THE FIRST WITHDRAWAL WINS. A tool that catches a failure and probes around to
+            // compose a better sentence -- `wrong_root_note` asks whether each ancestor exists --
+            // throws `NotFoundError` on the way, and the withdrawal must not be displaced by the
+            // recovery it caused.
+            if !crate::tools::is_withdrawn_grant(&cur) {
+                *cur = name.clone();
+            }
+        });
+        // `NotAllowedError: The request is not allowed` rather than the `Debug` rendering of an
+        // object, which is what the user and the model both had to read before.
+        if let Some(msg) = crate::wasm::js_prop(e, "message") {
+            return fmt!("{}: {}", name, msg);
+        }
+        return name;
+    }
+    // A rejection that is only a string -- `to_js_err`'s shape, and what a patched glue throws in
+    // the verifiers -- carries no name, so nothing is recorded and nothing is claimed.
+    js_str(e)
 }
 
 
@@ -282,7 +340,7 @@ async fn opfs_root() -> Outcome<FileSystemDirectoryHandle> {
             Private Browsing); persistent workspace storage is unavailable here."; IO, Missing));
     }
     let dir_val = res!(JsFuture::from(storage.get_directory()).await
-        .map_err(|e| err!("OPFS: getDirectory failed: {}.", js_str(&e); IO, File)));
+        .map_err(|e| err!("OPFS: getDirectory failed: {}.", js_err(&e); IO, File)));
     let dir: FileSystemDirectoryHandle = res!(dir_val.dyn_into()
         .map_err(|_| err!("OPFS: getDirectory did not return a directory handle."; IO, File)));
 
@@ -301,7 +359,7 @@ async fn opfs_root() -> Outcome<FileSystemDirectoryHandle> {
     let opts = FileSystemGetDirectoryOptions::new();
     opts.set_create(true);
     let sub_val = res!(JsFuture::from(dir.get_directory_handle_with_options(&ns, &opts)).await
-        .map_err(|e| err!("OPFS: opening account subdirectory '{}' failed: {}.", ns, js_str(&e); IO, File)));
+        .map_err(|e| err!("OPFS: opening account subdirectory '{}' failed: {}.", ns, js_err(&e); IO, File)));
     let sub: FileSystemDirectoryHandle = res!(sub_val.dyn_into()
         .map_err(|_| err!("OPFS: account subdirectory was not a directory handle."; IO, File)));
     Ok(sub)
@@ -384,7 +442,7 @@ async fn descend(
         opts.set_create(true);
         let next_val = res!(JsFuture::from(
                 dir.get_directory_handle_with_options(&name, &opts)).await
-            .map_err(|e| err!("OPFS: open/create dir '{}' failed: {}.", name, js_str(&e); IO, File)));
+            .map_err(|e| err!("OPFS: open/create dir '{}' failed: {}.", name, js_err(&e); IO, File)));
         dir = res!(next_val.dyn_into()
             .map_err(|_| err!("OPFS: dir handle for '{}' was not a directory.", name; IO, File)));
     }
@@ -406,7 +464,7 @@ async fn descend_dir(
     for want in components {
         let name = disk_name(&dir, &want).await;
         let next_val = res!(JsFuture::from(dir.get_directory_handle(&name)).await
-            .map_err(|e| err!("OPFS: open dir '{}' failed: {}.", name, js_str(&e); IO, File, Read)));
+            .map_err(|e| err!("OPFS: open dir '{}' failed: {}.", name, js_err(&e); IO, File, Read)));
         dir = res!(next_val.dyn_into()
             .map_err(|_| err!("OPFS: dir handle for '{}' was not a directory.", name; IO, File, Read)));
     }
@@ -434,7 +492,7 @@ async fn open_parent(
             break;
         }
         let next_val = res!(JsFuture::from(dir.get_directory_handle(&name)).await
-            .map_err(|e| err!("OPFS: open dir '{}' failed: {}.", name, js_str(&e); IO, File)));
+            .map_err(|e| err!("OPFS: open dir '{}' failed: {}.", name, js_err(&e); IO, File)));
         dir = res!(next_val.dyn_into()
             .map_err(|_| err!("OPFS: dir handle for '{}' was not a directory.", name; IO, File)));
     }
@@ -452,12 +510,12 @@ pub async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<(
     opts.set_create(true);
     let file_val = res!(JsFuture::from(
             dir.get_file_handle_with_options(&leaf, &opts)).await
-        .map_err(|e| err!("OPFS: open/create file '{}' failed: {}.", leaf, js_str(&e); IO, File)));
+        .map_err(|e| err!("OPFS: open/create file '{}' failed: {}.", leaf, js_err(&e); IO, File)));
     let file: FileSystemFileHandle = res!(file_val.dyn_into()
         .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File)));
 
     let writable_val = res!(JsFuture::from(file.create_writable()).await
-        .map_err(|e| err!("OPFS: create writable for '{}' failed: {}.", leaf, js_str(&e); IO, File, Write)));
+        .map_err(|e| err!("OPFS: create writable for '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
     let writable: FileSystemWritableFileStream = res!(writable_val.dyn_into()
         .map_err(|_| err!("OPFS: writable for '{}' had the wrong type.", leaf; IO, File, Write)));
 
@@ -484,13 +542,13 @@ pub async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<(
     let buf = js_sys::Uint8Array::new_with_length(content.len() as u32);
     buf.copy_from(content);
     let write_promise = res!(writable.write_with_buffer_source(&buf)
-        .map_err(|e| err!("OPFS: queue write for '{}' failed: {}.", leaf, js_str(&e); IO, File, Write)));
+        .map_err(|e| err!("OPFS: queue write for '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
     res!(JsFuture::from(write_promise).await
-        .map_err(|e| err!("OPFS: write '{}' failed: {}.", leaf, js_str(&e); IO, File, Write)));
+        .map_err(|e| err!("OPFS: write '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
 
     // `close` is inherited from `WritableStream` and flushes the file.
     res!(JsFuture::from(writable.close()).await
-        .map_err(|e| err!("OPFS: close '{}' failed: {}.", leaf, js_str(&e); IO, File, Write)));
+        .map_err(|e| err!("OPFS: close '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
     announce_write(path);
     Ok(())
 }
@@ -546,7 +604,7 @@ pub async fn create_dir(root: FileRoot, path: &str) -> Outcome<()> {
         let opts = FileSystemGetDirectoryOptions::new();
         opts.set_create(true);
         let next = res!(JsFuture::from(dir.get_directory_handle_with_options(&name, &opts)).await
-            .map_err(|e| err!("OPFS: create dir '{}' failed: {}.", name, js_str(&e); IO, File)));
+            .map_err(|e| err!("OPFS: create dir '{}' failed: {}.", name, js_err(&e); IO, File)));
         dir = res!(next.dyn_into()
             .map_err(|_| err!("OPFS: handle for '{}' was not a directory.", name; IO, File)));
     }
@@ -616,18 +674,18 @@ pub async fn read_file(root: FileRoot, path: &str) -> Outcome<Vec<u8>> {
     let (dir, leaf) = res!(open_parent(&handle, components).await);
 
     let file_val = res!(JsFuture::from(dir.get_file_handle(&leaf)).await
-        .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+        .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let file_handle: FileSystemFileHandle = res!(file_val.dyn_into()
         .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File, Read)));
 
     // `get_file` yields a `File` (a `Blob`); read its bytes via
     // `arrayBuffer`, which returns the whole contents.
     let blob_val = res!(JsFuture::from(file_handle.get_file()).await
-        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let file: File = res!(blob_val.dyn_into()
         .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
     let buf_val = res!(JsFuture::from(file.array_buffer()).await
-        .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+        .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let bytes = js_sys::Uint8Array::new(&buf_val).to_vec();
     Ok(bytes)
 }
@@ -662,11 +720,11 @@ pub async fn read_file_range(
     let (dir, leaf) = res!(open_parent(&handle, components).await);
 
     let file_val = res!(JsFuture::from(dir.get_file_handle(&leaf)).await
-        .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+        .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let file_handle: FileSystemFileHandle = res!(file_val.dyn_into()
         .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File, Read)));
     let blob_val = res!(JsFuture::from(file_handle.get_file()).await
-        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let file: File = res!(blob_val.dyn_into()
         .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
 
@@ -680,9 +738,9 @@ pub async fn read_file_range(
     // `slice_with_f64_and_f64` rather than the i32 pair: a file over 2 GiB is exactly the case
     // this function exists for, and an i32 offset would wrap silently in the middle of one.
     let part = res!(want.slice_with_f64_and_f64(from, to)
-        .map_err(|e| err!("OPFS: slice '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+        .map_err(|e| err!("OPFS: slice '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let buf_val = res!(JsFuture::from(part.array_buffer()).await
-        .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+        .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     Ok((js_sys::Uint8Array::new(&buf_val).to_vec(), total))
 }
 
@@ -710,11 +768,11 @@ pub async fn read_file_capped(root: FileRoot, path: &str, max: u32) -> Outcome<(
     let (dir, leaf) = res!(open_parent(&handle, components).await);
 
     let file_val = res!(JsFuture::from(dir.get_file_handle(&leaf)).await
-        .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+        .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let file_handle: FileSystemFileHandle = res!(file_val.dyn_into()
         .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File, Read)));
     let blob_val = res!(JsFuture::from(file_handle.get_file()).await
-        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let file: File = res!(blob_val.dyn_into()
         .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
 
@@ -724,12 +782,12 @@ pub async fn read_file_capped(root: FileRoot, path: &str, max: u32) -> Outcome<(
     let want: &Blob = file.as_ref();
     let part = if total > max as f64 {
         res!(want.slice_with_i32_and_i32(0, max as i32)
-            .map_err(|e| err!("OPFS: slice '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)))
+            .map_err(|e| err!("OPFS: slice '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)))
     } else {
         want.clone()
     };
     let buf_val = res!(JsFuture::from(part.array_buffer()).await
-        .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+        .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     Ok((js_sys::Uint8Array::new(&buf_val).to_vec(), total))
 }
 
@@ -822,9 +880,9 @@ async fn read_entries(dir: &FileSystemDirectoryHandle)
     let mut out: Vec<(String, bool, u64, Option<f64>)> = Vec::new();
     loop {
         let promise = res!(iter.next()
-            .map_err(|e| err!("OPFS: directory iterator next() failed: {}.", js_str(&e); IO, File, Read)));
+            .map_err(|e| err!("OPFS: directory iterator next() failed: {}.", js_err(&e); IO, File, Read)));
         let record = res!(JsFuture::from(promise).await
-            .map_err(|e| err!("OPFS: awaiting directory entry failed: {}.", js_str(&e); IO, File, Read)));
+            .map_err(|e| err!("OPFS: awaiting directory entry failed: {}.", js_err(&e); IO, File, Read)));
 
         // `done` signals iterator exhaustion; treat a missing/unreadable
         // flag as done so a malformed record cannot spin forever.
@@ -837,7 +895,7 @@ async fn read_entries(dir: &FileSystemDirectoryHandle)
         }
 
         let value = res!(js_sys::Reflect::get(&record, &JsValue::from_str("value"))
-            .map_err(|e| err!("OPFS: read directory entry value failed: {}.", js_str(&e); IO, File, Read)));
+            .map_err(|e| err!("OPFS: read directory entry value failed: {}.", js_err(&e); IO, File, Read)));
         let pair = js_sys::Array::from(&value);
         let name = pair.get(0).as_string().unwrap_or_default();
         let handle = pair.get(1);
@@ -855,7 +913,7 @@ async fn read_entries(dir: &FileSystemDirectoryHandle)
             match handle.dyn_into::<FileSystemFileHandle>() {
                 Ok(fh) => {
                     let file_val = res!(JsFuture::from(fh.get_file()).await
-                        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", name, js_str(&e); IO, File, Read)));
+                        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", name, js_err(&e); IO, File, Read)));
                     match file_val.dyn_into::<File>() {
                         Ok(f)  => (f.size() as u64, file_stamp(&f)),
                         Err(_) => (0u64, None),
@@ -908,7 +966,7 @@ pub async fn delete_entry(root: FileRoot, path: &str, recursive: bool) -> Outcom
     let opts = FileSystemRemoveOptions::new();
     opts.set_recursive(recursive);
     res!(JsFuture::from(dir.remove_entry_with_options(&leaf, &opts)).await
-        .map_err(|e| err!("OPFS: remove '{}' failed: {}.", leaf, js_str(&e); IO, File)));
+        .map_err(|e| err!("OPFS: remove '{}' failed: {}.", leaf, js_err(&e); IO, File)));
     Ok(())
 }
 

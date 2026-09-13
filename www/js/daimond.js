@@ -75,10 +75,16 @@ async function readBytes(path) {
 
 /// Whether a failed direct file call failed BECAUSE the open folder was taken away.
 ///
-/// The mirror of `is_folder_lost` in `src/wasm/opfs.rs`: the workspace root is a
+/// The mirror of `folder_loss_reported` in `src/tools.rs`: the workspace root is a
 /// real folder, and the browser reported the failure as a `NotAllowedError`. A
 /// missing file, or a path outside the jail, is an ordinary error and must not
 /// cost the user their folder.
+///
+/// THE WHOLE NAME, not `NotAllowed`. The Rust side reads `DOMException.name` and
+/// compares it whole; a substring of it is what turned a search HIT into a revoked
+/// grant on 2026-09-13 and cost the user their folder mid-turn. Here there is no
+/// name to read -- `to_js_err` rejects with a string -- so the test is still over
+/// text, but only over text a call THREW.
 ///
 /// # Arguments
 /// * `e` - Whatever the rejected call threw. `to_js_err` rejects with a string,
@@ -87,7 +93,7 @@ function folderWasLost(e) {
 	try { if (Wasm.workspace_mode() !== 'folder') return false; }
 	catch (err) { return false; }			// an engine too old to say is not a loss
 	var text = (e && typeof e === 'object' && e.message) ? String(e.message) : String(e);
-	return text.indexOf('NotAllowed') >= 0;
+	return text.indexOf('NotAllowedError') >= 0;
 }
 
 /// Raise `daimond:folder-lost` when `e` says the grant is gone. True if it did.
@@ -7735,7 +7741,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `NetworkError` was in the list; `network error`, with the space, was not — so the
 	/// commonest real transport failure there is fell through every branch below and reached
 	/// the user as that raw sentence, source frames and all. `\s*` covers both spellings.
-	var BROWSER_ROAD = /Failed to fetch|Load failed|The network connection was lost|network\s*error|ERR_CONNECTION|ENOTFOUND|ECONNREFUSED|refused|dns/i;
+	/// `connection refused` and NOT a bare `refused`: this codebase refuses things for a living,
+	/// and `refusal_line` opens some twenty tool sentences with the word. A file_edit refused at a
+	/// crystal's hot ceiling read as a dead road and was shown to the reader as "could not reach
+	/// that endpoint" -- eleven times in one turn, while the actual sentence said what to change.
+	/// Every real transport wording keeps its own token here: ECONNREFUSED, ERR_CONNECTION.
+	var BROWSER_ROAD = /Failed to fetch|Load failed|The network connection was lost|network\s*error|ERR_CONNECTION|ENOTFOUND|ECONNREFUSED|connection refused|dns/i;
 
 	/// Which class of failure an error is, from the module's `FAILURES` table.
 	///
@@ -16312,6 +16323,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return isUnreachable(stripAnsi(s).replace(/src\/[^\s":]+\.rs:\d+:?/g, ' '));
 	}
 
+	/// The HTTP status a failure is reporting, or 0 when it is not reporting one.
+	///
+	/// **A bare number is not a status code.** The tests here were `\b429\b` and `\b5\d\d\b`
+	/// over whatever text arrived, and a tool refusal is text with numbers in it: a crystal write
+	/// refused at its hot ceiling names the ceiling and the size, and was shown to the reader as
+	/// the provider having a server error -- so the one sentence that said what to change never
+	/// reached them, and the same edit was tried eleven times. So the number has to be ADJACENT
+	/// to the word that makes it a status, or in a sentence that is plainly about one.
+	///
+	/// The wordings are the engine's own: `LLM: HTTP error: 401 Unauthorized`, `HTTP 429`,
+	/// `the provider returned HTTP 500` (src/llm.rs), and the gateway's `status 502`.
+	function httpStatus(s) {
+		var m = /\b(?:HTTP|status)(?:\s+error)?\s*:?\s*(\d{3})\b/i.exec(s);
+		if (m) return Number(m[1]);
+		// The code quoted away from the word, in a sentence that still names one. Narrowed to
+		// the 4xx/5xx shape, because a three-digit number in a sentence about anything else is
+		// a number.
+		if (/\bHTTP\b|\bstatus\b/i.test(s)) {
+			m = /\b([45]\d\d)\b/.exec(s);
+			if (m) return Number(m[1]);
+		}
+		return 0;
+	}
+
 	function friendlyError(raw) {
 		var s = String(raw == null ? '' : (raw && raw.message ? raw.message : raw));
 		s = stripAnsi(s);
@@ -16324,12 +16359,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (isUnreachable(s)) {
 			return t('err.unreachable');
 		}
-		// Map the common upstream-provider HTTP statuses to actionable copy.
-		if (/\bHTTP (error )?401\b|\b401\b/.test(s)) return t('err.rejected_401');
-		if (/\b403\b/.test(s)) return t('err.denied_403');
-		if (/\b404\b/.test(s)) return t('err.notfound_404');
-		if (/\b429\b/.test(s)) return t('err.ratelimit_429');
-		if (/\b5\d\d\b/.test(s)) return t('err.server_5xx');
+		// Map the common upstream-provider HTTP statuses to actionable copy. A STATUS, never
+		// a number: see `httpStatus`.
+		var code = httpStatus(s);
+		if (code === 401) return t('err.rejected_401');
+		if (code === 403) return t('err.denied_403');
+		if (code === 404) return t('err.notfound_404');
+		if (code === 429) return t('err.ratelimit_429');
+		if (code >= 500 && code <= 599) return t('err.server_5xx');
 		// Otherwise, strip the remaining fe2o3 framing and return what is left:
 		// the error kind (`[IO File]`), the wrapper struct, the JsValue box, and
 		// the trailing `undefined` a missing DOMException message leaves behind.

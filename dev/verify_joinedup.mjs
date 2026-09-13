@@ -25,10 +25,13 @@
 //      fired on every failure would drop the user's folder because a file was
 //      missing, which is its own bug and a worse one.
 //
-//      And the predicate is compared, term by term, with `is_folder_lost` in
-//      `src/wasm/opfs.rs`. It exists in two languages until the Rust side raises
+//      And the predicate is compared, term by term, with `folder_loss_reported`
+//      in `src/tools.rs`. It exists in two languages until the Rust side raises
 //      the event itself; two copies of a rule drift, and this is what stops them
-//      drifting quietly.
+//      drifting quietly. Since 2026-09-13 the Rust half reads the outcome and the
+//      thrown `DOMException.name` rather than matching a tool RESULT, which is
+//      also asserted here: a search hit that merely NAMES the exception cost the
+//      user their folder mid-turn.
 //
 //   3. THE IMPROVE PANEL'S "i" OPENS THE PAGE ABOUT THE IMPROVE PANEL.
 //      `guide/social.html` documents it and was reachable only from the guide's
@@ -107,7 +110,7 @@ const VERIFY_IN = '\t\tbody.appendChild(check);\n';
 const VER_GUARD = "\t\t\tvar ver = data.version === undefined ? BACKUP_VERSION : data.version;\n"
 	+ "\t\t\tif (typeof ver !== 'number' || !isFinite(ver) || ver > BACKUP_VERSION) {";
 const LOST_TEST = "\tvar text = (e && typeof e === 'object' && e.message) ? String(e.message) : String(e);\n"
-	+ "\treturn text.indexOf('NotAllowed') >= 0;";
+	+ "\treturn text.indexOf('NotAllowedError') >= 0;";
 const LOGO_RULE = '.empty-state h2 { margin: 0; color: var(--text-primary); font-size: var(--fs-3xl); }';
 
 const BREAKS = {
@@ -273,34 +276,58 @@ async function stubGateway(page) {
 // ── 2. The predicate, in two languages ───────────────────────────────
 //
 // STATIC, and first, because it needs no browser and because it is the check
-// that stops the duplication rotting. The three terms are pulled OUT of the Rust
-// source: nothing here restates them, so a change to `is_folder_lost` that the
-// browser mirror does not follow goes red.
+// that stops the duplication rotting. The terms are pulled OUT of the Rust
+// source: nothing here restates them, so a change to the rule that the browser
+// mirror does not follow goes red.
+//
+// The rule moved on 2026-09-13. It used to be `is_folder_lost(result)` in
+// `src/wasm/opfs.rs`, a substring test over EVERY tool result, and a `file_search`
+// that matched that file's own doc comment cost the user their folder mid-turn.
+// It is now `folder_loss_reported(outcome, thrown)` in `src/tools.rs`: the call's
+// outcome first, then the NAME the browser threw, and never the result's words.
 {
-	const rs = fs.readFileSync(path.join(ROOT, 'src/wasm/opfs.rs'), 'utf8');
+	const ts = fs.readFileSync(path.join(ROOT, 'src/tools.rs'), 'utf8');
+	const os = fs.readFileSync(path.join(ROOT, 'src/wasm/opfs.rs'), 'utf8');
 	const js = fs.readFileSync(path.join(WWW, SRC), 'utf8');
 
-	const pred = (rs.match(/pub fn is_folder_lost\(result: &str\) -> bool \{([\s\S]*?)\n\}/) || [])[1] || '';
-	check('src/wasm/opfs.rs still has an is_folder_lost to mirror', !!pred.trim(),
-		pred.trim().slice(0, 80));
+	const name = (ts.match(/pub const WITHDRAWN_GRANT: &str = "([^"]+)"/) || [])[1] || '';
+	check('src/tools.rs names the withdrawn-grant exception', !!name, name);
 
-	// `workspace_mode() == "folder" && result.contains("NotAllowed")` — taken to
-	// pieces so the JS can be asked about each piece by name.
-	const mode = (pred.match(/(\w+)\(\)\s*==\s*"([^"]+)"/) || []);
-	const text = (pred.match(/contains\("([^"]+)"\)/) || []);
-	check('and its two terms read out of the Rust, not restated here',
-		!!mode[1] && !!mode[2] && !!text[1], `${mode[1]}()=="${mode[2]}" && contains("${text[1]}")`);
+	const pred = (ts.match(/pub fn folder_loss_reported\([^)]*\) -> bool \{([\s\S]*?)\n\}/) || [])[1] || '';
+	check('and holds the rule that reads it', !!pred.trim(), pred.trim().slice(0, 90));
+	// The outcome term is the one the defect turned on: a call that SUCCEEDED is
+	// never a lost folder, however its result reads.
+	check('which asks the outcome before anything else',
+		/outcome\s*!=\s*CallOutcome::Done/.test(pred), pred.trim().slice(0, 90));
+	check('and classifies by the thrown NAME, not by the result',
+		/is_withdrawn_grant\(thrown\)/.test(pred) && !/result/.test(pred), pred.trim().slice(0, 90));
+
+	// The evidence itself: the edge records what it caught, and the tool layer
+	// arms it before each call so no call inherits an earlier one's verdict.
+	check('the file edge records the exception name it caught',
+		/js_prop\(e, "name"\)/.test(os) && /pub fn take_thrown\(\)/.test(os));
+	check('and the tool layer arms it before every call',
+		ts.includes('crate::wasm::opfs::arm_folder_watch();')
+		&& ts.includes('crate::wasm::opfs::take_thrown()'));
+
+	// NOBODY reads a withdrawn grant out of a tool result any more. The unit test
+	// `test_nothing_reads_a_withdrawn_grant_out_of_a_tool_result_00` says the same
+	// of the Rust; this says it of the pair, which is where the copy lives.
+	check('no Rust source matches the name in a result',
+		!/contains\("NotAllowed/.test(ts) && !/contains\("NotAllowed/.test(os));
 
 	const mirror = (js.match(/function folderWasLost\(e\) \{([\s\S]*?)\n\}/) || [])[1] || '';
 	// One line, so a failure prints something a reader can take in.
 	const flat = mirror.replace(/\s+/g, ' ').trim().slice(0, 150);
 	check('js/daimond.js carries the mirror', !!mirror.trim());
-	check('which asks the same question of the root', mirror.includes(`${mode[1]}() !== '${mode[2]}'`)
-		|| mirror.includes(`${mode[1]}() === '${mode[2]}'`), flat);
-	check('and tests the same word in the failure', mirror.includes(`'${text[1]}'`), flat);
+	check('which asks the same question of the root',
+		mirror.includes("workspace_mode() !== 'folder'"), flat);
+	// The WHOLE name, so the browser half cannot drift back to the substring.
+	check('and tests the whole name in what the call threw',
+		mirror.includes(`'${name}'`), flat);
 
 	// The event name, likewise read from the Rust constant rather than typed.
-	const ev = (rs.match(/pub const FOLDER_LOST_EVENT: &str = "([^"]+)"/) || [])[1] || '';
+	const ev = (os.match(/pub const FOLDER_LOST_EVENT: &str = "([^"]+)"/) || [])[1] || '';
 	check('the browser raises the event the Rust names', !!ev && js.includes(`dispatchEvent(new CustomEvent('${ev}'))`), ev);
 	check('and the one handler is still the only listener for it',
 		js.split(`window.addEventListener('${ev}', handlePermissionLoss)`).length === 2,

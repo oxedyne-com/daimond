@@ -876,6 +876,104 @@ check('and the resolved body is the SCRUBBED one, not the posted one',
 
 fs.rmSync(ROOT4, { recursive: true, force: true });
 
+// ── roster names, and the ledger/turn.end merge for a daimon turn ────
+//
+// Two things this lane fixes, in one small fixture: `status`/`turns`/etc.
+// printing the ID ALONE is what made two sessions in one day mis-assign
+// a7b34e2 (= gilgamesh) as argonaut (= 96a1474) -- so this device's roster
+// names it "Chrome on argonaut" and both the print and `--device argonaut`
+// are checked. And a daimon turn -- `turn.start`, two `round`s, three `tool`s,
+// `ended`, and its OWN `turn.end` (`dia: 1`, no model on the `turn.end` payload,
+// which is the real shape) -- alongside the telemetry ledger entry the same
+// turn posts, joined by device + a five-second clock skew + equal prompt
+// tokens: proof the merge yields ONE row, not the $1.74-for-$0.87 double count
+// this lane was written to close.
+
+const ROOT5 = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-verify-merge-'));
+fs.mkdirSync(path.join(ROOT5, 'traces'), { recursive: true });
+const DEV_M = 'devM00000000000000000000000000mm';
+const BUILD_M = 'fixturebuildm';
+const mRow = (n, kind, extra, t) =>
+	row(t, 'ev ' + kind, JSON.stringify(Object.assign({ v: 1, d: DEV_M, n, b: BUILD_M, t }, extra)));
+
+// The roster: the only source of a short NAME, same as it is the only source of
+// a build until `ev` rows ship it.
+const SNAP_M = {
+	v: 1, kind: 'snapshot', ts: NOW - 19000, iso: new Date(NOW - 19000).toISOString(),
+	config: { model: 'fixture/glm-5.3' }, transcripts: [], presence: null,
+	roster: { [DEV_M]: { name: 'Chrome on argonaut', label: '', created: NOW - 100000,
+		namedAt: 0, seen: NOW - 19000, build: BUILD_M } },
+	election: null, tokenStats: [], signals: null, ledger: [], ledgerDropped: 0, trail: [], diag: [],
+};
+// The ledger tick: `t` five seconds inside the `turn.end` row below and the
+// SAME prompt tokens (12000) -- the join key -- carrying the model and the
+// `reported` flag the `turn.end` payload for this path does not.
+const TEL_M = {
+	v: 1, kind: 'telemetry', ts: NOW - 20000, iso: new Date(NOW - 20000).toISOString(),
+	ledger: [ { t: NOW - 20100, m: 'fixture/glm-5.3', p: 12000, c: 500, ca: 4000, u: 0.42,
+		r: 1, e: false, pv: 'fixture' } ],
+	trail: [], diag: [],
+	stats: { models: [], diamonds: [], signalModels: [], cross: [],
+		live: { contextActual: 0, contextWindow: 0, foldAt: 0, activeModel: 'fixture/glm-5.3',
+			provider: 'fixture', workerState: { active: 0, queued: 0, busy: false }, activity: 'idle' } },
+};
+
+const M_BLOCK = block(NOW - 25000, DEV_M, [
+	mRow(1, 'turn.start', { turn: 'daimonM1', chat: 'cM', model: 'fixture/glm-5.3', dia: 1 }, NOW - 24000),
+	mRow(2, 'round', { turn: 'daimonM1', r: 1, ctx: 8000, win: 200000, ca: 2000, msgs: 2, dia: 1 }, NOW - 23000),
+	mRow(3, 'round', { turn: 'daimonM1', r: 2, ctx: 12000, win: 200000, ca: 4000, msgs: 4, dia: 1 }, NOW - 22000),
+	mRow(4, 'tool', { turn: 'daimonM1', name: 'read_file', dia: 1 }, NOW - 21800),
+	mRow(5, 'tool', { turn: 'daimonM1', name: 'grep', dia: 1 }, NOW - 21600),
+	mRow(6, 'tool', { turn: 'daimonM1', name: 'edit', dia: 1 }, NOW - 21400),
+	mRow(7, 'ended', { turn: 'daimonM1', rounds: 2, how: 'done', dia: 1 }, NOW - 20200),
+	// The daimon's OWN `turn.end` -- no `m`/`model` field, which is why the
+	// unmatched row this lane used to leave behind printed as `? r2 est`.
+	mRow(8, 'turn.end', { turn: 'daimonM1', r: 2, p: 12000, c: 500, ca: 4000, usd: 0.42,
+		out: 'done', dia: 1 }, NOW - 20100),
+	...chunkRows('telemetry', 'tfixturem01', TEL_M, NOW - 20000).map(r => row(r.ts, r.tag, r.data)),
+	...chunkRows('snapshot', 'sfixturem01', SNAP_M, NOW - 19000).map(r => row(r.ts, r.tag, r.data)),
+]);
+fs.writeFileSync(path.join(ROOT5, 'traces', `${ACCOUNT}-${DEV_M}.log`), M_BLOCK);
+
+function lens5(...args) {
+	return execFileSync('node', [LENS, ...args], {
+		encoding: 'utf8',
+		env: Object.assign({}, process.env, { DAIMOND_LENS_HOME: ROOT5, DAIMOND_LENS_REMOTE: '' }),
+	});
+}
+function lensJson5(...args) { return JSON.parse(lens5(...args, '--json').trim()); }
+
+lensJson5('pull', '--no-rsync');
+
+const mTurns = lensJson5('turns', '--since', '24h');
+const daimonM = mTurns.filter(t => t.turn === 'daimonM1');
+check('a daimon turn posting both a ledger tick and its own turn.end is ONE row',
+	daimonM.length === 1, JSON.stringify(mTurns.map(t => [t.src, t.turn, t.model, t.usd])));
+check('the merged row carries the ledger\'s model and reported flag',
+	!!daimonM[0] && daimonM[0].model === 'fixture/glm-5.3' && daimonM[0].reported === true,
+	JSON.stringify(daimonM[0]));
+check('and the turn.end\'s own rounds, not the ledger\'s null',
+	!!daimonM[0] && daimonM[0].rounds === 2, JSON.stringify(daimonM[0] && daimonM[0].rounds));
+check('its maxPrompt/folds still join by turn id after the merge',
+	!!daimonM[0] && daimonM[0].maxPrompt === 12000 && daimonM[0].folds === 0,
+	JSON.stringify(daimonM[0] && [daimonM[0].maxPrompt, daimonM[0].folds]));
+check('the spend is counted once, not doubled to $0.84',
+	Math.abs(mTurns.reduce((a, t) => a + (t.usd || 0), 0) - 0.42) < 1e-9,
+	JSON.stringify(mTurns.map(t => t.usd)));
+
+const statusM = lens5('status');
+const statusMLine = statusM.split('\n').find(l => l.startsWith(DEV_M.slice(0, 7))) || '';
+check('status labels the device by its roster name, beside the id',
+	statusMLine.startsWith(DEV_M.slice(0, 7) + ' argonaut'), statusMLine);
+check('--device selects by roster name substring, not just an id prefix',
+	lensJson5('turns', '--since', '24h', '--device', 'argonaut').length === 1
+		&& lensJson5('turns', '--since', '24h', '--device', 'argonaut')[0].turn === 'daimonM1',
+	JSON.stringify(lensJson5('turns', '--since', '24h', '--device', 'argonaut').map(t => t.turn)));
+check('the name match is case-insensitive',
+	lensJson5('status', '--device', 'Argonaut').devices.length === 1);
+
+fs.rmSync(ROOT5, { recursive: true, force: true });
+
 // ── An unknown command must not look like success ────────────────────
 
 let rc = 0;
