@@ -1022,11 +1022,13 @@ impl DaimondApp {
         // the wrong engine. Read out of `Limits` after every band and ceiling, as the rest are.
         fmt!("{{\"worker\":{},\"max_rounds\":{},\"continuations\":{},\"context_cap\":{},\
             \"keep\":{},\"spend_cap_usd\":{},\"fold_at\":{},\"retire_prior\":{},\
+            \"retire_keep_turns\":{},\
             \"written_age\":{},\"result_age\":{},\"result_cap\":{},\"sweep_every\":{},\
             \"worker_max_rounds\":{},\"worker_continuations\":{},\"worker_context_cap\":{},\
             \"worker_keep\":{},\"worker_spend_usd\":{}}}",
             l.worker, l.max_rounds, l.max_continuations, l.context_cap, l.keep, l.spend_cap_usd,
             l.fold_at, l.retire_prior,
+            l.retire_keep_turns,
             l.written_age, l.result_age, l.result_cap, l.sweep_every,
             l.worker_max_rounds, l.worker_continuations, l.worker_context_cap,
             l.worker_keep, l.worker_spend_usd)

@@ -340,6 +340,7 @@ pub struct Limits {
 	// rather than a rebuild.  The DEFAULTS are today's constants exactly; nothing about a
 	// tree nobody tunes changes.
 	pub retire_prior: bool,		// retire a turn's predecessors on the way out; see `retire_upto`
+	pub retire_keep_turns: u32,	// completed turns left whole first; see `RETIRE_KEEP_TURNS`
 	pub written_age:  usize,	// rounds a write's body must be old; see `IN_TURN_RETIRE_AGE`
 	pub result_age:   usize,	// rounds a result must be old; see `IN_TURN_RESULT_AGE`
 	pub result_cap:   usize,	// bytes left whole however old; see `IN_TURN_RESULT_CAP`
@@ -366,6 +367,7 @@ impl Default for Limits {
 			fold_model: String::new(),
 			worker:     false,
 			retire_prior: true,
+			retire_keep_turns: RETIRE_KEEP_TURNS,
 			written_age:  IN_TURN_RETIRE_AGE,
 			result_age:   IN_TURN_RESULT_AGE,
 			result_cap:   IN_TURN_RESULT_CAP,
@@ -1325,6 +1327,30 @@ pub const IN_TURN_RESULT_CAP: usize = 2_048;
 /// leaving the ARGUMENTS alone is not what that guarantee requires.
 pub const ARG_RETIRE_CAP: usize = 512;
 
+/// Completed turns left verbatim in the sent copy before retirement begins.
+///
+/// **One, not nought, and the experiment is the reason.**  Retiring every finished turn is right
+/// for a fifty-round daimon session -- it took a per-round prompt from 182K tokens to 92K -- and
+/// wrong for the two- and three-turn chat a user actually has.  Measured on 2026-09-13 against
+/// deepseek-v4.1-flash, a three-turn memory task carried 41% MORE tokens on turn two with the
+/// retirement on than with it off: the model met a stub of what it had just been told, asked for
+/// the file again, and paid for both copies.  Between 3.6 and 8.6 re-reads-after-stub a trial,
+/// against nought with the measure off, for no gain in what the answer was worth.
+///
+/// So the boundary moves back one turn.  The turn the user is most likely to be talking ABOUT
+/// keeps every byte, and a session long enough for the saving to matter still has every turn
+/// before that retired.
+///
+/// **CONFIRMED BY THE RUN THAT FOLLOWED**, `rexp2`, thirty trials on the same model: nought
+/// re-reads-after-stub in all ten trials at this figure, against 3 to 12 a trial in all ten at a
+/// keep of nought -- the same tell the run before it found, and gone.  On the three-turn task the
+/// third turn's opening prompt is still 5.6% below what never retiring carries, so the measure is
+/// working on the turn it is left to work on.  `fix_two` is a two-turn task and this figure
+/// therefore retires nothing in it at all, which makes its row a NULL CONTROL: the two arms are
+/// the same engine there and their costs differ by 12% and their second turn's prompt by 17%,
+/// which is the noise floor every other figure in that report has to clear.
+pub const RETIRE_KEEP_TURNS: u32 = 1;
+
 /// How the turn's budget line opens, and the marker that finds an earlier one to remove.
 ///
 /// On its own line inside the last tool result, so removing it is a truncation rather than a
@@ -1348,25 +1374,49 @@ const ARGS_RETIRED_KEY: &str = "retired";
 /// Bytes of a key argument kept in a stub, so one enormous path cannot undo the saving.
 const STUB_ARG_CAP: usize = 200;
 
-/// Retire everything the conversation carried before the last thing the user said.
+/// Retire what the conversation carried before the last `keep` completed turns.
 ///
 /// Returns how many messages were changed.
 ///
-/// The boundary is the last [`ChatMessage::User`] because that is where the current turn
-/// begins: at the top of a turn the user's sentence has just been pushed, so everything
-/// before it belongs to a turn that has ended.  Use [`retire_upto`] where the boundary is
-/// known for other reasons -- mid-turn, an interjection is a user message too, and taking it
-/// as the boundary would retire the work of the turn it is interrupting.
-pub fn retire_prior(msgs: &mut [ChatMessage]) -> usize {
-	retire_upto(msgs, prior_end(msgs))
+/// Use [`retire_upto`] where the boundary is known for other reasons -- mid-turn, an
+/// interjection is a user message too, and taking it as the boundary would retire the work of
+/// the turn it is interrupting.
+///
+/// # Arguments
+/// * `msgs` - The SENT copy of the conversation, edited in place.
+/// * `keep` - Completed turns left whole; see [`RETIRE_KEEP_TURNS`].
+pub fn retire_prior(msgs: &mut [ChatMessage], keep: u32) -> usize {
+	retire_upto(msgs, prior_end(msgs, keep))
 }
 
-/// Where the turn in flight begins: one past the last thing before the user's latest sentence.
+/// Where retirement stops: the start of the oldest turn that is to be left whole.
 ///
-/// Zero when the user has not spoken, which retires nothing -- a conversation with no user
-/// message in it has no finished turn in it either.
-pub fn prior_end(msgs: &[ChatMessage]) -> usize {
-	msgs.iter().rposition(|m| matches!(m, ChatMessage::User { .. })).unwrap_or(0)
+/// With `keep` of nought that is the last [`ChatMessage::User`], because that is where the
+/// current turn begins: at the top of a turn the user's sentence has just been pushed, so
+/// everything before it belongs to a turn that has ended.  Each further turn kept walks the
+/// boundary back over one more user message, so `keep` of one leaves the turn just finished
+/// exactly as the model saw it.
+///
+/// Zero when the user has not spoken that often, which retires nothing -- a conversation with
+/// two turns in it and two to keep has no finished turn to take anything from.
+///
+/// **A mid-turn interjection counts as a user message here**, so a turn that was interrupted
+/// keeps MORE than it was asked to rather than less.  That is the safe direction: the cost is
+/// a few tokens, and the alternative is retiring results the turn in flight is reading.
+///
+/// # Arguments
+/// * `keep` - Completed turns left whole; see [`RETIRE_KEEP_TURNS`].
+pub fn prior_end(msgs: &[ChatMessage], keep: u32) -> usize {
+	let mut seen = 0;
+	for (i, m) in msgs.iter().enumerate().rev() {
+		if matches!(m, ChatMessage::User { .. }) {
+			if seen == keep {
+				return i;
+			}
+			seen += 1;
+		}
+	}
+	0
 }
 
 /// Retire the tool results and bulky tool-call arguments in `msgs[..end]`.
@@ -3092,10 +3142,10 @@ mod tests {
 		// that a turn which never trips a fold still re-sends two finished turns on every one of
 		// its rounds, and that is where the money went.
 		let mut v = three_turns();
-		let end    = prior_end(&v);
+		let end    = prior_end(&v, 0);
 		let before = conversation_bytes(&v, &shut());
 		let was    = conversation_bytes(&v[..end], &shut());
-		let n = retire_prior(&mut v);
+		let n = retire_prior(&mut v, 0);
 		let after = conversation_bytes(&v, &shut());
 		let now   = conversation_bytes(&v[..end], &shut());
 		assert!(n > 0, "a three-turn transcript retired nothing");
@@ -3118,7 +3168,7 @@ mod tests {
 		// last turn's results, so those are not the ones to take away.
 		let mut v = three_turns();
 		let kept: Vec<ChatMessage> = v[v.len() - 9..].to_vec();
-		retire_prior(&mut v);
+		retire_prior(&mut v, 0);
 		assert_eq!(kept, v[v.len() - 9..].to_vec(),
 			"the current turn was retired along with the finished ones");
 	}
@@ -3128,7 +3178,7 @@ mod tests {
 		// A stub is only safe because it says how to get the content back. One that did not
 		// name the file would be a hole, and a model meeting a hole invents what was in it.
 		let mut v = three_turns();
-		retire_prior(&mut v);
+		retire_prior(&mut v, 0);
 		let stub = v[3].text().to_string();
 		assert!(stub.contains("file_read src/a.rs 1-200"), "{}", stub);
 		assert!(stub.contains("retired"), "{}", stub);
@@ -3146,7 +3196,7 @@ mod tests {
 		// and embeds them as JSON for Anthropic's, so a stub that was a bare sentence would be
 		// a malformed request on one of the two paths and nothing here would say so.
 		let mut v = three_turns();
-		retire_prior(&mut v);
+		retire_prior(&mut v, 0);
 		let args = match &v[5] {
 			ChatMessage::Assistant { tool_calls, .. } => tool_calls[0].arguments.clone(),
 			other => panic!("the write turn is {:?}", other.role()),
@@ -3165,9 +3215,9 @@ mod tests {
 		// rebuilt from its own stub would report the size of the stub, which is a number that
 		// shrinks towards a lie.
 		let mut once = three_turns();
-		retire_prior(&mut once);
+		retire_prior(&mut once, 0);
 		let mut twice = once.clone();
-		let n = retire_prior(&mut twice);
+		let n = retire_prior(&mut twice, 0);
 		assert_eq!(0, n, "a second pass changed {} message(s)", n);
 		assert_eq!(once, twice);
 	}
@@ -3186,7 +3236,7 @@ mod tests {
 			says("I could not."),
 			user("never mind"),
 		];
-		retire_prior(&mut v);
+		retire_prior(&mut v, 0);
 		let stub = v[2].text().to_string();
 		assert!(stub.contains("refused"), "a refusal retired as a result: {}", stub);
 	}
@@ -3200,12 +3250,90 @@ mod tests {
 		let args = fmt!("{{\"summary\":\"short\",\"detail\":\"{}\"}}", detail);
 		let mut v = vec![user("explain"), asks("s1", "say", &args), replies("s1", "ok"),
 			user("thanks")];
-		retire_prior(&mut v);
+		retire_prior(&mut v, 0);
 		match &v[1] {
 			ChatMessage::Assistant { tool_calls, .. } =>
 				assert_eq!(args, tool_calls[0].arguments, "a say's detail was retired here"),
 			other => panic!("{:?}", other.role()),
 		}
+	}
+
+	#[test]
+	fn test_keeping_one_turn_retires_the_turn_before_it_and_no_further_00() {
+		// THE 2026-09-13 CORRECTION, as the shape of what is sent.  `three_turns` is nine
+		// messages a turn after the system prompt, so turn 0 is 1..10, turn 1 is 10..19, and
+		// turn 2 -- the one in flight -- is 19..28.  With one turn kept, turn 1 has to come
+		// out the other side byte for byte: it is what the user is most likely asking about,
+		// and a stub of it is what sent the model back to the file.
+		let v = three_turns();
+		let mut w = v.clone();
+		let n = retire_prior(&mut w, RETIRE_KEEP_TURNS);
+		assert!(n > 0, "keeping one turn retired nothing at all");
+		assert_eq!(v[10..], w[10..],
+			"the turn just finished was retired, which is the thing the keep exists to stop");
+		assert!(conversation_bytes(&w[..10], &shut()) * 20
+			< conversation_bytes(&v[..10], &shut()),
+			"turn 0 was not retired, so the keep has turned the measure off rather than \
+			 moved its boundary");
+	}
+
+	#[test]
+	fn test_keeping_nought_turns_is_what_shipped_before_00() {
+		// The arm of the trial that has to still exist: a figure measured against "today's
+		// behaviour" is only a figure if today's behaviour is reachable.
+		let mut was = three_turns();
+		retire_upto(&mut was, 19);	// the user message of the turn in flight
+		let mut now = three_turns();
+		retire_prior(&mut now, 0);
+		assert_eq!(was, now);
+		assert_eq!(19, prior_end(&three_turns(), 0));
+	}
+
+	#[test]
+	fn test_more_turns_kept_than_the_conversation_has_retires_nothing_00() {
+		// Two finished turns and two to keep, which is the ordinary short chat -- and the answer
+		// is the whole conversation, not a panic and not the whole conversation retired.  The
+		// boundary lands on the FIRST thing the user said, so the only message before it is the
+		// system prompt and retirement has nothing to work on.
+		let mut v: Vec<ChatMessage> = three_turns().into_iter().take(20).collect();
+		let whole = v.clone();
+		assert_eq!(1, prior_end(&v, 2));
+		let n = retire_prior(&mut v, 2);
+		assert_eq!(0, n, "{} message(s) were retired out of a history with none to spare", n);
+		assert_eq!(whole, v);
+		// And asking for more turns than were ever taken walks off the front of the list, where
+		// nought is the answer and not a panic.
+		assert_eq!(0, prior_end(&v, 9));
+		assert_eq!(0, retire_prior(&mut v, 9));
+		assert_eq!(whole, v);
+	}
+
+	#[test]
+	fn test_the_kept_boundary_survives_a_fold_00() {
+		// `prior_end_after_fold` shifts an index and knows nothing about turns, so the question
+		// is whether the KEEP-aware boundary is still the right message on the other side.  The
+		// damage if it is not is the one `prior_end_after_fold` exists for: a boundary read off
+		// the folded list afresh names the turn in flight's own predecessor, and retiring to it
+		// takes back exactly what the keep was put there to leave alone.
+		let v = three_turns();
+		let cut = 10;	// the user message that opens turn 1; nothing is orphaned
+		let folded = match fold(&v, cut, fmt!("[folded]")) {
+			Ok(f)  => f,
+			Err(e) => panic!("the fixture must fold: {}", e),
+		};
+		let was     = prior_end(&v, RETIRE_KEEP_TURNS);
+		let carried = prior_end_after_fold(was, cut);
+		assert_eq!(v[was].text(), folded[carried].text(),
+			"the kept boundary moved to a different message");
+		let mut kept = folded.clone();
+		retire_upto(&mut kept, carried);
+		assert_eq!(folded, kept, "the carried boundary retired inside a turn it was keeping");
+		// And the boundary worked out afresh from the folded list does the damage, so the
+		// assertion above is not true of every number.
+		let mut afresh = folded.clone();
+		retire_upto(&mut afresh, prior_end(&folded, 0));
+		assert!(conversation_bytes(&afresh, &shut()) < conversation_bytes(&folded, &shut()),
+			"a boundary read off the folded list took nothing, so this proves nothing");
 	}
 
 	#[test]
@@ -3221,7 +3349,7 @@ mod tests {
 		};
 		assert_eq!(v.len() - cut + 1, folded.len(), "the notice is no longer one message");
 		// A boundary behind the cut comes across to the same message.
-		let was = prior_end(&v);
+		let was = prior_end(&v, 0);
 		assert!(was > cut, "the fixture does not exercise the case");
 		let now = prior_end_after_fold(was, cut);
 		assert_eq!(v[was].text(), folded[now].text(),
@@ -3244,13 +3372,13 @@ mod tests {
 			Err(e) => panic!("the fixture must fold: {}", e),
 		};
 		let stale = { let mut w = folded.clone();
-			let clamped = prior_end(&v).min(w.len());
+			let clamped = prior_end(&v, 0).min(w.len());
 			retire_upto(&mut w, clamped); w };
 		let borne = { let mut w = folded.clone();
-			retire_upto(&mut w, prior_end_after_fold(prior_end(&v), cut)); w };
-		let whole = conversation_bytes(&folded[prior_end_after_fold(prior_end(&v), cut)..], &shut());
+			retire_upto(&mut w, prior_end_after_fold(prior_end(&v, 0), cut)); w };
+		let whole = conversation_bytes(&folded[prior_end_after_fold(prior_end(&v, 0), cut)..], &shut());
 		assert_eq!(whole,
-			conversation_bytes(&borne[prior_end_after_fold(prior_end(&v), cut)..], &shut()),
+			conversation_bytes(&borne[prior_end_after_fold(prior_end(&v, 0), cut)..], &shut()),
 			"the carried boundary retired part of the turn in flight");
 		assert!(conversation_bytes(&stale, &shut()) < conversation_bytes(&borne, &shut()),
 			"the stale boundary took nothing extra, so this test proves nothing");

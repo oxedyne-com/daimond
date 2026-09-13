@@ -130,6 +130,143 @@ const NOTE = 'Note code/dev_handover, code/dev_handover/06_projects/daimond.md\n
 	check(out === NOTE, 'a changed attach set replaces the old prefix in place', JSON.stringify(out));
 }
 
+// ── The remaining gap (owner report, 2026-09-13): an EXISTING chat's composer
+// came back prefilled with the attach prefix on focus, reload and unlock,
+// because `syncComposerAttachPrefix` never gated the chat branch on the
+// thread already having a turn -- only the Diamond branch had that check.
+// `attachPrefixGateOpen` is the extracted rule; proved here the same way
+// `mergeAttachPrefix` is, without a browser. ─────────────────────────────
+const GATE_SRC = grabFn(DAIMOND_SRC, 'function attachPrefixGateOpen(');
+const { attachPrefixGateOpen } =
+	new Function(GATE_SRC + '\nreturn { attachPrefixGateOpen: attachPrefixGateOpen };')();
+
+console.log('\nattachPrefixGateOpen — first turn only, into an otherwise-empty box');
+
+// ── Existing chat + focus: NEVER written, whatever the box holds ──────
+{
+	check(attachPrefixGateOpen(/* hasTurns */ true, '', '') === false,
+		'existing chat, empty box: gate stays closed');
+	check(attachPrefixGateOpen(true, NOTE, '') === false,
+		'existing chat, box already showing a prefix: gate stays closed');
+	check(attachPrefixGateOpen(true, 'please also check the tests', '') === false,
+		"existing chat, box holding the user's own draft: gate stays closed");
+}
+
+// ── Existing chat + reload: persisted user text is restored exactly, and the
+// closed gate is WHY -- nothing downstream of a closed gate ever calls
+// `mergeAttachPrefix`, so whatever `drafts.js` put in the box is what stays. ──
+{
+	const restored = 'please also check the tests\n\n';
+	const open = attachPrefixGateOpen(true, restored, '');
+	check(open === false, 'a chat with turns keeps the gate closed regardless of the restored text');
+	// The box is therefore left exactly as `drafts.js` restored it -- no merge,
+	// no prepend, simulated here by never invoking `mergeAttachPrefix` at all.
+	const val = open ? mergeAttachPrefix(NOTE, restored, '') : restored;
+	check(val === restored, 'closed gate: the persisted user text comes back exactly, no prefix',
+		JSON.stringify(val));
+}
+
+// ── New chat: zero turns, empty box, no memory -- the gate opens and one
+// prefix is written. ───────────────────────────────────────────────────
+{
+	const open = attachPrefixGateOpen(/* hasTurns */ false, '', '');
+	check(open === true, 'new chat, empty box: gate opens');
+	const val = open ? mergeAttachPrefix(NOTE, '', '') : '';
+	check(val === NOTE, 'new chat: exactly one prefix is written', JSON.stringify(val));
+}
+
+// ── Zero turns but the user already typed, or a real draft is sitting there:
+// the gate stays closed even on a brand new thread. ─────────────────────
+{
+	check(attachPrefixGateOpen(false, 'hello', '') === false,
+		"new chat, but the user typed first: gate stays closed");
+}
+
+// ── An in-session toggle (Note ⇄ Read, still zero turns) is UNAFFECTED: the
+// box holds exactly what this module wrote last, so the gate still opens. ──
+{
+	check(attachPrefixGateOpen(false, NOTE, NOTE) === true,
+		'zero turns, box holds our own last prefix: gate still opens for a live toggle');
+}
+
+// ── Still zero turns, but the user typed something AFTER our own prefix
+// (§6: "attaching one more thing... updates it") -- attaching a second file
+// must still refresh the prefix in place, keeping the user's words. ────
+{
+	const typed = NOTE + 'please also review this';
+	check(attachPrefixGateOpen(false, typed, NOTE) === true,
+		"the user's words follow our own prefix: gate still opens to refresh it");
+	const NOTE2 = 'Note code/dev_handover\n';
+	const merged = mergeAttachPrefix(NOTE2, typed, NOTE);
+	check(merged === NOTE2 + 'please also review this',
+		'refreshing in place keeps the words the user added after the prefix', JSON.stringify(merged));
+}
+
+// ── Scrubbing an already-corrupted draft, once, on restore ──────────────
+const SCRUB_SRC = grabFn(DAIMOND_SRC, 'function scrubAttachPrefixDup(');
+const LOOSE_LINE_MATCH = DAIMOND_SRC.match(/var ATTACH_PREFIX_LOOSE_LINE = [^\n]*\n/);
+if (!LOOSE_LINE_MATCH) { console.error('could not find ATTACH_PREFIX_LOOSE_LINE'); process.exit(2); }
+const { scrubAttachPrefixDup } =
+	new Function(LOOSE_LINE_MATCH[0] + SCRUB_SRC
+		+ '\nreturn { scrubAttachPrefixDup: scrubAttachPrefixDup };')();
+
+console.log('\nscrubAttachPrefixDup — the owner\'s six stacked copies, collapsed once');
+
+// ── The live symptom: SIX identical copies, on a chat that has turns ────
+{
+	const six = NOTE.repeat(6);
+	const out = scrubAttachPrefixDup(six, NOTE, /* hasTurns */ true);
+	check(out === '', 'six stacked copies on an existing chat: every copy is dropped',
+		JSON.stringify(out));
+}
+
+// ── Six copies, but nothing has been sent yet: keep exactly one ─────────
+{
+	const six = NOTE.repeat(6);
+	const out = scrubAttachPrefixDup(six, NOTE, /* hasTurns */ false);
+	check(out === NOTE, 'six stacked copies, zero turns: exactly one copy is kept', JSON.stringify(out));
+}
+
+// ── Six copies with the user's own words trailing: the words survive ────
+{
+	const typed = 'please also check the tests\n';
+	const six = NOTE.repeat(6) + typed;
+	const outTurns = scrubAttachPrefixDup(six, NOTE, true);
+	check(outTurns === typed, "an existing chat's trailing words survive the scrub",
+		JSON.stringify(outTurns));
+	const outNew = scrubAttachPrefixDup(six, NOTE, false);
+	check(outNew === NOTE + typed, "a zero-turn chat keeps one copy in front of the trailing words",
+		JSON.stringify(outNew));
+}
+
+// ── A single legitimate seed -- one Note line AND one Read line -- is not a
+// stack of two and must survive untouched. ──────────────────────────────
+{
+	const READ = 'Read spec.md in full.\n';
+	const single = NOTE + READ;
+	const out = scrubAttachPrefixDup(single, NOTE + READ, true);
+	check(out === single, 'one Note line plus one Read line is ONE seed, not two: left untouched',
+		JSON.stringify(out));
+}
+
+// ── The loose fallback: the attach list has since changed, so the exact text
+// no longer matches, but the same old line is still repeated verbatim. ──
+{
+	const OLD = 'Note old/path.md\n';
+	const stacked = OLD.repeat(4);
+	const out = scrubAttachPrefixDup(stacked, /* current, no longer matches */ NOTE, false);
+	check(out === OLD, 'an old, now-unmatched prefix repeated verbatim is still collapsed to one copy',
+		JSON.stringify(out));
+}
+
+// ── Nothing stacked: a single copy is left exactly as it was ────────────
+{
+	check(scrubAttachPrefixDup(NOTE, NOTE, false) === NOTE,
+		'a single, unstacked copy is left alone');
+	check(scrubAttachPrefixDup('hello', NOTE, false) === 'hello',
+		'ordinary text with no prefix at all is left alone');
+}
+
 console.log('\ndrafts.js — a script-dispatched write is never mistaken for a keystroke');
 {
 	const listener = grabFn(DRAFTS_SRC, "el.addEventListener('input', function (e) {");

@@ -535,8 +535,9 @@ impl Agent {
     ///
     /// A key that is absent is left alone, and so is a zero -- the same rule [`Agent::set_fold_at`]
     /// and its siblings follow, so `{}` is a no-op and a partial object is a partial change.  The
-    /// exceptions are the two that are meaningfully false or zero: `retire_prior` is a boolean and
-    /// `worker_continuations` of nought means one leg and no more.
+    /// exceptions are the three that are meaningfully false or zero: `retire_prior` is a boolean,
+    /// `worker_continuations` of nought means one leg and no more, and `retire_keep_turns` of
+    /// nought means no finished turn is spared.
     ///
     /// The worker ceiling is re-asserted afterwards, so a tune that arrives mid-run cannot lift a
     /// worker back over its own figures -- the rule every other setter here follows.
@@ -558,6 +559,12 @@ impl Agent {
             // The retire measures.
             if let Some(b) = crate::llm::extract_json_bool(text, "retire_prior") {
                 l.retire_prior = b;
+            }
+            // NOUGHT IS A CHOICE HERE TOO, and it is the one an arm of the trial wants: keeping no
+            // finished turn whole is the behaviour that shipped before 2026-09-13, so it has to be
+            // reachable rather than read as "absent".
+            if let Some(n) = crate::llm::extract_json_number(text, "retire_keep_turns") {
+                l.retire_keep_turns = n as u32;
             }
             if let Some(n) = crate::llm::extract_json_number(text, "written_age") {
                 if n > 0 { l.written_age = n as usize; }
@@ -673,7 +680,8 @@ impl Agent {
         // WHAT COUNTS AS PRIOR, for a fold with no turn behind it.  The last thing the user said
         // is still the boundary: a reader pressing Fold has just been answered and may ask about
         // that answer next, so the newest turn keeps its results and everything older is retired.
-        self.prior_end.set(compact::prior_end(&session.messages));
+        let keep = self.limits.borrow().retire_keep_turns;
+        self.prior_end.set(compact::prior_end(&session.messages, keep));
         self.fold_if_needed(session, &mut working, 0, Fold::ByHand, on_event).await
     }
 
@@ -820,7 +828,13 @@ impl Agent {
         // The boundary is recorded because a fold may rebuild `working` from the session later in
         // the turn, and that rebuild has to retire the same prefix rather than work it out again
         // from a conversation an interjection has since added a user message to.
-        self.prior_end.set(session.messages.len().saturating_sub(1));	// the sentence just pushed
+        //
+        // AND THE LAST FEW TURNS ARE LEFT OUT OF IT.  The boundary is not the sentence just
+        // pushed but `retire_keep_turns` turns before it: on a short chat the model is still
+        // reading the turn it has just finished, and handing it a stub of that made it ask for
+        // the content again -- see `compact::RETIRE_KEEP_TURNS` for the trial.
+        let keep = self.limits.borrow().retire_keep_turns;
+        self.prior_end.set(compact::prior_end(&session.messages, keep));
         let mut prior = session.messages.clone();
         // Under a switch, so the measure can be turned off and its worth measured rather than
         // asserted -- see `Agent::set_tune`. On by default, which is what shipped.
@@ -2564,6 +2578,7 @@ mod tests {
         let a = make_test_agent();
         let l = a.limits();
         assert!(l.retire_prior, "a default agent does not retire its prior turns");
+        assert_eq!(compact::RETIRE_KEEP_TURNS,    l.retire_keep_turns);
         assert_eq!(compact::IN_TURN_RETIRE_AGE,   l.written_age);
         assert_eq!(compact::IN_TURN_RESULT_AGE,   l.result_age);
         assert_eq!(compact::IN_TURN_RESULT_CAP,   l.result_cap);
@@ -2583,12 +2598,14 @@ mod tests {
 
         // AND IT ROUND-TRIPS.  Every key the loop sets, in one object, read back out of the
         // getter a control and a trial both draw from.
-        let tune = r#"{"retire_prior":false,"written_age":6,"result_age":16,"result_cap":4096,
+        let tune = r#"{"retire_prior":false,"retire_keep_turns":3,"written_age":6,
+            "result_age":16,"result_cap":4096,
             "sweep_every":5,"worker_max_rounds":100,"worker_continuations":2,
             "worker_context_cap":96000,"worker_keep":0.45,"worker_spend_usd":2.5}"#;
         if let Err(e) = a.set_tune(tune) { panic!("the tune was refused: {}", e); }
         let l = a.limits();
         assert!(!l.retire_prior, "retire_prior stayed on");
+        assert_eq!(3,      l.retire_keep_turns);
         assert_eq!(6,      l.written_age);
         assert_eq!(16,     l.result_age);
         assert_eq!(4_096,  l.result_cap);
@@ -2606,6 +2623,11 @@ mod tests {
         // Not an object is refused rather than silently tuning nothing: an arm that measured the
         // default while reporting itself as tuned is a figure about the wrong engine.
         assert!(a.set_tune("result_age=20").is_err(), "a tune that is not an object was taken");
+        // NOUGHT TURNS KEPT IS A CHOICE, not an absence: it is the arm of the trial that holds
+        // what shipped before 2026-09-13, so a setter that floored it would leave the experiment
+        // measuring the new default twice.
+        if let Err(e) = a.set_tune(r#"{"retire_keep_turns":0}"#) { panic!("{}", e); }
+        assert_eq!(0, a.limits().retire_keep_turns, "nought turns kept was read as absent");
 
         // AND THE WORKER PRESET IS READ OFF THESE FIELDS.  In `Workers.start`'s own order:
         // `applyFoldSettings` -- which is where the tune reaches the app -- runs BEFORE
@@ -2733,11 +2755,17 @@ mod tests {
         // The owner's ruling, at the new seam: the model gets the shortened version and his
         // transcript keeps every word.  `elide_bulk` already obeyed it; retirement runs on every
         // turn rather than only on an oversized one, so it is the seam that would do the damage.
+        //
+        // ONE FINISHED TURN, so the keep is set to nought to have anything to retire at all --
+        // the shipped figure leaves the turn just finished whole, which is what
+        // `test_the_default_leaves_the_turn_just_finished_whole_00` is about.  What is under test
+        // here is the SEAM, and it is the same seam at either figure.
         let registry = one_tool();
         let (port, seen) = crate::llm::tests::start_stub(vec![plain_answer()]).await;
         let mut llm = crate::llm::tests::stub_client(port);
         llm.retry.max_attempts = 1;
         let a = Agent::new(llm, "You are Daimond.");
+        if let Err(e) = a.set_tune(r#"{"retire_keep_turns":0}"#) { panic!("{}", e); }
         let mut session = Session::new(fmt!("s1"), fmt!("retire"), fmt!("model"));
         let body = "source line\n".repeat(2_000);
         session.messages.push(ChatMessage::user("read it"));
@@ -2767,6 +2795,49 @@ mod tests {
             "a finished turn's file read was re-sent whole");
         assert!(sent.contains("file_read src/a.rs 1-200"),
             "the retired result does not name the call that made it");
+    }
+
+    #[tokio::test]
+    async fn test_the_default_leaves_the_turn_just_finished_whole_00() {
+        // THE 2026-09-13 CORRECTION AT THE SEAM THAT SENDS.  Retiring every finished turn is
+        // right for a fifty-round session and wrong for a three-turn chat: the model met a stub
+        // of what it had just been told and asked for the file again, which carried 41% MORE
+        // tokens on turn two than not retiring at all.  So the newest finished turn goes out
+        // whole and the one before it does not.  See `compact::RETIRE_KEEP_TURNS`.
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(vec![plain_answer()]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        let mut session = Session::new(fmt!("s1"), fmt!("keep"), fmt!("model"));
+        // Two finished turns, each a read of its own file, so one figure tells them apart.
+        for (id, path, line) in [("r1", "src/a.rs", "older line\n"), ("r2", "src/b.rs", "newer line\n")] {
+            session.messages.push(ChatMessage::user(fmt!("read {}", path)));
+            session.messages.push(ChatMessage::Assistant {
+                content:    MessageContent::text(""),
+                tool_calls: vec![crate::protocol::ToolCall {
+                    id: fmt!("{}", id), name: fmt!("file_read"),
+                    arguments: fmt!(r#"{{"path":"{}","offset":1,"end":200}}"#, path),
+                }],
+            });
+            session.messages.push(ChatMessage::tool(fmt!("{}", id), line.repeat(2_000)));
+            session.messages.push(ChatMessage::assistant("I have read it."));
+        }
+        let _ = a.run_turn(&mut session, fmt!("now change it"), &registry, &mut |_| {}).await;
+
+        let bodies = match seen.lock() {
+            Ok(g)  => g.bodies.clone(),
+            Err(e) => panic!("the stub's record: {}", e),
+        };
+        assert!(!bodies.is_empty(), "no request reached the provider");
+        let sent = bodies.join("\n");
+        assert!(sent.contains("newer line\\nnewer line"),
+            "the turn just finished was retired, which is what the keep exists to stop");
+        assert!(!sent.contains("older line\\nolder line"),
+            "the turn before last was sent whole, so retirement has been turned off rather \
+             than moved back one turn");
+        assert!(sent.contains("file_read src/a.rs 1-200"),
+            "the older turn's retired result does not name the call that made it");
     }
 
     #[tokio::test]

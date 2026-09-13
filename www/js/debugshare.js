@@ -162,6 +162,21 @@
 	var BEAT_TICK_MS = 30000;					// the beat timer's period ...
 	var BEAT_TURN_MS = 30000;					// ... a beat this often while a turn runs ...
 	var BEAT_IDLE_MS = 300000;					// ... and this often when nothing is running
+	// THE SCREEN, ADDED 2026-09-13. Every other event says what the ENGINE did; a
+	// phone driven by its own owner has no console to read and no way to be driven
+	// from Linux, so the beat/telemetry/console lanes above are silent about the one
+	// thing "full visibility" actually needs there: what the person is LOOKING AT.
+	// Checked on the SAME clock as the beat (see `beatTick`), so it costs no extra
+	// timer, but it posts its own `ev screen` row only when the picture actually
+	// CHANGED since the last one -- a device sitting on one screen for an hour must
+	// not repeat itself every thirty seconds -- with a floor that ships one anyway
+	// every `SCREEN_FLOOR_MS`, so a reader is never more than five minutes stale.
+	var SCREEN_FLOOR_MS   = 300000;			// ship one even unchanged, at least this often
+	var MAX_VIEW_CHARS    = 24;					// the view/thread kind
+	var MAX_SEAT_CHARS    = 60;					// the seat-line text, as rendered
+	var MAX_TILE_ROLE_CHARS = 16;				// the last tile's role ("user", "assistant", ...)
+	var MAX_TILE_TEXT_CHARS = 80;				// the last tile's text, head only
+	var MAX_DLG_CHARS     = 48;					// an open dialog/banner's kind + head
 	var MAX_MSG_CHARS = 200;					// an `error` or `console` message, clipped
 	var MAX_SRC_CHARS = 60;						// and where it came from
 	// The console lanes. A dedupe window and the rate window are deliberately the
@@ -234,6 +249,7 @@
 	var enabled  = read(ENABLED_KEY) === '1';
 	var provider = null;			// registered by daimond.js: () -> (obj | Promise<obj>)
 	var statsFn  = null;			// registered by daimond.js: () -> live-stats obj (sync, cheap)
+	var screenFn = null;			// registered by daimond.js: () -> {view,seat,role,text,dlg,comp,locked}
 	var crossIx  = {};				// diamondId -> model -> {turns, usd}, filled while on
 	// Two lanes, not one FIFO. Telemetry (small, frequent, the live per-round numbers)
 	// drains first and completely; the snapshot lane (a large multi-thousand-row bundle)
@@ -254,6 +270,10 @@
 	var dropping    = false;		// re-entry guard: a feed.drop must not recurse
 	var feedOff     = false;		// the feed threw; collection is off for this session
 	var lastBeatAt  = 0;
+	// The screen's own change-detection: the last picture SHIPPED (not merely
+	// gathered), as its exact JSON, and when. A tick whose picture matches this
+	// says nothing unless the floor has passed; see `screenTick`.
+	var lastScreenAt = 0, lastScreenKey = null;
 	var errWindowAt = 0, errCount = 0, errDropped = 0;
 	// The console lane: what is held for dedupe, what this minute has admitted,
 	// and what it had to drop. `inConsole` is the recursion guard -- anything the
@@ -1227,6 +1247,7 @@
 			postFail:  postFailCount,
 			cdrop:     (function () { var n = conDropped; conDropped = 0; return n; })(),
 		});
+		screenTick();
 	}
 
 	/// One post's worth of events, taken from the FRONT of the outbox and never
@@ -1527,6 +1548,8 @@
 			// the CLOCK: it says a quiet device is still there. So the first one is
 			// the timer's, not this.
 			lastBeatAt = 0;
+			lastScreenAt = 0;
+			lastScreenKey = null;
 		} else {
 			stopTimers();
 			telQueue = [];
@@ -1604,6 +1627,86 @@
 	/// `registerProvider`.
 	function registerStats(fn) {
 		if (typeof fn === 'function') statsFn = fn;
+	}
+
+	/// Register the screen seam daimond.js supplies: a cheap, synchronous function
+	/// returning what the person is actually LOOKING AT -- which view, the seat
+	/// line, the last tile's role and text head, an open dialog's kind, the
+	/// composer's length and the lock state. Called once at boot, beside the two
+	/// seams above; the fields this module cannot know on its own (window size,
+	/// tab visibility, the updater's state) are added in `gatherScreen`.
+	function registerScreen(fn) {
+		if (typeof fn === 'function') screenFn = fn;
+	}
+
+	/// The updater's state, in the one word a reader needs: `'none'` (nothing
+	/// pending), `'countdown'` (an automatic reload is due), `'manual'` (the watch
+	/// has given up finding a safe moment, or a controlling worker will not
+	/// advance -- only a manual reload will move this device), or `'ready'` (a
+	/// build is pending and waiting for a quiet moment, counting down to neither).
+	/// `window.DaimondUpdater` absent -- an older build, or a test -- reads as `'none'`.
+	function updaterState() {
+		try {
+			var U = window.DaimondUpdater;
+			if (!U || !(U.pending && U.pending())) return 'none';
+			if (U.countdown && U.countdown() > 0) return 'countdown';
+			if ((U.stuck && U.stuck()) || (U.gaveUp && U.gaveUp())) return 'manual';
+			return 'ready';
+		} catch (e) { return 'none'; }
+	}
+
+	/// The screen picture, assembled from the registered seam plus the three
+	/// facts only this module can see: the viewport size, whether the tab is
+	/// visible, and the updater's own state. Every string is bounded here, so
+	/// `screenTick`'s change-detection compares an already-capped object and
+	/// `fit()` in `emit` is a safety net rather than the only thing keeping this
+	/// under the 360-byte cap. Never throws: a screen seam that is absent, or
+	/// that itself throws, yields the fields this module can still answer.
+	function gatherScreen() {
+		var s = null;
+		try { s = screenFn ? screenFn() : null; } catch (e) { s = null; }
+		s = (s && typeof s === 'object') ? s : {};
+		var role = clip(s.role || '', MAX_TILE_ROLE_CHARS);
+		var text = clip(s.text || '', MAX_TILE_TEXT_CHARS);
+		// One string, "role: text", which is what a reader wants on one line; an
+		// absent tile (a fresh chat, or no seam registered) is the empty string,
+		// not "': '".
+		var tile = text ? (role ? role + ': ' + text : text) : '';
+		var w = 0, h = 0, vis = '';
+		try { w = (window.innerWidth  | 0) || 0; } catch (e) { /* no window */ }
+		try { h = (window.innerHeight | 0) || 0; } catch (e) { /* no window */ }
+		try { vis = (typeof document !== 'undefined' && document.visibilityState) || ''; }
+		catch (e) { /* no document */ }
+		return {
+			view:   clip(s.view || '', MAX_VIEW_CHARS) || 'chat',
+			seat:   clip(s.seat || '', MAX_SEAT_CHARS),
+			tile:   tile,
+			dlg:    clip(s.dlg || 'none', MAX_DLG_CHARS) || 'none',
+			comp:   Number(s.comp) || 0,
+			locked: s.locked ? 1 : 0,
+			upd:    updaterState(),
+			w:      w,
+			h:      h,
+			vis:    vis,
+		};
+	}
+
+	/// Gather the screen and ship it as an `ev screen` row -- but only when its
+	/// picture has actually CHANGED since the last one shipped, or `SCREEN_FLOOR_MS`
+	/// has passed since it last did, whichever comes first. Called from `beatTick`,
+	/// so it is checked on the same clock as the beat (30 s busy, 5 min idle) without
+	/// a timer of its own; most ticks say nothing at all, which is the point -- a
+	/// device sitting on one screen must not repeat itself every thirty seconds.
+	function screenTick() {
+		if (!enabled || feedOff) return;
+		var s = gatherScreen();
+		var key = '';
+		try { key = str(s); } catch (e) { key = ''; }
+		var now = Date.now();
+		if (key === lastScreenKey && lastScreenAt && (now - lastScreenAt) < SCREEN_FLOOR_MS) return;
+		lastScreenKey = key;
+		lastScreenAt  = now;
+		event('screen', s);
 	}
 
 	// If the switch was left on from a previous session, restore the indicator and
@@ -1744,6 +1847,7 @@
 		adoptSync:        adoptSync,
 		registerProvider: registerProvider,
 		registerStats:    registerStats,
+		registerScreen:   registerScreen,
 		noteCross:        noteCross,
 		snapshotNow:      snapshotNow,
 		// THE EVENT SEAM. One call, `DEBUG_SHARE.event(kind, payload)`, from every
@@ -1783,6 +1887,13 @@
 		_persistNow:  persistNow,
 		_beatTick:    beatTick,
 		_capabilities: capabilities,
+		_gatherScreen: gatherScreen,
+		_screenTick:   screenTick,
+		_updaterState: updaterState,
+		// Simulate the five-minute floor having elapsed, without a real wait: the
+		// change-detection compares against `lastScreenAt`, and this is the one
+		// thing a test cannot otherwise move.
+		_expireScreen: function () { lastScreenAt = 0; },
 		_noteError:   noteError,
 		// The console lane, driven without waiting out a dedupe window.
 		_noteConsole: function (lvl, args) { noteConsole(lvl, args || []); },

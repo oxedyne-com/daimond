@@ -1675,6 +1675,105 @@ async function main() {
 			(gw.match(/dsFetchFail\(/g) || []).length === 3);	// the definition and its two calls
 	}
 
+	console.log('debugshare: screen — what the person is looking at, on the beat\'s own clock');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		let screen = {
+			view: 'chat', seat: 'Next turn: this device', role: 'assistant',
+			text: 'Two of the three verifiers are green so far.',
+			dlg: 'none', comp: 5, locked: false,
+		};
+		DS.registerScreen(() => screen);
+		DS.setEnabled(true);
+
+		DS._beatTick();
+		const rows = () => DS._outbox().filter((r) => r.tag === 'ev screen').map((r) => JSON.parse(r.data));
+		check('a screen event is emitted on the beat\'s own clock', rows().length === 1);
+		let s = rows()[0];
+		check('it carries the view', s.view === 'chat');
+		check('it carries the seat line, capped', s.seat === 'Next turn: this device');
+		check('it combines the last tile\'s role and text head, one field',
+			s.tile === 'assistant: Two of the three verifiers are green so far.');
+		check('it carries the open-dialog kind, or "none"', s.dlg === 'none');
+		check('the composer is a LENGTH, never its text', s.comp === 5);
+		check('it carries the lock state as a bool-ish 0/1', s.locked === 0);
+		check('it carries the updater state', s.upd === 'none');
+		check('it carries the viewport size and visibility',
+			typeof s.w === 'number' && typeof s.h === 'number' && typeof s.vis === 'string');
+		check('a screen row stays inside the 360-byte cap',
+			DS._byteLen(JSON.stringify(s)) <= 360);
+		check('no field is named like a secret',
+			Object.keys(s).every((k) => !/key|token|secret|password|passphrase|salt/i.test(k)));
+
+		// From here, `_screenTick` directly: the property under test is the
+		// screen's OWN change/floor logic, not the beat's separate busy/idle
+		// cadence gate that `_beatTick` is also subject to (proved above -- one
+		// `_beatTick` already reached `screenTick` and shipped the first row).
+
+		// Unchanged, and well inside the five-minute floor: calling it again
+		// says nothing more. A device sitting on one screen must not repeat itself.
+		DS._screenTick();
+		check('an unchanged screen inside the floor is not repeated', rows().length === 1);
+
+		// Changed content (the composer grew): the very next tick ships it.
+		screen = Object.assign({}, screen, { comp: 40 });
+		DS._screenTick();
+		check('a changed screen is shipped on the very next tick', rows().length === 2);
+		check('the new row carries the new value', rows()[1].comp === 40);
+
+		// Unchanged again, but the floor has (simulated) elapsed: shipped anyway,
+		// so a reader watching this device is never more than five minutes stale.
+		DS._expireScreen();
+		DS._screenTick();
+		check('an unchanged screen past the floor ships again', rows().length === 3);
+		const screenFields = (r) => ({ view: r.view, seat: r.seat, tile: r.tile, dlg: r.dlg,
+			comp: r.comp, locked: r.locked, upd: r.upd, w: r.w, h: r.h, vis: r.vis });
+		check('and its picture is identical to the one before it (envelope aside)',
+			JSON.stringify(screenFields(rows()[2])) === JSON.stringify(screenFields(rows()[1])));
+
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: screen — the updater\'s four words, and a screen seam that is absent or throws');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+
+		// No seam registered at all: the defaults still make a valid, small row.
+		DS.setEnabled(true);
+		DS._beatTick();
+		let s = DS._outbox().filter((r) => r.tag === 'ev screen').map((r) => JSON.parse(r.data));
+		check('with no screen seam, a row still ships with sane defaults',
+			s.length === 1 && s[0].view === 'chat' && s[0].tile === '' && s[0].dlg === 'none' && s[0].comp === 0);
+		DS.setEnabled(false);
+
+		// A seam that throws must not take the beat down with it.
+		const env2 = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS2 = env2.win.DEBUG_SHARE;
+		DS2.registerScreen(() => { throw new Error('fixture: screen seam threw'); });
+		DS2.setEnabled(true);
+		DS2._beatTick();
+		const s2 = DS2._outbox().filter((r) => r.tag === 'ev screen').map((r) => JSON.parse(r.data));
+		check('a throwing screen seam still yields a row, not a fault',
+			s2.length === 1 && DS2.feedOk() === true);
+		DS2.setEnabled(false);
+
+		// The updater's four words, driven directly (no beat needed).
+		env2.win.DaimondUpdater = { pending: () => false };
+		check('no pending build is "none"', DS2._updaterState() === 'none');
+		env2.win.DaimondUpdater = { pending: () => true, countdown: () => 8, stuck: () => false, gaveUp: () => false };
+		check('a running countdown is "countdown"', DS2._updaterState() === 'countdown');
+		env2.win.DaimondUpdater = { pending: () => true, countdown: () => 0, stuck: () => true, gaveUp: () => false };
+		check('a stuck device is "manual"', DS2._updaterState() === 'manual');
+		env2.win.DaimondUpdater = { pending: () => true, countdown: () => 0, stuck: () => false, gaveUp: () => true };
+		check('a device the watch gave up on is "manual"', DS2._updaterState() === 'manual');
+		env2.win.DaimondUpdater = { pending: () => true, countdown: () => 0, stuck: () => false, gaveUp: () => false };
+		check('pending, no countdown, not stuck: "ready"', DS2._updaterState() === 'ready');
+		delete env2.win.DaimondUpdater;
+		check('no updater at all reads as "none"', DS2._updaterState() === 'none');
+	}
+
 	console.log('');
 	if (failures) { console.log('FAILURES: ' + failures); process.exit(1); }
 	console.log('all debugshare checks passed');

@@ -218,6 +218,13 @@ const A_BLOCK2 = block(A_BT2, DEV_A, [
 	// about the feed and must not hide what the beat said.
 	evRow(10, 'beat', { ctx: 12345, win: 200000, busy: 0, ob: 3,
 		throttled: 2, postFail: 1, cdrop: 5 }, NOW - 94000),
+	// THE SCREEN (added 2026-09-13): what the person is actually looking at,
+	// on the phone that cannot be driven from Linux. `tile` rides the wire as
+	// one string, `"role: text"`; `status` splits it back for the reader.
+	evRow(17, 'screen', { view: 'daimon', seat: 'Next turn: Chrome on argonaut',
+		tile: 'daimon: Two of the three verifiers are green so far.',
+		dlg: 'none', comp: 0, locked: 0, upd: 'none', w: 390, h: 844,
+		vis: 'visible' }, NOW - 92000),
 	...telRows.slice(telHalf).map(r => row(r.ts, r.tag, r.data)),
 ]);
 
@@ -351,6 +358,23 @@ check('status --json carries the same two',
 		&& (st.devices.find(d => d.device === DEV_A) || {}).health.throttled === 2,
 	JSON.stringify(st.console1h));
 
+// The screen: the latest picture per device, printed right under its build
+// line -- the one lane a phone that cannot be driven from Linux still has.
+check('status --json carries device A\'s latest screen',
+	byDev[DEV_A] && byDev[DEV_A].screen && byDev[DEV_A].screen.view === 'daimon'
+		&& byDev[DEV_A].screen.tile === 'daimon: Two of the three verifiers are green so far.',
+	JSON.stringify(byDev[DEV_A] && byDev[DEV_A].screen));
+check('device B, which never sent one, carries no screen', !byDev[DEV_B].screen);
+const seesLine = statusLines.find(l => /^\s+sees\s/.test(l));
+check('status prints "sees" directly under device A\'s build line',
+	seesLine && statusLines[statusLines.indexOf(seesLine) - 1].startsWith(DEV_A.slice(0, 7)),
+	seesLine);
+check('the tile splits back into its role and text head, not the raw "role: text" join',
+	/tile daimon 'Two of the three verifiers are green so far\.'/.test(seesLine || ''), seesLine);
+check('the seat line and the dialog state both print',
+	/seat 'Next turn: Chrome on argonaut'/.test(seesLine || '') && / dlg none/.test(seesLine || ''),
+	seesLine);
+
 // Coverage, which is a different number per device AND per source. The archive
 // holds rows from nine hours back and TICKS from one; a window reaching past
 // either must say so rather than report the stretch it cannot see as a quiet one.
@@ -369,10 +393,12 @@ check('each device states its own first tick',
 	near(st.coverage.byDevice[DEV_A].ticks, NOW - 115000)
 		&& near(st.coverage.byDevice[DEV_B].ticks, NOW - 3600000),
 	utc(st.coverage.byDevice[DEV_A].ticks) + ' / ' + utc(st.coverage.byDevice[DEV_B].ticks));
+// Device A now carries a fourth line (`sees`, from its screen event) ahead of
+// device B's build line, which the fixed index below accounts for.
 check('the per-device lines carry those two different stamps',
-	/ since \d\d:\d\dZ/.test(statusLines[1]) && / since \d\d:\d\dZ/.test(statusLines[4])
-		&& statusLines[1].slice(-7) !== statusLines[4].slice(-7),
-	statusLines[1].slice(-14) + ' | ' + statusLines[4].slice(-14));
+	/ since \d\d:\d\dZ/.test(statusLines[1]) && / since \d\d:\d\dZ/.test(statusLines[5])
+		&& statusLines[1].slice(-7) !== statusLines[5].slice(-7),
+	statusLines[1].slice(-14) + ' | ' + statusLines[5].slice(-14));
 // The device that cannot see the window must not report it as a zero.
 const wide = lens('status', '--since', '24h');
 check('a device blind to the window says so instead of reporting zero',
@@ -495,7 +521,7 @@ check('a window with nothing in it says so, not nothing at all',
 // ── events ───────────────────────────────────────────────────────────
 
 const evs = lensJson('events', '--since', '24h');
-check('every event row is in the stream once', evs.length === 19,
+check('every event row is in the stream once', evs.length === 20,
 	evs.length + ': ' + evs.map(e => e.kind || e.tag).join(','));
 check('--kind selects the console rows', lensJson('events', '--since', '24h', '--kind', 'console').length === 4);
 check('--kind selects one event kind',
@@ -504,6 +530,14 @@ check('--kind reaches a generic gateway row too',
 	lensJson('events', '--since', '24h', '--kind', 'election').length === 1);
 check('--grep searches the payload',
 	lensJson('events', '--since', '24h', '--grep', 'nominee').length === 1);
+
+// `lens events --kind screen` needs no special-case ingestion: an `ev` row is
+// filed generically by its tag, and the screen is just another kind.
+const screenEvs = lensJson('events', '--since', '24h', '--kind', 'screen');
+check('--kind screen selects the screen row', screenEvs.length === 1);
+check('the screen row carries the wire\'s own fields',
+	screenEvs[0].ev && screenEvs[0].ev.view === 'daimon' && screenEvs[0].ev.dlg === 'none',
+	JSON.stringify(screenEvs[0] && screenEvs[0].ev));
 
 // ── snapshot ─────────────────────────────────────────────────────────
 

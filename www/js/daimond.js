@@ -24393,6 +24393,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// wins where the tab has one -- which is right: it is the fresher of the
 			// two, and the stored copy is at most a settle-timer behind it.
 			DaimondDrafts.bind(chatInput, k);
+			// A draft written before 5ede1ba may hold several stacked copies of the
+			// attach prefix -- collapse it once, here, where the restored text and
+			// the thread it belongs to (turns or none) are both in hand. See
+			// `scrubAttachPrefixDup`.
+			if (chatInput.value) {
+				var hasTurns = !!(next && Array.isArray(next.messages) && next.messages.length);
+				var curPrefix = (next && !next.diamondId) ? attachPrefixText(chatAttachList(next.id)) : '';
+				var cleaned = scrubAttachPrefixDup(chatInput.value, curPrefix, hasTurns);
+				if (cleaned !== chatInput.value) chatInput.value = cleaned;
+			}
 			if (chatInput.value) DaimondDrafts.set(k, chatInput.value);
 		} catch (e) { /* storage blocked: the box behaves as it did before this existed */ }
 	}
@@ -38883,23 +38893,106 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// to it is left alone rather than fought.
 	var attachPrefixWritten = {};
 
+	/// Does this call get to touch the composer at all? Split out, like
+	/// `mergeAttachPrefix` below, so the RULE can be proved without a browser:
+	/// the prefix is offered only into the FIRST turn of a new thread —
+	/// `hasTurns` false — and only where there is nothing to lose by writing:
+	/// an EMPTY box, or one that still starts with what this module wrote
+	/// there last THIS page life (`lastWritten`, '' if never) — which covers a
+	/// live attach/detach or a Note ⇄ Read flip typed after, per the box's own
+	/// doc comment, since the user's words merely follow it there.
+	///
+	/// Anything else — a real draft restored by `drafts.js`, the user's own
+	/// words with none of this module's text in front, or this module's own
+	/// prior text from a PREVIOUS page life (`lastWritten` is '' again on a
+	/// fresh reload, so it cannot be recognised as "ours" here) — is left
+	/// exactly as it stands: the composer on return is the persisted draft,
+	/// full stop, never reconciled against whatever the attach list has since
+	/// become. `hasTurns` is `true` for a thread with no conversation to seed
+	/// at all (`current` unset), by the caller passing it so, so one rule
+	/// covers "no thread" and "thread already under way" alike.
+	function attachPrefixGateOpen(hasTurns, boxValue, lastWritten) {
+		if (hasTurns) return false;
+		if (!boxValue) return true;
+		return !!(lastWritten && boxValue.indexOf(lastWritten) === 0);
+	}
+
+	// A single `Note …` / `Read …` line, the shape `attachPrefixText` builds one
+	// of. Used only as the LOOSE fallback below, for a draft whose attach list
+	// has since changed so the exact text can no longer be recomputed to match.
+	var ATTACH_PREFIX_LOOSE_LINE = /^(?:Note|Read) [^\n]*\n/;
+
+	/// A draft written before 5ede1ba could pick up one more copy of the attach
+	/// prefix every reload or unlock (owner report, 2026-09-13: six stacked
+	/// copies on one chat). This collapses what is ALREADY sitting in storage,
+	/// once, on restore — `syncComposerAttachPrefix` itself only ever seeds one
+	/// copy now, but a draft corrupted before that fix is not self-healing.
+	///
+	/// `current` is what `attachPrefixText` would build for this thread RIGHT
+	/// NOW — reused, so an exact repeat is recognised by the rule that
+	/// generates it rather than a re-guessed pattern — and is tried first,
+	/// as a whole unit, so a legitimate single seed that pairs one Note line
+	/// with one Read line is never mistaken for two stacked copies. Only when
+	/// that finds nothing does the loose single-line fallback run, for a draft
+	/// whose attach list no longer matches what it was written under.
+	///
+	/// A thread with turns keeps NONE of it back — the prefix belongs only to
+	/// a first turn, and one already happened here whether or not this ever
+	/// got to run before now. A thread with none keeps exactly one copy, so a
+	/// still-unstarted chat is not left with no seed at all.
+	function scrubAttachPrefixDup(text, current, hasTurns) {
+		if (typeof text !== 'string' || !text) return text;
+		var rest = text, copies = 0, block = '';
+		if (current) {
+			while (rest.indexOf(current) === 0) { rest = rest.slice(current.length); copies++; }
+			block = current;
+		}
+		if (!copies) {
+			var m = text.match(ATTACH_PREFIX_LOOSE_LINE);
+			if (m) {
+				block = m[0];
+				rest = text;
+				while (rest.indexOf(block) === 0) { rest = rest.slice(block.length); copies++; }
+			}
+		}
+		if (copies < 2) return text;                  // nothing stacked: leave it exactly as it was
+		return hasTurns ? rest : (block + rest);
+	}
+
 	/// Put the generated prefix in front of whatever is typed, replacing only
 	/// the text this module itself wrote there last — so attaching one more
 	/// thing, or flipping Note ⇄ Read, updates it, while a person who has
 	/// edited or deleted it keeps their own words. This is the `✎ Page`
 	/// decision of 2026-08-10 applied here: a prompt the app writes and hides is
 	/// a prompt nobody can argue with (§6).
+	///
+	/// Confined to a thread's FIRST turn, with an otherwise-empty composer
+	/// (`attachPrefixGateOpen`) — ATTACH_CONTRACT.md §6 always meant this for
+	/// the Diamond side ("when a new agent is initialised"), but the chat side
+	/// had no such gate at all, so an EXISTING chat's composer came back
+	/// prefilled with workspace instructions on focus, reload and unlock (owner
+	/// report, 2026-09-13). Checked once here, ahead of both branches and
+	/// before any of the async work below, so every caller — `selectChat`
+	/// (thread-switch-back, boot's restore), the Diamond face switch,
+	/// attach/detach, an unlock — is covered by the one rule rather than
+	/// needing a patch at each.
 	async function syncComposerAttachPrefix() {
 		var f = attachFocus();
 		if (!f) return;
+		var input = document.getElementById('chat-input');
+		if (!input) return;
+		var last = attachPrefixWritten[f.id] || '';
+		// `chatMsgCount`, not `current.messages.length`: a chat just opened from
+		// the rail is often not yet RESIDENT (seq 213) -- its transcript loads
+		// async and `messages` reads `[]` in the meantime, which read as a
+		// thread with no turns and let a real, multi-turn chat's composer be
+		// reseeded in the gap between `selectChat` and the load landing.
+		var hasTurns = !current || chatMsgCount(current) > 0;
+		if (!attachPrefixGateOpen(hasTurns, input.value, last)) return;
 		var list;
 		if (f.kind === 'chat') {
 			list = chatAttachList(f.id);
 		} else {
-			// A Diamond's attachments are permanent, so the prefix is offered
-			// once — "when a new agent is initialised" (§6) — and not re-forced
-			// on every later turn.
-			if (!current || current.messages.length) return;
 			var links = [];
 			try { links = JSON.parse(await diamondApp().links_touching('diamond:' + f.id) || '[]'); }
 			catch (e) { links = []; }
@@ -38912,15 +39005,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				list.push({ ref: l.other, path: p.path, state: readAttachState(l.id) });
 			});
 		}
-		var input = document.getElementById('chat-input');
-		if (!input) return;
 		var text = attachPrefixText(list);
 		// A CHAT quotes what it marked Read; a Diamond does not. A daimon may open
 		// everything its Diamond holds, so the instruction there is one it can carry
 		// out, and quoting the same file into a seeded composer would pay for it
 		// twice. Two surfaces, one control, and the difference is the fence.
 		if (text && f.kind === 'chat') text += await attachReadBodies(list);
-		var last = attachPrefixWritten[f.id] || '';
 		var val  = input.value;
 		input.value = mergeAttachPrefix(text, val, last);
 		attachPrefixWritten[f.id] = text;
@@ -46579,6 +46669,83 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				provider:      chat ? (chat.provider || '') : '',
 				workerState:   workerState,
 				activity:      workerState ? (workerState.busy ? 'busy' : 'idle') : null,
+			};
+		});
+	}
+
+	// The screen seam for the same debug feed (owner, 2026-09-13): what the
+	// person is actually LOOKING AT. The iPhone PWA cannot be driven from Linux,
+	// so this is the one lane that carries what a screenshot would show, without
+	// carrying a screenshot -- read straight off the same state the screen itself
+	// is drawn from, never off a second copy of it. Cheap and synchronous, like
+	// the stats seam above; the fields it cannot answer (window size, tab
+	// visibility, the updater's state) are added by debugshare.js itself.
+	if (window.DEBUG_SHARE && DEBUG_SHARE.registerScreen) {
+		DEBUG_SHARE.registerScreen(function () {
+			// Which of the app's own surfaces is up. `admin` and the quick
+			// appearance popover are read straight off the elements they toggle;
+			// short of those, `centreMode` is the app's own answer for the AI
+			// panel's face -- 'chat', 'focus' (a Diamond's crystal) or 'daimon'
+			// (a Diamond's own conversation). The guide is a SEPARATE tab
+			// (`window.open`, see the button beside it) and cannot be seen from
+			// here at all -- left out rather than guessed at.
+			var view = 'chat';
+			try {
+				var adminEl = document.getElementById('admin');
+				var menuEl  = document.getElementById('settings-menu');
+				if (adminEl && adminEl.classList && adminEl.classList.contains('admin-open')) view = 'admin';
+				else if (menuEl && !menuEl.hidden) view = 'settings';
+				else if (centreMode === 'focus') view = 'diamond';
+				else if (centreMode === 'daimon') view = 'daimon';
+			} catch (e) { /* the DOM is not up yet */ }
+			// The seat line, read as rendered rather than recomputed -- what this
+			// answers is what the person actually SEES under the composer, not a
+			// second opinion that could drift from it.
+			var seat = '';
+			try {
+				var sl = document.getElementById('seat-line');
+				seat = sl ? String(sl.textContent || '') : '';
+			} catch (e) { /* no seat line mounted */ }
+			// The last message of the CURRENT chat, role and text; debugshare.js
+			// combines and clips them. A daimon's log roles ('fold_log', 'tool', ...)
+			// travel just as honestly as 'user'/'assistant' -- whatever tile is last
+			// is what is on screen.
+			var role = '', text = '';
+			try {
+				var msgs = (current && Array.isArray(current.messages)) ? current.messages : [];
+				var last = msgs.length ? msgs[msgs.length - 1] : null;
+				if (last) {
+					role = String(last.role || '');
+					text = (last.content == null) ? '' : String(last.content);
+				}
+			} catch (e) { /* no current chat yet */ }
+			// The three dialogs this seam can answer cheaply and honestly: a build
+			// waiting on a reload, the identity gate, and a build the watch has
+			// given up advancing on its own.
+			//
+			// TODO(debug-feed): a consent/ask/blocker/runner-confirm tile is real
+			// screen state too, but it lives on `Pending`'s own list rather than
+			// behind one flag reachable here -- left for a later pass rather than
+			// guessed at.
+			var dlg = 'none';
+			try {
+				var U = window.DaimondUpdater;
+				if (U && U.pending && U.pending()) {
+					var left = U.countdown ? U.countdown() : 0;
+					if (left > 0) dlg = 'update-countdown: reload in ' + left + 's';
+					else if (U.stuck && U.stuck()) dlg = 'stale-build: reload needed';
+					else if (U.gaveUp && U.gaveUp()) dlg = 'stale-build: waiting for a safe moment';
+				}
+				if (dlg === 'none' && locked) dlg = 'lock: unlock';
+			} catch (e) { /* the updater has not polled yet */ }
+			return {
+				view:   view,
+				seat:   seat,
+				role:   role,
+				text:   text,
+				dlg:    dlg,
+				comp:   (chatInput && chatInput.value) ? chatInput.value.length : 0,
+				locked: !!locked,
 			};
 		});
 	}
