@@ -23797,6 +23797,55 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// Whether something is in the trash, for anything outside this file that
 		/// builds a list of Diamonds — `js/graph.js` does.
 		trashed:         trashed,
+		/// The limits the ENGINE is holding for a conversation, in its own words.
+		///
+		/// Read-only, and read off the agent the next turn will actually run on rather
+		/// than off `cfg`: the two can differ, and the difference is the whole point.
+		/// `applyRoundLimit` and `applyFoldSettings` put the user's figures on an app when
+		/// it is BUILT, so a chat still holding an app from before a setting changed is
+		/// running under the old ones -- and nothing could say so. `dev/tune/run.mjs` was
+		/// asking a throwaway app it built itself, which proves only that the engine accepts
+		/// a string.
+		///
+		/// # Arguments
+		/// * `id` - The chat, or absent for the one on screen. A Diamond's daimon is named
+		///   by its own id, since its agent is the cached `diamondApp`.
+		turnLimits:      function (id) {
+			try {
+				if (id) {
+					var c = chats.find(function (x) { return x.id === id; });
+					if (c && c.app) return c.app.turn_limits;
+					// A Diamond's daimon has no agent of its own: it runs on the client
+					// `diamondApp` caches per provider and model, so it is asked for by
+					// Diamond and answered by the cache. Builds one if the Diamond has not
+					// run yet, which is the same app its first turn would use.
+					var da = diamondApp(id);
+					return da ? da.turn_limits : '';
+				}
+				return (current && current.app) ? current.app.turn_limits : '';
+			} catch (e) { return ''; }
+		},
+		/// How the last turn of a conversation ended, and how many legs it took.
+		///
+		/// `{ rounds, how, legs, calls, refused, failed }`, or null where no turn has run
+		/// since the page loaded. `legs` is the count no other reader can reach: the engine
+		/// writes NOTHING into the conversation when a turn reaches its round cap and takes
+		/// its own Continue (`at_the_cap`, src/agent.rs), so a forty-round turn under a
+		/// ten-round limit looks, in the transcript and in the provider's request log alike,
+		/// like a turn that was never capped at all.
+		lastTurn:        function (id) {
+			try {
+				var c = id ? chats.find(function (x) { return x.id === id; }) : current;
+				if (c && c._lastTurn) return c._lastTurn;
+				// A DAIMON'S TURN IS NOT A CHAT'S. A Diamond's chat face shares this
+				// composer and this thread but not this turn (`sendUserMessage` parts
+				// them), so its ending is kept by Diamond id and asked for here rather
+				// than answered null -- which is what a caller measuring a Diamond task
+				// would otherwise get, with nothing to say the question was the wrong one.
+				var dia = id || (c && c.diamondId) || (currentDiamond && currentDiamond.id);
+				return (dia && _lastSteer[dia]) || null;
+			} catch (e) { return null; }
+		},
 	};
 	/// The composer, refitted to what is in it.
 	function fitComposer() {
@@ -24980,6 +25029,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// cut off at the length limit. Recorded here and reported once at the end
 		// of the turn, where the whole turn is known.
 		var capCut = false;
+		// How many legs this turn has taken past its round cap. See the `continued` arm.
+		var turnLegs = 0;
 		// The turn's closing line, held until the turn actually closes. See the
 		// `ended` arm below for why it cannot be drawn where it arrives.
 		var pendingEnd = null;
@@ -25168,6 +25219,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// was an earlier one.
 				if (roundPayload && roundSent !== step) dsEvent('round', roundPayload);
 				dsEvent('ended', { turn: String(umid), rounds: step, how: endedHow(ev.how) });
+				// HOW THE LAST TURN ENDED, IN THE ENGINE'S OWN WORD, kept where something
+				// outside the turn can read it. `dsEvent` writes into DEBUG_SHARE's upload
+				// buffer and the transcript keeps only a rendered line, so until this there
+				// was nowhere a caller could ask; `dev/tune/run.mjs` was deriving the word
+				// from the shape of the provider's request log, which cannot see a
+				// continuation at all. Not persisted: it is a fact about the turn just run.
+				//
+				// AND A RUNNING TOTAL BESIDE THE TURN'S OWN FIGURES. A caller cannot simply
+				// add up what it reads: a gather round is a turn nobody sent, so a reader
+				// that asks after each of ITS OWN turns misses the one the app took by
+				// itself -- and on a worker task that is the only turn there is.
+				var wasT = chat._lastTurn || {};
+				chat._lastTurn = {
+					rounds: step, how: String(ev.how || ''), legs: turnLegs,
+					calls: ev.calls | 0, refused: ev.refused | 0, failed: ev.failed | 0,
+					rounds_total: (wasT.rounds_total | 0) + step,
+					legs_total:   (wasT.legs_total   | 0) + turnLegs,
+					turns:        (wasT.turns        | 0) + 1,
+				};
 			} else if (ev.type === 'unseeable') {
 				// A conversation is not re-routed -- there is no second model for it to move
 				// to and its history would have to move with it. What it gets is the fact,
@@ -25218,6 +25288,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// arguments would not parse. Not an error: the request succeeded and a
 				// setting was reached, so the turn is not retried, only reported.
 				capCut = true;
+			} else if (ev.type === 'continued') {
+				// THE TURN REACHED ITS ROUND CAP AND TOOK ITS OWN CONTINUE.
+				//
+				// Nothing consumed this event, and nothing else can tell you it happened:
+				// `at_the_cap` in src/agent.rs deliberately writes NOTHING into the
+				// conversation when it grants a leg, so a reader of the transcript -- or of
+				// the provider's own request log -- sees a forty-round turn under a ten-round
+				// limit and no sign of the limit. Counted here, where the event arrives.
+				//
+				// Not drawn. It is the app's bookkeeping, not the answer, and the spinner
+				// already says the turn is still running.
+				turnLegs = ev.n | 0;
+				diag('turn.continued', { chat: chat.id, leg: turnLegs, rounds: ev.rounds | 0 });
 			} else if (ev.type === 'error') {
 				// The refusal of a spent minted key is not news to the user: it is a key to
 				// replace, and the retry below does that. Nothing is written down until that
@@ -26767,6 +26850,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// than written into its output: it is a fact about the reply, not part
 					// of what the worker said.
 					run.truncated = true;
+				} else if (ev.type === 'continued') {
+					// A worker reaches its own cap and takes its own Continue, bounded by
+					// `worker_continuations`. Counted for the same reason the chat's is: the
+					// engine writes nothing into the conversation, so the leg count exists
+					// only in this event -- and the worker preset is one of the settings
+					// `dev/tune` measures.
+					run.legs = ev.n | 0;
 				} else if (ev.type === 'error') {
 					// Held back while a fresh key is still worth trying, exactly as a chat holds
 					// it back: an agent that goes on to succeed must not carry the wreckage of
@@ -26877,6 +26967,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var _capped = capReportBytes((_tailText ? run._tail : (run.text || '')).trim(),
 					_clip.head, _clip.tail);
 				run.report = _capped.text;
+				// WHAT THE CLIP ACTUALLY COST, on the run as well as in the feed event below.
+				// The feed is an upload buffer: a caller in the page -- the Agents panel, or
+				// `dev/tune/run.mjs` -- cannot read it back, so the one measure of how much of
+				// a report a daimon was denied was write-only. Two numbers, kept beside the
+				// report they describe.
+				run.reportRaw  = _capped.rawBytes;
+				run.reportSent = _capped.sentBytes;
 				// The agent's OWN conversation, ids and all, so a continuation dispatched
 				// later can pick this run's thread back up with its folds and tool history
 				// intact rather than the prose-only seed `resume()` falls back to -- see
@@ -33544,6 +33641,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// Cached by the configuration rather than by the Diamond: two Diamonds on the same model are the
 	// same client, and DaimondApp has no setter for its model -- changing one means building one.
 	var _diamondApps     = {};           // "provider model" -> DaimondApp
+	// How each Diamond's last daimon turn ended, by Diamond id. In memory only: it is a
+	// fact about the turn just run, and a reload has no turn. See `DaimondCore.lastTurn`.
+	var _lastSteer       = {};
 	var _diamondAppModel = new Map();    // DaimondApp -> the model id it runs, for the ledger
 	// And whose key it runs on. A ledger entry without it cannot be attributed to a provider, and
 	// a live rate captured from that provider cannot be preferred over the baked-in table.
@@ -40027,6 +40127,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var step = 0;        // tool-call rounds so far, for the caption
 		var writing = false; // prose is arriving, so the caption has said so once
 		var sawError = false;
+		var steerLegs = 0;   // legs past the round cap; see the `continued` arm
 		// TRAINING WHEELS — has the engine said the turn ended? A turn that dies without
 		// saying so is the one shape the feed could not see, and the reason is given at
 		// `closeFeedTurn` below.
@@ -40179,6 +40280,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (roundPayload && roundSent !== step) dsEvent('round', roundPayload);
 				endedSeen = true;
 				dsEvent('ended', { turn: String(rec.id || ''), rounds: step, how: endedHow(ev.how), dia: 1 });
+				// The daimon's half of `chat._lastTurn`. Kept by Diamond, since a daimon has
+				// no chat record of its own; see `DaimondCore.lastTurn`.
+				var wasS = _lastSteer[diamondId] || {};
+				_lastSteer[diamondId] = {
+					rounds: step, how: String(ev.how || ''), legs: steerLegs,
+					calls: ev.calls | 0, refused: ev.refused | 0, failed: ev.failed | 0,
+					rounds_total: (wasS.rounds_total | 0) + step,
+					legs_total:   (wasS.legs_total   | 0) + steerLegs,
+					turns:        (wasS.turns        | 0) + 1,
+				};
+			} else if (ev.type === 'continued') {
+				// The daimon reached its round cap and carried itself on. See the same arm
+				// in `runTurn`: the engine writes nothing into the conversation, so this
+				// event is the only record that the cap was met at all.
+				steerLegs = ev.n | 0;
+				diag('turn.continued', { diamond: diamondId, leg: steerLegs, rounds: ev.rounds | 0 });
 			} else if (ev.type === 'unseeable') {
 				// The daimon is NOT re-routed: its conversation is durable and there is no
 				// second model configured for it. What this buys it is that the picture

@@ -20,6 +20,13 @@
 //   @tool <name> <json>      one tool call, then a text reply once it returns
 //   @tools <name> <json> ;; <name> <json>   several tool calls in one turn
 //   @chain <name> <json>     tool call, then a second call, then text
+//   @rounds <n> <name> <json>
+//                            the SAME call, over and over, until `n` tool results have
+//                            come back in this turn -- then a text reply. The only way
+//                            in this tree to reach a round limit, and therefore the only
+//                            way to see `at_the_cap` grant a continuation. The count
+//                            carries across legs, since a continuation adds no user
+//                            message.
 //   @narrate <words> ;; <name> <json>
 //   @reason <working> ;; <answer>
 //                           the model THINKS before it answers, on the wire the way
@@ -64,6 +71,8 @@
 //                            same event as the provider refusing and must not be
 //                            treated as one. There was no way to produce it, so
 //                            the branch that tells them apart could not be tested.
+//   @big <n>                 a reply of n bytes, unpaced -- the only way here to produce
+//                            one long enough for the worker report clip to bite
 //   @slow <ms>               reply after a delay
 //   @look <path>             the model that keeps trying to LOOK. It answers with
 //                            `file_read {"path":…,"as":"image"}` until a tool result
@@ -440,6 +449,19 @@ const plan = (messages) => {
 			return { text: Array.from({ length: n }, (_, i) => `chunk-${i + 1}`).join(' ') , slowChunks: true };
 		}
 
+		// A REPLY BIG ENOUGH TO BE CLIPPED, and quickly.
+		//
+		// The worker report clip is measured in bytes -- `capReportBytes` keeps a head and a
+		// tail and drops the middle -- and nothing here could produce a reply long enough to
+		// reach it: `@long` paces itself at 120 ms a chunk, so the sixteen kilobytes the
+		// loosest preset allows would take three minutes. This is the same thing without the
+		// pacing, because what wants the bytes is a size check and not a look at the screen.
+		case 'big': {
+			const n = Math.max(1, numArg(d.rest, 20000, 'big'));
+			const word = 'filler ';
+			return { text: word.repeat(Math.ceil(n / word.length)).slice(0, n) };
+		}
+
 		case 'usage': {
 			const [i, o, cost, cached] = d.rest.split(/\s+/).map(Number);
 			const usage = { prompt_tokens: i || 100, completion_tokens: o || 50 };
@@ -470,6 +492,27 @@ const plan = (messages) => {
 		case 'tool': {
 			if (rounds > 0) return { text: 'Tool done.' };
 			const { name, args } = splitCall(d.rest);
+			return { calls: [toolCall(nextCallId(), name, args)] };
+		}
+
+		// A TURN THAT KEEPS CALLING, so a ROUND LIMIT can be reached without a provider.
+		//
+		// Nothing in this tree could produce a multi-round turn: every directive above
+		// stops at its first tool result, so `Limits::max_rounds`, `at_the_cap` and the
+		// auto-continue it grants had no fixture at all -- and `dev/tune`'s first live run
+		// read a 26-round turn under a 10-round cap and could not tell whether the setting
+		// had failed to arrive or the count had failed to notice. This makes the turn long
+		// enough to find out, free.
+		//
+		// `rounds` is the count since the last user message, which is what a turn is here:
+		// a continuation adds no user message, so the count carries across the legs and the
+		// turn stops itself at `n` however many legs it took.
+		case 'rounds': {
+			const sp = d.rest.indexOf(' ');
+			const n  = Math.max(1, numArg(sp === -1 ? d.rest : d.rest.slice(0, sp), 20, 'rounds'));
+			if (rounds >= n) return { text: `Called ${rounds} time(s); done.` };
+			const { name, args } = splitCall((sp === -1 ? 'file_list {"path":"."}'
+				: d.rest.slice(sp + 1).trim()));
 			return { calls: [toolCall(nextCallId(), name, args)] };
 		}
 

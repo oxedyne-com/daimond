@@ -34,7 +34,7 @@
 
 	// Written by daimond.js; read here and NEVER written.
 	var NOMINATED_KEY = 'daimond-nominated';	// { id, at }: the account's chosen runner
-	var DEVICE_ID_KEY = 'daimond-device-id';	// this device's own id
+	var DEVICE_ID_KEY = 'daimond-id-device';	// this device's own id (the identity id; the 16-hex key is legacy since 2026-09-12)
 
 	// This machine's own answer, and nowhere else. `collectSync` packs a fixed,
 	// named set of fields, so a key it does not name never travels -- and neither

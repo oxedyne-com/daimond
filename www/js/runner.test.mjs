@@ -66,7 +66,7 @@ const drain = () => new Promise((r) => setImmediate(r));
 async function settle(n = 8) { for (let i = 0; i < n; i++) await drain(); }
 
 const NOM  = 'daimond-nominated';
-const DEV  = 'daimond-device-id';
+const DEV  = 'daimond-id-device';
 const KEY  = 'daimond-runner-posture';
 const ASK  = 'daimond-runner-asked';
 
