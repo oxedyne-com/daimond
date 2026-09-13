@@ -1856,6 +1856,17 @@ impl DaimondApp {
         self.session.try_borrow().map(|s| s.last_prompt_tokens as f64).unwrap_or(0.0)
     }
 
+    /// Prompt tokens of the last round the turn IN FLIGHT has sent, safe to read
+    /// while it runs; see [`DaimondApp::live_prompt_tokens`].
+    ///
+    /// [`DaimondApp::last_prompt_tokens`] borrows the session and draws zero mid-turn,
+    /// so a context meter reading it while a turn runs sees nothing until the turn ends.
+    /// This sits on the agent, outside that borrow, and is set round by round.
+    #[wasm_bindgen(getter)]
+    pub fn live_last_prompt_tokens(&self) -> f64 {
+        self.agent.live_last_prompt.get() as f64
+    }
+
     /// Cumulative cached prompt tokens for the turn IN FLIGHT, safe to read
     /// while it runs; see [`DaimondApp::live_prompt_tokens`].
     #[wasm_bindgen(getter)]

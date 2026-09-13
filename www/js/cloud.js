@@ -565,6 +565,65 @@
 		return ix;
 	}
 
+	// ── Manifests this device cannot heal ──────────────────────
+	// A manifest whose chunks the gateway no longer holds and whose content is not
+	// on this device either is UNRESTORABLE: re-offloading is impossible, and
+	// dropping it would take away the last record of where its chunks were. So it
+	// was kept and re-sent on every push, for ever -- sixty-five addresses of one
+	// account's workspace files, on every round, in a parcel already at 94% of the
+	// front door.
+	//
+	// Kept OUT OF THE INDEX on purpose. The index travels in the parcel and merges
+	// across devices, so a flag written into a manifest would change the parcel's
+	// bytes, and a peer on a build that does not know the flag would merge it away
+	// again. This is one device's observation about its own copy, so it lives in
+	// this device's own storage and nothing else has to learn about it.
+	var LOST_KEY = 'daimond-manifest-unrestorable';		// key -> { at, rounds }
+
+	/// Record that `key`'s chunks are gone and this device cannot put them back.
+	/// Answers how many rounds it has now been seen for -- 1 the first time, so a
+	/// caller can act only on the second and later sightings.
+	function noteUnrestorable(key) {
+		var m = readJson(LOST_KEY, {});
+		var r = m[key] || { at: Date.now(), rounds: 0 };
+		r.rounds = (r.rounds | 0) + 1;
+		m[key] = r;
+		writeJson(LOST_KEY, m);
+		return r.rounds;
+	}
+
+	/// What this device has recorded as unrestorable, `key -> { at, rounds }`.
+	function unrestorable() { return readJson(LOST_KEY, {}); }
+
+	/// Forget the record for `key` -- it healed, or its manifest is gone.
+	function clearUnrestorable(key) {
+		var m = readJson(LOST_KEY, {});
+		if (!Object.prototype.hasOwnProperty.call(m, key)) return false;
+		delete m[key];
+		writeJson(LOST_KEY, m);
+		return true;
+	}
+
+	/// Every chunk address named by a `.peer.<device>` slot in the index -- the
+	/// record of what SOMEBODY ELSE'S parcel says it holds for an item.
+	///
+	/// This is what makes dropping an unrestorable manifest safe. Our own manifest
+	/// is not the only thing keeping a chunk in the committed live set: a peer slot
+	/// names it too (`notePeerRef`, daimond.js), and the commit declares both. So a
+	/// dead address a peer still names can leave OUR manifest without leaving the
+	/// live set, which is the difference between dropping a reference and losing
+	/// the chunks it pointed at.
+	function peerNamedAddrs() {
+		var ix = index(), out = {};
+		Object.keys(ix).forEach(function (k) {
+			if (k.indexOf('.peer.') < 0) return;
+			var m = ix[k];
+			if (!m || !Array.isArray(m.chunks)) return;
+			m.chunks.forEach(function (c) { if (c && c.addr) out[c.addr] = 1; });
+		});
+		return out;
+	}
+
 	/// Drop a path from the index — the file is GONE, not merely absent. Its
 	/// chunks are swept on the next commit. Only an explicit delete does this.
 	function forget(path) {
@@ -877,6 +936,14 @@
 		contentGet:   contentGet,
 		contentSet:   contentSet,
 		contentForget: contentForget,
+		/// A manifest this device cannot heal: record it (`noteUnrestorable`, which
+		/// answers how many rounds it has been seen), read the set (`unrestorable`),
+		/// forget one (`clearUnrestorable`), and ask what addresses a PEER's slot still
+		/// names (`peerNamedAddrs`) -- which is what makes dropping one safe.
+		noteUnrestorable:  noteUnrestorable,
+		unrestorable:      unrestorable,
+		clearUnrestorable: clearUnrestorable,
+		peerNamedAddrs:    peerNamedAddrs,
 		contentReap:  contentReap,
 		peerKey:      peerKey,
 		peerKeyFor:   peerKeyFor,

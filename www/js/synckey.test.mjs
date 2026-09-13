@@ -175,6 +175,28 @@ function makeTab(seed) {
 	// sigOf() digests through cloud.js in the app; one function of it is all that
 	// is wanted here, and it has to be the SAME digest for the carried fixed point
 	// to mean anything.
+	// THE LEASE VIEW AND THE PURE DECISION over it. `push()` consults these before it
+	// sends, so a device that is no part of a live hand-off stands off the door rather
+	// than 409-ing the runner's answer. Empty by default, so every other check here
+	// sees the behaviour it always saw.
+	tab.leases = {};
+	win.DaimondLease = { snapshot: () => tab.leases };
+	win.DaimondPeer  = {
+		// The REAL function, read out of peer.js rather than restated: a stand-off the
+		// test agreed with but the app did not would prove nothing.
+		deferPushFor: (function () {
+			const src = readFileSync(join(HERE, 'peer.js'), 'utf8');
+			const m = /\n\tfunction deferPushFor\(leases, selfId, now, isOriginatorOf\) \{[\s\S]*?\n\t\}\n/.exec(src);
+			if (!m) throw new Error('synckey.test: deferPushFor not found in peer.js -- has it been renamed?');
+			// `liveLease` is the one sibling it calls; lifted the same way.
+			const lv = /\n\tfunction liveLease\([\s\S]*?\n\t\}\n/.exec(src);
+			if (!lv) throw new Error('synckey.test: liveLease not found in peer.js');
+			const ms = /\n\tfunction leaseMs\([\s\S]*?\n\t\}\n/.exec(src);
+			if (!ms) throw new Error('synckey.test: leaseMs not found in peer.js');
+			return new Function('return (function(){' + ms[0] + lv[0] + m[0]
+				+ 'return deferPushFor; })()')();
+		})(),
+	};
 	win.DaimondCloud = {
 		sha256: async (s) => {
 			const d = await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
@@ -441,6 +463,58 @@ console.log('\nD. the refusal — over the door, refused here rather than at the
 	check('D5. and the push that landed carries BOTH figures — the parcel and the wire',
 		landed.length === 1 && landed[0][1].bytes > 0 && landed[0][1].wire > landed[0][1].bytes,
 		landed.length ? 'bytes=' + landed[0][1].bytes + ' wire=' + landed[0][1].wire : 'no event');
+}
+
+console.log('\nE. the stand-off — three devices, one hand-off, and who may push\n');
+
+{
+	// THE 409 STORM THIS REMOVES. The owner's hand-off: the phone dispatched, argonaut
+	// ran, and a THIRD device pushed into the middle of it -- it won the
+	// compare-and-set, the runner's push of the ANSWER came back 409 (pull, merge,
+	// retry: +20 s), and the phone then 409'd five times re-pushing its own parcel.
+	// None of those pushes carried anything anybody was waiting for.
+	const tab = makeTab();
+	tab.unlocked = true;
+	tab.parcel = parcel({ selfSeen: 1000, chats: [{ id: 'c1', messages: ['one'] }] });
+	await tab.win.DaimondSync.push();
+	const base = tab.posts.length;
+	check('E1. an ordinary push lands when no hand-off is running', base >= 1, base + ' POST(s)');
+
+	// A live RUNNING lease held by somebody else, on a turn this device did not send.
+	const now = Date.now();
+	tab.leases = { 'turn-x': { turnId: 'turn-x', holder: 'OTHER-RUNNER', mode: 'running',
+		expiry: now + 120000, renewedAt: now } };
+	tab.parcel = parcel({ selfSeen: 2000, chats: [{ id: 'c1', messages: ['one', 'two'] }] });
+	await tab.win.DaimondSync.push();
+	check('E2. a third device with REAL news still stands off while the turn runs',
+		tab.posts.length === base, (tab.posts.length - base) + ' POST(s) during the hand-off');
+
+	// The lease expires -- the runner died, or finished and released.
+	tab.leases = { 'turn-x': { turnId: 'turn-x', holder: 'OTHER-RUNNER', mode: 'released',
+		expiry: now + 120000, renewedAt: now } };
+	await tab.win.DaimondSync.push();
+	check('E3. and sends the moment the lease is no longer running -- deferred, never dropped',
+		tab.posts.length === base + 1, (tab.posts.length - base) + ' POST(s) after the release');
+
+	// A CLAIMED lease is not yet a running turn, so it holds nobody off.
+	tab.leases = { 'turn-y': { turnId: 'turn-y', holder: 'OTHER-RUNNER', mode: 'claimed',
+		expiry: now + 120000, renewedAt: now } };
+	tab.parcel = parcel({ selfSeen: 3000, chats: [{ id: 'c1', messages: ['one', 'two', 'three'] }] });
+	const atClaim = tab.posts.length;
+	await tab.win.DaimondSync.push();
+	check('E4. a CLAIMED lease is not a running turn, so the push goes',
+		tab.posts.length === atClaim + 1, (tab.posts.length - atClaim) + ' POST(s)');
+
+	// AND A TAB WITH NO LEASE MODULE AT ALL behaves exactly as it did before: the gate
+	// is a guarded read, not a dependency.
+	const plain = makeTab();
+	plain.unlocked = true;
+	delete plain.win.DaimondLease;
+	delete plain.win.DaimondPeer;
+	plain.parcel = parcel({ selfSeen: 1000, chats: [{ id: 'c1', messages: ['one'] }] });
+	await plain.win.DaimondSync.push();
+	check('E5. a build without the lease module pushes as before -- the gate is guarded',
+		plain.posts.length >= 1, plain.posts.length + ' POST(s)');
 }
 
 console.log(failures ? '\n' + failures + ' FAILED\n' : '\nall push-skip and parcel-size checks passed\n');

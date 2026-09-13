@@ -4534,6 +4534,79 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return true;
 	}
 
+	// ── A PHONE'S PARCEL IS NOT A DESKTOP'S ────────────────────
+	//
+	// The budgets above are the parcel's CEILING -- what must never be exceeded. They
+	// are not a target, and for four months they were used as one: the owner's phone
+	// packed 5.40 MB of workspace files INLINE because each file was under the
+	// per-file ceiling and the set was under the section ceiling, so nothing refused
+	// it. Dispatching a turn then flushed all of it before the errand could be posted
+	// -- 23.3 s of a 27.6 s wait, measured 2026-09-13.
+	//
+	// So past a soft ceiling the overflow OFFLOADS rather than riding inline: the
+	// file still travels (a manifest in the cloud index, hydrated on demand at the
+	// far end, exactly as a large file already did), and the parcel stops carrying
+	// megabytes of text that nothing on the other device is waiting for. A mobile
+	// device is held to a tighter one than a desktop, because it is the device that
+	// dispatches and therefore the device whose parcel is on somebody's critical path.
+	//
+	// THE SOFT CAP NEVER DROPS ANYTHING. Where there is nowhere to offload to (no
+	// chunk transport, a folder-mounted root, a locked identity) it does not apply at
+	// all and inline is the only way a file travels, as before.
+	var SYNC_INLINE_SOFT_MAX        = 1024 * 1024;	// a desktop's soft inline ceiling
+	var SYNC_INLINE_SOFT_MOBILE_MAX = 256 * 1024;	// a phone's -- it is the dispatcher
+
+	/// The inline ceiling a section actually spends to: the soft cap where its
+	/// overflow has somewhere to go, and the full budget where it has not.
+	///
+	/// ALL THREE INLINE SECTIONS, not just the files. Capping the files alone simply
+	/// moved the problem: the freed budget went to the Diamonds and the transcripts,
+	/// which then rode inline instead of offloading, and the parcel was the size it
+	/// always was with different content in it. The ceiling belongs to "what this
+	/// device carries inline", so every section that spends the parcel reads it.
+	///
+	/// `mobile` is this device's own answer (`isMobileDeviceSelf`), so a phone is
+	/// offload-first and a desktop is capped only past a megabyte -- the two halves of
+	/// the rule, in one place, so every sync caller that recomputes an inline set
+	/// agrees on what is inline. That agreement is load-bearing for the files: the
+	/// baseline commit and the pull merge both run `collectFiles`, and a file the
+	/// parcel treats as a ref while the baseline records it as inline is a file a later
+	/// complete census reads as deleted.
+	function inlineSoftCap(budget, canOffload, mobile) {
+		var b = Math.max(0, budget | 0);
+		if (!canOffload) return b;					// nowhere to offload: inline or nothing
+		return Math.min(b, mobile ? SYNC_INLINE_SOFT_MOBILE_MAX : SYNC_INLINE_SOFT_MAX);
+	}
+
+	// WHICH PATHS THIS DEVICE HAS CONFIRMED ARE IN CHUNK STORAGE, this sitting.
+	// `path -> manifest key`. An entry means the gateway answered for every chunk the
+	// manifest names: either `offloadFile` uploaded them and was given a 200 (it
+	// throws otherwise), or the round's presence sweep asked about them and did not
+	// name them missing.
+	//
+	// This is the whole of the no-loss rule for the soft cap. A file only STOPS riding
+	// inline once its chunks are confirmed held -- until then it rides inline AND is
+	// queued for offload, so the first round after a file appears costs what it always
+	// did and every round after it is small. Nothing is ever in neither place.
+	var _offloadConfirmed = {};
+	// Whether THIS round's presence question was answered at all. An unanswered query
+	// is not evidence of absence (see `verifyManifestPresence`), so it is not evidence
+	// of presence either, and a manifest reused under one must not confirm anything.
+	var _presenceAnswered = false;
+
+	/// Is `path` confirmed to be in chunk storage, for the file it is right now?
+	/// The size and mtime must match what the manifest was taken of: a file edited
+	/// since its upload is a different file, and its old chunks are not it.
+	function offloadConfirmed(path, size, mtime) {
+		if (!_offloadConfirmed[path]) return false;
+		var m = null;
+		try { m = DaimondCloud.manifest(path); } catch (e) { m = null; }
+		if (!m || !m.key || m.key !== _offloadConfirmed[path]) return false;
+		if (size != null && (m.bytes | 0) !== (size | 0)) return false;
+		if (mtime != null && m.mtime && (m.mtime | 0) !== (mtime | 0)) return false;
+		return true;
+	}
+
 	/// Whether this device may put content into chunk storage this round.
 	///
 	/// A chunk only survives if the index naming it is committed, and only a device
@@ -4587,7 +4660,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// path as inline and a later pull from reading its absence as a deletion.
 		var budget = (typeof inlineBudget === 'number' && inlineBudget >= 0)
 			? inlineBudget : SYNC_FILES_TOTAL_MAX;
-		var out = { files: {}, large: {}, left: [], skipped: 0, oversize: [], bytes: 0, complete: false };
+		// `pending` is what is riding inline THIS ROUND ONLY, because its chunks are not
+		// confirmed held yet: it is queued for offload beside being carried, so nothing
+		// is ever in neither place, and the round after it confirms it rides as a ref.
+		// `softCap` is what the inline section actually spent to, reported so a log line
+		// can say which ceiling bound the round.
+		var out = { files: {}, large: {}, left: [], skipped: 0, oversize: [], bytes: 0,
+			complete: false, pending: [], softCap: budget };
 		if (!filesSyncable()) return out;
 		var app; try { app = tools(); } catch (e) { return out; }
 		// Can the overflow be offloaded this round? Same test the Diamond and chat
@@ -4596,6 +4675,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
 			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
 			&& DaimondCloud.contentGet);
+		// THE SOFT CEILING the inline section spends to, rather than the whole budget.
+		// A phone is offload-first; a desktop is capped past a megabyte; a device with
+		// nowhere to offload keeps the full budget (see `inlineFilesCap`).
+		var soft = inlineSoftCap(budget, canOffload, isMobileDeviceSelf());
+		out.softCap = soft;
 		out.complete = true;						// until something below is missed.
 		var total = 0, largeTotal = 0, todo = [''], guard = 0;
 		while (todo.length && guard++ < 5000) {
@@ -4662,17 +4746,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					largeTotal += e.size;
 					continue;
 				}
-				if (total + content.length > budget) {
-					// No inline room left in the parcel. Offload it like a large file so
-					// it still travels rather than eating the Diamonds' share of the
-					// parcel; with nowhere to offload this round, NAME it (noteFilesLeft)
-					// — never a silent drop.
+				if (total + content.length > soft) {
+					// PAST THE CEILING. Offload it like a large file so it still travels
+					// rather than eating the parcel; with nowhere to offload this round,
+					// NAME it (noteFilesLeft) — never a silent drop.
 					if (canOffload && largeTotal + e.size <= SYNC_CHUNK_TOTAL_MAX) {
 						out.large[full] = { size: e.size };
 						largeTotal += e.size;
-						continue;
+						// AND KEEP IT INLINE UNTIL ITS CHUNKS ARE CONFIRMED HELD. The offload
+						// queued above has not happened yet (`collectChunked` runs after this),
+						// so a file demoted now on the strength of an intention would travel as
+						// a reference to chunks nobody has. Confirmed means the gateway
+						// answered for every address this manifest names -- so the demotion
+						// costs one extra round per file, once, and never a byte.
+						//
+						// Redundancy, not contradiction: a path in both `files` and the chunk
+						// index is the ordinary state of an offloaded file that is also on
+						// disk, which is every large file the account has.
+						if (offloadConfirmed(full, e.size, null)) continue;
+						out.pending.push(full);
+					} else if (total + content.length > budget) {
+						// Past the HARD budget with nowhere to offload: this is the old
+						// end state, and it is still the honest one.
+						out.left.push(full); out.skipped++; continue;
 					}
-					out.left.push(full); out.skipped++; continue;
 				}
 				out.files[full] = content; total += content.length;
 			}
@@ -4887,11 +4984,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// skipping outright is a file identical in length and untouched since
 			// its own upload.
 			var known = DaimondCloud.manifest(p);
-			if (!stale && known && known.bytes === f.size && known.mtime === f.lastModified && known.key) continue;
+			if (!stale && known && known.bytes === f.size && known.mtime === f.lastModified && known.key) {
+				// REUSED ON ITS CHANGE-KEY, and therefore confirmed only if this round's
+				// presence sweep actually answered: that sweep asks about every address
+				// every manifest names and drops the stale ones before anything here runs,
+				// so a manifest still standing under an ANSWERED query is one the gateway
+				// holds. Under an unanswered one nothing is confirmed, because an
+				// unanswered query is not evidence either way.
+				if (_presenceAnswered) _offloadConfirmed[p] = known.key;
+				continue;
+			}
 			try {
 				var mani = await DaimondChunks.offloadFile(p, f);
 				await DaimondCloud.put(p, mani, mani.key);
-			} catch (e) { /* offload failed: retry next sync, index unharmed */ }
+				// CONFIRMED BY THE UPLOAD ITSELF. `offloadFile` reuses an address only
+				// after `missing()` said the gateway holds it, and `putChunks` throws on
+				// anything but a 200 — so a manifest it RETURNED names chunks that are all
+				// in the store. This is the signal the soft cap demotes on.
+				_offloadConfirmed[p] = mani.key;
+			} catch (e) {
+				// The offload failed, so this path is NOT confirmed and must not be
+				// treated as one on a later round either.
+				delete _offloadConfirmed[p];
+			}
 		}
 		// Cleared only after the pass that owed it, so a round that never ran leaves
 		// the debt standing rather than marking it paid.
@@ -5887,8 +6002,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		if (!addrs.length) return;
 		var res = null;
+		_presenceAnswered = false;
 		try { res = await DaimondChunks.presence(addrs); }
 		catch (e) { res = null; }
+		if (res && res.ok) _presenceAnswered = true;
 		if (!res || !res.ok) {
 			// Said, not swallowed: a push that could not put the question is a push
 			// whose reuse is unverified, and the next one asks again.
@@ -5923,7 +6040,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} catch (e) { dHeld = null; }			// cannot say: treat as restorable
 		}
 
-		var dropped = 0, lost = [], lostItems = 0, reasonOf = {}, held = [];
+		var dropped = 0, lost = [], lostItems = 0, reasonOf = {}, held = [], droppedLost = 0;
+		// WHAT A PEER'S SLOT STILL NAMES, read once for the whole pass. The set that
+		// makes dropping an unrestorable manifest safe; see `peerNamedAddrs` (cloud.js).
+		var peerAddrs = {};
+		try { peerAddrs = DaimondCloud.peerNamedAddrs ? DaimondCloud.peerNamedAddrs() : {}; }
+		catch (e) { peerAddrs = {}; }
+		// Per stale manifest: is EVERY address it names one a peer's slot also carries?
+		// Every, not any: a manifest half-named by a peer and half by nobody still has
+		// addresses only our own reference keeps in the live set.
+		var peerNamed = {};
+		for (var pk = 0; pk < sk.length; pk++) {
+			var pm = null;
+			try { pm = ix[sk[pk]]; } catch (e) { pm = null; }
+			if (!pm || !Array.isArray(pm.chunks) || !pm.chunks.length) continue;
+			var all = true;
+			for (var pc = 0; pc < pm.chunks.length; pc++) {
+				var pa = pm.chunks[pc] && pm.chunks[pc].addr;
+				if (!pa || !peerAddrs[pa]) { all = false; break; }
+			}
+			peerNamed[sk[pk]] = all;
+		}
 		for (var si = 0; si < sk.length; si++) {
 			var key = sk[si], kind = manifestKind(key), id = key.replace(/^@[dcm]\//, '');
 			var reason = 'unrestorable';
@@ -5937,9 +6074,39 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			reasonOf[key] = reason;
 			if (reason === 'reoffload') {
 				if (DaimondCloud.contentForget && DaimondCloud.contentForget(key)) dropped++;
+				// It can be put back, so it is not a standing loss: forget the note, or a
+				// manifest that healed and broke again would read as two rounds old.
+				try { DaimondCloud.clearUnrestorable(key); } catch (e) { /* inert */ }
 				continue;
 			}
 			held.push(key);
+			// A STANDING LOSS, RECORDED. Nothing here can heal this manifest, so it is
+			// the SAME manifest on the next push and the one after -- sixty-five of them
+			// on the owner's account, re-sent for ever in a parcel already at 94% of the
+			// front door. Counted rather than merely logged, so the drop below can wait
+			// for a second sighting and is not a decision taken on one reading.
+			var rounds = 0;
+			try { rounds = DaimondCloud.noteUnrestorable(key) | 0; } catch (e) { rounds = 0; }
+			// AND DROPPED, once, when a PEER still names its addresses. Our manifest is
+			// not the only thing keeping those chunks in the committed live set: a
+			// `.peer.<device>` slot names them too (`notePeerRef`) and the commit declares
+			// both, so letting go of ours loses no chunk and stops the parcel carrying
+			// dead addresses. Never on the first sighting -- one push must have gone out
+			// with the record in it, so a peer that is about to name them has had its
+			// round -- and never where no peer names them at all, which is the case where
+			// our reference is the last thing standing between the content and the sweep.
+			if (rounds > 1 && peerNamed[key]) {
+				var gone = false;
+				try { gone = !!(DaimondCloud.contentForget && DaimondCloud.contentForget(key)); }
+				catch (e) { gone = false; }
+				if (!gone) { try { gone = !!DaimondCloud.forget(key); } catch (e) { gone = false; } }
+				if (gone) {
+					dropped++;
+					droppedLost++;
+					try { DaimondCloud.clearUnrestorable(key); } catch (e) { /* a stale note is inert */ }
+					continue;
+				}
+			}
 			// NAME THE ITEM, not merely its kind. A chat or a Diamond whose text is
 			// no longer on this device is one the owner has LOST, and an id they can
 			// look up is the whole difference between a number and something they
@@ -5981,7 +6148,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				return row.slice(0, sp) + ' ' + census[row] + ' ' + row.slice(sp + 1);
 			}).join(', ');
 		clog('manifest refs missing: ' + n + (breakdown ? ' (' + breakdown + ')' : '')
-			+ ', re-offloading ' + dropped + ' item(s)');
+			+ ', re-offloading ' + (dropped - droppedLost) + ' item(s)'
+			+ (droppedLost ? ', dropping ' + droppedLost
+				+ ' unrestorable ref(s) a peer still names' : ''));
 		if (lost.length) {
 			clog('no local text for: ' + lost.join(', ')
 				+ (lostItems > lost.length ? ' (+' + (lostItems - lost.length) + ' more)' : ''));
@@ -5993,6 +6162,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			reoffload:     dropped,
 			miss_kinds:    kindCounts(kindOf),
 			unrestorable:  unrestorable,
+			// How many standing losses this round stopped carrying, because a peer's slot
+			// keeps their chunks in the live set. 0 on a round that dropped none.
+			dropped_refs:  droppedLost,
 			miss_ids:      lost,
 		});
 	}
@@ -6027,8 +6199,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Diamonds' own share of it. The reference floor reserved above guarantees this
 		// is at least `plan.refReserve`, so every Diamond's reference fits even when the
 		// files took all the rest. The Diamonds reuse `plan` — the store is walked once.
+		// THE SAME SOFT CEILING (see `inlineSoftCap`). A Diamond that does not fit it
+		// offloads, which is the path a large Diamond already took; with nothing to
+		// offload to (`plan.canOffload` false) the cap lifts and it rides inline as
+		// before, so nothing is ever shed.
 		var dCol = await collectDiamonds(
-			Math.max(0, Math.min(SYNC_DIAMONDS_MAX, SYNC_PARCEL_MAX - fileCol.bytes)), plan);
+			inlineSoftCap(Math.max(0, Math.min(SYNC_DIAMONDS_MAX, SYNC_PARCEL_MAX - fileCol.bytes)),
+				plan.canOffload, isMobileDeviceSelf()), plan);
 		// ONE BUDGET FOR THE THREE INLINE SECTIONS, and this is the last of them to
 		// spend it. The inline transcripts had SYNC_CHATS_INLINE_MAX to themselves,
 		// spent here and counted nowhere else, so the parcel's arithmetic was 5 MiB for
@@ -6047,7 +6224,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// then the honest end state -- the same as before this.
 		var chatsCap = Math.max(0, Math.min(SYNC_CHATS_INLINE_MAX,
 			SYNC_PARCEL_MAX - fileCol.bytes - dCol.bytes));
-		var chatsList = await collectChatsRefs(chatsCap);
+		// AND THE SOFT CEILING over the remainder. Without it, capping the files simply
+		// handed their budget to the transcripts: they rode inline instead of offloading
+		// and the parcel was as big as ever. A transcript past the cap becomes a
+		// `messagesRef` the far device hydrates on demand -- the path a large transcript
+		// already took -- and with nowhere to offload the cap lifts, as everywhere else.
+		var chatsList = await collectChatsRefs(
+			inlineSoftCap(chatsCap, plan.canOffload, isMobileDeviceSelf()));
 		// RE-READ THE INDEX AFTER THE CONTENT COLLECTORS. `collectChunked` snapped
 		// the index before the Diamonds and chats wrote their `@d/`/`@c/` manifests
 		// into it, and the ONE commit in sync.js declares its live set from what
@@ -6058,6 +6241,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (window.DaimondCloud) chunked = DaimondCloud.index();
 		noteFilesLeft(fileCol.left);
 		noteDiamondsLeft(dCol.left);
+		// A FILE RIDING INLINE ONLY UNTIL ITS CHUNKS ARE CONFIRMED owes one more round.
+		// `collectChunked` above has just offloaded it, so the NEXT collect demotes it to
+		// a reference and the parcel shrinks -- but nothing else would ask for that
+		// collect, and on a quiet device the big parcel would stand until something
+		// changed. So say so, and nudge once.
+		if (fileCol.pending && fileCol.pending.length) {
+			diag('parcel inline pending', fileCol.pending.length + ' file(s) inline until their chunks confirm'
+				+ ' (cap ' + Math.round(fileCol.softCap / 1024) + 'kB)');
+			try { if (DaimondSync && DaimondSync.nudge) setTimeout(function () { DaimondSync.nudge(); }, 0); }
+			catch (e) { /* the next ordinary round does it */ }
+		}
 		// v3 moves a large Diamond or transcript out to chunks and leaves a
 		// `dataRef`/`messagesRef` inline in its place; v2 added `diamonds` and
 		// `diamondTombs`. The version is informational: every section is read by
@@ -16825,11 +17019,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		persistChats();
 	}
 
-	/// Dispatch a turn to a peer of this account. STRICT ORDER (§4.1), each step
-	/// durable before the next: push the prompt parcel FIRST and capture the version
-	/// it committed at, mark the local turn peer-held SECOND, seal and post the
-	/// errand LAST carrying that version. The errand is never posted before the
-	/// prompt is on the server. Answers `{ ok, why }`.
+	/// Dispatch a turn to a peer of this account. STRICT ORDER (§4.1, seq 223):
+	/// POST THE ERRAND FIRST -- it carries the thread the runner needs -- mark the
+	/// local turn peer-held SECOND, and push the parcel LAST, in the background.
+	///
+	/// The order was the other way round, and the reason was real: a peer must never
+	/// claim an errand whose prompt it cannot read. What made it expensive is that the
+	/// prompt was on the PARCEL, so reading it meant the whole account. Measured on the
+	/// owner's phone (2026-09-13, build ea8174ff76f6): send→claim 27.6 s, of which
+	/// 23.3 s was `flush()` of a 7.86 MB parcel BEFORE the errand was posted, and the
+	/// runner then spent 6 s re-downloading the same parcel to read a one-line prompt.
+	///
+	/// So the prompt -- and the thread around it -- rides the ERRAND (`seedFrom`,
+	/// peer.js). The safety property is kept and is no longer proportional to the
+	/// account: the runner reads the conversation off the envelope it claimed, and the
+	/// parcel (the workspace, the Diamonds, the ledger, everything else a later tool
+	/// call may want) follows on its own time. Nothing the runner waits on is behind it.
+	///
+	/// The push is NOT awaited, and that is the point -- but it is also not forgotten:
+	/// it is kicked off here and its cost is logged when it lands, so a slow parcel is
+	/// still visible without anybody waiting for it. Answers `{ ok, why }`.
 	async function dispatchToPeer(chat, turnId, promptText, scopePaths, opts) {
 		diag('dispatch start', 'chat=' + (chat && chat.id) + ' turn=' + turnId
 			+ (opts && opts.toName ? ' to=' + String(opts.toId || '').slice(0, 8) : ''));
@@ -16851,6 +17060,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var plan = DaimondPeer.buildDispatch(chat, {
 			turnId: turnId,
 			prompt: promptText,
+			// THE THREAD, taken from the chat as it stands now -- after `maybeAutoDispatch`
+			// pushed this turn's user message, so the seed ends at the prompt itself.
+			// Built by `buildDispatch` from this same chat; named here only so a caller
+			// that has a reason to suppress it (`seed: false`) has somewhere to say so.
+			seed:   (opts && opts.seed === false) ? false : undefined,
 			// The chat's OWN model. The url is resolved by the peer from the provider
 			// (models.js), so it is left for the runner rather than looked up here.
 			model:  { provider: chat.provider || '', model: chat.model || '', url: '' },
@@ -16859,42 +17073,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			dispatchedBy: by,
 			parkCount: parkCount,
 		});
-		// 1. PUSH THE PROMPT PARCEL FIRST and CONFIRM it committed, then read the version
-		//    it committed at. A brand-new chat's summary and message tail must be FULLY on
-		//    the server before the errand names a version for the peer to pull to -- a bare
-		//    push() can return early (another push in flight, a live turn, a 409-retry
-		//    exhausting) having sent nothing, which would stamp the errand with a version
-		//    that predates the chat, and the peer would reach that version holding no chat.
-		//    flush() loops until the parcel is confirmed committed; if it cannot confirm,
-		//    fall back to a bare push + version() (the receiver's progress-based catch-up
-		//    and the undeliverable→local net still cover a stale stamp).
-		var parcelVersion = 0;
-		var t0    = (opts && opts.t0) || Date.now();		// turn-send origin, if the caller gave one
-		var tFlush = Date.now();
-		try {
-			var fl = DaimondSync.flush ? await DaimondSync.flush() : null;
-			if (fl && fl.ok) { parcelVersion = fl.version | 0; }
-			else { await DaimondSync.push(); parcelVersion = DaimondSync.version() | 0; }
-		}
-		catch (e) {
-			diag('dispatch FAILED', 'turn=' + turnId + ' push/flush threw after ' + (Date.now() - tFlush) + 'ms');
-			return { ok: false, why: 'the prompt could not be saved to the server' };
-		}
-		// (a) THE FLUSH-BEFORE-POST CONFIRM LOOP (seq 222). How long the send waited
-		// for the parcel to confirm committed on the server -- a prime suspect for
-		// "hand-off is slow", since flush() loops until the version is confirmed.
-		diag('dispatch flushed', 'turn=' + turnId + ' v=' + parcelVersion
-			+ ' flush=' + (Date.now() - tFlush) + 'ms');
-		// 2. MARK the local turn peer-held. Carry the chosen target onto the mark,
-		//    so the hand-off tile names the device before a lease holder exists.
-		if (opts && (opts.toId || opts.toName)) {
-			plan.mark.toDevice = opts.toId || '';
-			plan.mark.toName   = opts.toName || '';
-		}
-		markTurnDispatched(chat, plan.mark);
-		// 3. POST the errand LAST, carrying that version.
+		var t0 = (opts && opts.t0) || Date.now();		// turn-send origin, if the caller gave one
+		// 1. POST THE ERRAND FIRST. It carries the prompt, the model, the scope, the
+		//    pause snapshot AND the thread (`seed`), so a peer that claims it can read
+		//    everything the turn needs without waiting for a parcel. `parcelVersion` is
+		//    0 -- there is no pushed version yet -- which the receiver reads as "no
+		//    target version" and its progress-based catch-up already handles.
 		var body;
-		try { body = await DaimondPeer.sealForSelf(plan.errand(parcelVersion)); }
+		try { body = await DaimondPeer.sealForSelf(plan.errand(0)); }
 		catch (e) { return { ok: false, why: 'the errand could not be sealed: ' + (e && e.message || e) }; }
 		var tPost = Date.now();
 		var res = await DaimondPost.post(body);
@@ -16902,12 +17088,47 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			diag('dispatch FAILED', 'turn=' + turnId + ' ' + ((res && res.why) || 'relay refused'));
 			return { ok: false, why: (res && res.why) || 'the relay would not take the errand' };
 		}
-		// (c) THE ERRAND POSTED. Its own round-trip, and the TOTAL from turn-send to
-		// on-the-relay -- the whole dispatcher-side hand-off cost, before any peer
-		// has even claimed. `postToClaim`/answer timings are logged where they land.
-		diag('dispatch posted', 'turn=' + turnId + ' v=' + parcelVersion
-			+ ' post=' + (Date.now() - tPost) + 'ms send->posted=' + (Date.now() - t0) + 'ms');
-		return { ok: true, turnId: turnId, parcelVersion: parcelVersion };
+		// (a) THE ERRAND POSTED, and WHAT IT WEIGHED. The whole dispatcher-side cost of
+		// the hand-off now, because nothing else stands between the send and a peer
+		// being able to claim. The seed is named so a thread that grew past its budget
+		// is visible rather than inferred.
+		var seedMsgs = (plan.fields.seed && plan.fields.seed.msgs) ? plan.fields.seed.msgs.length : 0;
+		diag('dispatch posted', 'turn=' + turnId + ' post=' + (Date.now() - tPost) + 'ms'
+			+ ' send->posted=' + (Date.now() - t0) + 'ms seed=' + seedMsgs + 'msg/'
+			+ String((body && body.envelope) || '').length + 'B');
+		// 2. MARK the local turn peer-held, so the placeholder -- and the hand-off tile
+		//    with it -- is on screen the moment the errand is on the relay. Carry the
+		//    chosen target onto the mark, so the tile names the device before a lease
+		//    holder exists.
+		if (opts && (opts.toId || opts.toName)) {
+			plan.mark.toDevice = opts.toId || '';
+			plan.mark.toName   = opts.toName || '';
+		}
+		markTurnDispatched(chat, plan.mark);
+		// 3. PUSH THE PARCEL, IN THE BACKGROUND. Everything the turn may reach for that
+		//    the errand does not carry -- the workspace, the Diamonds, the models, the
+		//    ledger -- and the durable copy of this turn's own prompt. Not awaited: the
+		//    runner is not waiting for it, and neither should the person who sent the
+		//    turn. Its cost is logged when it lands, so a slow parcel stays visible.
+		var tFlush = Date.now();
+		(async function () {
+			var v = 0;
+			try {
+				var fl = DaimondSync.flush ? await DaimondSync.flush() : null;
+				if (fl && fl.ok) v = fl.version | 0;
+				else { await DaimondSync.push(); v = DaimondSync.version() | 0; }
+			} catch (e) {
+				// NOT a dispatch failure any more. The errand is already on the relay and
+				// carries the thread, so the turn runs; what is lost is only the durable
+				// copy, which the next ordinary push sends.
+				diag('dispatch parcel FAILED', 'turn=' + turnId
+					+ ' push/flush threw after ' + (Date.now() - tFlush) + 'ms');
+				return;
+			}
+			diag('dispatch parcel', 'turn=' + turnId + ' v=' + v
+				+ ' flush=' + (Date.now() - tFlush) + 'ms (background, after the post)');
+		})();
+		return { ok: true, turnId: turnId, parcelVersion: 0 };
 	}
 
 	// ── The peer runner wiring (dev/PEER_DESIGN.md §4.3, step 5) ─
@@ -16959,9 +17180,62 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var RECONSTRUCT_STALL_MS   = 45000;		// no version/chat progress for this long ⇒ stalled
 	var RECONSTRUCT_ABS_CAP_MS = 300000;	// absolute ceiling regardless of progress (≪ lease deadline)
 
-	/// Reconstruct the chat and its workspace for an errand. It PULLS TO THE
-	/// ERRAND'S PARCEL VERSION FIRST, then finds the chat, builds its app and scopes
-	/// it to the errand's fence.
+	/// Create the chat an errand's SEED describes, or graft the seed's missing
+	/// messages into the copy this device already holds. Answers the chat, or null
+	/// when the errand carries no seed.
+	///
+	/// This is what lets a runner start without the parcel. `DaimondPeer.seedGraft`
+	/// decides WHAT is missing (by `mid`, so a message this device already has is
+	/// never doubled); this only writes it. The graft is an APPEND of messages the
+	/// transcript does not carry, which is the same shape `mergeMessages` applies to
+	/// a pulled parcel -- so when the parcel does land, the union is a no-op over
+	/// what is already here and there is no second copy of anything.
+	async function graftSeed(errand) {
+		var seed = errand && errand.seed;
+		if (!seed || !Array.isArray(seed.msgs) || !seed.msgs.length) return null;
+		var chat = null;
+		for (var i = 0; i < chats.length; i++) if (chats[i].id === errand.chatId) { chat = chats[i]; break; }
+		if (!chat) {
+			// A chat this device has never seen. Built from what the seed says about it,
+			// so the turn can run NOW; the parcel's copy merges into it by id when it
+			// arrives, title and stamps included.
+			chat = {
+				id:       String(errand.chatId || ''),
+				title:    String(seed.title || ''),
+				provider: String(seed.provider || ''),
+				model:    String(seed.model || ''),
+				messages: [],
+				holds:    Array.isArray(errand.scope) ? errand.scope.slice() : [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			};
+			chat._loaded = true;					// its transcript is what we are about to write
+			chats.push(chat);
+			diag('seed chat', 'chat=' + chat.id + ' from the errand (never synced here)');
+		}
+		if (!chat._loaded) {
+			try { await loadChatMessages(chat); } catch (e) { /* the graft below still seeds it */ }
+			chat._loaded = true;
+		}
+		chat.messages = chat.messages || [];
+		var add = DaimondPeer.seedGraft(chat, errand);
+		for (var j = 0; j < add.length; j++) {
+			chat.messages.push({
+				role: add[j].role, content: add[j].content,
+				mid:  add[j].mid,  ts: add[j].ts || Date.now(),
+			});
+		}
+		if (add.length) {
+			touchChat(chat);
+			persistChats();
+			diag('seed graft', 'chat=' + chat.id + ' +' + add.length + ' message(s) from the errand');
+		}
+		return chat;
+	}
+
+	/// Reconstruct the chat and its workspace for an errand. It SEEDS THE THREAD FROM
+	/// THE ERRAND FIRST, then finds the chat, builds its app and scopes it to the
+	/// errand's fence -- pulling the parcel only where the seed could not answer.
 	///
 	/// The catch-up is load-bearing, and its absence was the live "argonaut showed
 	/// 'Sent to another device' but never ran it" failure. The post-box wake that
@@ -17006,19 +17280,36 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// merges the parcel into the STORE, but `applyChats` fires `onChatsChangedElsewhere`
 		// WITHOUT awaiting it (its first act is an async summaries read), so `chats[]` can
 		// lag the store; driving that rebuild ourselves each pass finds the chat.
+		// THE SEED, FIRST. An errand posted ahead of its parcel (seq 223) carries the
+		// thread, so the chat and the prompt are here before any pull -- which is the
+		// whole of why the claim no longer waits on a 7.86 MB flush. A seed that supplies
+		// the turn ends the catch-up before it starts; one that does not (an older
+		// dispatcher's errand, which carries none) leaves the loop below exactly as it
+		// was, so a mixed-build fleet hands off in both directions.
+		try {
+			var seeded = await graftSeed(errand);
+			if (seeded) { try { await onChatsChangedElsewhere(); } catch (e) { /* the chat is in `chats` regardless */ } }
+		} catch (e) { diag('seed FAILED', 'chat=' + (errand && errand.chatId) + ' ' + (e && e.message || e)); }
+
 		var have    = haveVer();
 		var chat    = findErrandChat();
 		var stallBy = startAt + RECONSTRUCT_STALL_MS;
 		var pulled  = false;
 		while (true) {
 			chat = findErrandChat();
-			if (chat && chat._loaded) break;			// present and resident: ready to run
+			// READY means the chat is resident AND HOLDS THIS TURN. Residency alone was
+			// the old test, and it let a chat that synced BEFORE the prompt break out of
+			// the catch-up: `runTurn(promptInTranscript: true)` then anchored to a user
+			// message that was not there. With the errand carrying the thread this is
+			// normally true on the first pass, which is the speed-up; where it is not,
+			// the loop below pulls exactly as it did.
+			if (chat && chat._loaded && DaimondPeer.holdsTurn(chat, errand.turnId)) break;
 			// Present but a NON-RESIDENT summary (empty transcript beside a real msgCount,
 			// seq 213): make it resident before building the agent, or ensureApp would seed
 			// the runner from an empty transcript.
 			if (chat && !chat._loaded) {
 				try { await loadChatMessages(chat); } catch (e) { /* retry within the window */ }
-				if (chat._loaded) break;
+				if (chat._loaded && DaimondPeer.holdsTurn(chat, errand.turnId)) break;
 			}
 			var now = Date.now();
 			if (now > absBy) break;						// absolute ceiling
@@ -17058,6 +17349,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var eResident = new Error('the errand\'s chat could not be made resident in time');
 			eResident.undeliverable = true;
 			throw eResident;
+		}
+		// THE PROMPT IS ON THE ERRAND, so a transcript that still does not hold this
+		// turn is a recoverable state rather than a hand-back. It happens where the
+		// dispatcher's seed was suppressed or clipped and the parcel has not landed:
+		// write the turn's user message from the envelope this device is holding, at
+		// the mid `runTurn(promptInTranscript)` anchors to. The union with the parcel's
+		// own copy is by mid, so the later pull adds nothing and duplicates nothing.
+		if (!DaimondPeer.holdsTurn(chat, errand.turnId)) {
+			chat.messages = chat.messages || [];
+			chat.messages.push({
+				role:    'user',
+				content: String(errand.prompt == null ? '' : errand.prompt),
+				mid:     String(errand.turnId || ''),
+				iturn:   String(errand.turnId || ''),
+				ts:      Date.now(),
+			});
+			touchChat(chat); persistChats();
+			diag('reconstruct prompt from errand', 'chat=' + chat.id + ' turn=' + errand.turnId
+				+ ' (the parcel had not landed and the seed did not carry it)');
 		}
 		// D3 — rebuild the agent from the freshly-synced transcript (a stale app from
 		// before the sync would carry neither the dispatched prompt nor whatever the
@@ -17307,6 +17617,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					}
 					if (DaimondSync && DaimondSync.pushProgress) await DaimondSync.pushProgress();
 				} catch (e) { /* a dropped frame is only a slower stream */ }
+			},
+			// THE LAST FRAME OF THE TURN. The whole rendered tail, on the progress door
+			// the originator is already reading, marked `final` -- so the finished answer
+			// is on its screen without waiting for the account parcel. That wait was
+			// 20.3 s of the owner's 58.9 s hand-off, every second of it after the model
+			// had stopped, and it included a 409 against a third device's push.
+			//
+			// NOT a frame like the streaming ones: those are the turn unfolding and are
+			// skipped when the tail has not changed; this one is the answer, is sent
+			// whether or not it differs from the last, and closes the watcher's view.
+			finalFrame: async function (turnId) {
+				try {
+					var chat = chatHoldingTurn(turnId);
+					if (!chat) return '';
+					var tail = (window.DaimondPeer && DaimondPeer.progressTail)
+						? DaimondPeer.progressTail(chat.messages, turnId, PROGRESS_TAIL_MAX) : '';
+					if (!tail) return '';
+					if (!(DaimondSync && DaimondSync.pushProgressFrame)) return '';
+					var out = await DaimondSync.pushProgressFrame(turnId, tail, true);
+					if (!out || !out.ok) return '';
+					_progressSent[turnId] = tail;
+					diag('handoff final frame', 'turn=' + String(turnId).slice(0, 12)
+						+ ' ' + (out.bytes | 0) + 'B in ' + (out.ms | 0) + 'ms (ahead of the parcel)');
+					return tail;
+				} catch (e) { return ''; }
 			},
 			post: async function (report) {
 				try { var body = await DaimondPeer.sealForSelf(report); await DaimondPost.post(body); }
@@ -17634,8 +17969,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				} catch (e) { frame = null; }
 				if (!_progressLoops[key]) break;
 				if (frame) {
+					// A FINAL FRAME IS THE ANSWER, not another glimpse of the turn. Drawn
+					// BEFORE it is folded, because `foldProgress` closes the view on a final
+					// frame (deliberately -- no later frame may draw a stale tail over a
+					// finished turn) and closing it empties the tail. So the finished text is
+					// put on screen here, and the fold then shuts the view behind it.
+					if (frame.final && frame.tail) {
+						_progressView[key] = { turn: key, seq: frame.seq | 0, tail: String(frame.tail), final: false };
+						paintProgressTile(key);
+						diag('handoff final frame seen', 'turn=' + key.slice(0, 12)
+							+ ' ' + String(frame.tail).length + ' chars, ahead of the parcel');
+					}
 					var next = DaimondPeer.foldProgress(_progressView[key], {
-						turn: key, seq: frame.seq, tail: frame.tail });
+						turn: key, seq: frame.seq, tail: frame.tail, final: frame.final });
 					if (next) {
 						_progressView[key] = next;
 						// Nothing more: the tile paints itself if it is on screen, and if it
@@ -25224,11 +25570,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// reason below. THROTTLED — see `roundSent` above — so only every 5th
 				// round is sent; `roundPayload` is kept regardless, so the round the
 				// turn actually ends on is still caught, below in the `ended` arm.
+				// MID-TURN: `run_turn` holds the session mutably right here, so this
+				// reads the `live_*` getters (agent-side Cells, no session borrow)
+				// rather than `last_prompt_tokens` / `cached_tokens`, which draw zero
+				// while a turn is in flight.
 				roundPayload = {
 					turn: String(umid), r: step,
-					ctx:  (app && app.last_prompt_tokens) || 0,
+					ctx:  (app && app.live_last_prompt_tokens) || 0,
 					win:  (app && app.context_window) || 0,
-					ca:   (app && app.cached_tokens) || 0,
+					ca:   (app && app.live_cached_tokens) || 0,
 					msgs: chat.messages.length,
 					tool: String(ev.name || '').slice(0, 40),
 				};
@@ -40320,11 +40670,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// Keyed on the Diamond's own record, which is the turn here; the chat
 				// path's `round` is keyed on the turn's mid. THROTTLED, same rule as
 				// `runTurn`'s: this is the loop measured running ~150 rounds deep.
+				// MID-TURN, same as `runTurn`'s own `round` payload: `steer_crystal`
+				// holds the session mutably right here, so this reads the `live_*`
+				// getters rather than `last_prompt_tokens` / `cached_tokens`, which
+				// draw zero while a turn is in flight.
 				roundPayload = {
 					turn: String(rec.id || ''), r: step,
-					ctx:  (rec.app && rec.app.last_prompt_tokens) || 0,
+					ctx:  (rec.app && rec.app.live_last_prompt_tokens) || 0,
 					win:  (rec.app && rec.app.context_window) || 0,
-					ca:   (rec.app && rec.app.cached_tokens) || 0,
+					ca:   (rec.app && rec.app.live_cached_tokens) || 0,
 					msgs: rec.messages.length,
 					tool: String(ev.name || '').slice(0, 40),
 					dia:  1,
@@ -46158,11 +46512,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var chat = current || null;
 			var app  = (chat && chat.app) ? chat.app : null;
 			var contextActual = null, contextWindow = null, foldAt = null;
-			// `last_prompt_tokens` is the last turn's prompt count, i.e. the size of
-			// the context as the engine last sent it, in TOKENS.
+			// `live_last_prompt_tokens` is the last round's prompt count, i.e. the size
+			// of the context as the engine last sent it, in TOKENS. This tick runs
+			// EVERY telemetry beat, turn running or not, so it reads the live/agent-side
+			// getter rather than `last_prompt_tokens`, which borrows the session
+			// `run_turn` holds mutably for the whole turn and draws zero while one runs.
 			try {
 				if (app) {
-					contextActual = app.last_prompt_tokens || 0;
+					contextActual = app.live_last_prompt_tokens || 0;
 					contextWindow = app.context_window || 0;
 					foldAt        = app.fold_at || 0;
 				}

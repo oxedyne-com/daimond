@@ -1,1 +1,1 @@
-{"build":"d52adf5a5b97","note":"Fix: a telemetry read mid-turn trapped the wasm and broke every later turn; seat plan; devices list; self-reload"}
+{"build":"755831416a0e","note":"Hand-off: errand first, phone parcel under 1 MB, answer before the parcel; live telemetry counters"}

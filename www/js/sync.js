@@ -1428,6 +1428,24 @@
 		if (!ready() || !entitled) return;
 		if (window.DaimondCore.busy && DaimondCore.busy()) { schedule(); return; }	// never over a live turn.
 		if (inFlight) { schedule(); return; }
+		// NOR OVER SOMEBODY ELSE'S LIVE TURN, on a device that is no part of it. A
+		// third device's push during a hand-off wins the compare-and-set and sends the
+		// RUNNER's push of the answer into a 409 -> pull -> merge -> retry, which cost
+		// the owner 20 s of a 58.9 s hand-off and then five more 409s on the phone.
+		// Deferred, not refused: `schedule()` re-arms, and the bound is the lease's own
+		// liveness, so a runner that dies holds nobody off past its deadline.
+		var standOff = '';
+		try {
+			if (window.DaimondPeer && DaimondPeer.deferPushFor && window.DaimondLease) {
+				standOff = DaimondPeer.deferPushFor(DaimondLease.snapshot(), selfDeviceId(),
+					Date.now(), ownDispatch);
+			}
+		} catch (e) { standOff = ''; }
+		if (standOff) {
+			diag('push deferred', 'turn=' + standOff.slice(0, 12) + ' is running on another device');
+			schedule();
+			return;
+		}
 		inFlight = true;
 		try {
 			for (var attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt++) {
@@ -1798,6 +1816,37 @@
 	/// for identity. A missed beat is safe -- the freshness window and the lease
 	/// catch a peer that actually slept -- so an error is swallowed rather than
 	/// surfaced. Answers the response JSON, or null.
+	/// This device's own id, for the lease comparisons. Through DaimondIdentity, which
+	/// is where every other per-device decision in this app reads it.
+	function selfDeviceId() {
+		try {
+			return (window.DaimondIdentity && DaimondIdentity.deviceId)
+				? String(DaimondIdentity.deviceId() || '') : '';
+		} catch (e) { return ''; }
+	}
+
+	/// Did THIS device dispatch `turnId`? Read from the dispatched placeholder it
+	/// holds for that turn, which carries `dispatchedBy`. A device with no placeholder
+	/// for the turn did not send it -- and answering false is the safe direction,
+	/// because it only ever makes this device MORE willing to stand off the door.
+	function ownDispatch(turnId) {
+		try {
+			var me = selfDeviceId();
+			if (!me) return false;
+			var cs = (window.DaimondCore && DaimondCore.chats) ? DaimondCore.chats() : [];
+			for (var i = 0; i < (cs || []).length; i++) {
+				var msgs = (cs[i] && cs[i].messages) || [];
+				for (var j = 0; j < msgs.length; j++) {
+					var m = msgs[j];
+					if (m && String(m.iturn || '') === String(turnId) && m.dispatchedBy) {
+						return String(m.dispatchedBy) === me;
+					}
+				}
+			}
+		} catch (e) { /* fall through */ }
+		return false;
+	}
+
 	async function beatPresence(deviceId, name, attended, servicing, runner, mobile) {
 		if (!ready() || !entitled) return null;
 		if (_removedSelf) return null;		// removed: the door will only refuse it again
@@ -2065,10 +2114,16 @@
 	/// `{ ok, seq, bytes, ms, why? }` -- never throws, because a dropped frame is a
 	/// slower stream and nothing more.
 	///
+	/// `final` marks THE LAST FRAME OF THE TURN: the turn has ended and this tail is
+	/// the whole of what it produced. A watcher draws it and stops following (see
+	/// `foldProgress`, peer.js), which is what lets the originating device show the
+	/// finished answer without waiting for the account parcel -- the parcel was
+	/// 20.3 s of the owner's 58.9 s hand-off, spent entirely after the turn was over.
+	///
 	/// On a `413` the tail is halved and sent ONCE more: the gateway names its
 	/// ceiling, so the runner fits it rather than stopping. Every other refusal is
 	/// reported and the next tick tries again with a fresher tail.
-	async function pushProgressFrame(turnId, tail) {
+	async function pushProgressFrame(turnId, tail, final) {
 		var out = { ok: false, seq: 0, bytes: 0, ms: 0 };
 		if (!ready() || !entitled || sessionGone) return out;
 		if (!turnId || !tail) return out;
@@ -2079,7 +2134,7 @@
 		for (var attempt = 0; attempt < 2; attempt++) {
 			var seq = (_progSeq[turnId] | 0) + 1;
 			var blob;
-			try { blob = await progSeal({ turn: String(turnId), seq: seq, tail: text }); }
+			try { blob = await progSeal({ turn: String(turnId), seq: seq, tail: text, final: !!final }); }
 			catch (e) { out.why = 'seal'; return out; }
 			if (!blob) { out.why = 'locked'; return out; }
 			var res;
@@ -2128,7 +2183,7 @@
 		if (!res || res.status !== 200 || !res.json || !res.json.blob) return null;
 		var frame = await progUnseal(res.json.blob);
 		if (!frame || String(frame.turn || '') !== String(turnId)) return null;
-		return { seq: res.json.seq | 0, tail: String(frame.tail || '') };
+		return { seq: res.json.seq | 0, tail: String(frame.tail || ''), final: !!frame.final };
 	}
 
 	/// Report a frame to the debug-share feed: how big it was and how long it took,
@@ -2959,6 +3014,9 @@
 		/// `getProgressFrame(turnId, since, waitMs)` reads the latest one (parking for
 		/// `waitMs` so it arrives promptly). This is what streams a hand-off; the whole
 		/// parcel travels only at the turn's end. See the progress door above.
+		/// `pushProgressFrame(turnId, tail, final)` -- `final` says the turn has ENDED
+		/// and this tail is the whole of it, so a watcher can show the finished answer
+		/// without the account parcel.
 		pushProgressFrame: pushProgressFrame,
 		getProgressFrame:  getProgressFrame,
 		/// Turn the in-flight poll on/off. daimond.js calls `expedite(true)` while a

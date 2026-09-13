@@ -259,6 +259,14 @@
 			// placeholder, so the ≤MAX_PARKS bound is GLOBAL across devices rather than
 			// a per-device count that would multiply the spend cap by device count.
 			parkCount: o.parkCount | 0,
+			// THE THREAD THE TURN NEEDS, carried ON the errand so the runner can start
+			// without the parcel. `parcelVersion` still names the version the dispatcher
+			// is pushing -- the workspace, the Diamonds, everything else -- but the turn
+			// itself needs only the conversation, and that is small enough to ride here.
+			// `{ chatId, title, provider, model, msgs:[{ role, content, mid, ts }] }`, or
+			// null from a dispatcher that carries none (an older build, or a thread too
+			// large to seed) -- read as "pull the parcel as before".
+			seed:    o.seed || null,
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -281,6 +289,11 @@
 			// collects this report) bumps from the true total, never from a device-local
 			// zero. Only meaningful on a `parked` report; 0 elsewhere.
 			parkCount: o.parkCount | 0,
+			// Whether the answer ALREADY travelled, as the final frame on the progress
+			// door, ahead of the parcel. 1 means the originator can show the finished turn
+			// now and need not wait for a version; 0 is the old behaviour (a runner on an
+			// older build), where the parcel is the first sight of it.
+			finalTail: o.finalTail | 0,
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -563,19 +576,124 @@
 	// STEP 4. The phone can only dispatch while awake -- sealing, signing and
 	// posting all need the JS context running. `buildDispatch` is the PURE core: it
 	// assembles the full errand and fixes the STRICT ORDER, and daimond.js does only
-	// the thin wiring that runs that order. The order is load-bearing (§4.1): the
-	// prompt parcel is pushed FIRST so a peer can never claim an errand whose prompt
-	// it cannot yet read, the local turn is marked peer-held SECOND, and the errand
-	// is posted LAST, carrying the version the prompt push returned.
+	// the thin wiring that runs that order.
+	//
+	// The order is load-bearing (§4.1) and it INVERTED at seq 223. The property has
+	// not changed -- a peer must never claim an errand whose prompt it cannot read --
+	// but the prompt is no longer on the parcel: the errand carries the thread
+	// (`seedFrom`), so the ERRAND IS POSTED FIRST, the local turn is marked peer-held
+	// SECOND, and the parcel follows LAST, in the background. What that removes is a
+	// wait proportional to the whole account: 23.3 s of the owner's 27.6 s
+	// send-to-claim was flushing 7.86 MB before the errand could be posted, for a
+	// conversation of a few kilobytes.
 
 	var DISPATCH_DEADLINE_MS = 15 * 60 * 1000;	// no peer should start a turn older than this
 	var REASON_DISPATCHED    = 'dispatched';	// the interrupted-reason, beside 'offline'/'unloading'
 
 	// The ordered step tags. The SEQUENCE is the safety property, so it is data a
 	// test can assert, not just the shape of the wiring.
-	var STEP_PUSH_PROMPT   = 'push-prompt';		// push the prompt parcel, capture parcelVersion
+	var STEP_PUSH_PROMPT   = 'push-prompt';		// push the parcel (now LAST, in the background)
 	var STEP_MARK_DISPATCH = 'mark-dispatched';	// mark the local turn why:'dispatched'
-	var STEP_POST_ERRAND   = 'post-errand';		// seal + post the errand carrying that version
+	var STEP_POST_ERRAND   = 'post-errand';		// seal + post the errand, carrying the thread seed
+
+	// WHAT A SEED CARRIES. Enough of the thread for the runner to run the turn, and
+	// no more: a tail of messages, each clipped, under a total budget, so the errand
+	// stays a small sealed envelope on the post door rather than a second parcel.
+	// Measured against the live fault it exists to remove -- a 7.86 MB parcel flushed
+	// BEFORE the errand was posted -- these are three orders of magnitude smaller.
+	var SEED_MAX_MSGS  = 24;				// the thread's tail, newest-last
+	var SEED_MAX_CHARS = 64 * 1024;			// the whole seed's content budget
+	var SEED_MSG_CHARS = 16 * 1024;			// any one message's share of it
+
+	/// THE THREAD THE ERRAND CARRIES. Pure over a chat's `messages`: the tail, ending
+	/// at the turn's own user message, each message clipped to `SEED_MSG_CHARS` and
+	/// the whole under `SEED_MAX_CHARS`, oldest dropped first.
+	///
+	/// This is the whole of why the errand no longer waits for the parcel. The order
+	/// was push-then-post because a peer must never claim an errand whose prompt it
+	/// cannot read -- and on a phone carrying a 7.86 MB account that push was 23.3 s
+	/// of the 27.6 s the owner waited to see the claim, for a conversation measured in
+	/// kilobytes. The safety property is unchanged and the means are different: the
+	/// runner reads the thread off the ERRAND, and the parcel (the workspace, the
+	/// Diamonds, the rest of the account) follows in the background.
+	///
+	/// Only the roles a model is fed travel: `user`, `assistant` and `tool`. A
+	/// `think_log`, a `vision_log` and every other view-only row are left out --
+	/// the runner rebuilds its own. Answers null where there is nothing to seed,
+	/// so an errand carries `seed: null` rather than an empty shell.
+	function seedFrom(chat, turnId, maxMsgs, maxChars) {
+		var c = chat || {}, msgs = Array.isArray(c.messages) ? c.messages : [];
+		var id = String(turnId || '');
+		var nMax = (maxMsgs | 0) > 0 ? (maxMsgs | 0) : SEED_MAX_MSGS;
+		var cMax = (maxChars | 0) > 0 ? (maxChars | 0) : SEED_MAX_CHARS;
+		// END AT THE TURN'S OWN USER MESSAGE. Anything after it on the dispatcher is
+		// the placeholder it is about to write, which the runner must not be seeded with.
+		var end = msgs.length;
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (m && m.role === 'user' && String(m.mid || '') === id) { end = i + 1; break; }
+		}
+		var keep = [];
+		var used = 0;
+		for (var j = end - 1; j >= 0 && keep.length < nMax; j--) {
+			var mm = msgs[j];
+			if (!mm || !mm.role) continue;
+			if (mm.role !== 'user' && mm.role !== 'assistant' && mm.role !== 'tool') continue;
+			if (mm.interrupted) continue;			// a half turn is not history
+			var body = String(mm.content == null ? '' : mm.content);
+			if (body.length > SEED_MSG_CHARS) body = body.slice(0, SEED_MSG_CHARS);
+			if (used + body.length > cMax && keep.length) break;	// the budget, oldest dropped first
+			used += body.length;
+			keep.unshift({ role: mm.role, content: body, mid: String(mm.mid || ''), ts: +mm.ts || 0 });
+		}
+		if (!keep.length) return null;
+		return {
+			chatId:   String(c.id || ''),
+			title:    String(c.title || ''),
+			provider: String(c.provider || ''),
+			model:    String(c.model || ''),
+			msgs:     keep,
+		};
+	}
+
+	/// WHAT A RUNNER IS MISSING from a seeded errand: the seed's messages whose `mid`
+	/// the chat it holds does not already carry, in the seed's own order. Pure, so
+	/// the graft is decided here and daimond.js only appends what this names.
+	///
+	/// A chat the runner has never seen answers the whole seed -- which is what lets
+	/// it build the thread and run, rather than block for the parcel and hand the turn
+	/// back `undeliverable`. A chat already holding every message answers nothing, so
+	/// a runner whose pull landed first does no work.
+	function seedGraft(chat, errand) {
+		var e = errand || {}, seed = e.seed;
+		if (!seed || !Array.isArray(seed.msgs) || !seed.msgs.length) return [];
+		var have = {}, msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (m && m.mid) have[String(m.mid)] = 1;
+		}
+		var out = [];
+		for (var j = 0; j < seed.msgs.length; j++) {
+			var sm = seed.msgs[j];
+			if (!sm || !sm.mid || have[String(sm.mid)]) continue;
+			out.push(sm);
+		}
+		return out;
+	}
+
+	/// Does a chat hold the turn this errand names -- the user message the runner
+	/// anchors `promptInTranscript` to? The reconstruct's readiness test, so a chat
+	/// that synced BEFORE the prompt is not mistaken for one that can run it.
+	function holdsTurn(chat, turnId) {
+		var id = String(turnId || '');
+		if (!id) return false;
+		var msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (m && m.role === 'user' && String(m.mid || '') === id) return true;
+		}
+		return false;
+	}
 
 	/// Assemble a dispatch. PURE: it reads `chat` and the raw materials in `opts`
 	/// (already gathered by daimond.js -- the turn id, the prompt, the scope from
@@ -601,25 +719,44 @@
 		// re-dispatch of a parked turn carries the GLOBAL count read from the synced
 		// placeholder / parked report, so the ≤MAX_PARKS bound holds across devices.
 		var parkCount = o.parkCount | 0;
+		// THE THREAD, ON THE ERRAND. Taken from the chat the caller handed in, so the
+		// errand is self-sufficient and the order below can put it first. A caller that
+		// passes `seed: false` suppresses it (the recovery path, which is running the
+		// turn on the device that already holds the chat).
+		var seed = (o.seed === false) ? null
+			: (o.seed || seedFrom(c, turnId, o.seedMaxMsgs, o.seedMaxChars));
 		return {
-			order:  [STEP_PUSH_PROMPT, STEP_MARK_DISPATCH, STEP_POST_ERRAND],
-			turnId: turnId, chatId: chatId, eid: eid,
+			// ERRAND FIRST (seq 223). The errand carries the thread (`seed`), so a peer
+			// can read the prompt the moment it claims and the claim no longer waits on a
+			// whole-account flush -- which on the owner's phone was 23.3 s of a 27.6 s
+			// wait, for a conversation of a few kilobytes. The local turn is marked
+			// SECOND, so the placeholder and its "is on it" follow the post rather than
+			// the push. The parcel goes LAST and in the BACKGROUND: the workspace, the
+			// Diamonds and the rest of the account still travel, and nothing the runner
+			// waits on is behind them.
+			order:  [STEP_POST_ERRAND, STEP_MARK_DISPATCH, STEP_PUSH_PROMPT],
+			turnId: turnId, chatId: chatId, eid: eid, seed: seed,
 			// What daimond.js writes on the local turn BETWEEN the push and the post,
 			// so recoverInterrupted and Continue treat it as peer-held, not a local
 			// interruption (§3.3). The runner/guards consult it in step 6.
 			mark: { interrupted: true, why: REASON_DISPATCHED, iturn: turnId, itext: prompt, dispatchedBy: by, parkCount: parkCount },
-			/// Finalise the errand once the prompt push has returned its version.
+			/// The errand. `parcelVersion` is the version the dispatcher's push WILL
+			/// commit at, where it is known; with the post now ahead of the push it is 0,
+			/// which the receiver reads as "no target version" and its progress-based
+			/// catch-up already handles. The seed is what the runner actually needs.
 			errand: function (parcelVersion) {
 				return makeErrand({
 					eid: eid, turnId: turnId, chatId: chatId, prompt: prompt, model: model,
 					scope: scope, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
+					seed: seed,
 				});
 			},
 			// The fully-resolved fields (bar parcelVersion), exposed for inspection.
 			fields: {
 				turnId: turnId, chatId: chatId, prompt: prompt, model: model, scope: scope,
 				pause: pause, deadline: deadline, dispatchedBy: by, eid: eid, parkCount: parkCount,
+				seed: seed,
 			},
 		};
 	}
@@ -1845,6 +1982,40 @@
 		return String(t.name || t.label || '');
 	}
 
+	/// Should THIS device hold its parcel push back, because another device is
+	/// running a turn it is not part of? Pure over the lease snapshot.
+	///
+	/// Three devices, one turn: the phone dispatched it, argonaut is running it, and
+	/// gilgamesh is neither. On the owner's hand-off gilgamesh pushed anyway, won the
+	/// compare-and-set, and the runner's own push of the ANSWER came back 409 -- pull,
+	/// merge, retry, +20 s -- after which the phone 409'd five times re-pushing its
+	/// own. None of those pushes carried anything anybody was waiting for.
+	///
+	/// So a device that is neither the originator nor the runner defers while a lease
+	/// it can see reads `running`. It is a DEFERRAL, not a refusal: the caller
+	/// re-schedules, and what it was going to send it sends a moment later, when the
+	/// two devices that are mid-hand-off have had the door. Bounded by the lease's own
+	/// liveness, so a runner that dies cannot hold anybody off past its deadline.
+	///
+	/// `originator` is the turn's `dispatchedBy` as this device knows it -- from the
+	/// dispatched placeholder it holds, where it holds one. A device that dispatched
+	/// the turn NEVER defers: it is the one waiting for the answer, and its own pushes
+	/// are how its half of the conversation travels.
+	function deferPushFor(leases, selfId, now, isOriginatorOf) {
+		var me = String(selfId || '');
+		var n  = now == null ? Date.now() : now;
+		var ls = leases || {};
+		for (var id in ls) {
+			if (!Object.prototype.hasOwnProperty.call(ls, id)) continue;
+			var r = ls[id];
+			if (!liveLease(r, n) || r.mode !== 'running') continue;
+			if (String(r.holder || '') === me) continue;			// we ARE the runner
+			if (isOriginatorOf && isOriginatorOf(id)) continue;		// we sent it
+			return String(id);										// the turn we are standing off for
+		}
+		return '';
+	}
+
 	/// Does `holder` hold a LIVE lease on any turn at all?
 	///
 	/// `leaseHolder` answers for one turnId, which is what every caller needed until
@@ -2477,7 +2648,16 @@
 	///   runTurn      async (ctx, prompt, { onProgress }): the ordinary turn engine,
 	///                calling `onProgress` on journal events so the lease renews;
 	///   abort        (): hard-stop the in-flight turn (`chat.app.abort`);
-	///   pushResult   async () -> version: `captureSession` + parcel push (append merge);
+	///   pushResult   async () -> version: `captureSession` + parcel push (append merge).
+	///                Called LAST and NOT awaited (see step 4), so nothing the
+	///                originator is watching is behind it;
+	///   finalFrame   optional async (turnId) -> tail: send the turn's WHOLE rendered
+	///                tail as the last frame on the progress door, marked `final`, so
+	///                the originating device shows the finished answer without waiting
+	///                for the parcel. Absent -> the parcel is the first sight of it,
+	///                which is what a runner on an older build does;
+	///   awaitPush    optional: await the parcel push before answering, so a test can
+	///                assert the whole sequence. Production leaves it off;
 	///   pushProgress optional async (turnId): stream the RUNNING turn's transcript
 	///                tail to the progress door on a timer, so a peer watching the
 	///                hand-off sees it unfold. ONE SMALL FRAME per tick, keyed by the
@@ -2793,21 +2973,55 @@
 			// nothing races the done/release writes below.
 			stopCheck();
 
-			// 4. COMPLETE in order: push the transcript (append merges), post the report,
-			// mark the lease done, ACK the errand (only now the push has committed), then
-			// release the lease.
-			var parcelVersion = 0;
-			try { parcelVersion = (await d.pushResult()) | 0; trace.push('push'); }
-			catch (err) { return { ran: true, error: true, why: 'push-failed', trace: trace }; }
+			// 4. COMPLETE. THE ANSWER TRAVELS BEFORE THE ACCOUNT DOES (seq 223).
+			//
+			// The order was push-then-report, and it cost the person who sent the turn
+			// everything the push cost: on the owner's hand-off the turn ended and the
+			// runner then spent 20.3 s scanning its manifests and flushing a whole parcel
+			// -- which collided with a third device's push, 409'd, pulled, retried -- with
+			// the finished answer sitting in it the entire time. 58.9 s total for a 3.5 s
+			// turn, most of it after the model had stopped.
+			//
+			// So the FINAL FRAME goes first: the turn's whole rendered tail, on the
+			// progress door the watcher is already reading, marked `final` so it draws it
+			// and stops following. Then the report, then the lease, then the ack -- every
+			// one of them a small write the originator is waiting on. The PARCEL goes LAST
+			// and is not awaited: it carries the durable copy, the workspace the turn
+			// touched and the session, and nobody is watching a spinner for it.
+			//
+			// Money-safety is unchanged and the reasoning is worth keeping: the ACK is
+			// what takes the errand off the relay, and a crash before the answer is
+			// durable must leave it there. The answer is durable in two places now -- the
+			// final frame on the progress door, which the originator folds into its own
+			// transcript, and the parcel. A crash between the two leaves the errand ACKED
+			// with the answer on the door, which is the state the originator already
+			// handles; what it can no longer do is strand the turn for the length of a
+			// flush.
+			var finalTail = '';
+			if (d.finalFrame) {
+				try { finalTail = String((await d.finalFrame(turnId)) || ''); trace.push('final-frame'); }
+				catch (err) { /* a dropped final frame only means the parcel is the first sight */ }
+			}
 			try {
 				await d.post(makeReport({ eid: e.eid, turnId: turnId, chatId: e.chatId,
-					status: 'done', parcelVersion: parcelVersion }));
+					status: 'done', parcelVersion: 0, finalTail: finalTail ? 1 : 0 }));
 				trace.push('report');
-			} catch (err) { /* the report is only the nudge; the answer is already pushed */ }
+			} catch (err) { /* the report is only the nudge; the frame already carried the answer */ }
 			await leaseSet(turnId, d.selfId, 'done', d.cas, d.now); trace.push('complete');
 			try { if (d.ack) { await d.ack(); trace.push('ack'); } }
 			catch (err) { /* a missed ack costs one idempotent re-collect, never a drop */ }
 			await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release');
+			// THE PARCEL, AFTER THE LEASE IS FREE. Awaited only where the caller asked
+			// for it (`awaitPush`, which the tests do so the sequence is assertable);
+			// otherwise started and left to land, because the originator is no longer
+			// waiting on any part of it.
+			var parcelVersion = 0;
+			var pushing = (async function () {
+				try { return (await d.pushResult()) | 0; }
+				catch (err) { return 0; }
+			})();
+			if (d.awaitPush) { parcelVersion = (await pushing) | 0; trace.push('push'); }
+			else { pushing.then(function () { trace.push('push'); }, function () {}); }
 			return { ran: true, done: true, parcelVersion: parcelVersion, trace: trace };
 		} finally {
 			stopCheck();			// EVERY exit stops the liveness ticker -- no timer leaks.
@@ -3006,6 +3220,21 @@
 		/// The device id and the label of a hand-off target, read from whatever shape
 		/// the caller holds -- a `handoffTarget` record or a bare id string. The feed's
 		/// `peer` field went out as "[object Obje" for want of these.
+		/// THE THREAD AN ERRAND CARRIES, and what a runner does with it. `seedFrom`
+		/// clips a chat's tail to the errand's budget; `seedGraft` answers which of
+		/// those messages the runner's own copy is missing; `holdsTurn` is the
+		/// reconstruct's readiness test -- does this chat carry the turn at all. All
+		/// three pure, which is what moved the parcel off the dispatch's critical path.
+		seedFrom:      seedFrom,
+		seedGraft:     seedGraft,
+		holdsTurn:     holdsTurn,
+		SEED_MAX_MSGS:  SEED_MAX_MSGS,
+		SEED_MAX_CHARS: SEED_MAX_CHARS,
+		/// Should this device defer its parcel push because another device is mid-turn on
+		/// a hand-off it is no part of? Pure; sync.js consults it before a push, and
+		/// re-schedules rather than refusing. The 409 storm three devices made of one
+		/// hand-off is what it removes.
+		deferPushFor:  deferPushFor,
 		peerIdOf:      peerIdOf,
 		peerLabelOf:   peerLabelOf,
 		/// WHERE THE NEXT TURN WILL RUN, as the line under the composer states it. The same

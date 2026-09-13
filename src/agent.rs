@@ -94,6 +94,10 @@ pub struct Agent {
     pub live_cached:     Cell<u64>,
     /// Cumulative provider-reported USD for the turn in flight; see `live_prompt`.
     pub live_cost:       Cell<f64>,
+    /// Prompt tokens of the last round this turn has sent, updated alongside
+    /// `session.last_prompt_tokens` -- one round, not the turn's running total; see
+    /// `live_prompt` for why this sits outside the session's borrow.
+    pub live_last_prompt: Cell<u64>,
     /// What the user has said since this turn began (see [`Interjections`]).
     pub interject:       Interjections,
     /// Facts about the machine this turn can reach, refreshed before each turn.
@@ -333,10 +337,11 @@ impl Agent {
         Self {
             llm,
             system_prompt: system_prompt.to_string(),
-            live_prompt:     Cell::new(0),
-            live_completion: Cell::new(0),
-            live_cached:     Cell::new(0),
-            live_cost:       Cell::new(0.0),
+            live_prompt:      Cell::new(0),
+            live_completion:  Cell::new(0),
+            live_cached:      Cell::new(0),
+            live_cost:        Cell::new(0.0),
+            live_last_prompt: Cell::new(0),
             interject:       new_interjections(),
             briefing:        Rc::new(RefCell::new(String::new())),
             limits:          Rc::new(RefCell::new(Limits::default())),
@@ -897,7 +902,10 @@ impl Agent {
                     session.completion_tokens += resp.completion_tokens;
                     session.cached_tokens += resp.cached_tokens;
                     session.cost_usd += resp.cost_usd;
-                    if resp.prompt_tokens > 0 { session.last_prompt_tokens = resp.prompt_tokens; }
+                    if resp.prompt_tokens > 0 {
+                        session.last_prompt_tokens = resp.prompt_tokens;
+                        self.live_last_prompt.set(resp.prompt_tokens);
+                    }
                     if resp.truncated { on_event(AgentEvent::Truncated); }
                     self.gauge.observe(sent, resp.prompt_tokens);
                     self.live_prompt.set(session.prompt_tokens);
@@ -1263,7 +1271,10 @@ impl Agent {
             // cost accumulate exactly as the token counters do.
             session.cached_tokens += resp.cached_tokens;
             session.cost_usd += resp.cost_usd;
-            if resp.prompt_tokens > 0 { session.last_prompt_tokens = resp.prompt_tokens; }
+            if resp.prompt_tokens > 0 {
+                session.last_prompt_tokens = resp.prompt_tokens;
+                self.live_last_prompt.set(resp.prompt_tokens);
+            }
             self.live_prompt.set(session.prompt_tokens);
             self.live_completion.set(session.completion_tokens);
             self.live_cached.set(session.cached_tokens);
@@ -3637,6 +3648,63 @@ mod tests {
             _ => false,
         }).count();
         assert_eq!(1, notes, "a continuation wrote itself into the conversation");
+    }
+
+    #[tokio::test]
+    async fn test_live_last_prompt_advances_per_round_on_the_stub_00() {
+        // `live_last_prompt` exists because `session.last_prompt_tokens` cannot be read
+        // mid-turn: `run_turn` holds the session mutably for the whole of it, so a getter
+        // that borrows it panics the `RefCell` if a caller reaches it from an `on_event`
+        // fired synchronously inside a round.  This is the stub proof that the agent-side
+        // Cell actually tracks the LAST round's figure, not the turn's running total, and
+        // that it is already current by the time the round's own event fires -- which is
+        // the moment `www/js/daimond.js`'s debug-share `round` payload reads it.
+        let registry = one_tool();
+        let round_one = crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c0\",\
+                 \"type\":\"function\",\"function\":{\"name\":\"file_write\",\"arguments\":\
+                 \"{\\\"path\\\":\\\"a.txt\\\",\\\"content\\\":\\\"1\\\"}\"}}]}}]}\n\n"
+                    .to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\
+                 \"usage\":{\"prompt_tokens\":50,\"completion_tokens\":2}}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        // The turn-ending round: a different figure, so a test that read the FIRST round's
+        // value by accident (a stale Cell, or one set before the round it names) would not
+        // pass by coincidence.
+        let round_two = crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Done\"}}]}\n\n".to_string(),
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":120,\
+                 \"completion_tokens\":2}}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        let (port, _seen) = crate::llm::tests::start_stub(vec![round_one, round_two]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(10);
+        let mut session = Session::new(fmt!("s1"), fmt!("live"), fmt!("model"));
+        // What the FIRST round's tool-call event saw, read the same way the JS round payload
+        // does: off the agent, mid-turn, with no session borrow in reach.
+        let mut mid_turn_reading = 0u64;
+        let res = a.run_turn(&mut session, fmt!("go"), &registry, &mut |ev| {
+            if let AgentEvent::ToolCall { .. } = ev {
+                mid_turn_reading = a.live_last_prompt.get();
+            }
+        }).await;
+        assert!(res.is_ok(), "{:?}", res);
+        assert_eq!(50, mid_turn_reading,
+            "the live counter was not current by the time the round's own event fired");
+        assert_eq!(120, a.live_last_prompt.get(),
+            "the live counter did not move on to the second round's figure");
+        assert_eq!(120, session.last_prompt_tokens,
+            "the live and the session-borrowing figures disagree once the turn has ended");
     }
 
     #[test]

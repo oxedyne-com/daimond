@@ -24,6 +24,13 @@
 //   up + claim-loop. (Pre-fix this is RED: B logs "reconstruct ... does not hold yet",
 //   releases the lease, and no answer ever appears.)
 //
+//   SINCE SEQ 223 the errand carries the thread (`seedFrom`, peer.js), so a runner
+//   does not need the parcel to read the prompt. Both cases keep their property --
+//   a withheld parcel never strands a turn -- but the WAY it is satisfied changed:
+//   the peer can now run the turn from the envelope it claimed, and the hand-back
+//   remains the net for a turn whose reconstruct genuinely needs the workspace. The
+//   checks below assert the property, not the mechanism, for exactly that reason.
+//
 //   CASE 2 (NEVER ARRIVES): the parcel is withheld indefinitely. The runner must
 //   detect the STALL, report UNDELIVERABLE, and the DISPATCHER (A) must drop to a
 //   LOCAL run AT ONCE -- before the ~95 s backstop -- exactly one run, on A, B never
@@ -203,8 +210,15 @@ try {
 	const bAns1 = answersMatching(bRan1, 'SLOWSYNC');
 	const claimLoop1 = bErrs.filter((e) => /reconstruct/i.test(e)
 		&& (/does not hold yet/i.test(e) || /could not sync/i.test(e) || /undeliverable/i.test(e)));
-	check('CASE 1: B held the content pull past 8 s (the withhold was exercised)', gate.aborted > 0,
-		'aborted content pulls: ' + gate.aborted);
+	// THE WITHHOLD NO LONGER HAS TO BITE (seq 223). The errand carries the thread, so
+	// a runner does not need a content pull to read the prompt -- `gate.aborted` can
+	// legitimately be 0 because B never asked. What still matters, and is what this
+	// file exists for, is that a WITHHELD PARCEL DOES NOT STRAND THE TURN: either the
+	// withhold was exercised and B waited it out, or B never needed the parcel at all.
+	// Both are the property; only a stranded turn is not.
+	check('CASE 1: a withheld parcel either bit and was waited out, or was not needed',
+		gate.aborted > 0 || bAns1.length >= 1,
+		'aborted content pulls: ' + gate.aborted + ', B answers: ' + bAns1.length);
 	check('CASE 1: B did NOT claim-loop / give up on the slow parcel (no reconstruct-fail)',
 		claimLoop1.length === 0,
 		'reconstruct-fail console lines: ' + claimLoop1.length
@@ -261,24 +275,39 @@ try {
 	const ranA2 = ans2.filter((m) => String(m.ranOn) === String(idA)).length;
 	const undeliverableSeen = bAll.filter((e) => /reconstruct undeliverable/i.test(e)
 		|| (/undeliverable/i.test(e) && /reconstruct/i.test(e)));
-	check('CASE 2: B reported the parcel UNDELIVERABLE (handed the turn back)',
-		undeliverableSeen.length >= 1,
-		'undeliverable console lines: ' + undeliverableSeen.length
-		+ (undeliverableSeen[0] ? ' e.g. ' + JSON.stringify(undeliverableSeen[0]).slice(0, 100) : ''));
-	check('CASE 2: A ran the turn LOCALLY (dropped to local, not stranded)', ranA2 >= 1,
-		'answers on A: ' + ranA2 + ' / total: ' + ans2.length + '; ranOn=' + JSON.stringify(ans2.map((m) => m.ranOn)));
-	check('CASE 2: the local run happened BEFORE the ~95 s backstop (immediate, via the undeliverable report)',
+	// THE TURN IS ANSWERED. That is the property, and since seq 223 there are TWO ways
+	// to satisfy it, because the errand now carries the thread:
+	//
+	//   B RUNS IT ANYWAY -- the better outcome, and the new ordinary one: the prompt
+	//   and the conversation are on the envelope B claimed, so a parcel that never
+	//   arrives costs the turn nothing. B answers, it syncs back, A shows it.
+	//
+	//   B HANDS IT BACK and A runs locally -- the old outcome, and still the net for a
+	//   turn the seed genuinely cannot supply (a reconstruct that needs the workspace).
+	//
+	// Asserted as a disjunction rather than rewritten to the new case alone, because
+	// BOTH are correct and which one happens depends on what the turn needs -- and a
+	// test that demanded the hand-back would be demanding the slower answer.
+	const ranB2 = ans2.filter((m) => String(m.ranOn) === String(idB)).length;
+	check('CASE 2: the turn was ANSWERED despite the parcel never arriving',
+		ans2.length >= 1,
+		'answers: ' + ans2.length + '; ranOn=' + JSON.stringify(ans2.map((m) => m.ranOn)));
+	check('CASE 2: either B ran it from the errand, or it was handed back and A ran it',
+		ranB2 >= 1 || ranA2 >= 1,
+		'on B: ' + ranB2 + ', on A: ' + ranA2
+		+ ', undeliverable lines: ' + undeliverableSeen.length);
+	check('CASE 2: and it happened BEFORE the ~95 s backstop',
 		ans2.length >= 1 && elapsed2 < 90, 'elapsed: ' + elapsed2 + 's');
-	check('CASE 2: exactly one answer (no double-run; B never ran)', ans2.length === 1,
-		'answers: ' + ans2.length);
+	check('CASE 2: exactly one answer -- one device ran it, never both',
+		ans2.length === 1, 'answers: ' + ans2.length);
 	// Match the ANSWER bubble ("Mock reply to: …DEADSYNC…"), not the prompt echo.
 	const rendered2 = await until(a.page, () => {
 		const out = document.getElementById('chat-output');
 		const txt = out ? out.innerText : '';
 		return /Mock reply to:[^\n]*DEADSYNC/i.test(txt) && !/sent to your other/i.test(txt);
 	}, null, 20000);
-	check('CASE 2: A rendered the local answer with the spinner cleared',
-		rendered2 && ans2.length >= 1, 'ran locally at ~' + elapsed2 + 's; rendered: ' + rendered2);
+	check('CASE 2: A rendered the answer with the spinner cleared',
+		rendered2 && ans2.length >= 1, 'answered at ~' + elapsed2 + 's; rendered: ' + rendered2);
 	await shot(a, 'handoff_slowparcel_case2');
 	gate.blocking = false;
 	b.page.off('console', bAllListener);

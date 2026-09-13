@@ -579,37 +579,45 @@ async function main() {
 	// ══════════════════════════════════════════════════════════
 	console.log('\nDispatcher — buildDispatch fixes the order and the whole errand');
 	const T0 = 1700000000000;			// a realistic epoch-ms
-	const dchat = { id: 'chat-9', provider: 'openrouter', model: 'test/m', holds: ['/a', '/b'] };
+	const dchat = { id: 'chat-9', provider: 'openrouter', model: 'test/m', holds: ['/a', '/b'],
+		messages: [
+			{ role: 'user', content: 'an earlier question', mid: 'm1', ts: T0 - 3000 },
+			{ role: 'assistant', content: 'an earlier answer', mid: 'm2', ts: T0 - 2000 },
+			{ role: 'user', content: 'do the thing', mid: 'turn-9', ts: T0 },
+		] };
 	const plan = phone.DaimondPeer.buildDispatch(dchat, {
 		turnId: 'turn-9', prompt: 'do the thing', pause: { paused: ['x'] },
 		scope: dchat.holds,			// daimond.js resolves scope (scopeChatTo / holds) and passes it
 		dispatchedBy: 'devPHONE', now: T0,
 	});
-	check('the order is push-prompt -> mark-dispatched -> post-errand',
-		plan.order.join(',') === 'push-prompt,mark-dispatched,post-errand');
+	check('the order is post-errand -> mark-dispatched -> push-prompt (the errand first)',
+		plan.order.join(',') === 'post-errand,mark-dispatched,push-prompt');
 	check('the mark is the dispatched reason on the turn',
 		plan.mark.why === 'dispatched' && plan.mark.iturn === 'turn-9' && plan.mark.interrupted === true);
 	check('the deadline defaults to ~15 minutes out',
 		plan.fields.deadline === T0 + phone.DaimondPeer.DISPATCH_DEADLINE_MS);
 
-	// Drive the order end to end: push the prompt parcel FIRST (capturing the
-	// version), then post the errand carrying it -- exactly what daimond.js's thin
-	// wiring does. The sequence is recorded and must equal plan.order.
+	// Drive the order end to end: post the errand FIRST (it carries the thread, so a
+	// peer can read the prompt the moment it claims), mark the turn, and push the
+	// parcel LAST -- exactly what daimond.js's thin wiring now does, with the push
+	// left running in the background. The sequence is recorded and must equal
+	// plan.order.
 	let ver = 41;
 	const fakeSync = { push: async () => { ver += 1; }, version: () => ver };
 	const seq = [];
-	await fakeSync.push(); seq.push('push-prompt');
-	const pv = fakeSync.version();
-	seq.push('mark-dispatched');			// daimond.js marks the local turn here
-	const errand9 = plan.errand(pv);
+	const errand9 = plan.errand(0);
 	const body9 = await phone.DaimondPeer.sealForSelf(errand9);
 	const before9 = relay2.since(0).length;
 	await phone.DaimondPost.post(body9); seq.push('post-errand');
+	seq.push('mark-dispatched');			// daimond.js marks the local turn here
+	await fakeSync.push(); seq.push('push-prompt');
+	const pv = fakeSync.version();
 
 	check('the executed sequence matches the planned order', seq.join(',') === plan.order.join(','));
-	check('the errand carries the version the prompt push committed at', errand9.parcelVersion === pv && pv === 42);
-	check('the errand was posted only AFTER the prompt push (never before)',
-		seq.indexOf('post-errand') > seq.indexOf('push-prompt'));
+	check('the errand names NO parcel version -- there is no pushed version yet',
+		errand9.parcelVersion === 0 && pv === 42);
+	check('the errand was posted BEFORE the parcel push (the whole point of seq 223)',
+		seq.indexOf('post-errand') < seq.indexOf('push-prompt'));
 	check('the post box grew by exactly the one errand', relay2.since(0).length === before9 + 1);
 
 	// The full envelope survives seal+sign+open, cross-device (laptop opens it).
@@ -621,13 +629,93 @@ async function main() {
 		&& opened9.model.provider === 'openrouter' && opened9.model.model === 'test/m'
 		&& Array.isArray(opened9.scope) && opened9.scope.join(',') === '/a,/b'
 		&& opened9.pause && opened9.pause.paused.join(',') === 'x'
-		&& opened9.parcelVersion === pv
+		&& opened9.parcelVersion === 0
 		&& opened9.deadline === T0 + phone.DaimondPeer.DISPATCH_DEADLINE_MS
 		&& opened9.dispatchedBy === 'devPHONE');
 
+	const P = phone.DaimondPeer;			// the seam every pure check below drives
+
+	// ── THE SEED. What makes errand-first safe: the thread rides the envelope, so a
+	//    peer that claims can run without the parcel. ──
+	console.log('\nDispatcher — the errand carries the thread, so the claim waits on nothing');
+	check('S1: the errand carries the seed, naming the chat',
+		!!opened9.seed && opened9.seed.chatId === 'chat-9'
+		&& opened9.seed.provider === 'openrouter' && opened9.seed.model === 'test/m');
+	check('S2: the seed ends AT the turn\'s own user message -- the prompt the runner anchors to',
+		opened9.seed.msgs.length === 3
+		&& opened9.seed.msgs[2].mid === 'turn-9' && opened9.seed.msgs[2].content === 'do the thing');
+	check('S3: and carries the history before it, in order',
+		opened9.seed.msgs.map((m) => m.mid).join(',') === 'm1,m2,turn-9');
+	check('S4: the whole sealed errand is KILOBYTES, not the account -- the 23.3s flush it replaces',
+		body9.envelope.length < 8 * 1024, 'sealed errand: ' + body9.envelope.length + ' B');
+	{
+		// A thread with a placeholder after the turn (which is what the dispatcher
+		// writes next) and a view-only row in it: neither belongs to a model.
+		const noisy = { id: 'c', messages: [
+			{ role: 'think_log', content: 'thinking thinking', mid: 't1' },
+			{ role: 'user', content: 'q', mid: 'u1' },
+			{ role: 'assistant', content: 'a', mid: 'a1' },
+			{ role: 'user', content: 'the prompt', mid: 'TURN' },
+			{ role: 'assistant', content: '', mid: 'ph', interrupted: true, why: 'dispatched' },
+		] };
+		const sd = P.seedFrom(noisy, 'TURN');
+		check('S5: a view-only row (think_log) is not seeded -- the runner rebuilds its own',
+			!sd.msgs.some((m) => m.role === 'think_log'));
+		check('S6: the dispatched PLACEHOLDER after the turn is not seeded',
+			!sd.msgs.some((m) => m.mid === 'ph') && sd.msgs[sd.msgs.length - 1].mid === 'TURN');
+		check('S7: a chat with nothing to seed answers null, not an empty shell',
+			P.seedFrom({ id: 'c', messages: [] }, 'TURN') === null);
+		// THE BUDGET. A long thread is clipped, and the newest end is what survives.
+		const long = { id: 'c', messages: [] };
+		for (let i = 0; i < 200; i++) {
+			long.messages.push({ role: 'user', content: 'q'.repeat(2000), mid: 'u' + i });
+			long.messages.push({ role: 'assistant', content: 'a'.repeat(2000), mid: 'a' + i });
+		}
+		long.messages.push({ role: 'user', content: 'the prompt', mid: 'TURN' });
+		const big = P.seedFrom(long, 'TURN');
+		const chars = big.msgs.reduce((n, m) => n + m.content.length, 0);
+		check('S8: a long thread is clipped to the seed budget, so the errand stays small',
+			big.msgs.length <= P.SEED_MAX_MSGS && chars <= P.SEED_MAX_CHARS,
+			big.msgs.length + ' msgs, ' + chars + ' chars');
+		check('S9: and the NEWEST end is what survives -- the turn itself is always in it',
+			big.msgs[big.msgs.length - 1].mid === 'TURN');
+		// ONE HUGE MESSAGE is clipped rather than dropped: a seed of nothing would
+		// hand the turn back for want of a prompt.
+		const huge = { id: 'c', messages: [{ role: 'user', content: 'x'.repeat(400 * 1024), mid: 'TURN' }] };
+		const hs = P.seedFrom(huge, 'TURN');
+		check('S10: a single oversized message is CLIPPED, never dropped -- the prompt always travels',
+			hs && hs.msgs.length === 1 && hs.msgs[0].mid === 'TURN'
+			&& hs.msgs[0].content.length > 0 && hs.msgs[0].content.length <= P.SEED_MAX_CHARS);
+	}
+	{
+		// ── THE GRAFT, on the runner. ──
+		const seeded = { seed: { chatId: 'c', msgs: [
+			{ role: 'user', content: 'q', mid: 'u1' },
+			{ role: 'assistant', content: 'a', mid: 'a1' },
+			{ role: 'user', content: 'the prompt', mid: 'TURN' },
+		] }, chatId: 'c', turnId: 'TURN' };
+		check('S11: a chat this runner has never seen needs the WHOLE seed',
+			P.seedGraft(null, seeded).map((m) => m.mid).join(',') === 'u1,a1,TURN');
+		const partly = { messages: [{ role: 'user', content: 'q', mid: 'u1' }] };
+		check('S12: a chat holding part of the thread needs only the rest -- no message is doubled',
+			P.seedGraft(partly, seeded).map((m) => m.mid).join(',') === 'a1,TURN');
+		const all = { messages: seeded.seed.msgs.map((m) => ({ role: m.role, content: m.content, mid: m.mid })) };
+		check('S13: a runner whose pull landed first needs nothing -- the graft is a no-op',
+			P.seedGraft(all, seeded).length === 0);
+		check('S14: an errand with no seed grafts nothing (a dispatcher on an older build)',
+			P.seedGraft(partly, { chatId: 'c', turnId: 'TURN' }).length === 0);
+		// `holdsTurn` is the reconstruct's readiness test, and the reason it exists:
+		// residency alone let a chat that synced BEFORE the prompt break out of the
+		// catch-up, and runTurn then anchored to a user message that was not there.
+		check('S15: holdsTurn is FALSE for a chat synced before the prompt',
+			P.holdsTurn(partly, 'TURN') === false);
+		check('S16: and TRUE once the prompt is in it, by mid and role',
+			P.holdsTurn(all, 'TURN') === true
+			&& P.holdsTurn({ messages: [{ role: 'assistant', content: 'x', mid: 'TURN' }] }, 'TURN') === false);
+	}
+
 	// ── The why:'dispatched' handling: dispatchState against the lease ──
 	console.log('\nDispatched turn — dispatchState classifies it against the lease');
-	const P = phone.DaimondPeer;
 	const dTurn = { why: 'dispatched', iturn: 'turn-9' };
 	const liveForeign = { turnId: 'turn-9', holder: 'devLAPTOP', mode: 'running', expiry: T0 + 60000, renewedAt: T0 };
 	const liveOwn     = { turnId: 'turn-9', holder: 'devPHONE',  mode: 'running', expiry: T0 + 60000, renewedAt: T0 };
@@ -2274,12 +2362,15 @@ async function runRunnerAcceptance(P, L, check) {
 		check('syncCas: the committed sync names the winner', sync.leases()[TID].holder === 'A');
 	}
 
-	// ── Happy path: take -> reconstruct -> run -> push -> report -> complete -> ack -> release. ──
+	// ── Happy path. THE RETURN LEG, REORDERED (seq 223): the answer travels before
+	//    the account does -- final frame, report, lease, ack, and the parcel last. ──
 	{
 		L.forget();
 		const sync = makeLeaseSync({});
-		let pushed = 0, report = null, acked = 0;
-		const ctxChat = { id: 'chat-r', messages: [{ role: 'user', content: 'compute', mid: 'u1', ts: 1 }] };
+		let pushed = 0, report = null, acked = 0, frames = [];
+		// The user message carries the TURN's own mid, which is what `progressTail`
+		// anchors to -- the runner's transcript holds the prompt the dispatcher sent.
+		const ctxChat = { id: 'chat-r', messages: [{ role: 'user', content: 'compute', mid: TID, ts: 1 }] };
 		const res = await P.runErrand(errand, {
 			selfId: 'peerA', cas: P.syncCas(sync), now: () => 2000,
 			reconstruct: async () => ({ chat: ctxChat }),
@@ -2288,21 +2379,112 @@ async function runRunnerAcceptance(P, L, check) {
 				P.foldAssistant(ctx.chat, { mid: 'a1', turnId: TID, text: 'the answer is 42', ts: 3 });
 			},
 			abort: () => {},
+			finalFrame: async (tid) => {
+				const tail = P.progressTail(ctxChat.messages, tid, 48 * 1024);
+				frames.push({ tid, tail });
+				return tail;
+			},
 			pushResult: async () => { pushed += 1; return 9; },
 			post: async (rep) => { report = rep; },
 			ack: async () => { acked += 1; },
+			awaitPush: true,			// so the whole sequence is assertable here
 		});
 		check('the runner completes the errand', res.ran === true && res.done === true);
-		check('the runner order is take,reconstruct,run,push,report,complete,ack,release',
-			res.trace.join(',') === 'take,reconstruct,run,push,report,complete,ack,release');
+		check('the runner order is take,reconstruct,run,final-frame,report,complete,ack,release,push',
+			res.trace.join(',') === 'take,reconstruct,run,final-frame,report,complete,ack,release,push',
+			res.trace.join(','));
 		check('the answer was folded into the transcript',
 			ctxChat.messages.some((m) => m.role === 'assistant' && m.content === 'the answer is 42'));
 		check('the transcript was pushed exactly once', pushed === 1);
-		check('a done report was posted carrying the pushed version',
-			!!report && report.t === 'report' && report.status === 'done' && report.parcelVersion === 9);
-		check('the errand was acked exactly once, AFTER the push',
-			acked === 1 && res.trace.indexOf('ack') > res.trace.indexOf('push'));
+		check('R1: the FINAL FRAME carried the answer, and went out BEFORE the parcel',
+			frames.length === 1 && /the answer is 42/.test(frames[0].tail)
+			&& res.trace.indexOf('final-frame') < res.trace.indexOf('push'));
+		check('R2: the report went out BEFORE the parcel -- the originator is not behind a flush',
+			res.trace.indexOf('report') < res.trace.indexOf('push'));
+		check('R3: and the lease was RELEASED before the parcel too',
+			res.trace.indexOf('release') < res.trace.indexOf('push'));
+		check('R4: the report says the answer already travelled, so the originator need not wait',
+			!!report && report.t === 'report' && report.status === 'done' && report.finalTail === 1);
+		check('the errand was acked exactly once, and before the parcel',
+			acked === 1 && res.trace.indexOf('ack') < res.trace.indexOf('push'));
 		check('the lease ends released', sync.leases()[TID].mode === 'released');
+	}
+
+	// ── R5. A RUNNER WITH NO FINAL-FRAME DEP (an older build's wiring) still completes,
+	//    and says so in the report, so the originator falls back to the parcel. ──
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		let report = null;
+		const ctxChat = { id: 'chat-r5', messages: [{ role: 'user', content: 'q', mid: 'u1', ts: 1 }] };
+		const res = await P.runErrand(errand, {
+			selfId: 'peerA', cas: P.syncCas(sync), now: () => 2000,
+			reconstruct: async () => ({ chat: ctxChat }),
+			runTurn: async (ctx) => { P.foldAssistant(ctx.chat, { mid: 'a1', turnId: TID, text: 'ok', ts: 3 }); },
+			abort: () => {}, pushResult: async () => 11,
+			post: async (rep) => { report = rep; }, ack: async () => {}, awaitPush: true,
+		});
+		check('R5: no final-frame dep -> the turn still completes, in order',
+			res.done === true && res.trace.join(',') === 'take,reconstruct,run,report,complete,ack,release,push');
+		check('R5: and the report says the answer did NOT travel ahead, so the parcel is the first sight',
+			!!report && report.finalTail === 0);
+	}
+
+	// ── R6. A FINAL FRAME THAT FAILS costs the stream, never the turn. ──
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		let report = null;
+		const ctxChat = { id: 'chat-r6', messages: [{ role: 'user', content: 'q', mid: 'u1', ts: 1 }] };
+		const res = await P.runErrand(errand, {
+			selfId: 'peerA', cas: P.syncCas(sync), now: () => 2000,
+			reconstruct: async () => ({ chat: ctxChat }),
+			runTurn: async (ctx) => { P.foldAssistant(ctx.chat, { mid: 'a1', turnId: TID, text: 'ok', ts: 3 }); },
+			abort: () => {},
+			finalFrame: async () => { throw new Error('the door refused the frame'); },
+			pushResult: async () => 12,
+			post: async (rep) => { report = rep; }, ack: async () => {}, awaitPush: true,
+		});
+		check('R6: a refused final frame still reports, releases and pushes',
+			res.done === true && res.trace.indexOf('report') >= 0
+			&& res.trace.indexOf('release') >= 0 && res.trace.indexOf('push') >= 0);
+		check('R6: and the report tells the truth about it -- no answer travelled ahead',
+			!!report && report.finalTail === 0);
+	}
+
+	// ── R7. THE 409 STORM. Three devices, one turn: the originator and the runner may
+	//    push; the third stands off while the lease reads `running`. ──
+	{
+		const now = 5000;
+		const running = { T1: { turnId: 'T1', holder: 'RUNNER', mode: 'running', expiry: now + 60000, renewedAt: now } };
+		check('R7a: the third device stands off -- its push would 409 the runner\'s answer',
+			P.deferPushFor(running, 'THIRD', now, () => false) === 'T1');
+		check('R7b: the RUNNER never stands off from its own turn',
+			P.deferPushFor(running, 'RUNNER', now, () => false) === '');
+		check('R7c: nor does the ORIGINATOR -- it is the one waiting for the answer',
+			P.deferPushFor(running, 'PHONE', now, (id) => id === 'T1') === '');
+		check('R7d: a CLAIMED lease is not yet running, so nobody stands off',
+			P.deferPushFor({ T1: { turnId: 'T1', holder: 'RUNNER', mode: 'claimed',
+				expiry: now + 60000, renewedAt: now } }, 'THIRD', now, () => false) === '');
+		check('R7e: an EXPIRED lease holds nobody off -- the bound is the lease\'s own liveness',
+			P.deferPushFor({ T1: { turnId: 'T1', holder: 'RUNNER', mode: 'running',
+				expiry: now - 1, renewedAt: now - 99999 } }, 'THIRD', now, () => false) === '');
+		check('R7f: a released lease holds nobody off',
+			P.deferPushFor({ T1: { turnId: 'T1', holder: 'RUNNER', mode: 'released',
+				expiry: now + 60000, renewedAt: now } }, 'THIRD', now, () => false) === '');
+		check('R7g: no leases at all is no stand-off', P.deferPushFor({}, 'THIRD', now, () => false) === ''
+			&& P.deferPushFor(null, 'THIRD', now, null) === '');
+	}
+
+	// ── R8. A FINAL FRAME CLOSES THE WATCHER'S VIEW, so a late ordinary frame cannot
+	//    draw a stale tail over the answer that replaced it. ──
+	{
+		const open1 = P.foldProgress(null, { turn: 'T1', seq: 1, tail: 'word one' });
+		check('R8a: an ordinary frame opens the view', !!open1 && open1.tail === 'word one' && open1.final === false);
+		const closed = P.foldProgress(open1, { turn: 'T1', seq: 2, tail: 'the whole answer', final: true });
+		check('R8b: a final frame closes it', !!closed && closed.final === true);
+		check('R8c: and no later frame reopens it',
+			P.foldProgress(closed, { turn: 'T1', seq: 3, tail: 'a late straggler' }) === null);
 	}
 
 	// ── Stand down: a peer already holds the lease, so the runner does not run. ──

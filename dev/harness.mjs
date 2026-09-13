@@ -655,7 +655,60 @@ export function clearChats(s) {
 /// Get past the passphrase gate, creating the identity on first run.
 export async function signInAs(s, name) {
 	const { page } = s;
-	await page.waitForSelector('#id-primary', { timeout: 15000 });
+	// ALREADY IN, AND NOTHING TO SIGN. Since the stay-unlocked-across-reload work
+	// (daimond.js boot gate, 2026-09-13) a reload of a tab that was unlocked comes
+	// back UNLOCKED: `DaimondIdentity.restoring()` reopens the wrapping key, the boot
+	// gate runs `completeUnlock()` and marks the app ready, and the lock screen is
+	// never shown. Every caller here that reloads and signs in again -- `clearDiamonds`
+	// does, and so do a dozen verifiers -- then waited fifteen seconds for an
+	// `#id-primary` that will not appear, and failed with "Create passphrase" reported
+	// as hidden, which reads as a broken app rather than an app that was already open.
+	//
+	// So the wait is for EITHER door: a visible gate to drive, or a tab that is already
+	// through it. Asked of the page rather than assumed from a timeout, so a genuinely
+	// stuck boot still fails and says so.
+	// Read once, as the page stands. `gate` is a lock/create screen to drive; `open`
+	// is a tab that came back already unlocked; `drawn-but-locked` is the app drawn
+	// over an identity that reports LOCKED -- which is a real state and also a
+	// transient one mid-boot, so it is waited THROUGH and only reported if it is
+	// where the boot settles.
+	const look = () => page.evaluate(() => {
+		const btn = document.getElementById('id-primary');
+		if (btn && btn.offsetParent !== null) return 'gate';
+		const modal = document.getElementById('identity-modal');
+		const hidden = !modal || modal.offsetParent === null;
+		const drawn  = !!window.__DAIMOND_READY && !document.body.classList.contains('locked');
+		if (!hidden || !drawn) return 'booting';
+		// THE APP IS DRAWN. Is the IDENTITY actually unlocked? `isUnlocked()` is what
+		// every encrypted store asks before it will open -- the chunk transport
+		// (`DaimondCloud.available`), the seal a peer errand needs, the provider keys --
+		// so an app drawn over a locked identity is not a signed-in tab, it is a tab
+		// that will fail at the first thing it tries. Distinguished rather than
+		// assumed, because the two look identical from outside and the cheerful reading
+		// wastes a whole verifier run on a page that cannot work.
+		try { return DaimondIdentity.isUnlocked() ? 'open' : 'drawn-but-locked'; }
+		catch (e) { return 'drawn-but-locked'; }
+	}).catch(() => 'booting');
+	let state = 'booting';
+	for (const t0 = Date.now(); Date.now() - t0 < 15000; ) {
+		state = await look();
+		if (state === 'gate' || state === 'open') break;
+		await page.waitForTimeout(250);
+	}
+	if (state === 'open') {
+		await page.waitForTimeout(200);
+		return;										// the tab never left; there is nothing to unlock
+	}
+	if (state !== 'gate') {
+		throw new Error('sign-in: after 15s there is no gate to drive and no unlocked identity either'
+			+ ' (state: ' + state + ').'
+			+ (state === 'drawn-but-locked'
+				? ' The app is drawn and marked ready while DaimondIdentity.isUnlocked() is false, so'
+					+ ' every encrypted store refuses: DaimondCloud.available() is false (no chunk'
+					+ ' offload), a peer errand cannot be sealed, the provider keys stay shut. This is'
+					+ ' the boot gate, not the harness.'
+				: ' The boot never finished.'));
+	}
 	// The name field is present in BOTH modes now — it doubles as the username a
 	// password manager files the entry under — but it is readonly when unlocking,
 	// where it names the account rather than choosing one. isEditable, not
