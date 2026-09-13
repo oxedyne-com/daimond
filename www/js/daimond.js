@@ -12086,7 +12086,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// It draws nothing. `renderToolCall` has already drawn the card by the time
 	/// this is called, on the ToolCall event that precedes the dispatch -- so what
 	/// is left for this to do is the one thing Rust cannot find out for itself:
-	/// whether this page has a card renderer at all. A native build has none, and
+	/// whether the question is on a screen: this page's own paint, or a
+	/// runner's lease blocker that every device reads. A native build paints none, and
 	/// so does a page served from a bundle older than this one; both must fail
 	/// LOUDLY, or the model tells the user it has asked a question that nobody
 	/// can see.
@@ -12105,13 +12106,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// reads off the door it already pulls. THE RUNNER'S OWN CARD STAYS: this adds
 			// a copy, it does not move the question.
 			broadcastAskIfHandedOff(o);
-			// Answered from the SHAPE and not from `_askCard`, deliberately. A
-			// daimon steered from a gather round asks while its own thread is not
-			// on screen, so no card was drawn here -- and the question is still
-			// recorded in the conversation and still drawn the moment the user
-			// opens it. "Was a card painted just now" would report that as a
-			// failure and send the model back to prose.
-			return Promise.resolve(JSON.stringify({ drawn: !!(o && askDrawable(o)) }));
+			// Answered from the PAINT and not from the shape: an ack that says
+			// the question is on the user's screen must mean a card is on A
+			// screen. `renderToolCall` painted this call's card on the ToolCall
+			// event -- the events strictly alternate, so `_askJust` is this
+			// call's and no other's -- and a page that painted nothing says so:
+			// the wasm edge (src/wasm/ask.rs) then refuses, the turn does not
+			// end, and the model asks in prose instead of waiting on an answer
+			// nobody can see. Until 2026-09-12 this answered from the payload's
+			// shape, so an ask made from the crystal face -- where
+			// `renderToolCall` is gated on `onScreen()` and nothing painted --
+			// still acked success and the turn ended as Done (turn 47).
+			//
+			// THE RUNNER IS THE ONE EXCEPTION: its own page painted nothing (the
+			// errand it grabbed is not the thread it is showing), but the
+			// broadcast above just wrote the question onto the lease as a blocker
+			// every device reads off its door -- so the question IS on a screen,
+			// and `handed` uses the broadcast's own predicate so the two can
+			// never disagree.
+			var handed = !!(o && askDrawable(o) && activeRunnerTurn());
+			return Promise.resolve(JSON.stringify({
+				drawn: handed || (_askJust && !!_askCard),
+			}));
 		},
 	};
 
@@ -12547,10 +12563,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return row;
 	}
 
+	/// The app's one modal. `opts.deadlineMs`, where a caller sets one, is how long
+	/// it may stand unanswered before it answers itself: the timer calls
+	/// `opts.onDeadline` (so the caller can SAY that nobody answered) and then closes
+	/// the card exactly as Escape does. No caller gets a deadline by default -- a
+	/// dialog somebody is reading must not be withdrawn from under them -- and only a
+	/// question whose unanswered outcome is the SAFE one may ask for one.
 	function dialog(opts) {
 		return new Promise(function (resolve) {
 			var back = document.createElement('div');
 			back.className = 'modal dlg';
+			// `data-kind` on the modal ROOT, and not only in a heading the reader sees: the
+			// debug feed's screen seam has to say WHAT is up without reading a translated
+			// title. See the `dlg` field in `registerScreen`.
+			try { back.setAttribute('data-kind', String(opts.kind || 'confirm')); } catch (e) { /* no setAttribute */ }
 			var card = document.createElement('div');
 			card.className = 'modal-card dlg-card';
 
@@ -12639,7 +12665,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// underneath replaces its CHILDREN and keeps its own box, so this survives
 		// where `prev` does not. See `refocus`.
 		var prevHost = (prev && prev.closest) ? prev.closest('[id]') : null;
+			// Cleared on EVERY exit, an answered one included: a card somebody closed at
+			// second three must not have its caller told at second 120 that nobody was
+			// there. `close` is the single exit, so one line covers all of them.
+			var deadline = null;
 			function close(value) {
+				if (deadline) { clearTimeout(deadline); deadline = null; }
 				document.removeEventListener('keydown', onKey, true);
 				back.remove();
 				refocus(prev, prevHost);
@@ -12686,6 +12717,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 			(input || ok).focus();
 			if (input) input.select();
+			// The self-answer, wired LAST so nothing above it can fire early. It closes
+			// with `nothing()` -- the value Escape, Cancel, the cross and the backdrop all
+			// give -- because a question nobody answered is not a different ANSWER from one
+			// somebody declined; `onDeadline` is how the caller tells the two apart in what
+			// it writes down.
+			if (opts.deadlineMs > 0) {
+				deadline = setTimeout(function () {
+					try { if (opts.onDeadline) opts.onDeadline(); } catch (e) { /* close anyway */ }
+					close(nothing());
+				}, opts.deadlineMs);
+			}
 		});
 	}
 
@@ -13675,6 +13717,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) { /* the runner's timeout is the safe fallback */ }
 	}
 
+	// HOW LONG A NETWORK QUESTION MAY STAND UNANSWERED.
+	//
+	// Two minutes, and the number is a judgement rather than a measurement: it is long
+	// enough that somebody who looked up, read the command and thought about it still
+	// answers their own question, and short enough that a turn does not hold a lease,
+	// a worker slot and a provider's context on a screen nobody is at. Turn 54 sat on
+	// one for eleven minutes and was still sitting on it when the owner found it.
+	//
+	// It bounds ONE question and no other: every other dialog in this file is either
+	// answerable later without cost, or authorises something a silence must never be
+	// read as agreeing to. This one's unanswered outcome is the refusal, so running
+	// out is safe in the one direction that matters.
+	var NET_ASK_DEADLINE_MS = 120 * 1000;
+	
+	/// The deadline this net question actually gets.
+	///
+	/// A caller may SHORTEN it and may never lengthen it, which is what makes the
+	/// override safe to expose at all: `dev/verify_netchip.mjs` drives the timed path
+	/// without waiting two minutes for it, and nothing reachable from a page can turn
+	/// the bound off and bring the hang back.
+	function netAskDeadline(opts) {
+		var n = Number(opts && opts.deadlineMs);
+		if (!(n > 0)) return NET_ASK_DEADLINE_MS;
+		return Math.min(n, NET_ASK_DEADLINE_MS);
+	}
+	
 	/// Whether this act may happen, now that something from outside has been read.
 	///
 	/// # Arguments
@@ -13783,6 +13851,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (req.tool === 'run_net') {
 			var ncmd = String(req.url || '');
 			if (!ncmd.trim()) return 'deny';
+			// THE DIALOG HONOURS ITS OWN LAST SENTENCE. `permmode.net_body` ends "No runs
+			// it anyway, with no network -- and so does saying nothing", and until
+			// 2026-09-13 nothing made the second half true: `dialog()` had no deadline and
+			// nothing else resolved it, so a live daimon's turn sat busy for eleven minutes
+			// on a question nobody was at the screen to answer (`dev/HATES.md`, turn 54).
+			//
+			// Two ways to answer it without a person, and both give the SAME outcome the
+			// No button gives -- the command runs, inside the fence it already had, with no
+			// network. Nothing here can grant anything; the worst it can do is withhold a
+			// network the user would have given, and the turn carries on and says so.
+			//
+			// FIRST, NOBODY IS THERE AT ALL. `someoneCanAnswer` is the app's own reading of
+			// that -- a hidden tab, a locked phone, a modal already up -- and it is the same
+			// function the parked-worker branch below keys on. Asked BEFORE the card is
+			// built, because building one would make its own answer false.
+			if (!someoneCanAnswer()) {
+				trail('net consent', 'nobody could answer, so the command ran with no network: '
+					+ ncmd.slice(0, 120));
+				return 'deny';
+			}
 			// Cut to the same 300 characters as every other body here, with an
 			// ellipsis rather than a silent trim: see the `run` branch above.
 			var shownNet = ncmd.length > 300 ? (ncmd.slice(0, 300) + '…') : ncmd;
@@ -13814,7 +13902,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// with a label beats a side effect, and the popover's own "Always allow"
 			// is the same setting reached the other way.
 			var netStanding = false;
+			// SECOND, NOBODY ANSWERED IN TIME. The card goes up on a screen somebody is
+			// at, and they walk away from it -- which `someoneCanAnswer` above cannot
+			// see and no signal honestly can (see its own header). So the wait is
+			// bounded, and `NET_ASK_DEADLINE_MS` is the bound.
+			var netTimedOut = false;
+			var netWaitMs = netAskDeadline(opts);
 			var netAns = await dialog({
+				deadlineMs: netWaitMs,
+				onDeadline: function () { netTimedOut = true; },
 				kind:    'pick',
 				title:   t('permmode.net_title'),
 				message: t('permmode.net_body', { cmd: shownNet, cwd: String(req.detail || '').slice(0, 300) }),
@@ -13837,8 +13933,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				},
 			});
 			// Cancel, Escape, the cross and the backdrop all answer null -- see
-			// `nothing()`. A dialog that was dismissed is a no, which is what the
-			// body's last sentence promises.
+			// `nothing()`, and so does the deadline. A dialog that was dismissed is a no,
+			// which is what the body's last sentence promises; a dialog that ran out is
+			// the same no, and it is written down as one so the difference is legible to
+			// whoever reads the turn afterwards.
+			if (netTimedOut) {
+				trail('net consent', 'nobody answered within '
+					+ Math.round(netWaitMs / 1000) + 's, so the command ran with no '
+					+ 'network: ' + ncmd.slice(0, 120));
+			}
 			if (!netAns) return 'deny';
 			netStanding = !!netAns.standing;
 			if (netStanding && window.DaimondHandMode && DaimondHandMode.setStandingNet) {
@@ -14199,6 +14302,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// before; the second parameter is forwarded only so a verifier can drive the
 	// strict path that `pageEgressAllowed` builds in production, and setting
 	// `strict` can only make this MORE cautious (it is never auto-allowed).
+	//
+	// `opts.deadlineMs` is the same bargain: `netAskDeadline` clamps it to
+	// `NET_ASK_DEADLINE_MS`, so a caller can only bring the unanswered REFUSAL
+	// forward, never push it back and never turn it off.
 	window.__daimondEgressAllowed = function (payloadJson, opts) { return egressAllowed(payloadJson, opts); };
 
 	// The reachable hand-a-turn-to-a-peer hook (dev/PEER_DESIGN.md §4, step 4).
@@ -47380,17 +47487,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					text = (last.content == null) ? '' : String(last.content);
 				}
 			} catch (e) { /* no current chat yet */ }
-			// The three dialogs this seam can answer cheaply and honestly: a build
-			// waiting on a reload, the identity gate, and a build the watch has
-			// given up advancing on its own.
+			// What is in front of the person, cheaply and honestly: the app's own
+			// modal, a build waiting on a reload, the identity gate, and a build the
+			// watch has given up advancing on its own.
 			//
-			// TODO(debug-feed): a consent/ask/blocker/runner-confirm tile is real
+			// TODO(debug-feed): a consent/ask/blocker/runner-confirm TILE is real
 			// screen state too, but it lives on `Pending`'s own list rather than
 			// behind one flag reachable here -- left for a later pass rather than
-			// guessed at.
+			// guessed at. A tile is not a modal and does not stop anybody reading
+			// the screen, which is why it is the lesser of the two omissions.
 			var dlg = 'none';
+			// THE APP'S OWN MODAL FIRST, because it is the thing actually covering the
+			// screen. On 2026-09-13 the beat said `dlg none` for eleven minutes with the
+			// network question up and a daimon's turn stopped behind it -- the one lane
+			// carrying what a screenshot would show, saying nothing was there
+			// (`dev/HATES.md`, turn 54). `.modal.dlg` is the root `dialog()` builds and
+			// the selector `someoneCanAnswer` keys on, so the two cannot disagree about
+			// whether a card is up; `data-kind` is stamped on it there. The heading is
+			// the reader's own words and travels as it is drawn, clipped by debugshare.js.
 			try {
-				var U = window.DaimondUpdater;
+				var card = document.querySelector('.modal.dlg');
+				if (card) {
+					var kind = String(card.getAttribute('data-kind') || 'dlg');
+					var head = card.querySelector('h2');
+					var title = head ? String(head.textContent || '').trim() : '';
+					dlg = title ? (kind + ': ' + title) : kind;
+				}
+			} catch (e) { /* the DOM is not up yet */ }
+			// A card on screen outranks a pending build: the updater's state is reported
+			// in its own `upd` field either way, so nothing is lost by yielding here.
+			try {
+				var U = dlg === 'none' ? window.DaimondUpdater : null;
 				if (U && U.pending && U.pending()) {
 					var left = U.countdown ? U.countdown() : 0;
 					if (left > 0) dlg = 'update-countdown: reload in ' + left + 's';

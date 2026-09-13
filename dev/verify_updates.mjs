@@ -131,6 +131,49 @@ try {
 	check('loop guard: does not re-reload from the same build', (await page.evaluate(() => window.__m)) === 1);
 	check('loop guard leaves the chip red for the user', (await state()) === 'stale');
 
+	// ── J. A sync round in flight holds the AUTOMATIC path, tells the feed why, ──
+	// and the banner (a desktop, not yet given up) says it will reload itself.
+	//
+	// The one-minute boot guard is real time here, not the fake clock
+	// www/js/updater.test.mjs drives -- there is no way to fast-forward an actual
+	// browser, so this scenario spends the minute for real before it means anything.
+	await reboot({ build: 'JJJ', note: 'j' });
+	await setBusy(false);
+	await page.evaluate(() => {
+		window.__ds = [];
+		window.DEBUG_SHARE = { event: (kind, payload) => window.__ds.push({ kind, payload }) };
+		window.DaimondSync = { state: () => ({ quiet: false, busyWith: 'a push is armed' }) };
+		// A real, focused browser tab is never `document.hidden`, and this script
+		// cannot wait out the ten real minutes `quietEnough` would otherwise want --
+		// so it is told this tab is backgrounded, which is the ordinary case the
+		// automatic path is FOR (a foreground tab is covered on the fake clock in
+		// www/js/updater.test.mjs, which can move ten minutes in an instant).
+		Object.defineProperty(document, 'hidden', { get: () => true, configurable: true });
+	});
+	await new Promise(r => setTimeout(r, 61000));
+	await serve({ build: 'KKK', note: 'k' });
+	await page.evaluate(() => DaimondUpdater.check());
+	const sawJ = await until(page, () => DaimondUpdater.pending() === 'KKK');
+	check('scenario J: a newer build is detected while sync is busy', sawJ);
+	const heldJ = await page.evaluate(() =>
+		(window.__ds || []).find(e => e.kind === 'update' && e.payload && e.payload.at === 'held'));
+	check('the debug feed holds why the automatic path is held, and it names sync',
+		!!heldJ && /^sync:/.test((heldJ.payload || {}).why || ''), heldJ && JSON.stringify(heldJ));
+	const bannerTxtJ = await page.evaluate(() => {
+		const b = document.querySelector('.update-banner');
+		return b && !b.hidden ? b.textContent : null;
+	});
+	check('the banner carries the desktop auto-reload copy, not the plain one',
+		/reloads itself when this desktop is idle/.test(bannerTxtJ || ''), bannerTxtJ);
+	// Un-stub sync: the tick asks again inside ten seconds, finds it safe, counts
+	// down twenty, and reloads with no click -- which is the whole point here.
+	await page.evaluate(() => {
+		window.DaimondSync = { state: () => ({ quiet: true, busyWith: '' }) };
+		window.__m = 1;
+	});
+	const reloadedJ = await until(page, () => typeof window.__m === 'undefined' && !!window.DaimondUpdater, 35000);
+	check('once sync goes quiet the automatic path reloads on its own', reloadedJ);
+
 	// ── F. No console errors from any of it. ────────────────────────────────
 	// Gateway bootstrap 401s are expected here: this test runs signed-out with no gateway, so those
 	// resource-load failures are not the updater's doing. Everything else must be silent.

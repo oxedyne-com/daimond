@@ -153,6 +153,26 @@ pub const SHOTS_MAX: usize = 40;
 /// to reassemble it.
 pub const REPORT_MAX: usize = CHUNK_MAX - 4_096;
 
+/// How many of a dead run's own last lines the report carries.
+///
+/// Twenty is a Node stack trace and the line that threw.  It is spent only on a run that measured
+/// nothing at all, so no report that carries evidence pays for it.
+pub const DEAD_TAIL_LINES: usize = 20;
+
+/// The last `n` lines of `text`, verbatim, without a trailing blank run.
+///
+/// # Arguments
+/// * `text` - What the script printed, stdout and stderr together.
+/// * `n` - How many lines from the end.
+fn last_lines(text: &str, n: usize) -> String {
+    let kept: Vec<&str> = text.lines()
+        .rev()
+        .skip_while(|l| l.trim().is_empty())
+        .take(n)
+        .collect();
+    kept.iter().rev().map(|l| *l).collect::<Vec<&str>>().join("\n")
+}
+
 /// The marker every report ends with, which the app checks for.
 ///
 /// A second line of defence at the far end: `Tool::Verify` refuses to hand a
@@ -851,6 +871,15 @@ pub struct Pass {
     pub norm:   String,
     /// Up to a few failing lines, verbatim, for the report.
     pub fails:  Vec<String>,
+    /// The end of what it printed, verbatim, kept only for a run that measured NOTHING.
+    ///
+    /// A verifier that threw before its first check reports `0 passed, 0 failed`, and until
+    /// 2026-09-13 the reason it threw reached the page nowhere: `parse_checks` found no checks,
+    /// `fails` takes only lines beginning `FAIL `, and a stack trace is neither.  A daimon spent
+    /// fifty steps on a browser verifier whose whole trouble was that nothing was listening on
+    /// the port it navigates to.  Empty on every run that measured something, so the report is
+    /// the length it always was.
+    pub tail:   String,
     /// How long it took, in milliseconds.
     pub ms:     u64,
 }
@@ -1370,6 +1399,12 @@ async fn once(
     if timed {
         return Err(fmt!("it ran past the budget and was killed"));
     }
+    // Kept ONLY where nothing was measured, and bounded: this is the one case where the script's
+    // own words are the whole of the evidence, and every other case has checks to report instead.
+    let tail = match checks.is_empty() {
+        true  => last_lines(&text, DEAD_TAIL_LINES),
+        false => String::new(),
+    };
     Ok(Pass {
         label,
         exit,
@@ -1377,6 +1412,7 @@ async fn once(
         norm: normalise(&text),
         checks,
         fails,
+        tail,
         ms,
     })
 }
@@ -1466,6 +1502,7 @@ pub async fn conduct(job: Job, tx: Sender<Resp>) -> Outcome<()> {
                     checks: Checks::new(),
                     norm:   String::new(),
                     fails:  Vec::new(),
+                    tail:   String::new(),
                     ms:     0,
                 }, Some(Bite::Unrun { why: w })));
             },
@@ -1540,6 +1577,16 @@ pub fn report(
                     p.passed(), p.failed(), p.exit, p.ms));
                 for f in p.fails.iter() {
                     s.push_str(&fmt!("     {}\n", f));
+                }
+                // A clean run that measured nothing did not pass and did not fail: it DIED, and
+                // its own last words are the only thing that says why.  Carried verbatim, because
+                // every summary of a stack trace is a summary of something this side did not
+                // understand.
+                if !p.tail.is_empty() {
+                    s.push_str("     -- it printed no check at all; its last lines, verbatim:\n");
+                    for l in p.tail.lines() {
+                        s.push_str(&fmt!("     | {}\n", l));
+                    }
                 }
             },
             Some(Bite::Red { names }) => {
@@ -1854,15 +1901,57 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
     // ── What a break did ────────────────────────────────────────────
 
     fn pass_of(label: &str, out: &str) -> Pass {
+        let checks = parse_checks(out);
         Pass {
             label:  fmt!("{}", label),
             exit:   0,
             timed:  false,
-            checks: parse_checks(out),
+            tail:   match checks.is_empty() {
+                true  => last_lines(out, DEAD_TAIL_LINES),
+                false => String::new(),
+            },
+            checks,
             norm:   normalise(out),
             fails:  Vec::new(),
             ms:     1,
         }
+    }
+
+    /// **A verifier that DIED says so, in its own words.**
+    ///
+    /// The turn of 2026-09-13 (`dev/HATES.md`): a browser verifier threw at its first
+    /// navigation because no dev world was up, the report said `0 passed, 0 failed`, and the
+    /// reason reached the model nowhere -- so a daimon spent fifty steps looking for a defect in
+    /// a repository that had none.  `parse_checks` finds no check and `fails` takes only lines
+    /// beginning `FAIL `, so a stack trace was neither.
+    #[test]
+    fn a_clean_run_that_measured_nothing_carries_its_last_words() {
+        let died = "  ..   starting\npage.goto: net::ERR_CONNECTION_REFUSED at http://localhost:8777/\n    at file:///home/u/ws/dev/verify_x.mjs:41:9\n";
+        let p = pass_of("clean", died);
+        assert_eq!(0, p.passed(), "the fixture reported a check, so this proves nothing");
+        assert_eq!(0, p.failed(), "the fixture reported a check, so this proves nothing");
+        assert!(p.tail.contains("ERR_CONNECTION_REFUSED"),
+            "a run that measured nothing kept none of what it printed: {:?}", p.tail);
+
+        let script = Script {
+            name:   fmt!("x"),
+            file:   fmt!("verify_x.mjs"),
+            path:   PathBuf::from("/w/dev/verify_x.mjs"),
+            breaks: Vec::new(),
+            prov:   Provenance::Committed,
+        };
+        let verdict = Verdict::Unproven { passed: 0, failed: 0, declared: Vec::new() };
+        let text = report(&script, &[(p, None)], &verdict, &[]);
+        assert!(text.contains("ERR_CONNECTION_REFUSED"),
+            "the death did not reach the report, which is the only thing the model reads: {}",
+            text);
+        assert!(text.contains("localhost:8777"),
+            "the report does not name what the script could not reach: {}", text);
+
+        // AND A RUN THAT MEASURED SOMETHING PAYS NOTHING FOR IT.  A tail on every report would
+        // double the bulk of an ordinary one for no reader.
+        let live = pass_of("clean", "  ok   a\n  ok   b\n");
+        assert!(live.tail.is_empty(), "a run with checks kept a tail it does not need");
     }
 
     #[test]

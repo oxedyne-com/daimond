@@ -172,7 +172,8 @@ function makeTab(cfg) {
 			// is what makes it a `drafts.js` restore the next load will not lose.
 			composerHasUnsavedText: () => !!cfg.state.typed && !cfg.state.draftBound,
 		},
-		DaimondSync: { state: () => ({ quiet: cfg.state.quiet !== false }) },
+		DaimondSync: { state: () => ({ quiet: cfg.state.quiet !== false,
+			busyWith: cfg.state.busyWith || 'a round is running' }) },
 		// The unlock gate, and the two things the runner exemption needs to be sure
 		// of. Absent by default, so every scenario that is not about the runner sees
 		// the tab it always saw: locked, no posture, no exemption.
@@ -333,6 +334,47 @@ async function main() {
 		tab.state.quiet = true;
 		await tab.clock.advance(11000 + 21000);
 		check('it reloads once sync is quiet', tab.reloads.n === 1);
+	}
+
+	console.log('\nupdater: sync going busy DURING the countdown holds it, tells the feed why, and resumes');
+	{
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: {} });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('a countdown is running', tab.U().countdown() === 20);
+		tab.state.quiet = false;
+		tab.state.busyWith = 'a push is armed';
+		await tab.clock.advance(1000);
+		check('the countdown stopped the moment sync went busy', tab.U().countdown() === 0);
+		check('nothing reloaded', tab.reloads.n === 0);
+		check('the banner still offers the reload button',
+			/update\.reload\|/.test(tab.bannerText() || ''));
+		const held = tab.events.find((e) => e.kind === 'update' && e.payload.at === 'held');
+		check('the feed heard why it was held, and the reason names sync',
+			!!held && /^sync:/.test(held.payload.why || ''), held && JSON.stringify(held.payload));
+		check('the module itself agrees on the reason', /^sync:/.test(tab.U().held() || ''));
+		tab.state.quiet = true;
+		await tab.clock.advance(11000);
+		await tab.clock.advance(21000);
+		check('it reloaded once sync went quiet again', tab.reloads.n === 1);
+	}
+
+	console.log('\nupdater: a visible, active tab is held for that reason, and reloads once it settles');
+	{
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: {}, hidden: false });
+		await tab.clock.advance(65000);
+		tab.fireDoc('pointerdown');
+		await learn(tab);
+		check('the newer build is pending', tab.U().pending() === NEWER.build);
+		check('no countdown while the tab is in front of the user', tab.U().countdown() === 0);
+		check('nothing reloaded', tab.reloads.n === 0);
+		const held = tab.events.find((e) => e.kind === 'update' && e.payload.at === 'held');
+		check('the feed heard it was held for being foreground and active',
+			!!held && held.payload.why === 'foreground-active', held && JSON.stringify(held.payload));
+		await tab.clock.advance(10 * MIN + 11000);
+		await tab.clock.advance(21000);
+		check('it reloaded once the tab had been idle in front of the user long enough',
+			tab.reloads.n === 1);
 	}
 
 	console.log('\nupdater: a turn that starts DURING the countdown stops it');

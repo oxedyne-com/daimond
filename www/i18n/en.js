@@ -3141,6 +3141,10 @@
 	'update.updated':    'Daimond updated',
 	'update.stale':      'Daimond is out of date and must reload to keep working. Click to reload.',
 	'update.available':  'A new version of Daimond is available.',
+	// Desktop only (see updater.js's `syncBanner`): the automatic path is still
+	// watching for a quiet moment, so this says that rather than reading as a
+	// chore only the button can finish.
+	'update.available_auto': 'Update ready — it reloads itself when this desktop is idle. Reload now',
 	'update.reload':     'Reload',
 	'update.dismiss':    'Dismiss',
 	// The countdown in front of an automatic reload. {s} is whole seconds.

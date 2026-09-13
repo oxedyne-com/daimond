@@ -528,6 +528,14 @@ check('--kind selects one event kind',
 	lensJson('events', '--since', '24h', '--kind', 'turn.start').length === 1);
 check('--kind reaches a generic gateway row too',
 	lensJson('events', '--since', '24h', '--kind', 'election').length === 1);
+// A single `--kind` is one exact match, which is right for a single kind and
+// silently wrong for a list: `--kind turn.start,election` used to compare the
+// whole string "turn.start,election" against each row's kind, match nothing,
+// and print "none" -- with nothing said about the flag being misread.
+check('--kind takes a comma-separated list, union of both',
+	lensJson('events', '--since', '24h', '--kind', 'turn.start,election').length === 2);
+check('a list with one unknown kind still finds the real one',
+	lensJson('events', '--since', '24h', '--kind', 'turn.start,nope').length === 1);
 check('--grep searches the payload',
 	lensJson('events', '--since', '24h', '--grep', 'nominee').length === 1);
 

@@ -109,6 +109,26 @@ pub struct TurnState {
     // one Diamond used to be SPENT in another sharing the same client: the second Diamond's first
     // command took the network on an answer given about a command the user never saw.
     pub net_consent: HashMap<String, Verdict>,
+    // The answer the user set from a control they can SEE, for this whole device
+    //
+    // `ToolContext::override_net_consent` writes it and nothing in the tool loop may (see that
+    // method for why a dialog's answer and a pressed control are different acts).  It is the
+    // app-wide standing answer -- `daimond-net-standing` in www/js/handmode.js, pushed into every
+    // engine by `netApplyAll` in www/js/daimond.js -- and it is NOT keyed, because a person
+    // pressing "Always allow" has answered for this computer and not for one conversation on it.
+    //
+    // `net_consent` above stays keyed and stays the first word: a Diamond that answered its own
+    // dialog keeps its own answer.  This is only what is read when that conversation has said
+    // nothing at all.
+    //
+    // IT IS A SEPARATE FIELD RATHER THAN THE `""` KEY, and the distinction is the point.  A
+    // daimon's turn reads under its Diamond's id while `set_net_answer` writes on the registry
+    // context, whose key is the empty string -- so on 2026-09-13 a device standing on `allow` put
+    // the question to a daimon anyway, and nobody was at the screen (`dev/HATES.md`, turn 54).
+    // Falling back to the `""` KEY would have fixed that and also spent a CHAT's one-off dialog
+    // answer on every Diamond sharing the client, which is the crossing `net_consent`'s keying
+    // exists to stop.  Only the visible, app-wide control writes here.
+    pub net_standing: Option<Verdict>,
     // What this conversation said, once, about reaching websites
     //
     // The answer to `web_fetch` and `web_open`'s one question -- MAY DAIMOND REACH THE WEB HERE --
@@ -5927,6 +5947,119 @@ pub(crate) fn wrap_untrusted(origin: &str, content: &str) -> String {
     )
 }
 
+/// The clean run's own three numbers, lifted out of the hand's report.
+///
+/// `verify::report` in hand/src/verify.rs writes one line per pass, and the first is
+/// `CLEAN            {passed} passed, {failed} failed, exit {exit}, {ms} ms`.  Read here rather
+/// than recomputed, because the counts are the hand's and this side must not invent one.
+///
+/// `None` where there is no such line -- an older hand, a truncated report, a refusal.
+///
+/// # Arguments
+/// * `report` - The hand's report, as it arrived on stdout.
+#[cfg(any(target_arch = "wasm32", test))]
+fn verify_clean_numbers(report: &str) -> Option<(u64, u64, i64)> {
+    let line = match report.lines().find(|l| l.trim_start().starts_with("CLEAN")) {
+        Some(l) => l,
+        None    => return None,
+    };
+    // The hand writes both counts as `<n> passed` and `<n> failed`, so each is the word before
+    // its own marker.
+    let before = |what: &str| -> Option<u64> {
+        match line.find(what) {
+            Some(at) => line[..at].split_whitespace().last().and_then(|w| w.parse::<u64>().ok()),
+            None     => None,
+        }
+    };
+    let passed = match before(" passed") { Some(n) => n, None => return None };
+    let failed = match before(" failed") { Some(n) => n, None => return None };
+    // `exit N` reads the other way round, so it is scanned rather than taken from a prefix.
+    let exit = line.split_whitespace()
+        .skip_while(|w| *w != "exit")
+        .nth(1)
+        .map(|w| w.trim_end_matches(','))
+        .and_then(|w| w.parse::<i64>().ok());
+    match exit {
+        Some(e) => Some((passed, failed, e)),
+        None    => None,
+    }
+}
+
+/// The last `n` lines of `text`, verbatim and without a trailing blank run.
+///
+/// # Arguments
+/// * `text` - What the script printed.
+/// * `n` - How many lines from the end.
+#[cfg(any(target_arch = "wasm32", test))]
+fn last_lines(text: &str, n: usize) -> String {
+    let kept: Vec<&str> = text.lines()
+        .rev()
+        .skip_while(|l| l.trim().is_empty())
+        .take(n)
+        .collect();
+    kept.iter().rev().map(|l| *l).collect::<Vec<&str>>().join("\n")
+}
+
+/// The one hint worth spending a line on when a verifier died before it measured anything.
+///
+/// **A verifier that cannot connect is not a verifier that found something.**  Every browser
+/// verifier in `dev/` drives a page on `dev/serve.mjs`, and with no world up the script throws at
+/// its first navigation -- which reads, to a model holding a report of `0 passed, 0 failed`, as a
+/// product defect.  On 2026-09-13 a daimon spent fifty steps on one.  The words are matched on the
+/// runtimes that actually say them: Playwright's `ERR_CONNECTION_REFUSED`, Node's `ECONNREFUSED`,
+/// and curl's plain English.
+///
+/// # Arguments
+/// * `tail` - The end of what the script printed.
+#[cfg(any(target_arch = "wasm32", test))]
+fn dead_run_hint(tail: &str) -> Option<String> {
+    // The LINE that says it, not the whole tail: a stack frame below it carries
+    // `file:///…/verify_x.mjs:41:9`, which wears the shape of an address and is not one.
+    let said = match tail.lines().find(|l| {
+        let low = l.to_ascii_lowercase();
+        low.contains("econnrefused")
+            || low.contains("err_connection_refused")
+            || low.contains("connection refused")
+    }) {
+        Some(l) => l,
+        None    => return None,
+    };
+    let where_at = said
+        .split(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '(' || c == '<')
+        .filter_map(|w| {
+            // A source location is not a destination, whatever its punctuation looks like.
+            if w.starts_with("file:") { return None; }
+            let w = w.trim_start_matches("http://")
+                .trim_start_matches("https://")
+                .trim_start_matches("ws://")
+                .trim_end_matches(|c: char| {
+                    c == '/' || c == '.' || c == ',' || c == ')' || c == ';' || c == '>'
+                });
+            if w.contains('/') { return None; }
+            let mut parts = w.rsplitn(2, ':');
+            let port = parts.next().unwrap_or("");
+            let host = parts.next().unwrap_or("");
+            let numeric = !port.is_empty()
+                && port.len() <= 5
+                && port.chars().all(|c| c.is_ascii_digit());
+            match numeric && !host.is_empty() && host.chars().any(|c| c.is_ascii_alphanumeric()) {
+                true  => Some(w.to_string()),
+                false => None,
+            }
+        })
+        .next();
+    Some(match where_at {
+        Some(w) => fmt!(
+            "\n[nothing is listening at {}. The verifier did not measure anything and found no \
+            defect: start the server it expects -- a browser verifier here wants a dev world \
+            (dev/world.sh) -- and run it again.]", w),
+        None => fmt!(
+            "\n[a connection was refused. The verifier did not measure anything and found no \
+            defect: start the server it expects -- a browser verifier here wants a dev world \
+            (dev/world.sh) -- and run it again.]"),
+    })
+}
+
 /// Truncate `s` to at most `max` bytes on a character boundary, noting that it was cut.
 ///
 /// The boundary search matters: `String::truncate` panics mid-character, and a workspace file is
@@ -8405,8 +8538,14 @@ impl ToolContext {
 
     /// What the user has already said about this conversation's commands reaching the network, or
     /// `None` where they have not been asked (see [`TurnState::net_consent`]).
+    ///
+    /// THIS CONVERSATION'S OWN ANSWER FIRST, then the device's standing one.  A Diamond that
+    /// answered its own dialog keeps that answer; a Diamond that has been asked nothing reads what
+    /// the user set on the control (see [`TurnState::net_standing`]), which is what that control
+    /// says it does.
     pub fn net_consent(&self) -> Option<Verdict> {
-        lock_cache(&self.read_seen).net_consent.get(&self.daimon_of).copied()
+        let c = lock_cache(&self.read_seen);
+        c.net_consent.get(&self.daimon_of).copied().or(c.net_standing)
     }
 
     /// Record the answer, for the rest of this conversation.
@@ -8477,11 +8616,19 @@ impl ToolContext {
     ///
     /// `None` puts the chat back to unanswered, so the next command asks again.
     ///
+    /// AND IT ANSWERS FOR THE DEVICE, not for one conversation on it.  `netApplyAll` in
+    /// www/js/daimond.js already calls this on every chat engine there is, saying of the standing
+    /// answer that it "is one answer for all of them" -- and a Diamond's daimon is the one
+    /// conversation it could not reach, because it reads under its Diamond's id and this writes
+    /// under the registry context's empty one.  So the same act also sets
+    /// [`TurnState::net_standing`], which every conversation with no answer of its own reads.
+    ///
     /// # Arguments
     /// * `v` - What the user set it to, or `None` to forget the answer.
     pub fn override_net_consent(&self, v: Option<Verdict>) {
         let who = self.daimon_of.clone();
         let mut c = lock_cache(&self.read_seen);
+        c.net_standing = v;
         match v {
             Some(x) => { c.net_consent.insert(who, x); },
             None    => { c.net_consent.remove(&who); },
@@ -17884,6 +18031,13 @@ impl Tool {
     #[cfg(any(target_arch = "wasm32", test))]
     const VERIFY_TRAILER: &str = "[verify:";
 
+    // How much of a dead run's own output is kept beside the note that names it.
+    //
+    // Twenty lines is a Node stack trace and the line that threw, which is the whole of what a
+    // reader needs to tell a refused connection from a real failure.  More would push the report
+    // against `MAX_OUTPUT` on a run that proved nothing.
+    const VERIFY_DEAD_TAIL_LINES: usize = 20;
+
     /// Does this hand have verifiers to run at all?
     ///
     /// From the handshake's `caps`, exactly as `fence_enforced` reads the fence out of it: a
@@ -17986,12 +18140,23 @@ impl Tool {
     /// envelope, as Daimond's own sentence; and where there is no trailer to lift, the model is
     /// told in plain words that what it is holding is not evidence.
     ///
+    /// **THE ENVELOPE EITHER WAY, THE TAINT ONLY WHERE THE FENCE EARNED IT**, which is
+    /// [`Tool::run_result`]'s rule and was not this one's.  A verifier is a script the hand looked
+    /// up by name in the tracked tree's own `dev/`, run over files the daimon wrote, and its
+    /// output went through [`ToolContext::wrap_untrusted`] unconditionally -- so on 2026-09-13 a
+    /// daimon's own `verify` marked its turn as having read a stranger's words, and the next
+    /// `grep` reached [`net_step`] as `Ask`.  `tainting` is now decided by
+    /// [`fence_reaches_untrusted`] in [`Tool::verify`], beside the fence it is a property of,
+    /// exactly as `run` decides it.
+    ///
     /// # Arguments
     /// * `name` - The verifier, for the origin line.
     /// * `res` - The hand's JSON result.
-    /// * `ctx` - The turn, which the envelope marks as tainted.
+    /// * `ctx` - The turn, which `tainting` decides whether to mark.
+    /// * `tainting` - Whether this turn's fence could reach a stranger's words.  Computed in
+    ///   [`Tool::verify`] and passed down, never re-derived here.
     #[cfg(any(target_arch = "wasm32", test))]
-    fn verify_result(name: &str, res: &str, ctx: &ToolContext) -> String {
+    fn verify_result(name: &str, res: &str, ctx: &ToolContext, tainting: bool) -> String {
         if let Some(reason) = extract_json_string(res, "refused") {
             return refusal_line(&reason);
         }
@@ -18012,6 +18177,31 @@ impl Tool {
         }
         let origin = fmt!("verify: dev/verify_{}.mjs", name);
         s = defang(&s);
+        // A CLEAN RUN THAT MEASURED NOTHING IS A DEATH, NOT A RESULT.
+        //
+        // `0 passed, 0 failed` is what the report says when the script threw before it printed
+        // its first check, and the three numbers below it are dutifully computed from nothing.  A
+        // model holding that reads a product defect and starts looking for one: on 2026-09-13 a
+        // daimon spent fifty steps on a verifier whose whole trouble was that no dev world was
+        // up, because the script's own `ERR_CONNECTION_REFUSED` reached it nowhere.  So the
+        // script's own exit code is stated, its last lines are kept, and the one cause worth
+        // naming is named.
+        let died = match verify_clean_numbers(&out) {
+            Some((0, 0, e)) => Some(e),
+            _               => None,
+        };
+        let dead_note = match died {
+            None    => String::new(),
+            Some(e) => {
+                let seen = last_lines(&s, Self::VERIFY_DEAD_TAIL_LINES);
+                fmt!("\n[THE VERIFIER MEASURED NOTHING. Its clean run printed no check at all and \
+                    exited {}, so every number below is computed over an empty run and says \
+                    nothing about this repository. Do not report a defect from it; find out why \
+                    the script died. Its last lines are above, verbatim.]{}",
+                    e,
+                    dead_run_hint(&seen).unwrap_or_default())
+            },
+        };
         let tail = match (&trailer, exit) {
             // No trailer, whatever the exit code says. This is the case the whole tool exists
             // to make survivable: a passing count with nothing behind it is the evidence that
@@ -18025,8 +18215,24 @@ impl Tool {
                 "\n{}\n[the sequence did not finish, so these numbers cover only what ran]", t),
             (Some(t), _) => fmt!("\n{}", t),
         };
-        truncate_output(&mut s, MAX_OUTPUT.saturating_sub(envelope_overhead(&origin) + tail.len()));
-        fmt!("{}{}", ctx.wrap_untrusted(&origin, &s), tail)
+        let tail = fmt!("{}{}", tail, dead_note);
+        let room = MAX_OUTPUT.saturating_sub(envelope_overhead(&origin) + tail.len());
+        if died.is_some() {
+            // THE END IS THE HALF THAT MATTERS on a run that died: `truncate_output` keeps the
+            // beginning, which would cut away the very stack trace this note points at.
+            s = head_and_tail(&s, room);
+        } else {
+            truncate_output(&mut s, room);
+        }
+        // The method marks the turn and the free function does not, and that is the whole of the
+        // difference: the model reads the same marked output on both branches, and only the
+        // network moves.  See `Tool::run_result`, which has said this since 2026-08-24.
+        let body = if tainting {
+            ctx.wrap_untrusted(&origin, &s)
+        } else {
+            wrap_untrusted(&origin, &s)
+        };
+        fmt!("{}{}", body, tail)
     }
 
 
@@ -18215,8 +18421,20 @@ impl Tool {
             Ok(s)  => s,
             Err(r) => return Ok(r),
         };
+        // THE SAME QUESTION `run` ASKS, over the same fence and by the same function.  The
+        // verifier is not fenced -- `Desk::verify` in hand/src/main.rs says so, and says why: a
+        // verifier that drives a browser cannot run inside one.  What is fenced is its INPUT, a
+        // name looked up in the tracked tree's own `dev/`, so nothing the model wrote reaches a
+        // program, an argument or a path.  The one thing that could make this output a stranger's
+        // words is therefore the TURN working somewhere a stranger's words live, which is exactly
+        // what the fence states: an unbounded turn's fence IS the granted root and still answers
+        // yes, mailbox and all, while a Diamond bounded to its own folder answers no.
+        //
+        // Before this, the answer was yes unconditionally, and on 2026-09-13 that cost a live
+        // daimon its network on its own verifier's output (`dev/HATES.md`, turn 54).
+        let tainting = fence_reaches_untrusted(&fence_spec(&ctx.no_write, &machine, true), &machine);
         let res = res!(crate::wasm::hand::run(&spec).await);
-        Ok(Self::verify_result(&name, &res, ctx))
+        Ok(Self::verify_result(&name, &res, ctx, tainting))
     }
 
 
@@ -24101,6 +24319,81 @@ mod tests {
         assert_eq!(None, two.net_consent(), "a no given in one Diamond answered for another");
     }
 
+    /// **THE STANDING ANSWER REACHES A DIAMOND'S DAIMON, and a Diamond's own answer still wins.**
+    ///
+    /// The second half of turn 54 (`dev/HATES.md`).  The device stood on `allow` --
+    /// `daimond-net-standing`, pushed into every chat engine by `netApplyAll` -- and a daimon
+    /// asked anyway, for eleven minutes, with nobody at the screen.  `set_net_answer` writes on
+    /// the registry context, whose `daimon_of` is the empty string; the daimon's turn reads under
+    /// its Diamond's id, and the two never met.
+    ///
+    /// Both directions, because a standing answer that only ever widens is not a setting.
+    #[test]
+    fn test_a_device_standing_answer_reaches_a_diamonds_daimon() {
+        let (chat, daimon) = shared_client();
+        // The chat context as `DaimondApp::new` builds it: this is the one the control is pressed
+        // on, and its conversation key is the empty string.
+        let mut app = ctx();
+        app.read_seen = chat.read_seen.clone();
+        app.daimon_of = String::new();
+        daimon.set_tainted();
+        assert_eq!(None, daimon.net_consent(), "a daimon started with an answer nobody gave");
+
+        app.override_net_consent(Some(Verdict::Allow));
+        assert_eq!(Some(Verdict::Allow), daimon.net_consent(),
+            "the device's standing answer did not reach the daimon, so it asks an empty room");
+        assert_eq!(NetStep::Restored,
+            net_step(Mode::Guarded, daimon.net_risk(), false, daimon.net_consent()),
+            "the daimon would still have raised the dialog turn 54 hung on");
+
+        // THE NO IS THE HALF THAT MATTERS MORE.  A standing refusal must reach the daimon too, or
+        // the fix would be one that only ever grants.
+        app.override_net_consent(Some(Verdict::Deny));
+        assert_eq!(Some(Verdict::Deny), daimon.net_consent(),
+            "a standing refusal did not reach the daimon");
+
+        // AND "ASK" PUTS IT BACK, so the control is a control rather than a one-way switch.
+        app.override_net_consent(None);
+        assert_eq!(None, daimon.net_consent(), "the standing answer could not be taken back");
+    }
+
+    /// **A DIAMOND'S OWN ANSWER IS READ BEFORE THE DEVICE'S, and a chat's dialog answer is not
+    /// the device's.**
+    ///
+    /// The precedence, and the crossing the fallback must not open.  Falling back to the `""` KEY
+    /// would have spent a CHAT's one-off dialog answer -- written by `set_net_consent` from inside
+    /// the tool loop -- on every Diamond sharing the client, which is exactly what
+    /// `test_one_diamonds_network_yes_is_not_spent_by_another_on_a_shared_client` forbids between
+    /// two Diamonds.  Only the visible control writes the standing answer.
+    #[test]
+    fn test_a_diamonds_own_answer_beats_the_devices_and_a_chats_dialog_is_not_standing() {
+        let (one, two) = shared_client();
+        let mut app = ctx();
+        app.read_seen = one.read_seen.clone();
+        app.daimon_of = String::new();
+        one.set_tainted();
+        two.set_tainted();
+
+        // The Diamond answered its own dialog with a NO; the device then stands on `allow`.
+        one.set_net_consent(Verdict::Deny);
+        app.override_net_consent(Some(Verdict::Allow));
+        assert_eq!(Some(Verdict::Deny), one.net_consent(),
+            "a standing yes overwrote the no this Diamond's user actually gave");
+        assert_eq!(Some(Verdict::Allow), two.net_consent(),
+            "the Diamond that had answered nothing did not read the device's answer");
+
+        // And the crossing that stays shut: a CHAT's own dialog answer answers for the chat.
+        let (three, _four) = shared_client();
+        let mut chat = ctx();
+        chat.read_seen = three.read_seen.clone();
+        chat.daimon_of = String::new();
+        three.set_tainted();
+        chat.set_net_consent(Verdict::Allow);      // the tool loop's writer, not the control
+        assert_eq!(Some(Verdict::Allow), chat.net_consent(), "the chat lost its own answer");
+        assert_eq!(None, three.net_consent(),
+            "a chat's one-off dialog answer was spent on a Diamond that never saw the command");
+    }
+
     /// Fresh daimon ends the conversation, so it ends the grant that conversation held.
     #[test]
     fn test_ending_a_conversation_ends_its_grant() {
@@ -24631,7 +24924,7 @@ mod tests {
         let w = ctx();
         w.set_unsupervised();
         let trailered = r#"{"stdout":"  ok   a\n[verify: 27 checks passed, 0 failed, 2 breaks confirmed red, 0 breaks proved nothing]\n","exit":2}"#;
-        let theirs = Tool::verify_result("graph", trailered, &w);
+        let theirs = Tool::verify_result("graph", trailered, &w, true);
         assert_eq!(CallOutcome::Done, call_outcome(&theirs),
             "a worker's verify is booked as a refusal: {}", theirs);
         assert!(!theirs.contains("THIS IS NOT EVIDENCE"), "{}", theirs);
@@ -24649,14 +24942,14 @@ mod tests {
         // As convincing as a lying instrument gets: everything passed, exit zero, no trailer.
         let bare = Tool::verify_result("graph",
             r#"{"stdout":"  ok   the links are drawn\n  ok   the badge counts\n27 checks passed\n","exit":0}"#,
-            &c);
+            &c, true);
         assert!(bare.contains("THIS IS NOT EVIDENCE"), "a bare pass was handed on: {}", bare);
         assert!(bare.contains("Do not report a passing count"), "{}", bare);
         // With the trailer, the numbers are restated as Daimond's own sentence, outside the
         // envelope that marks the verifier's own words as untrusted.
         let whole = Tool::verify_result("graph",
             r#"{"stdout":"  ok   a\n\n[verify: 27 checks passed, 0 failed, 2 breaks confirmed red, 1 breaks proved nothing]\n","exit":2}"#,
-            &c);
+            &c, true);
         assert!(!whole.contains("THIS IS NOT EVIDENCE"), "{}", whole);
         assert!(whole.trim_end().ends_with("1 breaks proved nothing]"),
             "the three numbers are not the last thing the model reads: {}", whole);
@@ -24668,7 +24961,7 @@ mod tests {
         let c = ctx();
         let out = Tool::verify_result("graph",
             r#"{"stdout":"  ok   a\n[verify: 27 checks passed, 0 failed -- NOT PROVEN: no break was run, so no check here has been shown to be able to fail.]\n","exit":2}"#,
-            &c);
+            &c, true);
         assert!(out.contains("NOT PROVEN"), "{}", out);
         assert!(!out.contains("THIS IS NOT EVIDENCE"),
             "a labelled clean-only run was refused as trailerless: {}", out);
@@ -24681,8 +24974,80 @@ mod tests {
         let c = ctx();
         let out = Tool::verify_result("graph",
             r#"{"stdout":"[verify: 5 checks passed, 0 failed, 1 breaks confirmed red, 0 breaks proved nothing]\n","exit":-1}"#,
-            &c);
+            &c, true);
         assert!(out.contains("did not finish"), "{}", out);
+    }
+
+    /// **A VERIFIER THAT DIED SAYS SO, AND SAYS WHY, IN ITS OWN WORDS.**
+    ///
+    /// 2026-09-13: a browser verifier threw at its first navigation because no dev world was up.
+    /// The report said `0 passed, 0 failed`, the three numbers were computed over an empty run,
+    /// and `page.goto: net::ERR_CONNECTION_REFUSED` reached the model nowhere -- so a live daimon
+    /// spent fifty steps looking for a defect in a repository that had none.
+    ///
+    /// The fixture is the hand's report as `verify::report` composes it, dead tail and all.
+    #[test]
+    fn test_a_verifier_that_measured_nothing_hands_on_its_own_death() {
+        let c = ctx();
+        let report = "dev/verify_diamondfit.mjs — 1 run, byte for byte the commit's\n\n            CLEAN            0 passed, 0 failed, exit 1, 812 ms\n            \u{20}    -- it printed no check at all; its last lines, verbatim:\n            \u{20}    | page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:8777/\n            \u{20}    |     at file:///home/u/ws/dev/verify_diamondfit.mjs:41:9\n\n            [verify: 0 checks passed, 0 failed -- NOT PROVEN: no break was run.]\n";
+        let res = fmt!(r#"{{"stdout":"{}","stderr":"  ..   clean run\n","exit":3}}"#,
+            json_escape(report));
+        let out = Tool::verify_result("diamondfit", &res, &c, false);
+
+        // THE THREE THINGS THE DAIMON DID NOT HAVE.
+        assert!(out.contains("ERR_CONNECTION_REFUSED"),
+            "the script's own death did not reach the model: {}", out);
+        assert!(out.contains("exited 1"),
+            "the script's exit code did not reach the model, so nothing said it had failed to \
+            start: {}", out);
+        assert!(out.contains("MEASURED NOTHING"),
+            "a run over zero checks was handed on as a measurement: {}", out);
+        // AND THE ONE HINT WORTH A LINE, with the address it could not reach.
+        assert!(out.contains("nothing is listening at localhost:8777"),
+            "the one cause worth naming was not named: {}", out);
+        assert!(out.contains("dev/world.sh"),
+            "the reader is told what went wrong and not what to do about it: {}", out);
+
+        // AND A LIVE RUN PAYS NOTHING FOR IT. A note on every report is a note nobody reads.
+        let live = Tool::verify_result("graph",
+            r#"{"stdout":"dev/verify_graph.mjs — 2 runs
+CLEAN            27 passed, 0 failed, exit 0, 900 ms
+[verify: 27 checks passed, 0 failed, 2 breaks confirmed red, 0 breaks proved nothing]
+","exit":2}"#,
+            &c, false);
+        assert!(!live.contains("MEASURED NOTHING"),
+            "a run that measured 27 checks was called dead: {}", live);
+        assert!(live.trim_end().ends_with("0 breaks proved nothing]"),
+            "the three numbers are no longer the last thing the model reads: {}", live);
+    }
+
+    /// The hint is spent on the one cause it was written for, and on nothing else.
+    #[test]
+    fn test_the_dead_run_hint_names_a_refused_connection_and_only_that() {
+        let refused = dead_run_hint("page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:8807/")
+            .expect("a refused connection was not recognised");
+        assert!(refused.contains("127.0.0.1:8807"), "{}", refused);
+        let node = dead_run_hint("Error: connect ECONNREFUSED 127.0.0.1:9129")
+            .expect("Node's own spelling was not recognised");
+        assert!(node.contains("127.0.0.1:9129"), "{}", node);
+        // A real failure must not be explained away as a missing server.
+        assert!(dead_run_hint("AssertionError: expected 3 to equal 4").is_none(),
+            "an ordinary failure was dressed as a connection problem");
+        // And a refusal with no address still says the useful half rather than nothing.
+        let bare = dead_run_hint("fetch failed: connection refused")
+            .expect("a refusal with no address said nothing at all");
+        assert!(bare.contains("did not measure anything"), "{}", bare);
+    }
+
+    /// The clean run's numbers are the HAND's, read out of its report rather than recomputed.
+    #[test]
+    fn test_the_clean_runs_numbers_are_read_from_the_hands_own_line() {
+        assert_eq!(Some((0, 0, 1)),
+            verify_clean_numbers("CLEAN            0 passed, 0 failed, exit 1, 812 ms"));
+        assert_eq!(Some((27, 2, 0)),
+            verify_clean_numbers("head\nCLEAN            27 passed, 2 failed, exit 0, 900 ms\ntail"));
+        // An older hand, or a report cut before the line: answered `None`, never guessed.
+        assert_eq!(None, verify_clean_numbers("dev/verify_x.mjs — 1 run\n[verify: ...]"));
     }
 
     /// A refusal is the hand speaking, and it is passed through as a refusal rather than dressed
@@ -24692,10 +25057,72 @@ mod tests {
         let c = ctx();
         let out = Tool::verify_result("graph",
             r#"{"refused":"Refused: there is no 'dev/verify_graph.mjs' in the folder this hand was granted."}"#,
-            &c);
+            &c, true);
         assert!(out.starts_with("Refused:"), "{}", out);
         assert!(!out.contains("THIS IS NOT EVIDENCE"),
             "a refusal was also accused of being a bare pass: {}", out);
+    }
+
+    /// **A DAIMON'S OWN VERIFIER DOES NOT MAKE IT A STRANGER.**
+    ///
+    /// Turn 54, 2026-09-13 (`dev/HATES.md`).  `verify_result` sent every report through
+    /// `ctx.wrap_untrusted` unconditionally, so a verifier the daimon wrote, on files the daimon
+    /// wrote, marked the turn as having read a stranger's words -- and the next `run`, a `grep`,
+    /// reached `net_step` as `Ask` and hung on a dialog nobody was there to answer.
+    ///
+    /// The fence is built from a Diamond's own bounds by `fence_spec` and the decision is taken
+    /// from it by `fence_reaches_untrusted`, which is the wiring `Tool::verify` uses; nothing here
+    /// is a literal `false` handed to `verify_result`, which would prove the branch and not the
+    /// rule.
+    #[test]
+    fn test_a_verifier_inside_the_fence_leaves_the_turn_its_network() {
+        let machine = Machine::at("/home/u/ws");
+        let c       = scoped(&["code/daimond"], &[]);
+        let fence   = fence_spec(&c.no_write, &machine, true);
+        let tainting = fence_reaches_untrusted(&fence, &machine);
+        assert!(!tainting,
+            "a fence scoped to the owner's own source was read as reaching a stranger's words: \
+            rw {:?} ro {:?}", fence.rw, fence.ro);
+
+        let trailered = r#"{"stdout":"  ok   a\n[verify: 27 checks passed, 0 failed, 2 breaks confirmed red, 0 breaks proved nothing]\n","exit":2}"#;
+        let out = Tool::verify_result("graph", trailered, &c, tainting);
+
+        // The envelope is NOT what moved: the verifier's own words stay marked.
+        assert!(out.contains(UNTRUSTED_OPEN),
+            "the verifier's output stopped being marked, which is the worse bug of the two: {}",
+            out);
+        // And the turn keeps what it had.
+        assert!(!c.is_tainted(), "a daimon's own verifier tainted its turn");
+        assert!(fence_spec(&c.no_write, &machine, c.net_risk()).net,
+            "the next command in the turn was fenced without a network");
+        assert_eq!(NetStep::Give, net_step(Mode::Guarded, c.net_risk(), false, c.net_consent()),
+            "the grep after the verify would still have raised the dialog turn 54 hung on");
+    }
+
+    /// **THE DEFENCE, UNMOVED: a turn whose fence holds the mailbox is still marked by its
+    /// verifier.**
+    ///
+    /// The narrowing is a narrowing and not a removal.  An unscoped turn is fenced at the granted
+    /// root, mailbox and all -- and a verifier run there could print a stranger's words, because
+    /// the hand runs it UNFENCED in that same tree (`Desk::verify`, hand/src/main.rs).
+    #[test]
+    fn test_a_verifier_on_a_turn_that_reaches_the_mailbox_still_costs_the_network() {
+        let machine = Machine::at("/home/u/ws");
+        let c       = ctx();  // no scope, so the fence is the granted root
+        let fence   = fence_spec(&c.no_write, &machine, true);
+        assert!(fence.rw.iter().any(|p| p == "/home/u/ws"),
+            "an unscoped turn was not fenced at the granted root, so this proves nothing: {:?}",
+            fence.rw);
+        let tainting = fence_reaches_untrusted(&fence, &machine);
+        assert!(tainting, "a fence holding /home/u/ws/mail was read as reaching nothing untrusted");
+
+        let out = Tool::verify_result("graph",
+            r#"{"stdout":"  ok   a\n[verify: 1 checks passed, 0 failed, 1 breaks confirmed red, 0 breaks proved nothing]\n","exit":2}"#,
+            &c, tainting);
+        assert!(out.contains(UNTRUSTED_OPEN), "the verifier's text was not marked: {}", out);
+        assert!(c.is_tainted(), "a verifier whose tree holds a mailbox did not mark the turn");
+        assert!(!fence_spec(&c.no_write, &machine, c.net_risk()).net,
+            "the next command in the turn was still given the network");
     }
 
     /// A hand that has not said it holds verifiers has not said it holds any.

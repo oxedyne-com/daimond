@@ -1774,6 +1774,44 @@ async function main() {
 		DS.setEnabled(false);
 	}
 
+	console.log('debugshare: screen — an open modal is named, never reported as "none"');
+	{
+		// The turn-54 defect (dev/HATES.md): the network question was up for eleven
+		// minutes with a live turn stopped behind it, and every beat said `dlg none`.
+		// The seam that reads `.modal.dlg` lives in daimond.js and needs a browser
+		// (dev/verify_netchip.mjs drives it there); what belongs HERE is the other half
+		// -- that a seam reporting a dialog gets it onto the wire, named and bounded,
+		// rather than clipped away to nothing or dropped for being long.
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		let screen = {
+			view: 'chat', seat: '', role: 'tool', text: 'grep -n fn daimon src/tools.rs',
+			dlg: 'pick: Let this command reach the network?', comp: 0, locked: false,
+		};
+		DS.registerScreen(() => screen);
+		DS.setEnabled(true);
+		DS._beatTick();
+		const rows = () => DS._outbox().filter((r) => r.tag === 'ev screen').map((r) => JSON.parse(r.data));
+		let s = rows()[0];
+		check('an open dialog reaches the beat instead of "none"',
+			s.dlg === 'pick: Let this command reach the network?');
+		check('and the row is still inside the 360-byte cap',
+			DS._byteLen(JSON.stringify(s)) <= 360);
+		// A long heading is CUT, not dropped: a reader must still learn a card is up.
+		screen = Object.assign({}, screen, { dlg: 'pick: ' + 'x'.repeat(400) });
+		DS._screenTick();
+		s = rows()[1];
+		check('a long dialog head is clipped, never emptied',
+			s.dlg.length <= 48 && s.dlg.indexOf('pick: ') === 0);
+		// AND THE CHANGE IS SHIPPED. A dialog going up is exactly the change a reader
+		// is waiting on, so it must not sit behind the five-minute floor.
+		screen = Object.assign({}, screen, { dlg: 'none' });
+		DS._screenTick();
+		check('a dialog closing is shipped on the very next tick',
+			rows().length === 3 && rows()[2].dlg === 'none');
+		DS.setEnabled(false);
+	}
+
 	console.log('debugshare: screen — the updater\'s four words, and a screen seam that is absent or throws');
 	{
 		const env = makeEnv({ fastTimers: true, respond: () => 500 });
@@ -1809,6 +1847,12 @@ async function main() {
 		check('a device the watch gave up on is "manual"', DS2._updaterState() === 'manual');
 		env2.win.DaimondUpdater = { pending: () => true, countdown: () => 0, stuck: () => false, gaveUp: () => false };
 		check('pending, no countdown, not stuck: "ready"', DS2._updaterState() === 'ready');
+		env2.win.DaimondUpdater = { pending: () => true, countdown: () => 0, stuck: () => false, gaveUp: () => false,
+			held: () => 'sync:a push is armed' };
+		check('held with a reason names it: "held:<why>"', DS2._updaterState() === 'held:sync:a push is armed');
+		env2.win.DaimondUpdater = { pending: () => true, countdown: () => 0, stuck: () => false, gaveUp: () => false,
+			held: () => null };
+		check('held() answering null is still "ready"', DS2._updaterState() === 'ready');
 		delete env2.win.DaimondUpdater;
 		check('no updater at all reads as "none"', DS2._updaterState() === 'none');
 	}

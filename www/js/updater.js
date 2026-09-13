@@ -96,6 +96,14 @@
 	var applying = false;
 	var chip     = null;
 
+	// The reason the automatic path is currently held back, or null when it is not
+	// held at all (safe, counting down, or nothing pending). `announced` is the set
+	// of reasons already told to the feed for THIS pending build -- distinct from
+	// `heldWhy`, which is the CURRENT reason and can revert to one already announced
+	// without a second telling. Both reset in `onFound`, where a new build starts over.
+	var heldWhy  = null;
+	var announced = {};
+
 	// An ACTIVE session should not be reloaded out from under the user. A soft
 	// update waits for a hidden tab OR a foreground one left untouched this long; a
 	// forced one (the gateway refusing the tab) never reloads mid-turn and waits a
@@ -320,6 +328,56 @@
 		return now - last >= GAP_MS;
 	}
 
+	/// `DaimondSync.state().busyWith`, in words, or empty when sync has none to
+	/// give -- unreadable or absent reads the same as empty, since `syncQuiet`
+	/// already treats "cannot tell" as quiet and this is only ever asked once it
+	/// has not.
+	function syncBusyWith() {
+		try {
+			var S = window.DaimondSync;
+			if (S && S.state) return String(S.state().busyWith || '');
+		} catch (e) {}
+		return '';
+	}
+
+	/// WHICH single guard is holding the automatic path back right now? Asked only
+	/// once `evaluate` has already found one of `softAllowed`, `safeNow` or
+	/// `quietEnough` refusing -- so this never decides anything, it only NAMES the
+	/// decision, in the same order those three ask their own questions, so the
+	/// reason given is always the one that actually applied.
+	function whyUnsafe() {
+		if (!booted) return 'boot';
+		var now = Date.now();
+		if (now - bootedAt < BOOT_MS) return 'boot';
+		if (now < deferUntil) return 'deferred';
+		var last = 0;
+		try { last = parseInt(localStorage.getItem(SKEY), 10) || 0; } catch (e) {}
+		if (now - last < GAP_MS) return 'gap';
+		if (busy()) return 'turn';
+		if (composerHasUnsavedText()) return 'typed';
+		if (!syncQuiet()) return 'sync:' + syncBusyWith();
+		try {
+			if (window.DaimondIdentity && DaimondIdentity.isUnlocked() && !idleUnlocked()) return 'lease';
+		} catch (e) {}
+		if (!document.hidden && quietFor() < QUIESCE_MS) return 'foreground-active';
+		return '';   // safeNow() && quietEnough() && softAllowed() all pass; should not be reached
+	}
+
+	/// Tell the feed why the build is held, at most once per distinct reason for
+	/// this pending build -- a tab stuck on the same reason for half an hour must
+	/// not fill the feed with it, but a reason that changes and changes back is
+	/// still only said once, since the feed already has it. Always updates
+	/// `heldWhy`, the CURRENT reason, whether or not this is its first telling.
+	function noteHeld() {
+		var why = whyUnsafe();
+		heldWhy = why;
+		if (why && !announced[why]) {
+			announced[why] = true;
+			share('update', { live: pending, mine: booted, at: 'held', why: why });
+		}
+		return why;
+	}
+
 	function counting() { return countTimer !== null; }
 
 	/// The automatic path. It never reloads itself -- it arms the tick, and the
@@ -333,10 +391,11 @@
 
 	/// One pass of "is it safe yet?".
 	function evaluate() {
-		if (applying || !pending) { disarm(); return; }
+		if (applying || !pending) { heldWhy = null; disarm(); return; }
 		if (counting()) return;
 		if (!softAllowed() || !safeNow() || !quietEnough()) {
 			if (!unsafeSince) unsafeSince = Date.now();
+			noteHeld();
 			// Half an hour of never finding a safe moment is not a moment that is
 			// coming -- a desktop left with a half-typed prompt will sit like that
 			// for days. Stop asking and leave the user a button; a check that finds
@@ -344,6 +403,7 @@
 			if (Date.now() - unsafeSince >= GIVEUP_MS) { gaveUp = true; disarm(); reflect(); }
 			return;
 		}
+		heldWhy = null;
 		unsafeSince = 0;
 		startCount();
 	}
@@ -360,7 +420,7 @@
 			// it: twenty seconds is long enough for a turn to start or a key to be
 			// pressed, and a countdown that ignored that would be the very reload
 			// this file exists to avoid.
-			if (!safeNow() || !quietEnough()) { stopCount(); return; }
+			if (!safeNow() || !quietEnough()) { noteHeld(); stopCount(); return; }
 			if (countLeft <= 0) { stopCount(); takeIt(); return; }
 			syncBanner('soon');
 		}, 1000);
@@ -614,9 +674,19 @@
 		// The user line is deliberately note-free: `note` carries the deploy's
 		// TRANSPARENCY-CHAIN summary (a developer commit subject), which is not
 		// user-facing copy and read as garbage in a popup. See `onFound`.
+		//
+		// `ready` on a desktop that has not given up says the automatic path is
+		// still watching -- the plain "available" copy read as a chore only the
+		// user could finish, which is why one was seen reaching for the button on
+		// a night an unrelated deploy kept the tab noisy for the whole watch. A
+		// phone keeps the old wording (it has no automatic path to describe), and
+		// a desktop that HAS given up gets it too -- there the button is, in truth,
+		// the only way this build is ever taken.
+		var readyDesktopWatching = state === 'ready' && !gaveUp && !mobileDevice();
 		banner.msg.textContent = state === 'stuck'
 			? t('update.stuck')
-			: (state === 'stale' ? t('update.stale') : t('update.available'));
+			: (state === 'stale' ? t('update.stale')
+				: (readyDesktopWatching ? t('update.available_auto') : t('update.available')));
 		// The stuck button offers the guarded cache-clear reload -- the one worth
 		// trying -- while the message names the sure escape (close and reopen).
 		banner.go.textContent = state === 'stuck' ? t('update.stuck_reload') : t('update.reload');
@@ -631,9 +701,13 @@
 		pending = j.build;
 		note = typeof j.note === 'string' ? j.note : '';
 		// A NEW build starts the patience over: whatever made the tab unsafe for
-		// half an hour, this is a different update and deserves its own half hour.
+		// half an hour, this is a different update and deserves its own half hour --
+		// and its own telling of why, since a reason already announced for the
+		// SUPERSEDED build says nothing about this one.
 		gaveUp      = false;
 		unsafeSince = 0;
+		heldWhy     = null;
+		announced   = {};
 		share('update', { live: pending, mine: booted, at: 'ready' });
 		reflect();
 		apply(false);                             // arm the watch; it waits for a safe moment
@@ -914,6 +988,10 @@
 		countdown: function () { return countLeft; },
 		/// Has the watch given up on ever finding a safe moment for this build?
 		gaveUp:  function () { return gaveUp; },
+		/// Why the automatic path is held right now -- one of `whyUnsafe`'s reasons,
+		/// or null when nothing is pending, a countdown is running, or the last
+		/// check found it safe.
+		held:    function () { return heldWhy; },
 		/// Everything an automatic reload must not land on top of, as one answer.
 		safe:    safeNow,
 		noteLiveBuild: noteLiveBuild,

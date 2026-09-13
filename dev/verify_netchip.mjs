@@ -26,7 +26,7 @@
 // looking for it. It was made answerable, not answered. The standing choice is
 // what actually removes the interruption, and check 7 is the one that proves it.
 //
-// NINE PROPERTIES:
+// THIRTEEN PROPERTIES:
 //
 //   1. THE HOVER NAMES THE RUNG. Asserted as the pair — it carries the rung's own
 //      word AND is not the old category sentence — because a tooltip that merely
@@ -65,6 +65,18 @@
 //      and points the wrong way: the direction being made permanent and global was
 //      the PERMISSIVE one. `src/tools.rs` says of `override_net_consent`, where that
 //      path ends, that NOTHING IN THE TOOL LOOP MAY CALL IT.
+//  10. AND THE COMMAND THAT RAN WITHOUT IT SAYS SO, on its own block and in the
+//      app's own sentence rather than in the bracketed note written for the model.
+//  11. A QUESTION NOBODY CAN ANSWER ANSWERS ITSELF, as the body already promises:
+//      "No runs it anyway, with no network -- and so does saying nothing." Added
+//      2026-09-13, after a live daimon's turn sat busy for eleven minutes behind a
+//      card in a tab nobody had in front of them (dev/HATES.md, turn 54).
+//  12. AND A DIALOG SOMEBODY CAN ANSWER IS NOT WITHDRAWN EARLY, which is the half
+//      that keeps 11 honest: a deadline firing under somebody mid-sentence would be
+//      the worse defect of the two.
+//  13. AND THE BEAT NAMES THE CARD THAT IS UP. The observer watching turn 54 through
+//      the debug feed read `dlg none` for the whole eleven minutes.
+//
 //
 // PROVED AGAINST BROKEN CODE FIRST, each break chosen to survive every check but
 // the ones under test:
@@ -78,6 +90,9 @@
 //   node dev/verify_netchip.mjs --break notick   # 8-9: no control to press at all
 //   node dev/verify_netchip.mjs --break yesnotsticky # 8: the tick is drawn and does nothing
 //   node dev/verify_netchip.mjs --break deafnote # 10:   a command with no network says nothing
+//   node dev/verify_netchip.mjs --break emptyroom# 11:   the question is put to an empty room again
+//   node dev/verify_netchip.mjs --break nodeadline#12:   and once up, it waits for ever
+//   node dev/verify_netchip.mjs --break blinddlg # 13:   the beat says `dlg none` over an open card
 //   node dev/verify_netchip.mjs                  # and then, clean
 //
 // `perchat` is the SHARP one: it restores the reported defect exactly -- the
@@ -195,6 +210,29 @@ const BREAKS = {
 		file: 'js/daimond.js',
 		find: "\t\t\treturn !!(Wasm && Wasm.ran_without_net",
 		with: "\t\t\treturn false && !!(Wasm && Wasm.ran_without_net",
+	},
+	// THE HANG ITSELF, restored: the question put to an empty room. Without the
+	// `someoneCanAnswer` guard the card goes up behind a hidden tab and waits, which
+	// is what turn 54 did for eleven minutes. Reddens 11 and nothing else.
+	emptyroom: {
+		file: 'js/daimond.js',
+		find: "\t\t\tif (!someoneCanAnswer()) {",
+		with: "\t\t\tif (false) {",
+	},
+	// And the other half: a card raised on a screen somebody walked away from, with
+	// no bound on the wait. Reddens 12's second half and nothing else -- the card
+	// still goes up, and still does not withdraw itself early.
+	nodeadline: {
+		file: 'js/daimond.js',
+		find: "\t\t\t\tdeadlineMs: netWaitMs,",
+		with: "\t\t\t\tdeadlineMs: 0,",
+	},
+	// The beat saying `dlg none` with a card on screen -- the lie the observer read
+	// for the whole of turn 54. Reddens 13 alone.
+	blinddlg: {
+		file: 'js/daimond.js',
+		find: "\t\t\t\tvar card = document.querySelector('.modal.dlg');",
+		with: "\t\t\t\tvar card = null;",
 	},
 	// No chat can be asked, so the whole section goes.
 	nosection: {
@@ -655,6 +693,126 @@ try {
 	check(gaps.length === 0,
 		'and it is in all eight catalogues, not in English only',
 		gaps.join(', '));
+
+	// ── 11. A QUESTION NOBODY CAN ANSWER ANSWERS ITSELF ─────────
+	//
+	// Turn 54, 2026-09-13 (dev/HATES.md). The dialog's own body promises "No runs
+	// it anyway, with no network -- and so does saying nothing", and nothing made
+	// the second half true: `dialog()` had no deadline and nothing else resolved
+	// it, so a live daimon's turn sat busy for eleven minutes behind a card in a
+	// tab nobody had in front of them.
+	//
+	// THE TAB IS HIDDEN, which is one of the two facts `someoneCanAnswer` reads
+	// (the other is a modal already up). Overridden as an own property on
+	// `document`, then deleted: Playwright cannot background a page it is driving,
+	// and the alternative -- asserting the branch from the source -- would prove
+	// the text and not the behaviour.
+	//
+	// The posture key is cleared first because `autonomousPosture()` sits ABOVE
+	// this branch and answers `allow-net` on the same condition: a profile left
+	// armed by another run would measure that instead.
+	await p.evaluate(() => {
+		try { localStorage.removeItem('daimond-autonomous-posture'); } catch (e) {}
+		try { localStorage.removeItem('daimond-net-standing'); } catch (e) {}
+	});
+	const empty = await p.evaluate(async () => {
+		const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+		Object.defineProperty(document, 'visibilityState', {
+			configurable: true, get: () => 'hidden',
+		});
+		const began = Date.now();
+		try {
+			const gate = window.__daimondEgressAllowed(JSON.stringify({
+				tool: 'run_net', url: 'grep -n drawn www/js/daimond.js', detail: '/home/jason/usr',
+			}));
+			// RACED, because the defect under test is a promise that never settles: a bare
+			// await would hang this verifier for the whole two-minute bound rather than
+			// report anything, and a check that can only hang reports nothing.
+			const v = await Promise.race([gate, sleep(5000).then(() => '(still waiting)')]);
+			const out = { verdict: v, ms: Date.now() - began,
+				cards: document.querySelectorAll('.modal.dlg').length };
+			// Dismissed if one went up, so a red here does not take the checks after it.
+			document.querySelectorAll('.modal.dlg .dlg-cancel').forEach((b) => b.click());
+			await sleep(50);
+			return out;
+		} finally { delete document.visibilityState; }
+	});
+	check(empty.verdict === 'deny' && empty.cards === 0 && empty.ms < 3000,
+		'A QUESTION NOBODY COULD ANSWER RESOLVES AT ONCE, as "no network, run anyway"',
+		`verdict=${empty.verdict} cards=${empty.cards} ${empty.ms}ms`);
+	// And the trail says WHY, so the eleven minutes are legible afterwards rather
+	// than looking like an answer somebody gave.
+	const noted = await p.evaluate(() => {
+		try {
+			return (DaimondTrail.rows() || []).some((r) =>
+				/net consent/.test(JSON.stringify(r)) && /no network/.test(JSON.stringify(r)));
+		} catch (e) { return false; }
+	});
+	check(noted, 'and it is written down, not silently withheld');
+
+	// ── 12. AND A DIALOG SOMEBODY CAN ANSWER IS NOT WITHDRAWN EARLY ──
+	//
+	// THE HALF THAT KEEPS THE FIX HONEST. A deadline that fired while somebody was
+	// reading the command would be the worse defect of the two: a question taken
+	// off the screen mid-sentence, answered no on their behalf. So both are
+	// asserted against one card -- still up and still unanswered well into the
+	// wait, and resolved as a no once it runs out.
+	//
+	// `deadlineMs` is the verifier's, and `netAskDeadline` CLAMPS it to
+	// `NET_ASK_DEADLINE_MS`: a caller can bring the refusal forward and can never
+	// push it back, which is what makes driving the timed path from here safe.
+	const timed = await p.evaluate(async () => {
+		let done = null;
+		const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+		const gate = window.__daimondEgressAllowed(JSON.stringify({
+			tool: 'run_net', url: 'cargo build', detail: '/home/jason/usr',
+		}), { deadlineMs: 2500 }).then((v) => { done = v; return v; });
+		await sleep(1200);
+		const mid = { up: document.querySelectorAll('.modal.dlg').length, answered: done };
+		// RACED, because the defect under test is a promise that never settles: awaiting
+		// it bare would hang this verifier rather than redden it, and a check that can
+		// only hang has no way to report anything.
+		const verdict = await Promise.race([gate, sleep(8000).then(() => '(never settled)')]);
+		await sleep(50);
+		const cards = document.querySelectorAll('.modal.dlg').length;
+		// Dismissed if it is still standing, so a red here does not take every check
+		// after it with it: `someoneCanAnswer` answers no while a modal is up.
+		document.querySelectorAll('.modal.dlg .dlg-cancel').forEach((b) => b.click());
+		return { mid: mid, verdict: verdict, cards: cards };
+	});
+	check(timed.mid.up === 1 && timed.mid.answered === null,
+		'a visible, answerable dialog is STILL UP and unanswered well into the wait',
+		`cards=${timed.mid.up} answered=${JSON.stringify(timed.mid.answered)}`);
+	check(timed.verdict === 'deny' && timed.cards === 0,
+		'and when the deadline passes it answers "no network, run anyway" and clears',
+		`verdict=${timed.verdict} cards=${timed.cards}`);
+
+	// ── 13. AND THE BEAT NAMES THE CARD THAT IS UP ────────────
+	//
+	// The observer watching turn 54 through the debug feed read `dlg none` for the
+	// whole eleven minutes -- the one lane that carries what a screenshot would
+	// show, saying nothing was there. Read through `DEBUG_SHARE._gatherScreen`,
+	// which is the function that actually composes the row, not the seam alone.
+	const seen = await p.evaluate(async () => {
+		const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+		const gate = window.__daimondEgressAllowed(JSON.stringify({
+			tool: 'run_net', url: 'cargo fetch', detail: '/home/jason/usr',
+		}), { deadlineMs: 1500 });
+		await sleep(400);
+		const row = window.DEBUG_SHARE ? window.DEBUG_SHARE._gatherScreen() : null;
+		// Raced for the reason above, and then dismissed either way.
+		await Promise.race([gate, sleep(8000)]);
+		document.querySelectorAll('.modal.dlg .dlg-cancel').forEach((b) => b.click());
+		await sleep(50);
+		const after = window.DEBUG_SHARE ? window.DEBUG_SHARE._gatherScreen() : null;
+		return { up: row ? row.dlg : '', after: after ? after.dlg : '' };
+	});
+	check(seen.up !== 'none' && seen.up.length > 0,
+		'THE BEAT NAMES AN OPEN DIALOG instead of reporting none',
+		JSON.stringify(seen.up));
+	check(seen.after === 'none',
+		'and goes back to none once the card is gone, so the field stays worth reading',
+		JSON.stringify(seen.after));
 } finally {
 	await s.close();
 }
