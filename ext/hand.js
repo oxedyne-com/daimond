@@ -1282,6 +1282,15 @@
 				return `The working directory "${m.cwd}" is not an absolute path without ".." in it. The hand does not guess `
 					+ `what a relative path is relative to, and a ".." is a way out of whatever it is written under.`;
 			}
+			// Optional, and absent means "you decide": a page built before the field
+			// existed sends no world at all, and the hand reads the verifier's own
+			// source to answer. A word outside the three is a page asking for a
+			// thing that does not exist, and the hand refuses it too.
+			if (m.world !== undefined && ['infer', 'stand', 'none'].indexOf(m.world) < 0) {
+				return 'verify\'s world is "stand" to stand a dev world for the run, "none" for a verifier that '
+					+ 'starts its own servers, or "infer" -- the default, and what leaving it out means -- to let '
+					+ 'the hand decide from whether the verifier imports dev/harness.mjs.';
+			}
 			if (typeof m.timeout_ms !== 'number' || !Number.isInteger(m.timeout_ms)
 				|| m.timeout_ms <= 0 || m.timeout_ms > TIMEOUT_MAX) {
 				return `exec needs timeout_ms: a whole number of milliseconds between 1 and ${TIMEOUT_MAX}. A command with no `

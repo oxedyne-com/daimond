@@ -42,6 +42,26 @@
 //   node dev/verify_verifyverb.mjs --break deadlive    7d fails: the control verifier's second break is made dead
 //   node dev/verify_verifyverb.mjs --break ghost       12 fails: the fixture leaves no trace on disk
 //   node dev/verify_verifyverb.mjs --break wrongjournal 14 fails: the journal is read from an empty directory
+//   node dev/verify_verifyverb.mjs --break leak       16 and 19 fail: the fixture's --down is a no-op
+//   node dev/verify_verifyverb.mjs --break noworld    15 fails, with 15b, 15c and 16, which are the
+//                                                     same world asked about four ways: the fixture
+//                                                     verifier drops its harness import
+//   node dev/verify_verifyverb.mjs --break quietrefusal 18 fails: the failing world says nothing
+//
+// ── THE WORLD, WHICH IS THE OTHER HALF OF "IT RAN" ──────────────────
+//
+// A verifier finds its world in the ENVIRONMENT: `dev/harness.mjs` reads
+// `DAIMOND_APP` and `DAIMOND_MOCK` and falls back to `localhost:8777`, which is
+// another lane's world or nothing. The hand's environment is Chrome's and names
+// no world at all, so before 2026-09-14 every page verifier this verb ran aimed
+// at whatever happened to be on 8777 and reported a count taken from it.
+//
+// So the fixture repository holds COMMITTED COPIES of this tree's own
+// `dev/world.sh`, `dev/serve.mjs` and `dev/mockllm.mjs`, and a `www/index.html`
+// for the server to serve. The world a check below stands is a real one: real
+// ports, a real identity probe, a real teardown. What the fixture verifier
+// writes to disk is the ports it actually reached, so "it was given the world"
+// is a fact about a child process rather than a line in a report.
 //
 // Each break damages ONE thing and reddens the check named beside it. THREE checks
 // have no break, and it is worth saying which rather than leaving a reader to
@@ -61,6 +81,7 @@
 // `hand/target/{release,debug}` or this slot's cache that is NEWER than `hand/src`,
 // else built. A stale binary is refused rather than driven -- see `newestSource`.
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -75,7 +96,8 @@ const BI    = process.argv.indexOf('--break');
 const BEQ   = process.argv.find(a => a.startsWith('--break='));
 const BREAK = BEQ ? BEQ.split('=')[1] : (BI >= 0 ? (process.argv[BI + 1] || '') : '');
 const KNOWN = ['nodev', 'realname', 'declaredbreak', 'proveclean', 'liveinstrument', 'deadlive',
-	'silentdead', 'noshot', 'ghost', 'committed', 'slander', 'noedit', 'wrongjournal'];
+	'silentdead', 'noshot', 'ghost', 'committed', 'slander', 'noedit', 'wrongjournal',
+	'leak', 'noworld', 'quietrefusal'];
 if (BREAK && !KNOWN.includes(BREAK)) {
 	console.error(`unknown break '${BREAK}'; known: ${KNOWN.join(', ')}`);
 	process.exit(2);
@@ -180,13 +202,85 @@ import fs from 'node:fs';
 ${HELPER}say('the edited fixture ran', true);
 `);
 
+// ── The world's own three files, and something to serve ─────────────
+//
+// COPIED FROM THIS TREE and committed, because what is being measured is the
+// verb's half of the arrangement against the real `dev/world.sh`: the identity
+// probe, the pid files, the teardown that refuses to report success over a held
+// port. A scripted stand-in would measure a script this file wrote.
+const WORLD_FILES = ['world.sh', 'serve.mjs', 'mockllm.mjs'];
+for (const f of WORLD_FILES) {
+	fs.copyFileSync(path.join(HERE, f), path.join(DEV, f));
+}
+fs.mkdirSync(path.join(GRANT, 'www'), { recursive: true });
+fs.writeFileSync(path.join(GRANT, 'www', 'index.html'),
+	`<!doctype html><title>fixture</title><p>${NONCE}</p>\n`);
+
+// A stub harness, because what makes a verifier a PAGE verifier -- and so what
+// the hand infers a world from -- is that it imports this. The real one opens a
+// browser; nothing here needs one.
+fs.writeFileSync(path.join(DEV, 'harness.mjs'),
+	`export const APP = process.env.DAIMOND_APP || 'http://localhost:8777';
+export const MOCK = process.env.DAIMOND_MOCK
+	|| 'http://127.0.0.1:9099/v1/chat/completions';
+`);
+
+// The fixture that reports the world it was actually given. It asks both servers
+// who they are rather than trusting the variables, so a world that was named and
+// never stood reads as what it is.
+//
+// TWO COPIES, and the second is not duplication. `--break noworld` takes the
+// harness import away, which is what the hand infers a world from -- and if that
+// damaged the one file every world check uses, it would redden the inference
+// check along with three checks about refusals that have nothing to do with it.
+// So the inference has a fixture of its own to damage.
+const worldFixture = (name, file, importLine) =>
+	fs.writeFileSync(path.join(DEV, `verify_${name}.mjs`), `// A fixture. Not a check of anything.
+//   node dev/verify_${name}.mjs --break blind   # 'the app answered' goes red
+import fs from 'node:fs';
+${HELPER}${importLine}const seen = { app: null, mock: null, env: process.env.DAIMOND_PORT ?? null };
+try {
+	const w = await (await fetch(APP + '/__world')).json();
+	seen.app = w.port;
+} catch (e) { seen.appError = String(e && e.message || e); }
+try {
+	const u = new URL(MOCK);
+	const w = await (await fetch('http://' + u.host + '/__world')).json();
+	seen.mock = Number(u.port);
+} catch (e) { seen.mockError = String(e && e.message || e); }
+fs.writeFileSync('dev/' + ${JSON.stringify(file)} + '-' + (BRK || 'clean') + '.json', JSON.stringify(seen));
+say('the fixture ran', true);
+say('the app answered', BRK !== 'blind' && seen.app !== null, JSON.stringify(seen));
+`);
+const HARNESS_IMPORT = "import { APP, MOCK } from './harness.mjs';\n";
+worldFixture('worldseen', 'seen', BREAK === 'noworld'
+	? "const APP = process.env.DAIMOND_APP || 'http://localhost:8777';\n"
+		+ "const MOCK = process.env.DAIMOND_MOCK || 'http://127.0.0.1:9099/v1/chat/completions';\n"
+	: HARNESS_IMPORT);
+worldFixture('needsworld', 'saw', HARNESS_IMPORT);
+
+// And one that outlives any budget worth giving it, for the check that a spent
+// budget still takes the world down.
+fs.writeFileSync(path.join(DEV, 'verify_fixsleep.mjs'), `// A fixture. Not a check of anything.
+import { APP } from './harness.mjs';
+${HELPER}say('the fixture started', true);
+await new Promise(r => setTimeout(r, 120000));
+say('the fixture finished', true);
+`);
+
 const git = (...args) => spawnSync('git', ['-C', GRANT, ...args],
 	{ stdio: 'ignore', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
 git('init', '-q');
 git('config', 'user.email', 'fixture@example.invalid');
 git('config', 'user.name', 'Fixture');
 git('add', 'dev/verify_fixlive.mjs', 'dev/verify_fixdead.mjs', 'dev/verify_fixclean.mjs',
-	'dev/verify_fixedit.mjs', 'dev/nonce.txt');
+	'dev/verify_fixedit.mjs', 'dev/nonce.txt',
+	// The world's three files and the two verifiers that use it. COMMITTED, because
+	// the verb asks whose bytes each of the three is before it stands anything --
+	// the rule that guards a verifier guards what its world is made of.
+	'dev/world.sh', 'dev/serve.mjs', 'dev/mockllm.mjs', 'dev/harness.mjs',
+	'dev/verify_needsworld.mjs', 'dev/verify_worldseen.mjs', 'dev/verify_fixsleep.mjs',
+	'www/index.html');
 // COMMITTED and not merely added, because the check this damages is about the
 // bytes and not about the index -- `git add` alone leaves the file refused, so a
 // break that only staged it would damage nothing and read as green.
@@ -281,7 +375,7 @@ const LE = os.endianness() === 'LE';
 /// port and kills it when the port closes. It also means one request cannot leave
 /// state behind for the next, so a check that passed because of an earlier one is
 /// not a failure mode this file has.
-function talk(messages, ms = 60000) {
+function talk(messages, ms = 60000, later = []) {
 	return new Promise((resolve) => {
 		const child = spawn(HAND, [], {
 			cwd: BASE,
@@ -300,10 +394,23 @@ function talk(messages, ms = 60000) {
 			if (done) return;
 			done = true;
 			clearTimeout(timer);
+			clearLater();
 			try { child.kill('SIGKILL'); } catch (e) { /* already gone */ }
 			resolve({ msgs: got, stderr: err });
 		};
 		const timer = setTimeout(finish, ms);
+		// A message sent PART-WAY THROUGH, which is the only way to ask what is running
+		// while something is. The dispatcher stays answerable during a sequence -- that
+		// is what `runs` being useful at all depends on -- so this is a question the
+		// page really can ask and really does.
+		const timers = later.map(l => setTimeout(() => {
+			if (done) return;
+			const body = Buffer.from(JSON.stringify(l.msg), 'utf8');
+			const head = Buffer.alloc(4);
+			if (LE) head.writeUInt32LE(body.length, 0); else head.writeUInt32BE(body.length, 0);
+			try { child.stdin.write(Buffer.concat([head, body])); } catch (e) { /* gone */ }
+		}, l.delay));
+		const clearLater = () => { for (const t of timers) clearTimeout(t); };
 		child.stderr.on('data', (d) => { err += d.toString(); });
 		child.stdout.on('data', (d) => {
 			buf = Buffer.concat([buf, d]);
@@ -551,6 +658,190 @@ const trailerOf = (out) =>
 	check('14 the journal records the real node command line',
 		/verify_fixdead\.mjs/.test(text) && /"?fence:none"?/.test(text),
 		files.join(', ') || 'no journal files found');
+}
+
+// ── 15 to 20. The world the verb stands ─────────────────────────────
+//
+// Real ports, the real `dev/world.sh`, and the real teardown. What each check
+// rests on is a fact outside the report: a file the CHILD wrote naming the ports
+// it reached, or a port this process can bind afterwards.
+
+const free = (port) => new Promise((res) => {
+	const sock = net.createServer();
+	sock.once('error', () => res(false));
+	sock.once('listening', () => sock.close(() => res(true)));
+	sock.listen(port, '127.0.0.1');
+});
+
+/// The daimon band, read out of the fixture's own copy of the register.
+///
+/// Not written down here: the row in `dev/world.sh` is the reservation, and a
+/// second copy of it is the staleness the register exists against.
+const BAND = (() => {
+	const m = /^#\s+worlds (\d+)\.\.(\d+), LESS (\d+)\s/m
+		.exec(fs.readFileSync(path.join(DEV, 'world.sh'), 'utf8'));
+	if (!m) return [];
+	const out = [];
+	for (let n = Number(m[1]); n <= Number(m[2]); n++) if (n !== Number(m[3])) out.push(n);
+	return out;
+})();
+
+/// The world number the report names, or null.
+const worldOf = (out) => {
+	const m = /^\[world: (\d+) /m.exec(out);
+	return m ? Number(m[1]) : null;
+};
+
+/// What a fixture verifier wrote about the world it was actually given.
+const sawOf = (file) => {
+	try { return JSON.parse(fs.readFileSync(path.join(DEV, `${file}.json`), 'utf8')); }
+	catch (e) { return null; }
+};
+
+// Where the verb puts a world's state, which is inside the granted tree so that a
+// daimon can read serve.out with its own file tools.
+const WORLDS = path.join(GRANT, '.scratch/worlds');
+const stood = [];
+
+{
+	// `--break leak` makes the fixture's own `--down` a no-op, WITHOUT touching
+	// `--up`: the world comes up exactly as it does in the clean run, and nothing
+	// takes it away. Committed, because the verb refuses a world.sh that is not.
+	if (BREAK === 'leak') {
+		const txt = fs.readFileSync(path.join(DEV, 'world.sh'), 'utf8');
+		const damaged = txt.replace('--down)\n', '--down)\n\texit 0\n');
+		if (damaged === txt) {
+			console.error('break leak: the --down case did not match; has world.sh moved?');
+			process.exit(2);
+		}
+		fs.writeFileSync(path.join(DEV, 'world.sh'), damaged);
+		git('add', 'dev/world.sh');
+		git('commit', '-q', '-m', 'leak');
+	}
+	fs.rmSync(path.join(DEV, 'seen-clean.json'), { force: true });
+	const r = await verify({ name: 'worldseen', breaks: 'none', timeout_ms: 120000 }, 180000);
+	const n = worldOf(r.out);
+	if (n !== null) stood.push(n);
+	const saw = sawOf('seen-clean');
+	// THE CHECK THIS WHOLE SECTION IS FOR. Not "the report mentions a world": the
+	// CHILD asked both servers who they were and wrote down what answered.
+	check('15 the verifier was given a world of the daimon band, and reached it',
+		!!saw && n !== null && BAND.includes(n) && saw.app === 8777 + n && saw.mock === 9099 + n,
+		`report says ${n}, the verifier reached app ${saw ? saw.app : '(no file)'} `
+		+ `mock ${saw ? saw.mock : '-'}${saw && saw.appError ? ' — ' + saw.appError : ''}`);
+	check('15b and the report says which world, where its scratch is, and what held it',
+		/^\[world: \d+ — app :\d+, mock :\d+, gateway :\d+ .*scratch .scratch\/worlds/m.test(r.out)
+			&& /(MemoryMax|uncapped)/.test(r.out),
+		(r.out.match(/^\[world:.*$/m) || ['(no world line)'])[0].slice(0, 200));
+	// And the state is inside the granted tree, where a daimon's file_read reaches
+	// it -- ~/.cache is outside every fence, and a log it cannot read is a log it
+	// cannot act on. A clean sequence takes the world's own directory away again;
+	// the lock goes either way.
+	check('15c the world kept its state inside the granted tree',
+		fs.existsSync(WORLDS) && !fs.existsSync(path.join(WORLDS, `w${n}.lock`)),
+		`${WORLDS} exists: ${fs.existsSync(WORLDS)}, lock left: ${fs.existsSync(path.join(WORLDS, `w${n}.lock`))}`);
+	const ports = n === null ? [] : [8777 + n, 9099 + n, 9700 + n];
+	const held = [];
+	for (const p of ports) if (!await free(p)) held.push(p);
+	check('16 and after the report its three ports are free again',
+		n !== null && held.length === 0,
+		held.length ? `still held: ${held.map(p => ':' + p).join(' ')}` : `world ${n}`);
+}
+
+{
+	// ASKED WHILE IT IS UP, which is the only moment the answer means anything. A
+	// world the registry does not hold is a dev server and a mock nothing on the
+	// machine can name: the fence scopes signals to the domain that sent them, so a
+	// later command's kill answers "Operation not permitted".
+	const r = await talk([HELLO,
+		{ t: 'verify', id: 'v1', name: 'fixsleep', breaks: 'none', break: null, timeout_ms: 20000 }],
+		60000, [{ delay: 6000, msg: { t: 'runs' } }]);
+	const listing = r.msgs.filter(m => m.t === 'runs').pop();
+	const rows = (listing && listing.runs) || [];
+	check('16b while the sequence runs, the world is listed by runs and can be stopped there',
+		rows.some(x => x.id === 'v1-world' && x.state === 'standing'),
+		listing ? JSON.stringify(rows).slice(0, 200) : 'the hand never answered runs');
+	const out = r.msgs.filter(m => m.t === 'chunk' && m.stream === 'out').map(m => m.data).join('');
+	const refused = r.msgs.find(m => m.t === 'refused');
+	const n = worldOf(out) ?? worldOf((refused && refused.reason) || '');
+	if (n !== null) stood.push(n);
+	const held = [];
+	if (n !== null) for (const p of [8777 + n, 9099 + n, 9700 + n]) if (!await free(p)) held.push(p);
+	// 19: the budget was spent on a verifier that sleeps past it, and the world went
+	// anyway -- the path that used to leave a server holding a port for hours.
+	check('19 a spent budget takes the world down with it',
+		n !== null && held.length === 0,
+		held.length ? `world ${n} still holds ${held.map(p => ':' + p).join(' ')}`
+			: (n === null ? 'no world was named, so nothing was measured' : `world ${n}`));
+}
+
+{
+	// 17. `world: false` on a verifier that DOES import the harness. The run happens;
+	// what it must not have is a world, and the report must say so rather than leave
+	// a connection refused below it looking like the app.
+	// The WIRE takes the word, not the boolean: the page's tool schema is where
+	// `"world": false` is spelled, and `Tool::verify_spec` turns it into this.
+	//
+	// And the file goes first. Check 15's run left one naming a world, and a check
+	// that read it would report "no world was stood" as "a world was stood" -- or
+	// the reverse, which is worse.
+	fs.rmSync(path.join(DEV, 'saw-clean.json'), { force: true });
+	const r = await talk([HELLO, { t: 'verify', id: 'v1', name: 'needsworld', breaks: 'none',
+		break: null, world: 'none', timeout_ms: 120000 }], 180000);
+	const out = r.msgs.filter(m => m.t === 'chunk' && m.stream === 'out').map(m => m.data).join('');
+	const saw = sawOf('saw-clean');
+	// Not "it reached nothing": world 0 may well be up on this machine, held by a
+	// lane that has nothing to do with this run -- which is the whole fault the verb
+	// exists against. What must not have happened is that it reached a DAIMON world.
+	const stray = !!saw && saw.app !== null && BAND.includes(saw.app - 8777);
+	check('17 world:false stands none, and the verifier reaches no daimon world',
+		!!saw && !stray && worldOf(out) === null && /world: none \(world:false\)/.test(out),
+		`${(out.match(/^\[world:.*$/m) || ['(no world line)'])[0].slice(0, 160)} — saw ${JSON.stringify(saw)}`);
+}
+
+{
+	// 18. A world that refuses. Committed, so provenance is satisfied and what is
+	// being measured is the REFUSAL -- which has to name the world it tried and
+	// carry the script's own first line, or a daimon cannot tell a held port from a
+	// broken script. `--break quietrefusal` takes the script's line away.
+	const said = BREAK === 'quietrefusal' ? '' : 'echo "world $1: the fixture refuses on purpose" >&2';
+	fs.writeFileSync(path.join(DEV, 'world.sh'),
+		`#!/bin/bash\n${said}\nexit 1\n`);
+	git('add', 'dev/world.sh');
+	git('commit', '-q', '-m', 'a world that refuses');
+	const r = await verify({ name: 'needsworld', breaks: 'none', timeout_ms: 60000 }, 120000);
+	const why = r.refused ? r.refused.reason : '';
+	check('18 a world that will not come up refuses the sequence, naming the world it tried',
+		!!r.refused && /no world could be stood/.test(why) && /world 4\d \(app :88\d\d/.test(why)
+			&& /Nothing was run/.test(why),
+		why.slice(0, 200) || `no refusal; report=${(r.out.split('\n')[0] || '').slice(0, 120)}`);
+	check('18b and it carries what the script itself said',
+		/the fixture refuses on purpose/.test(why),
+		why.slice(0, 200) || 'no refusal');
+}
+
+{
+	// 20. And the three files a world is MADE of are the commit's, or nothing
+	// stands. A daimon may file_write any of them, and all three run unfenced.
+	fs.appendFileSync(path.join(DEV, 'world.sh'), '# and now it is mine\n');
+	const r = await verify({ name: 'needsworld', breaks: 'none', timeout_ms: 60000 }, 120000);
+	const why = r.refused ? r.refused.reason : '';
+	check('20 a world.sh the model has edited is refused before anything stands',
+		!!r.refused && /dev\/world\.sh/.test(why) && /NOT THE COMMIT'S/.test(why),
+		why.slice(0, 200) || `no refusal; report=${(r.out.split('\n')[0] || '').slice(0, 120)}`);
+}
+
+// STOP WHATEVER IS LEFT. `--break leak` deliberately leaves a world standing, and
+// a break that leaves a dev server holding a port for hours is worse than no break.
+// The real script, and the world's own scratch, because the fixture's copy is by
+// now a two-line refusal.
+for (const n of stood) {
+	const r = spawnSync('bash', [path.join(HERE, 'world.sh'), String(n), '--down'],
+		{ encoding: 'utf8', env: { ...process.env, DAIMOND_WORLD_ROOT: WORLDS } });
+	if (r.status !== 0) {
+		console.log(`  note  world ${n} did not shut down cleanly: `
+			+ String(r.stderr || r.stdout || '').trim().split('\n').pop());
+	}
 }
 
 // ── The summary ─────────────────────────────────────────────────────

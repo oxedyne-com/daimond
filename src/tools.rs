@@ -1270,11 +1270,18 @@ pub fn set_crystal_cap(bytes: usize) {
 /// 27 times.  Since 2026-09-13 the prompt carries the HOT part and an outline of the rest
 /// ([`crystal_split`]), so this is what that figure is bounded by and the total ceiling is not.
 ///
-/// 4 KiB is roughly a thousand tokens: enough for a title, a summary, the open threads and two
-/// or three sections the daimon has said it needs in front of it, and not enough for a filing
-/// cabinet.  A crystal whose WHOLE text is under this rides whole and is unchanged by any of
-/// this, which is every small crystal.  The user can move it; see [`set_crystal_hot_cap`].
-pub const CRYSTAL_HOT_CAP_DEFAULT: usize = 4 * 1024;
+/// RAISED FROM 4 KiB TO 16 KiB ON 2026-09-14, because 4 KiB made an existing crystal WORSE.
+/// Task 15 (`crystal_cold`) of the 2026-09-13 tool-programme measurement split a crystal at the
+/// shipped 4 KiB hot cap and put the rest behind `crystal_read`/`recall`: deepseek-flash called
+/// one of those tools only 0.33 times a trial and answered 1 of 3 questions against 3 of 3 with
+/// the whole crystal in the prompt.  The split saved 18% of prompt tokens and cost two thirds of
+/// the answers, which is not a trade this tool may make silently.  16 KiB is the OLD whole-prompt
+/// ceiling that `CRYSTAL_CAP_DEFAULT` stood at until the same day, so a crystal that fitted the
+/// prompt whole before the split still does: rides whole and hot, unsplit, at the size that was
+/// already proven to work.  Only the part beyond 16 KiB is cold, reached by `crystal_read` and
+/// `recall`.  A crystal whose WHOLE text is under this rides whole and is unchanged by any of
+/// this, which is most crystals.  The user can move it; see [`set_crystal_hot_cap`].
+pub const CRYSTAL_HOT_CAP_DEFAULT: usize = 16 * 1024;
 
 thread_local! {
     /// The hot ceiling in force, or 0 for [`CRYSTAL_HOT_CAP_DEFAULT`].
@@ -8987,16 +8994,21 @@ const WALK_ENTRIES_MAX: usize = 20_000;
 /// Everything else is walked, dotted or not.  The old rule skipped every name beginning with a
 /// dot, which quietly passed over `.github/`, `.cargo/` and `.config/` -- directories holding
 /// files a person actually wrote -- and then answered "no matches" about a file it had never
-/// opened.  A slow search is a nuisance; a silent miss is a wrong answer.  These five are
+/// opened.  A slow search is a nuisance; a silent miss is a wrong answer.  These six are
 /// machine-generated or enormous, they are named in the result whenever one was passed over,
 /// and `"all":true` includes them.
+///
+/// `.scratch` is the newest, and it is here because the `verify` verb put it there: a dev world
+/// keeps its state under `.scratch/worlds/wN`, and a browser profile is tens of thousands of
+/// files.  A search that walked one would spend its whole entry budget inside a directory nobody
+/// wrote and then answer "no matches" about the tree.
 ///
 /// **This is a rule about WALKING and never about reading.**  Nothing here refuses a path a caller
 /// named: `file_read` on `.git/HEAD` opens it, and a walk that starts inside one of these
 /// directories walks it.  The two questions are different -- "should a search of the whole tree
 /// descend into the object store" is not "may this agent read the reflog" -- and answering the
 /// second with the first would leave an agent unable to establish what state a repository is in.
-const SKIP_DIRS: [&str; 5] = [".git", ".hg", ".svn", "node_modules", "target"];
+const SKIP_DIRS: [&str; 6] = [".git", ".hg", ".svn", ".scratch", "node_modules", "target"];
 
 /// Whether `text` names `dir` as a WHOLE path segment.
 ///
@@ -9065,7 +9077,7 @@ impl Skips {
     }
 
     /// The names still passed over, so the result names what it did not look in rather than
-    /// reciting all five whatever happened.
+    /// reciting all six whatever happened.
     pub fn passed_over(&self) -> Vec<&'static str> {
         SKIP_DIRS.iter().enumerate().filter(|(i, _)| self.on[*i]).map(|(_, d)| *d).collect()
     }
@@ -13382,7 +13394,7 @@ impl Tool {
             Tool::Shell       => "Run a shell command in the workspace and return its stdout/stderr and exit code. Output costs context for the rest of the turn, so a result over 16000 bytes comes back as its head and its tail with the size and the middle cut out; ask a narrower question -- grep -n, sed -n, wc -l, head, tail -- or, where you have decided the whole of it is worth it, run the same command again with 'max_bytes' set to the size it named.",
             Tool::Runs        => "Say what the machine hand is STILL RUNNING, and stop one of them. A command can outlive itself: 'bash dev/world.sh 3 --up' starts a server and exits, so 'run' answers with an exit code while processes go on holding ports -- and nothing else on this computer can reach them, because the compartment scopes signals to itself. With no arguments it lists every run still going, each with an identifier, whether it is 'running' or 'standing' (finished, its processes not), how long, and the command line. 'stop' signals one by that identifier and nothing else -- never a process id, a program name or a pattern; 'signal' chooses 'term' (the default), 'kill' or 'int'. THE ANSWER TO A STOP IS ALWAYS A FRESH LISTING taken after it, and it is the only evidence you have: a run still in it did not stop. Ask for a listing before you finish a task in which you started something in the background.",
             Tool::Serve       => "Start, stop or list a static file server for a folder on this computer, to look at a site or a built page in the Web panel. 'start' serves 'path' read-only on 127.0.0.1 and answers with the URL and an id; THE SERVER STAYS UP AFTER THE TURN, so 'stop' it by that id before you finish, or use runs. Refused where the folder is in Daimond's storage, where this turn has no network, and for a worker. Never start one with run: there is no shell there, so a server either blocks the call until it is killed or is left standing with nothing able to reach it.",
-            Tool::Verify      => "With no 'name' it runs THIS PROJECT's own check: the argv in .daimond/verify.json, else inferred from Cargo.toml, package.json, pyproject.toml or go.mod -- inside the fence, like run -- and reports the exit code, the output's tail and the time. THE EXIT CODE IS THE VERDICT. With 'name' it runs one of this repository's own verifiers instead: the script's short name in 'dev/', 'graph' for dev/verify_graph.mjs, never a path or a command line. That drives the real app in a real browser, and THE ANSWER IS ALWAYS THREE NUMBERS, all of which you carry: checks passed clean; breaks confirmed red, the deliberate breakages that DID turn a passing check red, which is the only thing that makes its pass mean anything; and BREAKS THAT PROVED NOTHING, a break that changed no verdict -- report those checks as UNMEASURED, by name. It runs once per declared break plus once clean, so give 'timeout_ms' for a slow one rather than reaching for 'clean_only', which skips every break and is labelled NOT PROVEN and IS NOT EVIDENCE: say it ran and that its instrument was not proved, never a passing count. 'break' runs one break the verifier declares. It refuses with no machine hand.",
+            Tool::Verify      => "With no 'name' it runs THIS PROJECT's own check: the argv in .daimond/verify.json, else inferred from Cargo.toml, package.json, pyproject.toml or go.mod -- inside the fence, like run -- and reports the exit code -- THE VERDICT -- with the output's tail and the time. With 'name' it runs one of this repository's own verifiers instead: the script's short name in 'dev/', 'graph' for dev/verify_graph.mjs, never a path or a command line. That drives the real app in a real browser, and THE ANSWER IS ALWAYS THREE NUMBERS, all of which you carry: checks passed clean; breaks confirmed red, the deliberate breakages that DID turn a passing check red, which is the only thing that makes its pass mean anything; and BREAKS THAT PROVED NOTHING, a break that changed no verdict -- report those checks as UNMEASURED, by name. It runs once per declared break plus once clean, so give 'timeout_ms' for a slow one rather than reaching for 'clean_only', which skips every break and is labelled NOT PROVEN and IS NOT EVIDENCE: say it ran and that its instrument was not proved, never a passing count. 'break' runs one break the verifier declares. It refuses with no machine hand.",
             Tool::Run         => "Run one command on the user's machine and return its output and exit code. 'argv' is an ARRAY -- the program, then each argument separately: [\"cargo\",\"test\",\"--lib\"]. THERE IS NO SHELL: a ';', '|', '>', '&&', '$(...)' or backtick reaches the program as a literal argument, and '~' is not expanded, so write every path out in full from '/'. 'cwd' is workspace-relative as the file tools' paths are, and an absolute one is refused. 'stdin' feeds input; to chain two commands call this twice, and decide between them when you have seen the first result. It needs Daimond's machine hand, a companion program the user installs once. Where there is none, or the hand cannot contain the command, it REFUSES and says which: believe it, say what you wanted to run, and carry on with the file tools. Otherwise it runs inside the granted folder and nowhere else, and whether it reaches the network or the user is asked first is the permission mode they chose -- the note about this computer says which. Read a failing command's stderr before running it again. Output over 16000 bytes comes back as head and tail with the middle cut: ask a narrower question (grep -n, sed -n, wc -l, head, tail), or re-run with 'max_bytes' set to the size it named.",
             Tool::SpawnAgent  => SPAWN_AGENT_DESC,
             Tool::Gather      => "Wait for workers you started with spawn_agent and read their reports in this turn. Blocks until they finish or timeout_s passes; partial answers at the first report. Call it when you have nothing else left to do.",
@@ -13488,7 +13500,7 @@ impl Tool {
             Tool::DocEdit => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .docx or .odt, e.g. 'notes/report.docx'; never absolute"},"edits":{"type":"array","description":"The replacements to make, in order. Each is applied to the document as the one before it left it.","items":{"type":"object","properties":{"find":{"type":"string","description":"The exact text to look for, as the document holds it"},"replace":{"type":"string","description":"What to put in its place. Empty removes the text."},"nth":{"type":"integer","description":"Which occurrence to change, counted from 1 through the whole document. Omit to change every one."}},"required":["find","replace"]}}},"required":["path","edits"]}"#,
             Tool::SheetWrite => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .xlsx or .ods, e.g. 'books/ledger.xlsx'; never absolute"},"edits":{"type":"array","description":"The cells to write.","items":{"type":"object","properties":{"sheet":{"type":"string","description":"Which sheet, by the name on its tab. Omit for the first sheet."},"ref":{"type":"string","description":"Which cell, like 'B2' or 'AC14'"},"value":{"type":"string","description":"What to put in the cell, as a person would type it. '' empties it."},"formula":{"type":"string","description":"A formula in the ordinary A1 form, e.g. '=B2*C2'. Give this or 'value', not both unless you know the cached value is right."}},"required":["ref"]}}},"required":["path","edits"]}"#,
             Tool::Shell => r#"{"type":"object","properties":{"command":{"type":"string","description":"Shell command to run"},"max_bytes":{"type":"integer","description":"The most bytes of the command's output this result may carry (default 16000, maximum 80000). Past the default the result is cut to its head and its tail and says so; set this only when you have been told the size and have decided the whole of it is worth the context."}},"required":["command"]}"#,
-            Tool::Verify => r#"{"type":"object","properties":{"name":{"type":"string","description":"A repository verifier's short name: 'graph' for dev/verify_graph.mjs. Lower-case letters, digits and underscores; never a path or a command line. LEAVE IT OUT to run this project's own check instead."},"cwd":{"type":"string","description":"For the project check: which workspace-relative directory's project to verify (default: this turn's own folder)"},"max_bytes":{"type":"integer","description":"For the project check: most bytes of output to carry (default 16000, maximum 80000)"},"break":{"type":"string","description":"Run the clean pass and this ONE break, instead of every declared break. It must be one the verifier declares in its own source; any other string is refused and the refusal lists the ones it knows."},"clean_only":{"type":"boolean","description":"Skip every break and run the clean pass alone. The result is labelled NOT PROVEN and is not evidence: no check in it has been shown to be able to fail. Use it to see whether something is broken at all, never to report that something works."},"timeout_ms":{"type":"integer","description":"Budget in milliseconds for the WHOLE sequence -- the clean run and every break after it (default 1200000, maximum 7200000). A break the budget does not reach is reported as never having run."}},"required":[]}"#,
+            Tool::Verify => r#"{"type":"object","properties":{"name":{"type":"string","description":"A repository verifier's short name: 'graph' for dev/verify_graph.mjs. Lower-case letters, digits and underscores, never a path. LEAVE IT OUT to run this project's own check instead."},"cwd":{"type":"string","description":"For the project check: which workspace-relative directory to verify (default: this turn's folder)"},"max_bytes":{"type":"integer","description":"For the project check: most bytes of output to carry (default 16000, maximum 80000)"},"break":{"type":"string","description":"Run the clean pass and this ONE break instead of every declared break. It must be one the verifier declares in its own source; any other string is refused and the refusal lists them."},"clean_only":{"type":"boolean","description":"Skip every break and run the clean pass alone. Labelled NOT PROVEN and not evidence: no check in it has been shown to be able to fail. Use it to see whether something is broken, never to say it works."},"world":{"type":"boolean","description":"Stand a dev world (default: yes if the verifier imports dev/harness.mjs); false if it starts its own servers."},"timeout_ms":{"type":"integer","description":"Budget in milliseconds for the WHOLE sequence -- the clean run and every break after it (default 1200000, maximum 7200000). A break the budget does not reach is reported as never run."}},"required":[]}"#,
             Tool::Runs => r#"{"type":"object","properties":{"stop":{"type":"string","description":"Stop this run. It is the IDENTIFIER from this tool's own listing, such as 'run-1-bash' -- never a process id, never a program name and never a pattern. Leave it out to list without stopping anything."},"signal":{"type":"string","description":"Which signal to send with 'stop': 'term' to ask it to stop (the default), 'kill' to insist, 'int' to interrupt it as Ctrl-C would."},"read":{"type":"string","description":"Hand over the output being held for this run from before the page reloaded. The listing names which runs have any. It is handed over once and then let go, so read it before stopping that run."}},"required":[]}"#,
             Tool::Serve => r#"{"type":"object","properties":{"act":{"type":"string","enum":["start","stop","list"],"description":"Default 'list'"},"path":{"type":"string","description":"For 'start': workspace-relative folder to serve, inside a folder marked on this computer"},"port":{"type":"integer","description":"For 'start': 1024-65535 (default 8800 and up)"},"id":{"type":"string","description":"For 'stop': the identifier 'start' or 'list' gave"}},"required":[]}"#,
             Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program and each argument as a separate element, e.g. [\"cargo\",\"test\"]. Never a shell command line. A path in an argument is the machine's own: absolute, with no '~'."},"cwd":{"type":"string","description":"Workspace-relative directory to run in, e.g. 'src/api' (default: this Diamond's own directory). Never absolute."},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit in milliseconds (default 120000, maximum 900000)"},"max_bytes":{"type":"integer","description":"The most bytes of the command's output this result may carry (default 16000, maximum 80000). Past the default the result is cut to its head and its tail and says so; set this only when you have been told the size and have decided the whole of it is worth the context."}},"required":["argv"]}"#,
@@ -18038,6 +18050,13 @@ impl Tool {
     // against `MAX_OUTPUT` on a run that proved nothing.
     const VERIFY_DEAD_TAIL_LINES: usize = 20;
 
+    /// The line the hand's report carries about the dev world the sequence ran in.
+    ///
+    /// Lifted out of the report the way the trailer is, because it decides how every number
+    /// above it should be read: a page verifier given no world aimed at `localhost:8777`,
+    /// which is another lane's app or nothing.
+    const VERIFY_WORLD: &str = "[world:";
+
     /// Does this hand have verifiers to run at all?
     ///
     /// From the handshake's `caps`, exactly as `fence_enforced` reads the fence out of it: a
@@ -18121,12 +18140,23 @@ impl Tool {
             .unwrap_or(Self::VERIFY_BUDGET_DEFAULT_MS)
             .min(Self::VERIFY_BUDGET_MAX_MS)
             .max(1);
+        // A BOOLEAN here and three words on the wire, which is the one thing the model is
+        // allowed to say about a world. WHICH world is the hand's to choose from the band
+        // `dev/world.sh`'s register reserves -- the history of that register is the history
+        // of callers picking numbers -- so there is nothing here for a model to collide with
+        // another lane on. Saying nothing is "infer", which reads the verifier's own source.
+        let world = match extract_json_bool(args, "world") {
+            Some(true)	=> "stand",
+            Some(false)	=> "none",
+            None	=> "infer",
+        };
         Ok(fmt!(
-            r#"{{"t":"verify","id":"{}","name":"{}","breaks":"{}","break":{},"timeout_ms":{}}}"#,
+            r#"{{"t":"verify","id":"{}","name":"{}","breaks":"{}","break":{},"world":"{}","timeout_ms":{}}}"#,
             json_escape(id),
             json_escape(&name),
             breaks,
             brk,
+            world,
             budget))
     }
 
@@ -18167,6 +18197,11 @@ impl Tool {
         // hand's, which is the half of this that ran the processes.
         let trailer = out.lines().rev()
             .find(|l| l.trim_start().starts_with(Self::VERIFY_TRAILER))
+            .map(|l| fmt!("{}", l.trim()));
+        // The world, from the head of the report rather than its tail: which world the checks
+        // were aimed at is what says whether the numbers are about this tree's app at all.
+        let world = out.lines()
+            .find(|l| l.trim_start().starts_with(Self::VERIFY_WORLD))
             .map(|l| fmt!("{}", l.trim()));
         let mut s = String::new();
         if !out.is_empty() { s.push_str(&out); }
@@ -18216,7 +18251,14 @@ impl Tool {
             (Some(t), _) => fmt!("\n{}", t),
         };
         let tail = fmt!("{}{}", tail, dead_note);
-        let room = MAX_OUTPUT.saturating_sub(envelope_overhead(&origin) + tail.len());
+        // Restated outside the envelope beside the trailer, and for the same reason: a report is
+        // text, and a model reading a passing count owes its reader which app the count is about.
+        let world = match &world {
+            Some(w) => fmt!("\n{}", w),
+            None    => String::new(),
+        };
+        let room = MAX_OUTPUT.saturating_sub(
+            envelope_overhead(&origin) + tail.len() + world.len());
         if died.is_some() {
             // THE END IS THE HALF THAT MATTERS on a run that died: `truncate_output` keeps the
             // beginning, which would cut away the very stack trace this note points at.
@@ -18232,7 +18274,7 @@ impl Tool {
         } else {
             wrap_untrusted(&origin, &s)
         };
-        fmt!("{}{}", body, tail)
+        fmt!("{}{}{}", body, world, tail)
     }
 
 
@@ -24831,6 +24873,13 @@ mod tests {
         assert!(spec.contains(r#""t":"verify""#), "{}", spec);
         assert!(spec.contains(r#""name":"graph""#), "{}", spec);
         assert!(spec.contains(r#""breaks":"all""#), "every break is the default: {}", spec);
+        // Saying nothing about a world asks the hand to read the verifier's own source, which
+        // is what a page built before the field existed does.
+        assert!(spec.contains(r#""world":"infer""#), "{}", spec);
+        assert!(Tool::verify_spec(r#"{"name":"graph","world":true}"#, "v")
+            .unwrap_or_default().contains(r#""world":"stand""#));
+        assert!(Tool::verify_spec(r#"{"name":"graph","world":false}"#, "v")
+            .unwrap_or_default().contains(r#""world":"none""#));
         for forbidden in [r#""argv""#, r#""cwd""#, r#""env""#, r#""stdin""#, r#""fence""#] {
             assert!(!spec.contains(forbidden),
                 "the verify request carries {} -- there is now a way for a model's string to \
@@ -24953,6 +25002,48 @@ mod tests {
         assert!(!whole.contains("THIS IS NOT EVIDENCE"), "{}", whole);
         assert!(whole.trim_end().ends_with("1 breaks proved nothing]"),
             "the three numbers are not the last thing the model reads: {}", whole);
+    }
+
+    /// **Which world the numbers came from is part of the numbers.**
+    ///
+    /// A page verifier handed no world aims at `localhost:8777`, which is another lane's app or
+    /// nothing at all -- so a passing count whose world the reader cannot see is a count about
+    /// an app nobody named.  The line is lifted out of the report and restated OUTSIDE the
+    /// envelope, beside the trailer, for the same reason the trailer is.
+    #[test]
+    fn test_the_world_the_checks_ran_in_is_restated_outside_the_envelope() {
+        let c = ctx();
+        let stood = Tool::verify_result("graph",
+            r#"{"stdout":"dev/verify_graph.mjs — 1 run
+[world: 41 — app :8818, mock :9140, scratch .scratch/worlds/w41, MemoryMax 4G — stood for this sequence and torn down]
+  ok   a
+[verify: 27 checks passed, 0 failed, 2 breaks confirmed red, 0 breaks proved nothing]
+","exit":0}"#,
+            &c, false);
+        // Twice over: once inside the verifier's own words, once as Daimond's sentence.
+        assert_eq!(2, stood.matches("[world: 41").count(),
+            "the world line was not restated outside the envelope: {}", stood);
+        // And BEFORE the trailer, so the three numbers stay the last thing read.
+        let w = match stood.rfind("[world: 41") { Some(i) => i, None => usize::MAX };
+        let t = match stood.rfind("[verify:") { Some(i) => i, None => 0 };
+        assert!(w < t, "the world line displaced the three numbers as the last line: {}", stood);
+        // A report with a world line and NO trailer is still not evidence. The world says which
+        // app was measured; it says nothing about whether the instrument was proved.
+        let worldless_numbers = Tool::verify_result("graph",
+            r#"{"stdout":"[world: 41 — app :8818]
+  ok   a
+  ok   b
+","exit":0}"#,
+            &c, false);
+        assert!(worldless_numbers.contains("THIS IS NOT EVIDENCE"),
+            "a world line was accepted in place of the three numbers: {}", worldless_numbers);
+        // And a run that stood none says so in the same place.
+        let none = Tool::verify_result("worldports",
+            r#"{"stdout":"[world: none — dev/verify_worldports.mjs does not import dev/harness.mjs, so none was stood]
+[verify: 3 checks passed, 0 failed, 1 breaks confirmed red, 0 breaks proved nothing]
+","exit":0}"#,
+            &c, false);
+        assert!(none.contains("none was stood"), "{}", none);
     }
 
     /// A clean-only run carries its own label all the way through, in the words the model repeats.
@@ -25155,6 +25246,18 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         assert!(sum.contains("proved nothing"), "the panel does not say what it measures: {}", sum);
         let sch = Tool::Verify.parameters();
         assert!(sch.contains("clean_only") && sch.contains("NOT PROVEN"), "{}", sch);
+        // THE OVERRIDE IS IN THE SCHEMA AND NOWHERE IN THE DESCRIPTION, and that is a decision
+        // the prefix budget forced and the inference makes safe. Every verifier in this tree is
+        // answered correctly by whether it imports dev/harness.mjs, so `world` is an escape
+        // hatch rather than a thing a model has to be taught -- and a hatch has to be spellable
+        // on a provider that validates arguments against the schema, which is why it is here at
+        // all. What a daimon needs to KNOW about worlds is in DAIMOND.md, which is read for this
+        // repository only and costs no round in any other.
+        assert!(sch.contains("\"world\"") && sch.contains("harness.mjs"),
+            "the schema has no world, so the override cannot be spelled: {}", sch);
+        assert!(!d.contains("dev world"),
+            "the world went into the description, which is paid on every round of every turn \
+             in every repository, including the ones with no dev/ at all: {}", d);
     }
 
     // ── verify with no name: the project's own check ─────────────────
@@ -30025,16 +30128,23 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
     #[test]
     fn test_only_a_whole_segment_counts_as_naming_a_skipped_directory() {
         let all = Skips::new(true, &[]);
-        for d in [".git", ".hg", ".svn", "node_modules", "target"] {
+        for d in SKIP_DIRS {
             assert!(!all.skips(d), "\"all\":true must walk {}", d);
         }
         assert!(all.by_name().is_empty(), "\"all\" is not the same as naming one");
 
         let none = Skips::default_rule();
-        for d in [".git", ".hg", ".svn", "node_modules", "target"] {
+        for d in SKIP_DIRS {
             assert!(none.skips(d), "the default must pass over {}", d);
         }
-        assert_eq!(5, none.passed_over().len());
+        // Read off the list rather than written down, so a directory added there is
+        // covered by this test on the day it is added rather than reddening it.
+        assert_eq!(SKIP_DIRS.len(), none.passed_over().len());
+        // And the newest of them, named, because it is the one a verify sequence fills:
+        // a dev world's browser profiles live under .scratch/worlds/wN.
+        assert!(none.skips(".scratch"), "a search walks the world scratch and its profiles");
+        assert!(!Skips::new(false, &[".scratch/worlds/w41/world/serve.out"]).skips(".scratch"),
+            "a caller that named the world's own log was not let into it");
 
         // Named, in each of the shapes a caller writes.
         for text in [".git", ".git/**", "**/.git/logs/*", "code/rust/fe2o3/.git", ".git/refs/**"] {
@@ -30055,7 +30165,7 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         let s = Skips::new(false, &["target", ".hg/**"]);
         assert!(!s.skips("target") && !s.skips(".hg"));
         assert!(s.skips(".git") && s.skips("node_modules"));
-        assert_eq!(vec![".git", ".svn", "node_modules"], s.passed_over());
+        assert_eq!(vec![".git", ".svn", ".scratch", "node_modules"], s.passed_over());
     }
 
     // ── The one refusal that looks like a broken command ─────────────

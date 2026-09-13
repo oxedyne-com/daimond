@@ -43,6 +43,7 @@ use crate::wire::{
     RunState,
     Sig,
     Stream,
+    World,
     CHUNK_MAX,
     FRAME_MAX,
     RUNS_MAX,
@@ -750,6 +751,30 @@ fn breaks_of(obj: &Dat) -> Outcome<Breaks> {
     }
 }
 
+/// Whether a verify asked for a dev world, defaulting to [`World::Infer`].
+///
+/// **Absent is not an error, and that is the one decision in here.** The field
+/// arrived after the verb did, so a page built before it sends a verify with no
+/// `"world"` in it at all -- and a decoder that refused one would take the verb
+/// away from every browser that had not been updated in the same breath. Absent
+/// therefore means "you decide", which is what the hand did before the field
+/// existed. A field that IS there and says something else is refused, because
+/// that is a page asking for a thing this hand does not have.
+fn world_of(obj: &Dat) -> Outcome<World> {
+    let word = match res!(opt_str_field(obj, "verify", "world")) {
+        Some(w) => w,
+        None    => return Ok(World::Infer),
+    };
+    match word.as_str() {
+        "infer"	=> Ok(World::Infer),
+        "stand"	=> Ok(World::Stand),
+        "none"	=> Ok(World::None),
+        other	=> Err(Fault::WrongShape.raise(&fmt!(
+            "A verify's \"world\" is {:?}, which is none of \"infer\", \"stand\" or \"none\".",
+            other))),
+    }
+}
+
 fn want_object(d: &Dat, what: &str) -> Outcome<()> {
     match d {
         Dat::Map(_) | Dat::OrdMap(_) => Ok(()),
@@ -1170,7 +1195,7 @@ fn req_dat(req: &Req) -> Dat {
                 "toolkits"		=> strs(toolkits),
             }
         },
-        Req::Verify { id, name, breaks, timeout_ms } => omapdat!{
+        Req::Verify { id, name, breaks, world, timeout_ms } => omapdat!{
             "t"				=> "verify",
             "id"			=> Dat::Str(id.clone()),
             "name"			=> Dat::Str(name.clone()),
@@ -1179,6 +1204,7 @@ fn req_dat(req: &Req) -> Dat {
                 Breaks::One(b)	=> Dat::Str(b.clone()),
                 _		=> Dat::Opt(Box::new(None)),
             },
+            "world"			=> Dat::Str(world.word().to_string()),
             "timeout_ms"	=> *timeout_ms,
         },
         Req::File { id, op, cwd, fence, toolkits } => omapdat!{
@@ -1367,6 +1393,7 @@ pub fn req_of_json(txt: &str) -> Outcome<Req> {
             id:         res!(str_field(&obj, "verify", "id")),
             name:       res!(str_field(&obj, "verify", "name")),
             breaks:     res!(breaks_of(&obj)),
+            world:      res!(world_of(&obj)),
             timeout_ms: res!(safe_int_field(&obj, "verify", "timeout_ms")),
         }),
         "file" => Ok(Req::File {
@@ -2267,18 +2294,21 @@ mod tests {
                 id:         fmt!("v-1"),
                 name:       fmt!("graph"),
                 breaks:     Breaks::All,
+                world:      World::Infer,
                 timeout_ms: 1_200_000,
             },
             Req::Verify {
                 id:         fmt!("v-2"),
                 name:       fmt!("a11y_aria"),
                 breaks:     Breaks::One(fmt!("nolinks")),
+                world:      World::Stand,
                 timeout_ms: 60_000,
             },
             Req::Verify {
                 id:         fmt!("v-3"),
                 name:       fmt!("graph"),
                 breaks:     Breaks::None,
+                world:      World::None,
                 timeout_ms: SAFE_INT_MAX,
             },
             Req::Signal { id: fmt!("run-1"), sig: Sig::Term },
@@ -2513,8 +2543,40 @@ mod tests {
             id:         fmt!("v"),
             name:       fmt!("graph"),
             breaks:     Breaks::One(fmt!("x")),
+            world:      World::Infer,
             timeout_ms: 1000,
         }, res!(req_of_json(good)));
+        Ok(())
+    }
+
+    /// A page that has never heard of a dev world still gets a verify.
+    ///
+    /// The field arrived after the verb, so the browsers in the field send a
+    /// verify with no `"world"` in it. Absent has to mean "you decide" -- the
+    /// behaviour those pages already had -- or an update to the hand alone takes
+    /// the verb away from every one of them. A word that is not one of the three
+    /// is a different thing and is refused.
+    #[test]
+    fn a_verify_with_no_world_field_asks_the_hand_to_decide() -> Outcome<()> {
+        let old = r#"{"t":"verify","id":"v","name":"graph","breaks":"all","break":null,"timeout_ms":1000}"#;
+        assert_eq!(Req::Verify {
+            id:         fmt!("v"),
+            name:       fmt!("graph"),
+            breaks:     Breaks::All,
+            world:      World::Infer,
+            timeout_ms: 1000,
+        }, res!(req_of_json(old)));
+        for (w, want) in [("stand", World::Stand), ("none", World::None), ("infer", World::Infer)] {
+            let txt = fmt!(
+                r#"{{"t":"verify","id":"v","name":"graph","breaks":"all","break":null,"world":"{}","timeout_ms":1000}}"#,
+                w);
+            match res!(req_of_json(&txt)) {
+                Req::Verify { world, .. } => assert_eq!(want, world, "{}", txt),
+                other => return Err(err!("{:?} is not a verify", other; Test, Invalid)),
+            }
+        }
+        let bad = r#"{"t":"verify","id":"v","name":"graph","breaks":"all","break":null,"world":"maybe","timeout_ms":1000}"#;
+        assert!(req_of_json(bad).is_err(), "an invented world word was accepted");
         Ok(())
     }
 

@@ -928,6 +928,49 @@ impl Runner {
         Ok(n)
     }
 
+    /// Takes a process group this hand started into the registry by hand.
+    ///
+    /// **For a group nothing in here spawned**, which today is the dev world the
+    /// `verify` verb stands: `dev/world.sh N --up` is run by [`crate::verify`] and
+    /// not by [`Runner::spawn`], and until it is in here `runs` cannot list it, the
+    /// page's Stop cannot reach it and `Bye` does not kill it -- which is a dev
+    /// server and a mock provider holding two ports with nothing on the machine
+    /// able to name them.
+    ///
+    /// No scratch directory goes with it: the world keeps its own state where
+    /// `dev/world.sh` was told to, and removing that is the verb's own business
+    /// because a RED sequence's `serve.out` is what the daimon reads next.
+    ///
+    /// # Arguments
+    /// * `id` - What the group is reachable by, which is what `runs` lists.
+    /// * `pgid` - The group, which is the process id of the child that leads it.
+    /// * `what` - The command line, for the listing.
+    pub fn adopt(&self, id: String, pgid: u32, what: String) -> Outcome<()> {
+        let mut g = lock_mutex!(self.left);
+        g.insert(id, Left {
+            pgid,
+            what,
+            since:   std::time::Instant::now(),
+            scratch: None,
+        });
+        Ok(())
+    }
+
+    /// Drops a group from the registry, the thing it recorded being gone.
+    ///
+    /// The counterpart of [`Runner::adopt`], for a caller that took its group down
+    /// itself and verified the ports are free.  [`Runner::reap`] does the same for
+    /// groups that emptied on their own; this is for the one that was stopped on
+    /// purpose, so a listing does not go on naming it until the next reap.
+    ///
+    /// # Arguments
+    /// * `id` - What it was adopted under.
+    pub fn forget(&self, id: &str) -> Outcome<()> {
+        let mut g = lock_mutex!(self.left);
+        g.remove(id);
+        Ok(())
+    }
+
     /// The process id of a live run, or `None` if it has ended.
     ///
     /// # Arguments

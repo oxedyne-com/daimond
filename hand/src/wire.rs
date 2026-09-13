@@ -152,6 +152,38 @@ impl Breaks {
     }
 }
 
+/// Whether a [`Req::Verify`] should stand a dev world for the run.
+///
+/// **A world is not a number the caller picks.**  `dev/world.sh`'s port register
+/// exists because a dozen callers each chose a port after reasoning about the
+/// ranges they knew of, and on 2026-08-17 a lane died the moment another lane
+/// came up.  So the page asks for a world or asks for none, and WHICH world is
+/// the hand's to decide from the band the register reserves.
+///
+/// [`World::Infer`] is the default and is what an older page sends by sending
+/// nothing: the hand reads the verifier's own source and stands a world for one
+/// that imports the harness.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum World {
+    /// Decide from the verifier's source.
+    Infer,
+    /// Stand one, whatever the source says.
+    Stand,
+    /// Stand none: the verifier starts servers of its own.
+    None,
+}
+
+impl World {
+    /// The word this travels under.
+    pub fn word(&self) -> &'static str {
+        match self {
+            Self::Infer	=> "infer",
+            Self::Stand	=> "stand",
+            Self::None	=> "none",
+        }
+    }
+}
+
 // ── Why a pty is a separate pair of messages ────────────────────────
 //
 // [`Req::Exec`] is non-interactive by design: stdin is a string decided before the
@@ -526,6 +558,12 @@ pub enum Req {
         name:       String,
         /// Which of its declared breaks to run beside the clean pass.
         breaks:     Breaks,
+        /// Whether to stand a dev world for the sequence.
+        ///
+        /// The hand picks WHICH world, out of the band `dev/world.sh`'s register
+        /// reserves; the page says only whether one is wanted.  An older page
+        /// sends no field at all and gets [`World::Infer`].
+        world:      World,
         /// The WHOLE sequence's wall-clock budget, not one run's.
         ///
         /// The page arms one timer from this, so it has to cover every run the

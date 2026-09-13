@@ -594,8 +594,8 @@ pub const VERIFY_NOTE: &str =
 	 Where the work has verifiers of its own — the scripts in dev/ — verify is what runs one, and \
 	 run is not. There is no sequence of commands that gets there: a verifier runs outside the \
 	 fence, and inside it playwright is absent and a command has no network to fetch it. A daimon \
-	 that tried spent forty-one calls standing up a dev server and hunting for playwright, and its \
-	 turn ended with nothing verified.";
+	 that tried spent forty-one calls standing up a dev server; verify stands that world itself, \
+	 so there is nothing to start first.";
 
 // ┌───────────────────────────────────────────────────────────────────────────┐
 // │ THE FILE THAT MAKES DAIMOND KNOW HIM                                       │
@@ -815,7 +815,9 @@ pub const DEFAULT_DAIMON: &str =
 	 searches all of it together with whatever this conversation has folded. Keep \
 	 the hot part to what you need every round and put the record in cold sections, \
 	 which cost nothing per round — not in separate files, which nothing searches \
-	 together.\n\n\
+	 together. When you are asked about your own past work and the outline below \
+	 shows cold sections that could hold the answer, `recall` before you answer \
+	 rather than guessing from the hot part alone.\n\n\
 	 Second, agents. Most tasks are work rather than record-keeping, and work is \
 	 what workers are for, so dispatch one with `spawn_agent` as the ordinary \
 	 course rather than the exception. Each worker runs in its OWN context \
@@ -2091,16 +2093,31 @@ mod tests {
 	///
 	/// Four CHARACTERS to the token, as [`test_the_fold_note_stays_inside_its_budget`] measures
 	/// it and as [`crate::llm::CACHE_MIN_PREFIX_CHARS`] does. **Measured against the provider on
-	/// 2026-08-24 it is 97 tokens, not the 106 the estimate gives**; see [`MEASURED`].
+	/// 2026-08-24 it was 97 tokens against the 106 the estimate gave**; see [`MEASURED`]. The
+	/// third sentence has been rewritten since, so the estimate below is the live figure and 97
+	/// is the last measurement of an older wording.
 	///
 	/// **The ceiling is 110, and what it bought over [`SEARCH_NOTE`]'s one sentence is the second
 	/// sentence.** The rule alone is advice; what makes it stick is that the fence has no
-	/// playwright in it and no network to fetch one, which the model can check. The third
-	/// sentence -- the forty-one calls -- is the one to cut first if this ever has to shrink.
+	/// playwright in it and no network to fetch one, which the model can check.
+	///
+	/// **The third sentence now carries two things where it carried one**, and it was the one
+	/// marked to cut first if this ever had to shrink -- so the world clause went into it rather
+	/// than beside it, for six characters. The forty-one calls are the measurement and the
+	/// clause is what answers them: those calls were spent standing up a dev server, which the
+	/// verb now stands itself. The detail -- which world, where its logs are, what `world:false`
+	/// is for -- is in this repository's own `DAIMOND.md`, which costs no round anywhere else.
 	#[test]
 	fn test_the_verify_note_stays_inside_its_budget() {
 		let n = VERIFY_NOTE.chars().count() / 4;
 		assert!(n <= 110, "the verify note is about {} tokens, over its budget: {}", n,
+			VERIFY_NOTE);
+		// The two things the note has to leave a model able to do: reach for the right verb,
+		// and not spend the turn standing up what the verb stands for it.
+		assert!(VERIFY_NOTE.contains("verify is what runs one, and run is not"),
+			"the note stopped naming the verb: {}", VERIFY_NOTE);
+		assert!(VERIFY_NOTE.contains("nothing to start first"),
+			"the note leaves a daimon standing up a dev world the verb would have stood: {}",
 			VERIFY_NOTE);
 	}
 
@@ -3046,6 +3063,11 @@ mod tests {
 		// given two answers to one question and will keep choosing the one it had first.
 		assert!(!p.contains("write it to a file in this Diamond"),
 			"the crystal's cold half replaces the detail-in-a-file policy: {}", p);
+		// Added 2026-09-14 alongside the hot-cap raise: naming the cold sections in the
+		// outline is not enough on its own, or a model answers from the hot part it already
+		// has rather than spending a call on the record that names the answer.
+		assert!(p.contains("about your own past work"),
+			"the daimon is told to recall before answering from memory, not just that it can: {}", p);
 	}
 
 	#[test]

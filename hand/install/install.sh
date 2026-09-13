@@ -752,6 +752,49 @@ if [ -n "$TERM_WORKSPACE" ]; then
 	chmod 600 "$JDIR/terminal-root.txt"
 fi
 
+# ── A ceiling over a verify sequence ─────────────────────────────────
+#
+# The `verify` verb stands a dev world and drives a headless browser in it, which
+# together are 1.5 to 3 GB. The hand is Chrome's own child on the owner's desktop
+# and not a process in any build fleet's slice, so a runaway there takes the
+# machine the owner is sitting at -- which has happened, to a desktop, from an
+# agent that was told a limit rather than given one.
+#
+# So the verb puts both the world and each run in a transient scope under this
+# slice, and the slice is where the SHARED ceiling lives: one world plus one run,
+# not one each. A sequence that breaches it loses its browser -- the kernel kills
+# inside the cgroup -- the verifier prints PAGE CRASHED, and the check goes red
+# honestly, which is the failure mode to want.
+#
+# WRITTEN ONCE AND NEVER OVERWRITTEN. A person who has raised or lowered the
+# number has said what they want it to be, and an installer that put 6G back on
+# every upgrade would be arguing with them.
+if command -v systemctl >/dev/null 2>&1 && [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+	SLICE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+	SLICE="$SLICE_DIR/daimond-verify.slice"
+	if [ -e "$SLICE" ]; then
+		echo "install.sh: $SLICE is already there, left as it is"
+	else
+		mkdir -p "$SLICE_DIR"
+		cat > "$SLICE" <<'SLICEEOF'
+# Daimond's verify sequences: one dev world and one verifier run, together.
+#
+# Written by hand/install/install.sh. Raise or lower MemoryMax if you want a
+# different ceiling -- the installer will not write over this file again.
+[Unit]
+Description=Daimond verify sequences (a dev world and the run beside it)
+
+[Slice]
+MemoryMax=6G
+SLICEEOF
+		systemctl --user daemon-reload 2>/dev/null || true
+		echo "install.sh: wrote $SLICE (MemoryMax=6G over a verify sequence)"
+	fi
+else
+	echo "install.sh: no systemd user manager here, so a verify sequence runs uncapped." >&2
+	echo "  The verb says 'uncapped' in its report rather than implying a ceiling it has not got." >&2
+fi
+
 # ── The Remote toolchain: an ssh key that is Daimond's own ───────────
 #
 # The owner asked for one sentence: an ssh to another machine, from a Terminal

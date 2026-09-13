@@ -45042,7 +45042,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// bytes seen from outside. `dev/verify_crystalcap.mjs` now reads both sides and fails when
 	/// they disagree, so the next raise cannot leave this behind.
 	var DEFAULT_CRYSTAL_KB = 48;
-	var DEFAULT_CRYSTAL_HOT_KB = 4;
+	var DEFAULT_CRYSTAL_HOT_KB = 16;	// tools::CRYSTAL_HOT_CAP_DEFAULT, raised 2026-09-14: 4 KiB lost two thirds of crystal_cold's answers
 	var DEFAULT_CRYSTAL_PAGE_KB = 512;
 
 	/// The crystal ceiling: how large a Diamond's summary may grow before a write that grows it
@@ -45825,9 +45825,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// A twin of `CrystalCap`, including that zero means the engine's default. It mounts UNDER
 	/// the page row, sharing the heading both of those built.
 	var CrystalHotCap = {
-		/// The ladder offered, in kilobytes. Small numbers on purpose: this is the one figure
-		/// a user pays on every request, and the rungs are meant to make that visible.
-		STEPS: [2, 3, 4, 6, 8],
+		/// The ladder offered, in kilobytes, bracketing the 16 KB default: this is the one
+		/// figure a user pays on every request, and the rungs are meant to make that visible.
+		STEPS: [4, 8, 16, 24, 32, 48],
 
 		mount: function () {
 			if (document.getElementById('cfg-crystal-hot-cap')) return true;

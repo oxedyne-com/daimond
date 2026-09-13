@@ -1865,9 +1865,9 @@ impl Desk {
     /// # Arguments
     /// * `req` - The [`Req::Verify`].
     async fn verify(&self, req: Req) -> Outcome<()> {
-        let (id, name, want, budget_ms) = match &req {
-            Req::Verify { id, name, breaks, timeout_ms } =>
-                (id.clone(), name.clone(), breaks.clone(), *timeout_ms),
+        let (id, name, want, world, budget_ms) = match &req {
+            Req::Verify { id, name, breaks, world, timeout_ms } =>
+                (id.clone(), name.clone(), breaks.clone(), *world, *timeout_ms),
             _ => return Ok(()),
         };
 
@@ -1922,6 +1922,14 @@ impl Desk {
             node,
             budget: Duration::from_millis(budget),
             ledger: verify::Ledger::new(Arc::clone(&self.jr), Arc::clone(&self.sound)),
+            world,
+            // The registry, so a world the sequence stands is listed by `runs`,
+            // reachable by the page's Stop and killed when the tab goes away.
+            runner: Some(self.runner.clone()),
+            // Asked once per sequence rather than once per spawn: the answer cannot
+            // change inside a sequence, and a report that said `MemoryMax 4G` for
+            // the world and `uncapped` for the run would be saying two things.
+            cap:    verify::Cap::detect(),
         };
 
         // A task of its own, as a command is: the dispatcher must stay able to answer while a

@@ -22,6 +22,16 @@
 //   4. The refusal a caller reads says whose port it is, not merely that
 //      something is absent.
 //   5. No two rows of the port register collide for any world 0..9.
+//   5a. AND NOTHING ELSE IN THE REGISTER CLAIMS A DAIMON WORLD'S PORTS. The hand's
+//      `verify` verb stands a world out of the band the register reserves for it,
+//      chosen by the hand and never by a model, so a row that lands in that band is
+//      a lane a daimon's browser will drive mid-turn with nothing saying so. The
+//      band is read out of the register's own row rather than written down twice.
+//   7. AND `DAIMOND_WORLD_ROOT` MOVES A WORLD'S SCRATCH. The verb points it inside
+//      the granted tree, because ~/.cache is outside every fence and a daimon that
+//      cannot read serve.out cannot act on what it says. An env block that named
+//      the variable while `--up` went on writing its pid files under ~/.cache would
+//      leave the daimon reading an empty directory, so this asks both halves.
 //   6. AND `world.sh --up` HANDS THE PORT TO THE SERVER IT STARTS. This one is
 //      here because the fix shipped without it: the row was added, `--env`
 //      exported it, and the `node dev/serve.mjs` line still passed only
@@ -39,6 +49,8 @@
 //   node dev/verify_worldports.mjs --break quiet     # 4 fails: the old sentence
 //   node dev/verify_worldports.mjs --break collide   # 5 fails: a duplicated row
 //   node dev/verify_worldports.mjs --break handoff   # 6 fails: --up drops the port
+//   node dev/verify_worldports.mjs --break daimonband # 5a fails: a row lands in the band
+//   node dev/verify_worldports.mjs --break worldroot # 7 fails: the scratch ignores the variable
 //   node dev/verify_worldports.mjs                   # and then, clean
 //
 // The register rows are 8480 + 2N (two app servers) and 9480 + 2N (their two
@@ -116,7 +128,10 @@ const waitFor = async (fn, ms = 15000) => {
 /// where the check that asks for it can be read.
 function worldEnv(n, extra = {}, reg = path.join(HERE, 'world.sh')) {
 	const env = { ...process.env, ...extra };
-	for (const k of ['DAIMOND_GW_PORT', 'DAIMOND_IMAP_PORT', 'SMTPD_PORT']) {
+	// DAIMOND_WORLD_ROOT joins the three for the same reason one step along: this
+	// file may itself be run by a daimon, inside a world whose scratch has been
+	// moved, and a check that read the ambient value would be measuring the caller.
+	for (const k of ['DAIMOND_GW_PORT', 'DAIMOND_IMAP_PORT', 'SMTPD_PORT', 'DAIMOND_WORLD_ROOT']) {
 		if (!(k in extra)) delete env[k];
 	}
 	const txt = execFileSync('bash', [reg, String(n), '--env'],
@@ -132,6 +147,7 @@ function worldEnv(n, extra = {}, reg = path.join(HERE, 'world.sh')) {
 const procs = [];
 let standin = null;
 let spare = null;
+let spareRoot = null;
 
 async function main() {
 	// ── 1. The register answers, and it answers differently per world ─────
@@ -209,6 +225,61 @@ async function main() {
 	// are free before it takes one.
 	check('no two register rows claim one port for any world 0..9',
 		clashes.length === 0, clashes.slice(0, 3).join(' | '));
+
+	// ── 2a. The daimon band, which nothing else may reach into ────────────
+	//
+	// The band is READ OUT OF THE REGISTER's own row, not written down here: the
+	// row is the reservation, and a copy of it in this file would be the second
+	// place to forget. `--break daimonband` puts a row inside the band, which is
+	// exactly the mistake the row exists against -- and it uses a copy of its own,
+	// so that this check and check 5 above are damaged by different breaks.
+	let bandPath = path.join(HERE, 'world.sh');
+	if (BREAK === 'daimonband') {
+		bandPath = path.join(OUT, 'world-daimonband.sh');
+		const txt = fs.readFileSync(path.join(HERE, 'world.sh'), 'utf8');
+		fs.writeFileSync(bandPath, txt.replace(
+			'#   9099 + N   mock provider           dev/world.sh',
+			'#   9099 + N   mock provider           dev/world.sh\n'
+			+ '#   9140 + N   a row inside the daimon band  --break daimonband'));
+	}
+	const bandSrc = fs.readFileSync(bandPath, 'utf8');
+	const band = /^#\s+worlds (\d+)\.\.(\d+), LESS (\d+)\s/m.exec(bandSrc);
+	check('the register reserves a band of world numbers for the daimon',
+		!!band, band ? `${band[1]}..${band[2]} less ${band[3]}`
+			: 'no "worlds A..B, LESS C" row in dev/world.sh');
+	if (band) {
+		const skip  = Number(band[3]);
+		const mine  = [];
+		for (let n = Number(band[1]); n <= Number(band[2]); n++) if (n !== skip) mine.push(n);
+		// world.sh's own three rows are what a daimon world IS, so they are not
+		// intruders in it. Every other row is.
+		const ours  = /dev\/world\.sh|THIS WORLD/;
+		const bandRows = [];
+		for (const line of bandSrc.split('\n')) {
+			const m = /^#\s+(\d{4})(?:\s*\+\s*(\d*)N)?\s{2,}(\S.*?)\s*$/.exec(line);
+			if (!m) continue;
+			bandRows.push({ base: Number(m[1]), step: m[2] === undefined ? 0 : Number(m[2] || 1),
+				what: m[3].slice(0, 46) });
+		}
+		const intruders = [];
+		for (const n of mine) {
+			for (const p of [8777 + n, 9099 + n, 9700 + n]) {
+				for (const r of bandRows) {
+					if (ours.test(r.what)) continue;
+					// Over every world number a row could be read with, not just n:
+					// a row is a family of ports and any member of it landing in the
+					// band is the collision.
+					for (let m2 = 0; m2 <= 49; m2++) {
+						if (r.base + r.step * m2 === p) {
+							intruders.push(`world ${n} :${p} — ${r.what}`);
+						}
+					}
+				}
+			}
+		}
+		check('no other register row claims a port of a daimon world',
+			intruders.length === 0, intruders.slice(0, 3).join(' | '));
+	}
 
 	// ── 3. Two worlds, side by side ───────────────────────────────────────
 	for (const [name, p] of [['A app', APP_A], ['B app', APP_B], ['A gw', GW_A], ['B gw', GW_B]]) {
@@ -357,6 +428,63 @@ async function main() {
 	check('and world.sh asks the server where it proxies rather than assuming',
 		/got_gw=\$\(identify/.test(fs.readFileSync(path.join(HERE, 'world.sh'), 'utf8')),
 		'verify_identity does not read /__world\'s gateway field');
+
+	// ── 5. DAIMOND_WORLD_ROOT, asked of the env block AND of the disk ─────
+	//
+	// The hand's `verify` verb stands a world inside the granted tree so that the
+	// daimon being driven can read serve.out, mock.out and the pid files with its
+	// own file tools. An env block that named the variable while `--up` wrote its
+	// pid files under ~/.cache would satisfy a check on the block alone and leave
+	// the daimon reading an empty directory, so both halves are asked -- the
+	// second one by looking for the pid file the teardown will later read.
+	let rootSh = path.join(HERE, 'world.sh');
+	if (BREAK === 'worldroot') {
+		// In dev/, for world.sh's own reason: it resolves the app root from its
+		// location, and a copy elsewhere serves the wrong tree.
+		rootSh = path.join(HERE, 'world-worldroot-break.sh');
+		const txt = fs.readFileSync(path.join(HERE, 'world.sh'), 'utf8');
+		const damaged = txt.replace('WORLD_ROOT="${DAIMOND_WORLD_ROOT:-$HOME/.cache/daimond}"',
+			'WORLD_ROOT="$HOME/.cache/daimond"');
+		if (damaged === txt) {
+			console.log('  break worldroot: the WORLD_ROOT line did not match, so this run would '
+				+ 'prove nothing. Has world.sh\'s scratch line moved?');
+			process.exit(2);
+		}
+		fs.writeFileSync(rootSh, damaged);
+		procs.push({ path: rootSh });
+	}
+	const WROOT = path.join(OUT, 'worldroot');
+	fs.mkdirSync(WROOT, { recursive: true });
+	check('a world 0 scratch follows DAIMOND_WORLD_ROOT without a wN on the end',
+		worldEnv(0, { DAIMOND_WORLD_ROOT: WROOT }, rootSh).DAIMOND_SCRATCH === WROOT,
+		worldEnv(0, { DAIMOND_WORLD_ROOT: WROOT }, rootSh).DAIMOND_SCRATCH);
+
+	let rootN = spareN + 1;
+	for (; rootN <= 30; rootN++) {
+		if (await free(8777 + rootN) && await free(9099 + rootN) && await free(9700 + rootN)) break;
+	}
+	if (rootN > 30) {
+		check('a second spare world 21..30 was free for the world-root check', false,
+			'every remaining world of 21..30 has a port held; nothing was measured');
+		return;
+	}
+	const rootEnvWant = path.join(WROOT, `w${rootN}`);
+	check('DAIMOND_WORLD_ROOT moves the scratch the env block names',
+		worldEnv(rootN, { DAIMOND_WORLD_ROOT: WROOT }, rootSh).DAIMOND_SCRATCH === rootEnvWant,
+		`${worldEnv(rootN, { DAIMOND_WORLD_ROOT: WROOT }, rootSh).DAIMOND_SCRATCH} wanted ${rootEnvWant}`);
+
+	spareRoot = { n: rootN, root: WROOT, sh: rootSh };
+	const rootUp = spawnSync('bash', [rootSh, String(rootN), '--up'],
+		{ encoding: 'utf8', env: { ...process.env, DAIMOND_WORLD_ROOT: WROOT } });
+	if (rootUp.status !== 0) {
+		check('world.sh --up brought a world up under DAIMOND_WORLD_ROOT at all', false,
+			`world ${rootN}: ` + String(rootUp.stderr || rootUp.stdout || '').trim().split('\n').pop());
+		return;
+	}
+	const pidFile = path.join(rootEnvWant, 'world', 'serve.pid');
+	check('and --up writes its pid files THERE, not under the default root',
+		fs.existsSync(pidFile),
+		fs.existsSync(pidFile) ? '' : `${pidFile} does not exist; --up wrote somewhere else`);
 }
 
 // STOP WHAT WAS STARTED, AND SAY WHEN A KILL FAILED. An orphan holding a port for
@@ -375,6 +503,19 @@ async function teardown() {
 			{ encoding: 'utf8' });
 		if (r.status !== 0) {
 			console.log(`  note  world ${spare.n} did NOT shut down cleanly: `
+				+ String(r.stderr || r.stdout || '').trim());
+		}
+	}
+	// And the world-root world, through the COPY a break may have made rather than
+	// through the real script -- the opposite of the rule above, and for the same
+	// reason. `--break worldroot` is precisely a copy that computes the scratch
+	// DIFFERENTLY, so the real script would look for its pid files in a directory
+	// that has none and report a clean stop over two servers still holding ports.
+	if (spareRoot) {
+		const r = spawnSync('bash', [spareRoot.sh, String(spareRoot.n), '--down'],
+			{ encoding: 'utf8', env: { ...process.env, DAIMOND_WORLD_ROOT: spareRoot.root } });
+		if (r.status !== 0) {
+			console.log(`  note  world ${spareRoot.n} did NOT shut down cleanly: `
 				+ String(r.stderr || r.stdout || '').trim());
 		}
 	}

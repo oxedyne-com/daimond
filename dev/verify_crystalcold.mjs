@@ -73,6 +73,10 @@ const check = (name, pass, detail) => {
 
 // The fixture. Two hot sections and six cold ones, each body long enough that the split is
 // forced rather than incidental, and one marker word that exists ONLY in a cold body.
+//
+// SIZED PAST THE 16 KiB DEFAULT HOT CAP, not the old 4 KiB one -- raised 2026-09-14. At the
+// fillers this file used before, the whole fixture was 15,245 bytes: under the new default, so
+// it would ride whole and every check below that depends on a split firing would prove nothing.
 const HOTMARK  = 'RUBICON-the-hot-marker';
 const COLDMARK = 'ZEBRA-the-cold-marker';
 const filler   = (w, n) => (w + ' ').repeat(n).trim();
@@ -83,12 +87,12 @@ const CRYSTAL  = {
 	sections: [
 		{ heading: 'Ground rules', body: HOTMARK + ' ' + filler('rule', 20), hot: true },
 		{ heading: 'Decisions',    body: filler('decided', 30), hot: true },
-		{ heading: 'Architecture', body: filler('module', 400) },
-		{ heading: 'Cold B',       body: COLDMARK + '\n' + filler('history', 400) },
-		{ heading: 'Dead ends',    body: filler('abandoned', 300) },
-		{ heading: 'Numbers',      body: filler('measured', 300) },
-		{ heading: 'People',       body: filler('who', 200) },
-		{ heading: 'Later',        body: filler('someday', 200) },
+		{ heading: 'Architecture', body: filler('module', 600) },
+		{ heading: 'Cold B',       body: COLDMARK + '\n' + filler('history', 600) },
+		{ heading: 'Dead ends',    body: filler('abandoned', 450) },
+		{ heading: 'Numbers',      body: filler('measured', 450) },
+		{ heading: 'People',       body: filler('who', 300) },
+		{ heading: 'Later',        body: filler('someday', 300) },
 	],
 	facts: [{ k: 'rounding', v: 'half to even' }],
 	links: [{ label: 'spec', href: 'https://example.invalid/spec' }],
@@ -154,7 +158,7 @@ try {
 		return String(await window.__free.read_crystal_data(a.id)).length;
 	}, { id, crystal: JSON.stringify(CRYSTAL, null, 1) });
 	check('the crystal is larger than the hot ceiling, so the split is forced',
-		seeded > 4096, seeded + ' bytes');
+		seeded > 16384, seeded + ' bytes');
 
 	// ── 1 to 3: what the daimon is composed with ──────────────────────
 	const wire = await page.evaluate(async (a) => {
@@ -227,7 +231,10 @@ try {
 	// the one a fold and a hand edit come through, which is the door the file tools never see.
 	const refused = await page.evaluate(async (a) => {
 		const big = JSON.parse(JSON.stringify(a.crystal));
-		big.summary = 'x'.repeat(8000);
+		// Past the 16 KiB default hot ceiling (raised from 4 KiB on 2026-09-14), with room to
+		// spare for the other always-hot fields and the two flagged sections already in the
+		// fixture -- 8,000 was enough over the old 4 KiB ceiling and is not over this one.
+		big.summary = 'x'.repeat(20000);
 		try { await window.__free.write_crystal_data(a.id, JSON.stringify(big)); return ''; }
 		catch (e) { return String((e && e.message) || e).replace(/\[[0-9;]*m/g, ''); }
 	}, { id, crystal: CRYSTAL });
