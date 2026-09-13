@@ -183,6 +183,16 @@
 		var C = window.DaimondCore;
 		return !!(C && C.composerHasText && C.composerHasText());
 	}
+	/// Composer text a reload would lose. `drafts.js` restores anything bound to
+	/// a draft key, so text that IS bound survives a reload on its own and is not
+	/// a reason to hold one back -- only unbound text (no current thread to key
+	/// it to) would actually be lost. See `safeNow`, which used to treat any
+	/// composer text as unsafe: on gilgamesh a stray draft (fixed separately)
+	/// held the tab unsafe for two hours because this line could never pass.
+	function composerHasUnsavedText() {
+		var C = window.DaimondCore;
+		return !!(C && C.composerHasUnsavedText && C.composerHasUnsavedText());
+	}
 
 	/// Is a sync round running, or armed to start? `quiet` is sync.js's own answer
 	/// and counts the armed debounce timers too, which `inFlight` alone does not --
@@ -207,7 +217,7 @@
 	/// reload costs it nothing and waiting on it would only hold updates back.
 	function safeNow() {
 		if (busy()) return false;
-		if (composerHasText()) return false;
+		if (composerHasUnsavedText()) return false;
 		return syncQuiet();
 	}
 

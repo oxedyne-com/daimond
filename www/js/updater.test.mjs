@@ -10,9 +10,11 @@
    The properties under test are the ones a reload can get wrong:
 
      (a) the same build id does nothing at all;
-     (b) a newer id never reloads over a running turn, a half-
-         typed prompt, or a sync round in flight -- and keeps
-         watching while any of those hold;
+     (b) a newer id never reloads over a running turn, unsaved
+         composer text (nothing to restore it), or a sync round
+         in flight -- and keeps watching while any of those hold,
+         but does not hold over composer text a draft key would
+         restore anyway;
      (c) a newer id on a safe, quiet tab counts down in front of
          the user, says so, and then reloads;
      (d) Cancel defers it, and the defer expires;
@@ -166,6 +168,9 @@ function makeTab(cfg) {
 		DaimondCore: {
 			busy: () => !!cfg.state.busy,
 			composerHasText: () => !!cfg.state.typed,
+			// `typed` alone is text in the box; a bound draft key (`draftBound`)
+			// is what makes it a `drafts.js` restore the next load will not lose.
+			composerHasUnsavedText: () => !!cfg.state.typed && !cfg.state.draftBound,
 		},
 		DaimondSync: { state: () => ({ quiet: cfg.state.quiet !== false }) },
 		// The unlock gate, and the two things the runner exemption needs to be sure
@@ -294,15 +299,29 @@ async function main() {
 		check('it reloads once the turn ends', tab.reloads.n === 1);
 	}
 
-	console.log('\nupdater: unsent composer text holds it off');
+	console.log('\nupdater: unsaved composer text (no draft to restore it) holds it off');
 	{
 		const tab = await boot({ stamps: [BOOTED, NEWER], state: { typed: true } });
 		await tab.clock.advance(5 * MIN);
-		check('a half-typed prompt is not safe', tab.U().safe() === false);
+		check('a half-typed prompt with nothing to restore it is not safe', tab.U().safe() === false);
 		check('it did not reload over unsent text', tab.reloads.n === 0);
 		tab.state.typed = false;
 		await tab.clock.advance(11000 + 21000);
 		check('it reloads once the prompt is gone', tab.reloads.n === 1);
+	}
+
+	console.log('\nupdater: a draft bound to a key does not hold it off');
+	{
+		// `drafts.js` restores anything bound to a draft key on the next load, so
+		// text a reload would get right back is not a reason to hold one back --
+		// the composer having something in it is no longer, on its own, unsafe.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { typed: true, draftBound: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('a persisted draft is safe', tab.U().safe() === true);
+		check('a countdown is running over it', tab.U().countdown() === 20);
+		await tab.clock.advance(21000);
+		check('it reloaded with the draft still in the box', tab.reloads.n === 1);
 	}
 
 	console.log('\nupdater: a sync round in flight holds it off');

@@ -142,7 +142,7 @@ pub const FOLD_AT_MAX: f64 = 0.95;	// above it the provider refuses before the f
 /// It is now the DEFAULT of [`Limits::context_cap`] rather than the figure itself, because the
 /// owner has to be able to see it and move it: a number that decides what a turn costs, and
 /// that nothing in the product names, is a number nobody can act on.
-pub const ABSOLUTE_CAP: u64 = 80_000;
+pub const ABSOLUTE_CAP: u64 = 120_000;
 
 /// The band a chosen context ceiling is held inside.
 ///
@@ -3525,7 +3525,7 @@ mod tests {
 		// It was a constant at 200,000, and 200,000 was above the line it was drawn to hold: a
 		// real turn settled at ~182k per round, under the cap, so no fold ever fired and the
 		// whole of it was re-sent a hundred and fifty times.
-		assert_eq!(80_000, ABSOLUTE_CAP);
+		assert_eq!(120_000, ABSOLUTE_CAP);
 		assert_eq!(ABSOLUTE_CAP, Limits::default().context_cap);
 		let mut l = Limits::default();
 		l.window = 1_310_720;

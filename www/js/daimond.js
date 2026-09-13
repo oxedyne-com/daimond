@@ -23335,7 +23335,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Named here for the same reason `DEFAULT_FOLD_AT` is -- a tile drawn before its agent is
 	/// built still has to mark the fold in the right place -- and it goes stale the same way.
 	/// Keep it equal to the engine's figure.
-	var DEFAULT_CONTEXT_CAP = 80000;
+	var DEFAULT_CONTEXT_CAP = 120000;
 	var CONTEXT_CAP_MIN = 16000, CONTEXT_CAP_MAX = 1000000;
 
 	/// The most one TURN may spend before the engine stops it, in US dollars:
@@ -24139,6 +24139,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// the function the app itself calls.
 		showIdentity:    showIdentity,
 		composerHasText: function () { return !!(chatInput && chatInput.value && chatInput.value.trim()); },
+		/// Composer text a reload would NOT get back. `drafts.js` binds the box to
+		/// a key (`dataset.draftKey`) and restores it on the next load, so text
+		/// bound to one is safe to reload over; `updater.js`'s `safeNow` used to
+		/// treat ANY composer text as unsafe and held a build back for two hours
+		/// on gilgamesh behind a draft it would have restored anyway.
+		composerHasUnsavedText: function () {
+			return !!(chatInput && chatInput.value && chatInput.value.trim() && !chatInput.dataset.draftKey);
+		},
 		// Post a message to the one conversation from somewhere other than the
 		// composer — the phone sheet's "Ask about this" pill. Goes through the
 		// same send path, so there is still only one way a turn begins.
@@ -38914,10 +38922,36 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (text && f.kind === 'chat') text += await attachReadBodies(list);
 		var last = attachPrefixWritten[f.id] || '';
 		var val  = input.value;
-		if (last && val.indexOf(last) === 0) input.value = text + val.slice(last.length);
-		else if (text) input.value = text + val;
+		input.value = mergeAttachPrefix(text, val, last);
 		attachPrefixWritten[f.id] = text;
 		if (input.dispatchEvent) input.dispatchEvent(new Event('input', { bubbles: true }));
+	}
+
+	/// The composer's next value, given what it holds NOW (`val`), what this
+	/// module would write as the attach prefix THIS time (`text`), and what it
+	/// wrote LAST time this page life (`last`, '' if it never has).
+	///
+	/// `attachPrefixWritten` -- where `last` comes from -- is this module's own
+	/// memory, not the page's: it starts fresh on every reload while a RESTORED
+	/// draft (`drafts.js`) can still open with the very prefix this function
+	/// wrote last time, in a PREVIOUS page life. A version of this that trusted
+	/// `last` alone found `last === ''` on that first call after a reload, fell
+	/// through to prepending unconditionally, and stacked a second copy in front
+	/// of the one already sitting there -- and the box's own `input` event then
+	/// handed that doubled text straight back to `drafts.js` to keep, so the next
+	/// reload started from two and produced three. One more copy every load or
+	/// unlock, forever.
+	///
+	/// Checking `val` against the freshly computed `text` first catches that
+	/// case with no memory of having written it this page life at all: if the
+	/// box already starts with exactly what would be written now, there is
+	/// nothing to do. Split out as its own function so a page load's worth of
+	/// restores can be proved idempotent without a browser -- see
+	/// `verify_draftdup.mjs`.
+	function mergeAttachPrefix(text, val, last) {
+		if (text && val.indexOf(text) === 0) return val;                     // already exactly this prefix
+		if (last && val.indexOf(last) === 0) return text + val.slice(last.length);
+		return text ? text + val : val;
 	}
 
 	/// One tile in a footer or a panel, in whichever view is chosen. The

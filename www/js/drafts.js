@@ -184,7 +184,17 @@
 		if (had && !el.value) el.value = had;
 		if (!el.dataset.draftBound) {
 			el.dataset.draftBound = '1';
-			el.addEventListener('input', function () {
+			el.addEventListener('input', function (e) {
+				// A SYNTHETIC EVENT IS NOT A KEYSTROKE. `daimond.js` prefills this same
+				// box (the attach prefix, a queued message put back) by setting `.value`
+				// and dispatching a bare `new Event('input')` so the box's own listeners
+				// -- resize, send-mode -- run; a real keystroke's event is trusted, a
+				// script's is not. Saving on the untrusted one persisted the app's OWN
+				// prefill as though the user had typed it, so a reload restored it, the
+				// prefill code ran again unable to tell its old text from fresh box
+				// content, and prepended another copy -- one more each load or unlock.
+				// See `syncComposerAttachPrefix` in daimond.js.
+				if (e && e.isTrusted === false) return;
 				set(el.dataset.draftKey || '', el.value);
 			});
 		}

@@ -1,1 +1,1 @@
-{"build":"67057e438a23","note":"Tuned defaults from the loop: 80K ceiling, 16-round result age, roomier workers; runner lets the screen sleep"}
+{"build":"59d3e3e59f13","note":"Drafts no longer duplicate on load; composer text no longer blocks self-reload; ceiling back to 120K"}
