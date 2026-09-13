@@ -178,6 +178,12 @@ def main():
 
         t = req.get('t')
         if t == 'hello':
+            # RE-READ ON EVERY GREETING, and only the caps.  The second hello a relay
+            # sends is the one that asks a PARKED hand whether it is still the hand the
+            # machine has, and a test can only make that answer change by changing the
+            # file between the two.  Nothing else is re-read: the run behaviour is
+            # chosen once, at launch, as it always was.
+            c['caps'] = cfg()['caps']
             # A host that is there and never greets.  Nothing is sent back at all,
             # so the page's handshake deadline is the only thing that can end it.
             if c['mute']:

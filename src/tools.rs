@@ -1487,6 +1487,21 @@ pub fn crystal_hot_write_refused(new_hot: usize, old_hot: usize) -> bool {
 /// # Arguments
 /// * `new_hot` - Bytes the hot part would have weighed.
 pub fn crystal_hot_cap_message(new_hot: usize) -> String {
+    // WHERE THE NUMBER CAME FROM, said only when it is not this build's own.
+    //
+    // On 2026-09-14 the default was raised from 4 KiB to 16 KiB and a crystal edit was
+    // still refused at "may not exceed 4096 bytes" on a machine whose stored settings held
+    // no figure at all.  The refusal named a ceiling and nothing named its ORIGIN, so
+    // telling a setting from an engine older than its own page took a source hunt.  A
+    // ceiling that is not the shipped one is now said to be a setting, which is the one
+    // fact that separates the two.
+    let set = match crystal_hot_cap() == CRYSTAL_HOT_CAP_DEFAULT {
+        true  => String::new(),
+        false => fmt!(
+            " THIS CEILING IS A SETTING and not this build's own figure, which is {} bytes. \
+            If nobody chose it, it is under Settings, Crystal size limits, Always-present \
+            part, where \"Default\" restores it.", CRYSTAL_HOT_CAP_DEFAULT),
+    };
     fmt!(
         "The HOT part of this crystal -- `title`, `summary`, `open` and every section marked \
         \"hot\": true -- rides in your system message on every round and may not exceed {} \
@@ -1494,8 +1509,8 @@ pub fn crystal_hot_cap_message(new_hot: usize) -> String {
         drop the `!` from its heading -- or shorten the hot part. Nothing has to be deleted: a \
         cold section keeps every word of it and costs nothing per round, because crystal_read \
         fetches a cold section and recall searches all of them. The whole crystal may still be \
-        up to {} bytes.",
-        crystal_hot_cap(), new_hot, crystal_cap(),
+        up to {} bytes.{}",
+        crystal_hot_cap(), new_hot, crystal_cap(), set,
     )
 }
 
@@ -18057,6 +18072,14 @@ impl Tool {
     /// which is another lane's app or nothing.
     const VERIFY_WORLD: &str = "[world:";
 
+    /// The line the hand's report carries about the hand that ran it.
+    ///
+    /// Lifted out beside the world line, and for the same reason.  A page reloaded inside the
+    /// extension's grace keeps the hand it had, so the report may be an OLDER hand's answer
+    /// about code the machine has already replaced -- which is how 2026-09-14's `verify` came
+    /// back in 767 ms with no world line and nothing to explain it.
+    const VERIFY_HAND: &str = "[hand:";
+
     /// Does this hand have verifiers to run at all?
     ///
     /// From the handshake's `caps`, exactly as `fence_enforced` reads the fence out of it: a
@@ -18203,6 +18226,10 @@ impl Tool {
         let world = out.lines()
             .find(|l| l.trim_start().starts_with(Self::VERIFY_WORLD))
             .map(|l| fmt!("{}", l.trim()));
+        // And WHICH HAND produced them, on the same terms.
+        let hand = out.lines()
+            .find(|l| l.trim_start().starts_with(Self::VERIFY_HAND))
+            .map(|l| fmt!("{}", l.trim()));
         let mut s = String::new();
         if !out.is_empty() { s.push_str(&out); }
         if !err.is_empty() {
@@ -18257,8 +18284,12 @@ impl Tool {
             Some(w) => fmt!("\n{}", w),
             None    => String::new(),
         };
+        let hand = match &hand {
+            Some(h) => fmt!("\n{}", h),
+            None    => String::new(),
+        };
         let room = MAX_OUTPUT.saturating_sub(
-            envelope_overhead(&origin) + tail.len() + world.len());
+            envelope_overhead(&origin) + tail.len() + world.len() + hand.len());
         if died.is_some() {
             // THE END IS THE HALF THAT MATTERS on a run that died: `truncate_output` keeps the
             // beginning, which would cut away the very stack trace this note points at.
@@ -18274,7 +18305,7 @@ impl Tool {
         } else {
             wrap_untrusted(&origin, &s)
         };
-        fmt!("{}{}{}", body, world, tail)
+        fmt!("{}{}{}{}", body, world, hand, tail)
     }
 
 
@@ -21545,6 +21576,42 @@ mod tests {
 
         // The page is the larger of the two, or nothing is over one and under the other.
         assert!(CRYSTAL_PAGE_CAP_DEFAULT > CRYSTAL_CAP_DEFAULT);
+    }
+
+    /// **An unset hot ceiling is the engine's own figure, and a set one says so.**
+    ///
+    /// On 2026-09-14 the shipped default went from 4 KiB to 16 KiB and a crystal edit on the
+    /// owner's machine was still refused at "may not exceed 4096 bytes", with nothing stored
+    /// anywhere holding a 4.  The refusal named a ceiling and never its origin, so separating a
+    /// setting from an engine older than the page it was serving took a source hunt.  Both halves
+    /// are nailed down here: zero means the shipped figure, and a figure that is not the shipped
+    /// one is declared to be a setting.
+    #[test]
+    fn test_an_unset_hot_ceiling_is_the_engines_own_and_a_set_one_says_so() {
+        set_crystal_cap(0);
+        set_crystal_hot_cap(0);
+        assert_eq!(CRYSTAL_HOT_CAP_DEFAULT, crystal_hot_cap(),
+            "zero must mean the engine's own ceiling and nothing else");
+        // The write the owner was refused: over the OLD default, well under the shipped one.
+        let hot = |n: usize| fmt!("{{\"summary\":\"{}\"}}", "h".repeat(n));
+        assert!(crystal_hot_refusal(&hot(4 * 1024 + 512), "").is_none(),
+            "a hot part over the retired 4 KiB default was refused with nothing set");
+        assert!(crystal_hot_refusal(&hot(CRYSTAL_HOT_CAP_DEFAULT + 2_048), "").is_some(),
+            "a hot part over the shipped ceiling was not refused");
+        let shipped = crystal_hot_cap_message(CRYSTAL_HOT_CAP_DEFAULT + 2_048);
+        assert!(shipped.contains(&fmt!("{}", CRYSTAL_HOT_CAP_DEFAULT)), "{}", shipped);
+        assert!(!shipped.contains("IS A SETTING"),
+            "the shipped ceiling was described as somebody's setting: {}", shipped);
+        // And the other way: a ceiling that is not the shipped one names itself as a choice,
+        // which is the sentence that separates a setting from a stale engine in one read.
+        set_crystal_hot_cap(4 * 1024);
+        assert_eq!(4 * 1024, crystal_hot_cap());
+        let set = crystal_hot_cap_message(4 * 1024 + 32);
+        assert!(set.contains("4096"), "{}", set);
+        assert!(set.contains("IS A SETTING"), "a chosen ceiling did not say it was chosen: {}", set);
+        assert!(set.contains(&fmt!("{}", CRYSTAL_HOT_CAP_DEFAULT)),
+            "and it must name the figure this build would use instead: {}", set);
+        set_crystal_hot_cap(0);
     }
 
     #[test]
@@ -25044,6 +25111,53 @@ mod tests {
 ","exit":0}"#,
             &c, false);
         assert!(none.contains("none was stood"), "{}", none);
+    }
+
+    /// **Which HAND ran them is part of the numbers too.**
+    ///
+    /// The extension parks a native host for thirty seconds when a page goes, so a reload --
+    /// which is exactly what a person does after installing a new hand -- hands the same
+    /// process back.  On 2026-09-14 a daimon measured this repository with a hand four days
+    /// old while the one installed that night sat unused, and read the missing world support
+    /// as a defect in the tree.  The line the hand writes about itself is restated outside the
+    /// envelope beside the world's, and for the same reason.
+    #[test]
+    fn test_which_hand_ran_the_checks_is_restated_outside_the_envelope() {
+        let c = ctx();
+        let out = Tool::verify_result("graph",
+            r#"{"stdout":"dev/verify_graph.mjs — 1 run
+[world: 41 — app :8818]
+[hand: 0.1.0/3f9c1a20 at /home/x/.local/share/daimond/hand/bin/daimond-hand]
+  ok   a
+[verify: 27 checks passed, 0 failed, 2 breaks confirmed red, 0 breaks proved nothing]
+","exit":0}"#,
+            &c, false);
+        assert_eq!(2, out.matches("[hand: 0.1.0/3f9c1a20").count(),
+            "the hand line was not restated outside the envelope: {}", out);
+        // Ordering, on the same terms as the world's: the three numbers stay last, and a
+        // reader meets the hand before them.
+        let h = match out.rfind("[hand: 0.1.0") { Some(i) => i, None => usize::MAX };
+        let t = match out.rfind("[verify:") { Some(i) => i, None => 0 };
+        assert!(h < t, "the hand line displaced the three numbers as the last line: {}", out);
+        // The whole point of the line is the case where it says the machine has moved on.
+        let stale = Tool::verify_result("graph",
+            r#"{"stdout":"[world: none — dev/verify_x.mjs does not import dev/harness.mjs, so none was stood]
+[hand: 0.1.0/3f9c1a20 at /home/x/bin/daimond-hand -- A NEWER HAND IS INSTALLED at this path and is not the one that ran these checks; reload the page with nothing running to take it]
+[verify: 1 checks passed, 0 failed, 1 breaks confirmed red, 0 breaks proved nothing]
+","exit":0}"#,
+            &c, false);
+        assert!(stale.rfind("A NEWER HAND IS INSTALLED").unwrap_or(0)
+                > stale.find("[world: none").unwrap_or(usize::MAX),
+            "the newer-hand warning did not survive outside the envelope: {}", stale);
+        // A hand too old to write the line at all changes nothing else: the world and the
+        // trailer are lifted exactly as they were.
+        let old = Tool::verify_result("graph",
+            r#"{"stdout":"[world: 41 — app :8818]
+[verify: 1 checks passed, 0 failed, 1 breaks confirmed red, 0 breaks proved nothing]
+","exit":0}"#,
+            &c, false);
+        assert!(!old.contains("[hand:"), "a hand line was invented: {}", old);
+        assert_eq!(2, old.matches("[world: 41").count(), "{}", old);
     }
 
     /// A clean-only run carries its own label all the way through, in the words the model repeats.

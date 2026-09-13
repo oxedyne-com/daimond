@@ -172,5 +172,11 @@
 		clear:    clear,
 		rows:     read,
 		setBuild: setBuild,
+		// The build the LAST boot confirmed, readable SYNCHRONOUSLY. `build.json` is
+		// fetched, so at the moment the hand's port is opened the updater may not have
+		// read it yet -- and the extension's question ("is the page that came back the
+		// build that left this hand running?") has to be answered at connect time or not
+		// at all. See `clientBuild` in js/hand.js.
+		lastBuild: lastBuild,
 	};
 })();

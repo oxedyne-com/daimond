@@ -205,7 +205,7 @@ const { page } = s;
 try {
 	await page.waitForTimeout(1500);
 
-	const out = await page.evaluate(async ({ MID_LEN, BIG_LEN }) => {
+	const out = await page.evaluate(async ({ MID_LEN, BIG_LEN, HOT }) => {
 		const mod = await import('../pkg/oxedyne_daimond.js');
 		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 		const r = { absent: [] };
@@ -267,6 +267,28 @@ try {
 			r.defDataMid = await write(dir + '/crystal.json', dataMid);
 			r.defPageMid = await write(dir + '/crystal.html', pageMid);
 			r.defPageBig = await write(dir + '/crystal.html', pageBig);
+		}
+
+		// ── The hot ceiling a FRESH PROFILE is under ─────────────────
+		//
+		// BEFORE ANY SETTER, on a profile that holds no `daimond-byok` at all, so what
+		// is measured is what an install with no setting gets. An unset `crystalHotKb`
+		// is passed to the engine as zero and zero means the engine's own figure, which
+		// is the whole of the contract -- and on 2026-09-14 a crystal edit was refused
+		// on the owner's machine at "may not exceed 4096 bytes" on the day the shipped
+		// default became 16384, with no setting anywhere holding a 4. Nothing in the
+		// product names the ceiling in force, so the only instrument was the source.
+		// This is the instrument: it asks the engine, through the door that refused.
+		{
+			const id = await app.create_diamond('Fresh');
+			const p  = 'diamonds/' + id + '/crystal.json';
+			const hot = (n) => JSON.stringify({ summary: 'h'.repeat(n) });
+			// The write that was refused: a hot part over the OLD default and well under
+			// the shipped one. A build whose hot ceiling is the old 4 KiB refuses this.
+			r.freshWasRefused = await write(p, hot(4 * 1024 + 512));
+			// And the shipped figure itself, either side of it.
+			r.freshUnder = await write(p, hot(HOT - 512));
+			r.freshOver  = await write(p, hot(HOT + 2048));
 		}
 
 		// ── Each file, at each of its three doors ────────────────────
@@ -429,7 +451,7 @@ try {
 		}
 
 		return r;
-	}, { MID_LEN, BIG_LEN });
+	}, { MID_LEN, BIG_LEN, HOT: HOT_CAP });
 
 	if (out.absent.length) {
 		check(false, 'the engine offers both ceilings and both store doors',
@@ -503,6 +525,20 @@ try {
 		check(R(f, 'shrinkUnder').ok, 'and all the way under', R(f, 'shrinkUnder').msg);
 		check(!R(f, 'growAgain').ok, 'but not grown again once it is under', R(f, 'growAgain').msg);
 	}
+
+	// ── An unset setting is the engine's own ceiling ─────────────
+	check(R(out, 'freshWasRefused').ok,
+		'a hot part of ' + KIB(4 * 1024 + 512) + ' -- over the OLD 4 KiB default and under the '
+			+ 'shipped ' + KIB(HOT_CAP) + ' -- is written on a profile with no setting',
+		R(out, 'freshWasRefused').msg);
+	check(R(out, 'freshUnder').ok,
+		'and so is one just under the shipped ceiling', R(out, 'freshUnder').msg);
+	check(!R(out, 'freshOver').ok,
+		'while one over it is refused, so the ceiling in force really is the engine\'s',
+		R(out, 'freshOver').msg);
+	check(new RegExp('exceed ' + HOT_CAP + ' bytes').test(R(out, 'freshOver').msg || ''),
+		'and the refusal names ' + HOT_CAP + ', which is the number a reader has to be able to see',
+		R(out, 'freshOver').msg);
 
 	// ── The hot ceiling measures the prompt and not the file ─────
 	{

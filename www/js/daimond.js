@@ -45852,14 +45852,48 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return true;
 		},
 
+		/// The engine's own default, in kilobytes, and the ceiling it is enforcing now.
+		///
+		/// ASKED OF THE ENGINE, not read from `DEFAULT_CRYSTAL_HOT_KB`. That constant is a
+		/// hand-kept copy of `tools::CRYSTAL_HOT_CAP_DEFAULT` and `dev/verify_crystalcap.mjs`
+		/// compares the two files on disk -- which cannot see the case that actually bit: a
+		/// page whose wasm is older than its JavaScript, enforcing a ceiling the pane is
+		/// naming a newer figure for. On 2026-09-14 a crystal write was refused at 4096 bytes
+		/// with no setting holding a 4, and there was nowhere to read what the engine thought.
+		/// The copy is the fallback, for a build with no getter.
+		engine: function () {
+			var app = anyApp();
+			var out = { def: DEFAULT_CRYSTAL_HOT_KB, force: 0 };
+			if (!app) return out;
+			try {
+				if (typeof app.crystal_hot_cap_default === 'function') {
+					var d = Math.round(app.crystal_hot_cap_default() / 1024);
+					if (d > 0) out.def = d;
+				}
+				if (typeof app.crystal_hot_cap === 'function') {
+					out.force = Math.round(app.crystal_hot_cap() / 1024);
+				}
+			} catch (e) { /* an older wasm has neither */ }
+			return out;
+		},
+
 		render: function () {
 			if (!this.mount()) return;
 			var lab = document.querySelector('label[for="cfg-crystal-hot-cap"]');
 			if (lab) lab.textContent = tOr('settings.crystal_hot_cap', 'Always-present part');
+			var eng = this.engine();
 			var hnote = document.getElementById('cfg-crystal-hot-cap-note');
 			if (hnote) {
 				hnote.textContent = tOr('settings.crystal_hot_cap_note',
 					'How much of a Diamond’s memory rides in every round; the rest is read on demand.');
+				// THE CEILING ACTUALLY IN FORCE, said only when it is not the one this row
+				// claims. Silence is the normal state; a sentence here means the engine and
+				// the panel disagree, which is exactly what nothing could see on 2026-09-14.
+				var want = (cfg.crystalHotKb || 0) || eng.def;
+				if (eng.force && eng.force !== want) {
+					hnote.textContent += ' This app is enforcing ' + eng.force
+						+ ' KB, not ' + want + ' KB — reload the page, and say so if it persists.';
+				}
 			}
 			var sel = document.getElementById('cfg-crystal-hot-cap');
 			sel.innerHTML = '';
@@ -45872,7 +45906,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				o.value = String(value); o.textContent = label;
 				sel.appendChild(o);
 			};
-			mk(0, tOr('settings.crystal_cap_auto', 'Default') + ' — ' + DEFAULT_CRYSTAL_HOT_KB + ' KB');
+			mk(0, tOr('settings.crystal_cap_auto', 'Default') + ' — ' + eng.def + ' KB');
 			steps.forEach(function (n) { mk(n, String(n) + ' KB'); });
 			sel.value = String(mine);
 			if (sel.selectedIndex === -1) sel.value = '0';

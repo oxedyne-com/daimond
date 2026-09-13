@@ -1625,6 +1625,28 @@ impl Desk {
         if daimond_hand::exec::remote_ready() {
             caps.push(fmt!("remote:ready"));
         }
+        // WHICH HAND THIS IS, and whether it is still the one on disk.
+        //
+        // `version` beside it is the crate's version and has never moved, so it cannot tell
+        // two builds apart; the hash of the running image can. Both ride in `caps` beside
+        // `root:` and `home:` for the reason given there -- the wire has no field for them --
+        // and the extension reads them on EVERY hello, which is what lets a page that comes
+        // back to a parked hand find out it is holding an older one than the manifest names.
+        {
+            let img = daimond_hand::image();
+            if !img.sha.is_empty() {
+                caps.push(fmt!("bin-sha:{}", img.sha));
+            }
+            if !img.path.as_os_str().is_empty() {
+                caps.push(fmt!("bin:{}", img.path.display()));
+            }
+            // Said only when it is TRUE, so a page that reads no `bin-stale:` gets the
+            // behaviour every build before this one had rather than a second way of saying
+            // nothing is wrong.
+            if daimond_hand::image_changed() {
+                caps.push(fmt!("bin-stale:1"));
+            }
+        }
         if !self.say(Resp::Hello {
             proto:   daimond_hand::PROTO,
             host:    fmt!("{}", daimond_hand::HOST_NAME),
@@ -2062,7 +2084,9 @@ impl Desk {
         let _ = self.ctl.send(Resp::Granted {
             path: fmt!("{}", here.display()),
             note: fmt!("The folder is written down. This hand is still working in '{}' until it \
-                is restarted, which happens when the page is reloaded.", self.root.display()),
+                is restarted. Reloading the page is what restarts it -- this hand is let go \
+                the moment the grant lands, so the page that comes back starts a new one \
+                that reads the file.", self.root.display()),
         }).await;
         Ok(())
     }
@@ -2702,6 +2726,11 @@ fn host() -> Outcome<()> {
 /// the same, which is a stack trace where a sentence was wanted; [`refuse`]
 /// writes the sentence instead.
 fn main() {
+    // BEFORE ANYTHING ELSE, because it hashes the bytes this process is running and
+    // the file they came from can be replaced while it runs. Asked for the first time
+    // after an install it would hash the new file and report a current hand; asked
+    // here it cannot. See `daimond_hand::image`.
+    let _ = daimond_hand::image();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Whether a browser is on the other end of standard output, which decides where a
     // refusal can be READ.  A person at a terminal reads standard error; a browser
@@ -3376,6 +3405,24 @@ mod tests {
                 }
                 let want = fmt!("root:{}", cfg.root.display());
                 assert!(caps.contains(&want), "{:?} is missing {}", caps, want);
+                // WHICH HAND THIS IS. The crate version has never moved, so the page
+                // cannot tell two builds apart without the hash of the running image --
+                // which is the whole of why a reload could re-adopt a four-day-old hand
+                // and nothing anywhere said so.
+                let sha = res!(caps.iter().find_map(|c| c.strip_prefix("bin-sha:"))
+                    .ok_or_else(|| err!("the hello names no bin-sha: {:?}", caps; Test, Missing)));
+                assert_eq!(8, sha.len(), "bin-sha is not eight hex digits: {}", sha);
+                assert!(sha.chars().all(|ch| ch.is_ascii_hexdigit()),
+                    "bin-sha is not hex: {}", sha);
+                assert_eq!(daimond_hand::image().sha, sha, "the hello named another image");
+                let bin = res!(caps.iter().find_map(|c| c.strip_prefix("bin:"))
+                    .ok_or_else(|| err!("the hello names no bin: {:?}", caps; Test, Missing)));
+                assert_eq!(fmt!("{}", daimond_hand::image().path.display()), fmt!("{}", bin));
+                // And it says nothing at all where nothing is wrong: a page reading no
+                // `bin-stale:` gets what every build before this one had. The test binary
+                // is not being replaced under itself, so this is the false case.
+                assert!(!caps.iter().any(|c| c.starts_with("bin-stale:")),
+                    "an unchanged hand claimed to be stale: {:?}", caps);
             },
             other => return Err(err!("Expected a hello, got {:?}.", other; Test, Invalid)),
         }

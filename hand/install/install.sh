@@ -20,8 +20,14 @@
 #	./install.sh --check               # diagnose an install, changing nothing
 #	./install.sh /path/to/daimond-hand # register a particular binary
 #	./install.sh --dir /some/profile/NativeMessagingHosts /path/to/binary
+#	./install.sh --profile /some/profile /path/to/binary # ...same, one level up
 #	./install.sh --list                # say what it would write, and where
 #	./install.sh --selftest            # run this script's own tests
+#
+# --check honours --dir and --profile too: point it at the same non-default
+# profile the install used and it reads that manifest's own "path" for the
+# binary check, rather than assuming a build under $REPO/hand/target.
+#	./install.sh --check --profile /some/profile
 #
 # --workspace does what step 2 of install/README.md used to ask you to type: it
 # creates the journal directory at mode 700 and writes the granted folder into
@@ -105,6 +111,21 @@ BROWSERS=(
 	"Vivaldi|deb|$CONFIG/vivaldi"
 	"Opera|deb|$CONFIG/opera"
 
+	# Chrome 136+ ignores --remote-debugging-port on the default profile
+	# directory, so a machine driven over CDP moves its profile aside with
+	# --user-data-dir=...-cdp and launches against that instead. These entries
+	# let --check and a plain install find the manifest there without either
+	# one having to be told --profile by hand.
+	"Google Chrome (cdp profile)|deb|$CONFIG/google-chrome-cdp"
+	"Google Chrome Beta (cdp profile)|deb|$CONFIG/google-chrome-beta-cdp"
+	"Google Chrome Dev (cdp profile)|deb|$CONFIG/google-chrome-unstable-cdp"
+	"Chromium (cdp profile)|deb|$CONFIG/chromium-cdp"
+	"Brave (cdp profile)|deb|$CONFIG/BraveSoftware/Brave-Browser-cdp"
+	"Brave Beta (cdp profile)|deb|$CONFIG/BraveSoftware/Brave-Browser-Beta-cdp"
+	"Microsoft Edge (cdp profile)|deb|$CONFIG/microsoft-edge-cdp"
+	"Vivaldi (cdp profile)|deb|$CONFIG/vivaldi-cdp"
+	"Opera (cdp profile)|deb|$CONFIG/opera-cdp"
+
 	"Chromium (snap)|snap|$SNAP/chromium/common/chromium"
 	"Chromium (snap)|snap|$SNAP/chromium/current/.config/chromium"
 	"Brave (snap)|snap|$SNAP/brave/current/.config/BraveSoftware/Brave-Browser"
@@ -143,6 +164,12 @@ REMOTE=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--dir)	ONLY_DIR="${2:?--dir needs a directory}"; shift 2 ;;
+	# The profile root, not the NativeMessagingHosts directory inside it -- for
+	# naming a profile the way you would find it on disk, without having to know
+	# what --dir wants appended. Same variable underneath: both end up meaning
+	# "only this one directory", for install and for --check alike.
+	--profile)
+		ONLY_DIR="${2:?--profile needs a profile directory}/NativeMessagingHosts"; shift 2 ;;
 	--workspace|-w)
 		WORKSPACE="${2:?--workspace needs a folder}"; shift 2 ;;
 	--terminal-workspace|-t)
@@ -488,6 +515,20 @@ for entry in "${BROWSERS[@]}"; do
 	fi
 done
 
+# --check with --dir or --profile: fold the named directory in as though it
+# were a table entry, so a profile the BROWSERS table has no line for (a
+# --user-data-dir moved somewhere this script does not guess at) still gets
+# checked instead of silently skipped. A plain install keeps its own --dir
+# path far below, untouched -- this is for --check alone.
+if [ -n "$ONLY_DIR" ] && [ "$CHECK_ONLY" = 1 ]; then
+	kind="$(confined_path "$ONLY_DIR")"
+	if [ -n "$kind" ]; then
+		CONFINED+=("(given)|$ONLY_DIR|$kind")
+	else
+		USABLE+=("(given)|$ONLY_DIR")
+	fi
+fi
+
 # ── The manifest ─────────────────────────────────────────────────────
 #
 # Written from here rather than copied from the template beside this script, so
@@ -559,7 +600,7 @@ run_check() {
 	fi
 
 	# 2. The registration, in each profile that could use it.
-	local seen=0 dir f mpath morigin
+	local seen=0 dir f mpath morigin reg_binary=''
 	for u in "${USABLE[@]}" ${CONFINED[@]+"${CONFINED[@]}"}; do
 		dir="$(echo "$u" | cut -d'|' -f2)"
 		f="$dir/$HOST.json"
@@ -567,6 +608,11 @@ run_check() {
 		seen=$((seen + 1))
 		mpath="$(sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)"
 		morigin="$(sed -n 's|.*chrome-extension://\([^/]*\)/.*|\1|p' "$f" | head -1)"
+		# The first manifest's own path, kept for the binary check below. When
+		# no argument named a binary and none sits under $REPO/hand/target
+		# either, this is the only place left that knows where an install
+		# made with --dir put it -- so read it rather than assume a location.
+		[ -z "$reg_binary" ] && [ -n "$mpath" ] && reg_binary="$mpath"
 		if [ ! -x "$mpath" ]; then
 			bad 'registration' "$f names '$mpath', which will not run: the browser can start nothing" \
 				'rebuild the hand, then run install.sh again'
@@ -583,6 +629,7 @@ run_check() {
 	fi
 
 	# 3. The binary, actually run rather than merely present.
+	[ -z "$BINARY" ] && BINARY="$reg_binary"
 	if [ -z "$BINARY" ]; then
 		bad 'binary' 'not built' \
 			'cargo build --release --manifest-path hand/Cargo.toml'

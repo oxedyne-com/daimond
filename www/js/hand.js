@@ -348,6 +348,29 @@
 		});
 	}
 
+	/// Which build of the app this is, synchronously, or '' where it cannot be said.
+	///
+	/// The updater's answer first, because it has actually read `build.json`; the id the
+	/// LAST boot confirmed second, which `js/breadcrumb.js` keeps in `localStorage` and
+	/// which is therefore readable before any fetch. Empty is a real answer and not a
+	/// failure: the extension treats a page that did not say as every page before this
+	/// one, rather than ending a hand on a build id that is merely absent.
+	function clientBuild() {
+		try {
+			if (window.DaimondUpdater && DaimondUpdater.booted) {
+				var b = DaimondUpdater.booted();
+				if (b) return String(b);
+			}
+		} catch (e) { /* the updater has not polled */ }
+		try {
+			if (window.DaimondTrail && DaimondTrail.lastBuild) {
+				var l = DaimondTrail.lastBuild();
+				if (l) return String(l);
+			}
+		} catch (e) { /* no trail, or no storage */ }
+		return '';
+	}
+
 	/// Open the port and say hello on it.
 	///
 	/// CONNECTING IS WHAT PUTS THE APPROVAL WINDOW ON SCREEN, and that is the right
@@ -359,7 +382,16 @@
 	/// that matters. It is not called from here for that reason.
 	function connect(rec) {
 		var port;
-		try { port = chrome.runtime.connect(state.extId, { name: 'daimond-hand' }); }
+		// THE BUILD RIDES IN THE PORT'S NAME, because the one decision it feeds is made
+		// the instant the port opens and before any message can arrive: whether the page
+		// that has come back is the app that left a hand parked in the extension's grace.
+		// See `portBuild` in ext/hand.js. An extension too old to read the suffix sees a
+		// name it does not recognise -- so an empty build falls back to the bare name and
+		// nothing changes for it.
+		var name = 'daimond-hand';
+		var build = clientBuild();
+		if (build) name += '@' + build;
+		try { port = chrome.runtime.connect(state.extId, { name: name }); }
 		catch (e) { drop(rec, NO_HAND); return; }
 		rec.port = port;
 

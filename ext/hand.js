@@ -13,7 +13,7 @@
 // So this file is a relay and almost nothing else. It carries wire messages
 // between two ports:
 //
-//	the PAGE port	-- chrome.runtime.connect(extId, {name:'daimond-hand'}),
+//	the PAGE port	-- chrome.runtime.connect(extId, {name:'daimond-hand@<build>'}),
 //			   which externally_connectable already restricts to the
 //			   Daimond origins, and which is checked again here;
 //	the HOST port	-- chrome.runtime.connectNative('com.oxedyne.daimond.hand'),
@@ -81,6 +81,30 @@
 	/// connect, so a later feature can open a second kind of port on the same
 	/// boundary without either one guessing which it is.
 	const PORT_NAME = 'daimond-hand';
+
+	/// What separates the port's name from the build of the app opening it.
+	///
+	/// A page may connect as `daimond-hand@<build>`. The suffix is the id the app
+	/// is running -- `build.json`'s, as `js/updater.js` read it -- and it exists
+	/// for ONE decision: whether a page that has come back to a parked host is the
+	/// same app that left it there. A bare `daimond-hand` is a page that could not
+	/// say, and it is answered exactly as every build before this one was.
+	const PORT_SEP = '@';
+
+	/// The build a port names, '' where it named none, or null where the name is
+	/// not ours at all.
+	///
+	/// # Arguments
+	/// * `name` - `port.name`, as Chrome hands it over.
+	function portBuild(name) {
+		if (typeof name !== 'string') return null;
+		if (name === PORT_NAME) return '';
+		if (name.indexOf(PORT_NAME + PORT_SEP) !== 0) return null;
+		// Bounded and stripped of anything that is not a build id: the string comes
+		// from the page, it is only ever compared and logged, and a name is not a
+		// place to start trusting one.
+		return name.slice(PORT_NAME.length + PORT_SEP.length).replace(/[^A-Za-z0-9._-]/g, '').slice(0, 64);
+	}
 
 	/// Where the user's approvals are kept, one entry per origin. `local`, not
 	/// `session`: a grant that evaporated when the browser restarted would be
@@ -557,7 +581,9 @@
 	/// * `origin` - Which Daimond origin it is, already checked.
 	/// * `tabId` - The tab it came from, which a reload keeps and a new tab does
 	///   not, or 0 where Chrome named none.
-	function relay(page, origin, tabId) {
+	/// * `build` - The app build that opened it, from the port's name, or '' where
+	///   the page did not say.
+	function relay(page, origin, tabId, build) {
 		/// The port to the page, swapped for a new one when a reloaded page
 		/// adopts this relay, and null while nothing is attached.
 		let wire = page;
@@ -620,12 +646,31 @@
 		/// which is what keeps this a clamp rather than a formality. Empty on an older hand,
 		/// and then a terminal is held to the granted root exactly as it always was.
 		let hostCeilings = [];
+		/// The hand's own image: the hash of the bytes it is running, the file it
+		/// was launched from, and whether that file now holds different bytes.
+		///
+		/// ALL THREE COME FROM THE HAND, because nothing in an extension can read a
+		/// manifest or stat a file. `version` in the hello is the crate's version and
+		/// has never moved, so it cannot tell two hands apart; `bin-sha:` can.
+		///
+		/// Read on every hello, including the one asked on a re-attach, which is the
+		/// whole point: a page that comes back inside the grace is handed the SAME
+		/// process, so this is the only moment it can find out that the machine has a
+		/// newer hand installed than the one it is about to go on using.
+		let hostSha   = '';
+		let hostBin   = '';
+		let hostStale = false;
 		/// Waiting for the hand to say what it can enforce, before the user is
 		/// asked. Null once that is settled, one way or another.
 		let capsWait = null;
 		/// Waiting for the hand to name what the grace is about to take with it.
 		/// Null except during those two seconds.
 		let ritesWait = null;
+		/// A staleness check is owed as soon as nothing is running.
+		///
+		/// Set when a re-attach finds the hand mid-command: the question cannot be put
+		/// to a hand that is not reading, and a build must not be ended to ask it.
+		let owed = false;
 		/// The timer counting out the grace, or null while a page is attached.
 		let holding = null;
 		/// The grace has run out and the last rites are being read. The relay is
@@ -648,6 +693,7 @@
 			lapsed,
 			origin,
 			tabId,
+			build,
 			// A parked relay is BUSY. Not because anything is necessarily
 			// running -- it may be holding nothing but a buffer -- but because
 			// an MV3 worker evicted mid-grace takes the native port with it, and
@@ -865,6 +911,48 @@
 			});
 			for (const h of batch) say(h.m);
 			breathe();
+			// AND THEN ASK THE HAND WHETHER IT IS STILL THE HAND THIS MACHINE HAS.
+			//
+			// A reload inside the grace hands the page the SAME process, which is the
+			// behaviour the grace exists for -- and it is also how a hand installed an
+			// hour ago goes on sitting unused while the page measures the app against
+			// the one that started four days earlier. On 2026-09-14 that cost a whole
+			// turn: `verify {"world":true}` died in 767 ms because the hand holding the
+			// page had never heard of the world code, and nothing anywhere said which
+			// of the two hands was answering.
+			//
+			// Asked here, after the replay, so a re-attach is not made to wait on a
+			// round trip before it sees its own output.
+			retake();
+		}
+
+		/// Lets a parked hand go when a newer one is installed, so the reload takes it.
+		///
+		/// NOT WHILE ANYTHING IS RUNNING. The whole worth of the grace is that a build
+		/// survives a keypress, and ending a thirty-minute command to pick up a hand
+		/// the user installed meanwhile would be a worse fault than the one this fixes.
+		/// So a busy hand is kept and the page is TOLD, in the hand's own terms, which
+		/// is the half that was missing rather than the kill.
+		async function retake() {
+			if (!host) return;
+			// NOT WHILE ANYTHING IS RUNNING, and not even the question: a hand that is
+			// mid-command cannot answer a greeting, so asking here would be a round trip
+			// that resolves after the fact. The check is OWED instead, and paid the
+			// moment the last run ends -- which is the earliest point the hand could be
+			// swapped without taking a build down with it.
+			if (runs.size > 0) { owed = true; return; }
+			owed = false;
+			const said = await capabilities();
+			if (said.gone || !host || !hostStale) return;
+			if (runs.size > 0) { owed = true; return; }
+			// Stopped rather than merely reported: the page is holding nothing, and the
+			// next thing it asks for launches the hand the machine actually has. `stop`
+			// says why, and that sentence is what the page reads.
+			stop('A NEWER MACHINE HAND IS INSTALLED on this computer'
+				+ (hostBin ? ' at ' + hostBin : '')
+				+ ', so the one this page had been holding was let go rather than kept'
+				+ (hostSha ? ' (it was running ' + hostSha + ')' : '')
+				+ '. Nothing was running at the time. The next command starts the new hand.');
 		}
 
 		/// Tells a fresh page what the grace took, when it came back too late.
@@ -919,6 +1007,15 @@
 						const cp = c.slice('terminal-ceiling:'.length);
 						if (cp && hostCeilings.indexOf(cp) < 0) hostCeilings.push(cp);
 					}
+				}
+				// The image, on the same terms. `bin-stale:` is said only when it is TRUE,
+				// so it is cleared on every hello rather than left standing from the last.
+				hostStale = false;
+				for (const c of (Array.isArray(m.caps) ? m.caps : [])) {
+					if (typeof c !== 'string') continue;
+					if (c.indexOf('bin-sha:') === 0) hostSha = c.slice('bin-sha:'.length);
+					if (c.indexOf('bin:') === 0) hostBin = c.slice('bin:'.length);
+					if (c === 'bin-stale:1') hostStale = true;
 				}
 				if (typeof m.root === 'string' && m.root) hostRoot = m.root;
 				if (capsWait) {
@@ -989,6 +1086,9 @@
 				// never started.
 				runs.delete(m.id);
 				breathe();
+				// The earliest moment a hand can be swapped without taking a command
+				// down with it. See `retake`.
+				if (owed && runs.size === 0) retake();
 			}
 
 			say(m);
@@ -1765,7 +1865,9 @@
 	// Only the Daimond origins reach this event at all -- externally_connectable
 	// says so -- and the sender is checked again on the way in.
 	chrome.runtime.onConnectExternal.addListener((port) => {
-		if (!port || port.name !== PORT_NAME) return;
+		if (!port) return;
+		const build = portBuild(port.name);
+		if (build === null) return;
 		const origin = allowedOrigin(port.sender || {});
 		if (!origin) {
 			try { port.disconnect(); } catch (e) { /* already gone */ }
@@ -1779,13 +1881,36 @@
 
 		const waiting = tab ? parked.get(tab) : null;
 		if (waiting) {
-			if (waiting.origin === origin) { waiting.adopt(port); return; }
-			// The same tab at a different Daimond origin. Its runs were started
-			// under the other origin's grant and are not this page's to have.
-			waiting.stop('');
+			if (waiting.origin !== origin) {
+				// The same tab at a different Daimond origin. Its runs were started
+				// under the other origin's grant and are not this page's to have.
+				waiting.stop('');
+			} else if (waiting.build && build && waiting.build !== build) {
+				// A DIFFERENT BUILD OF THE APP IS ASKING FOR THE SAME HAND BACK.
+				//
+				// A reload is how a person takes a new build, and it is also how a
+				// person takes a newly installed hand -- the two arrive together, and
+				// until now the second was quietly refused: the grace handed the new
+				// page the old process, and the hand the installer had just written sat
+				// unused with nothing anywhere saying so.
+				//
+				// Only when BOTH ends named a build. A page that could not say -- an
+				// older app, or one whose `build.json` has not been read yet -- is
+				// answered exactly as every build before this one was, because ending a
+				// live hand on a build id that is merely absent would kill a running
+				// command for no reason at all.
+				waiting.stop('This page is build ' + build + ' and the machine hand it '
+					+ 'left running was held for build ' + waiting.build + ', so the hand '
+					+ 'was let go rather than handed over: a new build of Daimond is how a '
+					+ 'newly installed hand arrives. Anything it was running has stopped. '
+					+ 'The next command starts a fresh hand.');
+			} else {
+				waiting.adopt(port);
+				return;
+			}
 		}
 
-		const r = relay(port, origin, tab);
+		const r = relay(port, origin, tab, build);
 		// A page that came back after the grace had run out. Told once, and the
 		// record cleared: it is news about one gap, not a standing condition.
 		const gap = tab ? lapses.get(tab) : null;
@@ -1805,6 +1930,7 @@
 		ours,
 		originOfPattern,
 		allowedOrigin,
+		portBuild,
 		mayConnect,
 		PATTERN,
 		PATTERN_SEP,

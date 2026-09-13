@@ -128,3 +128,139 @@ pub fn checked_os() -> Outcome<&'static str> {
         name => Ok(name),
     }
 }
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Which hand this is                                             │
+// └───────────────────────────────────────────────────────────────┘
+
+/// The binary this process was launched from, and the bytes it was launched
+/// with.
+///
+/// WRITTEN BECAUSE A HAND THAT IS REPLACED ON DISK GOES ON RUNNING.  The
+/// extension parks a hand for thirty seconds when its page goes, so a reload --
+/// which is what a person does after installing a new one -- hands the SAME
+/// process back to the new page.  On 2026-09-14 a hand installed at 01:02 sat
+/// unused while a daimon measured the app against the one that started at 09:24
+/// four days earlier, and nothing anywhere said which of the two it held.
+pub struct Image {
+    pub path: std::path::PathBuf,   // where the loader found it, empty if it would not say
+    pub sha:  String,               // 8 hex of the bytes it was launched with, empty if unreadable
+}
+
+/// The image this process is running, read once and read EARLY.
+///
+/// `main` asks for it before it answers anything, so the hash is of the bytes
+/// that are actually executing.  Asked for the first time after an install it
+/// would hash the NEW file and report a hand that is already current, which is
+/// the one wrong answer this exists to prevent.
+pub fn image() -> &'static Image {
+    static SEEN: std::sync::OnceLock<Image> = std::sync::OnceLock::new();
+    SEEN.get_or_init(|| {
+        let path = match std::env::current_exe() {
+            Ok(p)  => p,
+            Err(_) => std::path::PathBuf::new(),
+        };
+        let sha = short_sha(&path).unwrap_or_else(String::new);
+        Image { path, sha }
+    })
+}
+
+/// The first eight hex digits of a file's SHA-256, or nothing where it cannot be read.
+///
+/// Eight digits, because this is read by a person comparing two lines and not by
+/// anything that has to be sure: the whole digest in a report is thirty-two
+/// characters nobody reads.
+pub fn short_sha(path: &std::path::Path) -> Option<String> {
+    let bytes = match std::fs::read(path) {
+        Ok(b)  => b,
+        Err(_) => return None,
+    };
+    let full = oxedyne_fe2o3_hash::sha256::digest(&bytes);
+    let mut s = String::with_capacity(8);
+    for b in full.iter().take(4) {
+        s.push_str(&fmt!("{:02x}", b));
+    }
+    Some(s)
+}
+
+/// Does the file this hand was launched from now hold different bytes?
+///
+/// False where either hash could not be taken: a hand that cannot read its own
+/// file says nothing rather than claiming a hand it cannot see is newer.
+pub fn image_changed() -> bool {
+    let img = image();
+    if img.sha.is_empty() {
+        return false;
+    }
+    match short_sha(&img.path) {
+        Some(now) => now != img.sha,
+        None      => false,
+    }
+}
+
+/// The one sentence a newer hand on disk earns, or nothing while it is the same hand.
+///
+/// It names the reload, because a reload is what a person will already have
+/// tried: inside the extension's grace a reload hands the OLD process back, so
+/// the sentence has to say that the hand changes when nothing is running rather
+/// than promising something the grace can quietly refuse.
+pub fn image_note() -> Option<String> {
+    if !image_changed() {
+        return None;
+    }
+    Some(fmt!(
+        "A NEWER MACHINE HAND IS INSTALLED at '{}' and this process is still running the \
+        older one ({}). Reload the page with nothing running and the new hand is taken; a \
+        reload while a command is in flight keeps this one, because the extension holds a \
+        busy hand across the reload.",
+        image().path.display(), image().sha))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Where a fixture goes: the home cache and never `/tmp`, which is a tmpfs here.
+    fn tree(name: &str) -> std::path::PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| fmt!("."));
+        let dir  = std::path::PathBuf::from(home).join(".cache/daimond/hand-image").join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// **The hash is of the bytes, so replacing the file changes it and touching it does not.**
+    ///
+    /// The whole of the staleness question is this comparison: a hand holds the hash it
+    /// started with and asks the file whether it still matches.  An mtime would answer
+    /// differently for a reinstall of identical bytes, which is not a newer hand.
+    #[test]
+    fn a_replaced_file_hashes_differently_and_a_rewritten_identical_one_does_not() {
+        let dir = tree("replaced");
+        let f   = dir.join("daimond-hand");
+        assert!(std::fs::write(&f, b"one").is_ok());
+        let first = short_sha(&f);
+        assert!(first.is_some(), "a readable file gave no hash");
+        // The same bytes again, written later: the same hand, so the same answer.
+        assert!(std::fs::write(&f, b"one").is_ok());
+        assert_eq!(first, short_sha(&f), "an identical rewrite read as a different hand");
+        // Different bytes: a different hand.
+        assert!(std::fs::write(&f, b"two").is_ok());
+        assert_ne!(first, short_sha(&f), "a replaced binary read as the same hand");
+        // A path with nothing at it says nothing rather than guessing.
+        assert_eq!(None, short_sha(&dir.join("absent")));
+        assert_eq!(8, first.unwrap_or_default().len());
+    }
+
+    /// This process is running the bytes it says it is, and does not claim otherwise.
+    #[test]
+    fn the_running_image_is_named_and_is_not_stale() {
+        let img = image();
+        assert!(!img.path.as_os_str().is_empty(), "the hand cannot say what it was launched from");
+        assert_eq!(8, img.sha.len(), "the running image has no eight-digit hash: {}", img.sha);
+        // Nothing has replaced the test binary under itself, so the note is silent. A note
+        // that fired here would fire on every hand that had ever started.
+        assert!(!image_changed(), "an unreplaced image read as changed");
+        assert_eq!(None, image_note());
+    }
+}

@@ -733,6 +733,18 @@ const stood = [];
 		/^\[world: \d+ — app :\d+, mock :\d+, gateway :\d+ .*scratch .scratch\/worlds/m.test(r.out)
 			&& /(MemoryMax|uncapped)/.test(r.out),
 		(r.out.match(/^\[world:.*$/m) || ['(no world line)'])[0].slice(0, 200));
+	// WHICH HAND PRODUCED THE NUMBERS, on the same terms as the world.
+	//
+	// A page reloaded inside the extension's thirty-second grace is handed back the hand it
+	// already had, so a report can be an OLDER hand's answer about code the machine has
+	// already replaced -- which is how 2026-09-14's `verify {"world":true}` came back in
+	// 767 ms with no world line and nothing to explain it. The line names the build and the
+	// hash of the running image, because the crate version has never moved and cannot tell
+	// two hands apart.
+	check('15d and the report says WHICH HAND ran them, by the hash of its own image',
+		/^\[hand: [0-9][^ /]*\/[0-9a-f]{8} at \/\S+\]$/m.test(r.out),
+		(r.out.match(/^\[hand:.*$/m) || ['(no hand line)'])[0].slice(0, 200));
+
 	// And the state is inside the granted tree, where a daimon's file_read reaches
 	// it -- ~/.cache is outside every fence, and a log it cannot read is a log it
 	// cannot act on. A clean sequence takes the world's own directory away again;

@@ -98,6 +98,10 @@ directory, granted folder, fence, extension — and the fix printed under each t
 is not. It changes nothing. This is the first thing to run, before reading
 anything else here.
 
+Installed into a profile the built-in table does not know about (see
+"Variants" below), `--check` needs the same `--dir` or `--profile` the install
+used, or it looks in the usual places and reports FAIL for a working install.
+
 Two more, both harmless:
 
 ```sh
@@ -155,14 +159,35 @@ hand/install/install.sh /path/to/daimond-hand
 
 ```sh
 hand/install/install.sh --dir /path/to/profile/NativeMessagingHosts /path/to/daimond-hand
+hand/install/install.sh --profile /path/to/profile /path/to/daimond-hand
 ```
 
 A browser started with `--user-data-dir` reads `<that dir>/NativeMessagingHosts`
-and nothing else, which is what this is for.
+and nothing else, which is what this is for. `--profile` takes the profile
+directory itself -- the one you can actually find on disk -- and appends
+`NativeMessagingHosts` for you; `--dir` takes that final directory directly, for
+when you already have it.
 
-`--dir` writes into a snap or flatpak profile too, with the warning above, on the
-grounds that naming a directory explicitly means you know better. Expect the hand
-to disconnect on the first command.
+One case is common enough to be in the table already: driving a browser over
+CDP needs `--remote-debugging-port`, which Chrome 136+ ignores on the *default*
+profile, so a machine set up for that moves the profile aside, typically to
+`google-chrome-cdp` (and the `-cdp` equivalent for other Chromium-family
+browsers) and launches with `--user-data-dir` pointed at it. `install.sh` and
+`install.sh --check` both look there without being told, so `--profile` is
+needed only for a profile in a place the table does not already know.
+
+`--dir` and `--profile` write into a snap or flatpak profile too, with the
+warning above, on the grounds that naming a directory explicitly means you know
+better. Expect the hand to disconnect on the first command.
+
+**`--check` honours both the same way.** Point it at the profile you installed
+into and it is checked even though the table has no line for it, and the
+binary check reads the path out of the manifest it finds there rather than
+assuming a build under `hand/target`:
+
+```sh
+hand/install/install.sh --check --profile /path/to/profile
+```
 
 ### To see what it would do, without doing it
 

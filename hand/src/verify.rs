@@ -1513,6 +1513,32 @@ pub fn no_world_line(file: &str, asked: bool) -> String {
     }
 }
 
+/// Which hand ran this, and whether the machine has a newer one installed.
+///
+/// WRITTEN BECAUSE A REPORT NAMED EVERY OTHER PARTY TO ITS OWN NUMBERS.  It says
+/// which world the checks were aimed at, which verifier ran, and which commit the
+/// verifier came from -- and said nothing at all about the program that ran them.
+/// On 2026-09-14 a `verify` died in 767 ms with no `[world:` line because the page,
+/// reloaded inside the extension's grace, was still holding a hand four days old
+/// that had never heard of the world code; the report it produced was the older
+/// hand's and there was no way to read that off it.
+///
+/// The crate version is not a build id -- it has been 0.1.0 throughout -- so the
+/// hash of the running image is what separates two hands.
+pub fn hand_line() -> String {
+    let img  = crate::image();
+    let sha  = match img.sha.is_empty() {
+        true  => fmt!("unreadable"),
+        false => fmt!("{}", img.sha),
+    };
+    let newer = match crate::image_changed() {
+        false => fmt!(""),
+        true  => fmt!(" -- A NEWER HAND IS INSTALLED at this path and is not the one that ran \
+            these checks; reload the page with nothing running to take it"),
+    };
+    fmt!("[hand: {}/{} at {}{}]", crate::version(), sha, img.path.display(), newer)
+}
+
 /// The note a verifier that wants a live gateway gets beside its world line.
 pub fn gateway_note(file: &str) -> String {
     fmt!(
@@ -2445,6 +2471,11 @@ pub fn report(
     // cannot take it: a report whose numbers came from a world the reader does not
     // know about is a report about somebody else's app.
     s.push_str(world);
+    s.push('\n');
+    // Beside the world, and above the runs for the same reason: a reader who cannot say
+    // WHICH hand produced these numbers cannot tell a defect in the app from a defect
+    // fixed in a hand this machine installed and this process never took.
+    s.push_str(&hand_line());
     s.push_str("\n\n");
     for (p, what) in passes.iter() {
         match what {

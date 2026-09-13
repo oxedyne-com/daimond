@@ -73,7 +73,13 @@ const openChat = async (id) => {
 const say = async (text, ms = 4000) => { await p.fill('#chat-input', text); await p.click('#chat-send'); await p.waitForTimeout(ms); };
 const msgCount = (id) => p.evaluate((i) => {
 	const c = window.DaimondDiamond && window.DaimondDiamond.conversation(i);
-	return c ? (c.messages || []).length : -1;
+	// A stored chat is a SUMMARY since seq 213: `messages` stays empty until the
+	// chat is opened, and the true count rides the summary's `msgCount` (the app's
+	// own path is `chatMsgCount`, daimond.js:3231). Reading `messages.length`
+	// cold took a full chat for an empty one and failed this check as Dum=0/3.
+	if (!c) return -1;
+	if (c._loaded === false && typeof c.msgCount === 'number') return c.msgCount;
+	return (c.messages || []).length;
 }, id);
 const sessCount = (id) => p.evaluate((i) => {
 	const c = window.DaimondDiamond && window.DaimondDiamond.conversation(i);

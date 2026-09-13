@@ -969,6 +969,26 @@ impl DaimondApp {
         crate::tools::set_crystal_hot_cap(bytes);
     }
 
+    /// The hot ceiling THIS ENGINE would enforce with nothing set, in bytes.
+    ///
+    /// **The settings pane names a ceiling, and until now it named a copy.**
+    /// `DEFAULT_CRYSTAL_HOT_KB` in `www/js/daimond.js` is a hand-kept duplicate of
+    /// [`tools::CRYSTAL_HOT_CAP_DEFAULT`], checked against the source by
+    /// `dev/verify_crystalcap.mjs` -- which compares two files on disk and therefore
+    /// cannot see the one case that matters at RUN time: a page whose wasm is older
+    /// than its JavaScript.  On 2026-09-14 the default was raised from 4 KiB to 16 KiB
+    /// and a write was refused at 4096 bytes with no setting anywhere holding a 4, and
+    /// there was no way to ask the engine what it thought the figure was.  This is the
+    /// way to ask.
+    pub fn crystal_hot_cap_default(&self) -> usize {
+        crate::tools::CRYSTAL_HOT_CAP_DEFAULT
+    }
+
+    /// The hot ceiling actually in force, in bytes: the setting, or the default where none is set.
+    pub fn crystal_hot_cap(&self) -> usize {
+        crate::tools::crystal_hot_cap()
+    }
+
     /// A Diamond's crystal as the PROMPT carries it: the hot part and the outline of the rest.
     ///
     /// **One implementation of the split, and this export is what keeps it one.**  A worker is

@@ -99,11 +99,16 @@ const PAGE = `<!doctype html><meta charset="utf-8"><title>hand</title>
 <body><h1>hand harness</h1><script>
 window.__seen = [];
 window.__port = null;
-window.__open = function () {
+window.__open = function (build) {
 	const id = document.documentElement.dataset.daimondHands;
 	if (!id) return 'no extension';
 	window.__seen = [];
-	window.__port = chrome.runtime.connect(id, { name: 'daimond-hand' });
+	// The app names its own build in the port's name, so the extension can tell a
+	// reload of the SAME build from a reload onto a new one. No build is a real
+	// answer and the bare name is what every page sent before this existed, so the
+	// checks that pass none exercise exactly the old path.
+	window.__port = chrome.runtime.connect(id,
+		{ name: 'daimond-hand' + (build ? '@' + build : '') });
 	window.__port.onMessage.addListener((m) => window.__seen.push(m));
 	window.__port.onDisconnect.addListener(() => window.__seen.push({ t: '__gone' }));
 	return 'ok';
@@ -114,6 +119,7 @@ window.__open = function () {
 // use a disconnected port object", killing the whole run). The answer is
 // reported rather than thrown: every check reads what the extension SENT, and
 // a post that could not be made is not one of them.
+window.__clear = function () { window.__seen = []; return 'ok'; };
 window.__say = function (m) {
 	try { window.__port.postMessage(m); return 'sent'; }
 	catch (e) { return 'gone: ' + ((e && e.message) || e); }
@@ -752,6 +758,136 @@ try {
 	}
 	check('the relay says bye on the way out, once the hold has run out', /"bye"/.test(log),
 		log.split('\n').slice(-3).join(' | '));
+
+	// ── A reload does not have to mean the SAME hand ────────────────
+	//
+	// The grace exists so a keypress does not kill a build, and it is also how a
+	// hand installed five minutes ago goes on sitting unused: the page comes back
+	// inside the thirty seconds and is handed the process that was already there.
+	// On 2026-09-14 a daimon spent a turn measuring this repository with a hand
+	// four days old -- `verify {"world":true}` died in 767 ms because that hand had
+	// never heard of the world code -- while the binary installed that night was
+	// never launched, and nothing anywhere said which of the two it held.
+	//
+	// Two rules, and BOTH are checked, because each covers what the other cannot:
+	// the page names its build, which needs no help from the hand at all; and the
+	// hand says whether its own file has been replaced, which holds when the build
+	// has not moved. Neither may end a hand that is in the middle of something.
+	//
+	// The host's pid is the mock's own, so a hand that was let go and a hand that
+	// was handed back are told apart by the number rather than by a sentence.
+	{
+		const base  = { chunks: 3, delay_ms: 900, caps: ['fence:none', 'root:/tmp'] };
+		const STALE = ['fence:none', 'root:/tmp', 'bin:/x/bin/daimond-hand', 'bin-stale:1'];
+		const recfg = (extra) => fs.writeFileSync(CFG,
+			JSON.stringify({ ...base, ...(extra || {}) }, null, '\t') + '\n');
+		/// One whole command, and the process that answered it.
+		///
+		/// Waited out to the `ended`, because a mock mid-run is not reading its stdin:
+		/// every check below would otherwise be racing the schedule rather than the rule.
+		const ran = async (pg, id) => {
+			await pg.evaluate(() => window.__clear());
+			await pg.evaluate((i) => window.__exec(i, ['sleep']), id);
+			const up  = await until(pg, 'started', 8000);
+			const pid = (up.find((m) => m.t === 'started') || {}).pid;
+			await until(pg, 'ended', 15000);
+			return pid;
+		};
+		const reopen = async (pg, build) => {
+			await pg.reload({ waitUntil: 'domcontentloaded' });
+			await sleep(400);
+			await pg.evaluate((b) => window.__open(b), build);
+		};
+
+		// 1. The grace itself, on the same build and with nothing new installed: the
+		//    page that comes back gets the hand it left, which is the whole point of it.
+		register(base);
+		const rl = await b.newPage();
+		await rl.goto(APP + '/', { waitUntil: 'domcontentloaded' });
+		await sleep(500);
+		await rl.evaluate(() => window.__open('build-one'));
+		const first = await ran(rl, 'h1');
+		await reopen(rl, 'build-one');
+		const back  = await until(rl, 'resumed', 8000);
+		const again = await ran(rl, 'h2');
+		check('a reload on the same build still takes its hand back',
+			back.some((m) => m.t === 'resumed') && !!first && again === first,
+			`pid ${first} then ${again}`);
+
+		// 2. The same build, but the hand says its own file has been replaced. It is
+		//    let go on the re-attach rather than handed over, and the page is told.
+		recfg({ caps: STALE });
+		await reopen(rl, 'build-one');
+		const said = await until(rl, 'error', 12000);
+		const note = said.find((m) => m.t === 'error' && /NEWER MACHINE HAND/.test(m.message || ''));
+		check('a newer hand on disk is not handed back on a reload',
+			!!note, JSON.stringify(said.slice(-2)));
+		check('and the sentence names the file the machine now has',
+			!!note && /\/x\/bin\/daimond-hand/.test(note.message || ''), (note || {}).message);
+		// The relay stopped, so the page opens a fresh port -- and a fresh host.
+		recfg({});
+		await rl.evaluate(() => window.__open('build-one'));
+		const fresh = await ran(rl, 'h3');
+		check('so the next command is answered by a different process',
+			!!fresh && fresh !== first, `was ${first}, now ${fresh}`);
+
+		// 3. NOT WHILE ANYTHING IS RUNNING. Ending a thirty-minute build to pick up a
+		//    hand installed meanwhile would be a worse fault than the one this fixes, so
+		//    the question is OWED rather than put, and the command survives the reload.
+		recfg({ caps: STALE, delay_ms: 1500 });
+		await rl.evaluate(() => window.__clear());
+		await rl.evaluate(() => window.__exec('hb', ['sleep']));
+		const mid  = await until(rl, 'started', 8000);
+		const busy = (mid.find((m) => m.t === 'started') || {}).pid;
+		await reopen(rl, 'build-one');
+		await sleep(900);
+		const yet = await seen(rl);
+		check('a newer hand does not end one that is mid-command',
+			!!busy && fs.existsSync(`/proc/${busy}`)
+				&& !yet.some((m) => m.t === 'error' || m.t === '__gone'),
+			`pid ${busy} — ${JSON.stringify(yet.filter((m) => m.t === 'error' || m.t === '__gone'))}`);
+		// And it is taken as soon as the command is done, which is the earliest a hand
+		// can be swapped without taking a build down with it.
+		const after = await until(rl, 'error', 20000);
+		check('and is taken as soon as the command ends',
+			after.some((m) => m.t === 'error' && /NEWER MACHINE HAND/.test(m.message || '')),
+			JSON.stringify(after.slice(-2)));
+
+		// 4. The rule that needs nothing from the hand at all: the page that comes back
+		//    is a different build of Daimond, so the hand it left is not handed over.
+		//    This is the one that would have caught 2026-09-14, where the new client
+		//    build and the new hand arrived in the same hour.
+		recfg({});
+		await rl.evaluate(() => window.__open('build-one'));
+		const moved = await ran(rl, 'h4');
+		await reopen(rl, 'build-two');
+		const news = await until(rl, 'lapsed', 12000);
+		const gap  = news.find((m) => m.t === 'lapsed');
+		check('a reload onto a DIFFERENT build does not re-adopt the old hand',
+			!!gap && /build build-two/.test(gap.why || '') && /build build-one/.test(gap.why || ''),
+			(gap || {}).why || JSON.stringify(news.slice(-2)));
+		let gone = true;
+		for (let i = 0; i < 40 && gone; i++) {
+			await sleep(200);
+			gone = fs.existsSync(`/proc/${moved}`);
+		}
+		check('and the process it was holding is really gone', !gone, `pid ${moved}`);
+
+		// 5. Neither rule may fire on a page that simply did not say: an older app, or
+		//    one whose `build.json` has not been read yet, would otherwise lose its hand
+		//    on every reload for no reason at all.
+		const quiet = await ran(rl, 'h5');
+		await reopen(rl, '');
+		const kept  = await until(rl, 'resumed', 8000);
+		const still = await ran(rl, 'h6');
+		check('a page that names no build keeps the behaviour it always had',
+			kept.some((m) => m.t === 'resumed') && !!quiet && still === quiet,
+			`pid ${quiet} then ${still}`);
+		await rl.evaluate(() => { try { window.__say({ t: 'bye' }); window.__port.disconnect(); } catch (e) {} });
+		await sleep(400);
+		await rl.close();
+		register(base);
+	}
 
 	// ── The host is not installed ───────────────────────────────────
 	unregister();
