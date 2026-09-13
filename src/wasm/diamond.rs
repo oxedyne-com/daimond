@@ -1372,11 +1372,17 @@ async fn parent_data(id: &str, version: u64, snaps: &[(u64, Snap)]) -> Option<St
 ///   turn that edited the page through the file tools leaves behind.
 /// * `now` - The stamp both `updated` and `touched` take.
 async fn snapshot(id: &str, data: &str, page: Option<&str>, now: u64) -> Outcome<u64> {
+    // The TEXT rather than its length, because the hot ceiling has to split each side before it
+    // can measure it -- and this is the door a HAND EDIT and a FOLD come through, which is
+    // exactly where a reducer that dropped every `hot` flag would land.
     let old = opfs::read_file(FileRoot::Opfs, &crystal_data_path(id)).await
-        .map(|b| b.len())
-        .unwrap_or(0);
-    if crate::tools::crystal_write_refused(data.len(), old) {
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    if crate::tools::crystal_write_refused(data.len(), old.len()) {
         return Err(err!("{}", crate::tools::crystal_cap_message(data.len()); Invalid, Input, Size));
+    }
+    if let Some(msg) = crate::tools::crystal_hot_refusal(data, &old) {
+        return Err(err!("{}", msg; Invalid, Input, Size));
     }
     let disk = page_on_disk(id).await;
     let want: &str = page.unwrap_or(disk.as_str());

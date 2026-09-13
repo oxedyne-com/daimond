@@ -87,6 +87,10 @@ const capOf = (name) => {
 };
 const DATA_CAP = capOf('CRYSTAL_CAP_DEFAULT');
 const PAGE_CAP = capOf('CRYSTAL_PAGE_CAP_DEFAULT');
+// The THIRD ceiling, added 2026-09-13, and the only one of the three that is a per-round bill:
+// how much of a crystal rides in the daimon's system message. The other two bound what the
+// browser stores and syncs. It is read from the engine for the same reason the other two are.
+const HOT_CAP  = capOf('CRYSTAL_HOT_CAP_DEFAULT');
 
 // The whole point of the defaults block below is that these are two DIFFERENT numbers
 // with room between them. If they ever meet, there is no size that is over one and under
@@ -115,6 +119,7 @@ const labelOf = (name) => {
 for (const [label, cap, engine] of [
 	['DEFAULT_CRYSTAL_KB',      labelOf('DEFAULT_CRYSTAL_KB'),      DATA_CAP],
 	['DEFAULT_CRYSTAL_PAGE_KB', labelOf('DEFAULT_CRYSTAL_PAGE_KB'), PAGE_CAP],
+	['DEFAULT_CRYSTAL_HOT_KB',  labelOf('DEFAULT_CRYSTAL_HOT_KB'),  HOT_CAP],
 ]) {
 	if (cap !== engine) {
 		console.error('verify_crystalcap: ' + label + ' in www/js/daimond.js says ' + cap
@@ -369,6 +374,42 @@ try {
 			f.growAgain    = await write(path, fill(6 * 1024, 'z'));	// over again: refused
 		}
 
+		// ── The hot ceiling, which is a different question ───────────
+		//
+		// The other two measure the FILE. This one measures the part of it that rides in the
+		// prompt, so the same number of bytes is over it or under it depending on WHERE they
+		// sit: a long summary is hot and a long unflagged section is cold. A check that only
+		// weighed the file would pass against an engine that had never learned the difference.
+		if (typeof app.set_crystal_hot_cap === 'function') {
+			const h = {};
+			r.hot = h;
+			const id  = await app.create_diamond('Hot and cold');
+			const dir = 'diamonds/' + id;
+			const p   = dir + '/crystal.json';
+			app.set_crystal_cap(1024 * 1024);	// out of the way: the hot rule is what is under test
+			app.set_crystal_hot_cap(600);
+			const summary = (n) => JSON.stringify({ summary: 'h'.repeat(n) });
+			const section = (n) => JSON.stringify({
+				summary: 'short',
+				sections: [{ heading: 'Cold', body: 'c'.repeat(n) }],
+			});
+			h.hotOver   = await write(p, summary(2_000));
+			h.coldUnder = await write(p, section(20_000));
+			// The asymmetry the other two ceilings have, for the same reason.
+			app.set_crystal_hot_cap(1024 * 1024);
+			h.seeded = await write(p, summary(2_000));
+			app.set_crystal_hot_cap(600);
+			h.hotShrink = await write(p, summary(1_000));
+			h.hotGrow   = await write(p, summary(4_000));
+			// And the store's door, which is where a hand edit and a fold arrive.
+			try { await app.write_crystal_data(id, summary(2_000)); h.storeHot = { ok: true, msg: 'accepted' }; }
+			catch (e) { h.storeHot = { ok: false, msg: strip(String(e && e.message ? e.message : e)) }; }
+			try { await app.write_crystal_data(id, section(20_000)); h.storeCold = { ok: true, msg: 'accepted' }; }
+			catch (e) { h.storeCold = { ok: false, msg: strip(String(e && e.message ? e.message : e)) }; }
+			app.set_crystal_hot_cap(0);
+			app.set_crystal_cap(0);
+		}
+
 		// ── Two ceilings, two settings, no shared static ─────────────
 		// The likeliest way to build this wrong is a copy-pasted setter that moves
 		// the other file's number. Nothing in the run above would show it: each
@@ -461,6 +502,33 @@ try {
 		check(R(f, 'shrinkToward').ok, 'and edited SMALLER while still over', R(f, 'shrinkToward').msg);
 		check(R(f, 'shrinkUnder').ok, 'and all the way under', R(f, 'shrinkUnder').msg);
 		check(!R(f, 'growAgain').ok, 'but not grown again once it is under', R(f, 'growAgain').msg);
+	}
+
+	// ── The hot ceiling measures the prompt and not the file ─────
+	{
+		const h = out.hot;
+		if (!h) {
+			check(false, 'the engine offers the hot ceiling',
+				'this build has no set_crystal_hot_cap');
+		} else {
+			check(!R(h, 'hotOver').ok,
+				'two kilobytes of SUMMARY is over the hot ceiling and is refused',
+				R(h, 'hotOver').msg);
+			check(/"hot"/.test(R(h, 'hotOver').msg),
+				'and the refusal names the flag that moves a section out of the way',
+				R(h, 'hotOver').msg);
+			check(R(h, 'coldUnder').ok,
+				'while twenty kilobytes in a COLD section is written, because it is not in the prompt',
+				R(h, 'coldUnder').msg);
+			check(R(h, 'seeded').ok, 'a hot part can be seeded past the ceiling with it lifted',
+				R(h, 'seeded').msg);
+			check(R(h, 'hotShrink').ok, 'and edited SMALLER while still over', R(h, 'hotShrink').msg);
+			check(!R(h, 'hotGrow').ok, 'but not grown further over', R(h, 'hotGrow').msg);
+			check(!R(h, 'storeHot').ok,
+				'a hand edit over the hot ceiling is refused at the store\'s door as well',
+				R(h, 'storeHot').msg);
+			check(R(h, 'storeCold').ok, 'and a cold one is not', R(h, 'storeCold').msg);
+		}
 	}
 
 	// ── The two settings are two settings ────────────────────────

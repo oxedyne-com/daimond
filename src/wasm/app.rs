@@ -141,7 +141,12 @@ impl DaimondApp {
         } else {
             Vec::new()
         };
-        let registry = ToolRegistry::new(tools, ctx);
+        // WHICH DIALECT WILL CARRY THIS, read off the slug the client was configured with.  It
+        // decides the roster, the `file_edit` schema and how generously an argument object is
+        // read: see `crate::profile`.  A worker is built through this same constructor with its
+        // own model, so nothing on the JavaScript side has to know about any of it.
+        let registry = ToolRegistry::new(tools, ctx)
+            .with_family(crate::profile::Family::detect(model));
 
         Ok(DaimondApp {
             agent,
@@ -409,11 +414,56 @@ impl DaimondApp {
         if !self.registry.tools.contains(&Tool::SpawnAgent) {
             self.registry.tools.push(Tool::SpawnAgent);
         }
+        // THE TWO HALVES GO TOGETHER.  A conversation that can start a worker and cannot read
+        // what it found is the shape this whole item removes -- it would spend a second turn on
+        // the reading -- so there is no caller that wants one without the other.
+        if !self.registry.tools.contains(&Tool::Gather) {
+            self.registry.tools.push(Tool::Gather);
+        }
     }
 
     /// Whether this agent holds the dispatch tool.
     pub fn can_dispatch(&self) -> bool {
         self.registry.tools.contains(&Tool::SpawnAgent)
+    }
+
+    /// Whether a DAIMON turn on this engine can read a worker back inside the turn.
+    ///
+    /// A DIFFERENT QUESTION FROM [`DaimondApp::can_gather`], and the difference is which registry
+    /// answers.  A chat runs on this app's own belt, which is what that one reads; a Diamond's
+    /// steering turn runs on a registry `compose_daimon` builds fresh from
+    /// [`crate::tools::Tool::daimon`], and this app's belt says nothing about it.  Asked of the
+    /// wrong one, the page took the old collect-and-start path for every daimon turn there was --
+    /// which is the surface the whole saving was measured on.
+    pub fn daimon_can_gather(&self) -> bool {
+        Tool::daimon().contains(&Tool::Gather)
+    }
+
+    /// Tell the tool layer which turn the page is about to run, so a worker started from inside
+    /// it can be attributed to the conversation that started it.
+    ///
+    /// **Called immediately before every `run_turn` or `steer_crystal`.**  One
+    /// `window.DaimondWorkers` serves the whole page and several conversations run turns at once,
+    /// so the pump cannot work out whose worker a bare `{name, task}` belongs to; this is what
+    /// tells it.  `who` names the Diamond for the reason [`DaimondApp::set_tainted`] takes one:
+    /// a daimon client is shared by every Diamond on one model.
+    ///
+    /// # Arguments
+    /// * `who` - The Diamond, or nothing for this client's own conversation.
+    /// * `tag` - The page's own id for the turn.
+    pub fn set_turn_tag(&self, who: Option<String>, tag: String) {
+        self.registry.ctx.set_turn_tag_for(&who.unwrap_or_default(), &tag);
+    }
+
+    /// Whether this agent can read a worker's report inside the turn that started it.
+    ///
+    /// **The page asks this to choose which path a `spawn_agent` call takes.**  With a gather
+    /// -capable engine the call itself reaches `DaimondWorkers.spawn` and the worker is already
+    /// running, so the page's own tool-call collector must NOT start a second copy; without one,
+    /// the collector is the only thing that starts anything.  An engine that answers falsely
+    /// either way is a fan-out run twice or not at all.
+    pub fn can_gather(&self) -> bool {
+        self.registry.tools.contains(&Tool::Gather)
     }
 
     /// Confine a chat to its own WORKSPACE -- its own turn, and every worker it dispatches.
@@ -908,6 +958,49 @@ impl DaimondApp {
         crate::tools::set_crystal_page_cap(bytes);
     }
 
+    /// What of a crystal rides in the daimon's system message on every round, in bytes.
+    ///
+    /// The third ceiling, and the only one of the three that is a per-round bill: the other two
+    /// bound what the browser stores and syncs.  Zero restores the default.
+    ///
+    /// # Arguments
+    /// * `bytes` - The ceiling; zero restores the default.
+    pub fn set_crystal_hot_cap(&self, bytes: usize) {
+        crate::tools::set_crystal_hot_cap(bytes);
+    }
+
+    /// A Diamond's crystal as the PROMPT carries it: the hot part and the outline of the rest.
+    ///
+    /// **One implementation of the split, and this export is what keeps it one.**  A worker is
+    /// handed its dispatching Diamond's crystal by the page, and the page writing its own
+    /// hot/cold split in JavaScript would be the second implementation -- which is the fault
+    /// `dev/CONTRACT_FOLD.md` §2 is written about.
+    ///
+    /// # Arguments
+    /// * `id` - The Diamond whose crystal is wanted.
+    pub async fn crystal_hot_text(&self, id: String) -> Result<String, JsValue> {
+        let json  = diamond::read_crystal_data(&id).await.unwrap_or_default();
+        let split = crate::tools::crystal_split(&json, crate::tools::crystal_hot_cap())
+            .map_err(to_js_err)?;
+        Ok(crate::tools::crystal_prompt_text(&split))
+    }
+
+    /// What a Diamond's crystal weighs, hot and whole, as `{hot, total, hot_cap, cap}`.
+    ///
+    /// Deliberately NOT a session-borrowing call: it reads one file and the two ceilings, so the
+    /// Memory panel can draw the gauge on every render without the reentrancy that cost a
+    /// regression on 2026-09-12.
+    ///
+    /// # Arguments
+    /// * `id` - The Diamond whose sizes are wanted.
+    pub async fn crystal_split_sizes(&self, id: String) -> Result<String, JsValue> {
+        let json  = diamond::read_crystal_data(&id).await.unwrap_or_default();
+        let hot   = crate::tools::crystal_hot_cap();
+        let split = crate::tools::crystal_split(&json, hot).map_err(to_js_err)?;
+        Ok(fmt!(r#"{{"hot":{},"total":{},"hot_cap":{},"cap":{},"whole":{}}}"#,
+            split.hot_bytes, split.total_bytes, hot, crate::tools::crystal_cap(), split.whole))
+    }
+
     /// Fold this conversation at a different fraction of the window from the shipped one.
     ///
     /// `f64` for the reason [`DaimondApp::set_context_window`] gives, and because the figure
@@ -998,6 +1091,17 @@ impl DaimondApp {
     /// with a typo in it that quietly measures the default is how an arm reports a figure about
     /// the wrong engine.
     pub fn set_tune(&self, json: String) -> Result<(), JsValue> {
+        // THE PROFILE, forced by name, so a trial arm can measure one family's rules against
+        // another's without a rebuild.  A name no family answers to is refused rather than
+        // ignored: an arm that silently measured the default would report the wrong engine.
+        if let Some(name) = crate::llm::extract_json_string(&json, "family") {
+            match crate::profile::Family::from_name(&name) {
+                Some(f) => self.registry.set_family(f),
+                None    => return Err(to_js_err(err!(
+                    "set_tune: no model family is called {:?}. The names are claude, gpt, \
+                    deepseek, qwen, glm, minimax, kimi and unknown.", name; Invalid, Input))),
+            }
+        }
         match self.agent.set_tune(&json) {
             Ok(())  => Ok(()),
             Err(e)  => Err(to_js_err(e)),
@@ -1025,13 +1129,15 @@ impl DaimondApp {
             \"retire_keep_turns\":{},\
             \"written_age\":{},\"result_age\":{},\"result_cap\":{},\"sweep_every\":{},\
             \"worker_max_rounds\":{},\"worker_continuations\":{},\"worker_context_cap\":{},\
-            \"worker_keep\":{},\"worker_spend_usd\":{}}}",
+            \"worker_keep\":{},\"worker_spend_usd\":{},\"gather_timeout_s\":{},\
+            \"fold_shape\":\"{}\",\"family\":\"{}\"}}",
             l.worker, l.max_rounds, l.max_continuations, l.context_cap, l.keep, l.spend_cap_usd,
             l.fold_at, l.retire_prior,
             l.retire_keep_turns,
             l.written_age, l.result_age, l.result_cap, l.sweep_every,
             l.worker_max_rounds, l.worker_continuations, l.worker_context_cap,
-            l.worker_keep, l.worker_spend_usd)
+            l.worker_keep, l.worker_spend_usd, l.gather_timeout_s, l.fold_shape.wire(),
+            self.registry.family().name())
     }
 
     /// Fold this agent's conversations with a different model from the one it chats
@@ -2036,6 +2142,25 @@ impl DaimondApp {
                 s.push_str(&machine);
             }
         }
+        // WHERE THE TURN IS, before anything else it may need to know.
+        //
+        // The largest round sink measured on the bank is not a tool failure at all: 21 of 27
+        // Claude trials opened by reading a path spelled relative to the wrong root, met a
+        // not-found, spent a `file_list '.'` and read again -- 44 rounds over 16 trials. A shell
+        // agent never pays that because its prompt says what its working directory is. This says
+        // the same thing once per turn, and costs a listing the page has already cached.
+        //
+        // Only where the turn holds file tools: a role with none cannot act on it.
+        if registry.tools.iter().any(|t| matches!(t, Tool::FileRead | Tool::FileList)) {
+            let note = crate::tools::orientation_note(
+                &crate::tools::root_entries(&registry.ctx).await);
+            if !note.is_empty() {
+                if !s.is_empty() {
+                    s.push_str("\n\n");
+                }
+                s.push_str(&note);
+            }
+        }
         // What the account has NOT bought, in one sentence, because the tools themselves are no
         // longer in the request at all -- see `ToolRegistry::offered`.  Absent, and free, on an
         // account that holds every pack its belt is sold under.
@@ -2160,8 +2285,19 @@ impl DaimondApp {
             local.push_str("Look at what is attached before you answer a question about it. You \
                 may READ anywhere in the workspace, and you may write only in the places above.");
         }
-        local.push_str("\n\nCurrent crystal.json:\n");
-        local.push_str(&before);
+        // THE HOT PART AND AN OUTLINE OF THE REST, which is the seam the split is made at.
+        //
+        // `local` is per-turn truth the user cannot edit away -- the role prompt is theirs
+        // (`prompts/<role>.md`) -- and the outline is itself the proof that the cold part exists:
+        // a sentence saying "there is more" with nothing naming it is a sentence a model has no
+        // way to act on. A crystal under the hot ceiling composes exactly as it always did, which
+        // is every small crystal.
+        //
+        // `DaimonTurn.crystal` below stays the WHOLE text: the after-turn comparison diffs the
+        // FILE, and diffing the hot part would report every cold edit as no change at all.
+        let split = crate::tools::crystal_split(&before, crate::tools::crystal_hot_cap())
+            .unwrap_or_default();
+        local.push_str(&crate::tools::crystal_prompt_text(&split));
 
         // The daimon reaches what its workers reach, and writes where the user marked.
         //
@@ -2203,7 +2339,8 @@ impl DaimondApp {
             // daimon asserts goes in THIS Diamond's sidecar and is stamped `agent:daimon`.
             daimon_of:   id.to_string(),
         };
-        let registry = ToolRegistry::new(Tool::daimon(), ctx);
+        let registry = ToolRegistry::new(Tool::daimon(), ctx)
+            .with_family(self.registry.family());
         let agent = Agent::new(self.agent.llm.clone(), &self.with_instructions(&system));
         // A fresh agent starts from the default limits, so without this a Diamond's
         // daimon would fold the same model's conversation at a different size from
@@ -2418,6 +2555,18 @@ impl DaimondApp {
             web_sys::console::warn_1(&JsValue::from_str(&fmt!(
                 "The fold proposed for Diamond {} drops {} from its crystal.",
                 id, lost.join(", "))));
+        }
+        // AND A HOT FLAG THAT WOULD VANISH, on the same footing and for a sharper reason: a flag
+        // is six bytes of a key the reducer has never been told about, and a proposal that lost
+        // every one of them composes as title-and-summary on the next round with nothing on
+        // screen to say why. See `compact::hot_flags_lost`.
+        let cold = crate::agent::compact::hot_flags_lost(&crystal, &proposal);
+        if !cold.is_empty() {
+            crate::wasm::entry::trail("FOLD DROPS HOT FLAGS",
+                &fmt!("{} — {}", id, cold.join(", ")));
+            web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                "The fold proposed for Diamond {} takes {} out of the part of the crystal that \
+                is in the prompt on every round.", id, cold.join(", "))));
         }
         Ok(proposal)
     }
@@ -2725,11 +2874,15 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("type", &JsValue::from_str("interjected"));
             set("content", &JsValue::from_str(text));
         }
-        AgentEvent::Compacted { folded, kept, note } => {
+        AgentEvent::Compacted { folded, kept, note, structured } => {
             set("type", &JsValue::from_str("compacted"));
             set("folded", &JsValue::from_f64(*folded as f64));
             set("kept", &JsValue::from_f64(*kept as f64));
             set("content", &JsValue::from_str(note));
+            // WHICH SHAPE THE NOTE CAME BACK IN, so the feed can carry it and the bank can
+            // count it. A structured fold that quietly stopped parsing would otherwise show as
+            // an ordinary fold for ever, which is the reading the measurement most needs.
+            set("shape", &JsValue::from_str(if *structured { "structured" } else { "prose" }));
         }
         AgentEvent::Unseeable { images, model } => {
             set("type", &JsValue::from_str("unseeable"));

@@ -64,6 +64,7 @@ pub mod pty;
 pub mod social;
 pub mod typst;
 pub mod web;
+pub mod workers;
 
 use oxedyne_fe2o3_core::prelude::*;
 

@@ -19,7 +19,20 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
 // (DAIMOND_MOCK_PORT, default 9099).
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { open, chat, signInAs, clearMockLog, mockLog, errors } from './harness.mjs';
+
+// THE SHAPE HAS TO SURVIVE THE RELOAD TOO, added 2026-09-13. A fold's note is now written under
+// a fixed heading layout, and the layout lives in the note's own TEXT -- so a reload that kept
+// the notice but lost its structure would be this file's original defect in miniature, with the
+// conversation the right size and the note no longer saying what it said. The mode reaches the
+// mock through a sidecar beside its log, because the mock is a world-lived process whose
+// environment was fixed when world.sh started it.
+const SIDE = (process.env.DAIMOND_MOCK_LOG
+	|| path.join(path.dirname(fileURLToPath(import.meta.url)), 'mockllm.log')) + '.fold';
+fs.writeFileSync(SIDE, 'structured');
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -101,9 +114,24 @@ check('what the fold replaced does NOT come back',
 check('and the notice survived the reload with it',
 	JSON.stringify(lastAfter.messages || []).includes('Daimond folded the earlier part'));
 
+// ── The structure survived it as well ─────────────────────────────────────
+const noticeIn = (req) => String(((req.messages || []).find(m =>
+	String(m.content || '').startsWith('[Daimond folded the earlier part')) || {}).content || '');
+const before2 = noticeIn(lastBefore);
+const after2  = noticeIn(lastAfter);
+check('the fold was written under the layout the compactor was told to use',
+	/##\s*Task/.test(before2) && /##\s*Next step/.test(before2),
+	before2.replace(/\n/g, ' / ').slice(0, 110));
+check('and every heading of it came back after the reload, byte for byte',
+	!!after2 && after2 === before2,
+	after2 ? after2.length + ' chars' : 'no notice in the reloaded request');
+check('including the value the fold exists to carry', /MOCKCAP=4120/.test(after2),
+	after2.replace(/\n/g, ' / ').slice(0, 140));
+
 const errs = errors(s).filter(e => !/502|Bad Gateway/.test(e));
 check('nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));
 
 await s.close();
+try { fs.unlinkSync(SIDE); } catch { /* the next run writes it again */ }
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(b => console.log('  FAILED: ' + b)); process.exit(1); }

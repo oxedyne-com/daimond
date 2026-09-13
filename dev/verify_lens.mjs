@@ -545,8 +545,20 @@ const snap = lensJson('snapshot', '--latest');
 check('the snapshot reassembles from its chunks, duplicate and all',
 	snap && snap.kind === 'snapshot' && snap.election && snap.election.self === DEV_B,
 	snap && (snap.kind || snap._unparsed || '').slice(0, 60));
-check('the reassembled snapshot is the bundle that was sent',
-	JSON.stringify(snap) === JSON.stringify(SNAP));
+// `config` aside, the archived body must match the bundle that was sent exactly.
+// `config` itself is deliberately NOT byte-identical: the archive's own
+// second-line redaction (below) runs `apiKey` back through the fingerprinter
+// regardless of what the client already did to it, since it cannot tell an
+// already-fingerprinted value from a raw one by looking at the value alone --
+// only the field NAME says it is a secret. That is idempotent in effect (still
+// a fingerprint, never the client's raw key) but not idempotent byte-for-byte.
+check('the reassembled snapshot matches the bundle that was sent, config aside',
+	JSON.stringify(Object.assign({}, snap, { config: undefined }))
+		=== JSON.stringify(Object.assign({}, SNAP, { config: undefined })));
+check('config.apiKey stays a fingerprint after the archive\'s own redaction pass',
+	snap && snap.config && /^\[redacted /.test(snap.config.apiKey), JSON.stringify(snap && snap.config));
+check('a non-secret config field (model) survives untouched',
+	snap && snap.config && snap.config.model === 'fixture/model-a');
 const gap = lensJson('snapshot', '--id', 'sfixture02');
 check('the holed set reports its gap rather than a bundle',
 	gap && gap.complete === false && gap.missing === '2', JSON.stringify(gap && gap.missing));
@@ -672,6 +684,197 @@ check('and a worker\'s own rounds, by its id rather than a turn',
 	roundEvents.trim().split('\n').slice(-4).join(' | '));
 
 fs.rmSync(ROOT2, { recursive: true, force: true });
+
+// ── second-line redaction: a secret the client's own regex missed ────
+//
+// `www/js/debugshare.js` matches a secret-shaped key on a `_`/`.`/`-` boundary,
+// so a camelCase-joined field such as `pushToken` (a GitHub personal access
+// token, carried on `config`) or a nested `authSecret` slides past it, exactly
+// the shape the client-side fix and this one both close. Its own archive,
+// since a snapshot fixture belongs with the other snapshot coverage above but
+// this one is deliberately built to arrive UN-redacted -- simulating the client
+// missing it -- and must not perturb the counts asserted against SNAP.
+
+const ROOT3 = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-verify-secret-'));
+fs.mkdirSync(path.join(ROOT3, 'traces'), { recursive: true });
+const DEV_S = 'devS00000000000000000000000000ss';
+const RAW_PUSH_TOKEN = 'ghp_ZZZFAKEpersonalAccessTOKEN0123456789abcd';	// allowlist secret
+const RAW_AUTH_SECRET = 'ZZZFAKEnestedAUTHsecretvalue998877';	// allowlist secret
+const SNAP_SECRET = {
+	v: 1, kind: 'snapshot', ts: NOW - 20000, iso: new Date(NOW - 20000).toISOString(),
+	config: {
+		model: 'fixture/model-c',
+		pushToken: RAW_PUSH_TOKEN,			// camelCase-joined -- the field this lane exists for
+		nested: { authSecret: RAW_AUTH_SECRET },	// one level down, still camelCase-joined
+	},
+	transcripts: [], presence: null, roster: {}, election: null,
+	tokenStats: [], signals: null, ledger: [], ledgerDropped: 0, trail: [], diag: [],
+};
+const secretRows = chunkRows('snapshot', 'sfixturesecret', SNAP_SECRET, NOW - 20000);
+const S_BLOCK = block(NOW - 20000, DEV_S, secretRows.map(r => row(r.ts, r.tag, r.data)));
+fs.writeFileSync(path.join(ROOT3, 'traces', `${ACCOUNT}-${DEV_S}.log`), S_BLOCK);
+
+function lens3(...args) {
+	return execFileSync('node', [LENS, ...args], {
+		encoding: 'utf8',
+		env: Object.assign({}, process.env, { DAIMOND_LENS_HOME: ROOT3, DAIMOND_LENS_REMOTE: '' }),
+	});
+}
+function lensJson3(...args) { return JSON.parse(lens3(...args, '--json').trim()); }
+
+lensJson3('pull', '--no-rsync');
+const snapSecret = lensJson3('snapshot', '--latest');
+// The bytes actually sitting in the archive, not just what the CLI prints, so
+// this proves the FILE never carried the raw value -- the point of a second
+// line the client cannot bypass by us only checking its own read path.
+const secretBodyFile = fs.readdirSync(path.join(ROOT3, 'archive', 'snapshots'))
+	.map(n => path.join(ROOT3, 'archive', 'snapshots', n))
+	.find(f => fs.readFileSync(f, 'utf8').includes('"kind":"snapshot"'));
+const secretBodyText = secretBodyFile ? fs.readFileSync(secretBodyFile, 'utf8') : '';
+
+check('a camelCase pushToken the client missed is NOT on disk in the clear',
+	!secretBodyText.includes(RAW_PUSH_TOKEN));
+check('pushToken is fingerprinted by the archive\'s own second-line redaction',
+	snapSecret && snapSecret.config && /^\[redacted /.test(snapSecret.config.pushToken),
+	JSON.stringify(snapSecret && snapSecret.config));
+check('a nested camelCase authSecret the client missed is NOT on disk in the clear',
+	!secretBodyText.includes(RAW_AUTH_SECRET));
+check('the nested authSecret is fingerprinted a level down',
+	snapSecret && snapSecret.config && snapSecret.config.nested
+		&& /^\[redacted /.test(snapSecret.config.nested.authSecret),
+	JSON.stringify(snapSecret && snapSecret.config && snapSecret.config.nested));
+check('an ordinary config field alongside the secrets survives untouched',
+	snapSecret && snapSecret.config && snapSecret.config.model === 'fixture/model-c');
+
+fs.rmSync(ROOT3, { recursive: true, force: true });
+
+// ── second-line CONTENT scrubbing: a key in free text, not in a field name ──
+//
+// The block above proves the archive's own name-based redaction. This one proves
+// the other half, and the one the owner actually asked for: a credential sitting
+// in FREE TEXT -- a console line, a transcript, a tool argument, a failed fetch's
+// URL -- has no field name to match on, and `redactConfig` is blind to every one
+// of them. The client scrubs these before posting; this proves the archive does
+// it again on ingest, so a device on an older build cannot leave a plaintext key
+// in `~/.cache/daimond-lens/archive` for good.
+//
+// Every fixture is BUILT from a seed rather than typed, so this file carries no
+// paste-able credential and only the SHAPES are real.
+
+const ROOT4 = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-verify-scrub-'));
+fs.mkdirSync(path.join(ROOT4, 'traces'), { recursive: true });
+// A device id and a snapshot id of the shape the REAL feed mints, deliberately:
+// joined, they are a 45-character run the entropy catch scores at 4.42 and would
+// take, which is how `lens snapshot` lost the body file it had just written. A
+// zero-padded fixture id would have scored far lower and proved nothing.
+const DEV_X = 'b3f71c9a2e604d8815aa77c0deef1932';
+const SNAP_X_ID = 'smtz4k7qv91b';
+
+const seeded = (n, seed, alpha) => {
+	alpha = alpha || 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+	let s = '', h = (seed * 2654435761) >>> 0;
+	for (let i = 0; i < n; i++) { h = (h * 1103515245 + 12345) >>> 0; s += alpha[(h >>> 8) % alpha.length]; }
+	return s;
+};
+// One per lane, so a survivor names the path it came in on.
+const FAKE = {
+	transcript: 'sk-' + seeded(48, 301),		// quoted back by the daimon, in a chat
+	toolarg:    'ghp_' + seeded(36, 302),		// an argument a tool was called with
+	console:    'sk-ant-api03-' + seeded(80, 303),	// a line the tab printed
+	fetchurl:   seeded(32, 304),				// a token in a failed request's URL
+	tile:       'AIza' + seeded(35, 305),		// what the person was LOOKING at
+};
+
+const SNAP_SCRUB = {
+	v: 1, kind: 'snapshot', ts: NOW - 20000, iso: new Date(NOW - 20000).toISOString(),
+	// Not a secret-NAMED field anywhere: every one of these is prose.
+	config: { model: 'fixture/model-d', baseUrl: 'https://fixture.invalid/v1' },
+	transcripts: [ { id: 'cScrub', name: 'fixture chat', model: 'fixture/model-d', messages: [
+		{ role: 'user', mid: 'mfix-1-aaaaa', content: 'here it is: ' + FAKE.transcript },
+		{ role: 'tool_log', mid: 'mfix-2-bbbbb', name: 'file_read',
+			callId: 'call_00_AbC9dEf1GhI2jKl3',
+			args: '{"path":"/home/x/.netrc","token":"' + FAKE.toolarg + '"}', content: '' },
+	] } ],
+	presence: null, roster: {}, election: null,
+	tokenStats: [ { id: 'cScrub', name: 'fixture chat', model: 'fixture/model-d', messages: 2, contextWindow: 200000 } ],
+	signals: null, ledger: [], ledgerDropped: 0, trail: [], diag: [],
+};
+
+const evX = (n, kind, extra, t) =>
+	row(t, 'ev ' + kind, JSON.stringify(Object.assign({ v: 1, d: DEV_X, n, b: BUILD_A, t }, extra)));
+
+const X_BT = NOW - 20000;
+const scrubRows = chunkRows('snapshot', SNAP_X_ID, SNAP_SCRUB, X_BT)
+	.map(r => row(r.ts, r.tag, r.data));
+const X_BLOCK = block(X_BT, DEV_X, [
+	evX(1, 'console', { lvl: 'warn', msg: '[gw] refused: ' + FAKE.console, src: 'gateway.js:689' }, X_BT),
+	evX(2, 'fetch.fail', { path: '/api/sync?access_token=' + FAKE.fetchurl, status: 401, ms: 12 }, X_BT),
+	evX(3, 'screen', { view: 'chat', seat: 'runner: this device',
+		tile: 'assistant: your key is ' + FAKE.tile, dlg: 'none', comp: 0, locked: 0 }, X_BT),
+	...scrubRows,
+]);
+fs.writeFileSync(path.join(ROOT4, 'traces', `${ACCOUNT}-${DEV_X}.log`), X_BLOCK);
+
+function lens4(...args) {
+	return execFileSync('node', [LENS, ...args], {
+		encoding: 'utf8',
+		env: Object.assign({}, process.env, { DAIMOND_LENS_HOME: ROOT4, DAIMOND_LENS_REMOTE: '' }),
+	});
+}
+lens4('pull', '--no-rsync');
+
+// EVERY BYTE the archive holds for this device, not just what the CLI chooses to
+// print: the point of a second line is that the FILE never carried the value.
+const archiveText = (() => {
+	const dirs = [path.join(ROOT4, 'archive'), path.join(ROOT4, 'archive', 'snapshots')];
+	let out = '';
+	for (const d of dirs) {
+		let names = [];
+		try { names = fs.readdirSync(d); } catch (e) { continue; }
+		for (const n of names) {
+			const f = path.join(d, n);
+			if (!fs.statSync(f).isFile()) continue;
+			out += fs.readFileSync(f, 'utf8');
+		}
+	}
+	return out;
+})();
+
+const survivors = Object.keys(FAKE).filter(k => archiveText.includes(FAKE[k]));
+check('no credential shape survives ingest, in any lane',
+	survivors.length === 0, survivors.length ? 'survived: ' + survivors.join(', ') : 'five lanes clean');
+check('the archive carries the scrubber\'s marker in their place',
+	/\[redacted (?:sk|gh|gcp|urlarg|named|hi) #[0-9a-f]+\/\d+\]/.test(archiveText));
+// And the legibility half: an archive scrubbed into uselessness is no archive.
+check('the chat, the tool name and the message ids still read',
+	archiveText.includes('cScrub') && archiveText.includes('file_read')
+		&& archiveText.includes('mfix-1-aaaaa'));
+check('the tool-call id a reader correlates by still reads',
+	archiveText.includes('call_00_AbC9dEf1GhI2jKl3'));
+check('the device id, the build id and the model id still read',
+	archiveText.includes(DEV_X) && archiveText.includes(BUILD_A)
+		&& archiveText.includes('fixture/model-d'));
+// The `console` and `errors` questions must still answer over a scrubbed line.
+const scrubConsole = lens4('console', '--device', DEV_X);
+check('`lens console` still prints the scrubbed line, source and all',
+	/gateway\.js:689/.test(scrubConsole) && /refused/.test(scrubConsole)
+		&& !scrubConsole.includes(FAKE.console));
+
+// THE INDEX MUST STILL POINT AT THE BODY. The snapshot filename is a device id
+// and a snapshot id joined -- a 45-character run the entropy catch reads as a
+// credential -- so `body` is exempt from that catch (and from nothing else). If
+// it stops being, this is the check that says so rather than a silent "the body
+// file is missing" months later.
+const snapOut = lens4('snapshot', '--latest', '--json');
+let snapBody = null;
+try { snapBody = JSON.parse(snapOut.trim()); } catch (e) { /* left null */ }
+check('`lens snapshot --latest` still resolves the body file it wrote',
+	!!(snapBody && snapBody.kind === 'snapshot'),
+	snapBody ? 'chats ' + (snapBody.tokenStats || []).length : snapOut.trim().slice(0, 80));
+check('and the resolved body is the SCRUBBED one, not the posted one',
+	!!snapBody && !JSON.stringify(snapBody).includes(FAKE.transcript));
+
+fs.rmSync(ROOT4, { recursive: true, force: true });
 
 // ── An unknown command must not look like success ────────────────────
 

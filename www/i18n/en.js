@@ -2145,6 +2145,9 @@
 	'crystal.memory':         'Memory',
 	'crystal.memory_help':    'View and edit this Diamond’s memory — the crystal it carries into every turn',
 	'crystal.memory_invalid': 'That is not valid crystal JSON, so nothing was saved.',
+	// What the daimon pays for this memory: the hot part rides in every round, the rest is
+	// read on demand.
+	'crystal.memory_gauge':   'hot {hot} / {hotcap} · total {total} / {cap}',
 	'crystal.no_history':     'No history yet.',
 	'crystal.view':           'View',
 	'crystal.restore':        'Restore',
@@ -2220,6 +2223,7 @@
 	'crystal.field_links':    'Links',
 	'crystal.field_heading':  'Heading',
 	'crystal.field_body':     'Body',
+	'crystal.field_hot':      'Always present',
 	'crystal.add_section':    'Add a section',
 	'crystal.remove':         'Remove',
 	'crystal.other_fields':   'Other fields',
@@ -2922,6 +2926,8 @@
 	'settings.crystal_cap_auto': 'Default',
 	'settings.crystal_page_cap': 'Page size limit',
 	'settings.crystal_page_cap_note': 'How large a Diamond’s page may grow.',
+	'settings.crystal_hot_cap': 'Always-present part',
+	'settings.crystal_hot_cap_note': 'How much of a Diamond’s memory rides in every round; the rest is read on demand.',
 	'settings.max_rounds_auto':    'Default',
 	'settings.steps':              'steps',
 	'settings.max_rounds_note':    'How many tool-calls one turn may take.',

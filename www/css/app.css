@@ -2909,6 +2909,10 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .crystal-memory { margin: 0 0 10px; }
 .crystal-memory-sum { cursor: pointer; font-size: var(--fs-xs); color: var(--text-secondary); padding: 2px 0; user-select: none; }
 .crystal-memory-sum:hover { color: var(--text-primary); }
+/* What a daimon pays for this memory on every round, above the box it edits. */
+.crystal-memory-gauge { margin: 8px 0 0; font-size: var(--fs-xs); color: var(--text-secondary); font-family: var(--font-mono); }
+.crystal-memory-gauge.over { color: var(--danger, #e05555); }
+.crystal-form-hot { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; font-size: var(--fs-xs); color: var(--text-secondary); }
 .crystal-memory-ta { width: 100%; min-height: 220px; margin-top: 8px; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 12px; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; resize: vertical; }
 .crystal-memory-ta:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .crystal-memory-bar { display: flex; gap: 6px; margin-top: 8px; }

@@ -34,6 +34,20 @@ const check = (name, pass, detail) => {
 const s = await open({ name: 'gather' + (BREAK ? '-' + BREAK : '') });
 const { page } = s;
 
+// THIS FILE IS THE POST-TURN PATH'S VERIFIER, and the bridge is taken off so that
+// it stays one. Since 2026-09-13 a `spawn_agent` call reaches `DaimondWorkers.spawn`
+// and the worker starts inside the turn -- `dev/verify_spawn_gather.mjs` is that
+// path's own file. The path measured HERE did not go away and must not: it is what
+// every worker nobody gathers still takes, what an older shell takes, and what a
+// turn that dispatched and then stopped takes. Six of the checks below are about the
+// app's word reaching a daimon that has already stopped, which is a state only this
+// path produces.
+await page.evaluate(() => {
+	if (!window.DaimondWorkers) return;
+	delete window.DaimondWorkers.spawn;
+	delete window.DaimondWorkers.awaitReports;
+});
+
 await page.click('#new-diamond-btn');
 await page.waitForSelector('.dlg-input', { timeout: 8000 });
 await page.fill('.dlg-input', 'Gather Test');
@@ -143,11 +157,24 @@ const workerReqs = wire.filter((m) => {
 });
 check('a worker request of its own reached the relay, so the dispatch was real',
 	workerReqs.length >= 1, `${workerReqs.length} of ${wire.length} request(s)`);
-check('and the daimon was never told a worker had started, because none had',
+check('and the daimon was never told a worker was "dispatched" with nothing behind it',
 	!said('Dispatched agent'),
 	said('Dispatched agent') ? 'a tool result claimed a dispatch' : 'no such claim');
-check('it was told WHEN the worker starts, so it does not spend the turn waiting',
-	said('begins when the turn ends'));
+// WHAT IT WAS TOLD DEPENDS ON WHICH PATH THE PAGE TOOK, and both answers are the
+// truth about their own path -- which is the whole of why the wording is tested at
+// all. With the in-turn bridge (`DaimondWorkers.spawn`) the worker IS running by
+// the time the result is written and the model is pointed at `gather`; without it,
+// nothing has started and the model is told to stop. What must never happen is the
+// sentence that fits neither: a claim of a dispatch that has not happened, which is
+// the check above and the turn lost to it on 2026-08-24.
+const inTurn = await page.evaluate(() => !!(window.DaimondWorkers
+	&& window.DaimondWorkers.runs.some(r => r.inTurn)));
+check(inTurn
+		? 'it was told the worker IS running and how to read it back in this turn'
+		: 'it was told WHEN the worker starts, so it does not spend the turn waiting',
+	inTurn ? (said('has STARTED and is running now') && said('Call gather'))
+		: said('begins when the turn ends'),
+	inTurn ? 'in-turn path' : 'post-turn path');
 
 await shot(s, 'gather-2-reported');
 

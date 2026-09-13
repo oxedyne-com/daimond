@@ -125,6 +125,10 @@
 		{ id: 'files',    fns: ['file_read', 'file_write', 'file_edit', 'file_list',
 		                        'file_search', 'file_glob', 'file_delete', 'file_move',
 		                        'dir_create',
+		                        // Mapping a file is finding something IN the workspace, which
+		                        // is what this row is about: a person granting "your files"
+		                        // has granted reading one, and this reads one more cheaply.
+		                        'outline',
 		                        'sheet_read', 'doc_edit', 'sheet_write',
 		                        // The text of a file whose text is a PICTURE: the OCR
 		                        // counterpart to file_read, reaching the same workspace path.
@@ -146,7 +150,11 @@
 		// is still running and stops one of them, and a person who granted the starting of
 		// commands has already granted this. Withholding it would not stop a command being
 		// left behind -- it would only stop Daimond being able to clear it up.
-		{ id: 'machine',  fns: ['run', 'runs', 'shell'] },
+		// `serve` is here for the reason `runs` is: it stands a static server up through the
+		// same hand, inside the same fence, and a person who granted the running of commands
+		// has already granted this. Withholding it separately would only send the model back
+		// to leaving a server behind with `run`, which is where the stray tab came from.
+		{ id: 'machine',  fns: ['run', 'runs', 'shell', 'serve'] },
 		// ITS OWN CAPABILITY, not a member of `machine`, because it is the one tool that
 		// runs a process OUTSIDE the fence -- a named verifier from the tracked tree, never
 		// a command the model wrote. That is a different thing to grant from `run`, so it is

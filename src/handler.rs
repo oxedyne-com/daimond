@@ -798,7 +798,7 @@ fn event_to_ws(ev: &AgentEvent) -> Option<(&'static str, Vec<Dat>)> {
         AgentEvent::Ended { .. } => ("ended", vec![]),
         // The two counts before the prose, so a client can draw the act without
         // parsing the sentence: what went, what is left, and then what it says.
-        AgentEvent::Compacted { folded, kept, note } =>
+        AgentEvent::Compacted { folded, kept, note, .. } =>
             ("compacted", vec![Dat::U64(*folded as u64), Dat::U64(*kept as u64),
                 dat!(note.clone())]),
         // The count before the model name, for the same reason as `compacted` above: how

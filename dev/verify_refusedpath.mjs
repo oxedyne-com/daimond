@@ -110,13 +110,15 @@ const BREAKS = {
 	// The empty-listing reader anchored at the END of the text, as it was before
 	// `two_places_note` put a second line under the answer. 1c goes red: the note becomes
 	// a file, in a census that still calls itself complete.
-	// TWO occurrences, and that is the honest count: the census reader and the Work panel's
-	// reader are the same line at two indents, so a substring anchor finds both -- and both
-	// were anchored at the end of the text before this change, so damaging both IS the world
-	// before it.
+	//
+	// IN `www/js/listing.js` SINCE 2026-09-13, and there is now ONE occurrence rather than two.
+	// The census reader and the Work panel's reader were the same line at two indents -- two
+	// copies of a rule about text, which is how one of them comes to be right -- and both now
+	// delegate to the one parser this break damages. Damaging it is still exactly the world
+	// before the fix, and it now reaches both readers through one edit rather than two.
 	endanchor: [[
-		`		if (/ is empty\\.$/.test(String(text).split('\\n')[0].trim())) return out;`,
-		`		if (/ is empty\\.$/.test(String(text).trim())) return out;`, 2]],
+		`		if (/ is empty\\.$/.test(s.split('\\n')[0].trim())) return out;`,
+		`		if (/ is empty\\.$/.test(s.trim())) return out;`, 1, 'listing']],
 	bare: [],
 };
 if (BREAK && !BREAKS[BREAK]) {
@@ -124,18 +126,23 @@ if (BREAK && !BREAKS[BREAK]) {
 	process.exit(2);
 }
 
-const APP_SRC  = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
-const GLUE_SRC = fs.readFileSync(path.join(WWW, 'pkg/oxedyne_daimond.js'), 'utf8');
+const APP_SRC   = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
+const LIST_SRC  = fs.readFileSync(path.join(WWW, 'js/listing.js'), 'utf8');
+const GLUE_SRC  = fs.readFileSync(path.join(WWW, 'pkg/oxedyne_daimond.js'), 'utf8');
 
-let damaged = APP_SRC;
-for (const [find, repl, want] of (BREAKS[BREAK] || [])) {
-	const got = damaged.split(find).length - 1;
+// A break names the file it damages with a fourth element; the default is the app.  Two files
+// rather than one since the listing parser moved out of `daimond.js` into `js/listing.js`.
+const damaged = { app: APP_SRC, listing: LIST_SRC };
+for (const [find, repl, want, where] of (BREAKS[BREAK] || [])) {
+	const key = where || 'app';
+	const got = damaged[key].split(find).length - 1;
 	if (got !== want) {
-		console.error(`--break ${BREAK}: expected ${want} occurrence(s) of\n  ${find}\nbut found ${got}; `
+		console.error(`--break ${BREAK}: expected ${want} occurrence(s) of\n  ${find}\nbut found ${got} `
+			+ `in js/${key === 'app' ? 'daimond' : key}.js; `
 			+ 'the anchor has moved and this break would patch nothing');
 		process.exit(2);
 	}
-	damaged = damaged.split(find).join(repl);
+	damaged[key] = damaged[key].split(find).join(repl);
 }
 
 // The fence, stood in for. A real scope refusal needs a real fence and a real
@@ -195,9 +202,14 @@ const s = await open({
 			status: 200, contentType: 'application/javascript',
 			body: GLUE_SRC + SHIM + (BREAK === 'bare' ? BARE : ''),
 		}));
-		if (BREAK && BREAK !== 'bare') await page.route('**/js/daimond.js', (r) => r.fulfill({
-			status: 200, contentType: 'application/javascript', body: damaged,
-		}));
+		if (BREAK && BREAK !== 'bare') {
+			await page.route('**/js/daimond.js', (r) => r.fulfill({
+				status: 200, contentType: 'application/javascript', body: damaged.app,
+			}));
+			await page.route('**/js/listing.js', (r) => r.fulfill({
+				status: 200, contentType: 'application/javascript', body: damaged.listing,
+			}));
+		}
 	},
 });
 const { page: p } = s;

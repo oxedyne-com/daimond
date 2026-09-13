@@ -1647,6 +1647,10 @@
      view. -->
 <script src="js/passcode.js"></script>
 <script src="js/chunks.js"></script>
+<!-- The one reader of a file_list answer: the Work panel and the sync census both parse
+		     through it, because two copies of a rule about text is how one of them comes to be
+		     right. Before daimond.js, which closes over both call sites. -->
+		<script src="js/listing.js"></script>
 <script src="js/cloud.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/pairing.js"></script>

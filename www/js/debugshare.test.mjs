@@ -26,6 +26,9 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+// A newline, named, so a multi-line fixture (a PEM block) can be built without
+// this file's own source carrying one inside a string literal.
+const NL = String.fromCharCode(10);
 let failures = 0;
 function check(name, cond) {
 	if (cond) { console.log('  ok   ' + name); }
@@ -299,6 +302,35 @@ async function main() {
 		check('fingerprint keeps the first six chars', json.indexOf('sk-or-') !== -1);
 		// A non-secret model field is untouched.
 		check('non-secret fields pass through', json.indexOf('anthropic/claude-3.5') !== -1);
+	}
+
+	console.log('debugshare: redaction — camelCase secrets (pushToken, nested, *Secret) with no separator');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		const RAW_PUSH_TOKEN = 'ghp_ZZZFAKEpersonalAccessTOKEN0123456789abcd';	// allowlist secret
+		const RAW_NESTED_TOKEN = 'ZZZFAKEnestedOAuthTOKENdeadbeef9876543210';	// allowlist secret
+		const RAW_REFRESH_SECRET = 'ZZZFAKErefreshSECRETvalue1122334455';	// allowlist secret
+		const state = {
+			config: {
+				baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
+				model: 'anthropic/claude-3.5',
+				pushToken: RAW_PUSH_TOKEN,	// a GitHub PAT, camelCase-joined -- no separator before "Token"
+				refreshSecret: RAW_REFRESH_SECRET,	// camelCase-joined "Secret"
+				auth: { nestedToken: RAW_NESTED_TOKEN },	// nested object, one level down
+			},
+		};
+		const bundle = DS._assemble({ ledger: [], trail: [], diag: [] }, state);
+		const json = JSON.stringify(bundle);
+		check('raw pushToken is NOT in the bundle', json.indexOf(RAW_PUSH_TOKEN) === -1);
+		check('pushToken appears as a fingerprint', /"pushToken":"\[redacted [^"]+\]"/.test(json));
+		check('raw nested token is NOT in the bundle', json.indexOf(RAW_NESTED_TOKEN) === -1);
+		check('the nested token is fingerprinted a level down', /"nestedToken":"\[redacted [^"]+\]"/.test(json));
+		check('raw *Secret field is NOT in the bundle', json.indexOf(RAW_REFRESH_SECRET) === -1);
+		check('a *Secret field is fingerprinted', /"refreshSecret":"\[redacted [^"]+\]"/.test(json));
+		// Ordinary, non-secret-shaped fields at every level still survive whole.
+		check('an ordinary top-level field survives', json.indexOf('anthropic/claude-3.5') !== -1);
+		check('the config object itself is not collapsed', json.indexOf('"baseUrl"') !== -1);
 	}
 
 	console.log('debugshare: ON — indicator with the warning, and the WIRE carries no raw key');
@@ -1270,8 +1302,15 @@ async function main() {
 		// throwing, whatever `TurnEnd` the engine actually reported.
 		check('a worker\'s status is read from the engine\'s own ending, not written as done',
 			/run\.status = run\.ended \? workerEndStatus\(run\.ended\.how\) : 'done'/.test(body));
+		// ONE READING OF WHAT TERMINAL MEANS, since 2026-09-13. `gather` held an inline
+		// copy and the in-turn wait needed the same answer; two copies of this rule is
+		// two chances for a batch to be called finished by one and not by the other,
+		// and the worker whose report goes missing is the one they disagree about.
 		check('a finished batch counts capped and spend_cap workers as terminal too',
-			/s === 'capped' \|\| s === 'spend_cap'/.test(src));
+			/isTerminal: function \(status\) \{/.test(src)
+			&& /\|\| status === 'capped' \|\| status === 'spend_cap'/.test(src));
+		check('and `gather` reads that one predicate rather than a copy of it',
+			/var terminal = function \(s\) \{ return self\.isTerminal\(s\); \};/.test(src));
 	}
 
 	console.log('debugshare: events — boot and beat carry the capability triple');
@@ -1772,6 +1811,289 @@ async function main() {
 		check('pending, no countdown, not stuck: "ready"', DS2._updaterState() === 'ready');
 		delete env2.win.DaimondUpdater;
 		check('no updater at all reads as "none"', DS2._updaterState() === 'none');
+	}
+
+	// ══ THE CONTENT SCRUBBER ══════════════════════════════════════════
+	//
+	// The name-based redactors answer for `config`, whose fields are NAMED. These
+	// blocks answer the owner's general question -- "the debug feed does not
+	// contain keys" -- for everything else the feed carries, which is free text: a
+	// console line, the tile of the daimon's own answer, a failed fetch's URL, a
+	// tool argument, a stack frame. Every fixture below is INVENTED here and wears
+	// only the SHAPE of a real credential; none has ever been a live key, and each
+	// is BUILT from a seed rather than typed out, so no line of this file is a
+	// paste-able credential and a scanner reading the repository finds none.
+
+	// A deterministic run of characters from a seed. Not random: a fixture that
+	// changes between runs cannot be asserted about.
+	const fakeRun = (n, seed, alpha) => {
+		alpha = alpha || 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+		let s = '', h = (seed * 2654435761) >>> 0;
+		for (let i = 0; i < n; i++) { h = (h * 1103515245 + 12345) >>> 0; s += alpha[(h >>> 8) % alpha.length]; }
+		return s;
+	};
+	const fakeHex = (n, seed) => fakeRun(n, seed, '0123456789abcdef');
+	const fakeB64 = (n, seed) => fakeRun(n, seed, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_');
+
+	console.log('debugshare: scrubber — one fixture per credential shape, none survives');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+
+		// One entry per shape the scrubber is asked to know.
+		const CORPUS = [
+			['github classic',		'ghp_' + fakeRun(36, 11)],
+			['github oauth',		'gho_' + fakeRun(36, 12)],
+			['github user',			'ghu_' + fakeRun(36, 13)],
+			['github server',		'ghs_' + fakeRun(36, 14)],
+			['github refresh',		'ghr_' + fakeRun(36, 15)],
+			['github fine PAT',		'github_pat_' + fakeRun(22, 16) + '_' + fakeRun(59, 17)],
+			['openai',				'sk-' + fakeRun(48, 21)],
+			['openrouter',			'sk-or-v1-' + fakeHex(64, 22)],
+			['anthropic',			'sk-ant-api03-' + fakeB64(95, 23)],
+			['stripe live',			'sk_live_' + fakeRun(24, 31)],
+			['stripe test',			'sk_test_' + fakeRun(24, 32)],
+			['stripe restricted',	'rk_live_' + fakeRun(24, 33)],
+			['stripe webhook',		'whsec_' + fakeRun(32, 34)],
+			['aws access key',		'AKIA' + fakeRun(16, 41).toUpperCase()],
+			['google api key',		'AIza' + fakeB64(35, 51)],
+			['slack bot',			'xoxb-' + fakeRun(12, 61) + '-' + fakeRun(12, 62) + '-' + fakeRun(24, 63)],
+			['jwt',					'eyJ' + fakeB64(28, 71) + '.eyJ' + fakeB64(40, 72) + '.' + fakeB64(43, 73)],
+			['tune relay run token',	'tune-' + fakeHex(32, 81)],
+			['high-entropy blob',	fakeB64(48, 91)],
+		];
+		const survived = [];
+		for (const [name, val] of CORPUS) {
+			if (DS._scrubText('the call failed: ' + val + ' was refused').indexOf(val) !== -1) survived.push(name);
+		}
+		if (survived.length) console.log('       survived: ' + survived.join(', '));
+		check('every enumerated shape is replaced, not passed through', survived.length === 0);
+
+		// The three whose shape only exists NEXT TO something else.
+		const AWS_ID  = 'AKIA' + fakeRun(16, 42).toUpperCase();
+		const AWS_SEC = fakeRun(40, 43);
+		const PEM_BODY = fakeB64(64, 101);
+		// The PEM ARMOUR only -- the body between the lines is generated above and
+		// is not key material. allowlist secret
+		const PEM = '-----BEGIN RSA PRIVATE KEY-----' + NL + PEM_BODY + NL + '-----END RSA PRIVATE KEY-----';
+		check('a PEM private key block goes whole',
+			DS._scrubText('key material:' + NL + PEM + NL + 'done').indexOf(PEM_BODY) === -1);
+		check('a PEM block clipped by elision still goes',	// allowlist secret
+			DS._scrubText('-----BEGIN EC PRIVATE KEY-----' + NL + fakeB64(64, 103)).indexOf(fakeB64(64, 103)) === -1);
+		check('an AWS secret beside its access-key id goes',
+			DS._scrubText('creds: ' + AWS_ID + ', "' + AWS_SEC + '"').indexOf(AWS_SEC) === -1);
+		check('an AWS secret beside its own field name goes',
+			DS._scrubText('aws_secret_access_key = ' + AWS_SEC).indexOf(AWS_SEC) === -1);
+
+		// The marker: the shape, a stable hash and the length -- so two sightings of
+		// one key are known to be one key, and nothing more.
+		const GH = 'ghp_' + fakeRun(36, 11);
+		check('the marker keeps the redactConfig style',
+			/^\[redacted gh #[0-9a-f]+\/40\]$/.test(DS._scrubText(GH)));
+		check('the same value marks identically in two places',
+			DS._scrubText('a ' + GH) === 'a ' + DS._scrubText('b ' + GH).slice(2));
+		check('two different values mark differently',
+			DS._scrubText(GH) !== DS._scrubText('ghp_' + fakeRun(36, 12)));
+
+		// The name-against-a-value rules, which keep the LINE and lose the VALUE --
+		// the thing fingerprinting a whole console message could not do.
+		const BEAR = fakeRun(40, 111);
+		const line = DS._scrubText('[gw] Authorization: Bearer ' + BEAR + ' rejected');
+		check('a bearer token goes and the line survives',
+			line.indexOf(BEAR) === -1 && line.indexOf('[gw]') === 0 && line.indexOf('rejected') > 0);
+		const TOK = fakeRun(30, 112);
+		const url = DS._scrubText('POST /api/sync?access_token=' + TOK + '&v=2 failed 401');
+		check('a token in a URL query goes and the URL survives',
+			url.indexOf(TOK) === -1 && url.indexOf('POST /api/sync?access_token=') === 0
+			&& url.indexOf('&v=2 failed 401') > 0);
+		check('an `&key=` argument goes too',
+			DS._scrubText('GET /x?a=1&key=' + fakeRun(30, 113)).indexOf(fakeRun(30, 113)) === -1);
+		check('the gateway session cookie goes',
+			DS._scrubText('Cookie: daimond_gw_sess=' + fakeRun(43, 114) + '; Path=/').indexOf(fakeRun(43, 114)) === -1);
+		check('a secret name sitting against a value goes',
+			DS._scrubText('config apiKey="' + fakeRun(30, 115) + '" loaded').indexOf(fakeRun(30, 115)) === -1);
+
+		// IDEMPOTENCE, which is not a nicety here: `dev/lens.mjs` runs this same
+		// block AGAIN on ingest, over output the client has already scrubbed. A rule
+		// whose replacement its own pattern can match nests its markers one deep per
+		// pass -- which the `?token=` rule did, until `[` and `]` were taken out of
+		// its value class.
+		const twice = [
+			'POST /api/sync?access_token=' + fakeRun(30, 121) + ' failed',
+			'Cookie: daimond_gw_sess=' + fakeRun(43, 122) + '; Path=/',
+			'Authorization: Bearer ' + fakeRun(40, 123),
+			'ghp_' + fakeRun(36, 124),
+			'apiKey=' + fakeRun(30, 125),
+			'blob ' + fakeB64(48, 126) + ' end',
+		];
+		const nested = twice.filter((t) => DS._scrubText(DS._scrubText(t)) !== DS._scrubText(t));
+		check('scrubbing twice is scrubbing once, for every rule', nested.length === 0);
+	}
+
+	console.log('debugshare: scrubber — what the feed is SUPPOSED to carry still reads');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		// The legibility half. A scrubber that eats the archive's own index is no
+		// use, so every shape the reader navigates by is whitelisted BY SHAPE.
+		const KEEP = [
+			['a sha256 digest',	'3b1f8c2d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c'],
+			['a build id',		'dae1ed646c3f'],
+			['a device id',		'a7b34e2d5181e710301a30ebbc3ee062'],
+			['a UUID',			'0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9'],
+			['a message id',	'mgk3j2a-1f-x7q2p'],
+			['a model id',		'anthropic/claude-sonnet-4-5-20250929'],
+			['a chunk tag',		'ds snapshot smtxxyvgy988 41/2377'],
+			['a sentence',		'[sync] chunk index not merged on this device; refusing to commit'],
+			['a constant',		'TRANSCRIPT_BUDGET_BYTES exceeded by 41 bytes'],
+			['a worded id',		'worker_pool_seat_000412'],
+			['a stack frame',	'sync.js:1511'],
+			['a long decimal',	'178930080399617893008039961789300803996'],
+		];
+		const lost = [];
+		for (const [name, val] of KEEP) if (DS._scrubText(val) !== val) lost.push(name);
+		if (lost.length) console.log('       lost: ' + lost.join(', '));
+		check('every legible shape survives untouched', lost.length === 0);
+
+		// And the correlation-id FIELDS, whose values a provider mints out of an
+		// alphabet a key would be at home in.
+		const callId = 'call_00_AbC9dEf1GhI2jKl3MnO4pQr5';
+		const walked = DS._scrubDeep({ id: callId, tool_call_id: callId, callId: callId,
+			turn: 'smtxxyvgy988', notAnId: callId });
+		check('a tool-call id survives in an id field',
+			walked.id === callId && walked.tool_call_id === callId && walked.callId === callId);
+		check('but the same run in an ordinary field does not', walked.notAnId !== callId);
+		check('and an id field holding a real key shape is STILL scrubbed',
+			DS._scrubDeep({ id: 'ghp_' + fakeRun(36, 11) }).id.indexOf(fakeRun(36, 11)) === -1);
+	}
+
+	console.log('debugshare: scrubber — the WIRE, with a secret planted in every lane');
+	{
+		const env = makeEnv({ fastTimers: true });
+		const DS = env.win.DEBUG_SHARE;
+		// One distinct fixture per egress path, so a survivor names its own lane.
+		const lane = (seed) => 'sk-' + fakeRun(48, seed);
+		const PLANTED = {
+			console:    lane(201),
+			tile:       lane(202),
+			fetchfail:  lane(203),
+			config:     lane(204),
+			toolarg:    lane(205),
+			transcript: lane(206),
+			seat:       lane(207),
+			error:      lane(208),
+		};
+
+		DS.registerProvider(async () => ({
+			// A NESTED config, under a field name no rule knows: the name-based
+			// redactors are blind to it and the content rules are not.
+			config: { baseUrl: 'https://openrouter.ai/api/v1',
+				providers: { extra: { note: 'bootstrap ' + PLANTED.config } } },
+			transcripts: [{ id: 'chatA', name: 'c', updatedAt: 2, messages: [
+				{ role: 'user', content: 'use this: ' + PLANTED.transcript },
+				{ role: 'tool_log', name: 'file_read', callId: 'call_00_AbC9dEf1GhI2jKl3',
+					args: JSON.stringify({ path: '/home/x/.netrc', body: PLANTED.toolarg }), content: '' },
+			] }],
+			roster: {}, presence: null, election: null, tokenStats: [],
+		}));
+		DS.registerScreen(() => ({ view: 'chat', seat: 'runner: ' + PLANTED.seat,
+			role: 'assistant', text: 'your key is ' + PLANTED.tile,
+			dlg: 'none', comp: 0, locked: false }));
+		DS.setEnabled(true);
+
+		// Every lane, driven directly rather than waited out.
+		env.console.warn('[gw] refused Authorization: Bearer ' + PLANTED.console);
+		DS._flushConsole(true);
+		DS._noteError('config load failed: apiKey=' + PLANTED.error, 'daimond.js:244');
+		DS.noteFetchFail('/api/sync?access_token=' + PLANTED.fetchfail, 401, 12, '');
+		DS.event('tool', { turn: 't1', r: 1, name: 'run', ab: 40, out: 'failed',
+			err: 'bad arg: ' + PLANTED.toolarg });
+		DS._expireScreen();
+		DS._screenTick();
+		await DS.snapshotNow();
+		DS._telemetryTick();
+		await env.drainAll();
+		await sleep(40);
+
+		// What actually went on the wire: every row of every post, with the base64
+		// `ds` rows decoded back to the JSON they carry.
+		let wire = '';
+		for (const p of env.posts) {
+			for (const r of ((p.body && p.body.rows) || [])) {
+				wire += r.tag + ' ' + r.data + ' ';
+				if (/^ds /.test(r.tag)) wire += Buffer.from(r.data, 'base64').toString('utf8') + ' ';
+			}
+		}
+		check('the run actually put rows on the wire', env.posts.length > 0 && wire.length > 500);
+		const leaked = Object.keys(PLANTED).filter((k) => wire.indexOf(PLANTED[k]) !== -1);
+		if (leaked.length) console.log('       leaked from: ' + leaked.join(', '));
+		check('no planted secret reaches the wire, in any lane', leaked.length === 0);
+		// The markers are there, so a reader is told a key was cut out rather than
+		// silently handed a shortened line.
+		check('the wire carries the scrubber\'s markers instead',
+			/\[redacted (?:sk|bearer|urlarg|named) #/.test(wire));
+		// And what must still be legible, is.
+		check('the wire still carries the chat and the tool name',
+			wire.indexOf('chatA') !== -1 && wire.indexOf('file_read') !== -1);
+		check('and the tool-call id the reader correlates by',
+			wire.indexOf('call_00_AbC9dEf1GhI2jKl3') !== -1);
+		DS.setEnabled(false);
+		env.halt();
+	}
+
+	console.log('debugshare: scrubber — the shared block, and what it costs a tick');
+	{
+		// THE TWO COPIES MUST MATCH. `www/js/debugshare.js` is a classic script and
+		// `dev/lens.mjs` a node tool, so neither can import the other and the block
+		// is duplicated; this is what stops the copies drifting. The client's copy
+		// sits one tab in, being inside the IIFE, so one leading tab comes off each
+		// line before the comparison and nothing else does.
+		const cut = (src) => {
+			const a = src.indexOf('// ── THE CONTENT SCRUBBER (SHARED BLOCK) ──');
+			const b = src.indexOf('// ── END OF THE SHARED SCRUBBER BLOCK ──');
+			return (a < 0 || b < 0) ? null : src.slice(a, b);
+		};
+		const client = cut(readFileSync(join(HERE, 'debugshare.js'), 'utf8'));
+		const lens   = cut(readFileSync(join(HERE, '..', '..', 'dev', 'lens.mjs'), 'utf8'));
+		check('the block is present in www/js/debugshare.js', !!client);
+		check('the block is present in dev/lens.mjs', !!lens);
+		const undent = (s) => s.split(NL).map((l) => l.replace(/^\t/, '')).join(NL);
+		check('and the two copies are identical, character for character',
+			!!client && !!lens && undent(client) === lens);
+
+		// THE PER-TICK COST, measured rather than assumed: this runs on every event,
+		// every telemetry tick and every snapshot. The ceiling is deliberately
+		// generous -- a regression guard, not a benchmark -- and the figure is
+		// printed, so a change that doubles it is visible even while it passes.
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		const words = 'sync chunk parcel commit device merge turn round fold ledger worker model prompt ';
+		const chats = [];
+		for (let c = 0; c < 12; c++) {
+			const messages = [];
+			for (let m = 0; m < 40; m++) {
+				messages.push({ role: m % 2 ? 'assistant' : 'user', mid: 'mg' + c + '-' + m + '-x7q2p',
+					ts: 1789300000000 + m, content: words.repeat(46) });
+			}
+			chats.push({ id: 'chat' + c, name: 'Chat ' + c, updatedAt: c,
+				model: 'anthropic/claude-sonnet-4-5', messages });
+		}
+		const big = DS._assemble({ ledger: [], trail: [], diag: [], signals: null },
+			{ config: { baseUrl: 'https://x/y' }, transcripts: chats, roster: {}, tokenStats: [] });
+		const bytes = JSON.stringify(big).length;
+		const t0 = Date.now();
+		for (let i = 0; i < 5; i++) DS._scrubDeep(big);
+		const each = (Date.now() - t0) / 5;
+		console.log('       ' + (bytes / 1024 | 0) + ' KiB snapshot bundle: ' + each.toFixed(1) + ' ms a pass');
+		check('a full snapshot bundle scrubs well inside a second', each < 400);
+
+		const ev = { v: 1, d: 'a7b34e2d5181', n: 40122, b: 'dae1ed646c3f', t: Date.now(),
+			lvl: 'warn', msg: '[sync] chunk index not merged on this device', src: 'sync.js:1511' };
+		const t1 = Date.now();
+		for (let i = 0; i < 20000; i++) DS._scrubDeep(ev);
+		const per = (Date.now() - t1) / 20000;
+		console.log('       one event row: ' + per.toFixed(4) + ' ms');
+		check('one event row costs a fraction of a millisecond', per < 0.5);
 	}
 
 	console.log('');

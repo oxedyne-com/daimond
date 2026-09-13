@@ -18,11 +18,19 @@
 //      the "Diamond" band from `crystal.json` as it stands, so the edited fact is IN the
 //      `local` string the next turn is sent. Persisting to a file nothing reads would be
 //      the same nothing as before.
+//   4. The panel says what the daimon PAYS for this memory. Since the hot/cold split of
+//      2026-09-13 only part of a crystal rides in the prompt on every round, and a person
+//      looking at a wall of JSON has no way to tell which part. A gauge that showed nothing
+//      would leave the one figure that matters invisible.
+//   5. And the flag that decides it is editable in the ✎ form, and survives a round-trip.
+//      A checkbox that drew the state and dropped it on Save is the same defect as 2 in
+//      miniature, on the one key the form was not built around.
 //
 // EACH CHECK PROVED AGAINST BROKEN CODE FIRST:
 //
 //   node dev/verify_crystalmemory.mjs --break nopanel   # 1: the disclosure is not drawn
 //   node dev/verify_crystalmemory.mjs --break nosave     # 2, 3: Save writes nothing
+//   node dev/verify_crystalmemory.mjs --break nohot      # 5: the form cannot show the flag
 //   node dev/verify_crystalmemory.mjs                    # and then, clean
 //
 // `nopanel` turns check 1 red and leaves the rest unreachable; `nosave` leaves the
@@ -50,6 +58,12 @@ const BREAKS = {
 		file: 'js/daimond.js',
 		find: "\t\tcrystalBody.appendChild(crystalMemoryPanel(id, text));",
 		with: "\t\tvoid crystalMemoryPanel;",
+	},
+	// The hot checkbox is never drawn, so the form silently loses the flag it cannot show.
+	nohot: {
+		file: 'js/daimond.js',
+		find: "\t\t\t\t\ttop.appendChild(hotWrap);",
+		with: "\t\t\t\t\tvoid hotWrap;",
 	},
 	// Save resolves without writing, so the box is there and an edit vanishes on Save.
 	nosave: {
@@ -162,6 +176,64 @@ try {
 	}, { id });
 	check('and the saved memory is in the system message a fresh daimon is composed with',
 		wire.indexOf(ADDED) >= 0, JSON.stringify(wire.slice(0, 100)));
+
+	// ── 4. The gauge says what the daimon pays.
+	const gauge = await page.$eval('.crystal-memory-gauge', el => el.textContent).catch(() => '');
+	check('the Memory panel says what of this crystal rides in every round',
+		/hot /.test(gauge) && /total /.test(gauge) && /KB/.test(gauge), gauge || '(no gauge)');
+
+	// ── 5. The hot flag is editable, and a round-trip keeps it.
+	//
+	// Through the ✎ form rather than the raw box, because the form is the surface that
+	// REWRITES every section on Save -- which is the one that can silently drop a key.
+	// Through the store's own door, so the face redraws from what was written rather than from
+	// a file the page has not noticed.
+	await page.evaluate(async (a) => {
+		await window.__free.write_crystal_data(a.id, JSON.stringify({
+			title: 'Memory',
+			sections: [{ heading: 'Kept', body: 'in front of you', hot: true },
+				{ heading: 'Fetched', body: 'on demand' }],
+		}, null, 2));
+	}, { id });
+	await page.reload({ waitUntil: 'domcontentloaded' });
+	await page.waitForTimeout(1200);
+	await signInAs(s, 'crystalmemory');
+	await page.waitForTimeout(1200);
+	// The reload took the free app with it, and the checks below read the disk through it.
+	await page.evaluate(async () => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		window.__free = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	});
+	await page.$$eval('.diamond-box', els => els[0] && els[0].click());
+	await page.waitForTimeout(2500);
+	// The ✎ of the crystal bar, which is the first of the bar's buttons.
+	await page.evaluate(() => {
+		const b = [...document.querySelectorAll('.crystal-bar .crystal-act')]
+			.find(x => /✎/.test(x.textContent || '') && !/Page/i.test(x.textContent || ''));
+		if (b) b.click();
+	});
+	await page.waitForTimeout(1200);
+	const boxes = await page.$$eval('.crystal-form-hotbox', els => els.map(e => e.checked))
+		.catch(() => []);
+	check('the ✎ form draws a hot flag per section, set where the crystal set it',
+		boxes.length === 2 && boxes[0] === true && boxes[1] === false, JSON.stringify(boxes));
+	// Tick the second one and save: the flag must be on disk afterwards.
+	await page.evaluate(() => {
+		const b = document.querySelectorAll('.crystal-form-hotbox')[1];
+		if (b) { b.checked = true; b.dispatchEvent(new Event('change', { bubbles: true })); }
+	});
+	await page.evaluate(() => {
+		const b = [...document.querySelectorAll('.crystal-bar .crystal-act.primary')][0];
+		if (b) b.click();
+	});
+	await page.waitForTimeout(2000);
+	const back = await page.evaluate(a => window.__free.read_crystal_data(a.id), { id });
+	let flags = [];
+	try { flags = (JSON.parse(back).sections || []).map(x => x.hot === true); } catch (e) { flags = []; }
+	check('and a flag ticked in the form round-trips to disk',
+		flags.length === 2 && flags[0] === true && flags[1] === true, JSON.stringify(flags));
+	check('with the section text it was ticked on kept whole',
+		/on demand/.test(String(back)), String(back).slice(0, 70).replace(/\n/g, ' '));
 
 	const errs = errors(s).filter(e => !/502|Bad Gateway|account/i.test(e));
 	check('no unexpected console errors', errs.length === 0, errs.slice(0, 2).join(' | ') || 'clean');

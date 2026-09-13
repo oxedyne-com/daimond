@@ -82,7 +82,13 @@ pub fn may_run_beside(name: &str) -> bool {
             | Tool::FileList
             | Tool::FileSearch
             | Tool::FileGlob
-            | Tool::SheetRead),
+            | Tool::SheetRead
+            // Both read-only, and neither touches a panel: `crystal_read` reads one file out of
+            // the Diamond store and `recall` reads the crystal and the conversation's own fold
+            // notices. A round that fetches two cold sections at once is the ordinary shape of
+            // using them.
+            | Tool::CrystalRead
+            | Tool::Recall),
         None => false,
     }
 }

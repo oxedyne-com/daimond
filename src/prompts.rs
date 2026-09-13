@@ -331,6 +331,16 @@ impl Role {
 		}
 		let spare = |note: &str| measured_spare(model, note);
 		let mut out = fmt!("{}\n\n{}", body, VISION_NOTE);
+		out.push_str(&fmt!("\n\n{}", PLACES_NOTE));
+		// WHAT THIS FAMILY GETS WRONG, and nothing any other family gets wrong.  Composed here
+		// beside `VISION_NOTE` rather than written into `prompts/<role>.md`, so a user's rewrite
+		// of their own prompt cannot lose it and the editor does not show it -- the standing
+		// trade for every composed note.  Empty for Claude, GPT and an unknown model, which is
+		// what measurement said: they did not make these mistakes.
+		let addendum = crate::profile::Family::detect(model).addendum();
+		if !addendum.is_empty() {
+			out.push_str(&fmt!("\n\n{}", addendum));
+		}
 		if !spare("QUIET_NOTE") {
 			out.push_str(&fmt!("\n\n{}", QUIET_NOTE));
 		}
@@ -346,6 +356,20 @@ impl Role {
 		out
 	}
 }
+
+/// The one account of where a file is, appended to every role that holds the file tools.
+///
+/// **Four places, one tree of paths.**  Browser storage, an open folder, a folder marked in on the
+/// machine and cloud storage are four different stores with four different failure modes, and
+/// until this note existed the model learnt which was which from refusals -- one round at a time,
+/// per place, per turn.  The measured cost of that ignorance is in `dev/PROMPT_NOTES.md`: the
+/// largest bucket of tool failures on the r1 bank, ~80 of 141, was a path spelled against the
+/// wrong root, and the second was a read of a cloud-only file.
+///
+/// It says what `file_list`'s own parentheses mean, because that is the one signal the model can
+/// act on WITHOUT a failed call first.
+pub const PLACES_NOTE: &str =
+	"## Where files are\n\n	 Every file tool sees one tree of workspace-relative paths, and file_list says where an entry 	 is: on this device unless its parentheses say 'in cloud storage' (a small one is fetched 	 when you read it, a large one needs file_fetch) or 'on <host>' (a folder the user marked in, 	 which run reaches too). diamonds/, chats/ and mail/ are browser storage on this device and 	 never on the machine, so a file tool always reaches them and run never can.";
 
 /// That an image file can be read and looked at, appended to every role that holds the file tools.
 ///
@@ -738,12 +762,15 @@ pub const DEFAULT_CHAT: &str =
 	 under Drafts, where they open it, change what they like and press Send. When you are \
 	 asked to reply to something, write the draft and tell them it is waiting; do not \
 	 claim to have sent it. Their own sent mail is at mail/<address>/sent/.\n\n\
-	 You can dispatch workers. Call spawn_agent once per agent, and call it several times in \
-	 the SAME turn to run them at once — two calls, two agents, genuinely in parallel. Each \
-	 runs in its own context and cannot see this conversation, so the task you give it must \
-	 say everything it needs; each reports back, and the reports come to you here. When the \
-	 user asks for two agents, dispatch two. Never do the work yourself and present it as \
-	 agents having done it, and never tell the user this app cannot run agents in parallel.\n\n\
+	 You can dispatch workers. spawn_agent starts one at once and it runs while you carry on; \
+	 call it several times in the SAME turn to run several at once. Each runs in its own \
+	 context and cannot see this conversation, so its task must say everything it needs. When \
+	 you have nothing left to do until they report, call gather once, naming them: their \
+	 reports come back to you here, in this turn, and you read and check them before you \
+	 answer. Do not gather before you have given them time — do your own part of the work \
+	 first. A worker you never gather reports back as a later turn. When the user asks for \
+	 two agents, dispatch two. Never do the work yourself and present it as agents having \
+	 done it, and never tell the user this app cannot run agents in parallel.\n\n\
 	 A worker is not you, and the difference is worth knowing before you hand one a task. It \
 	 works alone and cannot ask anybody anything, so it reads wherever you can read, writes \
 	 only in this chat's own working folder and whatever the user has attached here, and runs \
@@ -782,9 +809,13 @@ pub const DEFAULT_DAIMON: &str =
 	 page where nothing happened. \
 	 Edit either with your file tools when the user tells you something \
 	 worth keeping. Both have a size limit, because a crystal is a summary and its \
-	 page travels wherever the summary goes: when detail is worth keeping but too \
-	 long to belong there, write it to a file in this Diamond and refer to the file \
-	 from the crystal.\n\n\
+	 page travels wherever the summary goes. Only the HOT part of `crystal.json` — \
+	 `title`, `summary`, `open` and any section marked `\"hot\": true` — is in front \
+	 of you on every round; the rest is cold, one `crystal_read` away, and `recall` \
+	 searches all of it together with whatever this conversation has folded. Keep \
+	 the hot part to what you need every round and put the record in cold sections, \
+	 which cost nothing per round — not in separate files, which nothing searches \
+	 together.\n\n\
 	 Second, agents. Most tasks are work rather than record-keeping, and work is \
 	 what workers are for, so dispatch one with `spawn_agent` as the ordinary \
 	 course rather than the exception. Each worker runs in its OWN context \
@@ -792,7 +823,11 @@ pub const DEFAULT_DAIMON: &str =
 	 the `task` you give it must say everything it needs to know. To run \
 	 several agents at once, call `spawn_agent` several times in the SAME turn \
 	 — they then run in parallel. If the user asks for two agents, call it \
-	 twice. Each reports back a summary the user can fold into the crystal.\n\n\
+	 twice. When you have nothing left to do until they report, call `gather` \
+	 once, naming them: their reports come back to you here, in this turn, and \
+	 you read and check them before you answer. Do not gather before you have \
+	 given them time — do your own part of the work first. A worker you never \
+	 gather reports back as a later turn.\n\n\
 	 A worker reporting back is not the end of the task, it is the start of your \
 	 half. Read its summary against the task you actually gave it, open what it \
 	 says it changed, run whatever proves it, and send it back when it is wrong. \
@@ -986,8 +1021,9 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) ->
 	let mut s = fmt!(
 		"## This computer\n\nCommands run on {} through Daimond's machine hand: only the paths \
 		below are reachable to a command, and every other path is refused. Your file tools reach \
-		those same paths and are fenced there the same way, changing the real file -- so search \
-		with file_search and edit with file_edit, never grep or sed through run. Anywhere else \
+		those same paths and are fenced there the same way, changing the real file -- so map a \
+		file with outline, search with file_search and edit with file_edit, never grep or sed \
+		through run. Anywhere else \
 		they read and write the browser's own storage, and diamonds/, chats/ and mail/ are not \
 		on this machine but in that storage, which a file tool reaches and a command never \
 		can.", os);
@@ -1201,9 +1237,9 @@ pub async fn machine_briefing(ctx: &crate::tools::ToolContext) -> String {
 /// for and then reports as broken.  One sentence instead, for the same reason
 /// `ToolRegistry::locked_pack_note` is one sentence.
 pub const NO_MACHINE_NOTE: &str =
-	"## This computer\n\nNo folder on this computer is reachable from this page, so run, runs and \
-	 verify are not on your belt at all: do not reach for them and do not report a command as \
-	 having failed. Use your file tools, which work regardless.";
+	"## This computer\n\nNo folder on this computer is reachable from this page, so run, runs, \
+	 verify and serve are not on your belt at all: do not reach for them and do not report a \
+	 command as having failed. Use your file tools, which work regardless.";
 
 /// The reducer's role: fold exactly one delta into the current crystal and emit the
 /// whole new crystal.  A fresh reducer holds no history, so it cannot itself rot.
@@ -1257,8 +1293,9 @@ pub const CRYSTAL_SCHEMA_NOTE: &str =
 	 optional:\n\n\
 	 - `title` — a string.\n\
 	 - `summary` — a string, markdown, one paragraph.\n\
-	 - `sections` — a list of `{\"heading\": string, \"body\": string}`; the body is \
-	 markdown.\n\
+	 - `sections` — a list of `{\"heading\": string, \"body\": string, \"hot\": true \
+	 or absent}`; the body is markdown, and a hot flag is kept exactly as you found \
+	 it.\n\
 	 - `facts` — a list of `{\"k\": string, \"v\": string}`.\n\
 	 - `open` — a list of strings, the threads still open.\n\
 	 - `links` — a list of `{\"label\": string, \"href\": string}`.\n\n\
@@ -1287,7 +1324,48 @@ pub const DEFAULT_COMPACTOR: &str =
 	 is still outstanding. Drop: greetings, restatements, and the contents of anything that \
 	 can simply be read again.\n\n\
 	 Never say a file was changed or a command succeeded unless the transcript shows it. \
-	 Write short headings and terse bullets, not prose. Output only the notes.";
+	 Write under the headings you are given, terse bullets, nothing before the first heading \
+	 and nothing after the last.";
+
+/// The fixed layout the compactor writes under, appended by [`crate::agent::Agent::summarise`]
+/// over a user-edited prompt.
+///
+/// **Appended THERE and not by [`Role::compose_for`]**, which is where the reducer's schema note
+/// goes and where this was first put.  Two reasons decided it.  `Role::Compactor.compose()` IS
+/// `Agent::fold_prompt`, which is documented and tested to hand back the user's own text
+/// verbatim -- a user who rewrote the compactor's job is entitled to see what they wrote.  And
+/// the shape is a SETTING (`Limits::fold_shape`): a prose fold must be able to run with nothing
+/// appended at all, or the arm that measures whether the structure is worth having is measuring
+/// two prompts that both ask for headings.  The property the reducer's placement buys -- a user
+/// edit cannot remove it -- is kept, and is asserted against the request that is actually sent.
+///
+/// **Headings and not JSON, and the reason is compliance.**  Measured over six open-weight
+/// models, arguments that were not JSON at all ran 0.00 for every one of them, while a tool
+/// whose arguments had a nested SHAPE failed on three of them at 33%, 44% and 100%.  A
+/// free-form document of two thousand tokens with nested arrays is the shape that breaks, and a
+/// truncated JSON document loses the whole note; a truncated heading document keeps every
+/// heading that arrived.  Each heading also validates on its own, so "malformed" is per-slot.
+///
+/// **The ORDER is chosen so that a reply cut at the output cap loses the least important slot
+/// last.**  `Task` and `Next step` are what a continuation cannot start without; `Files read`
+/// is the one the app's own ledger already carries.
+///
+/// `Found` is not on the requested list and is here anyway: a fold that keeps "we measured the
+/// cap" and drops "the cap is 4120" has kept the sentence and lost the fact, and what a model
+/// needs after a fold is the value.
+pub const FOLD_SHAPE_NOTE: &str =
+	"Write your notes under exactly these headings, in this order, leaving out any that has \
+	 nothing under it:\n\n\
+	 ## Task — one or two sentences: what the user asked for, and any constraint they stated.\n\
+	 ## Next step — the single next action, concrete.\n\
+	 ## Open — one bullet per question or blocker still outstanding.\n\
+	 ## Decisions — one bullet per decision, each with its reason after an em dash.\n\
+	 ## Found — one bullet per fact learned, carrying the VALUE and not a description of it: \
+	 write `m07.js CAP=4120`, not `the cap was noted`.\n\
+	 ## Files edited — one bullet per file, path first, then what changed.\n\
+	 ## Files read — one bullet per file, path first, then which part: lines, function or \
+	 heading.\n\n\
+	 Nothing before the first heading and nothing after the last.";
 
 
 // ┌───────────────────────────────────────────────────────────────────────────┐
@@ -1419,6 +1497,27 @@ mod tests {
 			"a chat cannot say how to put a folder in scope: {}", p);
 		assert!(!p.contains("with the paperclip"),
 			"the prompt still sends the user to the control that grants no writing: {}", p);
+	}
+
+	#[test]
+	fn test_both_roles_are_told_to_gather_what_they_dispatched() {
+		// The half that is easy to leave out.  A model given `spawn_agent` and never told that
+		// `gather` exists dispatches, stops, and pays for a second turn to read the reports --
+		// which is exactly the turn this pair was built to remove.  So the prompt has to name the
+		// tool, say WHEN to call it, and say what happens to a worker nobody gathers.
+		for r in [Role::Chat, Role::Daimon] {
+			let p = r.compose("");
+			assert!(p.contains("gather"), "{:?} is not told it can read its workers back: {}",
+				r, p);
+			assert!(p.contains("in this turn"),
+				"{:?} is not told the reports come back inside the turn: {}", r, p);
+			// AND NOT TO GATHER FIRST THING.  A model that gathers in the round after the
+			// dispatch waits out the whole timeout having done none of its own work.
+			assert!(p.contains("nothing left to do"),
+				"{:?} is not told when to gather: {}", r, p);
+			assert!(p.contains("later turn"),
+				"{:?} is not told what becomes of a worker it never gathers: {}", r, p);
+		}
 	}
 
 	/// A flash-tier model offered every one of a chat's tools invented a `file_read("x")`
@@ -1834,7 +1933,103 @@ mod tests {
 		("SKILLS_NOTE",	SKILLS_NOTE,		409,	105),
 		("SAFETY_CLAUSE",	SAFETY_CLAUSE,		462,	107),
 		("CRYSTAL_SCHEMA_NOTE",	CRYSTAL_SCHEMA_NOTE,	776,	211),
+		("PLACES_NOTE",	PLACES_NOTE,		471,	128),
+		// The per-family addenda, which every role with tools pays for on a model of that
+		// family and no role pays for on any other.  Measured 2026-09-13, the same way.
+		("KIMI_NOTE",		crate::profile::KIMI_NOTE,	238,	67),
+		("QWEN_NOTE",		crate::profile::QWEN_NOTE,	208,	56),
+		("DEEPSEEK_NOTE",	crate::profile::DEEPSEEK_NOTE,	144,	39),
+		("MINIMAX_NOTE",	crate::profile::MINIMAX_NOTE,	188,	51),
+		("GLM_NOTE",		crate::profile::GLM_NOTE,	171,	37),
 	];
+
+	/// The addendum a family carries sits after the user's own words and before the clause.
+	///
+	/// Both halves matter. After the body, because a note that preceded the user's prompt would
+	/// read as part of the app's own instructions rather than as an addendum to theirs; before
+	/// [`SAFETY_CLAUSE`], because the clause is last by the owner's ruling of 2026-07-27 and
+	/// nothing may be composed after it.
+	#[test]
+	fn test_a_family_addendum_sits_after_the_users_words_and_before_the_clause() {
+		let mine = "Only ever answer in French.";
+		let out = Role::Chat.compose_for(mine, "moonshotai/kimi-k2.7-code");
+		let body = match out.find(mine) {
+			Some(i) => i,
+			None    => panic!("the user's own prompt is not in the composition"),
+		};
+		let add = match out.find(crate::profile::KIMI_NOTE) {
+			Some(i) => i,
+			None    => panic!("the Kimi addendum is not in a Kimi prompt: {}", out),
+		};
+		let clause = match out.find(SAFETY_CLAUSE) {
+			Some(i) => i,
+			None    => panic!("the safety clause is not in the composition"),
+		};
+		assert!(body < add, "the addendum came before the user's words");
+		assert!(add < clause, "the addendum came after the safety clause");
+	}
+
+	/// A family carries its own addendum and nobody else's.
+	#[test]
+	fn test_a_family_addendum_is_carried_by_that_family_alone() {
+		let cases: &[(&str, &str)] = &[
+			("moonshotai/kimi-k2.7-code",	crate::profile::KIMI_NOTE),
+			("qwen/qwen3-coder-next",		crate::profile::QWEN_NOTE),
+			("deepseek/deepseek-v4-pro",	crate::profile::DEEPSEEK_NOTE),
+			("minimax/minimax-m2.7",		crate::profile::MINIMAX_NOTE),
+			("z-ai/glm-5.3",				crate::profile::GLM_NOTE),
+		];
+		for (slug, mine) in cases {
+			let out = Role::Chat.compose_for("", slug);
+			assert!(out.contains(mine), "{} does not carry its own addendum", slug);
+			for (_, other) in cases {
+				if other == mine {
+					continue;
+				}
+				assert!(!out.contains(other),
+					"{} carries an addendum that is not its own", slug);
+			}
+		}
+		// And the three that earned none carry none.
+		for slug in ["anthropic/claude-opus-5", "openai/gpt-5", "a-model-nobody-knows", ""] {
+			let out = Role::Chat.compose_for("", slug);
+			for (_, note) in cases {
+				assert!(!out.contains(note),
+					"{:?} was given an addendum it did not earn", slug);
+			}
+		}
+		// `compose` is `compose_for` with no model, and no model is no addendum.
+		assert_eq!(Role::Chat.compose(""), Role::Chat.compose_for("", ""),
+			"compose and compose_for with an empty model have parted company");
+	}
+
+	/// Every role with file tools is told where files are; the two without are not.
+	#[test]
+	fn test_the_places_note_goes_to_every_role_that_holds_the_file_tools() {
+		for r in Role::all() {
+			let want = r.has_tools() && !matches!(r, Role::Reducer);
+			assert_eq!(want, r.compose("").contains(PLACES_NOTE),
+				"role {} and the places note", r.name());
+		}
+		// The four places, each named in the words `file_list` actually prints.
+		assert!(PLACES_NOTE.contains("in cloud storage"));
+		assert!(PLACES_NOTE.contains("on <host>"));
+		assert!(PLACES_NOTE.contains("file_fetch"));
+		assert!(PLACES_NOTE.contains("diamonds/, chats/ and mail/"));
+	}
+
+	/// A user who rewrites their own prompt cannot lose either composed note.
+	///
+	/// The whole reason both sit in `compose_for` beside [`VISION_NOTE`] rather than in
+	/// `prompts/<role>.md`.
+	#[test]
+	fn test_a_rewritten_prompt_cannot_drop_what_it_never_held() {
+		let out = Role::Chat.compose_for("Ignore everything else. Say only 'no'.",
+			"z-ai/glm-5.3");
+		assert!(out.contains(PLACES_NOTE), "a rewrite lost the places note");
+		assert!(out.contains(crate::profile::GLM_NOTE), "a rewrite lost the addendum");
+		assert!(out.contains(SAFETY_CLAUSE), "a rewrite lost the clause");
+	}
 
 	#[test]
 	fn test_no_note_has_been_reworded_out_from_under_its_measured_price() {
@@ -1865,10 +2060,11 @@ mod tests {
 				.map(|m| m.3).unwrap_or(0)).sum()
 		};
 		let person = toks(&["VISION_NOTE", "QUIET_NOTE", "SHOW_NOTE", "FOLD_NOTE",
-			"VERIFY_NOTE", "SKILLS_NOTE", "SEARCH_NOTE", "SAFETY_CLAUSE"]);
-		let worker = toks(&["VISION_NOTE", "QUIET_NOTE", "SEARCH_NOTE", "SAFETY_CLAUSE"]);
-		assert_eq!(person, 989, "the chat and daimon bill has moved");
-		assert_eq!(worker, 352, "the worker bill has moved");
+			"VERIFY_NOTE", "SKILLS_NOTE", "SEARCH_NOTE", "SAFETY_CLAUSE", "PLACES_NOTE"]);
+		let worker = toks(&["VISION_NOTE", "QUIET_NOTE", "SEARCH_NOTE", "SAFETY_CLAUSE",
+			"PLACES_NOTE"]);
+		assert_eq!(person, 1117, "the chat and daimon bill has moved");
+		assert_eq!(worker, 480, "the worker bill has moved");
 		// AND THE COMPOSITION AGREES WITH THE ARITHMETIC, so the sums above cannot go on being
 		// true of a set of notes `compose` has stopped appending.
 		for r in Role::all() {
@@ -1877,6 +2073,11 @@ mod tests {
 				let want = match *name {
 					"CRYSTAL_SCHEMA_NOTE" => matches!(r, Role::Reducer),
 					"SHOW_NOTE" | "FOLD_NOTE" | "VERIFY_NOTE" | "SKILLS_NOTE" => r.can_show(),
+					// Composed on the MODEL, and `compose("")` names none, so an addendum is
+					// absent from every role here. Its own per-family bill is asserted by
+					// `test_a_family_addendum_is_carried_by_that_family_alone`.
+					"KIMI_NOTE" | "QWEN_NOTE" | "DEEPSEEK_NOTE" | "MINIMAX_NOTE" | "GLM_NOTE"
+						=> false,
 					_ => r.has_tools() && !matches!(r, Role::Reducer),
 				};
 				assert_eq!(composed.contains(text), want,
@@ -1957,6 +2158,65 @@ mod tests {
 	/// its clause is 28 of the 105 tokens.  A budget raised to fit whatever the note has grown
 	/// into certifies nothing, so this is the last raise it gets without a measurement of what
 	/// the drafting clause BUYS -- `dev/PROMPT_NOTES.md` §9 says what that probe would ask.
+	#[test]
+	/// The fold layout is paid ONCE PER FOLD, not per round, which is what its budget is
+	/// measured against.
+	///
+	/// A fold happens a handful of times in a long turn where the standing notes are paid on
+	/// every request of every round, so this may be several times the size of `SKILLS_NOTE` and
+	/// still cost less over a turn.  The ceiling exists because the input it rides beside is
+	/// bounded (`compact::FOLD_INPUT_CAP`) and a note that grew a paragraph would be taking room
+	/// from the transcript it is meant to summarise.
+	#[test]
+	fn test_the_fold_shape_note_stays_inside_its_budget() {
+		let n = FOLD_SHAPE_NOTE.chars().count() / 4;
+		assert!(n <= 220, "the fold layout is about {} tokens, over its budget: {}", n,
+			FOLD_SHAPE_NOTE);
+		// EVERY HEADING THE PARSER KNOWS IS IN IT, and in the parser's own order. A layout that
+		// named six of the seven would have the compactor writing a heading nothing reads, or
+		// the parser reading a heading nothing is asked for -- and neither fails loudly.
+		let mut at = 0usize;
+		for h in crate::agent::compact::FOLD_HEADINGS {
+			let want = fmt!("## {}", h);
+			match FOLD_SHAPE_NOTE[at..].find(&want) {
+				Some(i) => at += i + want.len(),
+				None    => panic!("the layout does not name `{}`, or names it out of order; \
+					the order decides what a truncated reply loses", want),
+			}
+		}
+	}
+
+	#[test]
+	fn test_the_compactor_is_told_the_shape_and_a_user_edit_cannot_remove_it() {
+		// The compactor's prompt is the USER'S to rewrite (`prompts/compactor.md`), and what
+		// reads the reply is not: a user who reworded the job description has not asked for a
+		// note nothing can parse.  So the layout is appended to whatever the body is -- proved
+		// here over the role text, and proved over the REQUEST that is actually sent in
+		// `agent::tests::test_a_structured_reply_folds_into_a_structured_notice_00`.
+		let mine = "Keep only the file names.";
+		let sent = fmt!("{}\n\n{}", Role::Compactor.compose(mine), FOLD_SHAPE_NOTE);
+		assert!(sent.contains(mine), "the user's own words survive: {}", sent);
+		assert!(sent.contains("## Next step"), "and the layout is still there: {}", sent);
+		// And the ROLE text alone is the user's, which is what `Agent::fold_prompt` promises
+		// and what a settings pane shows them.
+		assert_eq!(mine, Role::Compactor.compose(mine),
+			"the compactor's own prompt must come back as the user wrote it");
+		// The layout is not in CONDITIONAL, so no findings table can turn it off.
+		assert!(!CONDITIONAL.iter().any(|(n, _)| *n == "FOLD_SHAPE_NOTE"),
+			"the layout must not be droppable by a table that arrives from outside this build");
+	}
+
+	#[test]
+	fn test_the_compactor_is_told_to_write_under_the_headings_it_is_given() {
+		// The last paragraph of the job description used to ask for "short headings", which is
+		// a different instruction from "these headings" and is what a free-form note answers.
+		assert!(DEFAULT_COMPACTOR.contains("under the headings you are given"),
+			"{}", DEFAULT_COMPACTOR);
+		assert!(DEFAULT_COMPACTOR.contains("Never say a file was changed"),
+			"the rule the ledger exists to back must not have been reworded away: {}",
+			DEFAULT_COMPACTOR);
+	}
+
 	#[test]
 	fn test_the_skills_note_stays_inside_its_budget() {
 		let n = SKILLS_NOTE.chars().count() / 4;
@@ -2412,10 +2672,16 @@ mod tests {
 		// single `sed -i` whose apostrophe had to survive an argument vector and a JavaScript
 		// string at once. The door now exists; a capability nothing names is a capability nothing
 		// uses, so the sentence is what the door is worth. The headroom is unchanged again.
+		//
+		// 1000 -> 1040 on 2026-09-13, for the 25 bytes that name `outline` beside `file_search`.
+		// Measured at 1,014 with the clause in. Bought with the rounds census of the same day:
+		// after orientation the next sink is a model reading a file it does not know, a page at a
+		// time, looking for a shape a map would have handed it in a kilobyte. The tool exists
+		// only if something names it -- `tool_names` lists it, and a list is not an instruction.
 		let mut b = diamond();
 		b.push(Toolkit::Rust.bound());
 		let s = machine_note(&machine(), &b, NetStep::Give, Mode::default());
-		assert!(s.len() < 1000, "the machine briefing is {} bytes:\n{}", s.len(), s);
+		assert!(s.len() < 1040, "the machine briefing is {} bytes:\n{}", s.len(), s);
 	}
 
 	// ── Which rung the daimon is in ──────────────────────────────────────────
@@ -2764,6 +3030,33 @@ mod tests {
 			"the daimon is not told where a control goes: {}", p);
 		assert!(p.contains("never drop a key you do not recognise"),
 			"the other writer of the crystal may drift its keys too: {}", p);
+	}
+
+	#[test]
+	fn test_the_daimon_is_told_the_cold_part_exists_and_how_to_reach_it() {
+		// The outline in the per-turn text proves the cold part exists; this is what tells the
+		// daimon it is ITS to move between the halves. Without it a model that meets the hot
+		// ceiling does what it did before the split: it deletes, or it writes a file.
+		let p = Role::Daimon.compose("");
+		assert!(p.contains("crystal_read"), "the verb that fetches a cold section: {}", p);
+		assert!(p.contains("recall"), "and the verb that searches everything: {}", p);
+		assert!(p.contains("\"hot\": true"), "and the flag that moves one: {}", p);
+		// AND THE OLD POLICY IS GONE, which is the half a new sentence could not achieve on its
+		// own: a daimon told BOTH to use cold sections and to write detail to a file has been
+		// given two answers to one question and will keep choosing the one it had first.
+		assert!(!p.contains("write it to a file in this Diamond"),
+			"the crystal's cold half replaces the detail-in-a-file policy: {}", p);
+	}
+
+	#[test]
+	fn test_the_reducer_is_told_to_keep_hot_flags() {
+		// The reducer rewrites every section at once, so it is the one thing that can strip
+		// every flag in a single accepted proposal -- and `hot` is a key it was never told
+		// about, which is exactly the shape of key the note spends a paragraph protecting.
+		let p = Role::Reducer.compose("");
+		assert!(p.contains("\"hot\""), "the schema names the flag: {}", p);
+		assert!(p.contains("kept exactly as you found it"),
+			"and says it is carried through rather than judged: {}", p);
 	}
 
 	// ── The context fold ─────────────────────────────────────────────────────

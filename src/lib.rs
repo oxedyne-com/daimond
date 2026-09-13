@@ -39,6 +39,12 @@ pub mod fsname;
 pub mod llm;
 /// The system prompt each kind of agent runs under, and the part of it a user
 /// may replace from their workspace.
+/// What a model's own dialect needs, read off the provider's slug: the prompt addendum it
+/// carries, the tools and schema shapes it is offered, and how generously its arguments are read.
+///
+/// Target-agnostic, so the wire fixtures the rules were written against are held by native unit
+/// tests rather than only by a page.
+pub mod profile;
 pub mod prompts;
 pub mod protocol;
 pub mod session;

@@ -597,6 +597,20 @@ impl Agent {
             if let Some(f) = crate::llm::extract_json_f64(text, "worker_spend_usd") {
                 if f > 0.0 { l.worker_spend_usd = f; }
             }
+            // How long an in-turn gather waits.  A trial arm that wants to see a turn carry on
+            // past a slow worker sets this low; nought is "absent", as everywhere above.
+            if let Some(n) = crate::llm::extract_json_number(text, "gather_timeout_s") {
+                if n > 0 { l.gather_timeout_s = n; }
+            }
+            // Which shape the compactor is asked for. A spelling this build does not know is
+            // IGNORED rather than defaulted, so an arm with a typo in it stays on whatever the
+            // engine had and `turn_limits` reports it -- a silent fall back to the default is
+            // how a measurement ends up being about the wrong engine.
+            if let Some(w) = crate::llm::extract_json_string(text, "fold_shape") {
+                if let Some(sh) = compact::FoldShape::from_wire(&w) {
+                    l.fold_shape = sh;
+                }
+            }
         }
         self.hold_worker();
         Ok(())
@@ -792,7 +806,10 @@ impl Agent {
         // dispatched worker and `examples/devcycle_probe.rs` alike -- and a Diamond's daimon
         // SHARES its `read_seen` with the chat that made it, so an allowance reset anywhere else
         // would leak from one turn into the next. See `crate::tools::TurnState::spent`.
-        registry.ctx.begin_turn();
+        registry.begin_turn();
+        // AND THE TUNED GATHER CEILING GOES WITH IT.  `gather` is a tool and cannot see `Limits`;
+        // this is the one place a turn begins, so it is where the figure is handed over.
+        registry.ctx.set_gather_timeout_s(self.limits.borrow().gather_timeout_s);
         // Append the user message to the persisted history.
         session.messages.push(ChatMessage::user(user_msg));
 
@@ -1035,6 +1052,52 @@ impl Agent {
         }
     }
 
+    /// A `recall` result with what this conversation folded away in front of it.
+    ///
+    /// Everything but `recall` comes back untouched, and cheaply: the name is compared before
+    /// anything is read.  The fold half is prepended rather than appended because what a fold
+    /// replaced is older than the crystal's standing record and reads as the answer to "did we
+    /// discuss this"; the crystal is the answer to "was it written down".
+    ///
+    /// The pattern is compiled by the SAME function the tool half uses, so the two halves of one
+    /// answer cannot disagree about what the query meant.  A query the matcher cannot compile has
+    /// already been refused by the tool half, which is why a failure here is silent: the result
+    /// being prepended to is the refusal.
+    ///
+    /// # Arguments
+    /// * `session` - The conversation, whose fold notices are what is searched.
+    /// * `tc` - The call, for its name and its arguments.
+    /// * `result` - What the tool half answered.
+    fn with_folds(
+        &self,
+        session: &Session,
+        tc:      &crate::protocol::ToolCall,
+        result:  MessageContent,
+    )
+        -> MessageContent
+    {
+        if tc.name != crate::tools::Tool::Recall.name() {
+            return result;
+        }
+        let q = match crate::tools::recall_query(&tc.arguments) {
+            Ok(q)  => q,
+            Err(_) => return result,
+        };
+        let lines = compact::recall_folds(
+            &session.messages, &mut |l: &str| q.matches(l), q.before, q.after, q.limit);
+        let head = if lines.is_empty() {
+            fmt!("[recall] Nothing this conversation has folded away matches.\n\n")
+        } else {
+            fmt!("{}\n\n[recall] {} line(s) from {} fold(s) of this conversation.\n\n",
+                lines.join("\n"), lines.len(),
+                session.messages.iter().filter(|m| matches!(m,
+                    ChatMessage::User { content }
+                        if content.as_text().starts_with("[Daimond folded the earlier part")))
+                    .count())
+        };
+        MessageContent::text(fmt!("{}{}", head, result.as_text()))
+    }
+
     /// The event that tells the page a call has started.
     ///
     /// The ID travels with it. A stored conversation's `say` fold is opened and closed on the
@@ -1149,6 +1212,18 @@ impl Agent {
         // slip back into working out what happened by reading what the model said about it.
         let mut claims = Claims::default();
         let mut rounds = 0usize;
+        // EVERY FAILED CALL THIS TURN HAS ALREADY MADE, by the hash of its name and arguments.
+        //
+        // A model that sends the same malformed call again after being told exactly what is
+        // wrong with it will send it a third time and a twentieth: Kimi did so twenty times in
+        // one turn on the bank, against a refusal that named the keys it had sent, and nothing
+        // in the loop could tell the difference between that and progress. So the answer says
+        // the count, and then the turn ends -- because a turn that cannot be told it is stuck
+        // spends its whole round budget being stuck.
+        let mut repeats: Vec<(u64, u8)> = Vec::new();
+        // Set when a call has been refused the same way once too often; the turn ends on it at
+        // the end of the round, so every call of the round still gets its result.
+        let mut stuck: Option<String> = None;
         // WHERE EACH ROUND STARTED IN `working`, so "three rounds old" is a position rather than a
         // guess.  Cleared whenever a fold rebuilds the list, because a fold moves every index in
         // it and a stale mark would retire the wrong messages -- the newest ones.
@@ -1452,8 +1527,34 @@ impl Agent {
                     // guess it back out of the text, and one of them did not know that a refusal
                     // opens "Refused" rather than "Error" -- so a write the fence had just
                     // stopped was drawn as a completed step.
-                    let text    = result.as_text().into_owned();
+                    // `recall` HAS TWO HALVES AND ONLY ONE OF THEM IS A TOOL'S.  The crystal
+                    // half is answered by the registry like any other call; what this
+                    // conversation FOLDED AWAY lives in its own messages, which no tool is ever
+                    // handed. So the fold half is answered here, where the session is, and
+                    // prepended to the result before anything downstream sees it -- the
+                    // announce, the claims, the event and the stored reply are all built from
+                    // this one value, so the pairing flow is untouched.
+                    let result = self.with_folds(session, tc, result);
+                    // Mutable because the repeat counter below may add a line to it; see
+                    // `stuck_said`.
+                    let mut text = result.as_text().into_owned();
                     let outcome = crate::tools::call_outcome(&text);
+                    // THE SAME CALL, REFUSED THE SAME WAY, COUNTED.  Only a call that FAILED is
+                    // counted: reading one file twice is ordinary, and a turn that verifies its
+                    // own work makes the same successful call on purpose.
+                    if !matches!(outcome, crate::tools::CallOutcome::Done) {
+                        let key = call_fingerprint(&tc.name, &tc.arguments);
+                        let n = match repeats.iter_mut().find(|(k, _)| *k == key) {
+                            Some(slot) => { slot.1 = slot.1.saturating_add(1); slot.1 },
+                            None       => { repeats.push((key, 1)); 1 },
+                        };
+                        if n >= STUCK_WARNS {
+                            text.push_str(&fmt!("\n{}", stuck_said(n)));
+                        }
+                        if n >= STUCK_ENDS_TURN {
+                            stuck = Some(stuck_said(n));
+                        }
+                    }
                     // AND THE AUDIT IS KEPT FROM THE SAME VERDICT, not from a second reading of
                     // it. The paths come from the ARGUMENTS the model sent, which name the file
                     // it meant whatever the reply says about it.
@@ -1464,7 +1565,7 @@ impl Agent {
                     asked |= ends_turn(&tc.name, outcome);
                     on_event(AgentEvent::ToolResult {
                         name:   tc.name.clone(),
-                        result: text,
+                        result: text.clone(),
                         outcome,
                     });
                     // A PICTURE FOR A MODEL THAT WILL NOT TAKE ONE NEVER ENTERS THE SESSION.
@@ -1475,6 +1576,14 @@ impl Agent {
                     // bricked a real Diamond on 2026-08-13. Left out here it costs one elision
                     // that names the file, and the act is announced once instead of being
                     // invisible.
+                    // The stuck note goes to the MODEL as well as to the screen, which is the
+                    // whole point of it: `text` is the result plus that line, and a plain result
+                    // is byte for byte what it always was.
+                    let result = if text.len() != result.text_len() && !result.has_image() {
+                        MessageContent::text(text)
+                    } else {
+                        result
+                    };
                     let result = if result.has_image() && !self.llm.can_take_images() {
                         on_event(AgentEvent::Unseeable {
                             images: result.images().count(),
@@ -1529,10 +1638,25 @@ impl Agent {
                 session.messages.push(msg);
             }
 
+            // A TURN THAT CANNOT BE TOLD IT IS STUCK IS ENDED.  At the seam rather than inside
+            // the round, so every call the model made this round still gets its own result and
+            // the conversation is well formed. The sentence is the assistant's last word, the way
+            // a spend ceiling's is.
+            if let Some(said) = stuck.take() {
+                let msg = ChatMessage::assistant(said.clone());
+                working.push(msg.clone());
+                session.messages.push(msg);
+                on_event(AgentEvent::Text(said));
+                let ending = self.audit(TurnEnd::Failed, rounds, &claims, Some(registry)).await;
+                self.ended(ending, on_event);
+                on_event(AgentEvent::Done);
+                return Ok(());
+            }
+
             // AND THE SEAM IS WHERE THE MONEY IS CHECKED.  The round's cost has just been added
             // and the next request has not gone out, so this is the last moment a ceiling can stop
             // the turn without paying for another round first.
-            if let Some((spent, cap)) = self.over_the_spend_cap(session, opening_cost) {
+            if let Some((spent, cap)) = self.over_the_spend_cap(session, opening_cost, registry) {
                 self.stop_on_spend(session, spent, cap, rounds, &claims, registry, on_event).await;
                 return Ok(());
             }
@@ -1556,7 +1680,9 @@ impl Agent {
                     // `over_the_spend_cap` does not enforce a ceiling there: several endpoints put
                     // no cost in the response and a local model has none, so a figure would be a
                     // claim about a price nobody quoted.
-                    let spent = session.cost_usd - opening_cost;
+                    // The workers' share too, so the figure the model reads is the one the
+                    // ceiling is about to be judged on -- see `over_the_spend_cap`.
+                    let spent = (session.cost_usd - opening_cost) + registry.ctx.worker_usd();
                     let usd = if l.spend_cap_usd > 0.0 && spent > 0.0 {
                         Some(l.spend_cap_usd - spent)
                     } else {
@@ -1579,8 +1705,20 @@ impl Agent {
     ///
     /// # Arguments
     /// * `opening_cost` - The session's bill before this turn opened, so the figure is the TURN's.
-    fn over_the_spend_cap(&self, session: &Session, opening_cost: f64) -> Option<(f64, f64)> {
-        let spent = session.cost_usd - opening_cost;
+    fn over_the_spend_cap(
+        &self,
+        session:      &Session,
+        opening_cost: f64,
+        registry:     &ToolRegistry,
+    )
+        -> Option<(f64, f64)>
+    {
+        // WORKER SPEND COUNTS AGAINST THE TURN'S CEILING AND IS NOT ADDED TO THE SESSION'S BILL.
+        // The ceiling is "what one turn may cost" -- a turn that can start eight workers of a
+        // dollar each outside it has a thirteen-dollar ceiling in effect -- while `cost_usd` is
+        // the provider's bill for THIS session, and a worker's own spend is booked separately by
+        // the page when the worker finishes.  Adding it there would bill it twice.
+        let spent = (session.cost_usd - opening_cost) + registry.ctx.worker_usd();
         if spent <= 0.0 {
             return None;
         }
@@ -1628,6 +1766,15 @@ impl Agent {
     /// round limit at all -- so a fold that waited for it would not happen here either.  And not
     /// `Refused`, because nothing was refused: see [`Fold::teaches_window`].
     ///
+    /// **AND UNTIL 2026-09-13 IT FOLDED NOTHING IN THE ORDINARY CASE.**  `compact::tail_start`
+    /// answers 0 whenever the WHOLE conversation fits the tail budget -- some 48,000 tokens at
+    /// the 120K cap -- and a turn capped at ten rounds has not filled that.  So `cut` was 0, no
+    /// summary was ever written, and the leg that continued started from the raw log with no
+    /// plan in front of it: the paragraph above describes a fold that was not happening.  It is
+    /// also why a fold fired ONCE in four hundred and twenty-two bank trials.
+    /// `compact::capped_cut` is the answer at this one door, and it declines when there is
+    /// genuinely nothing worth folding.
+    ///
     /// # Arguments
     /// * `rounds` - The whole turn's count, legs included, not this leg's.
     /// * `continuations` - How many legs the turn has already taken; raised when it takes another.
@@ -1663,7 +1810,7 @@ impl Agent {
         // turn that was a cent under the ceiling at the seam can be over it by the time the next
         // leg would start.  Checked before the continuation is granted, because granting one is
         // what commits the user to another `max_rounds` of spending.
-        if let Some((spent, cap)) = self.over_the_spend_cap(session, opening_cost) {
+        if let Some((spent, cap)) = self.over_the_spend_cap(session, opening_cost, registry) {
             self.stop_on_spend(session, spent, cap, rounds, claims, registry, on_event).await;
             return Some(Ok(()));
         }
@@ -1797,10 +1944,10 @@ impl Agent {
             let refused = self.gauge.tokens(compact::conversation_bytes(working, &open) + schema);
             self.limits.borrow_mut().learn_from_refusal(refused);
         }
-        let (budget, tail, model) = {
+        let (budget, tail, model, shape) = {
             let l = self.limits.borrow();
             let cap = self.reply_cap();
-            (l.budget(cap), l.tail_budget(cap), l.fold_model.clone())
+            (l.budget(cap), l.tail_budget(cap), l.fold_model.clone(), l.fold_shape)
         };
         let before = compact::conversation_bytes(&session.messages, &open);
         // Size read two ways -- the up-front byte estimate and the provider's real prompt_tokens
@@ -1815,11 +1962,24 @@ impl Agent {
 
         let mut folded  = 0usize;
         let mut trouble = String::new();
+        // Whether the note came back in the layout, which the feed carries and the bank counts.
+        let mut structured = false;
         // The hard ceiling is the budget itself: however few messages that leaves, a tail
         // bigger than what may be sent is a fold that changed nothing.
         let ceiling = self.gauge.bytes(budget).saturating_sub(schema);
-        let cut = compact::tail_start(&session.messages, self.gauge.bytes(tail).min(ceiling),
+        let mut cut = compact::tail_start(&session.messages, self.gauge.bytes(tail).min(ceiling),
             compact::MIN_KEEP_MESSAGES, ceiling, &open);
+        // A FOLD AT THE ROUND LIMIT THAT FOLDS NOTHING IS THE COMMON CASE, not the rare one.
+        // `tail_start` answers 0 whenever the whole conversation fits the tail budget, and a
+        // turn stopped at ten rounds has not filled 48,000 tokens -- so the leg that continues
+        // started from the raw log with no plan in front of it, and no summary was ever made.
+        // That is why a fold fired once in four hundred and twenty-two bank trials.  At this one
+        // door the question is different: the log is about to be re-sent on every round of the
+        // next leg, so it is worth replacing with a note.  See `compact::capped_cut`, which
+        // answers 0 when there is genuinely nothing worth folding.
+        if cut == 0 && why.at_the_cap() {
+            cut = compact::capped_cut(&session.messages, ceiling, &open);
+        }
         if cut > 0 {
             // Built before the summarising call, so a call that fails still leaves a
             // truthful record: which files were read, which were written, what ran, and
@@ -1828,12 +1988,24 @@ impl Agent {
             let ledger   = compact::ledger_of(&session.messages[..cut]);
             let rendered = compact::render_for_fold(&session.messages[..cut],
                 compact::FOLD_INPUT_CAP);
-            let (prose, why) = match self.summarise(&rendered, &model, session).await {
-                Ok(s)  => (s, None),
-                Err(e) => (String::new(), Some(fmt!("{}", e))),
+            let raw = match self.summarise(&rendered, &model, session, why, shape).await {
+                Ok(s)  => Ok(s),
+                Err(e) => Err(fmt!("{}", e)),
             };
-            if let Some(ref w) = why { trouble = w.clone(); }
-            let note = compact::notice(cut, &prose, &ledger, why.as_deref());
+            // THE STRUCTURE IS WON OR LOST HERE AND THE FOLD IS NEITHER.  A reply that is not
+            // the layout costs the structure and nothing else: the prose still becomes the
+            // note, the ledger is still beneath it, and the turn never loses its fold to a
+            // model that answered in paragraphs.
+            let summary = match &raw {
+                Ok(text) => match compact::parse_fold_notes(text) {
+                    Some(n) => compact::Summary::Notes(compact::reconcile(n, &ledger)),
+                    None    => compact::Summary::Prose(text),
+                },
+                Err(e) => compact::Summary::None(e),
+            };
+            structured = matches!(summary, compact::Summary::Notes(_));
+            if let Err(ref e) = raw { trouble = e.clone(); }
+            let note = compact::notice(cut, &summary, &ledger, why.at_the_cap());
             match compact::fold(&session.messages, cut, note) {
                 Ok(new) => {
                     // A fold that made the conversation bigger is not a fold; it happens
@@ -1948,6 +2120,7 @@ impl Agent {
             folded,
             kept: session.messages.len(),
             note: said,
+            structured,
         });
         true
     }
@@ -1964,11 +2137,15 @@ impl Agent {
     /// * `rendered` - The folded part as a bounded transcript.
     /// * `model` - The model to fold with, or empty for the chat's own.
     /// * `session` - Charged with what the call cost, so the fold is not spent invisibly.
+    /// * `why` - What brought the fold about, which decides how the user message opens.
+    /// * `shape` - Which layout the compactor is asked for, and therefore its output budget.
     async fn summarise(
         &self,
         rendered: &str,
         model:    &str,
         session:  &mut Session,
+        why:      Fold,
+        shape:    compact::FoldShape,
     )
         -> Outcome<String>
     {
@@ -1976,11 +2153,36 @@ impl Agent {
         if !model.trim().is_empty() {
             llm.model = model.trim().to_string();
         }
-        llm.max_tokens = compact::FOLD_MAX_TOKENS;
+        llm.max_tokens = shape.max_tokens();
+        // THE SHAPE IS APPENDED OVER A USER-EDITED PROMPT, on the reducer's own reasoning
+        // (`prompts::Role::compose_for`): the compactor's prompt is the user's to rewrite, and
+        // what `compact::parse_fold_notes` then reads is not. A user who rewrote the job
+        // description has not asked for a note nothing can parse.
+        //
+        // HERE rather than in `compose_for`, and the reason is in `FOLD_SHAPE_NOTE`'s own
+        // doc: `fold_prompt` hands back the user's text verbatim by contract, and a prose
+        // fold has to be able to run with nothing appended or the arm measuring whether the
+        // structure pays for itself is comparing two prompts that both ask for headings.
+        let mut system = self.fold_prompt();
+        if matches!(shape, compact::FoldShape::Structured) {
+            system.push_str("\n\n");
+            system.push_str(crate::prompts::FOLD_SHAPE_NOTE);
+        }
+        // WHY THE FOLD IS HAPPENING CHANGES WHAT THE NOTE IS FOR, and only the capped one is a
+        // different job: the turn CONTINUES from this note in the next round, so `## Next step`
+        // is the plan it starts on rather than a remark about the future. The others are a
+        // record for whatever comes next, which may be the user.
+        let opening = if why.at_the_cap() {
+            "The turn has hit its round limit and CONTINUES from your note in the next round. \
+             Write `## Next step` as the plan it starts on."
+        } else if matches!(why, Fold::ByHand) {
+            "The user asked for this fold."
+        } else {
+            "Here is the earlier part of the conversation."
+        };
         let msgs = vec![
-            ChatMessage::system(self.fold_prompt()),
-            ChatMessage::user(fmt!(
-                "Here is the earlier part of the conversation.\n\n{}", rendered)),
+            ChatMessage::system(system),
+            ChatMessage::user(fmt!("{}\n\n{}", opening, rendered)),
         ];
         let resp = res!(llm.chat_once(&msgs, None).await);
         session.prompt_tokens     += resp.prompt_tokens;
@@ -2101,6 +2303,42 @@ pub fn json_object_is_whole(s: &str) -> bool {
         i += 1;
     }
     false
+}
+
+/// How many identical failed calls a turn takes before the result says so.
+const STUCK_WARNS: u8 = 3;
+
+/// How many before the turn ends on it.
+///
+/// Five and not three, so a model that can recover is given two more rounds after being told.
+const STUCK_ENDS_TURN: u8 = 5;
+
+/// What a result says once the same call has failed the same way [`STUCK_WARNS`] times.
+///
+/// **Named because nothing else in the loop could see it.**  A refusal is information and a model
+/// is entitled to read it and try again; what no refusal can convey is that this is the third
+/// attempt, because each one arrives looking exactly like the first.  Kimi sent one malformed
+/// `file_edit` twenty times in a single turn on the bank against a refusal that named the very
+/// keys it had sent.  So the count is said out loud, and the last sentence says what happens next
+/// -- a model cannot plan around a wall it cannot see.
+fn stuck_said(n: u8) -> String {
+    fmt!("This exact call has now failed {} times with the same answer. Change the call or \
+        report what you cannot do; sending it again will end the turn.", n)
+}
+
+/// A call's identity, for counting repeats: its name and its arguments, verbatim.
+///
+/// FNV-1a over the two, rather than keeping the strings: a turn may make a hundred and fifty
+/// rounds of calls whose arguments are whole files, and a table of them would be the largest
+/// thing in the turn.  A collision costs a warning sentence on a call that did not earn one,
+/// which is the cheapest possible way to be wrong here.
+fn call_fingerprint(name: &str, args: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in name.as_bytes().iter().chain(b"\0").chain(args.as_bytes()) {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x1000_0000_01b3);
+    }
+    h
 }
 
 /// What the model is told when its own tool call was cut at the output limit.
@@ -3106,7 +3344,7 @@ mod tests {
         assert_eq!(folds.len(), 1, "the conversation was {} events and none was a fold",
             events.len());
         match folds[0] {
-            AgentEvent::Compacted { folded, kept, note } => {
+            AgentEvent::Compacted { folded, kept, note, .. } => {
                 assert!(*folded > 0, "a fold that folded nothing");
                 assert_eq!(*kept, session.messages.len(),
                     "the count does not match what the session now holds");
@@ -3154,6 +3392,81 @@ mod tests {
         }
     }
 
+    /// One malformed `file_edit`, the same one every time -- Kimi's own shape from the bank.
+    fn same_bad_edit() -> crate::llm::tests::Reply {
+        crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"e0\",\
+                    \"type\":\"function\",\"function\":{\"name\":\"file_edit\",\"arguments\":\
+                    \"{\\\"path\\\":\\\"notes/ok.txt\\\"}\"}}]}}]}\n\n".to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                    .to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        }
+    }
+
+    /// A model that will not stop sending the same refused call is told, and then stopped.
+    ///
+    /// **Kimi sent one malformed `file_edit` twenty times in a single turn on the tune bank**,
+    /// against a refusal that named the very keys it had sent; nothing in the loop could tell
+    /// that from progress, so the turn spent its whole round budget being stuck. The counter is
+    /// what a refusal cannot be: a refusal looks the same on the first attempt and the twentieth.
+    #[tokio::test]
+    async fn test_a_turn_that_cannot_be_told_it_is_stuck_is_stopped_00() {
+        let (port, _seen) = crate::llm::tests::start_stub(
+            (0..8).map(|_| same_bad_edit()).collect()).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(20);
+
+        let mut registry = no_tools();
+        registry.tools = vec![crate::tools::Tool::FileEdit];
+        let mut session = Session::new(fmt!("s1"), fmt!("stuck"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("edit it"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let got = tool_results(&events);
+        assert_eq!(STUCK_ENDS_TURN as usize, got.len(),
+            "the turn ran {} rounds rather than stopping at {}", got.len(), STUCK_ENDS_TURN);
+        // Said on the third, which is two rounds before the turn ends, so a model that can
+        // recover has somewhere to go.
+        let warned = (STUCK_WARNS - 1) as usize;
+        assert!(!got[warned - 1].2.contains("failed"),
+            "the count was said before it had happened: {}", got[warned - 1].2);
+        assert!(got[warned].2.contains("has now failed 3 times"),
+            "the third identical failure said nothing: {}", got[warned].2);
+        assert!(got[warned].2.contains("will end the turn"),
+            "the model is not told what happens next: {}", got[warned].2);
+        // And the turn's last word is that sentence, not a silent stop.
+        let said = events.iter().rev().find_map(|e| match e {
+            AgentEvent::Text(t) if t.contains("has now failed") => Some(t.clone()),
+            _ => None,
+        });
+        assert!(said.is_some(), "the turn ended without saying why: {:?}",
+            events.iter().map(|e| fmt!("{:?}", e)).collect::<Vec<_>>());
+    }
+
+    /// A call that SUCCEEDS is not counted, however often it is repeated.
+    ///
+    /// A turn that verifies its own work reads the same file twice on purpose, and a rule that
+    /// counted that would end the turns that are going best.
+    #[test]
+    fn test_the_repeat_counter_is_about_failures_and_not_about_repetition_00() {
+        let a = call_fingerprint("file_edit", "{\"path\":\"a\"}");
+        let b = call_fingerprint("file_edit", "{\"path\":\"a\"}");
+        let c = call_fingerprint("file_edit", "{\"path\":\"b\"}");
+        let d = call_fingerprint("file_read", "{\"path\":\"a\"}");
+        assert_eq!(a, b, "the same call fingerprints differently");
+        assert_ne!(a, c, "two different arguments share a fingerprint");
+        assert_ne!(a, d, "two different tools share a fingerprint");
+        assert!(stuck_said(3).contains("3 times"), "the sentence does not carry the count");
+        assert!(stuck_said(5).contains("5 times"));
+    }
+
     /// Every `ToolResult` in a run, as `(name, outcome, text)`.
     fn tool_results(events: &[AgentEvent]) -> Vec<(String, CallOutcome, String)> {
         events.iter().filter_map(|e| match e {
@@ -3161,6 +3474,237 @@ mod tests {
                 Some((name.clone(), *outcome, result.clone())),
             _ => None,
         }).collect()
+    }
+
+    // ── A worker's report read inside the turn that started it ───────────────
+
+    /// A registry holding the two worker tools and `file_list`, over a scratch workspace, with
+    /// its workers coming from a script rather than from a page.
+    fn worker_tools(reports: Vec<crate::tools::ScriptedReport>) -> crate::tools::ToolRegistry {
+        let mut r = batch_tools();
+        r.tools = vec![crate::tools::Tool::SpawnAgent, crate::tools::Tool::Gather,
+                       crate::tools::Tool::FileList];
+        r.ctx.set_worker_source(crate::tools::WorkerSource::Scripted(reports));
+        r
+    }
+
+    /// One scripted worker, terminal unless told otherwise.
+    fn scripted_worker(name: &str, report: &str, usd: f64, terminal: bool)
+        -> crate::tools::ScriptedReport
+    {
+        crate::tools::ScriptedReport {
+            name:   fmt!("{}", name),
+            status: fmt!("done"),
+            report: fmt!("{}", report),
+            usd,
+            rounds: 6,
+            terminal,
+        }
+    }
+
+    /// The same round with a price on it, so a turn's ceiling has something to be judged against.
+    fn priced(reply: crate::llm::tests::Reply, usd: f64) -> crate::llm::tests::Reply {
+        match reply {
+            crate::llm::tests::Reply::Sse { mut chunks, reset_after } => {
+                let last = chunks.len().saturating_sub(1);
+                chunks.insert(last, fmt!(
+                    "data: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":11,\
+                     \"completion_tokens\":2,\"cost\":{}}}}}\n\n", usd));
+                crate::llm::tests::Reply::Sse { chunks, reset_after }
+            }
+            other => other,
+        }
+    }
+
+    /// THE WHOLE ITEM, IN ONE TURN.  A worker is started, its report is read back, and the model
+    /// answers -- with no second turn spent on the reading.
+    ///
+    /// That second turn is what this removes: the page used to spend a fresh turn handing the
+    /// reports over, which re-sends the whole standing context for the sake of a few kilobytes of
+    /// report.  So what is asserted is the SHAPE: the report arrives as a tool result, inside the
+    /// turn, and the turn ends once.
+    #[tokio::test]
+    async fn test_a_gathered_report_lands_as_a_tool_result_in_the_same_turn_00() {
+        let registry = worker_tools(vec![scripted_worker("audit", "AUDITREPORT", 0.3, true)]);
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("spawn_agent", r#"{"name":"audit","task":"read the file"}"#)]),
+            tool_round(&[("gather", r#"{"names":["audit"]}"#)]),
+            plain_answer(),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(4);
+        let mut session = Session::new(fmt!("s1"), fmt!("gather"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("send a worker"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let got = tool_results(&events);
+        let gathered = match got.iter().find(|(n, _, _)| n == "gather") {
+            Some(g) => g,
+            None    => panic!("no gather result in {:?}",
+                got.iter().map(|(n, _, _)| n.clone()).collect::<Vec<String>>()),
+        };
+        assert_eq!(CallOutcome::Done, gathered.1, "a gather that read a report is work");
+        assert!(gathered.2.contains("AUDITREPORT"),
+            "the worker's report did not reach the turn: {}", gathered.2);
+        assert!(gathered.2.contains("### audit"), "the report has no heading: {}", gathered.2);
+
+        // AND IT ARRIVED BEFORE THE TURN ENDED, which is the whole claim.
+        let at_result = events.iter().position(|e|
+            matches!(e, AgentEvent::ToolResult { name, .. } if name == "gather"));
+        let at_done = events.iter().position(|e| matches!(e, AgentEvent::Done));
+        assert!(at_result.is_some() && (at_done.is_none() || at_result < at_done),
+            "the report arrived after the turn was done");
+
+        // ONE TURN, NOT TWO.  A second `Ended` would be the hand-back turn this replaces.
+        let ended = events.iter().filter(|e| matches!(e, AgentEvent::Ended { .. })).count();
+        assert_eq!(1, ended, "the turn ended {} times", ended);
+
+        // And the report is in the conversation the next round was built from, as a tool reply.
+        let in_session = session.messages.iter().any(|m| match m {
+            ChatMessage::Tool { content, .. } =>
+                content.as_text().contains("AUDITREPORT"),
+            _ => false,
+        });
+        assert!(in_session, "the gathered report is not in the session as a tool reply");
+
+        // The spawn said the worker was started, and the scripted source is what made that so.
+        assert!(got.iter().any(|(n, _, _)| n == "spawn_agent"), "no spawn in {:?}", got);
+    }
+
+    /// A WORKER'S SPEND COUNTS AGAINST THE TURN THAT READ ITS REPORT.
+    ///
+    /// The ceiling is what one turn may cost.  A turn that can start eight workers of a dollar
+    /// each outside it has a thirteen-dollar ceiling in effect, which is not the ceiling the user
+    /// set.  Counted on the gather, because that is the moment the turn takes the benefit; a
+    /// worker nobody gathers stays bounded by its own preset and the dispatch gate.
+    #[tokio::test]
+    async fn test_worker_spend_counts_toward_the_turn_ceiling_00() {
+        // Two rounds at ten cents plus a worker at forty-five: over a fifty-cent ceiling.
+        let dear = worker_tools(vec![scripted_worker("audit", "AUDITREPORT", 0.45, true)]);
+        let script = vec![
+            priced(tool_round(&[("spawn_agent", r#"{"name":"audit","task":"look"}"#)]), 0.1),
+            priced(tool_round(&[("gather", r#"{"names":["audit"]}"#)]), 0.1),
+            plain_answer(),
+        ];
+        let (port, _seen) = crate::llm::tests::start_stub(script.clone()).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(6);
+        a.set_spend_cap_usd(0.5);
+        let mut session = Session::new(fmt!("s1"), fmt!("spend"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("send a worker"), &dear,
+            &mut |ev| events.push(ev)).await;
+        assert_eq!(Some(TurnEnd::SpendCapped), a.ending().map(|e| e.how),
+            "the worker's spend was not counted against the turn's ceiling");
+
+        // The same turn with a free worker runs on and answers, so what stopped it was the money
+        // and not the rounds.
+        let free = worker_tools(vec![scripted_worker("audit", "AUDITREPORT", 0.0, true)]);
+        let (port2, _seen2) = crate::llm::tests::start_stub(script).await;
+        let mut llm2 = crate::llm::tests::stub_client(port2);
+        llm2.retry.max_attempts = 1;
+        let b = Agent::new(llm2, "You are Daimond.");
+        b.set_max_rounds(6);
+        b.set_spend_cap_usd(0.5);
+        let mut session2 = Session::new(fmt!("s2"), fmt!("spend"), fmt!("model"));
+        let mut events2: Vec<AgentEvent> = Vec::new();
+        let _ = b.run_turn(&mut session2, fmt!("send a worker"), &free,
+            &mut |ev| events2.push(ev)).await;
+        assert_eq!(Some(TurnEnd::Answered), b.ending().map(|e| e.how),
+            "a free worker's gather stopped the turn on money it had not spent");
+    }
+
+    /// A GATHER RESULT IS RETIRED LIKE ANY OTHER RESULT, and the stub says whose reports went.
+    ///
+    /// Intended rather than regrettable: a long report read sixteen rounds ago is working memory
+    /// the turn has finished with, and the model is told it can gather the same names again --
+    /// which re-reads the report off the run at no cost.  `result_age` is tuned down here so the
+    /// sweep bites in five rounds rather than eighteen; the mechanism is the shipped one, and
+    /// `sweep_every` is turned up to one so the sweep runs on the round the horizon is reached.
+    #[tokio::test]
+    async fn test_a_gather_result_is_retired_like_any_result_00() {
+        let registry = worker_tools(vec![
+            scripted_worker("audit", &"x".repeat(3_000), 0.0, true)]);
+        let mut script = vec![
+            tool_round(&[("spawn_agent", r#"{"name":"audit","task":"look"}"#)]),
+            tool_round(&[("gather", r#"{"names":["audit"]}"#)]),
+        ];
+        for _ in 0..6 {
+            script.push(tool_round(&[("file_list", r#"{"path":"."}"#)]));
+        }
+        script.push(plain_answer());
+        let (port, seen) = crate::llm::tests::start_stub(script).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(12);
+        if let Err(e) = a.set_tune(r#"{"sweep_every":1,"result_age":3}"#) {
+            panic!("the tune must be taken: {}", e);
+        }
+        let mut session = Session::new(fmt!("s1"), fmt!("retire"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("send a worker"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let bodies = match seen.lock() {
+            Ok(g)  => g.bodies.clone(),
+            Err(e) => panic!("the stub's record: {}", e),
+        };
+        let last = match bodies.last() {
+            Some(b) => b.clone(),
+            None    => panic!("the stub saw no request at all"),
+        };
+        assert!(last.contains("[gather audit"),
+            "the retired gather does not name the worker whose report went: {}",
+            &last[..last.len().min(3_000)]);
+        // AND THE REPORT ITSELF IS GONE FROM THE SENT COPY, which is the point of retiring it.
+        assert!(!last.contains(&"x".repeat(500)),
+            "the report was still being re-sent after it was retired");
+        // The STORED transcript keeps it, by the rule at the top of `compact`: the lossy form is
+        // the request's.
+        assert!(session.messages.iter().any(|m| match m {
+            ChatMessage::Tool { content, .. } => content.as_text().contains(&"x".repeat(500)),
+            _ => false,
+        }), "retirement reached the stored transcript");
+    }
+
+    /// A gather that runs out of time NAMES WHAT IS STILL RUNNING, and the turn carries on.
+    ///
+    /// A fact rather than a failure: the workers are still out there, and a turn told so can do
+    /// its own part of the work and gather again, or finish and let them report as a later turn.
+    /// An outcome of `Failed` here would be read by the model as the tool being broken.
+    #[tokio::test]
+    async fn test_a_timed_out_gather_names_the_pending_worker_and_the_turn_goes_on_00() {
+        let registry = worker_tools(vec![scripted_worker("census", "never", 0.0, false)]);
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("spawn_agent", r#"{"name":"census","task":"count"}"#)]),
+            tool_round(&[("gather", r#"{"names":["census"],"timeout_s":10}"#)]),
+            plain_answer(),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(4);
+        let mut session = Session::new(fmt!("s1"), fmt!("timeout"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("send a worker"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let got = tool_results(&events);
+        let g = match got.iter().find(|(n, _, _)| n == "gather") {
+            Some(g) => g,
+            None    => panic!("no gather result"),
+        };
+        assert!(g.2.contains("census"), "the pending worker was not named: {}", g.2);
+        assert!(g.2.contains("still running"), "the result does not say it is running: {}", g.2);
+        assert_eq!(CallOutcome::Done, g.1, "a timed-out gather is a fact, not a failure");
+        assert_eq!(Some(TurnEnd::Answered), a.ending().map(|e| e.how),
+            "the turn did not carry on after a gather that found nothing");
     }
 
     #[tokio::test]
@@ -4622,6 +5166,157 @@ mod tests {
         assert!(!rendered.contains("folded away to fit the context window"),
             "the next fold would be handed the engine's own elision notes as if they were the \
              conversation");
+    }
+
+    /// A non-streaming completion carrying `text`, which is what `chat_once` reads.
+    ///
+    /// The summarising call is tool-less and non-streaming, so a fold's answer never comes
+    /// through the SSE path the rest of these fixtures use.
+    fn completion(text: &str) -> crate::llm::tests::Reply {
+        let body = fmt!(
+            "{{\"choices\":[{{\"message\":{{\"role\":\"assistant\",\"content\":\"{}\"}},\
+             \"finish_reason\":\"stop\"}}],\"usage\":{{\"prompt_tokens\":9,\
+             \"completion_tokens\":9}}}}",
+            crate::llm::json_escape(text));
+        crate::llm::tests::Reply::Http {
+            status: 200, reason: "OK",
+            headers: vec![("Content-Type", "application/json".to_string())],
+            body,
+        }
+    }
+
+    /// A conversation long enough that `tail_start` has something to cut.
+    ///
+    /// [`bulky_session`] is deliberately too SHORT to fold -- four messages, under
+    /// `MIN_KEEP_MESSAGES` -- so it exercises elision and never the summarising call.  These
+    /// tests are about what the summarising call comes back with, so they need the other shape.
+    ///
+    /// # Arguments
+    /// * `pairs` - User/assistant rounds.
+    /// * `bytes` - Roughly what each answer weighs.
+    fn foldable_session(pairs: usize, bytes: usize) -> Session {
+        let mut session = Session::new(fmt!("s"), fmt!("foldable"), fmt!("model"));
+        for i in 0..pairs {
+            session.messages.push(ChatMessage::user(fmt!("ask {}", i)));
+            session.messages.push(ChatMessage::Assistant {
+                content: MessageContent::text(fmt!("answer {} {}", i, "y".repeat(bytes))),
+                tool_calls: Vec::new(),
+            });
+        }
+        session
+    }
+
+    /// The layout the compactor is told to write, as a stub would answer it.
+    fn structured_fold_reply() -> &'static str {
+        "## Task\nMake the caps agree.\n## Next step\nRewrite m07.js.\n## Found\n- m07.js CAP=4120\n"
+    }
+
+    #[tokio::test]
+    async fn test_a_structured_reply_folds_into_a_structured_notice_00() {
+        // End to end through the engine rather than over `parse_fold_notes` alone: the parse is
+        // proved in `compact`, and what is proved here is that `fold_if_needed` ASKS it, keeps
+        // what it returns, and writes it into the conversation the model will read next.
+        let (port, seen) = crate::llm::tests::start_stub(
+            vec![completion(structured_fold_reply()), plain_answer()]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(30, 3_000);
+        let registry = no_tools();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("carry on"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let folded = events.iter().any(|e| matches!(e, AgentEvent::Compacted { .. }));
+        assert!(folded, "nothing was folded, so there is no notice to look at");
+        assert!(events.iter().any(|e| matches!(e,
+            AgentEvent::Compacted { structured: true, .. })),
+            "the fold did not report itself as structured, so nothing downstream can count it");
+        let note = session.messages.iter()
+            .find(|m| m.text().starts_with("[Daimond folded the earlier part"))
+            .map(|m| m.text().to_string())
+            .unwrap_or_default();
+        assert!(note.contains("## Task"), "the notice lost the structure:\n{}", note);
+        assert!(note.contains("## Next step"), "{}", note);
+        assert!(note.contains("m07.js CAP=4120"),
+            "the value the fold exists to carry did not survive it:\n{}", note);
+        assert!(!note.contains("## What happened"),
+            "a structured notice must not also carry the prose heading:\n{}", note);
+
+        // AND THE SHAPE WAS ASKED FOR, over whatever prompt the user has. Read out of the
+        // request the stub really received, because a note appended by a function nothing calls
+        // is a note that is not in the prompt.
+        let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
+        let fold_req = bodies.iter().find(|b| b.contains("folding the earlier part"))
+            .cloned().unwrap_or_default();
+        assert!(!fold_req.is_empty(), "no summarising call was made");
+        assert!(fold_req.contains("## Files edited"),
+            "the compactor was not told the layout:\n{}", &fold_req[..fold_req.len().min(600)]);
+    }
+
+    #[tokio::test]
+    async fn test_a_garbage_reply_still_folds_and_still_announces_00() {
+        // A malformed reply costs the STRUCTURE and nothing else. The turn must never lose its
+        // fold to a model that answered in paragraphs -- which is the whole reason the parse
+        // falls back rather than refusing.
+        let (port, _seen) = crate::llm::tests::start_stub(
+            vec![completion("I read some files and changed one of them, probably."),
+                plain_answer()]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(30, 3_000);
+        let registry = no_tools();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("carry on"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::Compacted { .. })),
+            "a fold was lost because the model did not write the layout");
+        assert!(events.iter().any(|e| matches!(e,
+            AgentEvent::Compacted { structured: false, .. })),
+            "a prose fold must report itself as prose, or the count of structured folds lies");
+        let note = session.messages.iter()
+            .find(|m| m.text().starts_with("[Daimond folded the earlier part"))
+            .map(|m| m.text().to_string())
+            .unwrap_or_default();
+        assert!(note.contains("## What happened"), "the prose is still the note:\n{}", note);
+        assert!(note.contains("probably"), "and it is the model's own words:\n{}", note);
+    }
+
+    #[tokio::test]
+    async fn test_the_capped_fold_prefaces_the_summariser_with_the_continuation_00() {
+        // A capped fold is a different job from an ordinary one: the turn CONTINUES from the
+        // note in the next round, so `## Next step` is the plan it starts on. Asserted against
+        // the request body, because a preface composed and not sent is no preface.
+        let (port, seen) = crate::llm::tests::start_stub(
+            vec![completion(structured_fold_reply())]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        // SMALL ENOUGH THAT THE ORDINARY CUT IS NOTHING, which is the ordinary shape of a
+        // capped turn and the reason a fold fired once in four hundred and twenty-two bank
+        // trials. `compact::capped_cut` is what gives this turn a note at all.
+        let mut session = foldable_session(10, 1_200);
+        assert_eq!(0, compact::tail_start(&session.messages, u64::MAX,
+            compact::MIN_KEEP_MESSAGES, u64::MAX, &crate::llm::OpenSet::new()),
+            "the fixture has to be one the ordinary cut declines, or this proves nothing");
+        let mut working = session.messages.clone();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        a.fold_if_needed(&mut session, &mut working, 0, Fold::Capped,
+            &mut |ev| events.push(ev)).await;
+
+        let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
+        let fold_req = bodies.iter().find(|b| b.contains("folding the earlier part"))
+            .cloned().unwrap_or_default();
+        assert!(!fold_req.is_empty(), "no summarising call was made at the cap");
+        assert!(fold_req.contains("hit its round limit and CONTINUES"),
+            "the compactor was not told the turn carries on from its note");
+        assert!(fold_req.contains("Write `## Next step` as the plan it starts on"),
+            "nor what that makes `## Next step`");
+        let note = session.messages.iter()
+            .find(|m| m.text().starts_with("[Daimond folded the earlier part"))
+            .map(|m| m.text().to_string())
+            .unwrap_or_default();
+        assert!(note.contains("The turn continues from here: Rewrite m07.js"),
+            "the capped notice does not open its next step as a continuation:\n{}", note);
     }
 
     /// A dead-endpoint agent whose dialect and model are the ones the client raises the output cap

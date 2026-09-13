@@ -76,6 +76,32 @@ check('the rules survive a prompt that does not mention them',
 check('...and they come AFTER the user’s text, so they are read last',
 	mine.indexOf('Bartleby') < mine.indexOf('untrusted data'));
 
+// ── 3b. What the MODEL's own dialect adds, and what it does not ─────────
+//
+// Two composed notes join the clause here. `PLACES_NOTE` is unconditional and says where files
+// are; a family addendum is composed ON THE MODEL and names the one mistake that family's own
+// bank rows are full of. Both sit outside `prompts/<role>.md`, so neither can be lost by a
+// rewrite and neither shows in the editor -- the same trade `VISION_NOTE` makes.
+const composed = await p.evaluate(async (mine) => {
+	const mod = await import('../pkg/oxedyne_daimond.js');
+	return {
+		kimi:   mod.compose_prompt_for('chat', '', 'moonshotai/kimi-k2.7-code'),
+		claude: mod.compose_prompt_for('chat', '', 'anthropic/claude-opus-5'),
+		mine:   mod.compose_prompt_for('chat', mine, 'moonshotai/kimi-k2.7-code'),
+	};
+}, MINE);
+check('a Kimi prompt carries the addendum measured on Kimi',
+	/ONE JSON object/.test(composed.kimi), composed.kimi.slice(-140));
+check('...and a Claude prompt does not, because Claude did not earn it',
+	!/ONE JSON object/.test(composed.claude));
+check('every model is told where files are',
+	/Where files are/.test(composed.kimi) && /Where files are/.test(composed.claude));
+check('...and a rewritten prompt keeps both',
+	composed.mine.includes('Bartleby') && /Where files are/.test(composed.mine)
+	&& /ONE JSON object/.test(composed.mine), composed.mine.slice(-140));
+check('...with the clause still last of all',
+	composed.mine.indexOf('Where files are') < composed.mine.lastIndexOf('untrusted data'));
+
 // ── 4. Deleting the file puts the original back ─────────────────────────
 await remove('prompts/chat.md');
 await p.evaluate(() => window.DaimondPrompts.refresh());

@@ -199,6 +199,15 @@ pub const WORKER_CONTEXT_CAP:   u64   = 96_000;
 pub const WORKER_KEEP:          f64   = 0.3;
 pub const WORKER_SPEND_CAP_USD: f64   = 1.0;
 
+/// Seconds `gather` waits for the workers it was named before it answers with whatever has
+/// finished.
+///
+/// Ten minutes, the same order as a long turn's round cap, and inside every bound that encloses a
+/// handed-off turn: the errand deadline (15 min), the lease's ticker backstop (30 min) and the
+/// runner's own fan-out drain (10 min).  A ceiling and not a target -- a gather answers the moment
+/// its workers are terminal, so the wait only bites while one is genuinely still running.
+pub const GATHER_TIMEOUT_S: u64 = 600;
+
 /// Fraction of the budget kept verbatim at the end of the conversation.
 ///
 /// The recent exchanges are the ones that must survive intact: a model that has just been
@@ -300,6 +309,54 @@ const FALLBACK_IMAGE_TOKENS_PER_BYTE: f64 = 0.05;
 /// ceiling is [`crate::tools::crystal_cap`], enforced at the write.
 pub const FOLD_MAX_TOKENS: u32 = 1_400;
 
+/// Tokens the summarising call may generate when it is asked for the structured shape.
+///
+/// Seven headings with bullets under each need more room than a paragraph of prose, and running
+/// out is not a smaller note: it is a note cut mid-sentence.  The layout puts `## Task` and
+/// `## Next step` first precisely so that what a cut loses is `## Files read`, which the ledger
+/// already carries -- but the budget is raised as well, because relying on the ordering alone
+/// would be relying on a model to write the important part first every time.
+pub const FOLD_MAX_TOKENS_STRUCTURED: u32 = 2_000;
+
+/// Which shape the compactor is asked to write in.
+///
+/// Data rather than a constant for the reason every other figure in [`Limits`] is: an arm of a
+/// measurement has to be able to be "as it was before this existed" without a rebuild.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FoldShape {
+	/// The fixed heading layout of [`FoldNotes`].
+	Structured,
+	/// Whatever prose the compactor writes, as it was before 2026-09-13.
+	Prose,
+}
+
+impl FoldShape {
+	/// The wire spelling, which `set_tune` reads and `turn_limits` reports.
+	pub fn wire(self) -> &'static str {
+		match self {
+			Self::Structured => "structured",
+			Self::Prose      => "prose",
+		}
+	}
+
+	/// Read a spelling; anything else is `None` rather than a silent default.
+	pub fn from_wire(s: &str) -> Option<Self> {
+		match s.trim() {
+			"structured" => Some(Self::Structured),
+			"prose"      => Some(Self::Prose),
+			_            => None,
+		}
+	}
+
+	/// Tokens the summarising call may generate under this shape.
+	pub fn max_tokens(self) -> u32 {
+		match self {
+			Self::Structured => FOLD_MAX_TOKENS_STRUCTURED,
+			Self::Prose      => FOLD_MAX_TOKENS,
+		}
+	}
+}
+
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Limits                                                         │
@@ -328,6 +385,8 @@ pub struct Limits {
 	pub keep:       f64,
 	/// Model to fold with; empty means the chat's own.
 	pub fold_model: String,
+	/// Which shape the compactor is asked to write its note in.
+	pub fold_shape: FoldShape,
 	// A worker's ceiling
 	pub worker:     bool,	// held to the worker figures, which a user setting may lower only
 
@@ -352,6 +411,9 @@ pub struct Limits {
 	pub worker_context_cap:   u64,
 	pub worker_keep:          f64,
 	pub worker_spend_usd:     f64,
+
+	// How long an in-turn gather waits
+	pub gather_timeout_s: u64,	// seconds; see `GATHER_TIMEOUT_S`
 }
 
 impl Default for Limits {
@@ -365,6 +427,7 @@ impl Default for Limits {
 			max_continuations: MAX_CONTINUATIONS,
 			keep:       KEEP,
 			fold_model: String::new(),
+			fold_shape: FoldShape::Structured,
 			worker:     false,
 			retire_prior: true,
 			retire_keep_turns: RETIRE_KEEP_TURNS,
@@ -377,6 +440,7 @@ impl Default for Limits {
 			worker_context_cap:   WORKER_CONTEXT_CAP,
 			worker_keep:          WORKER_KEEP,
 			worker_spend_usd:     WORKER_SPEND_CAP_USD,
+			gather_timeout_s:     GATHER_TIMEOUT_S,
 		}
 	}
 }
@@ -690,6 +754,48 @@ pub fn orphan_count(msgs: &[ChatMessage]) -> usize {
 	n
 }
 
+/// Bytes the folded part must weigh before a fold at the ROUND LIMIT is attempted at all.
+///
+/// A notice carries its own header, its trailer, the ledger, and up to
+/// [`FOLD_MAX_TOKENS_STRUCTURED`] of the model's own words.  Folding less than this cannot make
+/// the conversation smaller, and `fold_if_needed` would discard the result -- after paying a
+/// model for it.  So the cut is not taken below this, and the one thing it costs is that a very
+/// short capped turn continues on its log, which fits.
+pub const CAPPED_FOLD_MIN_BYTES: u64 = 4_000;
+
+/// The cut a fold at the round limit takes when the ordinary one is nothing.
+///
+/// **[`tail_start`] returns 0 whenever the WHOLE conversation fits `keep_bytes`**, and at the
+/// round limit that is the common case rather than the rare one: a turn capped at ten rounds has
+/// not filled a 48,000-token tail budget, so `cut == 0`, no summary is made, and the leg that
+/// continues starts from the raw log with no plan in front of it.  That was recorded as a known
+/// limit and left; it is the reason a fold fired once in four hundred and twenty-two trials.
+///
+/// The answer is not to lower the tail budget -- that would change every fold -- but to ask a
+/// different question at this one door: keep [`MIN_KEEP_MESSAGES`] verbatim and fold what is
+/// behind them, because at the cap the alternative is re-sending that log on every round of the
+/// next leg.  `keep_bytes` of nought is what spells "keep the minimum and no more"; `hard_bytes`
+/// still wins, so a tail of six enormous messages is still cut down to what may be sent.
+///
+/// Zero when there is nothing worth folding -- fewer than `MIN_KEEP_MESSAGES + 1` messages, or
+/// less than [`CAPPED_FOLD_MIN_BYTES`] behind the cut.
+///
+/// # Arguments
+/// * `msgs` - The conversation, oldest first.
+/// * `hard_bytes` - Bytes the tail may not exceed, whatever the minimum asks for.
+/// * `open` - The folds the user has open, so the tail is measured as it will be sent.
+pub fn capped_cut(msgs: &[ChatMessage], hard_bytes: u64, open: &OpenSet) -> usize {
+	let cut = tail_start(msgs, 0, MIN_KEEP_MESSAGES, hard_bytes, open);
+	if cut == 0 {
+		return 0;
+	}
+	let behind: u64 = msgs[..cut].iter().map(|m| msg_bytes(m, open)).sum();
+	if behind < CAPPED_FOLD_MIN_BYTES {
+		return 0;
+	}
+	cut
+}
+
 /// Whether every tool call is answered and every tool reply was asked for.
 pub fn pairing_is_whole(msgs: &[ChatMessage]) -> bool {
 	orphan_count(msgs) == 0
@@ -908,6 +1014,11 @@ fn record(l: &mut Ledger, tc: &ToolCall, outcome: CallOutcome) {
 	}
 	match tc.name.as_str() {
 		"file_read"											=> Ledger::push(&mut l.read, path),
+		// One line however many cold sections a turn fetched: WHICH sections were read is in
+		// the crystal itself, which survives the fold, so naming them would be the ledger
+		// repeating what the next round can simply look at.
+		"crystal_read"										=> Ledger::push(&mut l.read,
+			fmt!("crystal")),
 		"file_list" | "file_search"							=> Ledger::push(&mut l.read,
 			if path.is_empty() { fmt!(".") } else { path }),
 		"file_write" | "file_edit" | "file_delete"
@@ -1013,6 +1124,215 @@ pub fn render_for_fold(msgs: &[ChatMessage], cap: u64) -> String {
 // │ The notice                                                     │
 // └───────────────────────────────────────────────────────────────┘
 
+/// What a structured fold carries: one slot per heading, any of which may be empty.
+///
+/// **Not JSON, and the reason is compliance rather than taste.**  Measured over six open-weight
+/// models, `badArgs` -- arguments that are not JSON at all -- was 0.00 for every one of them,
+/// while `toolFail` on a tool with a nested argument SHAPE ran 33%, 44% and 100% on three of
+/// them.  A model asked for one object by a tool schema produces one; a model asked for a
+/// 1,400-token free-form document with nested arrays produces something that truncates at the
+/// output cap, and a truncated JSON document loses the whole note.  A truncated heading document
+/// keeps every heading that arrived.
+///
+/// The fold notice is already markdown, and the model reads its own markdown back better than it
+/// reads JSON in prose.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FoldNotes {
+	pub task:      String,
+	pub next:      String,
+	pub open:      Vec<String>,
+	pub decisions: Vec<String>,
+	pub found:     Vec<String>,
+	pub edited:    Vec<String>,	// "path -- what", reconciled against the ledger
+	pub read:      Vec<String>,	// "path -- region"
+}
+
+/// The headings the compactor is told to write, in the order it is told to write them.
+///
+/// The ORDER is load-bearing: a reply cut at the output cap loses the last heading first, so the
+/// two that a continuation cannot do without come first and the one the ledger already carries
+/// comes last.
+pub const FOLD_HEADINGS: [&str; 7] =
+	["Task", "Next step", "Open", "Decisions", "Found", "Files edited", "Files read"];
+
+/// Which slot a heading names, however the model spelled it.
+///
+/// Case is folded, a trailing `s` is tolerated on either side, and the two headings a model
+/// habitually lengthens -- "Open questions", "Next steps" -- are matched on their opening word.
+/// Anything else is not a heading this layout names.
+fn fold_slot(head: &str) -> Option<usize> {
+	let h = head.trim().trim_end_matches(':').trim().to_lowercase();
+	let h = h.trim_start_matches("##").trim_start_matches('#').trim();
+	let h = h.trim_matches('*').trim();
+	for (i, want) in FOLD_HEADINGS.iter().enumerate() {
+		let w = want.to_lowercase();
+		if h == w || h == fmt!("{}s", w) || fmt!("{}s", h) == w {
+			return Some(i);
+		}
+	}
+	// The lengthened spellings, matched on the opening word so "Open questions" and "Open
+	// threads" are one heading rather than two more entries in a list nobody can finish.
+	if h.starts_with("open ")  { return Some(2); }
+	if h.starts_with("next ")  { return Some(1); }
+	if h.starts_with("decision") { return Some(3); }
+	if h.starts_with("found") || h.starts_with("learned") { return Some(4); }
+	if h.starts_with("files edited") || h.starts_with("edited") || h.starts_with("files changed") {
+		return Some(5);
+	}
+	if h.starts_with("files read") || h.starts_with("read") { return Some(6); }
+	None
+}
+
+/// Whether a line is a heading of any spelling this parse accepts, and which slot it names.
+///
+/// `## `, `### `, and a bold line (`**Task**`) are all accepted, because all three are what a
+/// model writes when it is told "under the headings you are given" and left to choose markup.
+fn fold_heading(line: &str) -> Option<usize> {
+	let t = line.trim();
+	if t.starts_with('#') {
+		return fold_slot(t);
+	}
+	if t.starts_with("**") && t.ends_with("**") && t.len() > 4 {
+		return fold_slot(t);
+	}
+	None
+}
+
+/// One bullet, stripped of whatever marker it arrived with; `None` for a line that is not one.
+fn fold_bullet(line: &str) -> Option<String> {
+	let t = line.trim();
+	if t.is_empty() {
+		return None;
+	}
+	for m in ["- ", "* ", "+ "] {
+		if let Some(rest) = t.strip_prefix(m) {
+			return Some(rest.trim().to_string());
+		}
+	}
+	// A numbered list, which several models write whatever the layout asks for.
+	let digits: String = t.chars().take_while(|c| c.is_ascii_digit()).collect();
+	if !digits.is_empty() {
+		let rest = &t[digits.len()..];
+		for m in [". ", ") "] {
+			if let Some(r) = rest.strip_prefix(m) {
+				return Some(r.trim().to_string());
+			}
+		}
+	}
+	Some(t.to_string())
+}
+
+/// Parse the compactor's reply into the slots the layout names.
+///
+/// `None` when the reply is not this shape at all -- no heading the layout names appears in it --
+/// so the caller can fall back to prose and lose nothing but the structure.  **A reply that is
+/// half the shape is kept**, which is the whole reason the shape is headings: each heading
+/// validates on its own, so a note cut at the output cap keeps every heading that arrived
+/// instead of being thrown away entire.
+///
+/// Text under a heading the layout does NOT name goes to `found` rather than being dropped: a
+/// model that invented "## Context" has written something, and the slot for "what was learned" is
+/// the one place it can go without being claimed as an edit or a decision.
+///
+/// # Arguments
+/// * `raw` - The compactor's reply, fences and all.
+pub fn parse_fold_notes(raw: &str) -> Option<FoldNotes> {
+	let text = unfence(raw);
+	let mut n = FoldNotes::default();
+	let mut slot: Option<usize> = None;
+	let mut seen = false;
+	let mut task_lines: Vec<String> = Vec::new();
+	let mut next_lines: Vec<String> = Vec::new();
+	for line in text.lines() {
+		if let Some(i) = fold_heading(line) {
+			slot = Some(i);
+			seen = true;
+			continue;
+		}
+		// A heading the layout does not name still ENDS the slot before it, or its text would be
+		// filed under somebody else's heading -- which is the one failure worse than losing it.
+		if line.trim_start().starts_with('#') {
+			slot = Some(4);
+			continue;
+		}
+		let at = match slot {
+			Some(i) => i,
+			None    => continue,	// anything before the first heading is preamble
+		};
+		match at {
+			0 => { if !line.trim().is_empty() { task_lines.push(line.trim().to_string()); } },
+			1 => { if !line.trim().is_empty() { next_lines.push(line.trim().to_string()); } },
+			_ => {
+				if let Some(b) = fold_bullet(line) {
+					match at {
+						2 => n.open.push(b),
+						3 => n.decisions.push(b),
+						4 => n.found.push(b),
+						5 => n.edited.push(b),
+						6 => n.read.push(b),
+						_ => {},
+					}
+				}
+			},
+		}
+	}
+	if !seen {
+		return None;
+	}
+	n.task = task_lines.join(" ");
+	n.next = next_lines.join(" ");
+	Some(n)
+}
+
+/// Keep only the edits the ledger confirms, and move the rest where they cannot be read as work.
+///
+/// **The one rule this module already enforces, applied to the new slot.**  The ledger is
+/// arithmetic and the prose is judgement, and the whole design is that the prose must never
+/// contradict the record: a fold that lists a refused write as a write is the app itself making
+/// the claim, in the part of the note the model is told to trust.  A path the model names that
+/// `ledger.wrote` does not have therefore stops being an edit and becomes an open thread saying
+/// so, which is the honest thing to carry forward -- the model may have MEANT to make it.
+///
+/// Matched on the path, which is the first token of the line before the ` -- ` the layout asks
+/// for; a ledger entry that spells the same path differently is not reconciled, which errs
+/// towards demoting an edit rather than confirming one.
+///
+/// # Arguments
+/// * `notes` - What the model wrote.
+/// * `ledger` - What the transcript shows.
+pub fn reconcile(mut notes: FoldNotes, ledger: &Ledger) -> FoldNotes {
+	let head = |line: &str| -> String {
+		line.split_whitespace().next().unwrap_or("").trim_matches('`').to_string()
+	};
+	let confirmed = |line: &str, against: &[String]| -> bool {
+		let p = head(line);
+		!p.is_empty() && against.iter().any(|w| head(w) == p || w.contains(&p))
+	};
+	let (kept, claimed): (Vec<String>, Vec<String>) = notes.edited.into_iter()
+		.partition(|l| confirmed(l, &ledger.wrote));
+	notes.edited = kept;
+	for l in claimed {
+		notes.open.push(fmt!("claimed edit not in the record: {}", l));
+	}
+	// Reads are not reconciled the same way: a read is not a claim about the world, and a model
+	// that names the region it read is saying something the ledger's bare path cannot.
+	notes
+}
+
+/// What the summarising call produced, which is three different things and not two.
+///
+/// It was a string and an `Option<&str>` reason, which could not tell "the model answered in the
+/// shape" from "the model answered in prose" -- and the notice has to render those differently
+/// or the structure is thrown away between parsing it and writing it down.
+pub enum Summary<'a> {
+	/// The compactor wrote the layout, and it has been reconciled against the ledger.
+	Notes(FoldNotes),
+	/// It wrote something else, which is kept exactly as it came.
+	Prose(&'a str),
+	/// The call could not be made, and this is why.
+	None(&'a str),
+}
+
 /// The one message a fold leaves in place of everything it folded.
 ///
 /// A user message, and deliberately not an assistant one: a summary in the assistant's own
@@ -1022,26 +1342,33 @@ pub fn render_for_fold(msgs: &[ChatMessage], cap: u64) -> String {
 /// `user` and `assistant` messages only, so a system-role fold would silently vanish on
 /// reload and the conversation would spring back to full size.
 ///
+/// **One function for all three outcomes**, because the three used to be a string and an
+/// `Option`, and a caller that had parsed the layout had no way to say so: the structure would
+/// have been thrown away between the parse and the note.
+///
 /// # Arguments
 /// * `folded` - How many messages went.
-/// * `summary` - The model's prose, or empty when the call could not be made.
+/// * `summary` - What the summarising call produced, in whichever of the three forms.
 /// * `ledger` - What the folded part did.
-/// * `why` - Why there is no prose, when there is none.
-pub fn notice(folded: usize, summary: &str, ledger: &Ledger, why: Option<&str>) -> String {
+/// * `capped` - Whether the turn is CONTINUING from this note, which changes what `Next step` is.
+pub fn notice(folded: usize, summary: &Summary<'_>, ledger: &Ledger, capped: bool) -> String {
 	let mut s = fmt!(
 		"[Daimond folded the earlier part of this conversation to keep it inside the model's \
 		 context window. {} messages were replaced by this note; everything after it is \
 		 exactly as it was. This note is the only record of them that the model now has.]\n",
 		folded);
-	if !summary.trim().is_empty() {
-		s.push_str("\n## What happened\n\n");
-		s.push_str(summary.trim());
-		s.push('\n');
-	} else if let Some(reason) = why {
-		s.push_str(&fmt!(
+	match summary {
+		Summary::Notes(n) => s.push_str(&structured_body(n, capped)),
+		Summary::Prose(p) if !p.trim().is_empty() => {
+			s.push_str("\n## What happened\n\n");
+			s.push_str(p.trim());
+			s.push('\n');
+		},
+		Summary::Prose(_) => {},
+		Summary::None(reason) => s.push_str(&fmt!(
 			"\n## What happened\n\nNo summary could be written ({}), so what follows is the \
 			 record of the tool calls themselves and nothing more. Ask before assuming \
-			 anything not listed here was done.\n", reason));
+			 anything not listed here was done.\n", reason)),
 	}
 	let lines = ledger.lines();
 	if !lines.is_empty() {
@@ -1056,6 +1383,122 @@ pub fn notice(folded: usize, summary: &str, ledger: &Ledger, why: Option<&str>) 
 	s
 }
 
+/// The structured half of a notice: one heading per slot that carries anything.
+///
+/// An empty slot is left out rather than written as a heading with nothing under it -- a heading
+/// over silence reads as "there were no decisions", which is a claim, and the model was not asked
+/// one.  `## What was touched` follows from the LEDGER and stays app-built, so nothing here can
+/// put a refused write in it.
+///
+/// # Arguments
+/// * `n` - The parsed and reconciled slots.
+/// * `capped` - Whether the turn continues from this note, which is what makes `Next step` a plan
+///   the next round starts on rather than a note about the future.
+fn structured_body(n: &FoldNotes, capped: bool) -> String {
+	let mut s = String::new();
+	if !n.task.trim().is_empty() {
+		s.push_str(&fmt!("\n## Task\n\n{}\n", n.task.trim()));
+	}
+	if !n.next.trim().is_empty() {
+		s.push_str("\n## Next step\n\n");
+		if capped {
+			s.push_str("The turn continues from here: ");
+		}
+		s.push_str(n.next.trim());
+		s.push('\n');
+	}
+	let list = |s: &mut String, head: &str, items: &[String]| {
+		if items.is_empty() {
+			return;
+		}
+		s.push_str(&fmt!("\n## {}\n\n", head));
+		for i in items {
+			s.push_str(&fmt!("- {}\n", i));
+		}
+	};
+	list(&mut s, "Open",        &n.open);
+	list(&mut s, "Decisions",   &n.decisions);
+	list(&mut s, "Found",       &n.found);
+	list(&mut s, "Files edited", &n.edited);
+	list(&mut s, "Files read",  &n.read);
+	s
+}
+
+
+/// Whether a message is a fold notice this module wrote.
+///
+/// Matched on the opening of [`notice`], which is the one sentence every notice carries and the
+/// same tell `dev/verify_foldreload.mjs` reads.  A user message that merely quotes it would be
+/// searched as a fold, which costs a line of context and nothing else.
+fn is_fold_notice(m: &ChatMessage) -> bool {
+	match m {
+		ChatMessage::User { content } =>
+			content.as_text().starts_with("[Daimond folded the earlier part"),
+		_ => false,
+	}
+}
+
+/// Every line of every fold notice in `msgs` that `re` matches, oldest notice first.
+///
+/// **The half of `recall` no tool could answer.**  A tool is handed a `ToolContext` and never the
+/// session, and what a conversation has folded away lives only in its own messages -- so this is
+/// pure, takes the messages, and is called from the one place that has them
+/// ([`crate::agent::Agent::run_tool_loop`]).  Written here rather than there because it is a
+/// statement about what a fold left behind, which is this module's subject.
+///
+/// Lines are reported as `fold:<k>:<n>: text`, `k` counting notices oldest first and `n` the line
+/// within that notice -- the same `path:line:text` shape `file_search` reports in, so a model
+/// reads one answer in one form.
+///
+/// # Arguments
+/// * `msgs` - The conversation, oldest first.
+/// * `matches` - Whether one line matches; undecidable lines answer `false`.
+/// * `before` - Context lines before each match.
+/// * `after` - Context lines after each match.
+/// * `limit` - Most matches to report.
+pub fn recall_folds(
+	msgs:    &[ChatMessage],
+	matches: &mut impl FnMut(&str) -> bool,
+	before:  usize,
+	after:   usize,
+	limit:   usize,
+)
+	-> Vec<String>
+{
+	let mut out  = Vec::new();
+	let mut note = 0usize;
+	let mut hits = 0usize;
+	for m in msgs.iter().filter(|m| is_fold_notice(m)) {
+		note += 1;
+		let text = match m {
+			ChatMessage::User { content } => content.as_text(),
+			_                             => continue,
+		};
+		let lines: Vec<&str> = text.lines().collect();
+		let mut done: Option<usize> = None;
+		for (i, line) in lines.iter().enumerate() {
+			if !matches(line) {
+				continue;
+			}
+			if hits >= limit {
+				return out;
+			}
+			hits += 1;
+			let lo = i.saturating_sub(before);
+			let hi = (i + after).min(lines.len().saturating_sub(1));
+			let start = match done {
+				Some(p) if lo <= p + 1 => p + 1,
+				_                      => lo,
+			};
+			for n in start..=hi {
+				let sep = if n == i { ':' } else { '-' };
+				out.push(fmt!("fold:{}{}{}{}{}", note, sep, n + 1, sep, lines[n]));
+			}
+			done = Some(hi);
+		}
+	}
+	out
+}
 
 /// What goes into the conversation when a turn is stopped at the round limit.
 ///
@@ -1772,9 +2215,41 @@ fn call_label(tc: &ToolCall) -> String {
 		"shell"             => fmt!("shell {}", clip(&arg("command"), STUB_ARG_CAP)),
 		"file_move"         => fmt!("file_move {} -> {}", path, arg("to")),
 		"file_search"       => fmt!("file_search {} {}", clip(&arg("query"), STUB_ARG_CAP), path),
+		// The path and the page, because a retired outline of a big file whose stub said only
+		// "outline" is an outline the model asks for again.
+		"outline"           => {
+			let page = match num("offset") {
+				Some(n) if n > 0 => fmt!(" from row {}", n),
+				_                => String::new(),
+			};
+			fmt!("outline {}{}", path, page)
+		},
+		"serve"             => {
+			let act = match arg("act").as_str() { "" => fmt!("list"), a => fmt!("{}", a) };
+			let what = if !arg("id").is_empty() { arg("id") } else { path };
+			fmt!("serve {} {}", act, what).trim_end().to_string()
+		},
+		// WHAT of the memory was fetched, because "crystal_read" alone is a stub the model
+		// reads as "I have already looked" while not knowing which section it looked at.
+		"crystal_read"      => {
+			let what = if !arg("section").is_empty() { arg("section") } else { arg("key") };
+			fmt!("crystal_read {}", what).trim_end().to_string()
+		},
+		"recall"            => fmt!("recall {}", clip(&arg("query"), STUB_ARG_CAP)),
 		"web_fetch" | "web_open" | "web_read"
 		                    => fmt!("{} {}", tc.name, clip(&arg("url"), STUB_ARG_CAP)),
 		"spawn_agent"       => fmt!("spawn_agent {}", arg("name")),
+		// The workers a retired gather was waiting on, so the stub says WHOSE reports went.
+		// The model can call `gather` again on the same names and re-read them at no cost, and a
+		// stub naming nobody would leave it guessing which reports it had lost.
+		"gather" => {
+			let who = extract_json_string_array(&tc.arguments, "names").unwrap_or_default();
+			if who.is_empty() {
+				fmt!("gather")
+			} else {
+				fmt!("gather {}", clip(&who.join(", "), STUB_ARG_CAP))
+			}
+		},
 		_ => {
 			let what = if path.is_empty() { arg("url") } else { path };
 			fmt!("{} {}", tc.name, clip(&what, STUB_ARG_CAP)).trim().to_string()
@@ -1883,8 +2358,8 @@ pub fn crystal_proposal(raw: &str) -> Outcome<String> {
 
 /// How a crystal is read, wherever it is read: strictly, as JSON, and bounded.
 ///
-/// One function so that the two questions asked of a crystal in this module cannot come to
-/// disagree about what a crystal is.  The decoder's JSON configuration rather than its own
+/// One function so that every question asked of a crystal -- here, and at the hot/cold split in
+/// [`crate::tools::crystal_split`] -- cannot come to disagree about what a crystal is.  The decoder's JSON configuration rather than its own
 /// -- no comments and no trailing comma -- because being laxer here than the browser is the
 /// one thing this must not be: a proposal Rust waves through and `JSON.parse` then rejects
 /// is a crystal the user accepted and cannot open, which is worse than a refusal, since a
@@ -1892,7 +2367,9 @@ pub fn crystal_proposal(raw: &str) -> Outcome<String> {
 ///
 /// `use_ordmaps` stays off, as it is by default, so a decoded object is always a
 /// [`Dat::Map`] and never a [`Dat::OrdMap`].
-fn json_cfg() -> DecoderConfig<BTreeMap<UsrKindCode, UsrKind>, BTreeMap<String, UsrKindId>> {
+pub(crate) fn json_cfg()
+	-> DecoderConfig<BTreeMap<UsrKindCode, UsrKind>, BTreeMap<String, UsrKindId>>
+{
 	DecoderConfig::json(None)
 		.with_limits(DecodeLimits::new(CRYSTAL_MAX_DEPTH, CRYSTAL_MAX_BYTES))
 }
@@ -1960,6 +2437,59 @@ pub fn crystal_keys_lost(old: &str, new: &str) -> Vec<String> {
 		}
 	}
 	lost
+}
+
+/// Headings that carried `"hot": true` in `old` and do not in `new`.
+///
+/// **The reducer is the one thing that rewrites every section at once**, and a hot flag is six
+/// bytes of a key it has never been told about -- exactly the shape of key the schema note
+/// spends a paragraph telling it not to drop.  A crystal that came back with every flag gone
+/// would compose as title-and-summary on the next round, the daimon would not know why, and the
+/// only tell would be a system message that quietly got shorter.  So the flags are counted the
+/// way keys are, and the answer goes in front of the user with the proposal.
+///
+/// Silent where either text will not parse or is not an object, as [`crystal_keys_lost`] is and
+/// for the same reason: a claim nothing can check is worse than no claim.
+///
+/// # Arguments
+/// * `old` - The crystal as it stands, from disk.
+/// * `new` - The proposal.
+pub fn hot_flags_lost(old: &str, new: &str) -> Vec<String> {
+	// `None` where the text is not one JSON object, so that a crystal still in its legacy
+	// markdown -- or a proposal that arrived damaged -- yields NOTHING rather than reporting
+	// every flag in the world as lost.  The same silence, and the same reason, as
+	// [`crystal_keys_lost`]'s.
+	let hot_of = |text: &str| -> Option<Vec<String>> {
+		let cfg = json_cfg();
+		let map = match Dat::decode_string_with_config(unfence(text), &cfg) {
+			Ok(Dat::Map(m)) => m,
+			_               => return None,
+		};
+		let secs = match map.get(&Dat::Str(fmt!("sections"))) {
+			Some(Dat::List(v)) => v.clone(),
+			_                  => return Some(Vec::new()),
+		};
+		let mut out = Vec::new();
+		for sec in &secs {
+			let m = match sec {
+				Dat::Map(m) => m,
+				_           => continue,
+			};
+			if !matches!(m.get(&Dat::Str(fmt!("hot"))), Some(Dat::Bool(true))) {
+				continue;
+			}
+			match m.get(&Dat::Str(fmt!("heading"))) {
+				Some(Dat::Str(h)) => out.push(h.clone()),
+				_                 => out.push(fmt!("(no heading)")),
+			}
+		}
+		Some(out)
+	};
+	match (hot_of(old), hot_of(new)) {
+		(Some(before), Some(after)) =>
+			before.into_iter().filter(|h| !after.contains(h)).collect(),
+		_ => Vec::new(),
+	}
 }
 
 /// Whether a value holds anything a user would miss.
@@ -2901,7 +3431,7 @@ mod tests {
 				"{} was recorded as a broken tool rather than a closed door: {:?}", door, l);
 			// And the notice must not name the file under what was written, which is the part of
 			// it the model is instructed to trust.
-			let n = notice(9, "", &l, None);
+			let n = notice(9, &Summary::Prose(""), &l, false);
 			assert!(!n.contains("Files written"), "{}: {}", door, n);
 		}
 	}
@@ -2972,7 +3502,7 @@ mod tests {
 		let args  = r#"{"path":"secrets/keys.txt","content":"x"}"#;
 		let reply = dispatched(Tool::FileWrite, args, &ctx).await;
 		let l     = ledger_of(&one_call(Tool::FileWrite, args, &reply));
-		let n     = notice(9, "", &l, None);
+		let n     = notice(9, &Summary::Prose(""), &l, false);
 		assert!(n.contains("secrets/keys.txt"), "the refusal was not named at all: {}", n);
 		assert!(!n.contains("Files written"),
 			"a refusal must not be listed as a write: {} -- the reply was: {}", n, reply);
@@ -3009,7 +3539,7 @@ mod tests {
 			asks("a", "file_write", r#"{"path":"src/new.rs"}"#),
 			replies("a", "Wrote."),
 		]);
-		let n = notice(9, "", &l, Some("the key was refused"));
+		let n = notice(9, &Summary::None("the key was refused"), &l, false);
 		assert!(n.contains("src/new.rs"), "{}", n);
 		assert!(n.contains("No summary could be written"), "{}", n);
 		assert!(n.contains("the key was refused"), "{}", n);
@@ -3020,7 +3550,7 @@ mod tests {
 	fn test_the_notice_is_not_in_the_assistants_voice_00() {
 		// It is a user message on purpose. An assistant-voiced summary is the model reading
 		// invented memories back as things it said.
-		let out = match fold(&session(4, 100), 3, notice(3, "did things", &Ledger::default(), None)) {
+		let out = match fold(&session(4, 100), 3, notice(3, &Summary::Prose("did things"), &Ledger::default(), false)) {
 			Ok(o)  => o,
 			Err(e) => panic!("{}", e),
 		};
@@ -3570,6 +4100,35 @@ mod tests {
 		assert_eq!(again[2].text(), v[2].text());
 	}
 
+	/// **A retired outline still says which file it was of, and which page.**
+	///
+	/// A stub is rebuilt from the CALL's arguments, so a tool with no arm of its own falls to
+	/// the general one and can end up as `[outline  -- 9,000 bytes retired ...]` with no path in
+	/// it -- at which point the model asks for the same nine kilobytes again.
+	#[test]
+	fn test_the_outline_stub_names_the_path() {
+		let mut v = vec![
+			asks("r1", "outline", "{\"path\":\"www/js/daimond.js\",\"offset\":400}"),
+			replies("r1", &"row\n".repeat(3_000)),
+			asks("r2", "serve", "{\"act\":\"stop\",\"id\":\"serve-2-python3\"}"),
+			replies("r2", &"line\n".repeat(3_000)),
+			asks("r3", "file_list", "{\"path\":\"src\"}"),
+			replies("r3", "a.rs\n"),
+		];
+		retire_results(&mut v, 5, IN_TURN_RESULT_CAP);
+		let outline = v[1].text();
+		assert!(outline.starts_with("[outline www/js/daimond.js from row 400"),
+			"the retired outline does not name what it was of: {}", outline);
+		let serve = v[3].text();
+		assert!(serve.starts_with("[serve stop serve-2-python3"),
+			"the retired serve does not name the run it acted on: {}", serve);
+		// IDEMPOTENT, for the reason the sweep above is: it runs again every tenth round.
+		let again = v.clone();
+		retire_results(&mut v, 5, IN_TURN_RESULT_CAP);
+		assert_eq!(again[1].text(), v[1].text());
+		assert_eq!(again[3].text(), v[3].text());
+	}
+
 	#[test]
 	fn test_an_unanswered_write_keeps_its_arguments_00() {
 		// A call with no reply may still be in flight, and a retried call must carry what the
@@ -3879,7 +4438,7 @@ mod tests {
 		let cut  = tail_start(&v, keep, MIN_KEEP_MESSAGES, u64::MAX, &shut());
 		assert!(cut > 0);
 		let l   = ledger_of(&v[..cut]);
-		let mut out = match fold(&v, cut, notice(cut, "read forty files", &l, None)) {
+		let mut out = match fold(&v, cut, notice(cut, &Summary::Prose("read forty files"), &l, false)) {
 			Ok(o)  => o,
 			Err(e) => panic!("{}", e),
 		};
@@ -3911,17 +4470,306 @@ mod tests {
 		let v = session(40, 6_000);
 		let g = Gauge::default();
 		let cut = tail_start(&v, g.bytes(4_000), MIN_KEEP_MESSAGES, u64::MAX, &shut());
-		let once = match fold(&v, cut, notice(cut, "", &ledger_of(&v[..cut]), None)) {
+		let once = match fold(&v, cut, notice(cut, &Summary::Prose(""), &ledger_of(&v[..cut]), false)) {
 			Ok(o) => o, Err(e) => panic!("{}", e),
 		};
 		let cut2 = tail_start(&once, g.bytes(2_000), MIN_KEEP_MESSAGES, u64::MAX, &shut());
 		if cut2 > 0 {
-			let twice = match fold(&once, cut2, notice(cut2, "", &ledger_of(&once[..cut2]), None)) {
+			let twice = match fold(&once, cut2, notice(cut2, &Summary::Prose(""), &ledger_of(&once[..cut2]), false)) {
 				Ok(o) => o, Err(e) => panic!("{}", e),
 			};
 			assert!(conversation_bytes(&twice, &shut()) < conversation_bytes(&once, &shut()));
 			assert!(pairing_is_whole(&twice));
 		}
+	}
+
+	// ── The shape a fold comes back in ───────────────────────────────────────
+
+	/// The layout as the compactor is told to write it.
+	fn structured_reply() -> &'static str {
+		"## Task\n\
+		 Make the twelve caps agree, keeping the old spelling.\n\
+		 ## Next step\n\
+		 Rewrite m07.js line 41 to CAP=4120.\n\
+		 ## Open\n\
+		 - whether m11 wants the same figure\n\
+		 ## Decisions\n\
+		 - keep the old spelling -- the user asked for it\n\
+		 ## Found\n\
+		 - m07.js CAP=4120\n\
+		 - m11.js CAP=880\n\
+		 ## Files edited\n\
+		 - src/m07.js -- the cap\n\
+		 ## Files read\n\
+		 - src/m11.js -- lines 30-50\n"
+	}
+
+	/// A ledger that confirms the one edit the reply above claims.
+	fn edited_ledger() -> Ledger {
+		let mut l = Ledger::default();
+		Ledger::push(&mut l.wrote, fmt!("src/m07.js"));
+		Ledger::push(&mut l.read,  fmt!("src/m11.js"));
+		l
+	}
+
+	#[test]
+	fn test_a_structured_fold_parses_every_heading_00() {
+		let n = match parse_fold_notes(structured_reply()) {
+			Some(n) => n,
+			None    => panic!("the layout the compactor is told to write must parse"),
+		};
+		assert_eq!("Make the twelve caps agree, keeping the old spelling.", n.task);
+		assert_eq!("Rewrite m07.js line 41 to CAP=4120.", n.next);
+		assert_eq!(vec![fmt!("whether m11 wants the same figure")], n.open);
+		assert_eq!(vec![fmt!("keep the old spelling -- the user asked for it")], n.decisions);
+		// THE VALUES AND NOT A DESCRIPTION OF THEM, which is what `## Found` is for.
+		assert_eq!(vec![fmt!("m07.js CAP=4120"), fmt!("m11.js CAP=880")], n.found);
+		assert_eq!(vec![fmt!("src/m07.js -- the cap")], n.edited);
+		assert_eq!(vec![fmt!("src/m11.js -- lines 30-50")], n.read);
+	}
+
+	#[test]
+	fn test_a_fold_cut_at_the_output_cap_keeps_the_headings_that_arrived_00() {
+		// The whole reason the shape is headings rather than JSON: a truncated JSON document
+		// loses the note entire, and this loses only what had not been written yet. The cut
+		// lands mid-`## Files read`, which is the slot the ordering puts last on purpose.
+		let whole = structured_reply();
+		let cut   = &whole[..whole.find("## Files read").unwrap_or(whole.len()) + 20];
+		let n = match parse_fold_notes(cut) {
+			Some(n) => n,
+			None    => panic!("a truncated note must keep what arrived"),
+		};
+		assert!(!n.task.is_empty(), "the first slot survived the cut");
+		assert!(!n.next.is_empty(), "and so did the one a continuation starts on");
+		assert_eq!(2, n.found.len(), "and every value learned");
+		assert_eq!(vec![fmt!("src/m07.js -- the cap")], n.edited);
+	}
+
+	#[test]
+	fn test_heading_spellings_the_models_use_are_accepted_00() {
+		// Three spellings a model reaches for when it is told "under these headings" and left
+		// to choose markup, plus the two headings every model lengthens.
+		let reply = "### Task\n\
+			 Fix the caps.\n\
+			 **Next steps**\n\
+			 Edit m07.js.\n\
+			 ### Open questions\n\
+			 * still unsure about m11\n\
+			 ### Decision\n\
+			 1. keep the spelling\n";
+		let n = match parse_fold_notes(reply) {
+			Some(n) => n,
+			None    => panic!("a spelling a model actually uses must parse"),
+		};
+		assert_eq!("Fix the caps.", n.task);
+		assert_eq!("Edit m07.js.", n.next);
+		assert_eq!(vec![fmt!("still unsure about m11")], n.open, "a `*` bullet is a bullet");
+		assert_eq!(vec![fmt!("keep the spelling")], n.decisions, "and so is a numbered one");
+	}
+
+	#[test]
+	fn test_a_reply_that_is_not_the_shape_falls_back_to_prose_and_keeps_the_ledger_00() {
+		// A fold must never be LOST to a model that answered in paragraphs: what a malformed
+		// reply costs is the structure and nothing else.
+		let prose = "The user wanted the caps to agree. I read m07 and m11 and changed one.";
+		assert!(parse_fold_notes(prose).is_none(),
+			"prose with no heading is not the shape and must say so");
+		let l = edited_ledger();
+		let note = notice(9, &Summary::Prose(prose), &l, false);
+		assert!(note.contains("## What happened"), "the prose is still the note: {}", note);
+		assert!(note.contains(prose));
+		assert!(note.contains("src/m07.js"), "and the ledger is still beneath it: {}", note);
+	}
+
+	#[test]
+	fn test_an_edit_the_model_claims_and_the_ledger_lacks_is_not_listed_as_an_edit_00() {
+		// The rule this module already enforces, applied to the new slot: the prose must never
+		// contradict the record, because a fold that lists a claimed write as a write is the
+		// APP making the claim, in the part of the note the model is told to trust.
+		let mut n = match parse_fold_notes(structured_reply()) {
+			Some(n) => n,
+			None    => panic!("must parse"),
+		};
+		n.edited.push(fmt!("src/never-touched.js -- rewrote it"));
+		let n = reconcile(n, &edited_ledger());
+		assert_eq!(vec![fmt!("src/m07.js -- the cap")], n.edited,
+			"only the edit the record confirms stays an edit");
+		assert!(n.open.iter().any(|o| o.contains("claimed edit not in the record")
+			&& o.contains("src/never-touched.js")),
+			"and the claim is carried forward as an open thread rather than deleted: {:?}",
+			n.open);
+		let note = notice(9, &Summary::Notes(n), &edited_ledger(), false);
+		let edited = note.split("## Files edited").nth(1).unwrap_or("")
+			.split("\n##").next().unwrap_or("");
+		assert!(!edited.contains("never-touched.js"),
+			"the note reads as though the file was written:\n{}", note);
+		assert!(note.contains("claimed edit not in the record: src/never-touched.js"),
+			"and the claim is still in front of the model, under Open:\n{}", note);
+	}
+
+	#[test]
+	fn test_the_capped_notice_opens_its_next_step_as_a_continuation_00() {
+		let n = match parse_fold_notes(structured_reply()) {
+			Some(n) => n,
+			None    => panic!("must parse"),
+		};
+		let carried = notice(9, &Summary::Notes(n.clone()), &edited_ledger(), true);
+		assert!(carried.contains("## Next step\n\nThe turn continues from here: Rewrite"),
+			"a capped fold's next step is the plan the next round starts on:\n{}", carried);
+		let plain = notice(9, &Summary::Notes(n), &edited_ledger(), false);
+		assert!(plain.contains("## Next step\n\nRewrite"),
+			"and an ordinary fold's is not dressed as one:\n{}", plain);
+		assert!(!plain.contains("continues from here"));
+	}
+
+	#[test]
+	fn test_a_structured_notice_is_still_a_user_message_00() {
+		// The notice is a `user` message deliberately: a summary in the assistant's own voice
+		// is the model reading invented memories as things it said, and a system one would
+		// vanish on reload because the browser rehydrates from user and assistant only. The
+		// structure must not have quietly changed that.
+		let n = match parse_fold_notes(structured_reply()) {
+			Some(n) => n,
+			None    => panic!("must parse"),
+		};
+		let note = notice(4, &Summary::Notes(n), &edited_ledger(), false);
+		// The cut comes from `tail_start`, because a cut chosen by hand can land inside a tool
+		// block and the fold refuses that -- which would be this test failing for a reason that
+		// has nothing to do with the shape of the note.
+		let v   = session(12, 200);
+		let cut = tail_start(&v, 400, MIN_KEEP_MESSAGES, u64::MAX, &shut());
+		let out = match fold(&v, cut, note) {
+			Ok(o)  => o,
+			Err(e) => panic!("{}", e),
+		};
+		assert!(matches!(out[0], ChatMessage::User { .. }),
+			"a structured notice must still be a user message");
+		assert!(out[0].text().contains("## Task"), "and must carry the structure: {}",
+			out[0].text());
+	}
+
+	#[test]
+	fn test_a_fold_notice_is_never_retired_or_elided_00() {
+		// Nothing in retirement or elision rewrites a user message, and a notice is one -- so
+		// the structure inherits that for free. Asserted rather than reasoned about, because
+		// four separate measures walk this list and each could grow a case for it.
+		let n = match parse_fold_notes(structured_reply()) {
+			Some(n) => n,
+			None    => panic!("must parse"),
+		};
+		let note = notice(4, &Summary::Notes(n), &edited_ledger(), false);
+		let base = session(12, 4_000);
+		let cut  = tail_start(&base, 8_000, MIN_KEEP_MESSAGES, u64::MAX, &shut());
+		let mut v = match fold(&base, cut, note) {
+			Ok(o)  => o,
+			Err(e) => panic!("{}", e),
+		};
+		let was = v[0].text().to_string();
+		let n = v.len();
+		retire_upto(&mut v, n);
+		retire_written(&mut v, n);
+		retire_results(&mut v, n, 0);
+		elide_bulk(&mut v, 100, 1, &shut());
+		assert_eq!(was, v[0].text(),
+			"a fold notice was rewritten by a measure that is documented not to touch one");
+	}
+
+	#[test]
+	fn test_the_fold_shape_is_a_setting_00() {
+		assert_eq!(FoldShape::Structured, Limits::default().fold_shape,
+			"the shape a fresh engine folds in");
+		assert_eq!(Some(FoldShape::Prose), FoldShape::from_wire("prose"));
+		assert_eq!(Some(FoldShape::Structured), FoldShape::from_wire(" structured "));
+		assert_eq!(None, FoldShape::from_wire("strucutred"),
+			"a spelling this build does not know must be refused, not defaulted");
+		assert_eq!("prose", FoldShape::Prose.wire());
+		// And the budgets differ, because seven headings with bullets do not fit a paragraph's.
+		assert!(FoldShape::Structured.max_tokens() > FoldShape::Prose.max_tokens());
+	}
+
+	#[test]
+	fn test_a_capped_turn_small_enough_to_fit_still_has_something_to_fold_00() {
+		// `tail_start` answers 0 whenever the WHOLE conversation fits the tail budget, and at
+		// the round limit that is the ordinary case: a turn capped at ten rounds has not filled
+		// forty-eight thousand tokens. So no summary was made, and the leg that continued
+		// started from the raw log -- which is why a fold fired once in 422 bank trials.
+		let v = session(12, 2_000);
+		assert_eq!(0, tail_start(&v, u64::MAX, MIN_KEEP_MESSAGES, u64::MAX, &shut()),
+			"the fixture has to be one the ordinary cut declines, or this proves nothing");
+		let cut = capped_cut(&v, u64::MAX, &shut());
+		assert!(cut > 0, "a capped fold must have something to fold");
+		assert!(v.len() - cut >= MIN_KEEP_MESSAGES,
+			"and must still keep the minimum verbatim: {} of {}", v.len() - cut, v.len());
+		// And what it folds is worth the summary it costs.
+		let out = match fold(&v, cut, notice(cut, &Summary::Prose("a plan"), &ledger_of(&v[..cut]), true)) {
+			Ok(o)  => o,
+			Err(e) => panic!("{}", e),
+		};
+		assert!(pairing_is_whole(&out));
+		assert!(conversation_bytes(&out, &shut()) < conversation_bytes(&v, &shut()),
+			"a capped fold that made the conversation bigger is not a fold");
+		// A conversation with nothing behind the minimum is left alone: the note would cost
+		// more than the log it replaced, and the continuation carries the log perfectly well.
+		assert_eq!(0, capped_cut(&session(8, 20), u64::MAX, &shut()),
+			"folding a few hundred bytes buys nothing and costs a model call");
+	}
+
+	// ── What a fold left behind ──────────────────────────────────────────────
+
+	#[test]
+	fn test_recall_finds_a_line_in_any_fold_notice_with_context_00() {
+		// Two folds, so the numbering is exercised: `fold:1` is the older one, which is the
+		// order a model reads a conversation in.
+		let mut l = Ledger::default();
+		Ledger::push(&mut l.read, fmt!("src/m07.js"));
+		let first  = notice(9, &Summary::Prose("The cap is 4120 in m07.js.\nAnd nothing else was settled."), &l, false);
+		let second = notice(4, &Summary::Prose("Nothing to do with it."), &l, false);
+		let msgs = vec![
+			ChatMessage::user(first),
+			ChatMessage::assistant("between the two"),
+			ChatMessage::user(second),
+			ChatMessage::user(fmt!("what was the cap?")),
+		];
+		let hits = recall_folds(&msgs, &mut |l: &str| l.contains("4120"), 0, 0, 40);
+		assert_eq!(1, hits.len(), "one line carries it: {:?}", hits);
+		assert!(hits[0].starts_with("fold:1:"),
+			"reported under the notice it came from, in file_search's own form: {}", hits[0]);
+		assert!(hits[0].contains("4120"));
+		// Context lines come back too, since "what was decided" is rarely one line.
+		let hits = recall_folds(&msgs, &mut |l: &str| l.contains("4120"), 0, 1, 40);
+		assert_eq!(2, hits.len(), "the line after it as well: {:?}", hits);
+		assert!(hits[1].contains("nothing else was settled"));
+		// A user message that is not a notice is not searched: it is still in the
+		// conversation, so reporting it would be the tool answering about what is in front of
+		// the model already.
+		let hits = recall_folds(&msgs, &mut |l: &str| l.contains("what was the cap"), 0, 0, 40);
+		assert!(hits.is_empty(), "{:?}", hits);
+	}
+
+	#[test]
+	fn test_recall_answers_nothing_when_nothing_folded_00() {
+		let msgs = three_turns();
+		let hits = recall_folds(&msgs, &mut |_: &str| true, 0, 0, 40);
+		assert!(hits.is_empty(),
+			"a conversation that has folded nothing has nothing to recall: {:?}", hits);
+	}
+
+	#[test]
+	fn test_a_hot_flag_the_reducer_drops_is_named_00() {
+		let before = "{\"sections\":[{\"heading\":\"Ground rules\",\"body\":\"b\",\"hot\":true},\
+			{\"heading\":\"History\",\"body\":\"h\"}]}";
+		let after  = "{\"sections\":[{\"heading\":\"Ground rules\",\"body\":\"b\"},\
+			{\"heading\":\"History\",\"body\":\"h\"}]}";
+		assert_eq!(vec![fmt!("Ground rules")], hot_flags_lost(before, after),
+			"a section that went cold is named");
+		assert!(hot_flags_lost(before, before).is_empty(), "nothing moved, nothing said");
+		// A section that was renamed AND kept hot is reported, and that is the honest answer:
+		// nothing here can tell a rename from a removal, and the user is the one deciding.
+		let renamed = "{\"sections\":[{\"heading\":\"The rules\",\"body\":\"b\",\"hot\":true}]}";
+		assert_eq!(vec![fmt!("Ground rules")], hot_flags_lost(before, renamed));
+		// Silent where nothing can be established, exactly as `crystal_keys_lost` is.
+		assert!(hot_flags_lost("not json", after).is_empty());
+		assert!(hot_flags_lost(before, "[1,2,3]").is_empty());
 	}
 
 	// ── The crystal fold's gate ──────────────────────────────────────────────

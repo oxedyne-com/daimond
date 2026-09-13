@@ -967,7 +967,7 @@ pub enum AgentEvent {
     /// Its own variant rather than a line of assistant text: a fold is something the APP
     /// did, it is lossy, and the user is entitled to see it as an act rather than as prose
     /// the model produced.
-    Compacted { folded: usize, kept: usize, note: String },
+    Compacted { folded: usize, kept: usize, note: String, structured: bool },
     /// A picture could not be put in front of this model.
     ///
     /// Its own variant and not an error: the turn goes on without the picture.  The app did
@@ -1112,7 +1112,7 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("interjected"));
                 m.insert(dat!("content"), dat!(text.clone()));
             }
-            Self::Compacted { folded, kept, note } => {
+            Self::Compacted { folded, kept, note, .. } => {
                 m.insert(dat!("type"), dat!("compacted"));
                 m.insert(dat!("folded"), Dat::U64(*folded as u64));
                 m.insert(dat!("kept"), Dat::U64(*kept as u64));
@@ -2243,6 +2243,7 @@ mod tests {
         // counts beside the sentence so a client need not parse prose to draw it.
         let ev = AgentEvent::Compacted {
             folded: 41, kept: 7, note: fmt!("Folded 41 earlier messages."),
+            structured: true,
         };
         let dm = ev.to_datmap();
         assert_eq!(dm.get(&dat!("type")), Some(&dat!("compacted")));

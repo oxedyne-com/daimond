@@ -301,7 +301,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `pushToken` is deliberately NOT in the stored shape and never read back: the
 		// wrapped `pushTokenEnc` is the only form that reaches storage. See `saveCfg`.
 		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0,
-			crystalKb: 0, crystalPageKb: 0, tools: true,
+			crystalKb: 0, crystalPageKb: 0, crystalHotKb: 0, tools: true,
 			foldModel: '', foldProvider: '', foldAt: 0, contextCap: 0, spendCap: 0,
 			// The compaction and worker-preset knobs, as one flat JSON object -- see
 			// `Agent::set_tune`. Empty is how "nobody has tuned anything" travels, and it is
@@ -346,6 +346,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// daimon reads, and the page that draws it.
 				if (typeof j.crystalKb === 'number') cfg.crystalKb = j.crystalKb;
 				if (typeof j.crystalPageKb === 'number') cfg.crystalPageKb = j.crystalPageKb;
+				if (typeof j.crystalHotKb === 'number') cfg.crystalHotKb = j.crystalHotKb;
 				if (typeof j.tools === 'boolean') cfg.tools = j.tools;
 			if (typeof j.chatPreview === 'boolean') cfg.chatPreview = j.chatPreview;
 				// What folds a conversation when it outgrows its window. Empty -- and an
@@ -437,6 +438,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		maxRounds: c.maxRounds || 0,
 			crystalKb:     c.crystalKb || 0,
 			crystalPageKb: c.crystalPageKb || 0,
+			crystalHotKb:  c.crystalHotKb || 0,
 			tools:     c.tools !== false,
 			chatPreview: c.chatPreview !== false,
 			foldModel:    c.foldModel || '',
@@ -4503,29 +4505,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return (h >>> 0).toString(36) + ':' + s.length;
 	}
 
-	/// Parse one `file_list` listing (a local copy of the Files panel's parser,
-	/// which is closed over there).
+	/// Parse one `file_list` listing.
+	///
+	/// ONE READER, in `js/listing.js`, which the Files panel also uses. This was "a local copy of
+	/// the Files panel's parser, which is closed over there" -- two copies of a rule about text,
+	/// which is how one of them comes to be right. A line neither recognised became a phantom file
+	/// in a census that calls itself complete, which is what the other device deletes on.
 	function parseSyncListing(text) {
-		var out = [];
-		// THE FIRST LINE, not the end of the text. `file_list` can now put a second line
-		// under this one saying which filesystem it looked in (`two_places_note`,
-		// src/tools.rs), and a test anchored at the end stopped recognising the answer --
-		// which does not read as "unknown", it reads as ONE FILE whose name is that
-		// sentence. In a census that calls itself complete, a phantom file is what the
-		// other device syncs. Anchored here so that any later note is inert as well.
-		if (/ is empty\.$/.test(String(text).split('\n')[0].trim())) return out;
-		String(text).split('\n').forEach(function (line) {
-			if (!line) return;
-			if (line.charAt(line.length - 1) === '/') { out.push({ name: line.slice(0, -1), dir: true, size: 0 }); return; }
-			// A file the listing marks as in cloud storage is not on this device,
-			// so there is nothing here to read or to re-offload.
-			var c = /^(.*?)\s{2}\((\d+) bytes, in cloud storage\)$/.exec(line);
-			if (c) { out.push({ name: c[1], dir: false, size: parseInt(c[2], 10), cloud: true }); return; }
-			var m = /^(.*?)\s{2}\((\d+) bytes\)$/.exec(line);
-			if (m) out.push({ name: m[1], dir: false, size: parseInt(m[2], 10) });
-			else out.push({ name: line, dir: false, size: 0 });
-		});
-		return out;
+		if (!window.DaimondListing) return [];
+		return window.DaimondListing.parse(text);
 	}
 
 	/// Whether workspace files can be synced now: tools are up and the active
@@ -17617,7 +17605,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// abort exactly this turn when it parks. The app exists now (reconstruct ran).
 				var tid = String((ropts && ropts.turnId) || '');
 				if (tid && _runnerCtx[tid]) {
-					_runnerCtx[tid].abort = function () { try { if (c && c.chat && c.chat.app) c.chat.app.abort(); } catch (e) { /* idempotent */ } };
+					_runnerCtx[tid].abort = function () {
+						try { if (c && c.chat) Workers.cancelAwaits(c.chat.id); } catch (e) { /* best effort */ }
+						try { if (c && c.chat && c.chat.app) c.chat.app.abort(); } catch (e) { /* idempotent */ }
+					};
 				}
 				// D3 — the prompt is already in the reconstructed transcript, so tell
 				// runTurn to run against it rather than append a second copy.
@@ -17632,7 +17623,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// local transcript. A turn that fanned out nothing returns from here at once.
 				await drainAgenticRounds(c.chat);
 			},
-			abort: function () { try { if (ctx && ctx.chat && ctx.chat.app) ctx.chat.app.abort(); } catch (e) { /* idempotent */ } },
+			abort: function () {
+				try { if (ctx && ctx.chat) Workers.cancelAwaits(ctx.chat.id); } catch (e) { /* best effort */ }
+				try { if (ctx && ctx.chat && ctx.chat.app) ctx.chat.app.abort(); } catch (e) { /* idempotent */ }
+			},
 			pushResult: async function () {
 				try { if (ctx && ctx.chat) captureSession(ctx.chat, ctx.app); } catch (e) { /* best effort */ }
 				// CONFIRM the final answer committed, resilient to a streaming progress push
@@ -17683,8 +17677,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var live = _liveTurn[String(turnId)] || '';
 					if (live) {
 						tail = (tail ? tail + '\n' : '') + live;
-						if (tail.length > PROGRESS_TAIL_MAX) tail = tail.slice(-PROGRESS_TAIL_MAX);
 					}
+					// AND THE WORKERS THIS TURN STARTED, which is the one thing the phone
+					// watching a runner cannot see. The transcript already carries the
+					// `[tool spawn_agent …]` line; what it does not carry is whether the
+					// worker is still going, and that is what a reader waiting on a fan-out
+					// is actually waiting for.
+					var wl = '';
+					try { wl = Workers.liveLine(turnId); } catch (e) { wl = ''; }
+					if (wl) tail = (tail ? tail + '\n' : '') + wl;
+					if (tail.length > PROGRESS_TAIL_MAX) tail = tail.slice(-PROGRESS_TAIL_MAX);
 					if (tail && DaimondSync && DaimondSync.pushProgressFrame) {
 						if (tail === _progressSent[turnId]) return;		// nothing new to say
 						var out = await DaimondSync.pushProgressFrame(turnId, tail);
@@ -25502,6 +25504,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// read after the turn: a dispatch that named no task starts nothing, and the
 		// user used to see no agent, no error and no explanation.
 		var dispatched = [], rejectedSpawns = 0;
+		// CAN THIS ENGINE READ A WORKER BACK INSIDE THE TURN? With one that can, the model's own
+		// `spawn_agent` call reaches `DaimondWorkers.spawn` and the worker is already running by
+		// the time the call returns -- so the collector below must NOT start a second copy. With
+		// an older engine, or a bundle where the pair was never built, the collector is the only
+		// thing that starts anything and behaves exactly as it always has.
+		// BOTH HALVES, and the second one is not a formality: the engine says whether it HOLDS
+		// `gather`, and this file says whether the page can serve it. A shell without the pump's
+		// two methods -- an older bundle, or a verifier that took one away -- would otherwise
+		// switch the collector off on the engine's word and start nothing at all.
+		var inTurnWorkers = false;
+		try {
+			inTurnWorkers = !!(app.can_gather && app.can_gather() && app.set_turn_tag
+				&& typeof Workers.spawn === 'function'
+				&& typeof Workers.awaitReports === 'function');
+		} catch (e) { inTurnWorkers = false; }
+		if (inTurnWorkers) {
+			try {
+				// The engine cannot work out which conversation it is: one pump serves the whole
+				// page and several turns run at once. `null` is this client's own conversation --
+				// a chat holds an app of its own, so there is only ever one.
+				app.set_turn_tag(null, String(umid));
+				Workers.holdTurn(umid, {
+					chatId:   chat.id,
+					chatName: chat.name || '',
+					// The depth a gather round left for this chat, read and cleared exactly as
+					// the post-turn path below reads and clears it.
+					depth:    Workers.gatherDepth[chat.id] | 0,
+				});
+				delete Workers.gatherDepth[chat.id];
+			} catch (e) { inTurnWorkers = false; }
+		}
 		// D3 — the peer turn's prompt is already the transcript message `umid` (and, if
 		// the chat is on screen, already drawn from the synced history); append neither
 		// a duplicate record nor a duplicate bubble. An ordinary turn appends the
@@ -25635,7 +25668,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// is: the tool call only records the request — the agent runtime is the
 				// page's, not the model's — so several calls in one turn become several
 				// workers running at once rather than one blocking the next.
-				if ((ev.name || '') === 'spawn_agent') {
+				if ((ev.name || '') === 'spawn_agent' && !inTurnWorkers) {
 					var wspec = null;
 					try { wspec = JSON.parse(ev.args || '{}'); } catch (e) { wspec = null; }
 					if (wspec && wspec.task) dispatched.push({ name: wspec.name, task: wspec.task });
@@ -25822,8 +25855,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// `worthSaying` draws it, because a fold that happened is a fold that
 				// happened; and `noteRealFold` stands the feed's own drop-inference
 				// down for this turn, so the two never report the same fold twice.
+				// `shape` says whether the note came back in the layout the compactor was
+				// asked for. A structured fold that quietly stopped parsing would otherwise
+				// show as an ordinary fold for ever, which is the reading the measurement
+				// most needs; an engine too old to say answers 'prose', which it was.
 				dsEvent('fold', { turn: String(umid), r: step, folded: ev.folded || 0,
-					kept: ev.kept || 0, trigger: 'real' });
+					kept: ev.kept || 0, trigger: 'real', shape: ev.shape || 'prose' });
 				try { if (window.DEBUG_SHARE && DEBUG_SHARE.noteRealFold) DEBUG_SHARE.noteRealFold(String(umid)); }
 				catch (e) { /* the feed must never break a turn */ }
 				// Persisted, so a reload still shows that the history was folded --
@@ -25938,6 +25975,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						var half  = Math.max(MIN_MAX, Math.floor(asked / 2));
 						chat._capTry = half;
 						app = rebuildAppWithout(chat, umid);
+						// A REBUILT APP IS A NEW APP AND CARRIES NO TAG. Without this the rest
+						// of the turn could not attribute a worker to anything, and the spawn
+						// would be refused for a reason the user never caused.
+						if (inTurnWorkers) {
+							try { app.set_turn_tag(null, String(umid)); } catch (e) { /* older engine */ }
+						}
 						await app.run_turn(text, onEvent);
 						// Only NOW is the smaller ask believed. Recording the cap before
 						// the retry would teach the app a ceiling from any unrelated 400 —
@@ -25962,6 +26005,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 								+ 'switch this chat to a provider key of your own.');
 						}
 						app = rebuildAppWithout(chat, umid);
+						// A REBUILT APP IS A NEW APP AND CARRIES NO TAG. Without this the rest
+						// of the turn could not attribute a worker to anything, and the spawn
+						// would be refused for a reason the user never caused.
+						if (inTurnWorkers) {
+							try { app.set_turn_tag(null, String(umid)); } catch (e) { /* older engine */ }
+						}
 						await app.run_turn(text, onEvent);
 					} else {
 						throw e;
@@ -26219,6 +26268,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { window.dispatchEvent(new Event('daimond:idle')); } catch (e) {}
 			}
 		});
+		// THE TURN IS OVER. Anything it started and never gathered goes back on the ordinary
+		// path from here -- `gather` -> `deliverToChat` -- so a turn that dispatched and then
+		// stopped without gathering loses nothing. Before `drainQueue`, which starts the next
+		// turn, and before the post-turn dispatch below, which belongs to the old path.
+		try { Workers.releaseTurn(umid); } catch (e) { /* best effort; the runs stand */ }
 		// The workers this turn asked for, started now that it has finished. OUTSIDE
 		// the lock, and after the turn rather than during it, for the reason the
 		// Diamond's fan-out is: they run concurrently, and starting one from inside
@@ -26445,6 +26499,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Stop means stop: anything queued behind this turn is handed back to the
 		// composer rather than sent the moment the turn the user just killed ends.
 		current._aborted = true;
+		// AND ANY GATHER THIS CHAT IS WAITING ON. `LlmClient::abort` fires the armed fetch, and
+		// during a gather there is none -- so without this Stop would do nothing at all until
+		// the wait ran out, which is up to ten minutes of a button that looks broken.
+		try { Workers.cancelAwaits(current.id); } catch (e) { /* best effort */ }
 		try { current.app.abort(); } catch (e) { /* idempotent; ignore */ }
 	}
 
@@ -26572,6 +26630,277 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// on reload would re-spend on a turn the user never saw.
 		batches: {},
 		batchSeq: 0,
+
+		// ── The in-turn path ────────────────────────────────────────
+		//
+		// A worker used to start when the turn that asked for it ENDED, and its report reached
+		// the daimon as a whole further turn -- a second full send of the standing context for
+		// the sake of a few kilobytes of report. The engine can now start one at the call and
+		// wait for it from inside the turn (`spawn_agent` -> `spawn`, `gather` ->
+		// `awaitReports`, both in src/wasm/workers.rs), and these three pieces of state are what
+		// that needs.
+		//
+		// NONE OF IT IS PERSISTED, like `batches` beside it: a turn does not survive a reload,
+		// so a revived `awaiting` would be a promise nothing is holding and a revived
+		// `liveTurns` would stop `gather` for ever. `load` marks the runs `interrupted` and the
+		// ordinary path takes them from there.
+
+		/// Turns whose workers this page is hosting: the engine's turn tag -> what it belongs to.
+		liveTurns: {},
+
+		/// Gathers waiting on their workers. One entry per `awaitReports` call in flight.
+		awaiting: [],
+
+		/// Is this the end of a run, as `gather` has always counted it?
+		///
+		/// One reading, because two would eventually disagree: `paused` is NOT terminal -- a
+		/// paused worker is going to be resumed and its report belongs with the others -- while
+		/// `capped` and `spend_cap` are, since the turn is over and waiting for either to become
+		/// something else would strand the round for ever.
+		isTerminal: function (status) {
+			return status === 'done' || status === 'error' || status === 'stopped'
+				|| status === 'capped' || status === 'spend_cap';
+		},
+
+		/// Say that a turn is running here, so a worker it starts can be attributed to it.
+		///
+		/// # Arguments
+		/// * `turnId` - The tag the engine was handed with `set_turn_tag`.
+		/// * `owner` - `{ chatId, chatName }` for a chat, `{ diamondId, diamondName, depth }`
+		///   for a Diamond's daimon.
+		holdTurn: function (turnId, owner) {
+			var turn = String(turnId || '');
+			if (!turn) return;
+			this.liveTurns[turn] = owner || {};
+		},
+
+		/// The turn has ended: stop holding its workers back, and settle anything still waiting.
+		///
+		/// EVERY WAY OUT OF A TURN COMES THROUGH HERE, exactly as `runTurn`'s own `finally` is
+		/// the one place the indicator comes down. A batch whose reports the turn never gathered
+		/// takes today's path from here -- `gather` -> `deliverToChat` -- so nothing is lost by
+		/// a turn that dispatched and then stopped without gathering.
+		releaseTurn: function (turnId) {
+			var turn = String(turnId || '');
+			if (!turn || !this.liveTurns[turn]) return;
+			delete this.liveTurns[turn];
+			// Nothing will read the answer now, so no promise is left holding the engine.
+			this.settleTurnAwaits(turn, 'released');
+			var self = this;
+			Object.keys(this.batches).forEach(function (k) {
+				if (String((self.batches[k] || {}).turnId || '') === turn) self.gather(k);
+			});
+		},
+
+		/// Start one worker now, for the turn that asked. The engine's `spawn_agent`.
+		///
+		/// Answers `{started, id, name}` or `{started:false, why}`; the refusal's `why` is the
+		/// clause the model is shown, so it says what happened rather than that something did.
+		spawn: function (payload) {
+			var o = null;
+			try { o = JSON.parse(String(payload || '{}')); } catch (e) { o = null; }
+			var name = String((o && o.name) || '');
+			var task = String((o && o.task) || '');
+			var turn = String((o && o.turn) || '');
+			var live = turn ? this.liveTurns[turn] : null;
+			if (!task) {
+				return Promise.resolve(JSON.stringify({ started: false,
+					why: 'the request carried no task' }));
+			}
+			// The page is not hosting this turn, so there is nothing to attribute the worker
+			// to -- no model to run it on, no fence to put round it and nowhere to report.
+			if (!live) {
+				return Promise.resolve(JSON.stringify({ started: false,
+					why: 'this page is not running a turn the worker could be attributed to' }));
+			}
+			var self = this;
+			var chat = live.chatId
+				? chats.find(function (x) { return x.id === live.chatId; }) : null;
+			// The spend gate, asked BEFORE anything is enqueued and therefore before anything is
+			// spent -- which is where it always belonged. On the old path it was asked after the
+			// turn had already ended, so the dialog appeared under a finished answer.
+			return Promise.resolve(governorClearsDispatch(1, live.diamondId || '',
+					live.chatId || ''))
+				.then(function (gate) {
+					if (!gate.ok) {
+						return JSON.stringify({ started: false, why: gate.why });
+					}
+					var pick = live.chatId
+						? (chat ? chatWorkerModel(chat) : null)
+						: diamondWorkerModel(live.diamondId || '');
+					if (!pick || !pick.model) {
+						return JSON.stringify({ started: false,
+							why: 'this conversation has no model its workers could run on' });
+					}
+					// THE TAINT COMES FROM THE CALL, not from the turn's opening state: a
+					// conversation becomes tainted the moment it reads a stranger's words, and
+					// that may be three rounds into this turn. The engine reads its own flag at
+					// the call and puts it here.
+					var tainted = !!(o && o.tainted);
+					var ids = self.dispatch(live.diamondId || '', live.diamondName || '',
+						[{ name: name, task: task }], tainted, pick, live.depth | 0,
+						{ chatId: live.chatId || '', chatName: live.chatName || '',
+							turnId: turn });
+					if (!ids || !ids.length) {
+						return JSON.stringify({ started: false,
+							why: 'the worker pump would not take it' });
+					}
+					return JSON.stringify({ started: true, id: ids[0], name: name });
+				})
+				.catch(function (e) {
+					return JSON.stringify({ started: false, why: friendlyError(e) });
+				});
+		},
+
+		/// Wait for named runs and hand back their reports. The engine's `gather`.
+		///
+		/// The whole of the WAIT is here, because this object owns the runs and is the only
+		/// thing that can say when one is finished. The composing and the accounting are the
+		/// engine's; see `gather_result` in src/tools.rs.
+		awaitReports: function (payload) {
+			var o = null;
+			try { o = JSON.parse(String(payload || '{}')); } catch (e) { o = null; }
+			var ids = (o && Array.isArray(o.ids)) ? o.ids.map(String) : [];
+			var self = this;
+			return new Promise(function (resolve) {
+				var w = {
+					turn:    String((o && o.turn) || ''),
+					ids:     ids,
+					partial: !!(o && o.partial),
+					at:      Date.now(),
+					resolve: resolve,
+					done:    false,
+					timer:   null,
+				};
+				self.awaiting.push(w);
+				// Already finished is the common case on a second gather, and a promise that
+				// waited for a timer to notice would cost the turn a minute for nothing.
+				if (!self.trySettle(w)) {
+					var ms = Math.max(1000, (o && o.timeout_ms) | 0);
+					w.timer = setTimeout(function () { self.finishAwait(w, 'timeout'); }, ms);
+				}
+			});
+		},
+
+		/// A run has reached a terminal state; any gather waiting on it may now be able to answer.
+		settleAwaits: function (run) {
+			if (!run) return;
+			var self = this;
+			this.awaiting.slice().forEach(function (w) {
+				if (!w.done && w.ids.indexOf(String(run.id)) !== -1) self.trySettle(w);
+			});
+		},
+
+		/// The user pressed Stop: settle every gather this chat is waiting on.
+		///
+		/// `LlmClient::abort` only fires an armed fetch, and during a gather there is none --
+		/// so without this Stop would do nothing at all until the wait ran out. See §1.2 of the
+		/// plan and src/llm.rs's `abort`.
+		cancelAwaits: function (chatId) {
+			var want = String(chatId || '');
+			var self = this;
+			this.awaiting.slice().forEach(function (w) {
+				if (w.done) return;
+				var live = self.liveTurns[w.turn] || {};
+				if (!want || String(live.chatId || '') === want) self.finishAwait(w, 'cancelled');
+			});
+		},
+
+		/// Settle every gather belonging to one turn, whatever it is waiting for.
+		settleTurnAwaits: function (turn, how) {
+			var self = this;
+			this.awaiting.slice().forEach(function (w) {
+				if (!w.done && w.turn === String(turn)) self.finishAwait(w, how);
+			});
+		},
+
+		/// Answer this gather if its condition is met; say whether it did.
+		trySettle: function (w) {
+			var self = this;
+			var known = w.ids.map(function (id) {
+				return self.runs.find(function (r) { return String(r.id) === id; });
+			});
+			var ready = known.filter(function (r) { return r && self.isTerminal(r.status); });
+			// All of them, or -- where the model asked for it -- the first of them. A run the
+			// page has lost track of altogether counts as ready: waiting on a record that is
+			// not there would hold the turn to its timeout for nothing.
+			var all = known.every(function (r) { return !r || self.isTerminal(r.status); });
+			if (!all && !(w.partial && ready.length)) return false;
+			this.finishAwait(w, 'done');
+			return true;
+		},
+
+		/// Answer one gather, once, with whatever is finished.
+		finishAwait: function (w, how) {
+			if (!w || w.done) return;
+			w.done = true;
+			if (w.timer) { clearTimeout(w.timer); w.timer = null; }
+			var i = this.awaiting.indexOf(w);
+			if (i !== -1) this.awaiting.splice(i, 1);
+			var self = this;
+			var reports = [], pending = [];
+			w.ids.forEach(function (id) {
+				var r = self.runs.find(function (x) { return String(x.id) === id; });
+				if (!r) return;						// no record, so nothing to report either way
+				if (how !== 'cancelled' && self.isTerminal(r.status)) {
+					// MARKED AS IT LEAVES, so `gather` does not deliver the same report again
+					// when the turn releases: the model has it, and a second copy read as a
+					// second finding is the one thing this path must not do.
+					r.gathered = w.turn;
+					reports.push({
+						id:     String(r.id),
+						name:   String(r.name || r.id),
+						status: String(r.status || 'done'),
+						rounds: (r.ended && r.ended.rounds) || 0,
+						usd:    r.costUsd || 0,
+						// `r.report` is the capped final answer -- see the `finally` in `start`,
+						// and `reportClip` for the two figures. `r.text` is the fallback for a
+						// worker that died before it ever answered.
+						report: String(r.report != null ? r.report : (r.text || '')),
+					});
+				} else {
+					pending.push({ id: String(r.id), name: String(r.name || r.id) });
+				}
+			});
+			var ms = Date.now() - w.at;
+			// TRAINING WHEELS — the debug feed's `gather`, one row per settlement, so a lens
+			// reader can see a turn wait and what it got. `lens events --kind gather`.
+			dsEvent('gather', {
+				turn:    String(w.turn || ''),
+				w:       w.ids.join(','),
+				n:       reports.length,
+				pending: pending.length,
+				ms:      ms,
+				to:      how === 'timeout' ? 1 : 0,
+			});
+			this.persist();
+			this.render();
+			w.resolve(JSON.stringify({
+				reports:   reports,
+				pending:   pending,
+				timed_out: how === 'timeout',
+				cancelled: how === 'cancelled',
+				waited_ms: ms,
+			}));
+		},
+
+		/// One line naming this turn's workers and where each has got to, for the progress frame
+		/// a handed-off turn streams home. Empty where the turn started none.
+		///
+		/// The phone watching a runner sees `[tool spawn_agent …]` from the transcript already;
+		/// what it cannot see is whether the worker is still going, which is the whole of what a
+		/// reader waiting on a fan-out wants to know.
+		liveLine: function (turnId) {
+			var turn = String(turnId || '');
+			if (!turn) return '';
+			var self = this;
+			var mine = this.runs.filter(function (r) { return String(r.turnId || '') === turn; });
+			if (!mine.length) return '';
+			return '[workers: ' + mine.slice().reverse().map(function (r) {
+				return (r.name || r.id) + ' ' + (self.isTerminal(r.status) ? r.status : 'running')
+					+ ' ' + r.id;
+			}).join(' · ') + ']';
+		},
 		// How many gather rounds may follow one another. A daimon that answers
 		// every report by dispatching again is iterating, which is the point; one
 		// that does it for ever is a bill. Three is enough for read-compare-act.
@@ -26624,6 +26953,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// a reload unable to say where it came from, and its answer read as
 						// orphaned.
 						chatId: r.chatId || '', chatName: r.chatName || '',
+						// Which turn started it, whether from inside that turn, and whether its
+						// report was ever handed back. A reload kills the turn, so `load` treats
+						// every in-turn run as releasable -- but a tile still has to be able to
+						// say what the run was part of.
+						turnId: r.turnId || '', inTurn: !!r.inTurn, gathered: r.gathered || '',
 						model: r.model, provider: r.provider || '', status: r.status, text: r.text, tools: r.tools,
 						// Which modality put this worker on this model. Without it a tile drawn
 						// after a reload cannot say why an image task is on the text model.
@@ -26702,7 +27036,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// fenced differently, reports back to a transcript rather than to a crystal,
 		/// and has no crystal to be folded into.
 		dispatch: function (diamondId, diamondName, specs, tainted, pick, depth, owner) {
-			if (!specs || !specs.length) return;
+			if (!specs || !specs.length) return [];
 			revealAgents();
 			var self = this;
 			var wm = (pick && pick.model) ? pick : diamondWorkerModel(diamondId);
@@ -26724,9 +27058,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var batch = 'b' + (++self.batchSeq);
 			var chatId   = (owner && owner.chatId)   ? owner.chatId   : '';
 			var chatName = (owner && owner.chatName) ? owner.chatName : '';
+			// Which turn started this, when a turn started it from inside itself. Empty on the
+			// old path, and every guard below tests for it rather than for its absence -- so a
+			// fan-out collected after the turn behaves exactly as it always has.
+			var turnId   = (owner && owner.turnId)   ? String(owner.turnId) : '';
 			this.batches[batch] = {
 				diamondId: diamondId, diamondName: diamondName,
-				chatId: chatId, chatName: chatName,
+				chatId: chatId, chatName: chatName, turnId: turnId,
 				depth: (depth | 0), expected: specs.length, ids: [],
 			};
 			specs.forEach(function (spec) {
@@ -26750,6 +27088,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// to say where the run came from. A Diamond's worker carries neither.
 					chatId: chatId,
 					chatName: chatName,
+					// The turn that started it, and whether it was started from INSIDE that turn.
+					// `gather` holds an in-turn batch back while its turn is still running, and
+					// `releaseTurn` lets it go; both read this. Persisted, so a reload can say
+					// what a run was part of.
+					turnId: turnId,
+					inTurn: !!turnId,
+					// Set to the turn tag once a `gather` has handed this run's report back, so
+					// the report is never delivered a second time by the post-turn path.
+					gathered: '',
 					// Why this worker is on this model, so a run that fell back to the text
 					// model because no vision model is set says so instead of looking chosen.
 					sees: sees,
@@ -26810,6 +27157,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			this.persist();
 			this.render();
 			this.pump();
+			// WHICH RUNS THIS MADE, so the in-turn bridge can tell the engine the id it must
+			// gather on. Nothing on the old path reads it.
+			return this.batches[batch] ? this.batches[batch].ids.slice() : [];
 		},
 
 		/// Which of the secondary models one task runs on, and why.
@@ -26881,18 +27231,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var b = batch && this.batches[batch];
 			if (!b) return;
 			var self = this;
+			// THE TURN IS STILL RUNNING AND IS GOING TO READ THESE ITSELF. Its `gather` call is
+			// holding a promise on these very runs, and delivering here as well would put the
+			// same reports into the conversation twice -- once as the tool's result and once as
+			// a turn nobody asked for. Released by `releaseTurn` when the turn ends, which is
+			// also what puts an UNgathered batch back on the path below.
+			if (b.turnId && this.liveTurns[b.turnId]) return;
 			var mine = this.runs.filter(function (r) { return r.batch === batch; });
 			if (mine.length < b.expected) return;		// not all enqueued yet
 			// `capped` and `spend_cap` are terminal too: the turn is over, its rounds
 			// exhausted or its spend exhausted, and waiting for a worker in either
 			// state to become something else would strand the round for ever, exactly
 			// as waiting on `error` or `stopped` would.
-			var terminal = function (s) {
-				return s === 'done' || s === 'error' || s === 'stopped'
-					|| s === 'capped' || s === 'spend_cap';
-			};
+			var terminal = function (s) { return self.isTerminal(s); };
 			if (!mine.every(function (r) { return terminal(r.status); })) return;
 			delete this.batches[batch];			// once only, whatever follows
+
+			// A report the turn already read is not delivered again. It is in that turn's own
+			// tool result, and a second copy would be read as a second finding.
+			mine = mine.filter(function (r) { return !r.gathered; });
+			if (!mine.length) return;
 
 			// The reports themselves, composed before any decision about where they
 			// go. Both surfaces get the same text, because it is the same thing.
@@ -27174,8 +27532,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					model: String(run.model || '').slice(0, 48),
 					at:    'end',
 					out:   String(run.status || '').slice(0, 16),
+					turn:  String(run.turnId || ''),
 					p: 0, c: 0, ca: 0, usd: 0, r: 0, rb: 0, sb: 0,
 				});
+				// A worker that died before its loop is terminal too, so a gather waiting on it
+				// must be answered rather than left to its timeout.
+				self2.settleAwaits(run);
 				// A batch whose member died here is still a batch, and `gather` judges it
 				// on status: `error` is terminal and hands the rest of the reports back,
 				// `paused` is not and returns, which is the same rule the ordinary close
@@ -27190,6 +27552,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				dia:   String(run.diamondId || ''),
 				model: String(run.model || '').slice(0, 48),
 				at:    'start',
+				turn:  String(run.turnId || ''),
 			});
 			var self = this;
 			// The worker cannot see the conversation that dispatched it, so hand
@@ -27199,8 +27562,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The data as it is on disk, not a rendering of it. A rendering drops any key
 			// the renderer does not know, and the keys a reducer has invented are exactly
 			// the ones a worker has not been told about anywhere else.
+			// THE HOT PART AND THE OUTLINE, from the engine's own split.
+			//
+			// A worker used to be handed `crystal.json` verbatim, which was right while the
+			// whole of it rode in the daimon's prompt too. Since the split it would hand a
+			// worker MORE than the daimon that dispatched it carries, on every round of its
+			// own -- and the split would then have two implementations, one per language,
+			// which is the fault `dev/CONTRACT_FOLD.md` §2 is written about. A worker that
+			// needs a cold section gets it quoted in its task.
 			var crystal = '';
-			try { crystal = await diamondApp().read_crystal_data(run.diamondId); } catch (e) { crystal = ''; }
+			try {
+				var wapp = diamondApp();
+				if (wapp && typeof wapp.crystal_hot_text === 'function') {
+					crystal = await wapp.crystal_hot_text(run.diamondId);
+				} else {
+					crystal = await wapp.read_crystal_data(run.diamondId);
+				}
+			} catch (e) { crystal = ''; }
 
 			// A worker's key, like a chat's, is frozen when its agent is built. A worker spends
 			// the same minted key a chat does, and must survive it being spent the same way --
@@ -27565,20 +27943,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// sent byte counts, so a lens reader can see the cap actually biting on
 				// a chatty worker, or a report going out empty on one that hit its cap
 				// on a tool result -- see the `_tailText` fallback above.
+				run.promptTokens = (run.priorPrompt || 0) + _pt;
+				run.completionTokens = (run.priorCompletion || 0) + _ct;
+				run.cachedTokens = (run.priorCached || 0) + _ca;
+				run.costUsd = (run.priorCost || 0) + _cost;
+				// A GATHER WAITING ON THIS RUN IS ANSWERED HERE, and here rather than at the
+				// foot of this block for two reasons. The report needs `run.costUsd`, which is
+				// the line above; and the feed's `g` below needs `run.gathered`, which this is
+				// what sets -- reported the other way round, every worker in the feed said its
+				// report had NOT been read in the turn, whatever the turn had done with it.
+				this.settleAwaits(run);
 				dsEvent('worker', {
 					w:     String(run.id || ''),
 					model: String(run.model || '').slice(0, 48),
 					at:    'end',
 					out:   String(run.status || '').slice(0, 16),
+					// WHICH TURN IT BELONGED TO, and only that. Whether the report was read
+					// back inside that turn cannot be said here: a gather settles when the LAST
+					// of its workers is terminal, so every earlier worker's row is written
+					// before anything has read it -- and a flag that was false for the first
+					// two of three workers and true for the third would be read as a
+					// difference between them. The `gather` row names the runs it read (`w`),
+					// which is the join, and it carries the turn as well.
+					turn:  String(run.turnId || ''),
 					p:     _pt, c: _ct, ca: _ca,
 					usd:   Math.round((_cost || 0) * 1e6) / 1e6,
 					r:     (run.ended && run.ended.rounds) || 0,
 					rb:    _capped.rawBytes, sb: _capped.sentBytes,
 				});
-				run.promptTokens = (run.priorPrompt || 0) + _pt;
-				run.completionTokens = (run.priorCompletion || 0) + _ct;
-				run.cachedTokens = (run.priorCached || 0) + _ca;
-				run.costUsd = (run.priorCost || 0) + _cost;
 				this.active--;
 				if (run.slot) { self.giveSlot(run.slot); if (window.DaimondModels) DaimondModels.forgetSlot(run.slot); }
 				updateSpend();
@@ -28363,22 +28755,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// The role prompt, plus the house rules, plus (for a worker) the crystal of
 		/// the Diamond that dispatched it.
 		///
-		/// The crystal is `crystal.json` verbatim, so the heading SAYS `crystal.json` and the
-		/// text is fenced as JSON. A worker handed a brace-and-quote blob under a heading
-		/// promising prose reads it as a quoting accident and starts guessing at the format,
-		/// which is the one thing a fresh model with no conversation behind it cannot recover
-		/// from. It is handed over unrendered on purpose: a rendering drops any key the
-		/// renderer does not know, and the keys a reducer has invented are exactly the ones a
-		/// worker has been told about nowhere else.
+		/// The crystal arrives from `DaimondApp::crystal_hot_text` -- the hot part and an
+		/// outline of the rest -- so it is already prose around a JSON object and goes in as it
+		/// stands, unfenced and unrendered. A rendering would drop any key the renderer does not
+		/// know, and the keys a reducer has invented are exactly the ones a worker has been told
+		/// about nowhere else; a fence around it would put a bullet list inside a JSON block.
+		///
+		/// **Hot and outline, not the whole crystal**, since the split of 2026-09-13: handing a
+		/// worker more than the daimon that dispatched it carries would put the cold half in the
+		/// standing context of every round of a turn that cannot even reach the tool that fetches
+		/// it. A worker that needs a cold section gets it quoted in its task. An older engine
+		/// with no such export hands back `crystal.json` whole, which is what this said before.
 		compose: function (role, crystal) {
 			var out = role;
 			if (this.md.trim()) {
 				out += '\n\n## Standing instructions from the user\n\n' + this.md.trim();
 			}
 			if (crystal && crystal.trim()) {
+				var text = crystal.trim();
+				// An engine too old for the split answers with the raw object, which still has
+				// to be fenced for the reason above.
+				if (text.charAt(0) === '{') text = '```json\n' + text + '\n```';
 				out += '\n\n## The crystal of the Diamond that dispatched you (crystal.json)\n\n'
-					+ 'This is what the work is for. Act consistently with it.\n\n'
-					+ '```json\n' + crystal.trim() + '\n```';
+					+ 'This is what the work is for. Act consistently with it.\n\n' + text;
 			}
 			return out;
 		},
@@ -31218,24 +31617,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// "name/" for a directory, "name  (N bytes)" for a file, and
 		// "name  (N bytes, in cloud storage)" for one this device is not
 		// holding; an empty directory yields "<path> is empty.".
+		/// One `file_list` answer as rows, through the one reader in `js/listing.js`.
+		///
+		/// Each row carries `where` -- local, cloud, machine or store -- so the panel can badge
+		/// it without a second opinion about what the annotation meant.
 		function parseListing(text) {
-			var out = [];
-			// The first line, for `parseSyncListing`'s reason: the panel would otherwise
-			// draw the note under the empty answer as a file row.
-			if (/ is empty\.$/.test(String(text).split('\n')[0].trim())) return out;
-			text.split('\n').forEach(function (line) {
-				if (!line) return;
-				if (line.charAt(line.length - 1) === '/') {
-					out.push({ name: line.slice(0, -1), dir: true, size: 0 });
-				} else {
-					var c = /^(.*?)\s{2}\((\d+) bytes, in cloud storage\)$/.exec(line);
-					if (c) { out.push({ name: c[1], dir: false, size: parseInt(c[2], 10), cloud: true }); return; }
-					var m = /^(.*?)\s{2}\((\d+) bytes\)$/.exec(line);
-					if (m) out.push({ name: m[1], dir: false, size: parseInt(m[2], 10) });
-					else out.push({ name: line, dir: false, size: 0 });
-				}
-			});
-			return out;
+			if (!window.DaimondListing) return [];
+			return window.DaimondListing.parse(text);
 		}
 
 		async function list(dir) {
@@ -36566,6 +36954,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		sum.textContent = t('crystal.memory');
 		sum.title = t('crystal.memory_help');
 		box.appendChild(sum);
+		// WHAT THE DAIMON ACTUALLY PAYS FOR, above the box rather than in it.
+		//
+		// Since the split only the HOT part of a crystal rides in the system message on every
+		// round, and a user looking at 30 KB of JSON has no way to tell which bytes those are.
+		// `crystal_split_sizes` reads one file and the three ceilings and borrows no session,
+		// so it is safe to call on every render -- see the reentrancy regression of 2026-09-12.
+		var gauge = document.createElement('p');
+		gauge.className = 'crystal-memory-gauge';
+		box.appendChild(gauge);
+		(async function () {
+			var app = diamondApp();
+			if (!app || typeof app.crystal_split_sizes !== 'function') { gauge.remove(); return; }
+			var z = null;
+			try { z = JSON.parse(await app.crystal_split_sizes(id)); } catch (e) { z = null; }
+			if (!z) { gauge.remove(); return; }
+			var kb = function (n) { return (Math.round(n / 102.4) / 10) + ' KB'; };
+			gauge.textContent = tOr('crystal.memory_gauge', 'hot {hot} / {hotcap} · total {total} / {cap}')
+				.replace('{hot}', kb(z.hot)).replace('{hotcap}', kb(z.hot_cap))
+				.replace('{total}', kb(z.total)).replace('{cap}', kb(z.cap));
+			// Red only where the daimon is over the one ceiling it pays per round. A crystal
+			// that rides whole is under it by definition, so the class never lands on a small
+			// one and never has to be explained.
+			if (!z.whole && z.hot > z.hot_cap) gauge.classList.add('over');
+		}());
 		var ta = document.createElement('textarea');
 		ta.className = 'crystal-memory-ta';
 		ta.spellcheck = false;
@@ -37915,9 +38327,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					body.setAttribute('aria-label', tOr('crystal.field_body', 'Body'));
 					body.value = String(sec.body || '');
 					body.addEventListener('input', function () { sec.body = body.value; writeSecs(); });
+					// Whether this section is in front of the daimon on every round. Written as
+					// the key itself and DELETED rather than written false, because absent is
+					// what cold is in the schema and `false` would be a fourth state nothing
+					// else reads.
+					var hotWrap = document.createElement('label');
+					hotWrap.className = 'crystal-form-hot';
+					var hot = document.createElement('input');
+					hot.type = 'checkbox';
+					hot.className = 'crystal-form-hotbox';
+					hot.checked = sec.hot === true;
+					hot.setAttribute('aria-label', tOr('crystal.field_hot', 'Always present'));
+					hot.addEventListener('change', function () {
+						if (hot.checked) sec.hot = true; else delete sec.hot;
+						writeSecs();
+					});
+					hotWrap.appendChild(hot);
+					hotWrap.appendChild(document.createTextNode(
+						' ' + tOr('crystal.field_hot', 'Always present')));
 					var top = document.createElement('div');
 					top.className = 'crystal-form-line';
 					top.appendChild(head);
+					top.appendChild(hotWrap);
 					top.appendChild(remover(function () { secs.splice(i, 1); writeSecs(); paintSecs(); }));
 					item.appendChild(top);
 					item.appendChild(body);
@@ -40696,6 +41127,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		crystalSay(t('crystal.steering'), true);
 
 		var dispatched = [], rejected = 0, replyText = '';
+		// CAN THIS ENGINE READ A WORKER BACK INSIDE THE TURN? Set just before the turn goes out,
+		// where the Diamond's app is resolved, and read by the collector below at call time --
+		// so a bundle whose engine has the pair keeps its workers off the post-turn path, and
+		// one whose engine has not behaves exactly as it always has.
+		var steerInTurn = false, steerTurn = '';
 		if (mine()) setCrystalReply('');   // clear any previous one-shot answer
 
 		// ── The daimon's conversation ────────────────────────────────
@@ -40820,6 +41256,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var closeFeedTurn = function (out) {
 			if (closedFeed) return;
 			closedFeed = true;
+			// THE ONE PLACE BOTH EXITS PASS THROUGH, which is why the workers are released here
+			// as well: anything this turn started and never gathered goes back on the ordinary
+			// path -- `gather` -> `tellDaimon`/`doSteer` -- exactly as it did before.
+			if (steerTurn) {
+				try { Workers.releaseTurn(steerTurn); } catch (e) { /* the runs stand */ }
+			}
 			if (!endedSeen) {
 				endedSeen = true;
 				// `threw` and `quiet` are this side's own words and neither is `error`,
@@ -40885,13 +41327,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (step === 1 || step % 5 === 0) { dsEvent('round', roundPayload); roundSent = step; }
 				busySay(rec, tOr('chat.busy_tool', 'Running {tool}, step {n}…',
 					{ tool: ev.name || '?', n: step }));
-				if ((ev.name || '') === 'spawn_agent') {
+				if ((ev.name || '') === 'spawn_agent' && !steerInTurn) {
 					var spec = null;
 					try { spec = JSON.parse(ev.args || '{}'); } catch (e) { spec = null; }
 					if (spec && spec.task) dispatched.push({ name: spec.name, task: spec.task });
 					// The tool rejects a task-less dispatch, and the user used to
 					// see nothing at all: no agent, no error, no explanation.
 					else rejected += 1;
+				} else if ((ev.name || '') === 'spawn_agent') {
+					// Already running: `DaimondWorkers.spawn` started it when the call was made.
+					crystalSay('Steering… (worker started)', true);
 				} else {
 					crystalSay('Steering… (' + ev.name + ')', true);
 				}
@@ -40986,7 +41431,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// TRAINING WHEELS — the debug feed's `fold`, the daimon's half. REAL, so
 				// the feed's own drop-inference stands down for this turn.
 				dsEvent('fold', { turn: String(rec.id || ''), r: step, folded: ev.folded || 0,
-					kept: ev.kept || 0, trigger: 'real', dia: 1 });
+					kept: ev.kept || 0, trigger: 'real', dia: 1, shape: ev.shape || 'prose' });
 				try { if (window.DEBUG_SHARE && DEBUG_SHARE.noteRealFold) DEBUG_SHARE.noteRealFold(String(rec.id || '')); }
 				catch (e) { /* the feed must never break a turn */ }
 				// The fold notes2 asks for by name: *"automatically and visibly folded at
@@ -41028,6 +41473,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			crystalSay(tOr('crystal.marks_unread',
 				'The attachments could not be read, so this turn works only in the Diamond.'), true);
 		}
+		// THE TURN IS HELD BEFORE IT GOES OUT, so a `spawn_agent` call inside it can be
+		// attributed to this Diamond. A fresh tag per turn: `rec.id` is the daimon chat's own
+		// id and is the same for every turn it ever runs, so it cannot say which one is live.
+		// `who` is the Diamond, because a daimon client is shared by every Diamond on one model
+		// -- the reason `is_tainted` takes one too.
+		try {
+			// `daimon_can_gather`, NOT `can_gather`: this turn runs on a registry
+			// `compose_daimon` builds fresh from the daimon belt, and the app's own belt --
+			// which is what `can_gather` reads -- says nothing about it.
+			if (fa.daimon_can_gather && fa.daimon_can_gather() && fa.set_turn_tag
+				&& typeof Workers.spawn === 'function'
+				&& typeof Workers.awaitReports === 'function') {
+				steerTurn = 'dt' + newMid();
+				fa.set_turn_tag(diamondId, steerTurn);
+				Workers.holdTurn(steerTurn, {
+					diamondId: diamondId, diamondName: diamondName,
+					depth: (depth | 0),
+				});
+				steerInTurn = true;
+			}
+		} catch (e) { steerInTurn = false; steerTurn = ''; }
 		try {
 			// The conversation goes out and comes back. It is what makes the daimon
 			// persistent, which is the whole of notes2's "the daimon is meant to be
@@ -44006,6 +44472,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		FoldModel.render();
 		CrystalCap.render();
 		CrystalPageCap.render();
+		CrystalHotCap.render();
 		// Which service the agent searches with, and the key for it. Redrawn with
 		// the rest because unlocking is what makes a sealed key readable, and the
 		// row says something different either side of that.
@@ -44430,7 +44897,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the ceiling had to find it by experiment and reported it as "~130kB", which is 131,072
 	/// bytes seen from outside. `dev/verify_crystalcap.mjs` now reads both sides and fails when
 	/// they disagree, so the next raise cannot leave this behind.
-	var DEFAULT_CRYSTAL_KB = 16;
+	var DEFAULT_CRYSTAL_KB = 48;
+	var DEFAULT_CRYSTAL_HOT_KB = 4;
 	var DEFAULT_CRYSTAL_PAGE_KB = 512;
 
 	/// The crystal ceiling: how large a Diamond's summary may grow before a write that grows it
@@ -45202,12 +45670,88 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		},
 	};
 
-	/// Put the user's crystal ceilings on the engine — both of them.
+	/// The hot ceiling: how much of a crystal rides in the daimon's prompt on every round.
 	///
-	/// One function for two settings, because they are one setting to a person: a crystal's
-	/// size is its data plus its page, and the panel says so under one heading. Splitting the
-	/// call in two would give the three places that build an agent two things to remember and
-	/// one of them would eventually be forgotten.
+	/// The third row under the same heading, and the only one of the three that is a per-round
+	/// bill -- the memory's and the page's bound what the browser stores and syncs. A crystal
+	/// whose whole text is under this rides whole, so lowering it splits more Diamonds and
+	/// raising it splits fewer; nothing is ever lost either way, because the cold part is read
+	/// with `crystal_read` and searched with `recall`.
+	///
+	/// A twin of `CrystalCap`, including that zero means the engine's default. It mounts UNDER
+	/// the page row, sharing the heading both of those built.
+	var CrystalHotCap = {
+		/// The ladder offered, in kilobytes. Small numbers on purpose: this is the one figure
+		/// a user pays on every request, and the rungs are meant to make that visible.
+		STEPS: [2, 3, 4, 6, 8],
+
+		mount: function () {
+			if (document.getElementById('cfg-crystal-hot-cap')) return true;
+			var form = document.getElementById('byok-form');
+			var section = form && form.parentNode;
+			if (!section) return false;
+			// The data row carries the heading all three share.
+			if (!CrystalCap.mount()) return false;
+			var lab = document.createElement('label');
+			lab.className = 'cfg-fieldlabel';
+			lab.setAttribute('for', 'cfg-crystal-hot-cap');
+			var sel = document.createElement('select');
+			sel.className = 'settings-select';
+			sel.id = 'cfg-crystal-hot-cap';
+			var note = document.createElement('p');
+			note.className = 'cfg-fieldnote';
+			note.id = 'cfg-crystal-hot-cap-note';
+			section.insertBefore(lab, form);
+			section.insertBefore(sel, form);
+			section.insertBefore(note, form);
+			sel.addEventListener('change', function () { CrystalHotCap.save(sel.value); });
+			return true;
+		},
+
+		render: function () {
+			if (!this.mount()) return;
+			var lab = document.querySelector('label[for="cfg-crystal-hot-cap"]');
+			if (lab) lab.textContent = tOr('settings.crystal_hot_cap', 'Always-present part');
+			var hnote = document.getElementById('cfg-crystal-hot-cap-note');
+			if (hnote) {
+				hnote.textContent = tOr('settings.crystal_hot_cap_note',
+					'How much of a Diamond’s memory rides in every round; the rest is read on demand.');
+			}
+			var sel = document.getElementById('cfg-crystal-hot-cap');
+			sel.innerHTML = '';
+			var mine = cfg.crystalHotKb || 0;
+			var steps = this.STEPS.slice();
+			if (mine > 0 && steps.indexOf(mine) === -1) steps.push(mine);
+			steps.sort(function (a, b) { return a - b; });
+			var mk = function (value, label) {
+				var o = document.createElement('option');
+				o.value = String(value); o.textContent = label;
+				sel.appendChild(o);
+			};
+			mk(0, tOr('settings.crystal_cap_auto', 'Default') + ' — ' + DEFAULT_CRYSTAL_HOT_KB + ' KB');
+			steps.forEach(function (n) { mk(n, String(n) + ' KB'); });
+			sel.value = String(mine);
+			if (sel.selectedIndex === -1) sel.value = '0';
+		},
+
+		save: function (raw) {
+			var n = Math.max(0, Math.round(Number(raw) || 0));
+			cfg.crystalHotKb = n;
+			var stored = readJson(CFG_KEY, {}) || {};
+			stored.crystalHotKb = n;
+			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
+			catch (e) { /* quota or unavailable — the choice holds for this session */ }
+			applyCrystalCap(anyApp());
+			this.render();
+		},
+	};
+
+	/// Put the user's crystal ceilings on the engine — all three of them.
+	///
+	/// One function for three settings, because they are one setting to a person: a crystal's
+	/// size is its data, its page, and how much of the data is in front of the model, and the
+	/// panel says so under one heading. Splitting the call up would give the three places that
+	/// build an agent three things to remember and one of them would eventually be forgotten.
 	///
 	/// The ceilings live in the wasm instance, not on an agent, so ANY app sets them for all of
 	/// them — they are applied wherever an agent is built only so that a page which has not
@@ -45224,6 +45768,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		if (typeof app.set_crystal_page_cap === 'function') {
 			try { app.set_crystal_page_cap((cfg.crystalPageKb || 0) * 1024); }
+			catch (e) { /* an older wasm build has no setter */ }
+		}
+		// And the one that is actually paid per round: how much of a crystal rides in the
+		// system message. The other two bound what the browser stores and syncs.
+		if (typeof app.set_crystal_hot_cap === 'function') {
+			try { app.set_crystal_hot_cap((cfg.crystalHotKb || 0) * 1024); }
 			catch (e) { /* an older wasm build has no setter */ }
 		}
 	}
@@ -45620,6 +46170,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		FoldModel.render();
 		CrystalCap.render();
 		CrystalPageCap.render();
+		CrystalHotCap.render();
 		var f = document.getElementById('byok-form');
 		if (f) f.style.display = 'none';
 		DaimondAdmin.status();

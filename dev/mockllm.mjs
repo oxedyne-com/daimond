@@ -356,6 +356,42 @@ const crystalReply = (words) => JSON.stringify({
 	summary: String(words || '').slice(0, 400),
 }, null, 2);
 
+/// Whether this request is a CONTEXT fold -- the compactor, not the crystal's reducer.
+///
+/// Matched on the compactor's own opening sentence, which is its role, exactly as `isTriage`
+/// below is matched and for the same reason: a real compactor is recognisable the same way, and
+/// every test that folds needs the same answer.
+const isCompactor = (messages) => (messages || []).some((m) =>
+	m && m.role === 'system'
+	&& /folding the earlier part of a long working conversation/i.test(String(m.content || '')));
+
+/// Which shape a fold should be answered in, read PER REQUEST.
+///
+/// `DAIMOND_MOCK_FOLD` in this process's own environment wins, for a bespoke mock started with
+/// it set. Otherwise a sidecar beside the log, which is how a verifier started long after the
+/// mock says what it wants: the mock is a world-lived process and its environment was fixed when
+/// world.sh started it, so an env var on the VERIFIER could never reach it. Read on every
+/// request rather than cached, so two verifiers can run back to back against one mock.
+const foldMode = () => {
+	if (process.env.DAIMOND_MOCK_FOLD) return String(process.env.DAIMOND_MOCK_FOLD);
+	try { return fs.readFileSync(LOG + '.fold', 'utf8').trim(); } catch { return ''; }
+};
+
+/// A fold note in the layout `prompts::FOLD_SHAPE_NOTE` asks for.
+///
+/// The task line carries the transcript's own opening so a verifier can tell this answer from a
+/// fixed string, exactly as `crystalReply` echoes the delta's words.
+const structuredFold = (transcript) => {
+	const first = String(transcript || '').split('\n').find(l => l.trim()) || 'the work';
+	return '## Task\n' + first.slice(0, 120) + '\n'
+		+ '## Next step\nCarry on from where the transcript stops.\n'
+		+ '## Open\n- whether anything above was left unfinished\n'
+		+ '## Decisions\n- answer in the layout -- the mock was told to\n'
+		+ '## Found\n- MOCKCAP=4120\n'
+		+ '## Files edited\n- src/mock.js -- the cap\n'
+		+ '## Files read\n- src/mock.js -- the whole file\n';
+};
+
 /// Whether this request is a triage of somebody's notes into proposals.
 ///
 /// The Social panel's drafting (`www/js/triage.js`) has a fixed answer shape --
@@ -421,6 +457,22 @@ const plan = (messages) => {
 			// Names the file, so a resumed session's seeded assistant message is
 			// recognisable as THIS worker's own earlier words and not a generic reply.
 			return { text: `Looked at ${look}.` };
+		}
+	}
+
+	// BEFORE the reducer and before the directives, because a fold's user message carries the
+	// RENDERED TRANSCRIPT and that transcript is full of other turns' directives: a fold of a
+	// conversation containing `@look` would otherwise be answered with a `file_read`.
+	//
+	// Silent unless asked. With no mode set this falls through to what it always did -- the
+	// default branch, which echoes the prompt back -- so every fold verifier written before
+	// this existed reads exactly what it read yesterday.
+	if (isCompactor(messages)) {
+		const mode = foldMode();
+		if (mode === 'structured') return { text: structuredFold(lastUser(messages)) };
+		if (mode === 'garbage') {
+			return { text: 'I folded some things. There were files, and some of them changed, '
+				+ 'and a decision was taken about one of them at some point.' };
 		}
 	}
 
@@ -787,6 +839,10 @@ const server = http.createServer((req, res) => {
 			model:     payload.model,
 			stream:    !!payload.stream,
 			tools:     (payload.tools || []).map(t => t.function?.name).filter(Boolean),
+			// The output ceiling the client asked for. A fold's is set per SHAPE
+			// (`compact::FoldShape::max_tokens`), and a verifier that could not read it back
+			// could not tell a structured fold's budget from a prose one's.
+			max_tokens: payload.max_tokens,
 			auth:      !!(req.headers.authorization),
 			images,		// picture parts in this request, either dialect
 			...(refused ? { refusedImages: true } : {}),
