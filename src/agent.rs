@@ -635,6 +635,12 @@ impl Agent {
             if let Some(n) = crate::llm::extract_json_number(text, "gather_timeout_s") {
                 if n > 0 { l.gather_timeout_s = n; }
             }
+            // A MEASURE UNDER TRIAL, which is a switch and not a figure -- so false is taken as
+            // written, exactly as `retire_prior` is, and the arm that turns the measure OFF is
+            // as reachable as the one that turns it on.
+            if let Some(b) = crate::llm::extract_json_bool(text, "compound") {
+                l.compound = b;
+            }
             // Which shape the compactor is asked for. A spelling this build does not know is
             // IGNORED rather than defaulted, so an arm with a typo in it stays on whatever the
             // engine had and `turn_limits` reports it -- a silent fall back to the default is
@@ -650,9 +656,50 @@ impl Agent {
             if let Some(b) = crate::llm::extract_json_bool(text, "batch_line") {
                 l.batch_line = b;
             }
+            // HOW MUCH THE MODEL THINKS FIRST, and how deeply.  A spelling this build does not
+            // know is ignored rather than defaulted, for `fold_shape`'s reason above: an arm
+            // with a typo in it must stay on whatever the engine had and be reported doing so.
+            // Only the Anthropic dialect carries either -- see `LlmClient::set_thinking` --
+            // which is why the `think_*` arms are paired with the direct provider.
+            if let Some(w) = crate::llm::extract_json_string(text, "thinking") {
+                if let Some(t) = crate::llm::Thinking::from_wire(&w) {
+                    l.thinking = t;
+                }
+            }
+            if let Some(w) = crate::llm::extract_json_string(text, "effort") {
+                if let Some(e) = crate::llm::Effort::from_wire(&w) {
+                    l.effort = e;
+                }
+            }
         }
         self.hold_worker();
+        // The client builds the wire, so the setting has to reach it; `Limits` alone would be
+        // a figure `turn_limits` reports and no request carries.
+        self.push_thinking();
         Ok(())
+    }
+
+    /// Ask this agent's model to think, or not, and how deeply.
+    ///
+    /// Separate from [`Agent::set_tune`] because the per-family default is applied from the
+    /// model rather than from a tune string; see `profile::Family::thinking_default`.
+    ///
+    /// # Arguments
+    /// * `thinking` - Adaptive, or off where the model and the effort allow it.
+    /// * `effort` - `output_config.effort`; `High` is the API's own default.
+    pub fn set_thinking(&self, thinking: crate::llm::Thinking, effort: crate::llm::Effort) {
+        {
+            let mut l = self.limits.borrow_mut();
+            l.thinking = thinking;
+            l.effort   = effort;
+        }
+        self.push_thinking();
+    }
+
+    /// Hand the thinking setting to the client, where the request body is built.
+    fn push_thinking(&self) {
+        let l = self.limits.borrow();
+        self.llm.set_thinking(l.thinking, l.effort);
     }
 
     /// Re-assert the worker ceiling after a setting has been written.
@@ -696,6 +743,11 @@ impl Agent {
     /// * `from` - The agent whose limits are the right ones.
     pub fn adopt_limits(&self, from: &Agent) {
         *self.limits.borrow_mut() = from.limits();
+        // Including the thinking setting, which lives on the CLIENT as well: an agent built
+        // fresh from a chat's client holds that client's tune already, but one whose client
+        // was constructed separately would otherwise fold and answer at a different depth
+        // from the chat it was adopted from.
+        self.push_thinking();
         // The fold PROMPT travels with them, for the same reason and by the same argument.
         // It is not part of `Limits` because it is text rather than a figure, but it is the
         // same setting: what the folding model is told.  Without this line a Diamond's
@@ -821,12 +873,23 @@ impl Agent {
         let tools = if registry.is_empty() {
             String::new()
         } else {
+            let names = registry.tool_names();
+            // ONE SENTENCE, AND ONLY WHERE THE TOOL IS THERE. A model reaches for the shape it
+            // has been shown, and `compound` is the one tool whose whole value is that it
+            // replaces a habit -- reading one file per round -- rather than adding a capability.
+            // It goes here rather than in `DEFAULT_DAIMON`, which the user may rewrite: a
+            // briefing line about a tool is a fact about the belt and not a preference.
+            let several = match names.iter().any(|n| n == "compound") {
+                true  => " For several reads that go together -- list a folder, then read what \
+                          you found in it -- use compound and get them all in one call.",
+                false => "",
+            };
             let mut t = fmt!(
                 "You have exactly these tools, all scoped to the user's \
                  workspace: {}. Use them to inspect and change the workspace \
                  when completing a task. You have no other tools; never claim \
-                 to have performed an action you had no tool to perform.",
-                registry.tool_names().join(", "));
+                 to have performed an action you had no tool to perform.{}",
+                names.join(", "), several);
             // ONE SENTENCE, on by default. Claude Code's own advantage on the rounds census was
             // not fewer tools but fewer ROUNDS to reach the same reads: one `ls -R; cat …` where
             // a daimon spent several. The provider already coalesces every result of a round back
@@ -858,6 +921,11 @@ impl Agent {
         // AND THE TUNED GATHER CEILING GOES WITH IT.  `gather` is a tool and cannot see `Limits`;
         // this is the one place a turn begins, so it is where the figure is handed over.
         registry.ctx.set_gather_timeout_s(self.limits.borrow().gather_timeout_s);
+        // AND THE MEASURE UNDER TRIAL, handed over at the same seam and for the same reason:
+        // `offered` decides the schema array synchronously, once a round, and cannot see
+        // `Limits`. Written every turn rather than once, so an arm that changes it between two
+        // turns of one conversation is obeyed by the second of them.
+        registry.ctx.set_compound(self.limits.borrow().compound);
         // Append the user message to the persisted history.
         session.messages.push(ChatMessage::user(user_msg));
 
@@ -1360,7 +1428,7 @@ impl Agent {
             // change it and it changes it exactly once, so sampling either side of the round is
             // the whole of the learned signal -- no counter and no flag of our own.
             let could_see = self.llm.can_take_images();
-            let resp = loop {
+            let mut resp = loop {
                 match self.llm.chat_stream_tools(
                     &working,
                     tools_json.as_deref(),
@@ -1393,6 +1461,18 @@ impl Agent {
                     }
                 }
             };
+            // CANONICALISED HERE, ONCE, before the round's calls are stored or dispatched.  A
+            // Claude-family model with the alias switch on may write `Read` where every other
+            // build says `file_read`; rewriting the wire name back to Daimond's own, in place,
+            // before it is cloned into the session, is what lets `call_label`, the feed and the
+            // ledger go on reading `tc.name` directly and never learn a second spelling exists.
+            // See `crate::profile::Family::tool_alias` for the table and `Tool::from_name` for
+            // the both-ways lookup this reads.
+            for tc in resp.tool_calls.iter_mut() {
+                if let Some(t) = crate::tools::Tool::from_name(&tc.name) {
+                    tc.name = t.name().to_string();
+                }
+            }
             // The working is NOT emitted here either; see the note in `run_streaming`. It
             // streamed while the round ran, and a tool loop is where that matters most --
             // this is the path that runs many rounds, each of which may think for a minute
@@ -2615,6 +2695,37 @@ mod tests {
             "set_tune(\"batch_line\":false) did not turn the sentence off: {}", tools);
     }
 
+    // ── The Claude Code tool profile ─────────────────────────────────
+
+    /// The tools sentence names the Claude Code alias for a Claude-family registry with the
+    /// switch on, Daimond's own name for every other combination.
+    #[test]
+    fn test_the_composed_tools_line_aliases_for_claude_and_not_otherwise_00() {
+        let a = make_test_agent();
+        let mut plain = no_tools();
+        plain.tools = vec![crate::tools::Tool::FileRead];
+        let claude = plain.clone()
+            .with_family(crate::profile::Family::Claude)
+            .with_claude_names(true);
+
+        let (_, tools_default, _) = a.system_parts(&plain);
+        assert!(tools_default.contains("file_read"), "{}", tools_default);
+        assert!(!tools_default.contains("Read"),
+            "an un-aliased registry named the Claude alias: {}", tools_default);
+
+        let (_, tools_claude, _) = a.system_parts(&claude);
+        assert!(tools_claude.contains("Read"), "{}", tools_claude);
+        assert!(!tools_claude.contains("file_read"),
+            "the switch was on and the canonical name still showed: {}", tools_claude);
+
+        // The switch OFF, same family, restores Daimond's own name -- `cur` against
+        // `claudenames` differs in exactly this.
+        let off = plain.clone().with_family(crate::profile::Family::Claude);
+        let (_, tools_off, _) = a.system_parts(&off);
+        assert!(tools_off.contains("file_read"),
+            "claude_names off lost the canonical name: {}", tools_off);
+    }
+
     // ── Speaking into a running turn ────────────────────────────────
 
     #[test]
@@ -3019,6 +3130,48 @@ mod tests {
         if let Err(e) = late.set_tune(r#"{"worker_context_cap":96000}"#) { panic!("{}", e); }
         assert_eq!(compact::WORKER_CONTEXT_CAP, late.limits().context_cap,
             "a tune after the hold raised a ceiling");
+    }
+
+    /// The thinking tune reaches the CLIENT, which is the only place it can do anything.
+    ///
+    /// `Limits` holding the figure is not the measure: the request body is built by
+    /// `LlmClient`, so a setter that wrote only the limits would give `turn_limits` a figure to
+    /// report and every request the shipped default -- an arm measuring the wrong engine while
+    /// the selftest passed.
+    #[test]
+    fn test_the_thinking_tune_reaches_the_client_and_not_only_the_limits_00() {
+        use crate::llm::{Effort, Thinking};
+
+        let a = make_test_agent();
+        // The default is what the client asked for before it was a setting.
+        assert_eq!(Thinking::Adaptive, a.limits().thinking);
+        assert_eq!(Effort::High,       a.limits().effort);
+        assert_eq!(Thinking::Adaptive, a.llm.thinking_tune().thinking);
+
+        if let Err(e) = a.set_tune(r#"{"thinking":"off","effort":"xhigh"}"#) {
+            panic!("the tune was refused: {}", e);
+        }
+        assert_eq!(Thinking::Off,  a.limits().thinking);
+        assert_eq!(Effort::XHigh,  a.limits().effort);
+        assert_eq!(Thinking::Off,  a.llm.thinking_tune().thinking, "the client was not told");
+        assert_eq!(Effort::XHigh,  a.llm.thinking_tune().effort,   "the client was not told");
+
+        // A SPELLING THIS BUILD DOES NOT KNOW IS IGNORED, as `fold_shape` is: the engine stays
+        // on whatever it held and `turn_limits` reports that, rather than a typo silently
+        // measuring the default under another name.
+        if let Err(e) = a.set_tune(r#"{"thinking":"adpative","effort":"xxhigh"}"#) {
+            panic!("{}", e);
+        }
+        assert_eq!(Thinking::Off, a.limits().thinking);
+        assert_eq!(Effort::XHigh, a.limits().effort);
+
+        // AND AN AGENT THAT ADOPTS ANOTHER'S LIMITS ADOPTS ITS DEPTH.  A Diamond's reducer is
+        // built from a fresh client for the same model; without this it would fold at a
+        // different effort from the chat it was built for.
+        let b = make_test_agent();
+        b.adopt_limits(&a);
+        assert_eq!(Thinking::Off, b.llm.thinking_tune().thinking);
+        assert_eq!(Effort::XHigh, b.llm.thinking_tune().effort);
     }
 
     #[tokio::test]
@@ -4111,6 +4264,47 @@ mod tests {
         }
     }
 
+    /// **The compound switch crosses from the tune into the turn's own registry.**
+    ///
+    /// `Limits` belongs to the agent and `offered` to the registry, and nothing joins them but
+    /// the one line at the top of [`Agent::run_turn`].  A measure whose switch never crossed
+    /// that seam would be echoed as taken by `turn_limits` and be off in every request the turn
+    /// actually made -- which is a measurement about the wrong engine, reported as an arm.
+    #[tokio::test]
+    async fn test_the_compound_switch_crosses_from_the_tune_into_the_turns_registry() {
+        let a = dead_agent();
+        let mut registry = no_tools();
+        registry.tools.push(crate::tools::Tool::Compound);
+        registry.tools.push(crate::tools::Tool::FileRead);
+        let mut session = Session::new(fmt!("s1"), fmt!("compound"), fmt!("model"));
+
+        // OFF BY THE SHIPPED DEFAULT, which is the whole of what makes the bank's `cur` arm a
+        // control rather than a second copy of the treatment.
+        assert!(!a.limits().compound, "the shipped default is on, so `cur` is not a control");
+        let _ = a.run_turn(&mut session, fmt!("read the files"), &registry, &mut |_| {}).await;
+        assert!(!registry.ctx.compound_on(), "a turn switched it on with nothing asking");
+        let (_, tools, _) = a.system_parts(&registry);
+        assert!(!tools.contains("compound"),
+            "the tool is named to the model before any arm asked for it: {}", tools);
+
+        // On, through the one door an arm comes through.
+        if let Err(e) = a.set_tune(r#"{"compound":true}"#) { panic!("the tune was refused: {}", e); }
+        assert!(a.limits().compound, "the tune did not reach Limits");
+        let _ = a.run_turn(&mut session, fmt!("read the files"), &registry, &mut |_| {}).await;
+        assert!(registry.ctx.compound_on(), "the switch did not cross into the turn's context");
+        let (_, tools, _) = a.system_parts(&registry);
+        assert!(tools.contains("compound"), "the tool is not named to the model: {}", tools);
+        // AND THE SENTENCE THAT CHANGES THE HABIT, which is the half the rounds turn on: the
+        // tool is worth nothing to a model that goes on reading one file per round.
+        assert!(tools.contains("use compound and get them all in one call"),
+            "the briefing line did not travel with the tool: {}", tools);
+
+        // False is taken as written, so the arm that turns the measure OFF is as reachable as
+        // the one that turns it on -- the rule `retire_prior` already follows.
+        if let Err(e) = a.set_tune(r#"{"compound":false}"#) { panic!("{}", e); }
+        assert!(!a.limits().compound, "false was read as absent");
+    }
+
     /// A turn's byte allowance starts AT THE TURN, wherever the turn came from.
     ///
     /// Nothing resets itself.  The ledger lives on a [`ToolContext`] that OUTLIVES the turn -- the
@@ -4390,6 +4584,42 @@ mod tests {
             _ => false,
         }).count();
         assert_eq!(1, notes, "a continuation wrote itself into the conversation");
+    }
+
+    #[tokio::test]
+    async fn test_a_workers_true_ceiling_is_the_leg_times_its_continuations_00() {
+        // Turn 55, 2026-09-14: w21 ran 112 rounds against a `worker_max_rounds` of 100, and that
+        // read as a cap the engine had missed. It had not: `hold_to_worker` carries
+        // `WORKER_CONTINUATIONS` across too, so a worker's true ceiling is
+        // `worker_max_rounds * (1 + worker_continuations)`, and 112 sits twelve rounds into the
+        // second leg -- exactly what `at_the_cap` grants once. Pinned at two rounds a leg, so the
+        // same shape a hundred rounds a leg makes is proved in milliseconds rather than by
+        // replaying a hundred rounds twice.
+        let registry = one_tool();
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        if let Err(e) = a.set_tune(r#"{"worker_max_rounds":2,"worker_continuations":1}"#) {
+            panic!("the worker tune was refused: {}", e);
+        }
+        a.set_worker_limits();
+        let mut session = Session::new(fmt!("s1"), fmt!("w21"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("keep going"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let legs = events.iter().filter(|e| matches!(e, AgentEvent::Continued { .. })).count();
+        assert_eq!(1, legs,
+            "a worker's one breath granted something other than one continuation: {}", legs);
+        let end = a.ending().unwrap_or_else(|| panic!("a turn ran and said nothing about how it ended"));
+        assert_eq!(TurnEnd::Capped, end.how,
+            "out of continuations must still end at the round limit: {:?}", end);
+        assert_eq!(4, end.rounds,
+            "a worker's true ceiling is its leg times (1 + its continuations), not the leg alone: {:?}",
+            end);
     }
 
     #[tokio::test]

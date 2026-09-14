@@ -1381,7 +1381,42 @@
 				+ ' tombs=' + Object.keys(state.tombs || {}).join(',')
 				+ ' msgTombs=' + Object.keys(state.msgTombs || {}).length);
 		} catch (e) {}
-		lastFailed = await applyParcel(state);
+		// A VERSION THIS DEVICE HAS ALREADY FULLY MERGED IS NOT MERGED AGAIN.
+		// `applyParcel` is idempotent -- every section is freshest-wins, union or
+		// tombstone, all stamp-ordered -- so re-running it changes nothing; but the
+		// files section pays for a folder walk to find that out, and on a
+		// folder-mounted desktop that walk is the whole cost of the round. `pulledOk`
+		// keeps this from firing on the very first pull of a session (nothing is
+		// "already adopted" yet) and `reapplyTries` keeps it from firing while a
+		// PRIOR merge of this same version is still being retried -- that pass has
+		// not finished and must still run.
+		//
+		// AND ONLY WHILE THE RECORD OF THAT MERGE IS STILL THERE. `serverVersion` is a
+		// variable; `daimond-sync-version` is the durable note of it, written by
+		// `adoptVersion` and by every landed push. A device whose note has gone has lost
+		// the state the note was about -- site data cleared under a live tab, or a
+		// fixture standing in for an install that has never seen this mailbox -- and the
+		// one thing that would repair it is the merge this skip declines. So the claim
+		// is only made where it can still be shown. A read that THROWS is not evidence
+		// of loss (a browser with no storage at all never had a note to lose), so only a
+		// read that succeeds and disagrees defeats the skip.
+		var noted = serverVersion;
+		try {
+			var rawV = localStorage.getItem(K_VERSION);
+			noted = rawV === null ? -1 : (parseInt(rawV, 10) || 0);
+		} catch (e) { /* cannot tell; leave the claim standing */ }
+		if (j.version === serverVersion && noted === serverVersion && pulledOk && reapplyTries === 0) {
+			// ONE TRAIL LINE STANDS IN FOR THE SECTION THIS PULL DID NOT RUN. Skipping
+			// `applyParcel` outright means `applySync`'s own `section('files', …)` never
+			// fires, and a trail that goes silent here is exactly the failure mode its own
+			// comment warns against -- a merge nobody can tell was ever looked at. This
+			// names the version and says why, in the same 'sync files' slot the walk would
+			// have logged into, but without the walk.
+			trail('sync files', 'v' + (j.version | 0) + ' already adopted, no walk');
+			lastFailed = [];
+		} else {
+			lastFailed = await applyParcel(state);
+		}
 		pulledOk   = true;			// a parcel was read; see `pulledOk`.
 		noteSynced();
 		// A merge that could not finish is not a sync that worked, and it is the

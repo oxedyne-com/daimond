@@ -381,14 +381,19 @@ const marked = await p.evaluate(async (a) => {
 	await app.run_tool_outcome('file_write', JSON.stringify({ path: a.note, content: 'the note\n' }));
 	await app.run_tool_outcome('file_write', JSON.stringify({ path: a.other, content: a.original }));
 	const id = await app.create_diamond('Marked');
-	await app.add_link(id, 'diamond:' + id, 'dir:' + a.work, 'holds', '', 'user');
+	// MARKED AND FLAGGED. Since 2026-09-14 the mark is the daimon's grant to READ the
+	// folder and nothing more; what travels to devices that cannot open it is what
+	// carries `share` on its attachment.
+	const linkId = await app.add_link(id, 'diamond:' + id, 'dir:' + a.work, 'holds', '', 'user');
+	await app.update_link(id, linkId, 'holds', 'share');
 	await window.DaimondCore.loadDiamonds();
+	window.DaimondCore.syncClearWalkCache();
 	const share = await window.DaimondCore.syncFolderShare();
 	await window.DaimondCore.syncCommitBaseline();
 	const st = await window.DaimondCore.collectSync();
 	return { share, paths: Object.keys(st.files || {}).sort(), complete: st.filesComplete };
 }, { work: WORK, note: NOTE, other: OTHER, original: ORIGINAL });
-check('a folder MARKED INTO a Diamond does travel, and says its census is complete',
+check('a folder FLAGGED on a Diamond does travel, and says its census is complete',
 	marked.share.folder === true && marked.share.roots.join() === WORK
 	&& marked.paths.includes(NOTE) && marked.paths.includes(OTHER)
 	&& marked.complete === true,

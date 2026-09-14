@@ -104,6 +104,11 @@ impl DaimondApp {
         let (secure, host, port, path) = res!(parse_base_url(base_url));
         let llm = LlmClient::new_with_scheme(&host, port, &path, api_key, model, max_tokens, secure);
         let agent = Agent::new(llm, system_prompt);
+        // THE FAMILY'S OWN THINKING DEFAULT, applied here because this is the first place the
+        // model is known.  `set_tune` moves it afterwards, and `turn_limits` reports whichever
+        // is in force; see `crate::profile::Family::thinking_default`.
+        let (thinking, effort) = crate::profile::Family::detect(model).thinking_default();
+        agent.set_thinking(thinking, effort);
 
         let session = Session::new(
             crate::protocol::generate_session_id(),
@@ -1122,6 +1127,23 @@ impl DaimondApp {
                     deepseek, qwen, glm, minimax, kimi and unknown.", name; Invalid, Input))),
             }
         }
+        // THE CLAUDE CODE ALIAS TABLE, same door as `family` and for the same reason: it lives
+        // on the registry, which `Agent::set_tune` cannot reach. Independent of `family` on
+        // purpose -- see `ToolRegistry::claude_names` -- so `claudenames` can differ from `cur`
+        // in exactly this one setting on a model that is already Claude by detection.
+        if let Some(b) = crate::llm::extract_json_bool(&json, "claude_names") {
+            self.registry.set_claude_names(b);
+        }
+        // AND THE COMPOUND SWITCH, through the same door and for the same reason. The
+        // schema array is built off the REGISTRY (`ToolRegistry::offered` asks
+        // `ctx.compound_on()`), and the Wire view builds one without running a turn -- so a
+        // switch that reached `Limits` alone was invisible until the first turn pushed it
+        // across, and an arm that read the wire before turning would have measured the
+        // control. `Agent::run_turn` still pushes it every turn, which is what makes a
+        // worker's own preset apply; this makes the setting true the moment it is set.
+        if let Some(b) = crate::llm::extract_json_bool(&json, "compound") {
+            self.registry.ctx.set_compound(b);
+        }
         match self.agent.set_tune(&json) {
             Ok(())  => Ok(()),
             Err(e)  => Err(to_js_err(e)),
@@ -1151,15 +1173,19 @@ impl DaimondApp {
             \"worker_max_rounds\":{},\"worker_continuations\":{},\"worker_context_cap\":{},\
             \"worker_keep\":{},\"worker_spend_usd\":{},\"gather_timeout_s\":{},\
             \"batch_line\":{},\
-            \"fold_shape\":\"{}\",\"family\":\"{}\"}}",
+            \"compound\":{},\
+            \"thinking\":\"{}\",\"effort\":\"{}\",\
+            \"fold_shape\":\"{}\",\"family\":\"{}\",\"claude_names\":{}}}",
             l.worker, l.max_rounds, l.max_continuations, l.context_cap, l.keep, l.spend_cap_usd,
             l.fold_at, l.retire_prior,
             l.retire_keep_turns,
             l.written_age, l.result_age, l.result_cap, l.sweep_every,
             l.worker_max_rounds, l.worker_continuations, l.worker_context_cap,
-            l.worker_keep, l.worker_spend_usd, l.gather_timeout_s, l.batch_line,
+            l.worker_keep, l.worker_spend_usd, l.gather_timeout_s,
+            l.batch_line, l.compound,
+            l.thinking.wire(), l.effort.wire(),
             l.fold_shape.wire(),
-            self.registry.family().name())
+            self.registry.family().name(), self.registry.claude_names())
     }
 
     /// Fold this agent's conversations with a different model from the one it chats
@@ -2264,8 +2290,8 @@ impl DaimondApp {
         // from a constant, exactly as `briefing` reads it: two of the notes are dropped for a
         // model measured not to need them, and a model this build has not heard of is given all
         // of them.  See `prompts::CONDITIONAL` and `dev/PROMPT_NOTES.md`.
-        let standing = Role::Daimon.compose_for(
-            &self.daimon_prompt.borrow(), &self.agent.llm.model);
+        let standing = Role::Daimon.compose_wire(
+            &self.daimon_prompt.borrow(), &self.agent.llm.model, self.registry.claude_names());
         // Named apart from the standing text rather than pushed onto it, and the reason is the
         // question the Wire asks of every paragraph: WHOSE is it.  The role prompt above is one
         // constant every Diamond shares and its owner may rewrite; what follows is true of THIS

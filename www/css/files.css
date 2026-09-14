@@ -222,6 +222,13 @@
 /* Read-only says what a daimon may do with it, so it stays visible: a hover-only
    badge is a permission nobody reads. */
 .files-badge.files-ro { white-space: nowrap; }
+/* Shared says where the folder's contents are expected to go, so like read-only
+   it is standing information rather than a hover. */
+.files-badge.files-shared { white-space: nowrap; }
+/* ⇄ on an attached row: the copy grant. Lit is standing information, the same
+   rule `.files-hold.on` follows and for the same reason. */
+.files-res.files-share.on { visibility: visible; color: var(--accent-text); }
+.files-res.files-share[disabled] { opacity: 0.4; cursor: default; }
 /* ◈ on a row: put this folder in the open Diamond's workspace, or take it out.
    Like the pin, the LIT state is standing information and must not hide until
    the pointer finds it. */

@@ -830,6 +830,20 @@ const stood = [];
 	check('18b and it carries what the script itself said',
 		/the fixture refuses on purpose/.test(why),
 		why.slice(0, 200) || 'no refusal');
+	// 18c AND IT IS READ THE WAY A REPORT IS. A refusal short-circuits the report, so
+	// until 2026-09-14 it named neither the world nor the hand -- and a `verify` whose
+	// answer carries no `[world:` line at all is exactly what a hand OLDER than the world
+	// support produces. Two opposite faults with one shape: on 2026-09-14 a daimon met the
+	// second, read it as the first, and spent about thirty rounds on the fence and the
+	// mocks. A refusal that says which it is costs one line.
+	check('18c and it says a world was asked for, and which hand said so',
+		/\[world: none — one was asked for and could not be stood/.test(why)
+			&& /^\[hand: [0-9][^ /]*\/[0-9a-f]{8} at \/\S+/m.test(why),
+		why.split('\n').slice(-2).join(' | ').slice(0, 220) || 'no refusal');
+	// And the exit status, which is the other half of "why": a script that refuses and a
+	// script that was killed print the same nothing when only stderr is carried.
+	check('18d and what the script exited with',
+		/--up exited 1/.test(why), why.slice(0, 220) || 'no refusal');
 }
 
 {

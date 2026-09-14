@@ -833,7 +833,8 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '有 {n} 个文件装不进这台设备的同步包裹，在腾出空间之前不会传到你的其他设备：{names}',
 	'sync.files_left.other':    '有 {n} 个文件装不进这台设备的同步包裹，在腾出空间之前不会传到你的其他设备：{names}',
-	'sync.folder_too_big':      '你标记的文件夹有 {size}，超过共享文件夹可占用的 {max}，所以里面的内容不会传到你的其他设备。请标记更小的文件夹，或者把其中一部分移出去。',
+	'sync.folders_left.one':    '{names} 超过共享文件夹可占用的 {max}，所以不会传到你的其他设备。请共享更小的文件夹，或者把其中一部分移出去。',
+	'sync.folders_left.other':  '有 {n} 个共享文件夹超过了各自可占用的 {max}，不会传到你的其他设备：{names}。',
 	// 已经结束、又拿不回来的会话。和下面用同一个说法。
 	'sync.signed_out':        '同步已暂停',
 	'sync.signed_out_reason': '这台设备已退出 Daimond 的账户服务，也没能重新登录，所以它做的事没有传到你的其他设备。服务一能连上就会恢复。如果没有恢复，把 Daimond 锁上再解锁。',
@@ -1735,6 +1736,10 @@
 	'dws.kit_none':        '没有工具链。命令只能访问这个 Diamond 的文件，电脑上的其他内容都访问不到。',
 	'dws.elsewhere':       '在工作区里',
 	'dws.readonly':        '只读',
+	'dws.share':           '共享给无法自己打开它的设备',
+	'dws.share_help':      '关闭时，只有能自己打开这个文件夹的设备才看得到。开启时，它会复制到你的其他设备，每个文件夹最多 {max}。',
+	'dws.shared':          '已共享',
+	'dws.share_unavailable': '只能从能打开它的设备共享',
 	'dws.showing':         '正在显示',
 	'dws.reach':           '可及范围',
 	'dws.reach_help':      '这个 Diamond 的 daimon 可以写入的文件夹。两棵树里都会显示，因为两边都算数。',

@@ -83,12 +83,21 @@ pub fn may_run_beside(name: &str) -> bool {
             | Tool::FileSearch
             | Tool::FileGlob
             | Tool::SheetRead
+            // Reads a file and maps it; touches no panel, no store. Two outlines in one round
+            // are the ordinary shape of surveying a few unfamiliar files before reading them.
+            | Tool::Outline
             // Both read-only, and neither touches a panel: `crystal_read` reads one file out of
             // the Diamond store and `recall` reads the crystal and the conversation's own fold
             // notices. A round that fetches two cold sections at once is the ordinary shape of
             // using them.
             | Tool::CrystalRead
-            | Tool::Recall),
+            | Tool::Recall
+            // READ-ONLY BY CONSTRUCTION, which is why `edit` is not one of its ops. It runs its
+            // own ops one after another inside a single call, and every one of them is one of
+            // the reads named above -- so the four conditions are answered by the ops rather
+            // than by anything the compound itself does, and a compound of reads beside a read
+            // is the same claim as two reads beside each other.
+            | Tool::Compound),
         None => false,
     }
 }
@@ -222,6 +231,13 @@ mod tests {
         for (n, span) in spans.iter().enumerate() {
             assert_eq!(n..n + 1, *span, "write {} was not alone and in place", n);
         }
+    }
+
+    #[test]
+    fn test_outline_batches_beside_a_read() {
+        // Read-only, no panel: see the module note beside `Tool::Outline` in `may_run_beside`.
+        let names = ["outline", "file_read"];
+        assert_eq!(vec![0..2], batches(&names), "outline did not batch beside a read");
     }
 
     #[test]

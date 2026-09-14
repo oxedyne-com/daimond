@@ -512,6 +512,13 @@ try {
 		await app.run_tool('file_delete', JSON.stringify({ path: 'sync-note.txt' }));
 		const gone = await app.run_tool('file_read', JSON.stringify({ path: 'sync-note.txt' }));
 		localStorage.removeItem('daimond-sync-filebase');		// a fresh device has no baseline.
+		// AND NO RECORD OF HAVING MERGED THIS VERSION EITHER. Since 2026-09-14 a pull
+		// that finds the version it already adopted skips the merge outright -- the
+		// files section is a folder walk, and paying for one to learn nothing changed
+		// is the whole cost of an idle round. The cursor is the note of that merge, so
+		// a device standing in for one that has never seen this mailbox has to drop it
+		// here, exactly as it drops the baseline on the line above.
+		localStorage.removeItem('daimond-sync-version');
 		await window.DaimondSync.pull();
 		const back = await app.run_tool('file_read', JSON.stringify({ path: 'sync-note.txt' }));
 		return { gone: String(gone), back: String(back) };
@@ -1978,6 +1985,12 @@ try {
 	const bSaw = await page.evaluate(async (b) => {
 		localStorage.setItem('daimond-id-device', b);
 		localStorage.setItem('daimond-devices', '{}');
+		// Another install has no cursor either, and since 2026-09-14 that is what
+		// decides whether the pull merges at all: a version already adopted is not
+		// merged again, and the cursor is the note of having adopted it. Swapping the
+		// device key alone left this page claiming a merge the roster it just emptied
+		// no longer holds, so the pull answered with a walk it did not do.
+		localStorage.removeItem('daimond-sync-version');
 		await window.DaimondSync.pull();
 		return JSON.parse(localStorage.getItem('daimond-devices') || '{}');
 	}, DEV_B);
@@ -1989,6 +2002,7 @@ try {
 	const aSaw = await page.evaluate(async (r) => {
 		localStorage.setItem('daimond-id-device', r.self);
 		localStorage.setItem('daimond-devices', r.reg);
+		localStorage.removeItem('daimond-sync-version');		// as device B above: no note of a merge it did not make.
 		await window.DaimondSync.pull();
 		return JSON.parse(localStorage.getItem('daimond-devices') || '{}');
 	}, roster0);

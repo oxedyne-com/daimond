@@ -1520,7 +1520,11 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} file did not fit in this device’s sync parcel and will not reach your other devices until there is room for it: {names}',
 	'sync.files_left.other':    '{n} files did not fit in this device’s sync parcel and will not reach your other devices until there is room for them: {names}',
-	'sync.folder_too_big':      'The folder you marked in weighs {size}, over the {max} a shared folder may take, so none of it is going to your other devices. Mark in a smaller folder, or take some of this one out of it.',
+	// `{size}` is what the walk had summed when it gave up at the ceiling, not the
+	// tree's true weight -- the walk stops there on purpose (see `walkShared`), so
+	// the sentence must not claim a total nobody measured.
+	'sync.folders_left.one':    '{names} weighs more than the {max} a shared folder may take, so it is not going to your other devices. Share a smaller folder, or take some of it out.',
+	'sync.folders_left.other':  '{n} shared folders are over the {max} each may take and are not going to your other devices: {names}.',
 	// A session that has ended and could not be taken again. Same label as the
 	// two below for the same reason: what the user needs to know is that this
 	// device's work is not travelling, and the difference is in the hover.
@@ -2320,6 +2324,10 @@
 	'dws.detach_dir':      'Stop keeping this folder with {name}',
 	'dws.elsewhere':       'Lives in the workspace',
 	'dws.readonly':        'Read only',
+	'dws.share':           'Share with devices that lack native access',
+	'dws.share_help':      'Off: only devices that can open this folder themselves see it. On: it is copied to your other devices, up to {max} per folder.',
+	'dws.shared':          'Shared',
+	'dws.share_unavailable': 'Can only be shared from a device that can open it',
 	'dws.showing':         'Showing',
 	'dws.reach':           'Reach',
 	'dws.reach_help':      'The folders this Diamond’s daimon may write in. Shown in both trees, because it is true in both.',

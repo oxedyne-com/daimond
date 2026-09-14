@@ -1492,6 +1492,17 @@ pub fn world_line(n: u8, scratch: &str, cap: Cap, down: &Result<(), String>) -> 
         n, a, m, g, scratch, n, cap.phrase(), tail)
 }
 
+/// The world line a REFUSAL carries, so a refusal is read the way a report is.
+///
+/// A refusal short-circuits [`report`], so until 2026-09-14 it named neither the
+/// world nor the hand -- and a `verify` that answered with no `[world:` line at
+/// all was, from the seat, indistinguishable from a hand too old to know the
+/// word.  The two are opposite faults and they need opposite answers, so the
+/// refusal says which it is.
+pub fn refused_world_line() -> String {
+    fmt!("[world: none — one was asked for and could not be stood; the sentence above says why]")
+}
+
 /// The one line the report carries when no world was stood.
 ///
 /// Two sentences and not one, because the two cases mean opposite things: a
@@ -1701,6 +1712,25 @@ fn world_env(scratch: &Path) -> BTreeMap<String, String> {
     env
 }
 
+/// What a script said on the way out, from both ends of its standard error.
+///
+/// The first non-empty line and the last, joined where they differ.  A refusal is
+/// at the top and a death is at the bottom, and a report that carries only one of
+/// the two is a report that names the wrong half of the failures.
+///
+/// # Arguments
+/// * `err` - Everything the child wrote to standard error.
+fn said_by(err: &str) -> String {
+    let lines: Vec<&str> = err.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+    match (lines.first(), lines.last()) {
+        (None, _) | (_, None)	=> fmt!("it said nothing"),
+        (Some(a), Some(b))	=> match a == b {
+            true	=> fmt!("{}", a),
+            false	=> fmt!("{} … {}", a, b),
+        },
+    }
+}
+
 /// Stands a world for this sequence, or says in one sentence why it could not.
 ///
 /// **Every file it runs is asked whose it is first.**  A world is `world.sh`,
@@ -1850,12 +1880,19 @@ async fn world_up(job: &Job, tx: &Sender<Resp>) -> Result<WorldUp, String> {
     if !out.status.success() {
         let _ = crate::exec::signal_group(pgid, Sig::Kill).await;
         let _ = std::fs::remove_file(&lock);
-        let first = err.lines()
-            .map(|l| l.trim())
-            .find(|l| !l.is_empty())
-            .unwrap_or("it said nothing");
-        return Err(fmt!("world {} (app :{}, mock :{}): {}",
-            n, world_ports(n).0, world_ports(n).1, first));
+        // THE SCRIPT'S OWN WORDS AND ITS OWN EXIT, not a sentence composed over them.
+        // `--up` refuses at the top (a port held, an identity probe that answered wrong)
+        // and it also dies at the bottom (a node that would not start), and only the first
+        // of those is the FIRST line of its standard error -- so both ends are carried
+        // when they differ.  Written because the same fault in the other direction cost
+        // 2026-09-13's turn 54: a dying script's error reached the model nowhere and it
+        // spent nineteen steps guessing at what had gone wrong.
+        return Err(fmt!("world {} (app :{}, mock :{}): {} — dev/{} {} --up {}",
+            n, world_ports(n).0, world_ports(n).1, said_by(&err), WORLD_SH, n,
+            match out.status.code() {
+                Some(c) => fmt!("exited {}", c),
+                None    => fmt!("was killed by a signal"),
+            }));
     }
     let env = parse_env_block(&String::from_utf8_lossy(&out.stdout));
     if env.is_empty() {
@@ -2251,8 +2288,8 @@ pub async fn conduct(job: Job, tx: Sender<Resp>) -> Outcome<()> {
                 let _ = tx.send(Resp::Refused {
                     id:     fmt!("{}", job.id),
                     reason: fmt!(
-                        "Refused: no world could be stood for dev/{} — {}. Nothing was run.",
-                        job.script.file, w),
+                        "Refused: no world could be stood for dev/{} — {}. Nothing was run.\n{}\n{}",
+                        job.script.file, w, refused_world_line(), hand_line()),
                 }).await;
                 return Ok(());
             },
@@ -3755,6 +3792,31 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         // be in the sentence a model reads.
         assert!(bad.contains("v1-world"), "{}", bad);
         assert!(bad.contains("uncapped"), "a missing ceiling must never be silent: {}", bad);
+    }
+
+    #[test]
+    fn a_world_that_could_not_be_stood_hands_back_the_scripts_own_words() {
+        // Both ends, because `--up` refuses at the top and dies at the bottom, and a
+        // report carrying one of the two names the wrong half of the failures.
+        assert_eq!("it said nothing", said_by("\n  \n"));
+        assert_eq!("only line", said_by("only line\n"));
+        assert_eq!("only line", said_by("\nonly line\n\nonly line\n"),
+            "two identical ends were printed twice");
+        let both = said_by("world 41: :8818 is held by something else\n  \nnode: not found\n");
+        assert_eq!("world 41: :8818 is held by something else … node: not found", both);
+    }
+
+    #[test]
+    fn a_refusal_names_the_world_and_the_hand_the_way_a_report_does() {
+        // A refusal short-circuits `report`, so it carried neither -- and a verify that
+        // answered with no `[world:` line at all was, from the seat, the same shape as a
+        // hand too old to know the word. Opposite faults, opposite answers.
+        let w = refused_world_line();
+        assert!(w.starts_with("[world: none"), "{}", w);
+        assert!(w.contains("could not be stood"), "{}", w);
+        let h = hand_line();
+        assert!(h.starts_with("[hand: "), "{}", h);
+        assert!(h.ends_with(']'), "{}", h);
     }
 
     #[test]

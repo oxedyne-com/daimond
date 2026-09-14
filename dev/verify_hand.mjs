@@ -831,6 +831,39 @@ try {
 		check('so the next command is answered by a different process',
 			!!fresh && fresh !== first, `was ${first}, now ${fresh}`);
 
+		// 2b. AND NOTHING THE PAGE SENDS CROSSES THE QUESTION.
+		//
+		//    The staleness check is a ROUND TRIP -- a hello out, a hello back -- and a
+		//    daimon's page sends its first call the instant it is back, well inside it.
+		//    `chrome.runtime.connectNative` returns a usable port synchronously, so the
+		//    relay's `host` was truthy throughout that trip and `fromPage` posted straight
+		//    past it: the hand this rule exists to let go would have answered the one call
+		//    that mattered, and the honest sentence would have arrived after the report it
+		//    was about. The outbox's own doc had said messages wait for a greeting since
+		//    the grant window was written; it was never true of either greeting.
+		//
+		//    Sent in the SAME evaluate as the connect, which is the tightest the race gets.
+		recfg({ caps: STALE });
+		await rl.reload({ waitUntil: 'domcontentloaded' });
+		await sleep(400);
+		await rl.evaluate(() => { window.__open('build-one'); window.__exec('h7', ['sleep']); });
+		const raced = await until(rl, 'error', 12000);
+		check('a command sent as the page comes back is not answered by the hand being let go',
+			!raced.some((m) => m.t === 'started' && m.pid === fresh)
+				&& raced.some((m) => m.t === 'error' && /NEWER MACHINE HAND/.test(m.message || '')),
+			JSON.stringify(raced.slice(-3)));
+		// An `ended` is owed for every command the relay took in, queued or not: a page left
+		// waiting for ever on a call that was never sent is the same silence, one layer down.
+		check('and the command it was holding is answered rather than left waiting',
+			raced.some((m) => m.t === 'ended' && m.id === 'h7'),
+			JSON.stringify(raced.filter((m) => m.id === 'h7')));
+		// Back to a clean hand for what follows.
+		recfg({});
+		await rl.evaluate(() => window.__open('build-one'));
+		const after2b = await ran(rl, 'h8');
+		check('and the call after it is answered by the hand the machine now has',
+			!!after2b && after2b !== fresh, `was ${fresh}, now ${after2b}`);
+
 		// 3. NOT WHILE ANYTHING IS RUNNING. Ending a thirty-minute build to pick up a
 		//    hand installed meanwhile would be a worse fault than the one this fixes, so
 		//    the question is OWED rather than put, and the command survives the reload.

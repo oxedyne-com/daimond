@@ -87,6 +87,117 @@ impl Dialect {
 
 
 // ┌───────────────────────────────────────────────────────────────┐
+// │ Thinking, as a setting                                         │
+// └───────────────────────────────────────────────────────────────┘
+
+/// Whether a turn asks the model to think before it answers.
+///
+/// Adaptive is the only on-mode any current model takes; see
+/// [`model_takes_adaptive_thinking`].  `Off` is a request rather than a
+/// guarantee -- three models think whatever they are told (see
+/// [`model_always_thinks`]) and Opus 5 refuses to be switched off above
+/// effort `high` -- so what actually went on the wire is read back out of
+/// the body, never assumed from this.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Thinking {
+    Adaptive,
+    Off,
+}
+
+impl Thinking {
+
+    /// The wire spelling, which `set_tune` reads and `turn_limits` reports.
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Adaptive => "adaptive",
+            Self::Off      => "off",
+        }
+    }
+
+    /// Read a spelling; anything else is `None` rather than a silent default.
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s.trim() {
+            "adaptive"          => Some(Self::Adaptive),
+            "off" | "disabled"  => Some(Self::Off),
+            _                   => None,
+        }
+    }
+}
+
+/// How deeply a thinking model is asked to work: `output_config.effort`.
+///
+/// `High` is the API's own default, so it is what an untuned client asks
+/// for.  `XHigh` arrived with Opus 4.7 and is a 400 on the two 4.6 models,
+/// which is why [`effort_accepted`] exists rather than the field simply
+/// being written out.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+impl Effort {
+
+    /// The wire spelling, which `set_tune` reads and `turn_limits` reports.
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Low    => "low",
+            Self::Medium => "medium",
+            Self::High   => "high",
+            Self::XHigh  => "xhigh",
+            Self::Max    => "max",
+        }
+    }
+
+    /// Read a spelling; anything else is `None` rather than a silent default.
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s.trim() {
+            "low"    => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high"   => Some(Self::High),
+            "xhigh"  => Some(Self::XHigh),
+            "max"    => Some(Self::Max),
+            _        => None,
+        }
+    }
+
+    /// Is this one of the levels at which thinking may be switched off at all?
+    ///
+    /// Opus 5 takes `{"type":"disabled"}` only at `high` or below and answers
+    /// a 400 above it, so the ceiling is part of the setting rather than a
+    /// property of the model alone.
+    pub fn at_most_high(self) -> bool {
+        matches!(self, Self::Low | Self::Medium | Self::High)
+    }
+}
+
+/// What a client asks of a thinking model, as one value a shared cell can hold.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ThinkTune {
+    pub thinking: Thinking,
+    pub effort:   Effort,
+}
+
+impl Default for ThinkTune {
+    /// What the client asked for before either was a setting: adaptive
+    /// thinking, at the effort the API itself defaults to.
+    fn default() -> Self {
+        Self { thinking: Thinking::Adaptive, effort: Effort::High }
+    }
+}
+
+/// A [`ThinkTune`] shared across clones of a client.
+///
+/// `Rc<Cell<..>>` on both targets, exactly as `open_folds` is: this client is
+/// single-threaded on either transport, and a worker built from a cloned
+/// client is continuing the same turn and must think the same way.
+type Tune = std::rc::Rc<std::cell::Cell<ThinkTune>>;
+
+
+// ┌───────────────────────────────────────────────────────────────┐
 // │ Thinking carry                                                 │
 // └───────────────────────────────────────────────────────────────┘
 
@@ -243,6 +354,9 @@ pub struct LlmClient {
     think:          Carry,
     /// The `say` folds the user has open. See [`OpenFolds`].
     open_folds:     OpenFolds,
+    /// What this client asks of a thinking model, from `set_tune`.  Shared
+    /// across clones for the reason the carry is; see [`Tune`].
+    tune:           Tune,
     /// Set once this endpoint has been caught refusing a request that carried pictures.
     /// See [`Blind`]; read by [`LlmClient::vision_guard`] and set by the strip-and-retry in
     /// [`LlmClient::stream_turn`] and [`LlmClient::chat_once`].
@@ -816,6 +930,7 @@ impl LlmClient {
             retry:      RetryPolicy::default(),
             think:      new_carry(),
             open_folds: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
+            tune:       std::rc::Rc::new(std::cell::Cell::new(ThinkTune::default())),
             blind:      new_blind(),
             tls_config,
         }
@@ -864,6 +979,7 @@ impl LlmClient {
             retry:      RetryPolicy::default(),
             think:      new_carry(),
             open_folds: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
+            tune:       std::rc::Rc::new(std::cell::Cell::new(ThinkTune::default())),
             blind:      new_blind(),
             secure,
             abort:      std::rc::Rc::new(std::cell::RefCell::new(None)),
@@ -1353,17 +1469,31 @@ impl LlmClient {
     /// * thinking blocks precede the `tool_use` blocks they were generated
     ///   beside, and must be handed back unmodified -- see [`ThinkCarry`].
     ///
-    /// Thinking is requested only for the models that take the adaptive form;
-    /// see [`model_takes_adaptive_thinking`].
+    /// Thinking is requested only for the models that take the adaptive form
+    /// ([`model_takes_adaptive_thinking`]) and only while the client's own
+    /// setting asks for it ([`LlmClient::set_thinking`]); `output_config.effort`
+    /// rides the same gate.
     fn build_anthropic_body(&self, messages: &[ChatMessage], tools: Option<&str>, stream: bool)
         -> String
     {
         let marks = self.cache_breakpoints(messages, tools);
-        let thinks = model_takes_adaptive_thinking(&self.model);
+        let tune = self.thinking_tune();
+        let adaptive = model_takes_adaptive_thinking(&self.model);
+        // THREE STATES, not two.  `thinks` is whether this request ASKS for thinking;
+        // `off_lands` is whether asking for it to stop is something this model will accept at
+        // this effort.  Where it is not -- Fable and Mythos think whatever they are told, and
+        // Opus 5 refuses to be switched off above effort `high` -- the field is left off and
+        // the model reasons anyway, so the output cap must still make room for it.  A cap
+        // chosen from the request instead of from what the model will do truncates the answer
+        // mid-sentence and nothing reports it.
+        let thinks = adaptive && matches!(tune.thinking, Thinking::Adaptive);
+        let off_lands = matches!(tune.thinking, Thinking::Off)
+            && thinking_off_accepted(&self.model, tune.effort);
+        let reasons = adaptive && !off_lands;
         let mut out = String::with_capacity(1024);
         out.push('{');
         out.push_str(&fmt!("\"model\":\"{}\",", self.model));
-        out.push_str(&fmt!("\"max_tokens\":{},", self.anthropic_max_tokens(thinks, stream)));
+        out.push_str(&fmt!("\"max_tokens\":{},", self.anthropic_max_tokens(reasons, stream)));
 
         // The system prompt, hoisted.  Several system messages become one
         // block: the API takes a single system field, and the model reads a
@@ -1476,6 +1606,17 @@ impl LlmClient {
             // the same -- the billed thinking is the full reasoning either way
             // -- and is the difference between a visible pause and a silent one.
             out.push_str("\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"},");
+        } else if off_lands {
+            // Asked for, and legal here.  Sent rather than the field being omitted: omitting
+            // it on Opus 5 runs adaptive thinking, so "off" and "say nothing" are opposite
+            // instructions on the very model the arm measures.
+            out.push_str("\"thinking\":{\"type\":\"disabled\"},");
+        }
+        // HOW DEEPLY, which is a setting on the thinking models and a 400 on the rest.
+        // Written even at `high`, the API's own default, so the wire says what the engine was
+        // asked for rather than leaving a reader to infer it from an absence.
+        if effort_accepted(&self.model, tune.effort) {
+            out.push_str(&fmt!("\"output_config\":{{\"effort\":\"{}\"}},", tune.effort.wire()));
         }
         out.push_str(&fmt!("\"stream\":{}", if stream { "true" } else { "false" }));
         out.push('}');
@@ -1591,6 +1732,27 @@ impl LlmClient {
         for id in ids {
             f.insert(id);
         }
+    }
+
+    /// What this client is currently asking of a thinking model.
+    pub fn thinking_tune(&self) -> ThinkTune {
+        self.tune.get()
+    }
+
+    /// Ask for a different depth of thinking, from `Agent::set_tune`.
+    ///
+    /// **Only the Anthropic dialect can carry either half.**  Adaptive thinking is requested
+    /// there and its signed blocks are handed back by [`ThinkCarry`]; the OpenAI-shaped body
+    /// has nowhere to put a thinking block and no field this app has ever sent, so a setting
+    /// that reached it would be a request whose answer could not be replayed on the next
+    /// round.  So the OpenAI builder ignores this, and `turn_limits` reports the figure the
+    /// engine holds rather than one a caller could take for something that went out.
+    ///
+    /// # Arguments
+    /// * `thinking` - Adaptive, or off where the model and the effort allow it.
+    /// * `effort` - `output_config.effort`; `High` is the API's own default.
+    pub fn set_thinking(&self, thinking: Thinking, effort: Effort) {
+        self.tune.set(ThinkTune { thinking, effort });
     }
 
     /// The thinking blocks held for `id`, or none when no held turn produced
@@ -3007,6 +3169,65 @@ pub(crate) fn model_takes_adaptive_thinking(model: &str) -> bool {
         "claude-sonnet-4-6",
     ];
     ADAPTIVE.iter().any(|id| m.contains(id))
+}
+
+/// Whether `model` thinks whatever it is told.
+///
+/// Thinking is always on for these three families: `{"type":"disabled"}` is a 400 and omitting
+/// the field runs adaptive anyway.  So a tune that asks for thinking off cannot be honoured on
+/// them, and the honest thing is to send no `thinking` field and still allow the output cap the
+/// room the reasoning will take.
+///
+/// # Arguments
+/// * `model` - The model id, in any of the forms a caller can configure.
+fn model_always_thinks(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.contains("claude-fable") || m.contains("claude-mythos")
+}
+
+/// Whether `model` predates `output_config.effort`'s `xhigh` level.
+///
+/// `xhigh` arrived with Opus 4.7.  The two 4.6 models take `low`, `medium`, `high` and `max`
+/// and answer a 400 to `xhigh`, so an arm that asks for it on one of them is refused the
+/// field rather than quietly given a level it did not choose.
+fn model_predates_xhigh(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.contains("claude-opus-4-6") || m.contains("claude-sonnet-4-6")
+}
+
+/// Whether `{"type":"disabled"}` is a legal thing to send this model at this effort.
+///
+/// The tightest rule that is legal on every model that takes adaptive thinking at all: Opus 5
+/// accepts it only at effort `high` or below, the 4.7/4.8 and Sonnet models accept it at any
+/// effort, and Fable and Mythos accept it nowhere.  Holding all three to Opus 5's ceiling
+/// sends a little less than the API would allow and never sends something it refuses.
+///
+/// # Arguments
+/// * `model` - The model id, in any of the forms a caller can configure.
+/// * `effort` - The level this request will carry.
+fn thinking_off_accepted(model: &str, effort: Effort) -> bool {
+    model_takes_adaptive_thinking(model)
+        && !model_always_thinks(model)
+        && effort.at_most_high()
+}
+
+/// Whether `output_config.effort` may carry `effort` to `model`.
+///
+/// The field errors on the models that do not think (Sonnet 4.5, Haiku 4.5 and everything
+/// older), so the gate is the same list adaptive thinking uses, less `xhigh` on the two models
+/// released before that level existed.
+///
+/// # Arguments
+/// * `model` - The model id, in any of the forms a caller can configure.
+/// * `effort` - The level this request would carry.
+fn effort_accepted(model: &str, effort: Effort) -> bool {
+    if !model_takes_adaptive_thinking(model) {
+        return false;
+    }
+    match effort {
+        Effort::XHigh => !model_predates_xhigh(model),
+        _             => true,
+    }
 }
 
 /// Whether `model` can be shown an image.
@@ -4526,6 +4747,120 @@ pub(crate) fn split_top_level_objects(arr: &str) -> Vec<String> {
         i += 1;
     }
     out
+}
+
+/// `json` with one top-level member removed, or the text unchanged where the key is not there.
+///
+/// For an argument object that carries a key of its OWN beside the keys it is passing on -- the
+/// `compound` tool's `{"op":"read","path":…}`, where `op` chooses the primitive and everything
+/// else belongs to it.  Handing the object on whole would work and then lie: a failed call is
+/// answered with the unknown-key line [`crate::tools::ToolRegistry::guided`] composes, and it
+/// would name `op` as a key the primitive does not know.
+///
+/// Textual rather than a parse-and-re-emit, like every other reader in this section: what comes
+/// back is the model's own bytes with one member cut out, so a value this file has no type for
+/// cannot be reshaped on the way through.
+pub(crate) fn json_without_key(json: &str, key: &str) -> String {
+    let bytes = json.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' | b'[' => { depth += 1; i += 1; },
+            b'}' | b']' => { depth -= 1; i += 1; },
+            b'"' => {
+                // The key's own text, then whether a colon follows: a string in the value
+                // position is not a key, and at depth 1 the colon is what tells them apart.
+                let from = i + 1;
+                let mut j = from;
+                while j < bytes.len() {
+                    if bytes[j] == b'\\' { j += 2; continue; }
+                    if bytes[j] == b'"' { break; }
+                    j += 1;
+                }
+                let end = j.min(bytes.len());
+                let mut k = end + 1;
+                while k < bytes.len() && bytes[k].is_ascii_whitespace() { k += 1; }
+                if depth == 1 && k < bytes.len() && bytes[k] == b':' && &json[from..end] == key {
+                    let mut cut_from = i;
+                    let mut cut_to   = json_value_end(json, k + 1);
+                    // One comma goes with the member, or the object is left with a hole in it.
+                    // The comma AFTER, where there is one; otherwise this was the last member
+                    // and the comma before it is the one that has to go.
+                    let mut after = cut_to;
+                    while after < bytes.len() && bytes[after].is_ascii_whitespace() { after += 1; }
+                    if after < bytes.len() && bytes[after] == b',' {
+                        cut_to = after + 1;
+                    } else {
+                        while cut_from > 0 && bytes[cut_from - 1].is_ascii_whitespace() {
+                            cut_from -= 1;
+                        }
+                        if cut_from > 0 && bytes[cut_from - 1] == b',' {
+                            cut_from -= 1;
+                        }
+                    }
+                    let mut out = String::with_capacity(json.len());
+                    out.push_str(&json[..cut_from]);
+                    out.push_str(&json[cut_to..]);
+                    return out;
+                }
+                i = end + 1;
+            },
+            _ => i += 1,
+        }
+    }
+    json.to_string()
+}
+
+/// The byte just past the JSON value beginning at or after `from`.
+///
+/// A string, an object or an array is followed to its own close; anything else -- a number,
+/// `true`, `false`, `null` -- ends where the member does, at the first comma or closing bracket.
+fn json_value_end(json: &str, from: usize) -> usize {
+    let bytes = json.as_bytes();
+    let mut i = from;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
+    if i >= bytes.len() {
+        return i;
+    }
+    match bytes[i] {
+        b'"' => {
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' { i += 2; continue; }
+                if bytes[i] == b'"'  { return i + 1; }
+                i += 1;
+            }
+            i
+        },
+        b'{' | b'[' => {
+            let mut depth  = 0i32;
+            let mut in_str = false;
+            while i < bytes.len() {
+                let b = bytes[i];
+                if in_str {
+                    if b == b'\\' { i += 2; continue; }
+                    if b == b'"'  { in_str = false; }
+                } else {
+                    match b {
+                        b'"'        => in_str = true,
+                        b'{' | b'[' => depth += 1,
+                        b'}' | b']' => {
+                            depth -= 1;
+                            if depth == 0 { return i + 1; }
+                        },
+                        _ => (),
+                    }
+                }
+                i += 1;
+            }
+            i
+        },
+        _ => {
+            while i < bytes.len() && !matches!(bytes[i], b',' | b'}' | b']') { i += 1; }
+            i
+        },
+    }
 }
 
 pub fn datmap_to_json(m: &DaticleMap) -> String {
@@ -6577,6 +6912,154 @@ pub mod tests {
         assert!(!on.contains("budget_tokens"), "a removed parameter was sent: {}", on);
         let off = anth_client("claude-haiku-4-5").build_anthropic_body(&msgs, None, true);
         assert!(!off.contains("thinking"), "{}", off);
+    }
+
+    /// The tune reaches the Anthropic body, and the OpenAI one never learns of it.
+    #[test]
+    fn test_the_thinking_tune_reaches_the_anthropic_body_and_not_the_openai_one() {
+        let msgs = [ChatMessage::user("Hi".to_string())];
+
+        // Untuned: what the client sent before either was a setting, plus the effort the API
+        // itself defaults to -- written out so the wire says what was asked for.
+        let c = anth_client("claude-opus-5");
+        let dflt = c.build_anthropic_body(&msgs, None, true);
+        assert!(dflt.contains("\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"}"),
+            "{}", dflt);
+        assert!(dflt.contains("\"output_config\":{\"effort\":\"high\"}"), "{}", dflt);
+
+        // Tuned deeper: the level goes out and the thinking request is untouched.
+        c.set_thinking(Thinking::Adaptive, Effort::XHigh);
+        let deep = c.build_anthropic_body(&msgs, None, true);
+        assert!(deep.contains("\"output_config\":{\"effort\":\"xhigh\"}"), "{}", deep);
+        assert!(deep.contains("\"type\":\"adaptive\""), "{}", deep);
+
+        // OFF, at an effort where Opus 5 accepts being switched off.  Sent as `disabled`
+        // rather than as an absent field: omitting it on this model runs adaptive.
+        c.set_thinking(Thinking::Off, Effort::High);
+        let off = c.build_anthropic_body(&msgs, None, true);
+        assert!(off.contains("\"thinking\":{\"type\":\"disabled\"}"), "{}", off);
+        assert!(!off.contains("adaptive"), "{}", off);
+        // And with the reasoning gone, the output cap is the configured one again rather than
+        // the floor a thinking turn needs.
+        assert!(off.contains("\"max_tokens\":4096"), "{}", off);
+
+        // THE SAME SETTING ON THE OPENAI DIALECT CHANGES NOTHING.  There is no field this app
+        // has ever sent there and nowhere to hand a signed block back, so a request that
+        // carried one would be asking for something it could not replay next round.
+        let router = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
+        router.set_thinking(Thinking::Off, Effort::Max);
+        let openai = router.build_body(&msgs, None, true);
+        assert!(!openai.contains("thinking"), "{}", openai);
+        assert!(!openai.contains("output_config"), "{}", openai);
+        assert!(!openai.contains("effort"), "{}", openai);
+        assert!(!openai.contains("reasoning"), "{}", openai);
+    }
+
+    /// A level or a switch the model would answer a 400 to is not sent.
+    #[test]
+    fn test_a_thinking_setting_the_model_refuses_is_withheld_rather_than_guessed_at() {
+        let msgs = [ChatMessage::user("Hi".to_string())];
+
+        // OPUS 5 ABOVE EFFORT `high`: `{"type":"disabled"}` is a 400 there.  Nothing is sent,
+        // the model reasons anyway, and the output cap makes room for it -- which is the half
+        // that would fail silently, by truncating the answer.
+        let c = anth_client("claude-opus-5");
+        c.set_thinking(Thinking::Off, Effort::Max);
+        let body = c.build_anthropic_body(&msgs, None, true);
+        assert!(!body.contains("disabled"), "a 400 was sent rather than withheld: {}", body);
+        assert!(body.contains(&fmt!("\"max_tokens\":{}", THINKING_MIN_MAX_TOKENS)),
+            "a model that thinks anyway was capped at the answer-only figure: {}", body);
+        assert!(body.contains("\"output_config\":{\"effort\":\"max\"}"), "{}", body);
+
+        // FABLE THINKS WHATEVER IT IS TOLD, at every effort.
+        assert!(model_always_thinks("claude-fable-5"));
+        assert!(model_always_thinks("claude-mythos-5"));
+        assert!(!model_always_thinks("claude-opus-5"));
+        let f = anth_client("claude-fable-5");
+        f.set_thinking(Thinking::Off, Effort::Low);
+        let fable = f.build_anthropic_body(&msgs, None, true);
+        assert!(!fable.contains("disabled"), "{}", fable);
+        assert!(fable.contains(&fmt!("\"max_tokens\":{}", THINKING_MIN_MAX_TOKENS)), "{}", fable);
+
+        // `xhigh` ARRIVED WITH OPUS 4.7, so the two 4.6 models are sent no level at all
+        // rather than one they did not choose.
+        let old = anth_client("claude-sonnet-4-6");
+        old.set_thinking(Thinking::Adaptive, Effort::XHigh);
+        let refused = old.build_anthropic_body(&msgs, None, true);
+        assert!(!refused.contains("output_config"), "{}", refused);
+        old.set_thinking(Thinking::Adaptive, Effort::Max);
+        assert!(old.build_anthropic_body(&msgs, None, true)
+            .contains("\"output_config\":{\"effort\":\"max\"}"));
+
+        // AND A MODEL THAT DOES NOT THINK IS SENT NEITHER FIELD: `output_config.effort` errors
+        // on Haiku 4.5 and everything older.
+        let h = anth_client("claude-haiku-4-5");
+        h.set_thinking(Thinking::Adaptive, Effort::High);
+        let haiku = h.build_anthropic_body(&msgs, None, true);
+        assert!(!haiku.contains("thinking"), "{}", haiku);
+        assert!(!haiku.contains("output_config"), "{}", haiku);
+    }
+
+    /// The spellings `set_tune` reads, and the ones it must refuse.
+    #[test]
+    fn test_the_thinking_spellings_round_trip_and_a_typo_is_refused() {
+        for t in [Thinking::Adaptive, Thinking::Off] {
+            assert_eq!(Some(t), Thinking::from_wire(t.wire()));
+        }
+        for e in [Effort::Low, Effort::Medium, Effort::High, Effort::XHigh, Effort::Max] {
+            assert_eq!(Some(e), Effort::from_wire(e.wire()));
+        }
+        // `disabled` is the API's own word for it and is taken as well as `off`.
+        assert_eq!(Some(Thinking::Off), Thinking::from_wire("disabled"));
+        // A typo is None rather than a silent default, so an arm that measured the shipped
+        // engine cannot report that it measured something else.
+        assert_eq!(None, Thinking::from_wire("adpative"));
+        assert_eq!(None, Effort::from_wire("xxhigh"));
+        assert_eq!(None, Effort::from_wire(""));
+        // The one ceiling that is part of the setting rather than of the model.
+        assert!(Effort::High.at_most_high());
+        assert!(!Effort::XHigh.at_most_high());
+        assert!(!Effort::Max.at_most_high());
+    }
+
+    /// A tuned effort does not cost the turn its signed reasoning.
+    ///
+    /// The carry is what makes a thinking tool round legal at all (see [`ThinkCarry`]), and it
+    /// is held on the client beside the tune -- so a setter that replaced the wrong cell, or a
+    /// body builder that stopped consulting `carry_get` once it had a second field to write,
+    /// would produce a request the API rejects on every round after the first.
+    #[test]
+    fn test_a_tuned_turn_still_hands_its_thinking_back_with_the_tool_results() {
+        let c = anth_client("claude-opus-5");
+        c.set_thinking(Thinking::Adaptive, Effort::XHigh);
+        c.carry_put("toolu_1", vec![
+            r#"{"type":"thinking","thinking":"Euclid first.","signature":"SIG-1"}"#.to_string(),
+        ]);
+        let round_two = vec![
+            ChatMessage::user("read a.txt".to_string()),
+            ChatMessage::Assistant {
+                content:    MessageContent::text(""),
+                tool_calls: vec![ToolCall {
+                    id:        "toolu_1".to_string(),
+                    name:      "file_read".to_string(),
+                    arguments: r#"{"path":"a.txt"}"#.to_string(),
+                }],
+            },
+            ChatMessage::tool("toolu_1".to_string(), "hello".to_string()),
+        ];
+        let body = c.build_anthropic_body(&round_two, None, true);
+        assert!(body.contains("\"signature\":\"SIG-1\""),
+            "the tune cost the turn its signed thinking: {}", body);
+        assert!(body.contains("\"output_config\":{\"effort\":\"xhigh\"}"), "{}", body);
+        let think_at = match body.find("\"type\":\"thinking\"") {
+            Some(p) => p,
+            None    => panic!("no thinking block in the assistant turn: {}", body),
+        };
+        let call_at = match body.find("\"type\":\"tool_use\"") {
+            Some(p) => p,
+            None    => panic!("no tool_use block: {}", body),
+        };
+        assert!(think_at < call_at, "the reasoning must precede the call it produced: {}", body);
     }
 
     #[test]

@@ -1,13 +1,20 @@
-// verify_foldershare.mjs — a desktop's real folder reaches the phone, and comes back.
+// verify_foldershare.mjs — a flagged folder reaches the devices that cannot open it.
 //
 // THE GAP THIS CLOSES. Sync carried the OPFS sandbox only -- "a real folder is the
-// user's own disk, device-specific" -- and the owner's two desktops boot with a folder
-// open. So the account's phone held NONE of the book those desktops exist for: the only
-// route to a file was a chat turn handed to a desktop, which answered in prose. A
-// desktop that has a folder open now sends what the user marked into a Diamond to the
+// user's own disk, device-specific" -- and a device that boots with a folder open holds
+// work that a device of the same account with no native access cannot reach at all: the
+// only route to a file was a chat turn handed to the first device, which answered in
+// prose. A device with a folder open now sends what the user FLAGGED for sharing to the
 // devices that have no native access, and writes their edits back into the folder. The
 // folder stays the canonical copy: Syncthing, git, Ore and the owner's own `dev` script
 // read the same bytes as before.
+//
+// AND THE FLAG IS THE FIRST GUARD, added 2026-09-14 within a day of the share shipping
+// without one. A mark on a folder is the grant its daimon works under -- permission to
+// READ -- and the first version of this read that as permission to replicate, so the
+// owner's twenty-six gigabytes of marks were all up for copying and the walk that found
+// so cost four minutes a round. The copy grant is now its own flag on the attachment,
+// generic with respect to devices, off until somebody turns it on.
 //
 // THE FIXTURE IS THE BOOK. `~/usr/books/ontheism/TheOrder/Onthearche` -- 582 files and
 // about 89 MB once the `assets` symlink is followed, 411 of them text, five of them
@@ -15,17 +22,22 @@
 // only thing this run writes is the browser profile and the OPFS folder it mounts, so
 // there is no copy to make and none to leave behind.
 //
-// FOUR GUARDS, each with its own break:
+// FIVE GUARDS, each with its own break:
 //
-//   CEILING. `SYNC_FOLDER_SHARE_MAX` is 200 MiB, symlinked trees counted. Past it
-//   nothing is shared and the panel names the size and the ceiling. Below it the
-//   existing budgets apply unchanged.
+//   THE FLAG. A marked folder shares nothing. What travels is what carries `share` on
+//   its attachment, and on a device that has flagged nothing not one `file_list` is
+//   issued -- which is the state of the whole fleet the day this ships.
+//
+//   CEILING, PER FLAGGED FOLDER. `SYNC_FOLDER_SHARE_MAX` is 200 MiB, symlinked trees
+//   counted. Past it THAT folder travels no part of itself and the panel names it by
+//   name; the other flagged folders go on travelling. Below it the existing budgets
+//   apply unchanged.
 //
 //   IGNORE. `.gitignore` and `.oreignore` are honoured over a built-in floor of build
 //   output. Without it a `typst watch` rebuild -- a fresh 1.7 MB PDF beside the source
 //   on every keystroke -- would offload a megabyte and wake every device, per keystroke.
 //
-//   CONTENT, NEVER TIME. Two desktops kept identical by Syncthing hold one file at two
+//   CONTENT, NEVER TIME. Two devices kept identical by Syncthing hold one file at two
 //   modification times. What travels is keyed on the content hash. The parcels cannot be
 //   byte-identical in every section -- a chunk address is the hash of CIPHERTEXT and the
 //   seal takes a fresh IV per device, so two devices addressing identical bytes address
@@ -33,8 +45,8 @@
 //   what matters: the inline section identical byte for byte, every manifest agreeing on
 //   `key`, `size` and `bytes` and carrying no clock at all, and each device's own parcel
 //   a fixed point. The ten-minute half of that property is in
-//   `dev/verify_syncfixedpoint.mjs`, which now stands two mounted desktops beside the
-//   phone.
+//   `dev/verify_syncfixedpoint.mjs`, which now stands two mounted devices beside the
+//   one without native access.
 //
 //   NO DELETION BY ABSENCE. A file in the folder goes only on an explicit tombstone from
 //   a device that HELD it, and only while the bytes on disk are still the bytes the
@@ -44,10 +56,13 @@
 // version lands beside it as `<name>.conflict-<device>-<stamp>.<ext>`, keeping the real
 // extension so the tools that open these files still can.
 //
-// CHROMIUM ONLY, and said rather than skipped. Playwright's Linux WebKit has no
-// `navigator.storage` at all, so there is no origin-private filesystem to mount as a
-// folder and no workspace for either device to hold. Real iOS Safari has had OPFS since
-// 15.2; this is a limit of the test engine.
+// CHROMIUM ONLY FOR THE FOLDER, and said rather than skipped. Playwright's Linux WebKit
+// has no `navigator.storage` at all, so there is no origin-private filesystem to mount
+// as a folder and no workspace for either device to hold. Real iOS Safari has had OPFS
+// since 15.2; this is a limit of the test engine. What WebKit CAN answer is asked of it:
+// the rows a compile would fetch, and the banner that names the folders left out -- both
+// string arithmetic over localStorage, and both what a device with no native access
+// actually reads.
 //
 //   bash dev/world.sh 32 --up ; eval "$(bash dev/world.sh 32 --env)"
 //   node dev/verify_foldershare.mjs
@@ -59,6 +74,13 @@
 //   node dev/verify_foldershare.mjs --break nohydrate    # the phone typesets without its own fonts
 //   node dev/verify_foldershare.mjs --break awayisgone   # a file this device freed reads as deleted
 //   node dev/verify_foldershare.mjs --break deleteabsent # absence deletes off somebody's disk
+//   node dev/verify_foldershare.mjs --break noearlyexit  # the walk finishes the tree before judging the ceiling
+//   node dev/verify_foldershare.mjs --break nomemo       # a round's three callers each re-walk the tree
+//   node dev/verify_foldershare.mjs --break markshares   # a mark shares the folder, flag or no flag
+//   node dev/verify_foldershare.mjs --break allornothing # one folder over the ceiling stops them all
+//   node dev/verify_foldershare.mjs --break nonames      # the banner counts the folders instead of naming them
+//   node dev/verify_foldershare.mjs --break flagstuck    # the far panel never hears the flag move
+//   node dev/verify_foldershare.mjs --break skillprobe   # a SKILL.md's own folder being fenced is believed over the file
 //   bash dev/world.sh 32 --down
 import fs from 'node:fs';
 import path from 'node:path';
@@ -96,8 +118,37 @@ const BREAKS = {
 		with: '		var rules = null; if (0) await folderIgnoreRules(roots);' }],
 	// The ceiling stops binding.
 	noceiling: [{ file: 'js/daimond.js',
-		find: '		if (walk.bytes > SYNC_FOLDER_SHARE_MAX) {',
-		with: '		if (false && walk.bytes > SYNC_FOLDER_SHARE_MAX) {' }],
+		find: '			if (w.bytes > SYNC_FOLDER_SHARE_MAX) {',
+		with: '			if (false && w.bytes > SYNC_FOLDER_SHARE_MAX) {' }],
+	// THE STATE THE SHARE SHIPPED IN: a mark is read as a copy grant, so every folder
+	// any Diamond holds is replicated whether or not anybody asked for it.
+	markshares: [{ file: 'js/daimond.js',
+		find: '						// The flag, and not the mark. See above.\n						if (!a.share) return;',
+		with: '						// BROKEN: the mark is the grant again\n						if (false && !a.share) return;' }],
+	// THE CEILING GOES BACK TO BEING ALL-OR-NOTHING, so one oversized folder stops
+	// every other flagged folder travelling.
+	allornothing: [{ file: 'js/daimond.js',
+		find: '				left.push({ root: roots[i], bytes: w.bytes });\n				continue;',
+		with: '				left.push({ root: roots[i], bytes: w.bytes });\n				kept = []; break;		// BROKEN: one over the ceiling stops them all' }],
+	// The banner counts the folders instead of naming them, which is the notice the
+	// person cannot act on: the ceiling is per folder, so which folder is the whole
+	// of the news.
+	nonames: [{ file: 'js/daimond.js',
+		find: '			function (r) { return r.root; },',
+		with: '			function (r) { return \'\'; },			// BROKEN: counted, never named' }],
+	// The flag moves on one device and the other device's panel never hears about it.
+	// TWO SPECS, because the redraw has two carriers and either alone is enough: the
+	// links ride with their Diamond and the merge says the links moved, and a landed
+	// parcel re-lists an open Workspace panel whatever moved. Breaking one leaves the
+	// other drawing the right row, which is a guard proved by nothing -- found by this
+	// file on 2026-09-14, when a one-anchor break went green.
+	flagstuck: [
+		{ file: 'js/daimond.js',
+		  find: '		signalLinksChanged();                      // links ride with their Diamond, so the graph moved',
+		  with: '		if (false) signalLinksChanged();           // BROKEN: the merge says nothing moved' },
+		{ file: 'js/daimond.js',
+		  find: '				if (Files.refresh) Files.refresh();',
+		  with: '				if (false && Files.refresh) Files.refresh();		// BROKEN: a landed parcel redraws nothing' }],
 	// The manifest carries the modification time again, which is what two desktops
 	// disagree about while agreeing about every byte.
 	timekeyed: [{ file: 'js/daimond.js',
@@ -129,6 +180,24 @@ const BREAKS = {
 			+ '				if (local[ap] == null) continue;\n'
 			+ '				if (await deleteSyncFile(app, ap)) gone[ap] = 1;\n'
 			+ '			}\n			}\n		if (false) {\n			// A FILE ON SOMEBODY\'S DISK IS DELETED ONLY ON A TOMBSTONE' }],
+	// THE STATE BEFORE THIS FILE'S guard 1a: the walk always finishes the whole tree
+	// before `syncWalkPlan` judges it over the ceiling, so a verdict the first few
+	// hundred listings already had still costs the rest of them.
+	noearlyexit: [{ file: 'js/daimond.js',
+		find: '					if (out.bytes > SYNC_FOLDER_SHARE_MAX) { out.complete = false; return out; }',
+		with: '					if (false && out.bytes > SYNC_FOLDER_SHARE_MAX) { out.complete = false; return out; }' }],
+	// THE MEMO NEVER HITS: a TTL of zero is the state every one of a round's three
+	// callers -- the parcel, the baseline commit and the pull merge -- stood in
+	// before `syncWalkPlan` cached the walk, each paying for its own full census.
+	nomemo: [{ file: 'js/daimond.js',
+		find: '\tvar SYNC_WALKPLAN_TTL_MS = 25000;\t\t// 25s: covers one round\'s three callers, well inside the next',
+		with: '\tvar SYNC_WALKPLAN_TTL_MS = 0;\t\t// BROKEN: the memo never hits' }],
+	// THE STATE BEFORE THIS FIX: a refused PARENT listing is believed over the file
+	// itself, so `.daimond/skills/<name>/SKILL.md` -- fenced at the folder, open at the
+	// manifest -- goes back to "would not list" on every census.
+	skillprobe: [{ file: 'js/daimond.js',
+		find: '\t\tvar rr;\n\t\ttry { rr = await app.run_tool_outcome(\'file_read\', JSON.stringify({ path: path })); }',
+		with: '\t\treturn null;\t\t// BROKEN: never falls back to file_read (skillprobe)\n\t\tvar rr;\n\t\ttry { rr = await app.run_tool_outcome(\'file_read\', JSON.stringify({ path: path })); }' }],
 };
 if (BREAK && !BREAKS[BREAK]) {
 	console.error(`unknown break '${BREAK}'; one of: ${Object.keys(BREAKS).join(', ')}`);
@@ -165,8 +234,8 @@ if (BREAK && !BREAKS[BREAK]) {
 	try {
 		w = await open({ name: 'fs-rows', profile: scratch('pw', 'foldershare-rows-' + BROWSER),
 			signIn: false, connect: false, defaults: false });
-		await w.page.waitForFunction(() => !!(window.DaimondFiles && DaimondFiles.compileCloudRows),
-			null, { timeout: 30000 });
+		await w.page.waitForFunction(() => !!(window.DaimondFiles && DaimondFiles.compileCloudRows
+			&& window.DaimondCore && DaimondCore.noteFoldersLeft), null, { timeout: 30000 });
 		const got = await w.page.evaluate((a) => {
 			localStorage.setItem('daimond-cloud-paths', JSON.stringify(a.away));
 			const rows = window.DaimondFiles.compileCloudRows(a.main) || [];
@@ -182,6 +251,30 @@ if (BREAK && !BREAKS[BREAK]) {
 			return (window.DaimondFiles.compileCloudRows('a/b/main.typ') || []).length;
 		});
 		check(`and a device holding everything already fetches nothing (${BROWSER})`, none === 0);
+
+		// THE BANNER IS A LIST AND A STRING TABLE, so this engine can answer it too --
+		// and it is the one sentence that tells a person WHICH folder is not going to
+		// their other devices. The ceiling is per folder now, so a notice that said
+		// only "a folder is too big" would name nothing anybody could act on.
+		const banner = await w.page.evaluate(() => {
+			const draw = (list) => {
+				window.DaimondCore.noteFoldersLeft(list);
+				const el = document.querySelector('.left-banner-msg');
+				return el ? el.textContent : '';
+			};
+			const one = draw([{ root: 'TheOrder/Onthearche', bytes: 220 * 1024 * 1024 }]);
+			const two = draw([{ root: 'TheOrder/Onthearche', bytes: 220 * 1024 * 1024 },
+				{ root: 'photos/2026', bytes: 900 * 1024 * 1024 }]);
+			const cleared = draw([]);
+			return { one, two, cleared };
+		});
+		check(`the folder left out is NAMED in the banner, with the ceiling beside it (${BROWSER})`,
+			banner.one.indexOf('TheOrder/Onthearche') >= 0 && banner.one.indexOf('200') >= 0,
+			banner.one.slice(0, 130) || 'no banner');
+		check(`two of them are both named, and the row clears when the list empties (${BROWSER})`,
+			banner.two.indexOf('TheOrder/Onthearche') >= 0 && banner.two.indexOf('photos/2026') >= 0
+			&& banner.cleared === '',
+			banner.two.slice(0, 150) || 'no banner');
 	} catch (e) {
 		// A CELL THAT COULD NOT RUN IS RED, not absent: this is the one claim in this
 		// file that the iPhone's real engine can answer, and a silent skip of it would
@@ -227,6 +320,14 @@ const SEAM = [
 	  why: 'nothing can write a chunked file into the folder, so a big edit cannot come back' },
 	{ file: 'js/daimond.js',  want: 'hydrateProject',
 	  why: 'a compile does not fetch the pictures and fonts held as ☁ rows' },
+	{ file: 'js/daimond.js',  want: 'if (out.bytes > SYNC_FOLDER_SHARE_MAX) { out.complete = false; return out; }',
+	  why: 'the walk finishes the whole tree before giving a verdict it had hundreds of listings ago' },
+	{ file: 'js/daimond.js',  want: '_walkPlanCache',
+	  why: 'the walk is not memoised, so a round\'s three callers each re-walk the whole tree' },
+	{ file: 'js/daimond.js',  want: 'if (!a.share) return;',
+	  why: 'a mark is read as a copy grant again, and every marked folder is replicated' },
+	{ file: 'js/daimond.js',  want: 'noteFoldersLeft',
+	  why: 'a folder left out for its size is not named, so nobody can tell which it was' },
 ];
 {
 	const missing = [];
@@ -484,10 +585,12 @@ await signInAs(A, 'foldershare');
 await ready(A);
 
 const bundle = await A.page.evaluate(() => window.DaimondIdentity.exportBundle());
-// B IS THE PHONE. It is the device with no native access -- the whole reason the folder
-// has to travel -- and it is also the device whose inline ceiling is the tight one
+// B HAS NO NATIVE ACCESS. It is the device the flag exists for -- the whole reason a
+// folder has to travel at all -- and it is also given the tighter inline ceiling
 // (`SYNC_INLINE_SOFT_MOBILE_MAX`, 256 KiB), so its own parcel is where that cap is
-// asserted. An iPhone user agent is what `detectMobile` reads first and treats as final.
+// asserted. The iPhone user agent below is the fixture for that cap and nothing more:
+// nothing in this feature is about a phone, and the flag is worded about devices that
+// cannot open a folder rather than about any kind of device.
 B = await open({ name: 'fs-b', profile: PROFILE_B, signIn: false, connect: false,
 	defaults: false, route: await routeFor(false),
 	ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 '
@@ -546,6 +649,15 @@ check('A has a real folder open, and STILL commits nothing — the owner\'s desk
 
 // ── The book goes into the folder ────────────────────────────────────
 const t0 = Date.now();
+// A BOOK REPOSITORY STATES ITS OWN RULES, and they go in with the book rather than
+// after it: the archive tree is a snapshot nobody edits and the font zips are the
+// downloads the unpacked fonts came from, and on the owner's disk both rules were there
+// before anything was ever shared. The built-in floor underneath them excludes the
+// compiled PDFs. Guard 2 below is what asserts they bite.
+const RULES = [
+	['.gitignore', '# the snapshot, not the work\narchive/\n*.zip\n'],
+	['.oreignore', 'revision/\n'],
+];
 const seeded = await A.page.evaluate(async (list) => {
 	const root = window.DaimondFiles.folder();
 	const dirs = new Map([['', root]]);
@@ -578,55 +690,223 @@ const seeded = await A.page.evaluate(async (list) => {
 	}
 	return { n, bytes, missing };
 }, FIXTURE.map(f => ({ p: SCOPE + '/' + f.p, src: f.p })));
+await A.page.evaluate(async (a) => {
+	const root = window.DaimondFiles.folder();
+	let d = root;
+	for (const seg of a.scope.split('/')) d = await d.getDirectoryHandle(seg, { create: true });
+	for (const [name, text] of a.rules) {
+		const fh = await d.getFileHandle(name, { create: true });
+		const w  = await fh.createWritable();
+		await w.write(new TextEncoder().encode(text));
+		await w.close();
+	}
+}, { scope: SCOPE, rules: RULES });
 note(`seeded ${seeded.n} files, ${(seeded.bytes / 1048576).toFixed(1)} MiB, in ${((Date.now() - t0) / 1000).toFixed(1)}s`
 	+ (seeded.missing.length ? `; ${seeded.missing.length} had gone since the walk` : ''));
 
 // ── One Diamond, scoped to the book ──────────────────────────────────
 //
-// The mark IS the share: what travels is what the user marked into a Diamond, which is
-// already the grant its daimon works under (dev/ATTACH_CONTRACT.md §2). The reference is
-// written WITHOUT a root -- `dir:TheOrder/Onthearche` rather than
+// THE MARK IS A READ GRANT AND NOT A COPY GRANT (owner's ruling, 2026-09-14). Marking a
+// folder into a Diamond says its daimon may open it (dev/ATTACH_CONTRACT.md §2); it says
+// nothing about replicating the folder to the account's other devices, and reading the
+// two as one put twenty-six gigabytes of the owner's marks up for copying. The reference
+// is written WITHOUT a root -- `dir:TheOrder/Onthearche` rather than
 // `dir:[machine:mounted]TheOrder/Onthearche` -- which is the grandfathered form every
 // link made before roots were recorded carries, and is reachable from either workspace.
-const did = await A.page.evaluate(async (scope) => {
+const marked = await A.page.evaluate(async (scope) => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 	const id = await app.create_diamond('Onthearche');
-	await app.add_link(id, 'diamond:' + id, 'dir:' + scope, 'holds', '', 'user');
+	const linkId = await app.add_link(id, 'diamond:' + id, 'dir:' + scope, 'holds', '', 'user');
 	await window.DaimondCore.loadDiamonds();
-	return id;
+	return { id, linkId };
 }, SCOPE);
+const did = marked.id;
 note(`Diamond ${did.slice(0, 12)}… holds ${SCOPE}`);
 
+// ═══════════════════════════════════════════════════════════════════════
+// THE FLAG — a marked folder shares nothing until somebody says so
+// ═══════════════════════════════════════════════════════════════════════
+console.log('\n— a mark is a read grant: nothing travels until the attachment is flagged —');
+
+// MEASURED AROUND THE WALK ITSELF, because the cost is the point as much as the silence.
+// The owner's desktops paid ~22,500 `file_list` calls three times a round to conclude
+// that his marks were too big to share; after this ruling a device with nothing flagged
+// issues NONE, and that is the state of every device on the day this ships.
+const unflagged = await A.page.evaluate(async () => {
+	const mod  = await import('/pkg/oxedyne_daimond.js');
+	const orig = mod.DaimondApp.prototype.run_tool_outcome;
+	let calls  = 0;
+	mod.DaimondApp.prototype.run_tool_outcome = function (name, argsJson) {
+		if (name === 'file_list') calls++;
+		return orig.call(this, name, argsJson);
+	};
+	let s;
+	try { s = await window.DaimondCore.syncFolderShare(); }
+	finally { mod.DaimondApp.prototype.run_tool_outcome = orig; }
+	return { s, calls };
+});
+check('a folder MARKED into a Diamond and not flagged shares nothing at all',
+	unflagged.s.roots.length === 0 && unflagged.s.flagged.length === 0,
+	`roots [${unflagged.s.roots.join(', ')}], flagged [${unflagged.s.flagged.join(', ')}]`);
+check('and NO WALK RUNS — the whole cost of this feature on a device that flagged nothing',
+	unflagged.calls === 0,
+	`${unflagged.calls} file_list call(s) for a ${FIXTURE.length}-file mark`);
+const unflaggedCol = await A.page.evaluate(async () => {
+	const col = await window.DaimondCore.collectSync();
+	const row = document.querySelector('.left-banner-msg');
+	return { files: Object.keys(col.files).length, complete: col.filesComplete,
+		msg: row ? row.textContent : '' };
+});
+check('the census carries none of it, calls itself incomplete, and complains about nothing',
+	unflaggedCol.files === 0 && unflaggedCol.complete === false && unflaggedCol.msg === '',
+	`${unflaggedCol.files} inline file(s), complete=${unflaggedCol.complete}, `
+	+ `banner ${unflaggedCol.msg ? JSON.stringify(unflaggedCol.msg.slice(0, 70)) : 'none'}`);
+
+// ── and now the second grant, given explicitly ───────────────────────
+await A.page.evaluate(async (a) => {
+	const mod = await import('/pkg/oxedyne_daimond.js');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	await app.update_link(a.id, a.linkId, 'holds', 'share');
+	await window.DaimondCore.loadDiamonds();
+	window.DaimondCore.syncClearWalkCache();
+}, { id: did, linkId: marked.linkId });
+
 const share = await A.page.evaluate(() => window.DaimondCore.syncFolderShare());
-check('the share is exactly what was marked in, and the ceiling is 200 MiB',
+check('a FLAGGED folder shares exactly itself, and the ceiling is 200 MiB per folder',
 	share.folder === true && share.roots.length === 1 && share.roots[0] === SCOPE
-	&& share.max === 200 * 1024 * 1024 && !share.over,
+	&& share.flagged.length === 1 && share.max === 200 * 1024 * 1024 && share.left.length === 0,
 	`roots ${share.roots.join(', ')}, ${(share.bytes / 1048576).toFixed(1)} MiB in `
-	+ `${share.files} files, ${share.ignored} ignored`);
+	+ `${share.files} files, ${share.ignored} ignored, ${share.left.length} left out`);
+
+// A FILE ITSELF marked into a Diamond, rather than a folder -- the shape
+// `.daimond/skills/think/SKILL.md` takes on the owner's two desktops, and outside
+// SCOPE so the directory root above does not already cover it and drop it as
+// redundant. `file_list` opens directories; asked to list this path directly it
+// used to answer "would not list" on every single census.
+const DEEP_FILE = 'aside/notes/deep/skill.md';
+await A.page.evaluate(async (p) => {
+	const root = window.DaimondFiles.folder();
+	let d = root;
+	const parts = p.split('/');
+	const name = parts.pop();
+	for (const seg of parts) d = await d.getDirectoryHandle(seg, { create: true });
+	const fh = await d.getFileHandle(name, { create: true });
+	const w = await fh.createWritable();
+	await w.write(new TextEncoder().encode('# a file attached on its own\n'));
+	await w.close();
+}, DEEP_FILE);
+await A.page.evaluate(async ({ id, p }) => {
+	const mod = await import('/pkg/oxedyne_daimond.js');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	// Marked and flagged in one go: a lone file may be shared exactly as a folder may,
+	// and this one is the second flagged root the per-root ceiling is measured on.
+	const linkId = await app.add_link(id, 'diamond:' + id, 'file:' + p, 'holds', '', 'user');
+	await app.update_link(id, linkId, 'holds', 'share');
+	await window.DaimondCore.loadDiamonds();
+	window.DaimondCore.syncClearWalkCache();
+}, { id: did, p: DEEP_FILE });
+
+A.logs.length = 0;		// only the census the next line triggers is under test
+const deepShare = await A.page.evaluate(() => window.DaimondCore.syncFolderShare());
+const badLogs = A.logs.filter(l => l.indexOf('would not list') >= 0);
+check('a file marked in on its own is walked as a file, never asked to list as a directory',
+	badLogs.length === 0 && deepShare.complete === true && deepShare.roots.indexOf(DEEP_FILE) >= 0,
+	badLogs.join(' | ') || `roots ${deepShare.roots.join(', ')}, complete=${deepShare.complete}`);
+
+// A SHIPPED SKILL'S MANIFEST, `.daimond/skills/<name>/SKILL.md` -- the shape DEEP_FILE
+// did not cover. On the owner's desktops this one's PARENT directory
+// (`.daimond/skills/verifyskill/`) is refused by the read fence itself: a Diamond's own
+// bounds deny `.daimond/` outright and `is_skills_disclosure` (src/tools.rs) opens back
+// up only the skills index and the exact manifest path, never the folder around it --
+// the case the owner's argonaut logged as "would not list" ~60 times/hour. This
+// harness's own sync app runs unscoped (`tools()` in daimond.js builds a plain
+// `DaimondApp` with no Diamond bound at all), so the fence itself never actually
+// engages here -- proved by running this fixture with `fileEntryUnderParent`'s
+// fallback disabled and confirming NOTHING goes red. So the one call the fence would
+// have refused is refused here instead, on the exact prototype method every
+// `DaimondApp.run_tool_outcome` call goes through, and put back the moment the
+// census returns: `fileEntryUnderParent`'s parent-listing attempt is made to fail
+// exactly as it does in production, and only its `file_read` fallback -- reading the
+// one path `is_skills_disclosure` actually opens -- can answer it.
+const SKILL_FILE = '.daimond/skills/verifyskill/SKILL.md';
+const SKILL_PARENT = '.daimond/skills/verifyskill';
+await A.page.evaluate(async (p) => {
+	const root = window.DaimondFiles.folder();
+	let d = root;
+	const parts = p.split('/');
+	const name = parts.pop();
+	for (const seg of parts) d = await d.getDirectoryHandle(seg, { create: true });
+	const fh = await d.getFileHandle(name, { create: true });
+	const w = await fh.createWritable();
+	await w.write(new TextEncoder().encode('# a shipped skill, marked in on its own\n'));
+	await w.close();
+}, SKILL_FILE);
+const skillLinkId = await A.page.evaluate(async ({ id, p }) => {
+	const mod = await import('/pkg/oxedyne_daimond.js');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	// MARKED AND FLAGGED, exactly as DEEP_FILE above is. This fixture was written
+	// when a mark was itself the copy grant; it is not one any more (`Files.shareRoots`
+	// reads `a.share`, not the mark), so a manifest marked and left unflagged is
+	// correctly shared with nobody and this cell would be asserting the rule that
+	// was replaced rather than the fallback it exists to test.
+	const linkId = await app.add_link(id, 'diamond:' + id, 'file:' + p, 'holds', '', 'user');
+	await app.update_link(id, linkId, 'holds', 'share');
+	await window.DaimondCore.loadDiamonds();
+	// The memo is keyed on the flagged roots, but the walk this cell is about is the
+	// one the NEXT line triggers -- so it is dropped outright rather than raced.
+	window.DaimondCore.syncClearWalkCache();
+	return linkId;
+}, { id: did, p: SKILL_FILE });
+
+A.logs.length = 0;		// only the census the next line triggers is under test
+const skillShare = await A.page.evaluate(async (parent) => {
+	const mod  = await import('/pkg/oxedyne_daimond.js');
+	const orig = mod.DaimondApp.prototype.run_tool_outcome;
+	mod.DaimondApp.prototype.run_tool_outcome = function (name, argsJson) {
+		if (name === 'file_list') {
+			try {
+				if (JSON.parse(argsJson).path === parent) {
+					return Promise.resolve({ outcome: 'refused', text:
+						"file_list: '" + parent + "' is inside .daimond/, which a Diamond's own bounds deny." });
+				}
+			} catch (e) { /* fall through to the real call */ }
+		}
+		return orig.call(this, name, argsJson);
+	};
+	try { return await window.DaimondCore.syncFolderShare(); }
+	finally { mod.DaimondApp.prototype.run_tool_outcome = orig; }
+}, SKILL_PARENT);
+const skillBadLogs = A.logs.filter(l => l.indexOf('would not list') >= 0);
+check('a SKILL.md marked in on its own is walked as a file, even when its own folder listing is refused',
+	skillBadLogs.length === 0 && skillShare.complete === true && skillShare.roots.indexOf(SKILL_FILE) >= 0,
+	skillBadLogs.join(' | ') || `roots ${skillShare.roots.join(', ')}, complete=${skillShare.complete}`);
+
+// UNMARKED AND REMOVED, rather than left to ride through every later guard: this
+// fixture proves only the one narrow thing above, and a `.daimond/` path lingering
+// in the Diamond's marks for the rest of the run is untested territory for every
+// guard below it, not a property this file is set up to state anything about.
+await A.page.evaluate(async ({ id, linkId, p }) => {
+	const mod = await import('/pkg/oxedyne_daimond.js');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	await app.remove_link(id, linkId);
+	await window.DaimondCore.loadDiamonds();
+	const root = window.DaimondFiles.folder();
+	const d = await root.getDirectoryHandle('.daimond');
+	const skills = await d.getDirectoryHandle('skills');
+	await skills.removeEntry('verifyskill', { recursive: true });
+}, { id: did, linkId: skillLinkId, p: SKILL_FILE });
 
 // ═══════════════════════════════════════════════════════════════════════
 // GUARD 2 — the ignore list
 // ═══════════════════════════════════════════════════════════════════════
 console.log('\n— guard 2: the folder\'s own rules, over a built-in floor —');
 
-// A book repository states its own rules, and this one gains them here: the archive tree
-// is a snapshot nobody edits and the font zips are the downloads the unpacked fonts came
-// from. The built-in floor underneath it is what excludes the compiled PDFs.
-await A.page.evaluate(async (scope) => {
-	const root = window.DaimondFiles.folder();
-	let d = root;
-	for (const seg of scope.split('/')) d = await d.getDirectoryHandle(seg, { create: true });
-	const put = async (name, text) => {
-		const fh = await d.getFileHandle(name, { create: true });
-		const w = await fh.createWritable();
-		await w.write(new TextEncoder().encode(text));
-		await w.close();
-	};
-	await put('.gitignore', '# the snapshot, not the work\narchive/\n*.zip\n');
-	await put('.oreignore', 'revision/\n');
-}, SCOPE);
-
+// A RAW OPFS WRITE is what put the rules there, same as an external editor's, and
+// `daimond-file-written` never hears one -- so the memoised walk from the checks above
+// would otherwise answer from a reading of the folder taken before them. See
+// `syncClearWalkCache`.
+await A.page.evaluate(() => window.DaimondCore.syncClearWalkCache());
 const ignored = await A.page.evaluate(() => window.DaimondCore.syncFolderShare());
 const ignSet = await A.page.evaluate(async (scope) => {
 	const col = await window.DaimondCore.collectSync();
@@ -728,6 +1008,109 @@ check('B holds the chapter\'s text, byte for byte as it is on A\'s disk',
 check('and the document it is a chapter of', held.text[MAIN] === aText[MAIN]);
 check('and a manifest for every asset that was too big to ride inline',
 	held.manifests > 50, `${held.manifests} manifests under ${SCOPE}`);
+
+// ═══════════════════════════════════════════════════════════════════════
+// THE FLAG IS A FACT ABOUT THE ATTACHMENT, so it travels and is drawn
+// ═══════════════════════════════════════════════════════════════════════
+//
+// The flag rides in the link's own record, which rides inside the Diamond -- so a
+// device that cannot open the folder at all still shows whether the folder is expected
+// to reach it, and a person who turns the flag on at their desk sees it on everything
+// else without touching anything there.
+console.log('\n— the flag travels with its Diamond, and the far panel redraws —');
+
+// A THIRD ATTACHMENT, made for this and left OFF at the end, so the two flagged roots
+// the ceiling cells below measure are exactly the two they were. A folder rather than a
+// file, because a folder is the ordinary case and the control is offered on both.
+const FLAGTEST = 'aside/flagtest';
+const flagLink = await A.page.evaluate(async (a) => {
+	const root = window.DaimondFiles.folder();
+	let dir = root;
+	for (const seg of a.dir.split('/')) dir = await dir.getDirectoryHandle(seg, { create: true });
+	const fh = await dir.getFileHandle('note.md', { create: true });
+	const w  = await fh.createWritable();
+	await w.write(new TextEncoder().encode('# marked now, flagged in a moment\n'));
+	await w.close();
+	const mod = await import('/pkg/oxedyne_daimond.js');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	const linkId = await app.add_link(a.id, 'diamond:' + a.id, 'dir:' + a.dir, 'holds', '', 'user');
+	await window.DaimondCore.loadDiamonds();
+	window.DaimondCore.syncClearWalkCache();
+	return linkId;
+}, { id: did, dir: FLAGTEST });
+
+/// The attachment rows B is DRAWING, with the two things the flag shows on them.
+const bRows = async () => B.page.evaluate(() => Array.from(
+	document.querySelectorAll('#panel-work .files-row.attached')).map((e) => {
+		const btn = e.querySelector('.files-share');
+		return {
+			path:    e.dataset.path || '',
+			shared:  !!e.querySelector('.files-badge.files-shared'),
+			pressed: btn ? btn.getAttribute('aria-pressed') : '',
+		};
+	}));
+const said = (rs) => rs.map(r => `${r.path}=${r.pressed}${r.shared ? '+badge' : ''}`).join(' | ')
+	|| 'no attached rows drawn';
+
+// B HAS TO BE LOOKING AT IT for the redraw to be a claim about anything: the rows are
+// drawn when the panel lists the Diamond's own tree, and what is under test below is
+// whether a flag moved on A repaints them with nobody touching B.
+await round(A, B);
+await B.page.evaluate(() => window.DaimondCore.loadDiamonds());
+await B.page.waitForTimeout(800);
+await B.page.$$eval('.diamond-box', els => els[0] && els[0].click());
+await B.page.waitForTimeout(1200);
+await B.page.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
+await B.page.waitForTimeout(800);
+await B.page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
+await B.page.waitForTimeout(900);
+await B.page.click('.files-scope-chip[data-scope="diamond"]', { force: true }).catch(() => {});
+await B.page.waitForTimeout(1500);
+
+let rows = await bRows();
+const rowFor = (rs, p) => rs.find(r => r.path === p) || {};
+check('B draws the Diamond\'s attachments and says which of them are shared',
+	rowFor(rows, SCOPE).shared === true && rowFor(rows, SCOPE).pressed === 'true'
+	&& rowFor(rows, FLAGTEST).shared === false && rowFor(rows, FLAGTEST).pressed === 'false',
+	said(rows));
+
+// ── the flag goes on at A, and nobody touches B ──────────────────────
+await A.page.evaluate(async (a) => {
+	const mod = await import('/pkg/oxedyne_daimond.js');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	await app.update_link(a.id, a.linkId, 'holds', 'share');
+	await window.DaimondCore.loadDiamonds();
+	window.DaimondCore.syncClearWalkCache();
+}, { id: did, linkId: flagLink });
+const onA = await A.page.evaluate(() => window.DaimondCore.syncFolderShare());
+check('flagging a second folder on A puts it in what A shares, beside the first',
+	onA.roots.indexOf(FLAGTEST) >= 0 && onA.roots.indexOf(SCOPE) >= 0 && onA.left.length === 0,
+	`roots [${onA.roots.join(', ')}]`);
+await round(A, B);
+await B.page.waitForTimeout(1200);
+rows = await bRows();
+check('and B\'s panel redraws on its own: the attachment nobody touched here now reads as shared',
+	rowFor(rows, FLAGTEST).pressed === 'true' && rowFor(rows, FLAGTEST).shared === true,
+	said(rows));
+
+// ── and off again, which is the same journey backwards ───────────────
+await A.page.evaluate(async (a) => {
+	const mod = await import('/pkg/oxedyne_daimond.js');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	await app.update_link(a.id, a.linkId, 'holds', '');
+	await window.DaimondCore.loadDiamonds();
+	window.DaimondCore.syncClearWalkCache();
+}, { id: did, linkId: flagLink });
+const offA = await A.page.evaluate(() => window.DaimondCore.syncFolderShare());
+check('taking the flag off stops A sharing that folder, and leaves the other flagged root alone',
+	offA.roots.indexOf(FLAGTEST) < 0 && offA.roots.indexOf(SCOPE) >= 0,
+	`roots [${offA.roots.join(', ')}]`);
+await round(A, B);
+await B.page.waitForTimeout(1200);
+rows = await bRows();
+check('and B hears that too — the flag is one fact, drawn wherever the attachment is drawn',
+	rowFor(rows, FLAGTEST).pressed === 'false' && rowFor(rows, FLAGTEST).shared === false,
+	said(rows));
 
 // ═══════════════════════════════════════════════════════════════════════
 // THE WRITE-BACK
@@ -1189,6 +1572,9 @@ await A.page.evaluate(async (a) => {
 	await w.write(new TextEncoder().encode(a.text));
 	await w.close();
 }, { p: PROBE, text: PROBE_SRC });
+// A raw OPFS write again -- see the same call in guard 2 -- so the push below must
+// not build its parcel from a walk that predates this document.
+await A.page.evaluate(() => window.DaimondCore.syncClearWalkCache());
 await round(A, B); await round(A, B);
 
 const before = await B.page.evaluate(async (a) => {
@@ -1245,9 +1631,84 @@ check('and the phone drew pages: a PDF beside the document, and no error on the 
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// GUARD 1a — the walk gives up AT the ceiling, not after walking past it
+// ═══════════════════════════════════════════════════════════════════════
+// Measured on the owner's own desktop after the folder share first shipped: a
+// walk of the whole marked-in tree, ~22,500 `file_list` calls at ~5 ms each,
+// THREE TIMES a round, only to conclude "over the ceiling, share nothing" -- a
+// verdict the first few hundred listings already had. Hundreds of directories
+// here, each with one file, so the tree's bytes cross the ceiling only after
+// most of them are listed -- proving the walk stops AT that point rather than
+// paying for the rest of the tree to reach the same answer.
+console.log('\n— guard 1a: the walk stops at the ceiling instead of walking the whole tree —');
+
+const MANYDIRS  = 300;
+const DIR_BYTES = 1024 * 1024;			// 300 MiB of directories, over the 200 MiB ceiling
+await A.page.evaluate(async (a) => {
+	const root = window.DaimondFiles.folder();
+	let scope = root;
+	for (const seg of a.scope.split('/')) scope = await scope.getDirectoryHandle(seg, { create: true });
+	const base = await scope.getDirectoryHandle('manydirs', { create: true });
+	// Sparse (`truncate`, no bytes ever written): the walk reads the size the
+	// listing reports, so what fills the ceiling costs nothing but directory
+	// entries and file handles.
+	for (let i = 0; i < a.n; i++) {
+		const d  = await base.getDirectoryHandle('d' + String(i).padStart(4, '0'), { create: true });
+		const fh = await d.getFileHandle('f.bin', { create: true });
+		const w  = await fh.createWritable();
+		await w.truncate(a.bytes);
+		await w.close();
+	}
+}, { scope: SCOPE, n: MANYDIRS, bytes: DIR_BYTES });
+
+// Raw OPFS again, so the memoised walk from whatever ran just above this must not
+// answer for the tree as it stood before these 300 directories existed.
+await A.page.evaluate(() => window.DaimondCore.syncClearWalkCache());
+const walkCost = await A.page.evaluate(async () => {
+	const mod  = await import('/pkg/oxedyne_daimond.js');
+	const orig = mod.DaimondApp.prototype.run_tool_outcome;
+	let calls  = 0;
+	mod.DaimondApp.prototype.run_tool_outcome = function (name, argsJson) {
+		if (name === 'file_list') calls++;
+		return orig.call(this, name, argsJson);
+	};
+	const t0 = performance.now();
+	let s;
+	try { s = await window.DaimondCore.syncFolderShare(); }
+	finally { mod.DaimondApp.prototype.run_tool_outcome = orig; }
+	return { ms: performance.now() - t0, calls: calls, left: s.left };
+});
+check('the walk issues fewer file_list calls than the tree has directories',
+	walkCost.calls > 0 && walkCost.calls < MANYDIRS,
+	`${walkCost.calls} call(s) for ${MANYDIRS} directories`);
+check('and gives its verdict in under 5s rather than walking the whole tree',
+	walkCost.ms < 5000, `${walkCost.ms.toFixed(0)} ms`);
+check('and the verdict is still "this folder is over the ceiling", not a partial share of it',
+	walkCost.left.length === 1 && walkCost.left[0].root === SCOPE,
+	walkCost.left.map(r => `${r.root} ${(r.bytes / 1048576).toFixed(0)} MiB`).join(', ') || 'no verdict');
+
+// A SECOND CALLER, straight after the first and asking about the same roots --
+// exactly what the parcel, the baseline commit and the pull merge do inside one
+// round. The memoised walk answers from `_walkPlanCache` and lists nothing again.
+const walkCost2 = await A.page.evaluate(async () => {
+	const mod  = await import('/pkg/oxedyne_daimond.js');
+	const orig = mod.DaimondApp.prototype.run_tool_outcome;
+	let calls  = 0;
+	mod.DaimondApp.prototype.run_tool_outcome = function (name, argsJson) {
+		if (name === 'file_list') calls++;
+		return orig.call(this, name, argsJson);
+	};
+	try { await window.DaimondCore.syncFolderShare(); }
+	finally { mod.DaimondApp.prototype.run_tool_outcome = orig; }
+	return { calls: calls };
+});
+check('and a second caller in the same round reuses the memoised walk — no file_list at all',
+	walkCost2.calls === 0, `${walkCost2.calls} call(s) on the second caller`);
+
+// ═══════════════════════════════════════════════════════════════════════
 // GUARD 1 — the ceiling
 // ═══════════════════════════════════════════════════════════════════════
-console.log('\n— guard 1: a folder over the ceiling shares nothing, and says so —');
+console.log('\n— guard 1: the folder over the ceiling is left out by name; the other still goes —');
 
 // A file past the ceiling, made by extending rather than writing: the walk reads the
 // size the listing reports, and the refusal comes before a byte is read.
@@ -1263,25 +1724,37 @@ const grew = await A.page.evaluate(async (a) => {
 }, { scope: SCOPE, bytes: 210 * 1024 * 1024 });
 note(`a ${(grew / 1048576).toFixed(0)} MiB file appears in the folder`);
 
-const over = await A.page.evaluate(async () => {
+// Same raw write, same reason: the verdict below must count `huge.bin`, not answer
+// from guard 1a's walk of the tree as it stood before it existed.
+await A.page.evaluate(() => window.DaimondCore.syncClearWalkCache());
+const over = await A.page.evaluate(async (a) => {
 	const s = await window.DaimondCore.syncFolderShare();
 	const col = await window.DaimondCore.collectSync();
 	const row = document.querySelector('.left-banner-msg');
-	return { s, files: Object.keys(col.files).length, complete: col.filesComplete,
+	const files = Object.keys(col.files);
+	return { s, files: files.length, complete: col.filesComplete,
+		underScope: files.filter(f => f === a.scope || f.indexOf(a.scope + '/') === 0).length,
+		hasDeep: files.indexOf(a.deep) >= 0,
 		msg: row ? row.textContent : '' };
-});
-check('nothing at all is shared — not a prefix of it',
-	over.files === 0 && over.complete === false,
-	`${over.files} inline file(s), census complete ${over.complete}`);
-check('and the verdict names the size and the ceiling',
-	!!over.s.over && over.s.over.bytes > 200 * 1024 * 1024 && over.s.over.max === 200 * 1024 * 1024,
-	over.s.over ? `${(over.s.over.bytes / 1048576).toFixed(0)} MiB over ${(over.s.over.max / 1048576).toFixed(0)} MiB` : 'no verdict');
-check('and the panel says so, with both numbers in the sentence',
-	/\b\d[\d.]*\s?(MB|GB)\b/.test(over.msg) && over.msg.indexOf('200') >= 0,
-	over.msg.slice(0, 140) || 'no banner');
+}, { scope: SCOPE, deep: DEEP_FILE });
+check('the folder over the ceiling shares no part of itself — not a prefix of it',
+	over.underScope === 0 && over.s.roots.indexOf(SCOPE) < 0,
+	`${over.underScope} inline file(s) under ${SCOPE}, roots [${over.s.roots.join(', ')}]`);
+check('and the OTHER flagged root goes on travelling — the ceiling is per folder, not per share',
+	over.s.roots.length === 1 && over.s.roots[0] === DEEP_FILE && over.hasDeep === true,
+	`roots [${over.s.roots.join(', ')}], ${DEEP_FILE} carried: ${over.hasDeep}`);
+check('and the verdict names the folder and its size, and the census calls itself incomplete',
+	over.complete === false && over.s.left.length === 1 && over.s.left[0].root === SCOPE
+	&& over.s.left[0].bytes > 200 * 1024 * 1024 && over.s.max === 200 * 1024 * 1024,
+	`complete=${over.complete}, left `
+	+ (over.s.left.map(r => `${r.root} ${(r.bytes / 1048576).toFixed(0)} MiB`).join(', ') || 'nothing'));
+check('and the panel NAMES the folder, with the ceiling in the sentence',
+	over.msg.indexOf(SCOPE) >= 0 && /\b\d[\d.]*\s?(MB|GB)\b/.test(over.msg)
+	&& over.msg.indexOf('200') >= 0,
+	over.msg.slice(0, 150) || 'no banner');
 
-// AND THE FAR END DELETES NOTHING because of it: an over-ceiling census is incomplete
-// and carries no tombstones, so B keeps every file it was given.
+// AND THE FAR END DELETES NOTHING because of it: a census with a root left out is
+// incomplete and carries no tombstones, so B keeps every file it was given.
 const bBefore = await B.page.evaluate(async () => Object.keys((await window.DaimondCore.collectSync()).files).length);
 await push(A); await pull(B);
 const bAfter = await B.page.evaluate(async (p) => {
@@ -1291,7 +1764,7 @@ const bAfter = await B.page.evaluate(async (p) => {
 	return { n: Object.keys((await window.DaimondCore.collectSync()).files).length,
 		chapter: !!(r && r.outcome === 'done') };
 }, MAIN);
-check('and B loses nothing when the folder goes over — a refusal is not a deletion',
+check('and B loses nothing when that folder goes over — a refusal is not a deletion',
 	bAfter.chapter === true && bAfter.n >= bBefore,
 	`${bBefore} → ${bAfter.n} inline files on B, the document still readable: ${bAfter.chapter}`);
 

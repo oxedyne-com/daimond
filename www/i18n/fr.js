@@ -683,7 +683,8 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} fichier n’a pas tenu dans le colis de synchronisation de cet appareil et n’atteindra vos autres appareils qu’une fois la place trouvée : {names}',
 	'sync.files_left.other':    '{n} fichiers n’ont pas tenu dans le colis de synchronisation de cet appareil et n’atteindront vos autres appareils qu’une fois la place trouvée : {names}',
-	'sync.folder_too_big':      'Le dossier que vous avez marqué pèse {size}, au-delà des {max} qu’un dossier partagé peut prendre ; rien n’en part donc vers vos autres appareils. Marquez un dossier plus petit, ou retirez-en une partie.',
+	'sync.folders_left.one':    '{names} pèse plus que les {max} qu’un dossier partagé peut prendre, et ne part donc pas vers vos autres appareils. Partagez un dossier plus petit, ou retirez-en une partie.',
+	'sync.folders_left.other':  '{n} dossiers partagés dépassent les {max} que chacun peut prendre et ne partent pas vers vos autres appareils : {names}.',
 	// Une session terminée et impossible à reprendre. Même libellé que ci-dessous :
 	// ce qui compte est que le travail de cet appareil ne circule plus.
 	'sync.signed_out': 'Synchronisation en pause',
@@ -1716,6 +1717,10 @@
 	'dws.kit_none': 'Aucune chaîne d’outils. Une commande atteint les fichiers de ce Diamond et rien d’autre sur votre ordinateur.',
 	'dws.elsewhere': 'Vit dans l’espace de travail',
 	'dws.readonly': 'Lecture seule',
+	'dws.share': 'Partager avec les appareils qui n’y ont pas accès eux-mêmes',
+	'dws.share_help': 'Désactivé : seuls les appareils capables d’ouvrir ce dossier eux-mêmes le voient. Activé : il est copié sur vos autres appareils, jusqu’à {max} par dossier.',
+	'dws.shared': 'Partagé',
+	'dws.share_unavailable': 'Ne peut être partagé que depuis un appareil capable de l’ouvrir',
 	'dws.showing': 'Affiché',
 	'dws.reach': 'Portée',
 	'dws.reach_help': 'Les dossiers dans lesquels le daimon de ce Diamond peut écrire. Affiché dans les deux arbres, parce que cela vaut dans les deux.',

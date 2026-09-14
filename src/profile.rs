@@ -106,6 +106,21 @@ impl Family {
 		}
 	}
 
+	/// What this family is asked to do before it answers, and how deeply.
+	///
+	/// Only the Anthropic dialect can carry either half (see [`crate::llm::LlmClient::set_thinking`]),
+	/// so every other family's answer is what the OpenAI body has always sent: nothing at all.
+	/// Claude's is adaptive at the API's own default effort, which is exactly what the client
+	/// asked for before this was a setting -- so a tree nobody tunes behaves as it did.
+	pub fn thinking_default(&self) -> (crate::llm::Thinking, crate::llm::Effort) {
+		match self {
+			Self::Claude	=> (crate::llm::Thinking::Adaptive, crate::llm::Effort::High),
+			// Nothing goes on the wire for these: both gates in `llm.rs` require a model that
+			// takes adaptive thinking, and no model of these families does.
+			_				=> (crate::llm::Thinking::Off, crate::llm::Effort::High),
+		}
+	}
+
 	/// What this family is told about calling tools, beyond what every model is told.
 	///
 	/// Empty for the three that earned nothing.  Each of the rest is one short section naming the
@@ -122,6 +137,66 @@ impl Family {
 		}
 	}
 
+	/// The Claude Code name this family expects for one of Daimond's tools, or `None` for its
+	/// own wire name.
+	///
+	/// Six tools carry a Claude Code counterpart close enough to alias: `file_read`/Read,
+	/// `file_edit`/Edit (kept multi-hunk -- Daimond's `edits[]` is MultiEdit-like, and it is
+	/// where Daimond is AHEAD, so the alias keeps the shape and only renames it), `file_write`/
+	/// Write, `file_search`/Grep, `file_glob`/Glob, `file_list`/LS, and `run`/Bash. A tool with
+	/// no Claude Code counterpart (`gather`, `spawn_agent`, `crystal_read`, `ask`, ...) keeps
+	/// its own name, so a model reaching for a tool it actually has finds the same word in the
+	/// schema it was shown.
+	///
+	/// Aliasing is at the WIRE ONLY: [`crate::tools::Tool::from_name`] accepts both spellings
+	/// and dispatches to the same tool, so nothing downstream of dispatch -- `call_label`, the
+	/// feed, the lens -- ever has to know which name arrived.
+	pub fn tool_alias(&self, canonical: &str) -> Option<&'static str> {
+		if !matches!(self, Self::Claude) {
+			return None;
+		}
+		match canonical {
+			"file_read"   => Some("Read"),
+			"file_edit"   => Some("Edit"),
+			"file_write"  => Some("Write"),
+			"file_search" => Some("Grep"),
+			"file_glob"   => Some("Glob"),
+			"file_list"   => Some("LS"),
+			"run"         => Some("Bash"),
+			_             => None,
+		}
+	}
+
+	/// `text` with every backtick-quoted mention of an aliased tool rewritten to the name this
+	/// family's wire dialect uses for it.
+	///
+	/// Only meaningful for [`Self::Claude`] -- every other family answers with `text`
+	/// unchanged -- and only ever reached when the alias switch is actually on (see
+	/// [`crate::tools::ToolRegistry::claude_names`]), so a note that says `` `file_search` ``
+	/// in every other build says `` `Grep` `` in the one build whose schema does too, and the
+	/// briefing never falls out of step with what the model was actually offered.
+	pub fn substitute_tool_names<'a>(&self, text: &'a str) -> Cow<'a, str> {
+		if !matches!(self, Self::Claude) {
+			return Cow::Borrowed(text);
+		}
+		const PAIRS: [(&str, &str); 7] = [
+			("`file_read`",   "`Read`"),
+			("`file_edit`",   "`Edit`"),
+			("`file_write`",  "`Write`"),
+			("`file_search`", "`Grep`"),
+			("`file_glob`",   "`Glob`"),
+			("`file_list`",   "`LS`"),
+			("`run`",         "`Bash`"),
+		];
+		let mut out: Cow<'a, str> = Cow::Borrowed(text);
+		for (from, to) in PAIRS {
+			if out.contains(from) {
+				out = Cow::Owned(out.replace(from, to));
+			}
+		}
+		out
+	}
+
 	/// Is this tool kept out of the offer for this family?
 	///
 	/// Withholding is measured and never precautionary: a tool a family reaches for and fails at
@@ -131,7 +206,14 @@ impl Family {
 		match self {
 			// One dispatch on the whole bank and it went nowhere; and the turns that mattered
 			// were spent repeating a malformed edit, which a worker cannot help with.
-			Self::Kimi		=> matches!(t, Tool::SpawnAgent),
+			//
+			// AND `compound`, WHOSE SHAPE IS THE ONE THAT DISAPPEARS. See
+			// [`single_edit_only`](Self::single_edit_only): the raw upstream SSE of 2026-09-13
+			// shows Kimi's nested `edits` array never arriving at all, six times in a row, and
+			// `ops` is an array of objects in exactly the same position. A tool whose only
+			// argument cannot reach us is a tool that can only be refused -- which is what
+			// produced fifty identical refused calls on the bank -- so it is not offered.
+			Self::Kimi		=> matches!(t, Tool::SpawnAgent | Tool::Compound),
 			// Two dispatches, both misdirected. It prefers whole-file writes and works alone.
 			Self::MiniMax	=> matches!(t, Tool::SpawnAgent),
 			_				=> false,
@@ -233,6 +315,7 @@ fn array_keys(tool: &str) -> &'static [&'static str] {
 		"sheet_write"	=> &["edits"],
 		"run"			=> &["argv"],
 		"gather"		=> &["names"],
+		"compound"		=> &["ops"],
 		_				=> &[],
 	}
 }
@@ -423,12 +506,21 @@ mod tests {
 			assert!(f.withholds(&Tool::SpawnAgent), "{:?} still offers spawn_agent", f.name());
 			assert!(!f.withholds(&Tool::FileRead), "{:?} is withheld a file tool", f.name());
 		}
+		// `compound`'s whole argument is an array of objects, which is the shape Kimi's `edits`
+		// is lost in upstream -- so it is the one family that could only ever be refused it.
+		assert!(Family::Kimi.withholds(&Tool::Compound),
+			"kimi is offered a tool whose only argument cannot reach us");
+		for f in [Family::Claude, Family::Gpt, Family::DeepSeek, Family::Qwen, Family::Glm,
+			Family::MiniMax, Family::Unknown]
+		{
+			for t in [Tool::FileEdit, Tool::FileRead, Tool::Compound] {
+				assert!(!f.withholds(&t), "{:?} is withheld {}", f.name(), t.name());
+			}
+		}
 		for f in [Family::Claude, Family::Gpt, Family::DeepSeek, Family::Qwen, Family::Glm,
 			Family::Unknown]
 		{
-			for t in [Tool::SpawnAgent, Tool::FileEdit, Tool::FileRead] {
-				assert!(!f.withholds(&t), "{:?} is withheld {}", f.name(), t.name());
-			}
+			assert!(!f.withholds(&Tool::SpawnAgent), "{:?} is withheld spawn_agent", f.name());
 		}
 	}
 
@@ -498,6 +590,24 @@ mod tests {
 		assert_eq!(vec![fmt!("audit"), fmt!("census")], got,
 			"gather's names did not parse as two workers: {:?}", out.as_ref());
 		assert!(out.contains("\"timeout_s\":60"),
+			"the rest of the object did not survive: {:?}", out.as_ref());
+	}
+
+	/// `compound`'s `ops` is an array too, and gets the same forgiveness.
+	///
+	/// The one argument the tool has. Sent as a quoted string -- which is how Qwen writes every
+	/// array it is asked for -- the whole call would be refused for carrying no ops at all, and
+	/// the round the tool exists to save would be spent on the refusal instead.
+	#[test]
+	fn test_a_compounds_ops_written_as_a_quoted_string_are_unquoted_in_place() {
+		let args = "{\"ops\":\"[{\\\"op\\\": \\\"list\\\", \\\"path\\\": \\\"src\\\"}, \
+			{\\\"op\\\": \\\"read\\\", \\\"path\\\": \\\"src/a.js\\\"}]\",\"budget\":8192}";
+		let out = Family::Qwen.normalise_args("compound", args);
+		let got = crate::llm::extract_json_objects(out.as_ref(), "ops").unwrap_or_default();
+		assert_eq!(2, got.len(), "ops did not parse as two objects: {:?}", out.as_ref());
+		assert_eq!("list src", crate::tools::compound_op_label(&got[0]));
+		assert_eq!("read src/a.js", crate::tools::compound_op_label(&got[1]));
+		assert!(out.contains("\"budget\":8192"),
 			"the rest of the object did not survive: {:?}", out.as_ref());
 	}
 
@@ -577,6 +687,53 @@ mod tests {
 		for f in [Family::Claude, Family::Gpt, Family::Unknown] {
 			assert_eq!("", f.addendum(),
 				"{:?} carries an addendum it did not earn", f.name());
+		}
+	}
+
+	/// Only Claude gets a tool alias, only for the six with a Claude Code counterpart, and
+	/// nothing else answers.
+	#[test]
+	fn test_only_claude_aliases_the_six_tools_with_a_counterpart() {
+		let want: &[(&str, &str)] = &[
+			("file_read",   "Read"),
+			("file_edit",   "Edit"),
+			("file_write",  "Write"),
+			("file_search", "Grep"),
+			("file_glob",   "Glob"),
+			("file_list",   "LS"),
+			("run",         "Bash"),
+		];
+		for (canonical, alias) in want {
+			assert_eq!(Some(*alias), Family::Claude.tool_alias(canonical),
+				"Claude's alias for {:?}", canonical);
+		}
+		for canonical in ["gather", "spawn_agent", "crystal_read", "ask", "shell", "verify"] {
+			assert_eq!(None, Family::Claude.tool_alias(canonical),
+				"{:?} has no Claude Code counterpart", canonical);
+		}
+		for f in [Family::Gpt, Family::DeepSeek, Family::Qwen, Family::Glm,
+			Family::MiniMax, Family::Kimi, Family::Unknown]
+		{
+			assert_eq!(None, f.tool_alias("file_read"),
+				"{:?} is not the Claude profile", f.name());
+		}
+	}
+
+	/// The backtick substitution touches only Claude, only the aliased names, and leaves a
+	/// mention it does not recognise exactly as it found it.
+	#[test]
+	fn test_substitute_tool_names_only_rewrites_claudes_own_aliases() {
+		let text = "map a file with outline, search with `file_search` and edit with \
+			`file_edit`, never grep or sed through `run`.";
+		let out = Family::Claude.substitute_tool_names(text);
+		assert!(out.contains("`Grep`"), "{}", out);
+		assert!(out.contains("`Edit`"), "{}", out);
+		assert!(out.contains("`Bash`"), "{}", out);
+		assert!(out.contains("outline"), "an unaliased mention was disturbed: {}", out);
+		assert!(!out.contains("`file_search`"), "{}", out);
+		for f in [Family::Gpt, Family::DeepSeek, Family::Unknown] {
+			assert_eq!(text, f.substitute_tool_names(text).as_ref(),
+				"{:?} rewrote a note that is not its own", f.name());
 		}
 	}
 }

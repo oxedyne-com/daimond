@@ -982,6 +982,72 @@ check('the name match is case-insensitive',
 
 fs.rmSync(ROOT5, { recursive: true, force: true });
 
+// ── The same ledger entry synced to two different devices ────────────
+//
+// `ledger` rides the account-wide sync parcel: the SAME entry appears in
+// every device's own telemetry snapshot, byte for byte, the moment the two
+// devices are in sync. Keyed by device as well as the entry's own
+// fingerprint, `turnRecords` counted the turn once per device it happened
+// to reach -- "24h $28.39 / 23 turns" reading as roughly 6 turns, ~$7.
+// `status` and `digest` both read `turnRecords` too, so agreement between
+// all three is the property that actually matters, not just `turns` on
+// its own.
+
+const ROOT6 = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-verify-dedupe-'));
+fs.mkdirSync(path.join(ROOT6, 'traces'), { recursive: true });
+const DEV_P = 'devP00000000000000000000000000pp';
+const DEV_Q = 'devQ00000000000000000000000000qq';
+const SYNCED_ENTRY = { t: NOW - 5000, m: 'fixture/dedupe-model', p: 7000, c: 200, ca: 1000,
+	u: 0.33, r: 1, e: false, pv: 'fixture' };
+const telFor = () => ({
+	v: 1, kind: 'telemetry', ts: NOW - 4000, iso: new Date(NOW - 4000).toISOString(),
+	ledger: [ Object.assign({}, SYNCED_ENTRY) ], trail: [], diag: [],
+	stats: { models: [], diamonds: [], signalModels: [], cross: [],
+		live: { contextActual: 0, contextWindow: 0, foldAt: 0, activeModel: 'fixture/dedupe-model',
+			provider: 'fixture', workerState: { active: 0, queued: 0, busy: false }, activity: 'idle' } },
+});
+const P_BLOCK = block(NOW - 4000, DEV_P,
+	chunkRows('telemetry', 'tfixturep01', telFor(), NOW - 4000).map(r => row(r.ts, r.tag, r.data)));
+const Q_BLOCK = block(NOW - 3000, DEV_Q,
+	chunkRows('telemetry', 'tfixtureq01', telFor(), NOW - 3000).map(r => row(r.ts, r.tag, r.data)));
+fs.writeFileSync(path.join(ROOT6, 'traces', `${ACCOUNT}-${DEV_P}.log`), P_BLOCK);
+fs.writeFileSync(path.join(ROOT6, 'traces', `${ACCOUNT}-${DEV_Q}.log`), Q_BLOCK);
+
+function lens6(...args) {
+	return execFileSync('node', [LENS, ...args], {
+		encoding: 'utf8',
+		env: Object.assign({}, process.env, { DAIMOND_LENS_HOME: ROOT6, DAIMOND_LENS_REMOTE: '' }),
+	});
+}
+function lensJson6(...args) { return JSON.parse(lens6(...args, '--json').trim()); }
+
+lensJson6('pull', '--no-rsync');
+
+const turns6 = lensJson6('turns', '--since', '24h');
+check('the same ledger entry synced to two devices is ONE turn, not two',
+	turns6.filter(t => t.src === 'ledger').length === 1,
+	JSON.stringify(turns6.map(t => [t.src, t.device, t.usd])));
+check('its spend is counted once, not once per device',
+	Math.abs(turns6.reduce((a, t) => a + (t.usd || 0), 0) - 0.33) < 1e-9,
+	JSON.stringify(turns6.map(t => t.usd)));
+
+const status6 = lensJson6('status');
+check('status agrees with turns: one turn account-wide, not one per device',
+	status6.windowTurns === 1, JSON.stringify(status6.windowTurns));
+
+const digest6 = lensJson6('digest');
+check('digest agrees too: turns24h and spend24h are not doubled',
+	digest6.turns24h === 1 && Math.abs(digest6.spend24h - 0.33) < 1e-9,
+	JSON.stringify([digest6.turns24h, digest6.spend24h]));
+
+check('queried through either device alone, the turn is still there once',
+	lensJson6('turns', '--since', '24h', '--device', DEV_P).length === 1
+		&& lensJson6('turns', '--since', '24h', '--device', DEV_Q).length === 1,
+	JSON.stringify([lensJson6('turns', '--since', '24h', '--device', DEV_P).length,
+		lensJson6('turns', '--since', '24h', '--device', DEV_Q).length]));
+
+fs.rmSync(ROOT6, { recursive: true, force: true });
+
 // ── An unknown command must not look like success ────────────────────
 
 let rc = 0;

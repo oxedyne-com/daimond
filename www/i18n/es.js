@@ -679,7 +679,8 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} archivo no cupo en el paquete de sincronización de este dispositivo y no llegará a tus otros dispositivos hasta que haya sitio para él: {names}',
 	'sync.files_left.other':    '{n} archivos no cupieron en el paquete de sincronización de este dispositivo y no llegarán a tus otros dispositivos hasta que haya sitio para ellos: {names}',
-	'sync.folder_too_big':      'La carpeta que marcaste pesa {size}, por encima de los {max} que puede ocupar una carpeta compartida, así que nada de ella llega a tus otros dispositivos. Marca una carpeta más pequeña, o saca algo de esta.',
+	'sync.folders_left.one':    '{names} pesa más de los {max} que puede ocupar una carpeta compartida, así que no llega a tus otros dispositivos. Comparte una carpeta más pequeña, o saca algo de ella.',
+	'sync.folders_left.other':  '{n} carpetas compartidas superan los {max} que puede ocupar cada una y no llegan a tus otros dispositivos: {names}.',
 	// Una sesión que terminó y no se pudo retomar. Misma etiqueta que abajo: lo
 	// que importa es que el trabajo de este dispositivo no está viajando.
 	'sync.signed_out': 'Sincronización en pausa',
@@ -1705,6 +1706,10 @@
 	'dws.kit_none': 'Sin cadena de herramientas. Un comando alcanza los archivos de este Diamond y nada más en tu ordenador.',
 	'dws.elsewhere': 'Vive en el espacio de trabajo',
 	'dws.readonly': 'Solo lectura',
+	'dws.share': 'Compartir con dispositivos que no tienen acceso propio',
+	'dws.share_help': 'Desactivado: solo lo ven los dispositivos que pueden abrir esta carpeta por sí mismos. Activado: se copia a tus otros dispositivos, hasta {max} por carpeta.',
+	'dws.shared': 'Compartida',
+	'dws.share_unavailable': 'Solo se puede compartir desde un dispositivo que pueda abrirla',
 	'dws.showing': 'Mostrando',
 	'dws.reach': 'Alcance',
 	'dws.reach_help': 'Las carpetas en las que puede escribir el daimon de este Diamond. Se muestra en ambos árboles, porque vale en los dos.',

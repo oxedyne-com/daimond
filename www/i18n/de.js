@@ -682,7 +682,8 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} Datei passte nicht ins Sync-Paket dieses Geräts und erreicht deine anderen Geräte erst, wenn Platz dafür ist: {names}',
 	'sync.files_left.other':    '{n} Dateien passten nicht ins Sync-Paket dieses Geräts und erreichen deine anderen Geräte erst, wenn Platz dafür ist: {names}',
-	'sync.folder_too_big':      'Der markierte Ordner wiegt {size} und liegt damit über den {max}, die ein geteilter Ordner belegen darf; deshalb geht nichts davon an deine anderen Geräte. Markiere einen kleineren Ordner, oder nimm etwas aus diesem heraus.',
+	'sync.folders_left.one':    '{names} wiegt mehr als die {max}, die ein geteilter Ordner belegen darf, und geht deshalb nicht an deine anderen Geräte. Teile einen kleineren Ordner, oder nimm etwas heraus.',
+	'sync.folders_left.other':  '{n} geteilte Ordner liegen über den {max}, die jeder belegen darf, und gehen nicht an deine anderen Geräte: {names}.',
 	// Eine Sitzung, die geendet hat und nicht erneuert werden konnte. Gleiche
 	// Beschriftung wie unten: Was zählt, ist, dass die Arbeit nicht weitergeht.
 	'sync.signed_out': 'Sync angehalten',
@@ -1709,6 +1710,10 @@
 	'dws.kit_none': 'Keine Toolchain. Ein Befehl erreicht die Dateien dieses Diamonds und sonst nichts auf deinem Computer.',
 	'dws.elsewhere': 'Liegt im Arbeitsbereich',
 	'dws.readonly': 'Nur lesen',
+	'dws.share': 'Mit Geräten teilen, die keinen eigenen Zugriff darauf haben',
+	'dws.share_help': 'Aus: nur Geräte, die diesen Ordner selbst öffnen können, sehen ihn. An: er wird auf deine anderen Geräte kopiert, bis zu {max} pro Ordner.',
+	'dws.shared': 'Geteilt',
+	'dws.share_unavailable': 'Kann nur von einem Gerät geteilt werden, das ihn öffnen kann',
 	'dws.showing': 'Angezeigt',
 	'dws.reach': 'Reichweite',
 	'dws.reach_help': 'Die Ordner, in denen der Daimon dieses Diamonds schreiben darf. In beiden Bäumen sichtbar, weil es in beiden gilt.',

@@ -549,22 +549,32 @@ pub async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<(
     // `close` is inherited from `WritableStream` and flushes the file.
     res!(JsFuture::from(writable.close()).await
         .map_err(|e| err!("OPFS: close '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
-    announce_write(path);
+    announce_change(path);
     Ok(())
 }
 
-/// Say on the page that `path` has just been written.
+/// Say on the page that `path` has just changed.
 ///
-/// **This is the one door for bytes**, so it is the one place that can say so:
-/// a daimon's `file_write`, the Doc panel's Save, a compiled PDF and an upload all
-/// arrive here.  Anything on the page that follows a file — the Typst live view is
-/// the first — hears about a write the moment it lands, instead of finding out on
-/// its next poll.
+/// **This is the one place a mutation is announced**, so every door that changes the
+/// tree calls it: [`write_file`] for bytes — a daimon's `file_write`, the Doc panel's
+/// Save, a compiled PDF and an upload all arrive there — [`create_dir`] for a new
+/// folder, and [`delete_entry`] for a removal.  [`move_entry`] needs no call of its
+/// own: it is a write (or a `copy_dir`) followed by a delete, and both ends announce
+/// themselves.
+///
+/// **A DELETION HAS TO BE ANNOUNCED OR IT IS INVISIBLE.**  The sync walk memoises its
+/// census for `SYNC_WALKPLAN_TTL_MS` — 25 seconds, in `www/js/daimond.js` — and drops
+/// the memo on this event.  While only writes announced, a file deleted inside that
+/// window was still in the memo, so the tombstone the fork point asked for was written
+/// against a plan that still held the file, and the file survived its own tombstone.
+/// Two cells of `dev/verify_dataloss.mjs` are that bug.
 ///
 /// A `CustomEvent` on `window` rather than a call to a named object, deliberately:
 /// this module has no business knowing which features exist, and a second follower
 /// should not have to be added to a list here.  Nothing subscribes by default, and
-/// an event nobody hears costs a dispatch.
+/// an event nobody hears costs a dispatch.  The event keeps the name
+/// `daimond-file-written` because the page's listeners are the contract, and every one
+/// of them wants a path that changed rather than specifically one that was written.
 ///
 /// The other actor — an external editor writing into a real folder the user marked
 /// in — cannot be announced by anything, because the File System Access API has no
@@ -572,8 +582,8 @@ pub async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<(
 /// way they are noticed differs.
 ///
 /// # Arguments
-/// * `path` - The workspace-relative path just written.
-fn announce_write(path: &str) {
+/// * `path` - The workspace-relative path that just changed.
+fn announce_change(path: &str) {
     let win = match web_sys::window() {
         Some(w) => w,
         None    => return,
@@ -608,6 +618,7 @@ pub async fn create_dir(root: FileRoot, path: &str) -> Outcome<()> {
         dir = res!(next.dyn_into()
             .map_err(|_| err!("OPFS: handle for '{}' was not a directory.", name; IO, File)));
     }
+    announce_change(path);
     Ok(())
 }
 
@@ -967,6 +978,9 @@ pub async fn delete_entry(root: FileRoot, path: &str, recursive: bool) -> Outcom
     opts.set_recursive(recursive);
     res!(JsFuture::from(dir.remove_entry_with_options(&leaf, &opts)).await
         .map_err(|e| err!("OPFS: remove '{}' failed: {}.", leaf, js_err(&e); IO, File)));
+    // ANNOUNCED ONLY ON SUCCESS, and only here. A removal that failed changed nothing,
+    // and a memo dropped for it would be a re-walk bought for no reason.
+    announce_change(path);
     Ok(())
 }
 

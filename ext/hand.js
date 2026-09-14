@@ -671,6 +671,23 @@
 		/// Set when a re-attach finds the hand mid-command: the question cannot be put
 		/// to a hand that is not reading, and a build must not be ended to ask it.
 		let owed = false;
+		/// A hello is in flight and NOTHING THE PAGE SENDS MAY GO PAST IT.
+		///
+		/// The outbox's doc above says a page's messages wait while the hand is being
+		/// greeted, and until 2026-09-14 that was not true of either greeting: `host` is
+		/// set by `connectNative` the instant it returns, so `fromPage` found a host and
+		/// posted straight through -- past the grant window on a first connection, and
+		/// past the staleness question on a re-attach.
+		///
+		/// The second is the one that cost a turn. `retake` asks a parked hand whether the
+		/// machine has a newer one, and the answer is a round trip; a daimon's page sends
+		/// its `verify` the moment it is back, which is well inside that trip. So the hand
+		/// this fix exists to let go would have answered the one call that mattered before
+		/// it was let go, and the report would be the stale hand's with the honest note
+		/// arriving after it.
+		///
+		/// Set around every in-flight `capabilities()`, cleared before the outbox drains.
+		let settling = false;
 		/// The timer counting out the grace, or null while a page is attached.
 		let holding = null;
 		/// The grace has run out and the last rites are being read. The relay is
@@ -942,9 +959,20 @@
 			// swapped without taking a build down with it.
 			if (runs.size > 0) { owed = true; return; }
 			owed = false;
+			// AND THE PAGE WAITS FOR THE ANSWER. A round trip is ample room for the first
+			// call of a fresh turn -- a daimon's page sends its `verify` as soon as it is
+			// back -- and a command answered by a hand that is about to be let go for
+			// being stale is exactly the report this whole mechanism exists to prevent.
+			// The wait is one hello, and `CAPS_MS` bounds it.
+			settling = true;
 			const said = await capabilities();
-			if (said.gone || !host || !hostStale) return;
-			if (runs.size > 0) { owed = true; return; }
+			if (said.gone || !host || !hostStale) { drain(); return; }
+			// No second look at `runs`. Nothing could have STARTED across the await: this
+			// function only asks when the hand is idle, and the gate above holds every
+			// command the page sent meanwhile in the outbox rather than at the hand. A
+			// count taken here would therefore be a count of what is QUEUED, and treating
+			// that as a busy hand would defer the check for ever on exactly the page this
+			// is for -- a daimon's, which sends its first call the moment it is back.
 			// Stopped rather than merely reported: the page is holding nothing, and the
 			// next thing it asks for launches the hand the machine actually has. `stop`
 			// says why, and that sentence is what the page reads.
@@ -1322,7 +1350,12 @@
 				return;
 			}
 
-			if (!host) {
+			// HELD WHERE THERE IS NO HOST YET, and held just as firmly where there is one
+			// and a question is still out to it. `connectNative` hands back a usable port
+			// synchronously, so `host` alone was never the test this outbox was documented
+			// as making: it let a command past the grant window on a first connection and
+			// past the staleness question on a re-attach. See `settling`.
+			if (!host || settling) {
 				// Still asking the user, or still starting. Hold it in order.
 				if (outbox.length >= 64) {
 					fail(m.id, 'Too much was sent to the machine hand before it was ready. Wait for the "hello" it answers with before sending commands.');
@@ -1710,6 +1743,7 @@
 		/// installed is answered with the install sentence instead of being asked
 		/// a question about a capability it does not have.
 		async function begin() {
+			settling = true;
 			try {
 				host = chrome.runtime.connectNative(HOST_NAME);
 			} catch (e) {
@@ -1745,13 +1779,23 @@
 			}
 
 			// Whatever arrived while the question was open, in the order it
-			// arrived. `connectNative` returns a port that is usable at once,
-			// so a failure here is the host already having gone -- which its
-			// own disconnect handler is about to describe properly.
-			const held	= outbox;
+			// arrived.
+			drain();
+		}
+
+		/// Sends on what the page said while a greeting was out, oldest first.
+		///
+		/// `connectNative` returns a port that is usable at once, so a failure here is the
+		/// host already having gone -- which its own disconnect handler is about to
+		/// describe properly. A relay that has been stopped drops what it held: `stop` has
+		/// already told the page why, and delivering a command to a hand that was let go
+		/// for being stale is the whole of what this gate exists to prevent.
+		function drain() {
+			settling = false;
+			const waiting	= outbox;
 			outbox		= [];
-			for (const m of held) {
-				if (!host) break;
+			for (const m of waiting) {
+				if (!host || closing) break;
 				try { host.postMessage(m); } catch (e) { break; }
 			}
 		}

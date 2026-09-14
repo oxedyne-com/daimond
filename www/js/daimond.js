@@ -4550,25 +4550,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	//
 	// Until 2026-09-14 the rule two hundred lines above was the whole story: "Only the
 	// OPFS sandbox is synced -- a real folder is the user's own disk, device-specific."
-	// It is not device-specific. The owner's two desktops boot with a folder open, the
-	// phone does not, and the consequence of the old rule was that the phone's Diamond
-	// held NONE of the book those desktops are for: the only route to a file was a chat
-	// turn handed to a desktop, which answered in prose.
+	// It is not device-specific. A device that boots with a folder open holds work that
+	// a device of the same account with no native access to that folder cannot reach at
+	// all, and the only route to a file there was a chat turn handed to the first
+	// device, which answered in prose.
 	//
-	// So a desktop that has a folder open now sends the folder's contents on, to the
-	// devices of the same account that have no native access, and writes their edits
-	// back into the folder. What it does NOT do is make a copy anywhere a copy is not
-	// needed: a device that has the folder open keeps using the folder. The desktop's
+	// So a device that has a folder open sends the contents of a FLAGGED folder on, to
+	// the devices of the same account that have no native access, and writes their
+	// edits back into the folder. What it does NOT do is make a copy anywhere a copy is
+	// not needed: a device that has the folder open keeps using the folder. The open
 	// folder stays the canonical thing -- Syncthing, git, Ore and the owner's own `dev`
 	// script all read the same bytes as before, and nothing here writes a sidecar into
 	// a tree under version control without saying so.
 	//
-	// Four rules stand around it, each with a test of its own:
+	// Five rules stand around it, each with a test of its own:
 	//
-	//   THE CEILING. A folder is not a sandbox. `SYNC_FOLDER_SHARE_MAX` is the most a
-	//   shared folder may weigh, symlinked trees counted, and past it NOTHING is shared
-	//   and the panel says so with the size and the ceiling in it. Below it the ordinary
-	//   budgets apply exactly as before.
+	//   FLAGGED, ONE FOLDER AT A TIME. A mark on a folder is the grant its daimon works
+	//   under -- permission to READ -- and it is not permission to copy the folder onto
+	//   every device of the account. The first version of this read the two as one, and
+	//   the owner's marks came to some twenty-six gigabytes. So the copy grant is its
+	//   own flag on the attachment (`Files.shareRoots`), generic with respect to
+	//   devices, off until somebody turns it on.
+	//
+	//   THE CEILING, PER FLAGGED FOLDER. A folder is not a sandbox.
+	//   `SYNC_FOLDER_SHARE_MAX` is the most one shared folder may weigh, symlinked trees
+	//   counted. Past it THAT folder travels no part of itself and the panel names it;
+	//   the other flagged folders go on travelling. Below it the ordinary budgets apply
+	//   exactly as before.
 	//
 	//   THE IGNORE LIST. `.gitignore` and `.oreignore` are honoured where the folder has
 	//   them, over a built-in floor of build output (js/ignore.js). Without this a
@@ -4582,19 +4590,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	//
 	//   NO DELETION BY ABSENCE. A file on somebody's disk is deleted only on an explicit
 	//   tombstone from a device that HELD that file and deleted it, and only while the
-	//   bytes on disk are still the bytes the tombstone was written about. A phone that
+	//   bytes on disk are still the bytes the tombstone was written about. A device that
 	//   never received a file -- for budget, for an ignore rule, or because it dropped it
-	//   -- can no longer cost the desktop anything. The sandbox keeps the older
-	//   absence-plus-complete-census rule, which `dev/verify_dataloss.mjs` pins.
+	//   -- can no longer cost the device holding the folder anything. The sandbox keeps
+	//   the older absence-plus-complete-census rule, `dev/verify_dataloss.mjs` pins.
 
 	// THE CEILING ON A SHARED FOLDER, and it is a different question from the parcel's.
 	//
-	// The parcel budgets bound one push. This bounds the whole undertaking: past it the
+	// The parcel budgets bound one push. This bounds one flagged folder: past it the
 	// account would be paying to hold, and every device would be paying to hear about,
-	// a tree the user marked in without meaning to share it -- a home directory, a
-	// cloned monorepo, a photo library. The fixture this was built against is 18 MB of
-	// book plus 26 MB of fonts reached through a symlink, so the ceiling has to be well
+	// a tree flagged without a thought for its size -- a home directory, a cloned
+	// monorepo, a photo library. The fixture this was built against is 18 MB of book
+	// plus 26 MB of fonts reached through a symlink, so the ceiling has to be well
 	// clear of that and well short of a disk.
+	//
+	// PER FLAGGED FOLDER, since 2026-09-14, and it was the whole share before that. One
+	// number over everything flagged makes a second folder's fate a function of the
+	// first one's size, which is not a rule anybody can hold in their head; and the
+	// all-or-nothing verdict it produced was reached, on the owner's own marks, after a
+	// four-minute walk that then shared nothing.
 	//
 	// TWO HUNDRED MEBIBYTES, and the number is the chunk store's arithmetic rather than
 	// a feeling: `SYNC_CHUNK_TOTAL_MAX` is 4 GiB for everything the account offloads,
@@ -4662,6 +4676,67 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return DaimondIgnore.matcher(sets);
 	}
 
+	/// Build a `file_list`-shaped entry `{ size, dir: false, cloud: false }` from a
+	/// `file_read` answer's TEXT, for the one file `fileEntryUnderParent` cannot get a
+	/// parent listing for.
+	///
+	/// A partial view or the empty-file notice names its size directly, in a `(123
+	/// bytes)` parenthetical -- see `numbered_view` on the Rust side. A short file read
+	/// WHOLE carries no such header at all, so its bytes are recovered by stripping the
+	/// tool's own `<n>\t` numbering back off each line and re-encoding what is left. The
+	/// one byte this can lose is a final trailing newline `numbered_view` trims before
+	/// numbering; the census that reads this back is content-keyed, not size-keyed, so
+	/// it does not matter here.
+	function fileEntryFromRead(text) {
+		var s = String(text == null ? '' : text);
+		var m = /\((\d+) bytes\)/.exec(s);
+		if (m) return { size: parseInt(m[1], 10), dir: false, cloud: false };
+		var lines = s.length ? s.split('\n') : [];
+		if (lines.length && lines[lines.length - 1] === '') lines.pop(); // split's trailing ''
+		var body = [];
+		for (var i = 0; i < lines.length; i++) { body.push(lines[i].replace(/^\s*\d+\t/, '')); }
+		return { size: new TextEncoder().encode(body.join('\n')).length, dir: false, cloud: false };
+	}
+
+	/// Is `path` a FILE? `null` where it is not, or where nothing here can tell.
+	///
+	/// `file_list` opens directories, and an attachment can name a single file instead of
+	/// one -- `.daimond/skills/think/SKILL.md` is the shape a shipped skill takes on disk.
+	/// Asked to list a file it fails exactly the way a folder that is genuinely gone does,
+	/// so `walkShared` calls this before it believes the second reading.
+	///
+	/// The parent's OWN listing is tried first, and answers most cases -- an ordinary
+	/// file marked in on its own still sits inside a folder the fence has no opinion
+	/// about. It does not answer `.daimond/skills/<name>/SKILL.md`: the read fence
+	/// (`is_skills_disclosure` in `src/tools.rs`) opens that exact path but refuses its
+	/// parent directory's listing, `.daimond/skills/<name>/`, so the parent read comes
+	/// back refused for a file that is there and readable. Rather than widen the fence
+	/// -- which is what a directory listing would have to grant, and is the whole reason
+	/// that carve-out is spelled as two exact paths and not a prefix -- read the path
+	/// itself: `file_read` is permitted there, and its answer alone says the file
+	/// exists, with its size in `fileEntryFromRead`. Only when BOTH refuse does this
+	/// return null and leave `walkShared` to warn.
+	async function fileEntryUnderParent(app, path) {
+		if (!path) return null;
+		var cut    = path.lastIndexOf('/');
+		var parent = cut < 0 ? '' : path.slice(0, cut);
+		var base   = cut < 0 ? path : path.slice(cut + 1);
+		var res;
+		try { res = await app.run_tool_outcome('file_list', JSON.stringify({ path: parent || '.' })); }
+		catch (e) { res = null; }
+		if (res && res.outcome === 'done') {
+			var entries = parseSyncListing(res.text);
+			for (var i = 0; i < entries.length; i++) {
+				if (entries[i].name === base && !entries[i].dir) return entries[i];
+			}
+		}
+		var rr;
+		try { rr = await app.run_tool_outcome('file_read', JSON.stringify({ path: path })); }
+		catch (e) { return null; }
+		if (!rr || rr.outcome !== 'done') return null;
+		return fileEntryFromRead(rr.text);
+	}
+
 	/// Walk the shared roots and answer every file that may travel, with its size.
 	///
 	/// SORTED, which the sandbox walk is not. Two desktops enumerate one folder in
@@ -4686,6 +4761,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { res = await app.run_tool_outcome('file_list', JSON.stringify({ path: dir || '.' })); }
 				catch (e) { out.complete = false; continue; }
 				if (!res || res.outcome !== 'done') {
+					// Not a folder that refused -- maybe a FILE the walk was asked to open as
+					// one. See `fileEntryUnderParent`.
+					var asFile = await fileEntryUnderParent(app, dir);
+					if (asFile) {
+						if (asFile.cloud) { out.away[dir] = asFile.size | 0; }
+						else { out.entries.push({ path: dir, size: asFile.size | 0 }); out.bytes += asFile.size | 0; }
+						continue;
+					}
 					console.warn('sync: shared folder ' + (dir || '.') + ' would not list ('
 						+ ((res && res.outcome) || 'no answer')
 						+ '), so this census is incomplete and deletes nothing');
@@ -4704,6 +4787,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (e.cloud) { out.away[full] = e.size | 0; continue; }
 					out.entries.push({ path: full, size: e.size | 0 });
 					out.bytes += e.size | 0;
+					// THE VERDICT IN `syncWalkPlan` NEVER CHANGES ONCE THIS IS TRUE: a folder
+					// this far over `SYNC_FOLDER_SHARE_MAX` shares nothing whatever else the
+					// walk finds, so finding the rest is pure cost. On the owner's own tree
+					// this was ~22,500 `file_list` calls, three times a round, to reach a
+					// verdict the FIRST few hundred already decided. `complete` goes false
+					// because the census stops short of the whole tree -- the same meaning
+					// it carries when a listing refuses -- not because anything here failed.
+					if (out.bytes > SYNC_FOLDER_SHARE_MAX) { out.complete = false; return out; }
 				}
 			}
 			if (todo.length) out.complete = false;
@@ -4715,6 +4806,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// The last plan a collect computed, so the merge and the panel can ask what this
 	// device is sharing without walking the folder again. Re-derived every collect.
 	var _sharePlan = null;
+
+	// THE WALK ITSELF, memoised. A pull applies, then commits its own baseline, both
+	// against the census the parcel was already built from -- three callers a round,
+	// each walking the whole tree to answer the same question. Keyed on the SORTED
+	// FLAGGED roots, so flagging a folder or taking the flag off misses the cache
+	// rather than answering for a share that no longer matches -- and
+	// `toggleAttachShare` clears it outright, at the moment the set moved rather than
+	// a round later; good for `SYNC_WALKPLAN_TTL_MS`,
+	// long enough to cover one round's three callers and short enough that a folder
+	// the user just grew past the ceiling is re-measured well inside the next one.
+	// `daimond-file-written` clears it outright, for a write THIS DEVICE makes
+	// mid-round -- an edit that arrives some other way (Syncthing, git, the user's
+	// own editor) waits out the TTL like everything else past the ceiling does.
+	var _walkPlanCache     = null;			// { key, at, plan }
+	var SYNC_WALKPLAN_TTL_MS = 25000;		// 25s: covers one round's three callers, well inside the next
 
 	/// What the file census walks this round, or null when this device shares nothing.
 	///
@@ -4728,31 +4834,78 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var handle = sharedFolderHandle();
 		if (!handle) {
 			if (!filesSyncable()) return null;
-			_sharePlan = { folder: false, roots: [''], rules: null, over: null, app: app };
+			_sharePlan = { folder: false, roots: [''], flagged: [''], left: [], perRoot: {},
+				rules: null, app: app, max: SYNC_FOLDER_SHARE_MAX };
 			return _sharePlan;
 		}
 		var roots = [];
 		try { roots = await Files.shareRoots(); } catch (e) { roots = []; }
-		// A folder nobody marked into a Diamond is a folder nobody asked to share.
-		if (!roots.length) { _sharePlan = null; return null; }
-		var rules = await folderIgnoreRules(roots);
-		var walk  = await walkShared(app, roots, rules);
-		if (walk.bytes > SYNC_FOLDER_SHARE_MAX) {
-			// NOTHING IS SHARED, rather than a prefix of it: sharing the first 200 MiB
-			// of a tree in whatever order it enumerated would be a census that calls
-			// itself partial for ever and a set the user cannot predict.
-			_sharePlan = { folder: true, roots: roots, rules: rules, app: app, walk: null,
-				over: { bytes: walk.bytes, max: SYNC_FOLDER_SHARE_MAX } };
+		// A FOLDER NOBODY FLAGGED IS A FOLDER NOBODY ASKED TO SHARE, and this is the
+		// ordinary state of a device that has turned nothing on: the function returns
+		// here, so not one `file_list` is issued and the whole feature costs a read of
+		// the links. It is also the state of every device on the day this ships, since
+		// nothing carries the flag yet.
+		if (!roots.length) { _sharePlan = null; _walkPlanCache = null; return null; }
+		var key = roots.slice().sort().join('\n');
+		var now = Date.now();
+		if (_walkPlanCache && _walkPlanCache.key === key
+			&& (now - _walkPlanCache.at) < SYNC_WALKPLAN_TTL_MS) {
+			_sharePlan = _walkPlanCache.plan;
+			_sharePlan.app = app;		// `tools()` is a singleton, but never a stale one.
 			return _sharePlan;
 		}
-		_sharePlan = { folder: true, roots: roots, rules: rules, app: app, walk: walk, over: null };
+		var rules = await folderIgnoreRules(roots);
+		// ONE FLAGGED ROOT AT A TIME, so the ceiling is a fact about the folder somebody
+		// flagged and not about every folder they flagged added together. A root over it
+		// travels no part of itself and is NAMED; the rest go on travelling, which is
+		// what makes the flag worth having on a second folder. `walkShared`'s own early
+		// exit then fires per root, so a flagged home directory costs a few hundred
+		// listings rather than the tree.
+		var kept = [], left = [], perRoot = {};
+		var walk = { entries: [], bytes: 0, complete: true, ignored: 0, away: {} };
+		for (var i = 0; i < roots.length; i++) {
+			var w = await walkShared(app, [roots[i]], rules);
+			if (w.bytes > SYNC_FOLDER_SHARE_MAX) {
+				// NOT A PREFIX OF IT: sharing the first 200 MiB of a tree in whatever
+				// order it enumerated would be a census that calls itself partial for
+				// ever and a set the user cannot predict.
+				left.push({ root: roots[i], bytes: w.bytes });
+				continue;
+			}
+			kept.push(roots[i]);
+			perRoot[roots[i]] = w.bytes;
+			walk.entries  = walk.entries.concat(w.entries);
+			walk.bytes   += w.bytes;
+			walk.ignored += w.ignored;
+			if (!w.complete) walk.complete = false;
+			var away = w.away || {};
+			Object.keys(away).forEach(function (ap) { walk.away[ap] = away[ap]; });
+		}
+		// SORTED ACROSS THE ROOTS, not merely within each, for the reason `walkShared`
+		// sorts at all: the order decides which files fit inline, and two devices that
+		// disagree about it never agree about a parcel.
+		walk.entries.sort(function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0); });
+		// A ROOT LEFT OUT LEAVES A HOLE IN THE CENSUS, and the census says so: the same
+		// meaning `complete` carries when a listing refuses, and the reason no device
+		// anywhere reads the silence under that root as a deletion.
+		if (left.length) walk.complete = false;
+		_sharePlan = { folder: true, roots: kept, flagged: roots, left: left, perRoot: perRoot,
+			rules: rules, app: app, walk: walk, max: SYNC_FOLDER_SHARE_MAX };
+		_walkPlanCache = { key: key, at: now, plan: _sharePlan };
 		return _sharePlan;
 	}
+
+	// A WRITE THIS DEVICE MAKES MID-ROUND invalidates the memoised walk outright: the
+	// census `commitFileBaseline` is about to run must see it, not the plan from up to
+	// `SYNC_WALKPLAN_TTL_MS` ago.
+	window.addEventListener('daimond-file-written', function () { _walkPlanCache = null; });
 
 	/// Is this path inside what this device is sharing from a real folder?
 	/// False in sandbox mode, where the question does not arise.
 	function withinShare(plan, path) {
-		if (!plan || !plan.folder || plan.over) return false;
+		// `plan.roots` is the flagged roots that FIT; a root left out for its size is
+		// not in it, so nothing under one is written, deleted or counted here.
+		if (!plan || !plan.folder) return false;
 		if (plan.rules && plan.rules.ignored(path, false)) return false;
 		for (var i = 0; i < plan.roots.length; i++) {
 			var r = plan.roots[i];
@@ -4834,19 +4987,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { /* best effort: the file simply stays at the far end */ }
 	}
 
-	/// Say that a marked-in folder is too big to share, with the size and the ceiling
-	/// in the sentence, so the person can see which of the two to move.
-	function noteFolderOver(over) {
-		if (!over) {
-			_left.folder = null;
-			_leftDismissed.folder = '';
-			renderLeftBanner();
-			return;
-		}
-		var sig = 'folder:' + over.bytes;
-		_left.folder = { sig: sig, msg: t('sync.folder_too_big', {
-			size: fmtSyncBytes(over.bytes), max: fmtSyncBytes(over.max) }) };
-		renderLeftBanner();
+	/// Say which flagged folders are too big to travel, BY NAME.
+	///
+	/// The ceiling is per flagged folder, so the sentence has to name the folders it is
+	/// about: the others are still going, and "a folder is too big" would be a notice
+	/// nobody could act on. Same banner, same dismissal rule and same three-names-then-
+	/// an-ellipsis shape as the Diamonds and the files left out of a parcel.
+	function noteFoldersLeft(left) {
+		noteLeft('folder', left || [], 'sync.folders_left',
+			function (r) { return r.root + ':' + r.bytes; },
+			function (r) { return r.root; },
+			{ max: fmtSyncBytes(SYNC_FOLDER_SHARE_MAX) });
 	}
 
 	/// The File behind a census entry, from whichever root this census is of.
@@ -5020,12 +5171,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!plan) return out;
 		out.plan = plan;
 		var app = plan.app;
-		if (plan.over) {
-			// Past the ceiling nothing travels and the person is told, with both numbers.
-			// The census stays INCOMPLETE, so no device anywhere reads the silence as the
-			// folder having been emptied.
-			return out;
-		}
 		// Can the overflow be offloaded this round? Same test the Diamond and chat
 		// collectors use. When it is false there is nowhere to move an overflow file,
 		// so it is NAMED (noteFilesLeft) rather than silently dropped.
@@ -5050,6 +5195,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			flat = plan.walk.entries;
 			out.away = plan.walk.away || {};
 			if (!plan.walk.complete) out.complete = false;
+			// A FLAGGED ROOT LEFT OUT FOR ITS SIZE IS A HOLE IN THIS CENSUS, said here as
+			// well as in the walk: past the ceiling that root travels nothing, and
+			// `noteFileTombs` must not read the absence of everything under it as this
+			// device having deleted all of it.
+			if (plan.left && plan.left.length) out.complete = false;
 		}
 		var todo = flat ? [] : [''], guard = 0;
 		while ((flat || todo.length) && guard++ < 5000) {
@@ -5241,18 +5391,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// re-adopts every file it already has on every round.
 		var plan = await syncWalkPlan();
 		if (!plan) return;
-		// A FOLDER OVER THE CEILING LEAVES THE FORK POINT WHERE IT IS. The census carries
-		// nothing while the refusal stands, so committing it would record "the two devices
-		// agree about no files at all" -- and when the folder comes back under the ceiling
-		// every file would read as changed on both sides at once and grow a conflict copy.
-		// Nothing is shared, so nothing has been agreed, so nothing is written.
-		if (plan.over) return;
 		// The SAME inline budget the parcel uses, so a file that overflows and offloads
 		// is out of `files` here too and never enters the inline baseline — which is
 		// what keeps a later complete census from reading its absence as a deletion.
 		var col = await collectFiles(await syncFilesBudget());
 		var base = {};
 		Object.keys(col.files).forEach(function (p) { base[p] = fileHash(col.files[p]); });
+		// A FLAGGED ROOT OVER THE CEILING LEAVES THE FORK POINT UNDER IT WHERE IT IS.
+		// The census carries nothing from such a root while the refusal stands, so
+		// writing the census as the whole agreement would record "the two devices agree
+		// about no file under here at all" -- and the day the root fits again every one
+		// of its files would read as changed on both sides at once and grow a conflict
+		// copy beside itself. What was agreed under a left-out root is carried forward
+		// untouched; everything else is what this census found.
+		if (plan.left && plan.left.length) {
+			var had = readJson(SYNC_FILEBASE_KEY, {});
+			Object.keys(had).forEach(function (hp) {
+				for (var li = 0; li < plan.left.length; li++) {
+					var lr = plan.left[li].root;
+					if (hp === lr || hp.indexOf(lr + '/') === 0) { base[hp] = had[hp]; return; }
+				}
+			});
+		}
 		writeFilebase(base);
 		// The cloud index forked at the same moment, and its residency list is
 		// only true once the push that carried it has landed.
@@ -5283,7 +5443,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromDevice) {
 		if (!remoteFiles || typeof remoteFiles !== 'object') return;
 		var plan = await syncWalkPlan();
-		if (!plan || plan.over) return;
+		if (!plan) return;
+		// SCOPED BY `withinShare`, whose roots are the flagged folders that FIT. An edit
+		// the far end made under a root this device left out -- unflagged, or over the
+		// ceiling -- stays in that device's own workspace and is never written to this
+		// disk; a tombstone from under such a root is likewise ignored here.
 		var app = plan.app;
 		var base  = readJson(SYNC_FILEBASE_KEY, {});
 		// The same inline budget the parcel and the baseline use, so `local` classifies
@@ -5437,7 +5601,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// by Syncthing hold one file at two modification times; a manifest carrying either
 		// of them differs between devices that agree about every byte, and two devices
 		// with permanently different parcels push at each other for ever.
-		var shared = !!(plan && plan.folder && !plan.over);
+		var shared = !!(plan && plan.folder);
 		var seen = shared ? readJson(SYNC_FOLDER_SEEN_KEY, {}) : null;
 		var seenMoved = false;
 		// A passphrase change makes every chunk already in the cloud store
@@ -5545,7 +5709,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// ITS workspace, and on this device that is somebody's disk.
 		var plan = _sharePlan;
 		if (!plan) plan = await syncWalkPlan();
-		var folder = !!(plan && plan.folder && !plan.over);
+		var folder = !!(plan && plan.folder);
 		if (!folder && !filesSyncable()) return;
 		var incoming = remoteChunked;
 		if (folder) {
@@ -5647,8 +5811,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var handle = sharedFolderHandle();
 		if (!handle) return out;
 		var ix = DaimondCloud.index(), keys = Object.keys(ix).sort();
-		// What the folder already weighs, so the ceiling counts what arrives.
-		var spent = (plan.walk && plan.walk.bytes) | 0;
+		// What each flagged root already weighs, so what arrives is counted against the
+		// SAME per-root ceiling the walk applied. One number over all of them would let
+		// a small folder be refused its bytes because a large one beside it is full.
+		var spent = {};
+		var shareRoots = plan.roots || [];
+		Object.keys(plan.perRoot || {}).forEach(function (r) { spent[r] = plan.perRoot[r] | 0; });
+		var rootOf = function (rp) {
+			for (var ri = 0; ri < shareRoots.length; ri++) {
+				var rr = shareRoots[ri];
+				if (rp === rr || rp.indexOf(rr + '/') === 0) return rr;
+			}
+			return null;
+		};
 		for (var i = 0; i < keys.length; i++) {
 			var p = keys[i], m = ix[p];
 			if (!m || !Array.isArray(m.chunks) || m.peer) continue;
@@ -5672,16 +5847,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				catch (e) { live = null; }
 				if (live !== null && live === m.key) continue;		// already these bytes.
 			}
-			var add = (m.bytes | 0) - (f ? f.size : 0);
-			if (add > 0 && spent + add > SYNC_FOLDER_SHARE_MAX) {
+			var add  = (m.bytes | 0) - (f ? f.size : 0);
+			var root = rootOf(real);
+			if (add > 0 && root !== null && (spent[root] | 0) + add > SYNC_FOLDER_SHARE_MAX) {
 				console.warn('sync: ' + dest + ' was not written into the folder, because it '
-					+ 'would take the share past its ' + fmtSyncBytes(SYNC_FOLDER_SHARE_MAX)
-					+ ' ceiling');
+					+ 'would take ' + root + ' past the ' + fmtSyncBytes(SYNC_FOLDER_SHARE_MAX)
+					+ ' one shared folder may take');
 				continue;
 			}
 			var res = await DaimondCloud.materialiseTo(handle, p, dest);
 			if (String(res).indexOf('OK') !== 0) { console.warn('sync: ' + dest + ': ' + res); continue; }
-			if (add > 0) spent += add;
+			if (add > 0 && root !== null) spent[root] = (spent[root] | 0) + add;
 			if (!isSynced) continue;
 			DaimondCloud.rename(p, dest);
 			console.warn('sync: ' + real + ' changed on this device and on '
@@ -6183,7 +6359,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// notice. `keyOf` makes the dedup signature (an id, so two same-named items are
 	/// two items); `nameOf` is what the user reads. An empty set clears the row AND
 	/// forgets any dismissal, so the same item stranding again later is news again.
-	function noteLeft(kind, items, i18nKey, keyOf, nameOf) {
+	function noteLeft(kind, items, i18nKey, keyOf, nameOf, vars) {
 		if (!items.length) {
 			_left[kind] = null;
 			_leftDismissed[kind] = '';
@@ -6193,7 +6369,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var names = items.slice(0, 3).map(nameOf);
 		if (items.length > names.length) names.push('…');
 		var sig = kind + ':' + items.map(keyOf).sort().join(',');
-		_left[kind] = { sig: sig, msg: tn(i18nKey, items.length, { names: names.join(', ') }) };
+		// `vars` is whatever else the sentence names -- a ceiling, for the folders --
+		// and `names` is not overridable from it, since the names are the point.
+		var v = {};
+		if (vars) Object.keys(vars).forEach(function (k) { v[k] = vars[k]; });
+		v.names = names.join(', ');
+		_left[kind] = { sig: sig, msg: tn(i18nKey, items.length, v) };
 		renderLeftBanner();
 	}
 
@@ -6777,7 +6958,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var canReoffloadFiles = false;
 		try {
 			canReoffloadFiles = filesSyncable()
-				|| !!(_sharePlan && _sharePlan.folder && !_sharePlan.over);
+				|| !!(_sharePlan && _sharePlan.folder);
 		} catch (e) { canReoffloadFiles = false; }
 		for (var si = 0; si < sk.length; si++) {
 			var key = sk[si], kind = manifestKind(key), id = key.replace(/^@[dcm]\//, '');
@@ -6988,9 +7169,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (window.DaimondCloud) chunked = DaimondCloud.index();
 		noteFilesLeft(fileCol.left);
 		noteDiamondsLeft(dCol.left);
-		// A marked-in folder too big to share is the reason the other two rows are empty,
-		// so it is said in the same place and with both numbers in it.
-		noteFolderOver(fileCol.plan && fileCol.plan.over);
+		// A flagged folder too big to travel is named in the same banner, because it is
+		// the reason its own files are missing from the two rows above.
+		noteFoldersLeft(fileCol.plan ? fileCol.plan.left : []);
 		// AND A DELETION BECOMES NEWS HERE, on the device that made it. The fork point
 		// says which files both devices held; a COMPLETE census that no longer carries
 		// one of them is this device saying it deleted that file, with the hash it held,
@@ -7031,8 +7212,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			filesComplete: fileCol.complete === true,
 			// The files this device HELD and deleted, `path -> the hash it held`. The
 			// only thing that deletes a file out of somebody's real folder, and the
-			// reason a phone that never received a file cannot cost a desktop one. A
-			// device too old to read this field simply keeps its copy.
+			// reason a device that never received a file cannot cost the device holding
+			// the folder one. A device too old to read this field keeps its copy.
 			fileTombs:    fileTombs(),
 			chunked:      chunked,
 			diamonds:     dCol.list,
@@ -25504,15 +25685,36 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var plan = await syncWalkPlan();
 			return {
 				folder:   !!(plan && plan.folder),
+				// What is going: the flagged roots that fit under the ceiling.
 				roots:    plan ? plan.roots.slice() : [],
-				over:     (plan && plan.over) || null,
+				// What was flagged at all, so a verifier can tell "nobody flagged it"
+				// from "it was flagged and it is too big".
+				flagged:  (plan && plan.flagged) ? plan.flagged.slice() : [],
+				// `[{root, bytes}]` -- flagged, walked, and over the ceiling on its own.
+				left:     (plan && plan.left) ? plan.left.slice() : [],
 				max:      SYNC_FOLDER_SHARE_MAX,
-				bytes:    (plan && plan.walk) ? plan.walk.bytes : ((plan && plan.over) ? plan.over.bytes : 0),
+				bytes:    (plan && plan.walk) ? plan.walk.bytes : 0,
 				files:    (plan && plan.walk) ? plan.walk.entries.length : 0,
 				ignored:  (plan && plan.walk) ? plan.walk.ignored : 0,
 				complete: !!(plan && plan.walk && plan.walk.complete),
 			};
 		},
+		/// Draw the "these flagged folders are too big to travel" banner.
+		///
+		/// Published for `dev/verify_foldershare.mjs`, and for the engine that cannot
+		/// mount a folder at all: the sentence is a function of the list and the string
+		/// table alone, so WebKit can answer whether the folders are named in it even
+		/// though it can hold no workspace to have flagged one from.
+		noteFoldersLeft: function (left) { noteFoldersLeft(left || []); },
+		/// Drop the memoised walk, as if `daimond-file-written` had just fired.
+		///
+		/// Published for `dev/verify_foldershare.mjs`, which writes its fixture files
+		/// straight onto the OPFS folder -- the same thing an external editor does, and
+		/// exactly what `SYNC_WALKPLAN_TTL_MS` says waits for the next poll rather than
+		/// announcing itself. A verifier is not willing to wait out the TTL to prove an
+		/// ignore rule took, so it calls this instead of the event `opfs::write_file`
+		/// would have fired for a write the app made itself.
+		syncClearWalkCache: function () { _walkPlanCache = null; },
 		/// The file tombstones this device carries, and the conflict copies its last
 		/// merge wrote. Read-only: a deletion is recorded by the census, never by a
 		/// caller.
@@ -31403,6 +31605,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// Attached to be consulted rather than worked on. The tool door
 					// spells this as an allow plus a write fence; here it is a badge.
 					ro:   l.rel === 'consulted',
+					// Flagged to be REPLICATED to the devices of this account that
+					// cannot open it themselves. A mark is the daimon's grant to READ
+					// this thing and never a grant to copy it about, so the second
+					// grant is a second act, recorded in the link's own `note` -- the
+					// one slot on the record an attachment has never written a
+					// sentence into. Absent, empty or anything else reads as off, so
+					// every link made before this existed is off.
+					share: l.note === 'share',
 				});
 			});
 			out.sort(function (a, b) { return a.path.localeCompare(b.path); });
@@ -31476,6 +31686,35 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} catch (e) { /* already gone, or already there: the repaint tells the truth */ }
 			// One signal, and everything that draws links redraws: this tree through
 			// refreshAttached, the strip above the steer box, and the graph.
+			signalLinksChanged();
+		}
+
+		/// Flag this attachment to be replicated to the devices of this account
+		/// that have no native access to it, or take the flag off again.
+		///
+		/// A SECOND GRANT, and not the one the mark gave. Marking a folder into a
+		/// Diamond says its daimon may read the folder (`dev/ATTACH_CONTRACT.md`
+		/// §2); the owner's marks run to tens of gigabytes, and copying all of that
+		/// onto every device of the account is a thing nobody asked for. So it is
+		/// asked for here, per attachment, and it is off until it is.
+		///
+		/// GENERIC WITH RESPECT TO DEVICES. There is no "send this to the phone"
+		/// anywhere in it: the flag says the thing travels to whichever devices
+		/// cannot open it themselves, and which devices those are is a fact about
+		/// the account at the moment of a sync rather than a choice made here.
+		///
+		/// `rel` is passed through untouched: it is the read-only axis
+		/// (`consulted`/`holds`) and `update_link` writes both fields at once.
+		async function toggleAttachShare(a) {
+			if (!a || !a.link) return;
+			try {
+				await diamondApp().update_link(a.link.owner, a.link.id,
+					a.link.rel || 'holds', a.share ? '' : 'share');
+			} catch (e) { /* already gone: the repaint tells the truth */ }
+			// The memoised walk is keyed on the FLAGGED roots, which have just moved.
+			// The key would miss on its own; this says so at the moment it moved
+			// rather than leaving a plan to be recognised as stale a round later.
+			if (window.DaimondCore && DaimondCore.syncClearWalkCache) DaimondCore.syncClearWalkCache();
 			signalLinksChanged();
 		}
 
@@ -31997,6 +32236,42 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				ro.title = t('dws.readonly');
 				row.appendChild(ro);
 			}
+
+			// Standing information, the way `Read only` is: a device that cannot open
+			// this folder itself still shows that the folder is expected to arrive,
+			// and the device it was flagged on shows what it is sending.
+			if (a.share) {
+				var shared = document.createElement('span');
+				shared.className = 'files-badge files-shared';
+				shared.textContent = t('dws.shared');
+				shared.title = t('dws.shared');
+				row.appendChild(shared);
+			}
+
+			// ⇄ -- the copy grant, offered on a folder and on a lone file alike, and
+			// refused where this workspace cannot reach the thing: a device that
+			// cannot open it cannot walk it either, so flagging it here would be a
+			// promise nothing could keep.
+			var sh = document.createElement('button');
+			sh.type = 'button';
+			sh.className = 'files-res files-share' + (a.share ? ' on' : '');
+			sh.textContent = '⇄';
+			sh.dataset.act = 'share';
+			sh.setAttribute('aria-pressed', a.share ? 'true' : 'false');
+			sh.setAttribute('aria-label', t('dws.share'));
+			if (a.here === false) {
+				sh.disabled = true;
+				sh.title = t('dws.share_unavailable');
+			} else {
+				sh.title = t('dws.share') + '\n'
+					+ t('dws.share_help', { max: fmtSyncBytes(SYNC_FOLDER_SHARE_MAX) });
+			}
+			sh.addEventListener('click', async function (ev) {
+				ev.stopPropagation();
+				if (a.here === false) return;
+				await toggleAttachShare(a);
+			});
+			row.appendChild(sh);
 
 			var off = document.createElement('button');
 			off.className = 'files-res files-hold on';
@@ -35771,22 +36046,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			///   user is looking at.
 			/// The ☁ rows a compile of this document would look for and not find, and the
 			/// fetch of them. Published because `dev/verify_foldershare.mjs` asserts what
-			/// the PHONE sees, and a verifier that recomputed which paths those are would
-			/// be a second answer to the question the panel decides.
+			/// a device without native access sees, and a verifier that recomputed which
+			/// paths those are would be a second answer to the question the panel decides.
 			compileCloudRows: function (main) { return projectCloudRows(main); },
 			hydrateProject:   async function (main) {
 				var el = viewEl && viewEl.querySelector('.files-view-msg');
 				return await hydrateProject(main, el || document.createElement('div'));
 			},
-			/// Every workspace path a Diamond is scoped to, deduped and sorted.
+			/// Every workspace path FLAGGED for sharing on a Diamond, deduped and sorted.
 			///
-			/// THE SHARED FOLDER'S WHOLE DEFINITION. A device with a real folder open used
-			/// to sync nothing at all -- "a real folder is the user's own disk,
-			/// device-specific" -- and the owner's two desktops boot that way, so the
-			/// account's phone held none of the work. It holds it now, and what travels is
-			/// exactly what the user marked into a Diamond: the mark is already the grant a
-			/// daimon works under (`dev/ATTACH_CONTRACT.md` §2), so nothing here widens
-			/// anything, and a folder nobody marked in is a folder nobody asked to share.
+			/// THE SHARED FOLDER'S WHOLE DEFINITION, and what travels is exactly what the
+			/// user FLAGGED. A mark is the grant a daimon works under -- permission to
+			/// READ the folder (`dev/ATTACH_CONTRACT.md` §2) -- and it is not permission
+			/// to copy the folder onto every device of the account. Reading the two as
+			/// one, which this did until 2026-09-14, put some twenty-six gigabytes of the
+			/// owner's marks up for replication and cost every round a walk of all of it.
+			/// So the copy grant is a second, explicit act: `share` on the attachment,
+			/// worded generically about devices, off until somebody turns it on.
+			///
+			/// A FOLDER NOBODY FLAGGED COSTS NOTHING. An empty answer here is the ordinary
+			/// state, and `syncWalkPlan` returns before it walks anything at all.
 			///
 			/// EVERY Diamond'S marks, not the one on screen. `currentDiamond` is a piece of
 			/// UI state, and a parcel that changed when the user clicked a different Diamond
@@ -35804,6 +36083,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					try { list = await attachmentsOf(d.id); } catch (e) { list = []; }
 					list.forEach(function (a) {
 						if (a.here === false || !a.path) return;
+						// The flag, and not the mark. See above.
+						if (!a.share) return;
 						if (out.indexOf(a.path) < 0) out.push(a.path);
 					});
 				}

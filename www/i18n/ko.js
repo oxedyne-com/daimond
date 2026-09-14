@@ -838,7 +838,8 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '파일 {n}개가 이 기기의 동기화 꾸러미에 들어가지 못해, 자리가 날 때까지는 다른 기기로 가지 않아요: {names}',
 	'sync.files_left.other':    '파일 {n}개가 이 기기의 동기화 꾸러미에 들어가지 못해, 자리가 날 때까지는 다른 기기로 가지 않아요: {names}',
-	'sync.folder_too_big':      '표시해 둔 폴더가 {size}로, 공유 폴더에 허용된 {max}를 넘어서 아무것도 다른 기기로 가지 않아요. 더 작은 폴더에 표시하거나, 이 폴더에서 일부를 빼 주세요.',
+	'sync.folders_left.one':    '{names}은(는) 공유 폴더에 허용된 {max}를 넘어서 다른 기기로 가지 않아요. 더 작은 폴더를 공유하거나, 일부를 빼 주세요.',
+	'sync.folders_left.other':  '공유 폴더 {n}개가 각자에게 허용된 {max}를 넘어서 다른 기기로 가지 않아요: {names}.',
 	// 끝나 버렸고 다시 얻지도 못한 세션. 아래와 같은 이름을 씁니다.
 	'sync.signed_out':        '동기화 멈춤',
 	'sync.signed_out_reason': '이 기기는 Daimond 계정 서비스에서 로그아웃된 상태이고 다시 로그인하지도 못해서, 여기서 한 일이 다른 기기로 가지 않아요. 서비스에 닿는 대로 다시 이어져요. 그래도 안 되면 Daimond를 잠갔다가 다시 여세요.',
@@ -1741,6 +1742,10 @@
 	'dws.kit_none':        '툴체인 없음. 명령은 이 Diamond의 파일에만 닿고 컴퓨터의 다른 것에는 닿지 않습니다.',
 	'dws.elsewhere':       '작업 공간에 있어요',
 	'dws.readonly':        '읽기 전용',
+	'dws.share':           '직접 열 수 없는 기기에도 공유하기',
+	'dws.share_help':      '끄면 이 폴더를 직접 열 수 있는 기기만 봐요. 켜면 다른 기기에도 복사돼요(폴더마다 최대 {max}).',
+	'dws.shared':          '공유 중',
+	'dws.share_unavailable': '이 폴더를 열 수 있는 기기에서만 공유할 수 있어요',
 	'dws.showing':         '표시 중',
 	'dws.reach':           '닿는 범위',
 	'dws.reach_help':      '이 Diamond의 daimon이 쓸 수 있는 폴더. 두 트리 모두에서 같은 사실이므로 양쪽에 표시됩니다.',

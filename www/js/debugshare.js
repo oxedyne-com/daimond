@@ -153,6 +153,7 @@
 	var EVENT_KEY    = 'daimond-debugshare-outbox';	// the durable outbox
 	var SEQ_KEY      = 'daimond-debugshare-seq';	// the per-device sequence `n`
 	var BUILD_KEY    = 'daimond-build-seen';		// breadcrumb.js's confirmed build id
+	var POST_AT_KEY  = 'daimond-debugshare-lastpost';	// the post clock, so a reload keeps it
 	var MAX_EVENT_BYTES = 360;
 	var OUTBOX_CAP   = 5000;					// events held before the oldest are dropped
 	var BACKOFF_MAX_MS = 300000;				// 5 min, the ceiling on repeated-failure backoff
@@ -299,7 +300,14 @@
 	// The ONE post clock, and what the gateway has said about it. `lastPostAt` is
 	// stamped by every post of every lane; `throttleStreak` doubles the gap while
 	// 429s continue and is cleared by the first post that lands.
-	var lastPostAt     = 0;
+	//
+	// PERSISTED, not just held in memory: a reload used to zero this while the durable
+	// outbox it gates (`loadOutbox`, below) survived across the reload untouched, so
+	// the new page drained a full backlog with no memory of the gateway's per-device
+	// floor and drew a 429 (`feed.throttled`) on the very first post of every boot.
+	// `postRows` writes it out on every stamp; this line reads back whatever the last
+	// page left.
+	var lastPostAt     = ms(read(POST_AT_KEY));
 	var throttleStreak = 0, throttledCount = 0, postFailCount = 0, throttleBurst = false;
 	var pagehideAt     = 0;			// when the page last said it was going away
 	var lastCtx     = {};			// turn id -> last round's prompt tokens, for `inferFold`
@@ -1600,6 +1608,7 @@
 		// Stamped BEFORE the request, not after it: the handler's window starts
 		// when the post arrives, and a slow reply must not buy a second one.
 		lastPostAt = Date.now();
+		write(POST_AT_KEY, String(lastPostAt)); // survives a reload; `write` itself is guarded
 		return fetch(ENDPOINT, {
 			method:      'POST',
 			credentials: 'same-origin',
@@ -2205,6 +2214,9 @@
 			return { throttled: throttledCount, postFail: postFailCount, cdrop: conDropped,
 				gap: gapMs(), lastPostAt: lastPostAt };
 		},
+		// Exposed for the verifier: whether a post may go NOW, per the clock this
+		// instance booted with -- the property a reload used to lose.
+		_gapLeft:     gapLeft,
 		_fit:         fit,
 		_eventBatch:  eventBatch,
 		_backoffMs:   function (n) { failStreak = n; return backoffMs(); },

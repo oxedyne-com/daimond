@@ -678,7 +678,8 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} arquivo não coube no pacote de sincronização deste dispositivo e não chega aos seus outros dispositivos enquanto não houver espaço para ele: {names}',
 	'sync.files_left.other':    '{n} arquivos não couberam no pacote de sincronização deste dispositivo e não chegam aos seus outros dispositivos enquanto não houver espaço para eles: {names}',
-	'sync.folder_too_big':      'A pasta que você marcou pesa {size}, acima dos {max} que uma pasta compartilhada pode ocupar, então nada dela chega aos seus outros dispositivos. Marque uma pasta menor, ou tire parte do que está nesta.',
+	'sync.folders_left.one':    '{names} pesa mais do que os {max} que uma pasta compartilhada pode ocupar, então não chega aos seus outros dispositivos. Compartilhe uma pasta menor, ou tire parte do que está nela.',
+	'sync.folders_left.other':  '{n} pastas compartilhadas passam dos {max} que cada uma pode ocupar e não chegam aos seus outros dispositivos: {names}.',
 	// Uma sessão que acabou e não pôde ser retomada. Mesmo rótulo dos de baixo: o
 	// que importa é que o trabalho deste dispositivo não está viajando.
 	'sync.signed_out': 'Sincronização pausada',
@@ -1704,6 +1705,10 @@
 	'dws.kit_none': 'Sem cadeia de ferramentas. Um comando alcança os arquivos deste Diamond e nada mais no seu computador.',
 	'dws.elsewhere': 'Vive no espaço de trabalho',
 	'dws.readonly': 'Somente leitura',
+	'dws.share': 'Compartilhar com dispositivos sem acesso próprio',
+	'dws.share_help': 'Desligado: só os dispositivos que conseguem abrir esta pasta a veem. Ligado: ela é copiada para os seus outros dispositivos, até {max} por pasta.',
+	'dws.shared': 'Compartilhada',
+	'dws.share_unavailable': 'Só pode ser compartilhada de um dispositivo que consiga abri-la',
 	'dws.showing': 'Mostrando',
 	'dws.reach': 'Alcance',
 	'dws.reach_help': 'As pastas em que o daimon deste Diamond pode escrever. Aparece nas duas árvores, porque vale nas duas.',

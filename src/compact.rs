@@ -49,7 +49,7 @@
 
 use crate::llm::{OpenSet, extract_json_number, extract_json_string, extract_json_string_array};
 use crate::protocol::{ChatMessage, ImagePart, MessageContent, ToolCall};
-use crate::tools::{CallOutcome, call_outcome};
+use crate::tools::{CallOutcome, Tool, call_outcome};
 
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_jdat::Dat;
@@ -193,6 +193,13 @@ pub const SPEND_CAP_MAX_USD: f64 = 1000.0;
 // scored 1.00/1.00 on the two worker tasks where the tighter preset scored 0.33/0.67, with
 // re-reads after retirement the likely cause (`stubRR` 0.30 under the old preset, 0.00-0.07
 // under the others measured).
+//
+// WORKER_MAX_ROUNDS IS A LEG, NOT A TOTAL. `hold_to_worker` carries WORKER_CONTINUATIONS
+// across as well, so a worker's true ceiling is `WORKER_MAX_ROUNDS * (1 + WORKER_CONTINUATIONS)`
+// -- 200 rounds over two legs at today's figures, not 100. Turn 55 (2026-09-14) read w21's
+// 112 rounds against the 100 alone and called it a cap the engine had missed; it had not --
+// 112 is twelve rounds into the second leg, exactly what `at_the_cap` grants once. See
+// `test_a_workers_true_ceiling_is_the_leg_times_its_continuations_00` in agent.rs.
 pub const WORKER_MAX_ROUNDS:    usize = 100;
 pub const WORKER_CONTINUATIONS: usize = 1;	// one breath, not three
 pub const WORKER_CONTEXT_CAP:   u64   = 96_000;
@@ -418,6 +425,19 @@ pub struct Limits {
 	/// Say, once per turn, that independent calls belong in one reply.  On by default; the
 	/// `batchline_off` arm is the pair a measurement turns it off with.
 	pub batch_line: bool,
+
+	// Which measures still under trial are on
+	//
+	// Not a figure and not a ceiling: a switch, so a bank arm can run one measure against the
+	// `cur` control instead of against a build. `compound` offers `Tool::Compound`, which is
+	// held on every belt and withheld from the schema array until this says otherwise -- see
+	// `crate::tools::ToolRegistry::offered` and `crate::agent::Agent::run_turn`, which hands it
+	// to the turn's context. Off by the shipped default, which is what makes `cur` a control.
+	pub compound: bool,
+
+	// Thinking, which only the Anthropic dialect can carry
+	pub thinking: crate::llm::Thinking,	// adaptive, or off where the model allows it
+	pub effort:   crate::llm::Effort,	// how deeply; `output_config.effort`
 }
 
 impl Default for Limits {
@@ -446,6 +466,12 @@ impl Default for Limits {
 			worker_spend_usd:     WORKER_SPEND_CAP_USD,
 			gather_timeout_s:     GATHER_TIMEOUT_S,
 			batch_line:           true,
+			compound:             false,
+			// What the client asked for before either was a setting, so a tree nobody tunes
+			// sends exactly what it sent before.  The per-family figure is applied over this
+			// where the model is known; see `profile::Family::thinking_default`.
+			thinking:             crate::llm::Thinking::Adaptive,
+			effort:               crate::llm::Effort::High,
 		}
 	}
 }
@@ -2199,7 +2225,13 @@ fn call_label(tc: &ToolCall) -> String {
 	let arg = |k: &str| extract_json_string(&tc.arguments, k).unwrap_or_default();
 	let num = |k: &str| extract_json_number(&tc.arguments, k);
 	let path = arg("path");
-	match tc.name.as_str() {
+	// CANONICALISED, whatever the wire spelled it. `run_tool_loop` already rewrites `tc.name`
+	// in place the moment a round arrives, so this is normally a no-op -- but a label built
+	// straight off a fixture, or off a call that reached here some other way, must read the
+	// same either way: a Claude-family model's `Read` is `file_read` here just as it is
+	// everywhere else that names a tool. See `Tool::from_name` for the alias table.
+	let name = Tool::from_name(&tc.name).map(|t| t.name()).unwrap_or(tc.name.as_str());
+	match name {
 		"file_read" => {
 			// The RANGE, where there was one: a retired read of lines 1-200 and a retired
 			// read of the whole file are different facts, and the model is about to decide
@@ -2241,8 +2273,24 @@ fn call_label(tc: &ToolCall) -> String {
 			fmt!("crystal_read {}", what).trim_end().to_string()
 		},
 		"recall"            => fmt!("recall {}", clip(&arg("query"), STUB_ARG_CAP)),
+		// EVERY OP, NAMED. A retired compound whose stub said only "compound" would tell the
+		// model it had already looked and not say at what -- and a compound is by construction
+		// the call that read several things, so that stub loses more than any other. The namer
+		// is `crate::tools::compound_op_label`, the same one the result's own `--- [n]` headers
+		// are built from, so what the stub says is what the model read.
+		"compound" => {
+			let ops = crate::llm::extract_json_objects(&tc.arguments, "ops").unwrap_or_default();
+			if ops.is_empty() {
+				fmt!("compound")
+			} else {
+				let said: Vec<String> = ops.iter()
+					.map(|o| crate::tools::compound_op_label(o))
+					.collect();
+				fmt!("compound({})", clip(&said.join(", "), STUB_ARG_CAP * 2))
+			}
+		},
 		"web_fetch" | "web_open" | "web_read"
-		                    => fmt!("{} {}", tc.name, clip(&arg("url"), STUB_ARG_CAP)),
+		                    => fmt!("{} {}", name, clip(&arg("url"), STUB_ARG_CAP)),
 		"spawn_agent"       => fmt!("spawn_agent {}", arg("name")),
 		// The workers a retired gather was waiting on, so the stub says WHOSE reports went.
 		// The model can call `gather` again on the same names and re-read them at no cost, and a
@@ -2257,7 +2305,7 @@ fn call_label(tc: &ToolCall) -> String {
 		},
 		_ => {
 			let what = if path.is_empty() { arg("url") } else { path };
-			fmt!("{} {}", tc.name, clip(&what, STUB_ARG_CAP)).trim().to_string()
+			fmt!("{} {}", name, clip(&what, STUB_ARG_CAP)).trim().to_string()
 		},
 	}
 }
@@ -2742,6 +2790,27 @@ mod tests {
 		// the bill is made of: a worker on a million-token window carries 96,000 and not 852,000.
 		l.window = 1_310_720;
 		assert_eq!(96_000, l.budget(0));
+	}
+
+	/// A call that reached here under a Claude Code alias labels exactly as the same call
+	/// would under Daimond's own name -- the alias is at the wire, and the feed, the ledger
+	/// and the retired stub are all downstream of it.
+	#[test]
+	fn test_call_label_shows_the_canonical_name_for_a_call_that_arrived_as_read() {
+		let aliased = ToolCall {
+			id:        fmt!("c1"),
+			name:      fmt!("Read"),
+			arguments: fmt!(r#"{{"path":"src/main.rs","offset":10,"limit":5}}"#),
+		};
+		let canonical = ToolCall {
+			id:        fmt!("c2"),
+			name:      fmt!("file_read"),
+			arguments: fmt!(r#"{{"path":"src/main.rs","offset":10,"limit":5}}"#),
+		};
+		assert_eq!(call_label(&aliased), call_label(&canonical),
+			"a call that arrived as Read must label exactly as one that arrived as file_read");
+		assert!(call_label(&aliased).starts_with("file_read "), "{}", call_label(&aliased));
+		assert!(!call_label(&aliased).starts_with("Read "), "{}", call_label(&aliased));
 	}
 
 	#[test]
@@ -4132,6 +4201,36 @@ mod tests {
 		retire_results(&mut v, 5, IN_TURN_RESULT_CAP);
 		assert_eq!(again[1].text(), v[1].text());
 		assert_eq!(again[3].text(), v[3].text());
+	}
+
+	/// **A retired compound still says WHICH READS it made.**
+	///
+	/// It is the call that read several things at once, so it is the call whose stub loses most
+	/// by saying only its own name: a model handed `[compound -- 21,000 bytes retired]` knows it
+	/// has looked and not at what, and asks for all of it again -- which is the round the tool
+	/// exists to save, spent twice.
+	#[test]
+	fn test_the_compound_stub_names_every_op_it_read() {
+		let args = concat!(
+			r#"{"ops":[{"op":"list","path":"src"},"#,
+			r#"{"op":"read","paths":["src/sum.js","test/sum.test.js"]},"#,
+			r#"{"op":"search","query":"formatWhen","glob":"**/*.js","context":2},"#,
+			r#"{"op":"outline","path":"src/report.js"}]}"#);
+		let mut v = vec![
+			asks("c1", "compound", args),
+			replies("c1", &"answer
+".repeat(3_000)),
+		];
+		retire_results(&mut v, 5, IN_TURN_RESULT_CAP);
+		let stub = v[1].text();
+		assert!(stub.starts_with(
+			"[compound(list src, read 2 files, search formatWhen, outline src/report.js)"),
+			"the retired compound does not name the reads it made: {}", stub);
+		assert!(stub.ends_with(RESULT_RETIRED_TAIL), "{}", stub);
+		// IDEMPOTENT, for the reason every stub above is: the sweep runs again every tenth round.
+		let again = v.clone();
+		retire_results(&mut v, 5, IN_TURN_RESULT_CAP);
+		assert_eq!(again[1].text(), v[1].text());
 	}
 
 	#[test]

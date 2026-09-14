@@ -38,10 +38,12 @@
 //   (v)   NOTHING IS RE-OFFLOADED AND NOTHING IS MISSING. After the second round
 //         the feed says `refs_missing: 0` and no chunk is uploaded again. The
 //         desktops re-offloaded the same five items every round for hours.
-//   (vii) AND TWO DESKTOPS SHARING ONE FOLDER SETTLE. Since 2026-09-14 a device with a
-//         real folder open sends what the user marked into a Diamond, and the owner has
-//         TWO of those, kept identical by Syncthing and therefore holding one file at two
-//         modification times. Anything time-keyed in what travels makes their parcels
+//   (vii) AND TWO MOUNTED DEVICES SHARING ONE FOLDER SETTLE. Since 2026-09-14 a device
+//         with a real folder open sends what the user FLAGGED for sharing on a Diamond
+//         -- a mark is the daimon's read grant, and the copy grant is its own flag on
+//         the attachment -- and the owner has TWO such devices, kept identical by
+//         Syncthing and therefore holding one file at two modification times.
+//         Anything time-keyed in what travels makes their parcels
 //         permanently different, and two devices that permanently differ push at each
 //         other for ever. Two rounds, then the same ten simulated minutes, and nobody
 //         pushes. `dev/verify_foldershare.mjs` is the rest of that feature.
@@ -178,6 +180,28 @@ const BREAKS = {
 		find: "				reason = (f && canReoffloadFiles) ? 'reoffload' : (f ? 'no-file-sync' : 'no-local-file');",
 		with: "				reason = f ? 'reoffload' : 'no-local-file';",
 	}],
+	// A version already fully merged is re-applied anyway, which is where `pullOnce`
+	// stood until 2026-09-14: every idle catch-up pull pays for a full files-section
+	// merge -- a folder walk on a folder-mounted desktop -- to learn nothing changed.
+	// The (iii, cont.) cell reddens on A's `file_list` count, not the trail line --
+	// `section('files', ...)` logs its start unconditionally, so a version already
+	// adopted and a version genuinely re-applied both leave exactly one such line.
+	reapplyadopted: [{
+		file: 'js/sync.js',
+		find: `		if (j.version === serverVersion && noted === serverVersion && pulledOk && reapplyTries === 0) {
+			// ONE TRAIL LINE STANDS IN FOR THE SECTION THIS PULL DID NOT RUN. Skipping
+			// \`applyParcel\` outright means \`applySync\`'s own \`section('files', …)\` never
+			// fires, and a trail that goes silent here is exactly the failure mode its own
+			// comment warns against -- a merge nobody can tell was ever looked at. This
+			// names the version and says why, in the same 'sync files' slot the walk would
+			// have logged into, but without the walk.
+			trail('sync files', 'v' + (j.version | 0) + ' already adopted, no walk');
+			lastFailed = [];
+		} else {
+			lastFailed = await applyParcel(state);
+		}`,
+		with: `		lastFailed = await applyParcel(state);		// BROKEN: always re-applies, even when nothing changed`,
+	}],
 };
 
 if (BREAK && !BREAKS[BREAK]) {
@@ -203,10 +227,14 @@ const SEAM = [
 	  why: 'an unrestorable manifest is never dropped, so refs_missing can never reach 0' },
 	{ file: 'js/daimond.js', want: 'SYNC_FOLDER_SHARE_MAX',
 	  why: 'a folder-mounted device shares nothing, so (vii) would measure two empty censuses' },
+	{ file: 'js/daimond.js', want: 'if (!a.share) return;',
+	  why: 'a mark shares the folder again, so (vii) would pass without the flag it now needs' },
 	{ file: 'js/cloud.js', want: 'o.timeless ? 0 :',
 	  why: 'a shared folder\'s manifest still carries a clock, which is what (vii) is about' },
 	{ file: 'js/cloud.js', want: 'function notePeerFile',
 	  why: 'a file has no peer slot, so (viii) would measure a sweep nothing could stop' },
+	{ file: 'js/sync.js', want: "already adopted, no walk",
+	  why: 'a version already fully merged is re-applied anyway, so (iii, cont.) would measure a walk every idle pull' },
 ];
 
 function requireSeams() {
@@ -669,6 +697,69 @@ for (const [label, s] of [['A', A], ['B', B]]) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// (iii, cont.) A PUSH WITH NOTHING NEW DOES NOT RE-WALK THE FILES SECTION
+// ═══════════════════════════════════════════════════════════════════════
+// The version this device is about to push is already the version it last fully
+// merged, so `push`'s own idle-catch-up pull (nothing to SEND, but still worth a
+// LOOK) must not re-apply what it reads back -- every section's merge is
+// idempotent, so re-running it changes nothing, but the files section pays for a
+// folder walk to find that out, and that walk is the whole cost of a round on a
+// folder-mounted desktop. `IDLE_PULL_MIN_MS` gates whether `push` even attempts
+// the look, so the wait below is not padding -- without it `push` would skip the
+// pull outright and the assertion below would pass for the wrong reason.
+console.log('\n— (iii) a push with nothing new does not re-apply —');
+
+// BOTH SIDES FULLY CONVERGED FIRST. Without this, A's own idle-catch-up pull can
+// legitimately meet a version it has never seen -- B pushed since A last pulled --
+// and applying THAT is correct, not the defect: the guard below is for a version
+// this device has already fully merged, and only two full rounds guarantee that.
+for (let i = 0; i < 2; i++) { await pull(A); await push(A); await pull(B); await push(B); }
+
+// `section('files', ...)` logs ITS OWN START unconditionally -- the trail always
+// carries one 'sync files' line whether or not anything inside it ran, so a count
+// of THAT line cannot tell a skip from a full re-apply. `file_list` calls can: A is
+// the folder-mounted desktop from guard (vii) above, and re-applying is precisely
+// the walk this lane exists to stop paying for on an unchanged version. B has no
+// folder and is carried alongside for the settle-quiet half only -- a sandboxed
+// device's own `file_list` traffic (fonts, the typeset view) is not this guard's
+// business, and asserting zero on it would be measuring the wrong thing.
+for (const [label, s] of [['A', A], ['B', B]]) {
+	await s.page.evaluate(() => { try { window.DaimondTrail.clear(); } catch (e) {} });
+	await new Promise((r) => setTimeout(r, 5500));		// past IDLE_PULL_MIN_MS
+	const res = await s.page.evaluate(async () => {
+		const mod  = await import('/pkg/oxedyne_daimond.js');
+		const orig = mod.DaimondApp.prototype.run_tool_outcome;
+		let calls  = 0;
+		mod.DaimondApp.prototype.run_tool_outcome = function (name, argsJson) {
+			if (name === 'file_list') calls++;
+			return orig.call(this, name, argsJson);
+		};
+		window.DaimondSync.push();
+		const t0 = Date.now();
+		let quiet = false;
+		try {
+			while (Date.now() - t0 < 10000) {
+				quiet = window.DaimondSync.state().quiet === true;
+				if (quiet) break;
+				await new Promise((r) => setTimeout(r, 200));
+			}
+		} finally { mod.DaimondApp.prototype.run_tool_outcome = orig; }
+		return { quiet: quiet, calls: calls };
+	});
+	check(`${label}: a push with nothing new settles quiet within 10s`,
+		res.quiet === true, `quiet=${res.quiet}`);
+	if (label === 'A') {
+		check(`${label}: and the files section does not walk the folder — no re-apply of a version already adopted`,
+			res.calls === 0, `${res.calls} 'file_list' call(s) since the push`);
+	} else {
+		note(`${label}: ${res.calls} 'file_list' call(s) since the push — sandboxed, not this guard's concern`);
+	}
+	const filesLines = await s.page.evaluate(
+		() => (window.DaimondTrail.rows() || []).filter((r) => r.w === 'sync files').length);
+	note(`${label}: ${filesLines} 'sync files' trail line(s) since the push — the section always logs its start`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // (iv) THE VERSION STAYS FLAT
 // ═══════════════════════════════════════════════════════════════════════
 console.log('\n— (iv) ten simulated minutes, then a real quiet window —');
@@ -908,8 +999,9 @@ const seedFolder = (s) => s.page.evaluate(async (files) => {
 }, files_(SEED));
 function files_(x) { return x; }
 
-// A1 IS THE DEVICE ALREADY MOUNTED. It has no marked-in Diamond yet, which is why
-// everything above it saw an empty census; the mark is what turns a folder into a share.
+// A1 IS THE DEVICE ALREADY MOUNTED. It has no Diamond holding the folder yet, which is
+// why everything above it saw an empty census; a mark AND the flag beside it are what
+// turn a folder into a share -- the mark alone is the daimon's grant to read it.
 const A2 = await open({ name: 'syncfp-a2', profile: scratch('pw', 'syncfp-a2-' + BROWSER),
 	signIn: false, connect: false, defaults: false, route: patchedSource });
 await ready(A2);
@@ -935,15 +1027,18 @@ check('(vii) the two desktops hold identical bytes at DIFFERENT times — the Sy
 	`sizes ${st1.map(f => f.size).join(',')}; times differ on `
 	+ st1.filter((f, i) => f.mtime !== st2[i].mtime).length + ' of ' + st1.length);
 
-// The mark, made once and carried to the other desktop by the ordinary parcel: the
-// Diamond travels, its links travel inside it, and both devices then compute the same
-// shared roots without either of them being told.
+// The mark and the flag, made once and carried to the other mounted device by the
+// ordinary parcel: the Diamond travels, its links travel inside it -- the flag is a
+// field on the link -- and both devices then compute the same shared roots without
+// either of them being told.
 await A.page.evaluate(async (scope) => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 	const id = await app.create_diamond('The Book');
-	await app.add_link(id, 'diamond:' + id, 'dir:' + scope, 'holds', '', 'user');
+	const linkId = await app.add_link(id, 'diamond:' + id, 'dir:' + scope, 'holds', '', 'user');
+	await app.update_link(id, linkId, 'holds', 'share');
 	await window.DaimondCore.loadDiamonds();
+	window.DaimondCore.syncClearWalkCache();
 }, SCOPE);
 await push(A); await pull(A2); await pull(B);
 await A2.page.evaluate(() => window.DaimondCore.loadDiamonds());
@@ -952,7 +1047,7 @@ const shares = {
 	a1: await A.page.evaluate(() => window.DaimondCore.syncFolderShare()),
 	a2: await A2.page.evaluate(() => window.DaimondCore.syncFolderShare()),
 };
-check('(vii) both desktops share the same folder, from one mark neither was told about twice',
+check('(vii) both mounted devices share the same folder, from one flag neither was told about twice',
 	shares.a1.folder && shares.a2.folder
 	&& shares.a1.roots.join() === SCOPE && shares.a2.roots.join() === SCOPE
 	&& shares.a1.bytes === shares.a2.bytes,

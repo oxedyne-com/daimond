@@ -998,6 +998,12 @@ async function main() {
 		const depthBefore = DS1.outboxDepth();
 		const seqBefore = Number(first.store.get('daimond-debugshare-seq'));
 		check('the queue is held while the endpoint refuses', depthBefore === 40);
+		// The post CLOCK is durable too, not just the queue: the first event above
+		// already drove one post attempt (refused, but attempted -- `postRows`
+		// stamps before it knows the answer), so the clock this instance kept is
+		// on the same store the outbox came off.
+		const lastPostBefore = Number(first.store.get('daimond-debugshare-lastpost'));
+		check('the post clock is itself persisted before the reload', lastPostBefore > 0);
 		first.halt();		// the old instance stops retrying; its store is untouched
 
 		// The reload: a new module instance over the same store.
@@ -1006,6 +1012,15 @@ async function main() {
 		const DS2 = second.win.DEBUG_SHARE;
 		check('the reloaded module comes up still sharing', DS2.isOn() === true);
 		check('the reloaded module recovered the whole outbox', DS2.outboxDepth() === 40);
+		// THE FIX: a reload used to zero this, so the drained outbox posted inside
+		// the gateway's per-device floor and drew a 429 on the very first request
+		// of every boot. The new module instance must come up already knowing the
+		// old page's clock, and must therefore see a gap still owed rather than a
+		// green light to post immediately.
+		check('the reloaded module recovers the post clock too, not just the queue',
+			DS2._health().lastPostAt === lastPostBefore);
+		check('so a post right after boot still knows a gap is owed, not a fresh clock',
+			DS2._gapLeft() > 0);
 		check('the sequence continues where it left off, never restarting',
 			(JSON.parse(DS2._outbox()[0].data).n) === seqBefore - 39);
 		DS2.event('tool', { name: 'after-reload' });

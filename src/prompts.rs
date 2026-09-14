@@ -355,6 +355,29 @@ impl Role {
 		out.push_str(&fmt!("\n\n{}\n\n{}", SEARCH_NOTE, SAFETY_CLAUSE));
 		out
 	}
+
+	/// The same as [`compose_for`](Self::compose_for), with the Claude Code aliases a
+	/// Claude-family wire dialect uses substituted into the backtick-quoted mentions the notes
+	/// make of the tools that have one.
+	///
+	/// A second entry point rather than a third argument on `compose_for`, because almost
+	/// every caller of that one -- every test, the panel's own preview -- has no tune state in
+	/// hand, and a parameter every one of them would have to pass as `false` is a parameter
+	/// that exists for a single caller. `claude_names` off, or a family other than Claude,
+	/// answers exactly [`compose_for`](Self::compose_for)'s own text.
+	///
+	/// # Arguments
+	/// * `text` - The user's own prompt for this role, or empty for the default.
+	/// * `model` - The model as the client is configured with it.
+	/// * `claude_names` - Whether the Claude Code alias table is in effect, from
+	///   [`crate::tools::ToolRegistry::claude_names`].
+	pub fn compose_wire(&self, text: &str, model: &str, claude_names: bool) -> String {
+		let out = self.compose_for(text, model);
+		if !claude_names {
+			return out;
+		}
+		crate::profile::Family::detect(model).substitute_tool_names(&out).into_owned()
+	}
 }
 
 /// The one account of where a file is, appended to every role that holds the file tools.
@@ -1058,7 +1081,9 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) ->
 					// unsaid.
 					Toolkit::Git => s.push_str(&fmt!(
 						"\n{} toolkit: git was always on PATH; what this adds is the user's own \
-						configuration, so a commit carries their name and runs their hooks.",
+						configuration, so a commit carries their name and runs their hooks. \
+						Commit once, when the verifier is green -- not once per fix -- and amend \
+						that commit at most once rather than stacking amends on top of it.",
 						k.label())),
 					// Nothing went on `PATH`, because nvm's node sits at a path carrying a version
 					// this page cannot know. Saying so is what stops a daimon concluding the grant
@@ -1844,6 +1869,26 @@ mod tests {
 		// And the plain `compose`, which is what every untaught caller reaches, is the same
 		// prompt as an unmeasured model's -- not a shorter one.
 		assert_eq!(Role::Chat.compose(""), Role::Chat.compose_for("", "a-model-never-measured"));
+	}
+
+	/// `compose_wire` substitutes the Claude Code alias into a user's own note, and only when
+	/// both the model is Claude and the switch is actually on.
+	#[test]
+	fn test_compose_wire_aliases_the_users_own_note_for_claude_only() {
+		let mine = "Map with outline, then use `file_search` before `file_edit`.";
+		let claude = Role::Chat.compose_wire(mine, "anthropic/claude-opus-5", true);
+		assert!(claude.contains("`Grep`"), "{}", claude);
+		assert!(claude.contains("`Edit`"), "{}", claude);
+		assert!(!claude.contains("`file_search`"), "{}", claude);
+		assert!(!claude.contains("`file_edit`"), "{}", claude);
+		// The switch OFF restores `compose_for`'s own text, even for a Claude model.
+		assert_eq!(Role::Chat.compose_for(mine, "anthropic/claude-opus-5"),
+			Role::Chat.compose_wire(mine, "anthropic/claude-opus-5", false),
+			"claude_names off must not alias a Claude model's own prompt");
+		// And a family that is not Claude is untouched even with the switch on.
+		assert_eq!(Role::Chat.compose_for(mine, "deepseek/deepseek-v4-pro"),
+			Role::Chat.compose_wire(mine, "deepseek/deepseek-v4-pro", true),
+			"claude_names must not alias a family it was not built for");
 	}
 
 	/// **A findings table may not turn off a note that is load-bearing on every model.**
