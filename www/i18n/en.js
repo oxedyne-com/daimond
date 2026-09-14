@@ -205,6 +205,9 @@
 	'rail.chats_help':           'Raw conversation. A Diamond is cut from it.',
 	'rail.new_chat':             'New chat',
 	'rail.chats_menu':           'More',
+	// i18n-indirect: mobile.js key = rail.fold_section rail.unfold_section
+	'rail.fold_section':           'Fold this section away',
+	'rail.unfold_section':           'Open this section',
 	'rail.delete_all_chats':     'Delete all chats',
 	'layout.handle':             'Drag to resize, double-click to reset',
 
@@ -504,6 +507,7 @@
 	'chat.who_tool':       'Tool',
 	'chat.who_tools':      'Tools',
 	'chat.who_system':     'System',
+	'chat.who_leak':       'Tool call',
 	'chat.tool_sent':      'Sent',
 	'chat.tool_result':    'Result',
 	'chat.copy_selected':  'Copy selected',
@@ -1029,12 +1033,13 @@
 	// its reader to skip the one that mattered. "Answered · no tools used" is a
 	// statement of what happened, not an accusation — the reader decides whether
 	// the model promised otherwise.
-	// i18n-family: end.how_ = answered stopped capped silent failed
+	// i18n-family: end.how_ = answered stopped capped silent failed malformed
 	'end.how_answered': 'Answered',
 	'end.how_stopped':  'Stopped',
 	'end.how_capped':   'Step limit reached',
 	'end.how_silent':   'Ended without saying anything',
 	'end.how_failed':   'Ended on an error',
+	'end.how_malformed': 'Ended: the tool call arrived as text',
 	'end.no_calls':     'no tools used',
 	'end.calls.one':    '{n} tool call',
 	'end.calls.other':  '{n} tool calls',
@@ -1438,6 +1443,8 @@
 	// {thing} is a panel's name, lower-cased by the caller. A language where
 	// that reads badly should rewrite the sentence around it.
 	'sheet.ask_about': 'Ask about this {thing}…',
+	'sheet.tab_source': 'Source',
+	'sheet.tab_pages':  'Pages',
 
 	// ── Identity: creating and unlocking ───────────────────────
 	'identity.your_name':          'Your name',
@@ -2479,16 +2486,28 @@
 	'files.keep_editing':    'Keep editing',
 	'files.unsaved_body':    'Your changes to {path} have not been saved. Close the editor and lose them?',
 	'files.editing_stopped': 'Editing stopped. Nothing was written.',
+	'files.draft_restored':  'Restored what you had typed and not saved. Save to write it to the file.',
 	'files.overwrite':       'Overwrite',
 	'files.conflict_title':  'It changed while you were editing',
 	'files.conflict_body':   'This file changed on disk since you opened it, most likely an agent. Save anyway and overwrite those changes?',
 	'files.changed_while_editing': 'This file changed on disk; an agent edited it. Your edits are kept, and saving asks before overwriting.',
 	'files.reloaded':        'Reloaded. The file changed on disk.',
 	'files.compile':         'Compile',
+	'files.compile_help':    'Lay this document out here and write <name>-preview.pdf beside it. The published PDF is Publish’s, and this never writes it.',
 	'files.compiling':       'compiling',
 	'files.compiling_path':  'Compiling {path} …',
 	'files.compiled':        'Compiled → {path} ({size})',
+	'files.compiled_main':   'That is {main}, which includes this file.',
 	'files.compile_failed':  'Compile failed: {reason}',
+	'files.publish':         'Publish',
+	'files.publish_help':    'Run this project’s own dev script on your machine: print colour and a metadata scrub, writing the final PDF. Needs the machine hand.',
+	'files.publishing':      'publishing',
+	'files.publishing_cmd':  'Running {cmd} in {cwd} … the script keeps watching after the first build; the daimon’s runs tool stops it.',
+	'files.published':       'Published → {path}',
+	'files.publish_failed':  'Publish failed: {reason}',
+	'files.pages_paused':    'The pages are off screen, so saving no longer rebuilds them. Fold the rail or the dock, or widen the window, to see the source and the pages at once.',
+	'files.pages_live':      'The pages are back. Saving rebuilds them again.',
+	'files.go_to_line':      'Go to line {line}',
 	'files.binary_note':     'A binary file of {size}. It is stored and synced like everything else here, but there is nothing to show. Download it to open it in something that understands it.',
 	// Cloud storage, seen from the Workspace panel.
 	'files.cloud':           'Cloud',
@@ -3171,7 +3190,10 @@
 	'typst.watch.building': 'Rebuilding…',
 	'typst.watch.live_preview': 'Live preview',
 	'typst.watch.stale':    'Showing the last build that worked',
+	'typst.watch.paused':   'Paused — the pages are off screen',
 	'typst.watch.held':     'Rebuilding stopped',
+	'typst.watch.paused':   'Paused',
+	'typst.watch.paused_why': 'The pages are off screen, so nothing is being rebuilt.',
 	'typst.watch.dead':     'The compiler has stopped',
 	'typst.watch.rebuild':  'Rebuild',
 	'typst.watch.nothing':  'The compiler produced nothing and gave no reason.',
@@ -3195,6 +3217,7 @@
 	// ── Toasts ─────────────────────────────────────────────────
 	'toast.copied': 'Copied',
 	'render.copy_failed': 'Failed',
+	'render.tool_call_leaked': 'A tool call arrived as text rather than as a tool call. Nothing ran.',
 
 	// ── The Graph pane ─────────────────────────────────────────
 	// One still picture of the Diamonds and the links between them. It is an
@@ -3507,11 +3530,20 @@
 	'social.notes':        'Notes',
 	'social.proposals':    'Proposals',
 	'social.settings':     'Settings',
-	// The compose box, merged into Proposals: two ways to post, both auto-send.
+	// The compose box, merged into Proposals. Post sends the words as they are;
+	// Polish & post has the model draft a proposal and then WAITS for Send now.
 	'social.post':         'Post',
 	'social.post_help':    'Post exactly what is above to the forge as a proposal. Public, under your voice name — no account needed to read it.',
 	'social.polish':       'Polish & post',
-	'social.polish_help':  'Let the model rewrite it as a proposal, then post that.',
+	'social.polish_help':  'Let the model rewrite it as a proposal. You read it and press Send — nothing goes on its own.',
+	// The forge takes a title of 200 characters and its refusal names no number,
+	// so these two say it. `{n}` is what the title is; `{max}` is what it may be.
+	//
+	// TRANSLATORS — keep both placeholders. A sentence that says a title is too
+	// long without saying how long is the dead end these replace.
+	'social.title_over':   'That title is {n} characters; a title is up to {max}. Shorten it, then send.',
+	'social.title_count':  'Title {n} / {max}',
+	'social.title_label':  'The title this will be sent under',
 	'social.compose_public': 'Posted publicly, under your voice name — anyone can read it.',
 	// Shown after a note is raised (posted, or queued to send). The hub label is a
 	// press that opens the Improve panel, where it is read and settled.
@@ -3527,9 +3559,20 @@
 	'social.queue.one':    'Waiting to send ({n})',
 	'social.queue.other':  'Waiting to send ({n})',
 	'social.q_verbatim':   'Waiting to post',
-	'social.q_polish':     'Waiting to polish and post',
+	'social.q_polish':     'Waiting to be drafted by the model',
 	'social.send_now':     'Send now',
 	'social.send_now_help': 'Try to send this one now, in the way it was written.',
+	// A note the model has drafted. Nothing has been sent, and the row says so in
+	// those words: the whole fault this replaces was a card that looked sent.
+	'social.q_drafted':    'Nothing has been sent. Read it, then press Send now.',
+	'social.draft_head':   'The model would send this',
+	// A note the forge refused that had been handed to the model. What was refused
+	// was the model's title, which this build did not keep, so the way out is
+	// another drafting rather than an edit.
+	'social.q_redraft':    'Press Polish it to have the model write it again.',
+	'social.drafted':      'The model has drafted it below. Read it, then press Send now — nothing has been sent.',
+	'social.polish_now':   'Polish it',
+	'social.polish_now_help': 'Have the model draft a proposal from this note. Nothing is sent.',
 	// A note the forge has REFUSED, which is not a note waiting for the network.
 	// `{said}` is the forge's own sentence about what was wrong with it, in the
 	// forge's English: keep the placeholder and do not translate around it.

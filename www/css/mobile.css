@@ -16,8 +16,9 @@
    phone breakpoint so desktop is untouched.
    ============================================================ */
 
-/* The hamburger and the sheet exist only on a phone. */
+/* The hamburger, the sheet and the section folds exist only on a phone. */
 #drawer-btn { display: none; }
+.rail-fold  { display: none; }
 #msheet     { display: none; }
 #scrim      { display: none; }
 
@@ -104,7 +105,7 @@
 		left: 0;
 		right: 0;
 		margin-bottom: 0;
-		max-height: calc(100dvh - 16px - var(--safe-t) - var(--safe-b));
+		max-height: calc(var(--rail-h, 100dvh) - 16px - var(--safe-t) - var(--safe-b));
 	}
 	/* ── EACH LIST SCROLLS, AS IT DOES ON A DESKTOP ───────────────────
 	   These three rules used to say the opposite -- `overflow: visible` on both
@@ -143,9 +144,98 @@
 		overflow-y: auto;
 		overscroll-behavior: contain;
 		-webkit-overflow-scrolling: touch;
+		/* 4px between tiles, not the desktop's 6. Each tile already carries a
+		   border and a fill, so the gap is not what separates them; at 390x844
+		   with the Diamonds section folded the six-tile mark fell five pixels the
+		   wrong side of the list's foot, and ten pixels of gap is exactly what was
+		   between five whole tiles and six. */
+		gap: 4px;
 	}
-	.panel.rail .admin { flex: none; }
+
+	/* ── THE DRAWER IS AN ACCORDION ───────────────────────────────────
+	   Reported from an iPhone PWA, 2026-09-14: "the height of the diamond and
+	   chat sections in the rail in mobile view is impractically small". Measured
+	   at 390x844 with ten Diamonds and twenty-five chats, and he was being kind
+	   -- the Diamonds list came out 150px against a 549px content, the Chats list
+	   146px against 2538px, and a chat tile is 93px tall on a phone. ONE chat was
+	   fully on screen out of twenty-five.
+
+	   Nothing in the drawer was wrong on its own. The rules above give the two
+	   lists an even share of whatever `#rail-top` is left, and `#rail-top` is what
+	   `#admin` leaves: `flex: none` on a stack of eleven status rows, each lifted
+	   to ~40px for a thumb by responsive.css, is 345px of the 828 there are --
+	   more than either list it was taking it from. And the desktop's lever on
+	   this is `#handle-rail-split`, which is hidden here and whose `applyRailSplit`
+	   early-returns on a phone, so no user action could give one list any more.
+
+	   So each section FOLDS, and what it folds away goes to whatever is still
+	   open. Diamonds and Chats open, the status rows away -- which is the
+	   defaults in `mobile.js` and, measured, ~295px each instead of 150 and 146.
+	   Fold one list and the other has the lot: six chat tiles instead of one.
+	   The state is per device (localStorage) because it is a fact about the
+	   screen in the hand, not about the account.
+
+	   THE IDENTITY ROW IS NOT PART OF THE STATUS FOLD. It carries the cog, and
+	   the cog is a phone's only route to Settings -- there is none in the top bar
+	   -- so a fold that took it would strand the user. It is the section's
+	   header, and a header stays. */
+	.rail-fold {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex: none;
+		/* 34px, the box `.addbtn` takes beside it on a phone, so the row does not
+		   grow a taller control than the ones it already has. */
+		width: 34px;
+		height: 34px;
+		padding: 0;
+		background: none;
+		border: none;
+		border-radius: var(--radius-sm);
+		color: var(--text-muted);
+		cursor: pointer;
+	}
+	.rail-fold .ic { width: 16px; height: 16px; transition: transform .18s; }
+	/* Pointing down when the section is open, at its heading when it is not. */
+	.rail-fold[aria-expanded="false"] .ic { transform: rotate(-90deg); }
+	.rail-fold:active { background: var(--accent-soft); }
+	/* The whole heading is the target, not the 34px chevron alone: the row is
+	   already there and a thumb aims at the word. `mobile.js` binds it. */
+	.panel.rail .railhead > span[role="heading"] { cursor: pointer; }
+
+	/* A folded section shows its header and nothing else. The tag filter belongs
+	   to the Diamonds list and folds with it -- it narrows a list that is not on
+	   screen otherwise. */
+	.panel.rail[data-fold-diamonds="off"] .diamond-find,
+	.panel.rail[data-fold-diamonds="off"] .diamond-list,
+	.panel.rail[data-fold-chats="off"] .session-list { display: none; }
+	/* Everything in the status strip but its header row. `!important` because
+	   three of these rows carry an inline `display` of their own (BYOK, Pro, the
+	   spend readout) that money.js and release.js turn on and off -- folded they
+	   are all away, and unfolded each is back under whichever rule owns it. */
+	.panel.rail[data-fold-status="off"] .admin-status > *:not(.astat-id) { display: none !important; }
+	/* Unfolded, the strip scrolls inside itself rather than pushing the lists
+	   back down to their floor: every open section is bounded, which is the whole
+	   rule this block is written around. */
+	.panel.rail .admin { flex: 0 1 auto; min-height: 0; }
+	.panel.rail[data-fold-status="on"] .admin-status { max-height: calc(0.45 * var(--rail-h, 100dvh)); overflow-y: auto; overscroll-behavior: contain; }
 	.panel.rail #handle-rail-split { display: none; }
+
+	/* THE KEYBOARD, WHICH `dvh` DOES NOT ANSWER. `100dvh` is the viewport with
+	   the browser chrome retracted; it does not shrink when iOS raises the
+	   keyboard over it, so a drawer opened from a focused composer ran its last
+	   rows underneath one. `mobile.js` sets `--vvh` from `visualViewport.height`
+	   and ONLY while something is genuinely covering the page, so the ordinary
+	   case is the `dvh` it always was.
+
+	   Named `--rail-h` and inherited, so the two things inside the drawer that
+	   are measured against the screen -- the Admin panel and the unfolded status
+	   strip -- shrink with it rather than each carrying its own `100dvh` that a
+	   keyboard makes a lie of. */
+	.panel.rail {
+		--rail-h: var(--vvh, 100dvh);
+		height: var(--rail-h) !important;
+	}
 
 	body.drawer-open .panel.rail { transform: translateX(0); }
 	@media (prefers-reduced-motion: reduce) {
@@ -180,7 +270,11 @@
 		z-index: 40;
 		left: 0;
 		right: 0;
-		bottom: calc(var(--mnav-h) + var(--safe-b));
+		/* `--kb` is the height of the on-screen keyboard, written by the controller
+		   from `visualViewport` and zero the rest of the time. iOS does NOT move the
+		   layout viewport for a keyboard, so a sheet anchored to the bar alone sits
+		   UNDER it -- with the line being typed among the keys. */
+		bottom: calc(var(--mnav-h) + var(--safe-b) + var(--kb, 0px));
 		height: 0;					/* closed; the controller sets the detent height */
 		background: var(--bg-primary);
 		border-top-left-radius: 16px;
@@ -259,6 +353,76 @@
 		cursor: pointer;
 	}
 	.msheet-close:active { background: var(--accent-soft); }
+
+	/* Two faces of one thing: Source | Pages on the Doc sheet. Its own row under
+	   the grabber, because the grabber owns every gesture that starts on it. */
+	.msheet-tabs {
+		flex: none;
+		display: flex;
+		gap: 4px;
+		padding: 0 12px 6px;
+	}
+	.msheet-tab {
+		flex: 1 1 0;
+		min-width: 0;
+		/* 36px: a thumb target, and short enough that the strip costs the document
+		   less than a line of it. */
+		height: 36px;
+		/* The chip row's own tokens, because a tab IS a chip: a row that says which
+		   of two things is on screen. Two surfaces styling one idea differently is
+		   how an app comes to look like two apps. */
+		border: 1px solid var(--border-strong);
+		border-radius: var(--radius);
+		background: var(--bg-tertiary);
+		color: var(--text-secondary);
+		font-size: var(--fs-sm);
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.msheet-tab.on {
+		background: var(--accent-soft);
+		border-color: var(--accent);
+		color: var(--accent-text);
+	}
+	/* THE OTHER FACE GOES WHILE THE KEYBOARD IS UP. Half the room is gone and every
+	   pixel left belongs to the line being typed; a tab that would throw the typing
+	   away if a thumb brushed it is the worst thing to leave beside it. */
+	.msheet-tabs.typing .msheet-tab:not(.on) { display: none; }
+	.msheet-tabs.typing .msheet-tab.on {
+		/* Nothing to choose between any more, so it reads as a label rather than as
+		   a control that does nothing. */
+		background: none;
+		border-color: transparent;
+		font-weight: 500;
+	}
+	/* ── TWO FACES, ONE BOX, AND NEITHER IS EVER `display: none` ──────────
+	   Both panels are in the sheet at once, stacked on top of each other rather
+	   than beside each other, and the one not chosen is merely INVISIBLE.
+
+	   Two things forced that, and both were measured. A `display: none` face is
+	   not laid out, so the live pages had no width to be drawn at and, worse,
+	   THE BROWSER DISCARDS THE SCROLL POSITION of a scroller that is taken out
+	   of flow -- so every glance at the source sent the reader back to page one
+	   of a 48-page book. Left in flow and merely hidden, the pages keep their
+	   size, their scroll and the reader's place, and a rebuild that lands while
+	   he is typing is already up when he turns back.
+
+	   Absolutely positioned so the two share the box instead of halving it. The
+	   first version set an inline `display` and did not even manage that:
+	   `#msheet .panel` carries `display: flex !important` a few lines up, which
+	   an inline style loses to, so both faces were on screen, each at half
+	   height, with the editor 34px tall under a keyboard. */
+	#msheet-body.two-faced { position: relative; }
+	#msheet-body.two-faced > .panel { position: absolute; inset: 0; }
+	#msheet .panel.msheet-face-off {
+		visibility: hidden;
+		pointer-events: none;
+	}
+	/* WHILE THE KEYBOARD IS UP THE ASK PILL GOES TOO. It is a second text input
+	   directly under the one being typed in, and the 61px it costs is a third of
+	   what is left of the editor. The pill comes back the moment the field is left,
+	   which is when there is something to ask about. */
+	body.sheet-typing #msheet-ask { display: none; }
 
 	/* The thing itself fills the room between the grabber and the ask
 	   pill. The moved panel keeps its own header and controls. */

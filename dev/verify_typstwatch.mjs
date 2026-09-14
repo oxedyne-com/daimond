@@ -184,10 +184,19 @@ const BREAKS = {
 	}],
 	// Closing the document does not end the watch, so the compiler keeps working on
 	// a file nobody is looking at.
+	//
+	// IT IS AN EDIT TO `closePreview` NOW, AND THAT MOVE IS THE PROPERTY. The pages
+	// merely leaving the screen is a PAUSE -- on a phone the source and its pages
+	// share one sheet, so looking at the source hides the pages every time -- and a
+	// close is a different event, said out loud by the closer rather than guessed at
+	// from an element's rects. Take the sentence away and a closed panel is
+	// indistinguishable from a hidden one: the loop pauses, keeps the path and keeps
+	// the view, which is what check 7 below then reports.
 	nostop: [{
-		file: 'js/typstwatch.js',
-		find: '\tif (S.seen && !shown) {\n\t\tstop();\n\t\treturn;\n\t}',
-		with: '\tif (false) { stop(); return; }',
+		file: 'js/daimond.js',
+		find: '\t\t\ttry { if (window.DaimondTypstWatch) DaimondTypstWatch.stop(); }\n'
+			+ '\t\t\tcatch (e) { /* no live view is the ordinary case */ }\n',
+		with: '',
 	}],
 	// No budget at all: the loop starts a rebuild whatever the heap says, which is
 	// how it eventually finds the wall and dies there.

@@ -338,6 +338,8 @@
 	]);
 	// Attributes safe on any allowed element.
 	var ATTR_OK = wordSet(['CLASS', 'TITLE', 'ALT', 'ALIGN']);
+	// The wrappers a leaked native tool call is made of; see the note in `scrub`.
+	var LEAK_TAG = wordSet(['TOOL_CALL', 'ARG_KEY', 'ARG_VALUE']);
 
 	/// True when a URL is safe to keep — http(s), mailto, in-page or
 	/// root-relative, or an inline image data URI.  Everything else
@@ -368,6 +370,18 @@
 			// are the reader's, the markup is not to be trusted.
 			var orphanSummary = (tag === 'SUMMARY' && node.nodeName !== 'DETAILS');
 			if (!TAG_OK[tag] || orphanSummary) {
+				// A MODEL'S OWN TOOL-CALL SYNTAX, WRITTEN INTO THE REPLY. The ordinary
+				// unknown-wrapper rule keeps the text and drops the markup, and on
+				// 2026-09-14 that turned
+				// `<arg_value>daimonfold</arg_value>…` into the word
+				// `namedaimonfoldtimeout_ms600000worldtrue` drawn as the model's answer —
+				// the one shape where discarding the tags destroys the evidence rather
+				// than tidying it. These three keep their angle brackets, as text, so a
+				// reader sees what actually arrived.
+				if (LEAK_TAG[tag]) {
+					node.replaceChild(document.createTextNode(ch.outerHTML || ''), ch);
+					continue;
+				}
 				// Unknown wrapper: keep the text, discard the markup.
 				node.replaceChild(document.createTextNode(ch.textContent || ''), ch);
 				continue;
@@ -1002,6 +1016,28 @@
 		return html;
 	}
 
+	// ── A tool call that arrived as prose ──────────────────────
+
+	/// The HTML for a leaked tool call: a one-line note, then the fragment as code.
+	///
+	/// A `<pre>` and not markdown. The fragment is markup the model wrote by mistake, so
+	/// every path that might interpret it is a path that might hide it — which is exactly
+	/// what happened on 2026-09-14, when the sanitiser's unknown-wrapper rule drew
+	/// `namedaimonfoldtimeout_ms600000worldtrue` as the reply. Escaped here rather than
+	/// sanitised, because nothing in it is meant to render.
+	///
+	/// Pure string work: no DOM, so the node test can call it without one.
+	function leakBlock(fragment) {
+		var note = t('render.tool_call_leaked');
+		if (!note || note === 'render.tool_call_leaked') {
+			note = 'A tool call arrived as text rather than as a tool call. Nothing ran.';
+		}
+		return '<div class="leak-note">' + escapeHtml(note) + '</div>'
+			+ '<pre class="leak-frag"><code>'
+			+ escapeHtml(String(fragment == null ? '' : fragment))
+			+ '</code></pre>';
+	}
+
 	// ── Copy-to-clipboard (event delegation) ───────────────────
 
 	/// Copy `text` to the clipboard, with a legacy fallback for
@@ -1052,7 +1088,7 @@
 	window.DaimondRender = {
 		md: md, escapeHtml: escapeHtml, sanitize: sanitize,
 		foldScan: foldScan, foldSegments: foldSegments, summaryText: summaryText,
-		seamText: seamText, seamLine: seamLine,
+		seamText: seamText, seamLine: seamLine, leakBlock: leakBlock,
 		extractMath: extractMath, mathSpans: mathSpans,
 	};
 })();

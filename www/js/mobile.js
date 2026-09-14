@@ -96,6 +96,128 @@
 	function closeDrawer() { document.body.classList.remove('drawer-open'); }
 	function toggleDrawer() { document.body.classList.toggle('drawer-open'); }
 
+	// ── The drawer's sections ──────────────────────────────────
+	//
+	// Reported from an iPhone PWA on 2026-09-14: the Diamonds and Chats sections
+	// are "impractically small". Measured at 390x844 with ten Diamonds and
+	// twenty-five chats, the Diamonds list was 150px of a 549px content and the
+	// Chats list 146px of 2538px -- one chat tile of twenty-five fully on screen.
+	// The arithmetic is in mobile.css beside the rules; the short of it is that
+	// the status strip is `flex: none` and took 345px of the 828 there are, and
+	// the desktop's lever on that -- the drag handle between the two lists -- is
+	// hidden on a phone with nothing in its place.
+	//
+	// So each section folds, and folding one gives its room to whatever is still
+	// open. The state is per DEVICE: which sections are worth their height is a
+	// fact about the screen in the hand, and a phone and a desktop that shared an
+	// account would otherwise fight over it.
+	var FOLD_KEY  = 'daimond-rail-fold';
+	// Diamonds and Chats are what the drawer is for. The status rows are eleven
+	// answers to questions nobody is asking while looking for a chat, so they
+	// start away -- and their header row, which carries the identity and the only
+	// cog a phone has, stays whatever this says.
+	var FOLD_DEF  = { diamonds: true, chats: true, status: false };
+	var folds     = null;
+
+	function foldState() {
+		if (folds) return folds;
+		folds = { diamonds: FOLD_DEF.diamonds, chats: FOLD_DEF.chats, status: FOLD_DEF.status };
+		try {
+			var raw = JSON.parse(localStorage.getItem(FOLD_KEY) || 'null');
+			if (raw && typeof raw === 'object') {
+				Object.keys(folds).forEach(function (k) {
+					if (typeof raw[k] === 'boolean') folds[k] = raw[k];
+				});
+			}
+		} catch (e) { /* private mode, or a key somebody hand-edited */ }
+		return folds;
+	}
+
+	/// Paint the fold state onto the rail and its three controls.
+	///
+	/// The attributes are written at every width. The rules that act on them live
+	/// inside the phone breakpoint, so a desktop is untouched by a state its user
+	/// cannot even see the controls for -- and a window dragged back under 760px
+	/// finds the drawer as this device last left it.
+	function applyFold() {
+		var rail = document.getElementById('panel-rail');
+		if (!rail) return;
+		var st = foldState();
+		Object.keys(st).forEach(function (k) {
+			rail.setAttribute('data-fold-' + k, st[k] ? 'on' : 'off');
+		});
+		var t = (window.DaimondI18n && DaimondI18n.t) ? DaimondI18n.t : null;
+		[].slice.call(rail.querySelectorAll('.rail-fold')).forEach(function (b) {
+			var k = b.getAttribute('data-fold');
+			if (!(k in st)) return;
+			var open = !!st[k];
+			b.setAttribute('aria-expanded', open ? 'true' : 'false');
+			var key = open ? 'rail.fold_section' : 'rail.unfold_section';
+			var txt = open ? 'Fold this section away' : 'Open this section';
+			// `t` answers with the KEY when a table has no entry, so the English
+			// above stands rather than a dotted identifier reaching a tooltip.
+			if (t) { try { var got = t(key); if (got && got !== key) txt = got; } catch (e) { /* table not up */ } }
+			// The data attributes move with the state, so a language change after
+			// the fold re-resolves the label the section is actually wearing.
+			b.setAttribute('data-i18n-title', key);
+			b.setAttribute('data-i18n-aria-label', key);
+			b.title = txt;
+			b.setAttribute('aria-label', txt);
+		});
+	}
+
+	function setFold(k, open) {
+		var st = foldState();
+		if (!(k in st)) return;
+		st[k] = !!open;
+		try { localStorage.setItem(FOLD_KEY, JSON.stringify(st)); } catch (e) { /* nothing to remember with */ }
+		applyFold();
+	}
+
+	function bindFolds() {
+		var rail = document.getElementById('panel-rail');
+		if (!rail) return;
+		applyFold();
+		rail.addEventListener('click', function (e) {
+			var b = e.target.closest && e.target.closest('.rail-fold');
+			if (b && rail.contains(b)) {
+				e.preventDefault();
+				e.stopPropagation();
+				setFold(b.getAttribute('data-fold'), b.getAttribute('aria-expanded') !== 'true');
+				return;
+			}
+			// The heading beside it is the same act with a thumb's worth of target.
+			// Phone only: on a desktop that word is a heading and nothing else, and
+			// there is a drag handle for what this does.
+			if (!isPhone()) return;
+			var h = e.target.closest && e.target.closest('.railhead > span[role="heading"]');
+			if (!h || !rail.contains(h)) return;
+			var head = h.parentNode.querySelector('.rail-fold');
+			if (!head) return;
+			e.preventDefault();
+			setFold(head.getAttribute('data-fold'), head.getAttribute('aria-expanded') !== 'true');
+		});
+		// A language change repaints the two labels this file owns.
+		if (window.DaimondI18n && DaimondI18n.onChange) DaimondI18n.onChange(applyFold);
+	}
+
+	// ── The keyboard, which `dvh` does not answer ───────────────
+	//
+	// `100dvh` is the viewport with the browser chrome retracted, and it does not
+	// shrink when iOS raises the keyboard over the page -- so a drawer opened from
+	// a focused composer ran its last rows underneath one. `--vvh` is the VISUAL
+	// viewport's height, and it is set only while something is genuinely covering
+	// the page, so the ordinary case stays the `dvh` it always was rather than a
+	// number this file has to keep right through every rotation and scroll.
+	function fitVisual() {
+		var vv = window.visualViewport;
+		var root = document.documentElement;
+		if (!vv || !root) return;
+		var covered = (window.innerHeight || 0) - vv.height;
+		if (covered > 80) root.style.setProperty('--vvh', Math.round(vv.height) + 'px');
+		else root.style.removeProperty('--vvh');
+	}
+
 	// ── The footer: the chip row ───────────────────────────────
 	//
 	// The bar carried four hard-wired destinations -- Chat, Email, Files, Agents
@@ -133,7 +255,9 @@
 	/// chips filled at once.
 	function here() {
 		if (document.body.classList.contains('drawer-open')) return 'rail';
-		if (guest) return guest;
+		// The FACE, not the guest: with the Pages tab selected the thing on screen is
+		// the Preview, and its chip is the one that should be filled in.
+		if (guest) return (FACES[guest] && face) ? face : guest;
 		return document.body.dataset.mpanel || '';
 	}
 
@@ -216,8 +340,29 @@
 	// boxes with opposite meanings.
 	var NO_ASK       = { compose: 1, tools: 1, trash: 1, social: 1 };
 
-	var sheetEl, bodyEl, grabEl, titleEl, askWrap, askInput, askSend;
+	// ── A guest with two faces ─────────────────────────────────
+	//
+	// A phone raises one thing at a time, and for most of the app that is the right
+	// shape: a message, a terminal, a list. It is the wrong shape for a document,
+	// because a document and the pages it is typeset into are ONE thing looked at
+	// two ways, and the loop that rebuilds the pages only runs while they are on
+	// screen. Raising the Preview as its own guest stashed the source, swapping back
+	// stashed the pages, and the watch stopped with them -- silently, so a Save then
+	// rebuilt nothing and coming back showed the PDF the button had written rather
+	// than the document as it now stands.
+	//
+	// So the second panel is a TAB of the first, both moved into the sheet together
+	// and neither ever stashed while the other is up. A table rather than a special
+	// case in `open`: anything else that turns out to be one thing seen two ways
+	// joins it with a line.
+	var FACES = { doc: 'preview' };
+	// Which face each two-faced guest was last left on, so going back to a document
+	// puts the reader where he left it rather than at the source every time.
+	var faceOf = {};
+
+	var sheetEl, bodyEl, grabEl, titleEl, tabsEl, askWrap, askInput, askSend;
 	var guest = null;			// the panel id currently in the sheet, or null
+	var face  = null;			// which of a two-faced guest's panels is showing
 	var detent = 'half';		// full | half | peek
 	var closing = false;		// re-entrancy guard against DaimondPanels.hide
 	// What had the keyboard when the sheet went up, so the sheet can give it
@@ -252,9 +397,32 @@
 		return h > 0 ? h : BAR_FALLBACK;
 	}
 
+	/// How much of the screen the on-screen keyboard is covering, in px.
+	///
+	/// MEASURED FROM `visualViewport`, which is the only thing that knows. iOS does
+	/// not shrink the layout viewport for a keyboard -- `innerHeight` is the same
+	/// number with the keys up as without -- so a sheet placed from `innerHeight`
+	/// alone puts the line being typed behind the keys, which is what the author met
+	/// editing a chapter on the phone. Zero where there is no visual viewport and
+	/// zero while no keyboard is up, so every caller can add it unconditionally.
+	function kbH() {
+		var vv = window.visualViewport;
+		if (!vv) return 0;
+		var hidden = window.innerHeight - vv.height - vv.offsetTop;
+		// A pixel or two of rounding is not a keyboard; a quarter of the screen is.
+		return hidden > 24 ? Math.round(hidden) : 0;
+	}
+
+	/// Put the measured keyboard where the stylesheet can use it.
+	function sayKb() {
+		if (!sheetEl) return;
+		var k = kbH();
+		sheetEl.style.setProperty('--kb', k + 'px');
+	}
+
 	/// The most a sheet may grow to: from just under the top bar to just above
-	/// the bottom bar. `full` stops a touch short so a sliver of chat stays.
-	function maxH() { return Math.max(PEEK, window.innerHeight - TOPBAR - barH()); }
+	/// the bottom bar, and above the keyboard when one is up.
+	function maxH() { return Math.max(PEEK, window.innerHeight - TOPBAR - barH() - kbH()); }
 
 	/// The HEIGHT of the sheet at each detent (it is anchored to the bottom, so
 	/// a taller sheet reveals more of the thing and less of the chat).
@@ -308,6 +476,14 @@
 	/// apply() skips reordering on a phone, so it stays put until closed.
 	function open(id) {
 		if (!sheetEl) return;
+		// A face asked for by name raises the guest it belongs to, on that face.
+		// Nothing else in the app has to know the sheet folded two panels into one.
+		for (var g in FACES) {
+			if (FACES[g] !== id) continue;
+			open(g);
+			tab(id);
+			return;
+		}
 		var el = document.getElementById('panel-' + id);
 		if (!el) return;
 		if (guest && guest !== id) stashBack();		// only one thing up at a time
@@ -316,10 +492,34 @@
 		// outgoing guest the thing focus goes home to.
 		if (!guest) opener = document.activeElement;
 		el.style.display = '';						// clear any inline none left by apply()
-		bodyEl.appendChild(el);
+		// MOVING AN ELEMENT RESETS EVERY SCROLLER INSIDE IT, so a panel already in
+		// the sheet is left exactly where it is. Re-raising the Doc sheet -- which
+		// opening another file in it does -- used to re-append both faces, and the
+		// live pages came back at page one of a 48-page book every time.
+		if (el.parentNode !== bodyEl) bodyEl.appendChild(el);
 		guest = id;
 		titleEl.textContent = label(id);
 		hideRedundantHead(el, label(id));
+		// The other face comes up with it, hidden, so the panel the watch draws into
+		// is MOUNTED from the moment the sheet opens. Mounted and hidden is a pause;
+		// gone is a stop, and the difference is the whole of the loop surviving a tab.
+		if (FACES[id]) {
+			var other = document.getElementById('panel-' + FACES[id]);
+			if (other) {
+				other.style.display = '';
+				if (other.parentNode !== bodyEl) bodyEl.appendChild(other);
+				hideRedundantHead(other, label(FACES[id]));
+			}
+			// The two share the box rather than halving it; see `.two-faced` in
+			// css/mobile.css for why neither is ever taken out of flow.
+			bodyEl.classList.add('two-faced');
+			drawTabs(id);
+			tab(faceOf[id] || id);
+		} else {
+			bodyEl.classList.remove('two-faced');
+			drawTabs(null);
+			face = null;
+		}
 		document.body.classList.add('sheet-open');
 		sheetEl.classList.add('open');
 		if (NO_ASK[id]) askWrap.classList.add('hidden');
@@ -334,17 +534,114 @@
 		setTimeout(function () { sheetEl.classList.add('open'); }, 20);   // headless-safe
 	}
 
+	/// Draw the tab strip for a two-faced guest, or take it away.
+	///
+	/// The strip is its own row under the grabber and NOT inside it, which is not
+	/// tidiness: the grabber carries `touch-action: none` and owns every vertical
+	/// gesture that starts on it, so a tab drawn there would be a button that moves
+	/// the sheet when a thumb slides a pixel on the way down.
+	function drawTabs(id) {
+		if (!tabsEl) return;
+		if (!id || !FACES[id]) { tabsEl.hidden = true; tabsEl.textContent = ''; return; }
+		var ids = [id, FACES[id]];
+		tabsEl.textContent = '';
+		ids.forEach(function (p) {
+			var b = document.createElement('button');
+			b.type = 'button';
+			b.className = 'msheet-tab';
+			b.dataset.face = p;
+			b.setAttribute('role', 'tab');
+			b.setAttribute('aria-controls', 'panel-' + p);
+			b.textContent = tabName(p);
+			b.addEventListener('click', function () { tab(p); });
+			tabsEl.appendChild(b);
+		});
+		tabsEl.hidden = false;
+	}
+
+	/// What a face is called on its tab.
+	///
+	/// Not the panel's `data-label`: "Doc" and "Preview" name PANELS, and a reader
+	/// looking at one document wants the two things he can do with it. The catalogue
+	/// carries both, so a language that says it differently can.
+	function tabName(p) {
+		var k = p === 'doc' ? 'sheet.tab_source' : p === 'preview' ? 'sheet.tab_pages' : '';
+		var said = k ? t(k) : '';
+		if (said && said !== k) return said;
+		return p === 'doc' ? 'Source' : p === 'preview' ? 'Pages' : label(p);
+	}
+
+	/// Show one face of a two-faced guest and hide the other.
+	///
+	/// THE HIDDEN PANEL IS NEITHER MOVED NOR TAKEN OUT OF FLOW. It stays in the sheet
+	/// body, laid out, merely invisible -- so the live pages keep their DOM, their
+	/// size and the reader's scroll while he is reading the source, and a rebuild that
+	/// lands while he types is already up when he turns back. A `display: none` face
+	/// loses all three: the browser discards the scroll position of a scroller taken
+	/// out of flow, which sent him to page one of a 48-page book on every glance at
+	/// the source.
+	function tab(p) {
+		if (!guest || !FACES[guest]) return;
+		var ids = [guest, FACES[guest]];
+		if (ids.indexOf(p) < 0) return;
+		face = p;
+		faceOf[guest] = p;
+		// A CLASS AND NOT `style.display`, because `#msheet .panel` carries
+		// `display: flex !important` and an inline style loses to `!important`. The
+		// first version of this set the inline property, read it back as 'none' and
+		// believed it: both panels stayed in the flex column and each took HALF the
+		// sheet -- the editor 34px tall under a keyboard, and the pages behind it the
+		// whole time the reader thought he was looking at the source.
+		ids.forEach(function (q) {
+			var el = document.getElementById('panel-' + q);
+			if (el) el.classList.toggle('msheet-face-off', q !== p);
+		});
+		if (tabsEl) {
+			tabsEl.querySelectorAll('.msheet-tab').forEach(function (b) {
+				var on = b.dataset.face === p;
+				b.classList.toggle('on', on);
+				b.setAttribute('aria-selected', on ? 'true' : 'false');
+				b.tabIndex = on ? 0 : -1;
+			});
+		}
+		// TURNING TO THE PAGES DOES NOT WAIT FOR THE POLL. Nothing is PAUSED by
+		// turning away from them, on purpose -- the reader is on Source only for as
+		// long as it takes to type and save, and pausing there would hand him a stale
+		// document and a rebuild to wait through on every switch (js/typstwatch.js
+		// `atHand`). The resume here is for the other way in: a sheet raised again
+		// after another guest had it, which the poll would answer a second later.
+		try {
+			var w = window.DaimondTypstWatch;
+			if (w && p === FACES[guest]) w.resume();
+		} catch (e) { /* no watch is the ordinary case */ }
+		markHere();
+	}
+
 	/// Put the guest element back where the desktop engine expects it,
 	/// hidden, so a later resize to desktop reseats it correctly.
+	///
+	/// BOTH FACES, because both were raised: a second panel left in the sheet body
+	/// after the sheet came down is a panel the desktop engine cannot seat.
 	function stashBack() {
-		var el = document.getElementById('panel-' + guest);
 		var stage = document.getElementById('stage');
-		if (el && stage) { el.style.display = 'none'; stage.appendChild(el); }
+		if (!stage) return;
+		var ids = [guest];
+		if (FACES[guest]) ids.push(FACES[guest]);
+		ids.forEach(function (id) {
+			var el = document.getElementById('panel-' + id);
+			if (!el) return;
+			el.classList.remove('msheet-face-off');		// the sheet's business, not the stage's
+			el.style.display = 'none';
+			stage.appendChild(el);
+		});
 	}
 
 	function teardown() {
 		stashBack();
+		if (bodyEl) bodyEl.classList.remove('two-faced');
+		drawTabs(null);
 		guest = null;
+		face  = null;
 		document.body.classList.remove('sheet-open');
 		sheetEl.classList.remove('open');		// slides down (transform), then rests
 		applyH(0);
@@ -371,7 +668,11 @@
 	/// Mirror it in the sheet, unless we are the ones who asked for it.
 	function onEngineHide(id) {
 		if (closing) return;
-		if (guest === id) teardown();
+		if (guest === id) { teardown(); return; }
+		// A FACE CLOSED OUT FROM UNDER THE SHEET -- the Preview's own closer, or its
+		// chip -- leaves the sheet holding a panel with nothing in it. Turn back to
+		// the face that is still worth looking at rather than showing the blank.
+		if (guest && FACES[guest] === id && face === id) tab(guest);
 	}
 
 	// ── Dragging the grabber ───────────────────────────────────
@@ -458,6 +759,108 @@
 		});
 	}
 
+	// ── The keyboard, and the line being typed ─────────────────
+	//
+	// A phone editing a file is half a screen of text and half a screen of keys, and
+	// the one thing that must be on the visible half is the line the caret is on. Two
+	// mechanisms, and both are needed: the SHEET is placed above the keyboard (`kbH`
+	// and `--kb`), and the TEXTAREA is scrolled so the caret's own line sits inside
+	// what is left. Neither alone is enough -- a sheet above the keys still hides the
+	// caret when it is forty lines down, and a scrolled textarea whose foot is behind
+	// the keys is scrolled to a place nobody can see.
+
+	/// A hidden copy of the textarea, for measuring where the caret actually IS.
+	///
+	/// THE ARITHMETIC ANSWER IS WRONG HERE. `.files-edit` is `white-space: pre-wrap`
+	/// with `word-break: break-word`, so a logical line is any number of visual ones
+	/// and counting `\n` before the caret gives a row that does not exist on screen.
+	/// A mirror with the same font, padding and width wraps the same way by
+	/// construction, which is the only way to be right about a wrapped line without
+	/// asking the engine to lay the text out twice.
+	var mirror = null;
+	function caretRect(ta) {
+		var el = ta || (guest && bodyEl ? bodyEl.querySelector('textarea') : null);
+		if (!el || !el.isConnected) return null;
+		if (!mirror) {
+			mirror = document.createElement('div');
+			mirror.setAttribute('aria-hidden', 'true');
+			mirror.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;'
+				+ 'white-space:pre-wrap;word-break:break-word;overflow:hidden';
+			document.body.appendChild(mirror);
+		}
+		var cs = window.getComputedStyle(el);
+		['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing',
+			'textTransform', 'padding', 'border', 'boxSizing', 'tabSize'].forEach(function (k) {
+			mirror.style[k] = cs[k];
+		});
+		mirror.style.width = el.clientWidth + 'px';
+		var at = el.selectionStart || 0;
+		mirror.textContent = el.value.slice(0, at);
+		var mark = document.createElement('span');
+		// A zero-width space, so an empty line still has a box with a height.
+		mark.textContent = '\u200b';
+		mirror.appendChild(mark);
+		var line = parseFloat(cs.lineHeight);
+		if (!isFinite(line)) line = parseFloat(cs.fontSize) * 1.4;
+		var box = el.getBoundingClientRect();
+		var top = box.top + mark.offsetTop - el.scrollTop;
+		return {
+			top:    top,
+			bottom: top + line,
+			left:   box.left + mark.offsetLeft - el.scrollLeft,
+			height: line,
+			// What the caller has to fit it into, keyboard and all.
+			seen:   { top: TOPBAR, bottom: window.innerHeight - kbH() },
+		};
+	}
+
+	/// Scroll the editor so the caret's line is in the part of the screen the
+	/// keyboard has left, and no further than it has to.
+	function keepCaret() {
+		if (!guest || !bodyEl) return;
+		var ta = bodyEl.querySelector('textarea');
+		if (!ta || document.activeElement !== ta) return;
+		var r = caretRect(ta);
+		if (!r) return;
+		var box = ta.getBoundingClientRect();
+		// A line of margin either side, so the caret is never flush against an edge
+		// and the line above it can be read while the line below is written.
+		var pad = Math.round(r.height);
+		var lo = Math.max(box.top, r.seen.top) + pad;
+		var hi = Math.min(box.bottom, r.seen.bottom) - pad;
+		if (hi <= lo) return;			// nothing left to fit it into
+		if (r.bottom > hi) ta.scrollTop += (r.bottom - hi);
+		else if (r.top < lo) ta.scrollTop -= (lo - r.top);
+	}
+
+	/// The sheet knows it is being typed into, so the other face steps aside.
+	function typing(on) {
+		if (tabsEl) tabsEl.classList.toggle('typing', !!on);
+		document.body.classList.toggle('sheet-typing', !!on);
+	}
+
+	function bindKeyboard() {
+		if (!bodyEl) return;
+		bodyEl.addEventListener('focusin', function (e) {
+			if (!e.target || e.target.tagName !== 'TEXTAREA') return;
+			typing(true);
+			// After the engine has scrolled the field into view itself, so this is
+			// the last word on where the line ends up rather than the first.
+			setTimeout(keepCaret, 60);
+		});
+		bodyEl.addEventListener('focusout', function (e) {
+			if (!e.target || e.target.tagName !== 'TEXTAREA') return;
+			typing(false);
+		});
+		// Every way the caret moves: typing, an arrow key, a tap into the text.
+		['input', 'keyup', 'click'].forEach(function (ev) {
+			bodyEl.addEventListener(ev, function (e) {
+				if (!e.target || e.target.tagName !== 'TEXTAREA') return;
+				keepCaret();
+			});
+		});
+	}
+
 	// ── The ask pill: forward to the one composer ──────────────
 	function ask() {
 		var text = (askInput.value || '').trim();
@@ -477,12 +880,15 @@
 		bodyEl   = document.getElementById('msheet-body');
 		grabEl   = document.getElementById('msheet-grab');
 		titleEl  = document.getElementById('msheet-title');
+		tabsEl   = document.getElementById('msheet-tabs');
 		askWrap  = document.getElementById('msheet-ask');
 		askInput = document.getElementById('msheet-ask-input');
 		askSend  = document.getElementById('msheet-ask-send');
 		if (!sheetEl) return;
 
 		bindGrab();
+		bindKeyboard();
+		sayKb();
 		document.getElementById('msheet-close').addEventListener('click', close);
 		askSend.addEventListener('click', ask);
 		askInput.addEventListener('keydown', function (e) {
@@ -500,6 +906,10 @@
 		// came to be marked in two places and not in the others.
 		var watch = new MutationObserver(markHere);
 		watch.observe(document.body, { attributes: true, attributeFilter: ['data-mpanel', 'class'] });
+
+		// The drawer's own accordion, and the keyboard fit that goes with it.
+		bindFolds();
+		fitVisual();
 
 		// The hamburger and the scrim.
 		var burger = document.getElementById('drawer-btn');
@@ -562,9 +972,19 @@
 		// Keep the sheet honest across a keyboard show/hide and rotation.
 		if (window.visualViewport) {
 			window.visualViewport.addEventListener('resize', function () {
+				fitVisual();
+				sayKb();
 				if (guest && !sheetEl.classList.contains('dragging')) snapTo(detent);
+				keepCaret();
 			});
 		}
+		// AND THE PLAIN `resize` TOO, because that is the one a scripted viewport
+		// change fires and the one an engine without a visual viewport has at all.
+		window.addEventListener('resize', function () {
+			sayKb();
+			if (guest && !sheetEl.classList.contains('dragging')) snapTo(detent);
+			keepCaret();
+		});
 
 		// Crossing the phone boundary: fold the phone surfaces away when we
 		// grow to desktop, and let the engine reseat everything. Driven off
@@ -613,6 +1033,11 @@
 		open: open, close: close, onEngineHide: onEngineHide,
 		isOpen: function () { return !!guest; },
 		guest:  function () { return guest; },
+		/// Show one face of a two-faced guest by panel id ('doc' or 'preview').
+		tab:    tab,
+		/// Which face is showing, or null when the guest has only one.
+		face:   function () { return face; },
+		caretRect: caretRect,
 	};
 	window.DaimondShell = {
 		openDrawer: openDrawer, closeDrawer: closeDrawer, toggleDrawer: toggleDrawer,
@@ -620,6 +1045,11 @@
 		/// chip to fill in. See `goTo` and `here`.
 		goTo: goTo, here: here, markHere: markHere,
 		isPhone: isPhone,
+		/// The drawer's accordion, published for `dev/verify_railmobile.mjs`: a
+		/// verifier that set the storage key by hand would be measuring its own
+		/// idea of the format rather than the one `setFold` writes.
+		foldState: function () { var st = foldState(); return { diamonds: st.diamonds, chats: st.chats, status: st.status }; },
+		setFold:   setFold,
 		/// Is this MACHINE a phone or tablet? A hardware question, decided once from
 		/// real signals, unlike `isPhone`, which is the layout's 760px question and
 		/// moves when a window is resized. The presence beat carries this.

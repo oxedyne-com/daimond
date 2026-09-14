@@ -320,6 +320,155 @@ pub struct ChatResponse {
     pub truncated:         bool,
 }
 
+/// A tool call that arrived as TEXT, written in the model's own native call syntax, with no
+/// JSON `tool_calls` beside it.
+///
+/// Seen live on 2026-09-14, turn 56, glm-5.3 through OpenRouter: the round came back carrying
+/// `name</arg_key><arg_value>daimonfold</arg_value>…</tool_call>` as its whole content, the
+/// engine read a reply with no calls in it, ended the turn `answered` in 39 seconds, and the
+/// page drew `namedaimonfoldtimeout_ms600000worldtrue` as the model's answer.  No tool ran and
+/// nothing warned.  A wire fault had ended a turn as a success, which is the one ending this
+/// app may not report wrongly.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolCallLeak {
+    /// The leaked markup exactly as it arrived, kept verbatim so a reader sees the evidence
+    /// rather than a summary of it.
+    pub fragment:  String,
+    /// The call rebuilt from the fragment, where the fragment held a whole one.
+    ///
+    /// `None` when the head `<tool_call>NAME` was consumed upstream, which is what happened in
+    /// the live case: without a name there is nothing to dispatch, and guessing one from the
+    /// surrounding text would be the app inventing a tool call the model never made.
+    pub recovered: Option<ToolCall>,
+}
+
+/// What shape a reply arrived in, once it was whole.
+///
+/// Read ONCE, where the response is assembled, so the streamed and the non-streamed paths
+/// cannot disagree about the same bytes.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum ReplyShape {
+    /// An answer, or an answer with properly delivered tool calls beside it.
+    #[default]
+    Plain,
+    /// A tool call that arrived as prose.
+    Malformed(ToolCallLeak),
+}
+
+/// The four markers that say a native tool call has been written into the content.
+///
+/// `<arg_key>` and `</arg_value>` are deliberately absent: a fragment carrying either carries
+/// one of these too, and a shorter list is a shorter thing to keep honest.
+const LEAK_MARKS: [&str; 4] = ["<tool_call>", "</tool_call>", "<arg_value>", "</arg_key>"];
+
+/// The leak in `content`, or `None` where the model was only talking.
+///
+/// **A marker inside a fenced code block is not a leak.**  A model showing a reader what its
+/// own call syntax looks like -- which the daimon is asked to do whenever this defect is
+/// discussed -- writes exactly these bytes on purpose, and classifying that as malformed would
+/// nudge a model that had done nothing wrong and then end its turn under an error word.
+/// [`fenced_spans`] is the same reader the fold stripper trusts for the same judgement.
+///
+/// The fragment runs from the start of the LINE holding the first marker to the end of the line
+/// holding the last, rather than from marker to marker: the head-stripped form opens with the
+/// argument name (`name</arg_key>…`) and a span that began at the first marker would throw that
+/// word away -- the one word that says which argument was being written.
+pub fn leaked_tool_call(content: &str) -> Option<ToolCallLeak> {
+    let spans = fenced_spans(content);
+    let fenced = |i: usize| spans.iter().any(|(a, b)| i >= *a && i < *b);
+    let (mut lo, mut hi) = (usize::MAX, 0usize);
+    for mark in LEAK_MARKS {
+        let mut at = 0usize;
+        while let Some(i) = content[at..].find(mark) {
+            let start = at + i;
+            at = start + mark.len();
+            if fenced(start) {
+                continue;
+            }
+            lo = lo.min(start);
+            hi = hi.max(at);
+        }
+    }
+    if lo == usize::MAX {
+        return None;
+    }
+    // Out to the line ends, for the reason the doc comment gives.
+    let from = content[..lo].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let to = content[hi..].find('\n').map(|i| hi + i).unwrap_or(content.len());
+    let fragment = content[from..to].trim().to_string();
+    let recovered = recover_tool_call(&fragment);
+    Some(ToolCallLeak { fragment, recovered })
+}
+
+/// The call `fragment` holds, where it holds a whole one.
+///
+/// **Only a fragment with its NAME still on it is recovered.**  The name lives between
+/// `<tool_call>` and the first `<arg_key>`, and when the head has been consumed upstream there
+/// is no name in the bytes at all.  Inferring one from the preceding `think_log` would be the
+/// app dispatching a tool off the model's working rather than off its call, which is the
+/// mistake `dev/CONTRACT_OUTCOME.md` exists to keep out of this tree.
+fn recover_tool_call(fragment: &str) -> Option<ToolCall> {
+    let open = fragment.find("<tool_call>")? + "<tool_call>".len();
+    let close = fragment[open..].find("</tool_call>")? + open;
+    let body = &fragment[open..close];
+    let first_key = body.find("<arg_key>")?;
+    let name = body[..first_key].trim();
+    // A name is one bare word.  Anything carrying markup is a fragment that has been cut or
+    // interleaved, and dispatching off it would be a guess.
+    if name.is_empty() || name.contains('<') || name.contains('>') || name.contains(char::is_whitespace) {
+        return None;
+    }
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let mut rest = &body[first_key..];
+    while !rest.trim().is_empty() {
+        let ks = match rest.find("<arg_key>") {
+            Some(i) => i + "<arg_key>".len(),
+            None    => break,
+        };
+        let ke = rest[ks..].find("</arg_key>")? + ks;
+        let vs = rest[ke..].find("<arg_value>")? + ke + "<arg_value>".len();
+        let ve = rest[vs..].find("</arg_value>")? + vs;
+        // The key must sit immediately before its value, or the pairs have been interleaved
+        // with something this reader does not understand.
+        if rest[ke + "</arg_key>".len()..vs - "<arg_value>".len()].trim() != "" {
+            return None;
+        }
+        pairs.push((rest[ks..ke].trim().to_string(), rest[vs..ve].to_string()));
+        rest = &rest[ve + "</arg_value>".len()..];
+    }
+    if pairs.is_empty() {
+        return None;
+    }
+    let args: Vec<String> = pairs.iter()
+        .map(|(k, v)| fmt!("\"{}\":{}", json_escape(k), json_literal(v)))
+        .collect();
+    Some(ToolCall {
+        // Marked as recovered rather than given a provider's id, because no provider issued
+        // one: the call never existed on the wire as a call.
+        id:        fmt!("leak_{}", name),
+        name:      name.to_string(),
+        arguments: fmt!("{{{}}}", args.join(",")),
+    })
+}
+
+/// One leaked argument value as JSON.
+///
+/// The native syntax is untyped -- every value arrives as text -- so `true`, `false` and a bare
+/// number are written unquoted and everything else becomes a JSON string.  The live fragment
+/// carried `600000` and `true`, both of which a tool schema types as something other than a
+/// string, so a reader that quoted everything would recover a call the door then refused.
+fn json_literal(v: &str) -> String {
+    let t = v.trim();
+    if t == "true" || t == "false" || t == "null" {
+        return t.to_string();
+    }
+    if !t.is_empty() && t.parse::<f64>().is_ok() {
+        return t.to_string();
+    }
+    fmt!("\"{}\"", json_escape(v))
+}
+
+
 /// The response from a chat call that may include tool calls the model
 /// wants executed.  Whether it was produced by a streaming or a
 /// non-streaming request, the accumulated shape is the same.
@@ -368,6 +517,42 @@ pub struct ChatOnceResponse {
     /// complete HTTP 200, and sending the same request again costs money and
     /// produces the same cut.
     pub truncated:         bool,
+    /// Whether the reply arrived as a reply at all; see [`ReplyShape`].
+    ///
+    /// Settled by [`ChatOnceResponse::classified`] at each of the three places a response is
+    /// assembled, so a caller never has to remember to look.
+    pub shape:             ReplyShape,
+}
+
+impl ChatOnceResponse {
+
+    /// Read the reply's shape, and recover a leaked tool call where the fragment holds one.
+    ///
+    /// Called on every assembled response -- streamed, whole, OpenAI dialect and Anthropic --
+    /// because the fault is the MODEL writing its own call syntax into the text, and nothing
+    /// about that is particular to a transport.
+    ///
+    /// A recovered call joins `tool_calls` and its markup is taken out of `content`, so
+    /// everything downstream sees the round the model meant to send.  An unrecovered one is
+    /// left exactly as it arrived: the agent loop nudges once and then ends the turn under its
+    /// own word, and the fragment is the evidence both of those rest on.
+    fn classified(mut self) -> Self {
+        // A round that already carries calls is a round whose calls arrived.  Prose beside them
+        // showing the syntax is a model explaining itself, not a model failing.
+        if !self.tool_calls.is_empty() {
+            return self;
+        }
+        let leak = match leaked_tool_call(&self.content) {
+            Some(l) => l,
+            None    => return self,
+        };
+        if let Some(call) = leak.recovered.clone() {
+            self.content = self.content.replace(&leak.fragment, "").trim().to_string();
+            self.tool_calls.push(call);
+        }
+        self.shape = ReplyShape::Malformed(leak);
+        self
+    }
 }
 
 
@@ -942,7 +1127,8 @@ impl LlmClient {
             retries,
             thinking:          thinking_text,
             truncated,
-        })
+            shape:             ReplyShape::Plain,
+        }.classified())
     }
 
     /// Refuse, before the request is built, to send an image to a model known not to see.
@@ -3742,7 +3928,8 @@ impl StreamAcc {
             retries,
             thinking:          self.reasoning,
             truncated:         self.truncated,
-        }
+            shape:             ReplyShape::Plain,
+        }.classified()
     }
 }
 
@@ -4024,7 +4211,8 @@ impl AnthropicAcc {
             retries,
             thinking,
             truncated:         self.truncated,
-        }
+            shape:             ReplyShape::Plain,
+        }.classified()
     }
 }
 
@@ -4316,6 +4504,111 @@ pub mod tests {
     use super::*;
 
     use crate::protocol::ImageMedia;
+
+    // ── A tool call that arrived as prose ───────────────────────────────────
+    //
+    // Every string below is the wire, verbatim, off turn 56 of 2026-09-14 (glm-5.3 through
+    // OpenRouter, build 1f8ca7ce44f0). Typing a plausible-looking fragment instead is how a
+    // reader ends up testing the shape it expected rather than the shape that arrives.
+
+    /// What actually reached the page: the head `<tool_call>verify<arg_key>` consumed
+    /// upstream, so the reply opens on an argument name with no call around it.
+    pub const LEAK_HEADLESS: &str = "name</arg_key><arg_value>daimonfold</arg_value>\
+        <arg_key>timeout_ms</arg_key><arg_value>600000</arg_value>\
+        <arg_key>world</arg_key><arg_value>true</arg_value></tool_call>";
+
+    /// The same call with its head intact, which is what the provider was sent and what a
+    /// recovery has to be able to rebuild.
+    pub const LEAK_WHOLE: &str = "<tool_call>verify<arg_key>name</arg_key>\
+        <arg_value>daimonfold</arg_value><arg_key>timeout_ms</arg_key>\
+        <arg_value>600000</arg_value><arg_key>world</arg_key>\
+        <arg_value>true</arg_value></tool_call>";
+
+    /// The real fragment is a leak, and it is not recoverable: no name, nothing to dispatch.
+    #[test]
+    fn test_the_fragment_that_ended_turn_56_as_an_answer_is_read_as_a_leak() {
+        let leak = leaked_tool_call(LEAK_HEADLESS)
+            .unwrap_or_else(|| panic!("the live fragment was read as ordinary prose"));
+        assert_eq!(LEAK_HEADLESS, leak.fragment, "the fragment was not kept verbatim");
+        assert_eq!(None, leak.recovered,
+            "a call with no name was rebuilt, which is the app inventing one");
+    }
+
+    /// A whole call is rebuilt, with its arguments typed the way a schema wants them.
+    #[test]
+    fn test_a_whole_leaked_call_is_recovered_with_its_arguments_typed() {
+        let leak = leaked_tool_call(LEAK_WHOLE)
+            .unwrap_or_else(|| panic!("a whole leaked call was read as prose"));
+        let call = match leak.recovered {
+            Some(c) => c,
+            None    => panic!("a whole call was not recovered: {:?}", leak.fragment),
+        };
+        assert_eq!("verify", call.name);
+        assert_eq!(Some(fmt!("daimonfold")), extract_json_string(&call.arguments, "name"));
+        // UNQUOTED, both of them. `verify`'s schema types `timeout_ms` as a number and
+        // `world` as a boolean, so a reader that made every value a string would recover a
+        // call the door then refused -- a fix that looks like one and is not.
+        assert!(call.arguments.contains("\"timeout_ms\":600000"),
+            "a numeric argument was quoted: {}", call.arguments);
+        assert!(call.arguments.contains("\"world\":true"),
+            "a boolean argument was quoted: {}", call.arguments);
+    }
+
+    /// The markup INSIDE a fence is a model showing its reader the syntax, not using it.
+    ///
+    /// The daimon is asked to explain this very defect, and an explanation that got its
+    /// author nudged and then its turn ended under an error word would be the fix doing more
+    /// damage than the fault.
+    #[test]
+    fn test_the_same_markup_inside_a_fence_is_a_model_showing_its_working() {
+        let shown = fmt!("A leaked call looks like this:\n\n```\n{}\n```\n\nThat is the shape.",
+            LEAK_WHOLE);
+        assert_eq!(None, leaked_tool_call(&shown),
+            "a fenced example was classified as a malformed reply");
+        // And a fence that is still open -- the ordinary mid-stream case -- is fenced too.
+        let mid = fmt!("Here is the shape:\n\n```\n{}", LEAK_HEADLESS);
+        assert_eq!(None, leaked_tool_call(&mid),
+            "an unclosed fence stopped protecting what is inside it");
+    }
+
+    /// Ordinary prose, including prose about tools, is not a leak.
+    #[test]
+    fn test_ordinary_prose_is_not_a_leak() {
+        for said in ["I will run verify next.", "", "<details><summary>a</summary>b</details>",
+            "The arg_key is name.", "a < b and c > d"]
+        {
+            assert_eq!(None, leaked_tool_call(said), "prose was read as a leak: {:?}", said);
+        }
+    }
+
+    /// A whole response carrying the leak comes back MALFORMED, with the call dispatched and
+    /// the markup out of the answer.
+    #[test]
+    fn test_a_recovered_leak_leaves_the_round_looking_like_the_one_the_model_meant() {
+        let resp = ChatOnceResponse {
+            content: fmt!("Let me check.\n{}", LEAK_WHOLE),
+            ..Default::default()
+        }.classified();
+        assert!(matches!(resp.shape, ReplyShape::Malformed(_)),
+            "a recovered leak stopped being reported");
+        assert_eq!(1, resp.tool_calls.len(), "the recovered call did not reach the round");
+        assert_eq!("Let me check.", resp.content,
+            "the markup was left in the answer: {:?}", resp.content);
+    }
+
+    /// A round that carries proper tool calls is never malformed, whatever its prose shows.
+    #[test]
+    fn test_a_round_whose_calls_arrived_is_plain_however_its_prose_reads() {
+        let resp = ChatOnceResponse {
+            content:    fmt!("The syntax is {}", LEAK_WHOLE),
+            tool_calls: vec![ToolCall {
+                id: fmt!("call_1"), name: fmt!("file_list"), arguments: fmt!("{{}}"),
+            }],
+            ..Default::default()
+        }.classified();
+        assert_eq!(ReplyShape::Plain, resp.shape,
+            "a model explaining the syntax beside a real call was nudged for it");
+    }
 
     // ── The two-depth answer, written inline ─────────────────────────────────
 

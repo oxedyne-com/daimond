@@ -3961,6 +3961,24 @@ details.chat-msg-thinking > summary {
 	opacity: 0.86;
 }
 
+/* ── A tool call that arrived as prose ────────────────────────────────
+   The evidence, drawn as code and not as an answer. Amber rather than red:
+   nothing broke, the wire was got wrong -- the same register a refused tool
+   tile carries, for the same reason. The fragment scrolls sideways rather
+   than wrapping, because a wrapped run of `<arg_key>` markup is harder to
+   read than one the eye can follow along a line. */
+.leak-note {
+	color: var(--warn, var(--text-muted));
+	font-size: var(--fs-sm);
+	margin-bottom: 0.4em;
+}
+.leak-frag {
+	white-space: pre;
+	overflow-x: auto;
+	font-size: 0.9em;
+	margin: 0;
+}
+
 /* ── The same fold, drawn while it is still arriving ──────────────────
    A fold that streams keeps ONE `<details>` for the whole of a generation --
    rebuilt per frame it would snap shut sixty times a second -- so the chat

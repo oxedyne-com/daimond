@@ -142,22 +142,27 @@
 
 	<div class="note"><strong>Freeing a file is not deleting it.</strong> It stays in cloud storage, the tree still lists it, and it comes back when it is asked for. Only a deliberate delete removes a file.</div>
 
-	<h3 id="s17">Any kind of file</h3>
+	<h3 id="s17">Writing a document with its pages beside it</h3>
+	<p>Open a <code translate="no">.typ</code> file and the Doc panel gains two buttons. <span class="ui">Compile</span> lays the document out here, in the page, and writes <code translate="no">&lt;name&gt;-preview.pdf</code> beside the source; while those pages are up, every save rebuilds them, so the source and the document are on screen together. Pressing it on a chapter compiles the <em>document</em> that includes the chapter — the file that sets up its own page — and takes you to the chapter's own page in it. <span class="ui">Publish</span> is the other half: it runs the project's own <code translate="no">dev</code> script on your machine, under a memory cap, which is where print colour and a metadata scrub happen and what writes the final PDF. <span class="ui">Compile</span> never writes that name.</p>
+	<p>Both panels have to be on screen for the loop to run. Where the window is too narrow to seat the source and the pages at once, opening the source takes the pages' place and the Doc panel says so: nothing is rebuilt until they come back, and then one rebuild catches up whatever was saved meanwhile. Fold the rail or the dock, or widen the window, to see both.</p>
+	<p>The editor need not be Daimond's. A <code translate="no">:w</code> from vim in the Terminal panel — or from any editor writing into the folder you granted — is picked up within about a second and the pages rebuild from it, because a real folder has no change events and Daimond polls the files it is watching.</p>
+
+	<h3 id="s18">Any kind of file</h3>
 	<p>Any file is stored and travels between your devices, up to a gigabyte each. Opening one that is not text shows its size and a download button instead of trying to display it.</p>
 
-	<h3 id="s18">Moving files in and out</h3>
+	<h3 id="s19">Moving files in and out</h3>
 	<p>Two buttons sit beside the chips. <span class="ui">Import a folder…</span> copies a folder from this computer in, after which it syncs and is stored like everything else. <span class="ui">Save a copy…</span> writes the workspace out to a folder on this computer, and says how many cloud-only files it left behind rather than fetching them. Neither changes where the agent is working, and both need a Chromium-based browser.</p>
 
 	<p>While the agent is working in a real folder a third button appears, <span class="ui">Change folder…</span>, and it is the only control that opens a folder picker. Moving between <span class="ui">Browser</span> and <span class="ui">Machine</span> does not: Daimond remembers the folder you last used, so going back is one click on the chip.</p>
 
-	<h3 id="s19">What the agent may fetch</h3>
+	<h3 id="s20">What the agent may fetch</h3>
 	<p>When the agent needs a file that is in cloud storage, it is told so plainly and has to fetch it deliberately. Nothing is downloaded quietly behind a read: a download can be large and, once storage is priced, costs you money. A cap limits how much the agent may bring down on its own initiative, after which it comes back and asks.</p>
 
-	<h3 id="s20">What cloud storage costs</h3>
+	<h3 id="s21">What cloud storage costs</h3>
 	<p>Not a subscription. Like everything else leaving the browser it is paid for from <a href="models.html">credits</a>, and the one-time Pro unlock stays one-time. At present it is free and unmetered, until it can be sold properly.</p>
 	<div class="note">If a storage charge ever cannot be covered, <strong>nothing is deleted straight away</strong>. Reading and downloading stay free for six months, so everything can be retrieved, and only then is the paid overflow removed. The free working set never is.</div>
 
-	<h2 id="s21">Tools</h2>
+	<h2 id="s22">Tools</h2>
 	<p>Open the <span class="ui">Tools · N of M</span> row in the admin panel to see what Daimond can do. It is called Tools, not Upgrades, because most of what it lists is free and already yours.</p>
 
 	<figure class="shot" data-shot="tools-panel">

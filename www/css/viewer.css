@@ -418,6 +418,7 @@
 .tl-mark.tl-live     { background: var(--ok, #3fa66a); }
 .tl-mark.tl-building { background: var(--accent); animation: tl-pulse 1.1s ease-in-out infinite; }
 .tl-mark.tl-stale,
+.tl-mark.tl-paused,
 .tl-mark.tl-held     { background: var(--warn, #c9932b); }
 .tl-mark.tl-dead     { background: var(--danger, #c0453c); }
 @keyframes tl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
@@ -555,6 +556,16 @@
 	overflow: auto;
 	background: var(--bg-tertiary);
 	padding: 8px;
+	/* ONE FINGER SCROLLS, TWO FINGERS ZOOM. Without this the browser claims the
+	   second finger for its own page zoom before `pinch` in js/typstwatch.js ever
+	   sees a second pointer -- and a page-zoomed app is not a zoomed document: the
+	   sheet, the bars and the keyboard grow with it. `pan-y` gives the vertical
+	   drag back to the scroller, which is the only direction the book has. */
+	touch-action: pan-y;
+	/* A pinch that runs past the ends of the book must not drag the sheet the
+	   pages sit in, or pull the page down to refresh -- and a refresh is the one
+	   thing a live compiler does not survive. */
+	overscroll-behavior: contain;
 }
 /* THE STACK, WHICH IS NOT ITSELF PAPER. Each page is its own sheet inside the
    shadow root and carries its own white and its own shadow (`SHEET_CSS` in

@@ -6,11 +6,20 @@
    DaimondGateway.gwFetch) to prove the one thing that had two idle
    desktops each putting ~8 MB on the wire every 300 seconds:
 
-     A. THE KEY. The parcel's own-device `seen` stamp is masked out
-        of the comparison and nothing else is. A PEER's stamp still
-        counts as news, a real change still counts as news, and the
-        parcel itself is left untouched -- what is sent still carries
-        the true stamp.
+     A. THE KEY. EVERY roster line's `seen` stamp is masked out of the
+        comparison and nothing else is. A peer's `build` still counts
+        as news, a real change still counts as news, and the parcel
+        itself is left untouched -- what is sent still carries the
+        true stamps.
+
+        THE PEER'S STAMP WAS THE SECOND HALF, and this file asserted
+        the opposite of it until 2026-09-14: masking our own line
+        alone left the ECHO. A pull merges the peer's newer roster
+        line, so the next idle collect differs from what we last sent
+        and we push a byte-different, size-identical parcel; the peer
+        pulls that and does the same back. Versions 8355 and 8358 on
+        the owner's fleet were both 1,524,815 bytes on the wire with
+        nothing of the account different between them.
 
      B. THE SKIP. An idle device whose ONLY change is that stamp
         sends no POST at all (it takes the throttled idle pull
@@ -67,7 +76,8 @@ function parcel(o) {
 		devices: {
 			// Sorted by id, as `saveDevices` writes them.
 			[SELF]: line({ name: 'Chromium on Linux', created: 1000, seen: o.selfSeen || 1000, build: 'abc' }),
-			[PEER]: line({ name: 'Chromium on Linux', created: 900, seen: o.peerSeen || 900, build: 'abc' }),
+			[PEER]: line({ name: 'Chromium on Linux', created: 900, seen: o.peerSeen || 900,
+				build: o.peerBuild || 'abc' }),
 		},
 		ledger: [],
 	};
@@ -239,8 +249,12 @@ console.log('\nA. the comparison key — what counts as news and what does not\n
 		base === moved);
 
 	const peerMoved = key(parcel({ selfSeen: 1000, peerSeen: 900 + 60000 }));
-	check('A2. a PEER\'s `seen` moving DOES change it — the mask is this device\'s line alone',
-		base !== peerMoved);
+	check('A2. a PEER\'s `seen` moving leaves it UNCHANGED TOO — the echo fix',
+		base === peerMoved);
+
+	const peerBuilt = key(parcel({ selfSeen: 1000, peerBuild: 'def' }));
+	check('A2. but a peer\'s BUILD moving is still news — only the clock is masked',
+		base !== peerBuilt);
 
 	const changed = key(parcel({ selfSeen: 1000, chats: [{ id: 'c1', messages: [] }] }));
 	check('A3. a real change still changes it — the skip cannot swallow work',
@@ -251,10 +265,12 @@ console.log('\nA. the comparison key — what counts as news and what does not\n
 		base !== alsoChanged && changed === alsoChanged);
 
 	const masked = JSON.parse(base);
-	check('A4. the key keeps every other field of the line verbatim — only `seen` is touched',
+	check('A4. the key keeps every other field of every line verbatim — only `seen` is touched',
 		masked.devices[SELF].name === 'Chromium on Linux' && masked.devices[SELF].build === 'abc'
-		&& masked.devices[SELF].created === 1000 && masked.devices[PEER].seen === 900,
-		'seen=' + masked.devices[SELF].seen);
+		&& masked.devices[SELF].created === 1000
+		&& masked.devices[PEER].name === 'Chromium on Linux' && masked.devices[PEER].created === 900
+		&& masked.devices[SELF].seen === 0 && masked.devices[PEER].seen === 0,
+		'self seen=' + masked.devices[SELF].seen + ', peer seen=' + masked.devices[PEER].seen);
 	check('A4. and the key order is the parcel\'s, so two collects give the same bytes',
 		Object.keys(masked).join(',') === 'v,chats,files,filesComplete,devices,ledger'
 		&& Object.keys(masked.devices).join(',') === SELF + ',' + PEER);

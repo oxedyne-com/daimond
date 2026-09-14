@@ -153,68 +153,100 @@
 
 	/// The whole of what the drafting is told. Long, and every paragraph in it
 	/// is a rule some plan broke.
-	var SYSTEM = [
-		'You are triaging one person\'s notes about an application called Daimond into units of work.',
-		'',
-		'A NOTE is a report shaped like experience: where they were, what they expected, what happened.',
-		'A PROPOSAL is one change, stated so it can be agreed with, disagreed with, and FINISHED.',
-		'The map between them is many-to-many and all four of these happen:',
-		'  - several notes describe one fault: ONE proposal, and the other notes corroborate it;',
-		'  - one note holds two faults: TWO proposals, because a proposal holding both cannot be',
-		'    finished -- half of it ships and half does not;',
-		'  - a note that lands against a proposal already open is a COMMENT on it;',
-		'  - a note showing an open proposal\'s statement was wrong is a REVISION of it.',
-		'',
-		'Rules you are judged on:',
-		'1. DO NOT MERGE TWO FAULTS BECAUSE THEY TOUCH THE SAME PANEL, the same word, or the same',
-		'   feeling. Two notes about losing text are two faults unless one cause explains both.',
-		'   When two proposals plausibly share a cause, keep them apart and say so in the body.',
-		'2. DO NOT SPLIT ONE FAULT INTO ITS SYMPTOMS. One statement, one change, one finish.',
-		'3. INVENT NOTHING. Every claim in a draft must be traceable to a note or to a proposal you',
-		'   were shown. You have not read the code and must not write as though you had.',
-		'4. USE THE REPORTER\'S OWN WORDS wherever they are already precise. You are re-aiming a',
-		'   report at a maintainer, not rewriting it.',
-		'5. A title is ONE LINE and names the change, not the feeling. "Prompts to a second daimon',
-		'   are queued behind the first" -- not "Queueing problem".',
-		'6. A REVISION restates the whole proposal, title and body, as it should now read.',
-		'7. Every note must appear in at least one draft\'s `from`, or in `left` with a reason.',
-		'   A note holding two faults appears in two, which is the whole of rule 2\'s exception.',
-		'8. ORDER THE DRAFTS WITH THE MOST SERIOUS FIRST -- lost work, then wrong behaviour, then',
-		'   missing behaviour, then wording and documentation. A plan of twenty in the order the',
-		'   notes happened to be written is a plan nobody reads to the end of.',
-		'',
-		'Answer with ONE JSON object and nothing else -- no prose around it, no code fence:',
-		'{',
-		'  "drafts": [',
-		'    { "kind": "new",      "title": "...", "body": "...", "from": ["<note id>", ...], "why": "..." },',
-		'    { "kind": "comment",  "n": 12, "body": "...", "from": ["<note id>"], "why": "..." },',
-		'    { "kind": "revision", "n": 12, "title": "...", "body": "...", "from": ["<note id>"], "why": "..." }',
-		'  ],',
-		'  "left": [ { "id": "<note id>", "why": "..." } ]',
-		'}',
-		'',
-		'`why` is one sentence to the person who wrote the notes, saying why this draft is one unit',
-		'of work and not two, or why it belongs on a proposal that already exists.',
-	].join('\n');
+	///
+	/// BUILT AT THE CALL, not at load -- the same reason `polishSystem` below
+	/// gives: rule 9 carries a number that lives in another module, and a prompt
+	/// frozen at load would name whatever that module's figure was when this
+	/// file was first parsed.
+	function triageSystem() {
+		return [
+			'You are triaging one person\'s notes about an application called Daimond into units of work.',
+			'',
+			'A NOTE is a report shaped like experience: where they were, what they expected, what happened.',
+			'A PROPOSAL is one change, stated so it can be agreed with, disagreed with, and FINISHED.',
+			'The map between them is many-to-many and all four of these happen:',
+			'  - several notes describe one fault: ONE proposal, and the other notes corroborate it;',
+			'  - one note holds two faults: TWO proposals, because a proposal holding both cannot be',
+			'    finished -- half of it ships and half does not;',
+			'  - a note that lands against a proposal already open is a COMMENT on it;',
+			'  - a note showing an open proposal\'s statement was wrong is a REVISION of it.',
+			'',
+			'Rules you are judged on:',
+			'1. DO NOT MERGE TWO FAULTS BECAUSE THEY TOUCH THE SAME PANEL, the same word, or the same',
+			'   feeling. Two notes about losing text are two faults unless one cause explains both.',
+			'   When two proposals plausibly share a cause, keep them apart and say so in the body.',
+			'2. DO NOT SPLIT ONE FAULT INTO ITS SYMPTOMS. One statement, one change, one finish.',
+			'3. INVENT NOTHING. Every claim in a draft must be traceable to a note or to a proposal you',
+			'   were shown. You have not read the code and must not write as though you had.',
+			'4. USE THE REPORTER\'S OWN WORDS wherever they are already precise. You are re-aiming a',
+			'   report at a maintainer, not rewriting it.',
+			'5. A title is ONE LINE and names the change, not the feeling. "Prompts to a second daimon',
+			'   are queued behind the first" -- not "Queueing problem".',
+			'6. A REVISION restates the whole proposal, title and body, as it should now read.',
+			'7. Every note must appear in at least one draft\'s `from`, or in `left` with a reason.',
+			'   A note holding two faults appears in two, which is the whole of rule 2\'s exception.',
+			'8. ORDER THE DRAFTS WITH THE MOST SERIOUS FIRST -- lost work, then wrong behaviour, then',
+			'   missing behaviour, then wording and documentation. A plan of twenty in the order the',
+			'   notes happened to be written is a plan nobody reads to the end of.',
+			'9. A "new" or "revision" draft\'s TITLE IS AT MOST ' + titleLimit() + ' CHARACTERS, and shorter',
+			'   is better. The forge refuses a longer one outright and writes nothing at all, so a title',
+			'   over that length costs the person the proposal. Count it. Put the detail in the body,',
+			'   which has room. A "comment" carries no title and this rule does not apply to it.',
+			'',
+			'Answer with ONE JSON object and nothing else -- no prose around it, no code fence:',
+			'{',
+			'  "drafts": [',
+			'    { "kind": "new",      "title": "...", "body": "...", "from": ["<note id>", ...], "why": "..." },',
+			'    { "kind": "comment",  "n": 12, "body": "...", "from": ["<note id>"], "why": "..." },',
+			'    { "kind": "revision", "n": 12, "title": "...", "body": "...", "from": ["<note id>"], "why": "..." }',
+			'  ],',
+			'  "left": [ { "id": "<note id>", "why": "..." } ]',
+			'}',
+			'',
+			'`why` is one sentence to the person who wrote the notes, saying why this draft is one unit',
+			'of work and not two, or why it belongs on a proposal that already exists.',
+		].join('\n');
+	}
+
+	/// How long a title may be at the forge, in characters.
+	///
+	/// ASKED OF improve.js, which holds the one copy of the figure and names the
+	/// oregami constant it came from. A literal here would be a second number to
+	/// keep in step, and the one that matters is the one the panel refuses on. The
+	/// fallback is for a build loaded without that panel, where nothing can post
+	/// anyway.
+	function titleLimit() {
+		try { return window.DaimondImprove.titleLimit(); } catch (e) { return 200; }
+	}
 
 	/// The whole of what the SINGLE-note polish is told. The compose box's "Polish
-	/// & post" runs this on one note and posts what it drafts, so it is one note in
-	/// and one proposal out -- no triage, no comments, no revisions, no `from`.
-	var POLISH_SYSTEM = [
-		'You are turning ONE person\'s note about an application called Daimond into ONE proposal.',
-		'A NOTE is a report shaped like experience: where they were, what they expected, what happened.',
-		'A PROPOSAL is one change, stated so it can be agreed with, disagreed with, and FINISHED.',
-		'',
-		'Rules you are judged on:',
-		'1. ONE proposal, one change. If the note holds two faults, state the most serious and only that.',
-		'2. INVENT NOTHING. Every claim must be traceable to the note. You have not read the code.',
-		'3. USE THE REPORTER\'S OWN WORDS where they are already precise. You are re-aiming a report at a',
-		'   maintainer, not rewriting it in your own voice.',
-		'4. The TITLE is one line and names the change, not the feeling.',
-		'',
-		'Answer with ONE JSON object and nothing else -- no prose around it, no code fence:',
-		'{ "title": "...", "body": "..." }',
-	].join('\n');
+	/// & post" runs this on one note and HOLDS what it drafts for the person to
+	/// send, so it is one note in and one proposal out -- no triage, no comments,
+	/// no revisions, no `from`.
+	///
+	/// BUILT AT THE CALL, not at load, because rule 5 carries a number that lives in
+	/// another module. A prompt frozen at load would name whatever that module was
+	/// when this file was parsed.
+	function polishSystem() {
+		return [
+			'You are turning ONE person\'s note about an application called Daimond into ONE proposal.',
+			'A NOTE is a report shaped like experience: where they were, what they expected, what happened.',
+			'A PROPOSAL is one change, stated so it can be agreed with, disagreed with, and FINISHED.',
+			'',
+			'Rules you are judged on:',
+			'1. ONE proposal, one change. If the note holds two faults, state the most serious and only that.',
+			'2. INVENT NOTHING. Every claim must be traceable to the note. You have not read the code.',
+			'3. USE THE REPORTER\'S OWN WORDS where they are already precise. You are re-aiming a report at a',
+			'   maintainer, not rewriting it in your own voice.',
+			'4. The TITLE is one line and names the change, not the feeling.',
+			'5. The TITLE IS AT MOST ' + titleLimit() + ' CHARACTERS, and shorter is better. The forge refuses a',
+			'   longer one outright and writes nothing at all, so a title over that length costs the person',
+			'   the proposal. Count it. Put the detail in the body, which has room.',
+			'',
+			'Answer with ONE JSON object and nothing else -- no prose around it, no code fence:',
+			'{ "title": "...", "body": "..." }',
+		].join('\n');
+	}
 
 	/// One note, as the drafting reads it. The id goes FIRST and verbatim,
 	/// because it is what every draft is aimed with and a model that paraphrases
@@ -256,7 +288,7 @@
 			props.forEach(function (p) { parts.push(sayProp(p)); parts.push(''); });
 		}
 		parts.push('Triage these notes now.');
-		return { system: SYSTEM, user: parts.join('\n') };
+		return { system: triageSystem(), user: parts.join('\n') };
 	}
 
 	// ── What it will cost, said before it runs ─────────────────
@@ -420,7 +452,7 @@
 	/// is the brief.
 	async function client(got) {
 		var mod = await import(PKG);
-		return new mod.DaimondApp(got.baseUrl, got.apiKey, got.model, OUT_MAX, SYSTEM, false);
+		return new mod.DaimondApp(got.baseUrl, got.apiKey, got.model, OUT_MAX, triageSystem(), false);
 	}
 
 	/// Draft a plan from every kept note and the public proposal list.
@@ -487,7 +519,7 @@
 		if (!one) return null;
 		try {
 			var mod = await import(PKG);
-			var app = new mod.DaimondApp(got.baseUrl, got.apiKey, got.model, OUT_MAX, POLISH_SYSTEM, false);
+			var app = new mod.DaimondApp(got.baseUrl, got.apiKey, got.model, OUT_MAX, polishSystem(), false);
 			var out = '';
 			await app.run_turn('The note:\n\n' + one + '\n\nWrite the proposal now.', function (ev) {
 				if (ev && ev.type === 'text' && typeof ev.content === 'string') out += ev.content;
@@ -501,7 +533,12 @@
 			var title = (typeof obj.title === 'string') ? obj.title.replace(/[\r\n]+/g, ' ').trim() : '';
 			var body  = (typeof obj.body  === 'string') ? obj.body  : '';
 			if (!title) return null;
-			return { title: title.slice(0, 300), body: body.slice(0, 16000) };
+			// NOT CUT TO THE FORGE'S LIMIT. A title trimmed to exactly 200 characters
+			// would be cut mid-word and sent looking deliberate; an over-length one is
+			// handed back whole, and improve.js holds it in an editor with both numbers
+			// beside it. The bound here is only against an answer that is not a title
+			// at all. It was 300 and unexplained, which read as a limit and is not one.
+			return { title: title.slice(0, 4 * titleLimit()), body: body.slice(0, 16000) };
 		} catch (e) {
 			log('the note would not polish', e);
 			return null;
@@ -697,8 +734,13 @@
 		/// queue sends, in one press, on the user's tick.
 		run:      run,
 		/// Rewrite ONE note into `{ title, body }` with the model, for the compose
-		/// box's "Polish & post". improve.js posts what this returns.
+		/// box's "Polish & post". improve.js HOLDS what this returns, draws it, and
+		/// posts it on a press -- never on this answering.
 		polish:   polish,
+		/// What the single-note polish is told, INCLUDING the forge's title limit,
+		/// so a verifier can assert the number reached the model rather than
+		/// inferring it from a title that happened to be short.
+		polishSystem: polishSystem,
 		/// Forget this run's summary. The drafts stay in the queue.
 		clear:    clear,
 		/// Everything the model is given, PURE, so a verifier can assert that all

@@ -122,6 +122,8 @@
 	'rail.chats_help':           '生の会話です。ここから Diamond を切り出します。',
 	'rail.new_chat':             '新しいチャット',
 	'rail.chats_menu': 'その他',
+	'rail.fold_section': 'このセクションを折りたたむ',
+	'rail.unfold_section': 'このセクションを開く',
 	'rail.delete_all_chats': 'すべてのチャットを削除',
 	'layout.handle':             'ドラッグでサイズ変更、ダブルクリックでリセット',
 
@@ -762,6 +764,8 @@
 	'sheet.ask_ph':  'これについて質問…',
 	// {thing} はパネル名です。
 	'sheet.ask_about': 'この{thing}について質問…',
+	'sheet.tab_source': 'ソース',
+	'sheet.tab_pages':  'ページ',
 
 	// ── 識別情報：作成とロック解除 ─────────────────────────────
 	'identity.your_name':          'お名前',
@@ -1203,6 +1207,7 @@
 	'typst.watch.building': '再ビルド中…',
 	'typst.watch.live_preview': 'ライブプレビュー',
 	'typst.watch.stale':    '最後に成功したビルドを表示しています',
+	'typst.watch.paused':   '一時停止中 — ページが画面外です',
 	'typst.watch.held':     '再ビルドを停止しました',
 	'typst.watch.dead':     'コンパイラーが停止しました',
 	'typst.watch.rebuild':  '再ビルド',
@@ -1857,6 +1862,7 @@
 	'files.keep_editing':    '編集を続ける',
 	'files.unsaved_body':    '{path} への変更が保存されていません。エディターを閉じて破棄しますか。',
 	'files.editing_stopped': '編集をやめました。何も書き込んでいません。',
+	'files.draft_restored': '入力して保存していなかった内容を復元しました。保存するとファイルに書き込みます。',
 	'files.overwrite':       '上書き',
 	'files.conflict_title':  '編集中に変わりました',
 	'files.conflict_body':   'このファイルは開いたあとにディスク上で変わりました。おそらくエージェントです。それでも保存して、その変更を上書きしますか。',

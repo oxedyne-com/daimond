@@ -246,10 +246,43 @@
 		draw();
 	}
 
+	/// How long a title may be at the forge, in characters. Asked of
+	/// improve.js, which holds the one copy of the figure -- the same ask
+	/// js/triage.js's own `titleLimit()` makes, so there is one number kept in
+	/// step rather than two kept in step by hand.
+	function titleLimit() {
+		try { return window.DaimondImprove.titleLimit(); } catch (e) { return 200; }
+	}
+
+	function titleLen(s) { return Array.from(String(s || '')).length; }
+
+	/// Would the forge take this title? A "comment" carries no title of its
+	/// own -- `d.body` is what it sends -- so the question is only asked of
+	/// "new" and "revision", the same split js/triage.js's `cleanDraft` draws.
+	function fits(title, kind) {
+		if (kind === 'comment') return true;
+		var n = titleLen(title);
+		return n > 0 && n <= titleLimit();
+	}
+
+	/// What the row says about a title the forge will not take, in both
+	/// numbers -- the same sentence, and the same key, improve.js's `tooLong`
+	/// uses for the single-note path, so a person reads one rule twice, not two.
+	function tooLong(title) {
+		return tOr('social.title_over',
+			'That title is {n} characters; a title is up to {max}. Shorten it, then send.',
+			{ n: titleLen(title), max: titleLimit() });
+	}
+
 	/// Whether this draft can be sent at all. A voice is needed for every write;
-	/// a revision needs the forge to have said this asker may amend proposal `n`.
+	/// a title over the forge's limit is refused here, before it is ever
+	/// offered a tick -- the same guard improve.js's `fits` puts in front of the
+	/// single-note send, kept here rather than trusted to the model's own rule 9,
+	/// since a plan is read once and paid for already by the time it is wrong.
+	/// A revision needs the forge to have said this asker may amend proposal `n`.
 	function sendable(d) {
 		if (!hasVoice()) return false;
+		if (!fits(d.title, d.kind)) return false;
 		if (d.kind !== 'revision') return true;
 		var p = panel();
 		try { return !!(p && p.forge.mayAmend(d.n)); } catch (e) { return false; }
@@ -322,6 +355,14 @@
 			var parts = cut(text);
 			if (!parts) {
 				d.err = tOr('approve.no_title', 'First line is the title — write one, then what happened.');
+				return false;
+			}
+			// A title the forge will refuse never reaches it. Checked here, on the
+			// characters actually about to go -- not `d.title`, the one the draft was
+			// ticked with -- since `boxed()` reads a row's own edit, and an edit made
+			// after ticking is what `sendable()` above could not yet have seen.
+			if (!fits(parts.title, d.kind)) {
+				d.err = tooLong(parts.title);
 				return false;
 			}
 			a = (d.kind === 'revision') ? await p.forge.amend(d.n, parts) : await p.forge.open(parts);
@@ -501,13 +542,17 @@
 
 		// A revision the forge has not granted: no tick, and a plain sentence
 		// saying why, rather than a control that reaches a route this asker may
-		// not use. Never a path that edits someone else's proposal.
-		if (d.kind === 'revision' && !can && hasVoice()) {
-			row.appendChild(line('imp-as apl-dark', tOr('approve.not_yours',
-				'Only the proposal’s author can revise it.')));
-		} else if (!hasVoice()) {
+		// not use. Never a path that edits someone else's proposal. A title over
+		// the forge's own limit is checked ahead of that: it is the thing a
+		// person can actually fix in the box below, where "not yours" is not.
+		if (!hasVoice()) {
 			row.appendChild(line('imp-as apl-novoice', tOr('approve.novoice',
 				'No voice yet — a draft can only wait here.')));
+		} else if (!fits(d.title, d.kind)) {
+			row.appendChild(line('imp-as apl-dark apl-toolong', tooLong(d.title)));
+		} else if (d.kind === 'revision' && !can) {
+			row.appendChild(line('imp-as apl-dark', tOr('approve.not_yours',
+				'Only the proposal’s author can revise it.')));
 		}
 
 		var ta = document.createElement('textarea');

@@ -123,6 +123,8 @@
 	'rail.chats_help':           '날것의 대화예요. 여기서 Diamond을 잘라 내요.',
 	'rail.new_chat':             '새 채팅',
 	'rail.chats_menu': '더보기',
+	'rail.fold_section': '이 섹션 접기',
+	'rail.unfold_section': '이 섹션 열기',
 	'rail.delete_all_chats': '모든 채팅 삭제',
 	'layout.handle':             '끌어서 크기 조절, 두 번 클릭하면 원래대로',
 
@@ -763,6 +765,8 @@
 	'sheet.ask_ph':  '이것에 대해 물어보기…',
 	// {thing}은 패널 이름이에요.
 	'sheet.ask_about': '이 {thing}에 대해 물어보기…',
+	'sheet.tab_source': '소스',
+	'sheet.tab_pages':  '페이지',
 
 	// ── 신원: 만들기와 잠금 해제 ───────────────────────────────
 	'identity.your_name':          '이름',
@@ -1204,6 +1208,7 @@
 	'typst.watch.building': '다시 빌드하는 중…',
 	'typst.watch.live_preview': '실시간 미리보기',
 	'typst.watch.stale':    '마지막으로 성공한 빌드를 보여 주고 있어요',
+	'typst.watch.paused':   '일시중지 — 페이지가 화면에 없어요',
 	'typst.watch.held':     '다시 빌드를 멈췄어요',
 	'typst.watch.dead':     '컴파일러가 멈췄어요',
 	'typst.watch.rebuild':  '다시 빌드',
@@ -1856,6 +1861,7 @@
 	'files.keep_editing':    '계속 편집',
 	'files.unsaved_body':    '{path}에 고친 것이 저장되지 않았어요. 편집기를 닫고 버릴까요?',
 	'files.editing_stopped': '편집을 멈췄어요. 아무것도 쓰지 않았어요.',
+	'files.draft_restored': '입력하고 저장하지 않은 내용을 되살렸어요. 저장하면 파일에 기록돼요.',
 	'files.overwrite':       '덮어쓰기',
 	'files.conflict_title':  '편집하는 사이에 바뀌었어요',
 	'files.conflict_body':   '이 파일은 연 뒤에 디스크에서 바뀌었어요. 아마 에이전트일 거예요. 그래도 저장해서 그 변경을 덮어쓸까요?',

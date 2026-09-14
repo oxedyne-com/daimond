@@ -428,6 +428,25 @@
 }
 .files-view-msg.err { color: var(--danger, #e5484d); }
 
+/* WHAT THE LOOP IS SAYING, on its own line under what the PANEL is saying.
+   They were one line, and the panel's "Saved." therefore sat over a source that
+   no longer compiled: whichever spoke last won. A save is transient and fades; a
+   paused watch and a failed build stand until they are no longer true, so they
+   get a line that nothing else writes to. */
+.files-view-note {
+	flex: none; padding: 6px 10px; border-bottom: 1px solid var(--border);
+	font-family: var(--font-mono); font-size: var(--fs-xs);
+	color: var(--text-secondary); word-break: break-word; white-space: pre-wrap;
+}
+.files-view-note.err { color: var(--danger, #e5484d); }
+/* The file and the line, as the control it is: pressing it moves the caret. */
+.files-jump {
+	font: inherit; color: inherit; background: none; cursor: pointer;
+	border: 0; border-bottom: 1px dotted currentColor;
+	padding: 0; margin: 0 4px 0 0;
+}
+.files-jump:hover { color: var(--accent); }
+
 /* The box the file VIEWER draws into, and it had no rule at all.
    Everything inside it is written to stretch -- `.fileview`, `.fv-body` and each
    tier are all `flex: 1` -- but a flex item with no rule of its own is

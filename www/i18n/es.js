@@ -115,6 +115,8 @@
 	'rail.chats_help': 'Conversación en bruto. De ella se talla un Diamond.',
 	'rail.new_chat': 'Nuevo chat',
 	'rail.chats_menu': 'Más',
+	'rail.fold_section': 'Plegar esta sección',
+	'rail.unfold_section': 'Abrir esta sección',
 	'rail.delete_all_chats': 'Borrar todos los chats',
 	'layout.handle': 'Arrastra para redimensionar, doble clic para restablecer',
 
@@ -631,6 +633,8 @@
 	'sheet.ask': 'Preguntar',
 	'sheet.ask_ph': 'Pregunta sobre esto…',
 	'sheet.ask_about': 'Pregunta sobre {thing}…',
+	'sheet.tab_source': 'Fuente',
+	'sheet.tab_pages': 'Páginas',
 
 	// ── Identity: creating and unlocking ───────────────────────
 	'identity.your_name': 'Tu nombre',
@@ -1170,6 +1174,7 @@
 	'typst.watch.building': 'Recompilando…',
 	'typst.watch.live_preview': 'Vista previa en vivo',
 	'typst.watch.stale': 'Mostrando la última compilación que funcionó',
+	'typst.watch.paused': 'En pausa: las páginas no están a la vista',
 	'typst.watch.held': 'Recompilación detenida',
 	'typst.watch.dead': 'El compilador se ha detenido',
 	'typst.watch.rebuild': 'Recompilar',
@@ -1831,6 +1836,7 @@
 	'files.keep_editing': 'Seguir editando',
 	'files.unsaved_body': 'Tus cambios en {path} no se han guardado. ¿Cerrar el editor y perderlos?',
 	'files.editing_stopped': 'Edición detenida. No se escribió nada.',
+	'files.draft_restored': 'Se recuperó lo que habías escrito sin guardar. Guarda para escribirlo en el archivo.',
 	'files.overwrite': 'Sobrescribir',
 	'files.conflict_title': 'Cambió mientras editabas',
 	'files.conflict_body': 'Este archivo cambió en el disco desde que lo abriste, casi seguro un agente. ¿Guardar igualmente y sobrescribir esos cambios?',

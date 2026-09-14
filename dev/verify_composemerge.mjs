@@ -1,12 +1,19 @@
 // verify_composemerge.mjs — note-capture merged into the Proposals view.
 //
 // The standalone Notes view is gone. A note is written in a compose box at the
-// top of Proposals and posted straight as a proposal, in one of two modes that
-// both auto-send:
+// top of Proposals and becomes a proposal, in one of two modes -- and THEY DO NOT
+// END THE SAME WAY:
 //
 //   POST VERBATIM  — the words become the proposal at once (the direct path).
-//   POLISH & POST  — the model rewrites the note into a proposal, then that is
-//                    posted (the triage draft path).
+//   POLISH & POST  — the model rewrites the note into a proposal, and that draft
+//                    is HELD on the row with Send now beside it. Nothing leaves
+//                    until it is pressed.
+//
+// The second half of that changed on 2026-09-14: the drafting used to post in the
+// same breath, so the card carrying the model's words was drawn and removed inside
+// one turn. The owner watched his proposal go public before he could read it --
+// "It should wait for my permission." dev/verify_socialpost.mjs is that property's
+// own verifier; what is kept here is that the two modes still both WORK.
 //
 // A note that cannot be sent yet -- written offline, or a send that failed --
 // waits in a small queue under the box, REMEMBERING its mode, and is drained
@@ -14,9 +21,10 @@
 //
 // What this proves, the four the owner asked for:
 //   (a) verbatim online  → an immediate proposal, in the list, note gone;
-//   (b) polish online    → the DRAFTED proposal posted and in the list;
+//   (b) polish online    → the model's draft HELD, then posted on the press;
 //   (c) offline submit   → queued, with its mode, nothing on the wire;
-//   (d) reconnect        → the flush drains the queue, each note in its own mode.
+//   (d) reconnect        → the flush drains the queue: a verbatim note posts, a
+//                          polish note is drafted and then waits for a press.
 //
 // And two more, added because the queue had no way out of a refusal:
 //
@@ -333,15 +341,24 @@ try {
 	await page.evaluate(() => { window.DaimondPanels.show('social'); window.DaimondSocial.show('proposals'); });
 	await page.waitForTimeout(200);
 
-	// ── (b) Polish online → the DRAFTED proposal posted ─────────
+	// ── (b) Polish online → the draft is HELD, and the press posts it ──
 	before = opens().length;
 	await typeAndClick('the reply box scrolls to the top on send', 'improve-polish');
+	await page.waitForTimeout(1200);
+	check('(b) polish online posted NOTHING: the draft waits for a press',
+		opens().length - before === 0, `${opens().length - before} posts`);
+	check('(b) and the model\'s draft is held on the note',
+		await page.evaluate(() => {
+			const n = window.DaimondImprove.notes()[0];
+			return !!(n && n.draft && /^Polished:/.test(n.draft.title));
+		}) === true);
+	await page.click('#improve-queue .imp-queue-row [data-act="improve-resend"]');
 	for (let i = 0; i < 40 && await page.evaluate(() => window.DaimondImprove.notes().length > 0); i++) {
 		await page.waitForTimeout(150);
 	}
 	await page.waitForTimeout(300);
 	const bPost = opens().length - before === 1 ? fields(opens()[opens().length - 1].body) : {};
-	check('(b) polish online posted exactly one proposal', opens().length - before === 1,
+	check('(b) pressing Send now posted exactly one proposal', opens().length - before === 1,
 		`${opens().length - before} posts`);
 	check('(b) it carried the model\'s DRAFT, not the raw note',
 		/^Polished:/.test(bPost.title || '') && /tidier body/.test(bPost.body || ''),
@@ -376,23 +393,41 @@ try {
 		await page.locator('#improve-raised [data-act="improve-open-hub"]').count() === 1);
 	await shot(s, 'composemerge-offline' + (BREAK ? '-' + BREAK : ''));
 
-	// ── (d) Reconnect → the flush drains, each in its own mode ──
+	// ── (d) Reconnect → each note as far as it may go without a press ──
+	//
+	// AS FAR AS IT MAY GO IS NOT THE SAME FOR BOTH. The verbatim note's characters
+	// are the author's own and the press that queued them was the consent, so it
+	// posts. The polish note is DRAFTED -- the press that queued it was consent to
+	// spend on the model -- and then stops, because nobody has yet agreed to
+	// publish what the model wrote.
 	before = opens().length;
 	await stubPolish();				// the override does not survive if the panel reset; re-arm
 	await setOnline(true, true);	// fires 'online' → daimond.js → flushQueue
-	for (let i = 0; i < 60 && await page.evaluate(() => window.DaimondImprove.notes().length > 0); i++) {
+	for (let i = 0; i < 60 && await page.evaluate(() => window.DaimondImprove.notes().length > 1); i++) {
 		await page.waitForTimeout(200);
 	}
-	await page.waitForTimeout(400);
-	const drained = await page.evaluate(() => window.DaimondImprove.notes().length);
-	const newPosts = opens().slice(before).map(a => fields(a.body).title);
-	check('(d) reconnect drained the queue: nothing left waiting', drained === 0, `${drained} left`);
-	check('(d) both queued notes were sent on reconnect', opens().length - before === 2,
-		`${opens().length - before} posts`);
-	check('(d) the verbatim one went verbatim, the polish one as a draft',
-		newPosts.some(t => t === 'offline verbatim note about a crash')
-		&& newPosts.some(t => /^Polished:/.test(t)),
+	await page.waitForTimeout(600);
+	const left = await page.evaluate(() => window.DaimondImprove.notes().map(n => ({ mode: n.mode, draft: !!n.draft })));
+	let newPosts = opens().slice(before).map(a => fields(a.body).title);
+	check('(d) reconnect posted the verbatim note, and only it',
+		opens().length - before === 1
+		&& newPosts.some(t => t === 'offline verbatim note about a crash'),
 		JSON.stringify(newPosts));
+	check('(d) the polish note was drafted and is waiting on a press',
+		left.length === 1 && left[0].mode === 'polish' && left[0].draft === true,
+		JSON.stringify(left));
+	before = opens().length;
+	await page.click('#improve-queue .imp-queue-row [data-act="improve-resend"]');
+	for (let i = 0; i < 40 && await page.evaluate(() => window.DaimondImprove.notes().length > 0); i++) {
+		await page.waitForTimeout(150);
+	}
+	await page.waitForTimeout(400);
+	newPosts = opens().slice(before).map(a => fields(a.body).title);
+	check('(d) and the press sends it, as the model\'s draft',
+		opens().length - before === 1 && newPosts.some(t => /^Polished:/.test(t)),
+		JSON.stringify(newPosts));
+	check('(d) the queue is empty again',
+		await page.evaluate(() => window.DaimondImprove.notes().length) === 0);
 
 	// ── (e) A refusal the forge will repeat takes the note out of the flush ──
 	//
@@ -524,11 +559,18 @@ try {
 	before = opens().length;
 	await stubPolish();
 	await typeAndClick('one line, to be polished', 'improve-polish');
+	await page.waitForTimeout(1200);
+	check('(f) a one-line POLISH note is untouched by the rule and is drafted',
+		await page.evaluate(() => {
+			const n = window.DaimondImprove.notes()[0];
+			return !!(n && n.draft);
+		}) === true);
+	await page.click('#improve-queue .imp-queue-row [data-act="improve-resend"]');
 	for (let i = 0; i < 40 && await page.evaluate(() => window.DaimondImprove.notes().length > 0); i++) {
 		await page.waitForTimeout(150);
 	}
-	check('(f) a one-line POLISH note is untouched by the rule and still posts',
-		opens().length - before === 1, `${opens().length - before} posts`);
+	check('(f) and the press posts it', opens().length - before === 1,
+		`${opens().length - before} posts`);
 
 	const errs = errors(s).filter(e => !/Failed to load resource/.test(e));
 	check('nothing above was reached by way of an unhandled error', errs.length === 0,

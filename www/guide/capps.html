@@ -73,26 +73,26 @@
 			<p>The whole page, code and style together. Generous for a page written economically and tight for one used as a store, which is deliberate. <span class="ui">Page size limit</span> in Settings raises it if you need to.</p>
 		</div>
 		<div class="card">
-			<h3 id="s5b">Memory, hot and cold</h3>
+			<h3 id="s6">Memory, hot and cold</h3>
 			<p>A Diamond's memory can hold a great deal, and only the part you mark <span class="ui">Always present</span> travels with the daimon on every round. The rest is still its own to read and to search, on the turns that need it — so a record kept in the memory costs nothing until it is wanted. <span class="ui">Always-present part</span> in Settings sets how much rides along.</p>
 		</div>
 		<div class="card">
-			<h3 id="s6">No storage of its own</h3>
+			<h3 id="s7">No storage of its own</h3>
 			<p>It cannot use the browser's storage, and it has no memory between loads except the files it asks Daimond to write. Those files are in the Diamond, where you can read them.</p>
 		</div>
 		<div class="card">
-			<h3 id="s7">It cannot rewrite itself</h3>
+			<h3 id="s8">It cannot rewrite itself</h3>
 			<p>A capp may not write over <strong translate="no">crystal.html</strong> or <strong translate="no">crystal.json</strong> (nor <strong translate="no">crystal.md</strong>, where an older Diamond still keeps one), the version history, or the Diamond's own records. A page that could change its own code between one look and the next would mean nothing you read stayed read.</p>
 		</div>
 		<div class="card">
-			<h3 id="s8">It cannot leave its Diamond</h3>
+			<h3 id="s9">It cannot leave its Diamond</h3>
 			<p>Every path it asks for is resolved inside that one folder, and anything climbing out of it is refused. One capp cannot read another Diamond's files, and none of them can reach your workspace.</p>
 		</div>
 	</div>
 
 	<div class="note"><strong>The trade is the point.</strong> A capp is smaller and plainer than the little apps other tools will write for you, and there is no way yet to share one with anybody else. What you get for that is an app nobody else can read the contents of, that works with no connection, and that carries no subscription to keep it alive.</div>
 
-	<h2 id="s9">Where what you record goes</h2>
+	<h2 id="s10">Where what you record goes</h2>
 	<p>Into the Diamond, beside the page, on this device. A Diamond is kept in the browser's own storage: it is on your machine, but it is not a folder you can open in a file manager, and it is <strong>not</strong> in the folder you have open as your workspace, even though the Diamond's directory is listed there. Daimond keeps its own things apart from your work on purpose, so a page's log can never be written into somebody's project. The Workspace panel is where you read it. Nothing about it is sent to us, and <a href="accounts.html">what does leave the browser</a> is set out in full on the Accounts page. Deleting the page does not delete what it recorded: the files stay where they are, and a new page can read them.</p>
 
 	<p>Because the files are in the Diamond, they travel with the Diamond. <a href="sync.html">Cross-device sync</a> carries the whole folder to your other devices, so a log kept on your phone is on your laptop, and the gateway holds a parcel it cannot open. Two things follow that are worth knowing before you fill one up:</p>
@@ -101,19 +101,19 @@
 		<li><strong>Bulk data competes with everything else.</strong> Diamonds share a few megabytes in a parcel, and one that grows past what is left is left out of the sync entirely rather than trimmed. A log of what you did stays small for years; a reference table of tens of megabytes is a different thing and belongs in the workspace.</li>
 	</ul>
 
-	<h2 id="s10">Asking a daimon for one</h2>
+	<h2 id="s11">Asking a daimon for one</h2>
 	<p>Open the Diamond you want the app to live in and choose <span class="ui">✎ Page</span> in the row above the crystal. That fills the message box with a note saying which of the Diamond's two files you mean, since <span class="ui">✎ Edit</span> beside it changes what the crystal <em>says</em> and this changes how it <em>looks</em>. Finish the sentence with what you want and send it.</p>
 
 	<p>Say what you tap and what it should record. "A page with a tile for each of the foods I eat: tapping one records it with today's date, and the day's total is at the top." A daimon that knows the shape of the thing writes the file in one turn. What it cannot do is guess whether an entry is a count, a weight or a time, so say which.</p>
 
 	<p>You can ask for changes afterwards in the same way, and every version of the page is kept: <span class="ui">↺ History</span> shows them, and any of them can be restored. A page that will not load is not a dead end either. Daimond puts its own rendering up in place of the capp, says which way it failed, and offers to put the standard page back.</p>
 
-	<h2 id="s11">Using one on a phone</h2>
+	<h2 id="s12">Using one on a phone</h2>
 	<p>At the right-hand end of the row across the top of the centre panel, on a Diamond's crystal, sits a button drawn as four corners. Its name, <span class="ui">Full screen</span>, is in the tooltip rather than beside it, because in the ordinary view there is no room for the word. Pressing it takes away the rail, the top bar, the dock, the bottom bar, the message box and the crystal's own row of buttons, and gives the whole screen to the page, which is what a capp is worth having on a phone.</p>
 
 	<p>The same button, now wearing the words <span class="ui">Exit full screen</span>, brings it all back. <kbd>Esc</kbd> does too, so long as Daimond has the keyboard: while you are typing inside the page itself the keystrokes belong to the page, which is why the way out is a button and not only a key. It is never entered on your behalf, and it is not remembered: reopening Daimond puts you back in the ordinary view.</p>
 
-	<h2 id="s12">A worked example: Log Life</h2>
+	<h2 id="s13">A worked example: Log Life</h2>
 	<p>A capp ships with Daimond as an example, and you can have it as a working Diamond rather than reading about it. The button below makes a Diamond called <strong>Log Life</strong> and puts the page inside it, furnished and ready to record. Daimond asks first, and if you already have one it offers to open that instead of making a second.</p>
 
 	<div class="do" id="lifelog">

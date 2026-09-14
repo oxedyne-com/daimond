@@ -6,8 +6,9 @@
    looking at become the new ones, in place, without him asking.
 
        window.DaimondTypstWatch = {
-           began, stop, touched, rebuild, budgetMB, zoom, dark,
-           state, pageBox, goToPage, rail, sections, fitPage
+           began, stop, pause, resume, touched, rebuild, budgetMB,
+           zoom, dark, state, pageBox, goToPage, rail, sections,
+           fitPage
        }
 
    Nine things decide the shape of this file, and each of them is
@@ -239,6 +240,17 @@ const POLL_MS = 1000;
 /// measured here and stays a whole gigabyte clear.
 const BUDGET_DEFAULT = 2500;
 
+/// The same ceiling on a phone, in MB.
+///
+/// NOT A SMALLER GUESS AT THE SAME WALL: it is a different wall. iOS ends a tab
+/// that grows past a few hundred megabytes without a word and without a trap, so
+/// the "compiler bricked, reload" sentence the desktop budget buys never gets a
+/// chance to be read -- the whole page is gone. The author's 48-page book compiles
+/// at 306 MB and rebuilds at 378 MB, measured on the phone itself, so 768 leaves
+/// two rebuilds of headroom over the largest thing anybody has compiled here and
+/// still stops a long way short of what iOS will not forgive.
+const BUDGET_MOBILE = 768;
+
 /// The least headroom assumed for the next rebuild before any has been measured.
 const HEADROOM_MIN = 128;
 
@@ -359,7 +371,9 @@ const S = {
 	path:     '',		// the `.typ` being watched, or '' when idle
 	files:    [],		// every real path the last gather read
 	stamps:   null,		// what those files said last time, by path; null before any
-	mode:     'idle',	// idle | live | held | dead
+	mode:     'idle',	// idle | live | paused | held | dead
+	at:       null,		// the reader's place, kept across a pause that moves the view
+	dirty:    false,	// a watched file was written while the pages were off screen
 	builds:   0,		// rebuilds STARTED since `began`
 	drawn:    0,		// rebuilds that reached the screen
 	failed:   0,		// rebuilds the compiler refused
@@ -369,6 +383,7 @@ const S = {
 	building: false,
 	queued:   false,
 	seen:     false,	// the panel has been on screen at least once
+	was:      '',		// the mode a pause interrupted, so resuming restores it
 	error:    '',		// the compiler's own words, while a build is broken
 	reason:   '',		// why the loop is held or dead
 	cause:    '',		// 'write' or 'poll' or 'user': what asked for the rebuild
@@ -415,6 +430,25 @@ async function getRenderer() {
 	rinit = await g.default(R_WASM.href);
 	renderer = await new g.TypstRendererBuilder().build();
 	return renderer;
+}
+
+/// Is this a phone, for the purposes of what may be held in memory and how the
+/// pages are shown?
+///
+/// TWO QUESTIONS ARE ASKED AND EITHER ONE IS ENOUGH, deliberately. `isMobileDevice`
+/// is the hardware question, decided once from real signals, and it is the one that
+/// matters: iOS ends a tab that grows, and no width changes that. `isPhone` is the
+/// 760px layout question, and it is here because a window that narrow is running the
+/// one-thing-at-a-time shell whatever machine it is on -- the pages share a sheet
+/// with their source there, so the routing and the ceiling should agree with the
+/// shell rather than with the hardware. Capping a narrow desktop window at 768 MB
+/// costs it nothing: the largest document measured in this tree lays out at 378.
+function onPhone() {
+	try {
+		const sh = window.DaimondShell;
+		if (sh && (sh.isMobileDevice() || sh.isPhone())) return true;
+	} catch (e) { /* the shell is not up yet */ }
+	try { return window.matchMedia('(max-width: 760px)').matches; } catch (e) { return false; }
 }
 
 /// The RENDERER's wasm heap in MB, which is not the compiler's.
@@ -616,12 +650,60 @@ function mount() {
 			requestAnimationFrame(function () { sizing = false; resized(); });
 		}).observe(host.querySelector('.tl-scroll'));
 	}
+	pinch(host.querySelector('.tl-scroll'));
 	// The pages get a shadow root of their own: typst.ts's stylesheet carries a
 	// bare `svg { fill: none; }` that would blank every icon in the app, and the
 	// app's own CSS must not reach in and change what the book looks like.
 	const pages = host.querySelector('.tl-pages');
 	adopt(pages.attachShadow({ mode: 'open' }));
 	return host;
+}
+
+/// Two fingers on the pages change the zoom, like every other document on a phone.
+///
+/// THE SAME ZOOM THE BUTTONS DRIVE, and for the same reason they are safe: the
+/// layout is the compiler's and does not depend on it, so this is a repaint and
+/// never a compile. The reader's place -- a page and an offset in POINTS -- comes
+/// through it untouched.
+///
+/// It listens for POINTERS rather than `gesturestart`, which is WebKit's alone, and
+/// it only ever acts on the second finger: one finger is a scroll and belongs to the
+/// scroller, and the sheet this lives in owns nothing inside its guest (see the drag
+/// rule in js/mobile.js). `touch-action: pan-y` on the element is what stops the
+/// browser taking the second finger for a page zoom before we see it.
+function pinch(sc) {
+	if (!sc || !window.PointerEvent) return;
+	const live = new Map();		// pointerId -> { x, y }
+	let span = 0, was = 1;
+	const spread = () => {
+		const p = Array.from(live.values());
+		if (p.length < 2) return 0;
+		return Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+	};
+	sc.addEventListener('pointerdown', function (e) {
+		if (e.pointerType === 'mouse') return;
+		live.set(e.pointerId, { x: e.clientX, y: e.clientY });
+		if (live.size === 2) { span = spread(); was = S.zoom; }
+	});
+	sc.addEventListener('pointermove', function (e) {
+		if (!live.has(e.pointerId)) return;
+		live.set(e.pointerId, { x: e.clientX, y: e.clientY });
+		if (live.size < 2 || !span) return;
+		const now = spread();
+		if (!now) return;
+		e.preventDefault();		// this gesture is the document's, not the page's
+		// The fit follows the fingers: a pinch is an explicit width, so a later
+		// resize must not snap the page back to the one the button last chose.
+		S.fit = 'width';
+		zoom(was * (now / span));
+	});
+	const up = function (e) {
+		live.delete(e.pointerId);
+		if (live.size < 2) span = 0;
+	};
+	sc.addEventListener('pointerup', up);
+	sc.addEventListener('pointercancel', up);
+	sc.addEventListener('pointerleave', up);
 }
 
 // ── The settings the reader was not offered ─────────────────────────────────
@@ -880,6 +962,27 @@ function showError(text) {
 	S.error = text || '';
 	e.textContent = S.error;
 	e.style.display = S.error ? '' : 'none';
+	// AND THE PERSON IS NOT LOOKING AT THIS STRIP. The compiler's words land at the
+	// foot of the PAGES, and the author who just broke the build is in the SOURCE,
+	// where the panel said "Saved." over a file that no longer compiles. So the
+	// file and the line -- the only part of a diagnostic anybody acts on -- are
+	// raised as an event, and the panel holding that file puts them on its own line.
+	announce('daimond-build-error', Object.assign({ text: S.error }, errorAt(S.error)));
+}
+
+/// The file and the 1-based line a diagnostic points at: `{ path, line }`.
+///
+/// `explainDiag` in `typst.js` composes the head as `error at <path>:<line>: …`, with
+/// the path as the compiler saw it -- root-relative, leading slash -- and the line
+/// already counted from one. Read back rather than passed through, because the strip
+/// carries whatever the compiler said and a second channel for the same two facts is
+/// a second thing to keep in step.
+///
+/// The FIRST match, which is the first diagnostic: a broken delimiter reports at
+/// every later construct it swallows, and the first one is where the author has to go.
+function errorAt(text) {
+	const m = /(^|[\s(])(\/?[^\s:()]+\.typ):(\d+)/.exec(String(text || ''));
+	return m ? { path: m[2], line: parseInt(m[3], 10) } : { path: '', line: 0 };
 }
 
 
@@ -1611,7 +1714,7 @@ async function startScan() {
 	// beside the first — twice the renderer's work for one answer, and on a 281-page
 	// document that is the difference between a rail that fills in and a tab that
 	// stutters.
-	if (scanning || !S.rail || !vec || !S.toc.length || S.scanned === S.drawn) return;
+	if (scanning || (!S.rail && !asked) || !vec || !S.toc.length || S.scanned === S.drawn) return;
 	scanning = true;
 	try {
 		await scan();
@@ -1622,6 +1725,7 @@ async function startScan() {
 
 let waiting = null;		// the timer that starts the scan once the builds stop
 let scanning = false;		// a page scan is walking the document right now
+let asked = false;		// somebody asked for a page, so the rail's rule is waived
 
 /// The walk itself. `locate` owns the wait, `startScan` the guard; this owns the
 /// answer.
@@ -1665,7 +1769,7 @@ async function scan() {
 				}
 			}
 			await frame();
-			if (S.drawn !== serial || !vec || !S.rail) return;
+			if (S.drawn !== serial || !vec || (!S.rail && !asked)) return;
 		}
 	} catch (e) {
 		return;			// the rail keeps whatever it had; nothing on screen moved
@@ -2077,24 +2181,67 @@ async function stamps() {
 	}
 }
 
+// ── Off screen is not closed ────────────────────────────────────
+//
+// THE PAGES LEAVING THE SCREEN USED TO END THE WATCH, and on a phone that is every
+// time the reader looks at the source: one sheet is up at a time, so swapping Doc
+// for Pages hid the pages, the next poll read `seen && !shown`, and the loop
+// stopped -- silently, with the panel still saying `live` for a second. Coming back
+// showed the `<embed>` PDF, and a Save rebuilt nothing. The same fault reaches the
+// desktop wherever the stage seats two rather than three: opening the source EVICTS
+// the pages and takes the loop with them.
+//
+// So a hidden view PAUSES: the poll and the debounce stop, and everything the loop
+// knows -- the path, the files, the stamps, the drawn pages and the reader's place
+// in them -- stays exactly where it was. A CLOSE is still a stop, and it is a
+// different event: `closePreview` and the panel's own closer say so out loud
+// (daimond.js), which is what keeps "the reader is done with this document" and
+// "the reader is looking at something else for a moment" two answers rather than one
+// guess about visibility.
+
 /// Ask the watched files whether they have changed, and nudge if any has.
 async function poll() {
-	if (S.mode === 'dead' || !S.path || !S.files.length) return;
-	// The view being gone is what ends the watch. There is no toggle and no second
-	// concept: the reader closed the document, so nothing more is compiled for it.
-	//
+	if (S.mode === 'dead' || !S.path) return;
 	// "Gone" and "not there yet" are different, and telling them apart is the whole
 	// of `seen`. The watch is armed by a compile that finished BEFORE the panel was
 	// shown -- `began` is called from Rust, and the page opens the panel a moment
-	// later, in the same turn -- so a poll landing in that gap would find the panel
-	// invisible and stop a watch that had never started.
-	const shown = host && host.isConnected && visible(document.getElementById('panel-preview'));
+	// later, in the same turn -- so a poll landing in that gap would find the view
+	// invisible and pause a watch that had never started.
+	//
+	// THE HOST ITSELF IS ASKED, not the panel it happens to sit in. On a phone the
+	// Preview panel is moved bodily into the Doc sheet, so "is `#panel-preview` on
+	// screen" stopped being the question; "are the pages on screen" is the question
+	// either way, and it is the one an element with no client rects already answers.
+	// `atHand` widens it by exactly one case: the OTHER TAB of the sheet the reader
+	// is holding, which is a tap away and not away at all.
+	//
+	// AND A BACKGROUNDED PHONE IS LOOKING AT NOTHING, whatever the rects say. Without
+	// that term the poll resumed the watch a second after the tab went away and built
+	// the laid-out book straight back, so the release on `visibilitychange` would have
+	// been a release for one second. Scoped to a phone on purpose: a desktop tab in
+	// another window is not about to be ended, and pausing there would cost a rebuild
+	// on every alt-tab.
+	const away = document.hidden && onPhone();
+	const shown = !away && host && host.isConnected && (visible(host) || atHand(host));
 	if (shown) S.seen = true;
-	if (S.seen && !shown) {
-		stop();
-		return;
-	}
+	// AND THE PAGES LEAVING THE SCREEN IS NOT THE READER LEAVING THE DOCUMENT.
+	// A stage seats `floor((room + 10) / 390)` panels, so on a 1500 px window with
+	// the rail and the dock open there are two -- and opening the source EVICTS the
+	// pages. The old rule read that as "closed" and stopped the watch, silently: the
+	// author edited a chapter, saved, and nothing rebuilt, with nothing on screen to
+	// say why. So an eviction PAUSES, keeping the path, the file list and the last
+	// stamps, and coming back resumes with one rebuild if anything moved. A person
+	// CLOSING the panel still stops it -- `userHide` says so in daimond.js, which is
+	// the only door that knows a hand did it.
+	if (S.seen && !shown) { pause(); return; }
 	if (!shown) return;
+	// Back on screen. Resuming is the whole of this tick: it takes its own reading
+	// of the files and rebuilds from it, so the comparison below would be against
+	// stamps it has just replaced.
+	if (S.mode === 'paused') { await resume(); return; }
+	// Nothing to ask about is not a reason to ask: a watch armed before the gather
+	// returned has no file list yet, and the phone reaches this tick first.
+	if (!S.files.length) return;
 	const before = S.stamps;
 	const now = await stamps();
 	if (!now) return;			// the question could not be asked
@@ -2123,6 +2270,25 @@ function visible(el) {
 	return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
 }
 
+/// Whether `el` is one tap from the reader: raised in the phone sheet, on the tab he
+/// is not looking at this second.
+///
+/// ONE TAP IS NOT AWAY. The Source and Pages tabs are two faces of one sheet, and the
+/// reader is on Source for exactly as long as it takes to type and press Save -- so a
+/// watch that paused there would leave the pages a rebuild behind EVERY TIME, and he
+/// would meet a stale document and a spinner on every switch instead of the new pages.
+/// The panel is stashed back onto the stage the moment another guest is raised or the
+/// sheet comes down, and THAT is away.
+///
+/// The drawing survives the wait: a rebuild that lands while the tab is hidden keeps
+/// the last good scale (`scaleFor` refuses a zero width) and the `ResizeObserver` on
+/// the scroller repaints it the moment the tab comes back.
+function atHand(el) {
+	const body = document.getElementById('msheet-body');
+	const sheet = document.getElementById('msheet');
+	if (!body || !sheet || !body.contains(el)) return false;
+	return sheet.classList.contains('open');
+}
 
 // ── The doors ───────────────────────────────────────────────────────────────
 
@@ -2157,6 +2323,9 @@ function began(path, watch) {
 	S.blind    = false;
 	S.same     = 0;
 	S.mode     = 'live';
+	S.was      = '';
+	S.at       = null;
+	S.dirty    = false;
 	S.builds   = 0;
 	S.drawn    = 0;
 	S.failed   = 0;
@@ -2165,6 +2334,10 @@ function began(path, watch) {
 	S.seen     = false;
 	S.toc      = [];
 	S.scanned  = 0;
+	// A PHONE GETS THE PHONE'S CEILING, and it is decided here rather than at load
+	// because the answer is about the machine and not about the window: a desktop
+	// browser narrowed past 760px is still a desktop with a desktop's memory.
+	if (onPhone()) S.budget = Math.min(S.budget, BUDGET_MOBILE);
 	if (!mount()) { S.mode = 'idle'; S.path = ''; return; }
 	says(tOr('typst.watch.starting', 'Laying out the pages…'), 'building');
 	// The first live view is drawn BEFORE anything is hidden, so the PDF the button
@@ -2195,6 +2368,9 @@ function stop() {
 	S.files  = [];
 	S.stamps = null;
 	S.mode   = 'idle';
+	S.was    = '';
+	S.at     = null;
+	S.dirty  = false;
 	S.queued = false;
 	S.seen   = false;
 	S.error  = '';
@@ -2216,8 +2392,118 @@ function stop() {
 	S.laid   = 0;
 	S.pages  = 0;
 	S.bandErr = '';
+	S.was    = '';
 	sick     = null;
 	hereNow  = -2;
+	// The source panel may be carrying this loop's words -- a pause notice, a
+	// diagnostic -- and they are about a document nobody is watching any more.
+	announce('daimond-typst-stopped', {});
+}
+
+/// Hold the loop where it is, because the pages are not on screen.
+///
+/// PAUSE AND STOP ARE DIFFERENT EVENTS AND THE DIFFERENCE IS THE READER'S INTENT.
+/// `stop` is "I have closed this document": the path, the file list and the drawn
+/// pages all go, and the next Compile starts a fresh watch. This is "the pages are
+/// behind something", which on a two-seat stage is what opening the source DOES --
+/// and the author has not stopped editing the book because the window is narrow.
+/// So everything the loop knows is kept and only the work stops: no polling for
+/// changes, no debounce waiting to fire, no compile.
+///
+/// The interval is deliberately NOT cleared. While paused its only job is the one
+/// question this cannot answer any other way -- are the pages back? -- and the File
+/// System Access API has no events for that any more than it has for a file.
+///
+/// Said out loud, both here and on the panel that has the source in it, because a
+/// loop that stopped without a word is the defect this replaces.
+///
+/// The phone needs exactly this pair for its own reason: one sheet at a time, so
+/// swapping Source for Pages hides the pages the same way, and a backgrounded tab
+/// is looking at nothing whatever the rects say. ONE implementation for the two, so
+/// a fix to the eviction case cannot leave the sheet case behind.
+function pause(why) {
+	if (S.mode !== 'live' && S.mode !== 'held') return false;
+	S.was  = S.mode;
+	S.mode = 'paused';
+	S.reason = why || tOr('typst.watch.paused_why',
+		'The pages are off screen, so nothing is being rebuilt.');
+	if (timer) { clearTimeout(timer); timer = null; }
+	// The two timers the VIEW owns go too: a band waiting for the scroll to settle
+	// and a scan waiting for the builds to stop are both work for pages nobody can
+	// see. They are started again by the scroll and the build that follow a resume.
+	if (settling) { clearTimeout(settling); settling = null; }
+	if (waiting) { clearTimeout(waiting); waiting = null; }
+	S.queued = false;
+	// WHERE HE WAS, KEPT OUTSIDE THE SCROLLER. Going away can mean the panel is
+	// MOVED -- the phone sheet stashes it back on the stage -- and moving an element
+	// resets every scroller inside it, so the number the view holds is gone by the
+	// time anybody asks for it again.
+	S.at = where() || S.at;
+	says(tOr('typst.watch.paused', 'Paused'), 'paused');
+	announce('daimond-typst-paused', { path: S.path, why: S.reason });
+	return true;
+}
+
+/// Take the loop back up where the pause left it, and rebuild if anything moved.
+///
+/// ONE REBUILD, AND ONLY IF THE FILES SAY SO. Coming back to pages that are already
+/// right must not cost a compile, and coming back to a chapter saved while they were
+/// hidden must not leave yesterday's pages up: the stamps answer which it is, and
+/// `confirmed` settles the case where a save wrote back what was already there. A
+/// write the app itself made is already known -- `touched` recorded it as `dirty`
+/// rather than laying out a book nobody could see -- and that is the other half of
+/// the same question, because the digests moved with it and the stamps will report
+/// nothing.
+///
+/// A pause that interrupted a HELD loop resumes held: the heap ceiling is not
+/// something being on screen again repeals.
+async function resume() {
+	if (S.mode !== 'paused') return false;
+	S.mode = S.was || 'live';
+	S.was  = '';
+	S.reason = S.mode === 'held' ? S.reason : '';
+	says(S.mode === 'held'
+		? tOr('typst.watch.held', 'Rebuilding stopped')
+		: tOr('typst.watch.live_preview', 'Live preview'),
+		S.mode === 'held' ? 'held' : (S.error ? 'stale' : 'live'));
+	announce('daimond-typst-resumed', { path: S.path });
+	// Put him back if the scroller lost its place while it was away. Only then: a
+	// view that kept its scroll is already right, and a jump to the same page would
+	// snap the offset within it to nothing.
+	const sc = scroller();
+	if (S.at && S.at.page > 0 && sc && sc.scrollTop <= 1) goTo(S.at);
+	// The tick is what noticed the pages had gone, so a pause entered any other way
+	// -- a phone sheet, a panel closed by the app -- can find it already cleared.
+	if (!poller) poller = setInterval(function () { poll(); }, POLL_MS);
+	const moved = S.dirty;
+	S.dirty = false;
+	const before = S.stamps;
+	const now = await stamps();
+	if (now) S.stamps = now;
+	if (before && now) {
+		for (const p in now) {
+			if (!(p in before) || now[p] === before[p]) continue;
+			if (await confirmed(p, now[p])) continue;
+			S.blind = (Number(String(now[p]).split(':')[1]) > DIGEST_MAX);
+			nudge('resume', p + ' ' + before[p] + ' \u2192 ' + now[p]);
+			return true;
+		}
+	}
+	if (moved) nudge('resume', S.path);
+	return true;
+}
+
+/// Tell the rest of the page something the loop did.
+///
+/// The panel holding the SOURCE is a different panel from the one holding the pages,
+/// and it has no reference to this module: the source panel is where the author is
+/// looking when the loop pauses or a build fails, so that is where it has to be said.
+/// An event rather than a call, and carrying a path and a line rather than anything
+/// Typst-shaped, so a second renderer could raise the same three.
+function announce(name, detail) {
+	try {
+		window.dispatchEvent(new CustomEvent(name, { detail: detail || {} }));
+	} catch (e) { /* a page with no CustomEvent is a page with no panel to tell */ }
 }
 
 /// A writer that KNOWS it wrote says so, rather than waiting to be polled.
@@ -2232,10 +2518,15 @@ function stop() {
 /// # Arguments
 /// * `path` - The workspace-relative path just written.
 async function touched(path) {
-	if (S.mode !== 'live') return;
+	if (S.mode !== 'live' && S.mode !== 'paused') return;
 	const p = String(path || '');
 	if (!p) return;
 	if (p !== S.path && S.files.indexOf(p) < 0) return;
+	// SAVED WHILE THE PAGES WERE PUT AWAY -- the sheet down, or another guest holding
+	// it, or the phone in someone's pocket. Nothing is laid out for a view nobody can
+	// see, so the write is REMEMBERED and `resume` spends one rebuild on it when the
+	// pages come back, however many writes landed in between.
+	if (S.mode === 'paused') { S.dirty = true; return; }
 	// Told rather than polled, but the question is the same one: a Save that wrote
 	// back exactly what was there is a write, not an edit, and laying the book out
 	// again for it would cost the reader a rebuild to see what is already up.
@@ -2322,6 +2613,7 @@ function state() {
 	return {
 		path:     S.path,
 		mode:     S.mode,
+		was:      S.was,
 		files:    S.files.length,
 		builds:   S.builds,
 		drawn:    S.drawn,
@@ -2331,6 +2623,8 @@ function state() {
 		budget:   S.budget,
 		headroom: S.headroom,
 		building: S.building,
+		paused:   S.mode === 'paused',
+		dirty:    S.dirty,
 		error:    S.error,
 		reason:   S.reason,
 		why:      S.why,
@@ -2348,6 +2642,11 @@ function state() {
 		sheets:   band ? (band.p1 - band.p0 + 1) : 0,
 		band:     band ? { p0: band.p0, p1: band.p1 } : null,
 		bandErr:  S.bandErr,
+		// WHAT THE VIEW IS HOLDING, in bytes: the vector artifact every band is drawn
+		// out of, 11.1 MB on the author's 281-page book. It is the largest single
+		// thing on this page and the first thing let go when a phone is backgrounded,
+		// so it is worth being able to read rather than infer.
+		holds:    vec ? vec.length : 0,
 		// THE TWO WAYS THE RENDERER'S ROUNDING SHOWS, both in points, so a check can
 		// hold one against the other. `drift` is the renderer's own total height less
 		// the exact sum of the page heights, taken in `draw` before anything is drawn;
@@ -2369,6 +2668,35 @@ function sections() {
 	return state().toc;
 }
 
+/// Put the page named by `text` on screen, finding the pages first if need be.
+///
+/// The rail's page numbers are a VIEW cost — the walk renders every page to see
+/// where each heading landed — so `scan` only ever runs while the rail is open and a
+/// reader who never opens it pays nothing. Somebody asking to be taken to a chapter
+/// is asking for exactly that answer, which is what `asked` waives the rule for: the
+/// work is wanted, once, and the rail stays shut.
+///
+/// The words are folded to letters and digits before they are compared, because a
+/// heading carries a label in the source (`= Practice <practice>`) and a glossary
+/// term in the document, and neither survives being typeset as it was written.
+///
+/// # Arguments
+/// * `text` - The heading's words, as the source has them.
+async function goToSection(text) {
+	const want = fold(String(text || ''));
+	if (!want || !S.toc.length) return 0;
+	if (S.scanned !== S.drawn) {
+		asked = true;
+		try { await startScan(); } finally { asked = false; }
+	}
+	for (const e of S.toc) {
+		if (!e.page || fold(e.text) !== want) continue;
+		goToPage(e.page);
+		return e.page;
+	}
+	return 0;
+}
+
 if (typeof window !== 'undefined' && !window.DaimondTypstWatch) {
 	// A write that Daimond itself made is known the moment it lands: every byte the
 	// app writes goes through one Rust door (`opfs::write_file`), and that door says
@@ -2379,9 +2707,31 @@ if (typeof window !== 'undefined' && !window.DaimondTypstWatch) {
 	window.addEventListener('daimond-file-written', function (ev) {
 		touched(ev && ev.detail ? ev.detail.path : '');
 	});
+	// ── A BACKGROUNDED PHONE HOLDS NOTHING IT CAN BUILD AGAIN ──────────────
+	//
+	// iOS reclaims a backgrounded tab by ending it, and what it weighs when it
+	// decides is everything the page is holding. The largest single thing here is the
+	// vector artifact -- 11.1 MB on the author's 281-page book, and it is what the
+	// scroll draws each band out of -- so it is let go the moment the reader leaves,
+	// and the loop is marked as needing one rebuild when he comes back. The pages
+	// already on screen are untouched, so returning shows the document rather than a
+	// blank: `ensureWindow` and `resized` both do nothing without it, which is
+	// exactly right for a view nobody is looking at.
+	//
+	// Only on a phone. A desktop tab is not killed for being in the background, and
+	// throwing the artifact away there would buy a rebuild on every alt-tab.
+	document.addEventListener('visibilitychange', function () {
+		if (!document.hidden || !onPhone()) return;
+		if (S.mode !== 'live' && S.mode !== 'held' && S.mode !== 'paused') return;
+		pause('backgrounded');
+		vec = null;
+		S.dirty = true;		// there is nothing to draw a band from until a rebuild
+	});
 	window.DaimondTypstWatch = {
 		began:    began,
 		stop:     stop,
+		pause:    pause,
+		resume:   resume,
 		touched:  touched,
 		rebuild:  rebuild,
 		budgetMB: budgetMB,
@@ -2393,8 +2743,11 @@ if (typeof window !== 'undefined' && !window.DaimondTypstWatch) {
 		rail:     rail,
 		sections: sections,
 		fitPage:  fitPage,
+		pause:    pause,
+		resume:   resume,
+		goToSection: goToSection,
 	};
 }
 
-export { began, stop, touched, rebuild, budgetMB, zoom, dark, state, pageBox, goToPage,
-	rail, sections, fitPage };
+export { began, stop, pause, resume, touched, rebuild, budgetMB, zoom, dark, state,
+	pageBox, goToPage, rail, sections, goToSection, fitPage };

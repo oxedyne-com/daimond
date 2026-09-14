@@ -186,7 +186,10 @@ try {
 			const mod = await import('../pkg/oxedyne_daimond.js');
 			const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 			const out = String(await app.run_tool('file_list', JSON.stringify({ path: 'tbook' })));
-			return { listing: out, has: /main\.pdf/.test(out) };
+			// `-preview.pdf`, which is the name the button writes now: the plain
+			// `<name>.pdf` belongs to whatever publishing pipeline the project has, and
+			// the app writing over it replaced a print-ready final with a draft.
+			return { listing: out, has: /main-preview\.pdf/.test(out) };
 		}, MAIN);
 		const errored = await p.evaluate(() => {
 			const m = document.querySelector('.files-view-msg');

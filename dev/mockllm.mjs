@@ -65,6 +65,14 @@
 //                            in `prompt_tokens_details`), and it is the only way
 //                            a test can prove the app bills the REPORTED figure
 //                            rather than its own table's guess.
+//   @leak                    every round returns glm-5.3's NATIVE tool-call syntax as
+//                            CONTENT, with no JSON `tool_calls` -- the turn-56 wire
+//                            fault. Two in a row, so the turn ends `malformed`.
+//   @leakonce                the same, once: leaked, nudged, then an ordinary answer.
+//   @leakwhole               the same fragment with its `<tool_call>NAME` head still on
+//                            it, which the engine rebuilds and runs. Read from the WHOLE
+//                            transcript, like @look, because the app's nudge is itself a
+//                            user message and would otherwise hide the directive.
 //   @err <code>              fail with that HTTP status (the error path)
 //   @drop <n>                stream n words, then DESTROY the socket -- the road
 //                            failing part way through an answer, which is not the
@@ -164,8 +172,13 @@ const PORT = Number(process.argv[2] || process.env.DAIMOND_MOCK_PORT || 9099);
 // cannot drift from what the switch actually answers to.
 const SELF = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
 const SHA  = crypto.createHash('sha256').update(SELF).digest('hex');
+// The leak directives are answered BEFORE the switch -- they are read off the whole
+// transcript, because the app's own nudge is a user message and would otherwise hide them --
+// so the scan below cannot see them. Named here rather than left out, or a check asking
+// whether this mock can produce the turn-56 fault gets "no" from a mock that can.
+const OFF_SWITCH = ['leak', 'leakonce', 'leakwhole'];
 const DIRECTIVES = [...new Set(
-	[...SELF.matchAll(/^\t\tcase '([a-z0-9]+)':/gm)].map(m => m[1]))].sort();
+	[...SELF.matchAll(/^\t\tcase '([a-z0-9]+)':/gm)].map(m => m[1]).concat(OFF_SWITCH))].sort();
 
 const MODELS = [
 	'mock/fast',
@@ -428,9 +441,66 @@ const triageReply = (brief) => {
 	}, null, 2);
 };
 
+// ── A tool call that arrives as PROSE ────────────────────────────────────
+//
+// The wire, verbatim, off turn 56 of 2026-09-14 (glm-5.3 through OpenRouter). The
+// head `<tool_call>verify<arg_key>` was consumed upstream, so what the page got
+// opened on an argument name with no call around it. `src/llm.rs`'s unit tests hold
+// the same two strings; change one and change both, or the halves stop describing
+// the same fault.
+const LEAK_HEADLESS = 'name</arg_key><arg_value>daimonfold</arg_value>'
+	+ '<arg_key>timeout_ms</arg_key><arg_value>600000</arg_value>'
+	+ '<arg_key>world</arg_key><arg_value>true</arg_value></tool_call>';
+const LEAK_WHOLE = '<tool_call>verify<arg_key>name</arg_key>'
+	+ '<arg_value>daimonfold</arg_value><arg_key>timeout_ms</arg_key>'
+	+ '<arg_value>600000</arg_value><arg_key>world</arg_key>'
+	+ '<arg_value>true</arg_value></tool_call>';
+
+// How many times the app has told this conversation its call arrived as text.
+//
+// READ OFF THE WHOLE TRANSCRIPT, for `@look`'s reason and then some: the nudge IS a
+// user message, so after one leak `lastUser` returns the nudge and the directive is
+// two messages up. A mock that only read the last message would answer the nudge
+// with prose and no verifier could ever reach a second leak.
+const nudges = (messages) => (messages || [])
+	.filter(m => m && m.role === 'user' && /arrived as text/.test(String(m.content || '')))
+	.length;
+
+// The leak directive this conversation carries, wherever in it that is.
+const leakMode = (messages) => {
+	for (let i = (messages || []).length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (!m || m.role !== 'user') continue;
+		const t = String(m.content || '').trim();
+		if (t.startsWith('@leakonce'))  return 'once';
+		if (t.startsWith('@leakwhole')) return 'whole';
+		if (t.startsWith('@leak'))      return 'always';
+	}
+	return '';
+};
+
 const plan = (messages) => {
 	const d      = parseDirective(lastUser(messages));
 	const rounds = toolRounds(messages);
+
+	// A LEAKED TOOL CALL, before the switch for `@look`'s reason: after the app's nudge
+	// the last user message is the nudge, not the directive. Reached only by a
+	// conversation that actually carries `@leak…`; every other transcript takes the path
+	// it took yesterday.
+	const leak = leakMode(messages);
+	if (leak) {
+		// The whole call, which the engine rebuilds and runs: one leak, no nudge, and
+		// then a tool round like any other.
+		if (leak === 'whole') return rounds > 0 ? { text: 'Verified.' } : { text: LEAK_WHOLE };
+		// Leak once, then behave -- the ordinary wire fault, and the shape the nudge is
+		// for.
+		if (leak === 'once') {
+			return nudges(messages) > 0 ? { text: 'Right, it verified.' } : { text: LEAK_HEADLESS };
+		}
+		// And the model that cannot emit a call at all, which is what ends a turn
+		// `malformed` rather than `answered`.
+		return { text: LEAK_HEADLESS };
+	}
 
 	// A worker that was told to look keeps trying until it has looked.  Before the
 	// switch, so a RESUMED session -- whose last user message is the app's nudge and

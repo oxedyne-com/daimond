@@ -2864,17 +2864,23 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("type", &JsValue::from_str("thinking"));
             set("content", &JsValue::from_str(text));
         }
-        AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing } => {
-            set("type",    &JsValue::from_str("ended"));
-            set("how",     &JsValue::from_str(how));
-            set("offered", &JsValue::from_f64(*offered as f64));
-            set("rounds",  &JsValue::from_f64(*rounds  as f64));
-            set("calls",   &JsValue::from_f64(*calls   as f64));
-            set("refused", &JsValue::from_f64(*refused as f64));
-            set("failed",  &JsValue::from_f64(*failed  as f64));
+        AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing, malformed } => {
+            set("type",      &JsValue::from_str("ended"));
+            set("how",       &JsValue::from_str(how));
+            set("offered",   &JsValue::from_f64(*offered   as f64));
+            set("rounds",    &JsValue::from_f64(*rounds    as f64));
+            set("calls",     &JsValue::from_f64(*calls     as f64));
+            set("refused",   &JsValue::from_f64(*refused   as f64));
+            set("failed",    &JsValue::from_f64(*failed    as f64));
+            set("malformed", &JsValue::from_f64(*malformed as f64));
             let arr = js_sys::Array::new();
             for p in missing { arr.push(&JsValue::from_str(p)); }
             set("missing", &arr);
+        }
+        AgentEvent::Leaked { fragment, recovered } => {
+            set("type",      &JsValue::from_str("leaked"));
+            set("fragment",  &JsValue::from_str(fragment));
+            set("recovered", &JsValue::from_bool(*recovered));
         }
         AgentEvent::ToolCall { id, name, args } => {
             set("type", &JsValue::from_str("tool_call"));

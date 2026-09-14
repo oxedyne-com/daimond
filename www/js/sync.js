@@ -896,8 +896,8 @@
 	/// no-op guard in push() rests on. Attached last, so its position in the
 	/// serialisation never moves either.
 	/// What this module compares when it asks "has anything changed since the last
-	/// push" -- the parcel with this device's OWN `seen` stamp masked out. What is
-	/// SENT is always the parcel itself; only the comparison reads this.
+	/// push" -- the parcel with EVERY roster line's `seen` stamp masked out. What
+	/// is SENT is always the parcel itself; only the comparison reads this.
 	///
 	/// NOT THE PARCEL ITSELF, AND THAT IS THE FIX. `touchSelfDevice` (daimond.js)
 	/// moves this device's roster `seen` every SEEN_REFRESH_MS -- five minutes --
@@ -912,6 +912,24 @@
 	/// next push that has a reason of its own. What it can no longer do is BE the
 	/// reason.
 	///
+	/// EVERY LINE, NOT ONLY OURS, AND THAT IS THE SECOND HALF OF THE SAME FIX.
+	/// Masking our own line alone left the echo: a pull that merges a peer's newer
+	/// roster line (`mergeDevices` takes its `seen`) makes the next idle collect
+	/// differ from the last thing we sent, so this device pushes a parcel that is
+	/// byte-different and size-identical -- and the peer, pulling that, does the
+	/// same back. Measured on the owner's fleet 2026-09-13: version 8355 and
+	/// version 8358 both weighed 1,524,815 bytes on the wire with not one chat,
+	/// Diamond or file different between them, and each real change cost two or
+	/// three of those before the pair settled.
+	///
+	/// A PEER'S STAMP IS NOT NEWS TO ANYBODY. It is the words "last seen" on a row
+	/// in the devices panel, and the device it describes is the one that pushed it
+	/// -- so the account already has it, at the version it arrived in. Everything
+	/// else on the line still counts: `build` (an update the fleet must hear
+	/// about), `label` and `namedAt` (the owner naming a device), `created`, and
+	/// the line's arrival or departure. What can no longer BE the reason for a
+	/// push is a clock nobody set.
+	///
 	/// AND IT IS NOT HOW A DEVICE IS KNOWN TO BE ALIVE. Liveness is the presence
 	/// door below -- `beatPresence` / `refreshPresence`, read back through
 	/// `DaimondPresence` -- which left the parcel for exactly this reason (see
@@ -924,19 +942,16 @@
 	///
 	/// The key is built preserving every field and key order, so two collects of an
 	/// otherwise unchanged account still give byte-identical keys -- which is the
-	/// whole point of having one. A build whose core cannot name this device falls
-	/// back to the parcel, which is the behaviour this replaces.
+	/// whole point of having one. A parcel with no roster in it is its own key:
+	/// there is nothing to mask and nothing to throw.
 	function compareKey(state) {
 		var plain = JSON.stringify(state);
-		var id = '';
-		try {
-			if (DaimondCore.syncSelfDeviceId) id = String(DaimondCore.syncSelfDeviceId() || '');
-		} catch (e) { id = ''; }
-		if (!id || !state || !state.devices || !state.devices[id]) return plain;
+		if (!state || !state.devices || typeof state.devices !== 'object') return plain;
 		var src = state.devices, devs = {};
 		Object.keys(src).forEach(function (k) {
-			if (k !== id) { devs[k] = src[k]; return; }
-			var line = src[k] || {}, copy = {};
+			var line = src[k];
+			if (!line || typeof line !== 'object') { devs[k] = line; return; }
+			var copy = {};
 			Object.keys(line).forEach(function (f) { copy[f] = (f === 'seen' ? 0 : line[f]); });
 			devs[k] = copy;
 		});

@@ -173,6 +173,21 @@ impl Family {
 		}
 	}
 
+	/// One sentence appended to the nudge a LEAKED tool call earns, naming what this family
+	/// wrote instead of a call.
+	///
+	/// `None` for every family that has not been caught doing it.  Glm earned it on
+	/// 2026-09-14: turn 56 came back with `<tool_call>…<arg_key>…</arg_key>…</tool_call>` in
+	/// `content` and no JSON `tool_calls` at all, so the app read an answer where a call had
+	/// been meant.  Naming the syntax is the whole of the hint -- a model told only "that was
+	/// wrong" has no way to know WHICH of the things it wrote was the mistake.
+	pub fn leak_hint(&self) -> Option<&'static str> {
+		match self {
+			Self::Glm	=> Some(GLM_LEAK_HINT),
+			_			=> None,
+		}
+	}
+
 	/// The arguments as the tool should see them, generously read.
 	///
 	/// **Borrowed whenever nothing changed, which is the overwhelming case**, so the common path
@@ -316,6 +331,15 @@ pub const MINIMAX_NOTE: &str =
 	"## Tool calls\n\n\
 	 To change part of a file use file_edit with 'old_string'/'new_string'; file_write replaces \
 	 the whole file and is for new files. Only the keys a tool's schema names are read.";
+
+/// Glm: its own `<tool_call>` markup, written into the reply text.
+///
+/// One sentence, and it names the tags: the fragment the owner met carried
+/// `</arg_key><arg_value>daimonfold</arg_value>` and nothing else, so a model told only that
+/// its call was malformed would have no way to tell which of the things it wrote was meant.
+pub const GLM_LEAK_HINT: &str =
+	"Never write <tool_call>, <arg_key> or <arg_value> into the reply text; \
+	 the call goes in the request's own tool_calls field.";
 
 /// Glm: nine writes refused for being under the wrong folder.
 pub const GLM_NOTE: &str =
@@ -483,6 +507,52 @@ mod tests {
 		let args = "{\"path\":\"[a]\",\"content\":\"[1,2,3]\"}";
 		assert!(matches!(Family::Qwen.normalise_args("file_write", args), Cow::Borrowed(_)),
 			"file_write has no array key and something was rewritten");
+	}
+
+	/// Glm's leak hint, against the bytes that earned it.
+	///
+	/// Both forms of the live fragment: the one the page actually received, with
+	/// `<tool_call>verify<arg_key>` consumed upstream, and the same call whole.  Kept together
+	/// here because the hint has to be right for BOTH -- the model wrote one and the reader
+	/// met the other, and a note aimed only at the shape that survives the wire would be
+	/// addressed to a mistake nobody made.
+	#[test]
+	fn test_glms_leak_hint_names_the_tags_in_the_fragment_that_earned_it() {
+		use crate::llm::tests::{LEAK_HEADLESS, LEAK_WHOLE};
+		let hint = Family::Glm.leak_hint().unwrap_or("");
+		assert!(!hint.is_empty(), "Glm carries no leak hint");
+		// It names the tags, because "your call was malformed" tells a model nothing about
+		// WHICH of the things it wrote was the mistake.
+		for tag in ["<tool_call>", "<arg_key>", "<arg_value>"] {
+			assert!(hint.contains(tag), "the hint does not name {}: {}", tag, hint);
+			assert!(LEAK_WHOLE.contains(tag),
+				"the fixture no longer holds {}, so the hint is aimed at nothing", tag);
+		}
+		// ONE SENTENCE.  It rides on a round the user is already paying for twice.
+		assert_eq!(1, hint.matches('.').count(), "the hint grew past one sentence: {}", hint);
+
+		// The head-stripped form is a leak and is NOT recoverable: no name, nothing to
+		// dispatch, and a nudge is all that is left.
+		let headless = crate::llm::leaked_tool_call(LEAK_HEADLESS)
+			.unwrap_or_else(|| panic!("the live fragment reads as prose"));
+		assert_eq!(None, headless.recovered);
+		// The whole one recovers, which is why the nudge is not the only answer.
+		let whole = crate::llm::leaked_tool_call(LEAK_WHOLE)
+			.unwrap_or_else(|| panic!("a whole leaked call reads as prose"));
+		match whole.recovered {
+			Some(c) => assert_eq!("verify", c.name),
+			None    => panic!("a whole call was not recovered: {}", whole.fragment),
+		}
+	}
+
+	/// The hint belongs to the family that earned it, and to no other.
+	#[test]
+	fn test_only_the_family_caught_leaking_carries_the_leak_hint() {
+		for f in [Family::Claude, Family::Gpt, Family::DeepSeek, Family::Qwen,
+			Family::MiniMax, Family::Kimi, Family::Unknown]
+		{
+			assert_eq!(None, f.leak_hint(), "{:?} carries a hint it did not earn", f.name());
+		}
 	}
 
 	/// A hint is a line for the family that earned it, and nothing for the rest.

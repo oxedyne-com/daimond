@@ -115,6 +115,8 @@
 	'rail.chats_help': 'Conversation brute. Un Diamond y est taillé.',
 	'rail.new_chat': 'Nouveau chat',
 	'rail.chats_menu': 'Plus',
+	'rail.fold_section': 'Replier cette section',
+	'rail.unfold_section': 'Ouvrir cette section',
 	'rail.delete_all_chats': 'Supprimer tous les chats',
 	'layout.handle': 'Glissez pour redimensionner, double-cliquez pour réinitialiser',
 
@@ -635,6 +637,8 @@
 	'sheet.ask': 'Demander',
 	'sheet.ask_ph': 'Posez une question là-dessus…',
 	'sheet.ask_about': 'Posez une question sur {thing}…',
+	'sheet.tab_source': 'Source',
+	'sheet.tab_pages': 'Pages',
 
 	// ── Identity: creating and unlocking ───────────────────────
 	'identity.your_name': 'Votre nom',
@@ -1175,6 +1179,7 @@
 	'typst.watch.building': 'Recompilation…',
 	'typst.watch.live_preview': 'Aperçu en direct',
 	'typst.watch.stale': 'Affichage de la dernière compilation réussie',
+	'typst.watch.paused': 'En pause — les pages ne sont pas à l’écran',
 	'typst.watch.held': 'Recompilation arrêtée',
 	'typst.watch.dead': 'Le compilateur s’est arrêté',
 	'typst.watch.rebuild': 'Recompiler',
@@ -1844,6 +1849,7 @@
 	'files.keep_editing': 'Continuer à modifier',
 	'files.unsaved_body': 'Vos modifications de {path} ne sont pas enregistrées. Fermer l’éditeur et les perdre ?',
 	'files.editing_stopped': 'Modification arrêtée. Rien n’a été écrit.',
+	'files.draft_restored': 'Ce que vous aviez tapé sans enregistrer a été rétabli. Enregistrez pour l’écrire dans le fichier.',
 	'files.overwrite': 'Écraser',
 	'files.conflict_title': 'Il a changé pendant que vous modifiiez',
 	'files.conflict_body': 'Ce fichier a changé sur le disque depuis que vous l’avez ouvert, très probablement un agent. Enregistrer quand même et écraser ces changements ?',

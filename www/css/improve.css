@@ -372,6 +372,37 @@
    line of housekeeping, because the row's own controls are what resolve it:
    Send now after an edit elsewhere, or Delete. */
 .imp-note-state[data-state="refused"] { color: var(--warn); }
+/* A note the model has drafted and NOT sent. It reads as a question rather than
+   as a warning: the row is asking to be read and answered, which is the state the
+   owner never got to see because the card used to be posted and removed in one
+   turn. */
+.imp-note-state[data-state="drafted"] { color: var(--text-secondary); }
+
+/* The title, opened for editing on a row that is waiting on a person. The input
+   grows with the row and the count sits beside it, so the two numbers a refusal
+   never carried are read together. */
+.imp-note-eyebrow { margin-top: 6px; font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+.imp-note-title { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.imp-note-title-in {
+	flex: 1 1 auto; min-width: 0;
+	font-size: var(--fs-xs); padding: 3px 6px;
+	color: var(--text-primary); background: var(--bg-input);
+	border: 1px solid var(--border); border-radius: 4px;
+}
+/* The count is quiet until it is the answer, and then it is the loudest thing on
+   the row -- it is the number the forge's own refusal cannot carry. */
+.imp-note-count, .imp-count { font-size: var(--fs-3xs-2xs); color: var(--text-muted); white-space: nowrap; }
+.imp-note-count[data-over], .imp-count[data-over] { color: var(--warn); font-weight: 600; }
+.imp-note-draftbody {
+	white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 4px;
+	font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.45;
+	max-height: 7.5em; overflow-y: auto;
+}
+
+/* A Send that cannot go says so by being dark, and its title says why. It is NOT
+   hidden: the row would then offer nothing but Delete, which is the dead end. */
+.imp-note-send[disabled] { opacity: 0.5; cursor: not-allowed; }
+
 /* `.imp-note-send` and `.imp-note-copy` are the one pill (top of file). */
 .imp-note-drop { margin-left: auto; }
 

@@ -2935,6 +2935,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			case 'capped':     return 'capped';
 			case 'spend_cap':  return 'spend_cap';
 			case 'failed':     return 'error';
+			// A worker whose round returned its own tool-call syntax as text ran nothing,
+			// so its tile reads as a failure and not as a run that finished.
+			case 'malformed':  return 'error';
 			default:           return 'done';		// answered | silent
 		}
 	}
@@ -3065,6 +3068,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// ceiling that cannot help.
 			case 'spend_cap':  return 'spend_cap';
 			case 'failed':     return 'error';
+			// A TURN THAT ENDED ON A LEAKED TOOL CALL IS NOT DONE. Collapsing it into
+			// 'done' would write the 2026-09-14 defect into the feed as well as the page:
+			// a wire fault reported as a success is one nobody can count.
+			case 'malformed':  return 'malformed';
 			default:           return 'done';		// answered | silent
 		}
 	}
@@ -6098,26 +6105,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		var dropped = 0, lost = [], lostItems = 0, reasonOf = {}, held = [], droppedLost = 0;
-		// WHAT A PEER'S SLOT STILL NAMES, read once for the whole pass. The set that
-		// makes dropping an unrestorable manifest safe; see `peerNamedAddrs` (cloud.js).
-		var peerAddrs = {};
-		try { peerAddrs = DaimondCloud.peerNamedAddrs ? DaimondCloud.peerNamedAddrs() : {}; }
-		catch (e) { peerAddrs = {}; }
-		// Per stale manifest: is EVERY address it names one a peer's slot also carries?
-		// Every, not any: a manifest half-named by a peer and half by nobody still has
-		// addresses only our own reference keeps in the live set.
-		var peerNamed = {};
-		for (var pk = 0; pk < sk.length; pk++) {
-			var pm = null;
-			try { pm = ix[sk[pk]]; } catch (e) { pm = null; }
-			if (!pm || !Array.isArray(pm.chunks) || !pm.chunks.length) continue;
-			var all = true;
-			for (var pc = 0; pc < pm.chunks.length; pc++) {
-				var pa = pm.chunks[pc] && pm.chunks[pc].addr;
-				if (!pa || !peerAddrs[pa]) { all = false; break; }
-			}
-			peerNamed[sk[pk]] = all;
-		}
+		// CAN THIS DEVICE PUT A FILE BACK AT ALL? Asked once for the whole pass,
+		// because the answer is about the device and not about any one manifest.
+		var canReoffloadFiles = false;
+		try { canReoffloadFiles = filesSyncable(); } catch (e) { canReoffloadFiles = false; }
 		for (var si = 0; si < sk.length; si++) {
 			var key = sk[si], kind = manifestKind(key), id = key.replace(/^@[dcm]\//, '');
 			var reason = 'unrestorable';
@@ -6126,7 +6117,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			else if (kind === 'file') {
 				var f = null;
 				try { f = await DaimondCloud.fileAt(key); } catch (e) { f = null; }
-				reason = f ? 'reoffload' : 'no-local-file';
+				// THE FILE BEING THERE IS NOT ENOUGH. `fileAt` finds it in the mounted
+				// folder, and a folder-mounted device's `collectFiles` returns nothing at
+				// all (`filesSyncable`), so forgetting the manifest here put the file in
+				// neither place: not named by our index, and never re-offloaded. 417 file
+				// manifests drained off the owner's desktop that way in one round on
+				// 2026-09-13, the index falling from 264 KB to 160 KB with no upload
+				// behind it. A device that cannot offload says so rather than promising.
+				reason = (f && canReoffloadFiles) ? 'reoffload' : (f ? 'no-file-sync' : 'no-local-file');
 			}
 			reasonOf[key] = reason;
 			if (reason === 'reoffload') {
@@ -6144,15 +6142,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// for a second sighting and is not a decision taken on one reading.
 			var rounds = 0;
 			try { rounds = DaimondCloud.noteUnrestorable(key) | 0; } catch (e) { rounds = 0; }
-			// AND DROPPED, once, when a PEER still names its addresses. Our manifest is
-			// not the only thing keeping those chunks in the committed live set: a
-			// `.peer.<device>` slot names them too (`notePeerRef`) and the commit declares
-			// both, so letting go of ours loses no chunk and stops the parcel carrying
-			// dead addresses. Never on the first sighting -- one push must have gone out
-			// with the record in it, so a peer that is about to name them has had its
-			// round -- and never where no peer names them at all, which is the case where
-			// our reference is the last thing standing between the content and the sweep.
-			if (rounds > 1 && peerNamed[key]) {
+			// AND DROPPED, once, on the SECOND ANSWERED SIGHTING. The gateway has been
+			// asked about these addresses and has said it does not hold them: there is no
+			// content left for our reference to protect, and holding it only makes the
+			// parcel carry dead addresses for ever -- 65 of them on the owner's account,
+			// in a parcel already at 94% of the front door, and 330 on the phone.
+			//
+			// IT USED TO WAIT FOR A PEER to name the same addresses, on the reasoning that
+			// our reference might be the last thing keeping the chunks in the live set.
+			// That reasoning does not survive the sweep having already answered: chunks the
+			// gateway does not hold cannot be swept again, and a peer slot is not even
+			// possible for a file -- there is no peer mechanism for files -- so `dropped_refs`
+			// was 0 on every round and `refs_missing` never fell. Never on the FIRST
+			// sighting, which is unchanged: one push must have gone out with the record in
+			// it, and one unanswered or flapping sweep must not cost a manifest.
+			if (rounds > 1) {
 				var gone = false;
 				try { gone = !!(DaimondCloud.contentForget && DaimondCloud.contentForget(key)); }
 				catch (e) { gone = false; }
@@ -6207,7 +6211,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		clog('manifest refs missing: ' + n + (breakdown ? ' (' + breakdown + ')' : '')
 			+ ', re-offloading ' + (dropped - droppedLost) + ' item(s)'
 			+ (droppedLost ? ', dropping ' + droppedLost
-				+ ' unrestorable ref(s) a peer still names' : ''));
+				+ ' unrestorable ref(s) the gateway no longer holds' : ''));
 		if (lost.length) {
 			clog('no local text for: ' + lost.join(', ')
 				+ (lostItems > lost.length ? ' (+' + (lostItems - lost.length) + ' more)' : ''));
@@ -6219,8 +6223,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			reoffload:     dropped,
 			miss_kinds:    kindCounts(kindOf),
 			unrestorable:  unrestorable,
-			// How many standing losses this round stopped carrying, because a peer's slot
-			// keeps their chunks in the live set. 0 on a round that dropped none.
+			// How many standing losses this round stopped carrying, the sweep having said
+			// their chunks are gone. 0 on a round that dropped none.
 			dropped_refs:  droppedLost,
 			miss_ids:      lost,
 		});
@@ -8009,10 +8013,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var MOBILE_GUESTS = {
 		web: 1, doc: 1, msg: 1, compose: 1, tools: 1, spend: 1, term: 1, trash: 1,
 		graph: 1, pending: 1,
-		// The Preview panel is a stage panel like the Doc panel it was split out
-		// of, and a phone shows one thing at a time -- so on a phone the source and
-		// its pages are still two sheets, raised in turn. There is no room there for
-		// them to be side by side, which is the only thing the split gave.
+		// The Preview panel is a stage panel like the Doc panel it was split out of,
+		// and a phone shows one thing at a time. It was two SHEETS, raised in turn,
+		// and that is what broke the editing loop: raising one stashed the other, and
+		// the watch that rebuilds the pages stopped with them -- so a Save refreshed
+		// nothing and coming back showed the PDF the button had written.
+		//
+		// It is still a guest, and it still belongs in this table, because everything
+		// that asks for a panel by name comes through here. What it opens is a FACE of
+		// the Doc sheet rather than a sheet of its own: `FACES` in js/mobile.js folds
+		// the two panels into one surface with a Source | Pages strip, and
+		// `DaimondSheet.open('preview')` raises the Doc sheet on its Pages tab.
 		preview: 1,
 		// A panel about reporting faults that a phone cannot reach leaves out
 		// every reader most likely to meet one. It carries the messages and the
@@ -9313,7 +9324,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// CLOSED panel -- and this shortcut returned. So `web_open` revealed nothing and a
 			// real browser window was the whole of what the user saw. A panel with no seat is not
 			// open, whatever the flag says.
-			if (open[id] && seated(id)) { if (isMobile()) mshow(id); return; }
+			if (open[id] && seated(id)) { if (isMobile()) mshow(id); wakeTypst(id); return; }
 			// PAST THE ALREADY-OPEN SHORTCUT, so this counts a panel being opened
 			// rather than a panel being asked for again by a redraw. Which panel,
 			// as a number from the module's table; a panel this build has that the
@@ -9364,6 +9375,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (id === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
 			if (id === 'social' && window.DaimondSocial) DaimondSocial.onOpen();
 			if (isMobile()) mshow(id);
+			wakeTypst(id);
+		}
+
+		/// The pages are on screen again, so the watch that paused when they left
+		/// takes itself back up.
+		///
+		/// AFTER `apply()`, and deferred a turn past it: `resume` asks whether the
+		/// panel is visible, and a panel seated this instant has not been laid out yet.
+		/// The loop's own poll would find it within a second anyway -- this is so the
+		/// author does not spend that second wondering.
+		function wakeTypst(id) {
+			if (id !== 'preview') return;
+			setTimeout(function () {
+				try {
+					if (window.DaimondTypstWatch && DaimondTypstWatch.resume) DaimondTypstWatch.resume();
+				} catch (e) { /* no watch is the ordinary case */ }
+			}, 0);
 		}
 
 		function hide(id) {
@@ -9397,6 +9425,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var hideWatchers = [];
 		function userHide(id) {
 			if (!def(id) || !open[id]) return;
+			// CLOSING IS NOT BEING EVICTED, and this is the door that knows which. A
+			// hand on the Preview's close means the document is done with: the watch
+			// stops, the path goes, and the next Compile starts a fresh one. A panel
+			// pushed off the stage to seat something else only pauses -- see `poll` in
+			// js/typstwatch.js, which cannot tell the two apart from where it stands.
+			//
+			// THE STOP ITSELF IS `closePreview`'s, reached through the watcher list
+			// below rather than written here. Letting the pages go is one act -- the
+			// blob URLs, the `<embed>` and the watch -- and the ORDER inside it is
+			// what the panel looks like afterwards: the embed is hidden first and the
+			// watch stopped last, so `unmount` gives the embed back the display it
+			// had. A second stop at this door would be a no-op nobody could prove the
+			// absence of, which is exactly what `--break nostop` needs to be able to
+			// take away.
 			hide(id);
 			hideWatchers.forEach(function (fn) {
 				try { fn(id); } catch (e) { /* a watcher must never stop a close */ }
@@ -10448,7 +10490,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_jumpAt = (_jumpAt < 0) ? us.length - 1 : Math.max(0, _jumpAt - 1);
 		var el = us[_jumpAt];
 		// Measured, not computed from offsetTop: the thread is not necessarily the offset parent.
-		chatOutput.scrollTop += el.getBoundingClientRect().top - chatOutput.getBoundingClientRect().top;
+		setScrollTop(chatOutput.scrollTop
+			+ el.getBoundingClientRect().top - chatOutput.getBoundingClientRect().top);
 	}
 
 	/// Back to the bottom of the thread, where the conversation is.
@@ -10457,7 +10500,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// starts again from the last question rather than from wherever the walk had
 	/// got to, which is what a user who has just returned to the bottom means by it.
 	function jumpEnd() {
-		chatOutput.scrollTop = chatOutput.scrollHeight;
+		setScrollTop(chatOutput.scrollHeight);
 		_jumpAt = -1;
 	}
 
@@ -10472,7 +10515,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	//
 	// Every render path in this file builds its content into one of these, so the
 	// streaming turn and a reload draw the identical shape.
-	var TILE_DIR  = { user: 'to', wire: 'to', think: 'from', reply: 'from', tool: 'local', handoff: 'local' };
+	var TILE_DIR  = { user: 'to', wire: 'to', think: 'from', reply: 'from', tool: 'local', handoff: 'local',
+		leak: 'local' };
 	var TILE_ROLL = { think: 1, tool: 1, wire: 1 };   // consecutive runs of these roll up
 
 	/// The speaker word for a tile type, translated where a key exists.
@@ -10484,6 +10528,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			case 'tool':  return tOr('chat.who_tool', 'Tool');
 			case 'wire':  return tOr('chat.who_system', 'System');
 			case 'handoff': return tOr('chat.who_handoff', 'Hand-off');
+			// The APP's own voice, like Tool and System: the model did not say this
+			// happened, the app noticed that it had.
+			case 'leak':  return tOr('chat.who_leak', 'Tool call');
 		}
 		return '';
 	}
@@ -10725,7 +10772,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		tagTurn(div);
 		tilePeek(div, text);
 		postToChat(div);
-		chatOutput.scrollTop = chatOutput.scrollHeight;
+		setScrollTop(chatOutput.scrollHeight);
 		// A new question is a new place to jump back to, so the walk starts again from the bottom.
 		_jumpAt = -1;
 	}
@@ -10773,7 +10820,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		div.appendChild(body);
 		tagTurn(div);
 		postToChat(div);
-		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
 	}
 
 	/// Draw the app's own edit of the conversation, where it happened.
@@ -10942,7 +10989,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var pinned = nearBottom();
 			liveThink._body.textContent += body;
 			tilePeek(liveThink, liveThink._body.textContent);
-			if (pinned) chatOutput.scrollTop = chatOutput.scrollHeight;
+			if (pinned) setScrollTop(chatOutput.scrollHeight);
 			return;
 		}
 		if (!body.trim()) return;                // whitespace does not start a thought
@@ -10964,7 +11011,36 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (live) liveThink = d;
 		var wasDown = nearBottom();
 		tagTurn(d); postToChat(d);
-		if (wasDown) chatOutput.scrollTop = chatOutput.scrollHeight;
+		if (wasDown) setScrollTop(chatOutput.scrollHeight);
+	}
+
+	/// Draw a tool call that arrived as PROSE, as the code it is.
+	///
+	/// NOT an assistant tile and not markdown. On 2026-09-14 this fragment reached the reader
+	/// as `namedaimonfoldtimeout_ms600000worldtrue` — a run of prose in the model's own voice,
+	/// drawn as its answer — because the sanitiser's unknown-wrapper rule keeps an unknown
+	/// tag's text and drops its markup, and the app had no idea anything was wrong. So the
+	/// fragment goes through `DaimondRender.leakBlock`, which escapes it into a `<pre>` under
+	/// a one-line note, and the tile opens rather than hiding behind a control: this is the
+	/// thing the turn produced instead of an answer, and it is not tucked away.
+	function appendLeak(fragment) {
+		var body = String(fragment == null ? '' : fragment);
+		if (!body.trim()) return;
+		finalizeAssistant();
+		var d = buildTile('leak', { expanded: true });
+		d.classList.add('chat-msg-leak');
+		d._body.innerHTML = window.DaimondRender
+			? DaimondRender.leakBlock(body)
+			: ('<pre class="leak-frag"><code>' + body.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+				+ '</code></pre>');
+		var wasDown = nearBottom();
+		tagTurn(d); postToChat(d);
+		// Through `setScrollTop`, like every other write in this file. Written on a lane
+		// that branched before the anchor existed, a raw write here is read back by the
+		// scroll listener as the READER having moved -- so a leaked tool call stamped
+		// `_lastScrollAt` and left `_wasAtEnd` stale, and the resize anchor stopped
+		// holding the live end for the rest of the turn.
+		if (wasDown) setScrollTop(chatOutput.scrollHeight);
 	}
 
 	/// Say that the conversation was folded, and DRAW THE LINE IT WAS FOLDED AT.
@@ -11037,7 +11113,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			markAboveFold();
 		}
 		tagTurn(div); postToChat(div);
-		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
 	}
 
 	/// Is this compaction notice worth another line in the thread?
@@ -11138,7 +11214,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			paths:  missing.length
 				? tOr('end.missing', 'not written: {paths}', { paths: missing.join(', ') })
 				: '',
-			notice: !!(refused || failed || missing.length),
+			// A LEAKED TOOL CALL IS A NOTICE. The turn ran rounds and called nothing,
+			// which is exactly the silence `unaccounted` exists to break.
+			notice: !!(refused || failed || missing.length || (e.malformed | 0)),
 			// `offered` and `rounds` are here rather than on the line, so the line
 			// stays quiet and no figure is lost.
 			title:  tOr('end.help',
@@ -11189,7 +11267,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		line.textContent = tOr('end.how_' + (e.how || ''), String(e.how || '')) || p.line;
 		div.appendChild(line);
 		tagTurn(div); postToChat(div);
-		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
 	}
 
 	/// The stored form of an ending, or `null` where there is nothing to store.
@@ -11208,6 +11286,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			calls:   ev.calls   | 0,
 			refused: ev.refused | 0,
 			failed:  ev.failed  | 0,
+			// Rounds thrown away to a tool call that arrived as text; see the `leaked`
+			// arm. Stored, so a reload still says the turn ended on a wire fault.
+			malformed: ev.malformed | 0,
 			missing: Array.isArray(ev.missing) ? ev.missing.slice(0) : [],
 			mid:     newMid(),
 			ts:      Date.now(),
@@ -11522,7 +11603,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!curAsstDiv) return;
 		var pinned = nearBottom();
 		drawAsst();
-		if (pinned) chatOutput.scrollTop = chatOutput.scrollHeight;
+		if (pinned) setScrollTop(chatOutput.scrollHeight);
 	}
 	function appendAssistantText(text, ranOn, handoffFellBack, meta) {
 		if (!curAsstDiv) {
@@ -11656,12 +11737,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (div._peek) div._peek.textContent = head;
 	}
 
+	/// Take the live reply tile away without drawing what is in it.
+	///
+	/// The one caller is the leaked tool call: its markup streamed token by token into an
+	/// assistant tile, and finalising that tile would put the fault on screen as the model's
+	/// answer — which is the whole of the 2026-09-14 defect. `appendLeak` redraws the same
+	/// bytes as code immediately afterwards, so nothing is lost, only re-labelled.
+	function dropAssistant() {
+		if (curAsstDiv && curAsstDiv.parentNode) curAsstDiv.parentNode.removeChild(curAsstDiv);
+		curAsstDiv = null; curAsstText = ''; _asstRenderPending = false;
+		_asstSegs = [];
+	}
+
 	function finalizeAssistant() {
 		if (curAsstDiv && curAsstText) {
 			var pinned = nearBottom();
 			drawAsst(true);
 			// The tile's own header copy takes the answer (`_copyText`); no in-body button.
-			if (pinned) chatOutput.scrollTop = chatOutput.scrollHeight;
+			if (pinned) setScrollTop(chatOutput.scrollHeight);
 		}
 		curAsstDiv = null; curAsstText = ''; _asstRenderPending = false;
 		_asstSegs = [];
@@ -11811,7 +11904,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			addMsgCopy(div, o.summary);
 		}
 		chatOutput.appendChild(div);
-		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
 		return true;
 	}
 
@@ -12077,7 +12170,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		chatOutput.appendChild(card);
 		_askCard = card;
-		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
 		return true;
 	}
 
@@ -12174,7 +12267,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		tagTurn(block);
 		postToChat(block);
 		lastToolBlock = block;
-		chatOutput.scrollTop = chatOutput.scrollHeight;
+		setScrollTop(chatOutput.scrollHeight);
 	}
 
 	/// How a tool call ended, read back out of its RESULT TEXT.
@@ -12258,7 +12351,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// having had to survive the journey.
 			noNetLine(lastToolBlock, ranWithoutNet(result));
 		}
-		chatOutput.scrollTop = chatOutput.scrollHeight;
+		setScrollTop(chatOutput.scrollHeight);
 	}
 
 	/// Say on the block itself that this command ran with the network withheld.
@@ -12353,7 +12446,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var s = pre.textContent + String(text == null ? '' : text);
 		if (s.length > RUN_LIVE_MAX) s = '… ' + s.slice(s.length - RUN_LIVE_MAX);
 		pre.textContent = s;                 // escaped via textContent
-		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
 	}
 
 	function appendError(msg) {
@@ -12363,7 +12456,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		div.querySelector('.chat-msg-content').textContent = friendlyError(msg);
 		tagTurn(div);
 		postToChat(div);
-		chatOutput.scrollTop = chatOutput.scrollHeight;
+		setScrollTop(chatOutput.scrollHeight);
 	}
 
 	// Turn a raw error — which may be an ANSI-coloured fe2o3 `Outcome` chain
@@ -16582,11 +16675,52 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var _lastScrollAt = 0;
 	var SCROLL_SETTLE_MS = 220;
 	var _deferredRenderTimer = null;
+	// The last position THIS CODE put the thread at. A programmatic write raises a
+	// `scroll` event exactly as a finger does, so without this the restores below would
+	// read their own work as the reader scrolling -- which would cancel the hold that
+	// made the write and defer the next render for a gesture nobody made. Compared by
+	// position rather than by a flag and a timer: a user scroll always lands somewhere
+	// else, and at worst one event is missed by a reader who scrolls back to the exact
+	// pixel the app had chosen.
+	var _selfTop = -1;
+
+	// Was the reader at the live end the last time the thread moved? Read on a RESIZE
+	// of the thread's own box, below.
+	var _wasAtEnd = true;
+
+	/// Move the thread, and remember that WE moved it.
+	function setScrollTop(v) {
+		chatOutput.scrollTop = v;
+		_selfTop = chatOutput.scrollTop;		// read back: the browser clamps to the range
+		_wasAtEnd = nearBottom();
+	}
 	try {
 		if (chatOutput && chatOutput.addEventListener) {
-			chatOutput.addEventListener('scroll', function () { _lastScrollAt = Date.now(); }, { passive: true });
+			chatOutput.addEventListener('scroll', function () {
+				_wasAtEnd = nearBottom();
+				if (chatOutput.scrollTop === _selfTop) return;
+				_lastScrollAt = Date.now();
+			}, { passive: true });
 		}
 	} catch (e) { /* no thread element in this context */ }
+
+	// A READER AT THE LIVE END STAYS THERE WHEN THE THREAD'S BOX CHANGES SIZE.
+	//
+	// `#chat-output` is the flexible row of the chat panel, so anything else in that
+	// column taking or giving back height resizes it -- and the two that do so on a
+	// SYNC are the seat line under the composer, which appears and disappears on a
+	// presence beat, and the composer itself when its text is reseeded. A scroll
+	// container keeps its `scrollTop` when it shrinks, so a reader who was at the live
+	// end is left above it by exactly the height that arrived: measured at 25px for the
+	// seat line, on a pull that changed nothing in the chat. A reader scrolled UP is not
+	// moved by this and is deliberately left alone.
+	try {
+		if (window.ResizeObserver && chatOutput) {
+			new ResizeObserver(function () {
+				if (_wasAtEnd) setScrollTop(chatOutput.scrollHeight);
+			}).observe(chatOutput);
+		}
+	} catch (e) { /* no ResizeObserver: the thread keeps the behaviour it had */ }
 
 	/// A cheap per-message signature: its id and everything the drawing reads that could
 	/// change WITHOUT the id changing (content length, elision, outcome, the hand-off and
@@ -16666,6 +16800,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		else if (m.role === 'fold_log') { appendCompacted(m.content || '', m.folded, m.kept); }
 		else if (m.role === 'vision_log') { appendCompacted(m.content || ''); }
 		else if (m.role === 'think_log') { appendThinking(m.content || ''); }
+		// A tool call that arrived as prose. Its own role rather than an assistant
+		// message, because it is not the model's answer and must never be redrawn as
+		// one -- which is precisely what happened on 2026-09-14.
+		else if (m.role === 'leak_log') { appendLeak(m.content || ''); }
 		// How the turn ended, redrawn from the record: a reload that dropped it
 		// would leave a reader who had walked away with the same silence the
 		// line exists to replace.
@@ -16681,6 +16819,97 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				m.outcome || outcomeOfStoredText(m.content || ''));
 		}
 	}
+
+	// THE READER'S PLACE, AS A THING IN THE TRANSCRIPT RATHER THAN A NUMBER.
+	//
+	// `scrollTop` alone is only the reader's place while everything ABOVE the viewport
+	// keeps its height, and across an unrequested re-render it does not: the System band
+	// is rebuilt at the head of the thread, an image or a KaTeX font lands late, a tile
+	// two turns up gains a line. Restoring the number then puts the reader somewhere
+	// else and calls it the same place. So the place is recorded as a TILE and an
+	// offset -- the tile nearest the top of the viewport, and how far its top sits above
+	// or below that edge -- and restored by putting that tile back at that offset, which
+	// is the idiom `jumpBack` already uses to walk the questions.
+	//
+	// The key is the tile's turn number and its ordinal within that turn, because a
+	// rebuild draws new nodes and the old element is gone: `data-turn` is on every tile
+	// `tagTurn` drew, and the ordinal distinguishes the question from the answer beneath
+	// it. A tile the rebuild did not redraw (the turn was folded away) answers null and
+	// the caller falls back to the raw scrollTop, which is what it had before.
+	var ANCHOR_HOLD_MS = 1200;		// how long a restore keeps re-asserting itself
+	var _anchorHold = null;			// the live re-assert, cancelled by the next render
+
+	/// Where the reader is: the tile nearest the top of the viewport, and its offset
+	/// from that edge. Null when the thread holds no tile to anchor on.
+	function takeAnchor() {
+		if (!chatOutput) return null;
+		var or = chatOutput.getBoundingClientRect();
+		var kids = chatOutput.children, seen = {};
+		for (var i = 0; i < kids.length; i++) {
+			var k = kids[i];
+			if (!k.dataset || k.dataset.turn == null) continue;
+			var turn = String(k.dataset.turn);
+			seen[turn] = (seen[turn] || 0) + 1;
+			var r = k.getBoundingClientRect();
+			// The first tile whose bottom is still on screen is the one the reader is
+			// reading from; everything before it is above the fold.
+			if (r.bottom - or.top > 1) return { turn: turn, nth: seen[turn], off: r.top - or.top };
+		}
+		return null;
+	}
+
+	/// Put the anchored tile back where it was. True when it could be found.
+	function applyAnchor(a) {
+		if (!a || !chatOutput) return false;
+		var kids = chatOutput.children, n = 0;
+		for (var i = 0; i < kids.length; i++) {
+			var k = kids[i];
+			if (!k.dataset || String(k.dataset.turn) !== a.turn) continue;
+			if (++n !== a.nth) continue;
+			// Measured, not computed from offsetTop: the thread is not necessarily the
+			// offset parent. Same reading `jumpBack` takes.
+			var d = k.getBoundingClientRect().top - chatOutput.getBoundingClientRect().top - a.off;
+			if (Math.abs(d) > 0.5) setScrollTop(chatOutput.scrollTop + d);
+			return true;
+		}
+		return false;
+	}
+
+	/// Hold the reader's place THROUGH the layout that has not happened yet.
+	///
+	/// A restore made the instant the tiles are drawn is made before the browser has
+	/// loaded the images in them, before KaTeX's fonts have swapped, and before an
+	/// embedded page has reported its height -- each of which changes the height of
+	/// something above the viewport and moves the reader. So `reassert` is run on the
+	/// next frame and for a short window afterwards, and the hold stops the moment the
+	/// reader touches the thread themselves: one that fought a real scroll would be the
+	/// same bug with better manners. Null cancels a hold and starts none.
+	function hold(reassert) {
+		if (_anchorHold) { clearInterval(_anchorHold.iv); _anchorHold = null; }
+		if (!reassert) return;
+		var startedAt = Date.now(), scrollMark = _lastScrollAt;
+		var h = { iv: 0 };
+		var beat = function () {
+			if (_lastScrollAt !== scrollMark || Date.now() - startedAt > ANCHOR_HOLD_MS) {
+				clearInterval(h.iv);
+				if (_anchorHold === h) _anchorHold = null;
+				return;
+			}
+			reassert();
+		};
+		try { requestAnimationFrame(beat); } catch (e) { /* no rAF in this context */ }
+		h.iv = setInterval(beat, 100);
+		_anchorHold = h;
+	}
+
+	/// Hold the anchored tile where the render put it.
+	function holdAnchor(a) { hold(a ? function () { applyAnchor(a); } : null); }
+
+	/// Hold a reader who was at the live end ON it. The same need as `holdAnchor`
+	/// from the other side: the pin is written before the images and equations in
+	/// the tail have laid out, so a thread that grows afterwards leaves the reader
+	/// short of the end they were just pinned to.
+	function holdBottom() { hold(function () { setScrollTop(chatOutput.scrollHeight); }); }
 
 	/// Redraw the parts of the thread that are NOT the transcript: the queue box, the
 	/// System band, the permissions chip. Runs on every render -- full or append -- because
@@ -16717,6 +16946,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var sameChat = current && current.id && current.id === _renderedChatId;
 		var wasDown  = nearBottom();
 		var keepTop  = chatOutput.scrollTop;
+		// And the reader's place as a TILE, which survives a height change above the
+		// viewport that the number cannot. See `takeAnchor`.
+		var anchor   = sameChat ? takeAnchor() : null;
 
 		// DO NOT REBUILD UNDER AN ACTIVE SCROLL. A store-driven re-render (a streamed
 		// progress frame, another tab's write) that lands while the reader is mid-gesture
@@ -16768,6 +17000,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					&& dispatchedAnswerPresent(current, _sdm)) { _staleDispatch = true; break; }
 			}
 		}
+		// NOTHING CHANGED, SO NOTHING IS DRAWN AND NOTHING IS SCROLLED.
+		//
+		// Most pulls carry no news for the chat on screen: a parcel whose only
+		// difference is the chunk index, another device's touch on a DIFFERENT chat, a
+		// push acknowledged back. `onChatsChangedElsewhere` re-reads the open chat's
+		// row unconditionally and calls this with an array that is message-for-message
+		// what is already drawn -- and this used to fall into the append path, which
+		// draws no tile but still re-pins a reader at the live end. That pin is where
+		// the 2026-09-14 drift came from, and a transcript that did not change has no
+		// reason to be re-pinned at all. The furniture is still redrawn: the queue, the
+		// System band and the permissions chip belong to the chat and not to the
+		// message list, and any of them can differ while the transcript does not.
+		if (sameChat && _renderSynced && !_staleDispatch && Array.isArray(messages)
+			&& nextSigs.length === _renderedSigs.length && isAppendOf(_renderedSigs, nextSigs)) {
+			renderHistoryFurniture();
+			return;
+		}
 		if (sameChat && _renderSynced && !_staleDispatch && Array.isArray(messages)) {
 			// `nextSigs` was taken at the top of this function, before the defer guard.
 			if (isAppendOf(_renderedSigs, nextSigs)) {
@@ -16778,9 +17027,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				_renderingHistory = false;
 				renderHistoryFurniture();
-				// Pinned to the live end only if they were already there; otherwise the
-				// scroll is left exactly where the reader had it (nothing was cleared).
-				if (wasDown) chatOutput.scrollTop = chatOutput.scrollHeight;
+				// Pinned to the live end only if they were already there; otherwise put
+				// back where the reader had it. NOT "left where it was": the tail was
+				// drawn through `drawHistoryMessage`, and `appendUserMessage` pins the
+				// thread to the bottom for every question it draws -- which is what a
+				// live turn wants and is why a reader scrolled up used to be hauled
+				// 600px down the moment another device's turn merged. Either way the
+				// place is then HELD through the layout still to come: an image or an
+				// equation in that tail lands after this line.
+				if (wasDown) { setScrollTop(chatOutput.scrollHeight); holdBottom(); }
+				else { if (!applyAnchor(anchor)) anchor = null; holdAnchor(anchor); }
 				_renderedSigs = nextSigs;
 				_renderedChatId = current && current.id ? current.id : null;
 				_renderSynced = true;
@@ -16789,19 +17045,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		_renderingHistory = true;
+		// THE SYSTEM BAND CROSSES THE REBUILD, because it is not part of the transcript
+		// and it is at the HEAD of it. `clearChat` empties the thread, and `renderWire`
+		// puts the band back only after an await into the engine -- so without this the
+		// place is restored against a thread missing the band's height, and the reader
+		// is moved by it when the band lands a frame later. Held out and put straight
+		// back for the SAME chat; a chat SWITCH lands at the live end anyway and gets
+		// the new chat's own band from `renderWire`.
+		var heldWire = sameChat ? document.getElementById('wire-head') : null;
+		if (heldWire) heldWire.remove();
 		clearChat();
 		// Before a single fold is drawn: which of them this chat's reader had open.
 		loadTextFolds();
 		if (!Array.isArray(messages)) { _renderingHistory = false; _renderedSigs = []; _renderSynced = true; return; }
 		messages.forEach(drawHistoryMessage);
+		if (heldWire) chatOutput.insertBefore(heldWire, chatOutput.firstChild);
 		_renderingHistory = false;
 		renderHistoryFurniture();
 		// Put the reader back where the head of this function measured them: at the
 		// live end when they were already there or when this is a freshly opened chat,
 		// otherwise exactly where they had scrolled to. The per-turn pin above is what
 		// this overrides -- it fired for every user message the replay drew.
-		if (!sameChat || wasDown) chatOutput.scrollTop = chatOutput.scrollHeight;
-		else                      chatOutput.scrollTop = keepTop;
+		if (!sameChat || wasDown) { setScrollTop(chatOutput.scrollHeight); holdBottom(); }
+		else {
+			// The number first, so a thread with nothing to anchor on (a transcript of
+			// fold notices, a turn the rebuild dropped) lands where it always did, and
+			// then the TILE, which is the reading that survives the band being rebuilt
+			// above it and the images in it loading after it.
+			setScrollTop(keepTop);
+			if (!applyAnchor(anchor)) anchor = null;
+			holdAnchor(anchor);
+		}
 		_renderedSigs = sigsOf(messages);
 		_renderedChatId = current && current.id ? current.id : null;
 		_renderSynced = true;
@@ -20019,7 +20293,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		spinnerSay.textContent = words || tOr('chat.busy', 'Thinking…');   // escaped via textContent
 		var pinned = nearBottom();
 		postToChat(spinnerEl);
-		if (pinned) chatOutput.scrollTop = chatOutput.scrollHeight;
+		if (pinned) setScrollTop(chatOutput.scrollHeight);
 	}
 	function hideSpinner() { if (spinnerEl) { spinnerEl.remove(); spinnerEl = null; spinnerSay = null; } }
 
@@ -25267,7 +25541,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		box.innerHTML = '';
 		if (waiting.length) waitingRows(box, t('chat.interject_help'), waiting, t('chat.interject_pending'), unwait);
 		if (q.length)       waitingRows(box, t('chat.queue_help'),     q,       t('chat.queued_pending'),   unqueue);
-		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
 		updateQueueBadges();
 	}
 
@@ -25978,6 +26252,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				chat._lastTurn = {
 					rounds: step, how: String(ev.how || ''), legs: turnLegs,
 					calls: ev.calls | 0, refused: ev.refused | 0, failed: ev.failed | 0,
+					// Rounds thrown away to a tool call that arrived as text. It rides
+					// here because nothing else outside the turn can see it: the
+					// transcript keeps a rendered tile, and `how` alone cannot say
+					// whether one leak was nudged past or two ended the turn.
+					malformed: ev.malformed | 0,
 					rounds_total: (wasT.rounds_total | 0) + step,
 					legs_total:   (wasT.legs_total   | 0) + turnLegs,
 					turns:        (wasT.turns        | 0) + 1,
@@ -26031,6 +26310,39 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				busySay(chat, tOr('chat.busy_road',
 					'The connection dropped — trying {name} again ({n} of {of})…',
 					{ name: ev.name || 'that', n: ev.attempt || 2, of: ev.of || 8 }));
+			} else if (ev.type === 'leaked') {
+				// A TOOL CALL THAT ARRIVED AS TEXT. The engine says so; nothing here
+				// infers it from the shape of the words, which is the rule the whole
+				// ending mechanism is built on.
+				//
+				// THE CONSOLE LINE IS THE POINT. Turn 56 of 2026-09-14 ran for 39
+				// seconds, cost US$0.16, called no tool, ended `answered`, and raised
+				// ZERO warnings anywhere — so the one reader who could have caught it
+				// had nothing to catch. A warn, always, recovered or not: a fault the
+				// app papers over quietly is a fault nobody measures.
+				var leakKey = ev.recovered ? 'recovered_leak' : 'leak';
+				if (roundPayload) roundPayload[leakKey] = 1;
+				var lp = { turn: String(umid), r: step };
+				lp[leakKey] = 1;
+				dsEvent('round', lp);
+				try {
+					console.warn('daimond: a tool call arrived as text rather than as a tool call'
+						+ (ev.recovered ? ' (recovered and run)' : ' — nothing ran')
+						+ ': ' + String(ev.fragment || '').slice(0, 300));
+				} catch (e) { /* no console */ }
+				if (!ev.recovered) {
+					// The fragment already streamed as prose and the live reply tile is
+					// holding it. It is not the answer, so the tile goes and the fragment
+					// comes back as code — and `turnText` starts clean, or the markup
+					// would be carried into whatever the next round does say.
+					dropAssistant();
+					turnText = '';
+					if (umid) _liveTurn[String(umid)] = turnText;
+					chat.messages.push({ role: 'leak_log', content: String(ev.fragment || ''),
+						mid: newMid(), ts: Date.now() });
+					if (!owns()) return;
+					appendLeak(String(ev.fragment || ''));
+				}
 			} else if (ev.type === 'truncated') {
 				// Said by the provider rather than inferred from a tool call whose
 				// arguments would not parse. Not an error: the request succeeded and a
@@ -30880,6 +31192,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// `hide`; the second is a no-op on a panel that is already shut.
 			var pvClose = document.querySelector('#panel-preview [data-close="preview"]');
 			if (pvClose) pvClose.addEventListener('click', function () { closePreview(); });
+			// AND THE CHIP, which is the other hand-driven way the pages go away. It
+			// reaches `userHide` and never this module, so a watch closed from the
+			// header would have gone on polling a panel nobody can open. `userHide`
+			// fires for a PERSON only -- the sheet putting a panel away on a phone
+			// goes through `hide` and is a pause, which is the whole point.
+			try {
+				DaimondPanels.onUserHide(function (id) {
+					if (id === 'preview') closePreview();
+				});
+			} catch (e) { /* an engine without the hook keeps the closer above */ }
 			// The line-number toggle belongs to the document, so it is wired here
 			// where the view's own state is, and not with the panel's furniture.
 			var lnBtn = document.getElementById('doc-lineno');
@@ -32288,6 +32610,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// The twin of `closeView`, which does the same for the document. Two panels,
 		/// two closers, and neither one takes the other's file off the screen.
 		function closePreview() {
+			// TWO HANDS REACH THIS FOR ONE CLICK -- this module's own listener on the
+			// closer, and the panel engine's generic `[data-close]` binding through
+			// `onUserHide` -- so the second call must find nothing left to do. That
+			// used to cost nothing, because everything below was idempotent. It stopped
+			// being free when the live view came to be STOPPED here: stopping puts the
+			// `<embed>` back exactly as it was, and a second `docEmbed(false)` after
+			// that took it away again, closing into a panel holding nothing at all.
+			var holding = !!(_pdfUrl || _docPdf || pvFile || watchedPath());
+			if (!holding) { DaimondPanels.hide('preview'); return; }
 			if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
 			// The viewer mints a blob URL per picture, sound or page it shows, and a
 			// blob URL holds its bytes until it is revoked. A session that opened
@@ -32299,6 +32630,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			pvFile = null; _docPdf = '';
 			var n = document.getElementById('pv-name');
 			if (n) n.textContent = '';
+			// THE ONE PLACE A WATCH IS ENDED BY A PERSON, and it has to be said out
+			// loud now that the pages merely LEAVING the screen is a pause rather than
+			// a stop (js/typstwatch.js `poll`). Visibility cannot tell "he closed the
+			// document" from "he is looking at the source for a moment", and on a
+			// phone the second happens every time he saves; so the closer says which
+			// one this is instead of the loop guessing from an element's rects.
+			//
+			// LAST, AFTER `docEmbed(false)`, and the order is the whole of what the
+			// panel looks like afterwards: `stop` unmounts the live view, and
+			// unmounting gives the embed back the inline `display` it had before the
+			// pages stood in front of it. Stopping first and hiding second closed into
+			// a panel holding nothing at all -- which `dev/verify_typstwatch.mjs`
+			// check 7 reads, and which used to be right only by accident, because the
+			// stop came from a poll a second after this function had finished.
+			try { if (window.DaimondTypstWatch) DaimondTypstWatch.stop(); }
+			catch (e) { /* no live view is the ordinary case */ }
 			DaimondPanels.hide('preview');
 		}
 
@@ -32390,8 +32737,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			curFile = path; curContent = content; editing = false;
 			viewEl.style.display = '';
 			var isTypst = /\.typ$/i.test(path);
+			// TWO BUTTONS, AND THEY WRITE TO TWO DIFFERENT FILES. Compile lays the
+			// document out here, in the page, and writes `<main>-preview.pdf`; Publish
+			// runs the project's own script on the machine, which is what writes the
+			// final `<main>.pdf`. They were one button writing one name, and that name
+			// was the final's -- see `previewPdfPath`.
 			var compileBtn = isTypst
-				? '    <button class="files-btn" data-act="compile" title="Compile to PDF">⚙ Compile</button>'
+				? '    <button class="files-btn" data-act="compile" title="'
+					+ esc(t('files.compile_help')) + '">⚙ ' + esc(t('files.compile')) + '</button>'
+				+ '    <button class="files-btn" data-act="publish" title="'
+					+ esc(t('files.publish_help')) + '">⇪ ' + esc(t('files.publish')) + '</button>'
 				: '';
 			viewEl.innerHTML =
 				'<div class="files-view-head">' +
@@ -32413,6 +32768,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				'  </span>' +
 				'</div>' +
 				'<div class="files-view-msg" style="display:none"></div>' +
+				'<div class="files-view-note" style="display:none"></div>' +
 				'<pre class="files-view-body"></pre>';
 			var nameEl = document.getElementById('doc-name');
 			if (nameEl) nameEl.textContent = path;                 // escaped
@@ -32510,6 +32866,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						{ title: t('files.discard_title'), danger: true, cancelLabel: t('files.keep_editing') });
 					if (!go) return;
 				}
+				draftDrop(path);	// thrown away on purpose is still thrown away
 				stopEditing();
 				fileMsg(t('files.editing_stopped'));
 			});
@@ -32518,6 +32875,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					editing = true;
 					var ta = document.createElement('textarea');
 					ta.className = 'files-edit'; ta.value = curContent; ta.spellcheck = false;
+					// EVERY KEYSTROKE, not a debounce. The event this exists for is the
+					// tab being killed, and a kill does not wait for a timer to fire --
+					// whatever is held back at that moment is exactly what is lost.
+					// Writing a chapter-sized string to localStorage is well under a
+					// millisecond, which is a great deal less than the gap between two
+					// characters typed by a person.
+					ta.addEventListener('input', function () {
+						draftKeep(path, ta.value, curContent);
+					});
 					viewEl.querySelector('.files-view-body').replaceWith(ta);
 					ta.focus();
 					// At the TOP, not the end. Focusing a textarea leaves the caret past
@@ -32561,6 +32927,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 							return;
 						}
 						curContent = content; editing = false;
+						draftDrop(path);	// it is on disk; there is nothing left to restore
 						// It is a file now, so the two controls that act on one come back.
 						['download', 'attach'].forEach(function (a) {
 							var b = viewEl.querySelector('[data-act="' + a + '"]');
@@ -32586,6 +32953,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				viewEl.querySelector('[data-act="compile"]').addEventListener('click', function () {
 					compileTypst(path, this);
 				});
+				viewEl.querySelector('[data-act="publish"]').addEventListener('click', function () {
+					publishViaDev(path, this);
+				});
 			}
 			// A NEW DOCUMENT OPENS IN THE EDITOR, because a blank read view is a blank
 			// panel and a blank panel is the whole defect. Through the button rather
@@ -32610,6 +32980,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// place by two names is how a user comes to believe there are three.
 				fileMsg(t('files.new_doc_here', { place: placeName() }));
 			}
+			// ── AND WHAT WAS TYPED LAST TIME AND NEVER SAVED ──────────────────
+			//
+			// Offered back rather than applied behind the reader's back: the editor
+			// opens holding his own characters, the file on disk is untouched until he
+			// presses Save, and one line says so. It goes through the Edit button for
+			// the same reason a new document does -- the caret, the Cancel that backs
+			// out and the Save that writes are then the ones every other edit gets.
+			var kept = draftRead(path, curContent);
+			if (kept) {
+				if (!editing) editBtn.click();
+				var ta0 = viewEl.querySelector('.files-edit');
+				if (ta0) { ta0.value = kept.text; ta0.setSelectionRange(0, 0); }
+				fileMsg(t('files.draft_restored'));
+			}
 		}
 
 		// Compile the currently open `.typ` file to a PDF in the
@@ -32625,6 +33009,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			msgEl.style.display = ''; msgEl.classList.remove('err');
 			msgEl.textContent = t('files.compiling_path', { path: path });   // escaped
 			try {
+				// A CHAPTER IS NOT A DOCUMENT, and pressing Compile on one used to be
+				// refused: three `label <…> does not exist` errors, because the
+				// cross-references a chapter makes are resolved by the book around it.
+				// The author's own `dev` script has known the rule for years -- a
+				// document is a file holding `#show: doc.with(`, `select_typst_file` at
+				// ~/usr/books/ontheism/dev:39 -- so the same rule is applied here and
+				// the MAIN is compiled, with the chapter's own page brought into view.
+				var main = await mainFor(path);
 				// One driver, one memo. `typst.js` installs `window.DaimondTypst` and holds the
 				// compiler promise itself, so the button and the agent's `typst_compile` tool
 				// build the 30 MB wasm once between them; a private memo here would have been a
@@ -32640,29 +33032,306 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// caller at all, so a 63-file book compiled here came back "only the one
 				// source was given to the compiler" and the daimon reading that concluded
 				// the compiler could not resolve imports.
-				var out = await Wasm.typst_compile_project(path);
+				var out = await Wasm.typst_compile_project(main);
 				if (!out) { out = { error: t('files.compile_failed', { reason: 'no compiler' }) }; }
 				if (out.error) {
 					msgEl.classList.add('err');
 					msgEl.textContent = out.error;               // escaped
 					return;
 				}
-				var pdfPath = path.replace(/\.typ$/i, '.pdf');
+				var pdfPath = previewPdfPath(main);
 				await writeWorkspaceBytes(pdfPath, out.pdf);
 				// Render from a blob URL (same-origin) in the CENTRE panel, where
 				// there is room to actually read the page.
 				if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
-				var blob = new Blob([out.pdf], { type: 'application/pdf' });
-				_pdfUrl = URL.createObjectURL(blob);
+				// A BLOB URL HOLDS ITS BYTES UNTIL IT IS REVOKED, and on a phone
+				// nothing is ever going to read this one: `showDoc` leaves the
+				// `<embed>` empty there and the live pages draw the layout instead.
+				// 1.7 MB of a book held for a reader who cannot be shown it is exactly
+				// the kind of thing an iOS tab is ended for.
+				if (!(window.DaimondShell && DaimondShell.isPhone())) {
+					var blob = new Blob([out.pdf], { type: 'application/pdf' });
+					_pdfUrl = URL.createObjectURL(blob);
+				}
 				showDoc(pdfPath, _pdfUrl);
 				msgEl.textContent = t('files.compiled',
 					{ path: pdfPath, size: fmtBytes(out.pdf.length) });
+				if (main !== path) {
+					msgEl.textContent += ' ' + t('files.compiled_main', { main: main });
+					// The book is 48 pages and the chapter is somewhere in the middle of
+					// it, so landing on the title page is landing nowhere. Not awaited:
+					// the sections are located a build after the pages are drawn, and the
+					// message above must not wait for them.
+					showChapterPage(path);
+				}
 			} catch (e) {
 				msgEl.classList.add('err');
 				msgEl.textContent = t('files.compile_failed', { reason: (e && e.message ? e.message : e) });
 			} finally {
 				if (btn) { btn.disabled = false; btn.textContent = label || ('⚙ ' + t('files.compile')); }
 			}
+		}
+
+		// ── The main of a project, the preview's own name, and Publish ──
+		//
+		// Three things a person editing a book needs that a one-file Compile button
+		// could not give: pressing Compile on a CHAPTER must build the book, the PDF
+		// it writes must not be the one the publishing pipeline owns, and the
+		// pipeline itself must be reachable from here.
+
+		/// What `dev` calls a document: a file that sets up its own page.
+		///
+		/// Verbatim from `select_typst_file` in the author's script -- "a document sets
+		/// up its own page with `#show: doc.with(`; a chapter or section file is
+		/// included by one". One rule in two places is one rule; a second spelling here
+		/// would be a second answer to "what is the book".
+		var MAIN_MARK = '#show: doc.with(';
+
+		/// How much of a sibling is read while looking for that mark.
+		///
+		/// A document's `#show` is in its preamble, within a few lines of the imports,
+		/// and reading whole chapters to find out they are chapters is a megabyte of
+		/// OPFS per press. The book this was measured on puts the mark at line 4.
+		var MAIN_HEAD = 64 * 1024;
+
+		/// The document to compile when the user pressed Compile on `path`.
+		///
+		/// The file itself where it is a document; otherwise the one beside it that is,
+		/// remembered per directory so the search happens once. Where nothing in the
+		/// directory says so -- a document built some other way -- the answer is the
+		/// file itself, which is `dev`'s own fallback and keeps the button doing what
+		/// it always did.
+		async function mainFor(path) {
+			var p = String(path || '');
+			if (!p || storeFile) return p;
+			if (await isMain(p)) return p;
+			var cut = p.lastIndexOf('/');
+			var dir = cut >= 0 ? p.slice(0, cut) : '';
+			var key = 'daimond-typst-main:' + dir;
+			var kept = '';
+			try { kept = localStorage.getItem(key) || ''; } catch (e) { kept = ''; }
+			// A remembered answer is re-checked rather than trusted: the file may have
+			// been renamed, or the mark taken out of it, since it was written down.
+			if (kept && kept !== p && await isMain(kept)) return kept;
+			var names = [];
+			try {
+				var res = await tools().run_tool_outcome('file_list',
+					JSON.stringify({ path: dir || '.' }));
+				if (res && res.outcome === 'done') {
+					names = parseSyncListing(res.text)
+						.filter(function (e) { return !e.dir && /\.typ$/i.test(e.name); })
+						.map(function (e) { return e.name; })
+						.sort();
+				}
+			} catch (e) { names = []; }
+			for (var i = 0; i < names.length; i++) {
+				var full = dir ? (dir + '/' + names[i]) : names[i];
+				if (full === p) continue;
+				if (!(await isMain(full))) continue;
+				try { localStorage.setItem(key, full); } catch (e) { /* private window */ }
+				return full;
+			}
+			return p;
+		}
+
+		/// Does this file set up its own page?
+		async function isMain(path) {
+			try {
+				var b = await Wasm.read_bytes(String(path), 0, MAIN_HEAD);
+				if (!b || !b.length) return false;
+				return new TextDecoder().decode(b).indexOf(MAIN_MARK) >= 0;
+			} catch (e) { return false; }
+		}
+
+		/// Where the in-app compile writes, which is NEVER where the pipeline writes.
+		///
+		/// `~/usr/books/ontheism/dev` composes `<name>.pdf` out of typst's own output
+		/// through Ghostscript (CMYK, for print) and a pikepdf metadata scrub; the
+		/// bytes this button produces are RGB, unscrubbed and from a different compiler
+		/// version. Writing them to `<name>.pdf` replaced the FINAL of a book with a
+		/// draft of it, silently, and the only tell was the size -- 1.7 MB against the
+		/// pipeline's 408 KB.
+		function previewPdfPath(mainPath) {
+			return String(mainPath || '').replace(/\.typ$/i, '') + '-preview.pdf';
+		}
+
+		var PUBLISH_CAP    = '3G';
+		var PUBLISH_SCRIPT = 'dev';
+		/// How long Publish waits on the machine before it stops listening.
+		///
+		/// `dev` is a WATCHER, not a one-shot: it starts `typst watch`, a colour
+		/// watcher and a scrub watcher, opens the PDF and waits. The final PDF is
+		/// written by the first pass through all three -- about a minute on the
+		/// author's book -- and everything after that is the watch. So this waits long
+		/// enough for the first pass and says, in as many words, that the script goes
+		/// on running.
+		var PUBLISH_MS = 240000;
+
+		/// The command Publish runs, as `{ argv, cwd }`.
+		///
+		/// Composed rather than executed here so that what is sent to the machine can
+		/// be asserted -- and read by the person before they allow it, since `run`
+		/// shows the command line in its own dialog.
+		///
+		/// UNDER A MEMORY CAP, because a full book costs ~2.9 GB resident and
+		/// `typst watch` PARKS at that peak for as long as it runs (measured
+		/// 2026-08-07, memory `reference_typst_compile_memory`). Two of them is more
+		/// than the machine has. The scope is the user's own, so nothing here needs
+		/// root and a runaway kills itself rather than the session.
+		///
+		/// THROUGH `bash`, and that is not decoration. `run` has no shell, and
+		/// `systemd-run` wants a program it can find on PATH -- `./dev` is neither.
+		/// Handing the script to `bash` as an argument resolves it against `cwd`, which
+		/// is where the project is.
+		function publishCommand(mainPath) {
+			var m = String(mainPath || '');
+			var cut = m.lastIndexOf('/');
+			return {
+				argv: ['systemd-run', '--user', '--scope', '--quiet',
+					'-p', 'MemoryMax=' + PUBLISH_CAP,
+					'bash', './' + PUBLISH_SCRIPT, cut >= 0 ? m.slice(cut + 1) : m],
+				cwd:  cut >= 0 ? m.slice(0, cut) : '.',
+			};
+		}
+
+		/// The last command Publish composed, for a verifier to read back.
+		var _lastPublish = null;
+
+		/// Run the project's own publishing script on the machine.
+		///
+		/// It is the only place Ghostscript and pikepdf exist, so this is a `run` and
+		/// not something reimplemented in the page. The machine hand is a program the
+		/// user installs; without one the tool refuses in its own words and those are
+		/// what the panel shows.
+		async function publishViaDev(path, btn) {
+			var msgEl = viewEl.querySelector('.files-view-msg');
+			if (!msgEl) return;
+			var label = btn ? btn.textContent : '';
+			if (btn) { btn.disabled = true; btn.textContent = '… ' + t('files.publishing'); }
+			msgEl.style.display = ''; msgEl.classList.remove('err');
+			try {
+				var main = await mainFor(path);
+				var cmd = publishCommand(main);
+				_lastPublish = cmd;
+				msgEl.textContent = t('files.publishing_cmd',
+					{ cmd: cmd.argv.join(' '), cwd: cmd.cwd });
+				var res = await tools().run_tool_outcome('run', JSON.stringify({
+					argv: cmd.argv, cwd: cmd.cwd, timeout_ms: PUBLISH_MS }));
+				if (!res || res.outcome !== 'done') {
+					msgEl.classList.add('err');
+					msgEl.textContent = t('files.publish_failed', { reason: toolReason(res) });
+					return;
+				}
+				// The script's own output, verbatim: it names each stage as it finishes
+				// and says whether the metadata scrub found a leak, and a paraphrase
+				// would lose the one line the author acts on.
+				msgEl.textContent = t('files.published',
+					{ path: String(main).replace(/\.typ$/i, '.pdf') })
+					+ '\n' + stripAnsi(String(res.text || ''));
+			} catch (e) {
+				msgEl.classList.add('err');
+				msgEl.textContent = t('files.publish_failed', { reason: friendlyError(e) });
+			} finally {
+				if (btn) { btn.disabled = false; btn.textContent = label || ('⇪ ' + t('files.publish')); }
+			}
+		}
+
+		// ── What the watch says, where the author is looking ────────────
+		//
+		// The pages are one panel and the source is another, and everything the loop
+		// has to say happens while the person is in the SOURCE: the build broke, the
+		// pages went off screen and stopped rebuilding. `js/typstwatch.js` raises those
+		// as events carrying a path and a line and nothing Typst-shaped; this is the
+		// half that puts them on the panel holding that path.
+
+		/// Is this diagnostic about the file on screen?
+		///
+		/// The compiler names a file as it saw it -- root-relative, leading slash --
+		/// and the panel holds a workspace-relative path, so neither is a prefix of the
+		/// other. Matched at a segment boundary, so `chap.typ` does not answer for
+		/// `rev_chap.typ`.
+		function noteIsMine(path) {
+			var a = String(path || '').replace(/^\/+/, '');
+			var b = String(curFile || '');
+			if (!a || !b) return false;
+			if (a === b) return true;
+			return b.length > a.length && b.slice(-a.length) === a
+				&& b.charAt(b.length - a.length - 1) === '/';
+		}
+
+		/// Put a standing word from the loop on the note line, or take it away.
+		function noteLine(text, isErr, jump) {
+			var el = viewEl && viewEl.querySelector('.files-view-note');
+			if (!el) return;
+			if (!text && !jump) { el.style.display = 'none'; el.textContent = ''; return; }
+			el.textContent = '';
+			el.classList.toggle('err', !!isErr);
+			if (jump) {
+				var b = document.createElement('button');
+				b.type = 'button';
+				b.className = 'files-jump';
+				b.textContent = jump.label;
+				b.title = t('files.go_to_line', { line: jump.line });
+				b.addEventListener('click', function () { goToLine(jump.line); });
+				el.appendChild(b);
+			}
+			// The space is in the TEXT and not only in the margin: a reader with a
+			// screen reader hears the two run together without it, and so does a check.
+			el.appendChild(document.createTextNode((jump && text ? ' ' : '') + (text || '')));
+			el.style.display = '';
+		}
+
+		/// Move the caret to line `n` of the open file, opening the editor to do it.
+		///
+		/// Through the Edit button rather than beside it, so the caret, the Cancel that
+		/// backs out and the Save that writes are the ones every other edit gets.
+		function goToLine(n) {
+			var line = Math.max(1, Math.floor(Number(n) || 1));
+			var ta = viewEl && viewEl.querySelector('.files-edit');
+			if (!ta) {
+				var eb = viewEl && viewEl.querySelector('[data-act="edit"]');
+				if (!eb || editing) return false;
+				eb.click();
+				ta = viewEl.querySelector('.files-edit');
+				if (!ta) return false;
+			}
+			var lines = ta.value.split('\n');
+			if (line > lines.length) line = lines.length;
+			var at = 0;
+			for (var i = 0; i < line - 1; i++) at += lines[i].length + 1;
+			ta.focus();
+			ta.setSelectionRange(at, at + (lines[line - 1] || '').length);
+			// A textarea does not scroll to its own selection, so the line is put where
+			// it can be read -- the middle of the box, not its last row.
+			var lh = parseFloat(getComputedStyle(ta).lineHeight);
+			if (!(lh > 0)) lh = 16;
+			ta.scrollTop = Math.max(0, (line - 1) * lh - ta.clientHeight / 2);
+			ta.scrollLeft = 0;
+			return true;
+		}
+
+		/// The first heading in a chapter, as words, or ''.
+		function firstHeading(text) {
+			var m = /^=+[ \t]+(.+)$/m.exec(String(text || ''));
+			if (!m) return '';
+			// The label a heading carries -- `= Practice <practice>` -- is markup, and
+			// the rail has only what was typeset.
+			return m[1].replace(/<[^>]*>\s*$/, '').trim();
+		}
+
+		/// Bring the chapter's own page into view.
+		///
+		/// The book is 48 pages and the chapter is somewhere in the middle, so landing
+		/// on the title page is landing nowhere. `goToSection` finds where the heading
+		/// was typeset -- the compiler answers `[]` for a heading's location, so it has
+		/// to be read off the laid-out pages -- and scrolls there.
+		async function showChapterPage(chapterPath) {
+			var W = window.DaimondTypstWatch;
+			if (!W || !W.goToSection) return 0;
+			var want = '';
+			try { want = firstHeading(await readRaw(chapterPath)); } catch (e) { return 0; }
+			if (!want) return 0;
+			return await W.goToSection(want);
 		}
 
 		// Write binary bytes into the ACTIVE workspace root: a compiled PDF, a saved message, an
@@ -32942,6 +33611,54 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			catch (e) { noteFolderLost(e); throw e; }
 		}
 
+		// ── WHAT IS TYPED BUT NOT SAVED ──────────────────────────────
+		//
+		// An iOS tab is ended, not suspended: the system reclaims a backgrounded page
+		// by killing it, and everything in a textarea goes with it. The author edits a
+		// chapter on the phone, takes a call, comes back to a reloaded app and a file
+		// exactly as it was before he started typing -- with no message, because
+		// nothing failed. Nothing in the app knew there had been anything to lose.
+		//
+		// So every keystroke lands in browser storage, keyed by path, and opening the
+		// file again offers it back. It is NOT an autosave: the file on disk is
+		// untouched, the explicit Save is still the only thing that writes, and the
+		// daimon's own `file_edit` and the three-way sync merge are therefore
+		// unaffected -- which is the reason an autosaving textarea was refused when
+		// this was first proposed.
+		var DRAFT_KEY = 'daimond-doc-draft:';
+
+		/// Keep what is in the editor, without touching the file.
+		function draftKeep(path, text, base) {
+			if (!path) return;
+			try {
+				localStorage.setItem(DRAFT_KEY + path,
+					JSON.stringify({ text: text, base: base, at: Date.now() }));
+			} catch (e) { /* private mode, or full: the edit is still on screen */ }
+		}
+
+		/// What was typed into `path` and never saved, or null.
+		///
+		/// A draft that says exactly what the file says is not a draft: it is what
+		/// Save already wrote, or what the reader typed and then undid, and offering
+		/// to "restore" it would put a notice over a file nothing had happened to.
+		function draftRead(path, disk) {
+			if (!path) return null;
+			try {
+				var raw = localStorage.getItem(DRAFT_KEY + path);
+				if (!raw) return null;
+				var d = JSON.parse(raw);
+				if (!d || typeof d.text !== 'string') return null;
+				if (d.text === disk) { draftDrop(path); return null; }
+				return d;
+			} catch (e) { return null; }
+		}
+
+		/// Let a draft go: it was saved, or thrown away on purpose.
+		function draftDrop(path) {
+			if (!path) return;
+			try { localStorage.removeItem(DRAFT_KEY + path); } catch (e) { /* nothing kept */ }
+		}
+
 		/// Write the file the Doc panel has open, through whichever door it came from.
 		///
 		/// Both doors answer `{ outcome, text }`, because they report a failure differently
@@ -32997,6 +33714,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					t('files.discard'),
 					{ title: t('files.discard_title'), danger: true, cancelLabel: t('files.keep_editing') });
 				if (!go) return;
+				// He said discard, so there is nothing to offer back next time. A
+				// draft kept past an explicit discard would put the words he threw
+				// away back in front of him the moment he reopened the file.
+				draftDrop(curFile);
 			}
 			viewEl.style.display = 'none';
 			curFile = null; editing = false;
@@ -33155,6 +33876,44 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		}
 
+		// ── What the loop says, wired once ─────────────────────────────
+		//
+		// Registered here rather than on the first `.typ` opened: a build can fail
+		// while the panel holds nothing, and a listener wired lazily is a listener
+		// that misses the event it exists for.
+
+		// A BUILD BROKE, and the file and the line are the only part anybody acts on.
+		// The panel used to say "Saved." over a source that no longer compiled, with
+		// typst's words at the foot of a panel the author was not looking at.
+		window.addEventListener('daimond-build-error', function (ev) {
+			var d = (ev && ev.detail) || {};
+			if (!d.text) { noteLine('', false, null); return; }
+			if (!noteIsMine(d.path)) return;
+			var first = String(d.text).split('\n')[0];
+			// The head is `error at <path>:<line>: …`; the link says the path and the
+			// line, so the sentence after it starts where the compiler's own does.
+			var said = first.replace(/^\s*\w+ at [^\s:]+:\d+:\s*/, '');
+			noteLine(said || first, true,
+				d.line ? { label: String(d.path || '') + ':' + d.line, line: d.line } : null);
+		});
+		// THE PAGES WENT OFF SCREEN. Two seats and a third panel asked for is an
+		// eviction, and the loop stopping was silent: state read `live` for a second,
+		// then `idle`, and Save never rebuilt again.
+		window.addEventListener('daimond-typst-paused', function () {
+			noteLine(t('files.pages_paused'), false, null);
+		});
+		window.addEventListener('daimond-typst-resumed', function () {
+			noteLine(t('files.pages_live'), false, null);
+			// It is news, not a state: the pages are back and nothing is wrong.
+			var el = viewEl && viewEl.querySelector('.files-view-note');
+			if (el) setTimeout(function () {
+				if (el.textContent === t('files.pages_live')) noteLine('', false, null);
+			}, 4000);
+		});
+		window.addEventListener('daimond-typst-stopped', function () {
+			noteLine('', false, null);
+		});
+
 		return {
 			init:          bind,
 			onOpen:        onOpen,
@@ -33257,6 +34016,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			systemList:    sysList,
 			// Show a directory in the tree, whichever tree is showing.
 			browse:        function (p) { return list(p || ''); },
+			// ── The Typst seams, published so a check reads the app's own answer ──
+			//
+			// `publishCommand` especially: it composes a command that will run on the
+			// user's machine under a memory cap, and a verifier asserting a string it
+			// built itself would be asserting nothing.
+			mainFor:       mainFor,
+			previewPdf:    previewPdfPath,
+			chapterPage:   showChapterPage,
+			publishCommand: publishCommand,
+			lastPublish:   function () { return _lastPublish; },
+			goToLine:      goToLine,
 			// Say the panel's own words again in a new language. The scope chips and
 			// the badges on an attached row are on screen the whole time the panel
 			// is, so they cannot wait for the next time something rebuilds them.
@@ -33343,6 +34113,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	window.DaimondFiles = {
 		folder:  function () { try { return Files.folder(); } catch (e) { return null; } },
 		entries: function (dir) { return Files.entries(dir || ''); },
+		// The Typst seams, for `dev/verify_typedit_loop.mjs`: which file a chapter's
+		// Compile actually builds, what that compile writes, where a jump lands, and
+		// the command Publish would send to the machine.
+		mainFor:        function (p) { return Files.mainFor(p); },
+		previewPdf:     function (p) { return Files.previewPdf(p); },
+		chapterPage:    function (p) { return Files.chapterPage(p); },
+		publishCommand: function (p) { return Files.publishCommand(p); },
+		lastPublish:    function () { return Files.lastPublish(); },
+		goToLine:       function (n) { return Files.goToLine(n); },
 	};
 
 	// The daimon's door to the Doc panel. `file_show` in src/tools.rs reaches it
@@ -36533,6 +37312,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Tied to THIS document rather than to "a watch is running anywhere": the loop
 	/// may still be following the last file for a moment, and renaming this header
 	/// after that one would put a second wrong name where the first was.
+	/// The `.typ` the live view is following, or '' when nothing is.
+	function watchedPath() {
+		try {
+			var w = window.DaimondTypstWatch;
+			var st = w ? w.state() : null;
+			return (st && st.path) ? st.path : '';
+		} catch (e) { return ''; }         // no live view is the ordinary case
+	}
+
 	function liveSource(pdf) {
 		try {
 			var w = window.DaimondTypstWatch;
@@ -36569,8 +37357,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// threw "pvFile is not defined" and the pages were laid out into a panel
 		// nothing ever opened.
 		if (v) Files.previewAside();
-		e.style.display = '';
-		e.src = url;
+		// ── NOTHING GOES IN THE `<embed>` ON A PHONE ──────────────────────────
+		//
+		// iOS Safari draws an embedded PDF as PAGE ONE and nothing else: no scroll,
+		// no page two, no way to reach the rest of the document. A 48-page book
+		// compiled on the phone therefore ARRIVED as one page, and the reader had no
+		// way of knowing the other forty-seven were in the file. The live typeset
+		// pages are the only rendering that works there — they are drawn here, as
+		// SVG, a band at a time — and a `.typ` compiled from this panel always arms
+		// them (`began`, called by the Rust compile door), so there is a rendering to
+		// route to rather than a gap to leave.
+		//
+		// `isPhone` and not `isMobileDevice`: this is about the room on screen and
+		// about which shell is running, and a desktop window narrowed to a phone's
+		// width runs the phone's shell.
+		var narrow = !!(window.DaimondShell && DaimondShell.isPhone());
+		if (narrow) {
+			e.removeAttribute('src');
+			e.style.display = 'none';
+		} else {
+			e.style.display = '';
+			e.src = url;
+		}
 		// THE HEADER NAMES THE FILE THE READER IS EDITING, NOT THE ONE THAT FELL OUT
 		// OF COMPILING IT. Pressing ⚙ Compile leaves the pages on screen and rebuilds
 		// them from the `.typ` on every save, so a header reading `proj/main.pdf`
@@ -36589,6 +37397,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		DaimondPanels.markUsed('preview');   // it now has something to hold
 		DaimondPanels.show('preview');
 		DaimondPanels.reflow();
+		// On a phone the Preview is a FACE of the Doc sheet rather than a sheet of
+		// its own, so "show the preview" means "turn to the Pages tab". `show` above
+		// already routes there through `mshow`; this covers the case where the sheet
+		// was already up on Source and the engine therefore had nothing to open.
+		try {
+			if (narrow && window.DaimondSheet && DaimondSheet.isOpen()) DaimondSheet.tab('preview');
+		} catch (e2) { /* no sheet at this width */ }
 	}
 
 	/// Ask the header again what the Doc panel is holding.
@@ -46729,10 +47544,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// Draw the band at the head of the thread, or take it away.
-	async function renderWire() {
+	/// Take the System band down. The ONE place that removes it, so every path that
+	/// ends with no band reads the same and no path removes it by accident.
+	function dropWire() {
 		var old = document.getElementById('wire-head');
 		if (old) old.remove();
-		if (!_wireOn || !current) return;
+	}
+
+	async function renderWire() {
+		// THE BAND IS NOT TAKEN DOWN BEFORE ITS REPLACEMENT EXISTS.
+		//
+		// It sits at the HEAD of the thread, so removing it takes its height out of
+		// the transcript ABOVE whatever the reader is looking at -- and this function
+		// then awaits the engine for the composed system message. Until 2026-09-14 the
+		// removal was the first line here, so every scroll write `renderHistory` makes
+		// in that window (the pin for a reader at the live end, the restore for one
+		// scrolled up) was made against a thread one band too short, and when the band
+		// came back the reader was that far from where they had been. Measured on a
+		// pull that changed NOTHING: a reader at the live end ended 36px above it,
+		// every single pull -- the "syncs scroll the chat a little" the owner reported.
+		//
+		// So the standing band keeps its place across the await, and only the paths
+		// that end with NO band take it down. The one that must NOT is the staleness
+		// guard below: there a NEWER render owns the band, and removing it would be
+		// this render tearing down its successor's work.
+		if (!_wireOn || !current) { dropWire(); return; }
 		// WHICH TURN THIS THREAD ACTUALLY RUNS. A Diamond's chat uses this composer and this
 		// thread and NOT this turn: `sendUserMessage` hands a record carrying a `diamondId` to
 		// `doSteer`, which steers the DIAMOND'S own app through `steer_crystal` -- its own model,
@@ -46742,8 +47578,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// to him while he was asking why it never used one.
 		var did = (current.diamondId || '');
 		var app;
-		try { app = did ? diamondApp(did) : ensureApp(current); } catch (e) { return; }
-		if (!app || typeof app.wire_system !== 'function') return;
+		try { app = did ? diamondApp(did) : ensureApp(current); } catch (e) { dropWire(); return; }
+		if (!app || typeof app.wire_system !== 'function') { dropWire(); return; }
 		// What is marked into this Diamond, from the same `Files.bounds` the turn reads it from,
 		// so the band and the turn cannot come to different ideas of what is attached. A failure
 		// is the empty pair, which the engine reads as "nothing was marked" and confines to the
@@ -46760,7 +47596,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				JSON.stringify(marks.attached  || []),
 				JSON.stringify(marks.read_only || []),
 				JSON.stringify(marks.toolkits  || [])));
-		} catch (e) { return; }
+		} catch (e) { dropWire(); return; }
 		// Still the thread this render was started for, and still wanted. Re-read rather than
 		// assumed: everything above this line may have happened while the user was moving.
 		if (seq !== _wireSeq || !_wireOn || !current || (current.diamondId || '') !== did) return;

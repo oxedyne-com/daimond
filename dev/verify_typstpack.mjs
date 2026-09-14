@@ -70,7 +70,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // A namespace of this verifier's own, so the files it makes and removes are nobody else's.
 const NS   = 'd~typstpack';
 const SRC  = 'paper.typ';
+// TWO NAMES, BECAUSE THE TWO DOORS WRITE TWO FILES. The model's `typst_compile`
+// writes `<name>.pdf` beside the source, as it always has. The panel's ⚙ writes
+// `<name>-preview.pdf`: the plain name belongs to whatever publishing pipeline the
+// project has -- for the author's books a Ghostscript CMYK pass and a metadata scrub
+// -- and the button writing over it replaced a print-ready final with a draft.
 const PDF  = 'paper.pdf';
+const PPDF = 'paper-preview.pdf';
 const BODY = '= A heading\n\nA paragraph, and $x^2 + y^2$.\n';
 
 /// Every pack key the gateway's shipped catalogue sells, read out of `gateway/app.jdat` -- the
@@ -308,9 +314,9 @@ for (let i = 0; i < 40 && !hasButton; i++) {
 check('the .typ file opens in the Doc panel and offers a Compile button',
 	inTree === true && hasButton, `in the tree: ${inTree}, button drawn: ${hasButton}`);
 
-await remove(PDF);
+await remove(PPDF);
 const btnFree = await clickCompile();
-const btnFreePdf = await exists(PDF);
+const btnFreePdf = await exists(PPDF);
 check('unlocked: clicking ⚙ compiles, and a PDF lands in the workspace',
 	btnFree.clicked === true && btnFreePdf === true, btnFree.msg.slice(0, 160));
 
@@ -346,9 +352,9 @@ check('LOCKED: the driver itself refuses, and hands back no bytes at all',
 	driverLocked.bytes === 0 && driverLocked.error !== '',
 	`${driverLocked.bytes} bytes, error: ${driverLocked.error.slice(0, 120)}`);
 
-await remove(PDF);
+await remove(PPDF);
 const btnLocked = await clickCompile(20000);
-const btnLockedPdf = await exists(PDF);
+const btnLockedPdf = await exists(PPDF);
 check('LOCKED: clicking ⚙ does not compile — no PDF was written',
 	btnLocked.clicked === true && btnLockedPdf === false,
 	`clicked: ${btnLocked.clicked}, said: ${btnLocked.msg.slice(0, 140)}`);
@@ -409,9 +415,9 @@ await sleep(400);
 // same click, on the same file, in the same session, once the pack is held.
 
 await setLocked('');
-await remove(PDF);
+await remove(PPDF);
 const btnBought = await clickCompile();
-const btnBoughtPdf = await exists(PDF);
+const btnBoughtPdf = await exists(PPDF);
 check('bought: the very same click compiles again, in the same sitting',
 	btnBought.clicked === true && btnBoughtPdf === true, btnBought.msg.slice(0, 160));
 

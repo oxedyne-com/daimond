@@ -53,6 +53,24 @@
 
    Nothing about a note is queued, retried, batched or synced.
 
+   AND WHAT THE MODEL WRITES IS NOT ON THE SCREEN UNTIL IT IS
+   DRAWN. "Polish & post" hands a note to a model and gets back a
+   proposal in somebody else's words; until 2026-09-14 it posted
+   that in the same breath, so the card carrying it was drawn and
+   removed inside one turn and the owner watched his own proposal
+   go public before he could read it -- "It should wait for my
+   permission." A drafted proposal is now HELD on the note
+   (`draft`), drawn with Send now beside it, and `sendable()` keeps
+   it out of the flush: there is no path from a model finishing to
+   a request being made.
+
+   AND THE ONE LIMIT THE FORGE WILL NOT TELL US IS HELD HERE.
+   `TITLE_LIMIT` is 200 characters at the forge and its machine
+   refusal deliberately carries no number (oregami
+   views/proposals.rs:1157-1165), so the number is this side's to
+   say: the box counts, the press refuses before queueing, and a
+   refusal opens the title for editing with both numbers on it.
+
    `telemetry.js` keeps the same promise from the other side and
    the contrast is worth stating, because the two files look like
    opposites and are not. That one makes leaking impossible by
@@ -210,6 +228,27 @@
 	// wrote, and the next reader would have moved it to match a cap it does not track.
 	var MAX_CHARS = 20000;
 
+	/// How long a title may be, in CHARACTERS, at the forge.
+	///
+	/// `oregami/src/propose.rs:110`, `TITLE_LIMIT`. The forge counts code points
+	/// (`title.chars().count()`, views/proposals.rs:1438), so `titleLen()` counts
+	/// them too rather than UTF-16 units -- a title of 150 emoji is 150 characters
+	/// there and 300 to `String.length`, and counting the wrong one is how a client
+	/// refuses what the forge would have taken.
+	///
+	/// HARD-CODED, BECAUSE THE FORGE PUBLISHES NO LIMIT ANYWHERE. Its machine
+	/// refusal carries a `&'static str` and its own comment says what that costs:
+	/// "a client learns *which* rule it broke and must be told elsewhere what that
+	/// rule's number is" (views/proposals.rs:1157-1165). No answer on the improve
+	/// route carries a `limits` field, so elsewhere is here. The figure is asserted
+	/// against that Rust source by `www/js/socialpost.test.mjs` whenever the oregami
+	/// tree is on disk, so moving it there reddens a test rather than quietly
+	/// costing somebody a proposal.
+	var TITLE_LIMIT = 200;
+
+	/// How long a string is as the forge counts it: characters, not UTF-16 units.
+	function titleLen(s) { return Array.from(String(s || '')).length; }
+
 	var _st = null;
 
 	/// A millisecond stamp, or 0. Not `n | 0`: epoch-ms is past 32 bits.
@@ -263,7 +302,28 @@
 			// would put the note back in the flush, which is the defect this
 			// field exists to end.
 			refused: cleanRefusal(r.refused),
+			// What the model made of it, held until a person says yes
+			//
+			// Cleaned here for the same reason `refused` is: a field written only
+			// by the send path would live until the next boot and then vanish,
+			// and the card asking for permission would vanish with it -- which is
+			// most of the defect this field was added to end.
+			draft: cleanDraft(r.draft),
 		};
+	}
+
+	/// A stored draft, defended against whatever was in storage.
+	///
+	/// The title is kept well past `TITLE_LIMIT` on purpose: an over-length title
+	/// has to be ON SCREEN before anybody can shorten it, and a clean-up that
+	/// trimmed it to the limit would hide the very characters the person is being
+	/// asked to cut.
+	function cleanDraft(v) {
+		if (!v || typeof v !== 'object') return null;
+		var title = (typeof v.title === 'string') ? v.title.replace(/[\r\n]+/g, ' ') : '';
+		var body  = (typeof v.body  === 'string') ? v.body.slice(0, MAX_CHARS) : '';
+		if (!title.trim()) return null;
+		return { title: title.slice(0, 4 * TITLE_LIMIT), body: body, at: ms(v.at) || Date.now() };
 	}
 
 	/// A stored refusal, defended against whatever was in storage. `said` is the
@@ -975,6 +1035,39 @@
 		}
 		hint.textContent = tOr('social.title_hint',
 			'First line is the title; what happened goes below.');
+		drawBoxCount();
+	}
+
+	/// The box's title counter, drawn ONLY once the first line is past what the
+	/// forge takes.
+	///
+	/// Silent under the limit on purpose: a count sitting on the screen for every
+	/// note is one more thing to read in a box that already asks for two, and the
+	/// number matters at exactly one moment. Over it, it is the thing the owner was
+	/// never told -- the forge's refusal carries no number at all.
+	function drawBoxCount() {
+		var acts = el('improve-acts');
+		if (!acts) return;
+		var node = el('improve-count');
+		if (!node) {
+			node = document.createElement('span');
+			node.className = 'imp-count';
+			node.id = 'improve-count';
+			acts.appendChild(node);
+		}
+		var box  = el('improve-box');
+		var text = box ? String(box.value || '') : '';
+		var i    = text.indexOf('\n');
+		var n    = titleLen((i < 0) ? text : text.slice(0, i));
+		if (n > TITLE_LIMIT) {
+			node.hidden = false;
+			node.dataset.over = '1';
+			node.textContent = tOr('social.title_count', 'Title {n} / {max}', { n: n, max: TITLE_LIMIT });
+		} else {
+			node.hidden = true;
+			delete node.dataset.over;
+			node.textContent = '';
+		}
 	}
 
 	// ── The queue, and posting from it ─────────────────────────
@@ -1001,6 +1094,9 @@
 			sent: 0,
 			n:    0,
 			into: [],
+			// Nothing drafted yet. A polish note gets one from `polishOnly()` and
+			// then WAITS; a verbatim note never has one.
+			draft: null,
 		};
 		s.notes.unshift(rec);
 		save();
@@ -1035,11 +1131,68 @@
 		return true;
 	}
 
-	/// The notes a flush would try: everything queued except what the forge has
-	/// already refused. What `flushQueue` reports as waiting, so a count on the
-	/// screen is never larger than the number of notes that can still go.
+	/// The notes a flush would ACT on: everything queued except what the forge has
+	/// already refused, and except what is waiting on a person. What `flushQueue`
+	/// reports as waiting, so a count on the screen is never larger than the number
+	/// of notes that can still go.
+	///
+	/// A NOTE THE MODEL HAS DRAFTED IS THE SECOND KIND. What the model wrote is not
+	/// what its author wrote, so it goes on the wire on a press and on nothing
+	/// else -- which is the whole of the owner's 2026-09-14 report: the drafted
+	/// card appeared and vanished, "apparently sent automatically. It should wait
+	/// for my permission."
 	function sendable() {
-		return load().notes.filter(function (n) { return !n.refused; });
+		return load().notes.filter(function (n) { return !n.refused && !n.draft; });
+	}
+
+	/// The title this note would be sent under: the model's, where it has drafted
+	/// one, and otherwise the note's own first line.
+	function titleOf(rec) {
+		if (!rec) return '';
+		if (rec.draft) return rec.draft.title;
+		var i = rec.text.indexOf('\n');
+		return (i < 0) ? rec.text : rec.text.slice(0, i);
+	}
+
+	/// Write a new title onto a note, leaving its body exactly as it was.
+	///
+	/// THE ONE PATH THAT EDITS SOMEBODY'S OWN WORDS, and it exists because every
+	/// alternative is worse: a note the forge refused for the length of its title
+	/// could otherwise only be deleted, or re-sent unchanged to earn the same
+	/// refusal. The BODY is never touched -- a verbatim note's body is the
+	/// characters after the first newline -- so what this changes is the one line
+	/// the person is being asked about, and only while they are typing in it.
+	function retitle(rec, s) {
+		if (!rec) return false;
+		var one = String(s || '').replace(/[\r\n]+/g, ' ');
+		if (rec.draft) { rec.draft.title = one.slice(0, 4 * TITLE_LIMIT); save(); return true; }
+		var i = rec.text.indexOf('\n');
+		rec.text = (i < 0) ? one : (one + rec.text.slice(i));
+		save();
+		return true;
+	}
+
+	/// Would the forge take this note's title?
+	///
+	/// Asked only about characters that would actually go. A polish note with no
+	/// draft yet is sending nothing: the model writes the title it will send, so
+	/// the note's own first line is not the question.
+	function fits(rec) {
+		if (!rec) return false;
+		if (!rec.draft && rec.mode === 'polish') return true;
+		var n = titleLen(titleOf(rec));
+		return n > 0 && n <= TITLE_LIMIT;
+	}
+
+	/// What the screen says about a title the forge will not take.
+	///
+	/// IT NAMES BOTH NUMBERS, which the forge's own refusal cannot: `Fault::Malformed`
+	/// carries a static sentence and says so in its own comment. Without this line a
+	/// person is told their title is too long and never told what long is.
+	function tooLong(rec) {
+		return tOr('social.title_over',
+			'That title is {n} characters; a title is up to {max}. Shorten it, then send.',
+			{ n: titleLen(titleOf(rec)), max: TITLE_LIMIT });
 	}
 
 	/// One queued note by id, or null.
@@ -1153,13 +1306,28 @@
 		return a;
 	}
 
-	// ── The compose box: two ways to post, both auto-send ──────
+	// ── The compose box: one verb that posts, one that drafts ──
 	//
-	// One box, two verbs. "Post" sends the words as they are; "Polish & post" has
-	// the model rewrite them into a proposal first. NEITHER keeps -- both queue the
-	// note and immediately try to send it, so the only holding area is the queue,
-	// and only for a note that could not go yet. A note remembers which verb made
-	// it, so a reconnect flush sends it the way its author chose.
+	// One box, two verbs, and THEY DO NOT DO THE SAME THING at the end.
+	//
+	//   Post           the words on the screen go, at once. The person is looking
+	//                  at exactly what leaves, so the press is the consent.
+	//   Polish & post  the model rewrites the note into a proposal, and THAT IS
+	//                  PUT ON THE SCREEN WITH SEND NOW BESIDE IT. Nothing leaves
+	//                  until Send now is pressed.
+	//
+	// The second half of that used to post in the same breath as the drafting, and
+	// the owner reported what it looked like on 2026-09-14: "the 'Send now' button
+	// and associated model-revised proposal appears momentarily, before
+	// disappearing, apparently sent automatically. It should wait for my
+	// permission." It was sent automatically -- `submit('polish')` called
+	// `sendPolished`, which drafted and posted, and the row vanished because a
+	// posted note leaves the queue. What the model writes is not what its author
+	// wrote, so it is now held (`draft` on the note) and `sendable()` keeps it out
+	// of every automatic path.
+	//
+	// A note remembers which verb made it, so a reconnect drafts a polish note that
+	// was written offline -- and then still waits.
 
 	/// Post the box, in one of the two modes. Queues the note, then -- if the
 	/// browser is online -- tries to send it at once. If the send does not go (or
@@ -1190,6 +1358,17 @@
 					'Write what happened under the first line — the forge will not take a proposal with no body.'));
 				return null;
 			}
+			// AND A TITLE THE FORGE WILL TAKE. Same argument as the body above, and
+			// the same defect it prevents: a note over `TITLE_LIMIT` was queued,
+			// 400ed with a sentence carrying no number, and left the owner with a
+			// row he could only re-send or delete. Refused here, where the words are
+			// still in the box in front of the person who can cut them.
+			if (titleLen(cut.title) > TITLE_LIMIT) {
+				flash(tOr('social.title_over',
+					'That title is {n} characters; a title is up to {max}. Shorten it, then send.',
+					{ n: titleLen(cut.title), max: TITLE_LIMIT }));
+				return null;
+			}
 		}
 		if (!hasVoice()) { flash(tOr('social.novoice_set', 'No voice yet — set one in Settings to post.')); return null; }
 		var rec = store(text, mode);
@@ -1197,23 +1376,42 @@
 		render();
 		if (onLine()) { await sendOne(rec); }
 		render();
-		// Raised, whether it posted or is queued -- either way it has left the box.
-		// Point the person at the Improve hub, where it is read and settled.
-		showRaised();
+		// A POLISH NOTE HAS NOT BEEN RAISED. It has been drafted, and the draft is
+		// on the screen waiting to be read -- so saying "Raised — see it in
+		// Improve" there would point the person at a hub holding nothing of theirs.
+		var now = find(rec.id);
+		if (now && now.draft) {
+			flash(tOr('social.drafted',
+				'The model has drafted it below. Read it, then press Send now — nothing has been sent.'));
+		} else {
+			// Raised, whether it posted or is queued -- either way it has left the
+			// box. Point the person at the Improve hub, where it is read and settled.
+			showRaised();
+		}
 		return rec;
 	}
 
-	/// Send one queued note, in its own mode. Verbatim goes straight through the
-	/// door; polish runs the model first and posts what it drafted.
+	/// Take one queued note as far as it may go WITHOUT a further press.
+	///
+	/// A note the model has already drafted goes on the wire -- it is only ever
+	/// here because somebody pressed Send now on it. A polish note with no draft is
+	/// drafted and then STOPS, and answers false, because drafting is not sending
+	/// and the flush must not count it as one. A verbatim note posts.
 	async function sendOne(rec) {
 		var cur = find(rec.id);
 		if (!cur) return false;					// already gone
-		return (cur.mode === 'polish') ? await sendPolished(cur) : await sendVerbatim(cur);
+		if (cur.draft) return await sendDraft(cur);
+		if (cur.mode === 'polish') { await polishOnly(cur); return false; }
+		return await sendVerbatim(cur);
 	}
 
 	async function sendVerbatim(rec) {
 		var parts = split(rec.text);
 		if (!parts) { flash(tOr('social.no_title', 'First line is the title — write one, then what happened.')); return false; }
+		// A title the forge will refuse never reaches the wire. The box checks this
+		// too; a queued note can arrive here from an older build, from another tab,
+		// or from an edit that did not go far enough.
+		if (!fits(rec)) { flash(tooLong(rec)); return false; }
 		// The build is the note's OWN, captured when it was written -- not whatever
 		// the live "what goes with it" row happens to say now. `split` reads the live
 		// row, so its build is overwritten here.
@@ -1223,12 +1421,18 @@
 		return a.ok;
 	}
 
-	/// Polish one note into a proposal with the model, then post it. The drafting
-	/// is js/triage.js's, the one place the model machinery and its metering live;
-	/// this posts what it drafted through the same door a verbatim note leaves by.
+	/// Run the model over one queued note and HOLD what it wrote. The drafting is
+	/// js/triage.js's, the one place the model machinery and its metering live.
+	///
+	/// NOTHING GOES ON THE WIRE HERE, and that is the whole function. This was the
+	/// first half of a `sendPolished` that posted what it got in the same breath,
+	/// so the card carrying the model's words was drawn and removed inside one
+	/// turn -- the proposal was public before its author had read it, and the row
+	/// vanishing looked like a bug on top of that.
+	///
 	/// A failure -- no model, offline, an unreadable answer -- leaves the note in
-	/// the queue for the next flush.
-	async function sendPolished(rec) {
+	/// the queue undrafted, and the next flush tries again.
+	async function polishOnly(rec) {
 		var got = null;
 		try { if (window.DaimondTriage && DaimondTriage.polish) got = await DaimondTriage.polish(rec.text); }
 		catch (e) { got = null; }
@@ -1236,7 +1440,26 @@
 			flash(tOr('social.polish_wait', 'The model could not draft it just now; it is still waiting to send.'));
 			return false;
 		}
-		var a = await through(rec, { title: got.title, body: got.body || '', build: rec.build || '' });
+		var cur = find(rec.id);
+		if (!cur) return false;					// deleted while the model ran
+		cur.draft = cleanDraft({ title: got.title, body: got.body || '', at: Date.now() });
+		save();
+		render();
+		return !!cur.draft;
+	}
+
+	/// Put the model's draft on the wire, as a proposal of its own.
+	///
+	/// THE PERSON HAS SEEN IT. This runs from a press and from nothing else,
+	/// because `sendable()` keeps a drafted note out of the flush -- so there is
+	/// no path from a model finishing to a proposal being public.
+	async function sendDraft(rec) {
+		if (!fits(rec)) { flash(tooLong(rec)); return false; }
+		var a = await through(rec, {
+			title: rec.draft.title,
+			body:  rec.draft.body || '',
+			build: rec.build || '',
+		});
 		if (!a.ok) flash(refusedOrKept(rec, a));
 		return a.ok;
 	}
@@ -1247,6 +1470,15 @@
 		var rec = find(id);
 		if (!rec) return false;
 		if (!hasVoice()) { flash(tOr('social.novoice_set', 'No voice yet — set one in Settings to post.')); return false; }
+		// WHAT IS ON THE SCREEN IS WHAT GOES. The row's title editor writes every
+		// keystroke onto the record, but a press landing between the last keystroke
+		// and that write would send the older characters, so the input is read once
+		// more here.
+		takeTitle(rec);
+		// A title the forge will not take does not leave, and the row says the two
+		// numbers. This is the dead end the owner was left in: Send now on a refused
+		// note re-sent the same characters to earn the same refusal.
+		if (!fits(rec)) { flash(tooLong(rec)); render(); return false; }
 		// A press is a fresh judgement and outranks the record. The refusal comes
 		// off and the note goes on the wire ONCE; if the forge refuses again the
 		// send writes the refusal back, so a press cannot start the loop this
@@ -1254,18 +1486,31 @@
 		// the repository was full and is not now.
 		if (rec.refused) { delete rec.refused; save(); }
 		var ok = await sendOne(rec);
+		if (ok) showRaised();
 		render();
 		return ok;
 	}
 
+	/// Take the characters in one row's title editor onto its note, if it is drawn.
+	function takeTitle(rec) {
+		var row = document.querySelector('.imp-queue-row[data-note="' + String(rec.id) + '"]');
+		var inp = row ? row.querySelector('.imp-note-title-in') : null;
+		if (inp) retitle(rec, inp.value);
+	}
+
 	// ── Draining the queue when the browser comes back ─────────
 	//
-	// THE NET-NEW PIECE. A note written offline (or one whose send failed) waits in
-	// the queue; when the browser fires `online`, js/daimond.js calls this and every
-	// waiting note is sent in the mode it was written in -- a polish note drafts on
-	// reconnect, because the model needs the network too. One flush at a time, and
-	// it stops the moment the browser drops again rather than throwing every note at
-	// a dead forge.
+	// A note written offline (or one whose send failed) waits in the queue; when the
+	// browser fires `online`, js/daimond.js calls this and every waiting note is
+	// taken as far as it may go without a press. One flush at a time, and it stops
+	// the moment the browser drops again rather than throwing every note at a dead
+	// forge.
+	//
+	// AS FAR AS IT MAY GO IS NOT ALWAYS SENT. A verbatim note posts: those are the
+	// author's own characters and the press that queued them was the consent. A
+	// polish note is DRAFTED on reconnect -- the press that queued it was consent to
+	// spend on the model -- and then stops, because the press that sends a proposal
+	// under somebody's name has not happened yet.
 
 	var _flushing = false;
 
@@ -1285,6 +1530,9 @@
 				if (!onLine()) break;
 				var rec = find(q[i].id);
 				if (!rec || rec.refused) continue;	// taken, or refused meanwhile
+				// Drafted meanwhile: it is waiting on a person now, not on the
+				// network, and a flush is not a person.
+				if (rec.draft) continue;
 				var ok = await sendOne(rec);
 				if (ok) sent++;
 			}
@@ -2036,11 +2284,84 @@
 		return d;
 	}
 
-	/// The queue: notes that could not be sent yet, newest first. Empty when there
-	/// is nothing waiting, so the compose box sits straight above the proposals in
-	/// the ordinary case; it fills only when a send did not go -- offline, or a
-	/// forge that refused. Each row shows the words, how it will be sent, and offers
-	/// a Send-now and a Delete. The reconnect flush drains it on its own.
+	/// The title, opened for editing, with the forge's limit counted beside it.
+	///
+	/// DRAWN WHENEVER A NOTE IS WAITING ON A PERSON -- a refusal, or a draft the
+	/// model has just written -- because in both cases the answer is "read this one
+	/// line, and change it if you must". A row that offered only Send now and Delete
+	/// left the owner with a refusal he could re-earn or throw away and nothing
+	/// else (2026-09-14).
+	///
+	/// NO `maxlength`. The over-length title has to be on screen to be shortened,
+	/// and a browser silently trimming it to 200 would hide exactly the characters
+	/// the person is being asked to cut.
+	function titleEditor(rec) {
+		var wrap = document.createElement('div');
+		wrap.className = 'imp-note-title';
+		var inp = document.createElement('input');
+		inp.type = 'text';
+		inp.className = 'imp-note-title-in';
+		inp.value = titleOf(rec);
+		inp.setAttribute('aria-label', tOr('social.title_label', 'The title this will be sent under'));
+		wrap.appendChild(inp);
+		var count = document.createElement('span');
+		count.className = 'imp-note-count';
+		drawCount(count, titleOf(rec));
+		wrap.appendChild(count);
+		return wrap;
+	}
+
+	/// The live count: what the title is, against what the forge takes.
+	function drawCount(node, title) {
+		var n = titleLen(title);
+		node.textContent = n + ' / ' + TITLE_LIMIT;
+		if (n > TITLE_LIMIT) node.dataset.over = '1';
+		else delete node.dataset.over;
+	}
+
+	/// Whether this row's Send may be pressed, and what it says it will do. A
+	/// polish note with no draft yet is not sending anything on its next press --
+	/// it is paying for the model -- so it does not say Send.
+	function setSend(btn, rec) {
+		var drafting = !rec.draft && rec.mode === 'polish';
+		var ready = fits(rec);
+		btn.disabled = !ready;
+		btn.textContent = drafting
+			? tOr('social.polish_now', 'Polish it')
+			: tOr('social.send_now', 'Send now');
+		btn.title = ready
+			? (drafting
+				? tOr('social.polish_now_help', 'Have the model draft a proposal from this note. Nothing is sent.')
+				: tOr('social.send_now_help', 'Try to send this one now, in the way it was written.'))
+			: tooLong(rec);
+	}
+
+	/// A person is typing in one row's title. The record takes every keystroke, so
+	/// the shortened title survives a reload, and the counter and Send follow it.
+	///
+	/// NOTHING IS REDRAWN. A `render()` here would replace the input under the
+	/// cursor, which is the one thing a live counter must not do.
+	function onTitleInput(inp) {
+		var row = inp.closest ? inp.closest('.imp-note') : null;
+		if (!row) return;
+		var rec = find(row.dataset.note);
+		if (!rec) return;
+		retitle(rec, inp.value);
+		var count = row.querySelector('.imp-note-count');
+		if (count) drawCount(count, inp.value);
+		var send = row.querySelector('[data-act="improve-resend"]');
+		if (send) setSend(send, rec);
+	}
+
+	/// The queue: notes that have not been sent, newest first. Empty when there is
+	/// nothing waiting, so the compose box sits straight above the proposals in the
+	/// ordinary case. Three kinds of row, and each says which it is:
+	///
+	///   waiting   the network has not taken it yet; the flush will.
+	///   drafted   the model has written a proposal and it is HERE, unsent, with
+	///             Send now beside it. Nothing automatic will touch it.
+	///   refused   the forge read it and said no. The title is open for editing and
+	///             Send is dark until it fits.
 	function drawQueue() {
 		var host = el('improve-queue');
 		if (!host) return;
@@ -2061,6 +2382,27 @@
 			text.textContent = n.text;
 			row.appendChild(text);
 
+			// WHAT THE MODEL WROTE, SHOWN AS THE MODEL'S. It sits under the
+			// person's own words rather than replacing them, because the note is
+			// still the only copy of what they wrote and because the two being
+			// different is the reason this waits for a press at all.
+			if (n.draft) {
+				row.appendChild(line('imp-note-eyebrow',
+					tOr('social.draft_head', 'The model would send this')));
+				row.appendChild(titleEditor(n));
+				row.appendChild(line('imp-note-draftbody', n.draft.body || ''));
+			} else if (n.refused && n.mode !== 'polish') {
+				row.appendChild(titleEditor(n));
+			}
+			// A REFUSED POLISH NOTE WITH NO DRAFT GETS NO EDITOR, and the
+			// omission is the honest half. The characters in it would be the
+			// note's own first line, and the model writes the title that goes --
+			// so an editor there would invite somebody to shorten a line that is
+			// not what was refused and not what will be sent. Its way out is
+			// another drafting, under a prompt that now states the limit. Notes
+			// refused by the build that posted the drafting without holding it
+			// (before 2026-09-14) are all of this shape.
+
 			var foot = document.createElement('div');
 			foot.className = 'imp-note-foot';
 
@@ -2071,20 +2413,32 @@
 			// the refusal is a fact about the last attempt, not a lock.
 			if (n.refused) {
 				state.dataset.state = 'refused';
+				// THE FORGE'S SENTENCE, AND THEN THE NUMBER IT COULD NOT CARRY.
+				// `Fault::Malformed` is a `&'static str`, so the forge's own words
+				// about a long title name no limit; the second sentence is this
+				// side's job and is what turns a dead end into an edit.
 				state.textContent = tOr('social.q_refused', 'The forge would not take this: {said}',
-					{ said: n.refused.said || saying({ why: n.refused.why }) });
+					{ said: n.refused.said || saying({ why: n.refused.why }) })
+					+ (fits(n) ? '' : ' ' + tooLong(n))
+					+ ((!n.draft && n.mode === 'polish')
+						? ' ' + tOr('social.q_redraft', 'Press Polish it to have the model write it again.')
+						: '');
+			} else if (n.draft) {
+				state.dataset.state = 'drafted';
+				state.textContent = tOr('social.q_drafted',
+					'Nothing has been sent. Read it, then press Send now.');
 			} else {
 				state.dataset.state = 'waiting';
 				state.textContent = (n.mode === 'polish')
-					? tOr('social.q_polish', 'Waiting to polish and post')
+					? tOr('social.q_polish', 'Waiting to be drafted by the model')
 					: tOr('social.q_verbatim', 'Waiting to post');
 			}
 			foot.appendChild(state);
 
 			if (hasVoice()) {
-				foot.appendChild(button('imp-note-send', 'improve-resend',
-					tOr('social.send_now', 'Send now'),
-					tOr('social.send_now_help', 'Try to send this one now, in the way it was written.')));
+				var send = button('imp-note-send', 'improve-resend', tOr('social.send_now', 'Send now'));
+				setSend(send, n);
+				foot.appendChild(send);
 			}
 			foot.appendChild(button('imp-note-copy', 'improve-copy', t('common.copy'), t('common.copy')));
 
@@ -3089,10 +3443,19 @@
 	});
 
 	// Writing a fresh note takes the "Raised" confirmation down, so it never sits
-	// stale over a compose that has moved on.
+	// stale over a compose that has moved on -- and the title count follows the
+	// first line as it is typed, which is the whole point of a live counter.
+	//
+	// A row's title editor is here too rather than in the click handler above,
+	// because what it changes is the record and not the screen: every keystroke is
+	// written onto the note, so a reload after a refusal finds the shortened title
+	// rather than the one the forge would refuse again.
 	try {
 		document.addEventListener('input', function (e) {
-			if (e.target && e.target.id === 'improve-box') hideRaised();
+			var target = e.target;
+			if (target && target.id === 'improve-box') { hideRaised(); drawBoxCount(); return; }
+			var inp = (target && target.closest) ? target.closest('.imp-note-title-in') : null;
+			if (inp) onTitleInput(inp);
 		}, true);
 	} catch (e) { /* no document */ }
 
@@ -3524,6 +3887,17 @@
 		submit:   submit,
 		resend:   resend,
 		drop:     drop,
+		/// How long a title may be at the forge, in characters. Published because
+		/// js/triage.js has to put the number in the model's prompt and a second
+		/// literal there is a second number to get wrong -- there is ONE copy of
+		/// this figure in the client, and `TITLE_LIMIT` above names where it came
+		/// from.
+		titleLimit: function () { return TITLE_LIMIT; },
+		/// The title one queued note would be sent under, and whether the forge
+		/// would take it. For a verifier that wants the two answers the row draws
+		/// rather than the pixels.
+		titleOf:  function (id) { return titleOf(find(id)); },
+		fits:     function (id) { return fits(find(id)); },
 		/// Drain the queue: send every waiting note in its own mode. Called by
 		/// js/daimond.js on the browser's `online` event, and on panel open.
 		flushQueue: flushQueue,

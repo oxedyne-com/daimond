@@ -136,9 +136,23 @@
 	}
 
 	/// The device segment of a peer sidecar key, as written by `peerKeyFor`. A
-	/// device id is sixteen hex characters (daimond.js:DEVICE_ID_RE), so it can
-	/// never swallow the `.peer` in front of it.
-	var PEER_RE = /\.peer(?:\.([0-9a-f]{16}))?$/;
+	/// device id is sixteen OR thirty-two hex characters -- exactly what
+	/// `DEVICE_ID_RE` (daimond.js:3620) admits -- so it can never swallow the
+	/// `.peer` in front of it.
+	///
+	/// BOTH WIDTHS, AND THE WIDE ONE IS THE LIVE ONE. This read sixteen alone
+	/// until 2026-09-14, and every id on the owner's roster is thirty-two: the
+	/// slots `notePeerRef` writes are keyed by `parcelSender`, which is the roster
+	/// id. So `peerOwner` answered null for every slot the app had ever written --
+	/// "not a sidecar at all" -- and the three functions that ask it each did the
+	/// wrong thing with that answer. `contentReap` judged the slot by its whole
+	/// key, found no chat of that id, and deleted it on the very collect that was
+	/// about to commit it; `peerReap` skipped it; `merge` dropped it rather than
+	/// crossing it to a third device. The committer therefore swept the other
+	/// devices' fresh chunks on every push, and they re-offloaded the same items
+	/// minutes later, round after round. Two hex widths in two files is what made
+	/// that invisible; see www/js/peerkey.test.mjs.
+	var PEER_RE = /\.peer(?:\.([0-9a-f]{16}|[0-9a-f]{32}))?$/;
 
 	/// Drop every content manifest under `prefix` whose id is not in `live`.
 	/// Called by the Diamond and chat collectors once they have enumerated what
@@ -604,25 +618,6 @@
 		return true;
 	}
 
-	/// Every chunk address named by a `.peer.<device>` slot in the index -- the
-	/// record of what SOMEBODY ELSE'S parcel says it holds for an item.
-	///
-	/// This is what makes dropping an unrestorable manifest safe. Our own manifest
-	/// is not the only thing keeping a chunk in the committed live set: a peer slot
-	/// names it too (`notePeerRef`, daimond.js), and the commit declares both. So a
-	/// dead address a peer still names can leave OUR manifest without leaving the
-	/// live set, which is the difference between dropping a reference and losing
-	/// the chunks it pointed at.
-	function peerNamedAddrs() {
-		var ix = index(), out = {};
-		Object.keys(ix).forEach(function (k) {
-			if (k.indexOf('.peer.') < 0) return;
-			var m = ix[k];
-			if (!m || !Array.isArray(m.chunks)) return;
-			m.chunks.forEach(function (c) { if (c && c.addr) out[c.addr] = 1; });
-		});
-		return out;
-	}
 
 	/// Drop a path from the index — the file is GONE, not merely absent. Its
 	/// chunks are swept on the next commit. Only an explicit delete does this.
@@ -938,12 +933,12 @@
 		contentForget: contentForget,
 		/// A manifest this device cannot heal: record it (`noteUnrestorable`, which
 		/// answers how many rounds it has been seen), read the set (`unrestorable`),
-		/// forget one (`clearUnrestorable`), and ask what addresses a PEER's slot still
-		/// names (`peerNamedAddrs`) -- which is what makes dropping one safe.
+		/// and forget one (`clearUnrestorable`). The second answered sighting is what
+		/// makes dropping one safe; `peerNamedAddrs` asked whether a peer's slot still
+		/// named the addresses and went with the rule that read it.
 		noteUnrestorable:  noteUnrestorable,
 		unrestorable:      unrestorable,
 		clearUnrestorable: clearUnrestorable,
-		peerNamedAddrs:    peerNamedAddrs,
 		contentReap:  contentReap,
 		peerKey:      peerKey,
 		peerKeyFor:   peerKeyFor,

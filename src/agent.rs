@@ -207,6 +207,11 @@ pub enum TurnEnd {
 	SpendCapped,// the turn spent past the per-turn ceiling, with work still going
 	Silent,     // the final message carried no text at all
 	Failed,     // the provider or the transport ended the turn
+	// The model wrote its own native tool-call syntax into the reply TEXT, twice running, so
+	// the round produced neither an answer nor a call.  Its own word and not `Answered`,
+	// which is the whole of the 2026-09-14 defect: a wire fault that ends a turn as a
+	// success is a turn nobody can tell from one that worked.
+	Malformed,
 }
 
 impl TurnEnd {
@@ -224,6 +229,7 @@ impl TurnEnd {
 			Self::SpendCapped	=> "spend_cap",
 			Self::Silent	=> "silent",
 			Self::Failed	=> "failed",
+			Self::Malformed	=> "malformed",
 		}
 	}
 }
@@ -244,6 +250,9 @@ pub struct TurnEnding {
 	pub failed:		usize,			// ... of which broke
 	// Paths a completed call said it had left on the store, and which are not there.
 	pub missing:	Vec<String>,
+	// Rounds whose reply carried a tool call written as TEXT and had to be sent again.  A
+	// leak the reader recovered is not counted: it cost no round and the tool ran.
+	pub malformed:	usize,
 }
 
 impl TurnEnding {
@@ -256,7 +265,24 @@ impl TurnEnding {
 	/// that appended a warning to every turn would teach its reader to skip the one that mattered,
 	/// which is the failure this whole mechanism exists to prevent.
 	pub fn unaccounted(&self) -> bool {
-		self.refused > 0 || self.failed > 0 || !self.missing.is_empty()
+		self.refused > 0 || self.failed > 0 || !self.missing.is_empty() || self.malformed > 0
+	}
+}
+
+/// What the model is told when its tool call arrived as text.
+///
+/// **Tool-shaped, and deliberately short.**  It names what arrived, says what to do instead,
+/// and stops -- a paragraph of apology is a paragraph the model reads on a round it is already
+/// having to pay for twice.  The family's own note is appended where its bank rows earned one;
+/// see [`crate::profile::Family::leak_hint`].
+///
+/// # Arguments
+/// * `model` - The provider's slug, which is what names the family.
+fn leak_nudge(model: &str) -> String {
+	let base = "Your tool call arrived as text, not as a tool call. Emit it as a tool call.";
+	match crate::profile::Family::detect(model).leak_hint() {
+		Some(hint) => fmt!("{} {}", base, hint),
+		None       => base.to_string(),
 	}
 }
 
@@ -275,6 +301,11 @@ struct Claim {
 #[derive(Clone, Debug, Default)]
 struct Claims {
 	calls: Vec<Claim>,
+	// Rounds thrown away to a leaked tool call.  It rides here rather than on `audit`'s
+	// signature because it is the same KIND of fact as the rest -- a tally of what the turn
+	// did, decidable without reading a word of the model's prose -- and because a tenth
+	// parameter on the one exit is how a later exit comes to forget one.
+	malformed: usize,
 }
 
 impl Claims {
@@ -381,6 +412,7 @@ impl Agent {
             refused: ending.refused,
             failed:  ending.failed,
             missing: ending.missing.clone(),
+            malformed: ending.malformed,
         });
         *self.ending.borrow_mut() = Some(ending);
     }
@@ -427,6 +459,7 @@ impl Agent {
             refused: claims.tally(crate::tools::CallOutcome::Refused),
             failed:  claims.tally(crate::tools::CallOutcome::Failed),
             missing,
+            malformed: claims.malformed,
         }
     }
 
@@ -1234,6 +1267,12 @@ impl Agent {
         // counting the whole turn for the audit, the note and the feed.
         let mut leg = 0usize;
         let mut continuations = 0usize;
+        // CONSECUTIVE ROUNDS WHOSE TOOL CALL ARRIVED AS TEXT.  Reset by any round that comes
+        // back properly, so a model that leaks once, is nudged and then behaves is not held
+        // against a fault it has already corrected; two in a row is the model unable to emit a
+        // call at all, and the turn ends on it rather than nudging round after round at the
+        // user's expense.
+        let mut leaks = 0usize;
         // WHAT THE SESSION HAD SPENT BEFORE THIS TURN OPENED.  `session.cost_usd` is the whole
         // conversation's bill, and the ceiling is PER TURN -- measured against the session's total
         // it would end every turn of a long chat the moment the chat itself got expensive.
@@ -1387,6 +1426,55 @@ impl Agent {
                 self.ended(ending, on_event);
                 on_event(AgentEvent::Done);
                 return Ok(());
+            }
+
+            // A TOOL CALL THAT ARRIVED AS PROSE, which until 2026-09-14 ended the turn as an
+            // answer.  glm-5.3 put its own native call syntax in `content` with no JSON
+            // `tool_calls` beside it; `resp.tool_calls` was empty, so the branch below read a
+            // final answer, `audit` recorded `calls: 0`, and the page drew the markup with its
+            // tags stripped out -- `namedaimonfoldtimeout_ms600000worldtrue` -- as the reply.
+            // Thirty-nine seconds and US$0.16 for a round in which nothing ran and nothing
+            // warned.
+            //
+            // A WHOLE CALL IS RECOVERED RATHER THAN REFUSED.  `ChatOnceResponse::classified`
+            // has already rebuilt it and put it in `tool_calls`, so the turn simply carries on
+            // -- but the event still goes out, because a provider getting the wire wrong is
+            // worth measuring whether or not this app could paper over it.
+            if let crate::llm::ReplyShape::Malformed(leak) = resp.shape.clone() {
+                let recovered = leak.recovered.is_some();
+                on_event(AgentEvent::Leaked { fragment: leak.fragment.clone(), recovered });
+                if recovered {
+                    leaks = 0;
+                } else {
+                    leaks += 1;
+                    claims.malformed += 1;
+                    // VERBATIM, in both places.  The fragment is the only evidence of what the
+                    // model tried to call, and a reply the app had tidied would leave the next
+                    // reader with the app's account of the fault instead of the fault.
+                    let said = ChatMessage::Assistant {
+                        content:    MessageContent::text(resp.content.clone()),
+                        tool_calls: Vec::new(),
+                    };
+                    working.push(said.clone());
+                    session.messages.push(said);
+                    if leaks == 1 {
+                        // ONE NUDGE, then the turn ends under its own word.  The model is told
+                        // what arrived and what to do about it, in the family's own words where
+                        // the family has earned any; a second leak after that is not something
+                        // another sentence will fix.
+                        let nudge = leak_nudge(&self.llm.model);
+                        working.push(ChatMessage::user(nudge.clone()));
+                        session.messages.push(ChatMessage::user(nudge));
+                        continue;
+                    }
+                    let ending = self.audit(
+                        TurnEnd::Malformed, rounds, &claims, Some(registry)).await;
+                    self.ended(ending, on_event);
+                    on_event(AgentEvent::Done);
+                    return Ok(());
+                }
+            } else {
+                leaks = 0;
             }
 
             if resp.tool_calls.is_empty() {
@@ -4557,6 +4645,146 @@ mod tests {
         // the same loop again.
         assert!(!note.to_lowercase().contains("invalid json"), "{}", note);
         assert!(!note.to_lowercase().contains("malformed"), "{}", note);
+    }
+
+    /// One SSE round whose whole reply is `text`, ending on `stop`.
+    fn sse_saying(text: &str) -> crate::llm::tests::Reply {
+        crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                fmt!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\n", text),
+                fmt!("data: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\n"),
+                fmt!("data: [DONE]\n\n"),
+            ],
+            reset_after: None,
+        }
+    }
+
+    /// A leaked tool call is nudged ONCE and the round is sent again.
+    ///
+    /// Turn 56 of 2026-09-14: the round came back carrying glm-5.3's own call syntax as
+    /// content, `tool_calls` was empty, and the turn ended `answered` with `calls: 0` in 39
+    /// seconds.  The model had planned the call correctly and the wire lost it; one nudge is
+    /// what that costs, and the turn goes on.
+    #[tokio::test]
+    async fn test_a_tool_call_that_arrived_as_text_is_nudged_and_the_turn_goes_on_00() {
+        use crate::llm::tests::{start_stub, stub_client, LEAK_HEADLESS};
+        let (port, seen) = start_stub(vec![
+            sse_saying(LEAK_HEADLESS),
+            sse_saying("Right, it verified."),
+        ]).await;
+        let mut llm = stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(4);
+
+        let registry = one_tool();
+        let mut session = Session::new(fmt!("s1"), fmt!("leak"), fmt!("z-ai/glm-5.3"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("run verify"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        // THE EVENT, which is the whole of what was missing: nothing anywhere said a call
+        // had been lost.
+        let leaked: Vec<&AgentEvent> = events.iter()
+            .filter(|e| matches!(e, AgentEvent::Leaked { .. })).collect();
+        assert_eq!(1, leaked.len(), "the leak was not reported: {:?}", leaked);
+        match leaked[0] {
+            AgentEvent::Leaked { fragment, recovered } => {
+                assert_eq!(LEAK_HEADLESS, fragment, "the fragment was not carried verbatim");
+                assert!(!recovered, "a headless fragment was claimed as recovered");
+            }
+            _ => panic!("not a leak event"),
+        }
+        // THE NUDGE REACHED THE MODEL, in the family's own words.
+        let asked = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
+        assert_eq!(2, asked.len(), "the round was not sent again: {} request(s)", asked.len());
+        assert!(asked[1].contains("arrived as text"),
+            "the second request carried no nudge: {}", asked[1]);
+        assert!(asked[1].contains("arg_key"),
+            "Glm's own hint did not ride with the nudge: {}", asked[1]);
+        // AND THE TURN ANSWERED, because one leak is a wire fault and not a broken model.
+        match events.iter().find(|e| matches!(e, AgentEvent::Ended { .. })) {
+            Some(AgentEvent::Ended { how, malformed, rounds, .. }) => {
+                assert_eq!("answered", how, "one leak ended the turn");
+                assert_eq!(1, *malformed, "the re-sent round was not counted");
+                assert_eq!(2, *rounds, "the nudge did not cost exactly one round");
+            }
+            _ => panic!("no ending to read"),
+        }
+    }
+
+    /// A SECOND leak in a row ends the turn under its own word, never `answered`.
+    #[tokio::test]
+    async fn test_two_leaks_in_a_row_end_the_turn_malformed_and_not_answered_00() {
+        use crate::llm::tests::{start_stub, stub_client, LEAK_HEADLESS};
+        let (port, _seen) = start_stub(vec![
+            sse_saying(LEAK_HEADLESS),
+            sse_saying(LEAK_HEADLESS),
+        ]).await;
+        let mut llm = stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(6);
+
+        let registry = one_tool();
+        let mut session = Session::new(fmt!("s1"), fmt!("leak2"), fmt!("z-ai/glm-5.3"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("run verify"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        assert_eq!(2, events.iter().filter(|e| matches!(e, AgentEvent::Leaked { .. })).count(),
+            "both leaks must be reported, not just the one that ended the turn");
+        match events.iter().find(|e| matches!(e, AgentEvent::Ended { .. })) {
+            Some(AgentEvent::Ended { how, malformed, calls, .. }) => {
+                // THE WHOLE POINT. `answered` here is the defect.
+                assert_eq!("malformed", how, "a wire fault was reported as an answer");
+                assert_eq!(2, *malformed, "end_log.malformed did not count both rounds");
+                assert_eq!(0, *calls, "nothing ran, and the count must say so");
+            }
+            _ => panic!("no ending to read"),
+        }
+        // And the ending asks to be read, rather than sitting as furniture.
+        let end = a.ending().unwrap_or_else(|| panic!("the turn recorded no ending"));
+        assert_eq!(TurnEnd::Malformed, end.how);
+        assert!(end.unaccounted(), "a turn that called nothing was drawn as accounted for");
+    }
+
+    /// A leak with its head still on it is RECOVERED: the tool runs, the turn is not nudged.
+    #[tokio::test]
+    async fn test_a_whole_leaked_call_is_recovered_and_the_turn_never_stalls_00() {
+        use crate::llm::tests::{start_stub, stub_client, LEAK_WHOLE};
+        let (port, _seen) = start_stub(vec![
+            sse_saying(LEAK_WHOLE),
+            sse_saying("Verified."),
+        ]).await;
+        let mut llm = stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(4);
+
+        let registry = one_tool();
+        let mut session = Session::new(fmt!("s1"), fmt!("leak3"), fmt!("z-ai/glm-5.3"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("run verify"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        match events.iter().find(|e| matches!(e, AgentEvent::Leaked { .. })) {
+            Some(AgentEvent::Leaked { recovered, .. }) =>
+                assert!(*recovered, "a whole call was reported as unrecoverable"),
+            _ => panic!("a recovered leak went unreported, so nobody can measure it"),
+        }
+        // The recovered call was DISPATCHED -- `verify` is not in this registry, so the door
+        // answers rather than the tool, but the round is a tool round either way.
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::ToolCall { .. })),
+            "the recovered call was never dispatched");
+        match events.iter().find(|e| matches!(e, AgentEvent::Ended { .. })) {
+            Some(AgentEvent::Ended { how, malformed, .. }) => {
+                assert_eq!("answered", how, "a recovered leak ended the turn");
+                assert_eq!(0, *malformed,
+                    "a recovered leak cost no round and must not be counted as one");
+            }
+            _ => panic!("no ending to read"),
+        }
     }
 
     #[tokio::test]

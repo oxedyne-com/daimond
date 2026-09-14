@@ -1058,14 +1058,32 @@ pub enum AgentEvent {
     /// `missing` is paths a completed call SAID it left on the store and which are not there,
     /// read off the call's arguments and never off the model's words.
     Ended {
-        how:     String,        // answered | stopped | capped | silent | failed
-        offered: usize,         // tools this turn was allowed to call
-        rounds:  usize,
-        calls:   usize,
-        refused: usize,
-        failed:  usize,
-        missing: Vec<String>,
+        how:       String,      // answered | stopped | capped | silent | failed | malformed
+        offered:   usize,       // tools this turn was allowed to call
+        rounds:    usize,
+        calls:     usize,
+        refused:   usize,
+        failed:    usize,
+        missing:   Vec<String>,
+        malformed: usize,       // rounds re-sent because a tool call arrived as text
     },
+    /// A tool call arrived as TEXT, in the model's own native call syntax, with no JSON
+    /// `tool_calls` beside it.
+    ///
+    /// Its own variant for the reason [`Compacted`](Self::Compacted) has one: this is
+    /// something the APP noticed and acted on between two rounds, and the model neither
+    /// said it nor is told about it in these words.
+    ///
+    /// It exists because the failure was SILENT.  On 2026-09-14 a round came back carrying
+    /// `…</arg_key><arg_value>daimonfold</arg_value>…</tool_call>` as its content, the turn
+    /// ended `answered` with `calls: 0`, the page drew the markup as prose with every tag
+    /// stripped out of it, and nothing anywhere -- not one console line, not one lens row --
+    /// said a tool call had been lost.
+    ///
+    /// `recovered` says whether the fragment held a whole call that was rebuilt and run.  A
+    /// recovered leak costs nothing and is reported anyway: it is still the provider getting
+    /// the wire wrong, and a fault that fixes itself quietly is a fault nobody measures.
+    Leaked { fragment: String, recovered: bool },
     /// Agent turn complete.
     Done,
     /// Error occurred.
@@ -1086,16 +1104,22 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("thinking"));
                 m.insert(dat!("content"), dat!(text.clone()));
             }
-            Self::Ended { how, offered, rounds, calls, refused, failed, missing } => {
-                m.insert(dat!("type"),    dat!("ended"));
-                m.insert(dat!("how"),     dat!(how.clone()));
-                m.insert(dat!("offered"), Dat::U64(*offered as u64));
-                m.insert(dat!("rounds"),  Dat::U64(*rounds  as u64));
-                m.insert(dat!("calls"),   Dat::U64(*calls   as u64));
-                m.insert(dat!("refused"), Dat::U64(*refused as u64));
-                m.insert(dat!("failed"),  Dat::U64(*failed  as u64));
+            Self::Ended { how, offered, rounds, calls, refused, failed, missing, malformed } => {
+                m.insert(dat!("type"),      dat!("ended"));
+                m.insert(dat!("how"),       dat!(how.clone()));
+                m.insert(dat!("offered"),   Dat::U64(*offered as u64));
+                m.insert(dat!("rounds"),    Dat::U64(*rounds  as u64));
+                m.insert(dat!("calls"),     Dat::U64(*calls   as u64));
+                m.insert(dat!("refused"),   Dat::U64(*refused as u64));
+                m.insert(dat!("failed"),    Dat::U64(*failed  as u64));
+                m.insert(dat!("malformed"), Dat::U64(*malformed as u64));
                 m.insert(dat!("missing"),
                     Dat::List(missing.iter().map(|p| dat!(p.clone())).collect()));
+            }
+            Self::Leaked { fragment, recovered } => {
+                m.insert(dat!("type"),      dat!("leaked"));
+                m.insert(dat!("fragment"),  dat!(fragment.clone()));
+                m.insert(dat!("recovered"), Dat::Bool(*recovered));
             }
             Self::ToolCall { name, args, .. } => {
                 m.insert(dat!("type"), dat!("tool_call"));

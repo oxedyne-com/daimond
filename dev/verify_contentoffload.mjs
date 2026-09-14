@@ -777,11 +777,31 @@ try {
 	// per device. The device that commits names only its own, and the gateway
 	// sweeps the rest -- so the phone's push deleted the desktops' uploads of the
 	// very same conversation. The peer's refs are now recorded beside our own.
+	//
+	// AND THE PARCEL SAYS WHO SENT IT, which this check did not until 2026-09-14.
+	// It applied a parcel with no `devices` in it, so `parcelSender` answered ''
+	// and the slot written was the UNATTRIBUTED `@c/peerchat.peer` -- the one key
+	// shape `PEER_RE` happened to match while it admitted 16-hex ids alone. Every
+	// id on a real roster is 32 hex, so B1/B2 passed for the wrong reason while
+	// every slot the app actually wrote was deleted by the collect that was about
+	// to commit it. The sender here is a REAL-WIDTH roster id, and the slot is
+	// followed through the reap and into the commit payload.
 	console.log('\n— invariant 8: the committing index names the peer\'s refs —');
 
-	const peerRefs = await page.evaluate(async () => {
+	// A 32-hex roster id, the width `deviceId()` mints and `notePeerRef` keys by.
+	const SENDER = '96a1474270a784f8d7ba6f1bf9dc434d';
+
+	const peerRefs = await page.evaluate(async (sender) => {
 		const store = window.DaimondCore.chatStore();
 		const cid = 'peerchat';
+		// The sender marks its OWN roster line, which is the only thing in a parcel
+		// that can say where the parcel came from.
+		const roster = () => {
+			const out = {};
+			out[sender] = { name: 'Desk Far', label: '', created: 1, namedAt: 0,
+				seen: 100, build: '', self: 1 };
+			return out;
+		};
 		const mine = [];
 		for (let i = 0; i < 380; i++) mine.push({ role: 'user', content: 'mine ' + i + ' ' + 'p'.repeat(400), mid: 'pm' + i, ts: 2000 + i });
 		const list = store.stored();
@@ -793,19 +813,35 @@ try {
 		for (let i = 0; i < 380; i++) theirs.push({ role: 'assistant', content: 'theirs ' + i + ' ' + 'q'.repeat(400), mid: 'pt' + i, ts: 3000 + i });
 		const theirRef = await window.DaimondChunks.offloadBytes('c:' + cid, new TextEncoder().encode(JSON.stringify(theirs)));
 		await window.DaimondCore.applySync({ v: 3, tombs: {}, msgTombs: {}, diamonds: [], diamondTombs: {},
+			devices: roster(),
 			chats: [{ id: cid, name: 'Peer Chat', model: 'mock/fast', updatedAt: 7000, messages: null, messagesRef: theirRef, session: null }] });
 
-		const pk = window.DaimondCloud.peerKey(cid);
+		const pk = window.DaimondCloud.peerKey(cid, sender);
 		const entry = window.DaimondCloud.index()[pk] || null;
 		const ours  = window.DaimondCloud.contentGet('@c/' + cid) || {};
+		// THE COLLECT THAT COMMITS IS THE ONE THAT USED TO DELETE IT. `collectChatsRefs`
+		// reaps `@c/` against the live CHAT IDS, and a slot key is not a chat id: it
+		// survives only because `peerOwner` recognises the device segment and the reap
+		// judges the slot by the item id underneath it.
+		await window.DaimondCore.collectSync();
+		const survived = ((window.DaimondCloud.index()[pk] || {}).chunks || []).map(c => c.addr);
 		return {
-			cid, pk,
+			cid, pk, survived,
+			unattributed: !!window.DaimondCloud.index()[window.DaimondCloud.peerKey(cid)],
+			owner: window.DaimondCloud.peerOwner(pk),
 			theirAddrs: (theirRef.chunks || []).map(c => c.addr),
 			peerAddrs:  ((entry && entry.chunks) || []).map(c => c.addr),
 			ownAddrs:   (ours.chunks || []).map(c => c.addr),
 			adopted:    ours.key === theirRef.key,
 		};
-	});
+	}, SENDER);
+	check('B1. the slot is keyed by the SENDER\'s 32-hex roster id, not the unattributed one',
+		peerRefs.owner === SENDER && peerRefs.unattributed === false,
+		`owner=${peerRefs.owner}`);
+	check('B1. and it SURVIVES the collect that commits it — the reap judges it by its item',
+		peerRefs.survived.length > 0
+			&& JSON.stringify(peerRefs.survived) === JSON.stringify(peerRefs.theirAddrs),
+		`${peerRefs.survived.length} addr(s) after collectSync of ${peerRefs.theirAddrs.length}`);
 	check('B1. after unioning a peer\'s chat the index NAMES the peer\'s refs',
 		peerRefs.peerAddrs.length > 0
 			&& JSON.stringify(peerRefs.peerAddrs) === JSON.stringify(peerRefs.theirAddrs),
@@ -835,12 +871,21 @@ try {
 		committed.ownNamed === true);
 
 	const pruned = await page.evaluate(async (pr) => {
+		// The SAME sender, or these would be two peers and the slot would not be
+		// the one B1 wrote.
+		const roster = () => {
+			const out = {};
+			out[pr.owner] = { name: 'Desk Far', label: '', created: 1, namedAt: 0,
+				seen: 100, build: '', self: 1 };
+			return out;
+		};
 		// The peer's NEXT parcel carries a different reference for the same chat:
 		// the entry is replaced, never appended to.
 		const other = [];
 		for (let i = 0; i < 400; i++) other.push({ role: 'assistant', content: 'later ' + i + ' ' + 'z'.repeat(400), mid: 'pl' + i, ts: 4000 + i });
 		const ref2 = await window.DaimondChunks.offloadBytes('c:' + pr.cid, new TextEncoder().encode(JSON.stringify(other)));
 		await window.DaimondCore.applySync({ v: 3, tombs: {}, msgTombs: {}, diamonds: [], diamondTombs: {},
+			devices: roster(),
 			chats: [{ id: pr.cid, name: 'Peer Chat', model: 'mock/fast', updatedAt: 7001, messages: null, messagesRef: ref2, session: null }] });
 		const after2 = window.DaimondCloud.index()[pr.pk] || null;
 		const addrs2 = ((after2 && after2.chunks) || []).map(c => c.addr);
@@ -848,6 +893,7 @@ try {
 		// And a parcel that carries the transcript INLINE names no chunk at all,
 		// so the entry goes: the peer no longer refers to anything.
 		await window.DaimondCore.applySync({ v: 3, tombs: {}, msgTombs: {}, diamonds: [], diamondTombs: {},
+			devices: roster(),
 			chats: [{ id: pr.cid, name: 'Peer Chat', model: 'mock/fast', updatedAt: 7002, messages: other, session: null }] });
 		const after3 = window.DaimondCloud.index()[pr.pk] || null;
 		return {

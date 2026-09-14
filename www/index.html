@@ -263,6 +263,18 @@
 					<button class="addbtn" id="link-graph-btn" aria-pressed="false" title="Graph" aria-label="Graph" data-i18n-title="link.graph_open" data-i18n-aria-label="link.graph_open">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5.5" r="2.5"/><circle cx="5.5" cy="18" r="2.5"/><circle cx="18.5" cy="18" r="2.5"/><path d="M10.6 7.6L6.9 15.9M13.4 7.6l3.7 8.3M8 18h8"/></svg>
 					</button>
+					<!-- THE SECTION'S FOLD, AND ON A PHONE IT IS THE ONLY LEVER ON HEIGHT.
+					     A desktop divides the two lists with a handle the user drags; in
+					     the drawer that handle is hidden and `applyRailSplit` early-returns,
+					     so nothing could give one list more than the even share. Folding a
+					     section is that lever: what it gives up goes to whatever is still
+					     open. LAST in the row, not first, because `.railhead > span:first-child`
+					     (app.css, skin-warm.css, improve.css) is what makes the heading a
+					     heading -- a control before it would restyle every railhead in the
+					     app, desktop included. Hidden outside the phone breakpoint. -->
+					<button class="rail-fold" data-fold="diamonds" aria-controls="diamond-list" aria-expanded="true" title="Fold this section away" aria-label="Fold this section away" data-i18n-title="rail.fold_section" data-i18n-aria-label="rail.fold_section">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
+					</button>
 					<!-- No closer on this row. It is one section of the rail and has
 					     nothing of its own to close; the rail's closer is on the
 					     Everything row above. -->
@@ -293,6 +305,10 @@
 					     the dropdown; nothing here decides what is in it. -->
 					<button class="addbtn" id="chats-menu-btn" title="More" data-i18n-title="rail.chats_menu" aria-haspopup="menu" aria-expanded="false">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+					</button>
+					<!-- The Chats section's fold; see the Diamonds one above. -->
+					<button class="rail-fold" data-fold="chats" aria-controls="session-list" aria-expanded="true" title="Fold this section away" aria-label="Fold this section away" data-i18n-title="rail.fold_section" data-i18n-aria-label="rail.fold_section">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
 					</button>
 				</div>
 				<div class="session-list" id="session-list"></div>
@@ -326,6 +342,14 @@
 						     the 16px default, which is what makes the two identical. -->
 						<button class="icon-btn" id="settings-btn" title="Settings" data-i18n-title="admin.settings" aria-label="Settings" data-i18n-aria-label="admin.settings">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-2.9 1.2v.2a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00-1.2-2.9H2.9a2 2 0 110-4H3a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V2.9a2 2 0 114 0V3a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
+						</button>
+						<!-- The eleven machine-status rows fold behind THIS row, which stays
+						     put: the identity and the cog beside it are a phone's only route
+						     to Settings, so this section's header has to survive its own
+						     fold. Collapsed by default on a phone -- measured at 390x844
+						     those rows held 345px, more than either list they took it from. -->
+						<button class="rail-fold" data-fold="status" aria-controls="admin-status" aria-expanded="true" title="Fold this section away" aria-label="Fold this section away" data-i18n-title="rail.fold_section" data-i18n-aria-label="rail.fold_section">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
 						</button>
 					</div>
 					<button class="astat-row astat-btn" id="astat-model"></button>
@@ -1382,6 +1406,13 @@
 		<button class="msheet-close ui-close" id="msheet-close" title="Close" aria-label="Close the sheet"
 			data-i18n-title="common.close" data-i18n-aria-label="sheet.close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 	</div>
+	<!-- Two faces of one thing, on a phone, where only one can be on screen at
+	     a time: the Doc sheet's source and the pages it is typeset into. It is a
+	     tab strip and not a second sheet because the loop only works while the
+	     two are ONE surface -- raising the pages as their own guest stashed the
+	     source, and the watch that rebuilds them stopped with it. Empty and
+	     hidden for every guest that has no second face. -->
+	<div class="msheet-tabs" id="msheet-tabs" role="tablist" hidden></div>
 	<div class="msheet-scroll" id="msheet-body"></div>
 	<div class="msheet-ask" id="msheet-ask">
 		<input id="msheet-ask-input" type="text" placeholder="Ask about this…" autocomplete="off" autocapitalize="sentences" spellcheck="true" data-i18n-placeholder="sheet.ask_ph">

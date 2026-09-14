@@ -121,6 +121,8 @@
 	'rail.chats_help':           '原始的对话。Diamond 就是从中切出来的。',
 	'rail.new_chat':             '新建聊天',
 	'rail.chats_menu': '更多',
+	'rail.fold_section': '折叠此分区',
+	'rail.unfold_section': '展开此分区',
 	'rail.delete_all_chats': '删除所有聊天',
 	'layout.handle':             '拖动调整大小，双击复位',
 
@@ -758,6 +760,8 @@
 	'sheet.ask_ph':  '就这个提问…',
 	// {thing} 是一个面板的名称。
 	'sheet.ask_about': '就这个{thing}提问…',
+	'sheet.tab_source': '源码',
+	'sheet.tab_pages':  '页面',
 
 	// ── 身份：创建与解锁 ───────────────────────────────────────
 	'identity.your_name':          '你的名字',
@@ -1199,6 +1203,7 @@
 	'typst.watch.building': '正在重新编译…',
 	'typst.watch.live_preview': '实时预览',
 	'typst.watch.stale':    '显示的是最后一次编译成功的结果',
+	'typst.watch.paused':   '已暂停 — 页面不在屏幕上',
 	'typst.watch.held':     '已停止重新编译',
 	'typst.watch.dead':     '编译器已停止',
 	'typst.watch.rebuild':  '重新编译',
@@ -1850,6 +1855,7 @@
 	'files.keep_editing':    '继续编辑',
 	'files.unsaved_body':    '你对 {path} 的改动还没保存。关掉编辑器，把它们丢掉吗？',
 	'files.editing_stopped': '已停止编辑。什么都没写入。',
+	'files.draft_restored': '已恢复你输入但未保存的内容。保存后才会写入文件。',
 	'files.overwrite':       '覆盖',
 	'files.conflict_title':  '你编辑的时候它变了',
 	'files.conflict_body':   '自从你打开以来，这个文件在磁盘上变过了，多半是某个智能体改的。仍然保存并覆盖那些改动吗？',

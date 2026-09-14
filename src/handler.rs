@@ -813,6 +813,12 @@ fn event_to_ws(ev: &AgentEvent) -> Option<(&'static str, Vec<Dat>)> {
         // reach this wire unnoticed.
         AgentEvent::Roading { .. } => ("roading", vec![]),
         AgentEvent::Truncated => ("truncated", vec![]),
+        // NOT carried on this wire, for the reason `thinking`, `ended` and `roading` are not:
+        // `src/syntax.rs` declares no `leaked`, and a command the syntax does not know is not
+        // an empty frame -- `text_msg` fails to build it and sends `error "internal"` instead.
+        // The browser reads the leak over `wasm::app::event_to_js`, which is the path the page
+        // runs on, and that carries the fragment and the recovery flag both.
+        AgentEvent::Leaked { .. } => return None,
         // The leg number before the running total, for the reason `compacted` gives: which
         // continuation this is can be drawn without reading a sentence.
         AgentEvent::Continued { n, rounds_so_far } =>

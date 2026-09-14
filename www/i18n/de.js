@@ -118,6 +118,8 @@
 	'rail.chats_help': 'Rohes Gespräch. Daraus wird ein Diamond geschliffen.',
 	'rail.new_chat': 'Neuer Chat',
 	'rail.chats_menu': 'Mehr',
+	'rail.fold_section': 'Diesen Abschnitt einklappen',
+	'rail.unfold_section': 'Diesen Abschnitt öffnen',
 	'rail.delete_all_chats': 'Alle Chats löschen',
 	'layout.handle': 'Ziehen zum Anpassen, Doppelklick zum Zurücksetzen',
 
@@ -634,6 +636,8 @@
 	'sheet.ask': 'Fragen',
 	'sheet.ask_ph': 'Frag etwas dazu…',
 	'sheet.ask_about': 'Frag etwas zu {thing}…',
+	'sheet.tab_source': 'Quelle',
+	'sheet.tab_pages': 'Seiten',
 
 	// ── Identity: creating and unlocking ───────────────────────
 	'identity.your_name': 'Dein Name',
@@ -1173,6 +1177,7 @@
 	'typst.watch.building': 'Wird neu gebaut…',
 	'typst.watch.live_preview': 'Live-Vorschau',
 	'typst.watch.stale': 'Angezeigt wird der letzte Build, der funktioniert hat',
+	'typst.watch.paused': 'Pausiert — die Seiten sind nicht sichtbar',
 	'typst.watch.held': 'Neubauen gestoppt',
 	'typst.watch.dead': 'Der Compiler ist stehen geblieben',
 	'typst.watch.rebuild': 'Neu bauen',
@@ -1837,6 +1842,7 @@
 	'files.keep_editing': 'Weiter bearbeiten',
 	'files.unsaved_body': 'Deine Änderungen an {path} sind nicht gespeichert. Den Editor schließen und sie verlieren?',
 	'files.editing_stopped': 'Bearbeiten beendet. Es wurde nichts geschrieben.',
+	'files.draft_restored': 'Wiederhergestellt, was du getippt und nicht gespeichert hattest. Zum Schreiben speichern.',
 	'files.overwrite': 'Überschreiben',
 	'files.conflict_title': 'Sie hat sich beim Bearbeiten geändert',
 	'files.conflict_body': 'Diese Datei hat sich auf der Platte geändert, seit du sie geöffnet hast, höchstwahrscheinlich durch einen Agenten. Trotzdem speichern und diese Änderungen überschreiben?',

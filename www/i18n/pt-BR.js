@@ -115,6 +115,8 @@
 	'rail.chats_help': 'Conversa bruta. Um Diamond é lapidado a partir dela.',
 	'rail.new_chat': 'Novo chat',
 	'rail.chats_menu': 'Mais',
+	'rail.fold_section': 'Recolher esta seção',
+	'rail.unfold_section': 'Abrir esta seção',
 	'rail.delete_all_chats': 'Excluir todos os chats',
 	'layout.handle': 'Arraste para redimensionar, clique duas vezes para restaurar',
 
@@ -630,6 +632,8 @@
 	'sheet.ask': 'Perguntar',
 	'sheet.ask_ph': 'Pergunte sobre isto…',
 	'sheet.ask_about': 'Pergunte sobre {thing}…',
+	'sheet.tab_source': 'Fonte',
+	'sheet.tab_pages': 'Páginas',
 
 	// ── Identity: creating and unlocking ───────────────────────
 	'identity.your_name': 'Seu nome',
@@ -1169,6 +1173,7 @@
 	'typst.watch.building': 'Recompilando…',
 	'typst.watch.live_preview': 'Prévia ao vivo',
 	'typst.watch.stale': 'Mostrando a última compilação que funcionou',
+	'typst.watch.paused': 'Em pausa — as páginas estão fora da tela',
 	'typst.watch.held': 'Recompilação interrompida',
 	'typst.watch.dead': 'O compilador parou',
 	'typst.watch.rebuild': 'Recompilar',
@@ -1830,6 +1835,7 @@
 	'files.keep_editing': 'Continuar editando',
 	'files.unsaved_body': 'Suas mudanças em {path} não foram salvas. Fechar o editor e perdê-las?',
 	'files.editing_stopped': 'Edição encerrada. Nada foi gravado.',
+	'files.draft_restored': 'Recuperamos o que você digitou e não salvou. Salve para gravar no arquivo.',
 	'files.overwrite': 'Sobrescrever',
 	'files.conflict_title': 'Mudou enquanto você editava',
 	'files.conflict_body': 'Este arquivo mudou no disco desde que você o abriu, muito provavelmente por um agente. Salvar mesmo assim e sobrescrever essas mudanças?',
