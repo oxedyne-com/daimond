@@ -683,6 +683,7 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} fichier n’a pas tenu dans le colis de synchronisation de cet appareil et n’atteindra vos autres appareils qu’une fois la place trouvée : {names}',
 	'sync.files_left.other':    '{n} fichiers n’ont pas tenu dans le colis de synchronisation de cet appareil et n’atteindront vos autres appareils qu’une fois la place trouvée : {names}',
+	'sync.folder_too_big':      'Le dossier que vous avez marqué pèse {size}, au-delà des {max} qu’un dossier partagé peut prendre ; rien n’en part donc vers vos autres appareils. Marquez un dossier plus petit, ou retirez-en une partie.',
 	// Une session terminée et impossible à reprendre. Même libellé que ci-dessous :
 	// ce qui compte est que le travail de cet appareil ne circule plus.
 	'sync.signed_out': 'Synchronisation en pause',
@@ -1860,6 +1861,8 @@
 	'files.compiling_path': 'Compilation de {path} …',
 	'files.compiled': 'Compilé → {path} ({size})',
 	'files.compile_failed': 'La compilation a échoué : {reason}',
+	'files.compile_fetching': 'Récupération des images et des polices que cet appareil ne détient pas ({size}) — {path}',
+	'files.compile_fetch_too_big': 'Pas compilé : les images et les polices que cet appareil ne détient pas font {size}, au-delà des {max} qu’une compilation récupère d’elle-même. Récupérez d’abord celles dont vous avez besoin depuis la liste de l’espace de travail.',
 	'files.binary_note': 'Un fichier binaire de {size}. Il est stocké et synchronisé comme tout le reste ici, mais il n’y a rien à montrer. Téléchargez-le pour l’ouvrir avec quelque chose qui le comprend.',
 	'files.cloud': 'En ligne',
 	'files.cloud_storage': 'Stockage en ligne',

@@ -38,6 +38,24 @@
 //   (v)   NOTHING IS RE-OFFLOADED AND NOTHING IS MISSING. After the second round
 //         the feed says `refs_missing: 0` and no chunk is uploaded again. The
 //         desktops re-offloaded the same five items every round for hours.
+//   (vii) AND TWO DESKTOPS SHARING ONE FOLDER SETTLE. Since 2026-09-14 a device with a
+//         real folder open sends what the user marked into a Diamond, and the owner has
+//         TWO of those, kept identical by Syncthing and therefore holding one file at two
+//         modification times. Anything time-keyed in what travels makes their parcels
+//         permanently different, and two devices that permanently differ push at each
+//         other for ever. Two rounds, then the same ten simulated minutes, and nobody
+//         pushes. `dev/verify_foldershare.mjs` is the rest of that feature.
+//   (viii) AND A FILE HELD BY TWO DEVICES IS NAMED BY WHICHEVER COMMITS. Two devices
+//         holding one file at identical bytes hold it at DIFFERENT ADDRESSES: an
+//         address is the hash of ciphertext and the seal takes a fresh IV, so each
+//         upload lands somewhere of its own. The merge kept our manifest and dropped
+//         theirs, `chunks.js`'s commit builds the live set out of this index alone, and
+//         the gateway sweeps every chunk the committing index does not name. That is
+//         the whole of the phone's 222-file loss of 2026-09-13: a folder-mounted
+//         desktop lost its directory handle mid-turn, became a committer, offloaded
+//         its own copy of every workspace file, and its first commit swept the phone's
+//         611 chunks. A file has a `.peer.<device>` slot of its own now, as a chat and
+//         a Diamond already did.
 //   (vi)  AND A LOSS NOTHING CAN HEAL IS LET GO OF. A file manifest whose chunks
 //         the gateway no longer holds is kept once -- one sweep is not a verdict
 //         -- and dropped on the second answered sighting. It used to be either
@@ -65,6 +83,8 @@
 //   node dev/verify_syncfixedpoint.mjs --break selfmask
 //   node dev/verify_syncfixedpoint.mjs --break nodrop
 //   node dev/verify_syncfixedpoint.mjs --break forgetfiles
+//   node dev/verify_syncfixedpoint.mjs --break timekeyed
+//   node dev/verify_syncfixedpoint.mjs --break nopeerfile
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -134,6 +154,22 @@ const BREAKS = {
 		find: '			if (rounds > 1) {',
 		with: '			if (rounds > 1 && false) {		// the peer-named gate, which a file could never satisfy',
 	}],
+	// The shared folder's manifest carries the modification time again, which two
+	// desktops kept identical by Syncthing disagree about while agreeing about every
+	// byte. (vii) reddens: the parcels differ for ever and the pair never settles.
+	timekeyed: [{
+		file: 'js/cloud.js',
+		find: '			mtime:  o.timeless ? 0 : (f ? f.lastModified : 0),',
+		with: '			mtime:  f ? f.lastModified : 0,',
+	}],
+	// A file's peer slot is never written, so the merge keeps our manifest, drops
+	// theirs, and the next commit sweeps the other device's copy of the same bytes.
+	// (viii) reddens on the sweep.
+	nopeerfile: [{
+		file: 'js/cloud.js',
+		find: '		unadopted.forEach(function (e) { notePeerFile(out, e[0], e[1], e[2], fromDev, selfDev); });',
+		with: '		if (0) unadopted.forEach(function (e) { notePeerFile(out, e[0], e[1], e[2], fromDev, selfDev); });',
+	}],
 	// A file manifest whose file is in the mounted folder is classed `reoffload`
 	// and forgotten, on a device whose `collectFiles` returns nothing -- so it is
 	// named by nobody and never uploaded again. (vi) reddens on the drain.
@@ -165,6 +201,12 @@ const SEAM = [
 	  why: 'a folder-mounted device still promises to re-offload files it cannot' },
 	{ file: 'js/daimond.js', want: 'if (rounds > 1) {',
 	  why: 'an unrestorable manifest is never dropped, so refs_missing can never reach 0' },
+	{ file: 'js/daimond.js', want: 'SYNC_FOLDER_SHARE_MAX',
+	  why: 'a folder-mounted device shares nothing, so (vii) would measure two empty censuses' },
+	{ file: 'js/cloud.js', want: 'o.timeless ? 0 :',
+	  why: 'a shared folder\'s manifest still carries a clock, which is what (vii) is about' },
+	{ file: 'js/cloud.js', want: 'function notePeerFile',
+	  why: 'a file has no peer slot, so (viii) would measure a sweep nothing could stop' },
 ];
 
 function requireSeams() {
@@ -790,6 +832,381 @@ check('(vi) the SECOND drops it, and says so — the parcel stops carrying dead 
 	`held=${second.held} dropped_refs=${second.dropped}`);
 check('(vi) and nothing was uploaded in between — the "re-offload" it used to promise',
 	cloud.puts.length === putsBeforeHeal, `${cloud.puts.length - putsBeforeHeal} put batch(es)`);
+
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// (vii) TWO MOUNTED DESKTOPS AND A PHONE
+// ═══════════════════════════════════════════════════════════════════════
+//
+// The owner's fleet, exactly: argonaut and gilgamesh both hold the book in a real folder
+// and Syncthing keeps them byte-identical, which leaves the two files with DIFFERENT
+// modification times. A manifest carrying one of those times differs between two devices
+// that agree about every byte, and `push` skips the wire only when the parcel matches
+// what this device last sent -- so each side always has news, and the pair pushes at each
+// other for ever at the debounce. What travels is therefore keyed on content
+// (`put(..., { timeless: true })`, js/cloud.js) and the modification time stays on the
+// device that observed it.
+console.log('\n— (vii) two desktops sharing one folder, and the phone —');
+
+if (!OPFS) {
+	skipped.push('(vii), which needs two folder mounts and an OPFS to mount');
+	console.log('        · not on this engine: there is no OPFS to mount as a folder');
+} else {
+
+const SCOPE = 'book';
+// Two files over `SYNC_FILE_MAX` so they offload and there are manifests to compare, and
+// two under it so there is an inline section to compare byte for byte.
+const SEED = [
+	['book/chap_one.typ', '= One\n' + 'a line of the chapter\n'.repeat(400)],
+	['book/chap_two.typ', '= Two\n' + 'another line entirely\n'.repeat(500)],
+	['book/assets/big_a.dat', 'A'.repeat(300 * 1024)],
+	['book/assets/big_b.dat', 'B'.repeat(180 * 1024)],
+];
+
+/// Mount an OPFS subdirectory as the real folder, by the panel's own chip.
+async function mountFolder(s) {
+	await s.page.evaluate(async () => {
+		const root = await navigator.storage.getDirectory();
+		const dir  = await root.getDirectoryHandle('mounted', { create: true });
+		dir.queryPermission   = async () => 'granted';
+		dir.requestPermission = async () => 'granted';
+		window.showDirectoryPicker = async () => dir;
+	});
+	await s.page.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
+	await s.page.waitForTimeout(700);
+	await s.page.evaluate(() => {
+		const chips = [...document.querySelectorAll('.files-mode-chip')];
+		const machine = chips.find(c => /machine/.test(c.className)
+			|| c.querySelector('[data-icon="machine"]')) || chips[1];
+		if (machine) machine.click();
+	});
+	await s.page.waitForTimeout(1500);
+}
+
+/// Write the seed into whatever folder this device has open.
+const seedFolder = (s) => s.page.evaluate(async (files) => {
+	const root = window.DaimondFiles.folder();
+	for (const [p, text] of files) {
+		const segs = p.split('/');
+		let d = root;
+		for (let i = 0; i < segs.length - 1; i++) d = await d.getDirectoryHandle(segs[i], { create: true });
+		const fh = await d.getFileHandle(segs[segs.length - 1], { create: true });
+		const w = await fh.createWritable();
+		await w.write(new TextEncoder().encode(text));
+		await w.close();
+	}
+	const st = [];
+	for (const [p] of files) {
+		const segs = p.split('/');
+		let d = root;
+		for (let i = 0; i < segs.length - 1; i++) d = await d.getDirectoryHandle(segs[i]);
+		const f = await (await d.getFileHandle(segs[segs.length - 1])).getFile();
+		st.push({ p, size: f.size, mtime: f.lastModified });
+	}
+	return st;
+}, files_(SEED));
+function files_(x) { return x; }
+
+// A1 IS THE DEVICE ALREADY MOUNTED. It has no marked-in Diamond yet, which is why
+// everything above it saw an empty census; the mark is what turns a folder into a share.
+const A2 = await open({ name: 'syncfp-a2', profile: scratch('pw', 'syncfp-a2-' + BROWSER),
+	signIn: false, connect: false, defaults: false, route: patchedSource });
+await ready(A2);
+await A2.page.evaluate((b) => window.DaimondIdentity.importBundle(b), bundle);
+await A2.page.reload({ waitUntil: 'domcontentloaded' });
+await ready(A2);
+await signInAs(A2, 'syncfp');
+await ready(A2);
+await clearDiamonds(A2);
+await ready(A2);
+await wireCloud(A2, 'A2');
+await mountFolder(A2);
+
+const st1 = await seedFolder(A);
+// A DELIBERATE GAP, so the two copies are written at genuinely different times. This is
+// what Syncthing leaves behind: identical bytes, and a modification time per machine.
+await A.page.waitForTimeout(1200);
+const st2 = await seedFolder(A2);
+check('(vii) the two desktops hold identical bytes at DIFFERENT times — the Syncthing case',
+	st1.length === st2.length
+	&& st1.every((f, i) => f.size === st2[i].size)
+	&& st1.some((f, i) => f.mtime !== st2[i].mtime),
+	`sizes ${st1.map(f => f.size).join(',')}; times differ on `
+	+ st1.filter((f, i) => f.mtime !== st2[i].mtime).length + ' of ' + st1.length);
+
+// The mark, made once and carried to the other desktop by the ordinary parcel: the
+// Diamond travels, its links travel inside it, and both devices then compute the same
+// shared roots without either of them being told.
+await A.page.evaluate(async (scope) => {
+	const mod = await import('/pkg/oxedyne_daimond.js');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	const id = await app.create_diamond('The Book');
+	await app.add_link(id, 'diamond:' + id, 'dir:' + scope, 'holds', '', 'user');
+	await window.DaimondCore.loadDiamonds();
+}, SCOPE);
+await push(A); await pull(A2); await pull(B);
+await A2.page.evaluate(() => window.DaimondCore.loadDiamonds());
+
+const shares = {
+	a1: await A.page.evaluate(() => window.DaimondCore.syncFolderShare()),
+	a2: await A2.page.evaluate(() => window.DaimondCore.syncFolderShare()),
+};
+check('(vii) both desktops share the same folder, from one mark neither was told about twice',
+	shares.a1.folder && shares.a2.folder
+	&& shares.a1.roots.join() === SCOPE && shares.a2.roots.join() === SCOPE
+	&& shares.a1.bytes === shares.a2.bytes,
+	`A1 ${shares.a1.files} files/${shares.a1.bytes} B, A2 ${shares.a2.files} files/${shares.a2.bytes} B`);
+
+/// One full round over all three.
+async function settle3(n) {
+	for (let i = 0; i < n; i++) {
+		await push(A);  await pull(A2); await pull(B);
+		await push(A2); await pull(A);  await pull(B);
+		await push(B);  await pull(A);  await pull(A2);
+	}
+}
+// FOUR ROUNDS, NOT TWO, and the extra two are what the peer slots cost. A slot is
+// derived from a PAIR of indices, so every device has to have seen every other before
+// the set of them stops moving -- and a device whose chunks the committer swept before
+// it had seen that device's index re-offloads under fresh addresses, which moves the
+// slot again. Both settle; neither settles in one exchange. Two rounds left the mesh
+// mid-convergence and the quiet window below then measured the tail of it as churn.
+await settle3(4);
+
+const sections = {
+	a1: await A.page.evaluate(async () => {
+		const c = await window.DaimondCore.collectSync();
+		return { files: JSON.stringify(c.files), complete: c.filesComplete };
+	}),
+	a2: await A2.page.evaluate(async () => {
+		const c = await window.DaimondCore.collectSync();
+		return { files: JSON.stringify(c.files), complete: c.filesComplete };
+	}),
+};
+check('(vii) the two desktops\' INLINE sections are byte-identical — content, not enumeration',
+	sections.a1.files === sections.a2.files && sections.a1.files.length > 100
+	&& sections.a1.complete === true && sections.a2.complete === true,
+	sections.a1.files === sections.a2.files
+		? `${sections.a1.files.length} bytes each`
+		: `A1 ${sections.a1.files.length} B, A2 ${sections.a2.files.length} B`);
+
+// AND THE MANIFESTS AGREE ABOUT THE CONTENT AND CARRY NO CLOCK. They cannot agree about
+// their ADDRESSES: an address is the hash of ciphertext and the seal takes a fresh IV per
+// device, so two devices sealing identical bytes land them in different places. That is
+// by design and is what the `.peer` slot exists for; what must agree is the identity of
+// the file, and what must be absent is any time at all.
+// A SIDECAR IS NOT A MANIFEST. `<path>.peer.<device>` is another device's addresses
+// for the same file and `<path>.synced` is the version a divergence preserved; neither
+// has a content key, because neither is this device's record of a file's identity.
+// Counting them here read the peer slots added on 2026-09-14 as two manifests that
+// disagreed about their key.
+const manis = async (s) => s.page.evaluate((scope) => {
+	const ix = window.DaimondCloud.index(), out = {};
+	Object.keys(ix).filter(k => k.indexOf(scope + '/') === 0)
+		.filter(k => !ix[k].peer && !/\.synced$/.test(k)).sort().forEach(k => {
+		out[k] = { key: ix[k].key, size: ix[k].size, bytes: ix[k].bytes,
+			mtime: ix[k].mtime | 0, at: ix[k].at | 0 };
+	});
+	return out;
+}, SCOPE);
+const m1 = await manis(A), m2 = await manis(A2);
+const paths1 = Object.keys(m1);
+check('(vii) every shared manifest agrees on its content key, and carries no time at all',
+	paths1.length > 0 && paths1.join() === Object.keys(m2).join()
+	&& paths1.every(p => m1[p].key && m1[p].key === m2[p].key && m1[p].size === m2[p].size)
+	&& paths1.every(p => !m1[p].mtime && !m1[p].at && !m2[p].mtime && !m2[p].at),
+	`${paths1.length} manifest(s); `
+	+ (paths1.filter(p => !m2[p] || m1[p].key !== m2[p].key).length || 'no') + ' key mismatch, '
+	+ (paths1.filter(p => m1[p].mtime || m1[p].at || (m2[p] && (m2[p].mtime || m2[p].at))).length || 'no')
+	+ ' stamped');
+
+// AND NOBODY PUSHES. The same ten simulated minutes as (iv), over three devices.
+const before3 = cloud.pushes.length;
+for (let tick = 0; tick < 2; tick++) {
+	await ageRoster(A, FIVE_MIN);
+	await ageRoster(A2, FIVE_MIN);
+	await ageRoster(B, FIVE_MIN);
+	await push(A);  await pull(A2); await pull(B);
+	await push(A2); await pull(A);  await pull(B);
+	await push(B);  await pull(A);  await pull(A2);
+}
+check('(vii) ten SIMULATED minutes over two mounted desktops and a phone move NOTHING',
+	cloud.pushes.length === before3,
+	`${cloud.pushes.length - before3} push(es), mailbox v${cloud.mailbox.version}`);
+
+await A2.close().catch(() => {});
+
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// (viii) TWO COMMITTERS, ONE FILE, TWO SETS OF ADDRESSES
+// ═══════════════════════════════════════════════════════════════════════
+//
+// A and B above are a folder-mounted desktop and a phone, which is the owner's
+// topology and the one where only one device commits. This is the other one, and it
+// is the one that cost 222 files: TWO devices that may both commit, holding one file
+// at identical bytes. Identical bytes are not identical addresses -- an address is the
+// hash of CIPHERTEXT and the seal takes a fresh IV per device -- so each device's
+// index names a set of its own, the merge kept ours and dropped theirs, and the
+// gateway sweeps every chunk the committing index does not name.
+console.log('\n— (viii) two committers, one file, two sets of addresses —');
+
+if (!OPFS) {
+	skipped.push('(viii), which needs an OPFS to hold a workspace file in');
+	console.log('        · not on this engine: there is no OPFS to write the file into');
+} else {
+
+const XP = 'w/x.txt';
+// Past `SYNC_FILE_MAX` (128 kB), so it can only travel as a manifest.
+const XT = '= x\n' + 'the same line, on both devices, byte for byte\n'.repeat(6500);
+
+// CLEARED FIRST, as A and B are at the top of this file. A profile left by the last
+// run holds that run's chunk index, and its peer slots are keyed by that run's device
+// ids -- so this device opened with a slot for a device that no longer exists and the
+// count below read two where one was written.
+const PROFILE_C = scratch('pw', 'syncfp-c-' + BROWSER + (BREAK ? '-' + BREAK : ''));
+fs.rmSync(PROFILE_C, { recursive: true, force: true });
+const C = await open({ name: 'syncfp-c', profile: PROFILE_C, signIn: false,
+	connect: false, defaults: false, route: patchedSource });
+await ready(C);
+await C.page.evaluate((b) => window.DaimondIdentity.importBundle(b), bundle);
+await C.page.reload({ waitUntil: 'domcontentloaded' });
+await ready(C);
+await signInAs(C, 'syncfp');
+await ready(C);
+await clearDiamonds(C);
+await ready(C);
+await wireCloud(C, 'C');
+
+const devC = await C.page.evaluate(() => window.DaimondCore.syncSelfDeviceId());
+const mayBoth = {
+	b: await B.page.evaluate(() => window.DaimondCore.syncMayCommitChunks()),
+	c: await C.page.evaluate(() => window.DaimondCore.syncMayCommitChunks()),
+};
+check('(viii) both devices may commit the account\'s live set — the topology that swept it',
+	mayBoth.b === true && mayBoth.c === true, `B ${mayBoth.b}, C ${mayBoth.c}`);
+
+/// Write the file and offload it, WITHOUT pushing: each device uploads its own copy
+/// under addresses of its own, which is the state the merge then has to reason about.
+const seedX = (s) => s.page.evaluate(async (a) => {
+	const mod = await import('/pkg/oxedyne_daimond.js');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	await app.run_tool_outcome('file_write', JSON.stringify({ path: a.p, content: a.text }));
+	await window.DaimondCore.collectSync();
+	const m = window.DaimondCloud.index()[a.p] || null;
+	return m ? { key: m.key, hash: m.hash, addrs: (m.chunks || []).map(c => c.addr).sort() } : null;
+}, { p: XP, text: XT });
+const mB = await seedX(B);
+await B.page.waitForTimeout(400);
+const mC = await seedX(C);
+await C.page.waitForTimeout(400);
+check('(viii) one file, the same content key on both devices, at DIFFERENT addresses',
+	!!mB && !!mC && mB.key === mC.key && mB.addrs.length > 0
+	&& mB.addrs.join() !== mC.addrs.join(),
+	!mB || !mC ? 'one of them offloaded nothing'
+		: `key ${String(mB.key).slice(0, 10)}…, ${mB.addrs.length} vs ${mC.addrs.length} addresses, `
+		+ (mB.addrs.filter(a => mC.addrs.indexOf(a) >= 0).length || 'no') + ' in common');
+
+// B PUSHES AND COMMITS FIRST, and C has never sent a parcel. Nothing of C's is
+// declared, so this commit sweeps C's upload -- and no peer slot could have stopped
+// it: a device cannot name addresses it has never been told about. It is taken first
+// deliberately, because what is under test is the OTHER sweep, by a device that HAS
+// seen the other's index. C notices on its next collect that its chunks are gone and
+// re-offloads them, which is the pre-existing repair and is why the addresses below
+// are read again rather than remembered from above.
+await push(B);
+await pull(C);
+const sweptFirst = mC.addrs.filter(a => !cloud.chunks.has(a)).length;
+check('(viii) a committer that has never seen the other device\'s index sweeps it — the state to repair',
+	sweptFirst === mC.addrs.length, `${sweptFirst} of ${mC.addrs.length} of C's first upload swept`);
+const slotOnC = await C.page.evaluate((a) => {
+	const ix = window.DaimondCloud.index();
+	const key = Object.keys(ix).filter(k => k.indexOf(a.p + '.peer.') === 0);
+	return { keys: key, mine: (ix[a.p] && (ix[a.p].chunks || []).map(c => c.addr).sort()) || [],
+		slot: key.length ? (ix[key[0]].chunks || []).map(c => c.addr).sort() : [],
+		peer: key.length ? ix[key[0]].peer === true : false };
+}, { p: XP });
+check('(viii) C keeps its own manifest and opens a slot named for B — `<path>.peer.<32 hex>`',
+	slotOnC.keys.length === 1 && /\.peer\.[0-9a-f]{32}$/.test(slotOnC.keys[0])
+	&& slotOnC.keys[0] === XP + '.peer.' + devIds.b && slotOnC.peer === true,
+	slotOnC.keys.join(', ') || 'no slot at all');
+check('(viii) and the slot holds B\'s addresses, not C\'s',
+	slotOnC.slot.length > 0 && slotOnC.slot.join() === mB.addrs.join()
+	&& slotOnC.mine.join() === mC.addrs.join(),
+	`${slotOnC.slot.length} address(es) in the slot, ${slotOnC.mine.length} of its own`);
+
+// AND NOW C COMMITS. The live set it declares has to be the UNION, or the gateway
+// sweeps B's copy of a file both devices are holding.
+await push(C);
+const addrsC = await C.page.evaluate((p) => {
+	const m = window.DaimondCloud.index()[p] || {};
+	return (m.chunks || []).map(c => c.addr).sort();
+}, XP);
+check('(viii) C re-offloaded what was swept, under addresses of its own',
+	addrsC.length > 0 && addrsC.join() !== mB.addrs.join()
+	&& addrsC.every(a => cloud.chunks.has(a)),
+	`${addrsC.length} address(es), all held: ${addrsC.every(a => cloud.chunks.has(a))}`);
+const afterC = await B.page.evaluate(async (a) => {
+	const pr = await window.DaimondChunks.presence(a.addrs);
+	return { missing: (pr && pr.missing) || [], held: !!window.DaimondCloud.index()[a.p] };
+}, { addrs: mB.addrs, p: XP });
+check('(viii) C\'s commit leaves every one of B\'s addresses in place — the 222-file loss, closed',
+	afterC.missing.length === 0 && afterC.held === true,
+	afterC.missing.length ? `${afterC.missing.length} of ${mB.addrs.length} swept` : 'all held');
+
+// AND BACK THE OTHER WAY, because a scheme that works once in one direction is a
+// coincidence: B pulls C's parcel, opens a slot for C, and its own commit spares C's.
+await pull(B);
+const slotOnB = await B.page.evaluate((a) => {
+	const ix = window.DaimondCloud.index();
+	return Object.keys(ix).filter(k => k.indexOf(a.p + '.peer.') === 0);
+}, { p: XP });
+check('(viii) and B opens one for C, and never one for itself',
+	slotOnB.length === 1 && slotOnB[0] === XP + '.peer.' + devC,
+	slotOnB.join(', ') || 'no slot');
+await push(B);
+const afterB = await C.page.evaluate(async (a) => {
+	const pr = await window.DaimondChunks.presence(a.addrs);
+	return (pr && pr.missing) || [];
+}, { addrs: addrsC });
+check('(viii) B\'s commit leaves every one of C\'s addresses in place — the sweep, closed',
+	afterB.length === 0,
+	afterB.length ? `${afterB.length} of ${addrsC.length} swept` : 'all held');
+
+// AND THE FEED SAYS SO ON BOTH, which is the number the owner reads: a round where
+// nothing is missing is a round where nothing has to be put back. Two full exchanges,
+// because the first sweep above left C's old manifest naming addresses nothing holds
+// and one round is what it takes to notice and repair that.
+for (let r = 0; r < 2; r++) {
+	await pull(C); await push(C); await pull(B); await push(B);
+}
+// ASKED OF THIS FILE, AND SAID RATHER THAN QUIETLY NARROWED. Every section of this
+// verifier shares ONE mailbox and ONE chunk store, and B and C are the only devices
+// in this one: their commits name what THEY hold, so the Diamond, the chat and the
+// two desktops' book that sections (i) to (vii) offloaded from contexts now closed
+// are swept here and stand missing for the rest of the run. That is this file's own
+// arrangement rather than a property of anything, and a whole-index count reads it as
+// a fault. What (viii) is about is one file held by two committers, so the question is
+// put about that file: every address either device names FOR IT, on both of them.
+const refs = {};
+for (const [label, s_] of [['B', B], ['C', C]]) {
+	refs[label] = await s_.page.evaluate(async (p) => {
+		const ix = window.DaimondCloud.index();
+		const keys = Object.keys(ix).filter(k => k === p || k.indexOf(p + '.') === 0);
+		const addrs = [];
+		keys.forEach(k => ((ix[k] || {}).chunks || []).forEach(c => { if (c && c.addr) addrs.push(c.addr); }));
+		const r = addrs.length ? await window.DaimondChunks.presence([...new Set(addrs)]) : { missing: [] };
+		return { keys: keys.length, addrs: new Set(addrs).size, missing: (r.missing || []).length };
+	}, XP);
+}
+check('(viii) and after two more rounds every address either device names for that file is held',
+	refs.B.missing === 0 && refs.C.missing === 0
+	&& refs.B.addrs >= 4 && refs.C.addrs >= 4,
+	`B ${refs.B.keys} key(s)/${refs.B.addrs} addresses, ${refs.B.missing} missing; `
+	+ `C ${refs.C.keys} key(s)/${refs.C.addrs} addresses, ${refs.C.missing} missing`);
+
+await C.close().catch(() => {});
 
 }
 

@@ -1862,7 +1862,8 @@
 		return false;
 	}
 
-	async function beatPresence(deviceId, name, attended, servicing, runner, mobile) {
+	async function beatPresence(deviceId, name, attended, servicing, runner, mobile,
+		hand, folder) {
 		if (!ready() || !entitled) return null;
 		if (_removedSelf) return null;		// removed: the door will only refuse it again
 		try {
@@ -1888,6 +1889,19 @@
 			// Omitted only when this device genuinely cannot say, which a gateway relays as
 			// absent so the peer falls back to the old inference rather than to "desktop".
 			if (typeof mobile === 'boolean') body.mobile = mobile;
+			// THE TWO PLACEMENT FIELDS: can this machine reach a machine hand, and does it
+			// hold the real mounted folder rather than a browser replica. They are what
+			// lets another device place a compile or a publish without asking -- a phone
+			// that cannot hold a book's files hands the layout to a machine that can.
+			//
+			// Sent EXPLICITLY, both ways, and NOT sticky at the gateway. A hand unplugged
+			// and a folder grant withdrawn are both live changes, and only an explicit
+			// false can say so; absence then genuinely means "this build cannot say", which
+			// the election reads as unknown and NAMES rather than striking out. `runner`'s
+			// send-only-when-true shape would leave a withdrawn hand reading as present for
+			// as long as the device kept beating.
+			if (typeof hand === 'boolean')   body.hand = hand;
+			if (typeof folder === 'boolean') body.folder = folder;
 			// The running build id, so the gateway (once it relays this field) can show the
 			// fleet's build spread in its log and every device can de-prefer a peer on a
 			// superseded build at hand-off. A gateway that does not carry the field ignores

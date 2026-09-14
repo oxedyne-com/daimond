@@ -1682,6 +1682,12 @@
 		     through it, because two copies of a rule about text is how one of them comes to be
 		     right. Before daimond.js, which closes over both call sites. -->
 		<script src="js/listing.js"></script>
+<!-- The one reader of a .gitignore. A shared folder is a real folder on somebody's
+     disk and holds build output; the census that decides what to send and the merge
+     that decides what an arriving path may be written to must agree about which
+     paths those are, so the rule lives in one file. Before daimond.js, which closes
+     over both call sites. -->
+<script src="js/ignore.js"></script>
 <script src="js/cloud.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/pairing.js"></script>

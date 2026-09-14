@@ -679,6 +679,7 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} archivo no cupo en el paquete de sincronización de este dispositivo y no llegará a tus otros dispositivos hasta que haya sitio para él: {names}',
 	'sync.files_left.other':    '{n} archivos no cupieron en el paquete de sincronización de este dispositivo y no llegarán a tus otros dispositivos hasta que haya sitio para ellos: {names}',
+	'sync.folder_too_big':      'La carpeta que marcaste pesa {size}, por encima de los {max} que puede ocupar una carpeta compartida, así que nada de ella llega a tus otros dispositivos. Marca una carpeta más pequeña, o saca algo de esta.',
 	// Una sesión que terminó y no se pudo retomar. Misma etiqueta que abajo: lo
 	// que importa es que el trabajo de este dispositivo no está viajando.
 	'sync.signed_out': 'Sincronización en pausa',
@@ -1847,6 +1848,8 @@
 	'files.compiling_path': 'Compilando {path} …',
 	'files.compiled': 'Compilado → {path} ({size})',
 	'files.compile_failed': 'Falló la compilación: {reason}',
+	'files.compile_fetching': 'Se están obteniendo las imágenes y tipografías que este dispositivo no tiene ({size}) — {path}',
+	'files.compile_fetch_too_big': 'No se compiló: las imágenes y tipografías que este dispositivo no tiene suman {size}, más de los {max} que una compilación obtiene por su cuenta. Obtén primero las que necesites desde la lista del espacio de trabajo.',
 	'files.binary_note': 'Un archivo binario de {size}. Se guarda y se sincroniza como todo lo demás de aquí, pero no hay nada que mostrar. Descárgalo para abrirlo con algo que lo entienda.',
 	'files.cloud': 'Nube',
 	'files.cloud_storage': 'Almacenamiento en la nube',

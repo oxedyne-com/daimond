@@ -678,6 +678,7 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} arquivo não coube no pacote de sincronização deste dispositivo e não chega aos seus outros dispositivos enquanto não houver espaço para ele: {names}',
 	'sync.files_left.other':    '{n} arquivos não couberam no pacote de sincronização deste dispositivo e não chegam aos seus outros dispositivos enquanto não houver espaço para eles: {names}',
+	'sync.folder_too_big':      'A pasta que você marcou pesa {size}, acima dos {max} que uma pasta compartilhada pode ocupar, então nada dela chega aos seus outros dispositivos. Marque uma pasta menor, ou tire parte do que está nesta.',
 	// Uma sessão que acabou e não pôde ser retomada. Mesmo rótulo dos de baixo: o
 	// que importa é que o trabalho deste dispositivo não está viajando.
 	'sync.signed_out': 'Sincronização pausada',
@@ -1846,6 +1847,8 @@
 	'files.compiling_path': 'Compilando {path} …',
 	'files.compiled': 'Compilado → {path} ({size})',
 	'files.compile_failed': 'Falha na compilação: {reason}',
+	'files.compile_fetching': 'Buscando as imagens e fontes que este dispositivo não tem ({size}) — {path}',
+	'files.compile_fetch_too_big': 'Não compilado: as imagens e fontes que este dispositivo não tem somam {size}, além dos {max} que uma compilação busca por conta própria. Busque primeiro as que você precisa na lista do espaço de trabalho.',
 	'files.binary_note': 'Um arquivo binário de {size}. Ele é guardado e sincronizado como tudo aqui, mas não há o que mostrar. Baixe-o para abri-lo em algo que o entenda.',
 	'files.cloud': 'Nuvem',
 	'files.cloud_storage': 'Armazenamento na nuvem',

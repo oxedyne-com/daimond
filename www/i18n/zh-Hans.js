@@ -833,6 +833,7 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '有 {n} 个文件装不进这台设备的同步包裹，在腾出空间之前不会传到你的其他设备：{names}',
 	'sync.files_left.other':    '有 {n} 个文件装不进这台设备的同步包裹，在腾出空间之前不会传到你的其他设备：{names}',
+	'sync.folder_too_big':      '你标记的文件夹有 {size}，超过共享文件夹可占用的 {max}，所以里面的内容不会传到你的其他设备。请标记更小的文件夹，或者把其中一部分移出去。',
 	// 已经结束、又拿不回来的会话。和下面用同一个说法。
 	'sync.signed_out':        '同步已暂停',
 	'sync.signed_out_reason': '这台设备已退出 Daimond 的账户服务，也没能重新登录，所以它做的事没有传到你的其他设备。服务一能连上就会恢复。如果没有恢复，把 Daimond 锁上再解锁。',
@@ -1866,6 +1867,8 @@
 	'files.compiling_path':  '正在编译 {path} …',
 	'files.compiled':        '已编译 → {path}（{size}）',
 	'files.compile_failed':  '编译失败：{reason}',
+	'files.compile_fetching': '正在获取本设备没有的图片和字体（{size}）— {path}',
+	'files.compile_fetch_too_big': '没有编译：本设备没有的图片和字体共 {size}，超过编译自行获取的 {max}。请先从工作区列表中获取你需要的。',
 	'files.binary_note':     '一个 {size} 的二进制文件。它和这里的其他东西一样会被保存和同步，但没有什么可显示的。下载下来，用看得懂它的软件打开。',
 	// 从工作区面板看到的云端存储。
 	'files.cloud':           '云端',

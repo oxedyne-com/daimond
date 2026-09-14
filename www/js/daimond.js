@@ -4531,10 +4531,342 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Whether workspace files can be synced now: tools are up and the active
 	/// root is the OPFS sandbox, not a real on-disk folder.
+	///
+	/// STILL FALSE IN FOLDER MODE, and deliberately. This is the predicate that gates
+	/// the chunk-index MERGE and the COMMIT (`offloadAllowed`), and a folder-mounted
+	/// device holds no mergeable index -- the owner's two desktops have never
+	/// committed one and the phone commits for them, which is their steady state and
+	/// not a fault. Gating the offload on commit-ability broke desktop sync inside a
+	/// minute on 2026-09-12 and was reverted. The shared folder rides on a DIFFERENT
+	/// predicate (`syncWalkPlan`), so what a folder-mounted device may now send has
+	/// been widened without touching what it may declare.
 	function filesSyncable() {
 		if (!window.DaimondTools) return false;
 		try { if (Files && Files.folder && Files.folder()) return false; } catch (e) { return false; }
 		return true;
+	}
+
+	// ── The shared folder ──────────────────────────────────────
+	//
+	// Until 2026-09-14 the rule two hundred lines above was the whole story: "Only the
+	// OPFS sandbox is synced -- a real folder is the user's own disk, device-specific."
+	// It is not device-specific. The owner's two desktops boot with a folder open, the
+	// phone does not, and the consequence of the old rule was that the phone's Diamond
+	// held NONE of the book those desktops are for: the only route to a file was a chat
+	// turn handed to a desktop, which answered in prose.
+	//
+	// So a desktop that has a folder open now sends the folder's contents on, to the
+	// devices of the same account that have no native access, and writes their edits
+	// back into the folder. What it does NOT do is make a copy anywhere a copy is not
+	// needed: a device that has the folder open keeps using the folder. The desktop's
+	// folder stays the canonical thing -- Syncthing, git, Ore and the owner's own `dev`
+	// script all read the same bytes as before, and nothing here writes a sidecar into
+	// a tree under version control without saying so.
+	//
+	// Four rules stand around it, each with a test of its own:
+	//
+	//   THE CEILING. A folder is not a sandbox. `SYNC_FOLDER_SHARE_MAX` is the most a
+	//   shared folder may weigh, symlinked trees counted, and past it NOTHING is shared
+	//   and the panel says so with the size and the ceiling in it. Below it the ordinary
+	//   budgets apply exactly as before.
+	//
+	//   THE IGNORE LIST. `.gitignore` and `.oreignore` are honoured where the folder has
+	//   them, over a built-in floor of build output (js/ignore.js). Without this a
+	//   `typst watch` rebuild -- a fresh 1.7 MB PDF beside the source on every keystroke
+	//   -- would offload a megabyte and wake every device the account has, per keystroke.
+	//
+	//   CONTENT, NEVER TIME. Two desktops kept identical by Syncthing hold the same
+	//   bytes at different modification times. Everything that travels is keyed on the
+	//   content hash; the modification time is kept on the device that observed it
+	//   (`FOLDER_SEEN_KEY`). See `put` in js/cloud.js.
+	//
+	//   NO DELETION BY ABSENCE. A file on somebody's disk is deleted only on an explicit
+	//   tombstone from a device that HELD that file and deleted it, and only while the
+	//   bytes on disk are still the bytes the tombstone was written about. A phone that
+	//   never received a file -- for budget, for an ignore rule, or because it dropped it
+	//   -- can no longer cost the desktop anything. The sandbox keeps the older
+	//   absence-plus-complete-census rule, which `dev/verify_dataloss.mjs` pins.
+
+	// THE CEILING ON A SHARED FOLDER, and it is a different question from the parcel's.
+	//
+	// The parcel budgets bound one push. This bounds the whole undertaking: past it the
+	// account would be paying to hold, and every device would be paying to hear about,
+	// a tree the user marked in without meaning to share it -- a home directory, a
+	// cloned monorepo, a photo library. The fixture this was built against is 18 MB of
+	// book plus 26 MB of fonts reached through a symlink, so the ceiling has to be well
+	// clear of that and well short of a disk.
+	//
+	// TWO HUNDRED MEBIBYTES, and the number is the chunk store's arithmetic rather than
+	// a feeling: `SYNC_CHUNK_TOTAL_MAX` is 4 GiB for everything the account offloads,
+	// and a folder is one of many things spending it. It is also about forty times the
+	// parcel, so a folder at the ceiling is thousands of manifest entries and the index
+	// is the next ceiling met -- which is the honest reason not to raise this without
+	// measuring that one.
+	//
+	// SYMLINKED TREES COUNT. The File System Access API follows a link transparently, so
+	// a walk sees the target's bytes and the user's disk holds them once; the ceiling is
+	// about what would travel, and what would travel is what the walk finds.
+	var SYNC_FOLDER_SHARE_MAX = 200 * 1024 * 1024;
+
+	// Paths a device that HELD a file has deleted, `path -> the hash it held`. The hash
+	// is the whole of the safety: the far end deletes only while the bytes on its disk
+	// are still the bytes this tombstone was written about, so a file edited since the
+	// delete travelled is kept. No clock in it -- see `put` in js/cloud.js for why a
+	// timestamp here would push two devices at each other for ever.
+	var SYNC_FILE_TOMBS_KEY = 'daimond-file-tombs';
+	var SYNC_FILE_TOMBS_MAX = 2000;			// bounded like the fork point, and for the same reason
+
+	// `path -> "<size>:<mtime>"`, THIS DEVICE'S OWN, never in the parcel. The cheap
+	// "has this changed since I last looked" test genuinely wants a modification time;
+	// what must not carry one is the manifest that travels. Keeping the two apart is
+	// what lets two desktops agree byte for byte about a folder they hold at different
+	// times.
+	var SYNC_FOLDER_SEEN_KEY = 'daimond-foldershare-seen';
+
+	/// The handle of the real folder the user has open, or null for the sandbox.
+	///
+	/// Named for the share rather than for the handle, because the Workspace panel keeps
+	/// a `folderHandle` of its own inside its closure and two things called one name in
+	/// one file is how a reader comes to believe they are the same thing.
+	function sharedFolderHandle() {
+		try { return (Files && Files.folder) ? Files.folder() : null; } catch (e) { return null; }
+	}
+
+	/// The ignore rules in force over a set of shared roots.
+	///
+	/// The built-in floor first, then each root's own `.gitignore` and `.oreignore`, so
+	/// a folder that states its own rules refines the floor rather than replacing it --
+	/// and a `!` line in the folder's file can take back something the floor excluded,
+	/// because the last match wins.
+	///
+	/// READ THROUGH THE FOLDER'S OWN HANDLE, not through `file_read`. The tool reads the
+	/// workspace and would be the obvious door, but it is a door with policy on it -- a
+	/// truncation ceiling, a scope fence, a refusal that resolves rather than throwing --
+	/// and a rule file read through half of that is a rule file quietly not in force. The
+	/// bytes come from the same place the census reads every other byte from.
+	async function folderIgnoreRules(roots) {
+		if (!window.DaimondIgnore) return null;
+		var sets = [{ base: '', lines: DaimondIgnore.DEFAULTS }];
+		var handle = sharedFolderHandle();
+		for (var i = 0; i < roots.length; i++) {
+			for (var j = 0; j < DaimondIgnore.IGNORE_FILES.length; j++) {
+				var name = DaimondIgnore.IGNORE_FILES[j];
+				var text = null;
+				try {
+					var f = await DaimondCloud.fileUnderRoot(handle, roots[i] + '/' + name);
+					if (f) text = await f.text();
+				} catch (e) { text = null; }
+				if (text !== null) sets.push({ base: roots[i], lines: text });
+			}
+		}
+		return DaimondIgnore.matcher(sets);
+	}
+
+	/// Walk the shared roots and answer every file that may travel, with its size.
+	///
+	/// SORTED, which the sandbox walk is not. Two desktops enumerate one folder in
+	/// whatever order their filesystems hand it over, and the order decides which files
+	/// fit inline under the soft cap -- so an unsorted walk makes the inline section a
+	/// function of the disk rather than of the content, and the two devices never agree.
+	/// The sandbox keeps its existing order because nothing there is enumerated twice.
+	///
+	/// `complete` is false the moment anything is missed for a reason that might change;
+	/// a path left out by an IGNORE RULE is not one of those and does not touch it.
+	async function walkShared(app, roots, rules) {
+		// `away` is what the listing says is in cloud storage and not on this device:
+		// there are no local bytes to collect, so it is not an entry -- and it is not a
+		// gap either. See `noteFileTombs`, where the difference is a file on somebody
+		// else's disk.
+		var out = { entries: [], bytes: 0, complete: true, ignored: 0, away: {} };
+		for (var r = 0; r < roots.length; r++) {
+			var todo = [roots[r]], guard = 0;
+			while (todo.length && guard++ < 20000) {
+				var dir = todo.shift();
+				var res;
+				try { res = await app.run_tool_outcome('file_list', JSON.stringify({ path: dir || '.' })); }
+				catch (e) { out.complete = false; continue; }
+				if (!res || res.outcome !== 'done') {
+					console.warn('sync: shared folder ' + (dir || '.') + ' would not list ('
+						+ ((res && res.outcome) || 'no answer')
+						+ '), so this census is incomplete and deletes nothing');
+					out.complete = false;
+					continue;
+				}
+				var entries = parseSyncListing(res.text);
+				for (var i = 0; i < entries.length; i++) {
+					var e = entries[i];
+					var full = dir ? (dir + '/' + e.name) : e.name;
+					// Dotfiles are not walked -- the same rule the sandbox census keeps --
+					// and the ignore files themselves are read by name above.
+					if (e.name.charAt(0) === '.') continue;
+					if (rules && rules.ignored(full, !!e.dir)) { out.ignored++; continue; }
+					if (e.dir) { todo.push(full); continue; }
+					if (e.cloud) { out.away[full] = e.size | 0; continue; }
+					out.entries.push({ path: full, size: e.size | 0 });
+					out.bytes += e.size | 0;
+				}
+			}
+			if (todo.length) out.complete = false;
+		}
+		out.entries.sort(function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0); });
+		return out;
+	}
+
+	// The last plan a collect computed, so the merge and the panel can ask what this
+	// device is sharing without walking the folder again. Re-derived every collect.
+	var _sharePlan = null;
+
+	/// What the file census walks this round, or null when this device shares nothing.
+	///
+	/// One answer for the three callers that read the workspace for sync -- the parcel,
+	/// the baseline commit and the pull merge -- because a file one of them treats as
+	/// shared and another does not is a file that travels one way and is deleted on the
+	/// way back.
+	async function syncWalkPlan() {
+		if (!window.DaimondTools) return null;
+		var app; try { app = tools(); } catch (e) { return null; }
+		var handle = sharedFolderHandle();
+		if (!handle) {
+			if (!filesSyncable()) return null;
+			_sharePlan = { folder: false, roots: [''], rules: null, over: null, app: app };
+			return _sharePlan;
+		}
+		var roots = [];
+		try { roots = await Files.shareRoots(); } catch (e) { roots = []; }
+		// A folder nobody marked into a Diamond is a folder nobody asked to share.
+		if (!roots.length) { _sharePlan = null; return null; }
+		var rules = await folderIgnoreRules(roots);
+		var walk  = await walkShared(app, roots, rules);
+		if (walk.bytes > SYNC_FOLDER_SHARE_MAX) {
+			// NOTHING IS SHARED, rather than a prefix of it: sharing the first 200 MiB
+			// of a tree in whatever order it enumerated would be a census that calls
+			// itself partial for ever and a set the user cannot predict.
+			_sharePlan = { folder: true, roots: roots, rules: rules, app: app, walk: null,
+				over: { bytes: walk.bytes, max: SYNC_FOLDER_SHARE_MAX } };
+			return _sharePlan;
+		}
+		_sharePlan = { folder: true, roots: roots, rules: rules, app: app, walk: walk, over: null };
+		return _sharePlan;
+	}
+
+	/// Is this path inside what this device is sharing from a real folder?
+	/// False in sandbox mode, where the question does not arise.
+	function withinShare(plan, path) {
+		if (!plan || !plan.folder || plan.over) return false;
+		if (plan.rules && plan.rules.ignored(path, false)) return false;
+		for (var i = 0; i < plan.roots.length; i++) {
+			var r = plan.roots[i];
+			if (path === r || path.indexOf(r + '/') === 0) return true;
+		}
+		return false;
+	}
+
+	/// Where a device's version of a file goes when the disk moved under it.
+	///
+	/// Beside the original, named for the device that sent it and the moment it
+	/// landed, so two devices conflicting on one file do not overwrite each other's
+	/// conflict copy either. The extension is kept last, because the tools that open
+	/// these files read it -- a `.typ` that became `.typ.conflict-…` would stop being
+	/// a document to every one of them.
+	function conflictName(path, device, at) {
+		var cut = String(path).lastIndexOf('/');
+		var dir = cut < 0 ? '' : path.slice(0, cut + 1);
+		var name = cut < 0 ? String(path) : path.slice(cut + 1);
+		var dot = name.lastIndexOf('.');
+		var stem = dot > 0 ? name.slice(0, dot) : name;
+		var ext  = dot > 0 ? name.slice(dot) : '';
+		var d = new Date(at == null ? Date.now() : at);
+		var two = function (n) { return (n < 10 ? '0' : '') + n; };
+		var stamp = d.getUTCFullYear() + two(d.getUTCMonth() + 1) + two(d.getUTCDate())
+			+ 'T' + two(d.getUTCHours()) + two(d.getUTCMinutes()) + two(d.getUTCSeconds());
+		return dir + stem + '.conflict-' + String(device || 'peer').slice(0, 8) + '-' + stamp + ext;
+	}
+
+	/// The file tombstones this device is carrying.
+	function fileTombs() { return readJson(SYNC_FILE_TOMBS_KEY, {}); }
+
+	/// Write a tombstone for every path the fork point holds that a COMPLETE census no
+	/// longer carries, and take those paths out of the fork point.
+	///
+	/// THIS IS WHERE A DELETION BECOMES NEWS, on the device that made it, rather than
+	/// being inferred at the far end from a gap in somebody else's parcel. The gap has
+	/// four innocent causes and the far end cannot tell them apart; the device that
+	/// deleted the file knows it held the file, and says so.
+	///
+	/// Stable across collects by construction: the second collect finds the path gone
+	/// from the fork point and writes nothing, so the parcel is a fixed point.
+	///
+	/// A FILE THAT MOVED TO CHUNKS IS NOT A FILE THAT WENT, and this is the trap the
+	/// fork point has set before. The soft cap demotes a file out of the inline section
+	/// the round after its chunks are confirmed held -- so a path in the fork point and
+	/// absent from `files` is the ORDINARY state of every offloaded file, and a
+	/// tombstone written on that absence would tell the other device to delete, off
+	/// somebody's disk, a file that is safe in cloud storage and on its way. The census
+	/// carries both halves; a deletion is the path that is in neither.
+	///
+	/// AND NEITHER IS A FILE THIS DEVICE FREED. A path whose bytes were reclaimed after
+	/// their upload is in cloud storage and NOT on this device, so the listing marks it
+	/// and the census collects nothing for it -- `away`, which is a THIRD half. It was
+	/// missing from this test, and on 2026-09-14 `dev/verify_foldershare.mjs` caught
+	/// what that costs: a phone at its 256 kB inline ceiling offloads, reclaims, and
+	/// then tells the desktop to delete the file off the disk it is sitting on. The
+	/// census is complete, every named assertion is green, and the file is gone.
+	function noteFileTombs(col, complete) {
+		if (complete !== true) return;
+		var local = col.files || {}, large = col.large || {}, away = col.away || {};
+		var base = readJson(SYNC_FILEBASE_KEY, {});
+		var tombs = fileTombs(), next = {}, changed = false, kept = 0;
+		Object.keys(base).forEach(function (p) {
+			if (Object.prototype.hasOwnProperty.call(local, p)
+				|| Object.prototype.hasOwnProperty.call(large, p)
+				|| Object.prototype.hasOwnProperty.call(away, p)) { next[p] = base[p]; kept++; return; }
+			if (tombs[p] !== base[p]) { tombs[p] = base[p]; changed = true; }
+		});
+		if (kept !== Object.keys(base).length) writeFilebase(next);
+		if (!changed) return;
+		var keys = Object.keys(tombs);
+		if (keys.length > SYNC_FILE_TOMBS_MAX) {
+			var trimmed = {};
+			keys.slice(keys.length - SYNC_FILE_TOMBS_MAX).forEach(function (k) { trimmed[k] = tombs[k]; });
+			tombs = trimmed;
+		}
+		try { localStorage.setItem(SYNC_FILE_TOMBS_KEY, JSON.stringify(tombs)); }
+		catch (e) { /* best effort: the file simply stays at the far end */ }
+	}
+
+	/// Say that a marked-in folder is too big to share, with the size and the ceiling
+	/// in the sentence, so the person can see which of the two to move.
+	function noteFolderOver(over) {
+		if (!over) {
+			_left.folder = null;
+			_leftDismissed.folder = '';
+			renderLeftBanner();
+			return;
+		}
+		var sig = 'folder:' + over.bytes;
+		_left.folder = { sig: sig, msg: t('sync.folder_too_big', {
+			size: fmtSyncBytes(over.bytes), max: fmtSyncBytes(over.max) }) };
+		renderLeftBanner();
+	}
+
+	/// The File behind a census entry, from whichever root this census is of.
+	///
+	/// `DaimondCloud.fileAt` reads the account's OPFS sandbox whatever mode the
+	/// workspace is in, which is right for every caller it has -- eviction and the
+	/// manifest-presence sweep are about bytes this device holds in storage it owns.
+	/// A shared folder's bytes are on the user's disk, so the census asks the folder's
+	/// own handle. A handle rather than text, because the offload streams a 20 MB font
+	/// a slice at a time and never holds it.
+	function syncFileAt(plan, path) {
+		if (plan && plan.folder) return DaimondCloud.fileUnderRoot(sharedFolderHandle(), path);
+		return DaimondCloud.fileAt(path);
+	}
+
+	/// Bytes, as a sentence says them.
+	function fmtSyncBytes(n) {
+		var u = ['B', 'KB', 'MB', 'GB'], i = 0, v = n || 0;
+		while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+		return (i === 0 ? v : v.toFixed(1)) + ' ' + u[i];
 	}
 
 	// ── A PHONE'S PARCEL IS NOT A DESKTOP'S ────────────────────
@@ -4671,10 +5003,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// is never named, and is one of the reasons the census calls itself incomplete.
 		// `softCap` is what the inline section actually spent to, reported so a log line
 		// can say which ceiling bound the round.
+		// `away` is the paths cloud storage holds that this device is not holding: no
+		// local bytes to collect, and NOT A GAP. It is reported because the fork point
+		// has to tell the difference -- see `noteFileTombs`, where reading it as a gap
+		// deleted a file off another device's disk.
 		var out = { files: {}, large: {}, left: [], skipped: 0, oversize: [], bytes: 0,
-			complete: false, pending: [], held: 0, softCap: budget };
-		if (!filesSyncable()) return out;
-		var app; try { app = tools(); } catch (e) { return out; }
+			complete: false, pending: [], held: 0, softCap: budget, away: {},
+			// Which set this census is OF: the sandbox, or the folder roots a Diamond is
+			// scoped to. The merge reads it to decide whose deletion rule applies.
+			plan: null };
+		// THE ONE ANSWER about what this device shares, so the parcel, the baseline commit
+		// and the pull merge cannot disagree. Null is a device that shares no files at all
+		// -- no tools, the sandbox with tools down, or a folder nobody marked into a
+		// Diamond -- and it carries no news rather than an empty workspace.
+		var plan = await syncWalkPlan();
+		if (!plan) return out;
+		out.plan = plan;
+		var app = plan.app;
+		if (plan.over) {
+			// Past the ceiling nothing travels and the person is told, with both numbers.
+			// The census stays INCOMPLETE, so no device anywhere reads the silence as the
+			// folder having been emptied.
+			return out;
+		}
 		// Can the overflow be offloaded this round? Same test the Diamond and chat
 		// collectors use. When it is false there is nowhere to move an overflow file,
 		// so it is NAMED (noteFilesLeft) rather than silently dropped.
@@ -4687,9 +5038,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var soft = inlineSoftCap(budget, canOffload, isMobileDeviceSelf());
 		out.softCap = soft;
 		out.complete = true;						// until something below is missed.
-		var total = 0, largeTotal = 0, todo = [''], guard = 0;
-		while (todo.length && guard++ < 5000) {
-			var dir = todo.shift();
+		var total = 0, largeTotal = 0;
+		// THE CENSUS IS A LIST OF ENTRIES, AND ONLY ITS SOURCE DIFFERS. A shared folder is
+		// walked and SORTED by `walkShared`, because two desktops enumerate one directory
+		// in whatever order their filesystems hand it over and the order decides which
+		// files fit inline; the sandbox keeps the walk it has always had, entry by entry
+		// as each directory lists, because nothing there is enumerated twice and changing
+		// it would move which files ride inline for no gain.
+		var flat = null;
+		if (plan.folder) {
+			flat = plan.walk.entries;
+			out.away = plan.walk.away || {};
+			if (!plan.walk.complete) out.complete = false;
+		}
+		var todo = flat ? [] : [''], guard = 0;
+		while ((flat || todo.length) && guard++ < 5000) {
+			var entries, dir;
+			if (flat) {
+				// One pass over a list already gathered: `dir` is unused below because
+				// every entry carries its whole path.
+				entries = flat;
+				dir = null;
+				flat = null;
+			} else {
+			dir = todo.shift();
 			var res;
 			try { res = await app.run_tool_outcome('file_list', JSON.stringify({ path: dir || '.' })); }
 			catch (e) { out.complete = false; continue; }
@@ -4709,15 +5081,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				out.complete = false;
 				continue;
 			}
-			var entries = parseSyncListing(res.text);
+			entries = parseSyncListing(res.text);
+			}
 			for (var i = 0; i < entries.length; i++) {
 				var e = entries[i];
-				if (e.name.charAt(0) === '.') continue;					// dotfiles/dirs
-				var full = dir ? (dir + '/' + e.name) : e.name;
-				if (e.dir) { if (!(!dir && SYNC_SKIP_ROOT_DIRS[e.name])) todo.push(full); continue; }
-				// In cloud storage but not on this device: already safe, and there
-				// are no local bytes to collect.
-				if (e.cloud) continue;
+				var full;
+				if (dir === null) { full = e.path; }
+				else {
+					if (e.name.charAt(0) === '.') continue;				// dotfiles/dirs
+					full = dir ? (dir + '/' + e.name) : e.name;
+					if (e.dir) { if (!(!dir && SYNC_SKIP_ROOT_DIRS[e.name])) todo.push(full); continue; }
+					// In cloud storage but not on this device: already safe, and there
+					// are no local bytes to collect. NAMED, because the fork point below
+					// has to tell "in the cloud" from "gone".
+					if (e.cloud) { out.away[full] = e.size | 0; continue; }
+				}
 				if (e.size > SYNC_CHUNK_FILE_MAX) { out.oversize.push(full); out.skipped++; continue; }
 
 				// Anything past the inline ceiling is offloaded, and is NOT read here:
@@ -4735,7 +5113,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// and find out, rather than going through file_read, which lossily
 				// converts anything that is not.
 				var f = null;
-				try { f = await DaimondCloud.fileAt(full); } catch (e2) { f = null; }
+				try { f = await syncFileAt(plan, full); } catch (e2) { f = null; }
 				if (!f) { out.skipped++; continue; }
 				var raw;
 				try { raw = new Uint8Array(await f.arrayBuffer()); } catch (e2) { out.skipped++; continue; }
@@ -4856,7 +5234,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Set the file baseline to the current local files: this is "what both
 	/// devices agree on now", the fork point the next 3-way merge measures from.
 	async function commitFileBaseline() {
-		if (!filesSyncable()) return;
+		// THE SAME TEST `collectFiles` MAKES, not `filesSyncable`. A folder-mounted device
+		// shares files now and still may not commit the chunk index, so the two questions
+		// have come apart: gating the baseline on the commit predicate would leave a
+		// desktop's fork point permanently empty, and an empty fork point is a merge that
+		// re-adopts every file it already has on every round.
+		var plan = await syncWalkPlan();
+		if (!plan) return;
+		// A FOLDER OVER THE CEILING LEAVES THE FORK POINT WHERE IT IS. The census carries
+		// nothing while the refusal stands, so committing it would record "the two devices
+		// agree about no files at all" -- and when the folder comes back under the ceiling
+		// every file would read as changed on both sides at once and grow a conflict copy.
+		// Nothing is shared, so nothing has been agreed, so nothing is written.
+		if (plan.over) return;
 		// The SAME inline budget the parcel uses, so a file that overflows and offloads
 		// is out of `files` here too and never enters the inline baseline — which is
 		// what keeps a later complete census from reading its absence as a deletion.
@@ -4890,9 +5280,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// which is how a workspace was lost account-wide. A parcel that does not say
 	/// its census was complete is no news, never a deletion; a device too old to
 	/// say so is treated the same way.
-	async function applyFiles(remoteFiles, remoteComplete) {
-		if (!remoteFiles || typeof remoteFiles !== 'object' || !filesSyncable()) return;
-		var app; try { app = tools(); } catch (e) { return; }
+	async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromDevice) {
+		if (!remoteFiles || typeof remoteFiles !== 'object') return;
+		var plan = await syncWalkPlan();
+		if (!plan || plan.over) return;
+		var app = plan.app;
 		var base  = readJson(SYNC_FILEBASE_KEY, {});
 		// The same inline budget the parcel and the baseline use, so `local` classifies
 		// files inline-vs-offloaded exactly as they did — the merge and its delete branch
@@ -4902,6 +5294,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// It is not "everything local", which is what the baseline used to be set to on the way
 		// out of here -- see the commit below.
 		var agreed = {}, gone = {};
+		// What landed beside a file rather than over it, so a caller (and a verifier)
+		// can say so without reading the console.
+		var out_conflicts = [];
 		var paths = {};
 		Object.keys(local).forEach(function (p) { paths[p] = 1; });
 		Object.keys(remoteFiles).forEach(function (p) { paths[p] = 1; });
@@ -4909,6 +5304,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!Object.prototype.hasOwnProperty.call(paths, p)) continue;
 			var l = local[p], r = remoteFiles[p];
 			if (r == null) continue;								// only local has it: keep, it will push.
+			// A REAL FOLDER IS WRITTEN INTO ONLY WHERE THE USER MARKED IT IN. Everything
+			// arriving from another device is a path in ITS workspace, which on a
+			// folder-mounted device is somebody's disk: a path outside the shared roots,
+			// or one an ignore rule excludes, is not this folder's to hold and is left
+			// where it is. In the sandbox the whole workspace is the share and this is
+			// always true.
+			if (plan.folder && !withinShare(plan, p)) continue;
 			// Agreed only if the write LANDED. A refused or failed write leaves this
 			// device without the file, and a fork point that says both devices hold it
 			// is a fork point that will read its absence here as a deletion there.
@@ -4920,13 +5322,52 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var remoteChanged = (rh !== bh);
 			if (remoteChanged && !localChanged) { if (await writeSyncFile(app, p, r)) agreed[p] = rh; }
 			else if (localChanged && !remoteChanged) { /* keep local; it will push. */ }
+			else if (plan.folder) {
+				// BOTH MOVED, AND ONE OF THEM IS A FILE ON SOMEBODY'S DISK. The disk wins
+				// and is not touched: the version that arrived lands beside it, named for
+				// the device that sent it and the moment it arrived, and the person
+				// decides. A `.synced` sidecar would do for a sandbox path nothing else
+				// reads; in a folder under version control it would be a file `git status`
+				// reports and a compiler may try to open, so it keeps the real extension
+				// and says in its name what it is.
+				var cname = conflictName(p, fromDevice, Date.now());
+				if (await writeSyncFile(app, cname, r)) {
+					console.warn('sync: ' + p + ' changed on this device and on '
+						+ (fromDevice || 'another device') + '; the disk copy stands and '
+						+ 'theirs is beside it at ' + cname);
+					out_conflicts.push({ path: p, copy: cname });
+				}
+			}
 			else { await writeSyncFile(app, p + '.synced', r); }	// both diverged: preserve both.
 		}
 		// Deletions: a file both devices once agreed on (in the baseline) that the
 		// remote no longer has was deleted there. Propagate it here ONLY if it is
 		// unchanged locally since that fork — a local edit after the remote delete
 		// keeps the file, because an edit must never be lost to a delete.
-		if (remoteComplete === true) {
+		if (plan.folder) {
+			// A FILE ON SOMEBODY'S DISK IS DELETED ONLY ON A TOMBSTONE, never on absence.
+			// Absence has four innocent causes in the sandbox and five here -- the fifth
+			// being a device that was never sent the file at all, for budget or for an
+			// ignore rule -- and none of them is the user asking for a deletion. The
+			// tombstone is written by the device that HELD the file and no longer does
+			// (`noteFileTombs`), and it carries the hash it held: the delete is honoured
+			// only while the bytes on this disk are still those bytes, so a file edited
+			// here since the deletion travelled is kept.
+			var tombs = (remoteTombs && typeof remoteTombs === 'object') ? remoteTombs : {};
+			for (var tp in tombs) {
+				if (!Object.prototype.hasOwnProperty.call(tombs, tp)) continue;
+				if (!withinShare(plan, tp)) continue;
+				if (Object.prototype.hasOwnProperty.call(remoteFiles, tp)) continue;	// they have it after all.
+				var tv = local[tp];
+				if (tv == null) continue;							// already gone here.
+				if (fileHash(tv) !== tombs[tp]) {
+					console.warn('sync: ' + tp + ' was deleted elsewhere but has changed on this '
+						+ 'disk since, so it is kept');
+					continue;
+				}
+				if (await deleteSyncFile(app, tp)) gone[tp] = 1;
+			}
+		} else if (remoteComplete === true) {
 			for (var bp in base) {
 				if (!Object.prototype.hasOwnProperty.call(base, bp)) continue;
 				if (Object.prototype.hasOwnProperty.call(remoteFiles, bp)) continue;	// remote still has it.
@@ -4946,7 +5387,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// and the moment it has is a successful push -- which is what `commitFileBaseline` is for
 		// and where sync.js already calls it.
 		await commitAgreedFiles(agreed, gone);
+		_lastConflicts = out_conflicts;
+		return out_conflicts;
 	}
+
+	// The conflict copies the last merge wrote, for the panel and for the verifier.
+	var _lastConflicts = [];
 
 	/// Fold what this round proved the two devices hold in common into the fork point, and drop
 	/// what was deleted. Paths this device kept a newer copy of are deliberately absent: the
@@ -4983,9 +5429,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Needs an unlocked identity (a chunk is sealed with its key) and the chunk
 	/// module. Without either, nothing new is offloaded this round, but the
 	/// index still travels intact.
-	async function collectChunked(large) {
+	async function collectChunked(large, plan) {
 		if (!window.DaimondCloud) return {};
 		if (!window.DaimondChunks || !DaimondCloud.available()) return DaimondCloud.index();
+		// A SHARED FOLDER'S MANIFESTS CARRY NO CLOCK, so this device's own "have I looked
+		// at this since it changed" note lives here instead. Two desktops kept identical
+		// by Syncthing hold one file at two modification times; a manifest carrying either
+		// of them differs between devices that agree about every byte, and two devices
+		// with permanently different parcels push at each other for ever.
+		var shared = !!(plan && plan.folder && !plan.over);
+		var seen = shared ? readJson(SYNC_FOLDER_SEEN_KEY, {}) : null;
+		var seenMoved = false;
 		// A passphrase change makes every chunk already in the cloud store
 		// unopenable: they were sealed under the old key and the gateway holds them
 		// still. `chunks.js` drops its address map so none of that ciphertext can be
@@ -4997,16 +5451,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		for (var p in (large || {})) {
 			if (!Object.prototype.hasOwnProperty.call(large, p)) continue;
 			var f = null;
-			try { f = await DaimondCloud.fileAt(p); } catch (e) { f = null; }
+			try { f = await syncFileAt(plan, p); } catch (e) { f = null; }
 			if (!f) continue;						// vanished since the walk.
+			// A SHARED FOLDER SKIPS ON CONTENT. The cheap test is this device's own note
+			// of the size and time it last looked; when that note is absent or stale --
+			// a fresh device, or Syncthing having rewritten the file with identical bytes
+			// -- the file's identity is RE-DERIVED by streaming it (`fileKey`, the hash of
+			// its chunk hashes, which never holds the file) and compared against the
+			// manifest. Same content, no upload, and the note is brought forward.
+			var known = DaimondCloud.manifest(p);
+			if (shared && !stale && known && known.key && known.bytes === f.size) {
+				var mark = f.size + ':' + f.lastModified;
+				var fresh = seen[p] === mark;
+				if (!fresh) {
+					var live = null;
+					try { live = await DaimondCloud.fileKey(f, DaimondChunks.chunkSizeFor(f.size)); }
+					catch (e) { live = null; }
+					fresh = (live !== null && live === known.key);
+					if (fresh) { seen[p] = mark; seenMoved = true; }
+				}
+				if (fresh) {
+					if (_presenceAnswered) _offloadConfirmed[p] = known.key;
+					continue;
+				}
+			}
 			// Offload streams the file and asks the gateway which of its pieces
 			// are missing, so an unchanged file costs one `have` call and a read,
 			// and a file whose chunks were swept is refilled rather than left
 			// unfetchable with the index still promising it. The only thing worth
 			// skipping outright is a file identical in length and untouched since
 			// its own upload.
-			var known = DaimondCloud.manifest(p);
-			if (!stale && known && known.bytes === f.size && known.mtime === f.lastModified && known.key) {
+			if (!shared && !stale && known && known.bytes === f.size && known.mtime === f.lastModified && known.key) {
 				// REUSED ON ITS CHANGE-KEY, and therefore confirmed only if this round's
 				// presence sweep actually answered: that sweep asks about every address
 				// every manifest names and drops the stale ones before anything here runs,
@@ -5018,7 +5493,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			try {
 				var mani = await DaimondChunks.offloadFile(p, f);
-				await DaimondCloud.put(p, mani, mani.key);
+				await DaimondCloud.put(p, mani, mani.key,
+					shared ? { file: f, timeless: true } : null);
+				if (shared) { seen[p] = f.size + ':' + f.lastModified; seenMoved = true; }
 				// CONFIRMED BY THE UPLOAD ITSELF. `offloadFile` reuses an address only
 				// after `missing()` said the gateway holds it, and `putChunks` throws on
 				// anything but a 200 — so a manifest it RETURNED names chunks that are all
@@ -5033,6 +5510,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Cleared only after the pass that owed it, so a round that never ran leaves
 		// the debt standing rather than marking it paid.
 		if (stale && DaimondChunks.clearStale) DaimondChunks.clearStale();
+		if (seenMoved) { try { localStorage.setItem(SYNC_FOLDER_SEEN_KEY, JSON.stringify(seen)); }
+			catch (e) { /* quota: one re-derivation next round, never a byte */ } }
 		return DaimondCloud.index();
 	}
 
@@ -5051,13 +5530,193 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///   therefore compared local against itself, `localChanged` was false for every path, the
 	///   remote won unconditionally, and `cloud.js`'s both-sides-diverged branch -- the one that
 	///   preserves the loser as `.synced` -- could never run at all.
-	async function applyChunked(remoteChunked, base) {
-		if (!window.DaimondCloud || !filesSyncable()) return;
+	async function applyChunked(remoteChunked, base, fromDevice) {
+		if (!window.DaimondCloud) return;
+		// A FOLDER-MOUNTED DEVICE MERGES THE SHARED PATHS, and until 2026-09-14 it
+		// merged nothing: this function opened on `filesSyncable`, which is the answer
+		// to a different question (see it) -- may this device COMMIT an index. So a
+		// phone's edit of anything past `SYNC_FILE_MAX` reached cloud storage and
+		// stopped there. The desktop adopted no manifest, never learned the file had
+		// changed, and the folder the user actually works in never heard about it,
+		// while every inline file crossed in one round. The gap was the whole of what
+		// "the folder travels" did not cover.
+		//
+		// ONLY THE SHARED PATHS. Everything else in another device's index is a path in
+		// ITS workspace, and on this device that is somebody's disk.
+		var plan = _sharePlan;
+		if (!plan) plan = await syncWalkPlan();
+		var folder = !!(plan && plan.folder && !plan.over);
+		if (!folder && !filesSyncable()) return;
+		var incoming = remoteChunked;
+		if (folder) {
+			incoming = {};
+			Object.keys(remoteChunked || {}).forEach(function (k) {
+				if (!withinShare(plan, indexPathOf(k))) return;
+				incoming[k] = timelessManifest(remoteChunked[k]);
+			});
+		}
+		// The index as it stood BEFORE the merge, so the materialise below can tell a
+		// manifest this round adopted from one that has been ours all along.
+		var was = folder ? DaimondCloud.index() : null;
+		// THE RUNNER'S CHUNKS ARE NAMED BY THIS DEVICE'S COMMIT, or nothing names them.
+		// A folder-mounted machine never commits the index (filesSyncable is false
+		// there), so the preview artifact it just uploaded is live only while some
+		// committing device declares its addresses. Noted BEFORE the merge, so a record
+		// this device is about to adopt as its own is recognised as such and the slot
+		// pruned rather than doubled.
+		//
+		// ONLY A COMMITTING DEVICE NOTES THEM, which is the gate this function used to
+		// open on. A folder-mounted device now merges the shared paths (above), but it
+		// still sends no index, so a peer slot written here would be a localStorage
+		// write that nothing ever reads.
+		if (filesSyncable() && DaimondCloud.isPreviewKey) {
+			var rx = (remoteChunked && typeof remoteChunked === 'object') ? remoteChunked : {};
+			Object.keys(rx).forEach(function (k) {
+				if (!DaimondCloud.isPreviewKey(k)) return;
+				var rec = rx[k];
+				if (!rec || !Array.isArray(rec.chunks) || !rec.chunks.length) return;
+				var mine = DaimondCloud.contentGet(k);
+				var adopting = !mine || (+rec.ts || 0) > (+mine.ts || 0);
+				notePeerRef(k, rec, adopting, fromDevice);
+			});
+		}
 		// This device's roster id goes through so the merge can refuse a peer's
 		// record of OUR OWN addresses: our manifest is the authority on those, and a
 		// second-hand copy would name whatever we uploaded before our last change.
-		DaimondCloud.merge(remoteChunked, base || {}, deviceId());
+		DaimondCloud.merge(incoming, base || {}, deviceId(), fromDevice);
 		await DaimondCloud.refreshPaths();
+		if (folder) {
+			var made = await materialiseShared(plan, was, fromDevice);
+			// The panel's conflict list is the merge's, both halves of it: `applyFiles`
+			// runs first in `applySync` and set the inline ones.
+			if (made.length) _lastConflicts = _lastConflicts.concat(made);
+		}
+	}
+
+	/// A manifest with no clock on it, for adoption into a SHARED FOLDER's index.
+	///
+	/// A device that is not sharing a folder stamps its manifests with the file's
+	/// modification time and the moment of upload, which is right for it: they are the
+	/// cheap "did this change" test against its own sandbox. A folder-mounted device
+	/// must not then adopt those numbers, because its own manifests carry none -- see
+	/// `put` in js/cloud.js for why -- and one entry in its index disagreeing with the
+	/// other desktop's copy of the same bytes is the difference the fixed point is
+	/// measured on. `dev/verify_foldershare.mjs` found three such entries the first
+	/// time the merge was let through at all.
+	///
+	/// The content key and the merge fingerprint are untouched, so which side wins a
+	/// three-way compare is exactly what it was.
+	function timelessManifest(m) {
+		if (!m || typeof m !== 'object') return m;
+		if (!m.mtime && !m.at) return m;
+		var out = {};
+		for (var k in m) { if (Object.prototype.hasOwnProperty.call(m, k)) out[k] = m[k]; }
+		out.mtime = 0;
+		out.at = 0;
+		return out;
+	}
+
+	/// The workspace path an index key is about, with a sidecar suffix taken off.
+	///
+	/// `<path>.synced` is the version the merge preserved when both sides moved, and
+	/// `<path>.peer.<device>` is another device's addresses for the same file. Both are
+	/// about the path in front of them, so the share test has to be applied to that and
+	/// not to the key -- a sidecar judged by its own name is a sidecar outside every
+	/// root, and it would be dropped on the floor along with the file it is about.
+	function indexPathOf(key) {
+		var k = String(key).replace(/\.peer(?:\.[0-9a-f]{16,32})?$/, '');
+		return k.replace(/\.synced$/, '');
+	}
+
+	/// Bring another device's version of a SHARED FOLDER file onto the disk.
+	///
+	/// THE INLINE HALF'S THREE RULES, KEPT HERE TOO. Only a path inside the share is
+	/// written (`withinShare`); where both sides moved the disk stands and theirs lands
+	/// beside it under `conflictName`; and the folder's own ceiling counts these bytes,
+	/// so a merge can never carry a folder past the size at which nothing may be shared
+	/// at all.
+	///
+	/// A FILE WHOSE BYTES ARE ALREADY THESE BYTES IS NOT WRITTEN. Two desktops kept
+	/// identical by Syncthing meet here on every round, and rewriting the file would
+	/// cost the disk a modification time for nothing -- which is the one thing the
+	/// shared folder is built not to spend (see `put` in js/cloud.js). The test is the
+	/// content key, re-derived by streaming, so it is affordable at any size.
+	async function materialiseShared(plan, was, fromDevice) {
+		var out = [];
+		if (!window.DaimondCloud || !DaimondCloud.materialiseTo || !window.DaimondChunks) return out;
+		var handle = sharedFolderHandle();
+		if (!handle) return out;
+		var ix = DaimondCloud.index(), keys = Object.keys(ix).sort();
+		// What the folder already weighs, so the ceiling counts what arrives.
+		var spent = (plan.walk && plan.walk.bytes) | 0;
+		for (var i = 0; i < keys.length; i++) {
+			var p = keys[i], m = ix[p];
+			if (!m || !Array.isArray(m.chunks) || m.peer) continue;
+			// Both sides moved: `merge` preserved theirs at `<path>.synced`, which is the
+			// right sidecar for a sandbox path nothing else reads. In a folder under
+			// version control it would be a file `git status` reports and a compiler may
+			// try to open, so it lands under the conflict name the inline half uses and
+			// the index entry follows the bytes.
+			var isSynced = /\.synced$/.test(p);
+			var real = isSynced ? p.slice(0, -7) : p;
+			if (!withinShare(plan, real)) continue;
+			// Ours all along: the manifest this device's own offload took of the file
+			// that is on the disk.
+			if (!isSynced && was && was[p] && was[p].hash === m.hash) continue;
+			var dest = isSynced ? conflictName(real, fromDevice, Date.now()) : p;
+			var f = null;
+			try { f = await DaimondCloud.fileUnderRoot(handle, dest); } catch (e) { f = null; }
+			if (f && m.key && f.size === (m.bytes | 0)) {
+				var live = null;
+				try { live = await DaimondCloud.fileKey(f, DaimondChunks.chunkSizeFor(f.size)); }
+				catch (e) { live = null; }
+				if (live !== null && live === m.key) continue;		// already these bytes.
+			}
+			var add = (m.bytes | 0) - (f ? f.size : 0);
+			if (add > 0 && spent + add > SYNC_FOLDER_SHARE_MAX) {
+				console.warn('sync: ' + dest + ' was not written into the folder, because it '
+					+ 'would take the share past its ' + fmtSyncBytes(SYNC_FOLDER_SHARE_MAX)
+					+ ' ceiling');
+				continue;
+			}
+			var res = await DaimondCloud.materialiseTo(handle, p, dest);
+			if (String(res).indexOf('OK') !== 0) { console.warn('sync: ' + dest + ': ' + res); continue; }
+			if (add > 0) spent += add;
+			if (!isSynced) continue;
+			DaimondCloud.rename(p, dest);
+			console.warn('sync: ' + real + ' changed on this device and on '
+				+ (fromDevice || 'another device') + '; the disk copy stands and theirs is '
+				+ 'beside it at ' + dest);
+			out.push({ path: real, copy: dest });
+		}
+		return out;
+	}
+
+	/// How long a document's laid-out preview is kept in the cloud after the last
+	/// device compiled it.
+	///
+	/// A WEEK, on a TIME rule rather than on "still open somewhere". Nothing on the
+	/// wire says which documents any device has open -- and the device that most often
+	/// holds the artifact is a folder-mounted runner, which enumerates nothing into the
+	/// parcel at all -- so a liveness rule would have to be inferred from silence, and
+	/// silence there is the ordinary state. A week is long enough that a book worked on
+	/// across a fortnight of evenings never re-uploads, and short enough that a
+	/// document finished and forgotten stops costing storage.
+	var PREVIEW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+	/// Drop preview records nothing has refreshed inside the TTL, so their chunks stop
+	/// being named live and the next commit sweeps them.
+	function previewReap() {
+		if (!window.DaimondCloud || !DaimondCloud.index || !DaimondCloud.isPreviewKey) return;
+		var ix = DaimondCloud.index(), cut = Date.now() - PREVIEW_TTL_MS;
+		Object.keys(ix).forEach(function (k) {
+			if (!DaimondCloud.isPreviewKey(k)) return;
+			var rec = ix[k];
+			// A record with no stamp at all is from a build that did not write one; it is
+			// left alone rather than swept on a field it never had.
+			if (!rec || !rec.ts) return;
+			if ((+rec.ts || 0) < cut && DaimondCloud.contentForget) DaimondCloud.contentForget(k);
+		});
 	}
 
 	/// Set the cloud index's fork point to what it holds now, alongside the
@@ -5476,8 +6135,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// user dismisses stays dismissed for THAT set (keyed by its signature, as the
 	// update banner keys a dismissal to the pending build); a set that changes, or
 	// one that empties and comes back, is news again.
-	var _left          = { diamonds: null, files: null };   // {sig, msg} per kind, or null
-	var _leftDismissed = { diamonds: '', files: '' };        // the sig the user waved away
+	var _left          = { diamonds: null, files: null, folder: null };	// {sig, msg} per kind, or null
+	var _leftDismissed = { diamonds: '', files: '', folder: '' };		// the sig the user waved away
 	var _leftEl        = null;
 
 	function leftBannerEl() {
@@ -5496,7 +6155,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var b = leftBannerEl();
 		b.textContent = '';
 		var shown = 0;
-		['diamonds', 'files'].forEach(function (kind) {
+		// `folder` last: it is the reason the other two are empty when it fires, so it
+		// reads as the explanation rather than as a third complaint.
+		['diamonds', 'files', 'folder'].forEach(function (kind) {
 			var n = _left[kind];
 			if (!n || n.sig === _leftDismissed[kind]) return;
 			shown++;
@@ -6107,8 +6768,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var dropped = 0, lost = [], lostItems = 0, reasonOf = {}, held = [], droppedLost = 0;
 		// CAN THIS DEVICE PUT A FILE BACK AT ALL? Asked once for the whole pass,
 		// because the answer is about the device and not about any one manifest.
+		// AND A SHARED FOLDER CAN RE-OFFLOAD ITS OWN FILES, which `filesSyncable` alone
+		// says it cannot. That predicate is about the chunk index a device may COMMIT,
+		// and the two questions came apart when a folder-mounted device began sending
+		// what the user marked in: the plan the last collect computed is the honest
+		// answer to "would the next collect name this file again". Null on the first
+		// round of a sitting, which keeps the manifest -- the safe direction.
 		var canReoffloadFiles = false;
-		try { canReoffloadFiles = filesSyncable(); } catch (e) { canReoffloadFiles = false; }
+		try {
+			canReoffloadFiles = filesSyncable()
+				|| !!(_sharePlan && _sharePlan.folder && !_sharePlan.over);
+		} catch (e) { canReoffloadFiles = false; }
 		for (var si = 0; si < sk.length; si++) {
 			var key = sk[si], kind = manifestKind(key), id = key.replace(/^@[dcm]\//, '');
 			var reason = 'unrestorable';
@@ -6116,7 +6786,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			else if (kind === '@d/')  reason = (!dHeld || dHeld[id]) ? 'reoffload' : 'no-local-text';
 			else if (kind === 'file') {
 				var f = null;
-				try { f = await DaimondCloud.fileAt(key); } catch (e) { f = null; }
+				try { f = await syncFileAt(_sharePlan, key); } catch (e) { f = null; }
 				// THE FILE BEING THERE IS NOT ENOUGH. `fileAt` finds it in the mounted
 				// folder, and a folder-mounted device's `collectFiles` returns nothing at
 				// all (`filesSyncable`), so forgetting the manifest here put the file in
@@ -6151,11 +6821,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// IT USED TO WAIT FOR A PEER to name the same addresses, on the reasoning that
 			// our reference might be the last thing keeping the chunks in the live set.
 			// That reasoning does not survive the sweep having already answered: chunks the
-			// gateway does not hold cannot be swept again, and a peer slot is not even
-			// possible for a file -- there is no peer mechanism for files -- so `dropped_refs`
-			// was 0 on every round and `refs_missing` never fell. Never on the FIRST
-			// sighting, which is unchanged: one push must have gone out with the record in
-			// it, and one unanswered or flapping sweep must not cost a manifest.
+			// gateway does not hold cannot be swept again, so `dropped_refs` was 0 on every
+			// round and `refs_missing` never fell. Never on the FIRST sighting, which is
+			// unchanged: one push must have gone out with the record in it, and one
+			// unanswered or flapping sweep must not cost a manifest.
+			//
+			// A FILE HAS A PEER SLOT OF ITS OWN NOW (`notePeerFile`, js/cloud.js), which
+			// the sentence here used to say was impossible. It does not change this
+			// decision: a slot is judged by the same sweep, and one naming addresses the
+			// gateway has said it does not hold is naming nothing. What the slot changes is
+			// the arm ABOVE -- a live file's other copy is declared rather than swept.
 			if (rounds > 1) {
 				var gone = false;
 				try { gone = !!(DaimondCloud.contentForget && DaimondCloud.contentForget(key)); }
@@ -6265,7 +6940,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			diag('parcel files overspent', fileCol.bytes + ' B of inline files against a budget of '
 				+ filesBudget + ' B, so the Diamonds were handed what is left of nothing');
 		}
-		var chunked = await collectChunked(fileCol.large);
+		previewReap();
+		var chunked = await collectChunked(fileCol.large, fileCol.plan);
 		// What is left of the parcel after the inline files, and never more than the
 		// Diamonds' own share of it. The reference floor reserved above guarantees this
 		// is at least `plan.refReserve`, so every Diamond's reference fits even when the
@@ -6312,6 +6988,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (window.DaimondCloud) chunked = DaimondCloud.index();
 		noteFilesLeft(fileCol.left);
 		noteDiamondsLeft(dCol.left);
+		// A marked-in folder too big to share is the reason the other two rows are empty,
+		// so it is said in the same place and with both numbers in it.
+		noteFolderOver(fileCol.plan && fileCol.plan.over);
+		// AND A DELETION BECOMES NEWS HERE, on the device that made it. The fork point
+		// says which files both devices held; a COMPLETE census that no longer carries
+		// one of them is this device saying it deleted that file, with the hash it held,
+		// so the far end never has to read a gap in a parcel as an instruction.
+		noteFileTombs(fileCol, fileCol.complete);
 		// A FILE QUEUED FOR OFFLOAD THIS ROUND owes one more round, whether it rode
 		// inline beside the queue or was HELD off the parcel for want of room.
 		// `collectChunked` above has just offloaded it, so the NEXT collect demotes it to
@@ -6345,6 +7029,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Whether `files` above is the WHOLE workspace. Only a complete census
 			// entitles the receiver to delete by absence; see applyFiles.
 			filesComplete: fileCol.complete === true,
+			// The files this device HELD and deleted, `path -> the hash it held`. The
+			// only thing that deletes a file out of somebody's real folder, and the
+			// reason a phone that never received a file cannot cost a desktop one. A
+			// device too old to read this field simply keeps its copy.
+			fileTombs:    fileTombs(),
 			chunked:      chunked,
 			diamonds:     dCol.list,
 			// Whether `diamonds` above is the WHOLE store. Nothing reads it today and
@@ -6867,9 +7556,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (chatTombs[id] || dmndTombs[id]) DaimondTrash.forget(id);
 			});
 		});
-		await section('files',    function () { return applyFiles(remote.files, remote.filesComplete === true); });
+		await section('files',    function () {
+			return applyFiles(remote.files, remote.filesComplete === true,
+				remote.fileTombs, parcelSender(remote));
+		});
 		// The large files held in the chunk store, reconstructed on demand.
-		await section('chunked',  function () { return applyChunked(remote.chunked, cloudBase); });
+		await section('chunked',  function () {
+			return applyChunked(remote.chunked, cloudBase, parcelSender(remote));
+		});
 		// The providers, their model lists and their sealed keys. A parcel without
 		// the field is a device that predates it, so a v1 parcel still applies.
 		await section('models',   function () {
@@ -18180,6 +18874,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// so it is safe to call on every unlock.
 	function registerPeerRunner() {
 		if (!window.DaimondPeer || !DaimondPeer.onErrand || !DaimondPeer.runErrand) return false;
+		// THE COMPILE HAND-OFF GOES ON THE SAME DOOR. Registered here rather than in its
+		// own wiring so there is one moment at which this device becomes able to take
+		// work from a peer, whatever kind of work it is.
+		try { if (Files && Files.wireCompileHandoff) Files.wireCompileHandoff(); }
+		catch (e) { /* the turn half still registers */ }
 		// The lease `holder` this peer writes: the PER-DEVICE id, so its claim is
 		// distinguishable from a paired twin's (a key-derived id would collide and let
 		// both run the turn). Read at each errand, not captured here, so a device that
@@ -19448,10 +20147,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// waking, going quiet, or starting to service errands; the rest are this device's
 	// own doing.
 	try {
-		window.addEventListener('daimond:presence', function () { renderSeatLine(); });
-		window.addEventListener('daimond:unlock',   function () { renderSeatLine(); });
-		window.addEventListener('daimond:view',     function () { renderSeatLine(); });
+		window.addEventListener('daimond:presence', function () { renderSeatLine(); redrawDocSeat(); });
+		window.addEventListener('daimond:unlock',   function () { renderSeatLine(); redrawDocSeat(); });
+		window.addEventListener('daimond:view',     function () { renderSeatLine(); redrawDocSeat(); });
+		// A file written is the one event the seat line does not care about and the Doc
+		// panel's buttons do: what they measure is files, and a save can take a document
+		// from "compile on argonaut" to "compile here" without a beat moving.
+		window.addEventListener('daimond-file-written', function () { redrawDocSeat(); });
 	} catch (e) { /* no window: nothing to draw on */ }
+
+	/// Re-label the Doc panel's Compile and Publish buttons, if one is on screen.
+	function redrawDocSeat() {
+		try { if (Files && Files.renderDocSeat) Files.renderDocSeat(); }
+		catch (e) { /* the buttons keep their last words */ }
+	}
 
 	/// THE ELECTION SMOKING-GUN, for the opt-in diagnostics ring. Renders exactly
 	/// what `autoDispatchDecision` saw and chose, so a hand-off to the wrong device
@@ -19932,6 +20641,100 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// ("waiting for argonaut"). A missed beat is a stale beat, which is safe (the
 	/// deadline and lease catch a peer that actually slept).
 	var _presenceTimer = null;
+	// ══════════════════════════════════════════════════════════════
+	// WHAT THIS DEVICE CAN DO, AND WHAT IT LAST SAW OTHERS DO
+	// --------------------------------------------------------------
+	// Two live facts ride the beat, and a third thing is remembered locally: the last
+	// time each device said either of them. The remembered half is what lets a refusal
+	// NAME argonaut while argonaut is asleep -- "Needs argonaut awake; it holds the
+	// folder and the dev script" rather than "no device can do this" -- and it is kept
+	// OFF the synced parcel on purpose. A hand plugged in and a folder grant withdrawn
+	// are live per-device changes; stamping them onto the shared device roster would
+	// bump `seen`, and a bumped `seen` pushes the whole parcel.
+	// ══════════════════════════════════════════════════════════════
+
+	var PLACE_SEEN_KEY = 'daimond-place-seen';	// id -> { name, at, hand, folder, mobile }
+	var PLACE_SEEN_MAX = 24;					// bounded: a roster, not a log
+
+	/// Does this device hold the REAL, mounted workspace folder -- the machine's own
+	/// files, complete by construction -- rather than a browser replica?
+	function selfHoldsFolder() {
+		try { return !!(Files && Files.folder && Files.folder()); } catch (e) { return false; }
+	}
+
+	/// Can this device reach a machine hand at all?
+	///
+	/// The extension announcing itself on this page, or a link already open. NOT
+	/// `DaimondHand.status()`, which OPENS the link -- and opening it is what puts the
+	/// approval window on somebody's screen, so a presence beat must never do it.
+	/// The real folder is required beside it because `run` fences every command against
+	/// the granted folder and refuses outright without one, so a hand with no folder
+	/// under it cannot run anything and saying otherwise would seat a publish on a
+	/// machine that must then refuse it.
+	function selfHoldsHand() {
+		if (!selfHoldsFolder()) return false;
+		try { if (window.DaimondHand && DaimondHand.hasHand && DaimondHand.hasHand()) return true; } catch (e) { /* fall through */ }
+		try { return !!document.documentElement.dataset.daimondHands; } catch (e) { return false; }
+	}
+
+	/// Fold the live beats into the remembered roster: for each device that SAID
+	/// either field, what it said and when. Absence is never written -- a beat that
+	/// could not say leaves the last answer standing, which is the whole point.
+	function notePlaceSeen() {
+		var snap = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+		var kept = readJson(PLACE_SEEN_KEY, {});
+		if (!kept || typeof kept !== 'object') kept = {};
+		var now = Date.now(), moved = false;
+		Object.keys(snap).forEach(function (id) {
+			var rec = snap[id];
+			if (!rec) return;
+			var hasHand = typeof rec.hand === 'boolean';
+			var hasFold = typeof rec.folder === 'boolean';
+			if (!hasHand && !hasFold) return;
+			var was = kept[id] || {};
+			var line = { name: String(rec.name || was.name || ''), at: now,
+				hand: hasHand ? rec.hand : was.hand,
+				folder: hasFold ? rec.folder : was.folder };
+			if (typeof rec.mobile === 'boolean') line.mobile = rec.mobile;
+			else if (typeof was.mobile === 'boolean') line.mobile = was.mobile;
+			if (JSON.stringify(was) !== JSON.stringify(line)) { kept[id] = line; moved = true; }
+		});
+		if (!moved) return;
+		// Bounded by recency, so a fleet that churns device ids cannot grow this without
+		// end: the oldest lines are the least useful sentence to offer anybody.
+		var ids = Object.keys(kept).sort(function (a, b) { return (kept[b].at | 0) - (kept[a].at | 0); });
+		if (ids.length > PLACE_SEEN_MAX) {
+			var trim = {};
+			ids.slice(0, PLACE_SEEN_MAX).forEach(function (id) { trim[id] = kept[id]; });
+			kept = trim;
+		}
+		try { localStorage.setItem(PLACE_SEEN_KEY, JSON.stringify(kept)); } catch (e) { /* private window */ }
+	}
+
+	/// The roster the placement names a sleeping machine from: what each device last
+	/// said about its hand and its folder, with a label to say it by.
+	function placeRoster() {
+		var kept = readJson(PLACE_SEEN_KEY, {});
+		if (!kept || typeof kept !== 'object') kept = {};
+		var out = {};
+		Object.keys(kept).forEach(function (id) {
+			var r = kept[id] || {};
+			out[id] = { name: deviceLabelFor(id) || r.name || '', lastSeen: r.at | 0,
+				hand: r.hand, folder: r.folder, mobile: r.mobile };
+		});
+		return out;
+	}
+
+	/// The options a placement is taken with: the seat line's, plus the remembered
+	/// roster and this device's own label. ONE place, so a compile, a publish and a
+	/// turn cannot be decided against three different views of the fleet.
+	function placeOpts() {
+		var o = seatOpts();
+		o.roster   = placeRoster();
+		o.selfName = deviceLabelFor(selfDeviceId()) || '';
+		return o;
+	}
+
 	function presenceTick() {
 		try {
 			// A hidden PHONE tab is genuinely suspended, so it must not claim to be
@@ -19984,8 +20787,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// routed like a phone. Explicit and per-device; the name inference is now only
 			// the fallback for a peer on a build that predates the field.
 			var mob = isMobileDeviceSelf();
-			DaimondPresence.beat(id, name, Date.now(), att, svc, null, run, mob);
-			try { if (window.DaimondSync && DaimondSync.beatPresence) DaimondSync.beatPresence(id, name, att, svc, run, mob); } catch (e) { /* the next beat carries it */ }
+			// THE TWO PLACEMENT FIELDS: does this machine hold the real mounted folder,
+			// and can it reach a machine hand. They are what lets ANOTHER device place a
+			// compile or a publish without asking -- a phone that cannot hold a book's
+			// files hands the layout to a machine that can, and names it before the button
+			// is drawn rather than after a failure.
+			var fold = selfHoldsFolder();
+			var hnd  = selfHoldsHand();
+			DaimondPresence.beat(id, name, Date.now(), att, svc, null, run, mob, hnd, fold);
+			try { if (window.DaimondSync && DaimondSync.beatPresence) DaimondSync.beatPresence(id, name, att, svc, run, mob, hnd, fold); } catch (e) { /* the next beat carries it */ }
+			try { notePlaceSeen(); } catch (e) { /* the roster is a convenience, never a gate */ }
 			// The seat line is never more than one beat behind the fleet. The beat and the
 			// map it adopts each announce themselves (peer.js), but this device's own beat
 			// is also the moment a peer that went quiet ages out of the window.
@@ -24684,6 +25495,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// applyChunked merges. A device that refused the other device's index and
 		/// then committed its own swept the account's cloud files away.
 		syncMayCommitChunks: offloadAllowed,
+		/// What this device is sharing out of a real folder, and what it is refusing to.
+		///
+		/// Published for the same reason `syncMayCommitChunks` is: the panel's chip and
+		/// the census's own verdict can differ, and only one of them decides what
+		/// travels. `dev/verify_foldershare.mjs` asks this and never the tree.
+		syncFolderShare: async function () {
+			var plan = await syncWalkPlan();
+			return {
+				folder:   !!(plan && plan.folder),
+				roots:    plan ? plan.roots.slice() : [],
+				over:     (plan && plan.over) || null,
+				max:      SYNC_FOLDER_SHARE_MAX,
+				bytes:    (plan && plan.walk) ? plan.walk.bytes : ((plan && plan.over) ? plan.over.bytes : 0),
+				files:    (plan && plan.walk) ? plan.walk.entries.length : 0,
+				ignored:  (plan && plan.walk) ? plan.walk.ignored : 0,
+				complete: !!(plan && plan.walk && plan.walk.complete),
+			};
+		},
+		/// The file tombstones this device carries, and the conflict copies its last
+		/// merge wrote. Read-only: a deletion is recorded by the census, never by a
+		/// caller.
+		syncFileTombs:     fileTombs,
+		syncLastConflicts: function () { return _lastConflicts.slice(); },
 		// And, when it may not, which of the three conditions is in the way, so the
 		// refusal in sync.js says so instead of being read as a mystery.
 		syncCommitBlockedReason: offloadBlockedReason,
@@ -24712,6 +25546,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			planNow:  seatPlanNow,
 			lineText: seatLineText,
 			opts:     seatOpts,
+		},
+		// WHERE A TASK OTHER THAN A TURN RUNS. Published for
+		// `dev/verify_compile_handoff`, which has to read a REAL phone's placement
+		// against a REAL runner's beat: the pure `DaimondPeer.placeTask` cannot prove
+		// that the ledger this device assembles -- its own stamp probe, its own heap,
+		// the sidecar it merged -- adds up to the right answer. `syncShim` is the lease
+		// CAS the same file revokes a compile's lease through, which is what a
+		// take-back does. Test surface, not an API.
+		place: {
+			forTask:  function (kind, main) { return Files.placeFor(kind, main); },
+			forMissing: function (kind, main) { return Files.placeForMissing(kind, main); },
+			text:     function (p) { return Files.placeText(p); },
+			opts:     placeOpts,
+			roster:   placeRoster,
+			docKey:   function (main) { return Files.docKeyOf(main); },
+			sidecar:  function (main) { return Files.sidecarFor(main); },
+			syncShim: peerSyncShim,
 		},
 		// The device roster reconciled against who is actually beating. `liveness` is
 		// pure and `reconcileNominee` moves the star onto a re-minted device; both are
@@ -32956,6 +33807,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				viewEl.querySelector('[data-act="publish"]').addEventListener('click', function () {
 					publishViaDev(path, this);
 				});
+				// WHERE EACH OF THEM WOULD RUN, said on the button before it is pressed.
+				// Not awaited: the buttons carry their plain words until the measurement
+				// comes back, which is one probe of 29 stamps and a hash pass.
+				renderDocSeat();
 			}
 			// A NEW DOCUMENT OPENS IN THE EDITOR, because a blank read view is a blank
 			// panel and a blank panel is the whole defect. Through the button rather
@@ -32996,14 +33851,785 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		}
 
+		// ── THE PICTURES AND THE FONTS, BEFORE THE COMPILE ──────────
+		//
+		// A device that has never had native access holds the heavy half of a book as
+		// references: the shared folder sends what fits inline and offloads the rest, so
+		// on the phone `assets/**` and `fonts/**` are ☁ rows and nothing else.
+		//
+		// The gatherer (`gather`, src/wasm/typst.rs) reads the workspace, and a path that
+		// is not there is SKIPPED. What then happens is a refusal, twice over: a picture
+		// the compiler cannot read is named by the compiler, and a font FAMILY the source
+		// asks for and the walk did not find is named by the pre-flight in js/typst.js,
+		// which refuses before compiling for exactly the reason this is about -- Typst
+		// substitutes a missing family silently, so the PDF would print with different
+		// line breaks and a different page count and nothing would say so.
+		//
+		// THE HOLE THE PRE-FLIGHT CANNOT SEE is the other half of the same fault, and it
+		// is why the fetch is not left to a button on a refusal. That check is by FAMILY:
+		// a book whose `Cormorant Garamond` regular rode inline and whose italic and bold
+		// did not passes it, and the substitution it describes then happens for the two
+		// faces it never asked about.
+		//
+		// So they are fetched first. A device that has the files compiles the book it has
+		// rather than reading a refusal about a book it could have had.
+
+		/// Every folder the gatherer searches for pictures and fonts, from the document's
+		/// own outward -- `chain(main_dir, floor, MAX_UP)` in src/wasm/typst.rs, and the
+		/// same four levels.
+		function projectSearchDirs(main) {
+			var d = main.indexOf('/') < 0 ? '' : main.slice(0, main.lastIndexOf('/'));
+			var out = [d];
+			for (var up = 0; up < 4 && d; up++) {
+				var cut = d.lastIndexOf('/');
+				d = cut < 0 ? '' : d.slice(0, cut);
+				out.push(d);
+			}
+			return out;
+		}
+
+		/// The ☁ rows a compile of `main` will look for and not find.
+		///
+		/// UNDER THIS DOCUMENT'S OWN CHAIN AND NO WIDER. `awayPaths` is the whole
+		/// account's cloud-only set; fetching all of it to compile a chapter would be a
+		/// phone pulling down somebody's photo library. `assets` and `fonts` are the two
+		/// names the gatherer itself looks under (`FONT_DIRS`, and the `assets` tree every
+		/// picture in the author's book sits in).
+		function projectCloudRows(main) {
+			if (!window.DaimondCloud || !DaimondCloud.awayPaths) return [];
+			var pre = [];
+			projectSearchDirs(main).forEach(function (d) {
+				['assets/', 'fonts/'].forEach(function (w) { pre.push(d ? d + '/' + w : w); });
+			});
+			var away = DaimondCloud.awayPaths(), out = [];
+			Object.keys(away).forEach(function (q) {
+				for (var i = 0; i < pre.length; i++) {
+					if (q.indexOf(pre[i]) === 0) { out.push({ path: q, size: away[q] | 0 }); return; }
+				}
+			});
+			out.sort(function (a, b) { return a.path < b.path ? -1 : 1; });
+			return out;
+		}
+
+		/// The most a press of Compile brings down on its own.
+		///
+		/// The fixture book's fonts are 13 MB and its pictures another 11, which is the
+		/// price of typesetting that book on a phone and is worth paying once. A tree an
+		/// order of magnitude past that is not a book's assets, and the person is told
+		/// the size rather than billed for it.
+		var HYDRATE_MAX = 64 * 1024 * 1024;
+
+		/// Fetch them, saying what it is doing while it does.
+		///
+		/// Answers true when the compile may proceed. Never silent: the message line
+		/// carries the count and the total before the first byte moves, because this is a
+		/// metered download on the device least able to afford one.
+		async function hydrateProject(main, msgEl) {
+			var want = projectCloudRows(main);
+			if (!want.length) return true;
+			var bytes = want.reduce(function (n, w) { return n + w.size; }, 0);
+			if (bytes > HYDRATE_MAX) {
+				msgEl.classList.add('err');
+				msgEl.textContent = t('files.compile_fetch_too_big',
+					{ size: fmtBytes(bytes), max: fmtBytes(HYDRATE_MAX) });
+				return false;
+			}
+			for (var i = 0; i < want.length; i++) {
+				msgEl.textContent = t('files.compile_fetching',
+					{ size: fmtBytes(bytes), path: want[i].path });
+				var res = await DaimondCloud.fetch(want[i].path);
+				// ONE FILE, NOT THE COMPILE. A picture cloud storage has lost is a compiler
+				// error naming it a moment later, which is a better place to read it than
+				// here; a font it has lost is the silent case above, and nothing this side
+				// can do about it either. Both are said to the console and the compile goes
+				// on, so a book missing one picture still draws.
+				if (String(res).indexOf('OK') !== 0) console.warn('compile: ' + want[i].path + ': ' + res);
+			}
+			return true;
+		}
+
 		// Compile the currently open `.typ` file to a PDF in the
 		// browser, write it next to the source in OPFS, and render it
 		// inline.  The heavy compiler wasm is imported lazily on first
 		// use so opening non-Typst files stays light.
 		var _pdfUrl = null;   // live blob URL for the shown PDF
+		// ══════════════════════════════════════════════════════════
+		// WHERE THIS DOCUMENT IS LAID OUT
+		// ----------------------------------------------------------
+		// Compile assumed "here", and on a phone that assumption is the fault: the
+		// author's 48-page book is 29 files the phone may not hold and 306 MB of wasm
+		// heap it may not have. What is here is measured -- the files by their stamps,
+		// the heap by the last build's own growth -- and the answer is the election's,
+		// so the machine a compile goes to is the machine a turn would go to.
+		// ══════════════════════════════════════════════════════════
+
+		// The synchronous dispatch guard. A button press, a retry and a take-back must
+		// not each post an errand for one document, and an async check between the
+		// intention and the post is exactly the window in which they can
+		// (`reference_daimond_dispatch_election`: the guard has to be set in the same
+		// tick as the decision, never after an await).
+		var _placing  = Object.create(null);	// cid -> true while an errand is in flight
+		var _builtFor = Object.create(null);	// cid -> the report, so a finished compile is not re-run
+		var _shaMemo  = Object.create(null);	// path + '\0' + stamp -> sha, so drawing the buttons is one read
+
+		/// This workspace's own identity, as the hand and the page both see it: the
+		/// first real line of `.daimond/workspace.id` in the folder, hashed short.
+		///
+		/// '' where this device cannot read one, and '' means ANY FOLDER on the wire --
+		/// the check narrows as both ends come to hold the file, and never widens. A
+		/// device holding only a replica genuinely does not know which machine's folder
+		/// its copy came from, and asserting one would be worse than saying nothing.
+		var _wsidMemo = null;
+		async function wsidNow() {
+			if (_wsidMemo != null) return _wsidMemo;
+			_wsidMemo = '';
+			try {
+				var b = await Wasm.read_bytes('.daimond/workspace.id', 0, 4096);
+				var text = new TextDecoder().decode(b || new Uint8Array(0));
+				var lines = text.split(/\r?\n/), tok = '';
+				for (var i = 0; i < lines.length; i++) {
+					var ln = lines[i].trim();
+					if (!ln || ln.charAt(0) === '#') continue;
+					tok = ln; break;
+				}
+				if (tok) _wsidMemo = (await DaimondPeer.docKeyFor('', tok)).slice(0, 16);
+			} catch (e) { _wsidMemo = ''; }
+			return _wsidMemo;
+		}
+
+		/// The index key this document's live preview is stored under.
+		async function docKeyOf(main) {
+			return await DaimondPeer.docKeyFor(await wsidNow(), String(main || ''));
+		}
+
+		/// What the last successful build of this document said about it, from whichever
+		/// device made it: the import set, each import's hash, the heap the layout cost
+		/// and the artifact's chunk addresses. Null before anything has compiled it.
+		async function sidecarFor(main) {
+			try {
+				if (!window.DaimondCloud || !DaimondCloud.contentGet) return null;
+				return DaimondCloud.contentGet('@p/' + (await docKeyOf(main))) || null;
+			} catch (e) { return null; }
+		}
+
+		/// Write it, after a build that worked. One record per document per folder, so
+		/// the next device to open it knows what it will cost before it tries.
+		///
+		/// `ref` is the artifact's manifest where this device offloaded it (the runner
+		/// does; a device compiling for itself has no reason to upload two megabytes
+		/// nobody asked for) and an empty chunk list otherwise -- the numbers and the
+		/// hashes are the half that is always worth having.
+		async function writeSidecar(main, f) {
+			var o = f || {};
+			try {
+				if (!window.DaimondCloud || !DaimondCloud.contentSet) return null;
+				var imports = (o.imports || []).map(String);
+				var hashes  = o.hashes || (await hashImports(imports));
+				var ref = o.ref || null;
+				var rec = {
+					v:      ref ? ref.v : 2,
+					size:   ref ? ref.size : 0,
+					key:    ref ? ref.key : '',
+					chunks: ref ? ref.chunks : [],
+					kind:   'vector',			// the wire form; an 'svg' alternative would say so here
+					main:   String(main || ''),
+					wsid:   await wsidNow(),
+					imports: imports,
+					hashes: hashes,
+					heapMB:   o.growth | 0,
+					headroom: o.headroom | 0,
+					pages:    o.pages | 0,
+					by:     selfDeviceId(),
+					name:   deviceLabelFor(selfDeviceId()) || '',
+					ms:     o.ms | 0,
+					ts:     Date.now(),
+				};
+				DaimondCloud.contentSet('@p/' + (await docKeyOf(main)), rec);
+				return rec;
+			} catch (e) { return null; }
+		}
+
+		/// The WHOLE of a workspace file, for taking its hash.
+		///
+		/// `read_bytes(path, 0, 0)` reads ZERO bytes: the range is
+		/// `min(offset + len, size)` (`read_file_range`, src/wasm/opfs.rs), so a length of
+		/// nothing is nothing. Every hash taken that way was the SHA-256 of the empty
+		/// string -- the SAME digest for every file in the book -- and two of those
+		/// compare equal, so a file that had moved under an errand was written over and
+		/// reported as current. The size is what `typst_watch_stamps` already answers
+		/// ("mtime:size"), so passing it in costs no second call where a stamp is in hand.
+		async function readWhole(path, size) {
+			var n = size | 0;
+			if (!(n > 0)) {
+				try {
+					var st = String((await Wasm.typst_watch_stamps([String(path)]))[0] || '');
+					n = parseInt(st.split(':')[1], 10) | 0;
+				} catch (e) { n = 0; }
+			}
+			if (!(n > 0)) return new Uint8Array(0);		// absent, or genuinely empty
+			return await Wasm.read_bytes(String(path), 0, n);
+		}
+
+		/// `{ path: sha }` over an import set, memoised on `(path, stamp)`.
+		///
+		/// About two megabytes of source read once per draw of the buttons on the
+		/// author's book, and not again until a file's stamp moves -- which is what
+		/// makes it affordable to ask "is my copy the one that was compiled" every time
+		/// the panel redraws, rather than once and then hopefully.
+		async function hashImports(paths) {
+			var list = (paths || []).map(String);
+			if (!list.length) return {};
+			var stamps = [];
+			try { stamps = Array.from(await Wasm.typst_watch_stamps(list)).map(String); }
+			catch (e) { stamps = []; }
+			var out = {};
+			for (var i = 0; i < list.length; i++) {
+				var st = stamps[i] || '';
+				if (st === '0:-1') continue;					// not here: nothing to hash
+				var memo = list[i] + '\0' + st;
+				if (_shaMemo[memo]) { out[list[i]] = _shaMemo[memo]; continue; }
+				try {
+					var b = await readWhole(list[i], parseInt(String(st).split(':')[1], 10));
+					var h = await DaimondChunks._sha256Hex(b);
+					_shaMemo[memo] = h;
+					out[list[i]] = h;
+				} catch (e) { /* unreadable is not "unchanged": simply unanswered */ }
+			}
+			return out;
+		}
+
+		/// THE DEVICE LEDGER: this device's own answer about itself, decided from real
+		/// signals and never from its name.
+		///
+		/// `files.missing` is the cheap probe -- `typst_watch_stamps` answers `0:-1` for
+		/// a path that is not there, 29 of them in about six milliseconds -- and it is
+		/// the only file question the placement asks. A file that is HERE but different
+		/// from the one compiled is not missing: it is changed, and changed files ride
+		/// the errand.
+		async function capabilityLedger(imports) {
+			var W = window.DaimondTypstWatch;
+			var st = null;
+			try { st = W && W.state ? W.state() : null; } catch (e) { st = null; }
+			var missing = [];
+			var list = (imports || []).map(String);
+			if (list.length) {
+				try {
+					var got = Array.from(await Wasm.typst_watch_stamps(list)).map(String);
+					for (var i = 0; i < list.length; i++) if (got[i] === '0:-1') missing.push(list[i]);
+				} catch (e) { missing = []; }		// a question that could not be asked is not an answer
+			}
+			var heap = 0;
+			try { heap = (window.DaimondTypst && DaimondTypst.heapMB) ? DaimondTypst.heapMB() : 0; }
+			catch (e) { heap = 0; }
+			return {
+				deviceId: selfDeviceId(),
+				hand:     selfHoldsHand(),
+				folder:   selfHoldsFolder(),
+				mobile:   isMobileDeviceSelf(),
+				budgetMB: st ? (st.budget | 0) : (isMobileDeviceSelf() ? 768 : 2500),
+				heapMB:   heap | 0,
+				headroom: st ? (st.headroom | 0) : 128,
+				files:    { missing: missing },
+			};
+		}
+
+		/// What one task needs, declared at the moment the button is drawn -- and again
+		/// at the click, because files change between the two.
+		async function taskNeeds(kind, main, side) {
+			var car = side !== undefined ? side : await sidecarFor(main);
+			var imports = (car && Array.isArray(car.imports) && car.imports.length)
+				? car.imports.map(String) : [String(main)];
+			// THE HEAP THIS DOCUMENT LAST COST, plus the headroom that build recorded.
+			// A desktop's measurement of the same document is a FLOOR for a phone's,
+			// which is the safe direction to be wrong in: it can only move a compile
+			// away, never let one through that would end the tab.
+			var mem = car ? ((car.heapMB | 0) + (car.headroom | 0)) : 0;
+			return {
+				kind:     kind,
+				person:   kind === 'edit' || kind === 'view' || kind === 'terminal',
+				files:    imports.map(function (x) { return { path: x, sha: (car && car.hashes && car.hashes[x]) || '' }; }),
+				memoryMB: mem,
+				hand:     ['publish', 'dev', 'run', 'verify', 'serve', 'terminal'].indexOf(kind) >= 0,
+				network:  kind === 'publish',
+				main:     String(main || ''),
+			};
+		}
+
+		/// The placement for one kind over this document, right now.
+		async function placeFor(kind, main) {
+			var car = await sidecarFor(main);
+			var need = await taskNeeds(kind, main, car);
+			var ledger = await capabilityLedger(need.files.map(function (f) { return f.path; }));
+			var presence = annotatePresence((window.DaimondPresence && DaimondPresence.snapshot()) || {});
+			return DaimondPeer.placeTask(need, ledger, presence, placeOpts(), Date.now());
+		}
+
+		/// The words a placement puts on a button and on its tooltip. Lifted out of the
+		/// render so the wording is testable without a DOM, exactly as `seatLineText` is.
+		function placeText(place) {
+			if (!place || !place.key) return null;
+			var nm = place.label || '';
+			var sub = { name: nm || t('devices.unknown'), n: place.n,
+				need: place.needMB, room: place.roomMB };
+			// NO NAME, NO REASON. `place.why_needs_hand` names the machine that holds the
+			// hand, and the app's only fallback label is `devices.unknown` -- which reads
+			// "This device", the one machine the sentence is certainly not about. With
+			// nothing on the roster it produced "Needs the machine hand, which This device
+			// holds" under a button saying no device can do this. Where no machine is
+			// known the answer in `key` stands on its own.
+			return {
+				text:  t(place.key, sub),
+				title: (place.titleKey && (nm || place.why !== 'needs-hand'))
+					? t(place.titleKey, sub) : '',
+				can:   !!place.can,
+			};
+		}
+
+		/// Label the Doc panel's two buttons with where they would run, and put the
+		/// reason on the hover. Cheap and idempotent, so it can be called on every
+		/// presence beat without thought.
+		var _docSeatFor = '';		// the document the buttons were last labelled for
+		async function renderDocSeat() {
+			if (!viewEl || !curFile || !/\.typ$/i.test(curFile)) return;
+			var cBtn = viewEl.querySelector('[data-act="compile"]');
+			var pBtn = viewEl.querySelector('[data-act="publish"]');
+			if (!cBtn && !pBtn) return;
+			var main;
+			try { main = await mainFor(curFile); } catch (e) { return; }
+			// The document may have been closed, or another opened, while the awaits
+			// above were in flight; labelling the new one from the old one's placement is
+			// how a button comes to name a machine for a file nobody is looking at.
+			if (!viewEl.querySelector('[data-act="compile"]')) return;
+			_docSeatFor = main;
+			for (var i = 0; i < 2; i++) {
+				var btn = i === 0 ? cBtn : pBtn;
+				if (!btn || btn.disabled) continue;
+				var place;
+				try { place = await placeFor(i === 0 ? 'compile' : 'publish', main); }
+				catch (e) { continue; }
+				if (_docSeatFor !== main) return;
+				var txt = placeText(place);
+				if (!txt) continue;
+				btn.textContent = (i === 0 ? '⚙ ' : '⇪ ') + txt.text;
+				if (txt.title) btn.title = txt.title; else btn.removeAttribute('title');
+				// NOBODY IS A REFUSAL, AND IT SAYS WHOSE. A button that would post an
+				// errand no machine can take is worse than one that will not be pressed.
+				btn.classList.toggle('files-btn-off', !txt.can);
+				btn.disabled = !txt.can;
+				btn._place = place;
+			}
+		}
+
+		/// Post one compile errand, and follow it. Answers `{ ok, why }`.
+		///
+		/// The ORDER is the errand's alone: nothing this runner needs is in the parcel
+		/// -- the changed files ride the envelope and the rest is already in the folder
+		/// it holds -- so there is no flush in front of the post, which is the 23-second
+		/// wait the turn's dispatcher had to be redesigned to remove.
+		async function dispatchCompile(main, place, msgEl, want) {
+			var cid = 'cmp-' + (await docKeyOf(main));
+			// SET IN THE SAME TICK AS THE DECISION. Everything below is async, and the
+			// button, the retry and a take-back all reach here.
+			if (_placing[cid]) return { ok: false, why: 'in-flight' };
+			_placing[cid] = true;
+			try {
+				var car = await sidecarFor(main);
+				var imports = (car && Array.isArray(car.imports) && car.imports.length)
+					? car.imports.map(String) : [String(main)];
+				var mine = await hashImports(imports);
+				// WHAT IS COMPILED IS WHAT IS SAVED. An unsaved draft lives in browser
+				// storage and on no disk anywhere, so it cannot be hashed, sent or laid
+				// out -- and the message says so rather than letting the reader wonder why
+				// the pages did not change.
+				if (editing) fileMsg(t('files.compile_unsaved'));
+				var changed = [];
+				for (var i = 0; i < imports.length; i++) {
+					var pth = imports[i];
+					if (!mine[pth]) continue;						// not here: the runner holds it
+					if (car && car.hashes && car.hashes[pth] === mine[pth]) continue;
+					var text = '';
+					try { text = await readRaw(pth); } catch (e) { continue; }
+					changed.push({ path: pth, sha: mine[pth], text: text });
+				}
+				var plan = DaimondPeer.compilePlan(changed);
+				// The ONE refusal the plan can make, written as the literal key it is so
+				// `dev/i18ncheck.mjs` can read it. A second refusal would want a second
+				// sentence anyway, and a key in a variable is a sentence nothing checks.
+				if (plan.refused) {
+					if (msgEl) {
+						msgEl.classList.add('err');
+						msgEl.textContent = t('files.compile_too_many_changed', { n: plan.n });
+					}
+					return { ok: false, why: plan.why };
+				}
+				// A file too big to ride inline goes as chunks, the same door a Diamond's
+				// bytes take. A device that cannot offload at all says so rather than
+				// sending a truncated set, which would be a layout of a book that is not
+				// the one on screen.
+				var refs = [];
+				if (plan.offload.length) {
+					if (!filesSyncable() || !window.DaimondChunks || !DaimondChunks.offloadBytes) {
+						if (msgEl) { msgEl.classList.add('err'); msgEl.textContent = t('files.compile_toolarge_to_send'); }
+						return { ok: false, why: 'files.compile_toolarge_to_send' };
+					}
+					for (var j = 0; j < plan.offload.length; j++) {
+						var f = plan.offload[j];
+						var ref = await DaimondChunks.offloadBytes('compile:' + f.path,
+							new TextEncoder().encode(f.text));
+						refs.push({ path: f.path, sha: f.sha, ref: ref });
+					}
+				}
+				var errand = DaimondPeer.makeCompileErrand({
+					cid:    cid,
+					main:   main,
+					want:   want || 'vector',
+					wsid:   await wsidNow(),
+					docKey: await docKeyOf(main),
+					files:  plan.inline,
+					refs:   refs,
+					expect: { imports: imports, hashes: mine },
+					deadline: Date.now() + DaimondPeer.COMPILE_DEADLINE_MS,
+					dispatchedBy: selfDeviceId(),
+				});
+				var body = await DaimondPeer.sealForSelf(errand);
+				var res = await DaimondPost.post(body);
+				if (!res || !res.ok) {
+					if (msgEl) { msgEl.classList.add('err'); msgEl.textContent = t('files.compile_failed',
+						{ reason: (res && res.why) || 'the relay would not take it' }); }
+					return { ok: false, why: (res && res.why) || 'relay' };
+				}
+				if (msgEl) {
+					msgEl.classList.remove('err');
+					msgEl.textContent = t('files.compiling_on', { name: place.label || t('devices.unknown') });
+				}
+				watchCompile(cid, msgEl, place);
+				return { ok: true, cid: cid };
+			} catch (e) {
+				if (msgEl) { msgEl.classList.add('err'); msgEl.textContent = t('files.compile_failed',
+					{ reason: friendlyError(e) }); }
+				return { ok: false, why: String((e && e.message) || e) };
+			} finally {
+				// Held until the report lands, not until the post returns: the guard is
+				// about one compile in flight, not one post in flight.
+				if (!_placing[cid]) delete _placing[cid];
+			}
+		}
+
+		/// Follow one compile's progress door and stream it onto the panel's message
+		/// line -- the same reader the hand-off tile uses, on the same door.
+		var _compileLoops = Object.create(null);
+		async function watchCompile(cid, msgEl, place) {
+			if (_compileLoops[cid]) return;
+			_compileLoops[cid] = true;
+			var since = 0;
+			try {
+				while (_compileLoops[cid] && _placing[cid]) {
+					var frame = null;
+					try { frame = await DaimondSync.getProgressFrame(cid, since, PROGRESS_WATCH_WAIT_MS); }
+					catch (e) { frame = null; }
+					if (!frame) { await new Promise(function (r) { setTimeout(r, PROGRESS_WATCH_IDLE_MS); }); continue; }
+					since = frame.seq | 0;
+					if (frame.tail && msgEl && msgEl.isConnected) {
+						msgEl.textContent = t('files.compiling_on',
+							{ name: (place && place.label) || t('devices.unknown') })
+							+ ' ' + String(frame.tail);
+					}
+					if (frame.final) break;
+				}
+			} finally { delete _compileLoops[cid]; }
+		}
+
+		/// A runner's account of a compile, collected here. The pages are drawn from the
+		/// artifact it offloaded; the sidecar it wrote is already in the index this
+		/// device merged, and this device's commit is what keeps the runner's chunks
+		/// alive (a folder-mounted machine never commits one).
+		async function onBuiltReport(report) {
+			var r = report || {};
+			var cid = String(r.cid || '');
+			_builtFor[cid] = r;
+			delete _placing[cid];
+			var msgEl = viewEl && viewEl.querySelector('.files-view-msg');
+			var nm = deviceLabelFor(r.by) || t('devices.unknown');
+			function say(text, isErr) {
+				if (!msgEl || !msgEl.isConnected) return;
+				msgEl.classList.toggle('err', !!isErr);
+				msgEl.textContent = text;
+				msgEl.style.display = '';
+			}
+			if (r.status === 'refused') { say(t('files.runner_refused', { name: nm, reason: r.why || '' }), true); return; }
+			if (r.status === 'error')   { say(String(r.why || ''), true); return; }
+			if (!r.vector || !r.vector.chunks || !r.vector.chunks.length) {
+				say(t('files.built_on', { name: nm, secs: ((r.ms | 0) / 1000).toFixed(1) }));
+				return;
+			}
+			var W = window.DaimondTypstWatch;
+			if (!W || !W.given) return;
+			var drew = false;
+			try {
+				drew = await W.given(r.vector, { main: r.main, imports: r.imports,
+					pages: r.pages, by: r.by, name: nm, ts: r.ts });
+			} catch (e) { drew = false; }
+			if (!drew) { say(t('files.compile_failed', { reason: t('files.runner_refused',
+				{ name: nm, reason: '' }) }), true); return; }
+			try { if (window.DaimondSheet && DaimondSheet.tab) DaimondSheet.tab('preview'); } catch (e) { /* desktop has no sheet */ }
+			say(t('files.built_on', { name: nm, secs: ((r.ms | 0) / 1000).toFixed(1) }));
+			// FILES THAT MOVED under the errand: the runner compiled what it was sent
+			// and said which of them had already changed again. Named, not hidden --
+			// the pages on screen are of a copy one save behind.
+			if (r.status === 'stale' && (r.moved || []).length) {
+				say(t('files.compile_stale', { name: nm, n: r.moved.length }));
+			}
+			// The account of the build goes in the index whether or not this device made
+			// it, so the NEXT press knows what the document costs. The runner wrote one
+			// too; the freshest stamp wins, and this one is ours.
+			await writeSidecar(r.main, { imports: r.imports, hashes: r.hashes,
+				growth: (r.heap && r.heap.growth) | 0, headroom: (r.heap && r.heap.headroom) | 0,
+				pages: r.pages, ms: r.ms, ref: r.vector });
+			// AND THE COMMIT THAT KEEPS THE CHUNKS ALIVE. The runner uploaded them and
+			// cannot name them; without this push the orphan collector is the only thing
+			// standing between the pages on screen and addresses nothing refers to.
+			nudgeSync();
+			renderDocSeat();
+		}
+
+		/// The runner's side, as `runCompileErrand` takes it.
+		function compileDeps() {
+			// DID THIS ERRAND PAUSE THE WATCH? Held per errand rather than per module,
+			// because the pause belongs to the writes below and the resume to the compile
+			// that follows them, and nothing else may put the loop back.
+			var _held = false;
+			return {
+				selfId:    selfDeviceId(),
+				selfName:  deviceLabelFor(selfDeviceId()),
+				cas:       DaimondPeer.syncCas(peerSyncShim()),
+				nominatedId:   nominatedDeviceId(),
+				presence:      (window.DaimondPresence && DaimondPresence.snapshot()) || {},
+				freshWindowMs: DaimondPeer.DISPATCH_FRESH_MS,
+				finished:  async function (e) { return !!_builtFor[String(e.cid || '')]; },
+				/// CAN THIS MACHINE LAY THIS DOCUMENT OUT AT ALL?
+				///
+				/// Two questions, and deliberately not a third. The workspace identity,
+				/// where BOTH ends can read one, must match -- a runner that laid out a
+				/// book from another tree would write the bytes into the wrong project
+				/// and hand back pages of a document nobody asked for. An errand carrying
+				/// none is accepted: the dispatcher is holding a replica and genuinely
+				/// does not know whose folder its copy came from, and asserting one would
+				/// be worse than saying nothing.
+				///
+				/// And the main has to BE here -- either already on this device or among
+				/// the files the errand carries. What is NOT asked is whether this device
+				/// holds a real mounted folder: that is what the PLACEMENT requires of a
+				/// runner, and it is about where the preview PDF lands and what `run` may
+				/// touch. A machine holding the whole book in its own storage can lay it
+				/// out perfectly well, and refusing it here would refuse the phone's own
+				/// compile by the same rule.
+				check:     async function (e) {
+					var mine = await wsidNow();
+					if (e.wsid && mine && e.wsid !== mine) {
+						return { ok: false, why: t('files.compile_failed', { reason: e.main }) };
+					}
+					var carried = (e.files || []).concat(e.refs || [])
+						.some(function (f) { return f && f.path === e.main; });
+					if (!carried) {
+						var st = '';
+						try { st = String((await Wasm.typst_watch_stamps([e.main]))[0] || ''); }
+						catch (e2) { st = ''; }
+						if (st === '0:-1') {
+							return { ok: false, why: t('files.compile_failed', { reason: e.main }) };
+						}
+					}
+					return { ok: true, why: '' };
+				},
+				/// EVERY CARRIED FILE BEFORE ANY COMPILE. `write_file` raises
+				/// `daimond-file-written`, which the watch hears as `touched` and debounces
+				/// into one rebuild -- so writing them in a batch is what keeps a hand-off
+				/// to a device that has this document open at ONE layout rather than one
+				/// per file.
+				write:     async function (e) {
+					var wrote = [], moved = [];
+					// ONE LAYOUT FOR THE WHOLE ERRAND. Every `file_write` tells the watch
+					// (`touched`), so a runner whose watch holds this document laid the book
+					// out for the carried files AND again for the errand itself -- measured
+					// as builds 1 → 4 on the author's book, three heap growths of about
+					// 10 MB each on a heap that only ever grows. Paused, the writes are
+					// REMEMBERED (`S.dirty`) and the errand's own rebuild below is the single
+					// layout they get; `resume` in the compile step puts the loop back.
+					try {
+						var Wp = window.DaimondTypstWatch;
+						var stp = (Wp && Wp.state) ? Wp.state() : null;
+						if (stp && stp.path === e.main && Wp.pause) {
+							_held = !!Wp.pause(t('files.compiling_path', { path: e.main }));
+						}
+					} catch (e2) { _held = false; }
+					var all = (e.files || []).slice();
+					for (var i = 0; i < (e.refs || []).length; i++) {
+						var rf = e.refs[i];
+						var bytes = await DaimondChunks.materialiseBytes(rf.ref);
+						if (!bytes) continue;
+						all.push({ path: rf.path, sha: rf.sha, text: new TextDecoder().decode(bytes) });
+					}
+					for (var j = 0; j < all.length; j++) {
+						var f = all[j];
+						var cut = String(f.path).lastIndexOf('/');
+						if (cut > 0) {
+							try { await tools().run_tool_outcome('dir_create',
+								JSON.stringify({ path: String(f.path).slice(0, cut) })); } catch (e2) {}
+						}
+						// WHAT WAS HERE BEFORE, so a file that moved under the errand is named
+						// rather than silently overwritten and compiled as if it were current.
+						var was = '';
+						try { was = await DaimondChunks._sha256Hex(await readWhole(f.path)); }
+						catch (e2) { was = ''; }
+						try {
+							await tools().run_tool_outcome('file_write',
+								JSON.stringify({ path: f.path, content: f.text }));
+							wrote.push(f.path);
+							if (was && f.sha && was !== f.sha && _movedSince(f.path, was)) moved.push(f.path);
+						} catch (e2) { /* a file that would not write shows as a compile error */ }
+					}
+					return { wrote: wrote, moved: moved };
+				},
+				/// THROUGH THE WATCH where the watch holds this document, so the writes
+				/// above and this errand are ONE layout and one heap growth. Two would be
+				/// two, on a heap that only ever grows.
+				compile:   async function (main, want) {
+					if (!window.DaimondTypst) await import('./typst.js');
+					var before = (window.DaimondTypst && DaimondTypst.heapMB) ? DaimondTypst.heapMB() : 0;
+					var t0 = Date.now();
+					var W = window.DaimondTypstWatch;
+					var st = null;
+					try { st = W && W.state ? W.state() : null; } catch (e) { st = null; }
+					var out;
+					if (want === 'pdf') {
+						out = await Wasm.typst_compile_project(main);
+						if (out && out.pdf) await writeWorkspaceBytes(previewPdfPath(main), out.pdf);
+					} else if (st && st.path === main && W.rebuild) {
+						// The watch's own rebuild: it draws the runner's pages too, so the
+						// machine doing the work sees what it built.
+						var was = st.drawn | 0;
+						W.rebuild();
+						for (var w = 0; w < 600; w++) {
+							var now = W.state();
+							if (now.drawn > was || now.failed > (st.failed | 0)) break;
+							await new Promise(function (r) { setTimeout(r, 200); });
+						}
+						out = await Wasm.typst_compile_project_vector(main);
+					} else {
+						out = await Wasm.typst_compile_project_vector(main);
+					}
+					// AND THE LOOP GOES BACK, whatever the compile answered. The writes paused
+					// it so that they and this layout were one; leaving it paused would leave
+					// the runner's own pages frozen for the next edit its author makes. The
+					// rebuild above spent the remembered dirt, so this costs no second layout.
+					if (_held) {
+						_held = false;
+						try { if (W && W.resume) await W.resume(); } catch (e2) { /* a dead loop is not resumable */ }
+					}
+					var after = (window.DaimondTypst && DaimondTypst.heapMB) ? DaimondTypst.heapMB() : 0;
+					if (!out) return { error: t('files.compile_failed', { reason: 'no compiler' }) };
+					if (out.error) return { error: String(out.error), ms: Date.now() - t0,
+						watch: Array.from(out.watch || []).map(String),
+						heap: { before: before, after: after, growth: after - before, headroom: 0 } };
+					var watch = Array.from(out.watch || []).map(String);
+					return {
+						vector: out.vector || null,
+						pdf:    out.pdf || null,
+						pages:  out.pages | 0,
+						ms:     Date.now() - t0,
+						watch:  watch,
+						hashes: await hashImports(watch),
+						heap:   { before: before, after: after, growth: after - before,
+							headroom: (st && st.headroom) | 0 },
+					};
+				},
+				offload:   async function (bytes, docKey) {
+					try { return await DaimondChunks.offloadBytes('@p/' + docKey, bytes); }
+					catch (e) { return null; }
+				},
+				frame:     async function (cid, text, final) {
+					if (!DaimondSync || !DaimondSync.pushProgressFrame) return;
+					await DaimondSync.pushProgressFrame(cid, String(text || ''), !!final);
+				},
+				post:      async function (env) {
+					await DaimondPost.post(await DaimondPeer.sealForSelf(env));
+				},
+				ack:       async function () { /* the collector acks the row it routed */ },
+			};
+		}
+
+		/// Did `path` really move under us, or is this the first time it was written?
+		///
+		/// A path the runner did not hold at all reads as an empty hash, which is not a
+		/// file that changed -- it is a file that arrived.
+		function _movedSince(path, was) { return !!was; }
+
+		/// Hand the compile handlers to the collector, and tell the watch where to take
+		/// a rebuild of pages it did not lay out.
+		function wireCompileHandoff() {
+			if (!window.DaimondPeer || !DaimondPeer.onCompile) return false;
+			DaimondPeer.onCompile(async function (errand) {
+				return await DaimondPeer.runCompileErrand(errand, compileDeps());
+			});
+			DaimondPeer.onBuilt(function (report) {
+				try { return onBuiltReport(report); } catch (e) { /* the panel keeps its last line */ }
+			});
+			if (window.DaimondTypstWatch && DaimondTypstWatch.placeWith) {
+				DaimondTypstWatch.placeWith(async function (o) {
+					var main = String((o && o.main) || '');
+					if (!main) return false;
+					var place;
+					try { place = await placeFor('compile', main); } catch (e) { return false; }
+					if (place.where !== 'runner') return false;
+					var msgEl = viewEl && viewEl.querySelector('.files-view-msg');
+					var res = await dispatchCompile(main, place, msgEl);
+					return !!(res && res.ok);
+				});
+			}
+			// EVERY GOOD BUILD ON THIS DEVICE WRITES THE SIDECAR, wherever it came from:
+			// the button, the watch's own loop, the daimon's tool. One mechanism for "what
+			// does this document cost", so a phone asking the question gets an answer
+			// whichever machine happened to answer it last.
+			try {
+				window.addEventListener('daimond-typst-built', function (ev) {
+					var d = (ev && ev.detail) || {};
+					if (!d.path) return;
+					writeSidecar(d.path, { imports: d.files, pages: d.pages, ms: d.ms,
+						growth: d.growth, headroom: d.headroom });
+				});
+			} catch (e) { /* no window */ }
+			return true;
+		}
+
+		/// The two compiler wordings that mean "a file this build needed was not here",
+		/// as `explainDiag` composes them (typst.js), and the trapped-compiler pair.
+		/// A press retries on one of these and on nothing else.
+		var LOCAL_MISS = /which was not among the \d+ files gathered|failed to load file|access denied/i;
+		var TYPST_TRAPPED = /recursive use of an object|unreachable/i;
+
+		/// The compiler's sentence, cut to a clause a message line can carry.
+		function shortReason(text) {
+			var one = String(text || '').split('\n')[0].trim();
+			return one.length > 120 ? one.slice(0, 117) + '\u2026' : one;
+		}
+
+		/// The placement, taken again with the missing set FORCED non-empty -- because
+		/// the compiler has just proved it. Without this the retry would re-ask a probe
+		/// that has already answered wrongly once and get the same answer.
+		async function placeForMissing(kind, main) {
+			var car = await sidecarFor(main);
+			var need = await taskNeeds(kind, main, car);
+			var ledger = await capabilityLedger(need.files.map(function (f) { return f.path; }));
+			if (!ledger.files.missing.length) ledger.files.missing = [String(main)];
+			var presence = annotatePresence((window.DaimondPresence && DaimondPresence.snapshot()) || {});
+			return DaimondPeer.placeTask(need, ledger, presence, placeOpts(), Date.now());
+		}
+
 		async function compileTypst(path, btn) {
 			var msgEl = viewEl.querySelector('.files-view-msg');
 			if (!msgEl) return;
+			// ONCE PER PRESS. The flag lives in this call, so a second press is a second
+			// chance and a single press can hop at most once.
+			var retried = false;
 			var label = btn ? btn.textContent : '';
 			if (btn) { btn.disabled = true; btn.textContent = '… ' + t('files.compiling'); }
 			msgEl.style.display = ''; msgEl.classList.remove('err');
@@ -33017,6 +34643,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// ~/usr/books/ontheism/dev:39 -- so the same rule is applied here and
 				// the MAIN is compiled, with the chapter's own page brought into view.
 				var main = await mainFor(path);
+				// ── WHERE THIS GOES ──────────────────────────────────────
+				//
+				// Asked again at the click, not trusted from the draw: files change
+				// between a panel being labelled and a button being pressed, and the
+				// whole of what the placement measures is files.
+				var place = null;
+				try { place = await placeFor('compile', main); } catch (e) { place = null; }
+				if (place && place.where === 'runner') {
+					var sent = await dispatchCompile(main, place, msgEl);
+					if (sent && sent.ok) return;			// the report draws the pages
+					// A relay that would not take it is not a reason to give up on the
+					// document: fall through and try here, where the local guard still
+					// holds and the failure will at least be the compiler's own.
+				}
+				if (place && place.where === 'nobody') {
+					msgEl.classList.add('err');
+					var nb = placeText(place);
+					msgEl.textContent = nb ? nb.text : t('place.nobody_generic');
+					return;
+				}
+				// THE BYTES BEFORE THE COMPILER. On a device holding the book's pictures and
+				// fonts as ☁ rows -- which is every device that has never had native access
+				// -- the gatherer would skip them and typeset the wrong book. See
+				// `hydrateProject`, which says why a missing font is worse than a missing
+				// picture.
+				if (!(await hydrateProject(main, msgEl))) return;
+				msgEl.textContent = t('files.compiling_path', { path: path });   // escaped
 				// One driver, one memo. `typst.js` installs `window.DaimondTypst` and holds the
 				// compiler promise itself, so the button and the agent's `typst_compile` tool
 				// build the 30 MB wasm once between them; a private memo here would have been a
@@ -33035,6 +34688,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var out = await Wasm.typst_compile_project(main);
 				if (!out) { out = { error: t('files.compile_failed', { reason: 'no compiler' }) }; }
 				if (out.error) {
+					// ── THE RETRY, ONCE ──────────────────────────────────
+					//
+					// A missing file or a heap trip is exactly what the placement would
+					// have handed off for, had this device known in advance. It did not
+					// -- no sidecar yet, a stamp that misjudged, a growth larger than the
+					// estimate -- so the answer is the same one, taken late and said out
+					// loud. NEVER a second time: a failure that repeats is the document's,
+					// and a second automatic hop is how a double compile starts.
+					var retriable = LOCAL_MISS.test(out.error) || TYPST_TRAPPED.test(out.error);
+					if (retriable && !retried && place && place.deviceId && place.where !== 'nobody') {
+						var late = null;
+						try { late = await placeForMissing('compile', main); } catch (e) { late = null; }
+						if (late && late.where === 'runner') {
+							retried = true;
+							msgEl.textContent = t('files.retrying_on',
+								{ reason: shortReason(out.error), name: late.label });
+							var again = await dispatchCompile(main, late, msgEl);
+							if (again && again.ok) return;
+						}
+					}
 					msgEl.classList.add('err');
 					msgEl.textContent = out.error;               // escaped
 					return;
@@ -33211,6 +34884,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			msgEl.style.display = ''; msgEl.classList.remove('err');
 			try {
 				var main = await mainFor(path);
+				// PUBLISH IS A `run`, so only a device with the machine hand may do it.
+				// Where this one has not got it the answer is a sentence naming a machine
+				// that has, not a tool refusal the reader has to interpret. Phase 2 sends
+				// the errand; phase 1 says where it would have to go.
+				var place = null;
+				try { place = await placeFor('publish', main); } catch (e) { place = null; }
+				if (place && place.where !== 'here') {
+					msgEl.classList.add('err');
+					var pt = placeText(place);
+					// THE ANSWER, NOT THE REASON BEHIND IT. `key` is the sentence written for
+					// a reader -- "Publish on argonaut", or "No device that can do this is
+					// awake" -- and `titleKey` is the measurement under it. The reason for a
+					// publish is `place.why_needs_hand`, "Needs the machine hand, which {name}
+					// holds", which names a holder: put in front of somebody whose answer was
+					// NOBODY it asserts a machine that does not exist.
+					msgEl.textContent = (pt && pt.text) ? pt.text : t('place.nobody_generic');
+					return;
+				}
 				var cmd = publishCommand(main);
 				_lastPublish = cmd;
 				msgEl.textContent = t('files.publishing_cmd',
@@ -34049,6 +35740,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			relabelDoc:    function () { if (docRelabel) docRelabel(); },
 			// Which tree the panel is showing: 'all' or 'diamond'.
 			scope:         function () { return diamondScope() ? 'diamond' : 'all'; },
+			/// THE COMPILE HAND-OFF, reached from outside this module: register the two
+			/// envelope handlers (the collector's door), re-label the Doc panel's buttons
+			/// with where they would run, and -- for a verifier -- the placement itself
+			/// and the runner deps it would be run with.
+			wireCompileHandoff: wireCompileHandoff,
+			renderDocSeat:      renderDocSeat,
+			placeFor:           placeFor,
+			placeForMissing:    placeForMissing,
+			placeText:          placeText,
+			compileDeps:        compileDeps,
+			docKeyOf:           docKeyOf,
+			sidecarFor:         sidecarFor,
 			/// What the open Diamond's workspace is made of, as the three lists
 			/// `diamond_bounds` in src/tools.rs takes: its own directory, what the
 			/// user attached, and which of those were attached to be consulted
@@ -34066,6 +35769,50 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// * `id` - Which Diamond, or nothing for the one on screen. A worker is
 			///   scoped to the Diamond it works FOR, which is not always the one the
 			///   user is looking at.
+			/// The ☁ rows a compile of this document would look for and not find, and the
+			/// fetch of them. Published because `dev/verify_foldershare.mjs` asserts what
+			/// the PHONE sees, and a verifier that recomputed which paths those are would
+			/// be a second answer to the question the panel decides.
+			compileCloudRows: function (main) { return projectCloudRows(main); },
+			hydrateProject:   async function (main) {
+				var el = viewEl && viewEl.querySelector('.files-view-msg');
+				return await hydrateProject(main, el || document.createElement('div'));
+			},
+			/// Every workspace path a Diamond is scoped to, deduped and sorted.
+			///
+			/// THE SHARED FOLDER'S WHOLE DEFINITION. A device with a real folder open used
+			/// to sync nothing at all -- "a real folder is the user's own disk,
+			/// device-specific" -- and the owner's two desktops boot that way, so the
+			/// account's phone held none of the work. It holds it now, and what travels is
+			/// exactly what the user marked into a Diamond: the mark is already the grant a
+			/// daimon works under (`dev/ATTACH_CONTRACT.md` §2), so nothing here widens
+			/// anything, and a folder nobody marked in is a folder nobody asked to share.
+			///
+			/// EVERY Diamond'S marks, not the one on screen. `currentDiamond` is a piece of
+			/// UI state, and a parcel that changed when the user clicked a different Diamond
+			/// would be a parcel that is never the same twice -- which is the one thing sync
+			/// cannot survive (`dev/verify_syncfixedpoint.mjs`).
+			///
+			/// Sorted, and a path under another is dropped, so the walk below it happens
+			/// once and the set is the same on two devices that hold the same Diamonds.
+			shareRoots:    async function () {
+				var out = [];
+				for (var i = 0; i < diamonds.length; i++) {
+					var d = diamonds[i];
+					if (!d || !d.id || trashed(d.id)) continue;
+					var list = [];
+					try { list = await attachmentsOf(d.id); } catch (e) { list = []; }
+					list.forEach(function (a) {
+						if (a.here === false || !a.path) return;
+						if (out.indexOf(a.path) < 0) out.push(a.path);
+					});
+				}
+				out.sort();
+				return out.filter(function (p, i2) {
+					for (var j = 0; j < i2; j++) if (underPath(p, out[j])) return false;
+					return true;
+				});
+			},
 			bounds:        async function (id) {
 				var did = id || (currentDiamond ? currentDiamond.id : '');
 				// A trashed Diamond has no workspace to confine anything to. It is
@@ -34122,6 +35869,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		publishCommand: function (p) { return Files.publishCommand(p); },
 		lastPublish:    function () { return Files.lastPublish(); },
 		goToLine:       function (n) { return Files.goToLine(n); },
+		// The compile's own ☁ rows, for `dev/verify_foldershare.mjs`: what a device
+		// holding the book as references would look for, and the fetch a press of
+		// Compile does first. See `hydrateProject`.
+		compileCloudRows: function (p) { return Files.compileCloudRows(p); },
+		hydrateProject:   function (p) { return Files.hydrateProject(p); },
 	};
 
 	// The daimon's door to the Doc panel. `file_show` in src/tools.rs reaches it
@@ -47713,6 +49465,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	// ── Boot ───────────────────────────────────────────────────
 	async function boot() {
+		// WHICH ROOT THE FILE TOOLS ARE READING, said once, so the derived "in cloud
+		// storage and not on this device" list is computed against the same filesystem
+		// `file_list` answers from. Registered rather than reached for: cloud.js is
+		// loaded before this file and must not go looking upward for a handle this
+		// closure owns.
+		if (window.DaimondCloud && DaimondCloud.useRoot) DaimondCloud.useRoot(sharedFolderHandle);
 		initTheme();
 		initSkin();
 		// After the skin: the view inherits from it on a first run.

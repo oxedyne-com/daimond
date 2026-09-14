@@ -504,17 +504,33 @@ try {
 		if (/Publish failed|Published/.test(m)) break;
 		await sleep(300);
 	}
+	// NO HAND IS PAIRED IN THIS WORLD, and since the placement landed that is answered
+	// BEFORE anything is composed: a publish is a `run`, only a device with the machine
+	// hand may do one, and the panel now names where it would have to go instead of
+	// handing the reader a tool refusal to interpret. So nothing at all is sent from
+	// here -- which is a stronger form of "nothing composed elsewhere" than the press
+	// sending the right thing, and the shape of the command the button WOULD send is
+	// asserted above, straight from `publishCommand`.
 	const sent = await page.evaluate(() => window.DaimondFiles.lastPublish());
-	check('and pressing it sends that exact command and nothing composed elsewhere',
-		!!sent && sent.argv.join(' ') === line && sent.cwd === cmd.cwd,
+	check('and with no machine hand nothing is composed or sent at all',
+		sent === null || sent === undefined,
 		JSON.stringify(sent && sent.argv.join(' ')));
-	// NO HAND IS PAIRED IN THIS WORLD, so `run` refuses. What is asserted is that the
-	// refusal is shown AS a refusal: a panel that reported a publication here would be
-	// telling the author his book was printed by a tool that never ran.
+	// AND THE BUTTON ITSELF SAYS SO, which is why the press above sent nothing: the
+	// placement labels and DISABLES a publish this device cannot do, so the answer
+	// arrives before the reader commits to anything rather than as a refusal afterwards.
+	// A panel that reported a publication here would be telling the author his book was
+	// printed by a tool that never ran.
+	const pb = await page.evaluate(() => {
+		const b = document.querySelector('#doc-view [data-act="publish"]');
+		return b ? { text: b.textContent || '', title: b.getAttribute('title') || '',
+			disabled: !!b.disabled, off: b.classList.contains('files-btn-off') } : null;
+	});
 	const after = await msg();
-	check('and with no machine hand it says so rather than claiming the book was published',
-		/Publish failed/.test(after) && !/Published →/.test(after),
-		JSON.stringify(after.slice(0, 120)));
+	check('and the button says where a publish would have to go, and refuses to pretend',
+		!!pb && (pb.disabled || pb.off)
+		&& /awake|machine hand|Publish on/i.test(pb.text + ' ' + pb.title)
+		&& !/Published →/.test(after),
+		JSON.stringify({ btn: pb, msg: after.slice(0, 120) }));
 	const stillFinal = await page.evaluate((p) => window.__get(p), FINAL);
 	check('and after all of it the published PDF is still the pipeline’s own bytes',
 		!!stillFinal && stillFinal.size === SENTINEL.length, JSON.stringify(stillFinal));

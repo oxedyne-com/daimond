@@ -184,10 +184,17 @@ const stored = await s.page.evaluate(() => new Promise((res) => {
 	};
 	req.onerror = () => res([]);
 }));
-const asst = stored.flatMap(c => c.messages || []).filter(m => m.role === 'assistant');
-check(asst.some(m => String(m.content || '').includes('INTERIM-PROSE-MARKER')),
-	'the working is stored as part of the turn, so it was never the app\'s to lose',
-	`${asst.length} assistant message(s) stored`);
+const turnMsgs = stored.flatMap(c => c.messages || []);
+const asst = turnMsgs.filter(m => m.role === 'assistant');
+// Since f8843fc, the pre-tool prose is flushed into its OWN `think_log` message
+// (logThinking, www/js/daimond.js) rather than riding along inside the final
+// assistant message -- the fix for stray prose polluting the stored answer. So
+// the marker now belongs to a think_log entry, and "nothing was lost" is a
+// property of the TURN's stored messages, not of the assistant message alone.
+const think = turnMsgs.filter(m => m.role === 'think_log');
+check(think.some(m => String(m.content || '').includes('INTERIM-PROSE-MARKER')),
+	'the working is stored as its own think_log entry, so it was never the app\'s to lose',
+	`${asst.length} assistant message(s), ${think.length} think_log message(s) stored`);
 
 await s.page.reload({ waitUntil: 'domcontentloaded' });
 await s.page.waitForTimeout(1200);

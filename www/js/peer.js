@@ -66,11 +66,19 @@
 	// crypto -- and slot into the same route-by-type the collector already does.
 	var T_ASK   = 'consent-ask';	// runner -> the account: a live question for a human
 	var T_GRANT = 'consent-grant';	// an attended device -> the runner: the answer
+	// NON-CHAT WORK GOES THE SAME WAY A TURN DOES. A phone that cannot hold a book's
+	// files, or cannot afford the heap a layout costs, hands the COMPILE to a machine
+	// that can, and the machine hands back the laid-out artifact. Same self-seal, same
+	// signature, same post door, same collector -- a second transport for the same
+	// journey is a second set of money- and data-safety arguments to get right.
+	var T_COMPILE = 'compile';	// a device -> a runner: lay this document out
+	var T_BUILT   = 'built';	// the runner -> the account: what the layout cost and where it is
 
 	/// Is `t` a peer envelope tag this layer owns? The collector routes exactly these
-	/// four and hands everything else (a message artefact) to the message path.
+	/// six and hands everything else (a message artefact) to the message path.
 	function peerType(t) {
-		return t === T_ERRAND || t === T_REPORT || t === T_ASK || t === T_GRANT;
+		return t === T_ERRAND || t === T_REPORT || t === T_ASK || t === T_GRANT
+			|| t === T_COMPILE || t === T_BUILT;
 	}
 
 	// ── Bytes and text ─────────────────────────────────────────
@@ -298,6 +306,131 @@
 		};
 	}
 
+	// ── The compile errand's bounds ────────────────────────────
+	//
+	// The post door takes 64 KiB per sealed envelope (gateway post.rs), and the
+	// envelope is base64 of a GCM seal of JSON -- about 1.4x the plaintext. So the
+	// inline budget is set where 24 KiB of source plus the hashes of a 29-file import
+	// set (~4 KiB) still seals to well under 45 KiB. Past it a file rides as chunks,
+	// which is the same door a Diamond's bytes already take.
+
+	var COMPILE_FILES_MAX   = 16;			// changed files one errand may carry at all
+	var COMPILE_FILE_CHARS  = 16 * 1024;	// past this ONE file goes to chunks
+	var COMPILE_INLINE_CHARS = 24 * 1024;	// past this the REST of them go to chunks
+	// Three minutes, not the turn's fifteen: a compile that has not started in three
+	// minutes has a dead runner, and the phone's own "Compile here" is right there.
+	var COMPILE_DEADLINE_MS = 3 * 60 * 1000;
+
+	/// Split the changed files into what rides INLINE and what must be offloaded as
+	/// chunks, or refuse the whole errand. Pure, so the rule is one table a test can
+	/// enumerate rather than a shape the dispatcher happens to build.
+	///
+	/// `changed` is `[{ path, sha, text }]`. Answers
+	/// `{ inline, offload, refused, why, n }` -- `why` an i18n key, because a refusal
+	/// the user reads has to be a sentence in their language and not a thrown string.
+	///
+	/// REFUSING PAST THE COUNT IS THE HONEST ANSWER. Sixteen changed files is not a
+	/// compile hand-off, it is a device that has not synced; the ordinary parcel
+	/// carries the rest in one round and the compile then has nothing to send.
+	function compilePlan(changed, opts) {
+		var o = opts || {}, list = changed || [];
+		var maxN     = o.filesMax   != null ? o.filesMax   : COMPILE_FILES_MAX;
+		var maxFile  = o.fileChars  != null ? o.fileChars  : COMPILE_FILE_CHARS;
+		var maxTotal = o.totalChars != null ? o.totalChars : COMPILE_INLINE_CHARS;
+		if (list.length > maxN) {
+			return { inline: [], offload: [], refused: true, n: list.length,
+				why: 'files.compile_too_many_changed' };
+		}
+		var inline = [], offload = [], used = 0;
+		for (var i = 0; i < list.length; i++) {
+			var f = list[i] || {};
+			var text = String(f.text == null ? '' : f.text);
+			// Biggest first would pack better and read worse: the order files arrive in is
+			// the order the import set names them, and a reader comparing the errand with
+			// the sidecar should find the two in the same order.
+			if (text.length > maxFile || used + text.length > maxTotal) {
+				offload.push({ path: String(f.path || ''), sha: String(f.sha || ''), text: text });
+				continue;
+			}
+			used += text.length;
+			inline.push({ path: String(f.path || ''), sha: String(f.sha || ''), text: text });
+		}
+		return { inline: inline, offload: offload, refused: false, why: '', n: list.length };
+	}
+
+	/// THE KEY ONE LIVE PREVIEW OF ONE DOCUMENT IS STORED UNDER: a short hash of the
+	/// folder token and the main's path, so two books in two folders never collide and
+	/// the same book on two devices always agrees. Short on purpose -- it is an index
+	/// key beside a few hundred workspace paths, not a content address.
+	async function docKeyFor(wsid, main) {
+		var bytes = utf8(String(wsid == null ? '' : wsid) + '\u0000' + String(main || ''));
+		var h = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+		return hex(h).slice(0, 32);
+	}
+
+	/// Build a compile errand (not yet sealed): lay THIS document out, on a machine
+	/// that can. `files` ride inline; `refs` are the same files as chunk manifests,
+	/// already offloaded by the caller (the async half cannot live in an envelope
+	/// builder). `expect` is the dispatcher's own view of the import set, so the
+	/// runner can answer "stale" precisely rather than "something moved".
+	function makeCompileErrand(f) {
+		var o = f || {};
+		var eid = o.eid || newId();
+		return {
+			t:        T_COMPILE,
+			v:        ENVELOPE_V,
+			eid:      eid,
+			// The LEASE and PROGRESS key. A compile is not a turn, but every keyed door
+			// here takes a string, so it gets one that cannot collide with a turn id.
+			cid:      String(o.cid || ('cmp-' + eid)),
+			main:     String(o.main || ''),
+			want:     String(o.want || 'vector'),	// vector | pdf | publish
+			// The folder token hash the dispatcher last saw for this document. '' means
+			// "any folder"; a runner whose own token differs refuses rather than compiling
+			// a book out of the wrong tree.
+			wsid:     String(o.wsid || ''),
+			docKey:   String(o.docKey || ''),
+			files:    o.files || [],		// [{ path, sha, text }]
+			refs:     o.refs  || [],		// [{ path, sha, ref: <manifest v2> }]
+			expect:   o.expect || { imports: [], hashes: {} },
+			deadline: +o.deadline || 0,		// epoch-ms (NOT |0: ms overflows 32 bits)
+			dispatchedBy: String(o.dispatchedBy || ''),
+			ts:       o.ts || Date.now(),
+		};
+	}
+
+	/// Build a built report (not yet sealed): what the layout cost, what it read, and
+	/// where the artifact is. The artifact itself never rides here -- it is chunks
+	/// under `@p/<docKey>`, named by `vector`/`pdf` as manifests -- so the report stays
+	/// a small write on the same 64 KiB door a turn's report uses.
+	function makeBuilt(f) {
+		var o = f || {};
+		return {
+			t:       T_BUILT,
+			v:       ENVELOPE_V,
+			eid:     String(o.eid || ''),
+			cid:     String(o.cid || ''),
+			main:    String(o.main || ''),
+			status:  String(o.status || 'done'),	// done | error | refused | stale
+			why:     o.why ? String(o.why) : '',	// the compiler's sentence, or the check's
+			by:      String(o.by || ''),			// the lease holder, named by id not by label
+			ms:      o.ms | 0,						// wall time of the compile alone
+			heap:    o.heap || { before: 0, after: 0, growth: 0, headroom: 0 },
+			pages:   o.pages | 0,
+			imports: o.imports || [],				// out.watch -- the import set as compiled
+			hashes:  o.hashes || {},				// so the phone can tell stale from current
+			wrote:   o.wrote || [],					// what the runner put into the real folder
+			// WHICH FILES MOVED between dispatch and write. A second save landing in that
+			// window is not an error and not a reason to refuse -- it is compiled anyway
+			// and named, and the phone decides whether to ask again.
+			moved:   o.moved || [],
+			vector:  o.vector || null,				// manifest v2, or null on pdf/publish
+			pdf:     o.pdf || null,
+			docKey:  String(o.docKey || ''),
+			ts:      o.ts || Date.now(),
+		};
+	}
+
 	/// Build a consent-ask (not yet sealed): a runner's live question for a human.
 	/// `cid` names THIS question and is minted FRESH on every ask (including a
 	/// re-raise), so a captured or replayed grant for a spent `cid` matches nothing.
@@ -475,10 +608,14 @@
 	var _onReport = null;
 	var _onAsk    = null;	// a runner's live consent question, raised on an attended device
 	var _onGrant  = null;	// an attended device's answer, delivered to the awaiting runner
+	var _onCompile = null;	// a compile errand, run on a machine that holds the folder
+	var _onBuilt   = null;	// the runner's account of a compile, collected by the dispatcher
 	function onErrand(fn) { _onErrand = fn; }
 	function onReport(fn) { _onReport = fn; }
 	function onAsk(fn)    { _onAsk = fn; }
 	function onGrant(fn)  { _onGrant = fn; }
+	function onCompile(fn) { _onCompile = fn; }
+	function onBuilt(fn)   { _onBuilt = fn; }
 
 	/// Verify a peeked envelope and, if it was authored by this account, hand it to
 	/// the registered runner. An envelope that does not verify is DROPPED with a
@@ -498,6 +635,10 @@
 		else if (obj.t === T_REPORT && _onReport) await _onReport(obj, row);
 		else if (obj.t === T_ASK    && _onAsk)    await _onAsk(obj, row);
 		else if (obj.t === T_GRANT  && _onGrant)  await _onGrant(obj, row);
+		// A compile stands down the same way an errand does -- the result is propagated
+		// so takeRow can HOLD the errand on the relay for a runner that deferred.
+		else if (obj.t === T_COMPILE && _onCompile) result = await _onCompile(obj, row);
+		else if (obj.t === T_BUILT   && _onBuilt)   await _onBuilt(obj, row);
 		return { routed: true, verified: true, result: result };
 	}
 
@@ -538,6 +679,12 @@
 			} else if (obj.t === T_GRANT) {
 				tally.grants = (tally.grants | 0) + 1;
 				if (h.onGrant) await h.onGrant(obj, row);
+			} else if (obj.t === T_COMPILE) {
+				tally.compiles = (tally.compiles | 0) + 1;
+				if (h.onCompile) await h.onCompile(obj, row);
+			} else if (obj.t === T_BUILT) {
+				tally.builts = (tally.builts | 0) + 1;
+				if (h.onBuilt) await h.onBuilt(obj, row);
 			}
 		}
 		return tally;
@@ -973,7 +1120,8 @@
 	/// `mobile` is the machine's own answer to whether it is a phone or a tablet. STICKY,
 	/// unlike the posture: it is a boot-time fact about the machine, so a beat that cannot
 	/// say keeps what the device already said rather than unsaying it.
-	function presenceBeat(deviceId, name, now, attended, servicing, build, runner, mobile) {
+	function presenceBeat(deviceId, name, now, attended, servicing, build, runner, mobile,
+		hand, folder) {
 		var id = String(deviceId || '');
 		if (!id) return false;
 		var n = now == null ? Date.now() : now;
@@ -997,6 +1145,16 @@
 		// mean "fall back to the old inference", never "desktop".
 		if (mobile != null) _presence[id].mobile = !!mobile;
 		else if (prev && typeof prev.mobile === 'boolean') _presence[id].mobile = prev.mobile;
+		// THE TWO PLACEMENT FIELDS. `hand` is whether this machine can reach a machine
+		// hand at all; `folder` whether it holds the real, mounted workspace rather than
+		// a browser replica. LIVE, not sticky like `mobile`: a hand unplugged and a
+		// folder grant withdrawn must both stop reading as present on the very next beat,
+		// so an explicit false is carried through and only ABSENCE keeps the last answer
+		// (a beat that could not ask is not the device saying no).
+		if (hand != null)   _presence[id].hand = !!hand;
+		else if (prev && typeof prev.hand === 'boolean') _presence[id].hand = prev.hand;
+		if (folder != null) _presence[id].folder = !!folder;
+		else if (prev && typeof prev.folder === 'boolean') _presence[id].folder = prev.folder;
 		return true;
 	}
 
@@ -1035,6 +1193,13 @@
 				// "desktop" about a device that never said.
 				if (typeof inc.mobile === 'boolean') adopted.mobile = inc.mobile;
 				else if (cur && typeof cur.mobile === 'boolean') adopted.mobile = cur.mobile;
+				// The placement pair, preserved ABSENT the same way -- the election skips a
+				// peer that cannot say rather than striking it out, so absence has to survive
+				// the merge as absence.
+				if (typeof inc.hand === 'boolean') adopted.hand = inc.hand;
+				else if (cur && typeof cur.hand === 'boolean') adopted.hand = cur.hand;
+				if (typeof inc.folder === 'boolean') adopted.folder = inc.folder;
+				else if (cur && typeof cur.folder === 'boolean') adopted.folder = cur.folder;
 				_presence[id] = adopted;
 				moved = true;
 			}
@@ -1098,6 +1263,13 @@
 			// from "says desktop". Coercing absent to false would seat a phone on an old
 			// build; coercing it to true would strand a fleet mid-rollout.
 			if (typeof rec.mobile === 'boolean') recOut.mobile = rec.mobile;
+			// The placement pair, relayed verbatim (booleans, no clock in them). LEFT
+			// ABSENT when the gateway or the peer does not send them, because the election
+			// must be able to tell "cannot say" from "has not got it": the first is named
+			// as a maybe, the second is struck out, and a fleet mid-rollout is full of the
+			// first. Coercing absent to false is how seq 217 struck a live runner out.
+			if (typeof rec.hand === 'boolean')   recOut.hand   = rec.hand;
+			if (typeof rec.folder === 'boolean') recOut.folder = rec.folder;
 			next[String(id)] = recOut;
 		}
 		var before = JSON.stringify(_presence);
@@ -1463,6 +1635,19 @@
 		return !!(rec && rec.runner);
 	}
 
+	/// Does this presence record MEET the caller's requirement -- a beat field that must
+	/// be explicitly true for this peer to be seated at all?
+	///
+	/// `placeTask` uses it for `hand` and `folder`: only a machine that holds the machine
+	/// hand may be seated for a `run`, and only one that holds the real folder is worth
+	/// handing a compile to. ABSENT IS NOT FALSE, and that distinction is the seq-218
+	/// rollout rule applied here: a peer on a build that predates the field cannot say,
+	/// so it is skipped from the LIVE pass (nothing is dispatched on a guess) and named
+	/// by `nobody()` as unknown rather than struck out as lacking it.
+	function meetsRequire(rec, req) {
+		return !req || (!!rec && rec[req] === true);
+	}
+
 	/// Answers `{ target, reason }` where `target` is `{ deviceId, name, lastSeen, build,
 	/// staleBuild? }` or null (→ run local), and `reason` is one of
 	/// `nominee` / `nominee-presumed` / `worker` / `other-desktop` / `local`.
@@ -1486,7 +1671,8 @@
 		// absent from presence simply misses this, and the label match below recovers it.
 		if (nom && nom !== self && !exclude[nom]) {
 			var nr = p[nom];
-			if (nr && !recMobileView(nr) && (n - leaseMs(nr.lastSeen)) <= nomWin) {
+			if (nr && !recMobileView(nr) && meetsRequire(nr, o.require)
+				&& (n - leaseMs(nr.lastSeen)) <= nomWin) {
 				var presumed = (n - leaseMs(nr.lastSeen)) > w;		// seated on trust, not a fresh beat
 				var nb = String(nr.build || '');
 				var nomStale = !!(cur && nb && nb !== cur);
@@ -1515,7 +1701,7 @@
 				if (!Object.prototype.hasOwnProperty.call(p, id)) continue;
 				if (id === self || exclude[id]) continue;
 				var r = p[id];
-				if (!r || recMobileView(r)) continue;
+				if (!r || recMobileView(r) || !meetsRequire(r, o.require)) continue;
 				if ((n - leaseMs(r.lastSeen)) > w) continue;
 				if (normLabel(r.name) !== pref) continue;
 				byLabel.push({ deviceId: id, name: (r.name || ''), lastSeen: leaseMs(r.lastSeen), build: String(r.build || '') });
@@ -1545,7 +1731,7 @@
 			if (!Object.prototype.hasOwnProperty.call(p, id3)) continue;
 			if (id3 === self || exclude[id3]) continue;
 			var r3 = p[id3];
-			if (!r3 || !recRunner(r3) || recMobileView(r3)) continue;
+			if (!r3 || !recRunner(r3) || recMobileView(r3) || !meetsRequire(r3, o.require)) continue;
 			if ((n - leaseMs(r3.lastSeen)) > w) continue;
 			runners.push({ deviceId: id3, name: (r3.name || ''), lastSeen: leaseMs(r3.lastSeen), build: String(r3.build || '') });
 		}
@@ -1561,7 +1747,7 @@
 			if (!Object.prototype.hasOwnProperty.call(p, id2)) continue;
 			if (id2 === self || exclude[id2]) continue;
 			var r2 = p[id2];
-			if (!r2 || recMobileView(r2)) continue;
+			if (!r2 || recMobileView(r2) || !meetsRequire(r2, o.require)) continue;
 			if (!recGenuine(r2, n, w)) continue;
 			desks.push({ deviceId: id2, name: (r2.name || ''), lastSeen: leaseMs(r2.lastSeen), build: String(r2.build || '') });
 		}
@@ -1726,6 +1912,207 @@
 			reason:   d.reason,
 			dispatch: false,
 		};
+	}
+
+	// ════════════════════════════════════════════════════════════
+	// WHERE A TASK RUNS — the placement (owner design, 2026-09-14).
+	// ------------------------------------------------------------
+	// The seat line answers that question for a TURN. Everything else the app does
+	// -- laying a book out, running the project's publish script -- answered it by
+	// assuming "here", which is right on a desktop and was the whole of the fault on a
+	// phone: the author's 48-page book is 29 files the phone may not hold and 306 MB of
+	// wasm heap it may not have, and pressing Compile there produced either a file the
+	// gather could not reach or a tab iOS ended without a word.
+	//
+	// So the same election answers for the rest of the work. `placeTask` sits beside
+	// `seatPlan` and calls through to it for a turn, so a compile and a turn cannot name
+	// different machines for one presence snapshot, and it moves a task ONLY for a need
+	// the device demonstrably cannot meet -- a file it does not hold, a heap it cannot
+	// afford, a machine hand it has not got. Never for a preference, and never for a
+	// guess about which machine is "better".
+	// ════════════════════════════════════════════════════════════
+
+	// The closed vocabulary. A task is one of these and nothing else, so the rule table
+	// is something a test enumerates rather than something it guesses at.
+	var TASK_KINDS = ['edit', 'view', 'save', 'compile', 'publish', 'dev', 'run',
+		'verify', 'serve', 'terminal', 'turn'];
+
+	// The four placement reasons, beside the three `seatPlan` already names. `here` is
+	// in the set on purpose: "everything it needs is here" is an answer, and a reason
+	// the tooltip gives, not the absence of one.
+	var PLACE_WHYS = ['here', 'missing-files', 'too-large', 'needs-hand',
+		'runner-silent', 'no-desktop', 'chat-local'];
+
+	/// Is `k` a task kind this layer places?
+	function taskKind(k) { return TASK_KINDS.indexOf(String(k)) >= 0; }
+
+	/// The i18n key for the BUTTON, given the kind and where the task landed. Only the
+	/// two kinds that have a button answer; everything else places without saying so.
+	function placeKey(kind, where) {
+		var compile = kind === 'compile';
+		var hand = ['publish', 'dev', 'run', 'verify', 'serve', 'terminal'].indexOf(kind) >= 0;
+		if (!compile && !hand) return '';		// nothing else is drawn as a button
+		if (where === 'here')   return hand ? 'files.publish_here' : 'files.compile_here';
+		if (where === 'runner') return hand ? 'files.publish_on'   : 'files.compile_on';
+		return '';
+	}
+
+	/// The i18n key for the HOVER, given the reason. The button says where; the title
+	/// says why, which is the shape the seat line settled on (owner, 2026-09-13).
+	function placeTitleKey(why) {
+		return why === 'here'          ? 'place.why_here'
+			: why === 'missing-files' ? 'place.why_missing_files'
+			: why === 'too-large'     ? 'place.why_too_large'
+			: why === 'needs-hand'    ? 'place.why_needs_hand'
+			: '';
+	}
+
+	/// `opts` with a beat field every candidate must explicitly carry as true.
+	function withRequire(opts, field) {
+		var o = {};
+		for (var k in (opts || {})) {
+			if (Object.prototype.hasOwnProperty.call(opts, k)) o[k] = opts[k];
+		}
+		o.require = field;
+		return o;
+	}
+
+	/// The LAST DEVICE THE ROSTER SAW carrying `field`, so a refusal can name argonaut
+	/// while argonaut is asleep. Answers `{ deviceId, name, known }` -- `known` false
+	/// where the roster holds a plausible machine that has simply never said (an older
+	/// build), which is named as a maybe and never struck out.
+	function lastSeenWith(roster, field, selfId) {
+		var r = roster || {}, self = String(selfId || '');
+		var sure = null, maybe = null;
+		for (var id in r) {
+			if (!Object.prototype.hasOwnProperty.call(r, id)) continue;
+			if (id === self) continue;
+			var rec = r[id];
+			if (!rec || rec.mobile === true) continue;		// a phone is never the answer here
+			var when = leaseMs(rec.lastSeen);
+			if (rec[field] === true) {
+				if (!sure || when > leaseMs(sure.lastSeen)) sure = { id: id, rec: rec, lastSeen: when };
+			} else if (rec[field] == null) {
+				if (!maybe || when > leaseMs(maybe.lastSeen)) maybe = { id: id, rec: rec, lastSeen: when };
+			}
+		}
+		var pick = sure || maybe;
+		if (!pick) return { deviceId: '', name: '', known: false };
+		return { deviceId: pick.id, name: String(pick.rec.name || ''), known: !!sure };
+	}
+
+	/// The placement answer, assembled once so every arm has the same fields.
+	function placed(where, need, f) {
+		var o = f || {};
+		return {
+			where:    where,
+			key:      o.key != null ? o.key : placeKey(need.kind, where),
+			titleKey: o.titleKey != null ? o.titleKey : placeTitleKey(o.why || 'here'),
+			label:    String(o.label || ''),
+			deviceId: String(o.deviceId || ''),
+			why:      String(o.why || 'here'),
+			reason:   String(o.reason || ''),
+			// The two measured numbers, so the tooltip can state the case rather than
+			// assert it: how many files are missing, and the megabytes on each side.
+			n:        o.n | 0,
+			needMB:   o.needMB | 0,
+			roomMB:   o.roomMB | 0,
+			need:     need,
+			seat:     o.seat || null,
+			can:      where !== 'nobody',
+		};
+	}
+
+	/// Where should this task run? Pure, and the SAME election a turn takes.
+	///
+	/// `need` is the `TaskNeed` the caller declares at the moment the button is drawn
+	/// (and again at the click, because files change); `ledger` is this device's own
+	/// answer about itself; `presence` the live beats; `opts` the seat options plus a
+	/// `roster` of last-known device lines. Answers
+	///
+	///   { where, key, titleKey, label, deviceId, why, reason, n, needMB, roomMB,
+	///     need, seat, can }
+	///
+	/// `where` is `here`, `runner` or `nobody`; `why` is drawn from `PLACE_WHYS`.
+	function placeTask(need, ledger, presence, opts, now) {
+		var n = need || {}, L = ledger || {}, p = presence || {}, o = opts || {};
+		var t = now == null ? Date.now() : now;
+		var kind = String(n.kind || '');
+
+		function here(why) {
+			return placed('here', n, { why: why || 'here',
+				deviceId: String(L.deviceId || o.selfId || ''), label: String(o.selfName || '') });
+		}
+		function onRunner(res, why, more) {
+			var tgt = res.target || {};
+			var m = more || {};
+			return placed('runner', n, { why: why, reason: res.reason,
+				deviceId: String(tgt.deviceId || ''), label: String(tgt.name || ''),
+				n: m.n, needMB: m.needMB, roomMB: m.roomMB });
+		}
+		function nobody(field, why, more) {
+			var last = lastSeenWith(o.roster, field, o.selfId);
+			var m = more || {};
+			return placed('nobody', n, {
+				// NAMED, AND HONESTLY. A machine the roster has seen holding this is named;
+				// one that has simply never said is named as a maybe -- never struck out,
+				// which is the seq-218 rollout rule (an old runner must not disappear from
+				// Publish the way it once disappeared from hand-off).
+				key:      last.deviceId ? (last.known ? 'place.nobody' : 'place.nobody_maybe')
+					: 'place.nobody_generic',
+				titleKey: placeTitleKey(why),
+				deviceId: last.deviceId, label: last.name, why: why,
+				n: m.n, needMB: m.needMB, roomMB: m.roomMB });
+		}
+
+		// 1. HERE BY ROUTE. Editing and viewing want the person; a save is here because
+		// the bytes are here and the sync carries them on. No election is consulted: a
+		// rule presence could argue with is not a rule.
+		if (kind === 'edit' || kind === 'view' || kind === 'save') return here('here');
+
+		// 2. A TURN KEEPS THE EXISTING ELECTION VERBATIM. `seatPlan` is the answer and
+		// this is only a wrapper, so the seat line and the Send button stay one thing.
+		if (kind === 'turn') {
+			var sp = seatPlan(o.chat, p, o, t);
+			return placed(sp.where === 'local' ? 'here' : 'runner', n, {
+				key:      '',			// the seat line owns its own wording
+				titleKey: '',
+				label: sp.label, deviceId: sp.deviceId, why: sp.why || '', reason: sp.reason,
+				seat: sp });
+		}
+
+		// 3. THE HAND-BEARING TASKS. Only a device with the machine hand may run them, so
+		// the question is "which Hand-bearing device is awake", not "where would a turn
+		// go". The election is reused with a FILTER, so the nominee/label/posture/desktop
+		// order is the seat plan's, restricted to peers whose beat says `hand`.
+		if (n.hand) {
+			if (L.hand) return here('here');
+			var h = handoffTarget(p, withRequire(o, 'hand'), t);
+			if (h.target) return onRunner(h, 'needs-hand');
+			return nobody('hand', 'needs-hand');
+		}
+
+		// 4. A COMPILE. Two measurable needs and nothing else moves it (owner rule): a
+		// file this device does not hold, or a heap the device cannot afford.
+		if (kind === 'compile') {
+			var miss = (L.files && L.files.missing) ? L.files.missing : [];
+			var room = (L.budgetMB | 0) - (L.heapMB | 0);
+			// 0 means NO ESTIMATE YET, which is not the same as "it will fit": with no
+			// measurement the compile happens here and the local heap guard holds it, which
+			// is what it is for. A number is only ever trusted downwards.
+			var want = (n.memoryMB > 0) ? (n.memoryMB + (L.headroom | 0)) : 0;
+			if (!miss.length && (want === 0 || want <= room)) return here('here');
+			var why = miss.length ? 'missing-files' : 'too-large';
+			var more = { n: miss.length, needMB: want, roomMB: room };
+			// A runner that HOLDS THE FOLDER, so the book it lays out is the real one and
+			// the PDF it writes lands beside the source rather than in a replica.
+			var r = handoffTarget(p, withRequire(o, 'folder'), t);
+			if (r.target) return onRunner(r, why, more);
+			return nobody('folder', why, more);
+		}
+
+		// Every other kind is local until it declares a need.
+		return here('here');
 	}
 
 	// ── The nominated always-on runner (the claim guard) ───────
@@ -3028,6 +3415,208 @@
 		}
 	}
 
+	// ════════════════════════════════════════════════════════════
+	// THE COMPILE ON THE RUNNER
+	// ------------------------------------------------------------
+	// `runErrand`'s skeleton with the turn engine swapped for a layout, kept in that
+	// order because the order is the money- and data-safety: nothing is written before
+	// the lease is won, nothing is acked before the report is posted, and a lease taken
+	// back mid-compile stops the run rather than racing it.
+	// ════════════════════════════════════════════════════════════
+
+	/// Run one compile errand end to end. Pure over injected `deps`:
+	///
+	///   selfId, selfName, nominatedId, presence, freshWindowMs, allowSelf, cas, now
+	///                as `runErrand` takes them;
+	///   finished  async (errand) -> bool: a `built` for this eid was already collected;
+	///   check     async (errand) -> { ok, why }: does this device hold the folder the
+	///             errand was written for (the `wsid` match), and can it compile at all;
+	///   write     async (files)  -> { wrote:[paths], moved:[paths] }: put the carried
+	///             bytes into the real folder. ALL of them before the compile, so the
+	///             runner's own watch fires `touched` once and not once per file;
+	///   compile   async (main, want) -> { vector?, pdf?, pages, watch, hashes, ms,
+	///             heap:{before,after,growth,headroom}, error? }. It goes THROUGH the
+	///             runner's own watch where the watch holds this document, so a write
+	///             and an errand are ONE layout and one heap growth, not two;
+	///   offload   async (bytes, docKey) -> manifest v2, or null where the device
+	///             cannot offload (no cloud, identity locked);
+	///   frame     async (cid, text, final): one line on the progress door;
+	///   post      async (builtEnvelope);
+	///   ack       async ().
+	///
+	/// Answers `{ ran, done?, error?, refused?, aborted?, why?, holder?, trace }`.
+	async function runCompileErrand(errand, deps) {
+		var d = deps || {}, e = errand || {};
+		var cid = String(e.cid || '');
+		var trace = [];
+		diag('collect compile', 'cid=' + cid
+			+ ' main=' + String(e.main || '')
+			+ ' by=' + String(e.dispatchedBy || '').slice(0, 8));
+
+		// The same three stand-downs a turn takes, and for the same reasons: a device
+		// must not run its own dispatch on the automatic path, must not re-run a compile
+		// already reported, and must leave the claim to a freshly-awake nominee.
+		if (!d.allowSelf && e.dispatchedBy && String(e.dispatchedBy) === String(d.selfId)) {
+			trace.push('self-dispatched');
+			return { ran: false, why: 'self-dispatched', trace: trace };
+		}
+		if (d.finished) {
+			var already = false;
+			try { already = await d.finished(e); } catch (err) { already = false; }
+			if (already) { trace.push('already-done'); return { ran: false, why: 'already-done', trace: trace }; }
+		}
+		if (!d.allowSelf && nominationStandDown(d.nominatedId, d.selfId, d.presence,
+			leaseNow(d.now), d.freshWindowMs)) {
+			trace.push('stood-down-for-nominee');
+			return { ran: false, why: 'nominee', trace: trace };
+		}
+		if (!d.cas || typeof d.cas.read !== 'function') {
+			trace.push('no-cas');
+			return { ran: false, why: 'no-cas', trace: trace };
+		}
+
+		// 1. TAKE. The same take-if-vacant CAS a turn uses, on the compile's own key, so
+		// two awake runners cannot each lay the book out and each grow a heap for it.
+		var took = await leaseTake(cid,
+			{ holder: d.selfId, eid: e.eid, deadline: e.deadline }, d.cas, d.now);
+		trace.push('take');
+		if (!took.won) {
+			return { ran: false, why: took.why || 'stood-down', holder: took.holder, trace: trace };
+		}
+
+		var revoked = false, checkStopped = false, checkTimer = null;
+		var checkStart = leaseNow(d.now);
+		var maxLife = (d.maxLeaseLifeMs != null) ? d.maxLeaseLifeMs : MAX_LEASE_LIFE_MS;
+		var setT = d.setTimer   || (typeof setInterval   === 'function' ? setInterval   : null);
+		var clrT = d.clearTimer || (typeof clearInterval === 'function' ? clearInterval : null);
+		function stopCheck() {
+			checkStopped = true;
+			if (checkTimer != null && clrT) { try { clrT(checkTimer); } catch (err) {} checkTimer = null; }
+		}
+		// READ-ONLY, exactly as the turn's is: it never writes the parcel, so a compile
+		// in flight causes no churn. It detects the take-back -- the phone pressed
+		// "Compile here" -- and stops this run rather than letting two devices lay the
+		// same book out at once.
+		async function liveness() {
+			if (checkStopped || revoked) return;
+			if (leaseNow(d.now) - checkStart > maxLife) { stopCheck(); revoked = true; return; }
+			var snap;
+			try { snap = await d.cas.read(); } catch (err) { return; }
+			var cur = (snap && snap.leases) ? snap.leases[cid] : null;
+			if (!cur || cur.holder !== String(d.selfId) || cur.mode === 'released') {
+				revoked = true;
+				trace.push('abort');
+			}
+		}
+		async function say(text, final) {
+			if (!d.frame) return;
+			try { await d.frame(cid, text, !!final); trace.push(final ? 'final' : 'frame'); }
+			catch (err) { /* a dropped frame is only a quieter stream */ }
+		}
+		async function release() {
+			try { await leaseSet(cid, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
+			catch (err) { /* an unreleased lease still expires at its deadline */ }
+		}
+		async function report(f) {
+			try {
+				await d.post(makeBuilt(Object.assign({ eid: e.eid, cid: cid, main: e.main,
+					docKey: e.docKey, by: String(d.selfId || '') }, f)));
+				trace.push('report');
+			} catch (err) { /* the release below still frees the compile */ }
+		}
+
+		try {
+			if (setT) checkTimer = setT(function () { liveness(); }, RENEW_EVERY_MS);
+
+			// 2. CHECK. A runner whose folder token differs from the one the errand was
+			// written for refuses rather than laying out a book from another tree -- the
+			// bytes would be written into the wrong project and the pages would be of a
+			// document nobody asked for.
+			var ck = { ok: true, why: '' };
+			if (d.check) { try { ck = (await d.check(e)) || { ok: false, why: 'no answer' }; }
+				catch (err) { ck = { ok: false, why: String((err && err.message) || err) }; } }
+			trace.push('check');
+			if (!ck.ok) {
+				await report({ status: 'refused', why: String(ck.why || '') });
+				await release();
+				try { if (d.ack) { await d.ack(); trace.push('ack'); } } catch (err) {}
+				return { ran: false, refused: true, why: String(ck.why || ''), trace: trace };
+			}
+
+			// 3. WRITE. Every carried file before any compile, so the watch's own
+			// `daimond-file-written` handler coalesces them into ONE rebuild rather than
+			// one per file -- and so the compile below sees the whole set, never half of it.
+			await say('gathering');
+			var wrote = [], moved = [];
+			if (d.write) {
+				var w = (await d.write(e)) || {};
+				wrote = w.wrote || [];
+				moved = w.moved || [];
+			}
+			trace.push('write');
+			if (revoked) { stopCheck(); return { ran: true, aborted: true, why: 'revoked', trace: trace }; }
+
+			// 4. COMPILE. Through the watch where the watch holds this document, so the
+			// write above and this errand are one layout: two would be two heap growths on
+			// a heap that only ever grows (about 10 MB each on the author's book).
+			var out;
+			try { out = (await d.compile(e.main, e.want)) || {}; }
+			catch (err) { out = { error: String((err && err.message) || err) }; }
+			trace.push('compile');
+			if (revoked) { stopCheck(); return { ran: true, aborted: true, why: 'revoked', trace: trace }; }
+			var heap = out.heap || { before: 0, after: 0, growth: 0, headroom: 0 };
+			if (out.error) {
+				// THE RUNNER DID RUN. A compile error is the document's, not the placement's,
+				// so it is reported, acked and not left on the relay for a second machine to
+				// hit the same error at the same cost.
+				await report({ status: 'error', why: String(out.error), ms: out.ms | 0,
+					heap: heap, imports: out.watch || [], hashes: out.hashes || {}, wrote: wrote });
+				await release();
+				try { if (d.ack) { await d.ack(); trace.push('ack'); } } catch (err) {}
+				return { ran: true, error: true, why: String(out.error), trace: trace };
+			}
+			await say('laid out ' + (out.pages | 0) + ' pages in ' + (out.ms | 0) + ' ms');
+
+			// 5. OFFLOAD. The artifact goes as chunks under the document's own key, and the
+			// index rides the runner's next parcel -- a folder-mounted runner cannot COMMIT
+			// it, which is exactly why the dispatcher adopts the ref and commits for it.
+			var vector = null, pdf = null;
+			if (d.offload) {
+				if (out.vector && out.vector.length) vector = await d.offload(out.vector, e.docKey, 'vector');
+				if (out.pdf && out.pdf.length)       pdf    = await d.offload(out.pdf, e.docKey, 'pdf');
+			}
+			trace.push('offload');
+			if (vector && vector.chunks) await say('uploading ' + vector.chunks.length + ' chunks');
+			if (revoked) { stopCheck(); return { ran: true, aborted: true, why: 'revoked', trace: trace }; }
+
+			// 6. THE ANSWER TRAVELS, THEN THE ACCOUNT OF IT. The final frame first (the
+			// dispatcher is watching that door), then the report, then the lease, then the
+			// ack -- ack LAST, so a crash before the report leaves the errand on the relay
+			// and the dispatcher's own "Compile here" is still the way out.
+			stopCheck();
+			await say('built', true);
+			await report({
+				status: moved.length ? 'stale' : 'done',
+				ms: out.ms | 0, heap: heap, pages: out.pages | 0,
+				imports: out.watch || [], hashes: out.hashes || {},
+				wrote: wrote, moved: moved, vector: vector, pdf: pdf });
+			await release();
+			try { if (d.ack) { await d.ack(); trace.push('ack'); } }
+			catch (err) { /* a missed ack costs one idempotent re-collect, never a re-compile */ }
+			return { ran: true, done: true, pages: out.pages | 0, vector: vector, trace: trace };
+		} catch (err) {
+			// A THROW BEFORE THE REPORT is a fact about THIS device, so the account goes
+			// home and the lease is freed -- but the errand is NOT acked, because another
+			// Hand-bearing machine may still be able to lay the document out.
+			var why = String((err && err.message) || err);
+			await report({ status: 'error', why: why });
+			await release();
+			return { ran: true, error: true, why: why, trace: trace };
+		} finally {
+			stopCheck();
+		}
+	}
+
 	// ── Public surface ─────────────────────────────────────────
 	/// Does this errand name THIS device as its dispatcher? The sender must NOT ack
 	/// its own un-run errand off the shared relay -- only the peer that actually runs
@@ -3188,6 +3777,11 @@
 		/// an attended device; `onGrant` delivers the answer to the awaiting runner.
 		onAsk:    onAsk,
 		onGrant:  onGrant,
+		/// Register the compile handlers: `onCompile` runs a compile errand on a machine
+		/// that holds the folder; `onBuilt` delivers the runner's account to the device
+		/// that asked for it.
+		onCompile: onCompile,
+		onBuilt:   onBuilt,
 		/// Route a batch of collected rows by their sealed type tag (direct-drive).
 		routeRows:   routeRows,
 		/// Fold a peer's answer into a transcript as an append.
@@ -3241,6 +3835,35 @@
 		/// `autoDispatchDecision` the send takes, mapped to an i18n key, a device label and
 		/// whether running here is something the user must act on.
 		seatPlan:      seatPlan,
+		/// WHERE ANY TASK RUNS -- the placement. A turn goes through `seatPlan` verbatim;
+		/// a compile moves only for a file this device does not hold or a heap it cannot
+		/// afford; a `run` moves only to a device that holds the machine hand. Pure, so
+		/// `dev/verify_place.mjs` enumerates the whole rule table without a browser.
+		placeTask:     placeTask,
+		taskKind:      taskKind,
+		TASK_KINDS:    TASK_KINDS,
+		PLACE_WHYS:    PLACE_WHYS,
+		/// The two key-choosing halves of the placement, lifted so the button's words and
+		/// the tooltip's are one table a test can enumerate rather than two call sites.
+		placeKey:      placeKey,
+		placeTitleKey: placeTitleKey,
+		/// Does a presence record carry a required beat field as EXPLICITLY true? Absent
+		/// is unknown, never false -- the rollout rule the seq-218 regression taught.
+		meetsRequire:  meetsRequire,
+		/// THE COMPILE HAND-OFF. `compilePlan` decides what rides inline and what must be
+		/// offloaded (and refuses an errand that is really a missed sync);
+		/// `makeCompileErrand`/`makeBuilt` are the two envelopes; `runCompileErrand` is
+		/// the runner's whole side, pure over injected deps; `docKeyFor` is the one key a
+		/// document's live preview is stored under.
+		compilePlan:       compilePlan,
+		makeCompileErrand: makeCompileErrand,
+		makeBuilt:         makeBuilt,
+		runCompileErrand:  runCompileErrand,
+		docKeyFor:         docKeyFor,
+		COMPILE_FILES_MAX:    COMPILE_FILES_MAX,
+		COMPILE_FILE_CHARS:   COMPILE_FILE_CHARS,
+		COMPILE_INLINE_CHARS: COMPILE_INLINE_CHARS,
+		COMPILE_DEADLINE_MS:  COMPILE_DEADLINE_MS,
 		freshestPeer:  freshestPeer,
 		/// The genuine-availability gate: `recGenuine` -- is a presence record beating AND
 		/// servicing the errand channel (not a phantom background tab)? -- and

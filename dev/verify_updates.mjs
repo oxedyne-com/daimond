@@ -79,7 +79,13 @@ try {
 	check('a newer build is detected on re-check', sawPending);
 	check('foreground does NOT auto-reload', (await page.evaluate(() => window.__m)) === 1);
 	check('chip shows "ready"', (await state()) === 'ready');
-	check('chip carries the "what changed" note', (await title()).includes('second'));
+	// Since 3202f51, the stamp's `note` is the deploy's transparency-chain commit
+	// subject, not user copy, and is deliberately kept OUT of the chip -- it read
+	// as garbage in a popup. The property now guaranteed is the opposite of what
+	// this used to assert: the generic "ready" label shows, and the note never
+	// leaks into it.
+	check('chip carries the generic "ready" label, not the deploy\'s internal note',
+		(await title()).includes('Update ready') && !(await title()).includes('second'));
 
 	// ── C. A running turn suppresses even a forced click. ───────────────────
 	await setBusy(true);
@@ -98,7 +104,9 @@ try {
 	check('a click while idle reloads', reloaded);
 	const doneShown = await until(page, () => (document.getElementById('update-chip') || {}).dataset?.state === 'done', 4000);
 	check('after the update the chip says "updated"', doneShown);
-	check('the "updated" note is carried across the reload', (await title()).includes('second'));
+	// Same as the "ready" chip above: the done label is generic and note-free.
+	check('the "updated" chip stays generic, not carrying the deploy\'s internal note',
+		(await title()).includes('Daimond updated') && !(await title()).includes('second'));
 
 	// ── E. No stamp deployed → the chip stays silent. ───────────────────────
 	await reboot(null);

@@ -1520,6 +1520,7 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} file did not fit in this device’s sync parcel and will not reach your other devices until there is room for it: {names}',
 	'sync.files_left.other':    '{n} files did not fit in this device’s sync parcel and will not reach your other devices until there is room for them: {names}',
+	'sync.folder_too_big':      'The folder you marked in weighs {size}, over the {max} a shared folder may take, so none of it is going to your other devices. Mark in a smaller folder, or take some of this one out of it.',
 	// A session that has ended and could not be taken again. Same label as the
 	// two below for the same reason: what the user needs to know is that this
 	// device's work is not travelling, and the difference is in the hover.
@@ -2061,6 +2062,23 @@
 	'seat.why_chat_local':       'This chat is pinned to this device.',
 	'seat.tile_local_mobile':    'Runs here — keep this open',
 	'seat.retry':                '{from} did not pick it up; trying {to}',
+	// ── WHERE A TASK OTHER THAN A TURN RUNS (owner design, 2026-09-14) ──
+	// A compile and a publish are placed by the same election a turn is, and the
+	// button says WHERE while its tooltip says WHY. A task moves only for a need this
+	// device demonstrably cannot meet -- a file it does not hold, a heap it cannot
+	// afford, a machine hand it has not got -- so every sentence here names the
+	// measurement rather than asserting a preference.
+	// The button and its title name their own keys (DaimondPeer.placeTask chooses),
+	// so the call sites cannot be read for them. Both sets are closed.
+	// i18n-indirect: daimond.js place.key = files.compile_here files.compile_on files.publish_here files.publish_on place.nobody place.nobody_maybe place.nobody_generic
+	// i18n-indirect: daimond.js place.titleKey = place.why_here place.why_missing_files place.why_too_large place.why_needs_hand
+	'place.why_here':            'Everything it needs is here.',
+	'place.why_missing_files':   'Not all of this document’s files are here — {n} missing.',
+	'place.why_too_large':       'Too large for this phone: the last build needed {need} MB and this page has {room} MB.',
+	'place.why_needs_hand':      'Needs the machine hand, which {name} holds.',
+	'place.nobody':              'Needs {name} awake; it holds the folder and the dev script.',
+	'place.nobody_maybe':        '{name} may be able to do this; it has not said.',
+	'place.nobody_generic':      'No device that can do this is awake.',
 	'turn.consent_act_type':   'type into {host}',
 	'turn.consent_act_click':  'act on {host}',
 	'turn.consent_act_search': 'search the web',
@@ -2494,11 +2512,27 @@
 	'files.reloaded':        'Reloaded. The file changed on disk.',
 	'files.compile':         'Compile',
 	'files.compile_help':    'Lay this document out here and write <name>-preview.pdf beside it. The published PDF is Publish’s, and this never writes it.',
+	// ── The compile hand-off, as the Doc panel says it ──
+	'files.compile_here':    'Compile here',
+	'files.compile_on':      'Compile on {name}',
+	'files.publish_here':    'Publish here',
+	'files.publish_on':      'Publish on {name}',
+	'files.compiling_on':    'Compiling on {name} …',
+	'files.built_on':        'Built on {name}, {secs} s.',
+	'files.compile_stale':   '{name} built an older copy — {n} file(s) changed since. Compile again.',
+	'files.runner_refused':  '{name} could not compile this: {reason}',
+	'files.retrying_on':     'Compile failed here — {reason}; trying on {name} …',
+	'files.compile_too_many_changed': '{n} files here differ from the last build, which is a sync rather than a compile. Let this device sync, then compile again.',
+	'files.compile_toolarge_to_send': 'This document’s changed files are too large to send and this device cannot put them in the cloud. Sync first, then compile again.',
+	'files.compile_unsaved': 'What is compiled is what is saved — the editor still holds unsaved changes.',
+	'files.publish_running': 'The publishing script is already running on this machine; the daimon’s runs tool stops it.',
 	'files.compiling':       'compiling',
 	'files.compiling_path':  'Compiling {path} …',
 	'files.compiled':        'Compiled → {path} ({size})',
 	'files.compiled_main':   'That is {main}, which includes this file.',
 	'files.compile_failed':  'Compile failed: {reason}',
+	'files.compile_fetching': 'Fetching the pictures and fonts this device is not holding ({size}) — {path}',
+	'files.compile_fetch_too_big': 'Not compiled: the pictures and fonts this device is not holding come to {size}, past the {max} a compile fetches on its own. Fetch the ones you need from the workspace list first.',
 	'files.publish':         'Publish',
 	'files.publish_help':    'Run this project’s own dev script on your machine: print colour and a metadata scrub, writing the final PDF. Needs the machine hand.',
 	'files.publishing':      'publishing',
@@ -3189,6 +3223,9 @@
 	'typst.watch.starting': 'Laying out the pages…',
 	'typst.watch.building': 'Rebuilding…',
 	'typst.watch.live_preview': 'Live preview',
+	// Pages another device laid out. Named, because a reader who cannot see the
+	// machine that did the work is owed the sentence that says which one it was.
+	'typst.watch.given':    'Built on {name}',
 	'typst.watch.stale':    'Showing the last build that worked',
 	'typst.watch.paused':   'Paused — the pages are off screen',
 	'typst.watch.held':     'Rebuilding stopped',

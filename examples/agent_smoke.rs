@@ -73,9 +73,24 @@ async fn run() -> Outcome<()> {
             // Printed rather than ignored: a smoke run whose turn was folded, cut
             // short by the provider, or interrupted looks identical to one that
             // simply answered, and the difference is the whole point of running it.
-            AgentEvent::Compacted { folded, kept, note } =>
-                println!("\n[compacted] folded {} kept {} — {}", folded, kept, note),
+            // `structured` says whether the fold's own summary counts (a `Notes`
+            // compaction) or is prose read by nobody downstream -- worth seeing
+            // alongside the note, not folded into it.
+            AgentEvent::Compacted { folded, kept, note, structured } =>
+                println!("\n[compacted] folded {} kept {} structured={} — {}",
+                    folded, kept, structured, note),
             AgentEvent::Truncated => println!("\n[truncated] the provider cut the reply short"),
+            // The turn hit its round limit and carried on into another leg rather than
+            // stopping there. `n` counts legs from one; `rounds_so_far` is the whole
+            // turn, not this leg -- both worth seeing on a smoke run that ran long.
+            AgentEvent::Continued { n, rounds_so_far } =>
+                println!("\n[continued] leg {} — {} round(s) so far", n, rounds_so_far),
+            // A tool call arrived as bare text in the model's own syntax rather than a
+            // real call. Printed rather than silently swallowed: a leak that fixed
+            // itself (`recovered`) is still the provider getting the wire wrong, and a
+            // smoke run is exactly where that should be seen and not just repaired.
+            AgentEvent::Leaked { fragment, recovered } =>
+                println!("\n[leaked] recovered={} — {}", recovered, fragment),
             // A tool call being made again because the road went, which a smoke run has
             // to see: a turn that spent its whole ladder into a dead page and one that
             // answered first time otherwise print the same thing.  The model is never
@@ -94,10 +109,13 @@ async fn run() -> Outcome<()> {
             // reason every other arm here is: a smoke run is read by somebody deciding
             // whether the turn went the way they meant, and "answered with 4 calls, 1
             // refused" is that sentence.
-            AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing } =>
+            // `malformed` counts rounds re-sent because a tool call arrived as text
+            // rather than a real call -- a wire fault, not a refusal, and a smoke run
+            // that hid it would read a leaked call as an ordinary answer.
+            AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing, malformed } =>
                 println!("\n[ended] {} — {} tool(s) offered, {} round(s), {} call(s), \
-                    {} refused, {} failed{}",
-                    how, offered, rounds, calls, refused, failed,
+                    {} refused, {} failed, {} malformed{}",
+                    how, offered, rounds, calls, refused, failed, malformed,
                     if missing.is_empty() { String::new() }
                     else { format!(", missing: {}", missing.join(" ")) }),
         }

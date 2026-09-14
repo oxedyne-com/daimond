@@ -682,6 +682,7 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} Datei passte nicht ins Sync-Paket dieses Geräts und erreicht deine anderen Geräte erst, wenn Platz dafür ist: {names}',
 	'sync.files_left.other':    '{n} Dateien passten nicht ins Sync-Paket dieses Geräts und erreichen deine anderen Geräte erst, wenn Platz dafür ist: {names}',
+	'sync.folder_too_big':      'Der markierte Ordner wiegt {size} und liegt damit über den {max}, die ein geteilter Ordner belegen darf; deshalb geht nichts davon an deine anderen Geräte. Markiere einen kleineren Ordner, oder nimm etwas aus diesem heraus.',
 	// Eine Sitzung, die geendet hat und nicht erneuert werden konnte. Gleiche
 	// Beschriftung wie unten: Was zählt, ist, dass die Arbeit nicht weitergeht.
 	'sync.signed_out': 'Sync angehalten',
@@ -1853,6 +1854,8 @@
 	'files.compiling_path': '{path} wird gebaut …',
 	'files.compiled': 'Gebaut → {path} ({size})',
 	'files.compile_failed': 'Bauen fehlgeschlagen: {reason}',
+	'files.compile_fetching': 'Bilder und Schriften, die dieses Gerät nicht vorhält, werden geholt ({size}) — {path}',
+	'files.compile_fetch_too_big': 'Nicht kompiliert: die Bilder und Schriften, die dieses Gerät nicht vorhält, ergeben {size} und damit mehr als die {max}, die eine Kompilierung von selbst holt. Holen Sie die benötigten zuerst aus der Arbeitsbereichsliste.',
 	'files.binary_note': 'Eine Binärdatei von {size}. Sie wird gespeichert und synchronisiert wie alles hier, aber es gibt nichts zu zeigen. Lade sie herunter und öffne sie mit etwas, das sie versteht.',
 	'files.cloud': 'Cloud',
 	'files.cloud_storage': 'Cloud-Speicher',

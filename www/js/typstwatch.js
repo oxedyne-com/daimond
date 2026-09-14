@@ -408,11 +408,22 @@ const S = {
 	rail:     false,	// the section rail is open
 	toc:      [],		// { text, level, page } per heading; page 0 = not found yet
 	scanned:  0,		// the build serial the pages in `toc` were found in
+	// WHO LAID THESE PAGES OUT, when it was not this device: `{ main, by, name, ts }`,
+	// or null for pages this device compiled itself. It is not a MODE, deliberately --
+	// `mode` gates the poll, the debounce and the pause, and every one of those should
+	// go on working over handed-off pages exactly as it does over local ones. What
+	// changes is only what a rebuild DOES, which is one question asked in one place.
+	given:    null,
 };
 
 let timer = null;		// the debounce
 let poller = null;		// the interval that asks the files
 let host = null;		// the live view's root element
+// What to do about a rebuild of pages this device did not lay out. Installed by the
+// app (`placeWith`), because WHERE a task runs is an election over presence and a
+// device ledger, and neither belongs in a file about a compiler and a scroller.
+// Answers truthy when it took the rebuild elsewhere.
+let placeAgain = null;
 
 /// The wasm package, imported once.
 async function wasm() {
@@ -2023,6 +2034,19 @@ function dead(why) {
 async function build(force) {
 	if (S.mode === 'dead') return;
 	if (S.building) { S.queued = true; return; }
+	// PAGES LAID OUT ELSEWHERE STAY A LOOP. A save on this device must rebuild them,
+	// and the honest rebuild is the one the placement chooses -- this device could not
+	// hold the files or the heap a moment ago, and a keystroke has not changed that.
+	// So the same question is asked again and the answer acted on; only if it now says
+	// "here" does this fall through to a local compile, and then this device owns the
+	// pages and the handed-off record goes with them.
+	if (S.given && placeAgain) {
+		let elsewhere = false;
+		try { elsewhere = !!(await placeAgain({ main: S.path, force: !!force })); }
+		catch (e) { elsewhere = false; }
+		if (elsewhere) return;
+		S.given = null;
+	}
 	if (!force) {
 		const why = holdCheck();
 		if (why) { hold(why); return; }
@@ -2102,6 +2126,20 @@ async function build(force) {
 				showError(S.reason);
 				says(tOr('typst.watch.held', 'Rebuilding stopped'), 'held');
 			}
+			// WHAT THIS BUILD COST AND WHAT IT READ, said once, where anything that wants
+			// to know can hear it. The app writes it into the cloud index as the document's
+			// sidecar, which is what lets ANOTHER device answer "can I compile this" before
+			// it draws the button rather than by trying and killing its own tab. Raised
+			// rather than written here: this file knows about a compiler and a scroller, and
+			// nothing about chunks, accounts or indexes.
+			announce('daimond-typst-built', {
+				path:     S.path,
+				files:    S.files.slice(),
+				pages:    S.pages,
+				ms:       took,
+				growth:   heapAfter - heapBefore,
+				headroom: S.headroom,
+			});
 		} catch (e) {
 			S.failed++;
 			showError((e && e.message) ? e.message : String(e));
@@ -2552,7 +2590,77 @@ function rebuild() {
 	S.why   = 'user: Rebuild';
 	S.blind = false;
 	S.same  = 0;
+	// AND THE REMEMBERED DIRT IS SPENT. A write that landed while the loop was paused
+	// is held as `dirty` so `resume` can spend ONE rebuild on it; this rebuild is that
+	// layout, and `build` re-reads every stamp before it compiles, so leaving the flag
+	// set bought a SECOND layout for the same edit on the next resume. Two layouts of
+	// the author's book are two heap growths on a heap that only ever grows.
+	S.dirty = false;
 	build(true);
+}
+
+/// Install the app's answer to "this document should be rebuilt -- where?".
+///
+/// Called with `{ main, force }` while the pages on screen were laid out elsewhere;
+/// a truthy answer means it has been taken elsewhere again and nothing compiles here.
+function placeWith(fn) { placeAgain = (typeof fn === 'function') ? fn : null; }
+
+/// Draw pages ANOTHER DEVICE laid out.
+///
+/// The wire form is the compiler's own vector artifact, not per-page SVG, because
+/// that is what this view already draws every band out of: `draw` takes it verbatim,
+/// zoom, dark paper, the page box and the rail are all repaints of the one artifact,
+/// and the renderer dedupes glyphs across the session -- a 48-page book is about 2 MB
+/// that way against 48 standalone sheets each carrying their own glyph definitions.
+/// So there is one draw path and no second one to drift from it.
+///
+/// Everything else about the loop is unchanged: the watched set is what the remote
+/// gather read, the stamps are taken here so a LOCAL edit nudges as usual, and the
+/// pause, the resume and the rail all work as they do over a local build.
+///
+/// # Arguments
+/// * `manifest` - The chunk manifest the runner offloaded the artifact under.
+/// * `meta` - `{ main, imports, pages, by, name, ts }` from the runner's report.
+async function given(manifest, meta) {
+	const m = meta || {};
+	const main = String(m.main || '');
+	if (!main) return false;
+	if (!window.DaimondChunks || !DaimondChunks.materialiseBytes) return false;
+	let bytes = null;
+	try { bytes = await DaimondChunks.materialiseBytes(manifest); }
+	catch (e) { bytes = null; }
+	// A MISSING CHUNK IS NOT PAGES. Answer false and leave whatever is on screen
+	// alone, so a swept or half-uploaded artifact shows the last good build rather
+	// than a blank panel with nothing to say.
+	if (!bytes || !bytes.length) return false;
+	if (S.path !== main) {
+		stop();
+		S.path = main;
+		if (!mount()) { S.mode = 'idle'; S.path = ''; return false; }
+	}
+	S.files    = Array.isArray(m.imports) ? m.imports.map(String) : S.files;
+	S.mode     = 'live';
+	S.given    = { main: main, by: String(m.by || ''), name: String(m.name || ''), ts: m.ts || Date.now() };
+	S.cause    = 'given';
+	S.why      = 'given: ' + (m.name || m.by || 'a peer');
+	S.error    = '';
+	S.reason   = '';
+	S.digests  = {};
+	S.blind    = false;
+	S.same     = 0;
+	if (onPhone()) S.budget = Math.min(S.budget, BUDGET_MOBILE);
+	try { await draw(bytes); }
+	catch (e) { showError((e && e.message) ? e.message : String(e)); return false; }
+	// TAKEN AFTER THE DRAW, not before: what the poll must compare against is the
+	// state of this device's own files as they stand now, so an edit made here after
+	// the hand-off nudges exactly as an edit made before a local build does.
+	S.stamps = (await stamps()) || S.stamps;
+	refreshToc();
+	showError('');
+	says(tOr('typst.watch.given', 'Built on {name}', { name: m.name || m.by || '' }), 'live');
+	standIn();
+	if (!poller) poller = setInterval(function () { poll(); }, POLL_MS);
+	return true;
 }
 
 /// Read or set the heap ceiling, in MB.
@@ -2614,6 +2722,9 @@ function state() {
 		path:     S.path,
 		mode:     S.mode,
 		was:      S.was,
+		// WHO LAID THESE PAGES OUT, when it was not this device. Read by the Doc panel
+		// (to say so) and by a verifier (to prove a hand-off drew without compiling).
+		given:    S.given ? { by: S.given.by, name: S.given.name, ts: S.given.ts } : null,
 		files:    S.files.length,
 		builds:   S.builds,
 		drawn:    S.drawn,
@@ -2738,6 +2849,8 @@ if (typeof window !== 'undefined' && !window.DaimondTypstWatch) {
 		zoom:     zoom,
 		dark:     dark,
 		state:    state,
+		given:    given,
+		placeWith: placeWith,
 		pageBox:  pageBox,
 		goToPage: goToPage,
 		rail:     rail,
@@ -2750,4 +2863,4 @@ if (typeof window !== 'undefined' && !window.DaimondTypstWatch) {
 }
 
 export { began, stop, pause, resume, touched, rebuild, budgetMB, zoom, dark, state,
-	pageBox, goToPage, rail, sections, goToSection, fitPage };
+	pageBox, goToPage, rail, sections, goToSection, fitPage, given, placeWith };

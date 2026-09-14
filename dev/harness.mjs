@@ -356,6 +356,15 @@ export async function open(opts = {}) {
 		// about itself -- which mobile.js `detectMobile` reads FIRST and treats as
 		// final -- is the UA string. Left unset, each engine keeps its own.
 		ua        = null,
+		// CHROMIUM'S OWN STATEMENT THAT THIS IS A PHONE: `navigator.userAgentData.mobile`.
+		// The UA string alone is NOT enough here, and that is not a detail. mobile.js
+		// `detectMobile` reads the client hint FIRST and returns it whatever it says,
+		// precisely because it is the fact rather than a proxy for it -- so a Chromium
+		// context given an iPhone UA and touch still reads as a DESKTOP, because the hint
+		// is present and says false. WebKit sends no hint, which is why `verify_runnerseat`
+		// can put its phone there on the UA alone; a test that needs OPFS cannot, since
+		// Playwright's WebKit has not got it. Chromium only: WebKit refuses the option.
+		isMobile  = false,
 		// Called with the page before it is navigated, for a verifier that serves
 		// a damaged file through `page.route`. It has to run BEFORE `goto`, which
 		// is the whole reason it cannot be done by the caller afterwards.
@@ -448,6 +457,11 @@ export async function open(opts = {}) {
 			throw new Error('open({ browser: "webkit" }) cannot load the MV3 extension; '
 				+ 'run the extension flows under Chromium.');
 		}
+		if (isMobile) {
+			throw new Error('open({ browser: "webkit", isMobile: true }) is not a thing: '
+				+ 'isMobile is Chromium\u2019s client hint. Under WebKit the UA string is '
+				+ 'the device\u2019s own statement about itself -- pass `ua` instead.');
+		}
 		browser = await webkit.launchPersistentContext(profileDir, {
 			headless:   !headed,
 			env,
@@ -463,6 +477,7 @@ export async function open(opts = {}) {
 			env,
 			viewport:       { width: 1500, height: 950 },
 			hasTouch:       touch,
+			...(isMobile ? { isMobile: true } : {}),
 			...(ua ? { userAgent: ua } : {}),
 		});
 	} else {

@@ -103,7 +103,18 @@
 	// it.
 
 	/// Is this index key a content manifest rather than a workspace path?
-	function isContentKey(p) { return /^@[dcm]\//.test(String(p)); }
+	function isContentKey(p) { return /^@[dcmp]\//.test(String(p)); }
+
+	/// Is this key a document's LIVE PREVIEW -- the laid-out artifact and the sidecar
+	/// that says what went into it?
+	///
+	/// It is the one content key that is genuinely SHARED. A Diamond's or a chat's
+	/// manifest belongs to the device that offloaded it and is meaningless elsewhere;
+	/// a preview is one fact about one document in one folder -- these imports, these
+	/// hashes, this artifact -- and whichever device compiled it last is right. So it
+	/// crosses on the freshest stamp rather than being kept-or-dropped, which is what
+	/// lets a phone draw the pages a desktop laid out.
+	function isPreviewKey(p) { return /^@p\//.test(String(p)); }
 
 	/// The content manifest stored under `key`, or null. Shape-checked the same
 	/// way `manifest` checks a file's, so a half-written entry never becomes a
@@ -403,6 +414,126 @@
 		catch (e) { return null; }
 	}
 
+	/// The File at a path resolved against SOME OTHER ROOT — the real folder the
+	/// user has open, rather than this account's sandbox.
+	///
+	/// `fileAt` above reads the OPFS sandbox whatever mode the workspace is in, and
+	/// that is deliberate: the eviction and manifest-presence paths are about the
+	/// bytes this device is holding in storage it owns. The shared folder
+	/// (`SYNC_FOLDER_SHARE_MAX`, js/daimond.js) needs the other answer — the bytes on
+	/// the user's disk — and needs it through a handle, so the offload can stream a
+	/// 20 MB font a slice at a time rather than reading it whole. One more argument
+	/// on `fileAt` would have made every existing caller's silence a decision; a
+	/// second door says which root it means.
+	async function fileUnderRoot(root, path) {
+		var p = parts(path);
+		var dir = await dirUnderRoot(root, path, false);
+		if (!dir) return null;
+		try { return await (await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1]))).getFile(); }
+		catch (e) { return null; }
+	}
+
+	/// The directory handle holding `path` under `root`, or null when a component is
+	/// absent and `create` was not asked for. `dirFor`'s reasoning, one root along.
+	async function dirUnderRoot(root, path, create) {
+		if (!root) return null;
+		var p = parts(path);
+		if (!p.length) return null;
+		var dir = root;
+		for (var i = 0; i < p.length - 1; i++) {
+			try { dir = await dir.getDirectoryHandle(await diskNameIn(dir, p[i]), { create: !!create }); }
+			catch (e) { return null; }
+		}
+		return dir;
+	}
+
+	/// Open a writable stream at a path under `root`, creating the folders on the way.
+	async function openWriteUnderRoot(root, path) {
+		var p = parts(path);
+		var dir = await dirUnderRoot(root, path, true);
+		if (!dir) throw new Error('Cannot create directory for: ' + path);
+		var fh = await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1]), { create: true });
+		return await fh.createWritable();
+	}
+
+	/// Remove a file under `root`. Used to clear a half-written one, never as a
+	/// deletion the user asked for.
+	async function removeUnderRoot(root, path) {
+		var p = parts(path);
+		var dir = await dirUnderRoot(root, path, false);
+		if (!dir) return false;
+		try { await dir.removeEntry(await diskNameIn(dir, p[p.length - 1])); return true; }
+		catch (e) { return false; }
+	}
+
+	/// Write what cloud storage holds for `path` onto a path under `root` -- the real
+	/// folder the user has open -- streaming, and over whatever is there.
+	///
+	/// NOT `fetchDown` WITH A ROOT. That door answers "already on this device" and
+	/// stops, which is right for a person clicking a cloud row and wrong here: this is
+	/// the merge putting another device's version of a shared file where the user can
+	/// see it, and whether it should has already been decided (`materialiseShared`,
+	/// js/daimond.js). It also spends no agent allowance, because no agent asked.
+	///
+	/// `dest` is where the bytes land, which is `path` itself except for a conflict
+	/// copy. A failure leaves nothing behind: a truncated file standing in for a whole
+	/// one, in a folder under version control, would be committed by somebody.
+	async function materialiseTo(root, path, dest) {
+		var m = manifest(path);
+		if (!m) return 'Error: ' + path + ' is not in cloud storage.';
+		if (!window.DaimondChunks) return 'Error: the chunk transport is not loaded.';
+		var to = dest || path, w, written = 0, okAll = false;
+		try { w = await openWriteUnderRoot(root, to); }
+		catch (e) { return 'Error: could not write ' + to + ' into the open folder: '
+			+ (e && e.message ? e.message : e); }
+		if ((m.v | 0) >= 2) {
+			try {
+				okAll = await DaimondChunks.materialiseStream(m, async function (bytes) {
+					await w.write(bytes);
+					written += bytes.length;
+				});
+				await w.close();
+			} catch (e) { try { await w.close(); } catch (e2) { /* already gone */ } okAll = false; }
+		} else {
+			// An older whole-file manifest, from before the streaming pipeline.
+			var content = null;
+			try { content = await DaimondChunks.materialiseV1(m); } catch (e) { content = null; }
+			if (content == null) { try { await w.close(); } catch (e2) { /* already gone */ } }
+			else {
+				try {
+					var bytes = new TextEncoder().encode(content);
+					await w.write(bytes);
+					await w.close();
+					written = bytes.length;
+					okAll = true;
+				} catch (e) { try { await w.close(); } catch (e2) { /* already gone */ } okAll = false; }
+			}
+		}
+		if (!okAll) {
+			await removeUnderRoot(root, to);
+			return 'Error: ' + to + ' could not be written; cloud storage no longer holds all of its parts.';
+		}
+		touch(path);
+		log('materialised', to, written);
+		return 'OK: wrote ' + to + ' (' + written + ' bytes) into the open folder.';
+	}
+
+	/// Move an index entry to another path, keeping its chunks named.
+	///
+	/// For the one case that needs it: a conflict copy on a real folder's disk, whose
+	/// bytes are the ones a `<path>.synced` entry already names. The entry follows the
+	/// bytes, so the index names a file that exists and the addresses stay declared --
+	/// an entry dropped instead would have its chunks swept by the next committer.
+	function rename(from, to) {
+		var ix = index();
+		if (!Object.prototype.hasOwnProperty.call(ix, from)) return false;
+		if (from === to) return false;
+		ix[to] = ix[from];
+		delete ix[from];
+		setIndex(ix);
+		return true;
+	}
+
 	/// Open a writable stream at a path, so a large file lands on disk piece by
 	/// piece instead of being assembled in memory first.
 	async function openWrite(path) {
@@ -463,15 +594,37 @@
 	// missing. It holds only what is NOT held here, so it is recomputed
 	// whenever residency changes.
 
+	// WHICH ROOT "NOT ON THIS DEVICE" MEANS, and it is the active one.
+	//
+	// `file_read` and `file_list` read whichever root the workspace is in -- the
+	// folder the user has open when there is one -- so the list that tells them a
+	// path is in cloud storage has to be computed against that same root. `isHeld`
+	// and `fileAt` stay OPFS-only on purpose (see `fileUnderRoot`): eviction and the
+	// manifest-presence sweep are about bytes this device holds in storage it owns.
+	//
+	// Without this a desktop that offloaded its own shared folder's fonts was told by
+	// its own file tools that those fonts were in cloud storage and not on the disk
+	// they were sitting on -- and the census, which skips a cloud-only path because
+	// there are no local bytes to collect, then stopped seeing them at all.
+	var rootFn = null;
+	function useRoot(fn) { rootFn = (typeof fn === 'function') ? fn : null; }
+	function activeRoot() { try { return rootFn ? rootFn() : null; } catch (e) { return null; } }
+
 	async function refreshPaths() {
-		var ix = index(), out = {};
+		var ix = index(), out = {}, root = activeRoot();
 		var keys = Object.keys(ix);
 		for (var i = 0; i < keys.length; i++) {
 			var p = keys[i];
 			// A content manifest is not a workspace file: the agent's file tools
 			// must not be told a Diamond or a chat is a path in cloud storage.
 			if (isContentKey(p)) continue;
-			if (!(await isHeld(p))) out[p] = (ix[p] && ix[p].size) | 0;
+			// Nor is a PEER SLOT. `<path>.peer.<device>` is a record of another
+			// device's addresses for the same file (see `notePeerFile`), and a ☁ row
+			// called `chap_one.typ.peer.6f2a…` in the workspace listing would be a
+			// file the user could try to open and the agent could try to read.
+			if (ix[p] && ix[p].peer) continue;
+			var here = root ? !!(await fileUnderRoot(root, p)) : await isHeld(p);
+			if (!here) out[p] = (ix[p] && ix[p].size) | 0;
 		}
 		writeJson(PATHS_KEY, out);
 		return out;
@@ -491,9 +644,63 @@
 	/// records the remote one at `<path>.synced`, mirroring the sidecar rule for
 	/// inline files. No download is needed to preserve it, because the sidecar
 	/// is only a second reference to chunks the gateway already holds.
-	function merge(remoteIx, baseline, selfDev) {
+	/// A FILE NEEDS A PEER SLOT TOO, and until 2026-09-14 only a chat and a Diamond
+	/// had one. The arms below that KEEP our manifest -- the same content at two sets
+	/// of addresses, and the local-wins three-way arm -- dropped the remote manifest
+	/// entirely, and `chunks.js`'s commit builds the live set out of this index alone.
+	/// So a device that committed named only its own addresses and the gateway swept
+	/// the other device's.
+	///
+	/// That is the whole of the phone's 222-file loss of 2026-09-13: a folder-mounted
+	/// desktop lost its directory handle mid-turn, `filesSyncable` therefore turned it
+	/// into a committer, it offloaded its own copy of every workspace file under fresh
+	/// addresses -- a chunk address is the hash of CIPHERTEXT and the seal takes a
+	/// fresh IV, so identical bytes land in different places -- and its first commit
+	/// swept the phone's 611 chunks. Naming their addresses beside ours costs a few
+	/// hundred bytes of index.
+	///
+	/// `fromDev` is the roster id of the device whose parcel this is, so the slot is
+	/// per device and a pull from B cannot forget what A said.
+	function notePeerFile(out, path, mine, theirs, dev, selfDev) {
+		if (dev && String(dev) === String(selfDev || '')) return;	// our own parcel, come back
+		var key = peerKeyFor(path, dev), ours = {}, novel = [], bytes = 0;
+		((mine && mine.chunks) || []).forEach(function (c) { if (c && c.addr) ours[c.addr] = 1; });
+		((theirs && theirs.chunks) || []).forEach(function (c) {
+			if (!c || !c.addr || ours[c.addr]) return;
+			novel.push({ addr: c.addr, size: c.size | 0 });
+			bytes += c.size | 0;
+		});
+		// Nothing of theirs that is not already ours: two devices that uploaded the
+		// same file from the same bytes at the same chunk size, which is the ordinary
+		// case and needs no slot at all.
+		if (!novel.length) { delete out[key]; return; }
+		// A SLOT THAT HAS NOT MOVED IS NOT REWRITTEN, for the reason `notePeerRef`
+		// gives: this index is the parcel, and a parcel that is not a fixed point is
+		// two devices pushing at each other for ever.
+		var was = out[key];
+		if (was && was.peer && was.size === bytes && (was.chunks || []).length === novel.length
+			&& novel.every(function (c, i) { return was.chunks[i] && was.chunks[i].addr === c.addr; })) {
+			return;
+		}
+		out[key] = {
+			v:      theirs.v,
+			size:   bytes,
+			chunks: novel,
+			peer:   true,		// declared live, never reused as a manifest.
+			dev:    dev || '',	// whose addresses these are, for the log and the eye.
+		};
+	}
+
+	/// Is this index entry a peer device's record rather than a manifest of our own?
+	function isPeerSlot(m) { return !!(m && m.peer); }
+
+	function merge(remoteIx, baseline, selfDev, fromDev) {
 		var local = index(), base = baseline || {}, out = {}, seen = {};
 		remoteIx = (remoteIx && typeof remoteIx === 'object') ? remoteIx : {};
+		// Paths where THEIR manifest was not adopted, so their addresses have to be
+		// named beside ours. Gathered here and written after the pass, because a slot
+		// written during it would be overwritten when the loop reached its own key.
+		var unadopted = [];
 
 		Object.keys(local).forEach(function (p) { seen[p] = 1; });
 		Object.keys(remoteIx).forEach(function (p) { seen[p] = 1; });
@@ -506,6 +713,18 @@
 			// drop the rest -- except a peer sidecar, which is the one key here that
 			// this device did not author and so the one that crosses.
 			if (isContentKey(p)) {
+				// THE LIVE PREVIEW CROSSES ON ITS STAMP. Whichever device laid the document
+				// out last holds the true answer about it, and that device is often exactly
+				// the one that cannot commit the index (a folder-mounted runner). Freshest
+				// `ts` wins; equal stamps keep what is here, so a quiet round rewrites
+				// nothing.
+				if (isPreviewKey(p) && !peerOwner(p)) {
+					var lp = local[p], rp = remoteIx[p];
+					if (!rp) { out[p] = lp; return; }
+					if (!lp || (+rp.ts || 0) > (+lp.ts || 0)) out[p] = rp;
+					else out[p] = lp;
+					return;
+				}
 				if (Object.prototype.hasOwnProperty.call(local, p)) { out[p] = local[p]; return; }
 				// A PEER SIDECAR IS THE ONE CONTENT KEY THAT TRAVELS, because it is
 				// the one this device is not the author of: it says "device X's parcel
@@ -526,27 +745,52 @@
 					&& Object.prototype.hasOwnProperty.call(remoteIx, p)) out[p] = remoteIx[p];
 				return;
 			}
+			// A FILE'S OWN PEER SLOT, by the rule its content sibling keeps: whatever
+			// this device holds stands, a slot about ANOTHER device crosses to a third
+			// (which is what makes the scheme work for three devices rather than two),
+			// and a slot about US is never adopted -- our manifest is the authority on
+			// our own addresses, and a second-hand copy would name whatever we uploaded
+			// before our last change.
+			if (isPeerSlot(local[p]) || isPeerSlot(remoteIx[p])) {
+				if (Object.prototype.hasOwnProperty.call(local, p)) { out[p] = local[p]; return; }
+				var fo = peerOwner(p);
+				if (fo !== null && fo !== '' && fo !== String(selfDev || '')
+					&& Object.prototype.hasOwnProperty.call(remoteIx, p)) out[p] = remoteIx[p];
+				return;
+			}
 			var l = local[p], r = remoteIx[p];
 			if (!r) { out[p] = l; return; }							// only here: keep, it will push.
 			if (!l) { out[p] = r; return; }							// only there: adopt the reference.
-			if (l.hash === r.hash) { out[p] = l; return; }			// same file.
+			// SAME FILE, AND NOT NECESSARILY THE SAME CHUNKS. `hash` is the content key,
+			// so this arm is two devices agreeing about every byte -- and each of them
+			// sealed those bytes with an IV of its own, so the addresses differ. Keeping
+			// ours and dropping theirs is what let a committer sweep the other device's
+			// copy; their addresses are named below instead.
+			if (l.hash === r.hash) { out[p] = l; unadopted.push([p, l, r]); return; }
 			var b = base[p] || null;
 			var localChanged  = (l.hash !== b);
 			var remoteChanged = (r.hash !== b);
 			if (remoteChanged && !localChanged) { out[p] = r; return; }
-			if (localChanged && !remoteChanged) { out[p] = l; return; }
+			if (localChanged && !remoteChanged) { out[p] = l; unadopted.push([p, l, r]); return; }
 			out[p] = l;												// both diverged: keep ours,
 			// and preserve theirs beside it -- but never chain sidecars onto
 			// sidecars, or a path that keeps diverging grows a tail of
 			// `.synced.synced.synced` that nobody will ever read.
 			if (!/\.synced$/.test(p)) out[p + '.synced'] = r;
 		});
+		// Their addresses for the files we kept our own manifest of.
+		unadopted.forEach(function (e) { notePeerFile(out, e[0], e[1], e[2], fromDev, selfDev); });
 		// Drop a sidecar whose original is gone: it was only ever meaningful as
 		// "the other version of that file", and on its own it is landfill the
-		// user is paying to store.
+		// user is paying to store. A peer slot goes the same way and for the same
+		// reason -- it says "device X's parcel names these addresses FOR THIS FILE",
+		// and with no file there is nothing for it to be about.
 		Object.keys(out).forEach(function (p) {
 			var m = /^(.*)\.synced$/.exec(p);
-			if (m && !out[m[1]]) delete out[p];
+			if (m && !out[m[1]]) { delete out[p]; return; }
+			if (!isPeerSlot(out[p])) return;
+			var q = /^(.*)\.peer(?:\.[0-9a-f]{16}|\.[0-9a-f]{32})?$/.exec(p);
+			if (q && q[1] && !isContentKey(q[1]) && !out[q[1]]) delete out[p];
 		});
 		setIndex(out);
 		return out;
@@ -562,18 +806,34 @@
 	/// the string's length in UTF-16 code units, which equals the byte length
 	/// only for pure ASCII. Comparing that against a file's real size would
 	/// declare every accented character an unsaved edit.
-	async function put(path, mani, h) {
+	/// `opts.file` is the File the manifest was taken of, for a caller whose bytes
+	/// are not in this account's sandbox — a shared folder's are on the user's disk,
+	/// and `fileAt` would answer for the wrong file or for none.
+	///
+	/// `opts.timeless` LEAVES THE CLOCK OUT, and it is what makes a shared folder
+	/// work at all. Two desktops kept identical by Syncthing hold the same bytes with
+	/// different modification times; the manifest travels in the parcel, and `push`
+	/// skips the wire only when the parcel matches what this device last sent. A
+	/// manifest carrying `mtime` and `at` therefore differs between two devices that
+	/// agree about every byte, and they push at each other for ever. So a shared
+	/// folder's manifest is keyed on CONTENT -- `key` is the hash of the file's chunk
+	/// hashes, computed without ever holding the file -- and the "have I looked at
+	/// this since it changed" question, which genuinely wants a modification time,
+	/// is answered from a map that stays on the device (`FOLDER_SEEN_KEY`,
+	/// js/daimond.js).
+	async function put(path, mani, h, opts) {
+		var o = opts || {};
 		var ix = index();
-		var f = await fileAt(path);
+		var f = o.file || (await fileAt(path));
 		ix[path] = {
 			v:      mani.v || 1,
 			size:   mani.size,				// plaintext bytes on disk.
 			bytes:  f ? f.size : mani.size,
-			mtime:  f ? f.lastModified : 0,	// with size, the cheap "did it change" test.
+			mtime:  o.timeless ? 0 : (f ? f.lastModified : 0),	// with size, the cheap "did it change" test.
 			hash:   h,						// the merge fingerprint.
 			key:    mani.key || null,		// what eviction verifies against.
 			chunks: mani.chunks,
-			at:     Date.now(),
+			at:     o.timeless ? 0 : Date.now(),
 		};
 		setIndex(ix);
 		return ix;
@@ -928,6 +1188,9 @@
 		// Content manifests (Diamonds, chats) co-located under a reserved prefix.
 		// Owned by the sync collectors, skipped by every file mechanism.
 		isContentKey: isContentKey,
+		/// Is this key a document's live preview -- the one content key that is shared
+		/// rather than owned, and so the one that crosses on its stamp?
+		isPreviewKey: isPreviewKey,
 		contentGet:   contentGet,
 		contentSet:   contentSet,
 		contentForget: contentForget,
@@ -952,6 +1215,9 @@
 		touch:        touch,
 		awayPaths:    awayPaths,
 		refreshPaths: refreshPaths,
+		// Where the workspace's files are being read from right now, for the derived
+		// path list alone. See `useRoot`.
+		useRoot:      useRoot,
 		reclaim:      reclaim,
 		pressure:     pressure,
 		summary:      summary,
@@ -959,6 +1225,13 @@
 		hash:         hash,
 		sha256:       sha256,
 		fileAt:       fileAt,
+		// The same question asked of a root this account does not own -- the folder
+		// the user has open. See `fileUnderRoot`.
+		fileUnderRoot: fileUnderRoot,
+		// Writing under that same root, for the merge that puts another device's
+		// version of a shared file onto the user's own disk. See `materialiseTo`.
+		materialiseTo: materialiseTo,
+		rename:        rename,
 		fileKey:      fileKey,
 		writeBlob:    writeBlob,
 		// What the agent may still pull down unprompted, in bytes.
