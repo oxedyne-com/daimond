@@ -20,7 +20,9 @@
 //      exists, and what IS at the root — and never with `JsValue(`.
 //   5. The store is always writable, whatever else is open.
 //   6. The turn's composed prompt says where the turn is and what the root holds, so the model
-//      never spends a round discovering it.
+//      never spends a round discovering it. A Diamond's own turn carries that tree once (not
+//      once per composed field), a mark inside the root is named once (not twice under two
+//      spellings), and a directory's line precedes the children found under it.
 //
 // WHAT IS NOT HERE, and why. `Where::Machine` and `would_invent_said` need a paired machine hand,
 // which cannot be arranged under automation (`dev/HATES.md` Lane G §1, `dev/reflux.mjs`'s
@@ -259,8 +261,61 @@ if (sys && typeof sys.wire === 'string') {
 		'6e. ...and a Claude one does not', composed.claude.slice(-120));
 	check(/Where files are/.test(composed.kimi) && /Where files are/.test(composed.claude),
 		'6f. both are told where files are', 'PLACES_NOTE');
+	// The Claude-Code-grade snapshot (2026-09-14): a cwd sentence plus a depth-limited tree, in
+	// place of the one-line root listing 6a/6b proved above -- `format_orientation_tree` is
+	// itself Rust-unit-tested (cap, depth and cut order); this only proves the composed prompt
+	// actually carries it.
+	check(/Your working folder is/.test(sys.wire),
+		'6g. the composed prompt states the cwd', sys.wire.slice(0, 200));
 } else {
 	check(false, '6. the Wire getter answered', sys && sys.err);
+}
+
+// ── 6h-j. A Diamond's own turn carries the tree ONCE (2026-09-14 fix) ────
+//
+// `compose_daimon` used to walk the same tree a second time into `local`, on top of the one
+// `briefing()` already puts in `machine` -- ~3,200 further characters against a cap
+// (`ORIENTATION_TREE_CHARS`) meant to hold one copy. `docs` is marked into `d1` so the same
+// call also proves the mark de-duplication and the parent-before-children ordering fixed
+// alongside it: `docs/a.md` sits both inside the root's own depth-2 walk and inside the mark's
+// own re-walk of `docs`, which is exactly the shape that used to print it twice under two
+// spellings.
+const dsys = await p.evaluate(async () => {
+	const mod = await import('../pkg/oxedyne_daimond.js');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '',
+		'moonshotai/kimi-k2.7-code', 256, 'You are Daimond.', true);
+	return app.wire_system('d1', '["docs"]', '[]', '[]');
+}).catch((e) => ({ err: String(e) }));
+if (typeof dsys === 'string') {
+	const w = JSON.parse(dsys);
+	const HEADER = '## Where you are';
+	const occurrences = (text, needle) => text.split(needle).length - 1;
+	const treeCount = occurrences(w.machine, HEADER) + occurrences(w.local, HEADER);
+	check(treeCount === 1,
+		'6h. a Diamond turn carries the orientation tree once, not once per field',
+		`machine=${occurrences(w.machine, HEADER)} local=${occurrences(w.local, HEADER)}`);
+	// `Recently changed` is a second, DELIBERATE mention of a file the tree already named --
+	// see `orientation_tree_note` -- so the tree BODY is what a mark's duplicate walk would
+	// have doubled, and is what is checked here rather than the whole composed field.
+	const wholeTree = w.machine + w.local;
+	const treeBody = wholeTree.split('Recently changed:')[0];
+	check(occurrences(treeBody, 'docs/a.md') === 1,
+		'6i. a mark inside the root is named once, not twice under two spellings',
+		JSON.stringify({ occurrences: occurrences(treeBody, 'docs/a.md') }));
+	// The heading line is `docs/` followed by a space (its file count) or end of line; a
+	// child's line is `docs/` followed straight by its own name, with no space between —
+	// which is what tells the mark's heading apart from the files listed under it.
+	const headings = treeBody.match(/^docs\/(?=\s|$)/gm) || [];
+	check(headings.length === 1,
+		'6i2. ...and its own directory heading is not printed a second time from the mark walk',
+		JSON.stringify({ headings: headings.length }));
+	const treeText = w.machine.includes(HEADER) ? w.machine : w.local;
+	const markAt = treeText.indexOf('docs/');
+	const fileAt = treeText.indexOf('docs/a.md');
+	check(markAt >= 0 && fileAt > markAt,
+		'6j. the mark heading precedes the file beneath it', treeText.slice(markAt, markAt + 160));
+} else {
+	check(false, '6h. the Diamond Wire getter answered', dsys && dsys.err);
 }
 
 const errs = s.errs.filter((e) => !/favicon|404|401|402|502|net::ERR/.test(e));

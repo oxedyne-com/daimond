@@ -414,6 +414,10 @@ pub struct Limits {
 
 	// How long an in-turn gather waits
 	pub gather_timeout_s: u64,	// seconds; see `GATHER_TIMEOUT_S`
+
+	/// Say, once per turn, that independent calls belong in one reply.  On by default; the
+	/// `batchline_off` arm is the pair a measurement turns it off with.
+	pub batch_line: bool,
 }
 
 impl Default for Limits {
@@ -441,6 +445,7 @@ impl Default for Limits {
 			worker_keep:          WORKER_KEEP,
 			worker_spend_usd:     WORKER_SPEND_CAP_USD,
 			gather_timeout_s:     GATHER_TIMEOUT_S,
+			batch_line:           true,
 		}
 	}
 }

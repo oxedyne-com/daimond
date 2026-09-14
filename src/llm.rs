@@ -983,7 +983,16 @@ impl LlmClient {
             match outcome {
                 Ok(aborted) => {
                     let thinking = acc.take_thinking();
-                    let resp = acc.into_response(aborted, retries);
+                    let mut resp = acc.into_response(aborted, retries);
+                    // ANTHROPIC REPORTS NO `cost` AT ALL: the account is billed and the API says
+                    // nothing about what one call cost, so `into_response` above always hands
+                    // back zero here. The spend cap is inert against that zero and the ledger
+                    // reads $0 on a call that plainly cost something -- so it is booked from the
+                    // token counts the same response already carries, at list price.
+                    if resp.cost_usd == 0.0 && matches!(self.dialect, Dialect::Anthropic) {
+                        resp.cost_usd = anthropic_list_price_usd(&self.model,
+                            resp.prompt_tokens, resp.completion_tokens, resp.cached_tokens);
+                    }
                     // The signed reasoning of a turn that asked for tools is held
                     // for the request that returns their results; see [`ThinkCarry`].
                     if let Some(tc) = resp.tool_calls.first() {
@@ -1116,13 +1125,20 @@ impl LlmClient {
             Dialect::OpenAi    => openai_truncated(&raw),
             Dialect::Anthropic => anthropic_truncated(&raw),
         };
+        // See the same branch in `stream_turn`: Anthropic reports no `cost` at all, so `use_`
+        // above always carries zero here and the ledger is booked from the token counts instead.
+        let cost_usd = if use_.cost_usd == 0.0 && matches!(self.dialect, Dialect::Anthropic) {
+            anthropic_list_price_usd(&self.model, use_.prompt, use_.completion, use_.cached)
+        } else {
+            use_.cost_usd
+        };
         Ok(ChatOnceResponse {
             content,
             tool_calls,
             prompt_tokens:     use_.prompt,
             completion_tokens: use_.completion,
             cached_tokens:     use_.cached,
-            cost_usd:          use_.cost_usd,
+            cost_usd,
             aborted:           false,
             retries,
             thinking:          thinking_text,
@@ -1383,15 +1399,26 @@ impl LlmClient {
                     // A `tool_result` takes either a string or an array of blocks, and this side
                     // -- unlike OpenAI's -- takes an image among them.  So a screenshot stays
                     // attached to the call that produced it rather than being re-homed.
+                    //
+                    // `cache_control` goes on the `tool_result` BLOCK ITSELF, marked here rather
+                    // than pushed onto an inner part: `cache_breakpoints` marks at most one Tool
+                    // message, and it is always the LAST one this loop reaches (the highest index
+                    // it saw), so the block built here is necessarily the final entry `pending`
+                    // holds when it flushes -- which is where the API requires the marker to sit.
+                    let mark = if marks.contains(&i) {
+                        ",\"cache_control\":{\"type\":\"ephemeral\"}"
+                    } else {
+                        ""
+                    };
                     if content.has_image() {
                         let blocks = anthropic_blocks(content, false);
                         pending.push(fmt!(
-                            "{{\"type\":\"tool_result\",\"tool_use_id\":\"{}\",\"content\":[{}]}}",
-                            json_escape(tool_call_id), blocks.join(",")));
+                            "{{\"type\":\"tool_result\",\"tool_use_id\":\"{}\",\"content\":[{}]{}}}",
+                            json_escape(tool_call_id), blocks.join(","), mark));
                     } else {
                         pending.push(fmt!(
-                            "{{\"type\":\"tool_result\",\"tool_use_id\":\"{}\",\"content\":\"{}\"}}",
-                            json_escape(tool_call_id), json_escape(&content.as_text())));
+                            "{{\"type\":\"tool_result\",\"tool_use_id\":\"{}\",\"content\":\"{}\"{}}}",
+                            json_escape(tool_call_id), json_escape(&content.as_text()), mark));
                     }
                 }
                 ChatMessage::Assistant { content, tool_calls } => {
@@ -1598,14 +1625,23 @@ impl LlmClient {
     ///
     /// * the last system message, which with the tool definitions rendered ahead
     ///   of it is the largest block that never varies within a session;
-    /// * the last user message, which is the tip of the settled conversation --
-    ///   the next turn reads everything before it back out of the cache.
+    /// * the tip of the settled conversation -- the last USER OR TOOL message,
+    ///   whichever comes later -- so the next request reads everything before it
+    ///   back out of the cache.
+    ///
+    /// **The tip used to mean only the last user message.** A tool round never
+    /// appends one: `run_tool_loop` sends the assistant's calls and their results
+    /// straight back, so the conversation this method actually sees tails off in
+    /// `Tool` messages, several rounds past the user message it was marking. Every
+    /// round after the first then re-paid the whole tool-result history at the
+    /// full input rate, because the one breakpoint that could have covered it sat
+    /// further back than anything the marker was moving forward to cache.
     ///
     /// Nothing is marked for a model that does not honour the marker, and
     /// nothing is marked when the prefix is too short to be cacheable at all.
-    /// Assistant and tool messages are deliberately left unmarked: the array
-    /// content form they would need is the one an OpenAI-compatible router is
-    /// least certain to carry through, and a rejected body loses the whole turn.
+    /// Assistant messages are deliberately left unmarked: the array content form
+    /// they would need is the one an OpenAI-compatible router is least certain to
+    /// carry through, and a rejected body loses the whole turn.
     fn cache_breakpoints(&self, messages: &[ChatMessage], tools: Option<&str>) -> Vec<usize> {
         let mut marks = Vec::new();
         if !model_caches_on_request(&self.model) {
@@ -1614,7 +1650,7 @@ impl LlmClient {
         // The prefix at each message, in characters, standing in for tokens.
         let mut prefix = tools.map(|t| t.len()).unwrap_or(0);
         let mut sys = None;
-        let mut usr = None;
+        let mut tip = None;
         for (i, msg) in messages.iter().enumerate() {
             prefix += message_len(msg);
             if prefix < CACHE_MIN_PREFIX_CHARS {
@@ -1622,12 +1658,12 @@ impl LlmClient {
             }
             match msg {
                 ChatMessage::System { .. } => sys = Some(i),
-                ChatMessage::User { .. }   => usr = Some(i),
+                ChatMessage::User { .. } | ChatMessage::Tool { .. } => tip = Some(i),
                 _ => {}
             }
         }
         if let Some(i) = sys { marks.push(i); }
-        if let Some(i) = usr {
+        if let Some(i) = tip {
             if Some(i) != sys { marks.push(i); }
         }
         marks
@@ -3058,6 +3094,20 @@ fn message_len(msg: &ChatMessage) -> usize {
 /// are given this form; anything else falls back to the plain serialisation, so
 /// a caller that marks the wrong message loses the cache rather than the turn.
 fn message_to_json_cached(msg: &ChatMessage, open: &std::collections::HashSet<String>) -> String {
+    // A `tool` message carries its own id ahead of the content this function marks, so it is
+    // built here rather than falling in with `system`/`user` below -- both of which pass a
+    // caller-supplied `content` straight through and have nowhere to put one.
+    //
+    // Only ever reached for a Claude model (`cache_breakpoints` gates on
+    // `model_caches_on_request`), so this is the same marker OpenRouter already passes through
+    // for the system and user breakpoints above, now reaching the tool result that `run_tool_loop`
+    // actually tails off in -- see the note on `LlmClient::cache_breakpoints`.
+    if let ChatMessage::Tool { tool_call_id, content } = msg {
+        return fmt!(
+            "{{\"role\":\"tool\",\"tool_call_id\":\"{}\",\"content\":[{{\"type\":\"text\",\
+             \"text\":\"{}\",\"cache_control\":{{\"type\":\"ephemeral\"}}}}]}}",
+            json_escape(tool_call_id), json_escape(&content.as_text()));
+    }
     let (role, content) = match msg {
         ChatMessage::System { content } => ("system", content),
         ChatMessage::User { content }   => ("user", content),
@@ -3980,6 +4030,69 @@ struct AnthUsage {
     read:   u64,
     /// Prompt tokens written to the cache, billed at 1.25x a fresh read.
     write:  u64,
+}
+
+/// One Anthropic model's list price, USD per million tokens.
+///
+/// Anthropic itself reports no `cost` on any response (`AnthUsage::into_usage` always hands back
+/// zero), so a direct call books nothing unless something on this side prices the tokens it DID
+/// report. Kept in step BY HAND with the browser's own table (`www/js/pricing.js`, "Anthropic"
+/// section) -- there is no source the two could share, and the JS file is the one a router call's
+/// ledger already reads, this the one a call that reports no cost at all needs instead.
+struct AnthPrice {
+    model:  &'static str,   // the bare model id, without a provider prefix or a date suffix
+    input:  f64,            // per million fresh prompt tokens
+    output: f64,            // per million completion tokens
+    cached: f64,            // per million prompt tokens served from the cache
+}
+
+const ANTHROPIC_PRICES: &[AnthPrice] = &[
+    AnthPrice { model: "claude-fable-5",     input: 10.00, output: 50.00, cached: 1.00 },
+    AnthPrice { model: "claude-mythos-5",    input: 10.00, output: 50.00, cached: 1.00 },
+    AnthPrice { model: "claude-opus-5",      input:  5.00, output: 25.00, cached: 0.50 },
+    AnthPrice { model: "claude-opus-4-8",    input:  5.00, output: 25.00, cached: 0.50 },
+    AnthPrice { model: "claude-opus-4-7",    input:  5.00, output: 25.00, cached: 0.50 },
+    AnthPrice { model: "claude-opus-4-6",    input:  5.00, output: 25.00, cached: 0.50 },
+    // Introductory pricing, as `pricing.js` documents; update both files together when it lapses.
+    AnthPrice { model: "claude-sonnet-5",    input:  2.00, output: 10.00, cached: 0.20 },
+    AnthPrice { model: "claude-sonnet-4-6",  input:  3.00, output: 15.00, cached: 0.30 },
+    AnthPrice { model: "claude-haiku-4.5",   input:  1.00, output:  5.00, cached: 0.10 },
+    // Still served and still one click away in the picker; see `pricing.js`'s own comment on the
+    // unknown-model fallback these three would otherwise fall to.
+    AnthPrice { model: "claude-opus-4-5",    input:  5.00, output: 25.00, cached: 0.50 },
+    AnthPrice { model: "claude-sonnet-4-5",  input:  3.00, output: 15.00, cached: 0.30 },
+    AnthPrice { model: "claude-opus-4-1",    input: 15.00, output: 75.00, cached: 1.50 },
+];
+
+/// The price row for `model`, or `None` for one this table does not know.
+///
+/// Matches the bare id exactly, or as a prefix followed by `-` -- so
+/// `claude-opus-4-5-20251101` prices as `claude-opus-4-5` without a separate entry for every
+/// dated snapshot, the same way `pricing.js`'s own `alias` arrays do.
+fn anthropic_price_row(model: &str) -> Option<&'static AnthPrice> {
+    let bare = model.strip_prefix("anthropic/").unwrap_or(model);
+    ANTHROPIC_PRICES.iter().find(|p| bare == p.model || bare.starts_with(&fmt!("{}-", p.model)))
+}
+
+/// List-price cost of one call, in USD, from Anthropic's own token counts -- the fallback for a
+/// dialect that reports usage and never a cost (see the module note above `ANTHROPIC_PRICES`).
+///
+/// Zero for a model this table does not know, deliberately: a wrong guess is worse than a ledger
+/// that honestly has nothing to show for an unpriced call, and `0.0` already means exactly that
+/// everywhere else `cost_usd` is read (see [`Usage::cost_usd`]).
+///
+/// # Arguments
+/// * `model` - The provider's own id, exactly as [`LlmClient::model`] holds it.
+/// * `prompt` - Every prompt token processed, cache included (see [`Usage::prompt`]).
+/// * `cached` - The subset of `prompt` served from the cache, billed at the cheaper rate.
+fn anthropic_list_price_usd(model: &str, prompt: u64, completion: u64, cached: u64) -> f64 {
+    let row = match anthropic_price_row(model) {
+        Some(r) => r,
+        None    => return 0.0,
+    };
+    let fresh = prompt.saturating_sub(cached);
+    (fresh as f64 * row.input + cached as f64 * row.cached) / 1_000_000.0
+        + completion as f64 * row.output / 1_000_000.0
 }
 
 impl AnthUsage {
@@ -5816,6 +5929,30 @@ pub mod tests {
     // │ Prompt caching                                                 │
     // └───────────────────────────────────────────────────────────────┘
 
+    // ┌───────────────────────────────────────────────────────────────┐
+    // │ Anthropic — the direct path books its own cost                 │
+    // └───────────────────────────────────────────────────────────────┘
+
+    #[test]
+    fn test_anthropic_list_price_looks_up_by_bare_id_and_dated_suffix() {
+        assert_eq!(5.00, anthropic_list_price_usd("claude-opus-5", 1_000_000, 0, 0));
+        // The provider prefix a picker writes is not part of the price table's own key.
+        assert_eq!(5.00, anthropic_list_price_usd("anthropic/claude-opus-5", 1_000_000, 0, 0));
+        // A dated snapshot prices as its bare model, exactly as `pricing.js`'s own aliases do.
+        assert_eq!(25.00, anthropic_list_price_usd("claude-opus-4-5-20251101", 0, 1_000_000, 0));
+        // The cached share is a SUBSET of `prompt`, billed at the cheaper rate; a wholly-cached
+        // prompt prices at the cached rate alone, not at the fresh one on top of it.
+        let got = anthropic_list_price_usd("claude-opus-5", 1_000_000, 0, 1_000_000);
+        assert!((got - 0.50).abs() < 1e-9, "a fully-cached prompt should price at $0.50: {}", got);
+    }
+
+    #[test]
+    fn test_an_unpriced_model_books_nothing_rather_than_a_guess() {
+        // Zero already means "not measured" everywhere else `cost_usd` is read; a wrong guess at
+        // an unknown model's rate would be worse than the honest zero it would replace.
+        assert_eq!(0.0, anthropic_list_price_usd("some-future-model", 1_000_000, 1_000_000, 0));
+    }
+
     #[test]
     fn test_model_caches_on_request() {
         // Claude is the model family that needs an explicit breakpoint, in every
@@ -5913,6 +6050,79 @@ pub mod tests {
         assert!(!body.contains("\"text\":\"first\",\"cache_control\""),
             "a stale breakpoint was left on an earlier turn: {}", body);
         assert_eq!(body.matches("cache_control").count(), 2);
+    }
+
+    /// A conversation whose LAST message is a tool result, as every round after the first tool
+    /// call actually looks: `run_tool_loop` sends the calls and their results straight back
+    /// without appending a fresh user message.
+    #[test]
+    fn test_the_last_breakpoint_lands_on_the_latest_tool_result() {
+        let client = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
+        let messages = vec![
+            ChatMessage::system(long_system()),
+            ChatMessage::user("read the file and fix it".to_string()),
+            ChatMessage::assistant_calling("".to_string(),
+                vec![ToolCall { id: "c1".to_string(), name: "file_read".to_string(),
+                    arguments: "{}".to_string() }]),
+            ChatMessage::tool("c1".to_string(), "line one\nline two\n".to_string()),
+        ];
+        let body = client.build_anthropic_body(&messages, None, true);
+        assert!(body.contains("\"type\":\"tool_result\""), "no tool_result block at all: {}", body);
+        assert!(body.contains("\"content\":\"line one\\nline two\\n\",\"cache_control\""),
+            "the breakpoint is not on the tool result: {}", body);
+        assert!(!body.contains("\"text\":\"read the file and fix it\",\"cache_control\""),
+            "a stale breakpoint was left on the turn's own user message: {}", body);
+        // Never more than the API's own ceiling of four, and here exactly the two this body
+        // earns: the system prefix, and the tip now sitting on the tool result.
+        let marks = body.matches("\"cache_control\":{\"type\":\"ephemeral\"}").count();
+        assert!(marks <= 4, "over Anthropic's own breakpoint ceiling: {} in {}", marks, body);
+        assert_eq!(2, marks, "expected exactly a system and a tool-result breakpoint: {}", body);
+    }
+
+    /// A run of SEVERAL tool results in one round still marks only the last of them -- the block
+    /// the marker lands on must be the final entry of the merged `pending` array, which is what
+    /// the API requires the marker to sit on.
+    #[test]
+    fn test_only_the_last_of_several_tool_results_in_one_round_is_marked() {
+        let client = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
+        let messages = vec![
+            ChatMessage::system(long_system()),
+            ChatMessage::user("read both files".to_string()),
+            ChatMessage::assistant_calling("".to_string(), vec![
+                ToolCall { id: "c1".to_string(), name: "file_read".to_string(),
+                    arguments: "{}".to_string() },
+                ToolCall { id: "c2".to_string(), name: "file_read".to_string(),
+                    arguments: "{}".to_string() },
+            ]),
+            ChatMessage::tool("c1".to_string(), "first file".to_string()),
+            ChatMessage::tool("c2".to_string(), "second file".to_string()),
+        ];
+        let body = client.build_anthropic_body(&messages, None, true);
+        assert!(body.contains("\"content\":\"second file\",\"cache_control\""),
+            "the LAST tool result of the round is not marked: {}", body);
+        assert!(!body.contains("\"content\":\"first file\",\"cache_control\""),
+            "an earlier tool result in the same round was marked too: {}", body);
+    }
+
+    /// The same fix, on the OTHER dialect: a Claude model reached through an OpenAI-shaped
+    /// router (the `cur` arm's own path) gets the same moved breakpoint, because
+    /// `cache_breakpoints` is the one function both builders call.
+    #[test]
+    fn test_the_last_breakpoint_lands_on_a_tool_result_through_the_router_too() {
+        let client = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
+        let messages = vec![
+            ChatMessage::system(long_system()),
+            ChatMessage::user("read the file and fix it".to_string()),
+            ChatMessage::assistant_calling("".to_string(),
+                vec![ToolCall { id: "c1".to_string(), name: "file_read".to_string(),
+                    arguments: "{}".to_string() }]),
+            ChatMessage::tool("c1".to_string(), "line one\nline two\n".to_string()),
+        ];
+        let body = client.build_body(&messages, None, true);
+        assert!(body.contains("\"role\":\"tool\",\"tool_call_id\":\"c1\",\"content\":[{\"type\":\"text\""),
+            "the tool message did not take the array form the marker needs: {}", body);
+        assert!(body.contains("\"cache_control\""), "no breakpoint reached the tool result: {}", body);
+        assert_eq!(2, body.matches("\"cache_control\":{\"type\":\"ephemeral\"}").count());
     }
 
     #[test]
@@ -7463,6 +7673,30 @@ pub mod tests {
             "no breakpoint reached the provider: {}", body);
         assert!(!body.contains("\"stream_options\""),
             "an OpenAI-only field reached the Messages API: {}", body);
+    }
+
+    #[tokio::test]
+    async fn test_a_direct_anthropic_reply_with_no_cost_books_one_from_the_price_table() {
+        // Anthropic reports usage and NEVER a `cost` (`AnthUsage::into_usage` always hands back
+        // zero) -- so without the fix in `stream_turn` the spend cap is inert on this path and
+        // the ledger reads $0 on a call that plainly cost something. `anth_answer` reports 60
+        // prompt tokens and 8 completion (the LAST `output_tokens`, on `message_delta`, wins);
+        // `claude-opus-5` prices at $5 / $25 per million.
+        let (port, _seen) = start_stub(vec![Reply::anth_answer()]).await;
+        let client = anth_stub_client(port);
+        let msgs = [
+            ChatMessage::system(long_system()),
+            ChatMessage::user("hello".to_string()),
+        ];
+        let resp = match client.chat_stream_tools(&msgs, None, &mut |_| {}).await {
+            Ok(r)  => r,
+            Err(e) => panic!("the Messages API turn failed: {}", e),
+        };
+        assert_eq!(60, resp.prompt_tokens);
+        assert_eq!(8,  resp.completion_tokens);
+        let expected = 60.0 * 5.00 / 1_000_000.0 + 8.0 * 25.00 / 1_000_000.0;
+        assert!((resp.cost_usd - expected).abs() < 1e-9,
+            "expected {} booked from the price table, got {}", expected, resp.cost_usd);
     }
 
     #[tokio::test]

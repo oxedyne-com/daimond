@@ -4955,6 +4955,330 @@ pub(crate) fn orientation_note(entries: &[(String, bool)]) -> String {
         never to a folder inside it. The root holds: {}", roots)
 }
 
+/// Most characters [`format_orientation_tree`] may spend on the tree itself.
+///
+/// Measured against Claude Code's own directory snapshot -- a handful of screens' worth costs one
+/// cache write per turn (see the module note on hot vs cold) and nothing past it is worth the
+/// tokens; [`file_glob`](Tool::FileGlob) reaches the rest on demand.
+pub(crate) const ORIENTATION_TREE_CHARS: usize = 1_500;
+
+/// One entry the orientation walk found, already stamped with its own depth.
+///
+/// Depth is relative to the walk's OWN start -- 0 for a start's immediate children -- because the
+/// root walk and each attached mark's walk are separate calls with separate caps (depth 2 under
+/// the root, depth 3 under a mark; see [`orientation_tree_note`]).  Held flat rather than nested:
+/// the entries a caller passes are already in the order the walk found them, and a flat slice is
+/// what [`format_orientation_tree`] needs to decide, per entry, whether it survives the cap.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TreeNode {
+    pub path:      String,       // workspace-relative from the walk's own start, e.g. "packages/x/src"
+    pub is_dir:    bool,
+    pub files:     usize,        // files under a directory, recursively; 0 for a plain file
+    pub bytes:     u64,          // total size in bytes; a directory sums its descendants
+    pub depth:     usize,        // 0 = the walk's own immediate children
+}
+
+/// One line of [`format_orientation_tree`]'s output for a single entry.
+fn tree_line(node: &TreeNode) -> String {
+    let indent = "  ".repeat(node.depth);
+    if node.is_dir {
+        if node.files == 0 {
+            fmt!("{}{}/", indent, node.path)
+        } else {
+            fmt!("{}{}/ ({} file{}, {})", indent, node.path, node.files,
+                if node.files == 1 { "" } else { "s" }, in_units(node.bytes as usize))
+        }
+    } else {
+        fmt!("{}{} ({})", indent, node.path, in_units(node.bytes as usize))
+    }
+}
+
+/// Claude-Code-grade directory snapshot: a depth-limited tree, largest entries cut first when it
+/// does not fit [`ORIENTATION_TREE_CHARS`].
+///
+/// **Cut order is by size, not by walk order.**  A handful of small, readable directories say more
+/// about the workspace's shape than one giant `bulk/` that would otherwise eat the whole budget
+/// first merely for having been listed first; so where the rendered tree is over cap, the largest
+/// surviving entry is dropped, one at a time, until it fits -- the surviving lines keep the walk's
+/// own order, only the removal order is by size.
+///
+/// Depth is enforced here as well as by the walker that built `nodes`, so a caller's mistake does
+/// not silently reach the model as a wider tree than the design allows.
+///
+/// # Arguments
+/// * `nodes` - Every candidate entry the walk found.
+/// * `max_depth` - The deepest depth (inclusive) shown; anything deeper is dropped before sizing.
+/// * `cap` - Most characters the rendered tree, including its own cut notice, may take.
+pub(crate) fn format_orientation_tree(nodes: &[TreeNode], max_depth: usize, cap: usize) -> String {
+    let mut kept: Vec<&TreeNode> = nodes.iter().filter(|n| n.depth <= max_depth).collect();
+    if kept.is_empty() {
+        return String::new();
+    }
+    let total_in = kept.len();
+    loop {
+        let lines: Vec<String> = kept.iter().map(|n| tree_line(n)).collect();
+        let cut = kept.len() < total_in;
+        let mut body = lines.join("\n");
+        if cut {
+            body.push_str(&fmt!("\n… {} more; file_glob to see them", total_in - kept.len()));
+        }
+        if body.chars().count() <= cap || kept.len() <= 1 {
+            return body;
+        }
+        // Drop the largest surviving entry and try again. A directory's `bytes` already sums its
+        // descendants, so this compares fairly against a plain file.
+        let worst = kept.iter().enumerate()
+            .max_by_key(|(_, n)| n.bytes)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        kept.remove(worst);
+    }
+}
+
+/// The one-line "where you are" a Claude-Code-style cwd sentence gives for free.
+///
+/// # Arguments
+/// * `cwd` - The turn's own working folder, workspace-relative; empty for the workspace root.
+pub(crate) fn orientation_cwd_line(cwd: &str) -> String {
+    if cwd.is_empty() {
+        fmt!("Your working folder is the workspace root; paths are relative to it.")
+    } else {
+        fmt!("Your working folder is `{}/`; paths are relative to the workspace root, not to \
+            this folder.", cwd)
+    }
+}
+
+/// The "recent changes" substitute for git status: the newest-modified files the same walk found,
+/// newest first, capped to a handful of lines.
+///
+/// # Arguments
+/// * `recent` - Paths with a known modification time, already sorted newest first.
+/// * `max` - Most lines shown.
+pub(crate) fn orientation_recent_lines(recent: &[String], max: usize) -> String {
+    if recent.is_empty() {
+        return String::new();
+    }
+    let shown: Vec<&String> = recent.iter().take(max).collect();
+    fmt!("Recently changed: {}", shown.iter().map(|s| s.as_str())
+        .collect::<Vec<_>>().join(", "))
+}
+
+/// The full Claude-Code-grade orientation note: cwd, a depth-limited tree, and recent changes --
+/// composed once per turn (see the module note on hot vs cold: it must be byte-stable within a
+/// turn, never re-listed mid-turn).
+///
+/// Empty only where `nodes` is empty, matching [`orientation_note`]'s own rule: a sentence naming
+/// nothing teaches the model only that the app does not know either.
+///
+/// # Arguments
+/// * `cwd` - The turn's own working folder, workspace-relative.
+/// * `nodes` - Every candidate entry the walk found: depth 0-2 under the root, or 0-3 under a mark.
+/// * `max_depth` - Passed straight to [`format_orientation_tree`].
+/// * `recent` - Passed straight to [`orientation_recent_lines`].
+pub(crate) fn orientation_tree_note(
+    cwd:       &str,
+    nodes:     &[TreeNode],
+    max_depth: usize,
+    recent:    &[String],
+)
+    -> String
+{
+    let tree = format_orientation_tree(nodes, max_depth, ORIENTATION_TREE_CHARS);
+    if tree.is_empty() {
+        return String::new();
+    }
+    let mut s = fmt!("## Where you are\n\n{}\n\n{}", orientation_cwd_line(cwd), tree);
+    let recent = orientation_recent_lines(recent, 8);
+    if !recent.is_empty() {
+        s.push_str("\n\n");
+        s.push_str(&recent);
+    }
+    s
+}
+
+/// The names [`SKIP_DIRS`] already passes over, plus a Diamond's own version history -- noise for
+/// an orientation snapshot, since it is never where a user's own work sits.
+///
+/// # Arguments
+/// * `path` - A directory's own workspace-relative path, from the walk's own start.
+fn orientation_skips(path: &str) -> bool {
+    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
+    let name = segs.last().copied().unwrap_or("");
+    Skips::default_rule().skips(name)
+        || (segs.len() >= 3 && segs[0] == "diamonds" && segs[2] == "versions")
+}
+
+/// Every workspace-relative path an [`orientation_tree`] walk should start from: the workspace
+/// root always, plus one entry per attached mark (skipping Daimond's own store, which the hand
+/// cannot see and the tree would only mislead about).
+///
+/// # Arguments
+/// * `bounds` - The turn's [`Bound`] rules, in the order they were declared.
+fn orientation_marks(bounds: &[Bound]) -> Vec<String> {
+    let mut out = Vec::new();
+    for b in bounds {
+        let p = match b {
+            Bound::OnlyUnder(p) | Bound::OnlyWriteUnder(p) => p,
+            _ => continue,
+        };
+        let n = normalise(p);
+        if !n.is_empty() && !is_store_path(&n) && !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// Walks one directory to `max_depth`, gathering [`TreeNode`]s and the newest modification times
+/// it saw, for [`orientation_tree`].
+///
+/// Boxed for recursion (`async fn` cannot recurse directly) and bounded by [`WALK_ENTRIES_MAX`]
+/// the same way every other walk in this file is, so a huge marked folder cannot turn one turn's
+/// briefing into an unbounded scan.
+#[cfg(target_arch = "wasm32")]
+fn walk_orientation<'a>(
+    ctx:      &'a ToolContext,
+    start:    &'a str,
+    rel:      &'a str,
+    depth:    usize,
+    max_depth: usize,
+    budget:   &'a mut WalkBudget,
+    out:      &'a mut Vec<TreeNode>,
+    recent:   &'a mut Vec<(String, f64)>,
+)
+    -> std::pin::Pin<Box<dyn std::future::Future<Output = (usize, u64)> + 'a>>
+{
+    Box::pin(async move {
+        let full = if rel.is_empty() { start.to_string() } else { fmt!("{}/{}", start, rel) };
+        let entries = match crate::wasm::opfs::list_dir_stamped(ctx.root, &full).await {
+            Ok(e)  => e,
+            Err(_) => return (0, 0),
+        };
+        let mut files = 0usize;
+        let mut bytes = 0u64;
+        for (name, is_dir, size, when) in entries {
+            // `full` is the walk's own spelling of where it is, which is workspace-relative from
+            // either start -- the root (empty) or a mark -- and so is what a notice would name.
+            if !budget.spend(&full) {
+                break;
+            }
+            let child_rel = if rel.is_empty() { name.clone() } else { fmt!("{}/{}", rel, name) };
+            if is_dir {
+                if orientation_skips(&child_rel) {
+                    continue;
+                }
+                // Claimed BEFORE the recursion, not after: a directory's totals are only known
+                // once its children are counted, but the LINE must print above them or the tree
+                // reads bottom-up -- pushing here only once the count was in hand put every
+                // directory's line under its own children.  The slot holds the line's position;
+                // the totals are patched in once the recursion below has them.
+                let slot = out.len();
+                out.push(TreeNode {
+                    path: child_rel.clone(), is_dir: true, files: 0, bytes: 0, depth,
+                });
+                let (sub_files, sub_bytes) = if depth < max_depth {
+                    walk_orientation(ctx, start, &child_rel, depth + 1, max_depth, budget, out,
+                        recent).await
+                } else {
+                    (0, 0)
+                };
+                files += sub_files;
+                bytes += sub_bytes;
+                out[slot].files = sub_files;
+                out[slot].bytes = sub_bytes;
+            } else {
+                files += 1;
+                bytes += size;
+                if depth <= max_depth {
+                    out.push(TreeNode {
+                        path: child_rel.clone(), is_dir: false, files: 0, bytes: size, depth,
+                    });
+                }
+                if let Some(ms) = when {
+                    recent.push((child_rel, ms));
+                }
+            }
+        }
+        (files, bytes)
+    })
+}
+
+/// Removes a later entry whose full path repeats one already recorded, keeping the first.
+///
+/// The root walk and each mark's own walk are separate calls that can name the same file twice:
+/// a mark shallow enough to sit inside the root's own depth-2 cap is walked again from its own
+/// start, and without this the tree printed `docs/` from the root walk and then `plan.md` again
+/// from the mark's, the prefix stripped because the mark's own walk numbers paths from itself.
+/// Keyed on the full path alone, so it makes no difference which walk found the duplicate first
+/// structurally, only which the caller pushed first into `nodes` -- the root's copy, pushed
+/// first below, is what survives.
+///
+/// # Arguments
+/// * `nodes` - Every candidate the root walk and each mark's own walk found, in push order.
+pub(crate) fn dedupe_orientation_nodes(nodes: Vec<TreeNode>) -> Vec<TreeNode> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        if seen.insert(node.path.clone()) {
+            out.push(node);
+        }
+    }
+    out
+}
+
+/// Removes a later path that repeats one already listed, keeping the first -- the newest, since
+/// the caller sorts before calling this.  The same spelling collision that duplicated the tree
+/// (see [`dedupe_orientation_nodes`]) duplicated `Recently changed` too, because both are fed by
+/// the same two walks over the same paths.
+///
+/// # Arguments
+/// * `paths` - Full workspace-relative paths, newest first.
+pub(crate) fn dedupe_recent_paths(paths: Vec<String>) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    paths.into_iter().filter(|p| seen.insert(p.clone())).collect()
+}
+
+/// The Claude-Code-grade orientation note for one turn: [`orientation_tree_note`] fed from a real
+/// walk of the workspace root (depth 2) and every attached mark (depth 3).
+///
+/// # Arguments
+/// * `ctx` - This turn's tool context, which decides which filesystem root is walked.
+/// * `cwd` - The turn's own working folder, as shown in the cwd line.
+/// * `bounds` - The turn's [`Bound`] rules; see [`orientation_marks`].
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn orientation_tree(ctx: &ToolContext, cwd: &str, bounds: &[Bound]) -> String {
+    let mut nodes: Vec<TreeNode> = Vec::new();
+    let mut recent: Vec<(String, f64)> = Vec::new();
+    let mut budget = WalkBudget::new();
+    let _ = walk_orientation(ctx, "", "", 0, 2, &mut budget, &mut nodes, &mut recent).await;
+    for mark in orientation_marks(bounds) {
+        // Named as a bare heading, ahead of what is under it -- unlike a nested directory found
+        // BY the walk, a mark is a second walk's own starting point, so there is no enclosing
+        // recursion to fold its totals into.
+        nodes.push(TreeNode { path: mark.clone(), is_dir: true, files: 0, bytes: 0, depth: 0 });
+        // The mark's own walk numbers every path from ITS start, so a bare `walk_orientation`
+        // call here would hand back `plan.md` for a file the root already knows as `docs/plan.md`
+        // -- two spellings of the same entry.  Walked into scratch vectors and re-prefixed with
+        // the mark before joining `nodes`/`recent`, so every path leaving this function is whole
+        // and workspace-relative, and the de-dupe below can compare them as the same entry.
+        let mut mark_nodes:  Vec<TreeNode>       = Vec::new();
+        let mut mark_recent: Vec<(String, f64)>  = Vec::new();
+        let _ = walk_orientation(ctx, &mark, "", 0, 3, &mut budget, &mut mark_nodes,
+            &mut mark_recent).await;
+        for node in mark_nodes {
+            nodes.push(TreeNode { path: fmt!("{}/{}", mark, node.path), ..node });
+        }
+        for (path, when) in mark_recent {
+            recent.push((fmt!("{}/{}", mark, path), when));
+        }
+    }
+    let nodes = dedupe_orientation_nodes(nodes);
+    recent.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let recent_paths = dedupe_recent_paths(recent.into_iter().map(|(p, _)| p).collect());
+    let recent_paths: Vec<String> = recent_paths.into_iter().take(8).collect();
+    orientation_tree_note(cwd, &nodes, 3, &recent_paths)
+}
+
 /// A hand's listing, re-printed with the host inside each entry's parentheses.
 ///
 /// The hand answers with bare names and `name/` for a directory -- which is byte for byte what
@@ -20101,6 +20425,140 @@ mod tests {
         assert!(out.contains("README.md"), "it does not name a root file: {}", out);
         assert_eq!("", orientation_note(&[]),
             "a root nothing could be read from still costs tokens");
+    }
+
+    /// A node one level deeper than the walk's own top level, alongside a plain file at the top
+    /// level -- the shape a root walk actually returns.
+    fn tree_fixture() -> Vec<TreeNode> {
+        vec![
+            TreeNode { path: fmt!("src"), is_dir: true, files: 3, bytes: 900, depth: 0 },
+            TreeNode { path: fmt!("README.md"), is_dir: false, files: 0, bytes: 42, depth: 0 },
+            TreeNode { path: fmt!("packages"), is_dir: true, files: 5, bytes: 2_000, depth: 0 },
+            TreeNode { path: fmt!("packages/x"), is_dir: true, files: 4, bytes: 1_800, depth: 1 },
+            TreeNode {
+                path: fmt!("packages/x/src"), is_dir: true, files: 4, bytes: 1_800, depth: 2 },
+        ]
+    }
+
+    /// The tree stays under its cap, however many entries a walk hands it.
+    #[test]
+    fn test_the_orientation_tree_is_capped_00() {
+        let many: Vec<TreeNode> = (0..200)
+            .map(|i| TreeNode {
+                path: fmt!("folder-{:03}/quite-a-long-name-for-one-entry", i),
+                is_dir: true, files: i + 1, bytes: (i as u64 + 1) * 4_000, depth: 0 })
+            .collect();
+        let out = format_orientation_tree(&many, 2, ORIENTATION_TREE_CHARS);
+        assert!(out.chars().count() <= ORIENTATION_TREE_CHARS,
+            "the tree is {} characters: {}", out.chars().count(), out);
+        assert!(out.contains("more; file_glob to see them"),
+            "a cut tree does not say it was cut: {}", out);
+    }
+
+    /// Depth beyond the cap is dropped, whatever a caller handed the formatter -- the cap is
+    /// enforced here as well as by the walk that is meant to stop short of it.
+    #[test]
+    fn test_the_orientation_tree_respects_its_depth_cap_00() {
+        let mut nodes = tree_fixture();
+        nodes.push(TreeNode {
+            path: fmt!("packages/x/src/deep"), is_dir: false, files: 0, bytes: 5, depth: 3 });
+        let out = format_orientation_tree(&nodes, 2, ORIENTATION_TREE_CHARS);
+        assert!(out.contains("packages/x/src"), "the depth-2 entry was cut too: {}", out);
+        assert!(!out.contains("packages/x/src/deep"),
+            "an entry past max_depth was shown: {}", out);
+    }
+
+    /// Over the cap, the LARGEST entry is cut first, not the one a walk happened to find last --
+    /// three small entries survive a cap that only the fourth, huge one cannot fit under.
+    #[test]
+    fn test_the_orientation_tree_cuts_the_largest_entry_first_00() {
+        let nodes = vec![
+            TreeNode { path: fmt!("tiny-a"), is_dir: false, files: 0, bytes: 10, depth: 0 },
+            TreeNode { path: fmt!("tiny-b"), is_dir: false, files: 0, bytes: 10, depth: 0 },
+            TreeNode { path: fmt!("tiny-c"), is_dir: false, files: 0, bytes: 10, depth: 0 },
+            TreeNode {
+                path: fmt!("a-directory-with-a-fairly-long-name"), is_dir: true, files: 900,
+                bytes: 9_000_000, depth: 0 },
+        ];
+        // Under all four lines together, over the three tiny ones plus the cut notice.
+        let out = format_orientation_tree(&nodes, 2, 95);
+        assert!(!out.contains("a-directory-with-a-fairly-long-name"),
+            "the largest entry survived the cut: {}", out);
+        assert!(out.contains("tiny-a") && out.contains("tiny-b") && out.contains("tiny-c"),
+            "a small entry was cut ahead of the large one: {}", out);
+    }
+
+    /// A plain file sitting at the top level, beside directories, is shown -- CC's snapshot lists
+    /// files as well as folders, and a tree that dropped them would be a worse orientation than
+    /// the one-line root listing it replaces.
+    #[test]
+    fn test_the_orientation_tree_shows_a_decoy_top_level_file_00() {
+        let out = format_orientation_tree(&tree_fixture(), 2, ORIENTATION_TREE_CHARS);
+        assert!(out.contains("README.md"), "the top-level file was dropped: {}", out);
+    }
+
+    /// A directory nested two levels under the root is shown at a depth-2 cap.
+    #[test]
+    fn test_the_orientation_tree_shows_a_nested_directory_00() {
+        let out = format_orientation_tree(&tree_fixture(), 2, ORIENTATION_TREE_CHARS);
+        assert!(out.contains("packages/x/src"), "the nested directory was dropped: {}", out);
+    }
+
+    /// A mark inside the root survives ONE walk's spelling, not both -- the root walk's own
+    /// `docs/plan.md` first, then the mark's own re-walk of `docs` handing back the same file as
+    /// bare `plan.md`, prefixed with the mark before it ever reaches this function (see
+    /// `orientation_tree`).  Full path in, full path out: the survivor is not shortened back to
+    /// the bare spelling the mark's own walk numbers from.
+    #[test]
+    fn test_a_mark_inside_the_root_is_kept_once_with_its_full_path_00() {
+        let nodes = vec![
+            TreeNode { path: fmt!("docs"), is_dir: true, files: 1, bytes: 40, depth: 0 },
+            TreeNode { path: fmt!("docs/plan.md"), is_dir: false, files: 0, bytes: 40, depth: 1 },
+            // The mark heading and its re-walked child, already prefixed by `orientation_tree`.
+            TreeNode { path: fmt!("docs"), is_dir: true, files: 0, bytes: 0, depth: 0 },
+            TreeNode { path: fmt!("docs/plan.md"), is_dir: false, files: 0, bytes: 40, depth: 0 },
+        ];
+        let out = dedupe_orientation_nodes(nodes);
+        let plans: Vec<&TreeNode> = out.iter().filter(|n| n.path == "docs/plan.md").collect();
+        assert_eq!(1, plans.len(), "the mark's file survived under two spellings: {:?}", out);
+        assert_eq!("docs/plan.md", plans[0].path, "the surviving copy lost its mark prefix");
+        let docs: Vec<&TreeNode> = out.iter().filter(|n| n.path == "docs").collect();
+        assert_eq!(1, docs.len(), "the mark heading duplicated the root's own directory line");
+    }
+
+    /// `Recently changed` names a file once, however many walks found it -- the same collision
+    /// that duplicated the tree (a root-walked path and the mark's own re-walk of it) duplicated
+    /// this line too, since both are fed from the same two walks.
+    #[test]
+    fn test_recently_changed_has_no_duplicate_00() {
+        let paths = vec![fmt!("src/web/app.js"), fmt!("docs/plan.md"), fmt!("src/web/app.js")];
+        let out = dedupe_recent_paths(paths);
+        assert_eq!(vec![fmt!("src/web/app.js"), fmt!("docs/plan.md")], out,
+            "a duplicate survived: {:?}", out);
+        let rendered = orientation_recent_lines(&out, 8);
+        assert_eq!(1, rendered.matches("src/web/app.js").count(),
+            "the rendered line still names the file twice: {}", rendered);
+    }
+
+    /// A directory's line prints before the children the walk found under it -- reversed, the
+    /// tree reads bottom-up, which is what `walk_orientation` did before it claimed the line's
+    /// slot ahead of recursing into it (see the comment there). `format_orientation_tree` never
+    /// reorders what it is handed, so a walk that gets this right stays right through formatting.
+    #[test]
+    fn test_a_parent_line_precedes_its_children_00() {
+        let nodes = vec![
+            TreeNode { path: fmt!("packages"), is_dir: true, files: 1, bytes: 100, depth: 0 },
+            TreeNode { path: fmt!("packages/x"), is_dir: false, files: 0, bytes: 100, depth: 1 },
+        ];
+        let out = format_orientation_tree(&nodes, 2, ORIENTATION_TREE_CHARS);
+        let lines: Vec<&str> = out.lines().collect();
+        let parent_line = lines.iter()
+            .position(|l| l.trim_start() == "packages/ (1 file, 100 bytes)")
+            .expect("the parent's own line is missing");
+        let child_line = lines.iter().position(|l| l.contains("packages/x"))
+            .expect("the child's own line is missing");
+        assert!(parent_line < child_line,
+            "the parent line does not precede its child: {}", out);
     }
 
     /// A key no schema names is echoed back, and the tool's own keys are listed from its schema.

@@ -644,6 +644,12 @@ impl Agent {
                     l.fold_shape = sh;
                 }
             }
+            // The `batchline_off` arm's whole content: on by default, so a trial that wants to
+            // measure the sentence's own worth turns it off rather than the engine growing a
+            // second untested path.
+            if let Some(b) = crate::llm::extract_json_bool(text, "batch_line") {
+                l.batch_line = b;
+            }
         }
         self.hold_worker();
         Ok(())
@@ -815,12 +821,21 @@ impl Agent {
         let tools = if registry.is_empty() {
             String::new()
         } else {
-            fmt!(
+            let mut t = fmt!(
                 "You have exactly these tools, all scoped to the user's \
                  workspace: {}. Use them to inspect and change the workspace \
                  when completing a task. You have no other tools; never claim \
                  to have performed an action you had no tool to perform.",
-                registry.tool_names().join(", "))
+                registry.tool_names().join(", "));
+            // ONE SENTENCE, on by default. Claude Code's own advantage on the rounds census was
+            // not fewer tools but fewer ROUNDS to reach the same reads: one `ls -R; cat …` where
+            // a daimon spent several. The provider already coalesces every result of a round back
+            // into one message (`build_anthropic_body`); this is the model being told the calls
+            // may go out together in the first place.
+            if self.limits.borrow().batch_line {
+                t.push_str(" Independent calls go in ONE reply; they run together.");
+            }
+            t
         };
         let brief = self.briefing.borrow().trim().to_string();
         (self.system_prompt.clone(), tools, brief)
@@ -2574,6 +2589,30 @@ mod tests {
         assert_eq!(200_000, l.context_cap);
         assert_eq!(5.0, l.spend_cap_usd);
         assert_eq!(compact::MAX_CONTINUATIONS, l.max_continuations);
+    }
+
+    // ── Calls per round ────────────────────────────────────────────
+
+    #[test]
+    fn test_the_batch_line_rides_the_tools_sentence_by_default_00() {
+        let a = make_test_agent();
+        let (_, tools, _) = a.system_parts(&one_tool());
+        assert!(tools.contains("Independent calls go in ONE reply"),
+            "the batching sentence is not sent by default: {}", tools);
+        // A role with no tools has nothing to batch, so nothing is said and nothing is paid for.
+        let (_, empty_tools, _) = a.system_parts(&no_tools());
+        assert!(empty_tools.is_empty(), "a toolless registry was given a tools paragraph");
+    }
+
+    #[test]
+    fn test_the_batch_line_is_the_batchline_off_arms_whole_content_00() {
+        let a = make_test_agent();
+        if let Err(e) = a.set_tune(r#"{"batch_line":false}"#) {
+            panic!("set_tune refused a plain bool: {}", e);
+        }
+        let (_, tools, _) = a.system_parts(&one_tool());
+        assert!(!tools.contains("Independent calls go in ONE reply"),
+            "set_tune(\"batch_line\":false) did not turn the sentence off: {}", tools);
     }
 
     // ── Speaking into a running turn ────────────────────────────────

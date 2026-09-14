@@ -1150,13 +1150,15 @@ impl DaimondApp {
             \"written_age\":{},\"result_age\":{},\"result_cap\":{},\"sweep_every\":{},\
             \"worker_max_rounds\":{},\"worker_continuations\":{},\"worker_context_cap\":{},\
             \"worker_keep\":{},\"worker_spend_usd\":{},\"gather_timeout_s\":{},\
+            \"batch_line\":{},\
             \"fold_shape\":\"{}\",\"family\":\"{}\"}}",
             l.worker, l.max_rounds, l.max_continuations, l.context_cap, l.keep, l.spend_cap_usd,
             l.fold_at, l.retire_prior,
             l.retire_keep_turns,
             l.written_age, l.result_age, l.result_cap, l.sweep_every,
             l.worker_max_rounds, l.worker_continuations, l.worker_context_cap,
-            l.worker_keep, l.worker_spend_usd, l.gather_timeout_s, l.fold_shape.wire(),
+            l.worker_keep, l.worker_spend_usd, l.gather_timeout_s, l.batch_line,
+            l.fold_shape.wire(),
             self.registry.family().name())
     }
 
@@ -2172,8 +2174,8 @@ impl DaimondApp {
         //
         // Only where the turn holds file tools: a role with none cannot act on it.
         if registry.tools.iter().any(|t| matches!(t, Tool::FileRead | Tool::FileList)) {
-            let note = crate::tools::orientation_note(
-                &crate::tools::root_entries(&registry.ctx).await);
+            let note = crate::tools::orientation_tree(
+                &registry.ctx, &registry.ctx.cwd, &registry.ctx.no_write).await;
             if !note.is_empty() {
                 if !s.is_empty() {
                     s.push_str("\n\n");
@@ -2305,6 +2307,14 @@ impl DaimondApp {
             local.push_str("Look at what is attached before you answer a question about it. You \
                 may READ anywhere in the workspace, and you may write only in the places above.");
         }
+        // THE SAME DEPTH-LIMITED TREE A CHAT TURN GETS, not a bespoke sentence of its own -- see
+        // `DaimondApp::briefing`, called near the bottom of this function to build the agent's
+        // briefing.  It was ALSO composed here until measured: a daimon turn's `machine` carried
+        // one tree and its `local` carried a second, ~3,200 further characters against a cap
+        // (`ORIENTATION_TREE_CHARS`) meant to hold one.  `briefing()` already walks the same root
+        // with the same bounds, so a second walk here bought nothing but the duplicate -- the
+        // paragraph above, naming WHAT is attached and who may edit it, is the orientation this
+        // function itself still owns; WHAT IS IN each of those places is `briefing()`'s alone now.
         // THE HOT PART AND AN OUTLINE OF THE REST, which is the seam the split is made at.
         //
         // `local` is per-turn truth the user cannot edit away -- the role prompt is theirs
