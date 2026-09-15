@@ -421,7 +421,26 @@ g2 = await drawn();
 check(g2.edges.length === before && !g2.edges.some(e => e.lid === newLink),
 	`and a removed link goes the same way: ${g2.edges.length} edge(s)`);
 
-// ── 10. A node opens its Diamond ─────────────────────────────────
+// ── 10. A remembered panel draws itself on reload, with NO user action ───
+//
+// The launch snag. `show('graph')` in `draw()` above persisted the panel open
+// (`daimond-layout`), and a session kept unlocked across reload comes back
+// unlocked -- `signInAs` above documents exactly that -- so the identity modal
+// never moves from locked to open and never fires the OTHER trigger that
+// repaints this pane. That leaves `DaimondPanels.init()` reopening the panel
+// in `boot()`, BEFORE `await init()`, as the only thing that draws it: the
+// pane used to build its `DaimondApp` against a `wasm` binding still
+// undefined, throw reading `__wbindgen_malloc` off it, and have nothing left
+// to retry with. No `draw()`, no click -- boot alone has to put the picture up.
+await page.reload({ waitUntil: 'domcontentloaded' });
+await signInAs(s, 'graph');
+await page.waitForTimeout(2500);
+const healed = await drawn();
+check(healed.hasSvg && healed.nodes.length === 6 && healed.empty.length === 0,
+	`a remembered Graph panel draws itself on reload, unassisted: ${healed.nodes.length} `
+	+ `node(s), ${healed.edges.length} edge(s), empty: ${JSON.stringify(healed.empty)}`);
+
+// ── 11. A node opens its Diamond ─────────────────────────────────
 await page.click(`g.graph-node[data-diamond-id="${id.C}"] path.graph-node-box`, { force: true });
 await page.waitForTimeout(1200);
 const cur = await page.evaluate(() => (window.DaimondDiamond.current() || {}).id || null);
@@ -437,7 +456,7 @@ const errsA = errors(s).filter(e => !gatewayNoise.test(e));
 check(errsA.length === 0, `no console errors beyond the gateway's answer: ${JSON.stringify(errsA.slice(0, 3))}`);
 await s.close();
 
-// ── 11. The empty paths, on a profile that has never held anything ──
+// ── 12. The empty paths, on a profile that has never held anything ──
 const PROFILE_B = scratch('graph-profile-empty');
 fs.rmSync(PROFILE_B, { recursive: true, force: true });
 const b = await open({ name: 'graphB', connect: false, profile: PROFILE_B, defaults: false });
@@ -479,7 +498,7 @@ check((noLinks.stats || '').includes('2 diamonds') && (noLinks.stats || '').incl
 	`the stats line is still there and honest: ${JSON.stringify(noLinks.stats)}`);
 await shot(b, 'graph-empty');
 
-// ── 12. Two LONG relations between one pair ──────────────────────
+// ── 13. Two LONG relations between one pair ──────────────────────
 // The case the overlap was reported against, built on its own: one pair, two relations, both
 // far too long to be pulled apart by the eighteen pixels the paths are nudged.
 const longIds = await b.page.evaluate(async (a) => {

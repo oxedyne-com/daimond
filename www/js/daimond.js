@@ -53582,6 +53582,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		Files.init();
 		Workers.render();
+		// A promise other modules can await before touching the wasm module, so a panel
+		// remembered from a previous session (graph, tools, mail, ...) that draws itself on
+		// `mshow` below -- BEFORE `init()` -- does not construct against an undefined `wasm`
+		// binding. Published on `DaimondCore`, which already exists by this point, rather than
+		// a fresh global, so there is one place readers look. Rejects if `init()` throws, so a
+		// waiter does not hang forever on a boot that failed.
+		var readyResolve, readyReject;
+		window.DaimondCore.ready = new Promise(function (res, rej) { readyResolve = res; readyReject = rej; });
 		mshow(document.body.dataset.mpanel || 'ai');
 		try {
 			await init();               // instantiate the wasm module
@@ -53593,6 +53601,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// And the footprint, from the moment there is one to read.
 			try { watchHeap(); } catch (e) { /* an older bundle cannot report it */ }
 			window.__DAIMOND_READY = true;
+			// The module is now safe to construct against. Resolve before anything else in
+			// this block, so a panel waiting on it (graph, tools, ...) unblocks as early as
+			// possible rather than behind the rest of boot.
+			readyResolve();
+			try { document.dispatchEvent(new CustomEvent('daimond:wasm-ready')); } catch (e) {}
 			// Point OPFS at the current account's subdirectory BEFORE any file tool runs, so this
 			// account's workspace and Daimond's own state are isolated from every other account at
 			// this browser. Empty for the primary account (the root, unchanged).
@@ -53657,6 +53670,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// granted, else a one-click reconnect offer).  Best-effort.
 			try { await Files.tryReconnect(); } catch (e) { /* stay on OPFS */ }
 		} catch (e) {
+			// No-op once `readyResolve` has already settled it; a waiter on a boot that
+			// throws before the module is usable must not hang forever.
+			try { readyReject(e); } catch (e2) {}
 			// A LinkError here is never an ordinary runtime failure. It means the wasm
 			// and the JS glue beside it came from DIFFERENT BUILDS -- the module asks for
 			// an import the glue does not define -- and that is what a deploy landing

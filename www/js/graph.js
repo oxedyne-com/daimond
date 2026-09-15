@@ -232,6 +232,7 @@
 	// element it was waiting for existed.
 	var settlers = [];
 	var lastStore = null;   // what the picture on screen was drawn from
+	var wasmReadyArmed = false;   // one self-healing listener at a time, see `refresh`'s catch
 	var lastGeo   = null;   // and where that draw put every box
 	// How many times the whole SVG has been built. Published for a verifier, and
 	// not drawn anywhere: a gesture that rebuilt the picture would make the eye
@@ -459,7 +460,15 @@
 	/// provider fields are placeholders -- nothing here ever calls a model.
 	function reader() {
 		if (app) return Promise.resolve(app);
-		return import(PKG).then(function (mod) {
+		// A panel remembered from a previous session draws itself at `mshow`, BEFORE
+		// `boot()` reaches `await init()` -- so without this the module's `wasm` binding
+		// is still undefined and `new mod.DaimondApp` throws reading `__wbindgen_malloc`
+		// off it. Absent on an older page or the verifier harness, in which case there is
+		// nothing to wait for and this proceeds exactly as before.
+		var ready = (window.DaimondCore && DaimondCore.ready) || Promise.resolve();
+		return ready.then(function () {
+			return import(PKG);
+		}).then(function (mod) {
 			app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 			return app;
 		});
@@ -2961,6 +2970,20 @@
 			p.textContent = t('graph.failed', { err: (e && e.message) || String(e) });
 			bodyEl.appendChild(p);
 			settle();
+			// The module was not up yet -- boot had not reached `init()` when this pane
+			// was shown, or it still fails -- and nothing else re-triggers a refresh with
+			// a session kept across reload (no lock-to-unlock transition). Arm ONE
+			// listener so the picture repairs itself the moment the module comes up,
+			// rather than sitting blank until the user toggles panels. `once: true`
+			// takes the listener down itself; the flag stops a second one stacking from
+			// a refresh that fails again before the first has fired.
+			if (!wasmReadyArmed && window.DaimondCore && window.DaimondCore.ready) {
+				wasmReadyArmed = true;
+				document.addEventListener('daimond:wasm-ready', function () {
+					wasmReadyArmed = false;
+					refresh();
+				}, { once: true });
+			}
 		}).then(function () {
 			drawing = false;
 			if (again) { again = false; return refresh(); }

@@ -304,6 +304,11 @@
 			.map(function (p) { return p.tool; })
 			.join(',');
 		try {
+			// `init()` (`www/js/daimond.js`, `boot()`) starts a Tools panel refresh before it
+			// has awaited the module -- see `DaimondTools.init` there, called ahead of
+			// `await init()`. Wait for it where daimond.js publishes it, or proceed at once
+			// on an older page or the verifier harness, where there is nothing to wait for.
+			if (window.DaimondCore && DaimondCore.ready) await DaimondCore.ready;
 			var mod = await import(PKG);
 			mod.set_locked_packs(locked);
 		} catch (e) {
