@@ -219,6 +219,24 @@
 	padding: 0 5px; line-height: 1.6;
 }
 .files-badge.files-elsewhere { border: none; padding: 0 2px; font-size: var(--fs-2xs); }
+/* Stat'd lazily (see `statAttachments`): a row for something that no longer
+   exists at that path. Dimmed like an unreachable one, but for a different
+   reason -- there is nowhere else this could be open FROM, so the row carries
+   no open action at all, only the ◈ to take the dangling reference back out. */
+.files-badge.files-gone { color: var(--danger, #e5534b); border-color: var(--danger, #e5534b); }
+.files-row.attached.gone { opacity: 0.6; }
+.files-row.attached.gone .files-name { cursor: default; }
+/* The "added by the daimon" header row: a fold's harvest or an agent's own
+   `artefact_add`, collapsed by default (`dev/ATTACH_CONTRACT.md` §2b). Not a
+   `.files-row.attached` -- it names no single path and carries no ◈. */
+.files-row.attached-group { display: flex; align-items: center; justify-content: space-between;
+	border-top: 1px solid var(--border); padding: 2px 0; }
+.files-group-toggle { flex: 1; text-align: left; background: none; border: none; cursor: pointer;
+	color: var(--text-muted); font-size: var(--fs-xs-sm); font-family: var(--font-mono); }
+.files-group-toggle:hover { color: var(--text-secondary); }
+.files-group-drop { background: none; border: none; cursor: pointer; color: var(--text-muted);
+	font-size: var(--fs-3xs-2xs); }
+.files-group-drop:hover { color: var(--danger, #e5534b); }
 /* Read-only says what a daimon may do with it, so it stays visible: a hover-only
    badge is a permission nobody reads. */
 .files-badge.files-ro { white-space: nowrap; }

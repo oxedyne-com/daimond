@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Cross-device sync — Daimond guide</title>
+<title>More than one device &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../css/variables.css">
 <link rel="stylesheet" href="../css/guide.css">
@@ -21,95 +21,89 @@
 			<span class="brand-sub">Guide</span>
 		</a>
 		<nav class="site-nav" aria-label="Guide pages">
-			<a href="index.html">Getting started</a>
+			<a href="index.html">Start here</a>
 			<a href="interface.html">The interface</a>
-			<a href="models.html">Models &amp; credits</a>
 			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-			<a href="capps.html">Capps</a>
-			<a href="email-web-files.html">Email, Web &amp; files</a>
-			<a href="accounts.html">Accounts</a>
-			<a href="sync.html" aria-current="page">Cross-device sync</a>
-			<a href="runner.html">The runner</a>
+			<a href="capps.html">A Diamond&rsquo;s page</a>
+			<a href="email-web-files.html">Files, email &amp; the web</a>
+			<a href="machine-operations.html">Your computer</a>
+			<a href="runner.html">Helpers &amp; where turns run</a>
+			<a href="sync.html" aria-current="page">More than one device</a>
+			<a href="social.html">Social &amp; proposals</a>
+			<a href="models.html">Models &amp; providers</a>
 			<a href="spending.html">Spending</a>
-			<a href="machine-operations.html">Machine Operations</a>
-			<a href="social.html">Social</a>
+			<a href="accounts.html">Safety &amp; fixes</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>Cross-device sync</h1>
-	<p class="lede">Daimond is local-first, so a second device starts empty. Cross-device sync carries your chats and workspace files between your own devices without the server ever reading them.</p>
+	<h1>More than one device</h1>
+	<p class="lede">Daimond keeps your work on the device you are using, so a second device starts empty. Link it, and your chats, Diamonds and files stay in step without the server ever reading them.</p>
 
-	<p>What travels through the gateway is one encrypted parcel only your devices hold the key to. The key comes from your passphrase and never leaves the browser, so the server stores the parcel and cannot open it. Nothing readable crosses between devices.</p>
+	<p>What crosses is one encrypted parcel, and only your devices hold the key to it. The key comes from your passphrase and does not leave the browser.</p>
 
-	<h2 id="s1">Linking a second device</h2>
-	<p>Each device makes its own identity, so typing your passphrase on a new one starts a <em>separate</em>, empty account instead of bringing your existing one across. To use the account you already have, <strong>link</strong> the new device to it. Three steps.</p>
-
+	<h2 id="s1">Link a second device</h2>
+	<p>Each device makes its own identity, so typing your passphrase into a fresh browser starts a <em>separate</em> account. To use the one you have, link the new device to it.</p>
 	<ol class="steps">
 		<li>
 			<h3 id="s2">On the device you already use, open the link dialog</h3>
-			<p>Click the <span class="ui">Link another device</span> button in the top bar. It shows a QR code and a one-time pairing code.</p>
-			<figure class="shot narrow" data-shot="pair-desktop">
-				<img src="img/pair-desktop.png" alt="The Link another device dialog, showing a QR code and a one-time pairing code that expires in about ten minutes.">
+			<p><span class="ui">Link another device</span> in the top bar shows a QR code and a one-time pairing code.</p>
+			<figure class="shot narrow">
+				<img alt="The link dialog on a desktop, showing a QR code above a short pairing code." src="img/pair-desktop.png" loading="lazy">
 				<figcaption>Your first device shows a QR and a code.</figcaption>
 			</figure>
 		</li>
 		<li>
-			<h3 id="s3">On the new device, scan the QR, or type the code</h3>
-			<p>Point the new phone's camera at the QR code: it opens Daimond and fills the code in for you, so you only tap <span class="ui">Link this device</span>. No camera? Open Daimond there, choose <span class="ui">Have a pairing code?</span>, and type the code. The code shown is only so you can check it matches the first device.</p>
-			<figure class="shot narrow" data-shot="pair-mobile">
-				<img src="img/pair-mobile.png" alt="The Link this device dialog on a phone after scanning, with the pairing code already filled in and a Link this device button.">
-				<figcaption>After scanning, just tap <span class="ui">Link this device</span>.</figcaption>
+			<h3 id="s3">On the new device, scan the QR or type the code</h3>
+			<p>Point the phone's camera at the code. It opens Daimond and fills the code in, so you only tap <span class="ui">Link this device</span>. Without a camera, open Daimond there, choose <span class="ui">Have a passcode or a pairing code?</span>, and type it.</p>
+			<figure class="shot narrow">
+				<img alt="The new phone, after scanning, with a single Link this device button." src="img/pair-mobile.png" loading="lazy">
+				<figcaption>After scanning, one tap.</figcaption>
 			</figure>
 		</li>
 		<li>
 			<h3 id="s4">Unlock with the same passphrase</h3>
-			<p>The new device now holds your account. Unlock it with the <strong>same passphrase you use on your first device</strong> (not a new one) and your chats and files appear. A passkey can unlock it faster afterwards, once you add one there.</p>
+			<p>The new device now holds your account. Use the passphrase you already have, and your work appears. A passkey can unlock it faster afterwards.</p>
 		</li>
 	</ol>
-
-	<div class="note"><strong>The passphrase is the same everywhere, but it cannot travel on its own.</strong> One account, one passphrase, on every device you link. The passphrase only decrypts a key the device already holds, so a browser that has never been linked has nothing for it to open. If a device asks you to <em>create</em> a passphrase rather than <em>enter</em> one, it is about to start a new account, and only linking it (or importing a backup of the old account into it) will bring the old one over.</div>
+	<div class="note"><strong>If a device asks you to create a passphrase instead of entering one, it is about to start a new account.</strong> Go back and pair it, or import a backup. One account, one passphrase, on every device you link. The passphrase cannot travel on its own, because it only decrypts a key the device already holds, so a browser that has never been linked has nothing for it to open.</div>
 
 	<h2 id="s5">What travels</h2>
-	<p>Your chats, your Diamonds and the graph you laid them out in, your mail, your workspace files, the devices on the account, and what you have paused. Any file travels, whatever kind it is: a photograph, a recording, a PDF or a spreadsheet reaches your other devices as text does, up to a gigabyte for one file. So does the Trash, so a deletion and a restore both reach every device.</p>
-	<p>What syncs is also what is kept in cloud storage, so a workspace can be larger than the device you are reading it on. A file that is not on this device still shows in the tree, marked with a cloud, and comes down when you ask for it. <a href="email-web-files.html">The Workspace</a> sets out the three states a file can be in, how space is freed as the browser fills, and what cloud storage costs.</p>
+	<p>Your chats, your Diamonds and the way you laid them out, your mail, your workspace files, the devices on the account, and what you have paused all travel. Any kind of file travels, up to a gigabyte each. So does the Trash, so a deletion and a restore both reach every device.</p>
+	<p>What syncs is also what is kept in cloud storage, so a workspace can be larger than the device reading it. A file that is not here still shows in the tree and comes down when asked for.</p>
+	<p>A folder you opened on one computer is not in the browser's storage, so it does not travel by default. <a href="email-web-files.html">Files, email &amp; the web</a> covers the per-folder control that copies one to devices that cannot open it.</p>
 
-	<h2 id="s6">Running a turn on another device</h2>
-	<p>When more than one of your devices is awake and linked, one can run a turn for another, and the answer syncs back to the device you started it on.</p>
-
-	<p>This is off until you turn it on, and set for one device at a time. One switch, <span class="ui">Hand off when you step away</span>, lets a turn running on this computer move to another awake device when you close it — the lid shuts, the tab closes, the connection drops. The turn finishes there and its answer syncs back, instead of sitting interrupted until you return.</p>
-
-	<p>The turn says where it went. It reads <span class="ui">Sent to your other devices</span>, then names the one that took it — <span class="ui">Laptop is doing this</span> — and the answer appears here when it is done. Two buttons sit beside it: <span class="ui">Take back</span> returns the turn to this device, and <span class="ui">Run here</span> runs it locally if no device picked it up or one could not finish. Naming your devices in the account settings is what makes these lines read as <span class="ui">Laptop</span> rather than <em>your other device</em>.</p>
-
-	<div class="note"><strong>You can nominate one device as the runner.</strong> Pick the one that is usually on — a desktop that stays awake — and hand-offs go to it rather than whichever device grabs the turn first. If it is offline when a turn is handed off, any awake device runs it instead. <a href="runner.html">The runner</a> sets out how to nominate one, what to say yes to on the machine itself, how to keep a browser from slowing it down, and the two things that can still stop it.</div>
-
-	<p>An errand handed to another device, and the answer it sends back, are sealed to your account like everything else that crosses the gateway. The server routes an encrypted parcel it cannot open; only your own devices hold the key.</p>
+	<h2 id="s6">Running a turn somewhere else</h2>
+	<p>When more than one of your devices is awake, one can run a turn for another and the answer syncs back. One switch turns it on, <span class="ui">Hand off when you step away</span>. A turn on this computer then moves to another awake device when you close it, whether the lid shuts, the tab closes or the connection drops, and finishes there.</p>
+	<p><a href="runner.html">Helpers &amp; where turns run</a> covers naming the machine that should pick turns up, and the two things that stop it.</p>
+	<p>An errand sent to another device, and the answer it sends back, are sealed to your account like everything else. The server routes a parcel it cannot open.</p>
 
 	<h2 id="s7">What it costs</h2>
-	<p>Cross-device sync is part of <strong>Pro</strong>, the one-time unlock, which stays bought once like the rest of Daimond. Without Pro a device works on its own; with it, your devices stay in step. Pro also turns on cloud storage and Email. The larger file bodies sync carries are kept in cloud storage, paid for from credits, with a free allowance before anything is metered.</p>
+	<p>Cross-device sync is part of <strong>Daimond Pro</strong>, at $8 a month, billed monthly, and you can cancel any time. Pro also turns on cloud storage, Email and a posting name. Away for a month, the billing pauses on its own and resumes when you are back.</p>
+	<p>Without Pro a device works on its own and loses nothing. Inference, bandwidth and other metered use are paid from credits either way.</p>
 
 	<div class="next">
-		<a href="accounts.html">&larr; Accounts</a>
-		<a href="runner.html">Next: The runner &rarr;</a>
+		<a href="runner.html">&larr; Helpers &amp; where turns run</a>
+		<a href="social.html">Next: Social &amp; proposals &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
 	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
 	<nav aria-label="Guide pages">
-		<a href="index.html">Getting started</a>
-		<a href="interface.html">Interface</a>
-		<a href="models.html">Models</a>
+		<a href="index.html">Start here</a>
+		<a href="interface.html">The interface</a>
 		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-		<a href="capps.html">Capps</a>
-		<a href="email-web-files.html">Email, Web &amp; files</a>
-		<a href="accounts.html">Accounts</a>
-		<a href="sync.html">Cross-device sync</a>
-		<a href="runner.html">The runner</a>
+		<a href="capps.html">A Diamond&rsquo;s page</a>
+		<a href="email-web-files.html">Files, email &amp; the web</a>
+		<a href="machine-operations.html">Your computer</a>
+		<a href="runner.html">Helpers &amp; where turns run</a>
+		<a href="sync.html">More than one device</a>
+		<a href="social.html">Social &amp; proposals</a>
+		<a href="models.html">Models &amp; providers</a>
 		<a href="spending.html">Spending</a>
-		<a href="machine-operations.html">Machine Operations</a>
-		<a href="social.html">Social</a>
+		<a href="accounts.html">Safety &amp; fixes</a>
 	</nav>
 </footer>
 </body>

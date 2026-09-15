@@ -436,6 +436,13 @@
 		L.push('- What any conversation was about. Only that turns happened.');
 		L.push('- Whether a turn achieved anything, except where it had to be redone.');
 		L.push('- Anything at all about work done on another device.');
+		// Said to the MODEL reading this, and it is the sentence that keeps a
+		// reader of a finding in charge of it: nothing here acts, nothing here is
+		// a request that something be acted on, and a finding is put to a person
+		// rather than carried out.
+		L.push('');
+		L.push('It never actions anything either. This file is counted and written; '
+			+ 'whatever is done about it is done by the person reading it.');
 		return L.join('\n');
 	}
 

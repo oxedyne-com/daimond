@@ -5,9 +5,10 @@
 // system message on every steering turn (`compose_daimon`), so the crystal's ceiling was a
 // per-round bill: one measured turn carried a 16 KiB crystal twenty-seven times, and the only
 // way a daimon could record more was to stop recording. Since 2026-09-13 the prompt carries
-// the HOT part -- `title`, `summary`, `open` and any section flagged `"hot": true` -- plus an
-// OUTLINE of everything else, and the cold half is reached with `crystal_read` and searched
-// with `recall`.
+// the HOT part -- `title`, `summary` and any section flagged `"hot": true` -- plus an OUTLINE
+// of everything else, and the cold half is reached with `crystal_read` and searched with
+// `recall`. (`open` was hot until 2026-09-15 and is no longer in the schema at all; what is
+// outstanding is REQUIREMENTS.md's, which `dev/verify_reqfiles.mjs` measures.)
 //
 // That is one claim with four halves, and three of them can pass while the fourth is a lie:
 //
@@ -80,10 +81,12 @@ const check = (name, pass, detail) => {
 const HOTMARK  = 'RUBICON-the-hot-marker';
 const COLDMARK = 'ZEBRA-the-cold-marker';
 const filler   = (w, n) => (w + ' ').repeat(n).trim();
+// NO `open` KEY: it left the schema on 2026-09-15 for REQUIREMENTS.md
+// (`dev/CRYSTAL_CONTRACT.md` §12), so a crystal carrying one is carried through as an unknown
+// key and is COLD like any other. The fixture is the shape a crystal has now.
 const CRYSTAL  = {
 	title:   'Cold storage',
 	summary: 'A crystal larger than what rides in the prompt.',
-	open:    ['whether the outline is enough to act on'],
 	sections: [
 		{ heading: 'Ground rules', body: HOTMARK + ' ' + filler('rule', 20), hot: true },
 		{ heading: 'Decisions',    body: filler('decided', 30), hot: true },
@@ -232,8 +235,9 @@ try {
 	const refused = await page.evaluate(async (a) => {
 		const big = JSON.parse(JSON.stringify(a.crystal));
 		// Past the 16 KiB default hot ceiling (raised from 4 KiB on 2026-09-14), with room to
-		// spare for the other always-hot fields and the two flagged sections already in the
-		// fixture -- 8,000 was enough over the old 4 KiB ceiling and is not over this one.
+		// spare for the other always-hot fields, the two flagged sections already in the
+		// fixture, and the three files charged inside the same ceiling since 2026-09-15 --
+		// 8,000 was enough over the old 4 KiB ceiling and is not over this one.
 		big.summary = 'x'.repeat(20000);
 		try { await window.__free.write_crystal_data(a.id, JSON.stringify(big)); return ''; }
 		catch (e) { return String((e && e.message) || e).replace(/\[[0-9;]*m/g, ''); }

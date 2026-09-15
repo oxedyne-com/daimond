@@ -1162,6 +1162,30 @@
 		return box;
 	}
 
+	// ── Is this account an operator? ───────────────────────────
+	//
+	// `undefined` until asked, then the role string or null. Asked ONCE per page and
+	// never on a timer: `operatorRole` is a gateway round trip, and the answer does not
+	// change under a signed-in session. A gateway that cannot be reached answers null,
+	// which hides the block -- the right way round, since a reader who is not an
+	// operator and a reader we cannot ask both want the same thing, which is a board
+	// with no dormant admin controls on it.
+	var _role = undefined, _roleAsking = false;
+
+	function isOperator() { return _role === 'owner' || _role === 'operator'; }
+
+	/// Ask the gateway once, and redraw if the answer changes what is on screen.
+	function askRole() {
+		if (_role !== undefined || _roleAsking) return;
+		if (!window.DaimondGateway || !DaimondGateway.operatorRole) { _role = null; return; }
+		_roleAsking = true;
+		DaimondGateway.operatorRole().then(function (r) {
+			_roleAsking = false;
+			_role = r || null;
+			if (isOperator()) draw();
+		}, function () { _roleAsking = false; _role = null; });
+	}
+
 	/// The settle-voice control, drawn under the head. Shown only where an identity
 	/// exists to wrap under — in a build without one, `cfg.voice` is the only way a
 	/// voice is held, and there is nothing to paste. Presence, replace, forget: the
@@ -1170,6 +1194,14 @@
 	/// the board never shows a settle button that would fail.
 	function drawAdmin() {
 		if (!window.DaimondIdentity) return null;		// nothing to wrap under; tests use cfg.voice
+		// OPERATORS ONLY (audit 2026-09-15, SOC-05). This block used to be drawn for
+		// everybody, so an ordinary reader's first sight of the roadmap was "Reading
+		// only. Settling needs your admin voice. [Add your settle voice]" -- a refusal
+		// naming a credential no ordinary account can ever be given, above a board they
+		// were free to read. It is drawn now only where a voice is already held (so the
+		// replace and forget controls stay reachable) or where the gateway has said this
+		// account holds a role. `_role` is asked once per view and the answer redraws.
+		if (!adminHas() && !isOperator()) { askRole(); return null; }
 		var host = el('div', 'trk-admin');
 		if (_voiceOpen) {
 			var input = document.createElement('input');

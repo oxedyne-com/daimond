@@ -1689,10 +1689,16 @@ async function main() {
 		// whose wasm trapped, which is what happened -- was invisible, and the lens had
 		// to invent a daimon's turns out of its `ended` rows.
 		const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-		const steer = src.slice(src.indexOf('async function doSteer('));
+		// `runSteer`, NOT `doSteer`. Since the trigger lane, `doSteer` is a twenty-line
+		// door that finds the Diamond a press belongs to and hands it on; `runSteer(f, …)`
+		// is the turn, and is what a timer steers a Diamond nobody is looking at through.
+		// Read the door and every check below passes on an empty body, which is the
+		// failure this whole section exists to catch.
+		const steer = src.slice(src.indexOf('async function runSteer('));
 		const body  = steer.slice(0, steer.indexOf('\n\tasync function ', 1));
+		check('the turn body is the one that runs, not the door', body.length > 10000);
 		for (const kind of ['turn.start', 'round', 'tool', 'ended', 'fold', 'turn.end']) {
-			check('doSteer emits ' + kind, body.indexOf("dsEvent('" + kind + "'") !== -1);
+			check('runSteer emits ' + kind, body.indexOf("dsEvent('" + kind + "'") !== -1);
 		}
 		// BOTH exits, because `doSteer` has no `finally`: a failure before the turn and
 		// a turn that came back are two different lines and each has to close the turn.

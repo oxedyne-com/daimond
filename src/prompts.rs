@@ -324,7 +324,7 @@ impl Role {
 	pub fn compose_for(&self, text: &str, model: &str) -> String {
 		let body = if text.trim().is_empty() { self.default_prompt() } else { text.trim() };
 		if matches!(self, Self::Reducer) {
-			return fmt!("{}\n\n{}", body, CRYSTAL_SCHEMA_NOTE);
+			return fmt!("{}\n\n{}\n\n{}", body, CRYSTAL_SCHEMA_NOTE, CRYSTAL_FILES_NOTE);
 		}
 		if !self.has_tools() {
 			return body.to_string();
@@ -332,6 +332,13 @@ impl Role {
 		let spare = |note: &str| measured_spare(model, note);
 		let mut out = fmt!("{}\n\n{}", body, VISION_NOTE);
 		out.push_str(&fmt!("\n\n{}", PLACES_NOTE));
+		// THE DAIMON ALONE, because the three files are a Diamond's and a chat has no Diamond.
+		// A worker has one only as a scope, never as a memory: it cannot see this conversation
+		// and does not come back, so a rule about what to record across turns would be a rule
+		// about turns it does not have.
+		if matches!(self, Self::Daimon) {
+			out.push_str(&fmt!("\n\n{}", NEVER_FORGET_NOTE));
+		}
 		// WHAT THIS FAMILY GETS WRONG, and nothing any other family gets wrong.  Composed here
 		// beside `VISION_NOTE` rather than written into `prompts/<role>.md`, so a user's rewrite
 		// of their own prompt cannot lose it and the editor does not show it -- the standing
@@ -393,6 +400,77 @@ impl Role {
 /// act on WITHOUT a failed call first.
 pub const PLACES_NOTE: &str =
 	"## Where files are\n\n	 Every file tool sees one tree of workspace-relative paths, and file_list says where an entry 	 is: on this device unless its parentheses say 'in cloud storage' (a small one is fetched 	 when you read it, a large one needs file_fetch) or 'on <host>' (a folder the user marked in, 	 which run reaches too). diamonds/, chats/ and mail/ are browser storage on this device and 	 never on the machine, so a file tool always reaches them and run never can.";
+
+/// The never-forget rule, appended to the daimon alone.
+///
+/// Composed in beside [`PLACES_NOTE`] rather than written into [`DEFAULT_DAIMON`], for the
+/// standing reason every composed note is: `prompts/daimon.md` is the user's to rewrite, and a
+/// rule that a rewrite can delete is a rule that is absent on the machine where it mattered.
+///
+/// **It replaces the one sentence `DEFAULT_DAIMON` used to carry about putting what you learn in
+/// the crystal.**  That sentence named no file, no moment and no test, so what it asked for was
+/// done when a turn happened to have room for it.  These three name the file, the moment and the
+/// test: a task is ticked when it is VERIFIED and the version that did it is written beside it, a
+/// decision is written the turn it is made rather than the turn somebody asks, and `STATE.md` is
+/// rewritten when anything moves rather than appended to.
+///
+/// The last sentence is the rule the whole file set exists for and is quoted verbatim from the
+/// design of 2026-09-15 §5.2.  Lane C adds the turn-end check that notices when it was ignored;
+/// the note is what makes the check a reminder rather than a surprise.
+pub const NEVER_FORGET_NOTE: &str =
+	"## The three files beside the crystal\n\n\
+	 `REQUIREMENTS.md`, `DECISIONS.md` and `STATE.md` sit beside `crystal.json` in this \
+	 Diamond's own folder, and all three are in front of you on every round — the first two \
+	 whole, the last as its final twenty lines. Tick a task in \
+	 `REQUIREMENTS.md` only when you have VERIFIED it, and write the version that did it beside \
+	 the tick — `- [x] T12 … (v37)`. Write a decision into `DECISIONS.md` the turn it is made, \
+	 dated, with the reason, one line; it is append-only. Rewrite `STATE.md` whenever anything \
+	 moves — where the work is, what builds it, which file is the main one, what is in flight, \
+	 the next step — because it holds where things ARE and no history at all. \
+	 REQUIREMENTS.md is the list of what this Diamond exists to do. A task leaves it only by \
+	 being ticked with the version that did it, or by the user striking it. Before you say a \
+	 piece of work is finished, read the file.";
+
+/// What a new Diamond's `REQUIREMENTS.md` says, and what an old one is given on its next turn.
+///
+/// Shipped in this crate the way [`Role::default_prompt`] is, and seeded on disk the same way:
+/// the text a model is asked to work in lives beside the text it is asked to work by, so the two
+/// cannot drift.  Short on purpose -- it is paid on every round of every turn, and what earns
+/// those bytes is the SHAPE, which a model imitates, rather than instructions it has already been
+/// given in [`NEVER_FORGET_NOTE`].
+pub const REQUIREMENTS_TEMPLATE: &str =
+	"# Requirements\n\n\
+	 What this Diamond exists to do. A task leaves this file by being ticked with the version \
+	 that did it, or by the user striking it out.\n\n\
+	 ## O1 (no objective yet)\n\n\
+	 - [ ] T1 Say what this Diamond is for, and replace this line.\n\n\
+	 ## Unfiled\n\n\
+	 ## Done\n";
+
+/// What a new Diamond's `DECISIONS.md` says.  See [`REQUIREMENTS_TEMPLATE`].
+pub const DECISIONS_TEMPLATE: &str =
+	"# Decisions\n\n\
+	 One dated line each, with the reason, newest at the bottom. Append only: nothing here is \
+	 edited or deleted. The last twenty lines ride in the prompt; older ones move to \
+	 `.daimond/decisions-archive.md`, which recall searches.\n";
+
+/// What a new Diamond's `STATE.md` says.  See [`REQUIREMENTS_TEMPLATE`].
+///
+/// The headings are the questions a daimon re-derives every turn when nothing has written them
+/// down -- where the work is, what builds it, which file ties it together, what is running, what
+/// has been established, and what comes next.
+///
+/// `## Facts` and `## Next step` are the two a context fold writes into by itself
+/// (`crate::tools::absorb_notes`), so the shipped shape and the arithmetic name the same two
+/// headings; `crate::tools::STATE_FACTS_HEADING` is where that is said once.
+pub const STATE_TEMPLATE: &str =
+	"# State\n\n\
+	 Where things are now. Rewritten whenever anything moves; it holds no history.\n\n\
+	 ## Layout\n\n\
+	 ## Build and test\n\n\
+	 ## In flight\n\n\
+	 ## Facts\n\n\
+	 ## Next step\n";
 
 /// That an image file can be read and looked at, appended to every role that holds the file tools.
 ///
@@ -816,7 +894,7 @@ pub const DEFAULT_DAIMON: &str =
 	 Three things are yours to do.\n\n\
 	 First, the crystal. It is two files. `crystal.json` is the reduced state of this \
 	 Diamond, a single JSON object whose core keys are `title`, `summary`, `sections`, \
-	 `facts`, `open` and `links`; keep the ones that are there, add others where they \
+	 `facts` and `links`; keep the ones that are there, add others where they \
 	 earn their place, and never drop a key you do not recognise, because it is the \
 	 user's and something may be drawing it. `crystal.html` is the page that renders \
 	 that data, and it is yours to touch only when the user asks for the page itself \
@@ -833,7 +911,7 @@ pub const DEFAULT_DAIMON: &str =
 	 Edit either with your file tools when the user tells you something \
 	 worth keeping. Both have a size limit, because a crystal is a summary and its \
 	 page travels wherever the summary goes. Only the HOT part of `crystal.json` — \
-	 `title`, `summary`, `open` and any section marked `\"hot\": true` — is in front \
+	 `title`, `summary` and any section marked `\"hot\": true` — is in front \
 	 of you on every round; the rest is cold, one `crystal_read` away, and `recall` \
 	 searches all of it together with whatever this conversation has folded. Keep \
 	 the hot part to what you need every round and put the record in cold sections, \
@@ -872,9 +950,9 @@ pub const DEFAULT_DAIMON: &str =
 	 attached to it is that thing. When you are asked about attached work you have \
 	 not yet looked at, look: list the folder, open the file that ties it together, \
 	 follow what it imports. One turn spent taking stock is cheaper than an answer \
-	 built on a guess, and what you learn belongs in the crystal so that no later \
-	 daimon has to learn it again — how the project is laid out, what builds it, \
-	 which file is the main one.\n\n\
+	 built on a guess, and what you learn goes in `STATE.md` so that no later daimon \
+	 has to learn it again — how the project is laid out, what builds it, which file \
+	 is the main one.\n\n\
 	 If the work is not where you expect it, say so and stop. A folder that is \
 	 attached but empty, a path that will not open, a Diamond whose crystal \
 	 describes a book you cannot find — these are things to REPORT, naming what you \
@@ -1304,7 +1382,7 @@ pub const DEFAULT_REDUCER: &str =
 /// on the panel.**  Handed an EMPTY crystal and a delta, all six -- sonnet-4.5 included --
 /// answer with `goal`, `context`, `decisions` and `open_threads`, lifted straight out of
 /// [`DEFAULT_REDUCER`]'s own sentence, when `crystal.html` draws `title`, `summary`,
-/// `sections`, `facts`, `open` and `links`.  With the note: the right shape 17 times in 18.
+/// `sections`, `facts` and `links`.  With the note: the right shape 17 times in 18.
 /// Without it: 0 in 18.  The proposal is well-formed JSON either way and renders as an empty
 /// crystal, which is why no test anyone would think to write catches it.
 ///
@@ -1324,13 +1402,47 @@ pub const CRYSTAL_SCHEMA_NOTE: &str =
 	 or absent}`; the body is markdown, and a hot flag is kept exactly as you found \
 	 it.\n\
 	 - `facts` — a list of `{\"k\": string, \"v\": string}`.\n\
-	 - `open` — a list of strings, the threads still open.\n\
 	 - `links` — a list of `{\"label\": string, \"href\": string}`.\n\n\
 	 Keep these, you may add others, never drop one you do not understand. A key you do \
 	 not recognise belongs to the user or to the page that draws this Diamond: carry it \
 	 through unchanged rather than tidying it away.\n\n\
-	 Output the JSON object and nothing else — no sentence before it, no sentence after \
-	 it, and no markdown code fence around it.";
+	 Output the JSON object first, with no sentence before it and no markdown code fence \
+	 around it; then the file blocks below, and nothing else.";
+
+/// What the reducer is told about the three markdown files beside the crystal.
+///
+/// **A SECOND CONST AND NOT A LONGER FIRST ONE.**  [`CRYSTAL_SCHEMA_NOTE`] carries a measured
+/// price in [`MEASURED`] and a standing instruction not to reword it without re-measuring;
+/// folding this into it would have put that price out by a factor of two and left the table
+/// asserting a figure nobody had taken.  They are appended one after the other and both are the
+/// app's, so a user's rewrite of `prompts/reducer.md` can lose neither.
+///
+/// It is the OUTPUT half of the change of 2026-09-15: the reducer is handed the three files with
+/// the crystal and asked for whichever of them the delta changes, in heading-delimited blocks
+/// rather than as JSON, for the compliance reason set out on `compact::FoldNotes` -- a truncated
+/// JSON document loses everything after the cut and a truncated heading document keeps every
+/// block that arrived.  `dev/CRYSTAL_CONTRACT.md` §13 is the account.
+///
+/// The three rules at the end are not advice: `compact::fold_losses` checks all three, and a
+/// block that breaks one has the fold re-run once with the loss named and is then refused.
+pub const CRYSTAL_FILES_NOTE: &str =
+	"## The three files beside it\n\n\
+	 `REQUIREMENTS.md`, `DECISIONS.md` and `STATE.md` are given to you above, after the \
+	 crystal. AFTER the JSON object, write the whole new text of any of them this delta \
+	 changes, each under a heading of its own name and each inside a fence:\n\n\
+	 ## REQUIREMENTS.md\n\
+	 ```\n\
+	 # Requirements\n\
+	 …the whole file…\n\
+	 ```\n\n\
+	 Leave a file out entirely when the delta does not change it, and write nothing after \
+	 the last fence. Three rules, and a block that breaks one is refused:\n\n\
+	 - Never delete a TICKED task line (`- [x] T12 … (v37)`) from `REQUIREMENTS.md`. A \
+	 tick says a piece of work was verified and names the version that did it, and you \
+	 cannot know either.\n\
+	 - Never delete any line of `DECISIONS.md`. It is append-only: add the delta's \
+	 rulings at the bottom, dated, and leave everything above them alone.\n\
+	 - `STATE.md` says where things ARE and holds no history, so rewrite it whole.";
 
 /// The compactor's role: fold the earlier part of a working conversation into the
 /// notes the same assistant would need to carry on.
@@ -1979,7 +2091,12 @@ mod tests {
 		("SEARCH_NOTE",		SEARCH_NOTE,		196,	46),
 		("SKILLS_NOTE",	SKILLS_NOTE,		409,	105),
 		("SAFETY_CLAUSE",	SAFETY_CLAUSE,		462,	107),
-		("CRYSTAL_SCHEMA_NOTE",	CRYSTAL_SCHEMA_NOTE,	776,	211),
+		("CRYSTAL_SCHEMA_NOTE",	CRYSTAL_SCHEMA_NOTE,	809,	211),
+		// ESTIMATED, not measured: added 2026-09-15 with the three files, at this note's own
+		// measured ratio of 3.68 chars to the token.  It is in the table so that a rewording is
+		// caught the way every other one is; the token figure is the one thing here that has not
+		// been put to a provider, and `dev/prompt_cost.mjs` replaces it on the next run.
+		("CRYSTAL_FILES_NOTE",	CRYSTAL_FILES_NOTE,	891,	242),
 		("PLACES_NOTE",	PLACES_NOTE,		471,	128),
 		// The per-family addenda, which every role with tools pays for on a model of that
 		// family and no role pays for on any other.  Measured 2026-09-13, the same way.
@@ -2118,7 +2235,7 @@ mod tests {
 			let composed = r.compose("");
 			for (name, text, _, _) in MEASURED {
 				let want = match *name {
-					"CRYSTAL_SCHEMA_NOTE" => matches!(r, Role::Reducer),
+					"CRYSTAL_SCHEMA_NOTE" | "CRYSTAL_FILES_NOTE" => matches!(r, Role::Reducer),
 					"SHOW_NOTE" | "FOLD_NOTE" | "VERIFY_NOTE" | "SKILLS_NOTE" => r.can_show(),
 					// Composed on the MODEL, and `compose("")` names none, so an addendum is
 					// absent from every role here. Its own per-family bill is asserted by
@@ -2937,7 +3054,7 @@ mod tests {
 		// which nothing sees, because an open schema has no wrong answer to detect.
 		let p = Role::Reducer.compose("");
 		let mut at = 0;
-		for k in ["title", "summary", "sections", "facts", "open", "links"] {
+		for k in ["title", "summary", "sections", "facts", "links"] {
 			let i = match p[at..].find(&fmt!("`{}`", k)) {
 				Some(i) => at + i,
 				None    => panic!("the reducer is not told about `{}`, or not in order:\n{}",
@@ -2950,6 +3067,50 @@ mod tests {
 		for shape in ["heading", "body", "\"k\"", "\"v\"", "label", "href"] {
 			assert!(p.contains(shape), "the reducer must be told the shape {}:\n{}", shape, p);
 		}
+		// AND NOT ABOUT `open`, which left the schema on 2026-09-15 for REQUIREMENTS.md. A
+		// reducer still told about it would keep proposing the key, and the fold would put back
+		// on every turn exactly what the migration took out once.
+		assert!(!p.contains("`open`"),
+			"the reducer is still told about a key that is no longer in the schema:\n{}", p);
+	}
+
+	/// **The never-forget rule reaches the daimon, survives a rewritten prompt, and stops there.**
+	///
+	/// A rule that only lives in `DEFAULT_DAIMON` is a rule the user deletes the moment they
+	/// rewrite their own prompt -- which is exactly the machine where a forgotten task costs
+	/// most. A chat has no Diamond and a worker has no next turn, so neither is told.
+	#[test]
+	fn test_the_never_forget_rule_reaches_a_daimon_and_survives_a_rewrite() {
+		let p = Role::Daimon.compose("");
+		for name in ["REQUIREMENTS.md", "DECISIONS.md", "STATE.md"] {
+			assert!(p.contains(name), "the daimon is not told about {}:\n{}", name, p);
+		}
+		assert!(p.contains("Before you say a piece of work is finished, read the file."),
+			"the never-forget sentence is not in the daimon's prompt:\n{}", p);
+		assert!(p.contains("(v37)"),
+			"a task is not shown what a tick with its version looks like:\n{}", p);
+		// A user's own prompt replaces the role text and cannot lose the rule.
+		let mine = Role::Daimon.compose("Answer in haiku.");
+		assert!(mine.contains("Answer in haiku."), "{}", mine);
+		assert!(mine.contains("Before you say a piece of work is finished, read the file."),
+			"a rewritten prompt lost the rule:\n{}", mine);
+		// And nobody else is told: a chat has no Diamond, a worker has no next turn.
+		assert!(!Role::Chat.compose("").contains("REQUIREMENTS.md"),
+			"a chat with no Diamond was told about a Diamond's files");
+		assert!(!Role::Worker.compose("").contains("REQUIREMENTS.md"),
+			"a worker that cannot see this conversation was given a rule about carrying \
+			across turns");
+	}
+
+	/// The daimon is told where what it learns goes, and it is no longer "the crystal".
+	#[test]
+	fn test_what_a_daimon_learns_is_sent_to_the_state_file() {
+		let p = Role::Daimon.compose("");
+		assert!(p.contains("what you learn goes in `STATE.md`"),
+			"taking stock still files its result nowhere in particular:\n{}", p);
+		// And the schema it is told is the one the contract carries, minus `open`.
+		assert!(!p.contains("`facts`, `open` and `links`"),
+			"the daimon is still told `open` is a core key:\n{}", p);
 	}
 
 	#[test]
@@ -2968,8 +3129,15 @@ mod tests {
 		// crystal. JSON wrapped in prose or a ``` fence is not one, and the app would offer
 		// the wreckage as a proposal the user can accept.
 		let p = Role::Reducer.compose("");
-		assert!(p.contains("JSON object and nothing else"), "{}", p);
+		assert!(p.contains("no sentence before it"), "{}", p);
 		assert!(p.contains("no markdown code fence"), "{}", p);
+		// AND NOTHING ELSE, which since 2026-09-15 means nothing else BEFORE the file blocks:
+		// the reply is one JSON object and then up to three fenced markdown blocks, and the
+		// sentence that used to forbid anything after the object would now forbid those.
+		assert!(p.contains("then the file blocks below, and nothing else"), "{}", p);
+		assert!(p.contains("write nothing after \\\n			 the last fence")
+			|| p.contains("write nothing after the last fence"),
+			"the blocks have no end, so a model may write prose after them:\n{}", p);
 	}
 
 	#[test]
@@ -2982,9 +3150,11 @@ mod tests {
 		assert!(p.contains("never drop one you do not understand"),
 			"a rewritten prompt lost the schema, which is the failure it exists to prevent:\n{}",
 			p);
-		assert!(p.contains("JSON object and nothing else"), "{}", p);
-		// And it is the LAST word, so a rewrite that contradicts it is contradicted back.
-		assert!(p.ends_with(CRYSTAL_SCHEMA_NOTE), "{}", p);
+		assert!(p.contains("no markdown code fence"), "{}", p);
+		// And the app's own two notes are the LAST word, so a rewrite that contradicts either
+		// is contradicted back. Two since 2026-09-15: the schema, then the files beside it.
+		assert!(p.contains(CRYSTAL_SCHEMA_NOTE), "a rewritten prompt lost the schema:\n{}", p);
+		assert!(p.ends_with(CRYSTAL_FILES_NOTE), "{}", p);
 	}
 
 	#[test]

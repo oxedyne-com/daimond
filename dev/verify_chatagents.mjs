@@ -41,11 +41,12 @@ try {
 	// button is the ordinary way in — driven rather than reached around, so this
 	// exercises the same path a person takes.
 	await page.evaluate(() => document.getElementById('new-session-btn').click());
-	// A new chat starts PENDING and shows a Start button rather than a composer —
-	// nothing is spent until somebody asks for it. Pressed here, because that is
-	// what a person does, and because the composer does not exist until it is.
-	await page.waitForSelector('.pending-centre .empty-new-session', { timeout: 15000 });
-	await page.evaluate(() => document.querySelector('.pending-centre .empty-new-session').click());
+	// SINCE 2026-09-15 THERE IS NO START GATE when a model is connected: the chat
+	// opens with the composer on screen (audit CHAT-01). The gate is still drawn
+	// where the keys will not read, so its button is pressed if it is there, and
+	// the wait is on the box either way -- which is the state this test needs.
+	const gate = page.locator('.pending-centre .empty-new-session').first();
+	if (await gate.count()) await gate.click({ force: true });
 	await page.waitForSelector('#chat-input', { state: 'visible', timeout: 15000 });
 
 	// The panel first: a tile cannot be watched in a panel that is shut.

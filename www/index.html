@@ -352,6 +352,24 @@
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
 						</button>
 					</div>
+					<!-- ONE LINE, AND THE REST BEHIND IT (audit 2026-09-15, STRIP-01).
+					     A fresh account met eight diagnostic rows here -- models,
+					     account service, tools, permissions, a build hash, an
+					     evictable byte figure, the machine, and "nothing has synced
+					     yet" -- half of them grey or red on day one, and none of
+					     them the question a person actually has. That question is
+					     "is this thing working and is my work anywhere else", and
+					     this row answers it. The eight are all still here, one
+					     press away, drawn by exactly the same code as before: what
+					     changed is that they are closed to begin with.
+
+					     A BUTTON, so it takes a keyboard and says what it does.
+					     `aria-expanded` is the state and `aria-controls` names the
+					     block it opens. js/daimond.js `renderStatusSummary` writes
+					     the words and js/daimond.js's wiring remembers the fold. -->
+					<button class="astat-row astat-btn astat-summary" id="astat-summary"
+						aria-expanded="false" aria-controls="astat-detail"></button>
+					<div class="astat-detail" id="astat-detail" hidden>
 					<button class="astat-row astat-btn" id="astat-model"></button>
 					<button class="astat-row astat-btn" id="astat-account"></button>
 					<!-- The second money row: the user's own provider key, when they have
@@ -390,7 +408,9 @@
 						<span class="astat-dot" id="sync-rest-dot" aria-hidden="true"></span>
 						<span class="astat-val" id="sync-rest"></span>
 					</div>
-					<!-- Global spend readout: session / week / month, priced per model. -->
+					</div><!-- /#astat-detail -->
+					<!-- Global spend readout: session / week / month, priced per model.
+					     OUTSIDE the disclosure: money is not a diagnostic. -->
 					<div class="spend-row" id="spend-row" style="display:none"></div>
 				</div>
 
@@ -1000,8 +1020,12 @@
 					<!-- Where the terminal is, in a sentence: starting, running, refused,
 					     finished. A refusal from the hand or the relay is shown VERBATIM
 					     — those sentences are written to be acted on, and a paraphrase
-					     loses the only instruction the reader gets. -->
+					     loses the only instruction the reader gets. The one exception is
+					     "not paired": the hand's own text there is written for the model,
+					     not the reader (js/hand.js NO_HAND), so this line reads
+					     `term.not_paired` instead. -->
 					<p class="termp-state" id="termp-state" role="status"></p>
+					<button type="button" class="termp-install" id="termp-install" hidden data-i18n="term.install_link" title="Learn how to install the Daimond Hand" data-i18n-title="term.install_link_title">Install…</button>
 					<!-- Missing output, said BESIDE the stream and never written into it:
 					     bytes written into a terminal are drawn, so a marker in the stream
 					     would be damage on top of the loss. See handpty.js, "A hole is
@@ -1450,47 +1474,11 @@
 		     application form at /apply.html, its waitlist half, and the passcode
 		     dialog in js/passcode.js); nothing at the door pointed at any of them.
 
-		     ABOVE the title, and above the form, because it is the answer to
-		     "what is this and can I have it" and the form is the answer to a
-		     question a stranger has not asked yet. It is three names on one
-		     wrapped row and one line of lead — this card already runs 874px and
-		     scrolls on a laptop, so the strip is the smallest thing that can
-		     carry three routes.
-
-		     THE HEAD IS INSIDE THE LEAD, on one line, and that is a correction.
-		     Written as a head ABOVE the lead the strip stood 176px tall and put
-		     "Create account" 25px under the card's own bottom edge — a first
-		     visitor could not see the button they were brought here to press.
-		     The question and the answer are one sentence, so they are set as
-		     one, and the two keys stay two so the wording of either can change
-		     without the other. The rest of that 176px is answered by the sticky
-		     foot at `.id-foot` below, which is what actually guarantees the
-		     button; this only stops the strip from spending more of the card
-		     than it needs.
-
-		     SHOWN TO A STRANGER ONLY. `syncDoors` in js/daimond.js draws it only
-		     while creating, and only when no account in this browser has ever
-		     held an identity. Somebody unlocking sees nothing; somebody adding a
-		     second account to a browser that already has one sees nothing. -->
-		<div class="id-doors" id="id-doors" style="display:none">
-			<p class="id-doors-lead"><span class="id-doors-head" data-i18n="door.head">New to Daimond?</span> <span data-i18n="door.lead">It is in closed testing, so accounts are given out by passcode.</span></p>
-			<div class="id-doors-row">
-				<!-- Root-absolute, and a new tab, for the reasons the passcode card's
-				     own link states: the app is one document at the site root, and
-				     leaving the page would take a half-typed passphrase with it. -->
-				<a class="id-door" id="id-door-test" href="/apply.html?for=test" target="_blank" rel="noopener" data-i18n="door.test">Apply to test</a>
-				<a class="id-door" id="id-door-wait" href="/apply.html?for=waitlist" target="_blank" rel="noopener" data-i18n="door.waitlist">Join the waitlist</a>
-				<!-- A DISCLOSURE, not a one-way switch. Pressing it reveals the note
-				     below (there is no device key to redeem a code onto yet, so the
-				     order has to be said rather than the field drawn); pressing it
-				     again puts the note away. It was neither before, and
-				     `verify_reversible` was right to call it the only control on this
-				     screen with no way back. `aria-expanded` is what says so to a
-				     reader, and `aria-controls` names the thing it opens. -->
-				<button type="button" class="id-door" id="id-door-code" aria-expanded="false" aria-controls="id-doors-note" data-i18n="door.code">I have a passcode</button>
-			</div>
-			<p class="id-doors-note" id="id-doors-note" style="display:none"></p>
-		</div>
+		     THE STRIP THAT ANSWERS THAT IS NOW BELOW THE FORM, not above it, and
+		     closed. See `.id-doors` further down: it stood here for a month, and a
+		     phone at 390x844 put "Create account" on the card's bottom edge because
+		     of it. One primary path, first; the other three under it, behind a line.
+		-->
 		<h2 id="id-title">Protect this device</h2>
 		<p class="cfg-lead" id="id-lead"></p>
 		<!-- Several accounts on one browser: pick whose to unlock, or add another. Built in JS, and
@@ -1539,6 +1527,38 @@
 				<button type="submit" id="id-primary">Create passphrase</button>
 			</div>
 		</form>
+		<!-- THE OTHER WAYS IN, UNDER THE BUTTON THIS SCREEN EXISTS FOR AND CLOSED.
+		     This strip stood ABOVE "Create your account" -- a question a stranger
+		     has not asked yet, three named routes and a line of lead -- and at
+		     390x844 it pushed Create account to the bottom edge of the card
+		     (audit 2026-09-15, GATE-01/03). There is one primary path on this
+		     screen now and it is first; this is one line under it, and it opens
+		     to the same three routes it always held.
+
+		     SHOWN TO A STRANGER ONLY. `syncDoors` in js/daimond.js draws it only
+		     while creating, and only when no account in this browser has ever
+		     held an identity. Somebody unlocking sees nothing; somebody adding a
+		     second account to a browser that already has one sees nothing. -->
+		<details class="id-doors" id="id-doors" style="display:none">
+			<summary class="id-doors-sum" data-i18n="door.summary">Have a passcode or a pairing code?</summary>
+			<p class="id-doors-lead"><span class="id-doors-head" data-i18n="door.head">New to Daimond?</span> <span data-i18n="door.lead">It is in closed testing, so accounts are given out by passcode.</span></p>
+			<div class="id-doors-row">
+				<!-- Root-absolute, and a new tab, for the reasons the passcode card's
+				     own link states: the app is one document at the site root, and
+				     leaving the page would take a half-typed passphrase with it. -->
+				<a class="id-door" id="id-door-test" href="/apply.html?for=test" target="_blank" rel="noopener" data-i18n="door.test">Apply to test</a>
+				<a class="id-door" id="id-door-wait" href="/apply.html?for=waitlist" target="_blank" rel="noopener" data-i18n="door.waitlist">Join the waitlist</a>
+				<!-- A DISCLOSURE, not a one-way switch. Pressing it reveals the note
+				     below (there is no device key to redeem a code onto yet, so the
+				     order has to be said rather than the field drawn); pressing it
+				     again puts the note away. It was neither before, and
+				     `verify_reversible` was right to call it the only control on this
+				     screen with no way back. `aria-expanded` is what says so to a
+				     reader, and `aria-controls` names the thing it opens. -->
+				<button type="button" class="id-door" id="id-door-code" aria-expanded="false" aria-controls="id-doors-note" data-i18n="door.code">I have a passcode</button>
+			</div>
+			<p class="id-doors-note" id="id-doors-note" style="display:none"></p>
+		</details>
 		<button type="button" id="id-choose" class="id-choose" style="display:none" data-i18n="identity.choose_own">Choose my own passphrase instead</button>
 		<button type="button" id="id-skip" class="modal-close" data-i18n="identity.skip">Skip for now</button>
 	</div>
@@ -1731,8 +1751,17 @@
      the same reading that moves the update chip. -->
 <script src="js/pwa.js"></script>
 <script src="js/updater.js"></script>
+<!-- gesture.js EARLY, and before every surface that drags. It is the app's one
+     press-and-drag recogniser -- how far a press travels before it is a drag, how
+     long a finger rests before it is one, the pointer capture, the frame
+     coalescing -- shared by the Graph's canvas and the Dock's drag-to-slot so
+     that a hand meets one answer on both. -->
+<script src="js/gesture.js"></script>
 <script src="js/workspace.js"></script>
 <script src="js/release.js"></script>
+<!-- graphgeom.js BEFORE graph.js: the pane's geometry, arithmetic in a module of
+     its own so it can be proved under node with no browser. -->
+<script src="js/graphgeom.js"></script>
 <script src="js/graph.js"></script>
 <!-- The persistent desktop peer: window.DaimondPeer / DaimondLease /
      DaimondPresence, consumed by the guarded glue in daimond.js. Money-safe
@@ -1764,6 +1793,10 @@
      it binds one keydown listener at load and nothing else. See dev/RECORD.md
      for what it captures, what it refuses to look at, and why. -->
 <script src="js/record.js"></script>
+<!-- The tile header's local Holocene "when" (js/daimond.js's buildTile). Pure
+     formatting, no dependency on anything else here -- loaded wherever, so
+     it sits just before the module that draws the tiles. -->
+<script src="js/time.js"></script>
 <script type="module" src="js/daimond.js"></script>
 </body>
 </html>

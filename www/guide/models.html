@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Models &amp; credits — Daimond guide</title>
+<title>Models &amp; providers &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../css/variables.css">
 <link rel="stylesheet" href="../css/guide.css">
@@ -21,108 +21,96 @@
 			<span class="brand-sub">Guide</span>
 		</a>
 		<nav class="site-nav" aria-label="Guide pages">
-			<a href="index.html">Getting started</a>
+			<a href="index.html">Start here</a>
 			<a href="interface.html">The interface</a>
-			<a href="models.html" aria-current="page">Models &amp; credits</a>
 			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-			<a href="capps.html">Capps</a>
-			<a href="email-web-files.html">Email, Web &amp; files</a>
-			<a href="accounts.html">Accounts</a>
-			<a href="sync.html">Cross-device sync</a>
-			<a href="runner.html">The runner</a>
+			<a href="capps.html">A Diamond&rsquo;s page</a>
+			<a href="email-web-files.html">Files, email &amp; the web</a>
+			<a href="machine-operations.html">Your computer</a>
+			<a href="runner.html">Helpers &amp; where turns run</a>
+			<a href="sync.html">More than one device</a>
+			<a href="social.html">Social &amp; proposals</a>
+			<a href="models.html" aria-current="page">Models &amp; providers</a>
 			<a href="spending.html">Spending</a>
-			<a href="machine-operations.html">Machine Operations</a>
-			<a href="social.html">Social</a>
+			<a href="accounts.html">Safety &amp; fixes</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>Models &amp; credits</h1>
-	<p class="lede">A daimon thinks with a model. You can bring your own provider key and pay that provider directly, or buy credits and let Daimond run a model for you. This page covers both, and how to keep credits topped up.</p>
+	<h1>Models &amp; providers</h1>
+	<p class="lede">A daimon thinks with a model. Bring a key you already hold and pay that provider directly, or buy credits and let Daimond run one for you.</p>
 
-	<h2 id="s1">Two ways to power a daimon</h2>
-	<div class="cards">
-		<div class="card">
-			<h3 id="s2">Bring your own key</h3>
-			<p>Connect an account you already hold with a model provider. Your messages go straight to that provider; Daimond is not in the path, and nothing is charged by us.</p>
-		</div>
-		<div class="card">
-			<h3 id="s3">Buy credits</h3>
-			<p>No provider account to manage. Daimond runs the model for you and draws down the credits you bought. No subscription: you keep what you buy.</p>
-		</div>
-	</div>
-	<p>Either is enough to start. You can do both: connect a key for everyday work and keep credits for when you would rather not manage one.</p>
-
-	<h2 id="s4">Connecting a provider</h2>
-	<p>Open the <span class="ui">Models</span> row in the admin panel, bottom-left. It lists a key for each provider you use and which model new chats start on. To add one, choose <span class="ui">+ Add provider</span> and answer the same three questions, whoever the provider is.</p>
-
-	<figure class="shot" data-shot="models-form">
-		<img alt="The Add provider form: a provider drop-down, an API key box, and a default model drop-down, with a Save and start button." src="shots/models-form.png" loading="lazy">
-		<figcaption>Adding a provider: choose the provider, paste the key, star a default model, then Save &amp; start.</figcaption>
+	<h2 id="s1">Your own key</h2>
+	<p>Open the model row at the foot of the rail. It lists a key for each provider you use and which model new work starts on. <span class="ui">+ Add provider</span> asks the same three questions whoever the provider is.</p>
+	<figure class="shot">
+		<img alt="The add-provider form: a provider list, an API key box, and a default model." src="shots/models-form.png" loading="lazy">
+		<figcaption>Choose the provider, paste the key, star a default model, then save.</figcaption>
 	</figure>
-
 	<ol class="steps">
 		<li>
-			<h3 id="s5">Choose a provider</h3>
-			<p>Pick from the list: <strong translate="no">Anthropic</strong>, <strong translate="no">Fireworks AI</strong>, <strong translate="no">OpenRouter</strong>, <strong translate="no">Together AI</strong>, <strong translate="no">Groq</strong>, <strong translate="no">DeepInfra</strong>, or <strong>Custom</strong> for any other service speaking the same chat-completions API. Choosing Custom reveals a <strong>Base URL</strong> box to point Daimond at that service.</p>
+			<h3 id="s2">Choose a provider</h3>
+			<p>Anthropic, Fireworks AI, OpenRouter, Together AI, Groq or DeepInfra. <span class="ui">Custom</span> reveals a <span class="ui">Base URL</span> box for any other service speaking the same chat API, including one on your own machine.</p>
 		</li>
 		<li>
-			<h3 id="s6">Paste your API key</h3>
-			<p>Paste the key from your provider account into the <strong>API key</strong> box. It is stored on this device only, wrapped under your passphrase, and sent only to the provider you chose.</p>
+			<h3 id="s3">Paste the key</h3>
+			<p>It is stored wrapped under your passphrase, and sent to the provider you chose and to nobody else. It reaches your other devices only inside the encrypted sync parcel, still wrapped.</p>
 		</li>
 		<li>
-			<h3 id="s7">Star a default model</h3>
-			<p>Choose a <strong>Default model</strong> from the list (or type a model id for a custom provider). This is the one model new chats and Diamonds start on. Then choose <span class="ui">Save &amp; start</span>.</p>
+			<h3 id="s4">Star a default model</h3>
+			<p><span class="ui">List models</span> fetches the catalogue where the provider offers one, and otherwise you type the model id. The starred one is where new chats and Diamonds begin.</p>
 		</li>
 	</ol>
+	<p>Your messages then go straight to that provider on your own account. Daimond is out of the path, and we charge nothing.</p>
 
-	<div class="note"><strong>Everything stays on this device.</strong> Your keys, chats and files live only in this browser. Nothing is sent to us: a provider key you add talks to that provider, and to no one else.</div>
+	<h2 id="s5">Choosing a different model</h2>
+	<p>The default is a starting point. Any connected model can be chosen for one chat from the selector in its header, and the default is untouched. A Diamond can also carry a separate <span class="ui">Helper model</span> for the agents it dispatches, which applies to the next one dispatched and to none already running.</p>
+	<p>Where a model publishes no context window, the tile says <span class="ui">Context size unknown for this model.</span> and guesses nothing.</p>
 
-	<h3 id="s8">The default model, and picking another for one chat</h3>
-	<p>One model is the default that new chats and Diamonds begin on. Any connected model can be chosen for a single chat, from the selector in its header at the top-right of the centre panel; the default is untouched. A Diamond can also be given a separate model for the workers it dispatches.</p>
-
-	<h2 id="s9">Buying credits</h2>
-	<p>Open the <span class="ui">Credits</span> row in the admin panel. It shows your balance and a set of packs to buy. There is no subscription: you keep what you buy, and nothing is charged again unless you turn on auto-reload.</p>
-
-	<figure class="shot" data-shot="credits">
-		<img alt="The Credits view: the current balance, a row of credit packs to buy, and the auto-reload settings below." src="shots/credits.png" loading="lazy">
-		<figcaption>Credits: your balance, packs to buy, and the auto-reload settings underneath.</figcaption>
-	</figure>
-
-	<p>Payment is handled on the payment provider's own hosted page. No card number, expiry or security code is ever typed into Daimond, so there is nothing here to leak.</p>
-
-	<h2 id="s10">Auto-reload</h2>
-	<p>Auto-reload is a standing instruction to buy credits when they run low, so a long job does not stop halfway. It is the one place Daimond may charge a saved card while you are away, and so is deliberately explicit. Three numbers set it, below the packs in the Credits view:</p>
+	<h2 id="s6">Choosing who serves it</h2>
+	<p>A router hands one model to whichever upstream provider it likes, and they are not equally good. Under an OpenRouter provider, each model row carries a <span class="ui">Providers</span> field, with the placeholder <span class="ui">prefer, -avoid, !</span>.</p>
 	<ul>
-		<li><strong>Below</strong>: the balance at which a top-up fires.</li>
-		<li><strong>Buy</strong>: how much one top-up adds.</li>
-		<li><strong>Never more than</strong>: a hard cap on total top-ups in a calendar month. Set this one carefully. It is a ceiling rather than a target, and it is enforced on the same code path as the charge, so nothing can walk around it.</li>
+		<li>A bare name prefers that provider.</li>
+		<li>A leading <code>-</code> avoids one.</li>
+		<li>A bare <code>!</code> means only these, refusing every fallback.</li>
 	</ul>
+	<p>So <code>Novita, -DeepInfra</code> prefers one and avoids another. The field is saved as you leave it. A provider whose catalogue has not been fetched keeps its rows behind a <span class="ui">Models&hellip;</span> disclosure, so a preference already set stays reachable.</p>
 
-	<div class="note">Auto-reload cannot be switched on without a saved card. A control that turned on and then silently failed would be worse than one that is disabled and says why. Saving a card is a redirect to the payment provider's hosted page; Daimond never sees the card details.</div>
+	<h2 id="s7">Credits</h2>
+	<p>Credits run the model for you with no key needed, and they also meter the few things that leave the browser: fetching a page, the bandwidth of mail and of cross-device sync, and cloud storage beyond the free tier. Sync, Email and cloud storage themselves are turned on by Daimond Pro, and metered use is paid from credits with or without it.</p>
+	<p>Open the credits row for your balance and the packs. Credits are not a subscription, and you keep what you buy. Payment happens on the payment provider's own hosted page, so no card number is typed into Daimond.</p>
+	<p>While testing is closed, new accounts with credits are given out by passcode. Daimond works with your own provider key without one.</p>
+
+	<h2 id="s8">Auto-reload</h2>
+	<p>Auto-reload is a standing instruction to buy credits when they run low, so a long job does not stop halfway. It is the one place Daimond may charge a saved card while you are away, so it is deliberately explicit. Three numbers set it.</p>
+	<ul>
+		<li><strong>Below</strong> is the balance at which a top-up fires.</li>
+		<li><strong>Buy</strong> is how much one top-up adds.</li>
+		<li><strong>Never spend more, per month, than</strong> is a hard cap on the calendar month. Set this one carefully. It is enforced on the same code path as the charge.</li>
+	</ul>
+	<p>It cannot be switched on without a saved card, because a control that turned on and then failed silently would be worse than one that is disabled and says why.</p>
 
 	<div class="next">
-		<a href="interface.html">&larr; The interface</a>
-		<a href="chats-and-diamonds.html">Next: Chats &amp; Diamonds &rarr;</a>
+		<a href="social.html">&larr; Social &amp; proposals</a>
+		<a href="spending.html">Next: Spending &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
 	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
 	<nav aria-label="Guide pages">
-		<a href="index.html">Getting started</a>
-		<a href="interface.html">Interface</a>
-		<a href="models.html">Models</a>
+		<a href="index.html">Start here</a>
+		<a href="interface.html">The interface</a>
 		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-		<a href="capps.html">Capps</a>
-		<a href="email-web-files.html">Email, Web &amp; files</a>
-		<a href="accounts.html">Accounts</a>
-		<a href="sync.html">Cross-device sync</a>
-		<a href="runner.html">The runner</a>
+		<a href="capps.html">A Diamond&rsquo;s page</a>
+		<a href="email-web-files.html">Files, email &amp; the web</a>
+		<a href="machine-operations.html">Your computer</a>
+		<a href="runner.html">Helpers &amp; where turns run</a>
+		<a href="sync.html">More than one device</a>
+		<a href="social.html">Social &amp; proposals</a>
+		<a href="models.html">Models &amp; providers</a>
 		<a href="spending.html">Spending</a>
-		<a href="machine-operations.html">Machine Operations</a>
-		<a href="social.html">Social</a>
+		<a href="accounts.html">Safety &amp; fixes</a>
 	</nav>
 </footer>
 </body>

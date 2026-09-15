@@ -13,7 +13,12 @@
 //     model. Page text is data, not instruction; nothing irreversible happens
 //     unasked. Those survive a rewrite, or an editable prompt would be a way to
 //     disarm the agent by accident.
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { open, chat, mockLog, clearMockLog } from './harness.mjs';
+
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -156,12 +161,25 @@ await remove('prompts/worker.md');
 await p.click('#settings-btn', { force: true });
 await p.waitForTimeout(900);
 const buttons = await p.$$eval('#admin-home .admin-item', els => els.map(e => e.textContent));
+// BY KEY, NOT BY WORDING. This listed the English labels -- "dispatched worker",
+// "crystal fold" -- and a copy pass that renamed them to "Helper" and "Crystal
+// update" turned a rename into a failing check, exactly as "conductor" had before
+// it. What is being proved is that a button is offered per ROLE; the words on it
+// are the copy lane's to choose. The labels come out of en.js, so the check follows
+// a rename and still fails when a role loses its button.
+const roleLabels = (() => {
+	const en = readFileSync(join(ROOT, 'www', 'i18n', 'en.js'), 'utf8');
+	return ['role.chat', 'role.daimon', 'role.worker', 'role.reducer'].map((k) => {
+		const m = new RegExp("'" + k + "'\\s*:\\s*'((?:[^'\\\\]|\\\\.)*)'").exec(en);
+		if (!m) throw new Error('verify_prompts: en.js has no ' + k);
+		return m[1].replace(/\\u([0-9a-f]{4})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+			.replace(/\\'/g, "'");
+	});
+})();
 check('the Admin panel offers a button per role',
-	// "daimon", not "conductor": the agent behind a Diamond was renamed and this
-	// list was not, so the check went on looking for a word the app stopped using.
-	['chat', 'diamond daimon', 'dispatched worker', 'crystal fold']
-		.every(r => buttons.some(b => b.toLowerCase().includes(r))),
-	buttons.filter(b => /prompt/i.test(b)).join(' | '));
+	roleLabels.every(r => buttons.some(b => b.toLowerCase().includes(r.toLowerCase()))),
+	'wanted [' + roleLabels.join(', ') + '] in: '
+		+ buttons.filter(b => /prompt/i.test(b)).join(' | '));
 
 await p.evaluate(() => {
 	const b = [...document.querySelectorAll('#admin-home .admin-item')]

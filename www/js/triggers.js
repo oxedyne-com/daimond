@@ -93,6 +93,12 @@
 		return {
 			id:          '',
 			kind:        kind || 'activity',
+			// THE FILE'S OWN SWITCH, and the app never writes it. What starts and
+			// stops an action is its leaf of the pause tree -- the light writes
+			// that, `allowed` reads it -- so this is only for a person editing
+			// `triggers.json` by hand, who may switch an action off without
+			// deleting it. Written as `false` at creation it was a second switch
+			// the light could not throw; see the `+` handler in daimond.js.
 			on:          true,
 			target:      '',        // '' means the Diamond that owns the TA
 			instruction: '',
@@ -105,6 +111,12 @@
 			mailbox:     '',
 			folder:      'INBOX',
 			priority:    'normal',
+			// May this action's turn run while the user is looking at another
+			// Diamond? Off by default, and it is a property of the ACTION rather
+			// than of the kind: a timer whose answer belongs in a thread wants the
+			// thread on screen, and running it behind the user's back leaves its
+			// answer where they are not. See `offScreenSteerAllowed` in daimond.js.
+			offScreen:   false,
 		};
 	}
 
@@ -139,6 +151,10 @@
 				if (r[k] !== undefined && r[k] !== null) t[k] = r[k];
 			});
 			t.on = r.on !== false;
+			// The opposite default to `on`, and deliberately: an action that has not
+			// SAID it may run off screen has not said so, whatever a hand-edited file
+			// spells it as.
+			t.offScreen = r.offScreen === true;
 			t.minutes = Math.max(1, Math.round(Number(t.minutes) || 30));
 			// An id that is absent or already taken gets one, so two TAs can never
 			// share a pause leaf.
@@ -157,7 +173,10 @@
 	///
 	/// Asked before firing rather than at edit time: a file edited by hand can be
 	/// half-written, and a mail trigger with no folder would otherwise watch
-	/// every folder of every mailbox.
+	/// every folder of every mailbox. `on: false` is honoured here for the same
+	/// reader -- it is the hand-edited file's way of switching an action off --
+	/// and nothing in the app writes it, so the pause tree stays the one switch
+	/// the light can throw.
 	function ready(t) {
 		if (!t || !KINDS[t.kind]) return false;
 		if (t.on === false) return false;

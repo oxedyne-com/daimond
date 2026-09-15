@@ -1177,6 +1177,27 @@ await s.close();
 	// Release it through the GLOBAL CONTROL -- the button, not the module -- and
 	// the same agent goes. Measured at the network again, in the other
 	// direction: the pump reads the tree, so releasing the tree lets it out.
+	//
+	// THE VERB HAS TO BE LIVE FIRST, and that is a property of its own. The root
+	// is `mixed` here -- this profile's Optimiser timer is armed and playing, and
+	// the pump is armed (a queued agent) and held -- so both verbs are offered.
+	// But the pump became armed a moment ago, by the agent's own play button, and
+	// a run changing status announces no `daimond:pause`; the lights follow the
+	// worker list only because `Workers.render` repaints them. Until it did, the
+	// control here was painted from before the resume -- `play`, one armed leaf
+	// and nothing held -- with its play verb DISABLED, and the click below landed
+	// on a dead button. That went unseen for as long as the seeded timer was
+	// unarmed, because the root then read `idle` and `idle` offers play; the day
+	// the seed stopped writing `on: false`, this check went red and said nothing
+	// about why. A disabled button swallows a click, so it is asked in words.
+	const verb = await p2.evaluate(() => {
+		const b = document.querySelector('#pptw-global .pptw-play');
+		const g = document.querySelector('#pptw-global .pptw');
+		return { there: !!b, live: !!b && !b.disabled, state: g ? g.dataset.state : '(none)' };
+	});
+	check(verb.there && verb.live,
+		'the global play verb is LIVE once the pump holds a queued agent — the light followed the pump',
+		`state=${verb.state} live=${verb.live}`);
 	const released = await clickReal(p2, '#pptw-global .pptw-play');
 	check(released, 'there is a global play verb to release the hold with');
 	for (let i = 0; i < 40 && mockLog().length - before === 0; i++) await p2.waitForTimeout(300);

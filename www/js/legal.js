@@ -129,11 +129,13 @@
 		links.appendChild(link('privacy'));
 		row.appendChild(links);
 
-		var note = document.createElement('p');
-		note.className = 'about-legal-note';
-		note.textContent = t('legal.draft_note',
-			'In force from 13 August 2026. Points marked [TO CONFIRM] are still being settled.');
-		row.appendChild(note);
+		// The `[TO CONFIRM]` caveat that used to sit here (ABOUT-01, 2026-09-15
+		// audit) was a placeholder that never got resolved before it shipped. The
+		// Terms and Privacy links above are the real answer to "what am I
+		// agreeing to" -- they open the actual documents, in the app, which is
+		// the whole reason legal.js exists (see the file header). Nothing
+		// stands in for them here now; when the documents themselves are firm,
+		// their own [TO CONFIRM] markers (dev/legal-pages.mjs) come out too.
 
 		// Above the maker's signature, which is the last thing in the card.
 		var maker = body.querySelector('.about-maker');

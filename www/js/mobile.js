@@ -898,6 +898,28 @@
 		// The chip row belongs to whichever bar this width uses.
 		placeChips();
 
+		// The AI panel's own header controls scroll sideways below the phone
+		// breakpoint (responsive.css, `.panel.ai .chead-right`) rather than
+		// wrapping or clipping -- but nothing said so, so a control past the
+		// fold (Collapse, Full screen on a Diamond's crystal face) read as
+		// missing rather than one swipe away (PH-02/PH-14, 2026-09-15 audit).
+		// Same fade `bindScroll`/`markScroll` already draw on the footer chip
+		// strip, on the row that actually needs it.
+		var chatHeadRight = document.querySelector('.panel.ai .chead-right');
+		if (chatHeadRight) {
+			bindScroll(chatHeadRight);
+			markScroll(chatHeadRight);
+			// `ResizeObserver` alone watches the row's OWN box, which does not
+			// change when a child inside it is hidden or shown (the crystal-only
+			// controls, the face switch) -- only what OVERFLOWS it does. A
+			// content mutation is what actually moves `scrollWidth`, so that is
+			// what re-measures the fade.
+			if (typeof MutationObserver !== 'undefined') {
+				new MutationObserver(function () { markScroll(chatHeadRight); })
+					.observe(chatHeadRight, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
+			}
+		}
+
 		// WHERE WE ARE IS WATCHED, NOT REPORTED. Six or more paths change it --
 		// `mshow`, the sheet opening and closing, the drawer, a panel closing
 		// itself, a saved layout being restored -- and every one of them ends in

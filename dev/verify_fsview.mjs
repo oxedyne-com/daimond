@@ -22,7 +22,8 @@
 //   6. The turn's composed prompt says where the turn is and what the root holds, so the model
 //      never spends a round discovering it. A Diamond's own turn carries that tree once (not
 //      once per composed field), a mark inside the root is named once (not twice under two
-//      spellings), and a directory's line precedes the children found under it.
+//      spellings), and a directory's line precedes the children found under it. A tree too big
+//      for its cap keeps a project's newest source and test files, not a pile of stale bulk.
 //
 // WHAT IS NOT HERE, and why. `Where::Machine` and `would_invent_said` need a paired machine hand,
 // which cannot be arranged under automation (`dev/HATES.md` Lane G §1, `dev/reflux.mjs`'s
@@ -128,6 +129,14 @@ const tool = (name, args) => p.evaluate(async (a) => {
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 	return String(await app.run_tool(a.name, JSON.stringify(a.args)));
 }, { name, args });
+
+// A pile of stale bulk, written FIRST and never touched again, so it is unambiguously the
+// oldest thing in the tree by the time §6k checks it against a project written last. See the
+// note at that check for why.
+for (let i = 0; i < 30; i++) {
+	await tool('file_write',
+		{ path: `bulk/legacy-generated-fixture-${String(i).padStart(2, '0')}.txt`, content: 'x\n' });
+}
 
 // ── 1. Seed the four places ─────────────────────────────────────────────
 await tool('dir_create', { path: 'docs' });
@@ -316,6 +325,38 @@ if (typeof dsys === 'string') {
 		'6j. the mark heading precedes the file beneath it', treeText.slice(markAt, markAt + 160));
 } else {
 	check(false, '6h. the Diamond Wire getter answered', dsys && dsys.err);
+}
+
+// ── 6k. A project's own source survives; a pile of stale bulk does not ──────
+//
+// `format_orientation_tree` used to cut the LARGEST entries first, so a small
+// `package.json` outlived the `src/` and `test/` folders beside it the moment
+// the tree overflowed its cap -- see the module note in `src/tools.rs`. The
+// bulk pile above was written first and never touched again; this project is
+// written last, so the walk's own real modification times are what the fix
+// ranks on, with no JS lever needed to set a cwd the wasm boundary does not
+// expose.
+await tool('file_write', { path: 'proj/package.json', content: '{"name":"proj"}\n' });
+await tool('file_write', { path: 'proj/src/index.js', content: 'export const x = 1;\n' });
+await tool('file_write', { path: 'proj/test/index.test.js', content: 'test();\n' });
+const ksys = await p.evaluate(async () => {
+	const mod = await import('../pkg/oxedyne_daimond.js');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '',
+		'moonshotai/kimi-k2.7-code', 256, 'You are Daimond.', true);
+	return { wire: await app.wire_system('', '[]', '[]', '[]') };
+}).catch((e) => ({ err: String(e) }));
+if (ksys && typeof ksys.wire === 'string') {
+	check(/proj\/src\/index\.js/.test(ksys.wire),
+		'6k. the newest project\'s own source survives a tree too big for its cap',
+		ksys.wire.slice(ksys.wire.indexOf('## Where you are'), ksys.wire.indexOf('## Where you are') + 400));
+	check(/proj\/test\/index\.test\.js/.test(ksys.wire),
+		'6k2. ...and its tests survive alongside it', 'checked above');
+	const bulkSeen = (ksys.wire.match(/legacy-generated-fixture-/g) || []).length;
+	check(bulkSeen < 30,
+		'6k3. ...while the stale bulk pile is cut, not the source that replaced it',
+		`bulkSeen=${bulkSeen} ` + ksys.wire.slice(ksys.wire.indexOf('… '), ksys.wire.indexOf('… ') + 120));
+} else {
+	check(false, '6k. the Wire getter answered', ksys && ksys.err);
 }
 
 const errs = s.errs.filter((e) => !/favicon|404|401|402|502|net::ERR/.test(e));

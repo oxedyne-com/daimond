@@ -690,6 +690,19 @@
 	#mnav .panel-tags[data-more="start"] { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px); }
 	#mnav .panel-tags[data-more="both"]  { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px, #000 calc(100% - 34px), transparent 100%); }
 
+	/* The same fade, on the chat header's own control row (responsive.css makes
+	   it scroll below this breakpoint). `data-more` is set by the same
+	   `markScroll`, called on this row too from js/mobile.js `init`. A control
+	   past the fold -- Collapse, Full screen on a Diamond's crystal face -- used
+	   to read as gone rather than one swipe away (PH-02/PH-14). */
+	.panel.ai .chead-right { scroll-padding-inline: 22px; }
+	.panel.ai .chead-right[data-more="end"]   { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent 100%); }
+	.panel.ai .chead-right[data-more="start"] { mask-image: linear-gradient(to right, transparent 0, #000 28px); }
+	.panel.ai .chead-right[data-more="both"]  { mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); }
+	.panel.ai .chead-right[data-more="end"]   { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent 100%); }
+	.panel.ai .chead-right[data-more="start"] { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px); }
+	.panel.ai .chead-right[data-more="both"]  { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); }
+
 	/* ── No iOS auto-zoom ───────────────────────────────────────
 	   Safari zooms IN (and never back out) when a focused control is
 	   under 16px. Every form control is 16px on a phone so focusing a

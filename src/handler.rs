@@ -813,6 +813,10 @@ fn event_to_ws(ev: &AgentEvent) -> Option<(&'static str, Vec<Dat>)> {
         // reach this wire unnoticed.
         AgentEvent::Roading { .. } => ("roading", vec![]),
         AgentEvent::Truncated => ("truncated", vec![]),
+        // Not carried on this wire either, for the reason `thinking`, `ended` and `roading`
+        // are not: `src/syntax.rs` declares no `round_meta`. The browser reads it over
+        // `wasm::app::event_to_js`, which is the path the page runs on.
+        AgentEvent::RoundMeta { .. } => return None,
         // NOT carried on this wire, for the reason `thinking`, `ended` and `roading` are not:
         // `src/syntax.rs` declares no `leaked`, and a command the syntax does not know is not
         // an empty frame -- `text_msg` fails to build it and sends `error "internal"` instead.

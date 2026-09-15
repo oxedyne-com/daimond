@@ -207,6 +207,35 @@ type Tune = std::rc::Rc<std::cell::Cell<ThinkTune>>;
 /// long loop can hold while covering more rounds than any single tool loop runs.
 const CARRY_MAX_TURNS: usize = 32;
 
+/// How long a stream may go without a byte before [`LlmClient::stream_sse`] reads it as
+/// stalled and ends the round rather than waiting on a dead connection.  Proposal 15,
+/// 2026-09-15: OpenRouter's own export showed a round with `generation_time` 83.7 s that the
+/// app sat on for 318 s -- roughly four minutes on a stream that had already stopped sending.
+/// Overridable per turn via `Limits::stream_idle_ms`; see `Agent::set_stream_idle_ms`.
+pub const DEFAULT_STREAM_IDLE_MS: u64 = 60_000;
+
+/// Which upstream providers OpenRouter should try for this model, and in what order.
+///
+/// Sent as the request body's `provider` object, OpenRouter's own field -- never a client
+/// this app talks to directly, so no provider name is ever hard-coded here: every string in
+/// `order` and `ignore` is whatever the user typed on the model's own row.  Empty (the
+/// default) sends no `provider` object at all, which is OpenRouter's own free choice.
+#[derive(Clone, Debug, Default)]
+struct ProviderRouting {
+    /// Providers to try first, in this order.  OpenRouter's `provider.order`.
+    order:  Vec<String>,
+    /// Providers never to route to.  OpenRouter's `provider.ignore`.
+    ignore: Vec<String>,
+    /// Refuse every provider but `order` rather than falling back past it.
+    /// OpenRouter's `provider.allow_fallbacks`, sent only when this is `true` (the field's
+    /// own default is `true`, so `false` is the only value worth a byte on the wire).
+    only:   bool,
+}
+
+impl ProviderRouting {
+    fn is_empty(&self) -> bool { self.order.is_empty() && self.ignore.is_empty() }
+}
+
 /// The signed thinking blocks of recent assistant turns, held until their tool
 /// results come back.
 ///
@@ -361,6 +390,18 @@ pub struct LlmClient {
     /// See [`Blind`]; read by [`LlmClient::vision_guard`] and set by the strip-and-retry in
     /// [`LlmClient::stream_turn`] and [`LlmClient::chat_once`].
     blind:          Blind,
+    /// How long a stream may go without a byte before it is read as stalled rather than
+    /// slow; see [`stream_sse`](Self::stream_sse) and `Limits::stream_idle_ms` in
+    /// `src/compact.rs`, which `Agent::set_stream_idle_ms` pushes down into this.  An
+    /// `Rc<Cell<…>>` for the reason `tune` is one: shared across clones, so a sub-agent
+    /// built from a cloned client carries the same figure.
+    stream_idle_ms: std::rc::Rc<std::cell::Cell<u64>>,
+    /// Which upstream provider OpenRouter should route this model's calls to, from a
+    /// setting on the model's own row (`www/js/models.js`); see
+    /// [`set_provider_routing`](Self::set_provider_routing).  `Rc<RefCell<…>>` for the
+    /// reason `stream_idle_ms` is a shared cell: one client, one routing preference,
+    /// wherever it is cloned.
+    provider_routing: std::rc::Rc<std::cell::RefCell<ProviderRouting>>,
     /// Root-trust TLS configuration for the native transport.  The wasm
     /// transport delegates trust to the browser's `fetch`, so this field
     /// is native-only.
@@ -631,11 +672,32 @@ pub struct ChatOnceResponse {
     /// complete HTTP 200, and sending the same request again costs money and
     /// produces the same cut.
     pub truncated:         bool,
+    /// Set when the stream went quiet for longer than `stream_idle_ms` and the round was
+    /// given up on rather than waited on further; see [`DEFAULT_STREAM_IDLE_MS`] and
+    /// [`StreamOutcome`].  Distinct from `truncated`: that is the provider SAYING it cut
+    /// the reply, this is the app giving up on a provider that said nothing at all.  Always
+    /// `false` on the non-streaming path, which has no notion of a gap between bytes.
+    pub stalled:           bool,
     /// Whether the reply arrived as a reply at all; see [`ReplyShape`].
     ///
     /// Settled by [`ChatOnceResponse::classified`] at each of the three places a response is
     /// assembled, so a caller never has to remember to look.
     pub shape:             ReplyShape,
+    /// The provider's own id for this generation (OpenRouter's `"gen-…"`), so a round that
+    /// went wrong can be traced back to the provider's own logs afterwards.  Proposal 15,
+    /// 2026-09-15: a round that answered nothing had no id anywhere this app kept, and
+    /// nothing to ask OpenRouter about.  Empty off OpenRouter and on the Anthropic dialect.
+    pub gen_id:               String,
+    /// The wire's own `finish_reason` -- `"stop"`, `"length"`, `"tool_calls"`, … -- kept
+    /// beside `truncated` as the word behind that bit, for the same trace.  Empty on the
+    /// Anthropic dialect, which reports `stop_reason` instead; see `anthropic_truncated`.
+    pub finish_reason:        String,
+    /// OpenRouter's own `native_finish_reason`: the upstream provider's word, before
+    /// OpenRouter's normalisation to the field above.  Empty off OpenRouter.
+    pub native_finish_reason: String,
+    /// The upstream provider OpenRouter routed this call to (`"Novita"`, …).  Empty off
+    /// OpenRouter.
+    pub provider:             String,
 }
 
 impl ChatOnceResponse {
@@ -834,6 +896,20 @@ impl TransportErr {
     }
 }
 
+/// What [`LlmClient::stream_sse`] ended on, alongside whatever it already handed `on_data`.
+///
+/// Two different reasons a stream returns with nothing more to read, and the caller treats
+/// them differently: an abort is the app's own cancellation and the leak-nudge machinery
+/// never needs to know it happened; a stall is the provider's, and the turn should read
+/// honestly as `stalled` rather than as an ordinary clean end.  See `DEFAULT_STREAM_IDLE_MS`.
+#[derive(Clone, Copy, Debug, Default)]
+struct StreamOutcome {
+    /// The browser fired the abort signal (wasm only; always `false` on native).
+    aborted: bool,
+    /// No byte arrived for `stream_idle_ms`, and the connection was given up on.
+    stalled: bool,
+}
+
 /// Whether an HTTP status is worth another attempt.
 ///
 /// 429 is rate limiting and 5xx is the provider's own trouble; every other
@@ -905,6 +981,29 @@ pub(crate) async fn sleep_ms(ms: u64) {
     let _ = JsFuture::from(promise).await;
 }
 
+/// Whichever of two same-shaped futures becomes ready first; the other is dropped.
+///
+/// Hand-rolled rather than `tokio::select!` or a `futures` crate helper: `tokio` is not in
+/// this target's dependency graph (the wasm build has no TCP sockets or TLS stack, so
+/// nothing before this needed its executor), and pulling one in for a macro would be a
+/// second async runtime contending with `wasm-bindgen-futures` for the same microtask
+/// queue. A boxed, pinned trait object on each side is what lets the two callers of this
+/// (one `JsFuture`, one `sleep_ms`) share a Future poll loop despite being different
+/// concrete types.
+#[cfg(target_arch = "wasm32")]
+async fn race<T>(
+    mut a: std::pin::Pin<Box<dyn std::future::Future<Output = T>>>,
+    mut b: std::pin::Pin<Box<dyn std::future::Future<Output = T>>>,
+)
+    -> T
+{
+    std::future::poll_fn(move |cx| {
+        if let std::task::Poll::Ready(v) = a.as_mut().poll(cx) { return std::task::Poll::Ready(v); }
+        if let std::task::Poll::Ready(v) = b.as_mut().poll(cx) { return std::task::Poll::Ready(v); }
+        std::task::Poll::Pending
+    }).await
+}
+
 
 impl LlmClient {
 
@@ -932,6 +1031,8 @@ impl LlmClient {
             open_folds: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
             tune:       std::rc::Rc::new(std::cell::Cell::new(ThinkTune::default())),
             blind:      new_blind(),
+            stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
+            provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
             tls_config,
         }
     }
@@ -981,6 +1082,8 @@ impl LlmClient {
             open_folds: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
             tune:       std::rc::Rc::new(std::cell::Cell::new(ThinkTune::default())),
             blind:      new_blind(),
+            stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
+            provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
             secure,
             abort:      std::rc::Rc::new(std::cell::RefCell::new(None)),
         }
@@ -1090,16 +1193,17 @@ impl LlmClient {
             // arriving after the headers, so it is classified like a status code
             // rather than read as a short answer.
             let outcome = match outcome {
-                Ok(aborted) => match acc.stream_error() {
+                Ok(o) => match acc.stream_error() {
                     Some(e) if !emitted && !acc.has_output() => Err(e),
-                    _ => Ok(aborted),
+                    _ => Ok(o),
                 },
                 Err(e) => Err(e),
             };
             match outcome {
-                Ok(aborted) => {
+                Ok(StreamOutcome { aborted, stalled }) => {
                     let thinking = acc.take_thinking();
                     let mut resp = acc.into_response(aborted, retries);
+                    resp.stalled = stalled;
                     // ANTHROPIC REPORTS NO `cost` AT ALL: the account is billed and the API says
                     // nothing about what one call cost, so `into_response` above always hands
                     // back zero here. The spend cap is inert against that zero and the ledger
@@ -1241,6 +1345,20 @@ impl LlmClient {
             Dialect::OpenAi    => openai_truncated(&raw),
             Dialect::Anthropic => anthropic_truncated(&raw),
         };
+        // The four trace fields; see `ChatOnceResponse` for what each is and why. Empty on
+        // the Anthropic dialect, which sends none of them.
+        let (gen_id, finish_reason, native_finish_reason, provider) = match self.dialect {
+            Dialect::OpenAi => {
+                let head_end = raw.find("\"choices\"").unwrap_or(raw.len());
+                (
+                    extract_json_string(&raw[..head_end], "id").unwrap_or_default(),
+                    extract_json_string(&raw, "finish_reason").unwrap_or_default(),
+                    extract_json_string(&raw, "native_finish_reason").unwrap_or_default(),
+                    extract_json_string(&raw[..head_end], "provider").unwrap_or_default(),
+                )
+            }
+            Dialect::Anthropic => Default::default(),
+        };
         // See the same branch in `stream_turn`: Anthropic reports no `cost` at all, so `use_`
         // above always carries zero here and the ledger is booked from the token counts instead.
         let cost_usd = if use_.cost_usd == 0.0 && matches!(self.dialect, Dialect::Anthropic) {
@@ -1259,7 +1377,12 @@ impl LlmClient {
             retries,
             thinking:          thinking_text,
             truncated,
+            stalled:           false,
             shape:             ReplyShape::Plain,
+            gen_id,
+            finish_reason,
+            native_finish_reason,
+            provider,
         }.classified())
     }
 
@@ -1435,6 +1558,39 @@ impl LlmClient {
         if let Some(t) = tools {
             out.push_str(&fmt!("\"tools\":{},", t));
             out.push_str("\"tool_choice\":\"auto\",");
+        }
+        // OPENROUTER'S OWN PROVIDER ROUTING, from the model's own row -- and only ever sent
+        // to OpenRouter itself: a direct provider has no `provider` field in its own API and
+        // this app must never guess it would ignore one gracefully. No provider name is
+        // hard-coded on this side; every entry here is whatever the user typed.
+        if self.host.contains("openrouter") {
+            let routing = self.provider_routing.borrow();
+            if !routing.is_empty() {
+                out.push_str("\"provider\":{");
+                let mut wrote = false;
+                if !routing.order.is_empty() {
+                    out.push_str("\"order\":[");
+                    out.push_str(&routing.order.iter()
+                        .map(|p| fmt!("\"{}\"", json_escape(p)))
+                        .collect::<Vec<String>>().join(","));
+                    out.push(']');
+                    wrote = true;
+                }
+                if !routing.ignore.is_empty() {
+                    if wrote { out.push(','); }
+                    out.push_str("\"ignore\":[");
+                    out.push_str(&routing.ignore.iter()
+                        .map(|p| fmt!("\"{}\"", json_escape(p)))
+                        .collect::<Vec<String>>().join(","));
+                    out.push(']');
+                    wrote = true;
+                }
+                if routing.only {
+                    if wrote { out.push(','); }
+                    out.push_str("\"allow_fallbacks\":false");
+                }
+                out.push_str("},");
+            }
         }
         if stream {
             out.push_str("\"stream\":true,");
@@ -1755,6 +1911,41 @@ impl LlmClient {
         self.tune.set(ThinkTune { thinking, effort });
     }
 
+    /// How long a stream may currently go without a byte before it is read as stalled.
+    pub fn stream_idle_ms(&self) -> u64 {
+        self.stream_idle_ms.get()
+    }
+
+    /// Move the idle-stream ceiling, from `Agent::set_stream_idle_ms`.  Floored at one
+    /// second: zero would fire the watchdog on the gap between two SSE chunks of an
+    /// ordinary round.
+    pub fn set_stream_idle_ms(&self, ms: u64) {
+        self.stream_idle_ms.set(ms.max(1_000));
+    }
+
+    /// Set which upstream providers OpenRouter should try for this model, from the setting
+    /// on its own row; see [`ProviderRouting`].  Only ever reaches the wire when the
+    /// endpoint's host names OpenRouter -- see [`build_openai_body`](Self::build_openai_body)
+    /// -- so setting this against a direct provider is inert rather than a 400.
+    ///
+    /// `order`/`ignore` take a blank string as empty and trim every entry; an entry that
+    /// trims to nothing is dropped rather than sent as `""`.
+    ///
+    /// # Arguments
+    /// * `order` - Comma-separated provider names to try first, in that order.
+    /// * `ignore` - Comma-separated provider names never to route to.
+    /// * `only` - Refuse every provider but `order` rather than falling back past it.
+    pub fn set_provider_routing(&self, order: &str, ignore: &str, only: bool) {
+        let split = |s: &str| -> Vec<String> {
+            s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
+        };
+        *self.provider_routing.borrow_mut() = ProviderRouting {
+            order:  split(order),
+            ignore: split(ignore),
+            only,
+        };
+    }
+
     /// The thinking blocks held for `id`, or none when no held turn produced
     /// that call (or a lock could not be taken; see
     /// [`carry_put`](Self::carry_put)).
@@ -1987,20 +2178,31 @@ impl LlmClient {
         &self,
         body:       &str,
         on_data:    &mut impl FnMut(&str),
-    ) -> Result<bool, TransportErr>
+    ) -> Result<StreamOutcome, TransportErr>
     {
         let (stream, is_chunked) = match self.open(body).await {
             Ok(v)  => v,
             Err(e) => return Err(e),
         };
         let mut reader = LineReader::new(stream, is_chunked);
+        let idle = std::time::Duration::from_millis(self.stream_idle_ms.get());
         loop {
-            let line = match reader.read_line().await {
-                Ok(Some(l)) => l,
-                Ok(None) => break,
-                Err(e) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(TransportErr::transient("the stream broke".to_string(), err!(e,
+            // THE IDLE WATCHDOG. Proposal 15, 2026-09-15: OpenRouter's own export showed a
+            // round with `generation_time` 83.7 s that this app sat on for 318 s -- about
+            // four minutes reading a connection the provider had already stopped writing
+            // to. Bounded per line rather than per round, so an ordinary slow-but-live
+            // stream is never cut: each byte that DOES arrive re-arms the timeout.
+            let line = match tokio::time::timeout(idle, reader.read_line()).await {
+                Ok(Ok(Some(l))) => l,
+                Ok(Ok(None)) => break,
+                Ok(Err(e)) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => break,
+                Ok(Err(e)) => return Err(TransportErr::transient("the stream broke".to_string(), err!(e,
                     "LLM: read SSE line failed."; IO, Network, Wire, Read))),
+                // Whatever `on_data` already delivered this round is kept -- the round
+                // ends `stalled` rather than erroring, so a reply that reasoned and got
+                // this far still reaches the nudge path instead of being thrown away and
+                // the whole request sent again.
+                Err(_elapsed) => return Ok(StreamOutcome { aborted: false, stalled: true }),
             };
             let line = line.trim();
             if !line.starts_with("data: ") {
@@ -2012,7 +2214,7 @@ impl LlmClient {
             }
             on_data(data);
         }
-        Ok(false)
+        Ok(StreamOutcome::default())
     }
 }
 
@@ -2226,7 +2428,7 @@ impl LlmClient {
         &self,
         body:       &str,
         on_data:    &mut impl FnMut(&str),
-    ) -> Result<bool, TransportErr>
+    ) -> Result<StreamOutcome, TransportErr>
     {
         use wasm_bindgen::JsValue;
         use wasm_bindgen_futures::JsFuture;
@@ -2235,7 +2437,9 @@ impl LlmClient {
         let resp = match self.wasm_fetch(body).await {
             Ok(r) => r,
             Err(e) => {
-                if self.abort_signalled() { return Ok(true); }
+                if self.abort_signalled() {
+                    return Ok(StreamOutcome { aborted: true, stalled: false });
+                }
                 return Err(e);
             }
         };
@@ -2255,10 +2459,38 @@ impl LlmClient {
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
         loop {
-            let result = match JsFuture::from(reader.read()).await {
-                Ok(r) => r,
-                Err(e) => {
-                    if self.abort_signalled() { return Ok(true); }
+            // THE IDLE WATCHDOG, raced against the read rather than wrapped around it, so a
+            // chunk that DOES arrive re-arms the timeout for the next one; see the same
+            // note on the native `stream_sse`. `sleep_ms` is the browser `setTimeout` this
+            // client already uses for retry backoff, so no new timer mechanism is added.
+            // `race` (below) rather than `tokio::select!`: `tokio` is not in this target's
+            // dependency graph at all -- the wasm build has no TCP sockets or TLS stack, and
+            // pulling in tokio's executor for one macro would be a second async runtime
+            // fighting `wasm-bindgen-futures` for the same microtask queue.
+            enum Raced { Data(Result<JsValue, JsValue>), Idle }
+            // A cloned HANDLE, not a second reader: `ReadableStreamDefaultReader` is a thin
+            // wasm-bindgen wrapper around one JS object, so cloning it is what lets the read
+            // future OWN a reference to it (required for the `'static` bound `race` needs)
+            // while `reader` itself is still there to read from on the next loop iteration.
+            let reader_handle = reader.clone();
+            let idle_ms = self.stream_idle_ms.get();
+            let raced = race(
+                Box::pin(async move { Raced::Data(JsFuture::from(reader_handle.read()).await) }),
+                Box::pin(async move { sleep_ms(idle_ms).await; Raced::Idle }),
+            ).await;
+            let result = match raced {
+                Raced::Idle => {
+                    // Fire the same abort signal a user's Stop would: nothing else tears
+                    // down a `fetch` this client has stopped reading from, and a
+                    // dropped `JsFuture` does not reach the connection at all.
+                    self.abort();
+                    return Ok(StreamOutcome { aborted: false, stalled: true });
+                }
+                Raced::Data(Ok(r)) => r,
+                Raced::Data(Err(e)) => {
+                    if self.abort_signalled() {
+                        return Ok(StreamOutcome { aborted: true, stalled: false });
+                    }
                     // A stream that broke mid-flight; whether it is safe to try
                     // again is the caller's judgement, not this layer's.
                     return Err(TransportErr::transient("the stream broke".to_string(), err!(
@@ -2296,13 +2528,13 @@ impl LlmClient {
                 }
                 let data = &line[6..];
                 if data == "[DONE]" {
-                    return Ok(false);
+                    return Ok(StreamOutcome::default());
                 }
                 on_data(data);
             }
         }
 
-        Ok(false)
+        Ok(StreamOutcome::default())
     }
 
     /// Fire the abort signal for the in-flight request, if any.  Safe to
@@ -4077,6 +4309,11 @@ struct StreamAcc {
     calls:             Vec<StreamCall>,
     /// Whether a chunk said the reply stopped at the output limit.
     truncated:         bool,
+    // The four trace fields; see `ChatOnceResponse` for what each is and why.
+    gen_id:               String,
+    finish_reason:        String,
+    native_finish_reason: String,
+    provider:             String,
 }
 
 impl StreamAcc {
@@ -4165,6 +4402,26 @@ impl StreamAcc {
         if openai_truncated(data) {
             self.truncated = true;
         }
+
+        // THE FOUR TRACE FIELDS, all sticky for the reason `truncated` is above: each
+        // arrives on one delta (`id`/`provider` on every one in practice, `finish_reason`/
+        // `native_finish_reason` only on the last) and a later chunk carrying none of them
+        // must not blank out what an earlier one said.  `id` and `provider` are scoped to
+        // before `choices` so a tool call's own nested `id` is never mistaken for the
+        // generation's.
+        let head_end = data.find("\"choices\"").unwrap_or(data.len());
+        if let Some(id) = extract_json_string(&data[..head_end], "id") {
+            if !id.is_empty() { self.gen_id = id; }
+        }
+        if let Some(p) = extract_json_string(&data[..head_end], "provider") {
+            if !p.is_empty() { self.provider = p; }
+        }
+        if let Some(fr) = extract_json_string(data, "finish_reason") {
+            if !fr.is_empty() { self.finish_reason = fr; }
+        }
+        if let Some(nfr) = extract_json_string(data, "native_finish_reason") {
+            if !nfr.is_empty() { self.native_finish_reason = nfr; }
+        }
     }
 
     /// Whether this turn has produced anything yet.
@@ -4199,7 +4456,14 @@ impl StreamAcc {
             retries,
             thinking:          self.reasoning,
             truncated:         self.truncated,
+            // Set by the caller (`stream_turn`) from the `StreamOutcome` this accumulator
+            // never sees; a placeholder here so the struct is never partly built.
+            stalled:           false,
             shape:             ReplyShape::Plain,
+            gen_id:               self.gen_id,
+            finish_reason:        self.finish_reason,
+            native_finish_reason: self.native_finish_reason,
+            provider:             self.provider,
         }.classified()
     }
 }
@@ -4545,7 +4809,15 @@ impl AnthropicAcc {
             retries,
             thinking,
             truncated:         self.truncated,
+            // Set by the caller (`stream_turn`) from the `StreamOutcome` this accumulator
+            // never sees; a placeholder here so the struct is never partly built.
+            stalled:           false,
             shape:             ReplyShape::Plain,
+            // The Anthropic dialect carries none of these; see `ChatOnceResponse`.
+            gen_id:               String::new(),
+            finish_reason:        String::new(),
+            native_finish_reason: String::new(),
+            provider:             String::new(),
         }.classified()
     }
 }
@@ -6172,6 +6444,70 @@ pub mod tests {
         assert!(body.contains("\"content\":\"Hello\""));
     }
 
+    /// No routing set: no `provider` object at all -- OpenRouter's own free choice, and the
+    /// shape every existing request keeps.
+    #[test]
+    fn test_no_provider_routing_set_sends_no_provider_field_00() {
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(ClientConfig::builder().dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerify)).with_no_client_auth());
+        let client = LlmClient::new("openrouter.ai", 443, "/api/v1/chat/completions",
+            "key", "z-ai/glm-5.3", 4096, tls);
+        let body = client.build_request_body(&[ChatMessage::user("hi".to_string())]);
+        assert!(!body.contains("\"provider\""), "an unset routing must send nothing: {}", body);
+    }
+
+    /// A routing preference reaches OpenRouter as its own `provider` object, `order` before
+    /// `ignore`, with no name hard-coded on this side -- both came from `set_provider_routing`.
+    #[test]
+    fn test_provider_routing_reaches_openrouter_as_order_and_ignore_00() {
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(ClientConfig::builder().dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerify)).with_no_client_auth());
+        let client = LlmClient::new("openrouter.ai", 443, "/api/v1/chat/completions",
+            "key", "z-ai/glm-5.3", 4096, tls);
+        client.set_provider_routing(" Novita , Together ", "DeepInfra", false);
+        let body = client.build_request_body(&[ChatMessage::user("hi".to_string())]);
+        assert!(body.contains("\"provider\":{\"order\":[\"Novita\",\"Together\"],\
+            \"ignore\":[\"DeepInfra\"]},"), "the routing object was not built as expected: {}", body);
+        assert!(!body.contains("allow_fallbacks"), "`only` was false and must send nothing: {}", body);
+    }
+
+    /// `only` sends `allow_fallbacks:false`; whitespace-only entries are dropped rather than
+    /// sent as an empty provider name.
+    #[test]
+    fn test_provider_routing_only_refuses_every_fallback_00() {
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(ClientConfig::builder().dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerify)).with_no_client_auth());
+        let client = LlmClient::new("openrouter.ai", 443, "/api/v1/chat/completions",
+            "key", "z-ai/glm-5.3", 4096, tls);
+        client.set_provider_routing("Novita, ,", "", true);
+        let body = client.build_request_body(&[ChatMessage::user("hi".to_string())]);
+        assert!(body.contains("\"order\":[\"Novita\"]"), "a blank entry was not dropped: {}", body);
+        assert!(!body.contains("\"ignore\""), "an empty ignore list must not appear at all: {}", body);
+        assert!(body.contains("\"allow_fallbacks\":false"), "only was true: {}", body);
+    }
+
+    /// A DIRECT provider never sees the `provider` object, whatever routing is set: it is an
+    /// OpenRouter-only field and this app must never guess a direct API would ignore it.
+    #[test]
+    fn test_provider_routing_is_inert_off_openrouter_00() {
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(ClientConfig::builder().dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerify)).with_no_client_auth());
+        let client = LlmClient::new("api.openai.com", 443, "/v1/chat/completions",
+            "key", "gpt-5", 4096, tls);
+        client.set_provider_routing("Novita", "DeepInfra", true);
+        let body = client.build_request_body(&[ChatMessage::user("hi".to_string())]);
+        assert!(!body.contains("\"provider\""),
+            "routing set for OpenRouter reached a direct provider's own request: {}", body);
+    }
+
     // ┌───────────────────────────────────────────────────────────────┐
     // │ Retry — pure parts                                             │
     // └───────────────────────────────────────────────────────────────┘
@@ -7319,6 +7655,14 @@ pub mod tests {
             chunks:      Vec<String>,
             reset_after: Option<usize>,
         },
+        /// A chunked stream that sends `chunks` and then goes silent for `idle_ms` before
+        /// closing normally, never reaching `[DONE]` in between -- what a provider that has
+        /// stopped generating but not yet closed the connection looks like on the wire (see
+        /// proposal 15, 2026-09-15: `generation_time` 83.7 s against an app that waited 318).
+        Stall {
+            chunks:  Vec<String>,
+            idle_ms: u64,
+        },
     }
 
     impl Reply {
@@ -7644,6 +7988,23 @@ pub mod tests {
                 let _ = tls.write_all(b"0\r\n\r\n").await;
                 let _ = tls.flush().await;
             }
+            Reply::Stall { chunks, idle_ms } => {
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                    Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+                let _ = tls.write_all(head.as_bytes()).await;
+                let _ = tls.flush().await;
+                for chunk in chunks {
+                    let framed = fmt!("{:x}\r\n{}\r\n", chunk.len(), chunk);
+                    let _ = tls.write_all(framed.as_bytes()).await;
+                    let _ = tls.flush().await;
+                }
+                // Silence past whatever the client's idle watchdog is set to. The connection
+                // stays open and nothing more arrives until this sleep ends, at which point
+                // the client's own timeout should long since have fired and moved on.
+                tokio::time::sleep(std::time::Duration::from_millis(*idle_ms)).await;
+                let _ = tls.write_all(b"0\r\n\r\n").await;
+                let _ = tls.flush().await;
+            }
         }
     }
 
@@ -7805,6 +8166,45 @@ pub mod tests {
         assert_eq!(resp.prompt_tokens, 11);
         assert_eq!(resp.cached_tokens, 9);
         assert_eq!(resp.cost_usd, 0.0003);
+    }
+
+    /// A stream that goes quiet is read as STALLED rather than waited on for however long the
+    /// provider takes to close it. Proposal 15, 2026-09-15: OpenRouter's own export showed a
+    /// round with `generation_time` 83.7 s that this app sat on for 318 s.
+    #[tokio::test]
+    async fn test_a_stalled_stream_ends_the_round_rather_than_hanging_on_it() {
+        let (port, seen) = start_stub(vec![Reply::Stall {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"reasoning\":\"thinking hard about it\"}}]}\n\n"
+                    .to_string(),
+            ],
+            // Comfortably longer than the client's own ceiling below, so the watchdog and
+            // not the stub decides when the round ends.
+            idle_ms: 3_000,
+        }]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(80);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+
+        let started = std::time::Instant::now();
+        let resp = match client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
+            Ok(r)  => r,
+            Err(e) => panic!("a stall should end the round honestly, not fail it: {}", e),
+        };
+        let elapsed = started.elapsed();
+
+        assert!(elapsed < std::time::Duration::from_millis(1_500),
+            "the watchdog did not fire against an 80ms ceiling: waited {:?}", elapsed);
+        assert!(resp.stalled, "the round did not report itself as stalled");
+        assert!(!resp.truncated, "a stall is not the same fault as a length cut");
+        assert!(resp.content.is_empty(), "nothing was ever said, and none should be invented");
+        assert_eq!(resp.thinking, "thinking hard about it",
+            "the reasoning that DID arrive before the stall must not be thrown away");
+        // ONE CONNECTION. A stall is not a transport failure the retry ladder should act on --
+        // the round is over, with whatever it had, not sent again from the top.
+        assert_eq!(connections(&seen), 1,
+            "a stall must not trigger a full resend of the request");
     }
 
     #[tokio::test]

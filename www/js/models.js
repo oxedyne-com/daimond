@@ -907,6 +907,60 @@
 		};
 	}
 
+	/// The raw provider-routing text set on this model's own row, or '' when nobody has set
+	/// one. Free text the user typed -- "Novita, Together / DeepInfra" or similar -- parsed
+	/// only where it is used (`DaimondModels.parseRouting`); this file never reads it.
+	///
+	/// Added for proposal 15, 2026-09-15: the incident's own export named the upstream
+	/// provider (`Makora`) that served the stalled round, and there was nowhere on this side
+	/// to act on that evidence -- OpenRouter's own `provider.order`/`provider.ignore` are
+	/// per-request fields, and the app had no setting that reached them at all.
+	function routing(providerId, model) {
+		var p = store.providers[providerId];
+		if (!p || !p.routing) return '';
+		return typeof p.routing[model] === 'string' ? p.routing[model] : '';
+	}
+
+	/// Set the routing text for `model` under `providerId`; a blank string clears it.
+	function setRouting(providerId, model, text) {
+		var p = store.providers[providerId];
+		if (!p) return;
+		if (!p.routing) p.routing = {};
+		text = String(text || '').trim();
+		if (text) p.routing[model] = text;
+		else delete p.routing[model];
+		save();
+	}
+
+	/// Read one routing field into the three things OpenRouter's `provider` object wants.
+	///
+	/// SYNTAX: comma-separated provider names; a leading `-` marks one to IGNORE rather than
+	/// prefer, and a bare `!` token on its own means "only these -- refuse every fallback"
+	/// (OpenRouter's `allow_fallbacks:false`). No name here is ever hard-coded by this app --
+	/// every one came from what the user typed on the model's own row.
+	///
+	///     "Novita, Together"          -> prefer Novita then Together, fallbacks allowed
+	///     "Novita, -DeepInfra"        -> prefer Novita, never DeepInfra
+	///     "Novita, !"                 -> ONLY Novita, refuse every other provider
+	///
+	/// Returns `{ order, ignore, only }`, each list already trimmed and never containing an
+	/// empty string.
+	function parseRouting(text) {
+		var order = [], ignore = [], only = false;
+		String(text || '').split(',').forEach(function (raw) {
+			var tok = raw.trim();
+			if (!tok) return;
+			if (tok === '!') { only = true; return; }
+			if (tok.charAt(0) === '-') {
+				var nm = tok.slice(1).trim();
+				if (nm) ignore.push(nm);
+			} else {
+				order.push(tok);
+			}
+		});
+		return { order: order, ignore: ignore, only: only };
+	}
+
 	// ── What is left on a key ───────────────────────────────────────
 
 	/// Sibling endpoints of a chat-completions URL, for the two credit probes.
@@ -1985,6 +2039,32 @@
 		return wrap;
 	}
 
+	/// The one control this model's OpenRouter routing gets: a text field on its own row,
+	/// under the model button, saved on `change` and read back from `DaimondModels.routing`
+	/// on every render -- so the field holds no state of its own and a stale tab cannot show a
+	/// preference the store has since lost. See `parseRouting` for the syntax the help line
+	/// describes.
+	function routingRow(providerId, model) {
+		var wrap = document.createElement('div');
+		wrap.className = 'models-routing';
+		var lab = document.createElement('label');
+		lab.className = 'models-routing-lab';
+		lab.appendChild(document.createTextNode(t('models.routing_label')));
+		var inp = document.createElement('input');
+		inp.type = 'text';
+		inp.className = 'models-routing-input';
+		inp.placeholder = t('models.routing_ph');
+		inp.value = routing(providerId, model);
+		inp.addEventListener('change', function () { setRouting(providerId, model, inp.value); });
+		lab.appendChild(inp);
+		wrap.appendChild(lab);
+		var help = document.createElement('div');
+		help.className = 'models-routing-help';
+		help.textContent = t('models.routing_help');
+		wrap.appendChild(help);
+		return wrap;
+	}
+
 	/// The sentence that says what is left and how it is known.
 	///
 	/// An automatic figure that has been walked down by this device's own spending is no longer
@@ -2268,6 +2348,32 @@
 					body.appendChild(age);
 				}
 
+				// Per-model OpenRouter routing, on the model's own row. Reuses
+				// `canProbeCredit`'s OpenRouter test rather than a second string match
+				// on the same host: `LlmClient::set_provider_routing` only ever sends
+				// this for an `openrouter.ai` endpoint (see `applyProviderRouting` in
+				// daimond.js), so a row that is not one would offer a control that does
+				// nothing.
+				var isRoutable = canProbeCredit(p.url);
+
+				// A provider whose catalogue has not been fetched yet draws no model
+				// rows at all -- see `p.models.forEach` below -- so a routing preference
+				// set earlier (from the console, or from a catalogue that has since
+				// changed) would otherwise become invisible and unreachable. Surfaced
+				// here, collapsed, ONLY when there is something in it to show.
+				if (isRoutable && !p.count) {
+					var known = Object.keys((store.providers[p.id] || {}).routing || {});
+					if (known.length) {
+						var disc = document.createElement('details');
+						disc.className = 'models-routing-disc';
+						var sum = document.createElement('summary');
+						sum.textContent = t('models.routing_disclosure');
+						disc.appendChild(sum);
+						known.forEach(function (mm) { disc.appendChild(routingRow(p.id, mm)); });
+						body.appendChild(disc);
+					}
+				}
+
 				p.models.forEach(function (m) {
 					var isDef = d.provider === p.id && d.model === m;
 					var twin  = !!dup[baseName(m)];
@@ -2303,6 +2409,7 @@
 					} else {
 						body.appendChild(mr);
 					}
+					if (isRoutable) body.appendChild(routingRow(p.id, m));
 				});
 
 				// The credits row is not the user's to remove. It is their balance: taking it out of
@@ -2724,6 +2831,10 @@
 		fetchModels:    fetchModels,
 		// The live rates a provider published, which `DaimondPricing` asks before its table.
 		rateFor:        rateFor,
+		// OpenRouter provider routing, set on a model's own row; see `routing` above.
+		routing:        routing,
+		setRouting:     setRouting,
+		parseRouting:   parseRouting,
 		// What is left on a provider's key: asked for where it can be, told to us otherwise.
 		fetchCredit:    fetchCredit,
 		// When each key was last asked, and how that went. A snapshot, so nothing outside this

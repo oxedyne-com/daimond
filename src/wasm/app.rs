@@ -23,6 +23,7 @@ use crate::workspace::Workspace;
 use crate::wasm::{diamond, js_prop, to_js_err};
 
 use oxedyne_fe2o3_core::prelude::*;
+use oxedyne_fe2o3_jdat::Dat;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -928,6 +929,18 @@ impl DaimondApp {
         self.agent.set_context_window(if tokens > 0.0 { tokens as u64 } else { 0 });
     }
 
+    /// Set which upstream providers OpenRouter should try for this agent's model, from the
+    /// setting on its own row (`www/js/models.js`, `DaimondModels.routing`).  Inert against a
+    /// direct provider.
+    ///
+    /// # Arguments
+    /// * `order` - Comma-separated provider names to try first, in that order.
+    /// * `ignore` - Comma-separated provider names never to route to.
+    /// * `only` - Refuse every provider but `order` rather than falling back past it.
+    pub fn set_provider_routing(&self, order: String, ignore: String, only: bool) {
+        self.agent.set_provider_routing(&order, &ignore, only);
+    }
+
     /// How many tool-call rounds one turn of this agent may take.
     ///
     /// # Arguments
@@ -1005,9 +1018,10 @@ impl DaimondApp {
     /// * `id` - The Diamond whose crystal is wanted.
     pub async fn crystal_hot_text(&self, id: String) -> Result<String, JsValue> {
         let json  = diamond::read_crystal_data(&id).await.unwrap_or_default();
-        let split = crate::tools::crystal_split(&json, crate::tools::crystal_hot_cap())
-            .map_err(to_js_err)?;
-        Ok(crate::tools::crystal_prompt_text(&split))
+        let files = diamond::read_standing(&id).await;
+        let split = crate::tools::crystal_split(
+            &json, crate::tools::crystal_hot_room(files.hot_bytes())).map_err(to_js_err)?;
+        Ok(crate::tools::crystal_prompt_text(&split, &files))
     }
 
     /// What a Diamond's crystal weighs, hot and whole, as `{hot, total, hot_cap, cap}`.
@@ -1020,10 +1034,16 @@ impl DaimondApp {
     /// * `id` - The Diamond whose sizes are wanted.
     pub async fn crystal_split_sizes(&self, id: String) -> Result<String, JsValue> {
         let json  = diamond::read_crystal_data(&id).await.unwrap_or_default();
-        let hot   = crate::tools::crystal_hot_cap();
+        // THE ROOM RATHER THAN THE CEILING, because the gauge is what a user checks a refusal
+        // against: a panel drawing "hot 3.1 of 16.0 KB" beside a refusal at 15,100 would have
+        // the user reading the three files' share as a bug.  `files` is what they weigh.
+        let files = diamond::read_standing(&id).await;
+        let hot   = crate::tools::crystal_hot_room(files.hot_bytes());
         let split = crate::tools::crystal_split(&json, hot).map_err(to_js_err)?;
-        Ok(fmt!(r#"{{"hot":{},"total":{},"hot_cap":{},"cap":{},"whole":{}}}"#,
-            split.hot_bytes, split.total_bytes, hot, crate::tools::crystal_cap(), split.whole))
+        Ok(fmt!(
+            r#"{{"hot":{},"total":{},"hot_cap":{},"cap":{},"whole":{},"files":{}}}"#,
+            split.hot_bytes, split.total_bytes, hot, crate::tools::crystal_cap(), split.whole,
+            files.hot_bytes()))
     }
 
     /// Fold this conversation at a different fraction of the window from the shipped one.
@@ -1174,7 +1194,9 @@ impl DaimondApp {
             \"worker_keep\":{},\"worker_spend_usd\":{},\"gather_timeout_s\":{},\
             \"batch_line\":{},\
             \"compound\":{},\
+            \"standing\":{},\"briefing_top3\":{},\"task_log\":{},\"tail_note\":{},\
             \"thinking\":\"{}\",\"effort\":\"{}\",\
+            \"stream_idle_ms\":{},\
             \"fold_shape\":\"{}\",\"family\":\"{}\",\"claude_names\":{}}}",
             l.worker, l.max_rounds, l.max_continuations, l.context_cap, l.keep, l.spend_cap_usd,
             l.fold_at, l.retire_prior,
@@ -1183,7 +1205,9 @@ impl DaimondApp {
             l.worker_max_rounds, l.worker_continuations, l.worker_context_cap,
             l.worker_keep, l.worker_spend_usd, l.gather_timeout_s,
             l.batch_line, l.compound,
+            l.standing_files, l.briefing_top3, l.task_log, l.tail_note,
             l.thinking.wire(), l.effort.wire(),
+            l.stream_idle_ms,
             l.fold_shape.wire(),
             self.registry.family().name(), self.registry.claude_names())
     }
@@ -1863,10 +1887,20 @@ impl DaimondApp {
             .map_err(to_js_err)
     }
 
-    /// Propose a fold: run a fresh reducer over the current crystal data plus one
-    /// `delta`, returning the PROPOSED new crystal data.  Writes
-    /// nothing — the advisory half of the fold (H2); the delta is applied
-    /// only on explicit confirm via [`DaimondApp::fold_apply`].
+    /// Propose a fold: run a fresh reducer over the current crystal and the three files beside
+    /// it plus one `delta`, and answer with what it proposes for all four.  Writes nothing.
+    ///
+    /// The answer is a JSON envelope -- `{"crystal": "…", "requirements": "…", "decisions": "…",
+    /// "state": "…"}` -- with a file present only where the reducer rewrote it, which
+    /// [`DaimondApp::fold_apply`] takes back unchanged.  It is an envelope rather than the bare
+    /// crystal because the fold now returns four documents and a second call to fetch the other
+    /// three would run the reducer twice.
+    ///
+    /// **A proposal that would DESTROY something is refused here**, not reported: a populated
+    /// crystal key, every hot flag, a ticked task or a line of the append-only decisions.  The
+    /// reducer is run once more with the loss named, and only a second failure comes back as an
+    /// error.  See `dev/CRYSTAL_CONTRACT.md` §13 -- one click commits, so there is no moment at
+    /// which a person reads a warning and no undo but the version history.
     ///
     /// The page is not folded and is not shown to the reducer.  It is presentation, and a reducer
     /// asked to summarise a Diamond has no business rewriting how it looks.
@@ -1874,47 +1908,25 @@ impl DaimondApp {
         self.fold_propose_inner(&id, &delta).await.map_err(to_js_err)
     }
 
-    /// Which top-level keys accepting `proposal` would drop from this Diamond's crystal, as a
-    /// JSON array of names.  Empty means none.
-    ///
-    /// **The fold is the one path where a key can vanish on a single click**, and the schema's
-    /// governing rule is that nothing may ever drop a key it does not recognise.  The reducer is a
-    /// fresh, tool-less model under a user-editable prompt, rewriting the whole file from one
-    /// sentence; key drift is its expected behaviour rather than a risk, and `{}` is a valid
-    /// crystal, so no parse check can catch it.  Comparing the two key sets is what can.
-    ///
-    /// Names and not a sentence, deliberately: the warning is shown beside the Accept button and
-    /// belongs in the user's own language, which this side does not speak.
-    ///
-    /// Asked separately from [`DaimondApp::fold_propose`] rather than folded into its result, so
-    /// the existing single-string contract is untouched -- and because the honest moment to ask is
-    /// when the user is about to accept, not when the proposal was made.  The crystal can move
-    /// between the two, and this reads it as it stands now.
+    /// Apply a confirmed fold: write the accepted crystal and any of the three files the
+    /// proposal carries, snapshot a version, retain the raw `delta` under `.daimond/deltas/`,
+    /// and append a `fold` record referencing it.
     ///
     /// # Arguments
     /// * `id` - The Diamond.
-    /// * `proposal` - The proposed crystal, as [`DaimondApp::fold_propose`] returned it.
-    pub async fn fold_keys_lost(&self, id: String, proposal: String)
-        -> Result<String, JsValue>
-    {
-        self.fold_keys_lost_inner(&id, &proposal).await.map_err(to_js_err)
-    }
-
-    /// Apply a confirmed fold: write the accepted `new_crystal`, snapshot a
-    /// version, retain the raw `delta` under `.daimond/deltas/`, and append a
-    /// `fold` record referencing it.  Called only after the user accepts
-    /// the proposed diff, so a fold never auto-applies and never discards
-    /// the raw delta.
+    /// * `proposal` - The envelope [`DaimondApp::fold_propose`] returned, unchanged.
+    /// * `delta` - What was folded in, kept beside the version it produced.
+    /// * `note` - What the log record says about who asked.
     pub async fn fold_apply(
         &self,
         id:        String,
-        new_crystal: String,
+        proposal:  String,
         delta:     String,
         note:      String,
     )
         -> Result<(), JsValue>
     {
-        diamond::fold_apply(&id, &new_crystal, &delta, &note).await.map_err(to_js_err)
+        self.fold_apply_inner(&id, &proposal, &delta, &note).await.map_err(to_js_err)
     }
 
     /// Cumulative prompt tokens billed to this session.
@@ -2145,6 +2157,7 @@ struct DaimonTurn {
     agent:    Agent,        // the daimon, its system message composed and this app's limits adopted
     registry: ToolRegistry, // exactly the tools this turn holds, and nothing else
     crystal:  String,       // crystal.json as it stood before the turn, for the comparison after it
+    standing: crate::tools::Standing, // the three files as the turn found them, for the same reason
     local:    String,       // the slice of the system message true of this turn only, for the Wire
 }
 
@@ -2351,9 +2364,25 @@ impl DaimondApp {
         //
         // `DaimonTurn.crystal` below stays the WHOLE text: the after-turn comparison diffs the
         // FILE, and diffing the hot part would report every cold edit as no change at all.
-        let split = crate::tools::crystal_split(&before, crate::tools::crystal_hot_cap())
-            .unwrap_or_default();
-        local.push_str(&crate::tools::crystal_prompt_text(&split));
+        // THE THREE FILES BESIDE IT, created on the spot for a Diamond that predates them, and
+        // read ONCE here so the block is byte-stable for every round of this turn -- exactly as
+        // the crystal above is.  A file re-read per round would change the system message under
+        // a turn that had already sent it, which is the one thing a standing context may not do.
+        let files = diamond::ensure_standing(id).await;
+        // THE `nofiles` MEASUREMENT ARM'S OWN DOOR. `files` itself is read and tracked
+        // regardless -- the turn-end check below still needs the true content to diff against
+        // -- but what goes into THIS turn's prompt is an empty `Standing` when the switch is
+        // off, so the crystal gets the hot room back rather than paying for files it is not
+        // shown. See `dev/CRYSTAL_CONTRACT.md` §5 and `dev/tune/arms.json`'s `nofiles` arm.
+        let tune = self.agent.limits();
+        let prompt_files = if tune.standing_files {
+            files.clone()
+        } else {
+            crate::tools::Standing::default()
+        };
+        let split = crate::tools::crystal_split(
+            &before, crate::tools::crystal_hot_room(prompt_files.hot_bytes())).unwrap_or_default();
+        local.push_str(&crate::tools::crystal_prompt_text(&split, &prompt_files));
 
         // The daimon reaches what its workers reach, and writes where the user marked.
         //
@@ -2404,8 +2433,26 @@ impl DaimondApp {
         agent.adopt_limits(&self.agent);
         // And it starts with no briefing at all, which left the ONE agent that dispatches workers
         // as the one agent that could not judge how many to dispatch.
-        agent.set_briefing(&self.briefing(&registry).await);
-        DaimonTurn { agent, registry, crystal: before, local }
+        let mut brief = self.briefing(&registry).await;
+        // "N objectives, M open tasks; top three: …" -- parsed from the SAME read of
+        // `REQUIREMENTS.md` the hot block above carries, not a second one, so the figure agrees
+        // with what the model is also being shown in the prompt and stays byte-stable for every
+        // round of this turn. See `dev/CRYSTAL_CONTRACT.md` §5.1.
+        let objectives = crate::tools::requirements_briefing(&files.requirements, tune.briefing_top3);
+        if !objectives.is_empty() {
+            if !brief.is_empty() {
+                brief.push_str("\n\n");
+            }
+            brief.push_str(&objectives);
+        }
+        agent.set_briefing(&brief);
+        // WHICH DIAMOND, so that a fold mid-turn can file what it is about to forget into
+        // `REQUIREMENTS.md`, `DECISIONS.md` and `STATE.md` rather than into a note that is
+        // re-summarised at the next fold. `Agent::fold_if_needed` is handed the conversation and
+        // nothing that names a Diamond, and this is the only place the name is in hand. See
+        // `dev/CRYSTAL_CONTRACT.md` §13.
+        agent.set_diamond(id);
+        DaimonTurn { agent, registry, crystal: before, standing: files, local }
     }
 
     /// Drive the crystal agent for one instruction (see
@@ -2441,7 +2488,7 @@ impl DaimondApp {
         // `local` is dropped here and taken only by the Wire: the turn wants the joined message,
         // which the agent already holds, and a second copy of half of it would be one more thing
         // able to disagree with the first.
-        let DaimonTurn { agent, registry, crystal: before, .. } =
+        let DaimonTurn { agent, registry, crystal: before, standing: standing_before, .. } =
             self.compose_daimon(id, &attached, &read_only, &toolkits).await;
         // Read before the turn, compared after it. The page is not put in the prompt -- it is
         // markup the daimon can open with `file_read` when it has been asked to change it, and it
@@ -2465,6 +2512,10 @@ impl DaimondApp {
             }
         }
         session.messages = crate::protocol::pair_up(seeded);
+        // THE LAST WORD OF THE TURN BEFORE THIS ONE, for the tail note's "never twice in a row"
+        // -- cloned out now, because a fold during the turn may replace it with a notice and a
+        // read after the turn would need a second, overlapping borrow of `session.messages`.
+        let prior_tail = session.messages.last().cloned();
 
         let mut sink = |ev: AgentEvent| {
             let js = event_to_js(&ev);
@@ -2472,20 +2523,82 @@ impl DaimondApp {
         };
         let ran = agent.run_turn(&mut session, instruction, &registry, &mut sink).await;
         self.absorb_usage(&session);
+        // WHERE THIS TURN'S OWN MESSAGES START, so its ledger can be read apart from every turn
+        // before it -- `ledger_of` over the whole session would answer the same "files written"
+        // for turn forty as for turn one, and the turn-end check below needs to know what THIS
+        // turn did, not what the conversation has ever done.  READ FROM THE AGENT AFTER THE TURN,
+        // never as the length the list had before it: a fold inside `run_turn` replaces the folded
+        // prefix with one notice, so a 200-message prior became 27 and the length taken before the
+        // turn was an index past the end.  In wasm that slice is a trap, the future never settles,
+        // and the caller's promise sat until its timeout -- `dev/verify_foldabsorb.mjs`'s first
+        // padded fold, 2026-09-15. See `Agent::turn_start`.
+        let turn_start = agent.turn_start().min(session.messages.len());
+        // ARITHMETIC, NOT JUDGEMENT -- the same ledger a context fold reconciles a claimed edit
+        // against ([`crate::agent::compact::reconcile`]), read over exactly this turn's own messages.
+        let ledger = crate::agent::compact::ledger_of(&session.messages[turn_start..]);
 
-        // If the crystal changed, snapshot a version and log the edit so
-        // every crystal mutation stays versioned and auditable.  Attempted even when
-        // the turn ended badly: a turn that wrote the crystal and then died has still
-        // changed it, and leaving that version unrecorded is the one outcome with no
-        // way back.
+        // If the crystal, the page, or any of the three standing files changed, snapshot a
+        // version and log the edit so every mutation stays versioned and auditable.  Attempted
+        // even when the turn ended badly: a turn that wrote a file and then died has still
+        // changed it, and leaving that version unrecorded is the one outcome with no way back.
         let after = diamond::read_crystal_data(id).await.unwrap_or_default();
         // THE PAGE COUNTS AS A CHANGE TOO. A turn asked to redesign how a Diamond looks writes
         // `crystal.html` and touches no data at all, and judging by the data alone would leave
         // that turn's work on disk with no version, no snapshot and no line in the log saying who
         // asked for it -- the one change in a Diamond with no way back.
         let page_after = diamond::read_crystal_page(id).await.unwrap_or_default();
-        if after != before || page_after != page_before {
-            res!(diamond::record_steer(id, &after, &typed).await);
+        // AND SO DO THE THREE STANDING FILES. A turn that ticks a task or rewrites `STATE.md` and
+        // touches neither `crystal.json` nor `crystal.html` is a turn with real work to show for
+        // it, and judging by the crystal alone would leave it with no version either -- exactly
+        // the gap `dev/CRYSTAL_CONTRACT.md` §5 exists to close. `snapshot` mints the next version
+        // number on every call regardless of whether `crystal.json` itself moved, so calling
+        // `record_steer` here is what earns the version; it does not need `after` to differ from
+        // `before` to do it.
+        let standing_after = diamond::read_standing(id).await;
+        let tune = agent.limits();
+        if after != before || page_after != page_before || standing_after != standing_before {
+            let version = res!(diamond::record_steer(id, &after, &typed).await);
+            // ONE `kind:"task"` RECORD PER TICK, carrying what the ledger shows behind it. A
+            // task that went from `- [ ]` to `- [x]` in `before`/`after` earns one whether or not
+            // anything else changed in the same turn -- ticking three tasks with one file write
+            // between them is still three claims, each its own line. Gated on `task_log` alone:
+            // the version above is still minted with it off, so a Diamond still gets one, and
+            // only the per-task record and its flag disappear.
+            if tune.task_log {
+                let parent = version as i64 - 1;
+                // THE TICK'S OWN WRITE DOES NOT COUNT AS ITS BACKING. Ticking a task is ITSELF a
+                // `file_edit` of `REQUIREMENTS.md`, so `ledger.wrote` always holds that one path
+                // however the tick was arrived at -- checking for "anything written" would make
+                // the flag fire on nothing a bare tick could ever trigger it on, which is exactly
+                // the never-forget file's own failure mode. What counts is a write to something
+                // ELSE: the file the work actually landed in, or `STATE.md`/`DECISIONS.md`
+                // alongside it.
+                let backed = if ledger.wrote.iter().any(|w|
+                    crate::tools::standing_leaf(w) != Some(crate::tools::REQUIREMENTS_FILE))
+                {
+                    Some("an edit")
+                } else if !ledger.reported.is_empty() {
+                    Some("a worker report")
+                } else {
+                    None
+                };
+                for task_id in crate::tools::ticked_tasks(
+                    &standing_before.requirements, &standing_after.requirements)
+                {
+                    res!(diamond::record_task_tick(id, version, parent, &task_id, backed).await);
+                }
+            }
+        }
+        // THE TAIL NOTE, said once and never twice running: a turn that edited a file or read a
+        // worker's report and left `REQUIREMENTS.md` and `STATE.md` exactly as they were is a
+        // turn that did work the never-forget file does not yet know about. See
+        // `dev/CRYSTAL_CONTRACT.md` §5.2 and [`crate::agent::compact::note_reconcile`].
+        if tune.tail_note
+            && (!ledger.wrote.is_empty() || !ledger.reported.is_empty())
+            && standing_before.requirements == standing_after.requirements
+            && standing_before.state == standing_after.state
+        {
+            crate::agent::compact::note_reconcile(&mut session.messages, prior_tail.as_ref());
         }
         // The conversation goes back whichever way the turn went, and a failed turn is
         // therefore NOT an error out of here. A turn that got three tool calls in before
@@ -2512,23 +2625,158 @@ impl DaimondApp {
         Ok(out)
     }
 
-    /// Which keys a proposal would drop, as a JSON array (see [`DaimondApp::fold_keys_lost`]).
-    async fn fold_keys_lost_inner(&self, id: &str, proposal: &str) -> Outcome<String> {
-        let crystal = res!(diamond::read_crystal_data(id).await);
-        let lost = crate::agent::compact::crystal_keys_lost(&crystal, proposal);
-        let items: Vec<String> = lost.iter()
-            .map(|k| fmt!("\"{}\"", crate::llm::json_escape(k)))
-            .collect();
-        Ok(fmt!("[{}]", items.join(",")))
+    /// Apply a confirmed fold (see [`DaimondApp::fold_apply`]).
+    async fn fold_apply_inner(&self, id: &str, proposal: &str, delta: &str, note: &str)
+        -> Outcome<()>
+    {
+        let want = res!(Self::proposal_of(proposal));
+        // The three files first, and the crystal last, so the version the snapshot mints is
+        // taken with the Diamond in the state the fold left it: `record_steer` and
+        // `diamond::fold_apply` both read the store as it stands.
+        for (leaf, text) in [
+            (crate::tools::REQUIREMENTS_FILE, &want.requirements),
+            (crate::tools::DECISIONS_FILE,    &want.decisions),
+            (crate::tools::STATE_FILE,        &want.state),
+        ] {
+            let text = match text {
+                Some(t) => t.clone(),
+                None    => continue,
+            };
+            res!(diamond::write_standing(id, leaf, &text).await);
+        }
+        diamond::fold_apply(id, &want.crystal, delta, note).await
     }
 
-    /// Drive the reducer for one delta, returning the proposed crystal (see
+    /// The envelope [`DaimondApp::fold_propose`] answers with, read back.
+    ///
+    /// # Arguments
+    /// * `json` - The envelope, exactly as it was handed out.
+    fn proposal_of(json: &str) -> Outcome<crate::agent::compact::FoldProposal> {
+        let cfg = crate::agent::compact::json_cfg();
+        let map = match Dat::decode_string_with_config(json.trim(), &cfg) {
+            Ok(Dat::Map(m)) => m,
+            _ => return Err(err!(
+                "A fold is applied from the envelope fold_propose answered with, and this is \
+                not one: {}", json.chars().take(80).collect::<String>(); Invalid, Input)),
+        };
+        let text = |k: &str| -> Option<String> {
+            match map.get(&Dat::Str(fmt!("{}", k))) {
+                Some(Dat::Str(t)) if !t.trim().is_empty() => Some(t.clone()),
+                _                                         => None,
+            }
+        };
+        let crystal = match text("crystal") {
+            Some(c) => c,
+            None    => return Err(err!(
+                "The fold envelope carries no crystal, so there is nothing to write.";
+                Invalid, Input)),
+        };
+        Ok(crate::agent::compact::FoldProposal {
+            crystal,
+            requirements: text("requirements"),
+            decisions:    text("decisions"),
+            state:        text("state"),
+        })
+    }
+
+    /// The envelope, as JSON, for the page to carry back to [`DaimondApp::fold_apply`].
+    fn proposal_json(p: &crate::agent::compact::FoldProposal) -> String {
+        let esc = crate::llm::json_escape;
+        let mut out = fmt!("{{\"crystal\":\"{}\"", esc(&p.crystal));
+        for (k, v) in [
+            ("requirements", &p.requirements),
+            ("decisions",    &p.decisions),
+            ("state",        &p.state),
+        ] {
+            if let Some(t) = v {
+                out.push_str(&fmt!(",\"{}\":\"{}\"", k, esc(t)));
+            }
+        }
+        out.push('}');
+        out
+    }
+
+    /// Drive the reducer for one delta, returning the whole proposal (see
     /// [`DaimondApp::fold_propose`]).
+    ///
+    /// **Two rounds at most.**  The first is the fold.  If what came back would destroy something
+    /// no later turn can recover -- a populated crystal key, every hot flag, a ticked task, a
+    /// line of the append-only decisions -- the reducer is asked again with the loss named, and
+    /// a second such answer is refused outright.  Nothing is written by either round.
     async fn fold_propose_inner(&self, id: &str, delta: &str) -> Outcome<String> {
         let crystal = res!(diamond::read_crystal_data(id).await);
+        // The three files ride with the crystal, because the reducer is now asked to rewrite
+        // them too and a model cannot rewrite a file it has not been shown. Read once, before
+        // either round, so the two rounds fold the same delta into the same state.
+        let files = diamond::read_standing(id).await;
+        let mut want = res!(self.reduce_round(id, delta, &crystal, &files, "").await);
+        let lost = crate::agent::compact::fold_losses(&crystal, &files, &want);
+        if !lost.is_empty() {
+            // ONE RETRY, AND ONLY ONE. A reducer that destroys the record twice in a row is
+            // not going to be talked round by a third sentence, and the user is waiting.
+            crate::wasm::entry::trail("FOLD WOULD DESTROY",
+                &fmt!("{} — {}", id, lost.join("; ")));
+            let again = res!(self.reduce_round(id, delta, &crystal, &files,
+                &Self::loss_note(&lost)).await);
+            let still = crate::agent::compact::fold_losses(&crystal, &files, &again);
+            if !still.is_empty() {
+                return Err(err!(
+                    "This fold would delete what nothing can put back, and the reducer did it \
+                    again when told: {}. The crystal and its files are unchanged. Steer the \
+                    Diamond instead, or fold a smaller delta.",
+                    still.join("; "); Invalid, Data));
+            }
+            want = again;
+        }
+        Ok(Self::proposal_json(&want))
+    }
+
+    /// What the reducer is told it dropped, in the words it can act on.
+    ///
+    /// # Arguments
+    /// * `lost` - What [`crate::agent::compact::fold_losses`] named.
+    fn loss_note(lost: &[String]) -> String {
+        fmt!(
+            "\n\n---\nYour last answer DELETED things that must be carried through, and it was \
+            not accepted:\n\n{}\n\nWrite the whole answer again, with every one of those kept \
+            exactly as it stands above. A ticked task and a decision line are records of \
+            something that already happened; you cannot know what they knew.",
+            lost.iter().map(|l| fmt!("- {}\n", l)).collect::<String>())
+    }
+
+    /// One reducer round: the crystal, the three files and the delta in, a parsed proposal out.
+    ///
+    /// # Arguments
+    /// * `id` - The Diamond, for the session's own name.
+    /// * `delta` - What is being folded in.
+    /// * `crystal` - The crystal as it stands on disk.
+    /// * `files` - The three files as they stand on disk.
+    /// * `tail` - Appended to the user message; the loss note on the second round, empty on the
+    ///   first.
+    async fn reduce_round(
+        &self,
+        id:      &str,
+        delta:   &str,
+        crystal: &str,
+        files:   &crate::tools::Standing,
+        tail:    &str,
+    )
+        -> Outcome<crate::agent::compact::FoldProposal>
+    {
+        let standing = |leaf: &str, text: &str| -> String {
+            if text.trim().is_empty() {
+                return String::new();
+            }
+            fmt!("\n\n---\nCurrent {}:\n{}", leaf, text.trim_end())
+        };
         let user_msg = fmt!(
-            "Current crystal.json:\n{}\n\n---\nDelta to fold in:\n{}",
-            crystal, delta,
+            "Current crystal.json:\n{}{}{}{}\n\n---\nDelta to fold in:\n{}{}",
+            crystal,
+            standing(crate::tools::REQUIREMENTS_FILE, &files.requirements),
+            standing(crate::tools::DECISIONS_FILE,    &files.decisions),
+            standing(crate::tools::STATE_FILE,        &files.state),
+            delta,
+            tail,
         );
         // The reducer only emits text — no tools, so it cannot write.
         let ctx = ToolContext {
@@ -2589,42 +2837,11 @@ impl DaimondApp {
         // So a truncated crystal reached the user as a proposal they could accept, and accepting
         // it wiped everything after the cut.
         //
-        // The RETURNED string is what goes onward, never `out`: it comes back unfenced and
-        // trimmed, and handing the raw model output on instead would write a markdown fence into
-        // the crystal.
-        let proposal = res!(crate::agent::compact::crystal_proposal(&out));
-
-        // A KEY THAT WOULD VANISH IS RECORDED HERE AND REFUSED NOWHERE.
-        //
-        // `{}` is a valid crystal under the schema, so no parse check can tell a legitimately
-        // empty one from a fold that dropped everything. What answers it is comparing the two key
-        // sets, and the user is the one who decides -- so this does not refuse. What it must not
-        // do is bake the key names into an English sentence: the warning belongs beside the
-        // Accept button in the user's own language, which is [`DaimondApp::fold_keys_lost`]'s job.
-        //
-        // The line below is the backstop, not the mechanism. It costs nothing, it cannot mislead,
-        // and it means a dropped key is in the console and the durable trail even on a build where
-        // the warning has not been wired up yet.
-        let lost = crate::agent::compact::crystal_keys_lost(&crystal, &proposal);
-        if !lost.is_empty() {
-            crate::wasm::entry::trail("FOLD DROPS KEYS", &fmt!("{} — {}", id, lost.join(", ")));
-            web_sys::console::warn_1(&JsValue::from_str(&fmt!(
-                "The fold proposed for Diamond {} drops {} from its crystal.",
-                id, lost.join(", "))));
-        }
-        // AND A HOT FLAG THAT WOULD VANISH, on the same footing and for a sharper reason: a flag
-        // is six bytes of a key the reducer has never been told about, and a proposal that lost
-        // every one of them composes as title-and-summary on the next round with nothing on
-        // screen to say why. See `compact::hot_flags_lost`.
-        let cold = crate::agent::compact::hot_flags_lost(&crystal, &proposal);
-        if !cold.is_empty() {
-            crate::wasm::entry::trail("FOLD DROPS HOT FLAGS",
-                &fmt!("{} — {}", id, cold.join(", ")));
-            web_sys::console::warn_1(&JsValue::from_str(&fmt!(
-                "The fold proposed for Diamond {} takes {} out of the part of the crystal that \
-                is in the prompt on every round.", id, cold.join(", "))));
-        }
-        Ok(proposal)
+        // `fold_proposal` splits the reply at the file headings first and puts the part before
+        // them through exactly that check, so a reply with no headings in it is the old reply
+        // parsed the old way. A block that arrived EMPTY leaves its file alone rather than
+        // emptying it, which is the same rule at a second door.
+        crate::agent::compact::fold_proposal(&out)
     }
 }
 
@@ -2900,7 +3117,7 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("type", &JsValue::from_str("thinking"));
             set("content", &JsValue::from_str(text));
         }
-        AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing, malformed } => {
+        AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing, malformed, reasoned } => {
             set("type",      &JsValue::from_str("ended"));
             set("how",       &JsValue::from_str(how));
             set("offered",   &JsValue::from_f64(*offered   as f64));
@@ -2909,6 +3126,7 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("refused",   &JsValue::from_f64(*refused   as f64));
             set("failed",    &JsValue::from_f64(*failed    as f64));
             set("malformed", &JsValue::from_f64(*malformed as f64));
+            set("reasoned",  &JsValue::from_f64(*reasoned  as f64));
             let arr = js_sys::Array::new();
             for p in missing { arr.push(&JsValue::from_str(p)); }
             set("missing", &arr);
@@ -2960,6 +3178,14 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
         }
         AgentEvent::Truncated => {
             set("type", &JsValue::from_str("truncated"));
+        }
+        AgentEvent::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled } => {
+            set("type",     &JsValue::from_str("round_meta"));
+            set("gen",      &JsValue::from_str(gen_id));
+            set("finish",   &JsValue::from_str(finish_reason));
+            set("nfinish",  &JsValue::from_str(native_finish_reason));
+            set("provider", &JsValue::from_str(provider));
+            set("stalled",  &JsValue::from_bool(*stalled));
         }
         AgentEvent::Continued { n, rounds_so_far } => {
             set("type",   &JsValue::from_str("continued"));

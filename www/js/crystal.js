@@ -72,7 +72,7 @@
 
 	/// The core schema, in the order everything renders it. Extra top-level keys
 	/// are permitted and nothing may ever drop one it does not recognise.
-	var CORE_KEYS = ['title', 'summary', 'sections', 'facts', 'open', 'links'];
+	var CORE_KEYS = ['title', 'summary', 'sections', 'facts', 'links'];
 
 	/// The channel's version. Every message carries `{dc:1, v:1}`; a message
 	/// without both is not ours and is not read.
@@ -421,7 +421,6 @@
 	function labelsFor(opts) {
 		return {
 			facts:      tr(opts, 'crystal.field_facts', 'Facts'),
-			open:       tr(opts, 'crystal.field_open', 'Open threads'),
 			links:      tr(opts, 'crystal.field_links', 'Links'),
 			other:      tr(opts, 'crystal.other_fields', 'Other fields'),
 			other_note: tr(opts, 'crystal.other_fields_note',
@@ -998,19 +997,6 @@
 			}
 			body.appendChild(dl);
 		}
-		if (hasContent(d.open)) {
-			drew++;
-			body.appendChild(fieldHead(tr(opts, 'crystal.field_open', 'Open threads')));
-			var ul = document.createElement('ul');
-			ul.className = 'crystal-fb-open';
-			var opens = arr(d.open);
-			for (var oi = 0; oi < opens.length; oi++) {
-				var li = document.createElement('li');
-				li.textContent = str(opens[oi]);
-				ul.appendChild(li);
-			}
-			body.appendChild(ul);
-		}
 		if (hasContent(d.links)) {
 			drew++;
 			body.appendChild(fieldHead(tr(opts, 'crystal.field_links', 'Links')));
@@ -1293,7 +1279,7 @@
 		'.facts .k{margin-top:.45em}}',
 		'</style></head><body><div id="r"></div><script>',
 		'(function(){',
-		'var CORE=["title","summary","sections","facts","open","links"];',
+		'var CORE=["title","summary","sections","facts","links"];',
 		'var R=document.getElementById("r"),D={},L={},last=-1;',
 		'function post(o){o.dc=1;o.v=1;parent.postMessage(o,"*");}',
 		'function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;")',
@@ -1382,10 +1368,6 @@
 		'for(i=0;i<D.facts.length;i++){var ft=D.facts[i]||{};',
 		'h+="<div class=\\"k\\">"+esc(ft.k==null?"":ft.k)+"</div>";',
 		'h+="<div class=\\"v\\">"+inl(ft.v==null?"":ft.v)+"</div>";}h+="</div>";}',
-		'if(has(D.open)){keys.push("open");',
-		'if(L.open)h+="<h2>"+esc(L.open)+"</h2>";h+="<ul>";',
-		'for(i=0;i<D.open.length;i++)h+="<li>"+inl(D.open[i]==null?"":D.open[i])+"</li>";',
-		'h+="</ul>";}',
 		'if(has(D.links)){keys.push("links");',
 		'if(L.links)h+="<h2>"+esc(L.links)+"</h2>";h+="<ul>";',
 		'for(i=0;i<D.links.length;i++){var lk=D.links[i]||{};',

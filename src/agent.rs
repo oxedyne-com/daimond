@@ -135,11 +135,30 @@ pub struct Agent {
     /// very turn it interrupted.  Not shared on clone: it belongs to whichever agent is running
     /// the turn.
     prior_end:           Cell<usize>,
+    /// Where the turn in flight's own messages start in `session.messages`.
+    ///
+    /// Set at the top of `run_turn`, just before the user's sentence is pushed, and carried
+    /// across every fold the turn makes -- because a fold RENUMBERS the conversation, and an
+    /// index a caller took before the turn then reaches past the end of the list it names.
+    /// The turn-end check in `DaimondApp::steer_inner` read exactly such an index, and a
+    /// steering turn whose 200-message prior folded to 27 died at the slice with the promise
+    /// never settled; see [`Agent::turn_start`].
+    turn_start:          Cell<usize>,
     // How the last turn ended.  Shared on clone rather than copied, exactly as the
     // interjection queue is: the page holds a clone of the agent and has to be able to read
     // the ending of the turn it just watched, which a detached cell would not carry.  Written
     // once per turn, at the single exit in `Agent::ended`.
     ending:              Rc<RefCell<Option<TurnEnding>>>,
+    /// Which Diamond this turn is steering, or empty for a chat.
+    ///
+    /// **A FOLD HAS TO KNOW, AND ONLY THE CALLER DOES.**  `fold_if_needed` is handed the
+    /// conversation and the limits and nothing that names a Diamond, so until this existed the
+    /// one moment a conversation's memory is rewritten with no way back could not write any of
+    /// it into the files that survive the conversation -- see `dev/CRYSTAL_CONTRACT.md` §13.
+    /// Set beside the briefing, by `DaimondApp::compose_daimon`, and shared on clone for the
+    /// reason `briefing` is: a worker dispatched from a steering turn is inside the same
+    /// Diamond.
+    diamond:             Rc<RefCell<String>>,
 }
 
 
@@ -212,6 +231,12 @@ pub enum TurnEnd {
 	// which is the whole of the 2026-09-14 defect: a wire fault that ends a turn as a
 	// success is a turn nobody can tell from one that worked.
 	Malformed,
+	// The model reasoned, was nudged once to answer or call a tool, and did neither again.
+	// Its own word and not `Silent`, which is a reply with nothing in it and no reasoning
+	// behind it either -- the 2026-09-15 defect this exists to name: a round that spent
+	// 3,372 tokens thinking and ended mid-sentence was booked `TurnEnd::Silent` the same as
+	// a reply that never tried.
+	ReasonedOnly,
 }
 
 impl TurnEnd {
@@ -230,6 +255,7 @@ impl TurnEnd {
 			Self::Silent	=> "silent",
 			Self::Failed	=> "failed",
 			Self::Malformed	=> "malformed",
+			Self::ReasonedOnly	=> "reasoned_only",
 		}
 	}
 }
@@ -253,6 +279,11 @@ pub struct TurnEnding {
 	// Rounds whose reply carried a tool call written as TEXT and had to be sent again.  A
 	// leak the reader recovered is not counted: it cost no round and the tool ran.
 	pub malformed:	usize,
+	// Rounds thrown away to a reply that carried reasoning and nothing else -- no answer, no
+	// tool call.  Counted even where the very next round answered fine, for the same reason
+	// `malformed` is: the round still cost a request and a nudge, and a turn that ends
+	// `Answered` after one of these is not the same as a turn that never needed telling.
+	pub reasoned:	usize,
 }
 
 impl TurnEnding {
@@ -265,7 +296,8 @@ impl TurnEnding {
 	/// that appended a warning to every turn would teach its reader to skip the one that mattered,
 	/// which is the failure this whole mechanism exists to prevent.
 	pub fn unaccounted(&self) -> bool {
-		self.refused > 0 || self.failed > 0 || !self.missing.is_empty() || self.malformed > 0
+		self.refused > 0 || self.failed > 0 || !self.missing.is_empty()
+			|| self.malformed > 0 || self.reasoned > 0
 	}
 }
 
@@ -284,6 +316,12 @@ fn leak_nudge(model: &str) -> String {
 		Some(hint) => fmt!("{} {}", base, hint),
 		None       => base.to_string(),
 	}
+}
+
+/// What the model is told when its reply carried reasoning and nothing else -- no answer,
+/// no tool call.
+fn reasoned_only_nudge() -> String {
+	"You reasoned but neither answered nor called a tool; do one of them now.".to_string()
 }
 
 /// One dispatched tool call, as the audit sees it.
@@ -306,6 +344,9 @@ struct Claims {
 	// did, decidable without reading a word of the model's prose -- and because a tenth
 	// parameter on the one exit is how a later exit comes to forget one.
 	malformed: usize,
+	// Rounds thrown away to a reply that reasoned and answered nothing.  Same reasoning as
+	// `malformed`, immediately above.
+	reasoned: usize,
 }
 
 impl Claims {
@@ -379,7 +420,9 @@ impl Agent {
             gauge:           Rc::new(Gauge::default()),
             fold_prompt:     Rc::new(RefCell::new(String::new())),
             prior_end:       Cell::new(0),
+            turn_start:      Cell::new(0),
             ending:          Rc::new(RefCell::new(None)),
+            diamond:         Rc::new(RefCell::new(String::new())),
         }
     }
 
@@ -413,6 +456,7 @@ impl Agent {
             failed:  ending.failed,
             missing: ending.missing.clone(),
             malformed: ending.malformed,
+            reasoned: ending.reasoned,
         });
         *self.ending.borrow_mut() = Some(ending);
     }
@@ -460,6 +504,7 @@ impl Agent {
             failed:  claims.tally(crate::tools::CallOutcome::Failed),
             missing,
             malformed: claims.malformed,
+            reasoned: claims.reasoned,
         }
     }
 
@@ -641,6 +686,21 @@ impl Agent {
             if let Some(b) = crate::llm::extract_json_bool(text, "compound") {
                 l.compound = b;
             }
+            // THE NEVER-FORGET FILE SET'S OWN SWITCHES, each independent so a measurement or a
+            // verifier can turn off exactly one mechanism. See `compact::Limits` for what each
+            // does; `"standing"` is the name `dev/tune/arms.json`'s `nofiles` arm sets.
+            if let Some(b) = crate::llm::extract_json_bool(text, "standing") {
+                l.standing_files = b;
+            }
+            if let Some(b) = crate::llm::extract_json_bool(text, "briefing_top3") {
+                l.briefing_top3 = b;
+            }
+            if let Some(b) = crate::llm::extract_json_bool(text, "task_log") {
+                l.task_log = b;
+            }
+            if let Some(b) = crate::llm::extract_json_bool(text, "tail_note") {
+                l.tail_note = b;
+            }
             // Which shape the compactor is asked for. A spelling this build does not know is
             // IGNORED rather than defaulted, so an arm with a typo in it stays on whatever the
             // engine had and `turn_limits` reports it -- a silent fall back to the default is
@@ -671,11 +731,17 @@ impl Agent {
                     l.effort = e;
                 }
             }
+            // HOW LONG A STREAM MAY GO QUIET before the round is read as stalled rather than
+            // slow; see `LlmClient::stream_idle_ms`. Nought is "absent", as the figures above.
+            if let Some(n) = crate::llm::extract_json_number(text, "stream_idle_ms") {
+                if n > 0 { l.stream_idle_ms = n; }
+            }
         }
         self.hold_worker();
         // The client builds the wire, so the setting has to reach it; `Limits` alone would be
         // a figure `turn_limits` reports and no request carries.
         self.push_thinking();
+        self.push_stream_idle();
         Ok(())
     }
 
@@ -700,6 +766,41 @@ impl Agent {
     fn push_thinking(&self) {
         let l = self.limits.borrow();
         self.llm.set_thinking(l.thinking, l.effort);
+    }
+
+    /// Move the idle-stream ceiling for this agent's turns.
+    ///
+    /// A stream that goes this long without a byte is read as stalled rather than slow, and
+    /// the round ends on whatever it had accumulated instead of waiting on a dead connection
+    /// further; see `DEFAULT_STREAM_IDLE_MS` in `src/llm.rs`.  Zero restores the shipped
+    /// default, exactly as `set_context_cap` does.
+    ///
+    /// # Arguments
+    /// * `ms` - The ceiling in milliseconds; zero restores the default.
+    pub fn set_stream_idle_ms(&self, ms: u64) {
+        {
+            let mut l = self.limits.borrow_mut();
+            l.stream_idle_ms = if ms == 0 { crate::llm::DEFAULT_STREAM_IDLE_MS } else { ms };
+        }
+        self.push_stream_idle();
+    }
+
+    /// Hand the idle-stream ceiling to the client, where the stream is actually read.
+    fn push_stream_idle(&self) {
+        let l = self.limits.borrow();
+        self.llm.set_stream_idle_ms(l.stream_idle_ms);
+    }
+
+    /// Set which upstream providers OpenRouter should try for this agent's model, from the
+    /// setting on its own row (`www/js/models.js`).  Inert against a direct provider; see
+    /// `LlmClient::set_provider_routing`.
+    ///
+    /// # Arguments
+    /// * `order` - Comma-separated provider names to try first, in that order.
+    /// * `ignore` - Comma-separated provider names never to route to.
+    /// * `only` - Refuse every provider but `order` rather than falling back past it.
+    pub fn set_provider_routing(&self, order: &str, ignore: &str, only: bool) {
+        self.llm.set_provider_routing(order, ignore, only);
     }
 
     /// Re-assert the worker ceiling after a setting has been written.
@@ -727,6 +828,18 @@ impl Agent {
     /// What bounds this agent's turns right now.
     pub fn limits(&self) -> Limits {
         self.limits.borrow().clone()
+    }
+
+    /// Where the last turn's own messages start in the session it was run against.
+    ///
+    /// Valid AFTER `run_turn` returns, and only as an index into the session that turn was given:
+    /// the user's sentence and everything the turn appended come from here to the end.  Read this
+    /// rather than the length the session had before the turn -- a fold during the turn replaces
+    /// the folded prefix with one notice, so a length taken before it reaches past the end of the
+    /// list, and a slice at it panics.  Where the fold cut into the turn's own messages the answer
+    /// is 1, the message after the notice, and what the notice absorbed is in its own ledger.
+    pub fn turn_start(&self) -> usize {
+        self.turn_start.get()
     }
 
     /// Fold by the same figures as another agent.
@@ -816,6 +929,22 @@ impl Agent {
         *self.briefing.borrow_mut() = text.to_string();
     }
 
+    /// Say which Diamond this turn is steering, so a fold can file its notes into its files.
+    ///
+    /// Empty -- the default -- is a chat, which has no Diamond and no files, and whose fold
+    /// therefore leaves a notice exactly as it always did.
+    ///
+    /// # Arguments
+    /// * `id` - The Diamond, as `diamonds/<id>/` spells it.
+    pub fn set_diamond(&self, id: &str) {
+        *self.diamond.borrow_mut() = id.to_string();
+    }
+
+    /// Which Diamond this turn is steering, or empty.
+    pub fn diamond(&self) -> String {
+        self.diamond.borrow().clone()
+    }
+
     /// Say something into a turn that is already running.
     ///
     /// Takes effect at the next seam between rounds, which is the earliest moment a
@@ -890,13 +1019,26 @@ impl Agent {
                  when completing a task. You have no other tools; never claim \
                  to have performed an action you had no tool to perform.{}",
                 names.join(", "), several);
-            // ONE SENTENCE, on by default. Claude Code's own advantage on the rounds census was
-            // not fewer tools but fewer ROUNDS to reach the same reads: one `ls -R; cat …` where
-            // a daimon spent several. The provider already coalesces every result of a round back
-            // into one message (`build_anthropic_body`); this is the model being told the calls
-            // may go out together in the first place.
+            // TWO SENTENCES, on by default, and both true of what `batch::batches` actually does
+            // -- see the note there. The old one sentence ("Independent calls go in ONE reply;
+            // they run together") was not: everything in a reply runs in the model's OWN order,
+            // and only a read beside another read runs at the same time as it, so a model that
+            // believed "together" meant "at once, in any order" had no way to learn from the
+            // wording that an edit and the read or test that checks it belong in that same
+            // reply -- the sentence that would have told it so was the one place this was hidden.
             if self.limits.borrow().batch_line {
-                t.push_str(" Independent calls go in ONE reply; they run together.");
+                t.push_str(" Calls in one reply run in the order you give them; only reads run \
+                    side by side within that order. So an edit and the read or test that checks \
+                    it can go in the same reply -- the edit still finishes first.");
+            }
+            // ONE SENTENCE, AND ONLY WHERE THE TOOL IS THERE, same rule as `compound` above.
+            // The rounds census habit this replaces is a page-at-a-time read of one import after
+            // another once a task has named where the work is; `file_read`'s own description
+            // says the same thing for a reader who has not seen this sentence.
+            if names.iter().any(|n| n == "file_read") {
+                t.push_str(" When a task names a file or folder, read it whole in one file_read \
+                    -- \"path\":\"src/*.js\" or \"paths\":[..] -- before following its imports \
+                    one at a time.");
             }
             t
         };
@@ -926,6 +1068,10 @@ impl Agent {
         // `Limits`. Written every turn rather than once, so an arm that changes it between two
         // turns of one conversation is obeyed by the second of them.
         registry.ctx.set_compound(self.limits.borrow().compound);
+        // THIS TURN'S OWN MESSAGES BEGIN WITH THE SENTENCE ABOUT TO BE PUSHED, and the index is
+        // recorded on the agent rather than left to the caller, because a fold later in the turn
+        // moves it; see `Agent::turn_start`.
+        self.turn_start.set(session.messages.len());
         // Append the user message to the persisted history.
         session.messages.push(ChatMessage::user(user_msg));
 
@@ -1356,6 +1502,10 @@ impl Agent {
         // call at all, and the turn ends on it rather than nudging round after round at the
         // user's expense.
         let mut leaks = 0usize;
+        // CONSECUTIVE ROUNDS WHOSE REPLY CARRIED REASONING AND NOTHING ELSE -- no content, no
+        // tool call.  Bounded at one nudge the same way `leaks` is; see the note where it is
+        // read, in the empty-reply arm below.
+        let mut reasoned_only = 0usize;
         // WHAT THE SESSION HAD SPENT BEFORE THIS TURN OPENED.  `session.cost_usd` is the whole
         // conversation's bill, and the ceiling is PER TURN -- measured against the session's total
         // it would end every turn of a long chat the moment the chat itself got expensive.
@@ -1509,6 +1659,17 @@ impl Agent {
             if resp.truncated {
                 on_event(AgentEvent::Truncated);
             }
+            // THE ROUND'S OWN TRACE FACTS, unconditionally: see `AgentEvent::RoundMeta` for
+            // why a round that answered nothing is exactly the one this has to reach.
+            if !resp.gen_id.is_empty() || !resp.finish_reason.is_empty() || resp.stalled {
+                on_event(AgentEvent::RoundMeta {
+                    gen_id:               resp.gen_id.clone(),
+                    finish_reason:        resp.finish_reason.clone(),
+                    native_finish_reason: resp.native_finish_reason.clone(),
+                    provider:             resp.provider.clone(),
+                    stalled:              resp.stalled,
+                });
+            }
 
             // Cancelled mid-stream: keep the partial answer already
             // streamed and end the turn cleanly, without an error.
@@ -1573,6 +1734,45 @@ impl Agent {
             }
 
             if resp.tool_calls.is_empty() {
+                let empty_reply = resp.content.trim().is_empty();
+                // THE MODEL REASONED AND THEN SAID NOTHING.  Found by proposal 15's naive
+                // drive on 2026-09-15: a round returned 3,372 tokens on `resp.thinking` and
+                // an empty `content`, ending mid-sentence, with no tool call either.  This
+                // engine took that for a plain empty answer -- `TurnEnd::Silent` below -- and
+                // the turn was booked a success: 318 s and US$0.10 for nothing.
+                //
+                // ONE NUDGE, then the turn ends under its own word, exactly as a leaked tool
+                // call is handled above and for the same reason `leaks` there is bounded: a
+                // model that reasoned for the whole round and wrote nothing is told once to
+                // finish the thought, and `reasoned_only > 0` catches the round after that
+                // whether or not IT carried reasoning too -- a second empty round is not
+                // something a third sentence will fix, whatever produced it.
+                if empty_reply && (reasoned_only > 0 || !resp.thinking.trim().is_empty()) {
+                    reasoned_only += 1;
+                    claims.reasoned += 1;
+                    let said = ChatMessage::Assistant {
+                        content:    MessageContent::text(crate::llm::seamed(resp.content.clone())),
+                        tool_calls: Vec::new(),
+                    };
+                    working.push(said.clone());
+                    session.messages.push(said);
+                    if reasoned_only == 1 {
+                        let nudge = reasoned_only_nudge();
+                        working.push(ChatMessage::user(nudge.clone()));
+                        session.messages.push(ChatMessage::user(nudge));
+                        continue;
+                    }
+                    // A ROUND EMPTY AGAIN AFTER THE NUDGE IS HONEST ABOUT WHY: `Silent` is a
+                    // reply with nothing in it and no explanation; `ReasonedOnly` is a model
+                    // that reasoned, was told to answer or call a tool, and still did neither --
+                    // a different fault with a different remedy, and one nobody could see on
+                    // the wire until now.
+                    let ending = self.audit(
+                        TurnEnd::ReasonedOnly, rounds, &claims, Some(registry)).await;
+                    self.ended(ending, on_event);
+                    on_event(AgentEvent::Done);
+                    return Ok(());
+                }
                 // Final answer — its text has already streamed via the
                 // token callback, so it is not re-emitted here.
                 //
@@ -1580,11 +1780,7 @@ impl Agent {
                 // clears, the screen does not change, and a finished turn is indistinguishable
                 // from a hung one. The streaming path has said so since it was found; here the
                 // ending names it, which costs nothing and is the same fact.
-                let how = if resp.content.trim().is_empty() {
-                    TurnEnd::Silent
-                } else {
-                    TurnEnd::Answered
-                };
+                let how = if empty_reply { TurnEnd::Silent } else { TurnEnd::Answered };
                 // THE SEAM, and only here. A run of prose with a tool call after it is
                 // working rather than an answer -- `demoteToWorking` in the page draws it as
                 // the model's own thinking -- so a `Fold:` line in one of those would build a
@@ -2179,14 +2375,28 @@ impl Agent {
             // the layout costs the structure and nothing else: the prose still becomes the
             // note, the ledger is still beneath it, and the turn never loses its fold to a
             // model that answered in paragraphs.
-            let summary = match &raw {
-                Ok(text) => match compact::parse_fold_notes(text) {
-                    Some(n) => compact::Summary::Notes(compact::reconcile(n, &ledger)),
-                    None    => compact::Summary::Prose(text),
-                },
-                Err(e) => compact::Summary::None(e),
+            let parsed = match &raw {
+                Ok(text) => compact::parse_fold_notes(text)
+                    .map(|n| compact::reconcile(n, &ledger)),
+                Err(_) => None,
             };
-            structured = matches!(summary, compact::Summary::Notes(_));
+            // FILED BEFORE THE NOTICE IS WRITTEN, because what it answers decides what the
+            // notice says: the decisions and open threads leave the note only when they are
+            // really in `DECISIONS.md` and `REQUIREMENTS.md`, and a write that failed must
+            // leave the note exactly as long as it always was.  A chat has no Diamond and
+            // files nothing.  See `dev/CRYSTAL_CONTRACT.md` §13.
+            let filed = match &parsed {
+                Some(n) => self.file_notes(n).await,
+                None    => None,
+            };
+            let summary = match (filed, parsed, &raw) {
+                (Some(left), _, _)   => compact::Summary::Filed(left),
+                (None, Some(n), _)   => compact::Summary::Notes(n),
+                (None, None, Ok(t))  => compact::Summary::Prose(t),
+                (None, None, Err(e)) => compact::Summary::None(e),
+            };
+            structured = matches!(summary,
+                compact::Summary::Notes(_) | compact::Summary::Filed(_));
             if let Err(ref e) = raw { trouble = e.clone(); }
             let note = compact::notice(cut, &summary, &ledger, why.at_the_cap());
             match compact::fold(&session.messages, cut, note) {
@@ -2202,6 +2412,11 @@ impl Agent {
                         // flight. See `compact::prior_end_after_fold`.
                         self.prior_end.set(compact::prior_end_after_fold(
                             self.prior_end.get(), cut));
+                        // AND SO DOES THE TURN'S OWN START, by the same arithmetic: a caller
+                        // that slices `session.messages[turn_start..]` after the turn must be
+                        // handed an index into the list as it now is, not as it was.
+                        self.turn_start.set(compact::prior_end_after_fold(
+                            self.turn_start.get(), cut));
                     }
                 },
                 // Refused rather than allowed to orphan a tool call. Eliding below still
@@ -2306,6 +2521,37 @@ impl Agent {
             structured,
         });
         true
+    }
+
+    /// File a fold's notes into this Diamond's three markdown files.
+    ///
+    /// `Some(left)` when they are really on disk, carrying whatever a ceiling refused so the
+    /// notice can keep it; `None` when there is no Diamond to file into or a write failed, and
+    /// then the notice carries everything exactly as it did before any of this existed.
+    ///
+    /// **The failure has to be the quiet one.**  A fold happens because a conversation no longer
+    /// fits, and refusing to fold because a file could not be written would leave the turn dead
+    /// with nothing sent; so a Diamond whose store is unwritable gets the long notice and the
+    /// fold it needed, and the console says why.
+    ///
+    /// # Arguments
+    /// * `notes` - The parsed notes, already reconciled against the ledger.
+    #[cfg(target_arch = "wasm32")]
+    async fn file_notes(&self, notes: &compact::FoldNotes) -> Option<compact::FoldNotes> {
+        let id = self.diamond();
+        if id.trim().is_empty() {
+            return None;
+        }
+        crate::wasm::diamond::absorb_fold_notes(&id, notes).await
+    }
+
+    /// The same, off the browser, where there are no Diamonds and nothing to file into.
+    ///
+    /// A Diamond is browser storage -- `diamonds/<id>/` is OPFS and nothing else -- so the
+    /// native build has no store to write to rather than a store it declines to write to.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn file_notes(&self, _notes: &compact::FoldNotes) -> Option<compact::FoldNotes> {
+        None
     }
 
     /// Ask a model to summarise the part of the conversation being folded.
@@ -2677,7 +2923,7 @@ mod tests {
     fn test_the_batch_line_rides_the_tools_sentence_by_default_00() {
         let a = make_test_agent();
         let (_, tools, _) = a.system_parts(&one_tool());
-        assert!(tools.contains("Independent calls go in ONE reply"),
+        assert!(tools.contains("Calls in one reply run in the order you give them"),
             "the batching sentence is not sent by default: {}", tools);
         // A role with no tools has nothing to batch, so nothing is said and nothing is paid for.
         let (_, empty_tools, _) = a.system_parts(&no_tools());
@@ -2691,8 +2937,23 @@ mod tests {
             panic!("set_tune refused a plain bool: {}", e);
         }
         let (_, tools, _) = a.system_parts(&one_tool());
-        assert!(!tools.contains("Independent calls go in ONE reply"),
+        assert!(!tools.contains("Calls in one reply run in the order you give them"),
             "set_tune(\"batch_line\":false) did not turn the sentence off: {}", tools);
+    }
+
+    #[test]
+    fn test_the_whole_folder_sentence_rides_with_file_read_only_00() {
+        let a = make_test_agent();
+        // `one_tool()` holds `file_write`, not `file_read`: nothing to say about reading a
+        // folder whole where there is no tool that reads one.
+        let (_, no_read, _) = a.system_parts(&one_tool());
+        assert!(!no_read.contains("read it whole in one file_read"),
+            "the whole-folder sentence was sent with no file_read tool: {}", no_read);
+        let (_, with_read, _) = a.system_parts(&image_tools());
+        assert!(with_read.contains("read it whole in one file_read"),
+            "file_read is on the belt and the whole-folder sentence was not sent: {}", with_read);
+        assert!(with_read.contains("before following its imports one at a time"),
+            "the sentence does not say what habit it replaces: {}", with_read);
     }
 
     // ── The Claude Code tool profile ─────────────────────────────────
@@ -4928,6 +5189,28 @@ mod tests {
         }
     }
 
+    /// One SSE round whose whole reply is reasoning -- no content, no tool call.  Proposal
+    /// 15, 2026-09-15: exactly this shape, 3,372 tokens of it, ending mid-sentence.
+    fn sse_reasoning_only(think: &str) -> crate::llm::tests::Reply {
+        crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                fmt!("data: {{\"choices\":[{{\"delta\":{{\"reasoning\":\"{}\"}}}}]}}\n\n", think),
+                fmt!("data: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\n"),
+                fmt!("data: [DONE]\n\n"),
+            ],
+            reset_after: None,
+        }
+    }
+
+    /// A single HTTP 429, the shape `LlmClient`'s own retry ladder is meant to absorb before
+    /// it ever reaches the agent as a round.
+    fn http_429() -> crate::llm::tests::Reply {
+        crate::llm::tests::Reply::Http {
+            status: 429, reason: "Too Many Requests", headers: Vec::new(),
+            body: "{\"error\":{\"message\":\"rate limited\"}}".to_string(),
+        }
+    }
+
     /// A leaked tool call is nudged ONCE and the round is sent again.
     ///
     /// Turn 56 of 2026-09-14: the round came back carrying glm-5.3's own call syntax as
@@ -5054,6 +5337,151 @@ mod tests {
             }
             _ => panic!("no ending to read"),
         }
+    }
+
+    // ── A round that reasoned and said nothing ──────────────────────────────
+
+    /// Reasoning-only is nudged ONCE and the turn goes on to answer.
+    ///
+    /// Proposal 15, 2026-09-15: a round returned 3,372 tokens of reasoning, an empty
+    /// `content`, and no tool call, ending mid-sentence.  The engine took that for a plain
+    /// empty answer and booked the turn `silent` -- 318 s and US$0.10 for nothing that
+    /// looked, from the outside, like it might have worked.
+    #[tokio::test]
+    async fn test_reasoning_only_is_nudged_then_the_turn_answers_00() {
+        use crate::llm::tests::{start_stub, stub_client};
+        let (port, seen) = start_stub(vec![
+            sse_reasoning_only("One more thing: let me check the file before I answer."),
+            sse_saying("Here is the answer."),
+        ]).await;
+        let mut llm = stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(4);
+
+        let registry = one_tool();
+        let mut session = Session::new(fmt!("s1"), fmt!("reasoned1"), fmt!("z-ai/glm-5.3"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("do the thing"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        // THE NUDGE REACHED THE MODEL, in its own words.
+        let asked = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
+        assert_eq!(2, asked.len(), "the round was not sent again: {} request(s)", asked.len());
+        assert!(asked[1].contains("neither answered nor called a tool"),
+            "the second request carried no nudge: {}", asked[1]);
+        // AND THE TURN ANSWERED, because one reasoning-only round is not a broken model.
+        match events.iter().find(|e| matches!(e, AgentEvent::Ended { .. })) {
+            Some(AgentEvent::Ended { how, reasoned, rounds, .. }) => {
+                assert_eq!("answered", how, "one reasoning-only round ended the turn");
+                assert_eq!(1, *reasoned, "the re-sent round was not counted");
+                assert_eq!(2, *rounds, "the nudge did not cost exactly one round");
+            }
+            _ => panic!("no ending to read"),
+        }
+    }
+
+    /// REASONING-ONLY TWICE IN A ROW ends the turn under its own word, never `silent` and
+    /// never `answered`.
+    #[tokio::test]
+    async fn test_reasoning_only_twice_ends_the_turn_honestly_00() {
+        use crate::llm::tests::{start_stub, stub_client};
+        let (port, _seen) = start_stub(vec![
+            sse_reasoning_only("Thinking about the first step."),
+            sse_reasoning_only("Still thinking, this time about the second."),
+        ]).await;
+        let mut llm = stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(6);
+
+        let registry = one_tool();
+        let mut session = Session::new(fmt!("s1"), fmt!("reasoned2"), fmt!("z-ai/glm-5.3"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("do the thing"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        match events.iter().find(|e| matches!(e, AgentEvent::Ended { .. })) {
+            Some(AgentEvent::Ended { how, reasoned, calls, .. }) => {
+                // THE WHOLE POINT. Neither `silent` nor `answered` here is honest; only
+                // `reasoned_only` says what actually happened.
+                assert_eq!("reasoned_only", how,
+                    "a turn that reasoned twice and answered nothing was not reported honestly");
+                assert_eq!(2, *reasoned, "end_log.reasoned did not count both rounds");
+                assert_eq!(0, *calls, "nothing ran, and the count must say so");
+            }
+            _ => panic!("no ending to read"),
+        }
+        let end = a.ending().unwrap_or_else(|| panic!("the turn recorded no ending"));
+        assert_eq!(TurnEnd::ReasonedOnly, end.how);
+        assert!(end.unaccounted(), "a turn that answered nothing was drawn as accounted for");
+    }
+
+    /// A round that reasoned AND answered is never nudged: content present is untouched.
+    #[tokio::test]
+    async fn test_reasoning_beside_an_answer_is_never_nudged_00() {
+        use crate::llm::tests::{start_stub, stub_client, Reply};
+        let (port, seen) = start_stub(vec![Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"reasoning\":\"Let me check.\"}}]}\n\n"
+                    .to_string(),
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Done.\"}}]}\n\n".to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        }]).await;
+        let mut llm = stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(4);
+
+        let registry = one_tool();
+        let mut session = Session::new(fmt!("s1"), fmt!("reasoned3"), fmt!("z-ai/glm-5.3"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("do the thing"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let asked = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
+        assert_eq!(1, asked.len(),
+            "a round that answered was sent again, which the reasoning-only path must never do");
+        match events.iter().find(|e| matches!(e, AgentEvent::Ended { .. })) {
+            Some(AgentEvent::Ended { how, reasoned, .. }) => {
+                assert_eq!("answered", how);
+                assert_eq!(0, *reasoned, "a round with an answer must never count as reasoning-only");
+            }
+            _ => panic!("no ending to read"),
+        }
+    }
+
+    /// A 429 IS UNTOUCHED: the transport's own retry ladder absorbs it inside one round,
+    /// and the reasoning-only machinery never sees it as a round of its own.
+    #[tokio::test]
+    async fn test_a_429_before_the_answer_is_retried_and_never_read_as_reasoning_only_00() {
+        use crate::llm::tests::{start_stub, stub_client};
+        let (port, seen) = start_stub(vec![http_429(), sse_saying("All good now.")]).await;
+        let llm = stub_client(port);
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(4);
+
+        let registry = one_tool();
+        let mut session = Session::new(fmt!("s1"), fmt!("retry429"), fmt!("z-ai/glm-5.3"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("do the thing"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        match events.iter().find(|e| matches!(e, AgentEvent::Ended { .. })) {
+            Some(AgentEvent::Ended { how, reasoned, malformed, rounds, .. }) => {
+                assert_eq!("answered", how, "a 429 followed by a real answer must still answer");
+                assert_eq!(0, *reasoned, "a transport retry is not a reasoning-only round");
+                assert_eq!(0, *malformed, "a transport retry is not a leaked tool call either");
+                assert_eq!(1, *rounds,
+                    "the 429 is retried inside the client, and must not count as a second round");
+            }
+            _ => panic!("no ending to read"),
+        }
+        let bodies = match seen.lock() { Ok(g) => g.bodies.len(), Err(e) => panic!("{}", e) };
+        assert_eq!(2, bodies, "the 429 must still be retried at the transport level");
     }
 
     #[tokio::test]
@@ -5748,6 +6176,47 @@ mod tests {
         assert!(!fold_req.is_empty(), "no summarising call was made");
         assert!(fold_req.contains("## Files edited"),
             "the compactor was not told the layout:\n{}", &fold_req[..fold_req.len().min(600)]);
+    }
+
+    #[tokio::test]
+    async fn test_a_fold_moves_the_turns_own_start_with_it_00() {
+        // THE VERIFIER'S SHAPE, AND THE OWNER'S: two hundred small messages before the turn, the
+        // whole thing over the window, so the turn folds before its first request. The turn-end
+        // check in `steer_inner` then reads `session.messages[turn_start..]` to see what THIS
+        // turn wrote -- and on 2026-09-15 it took `turn_start` as the length before the turn,
+        // which a fold of 178 messages had just made an index past the end of a 27-message
+        // list. In the browser that is a trap, and a trapped future settles nothing: every
+        // padded fold in `dev/verify_foldabsorb.mjs` and `dev/verify_neverforget.mjs` sat until
+        // the outer timeout with the mock's log showing both requests answered.
+        let (port, _seen) = crate::llm::tests::start_stub(
+            vec![completion(structured_fold_reply()), plain_answer()]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(100, 600);
+        let before = session.messages.len();
+        let registry = no_tools();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("carry on"), &registry,
+            &mut |ev| events.push(ev)).await;
+        let note = events.iter().find_map(|e| match e {
+            AgentEvent::Compacted { note, .. } => Some(note.clone()),
+            _ => None,
+        }).expect("a conversation many times its window must have folded");
+        assert!(note.starts_with("Folded "), "the fixture must fold, not elide: {}", note);
+        assert!(session.messages.len() < before,
+            "the fold left the list no shorter ({} -> {}), so the old index would not have \
+             reached past it and this proves nothing", before, session.messages.len());
+        // The index the caller took would have been `before`, which is now out of range.
+        let start = a.turn_start();
+        assert!(start < session.messages.len(),
+            "turn_start {} is not inside the {} messages the fold left", start,
+            session.messages.len());
+        assert_eq!("carry on", session.messages[start].text(),
+            "turn_start does not name the sentence the turn began with");
+        // And nothing of the turn's own is before it: the slot ahead is the fold's notice or an
+        // earlier turn's, never this turn's user message twice over.
+        assert!(!session.messages[..start].iter().any(|m| m.text() == "carry on"),
+            "the turn's own sentence sits before turn_start");
     }
 
     #[tokio::test]

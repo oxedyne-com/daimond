@@ -1215,6 +1215,940 @@ pub const CRYSTAL_PAGE_FILE: &str = "crystal.html";
 /// may do as they please with, and putting a ceiling on it would put a ceiling on their work.
 pub const CRYSTAL_FILE_LEGACY: &str = "crystal.md";
 
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The three files beside the crystal                             │
+// └───────────────────────────────────────────────────────────────┘
+
+/// What this Diamond exists to do: objectives, the tasks under each, and a `## Done` tail.
+///
+/// THE NEVER-FORGET FILE, and the reason `open[]` left the crystal's schema.  A free-form list of
+/// strings inside a JSON object was never ranked, never ticked and never checked against the work
+/// a turn actually did; this is a file a model edits with the tools it edits every other file
+/// with, rides whole in the prompt, and is measured at the write door.  See
+/// `dev/CRYSTAL_CONTRACT.md` §12.
+pub const REQUIREMENTS_FILE: &str = "REQUIREMENTS.md";
+
+/// Dated rulings with their reasons, append-only; the last [`DECISIONS_HOT_LINES`] ride.
+pub const DECISIONS_FILE: &str = "DECISIONS.md";
+
+/// Where things ARE -- layout, build command, main file, what is in flight, the next step.
+///
+/// OVERWRITTEN, never appended to, which is what its 4 KiB ceiling enforces: a file of where
+/// things are that accumulated would become a file of where things were.
+pub const STATE_FILE: &str = "STATE.md";
+
+/// The three, in the order the prompt carries them and a refusal names them.
+pub const STANDING_FILES: [&str; 3] = [REQUIREMENTS_FILE, DECISIONS_FILE, STATE_FILE];
+
+/// What [`REQUIREMENTS_FILE`] may weigh before a write that grows it is refused, in bytes.
+///
+/// Paid on every round of every turn, whole: 8 KiB is roughly two thousand tokens, which is
+/// three objectives and thirty tasks with room for the shape.  A Diamond with more open work
+/// than that has more than a daimon can hold in front of it either way.
+pub const REQUIREMENTS_CAP: usize = 8 * 1024;
+
+/// What [`DECISIONS_FILE`] may weigh, in bytes.  Twice the requirements' ceiling because it is
+/// append-only and only its tail is paid per round.
+pub const DECISIONS_CAP: usize = 16 * 1024;
+
+/// What [`STATE_FILE`] may weigh, in bytes.  The smallest of the three, and deliberately: it is
+/// the file with no history in it, and a ceiling is the only thing that keeps that true.
+pub const STATE_CAP: usize = 4 * 1024;
+
+/// How many lines of [`DECISIONS_FILE`] ride in the prompt.
+pub const DECISIONS_HOT_LINES: usize = 20;
+
+/// What the tail of [`DECISIONS_FILE`] is budgeted at per round, in bytes.
+///
+/// Not a ceiling -- nothing refuses a write for it -- but the third term of the worst case the
+/// hot budget is argued from: 8 KiB of requirements, 4 KiB of state and this leave a crystal
+/// about 2.5 KiB of hot room at the very worst.  Twenty lines of a decision each averaging
+/// seventy-odd bytes.
+pub const DECISIONS_HOT_BUDGET: usize = 1_536;
+
+/// Which of the three a workspace-relative path names, or nothing.
+///
+/// # Arguments
+/// * `path` - A workspace-relative path, as a caller wrote it.
+pub fn standing_leaf(path: &str) -> Option<&'static str> {
+    STANDING_FILES.iter().copied().find(|leaf| is_diamond_file(path, leaf))
+}
+
+/// The ceiling on one of the three, in bytes.
+///
+/// # Arguments
+/// * `leaf` - One of [`STANDING_FILES`]; anything else answers 0, which refuses nothing.
+pub fn standing_cap(leaf: &str) -> usize {
+    match leaf {
+        REQUIREMENTS_FILE => REQUIREMENTS_CAP,
+        DECISIONS_FILE    => DECISIONS_CAP,
+        STATE_FILE        => STATE_CAP,
+        _                 => 0,
+    }
+}
+
+/// Where what a file retires to lives, workspace-relative, or empty where it retires nothing.
+///
+/// Under `.daimond/`, so it is the Diamond's own record rather than the user's: a template does
+/// not carry it (`share::REFUSED_PREFIXES`), and `recall` walks it.
+///
+/// # Arguments
+/// * `leaf` - One of [`STANDING_FILES`].
+/// * `id` - The Diamond that owns it.
+pub fn standing_archive(leaf: &str, id: &str) -> String {
+    match leaf {
+        REQUIREMENTS_FILE => fmt!("{}/{}/{}done.md", STORE_ROOT, id, DAIMOND_DIR),
+        DECISIONS_FILE    => fmt!("{}/{}/{}decisions-archive.md", STORE_ROOT, id, DAIMOND_DIR),
+        _                 => String::new(),
+    }
+}
+
+/// The shipped text one of the three is seeded with.
+///
+/// # Arguments
+/// * `leaf` - One of [`STANDING_FILES`]; anything else answers an empty string.
+pub fn standing_template(leaf: &str) -> &'static str {
+    match leaf {
+        REQUIREMENTS_FILE => crate::prompts::REQUIREMENTS_TEMPLATE,
+        DECISIONS_FILE    => crate::prompts::DECISIONS_TEMPLATE,
+        STATE_FILE        => crate::prompts::STATE_TEMPLATE,
+        _                 => "",
+    }
+}
+
+/// Whether a write to one of the three must be refused: over its ceiling, and not shrinking it.
+///
+/// The same asymmetry the crystal's three ceilings have, for the same reason -- a file that
+/// arrived over the line must still be editable down to it.
+///
+/// # Arguments
+/// * `leaf` - One of [`STANDING_FILES`].
+/// * `new_len` - Bytes the write would leave on disk, AFTER any retirement.
+/// * `old_len` - Bytes there now; 0 where there is no such file yet.
+pub fn standing_refused(leaf: &str, new_len: usize, old_len: usize) -> bool {
+    let cap = standing_cap(leaf);
+    cap > 0 && new_len > cap && new_len >= old_len
+}
+
+/// What to say when [`standing_refused`] says no.
+///
+/// It names the file, what the write weighed, the ceiling and where the retirement it has
+/// already been given puts things -- because by the time this is said the app's own arithmetic
+/// has run and failed, so what is left really is the live part, and the only thing the daimon
+/// can do about it is take something out.
+///
+/// # Arguments
+/// * `leaf` - One of [`STANDING_FILES`].
+/// * `new_len` - Bytes the write would have left on disk.
+/// * `id` - The Diamond, for the archive path.
+pub fn standing_cap_message(leaf: &str, new_len: usize, id: &str) -> String {
+    let cap = standing_cap(leaf);
+    let over = new_len.saturating_sub(cap);
+    match leaf {
+        STATE_FILE => fmt!(
+            "{} says where things ARE and may not exceed {} bytes; this write is {}, which is {} \
+            over. It is OVERWRITTEN rather than added to and holds no history, so what has grown \
+            it is almost certainly a record: a ruling belongs on one dated line in {}, a task in \
+            {}, and everything else in a cold section of the crystal.",
+            STATE_FILE, cap, new_len, over, DECISIONS_FILE, REQUIREMENTS_FILE),
+        _ => fmt!(
+            "{} may not exceed {} bytes; this write is {}, which is {} over, and there was \
+            nothing left to retire into {} — every line of it is live. Strike what is finished \
+            or superseded, or move the detail into a cold section of the crystal, which costs \
+            nothing per round.",
+            leaf, cap, new_len, over, standing_archive(leaf, id)),
+    }
+}
+
+/// One of the three after retirement: what stays live, and what moves to the archive.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Retired {
+    pub kept:    String,	// what is written back to the live file
+    pub retired: String,	// what is appended to the archive; empty when nothing moved
+}
+
+/// Retire finished items out of [`REQUIREMENTS_FILE`] until it fits, oldest first.
+///
+/// **APP ARITHMETIC, NEVER A MODEL.**  A model asked to prune its own record prunes what it
+/// judges unimportant, which is the judgement the record exists to survive; this takes ticked
+/// items from the TOP of the `## Done` tail -- the oldest, since the file is appended to -- and
+/// stops the moment the file is under the ceiling.  Nothing outside `## Done` is ever touched,
+/// so an open task cannot be retired however full the file is.
+///
+/// Total: a file with no `## Done`, or one already under the ceiling, comes back whole with
+/// nothing retired.
+///
+/// # Arguments
+/// * `text` - The file as the write would leave it.
+/// * `cap` - The ceiling to fit under.
+pub fn retire_done(text: &str, cap: usize) -> Retired {
+    if text.len() <= cap {
+        return Retired { kept: text.to_string(), retired: String::new() };
+    }
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    // Where the `## Done` tail starts, and where the next heading after it ends the tail. A
+    // heading of its own after Done is unusual and is left alone rather than swept.
+    let start = match lines.iter().position(|l| l.trim_start().starts_with("## Done")) {
+        Some(i) => i + 1,
+        None    => return Retired { kept: text.to_string(), retired: String::new() },
+    };
+    let end = lines.iter().skip(start)
+        .position(|l| l.trim_start().starts_with("## "))
+        .map(|i| start + i)
+        .unwrap_or(lines.len());
+    // Oldest first, and only a list item: a blank line or a note under the heading stays.
+    let mut go:    Vec<usize> = Vec::new();
+    let mut total = text.len();
+    for (i, line) in lines.iter().enumerate().take(end).skip(start) {
+        if total <= cap {
+            break;
+        }
+        if line.trim_start().starts_with("- ") {
+            total -= line.len();
+            go.push(i);
+        }
+    }
+    retired_of(&lines, &go)
+}
+
+/// Two strings from one file and the indices that leave it: what stays, and what moves.
+///
+/// # Arguments
+/// * `lines` - The file, split inclusive of its line endings.
+/// * `go` - Indices into `lines`, ascending, that retire.
+fn retired_of(lines: &[&str], go: &[usize]) -> Retired {
+    Retired {
+        kept:    lines.iter().enumerate()
+                     .filter(|(i, _)| !go.contains(i)).map(|(_, l)| *l).collect(),
+        retired: go.iter().map(|i| lines[*i]).collect(),
+    }
+}
+
+/// Retire decision lines older than the last [`DECISIONS_HOT_LINES`] until the file fits.
+///
+/// The same arithmetic as [`retire_done`] and the same guarantee: the twenty lines that ride in
+/// the prompt are never moved, and the header -- everything before the first blank line -- stays
+/// where a reader opening the file expects it.
+///
+/// # Arguments
+/// * `text` - The file as the write would leave it.
+/// * `cap` - The ceiling to fit under.
+pub fn retire_decisions(text: &str, cap: usize) -> Retired {
+    if text.len() <= cap {
+        return Retired { kept: text.to_string(), retired: String::new() };
+    }
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    // The header, which never retires: a leading `#` title and the run of prose under it. The run
+    // ENDS at a blank line or at the first list item, which is what keeps a file whose decisions
+    // are `- ` lines with no blank line between them from being protected whole -- and a heading
+    // anywhere in the file is protected wherever it is, since a heading is a reader's map rather
+    // than a record.
+    let mut head = 0;
+    while head < lines.len() && lines[head].trim().is_empty() {
+        head += 1;
+    }
+    if head < lines.len() && lines[head].trim_start().starts_with('#') {
+        head += 1;
+        while head < lines.len() && lines[head].trim().is_empty() {
+            head += 1;
+        }
+        while head < lines.len()
+            && !lines[head].trim().is_empty()
+            && !lines[head].trim_start().starts_with("- ")
+        {
+            head += 1;
+        }
+    } else {
+        head = 0;
+    }
+    let floor = lines.len().saturating_sub(DECISIONS_HOT_LINES).max(head);
+    let mut go:    Vec<usize> = Vec::new();
+    let mut total = text.len();
+    for (i, line) in lines.iter().enumerate().take(floor).skip(head) {
+        if total <= cap {
+            break;
+        }
+        if !line.trim().is_empty() && !line.trim_start().starts_with('#') {
+            total -= line.len();
+            go.push(i);
+        }
+    }
+    retired_of(&lines, &go)
+}
+
+/// The last [`DECISIONS_HOT_LINES`] non-empty lines of a decisions file, in order.
+///
+/// # Arguments
+/// * `text` - The file as it sits on disk.
+pub fn decisions_tail(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let from = lines.len().saturating_sub(DECISIONS_HOT_LINES);
+    lines[from..].join("\n")
+}
+
+/// The three files as one turn found them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Standing {
+    pub requirements: String,
+    pub decisions:    String,
+    pub state:        String,
+}
+
+impl Standing {
+
+    /// The block the prompt carries: requirements whole, state whole, the decisions' tail.
+    ///
+    /// Empty where all three are, which is a Diamond whose files have not been seeded yet -- and
+    /// the composer says nothing rather than three empty headings.
+    pub fn prompt_text(&self) -> String {
+        let tail = decisions_tail(&self.decisions);
+        if self.requirements.trim().is_empty()
+            && self.state.trim().is_empty()
+            && tail.trim().is_empty()
+        {
+            return String::new();
+        }
+        let mut out = String::new();
+        if !self.requirements.trim().is_empty() {
+            out.push_str(&fmt!("\n\n{} — what this Diamond is for, whole:\n{}",
+                REQUIREMENTS_FILE, self.requirements.trim_end()));
+        }
+        if !self.state.trim().is_empty() {
+            out.push_str(&fmt!("\n\n{} — where things are, whole:\n{}",
+                STATE_FILE, self.state.trim_end()));
+        }
+        if !tail.trim().is_empty() {
+            out.push_str(&fmt!(
+                "\n\n{} — the last {} lines (recall searches the rest, and \
+                `.daimond/decisions-archive.md` holds what has retired):\n{}",
+                DECISIONS_FILE, DECISIONS_HOT_LINES, tail));
+        }
+        out
+    }
+
+    /// What the block above costs in the system message on every round, in bytes.
+    pub fn hot_bytes(&self) -> usize {
+        self.prompt_text().len()
+    }
+}
+
+/// A crystal with `open[]` taken out, and what it held -- or nothing where there is nothing to do.
+///
+/// `None` where the crystal is empty, will not parse, is not one object, or has no `open` key.
+/// Those are one answer rather than four because the caller does one thing with all of them:
+/// leaves the file alone.  In particular a crystal a daimon left half-written comes back `None`
+/// and is not rewritten, because the turn that has to mend it must see exactly what it left.
+///
+/// Only string entries are carried over.  A malformed one is rendered as its JSON, which is what
+/// a reader of `REQUIREMENTS.md` can then act on, rather than dropped.
+///
+/// # Arguments
+/// * `json` - The crystal exactly as it sits on disk.
+pub fn crystal_without_open(json: &str) -> Option<(String, Vec<String>)> {
+    let cfg = crate::agent::compact::json_cfg();
+    let mut map = match Dat::decode_string_with_config(json.trim(), &cfg) {
+        Ok(Dat::Map(m)) => m,
+        _               => return None,
+    };
+    let held = map.remove(&Dat::Str(fmt!("open")))?;
+    let open: Vec<String> = match held {
+        Dat::List(items) => items.iter().map(|d| match d {
+            Dat::Str(t) => t.clone(),
+            other       => other.json().unwrap_or_default(),
+        }).filter(|t| !t.trim().is_empty()).collect(),
+        Dat::Str(t)      => vec![t],
+        other            => vec![other.json().unwrap_or_default()],
+    };
+    Some((Dat::Map(map).json().ok()?, open))
+}
+
+/// Add entries to a requirements file under `## Unfiled`, adding the heading where it has none.
+///
+/// **Dedupe by whole line**, so running it twice files nothing twice -- which is what makes the
+/// migration behind it safe to run on a Diamond somebody has already edited by hand.  The
+/// heading goes before `## Done` where there is one, so what is outstanding stays above what is
+/// finished, and at the end otherwise.
+///
+/// # Arguments
+/// * `text` - The file as it stands.
+/// * `items` - The entries, each becoming one unticked task line.
+pub fn file_unfiled(text: &str, items: &[String]) -> String {
+    let want: Vec<String> = items.iter()
+        .map(|t| fmt!("- [ ] {}", t.trim()))
+        .filter(|line| !text.lines().any(|l| l.trim() == line))
+        .collect();
+    if want.is_empty() {
+        return text.to_string();
+    }
+    let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+    let at = match lines.iter().position(|l| l.trim_start().starts_with("## Unfiled")) {
+        // Under the heading it already has: the line after it, so the newest is at the top of
+        // the section and the file reads newest-first where a user is looking for what arrived.
+        Some(i) => i + 1,
+        None => {
+            let at = lines.iter().position(|l| l.trim_start().starts_with("## Done"))
+                .unwrap_or(lines.len());
+            lines.insert(at, fmt!("## Unfiled"));
+            lines.insert(at + 1, String::new());
+            at + 2
+        },
+    };
+    for (n, line) in want.iter().enumerate() {
+        lines.insert(at + n, line.clone());
+    }
+    let mut out = lines.join("\n");
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ What a context fold files into the three                       │
+// └───────────────────────────────────────────────────────────────┘
+
+/// The `## Facts` heading of [`STATE_FILE`], which a fold's `found` slot is merged under.
+///
+/// Named here rather than spelled at each use because three things look for it: the template
+/// ships it, [`absorb_notes`] files under it, and a test asserts the two agree.
+pub const STATE_FACTS_HEADING: &str = "## Facts";
+
+/// The `## Next step` heading of [`STATE_FILE`], which a fold's `next` slot overwrites.
+pub const STATE_NEXT_HEADING: &str = "## Next step";
+
+/// The `## Unfiled` heading of [`REQUIREMENTS_FILE`], which a fold's `open` slot is merged under.
+pub const REQUIREMENTS_UNFILED_HEADING: &str = "## Unfiled";
+
+/// The three files after a fold's notes have been filed into them, and what would not fit.
+///
+/// `left` carries `task`, `next`, `edited` and `read` through untouched and holds, in its three
+/// lists, ONLY the items a ceiling refused -- which in the ordinary case is none of them.  The
+/// notice is then written from `left`, so an item that could not be filed is still in front of
+/// the model rather than lost between a full file and a shortened note.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Absorbed {
+    pub files: Standing,
+    pub left:  crate::agent::compact::FoldNotes,
+}
+
+/// File a context fold's notes into the three, and say what would not fit.
+///
+/// **TOTAL AND ORDER-INDEPENDENT, WHICH IS THE PROPERTY AND NOT A NICETY.**  The result is a
+/// function of the files and the notes alone: running the same absorb twice files nothing twice,
+/// and two notes arriving in the other order leave the files saying the same thing.  A fold is
+/// the one moment a conversation's memory is rewritten with no way back, so an absorb that
+/// depended on how many times it had run would compound its own mistakes -- see memory
+/// `reference_ore_fold_must_be_total`, and `dev/CRYSTAL_CONTRACT.md` §13.
+///
+/// Three things make that true, and each is a test:
+///
+/// * **Dedupe is on what a line SAYS** ([`task_key`], [`decision_key`]), not on its bytes, so a
+///   fold on Tuesday does not re-file what Monday's fold filed with Monday's date on it.
+/// * **The archives count as filed.**  `retired` is what `.daimond/done.md` and
+///   `.daimond/decisions-archive.md` hold, and a task ticked and retired last month must not come
+///   back under `## Unfiled` as new work.
+/// * **A ceiling stops the absorb rather than truncating it.**  Items go in while the file still
+///   fits its cap, and what does not fit stays in [`Absorbed::left`].
+///
+/// Nothing here removes a line.  Ticked tasks, decisions and every heading come through exactly
+/// as they were; the only overwrite is `STATE.md`'s `## Next step`, which is the one section of
+/// the one file that holds no history.
+///
+/// # Arguments
+/// * `files` - The three as they sit on disk.
+/// * `retired` - What the two archives hold, concatenated; empty where there are none.
+/// * `notes` - The fold's parsed notes, already reconciled against the ledger.
+/// * `date` - Today, as `YYYY-MM-DD`, which is what a decision line is stamped with.
+pub fn absorb_notes(
+    files:   &Standing,
+    retired: &str,
+    notes:   &crate::agent::compact::FoldNotes,
+    date:    &str,
+)
+    -> Absorbed
+{
+    let mut left = notes.clone();
+    // The two slots the ledger already answers better than the model does: `## What was touched`
+    // is built from the record itself, so carrying these into the notice as well is the
+    // duplication `open[]` was deleted for. See `dev/CRYSTAL_CONTRACT.md` §13.
+    left.edited.clear();
+    left.read.clear();
+    let (requirements, unfiled) = absorb_open(&files.requirements, retired, &notes.open);
+    let (decisions, undated)    = absorb_decisions(&files.decisions, retired, &notes.decisions, date);
+    let (state, unfound)        = absorb_state(&files.state, &notes.next, &notes.found);
+    left.open      = unfiled;
+    left.decisions = undated;
+    left.found     = unfound;
+    Absorbed {
+        files: Standing { requirements, decisions, state },
+        left,
+    }
+}
+
+/// What a task line SAYS, for comparing one against another.
+///
+/// The `- [ ]` or `- [x]` marker, a leading `T12` id and a trailing `(v37)` all come off, and
+/// what is left is lowercased with its whitespace collapsed.  So an open thread a fold names is
+/// recognised in a task the daimon has already TICKED, which is the comparison that stops the
+/// never-forget file resurrecting work it has finished -- an exact-line dedupe sees
+/// `- [x] T3 mend the decoder (v9)` and `- [ ] mend the decoder` as two different things.
+///
+/// # Arguments
+/// * `line` - A line of [`REQUIREMENTS_FILE`], or an entry a fold wants to put in one.
+pub(crate) fn task_key(line: &str) -> String {
+    let t = line.trim();
+    let t = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")).unwrap_or(t).trim();
+    let t = t.strip_prefix("[ ]").or_else(|| t.strip_prefix("[x]"))
+        .or_else(|| t.strip_prefix("[X]")).unwrap_or(t).trim();
+    // The version stamp a tick carries, which is the whole point of ticking and is not part of
+    // what the task says.
+    let t = match (t.rfind('('), t.ends_with(')')) {
+        (Some(i), true) if t[i + 1..].starts_with('v') => t[..i].trim(),
+        _                                              => t,
+    };
+    // The `T12` id, which a fold's own wording will not have.
+    let mut words = t.split_whitespace().peekable();
+    if let Some(w) = words.peek() {
+        let rest = w.trim_start_matches('T');
+        if rest.len() < w.len() && !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+            words.next();
+        }
+    }
+    words.collect::<Vec<&str>>().join(" ").to_lowercase()
+}
+
+/// The `T12` a task line opens with, once its bullet and tick marker are stripped -- or `None`
+/// for a line that is not a task line at all, or one with no id.
+///
+/// The mirror of the id-stripping half of [`task_key`]: that function throws the id away to
+/// compare what a task SAYS, and [`ticked_tasks`] needs to keep it, to say WHICH task changed.
+///
+/// # Arguments
+/// * `line` - A line of [`REQUIREMENTS_FILE`].
+fn leading_task_id(line: &str) -> Option<String> {
+    let t = line.trim();
+    let t = t.strip_prefix("- ").or_else(|| t.strip_prefix("* "))?.trim();
+    let t = t.strip_prefix("[ ]").or_else(|| t.strip_prefix("[x]"))
+        .or_else(|| t.strip_prefix("[X]"))?.trim();
+    let w = t.split_whitespace().next()?;
+    let rest = w.trim_start_matches('T');
+    if rest.len() < w.len() && !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+        Some(w.to_string())
+    } else {
+        None
+    }
+}
+
+/// Whether a requirements line is a TICKED task, `- [x]` or `- [X]`.
+fn is_ticked(line: &str) -> bool {
+    let t = line.trim();
+    match t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
+        Some(t) => { let t = t.trim(); t.starts_with("[x]") || t.starts_with("[X]") },
+        None    => false,
+    }
+}
+
+/// Whether a requirements line is an OPEN task, `- [ ]`.
+fn is_open(line: &str) -> bool {
+    let t = line.trim();
+    match t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
+        Some(t) => t.trim().starts_with("[ ]"),
+        None    => false,
+    }
+}
+
+/// The task ids ticked in `after` that were still open in `before` -- one `kind:"task"` log
+/// record per entry is what the turn-end check in `wasm::app::steer_inner` writes from this.
+///
+/// Matched by id and not by line, because the tick itself changes the line: `- [ ] T12 mend it`
+/// becomes `- [x] T12 mend it (v37)`, and it is exactly that pair being looked for.  A task that
+/// did not exist as an OPEN line in `before` is not reported -- there is no PRIOR state for a
+/// version to attach to, and a task the daimon both added and ticked in the same turn is caught
+/// by the ordinary "any change mints a version" rule regardless.
+///
+/// # Arguments
+/// * `before` - `REQUIREMENTS.md` as the turn found it.
+/// * `after` - `REQUIREMENTS.md` as the turn left it.
+pub fn ticked_tasks(before: &str, after: &str) -> Vec<String> {
+    let mut was_open: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for line in before.lines() {
+        if is_open(line) {
+            if let Some(id) = leading_task_id(line) {
+                was_open.insert(id);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for line in after.lines() {
+        if !is_ticked(line) {
+            continue;
+        }
+        if let Some(id) = leading_task_id(line) {
+            if was_open.remove(&id) {
+                out.push(id);
+            }
+        }
+    }
+    out
+}
+
+/// How many open tasks [`requirements_briefing`] names by their own words.
+const BRIEFING_TOP_TASKS: usize = 3;
+
+/// One task's text in the briefing line, clipped so three of them cannot balloon it.
+const BRIEFING_TASK_CAP: usize = 60;
+
+/// `s` inside [`BRIEFING_TASK_CAP`] bytes, cut on a character boundary.
+fn briefing_task_clip(s: &str) -> String {
+    let s = s.trim();
+    if s.len() <= BRIEFING_TASK_CAP {
+        return s.to_string();
+    }
+    let mut end = BRIEFING_TASK_CAP;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    fmt!("{}…", &s[..end])
+}
+
+/// "N objectives, M open tasks; top three: …", parsed from `REQUIREMENTS.md` -- the line
+/// [`crate::wasm::app::DaimondApp`]'s `compose_daimon` adds to the daimon's briefing, so a
+/// reader does not have to count headings in a file to know how much of it is still open.  See
+/// `dev/CRYSTAL_CONTRACT.md` §5.1.
+///
+/// Pure, so the count is proved by `cargo test --lib` and not only by driving a browser.  Read
+/// once with the rest of the standing files at the top of a turn and never again inside it, so
+/// the figure is byte-stable for every round of it -- exactly as [`Standing::prompt_text`] is.
+///
+/// Objectives are counted by `## O` headings whose next character is a digit; `## Unfiled` and
+/// `## Done` share the heading level and are not objectives, so they are not counted as one.
+/// Empty where the file has neither an objective nor an open task, which the composer reads as
+/// "say nothing" exactly as [`Standing::prompt_text`] does for an unseeded Diamond.
+///
+/// The open count is the PLAN'''s open tasks -- those outside `## Unfiled` -- and the named three
+/// are drawn from the same set, so the number and the list are counting one thing.  Until
+/// 2026-09-15 the count swept in the unfiled lines while the list could not reach them, and a
+/// file with three planned tasks and two loose threads briefed as "3 objectives, 5 open tasks;
+/// top three: T2, T5, T8": a daimon reading it went looking for two tasks nothing would name.
+/// Unfiled threads are real work, so they are still said -- separately, as `; N unfiled`, and
+/// only when there are any.
+///
+/// # Arguments
+/// * `text` - `REQUIREMENTS.md` as the turn found it.
+/// * `top3` - Whether to name the first three open tasks by their own words, or count-only.
+///   `Agent::Limits::briefing_top3`'s own switch, so `dev/verify_neverforget.mjs`'s
+///   `notoptrhee` break can turn just this half off.
+pub fn requirements_briefing(text: &str, top3: bool) -> String {
+    let mut objectives  = 0usize;
+    let mut open: Vec<String> = Vec::new();
+    let mut unfiled     = 0usize;
+    // Which side of `## Unfiled` the reader is on.  Any other `##` heading ends it, so a file
+    // that puts `## Done` after it does not leave every later tick counted as a loose thread.
+    let mut in_unfiled  = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with("## ") || t == "##" {
+            in_unfiled = t.starts_with(REQUIREMENTS_UNFILED_HEADING);
+            if let Some(rest) = t.strip_prefix("## O") {
+                if rest.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                    objectives += 1;
+                    continue;
+                }
+            }
+        }
+        if is_open(line) {
+            if in_unfiled {
+                unfiled += 1;
+                continue;
+            }
+            let body = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")).unwrap_or(t).trim();
+            let body = body.strip_prefix("[ ]").unwrap_or(body).trim();
+            open.push(body.to_string());
+        }
+    }
+    if objectives == 0 && open.is_empty() && unfiled == 0 {
+        return String::new();
+    }
+    let mut s = fmt!("{} objective{}, {} open task{}",
+        objectives, if objectives == 1 { "" } else { "s" },
+        open.len(), if open.len() == 1 { "" } else { "s" });
+    if top3 && !open.is_empty() {
+        let top: Vec<String> = open.iter().take(BRIEFING_TOP_TASKS)
+            .map(|t| briefing_task_clip(t)).collect();
+        s.push_str("; top three: ");
+        s.push_str(&top.join(", "));
+    }
+    if unfiled > 0 {
+        s.push_str(&fmt!("; {} unfiled", unfiled));
+    }
+    s
+}
+
+/// What a decision line SAYS, for comparing one against another.
+///
+/// The bullet and a leading ISO date come off, because the date is when it was FILED and the
+/// same ruling filed a day later is the same ruling.  Without that, a fold that ran twice over
+/// two days would leave two dated copies of every decision in an append-only file.
+///
+/// # Arguments
+/// * `line` - A line of [`DECISIONS_FILE`], or an entry a fold wants to put in one.
+pub(crate) fn decision_key(line: &str) -> String {
+    let t = line.trim();
+    let t = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")).unwrap_or(t).trim();
+    // `YYYY-MM-DD`, and only in that shape: a decision that opens with a number of its own is
+    // left whole.
+    let t = match t.split_once(' ') {
+        Some((head, rest)) if is_iso_date(head) => rest.trim(),
+        _                                       => t,
+    };
+    t.split_whitespace().collect::<Vec<&str>>().join(" ").to_lowercase()
+}
+
+/// Is this token a `YYYY-MM-DD` date?
+fn is_iso_date(t: &str) -> bool {
+    let b = t.as_bytes();
+    b.len() == 10 && b[4] == b'-' && b[7] == b'-'
+        && b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+}
+
+/// Merge a fold's open threads into [`REQUIREMENTS_FILE`] under `## Unfiled`.
+///
+/// Answers the file and whatever the ceiling refused.  Added one at a time through
+/// [`file_unfiled`], which is the same function the `open[]` migration files through, so a
+/// thread filed by a fold and one filed by the migration land in the same place in the same
+/// shape.
+///
+/// # Arguments
+/// * `text` - The file as it stands.
+/// * `retired` - What the archives hold.
+/// * `items` - The fold's `open` slot.
+fn absorb_open(text: &str, retired: &str, items: &[String]) -> (String, Vec<String>) {
+    let mut out  = text.to_string();
+    let mut left = Vec::new();
+    for item in items {
+        let want = item.trim();
+        if want.is_empty() {
+            continue;
+        }
+        let key = task_key(want);
+        if key.is_empty() || said(&out, &key, task_key) || said(retired, &key, task_key) {
+            continue;
+        }
+        let next = file_unfiled(&out, &[want.to_string()]);
+        // A plain ceiling test and not the write door's asymmetry: this only ever ADDS, so
+        // there is no shrinking write to make an exception for.
+        if next.len() > REQUIREMENTS_CAP {
+            left.push(want.to_string());
+            continue;
+        }
+        out = next;
+    }
+    (out, left)
+}
+
+/// Append a fold's rulings to [`DECISIONS_FILE`], one dated line each.
+///
+/// Answers the file and whatever the ceiling refused.  APPEND ONLY: nothing already in the file
+/// is read for anything but the dedupe, and nothing is removed.
+///
+/// # Arguments
+/// * `text` - The file as it stands.
+/// * `retired` - What the archive holds.
+/// * `items` - The fold's `decisions` slot.
+/// * `date` - Today, as `YYYY-MM-DD`.
+fn absorb_decisions(text: &str, retired: &str, items: &[String], date: &str)
+    -> (String, Vec<String>)
+{
+    let mut out  = text.to_string();
+    let mut left = Vec::new();
+    for item in items {
+        let want = item.trim();
+        if want.is_empty() {
+            continue;
+        }
+        let key = decision_key(want);
+        if key.is_empty() || said(&out, &key, decision_key) || said(retired, &key, decision_key) {
+            continue;
+        }
+        let mut next = out.clone();
+        if !next.is_empty() && !next.ends_with('\n') {
+            next.push('\n');
+        }
+        // Dated here and not by the model: a fold's note carries no date, and a record whose
+        // dates are a model's guess is a record nobody can order.
+        next.push_str(&fmt!("- {} {}\n", date, want));
+        if next.len() > DECISIONS_CAP {
+            left.push(want.to_string());
+            continue;
+        }
+        out = next;
+    }
+    (out, left)
+}
+
+/// Overwrite [`STATE_FILE`]'s next step and merge the fold's values into its facts.
+///
+/// Answers the file and whatever the ceiling refused.  `next` OVERWRITES, because `STATE.md`
+/// says where things are and a list of where things were is the one thing it may not become;
+/// `found` merges, because a value learned in March is still true in April.
+///
+/// # Arguments
+/// * `text` - The file as it stands.
+/// * `next` - The fold's `next` slot, or empty.
+/// * `found` - The fold's `found` slot.
+fn absorb_state(text: &str, next: &str, found: &[String]) -> (String, Vec<String>) {
+    let mut out = text.to_string();
+    let want = next.trim();
+    if !want.is_empty() {
+        let next_text = set_section(&out, STATE_NEXT_HEADING, want);
+        if !(next_text.len() > STATE_CAP && next_text.len() > out.len()) {
+            out = next_text;
+        }
+    }
+    let mut left = Vec::new();
+    for item in found {
+        let fact = item.trim();
+        if fact.is_empty() {
+            continue;
+        }
+        let key = fact_key(fact);
+        if key.is_empty() || said(&out, &key, fact_key) {
+            continue;
+        }
+        let next_text = add_to_section(&out, STATE_FACTS_HEADING, STATE_NEXT_HEADING,
+            &fmt!("- {}", fact));
+        if next_text.len() > STATE_CAP {
+            left.push(fact.to_string());
+            continue;
+        }
+        out = next_text;
+    }
+    (out, left)
+}
+
+/// What a fact line SAYS, for comparing one against another.
+fn fact_key(line: &str) -> String {
+    let t = line.trim();
+    let t = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")).unwrap_or(t).trim();
+    t.split_whitespace().collect::<Vec<&str>>().join(" ").to_lowercase()
+}
+
+/// Does any line of `text` say the same thing as `key`, under `key_of`?
+fn said(text: &str, key: &str, key_of: fn(&str) -> String) -> bool {
+    text.lines().any(|l| !l.trim().is_empty() && key_of(l) == key)
+}
+
+/// Replace everything under a heading with one paragraph, adding the heading where there is none.
+///
+/// The section ends at the next `## ` heading or at the end of the file, and the heading itself
+/// and everything above it are untouched.
+///
+/// # Arguments
+/// * `text` - The file as it stands.
+/// * `heading` - The `## ` heading, exactly as it is written in the file.
+/// * `body` - What goes under it.
+fn set_section(text: &str, heading: &str, body: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let at = match lines.iter().position(|l| l.trim() == heading) {
+        Some(i) => i,
+        None    => {
+            let mut out = text.to_string();
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str(&fmt!("\n{}\n\n{}\n", heading, body));
+            return out;
+        },
+    };
+    let end = lines.iter().skip(at + 1)
+        .position(|l| l.trim_start().starts_with("## "))
+        .map(|i| at + 1 + i)
+        .unwrap_or(lines.len());
+    let mut out: Vec<String> = lines[..=at].iter().map(|l| l.to_string()).collect();
+    out.push(String::new());
+    out.push(body.to_string());
+    out.push(String::new());
+    out.extend(lines[end..].iter().map(|l| l.to_string()));
+    let mut joined = out.join("\n");
+    if !joined.ends_with('\n') {
+        joined.push('\n');
+    }
+    joined
+}
+
+/// Add one line at the end of a heading's section, adding the heading where there is none.
+///
+/// # Arguments
+/// * `text` - The file as it stands.
+/// * `heading` - The `## ` heading to add under.
+/// * `before` - The heading the new one goes above where it has to be created, so the file keeps
+///   its shape; at the end where there is no such heading either.
+/// * `line` - The line to add.
+fn add_to_section(text: &str, heading: &str, before: &str, line: &str) -> String {
+    let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+    let at = match lines.iter().position(|l| l.trim() == heading) {
+        Some(i) => {
+            // The end of the section, past any blank lines trailing it, so the file does not
+            // acquire a blank line between its facts every time one is added.
+            let end = lines.iter().skip(i + 1)
+                .position(|l| l.trim_start().starts_with("## "))
+                .map(|k| i + 1 + k)
+                .unwrap_or(lines.len());
+            let mut k = end;
+            while k > i + 1 && lines[k - 1].trim().is_empty() {
+                k -= 1;
+            }
+            k
+        },
+        None => {
+            let mut at = lines.iter().position(|l| l.trim() == before).unwrap_or(lines.len());
+            // A blank line above it, or the heading would be glued to whatever stood before it
+            // and the file would stop being markdown a reader can skim.
+            if at > 0 && !lines[at - 1].trim().is_empty() {
+                lines.insert(at, String::new());
+                at += 1;
+            }
+            lines.insert(at, heading.to_string());
+            lines.insert(at + 1, String::new());
+            lines.insert(at + 2, String::new());
+            at + 2
+        },
+    };
+    lines.insert(at, line.to_string());
+    let mut out = lines.join("\n");
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// What is left of the hot ceiling for the crystal, once the three files have been counted.
+///
+/// **THE THREE FILES ARE PAID INSIDE THE 16 KiB CEILING, NOT BESIDE IT.**  The ceiling is on what
+/// a Diamond's standing memory costs per round, and adding a second budget beside it would be
+/// raising the bill while the number that names it stayed still.  The other way round -- a fixed
+/// 13.5 KiB reservation for the files' ceilings -- was considered and refused: it would split a
+/// live crystal at 2.5 KiB, and 4 KiB was measured on 2026-09-14 to cost two thirds of a model's
+/// answers for 18% of its tokens.  So what is subtracted is what the files ACTUALLY weigh, which
+/// on a new Diamond is a few hundred bytes and leaves the crystal what it had; the caps bound the
+/// worst case at 8 + 4 + ~1.5 KiB, so ~2.5 KiB of hot room is guaranteed however full they are.
+///
+/// **AN EIGHTH OF THE CEILING IS THE CRYSTAL'S WHATEVER THE FILES WEIGH**, and that floor is
+/// not decoration.  The ceiling is a SETTING: a user who lowers it below what the three files
+/// already cost would otherwise leave the crystal a room of zero, and every write to it --
+/// including a write that only touched a COLD section -- refused for ever.  A ceiling that
+/// bricks the file it is meant to bound is the failure the shrink asymmetry exists against,
+/// arriving by a different door.  At the shipped 16 KiB the floor is 2 KiB and never binds,
+/// because the caps already leave 2,560.
+///
+/// # Arguments
+/// * `standing_hot` - [`Standing::hot_bytes`] for this Diamond, or 0 where there are no files.
+pub fn crystal_hot_room(standing_hot: usize) -> usize {
+    let cap = crystal_hot_cap();
+    cap.saturating_sub(standing_hot).max(cap / 8)
+}
+
 /// What a crystal may weigh before a write that grows it is refused, in bytes.
 ///
 /// A crystal is the REDUCED state of a Diamond, and the weight belongs in the scope attached to
@@ -1486,8 +2420,9 @@ pub fn crystal_cap_message(new_len: usize) -> String {
 /// # Arguments
 /// * `new_hot` - Bytes the hot part would weigh after the write.
 /// * `old_hot` - Bytes it weighs now; 0 when there is no crystal yet.
-pub fn crystal_hot_write_refused(new_hot: usize, old_hot: usize) -> bool {
-    new_hot > crystal_hot_cap() && new_hot >= old_hot
+/// * `standing_hot` - What the three files beside it already cost per round.
+pub fn crystal_hot_write_refused(new_hot: usize, old_hot: usize, standing_hot: usize) -> bool {
+    new_hot > crystal_hot_room(standing_hot) && new_hot >= old_hot
 }
 
 /// What to say when [`crystal_hot_write_refused`] says no.
@@ -1498,7 +2433,9 @@ pub fn crystal_hot_write_refused(new_hot: usize, old_hot: usize) -> bool {
 ///
 /// # Arguments
 /// * `new_hot` - Bytes the hot part would have weighed.
-pub fn crystal_hot_cap_message(new_hot: usize) -> String {
+/// * `standing_hot` - What the three files beside it already cost per round, so the daimon is
+///   told where the rest of the ceiling went rather than left to wonder.
+pub fn crystal_hot_cap_message(new_hot: usize, standing_hot: usize) -> String {
     // WHERE THE NUMBER CAME FROM, said only when it is not this build's own.
     //
     // On 2026-09-14 the default was raised from 4 KiB to 16 KiB and a crystal edit was
@@ -1514,15 +2451,25 @@ pub fn crystal_hot_cap_message(new_hot: usize) -> String {
             If nobody chose it, it is under Settings, Crystal size limits, Always-present \
             part, where \"Default\" restores it.", CRYSTAL_HOT_CAP_DEFAULT),
     };
+    // WHERE THE REST OF THE CEILING WENT, said only when the three files have taken some of it.
+    // A daimon told "may not exceed 15,100 bytes" with no account of the odd figure has no way
+    // to tell a ceiling from a bug, and the files are the one thing it can shorten instead.
+    let files = match standing_hot {
+        0 => String::new(),
+        n => fmt!(
+            " {} of the {}-byte ceiling is {}, {} and the tail of {}, which ride whole on every \
+            round beside this; shortening one of them gives the crystal the room back.",
+            n, crystal_hot_cap(), REQUIREMENTS_FILE, STATE_FILE, DECISIONS_FILE),
+    };
     fmt!(
-        "The HOT part of this crystal -- `title`, `summary`, `open` and every section marked \
+        "The HOT part of this crystal -- `title`, `summary` and every section marked \
         \"hot\": true -- rides in your system message on every round and may not exceed {} \
-        bytes; this write would leave it at {}. MOVE A SECTION TO COLD -- set \"hot\": false, or \
+        bytes; this write would leave it at {}.{} MOVE A SECTION TO COLD -- set \"hot\": false, or \
         drop the `!` from its heading -- or shorten the hot part. Nothing has to be deleted: a \
         cold section keeps every word of it and costs nothing per round, because crystal_read \
         fetches a cold section and recall searches all of them. The whole crystal may still be \
         up to {} bytes.{}",
-        crystal_hot_cap(), new_hot, crystal_cap(), set,
+        crystal_hot_room(standing_hot), new_hot, files, crystal_cap(), set,
     )
 }
 
@@ -1560,22 +2507,36 @@ pub fn crystal_page_cap_message(new_len: usize) -> String {
     )
 }
 
-/// The refusal a write to one of a Diamond's two capped files earns, or nothing.
+/// The refusal a write to one of a Diamond's capped files earns, or nothing.
 ///
 /// One function so the two doors -- [`Tool::FileWrite`] and [`Tool::FileEdit`] -- cannot drift
-/// apart, and so neither has to remember which ceiling a path answers to.  A path that is not a
-/// crystal answers to neither and is never refused here.
+/// apart, and so neither has to remember which ceiling a path answers to.  A path that is none of
+/// the five answers to no ceiling and is never refused here.
 ///
-/// **The TEXTS rather than their lengths**, because the third ceiling is not a length: the hot
-/// part has to be split out of each side before it can be measured, and a door handed two numbers
+/// **The TEXTS rather than their lengths**, because the hot ceiling is not a length: the hot part
+/// has to be split out of each side before it can be measured, and a door handed two numbers
 /// could never ask that question.
+///
+/// **The three markdown files arrive here ALREADY RETIRED** -- see
+/// [`Tool::standing_retired`] -- so a refusal of one of them really is a live file that cannot be
+/// trimmed by arithmetic, which is what [`standing_cap_message`] then says.  Called
+/// `crystal_cap_refusal` until 2026-09-15; the name moved with the job rather than a shim being
+/// left behind it.
 ///
 /// # Arguments
 /// * `path` - The workspace-relative path being written.
 /// * `new_text` - What the write would leave on disk.
 /// * `old_text` - What is there now; empty when there is no such file yet.
+/// * `standing_hot` - What this Diamond's three files cost per round ([`Standing::hot_bytes`]).
 #[cfg(any(target_arch = "wasm32", test))]
-fn crystal_cap_refusal(path: &str, new_text: &str, old_text: &str) -> Option<String> {
+fn diamond_cap_refusal(
+    path:         &str,
+    new_text:     &str,
+    old_text:     &str,
+    standing_hot: usize,
+)
+    -> Option<String>
+{
     // Composed by `refusal_line` like every other refusal returned as a result: a ceiling that
     // stopped a write is a write that did not happen, and the fold's ledger reads the opening
     // rather than the sentence (see `call_outcome`).
@@ -1583,14 +2544,28 @@ fn crystal_cap_refusal(path: &str, new_text: &str, old_text: &str) -> Option<Str
         if crystal_write_refused(new_text.len(), old_text.len()) {
             return Some(refusal_line(&crystal_cap_message(new_text.len())));
         }
-        if let Some(msg) = crystal_hot_refusal(new_text, old_text) {
+        if let Some(msg) = crystal_hot_refusal(new_text, old_text, standing_hot) {
             return Some(refusal_line(&msg));
         }
     }
     if is_crystal_page_path(path) && crystal_page_write_refused(new_text.len(), old_text.len()) {
         return Some(refusal_line(&crystal_page_cap_message(new_text.len())));
     }
+    if let Some(leaf) = standing_leaf(path) {
+        if standing_refused(leaf, new_text.len(), old_text.len()) {
+            return Some(refusal_line(&standing_cap_message(
+                leaf, new_text.len(), &diamond_of_path(path))));
+        }
+    }
     None
+}
+
+/// The Diamond id in a workspace-relative path under the store, or empty.
+///
+/// # Arguments
+/// * `path` - A path whose second segment is the id, as every path under `diamonds/` is.
+pub fn diamond_of_path(path: &str) -> String {
+    normalise(path).split('/').filter(|s| !s.is_empty()).nth(1).unwrap_or("").to_string()
 }
 
 /// The hot-part refusal a crystal write earns, or nothing.
@@ -1603,8 +2578,10 @@ fn crystal_cap_refusal(path: &str, new_text: &str, old_text: &str) -> Option<Str
 /// # Arguments
 /// * `new_text` - The crystal the write would leave on disk.
 /// * `old_text` - The crystal there now; empty when there is none.
-pub fn crystal_hot_refusal(new_text: &str, old_text: &str) -> Option<String> {
-    let cap = crystal_hot_cap();
+/// * `standing_hot` - What this Diamond's three files already cost per round
+///   ([`Standing::hot_bytes`]); 0 where it has none.
+pub fn crystal_hot_refusal(new_text: &str, old_text: &str, standing_hot: usize) -> Option<String> {
+    let cap = crystal_hot_room(standing_hot);
     let new_hot = match crystal_split(new_text, cap) {
         Ok(s)  => s.hot_bytes,
         // Unparseable, so nothing can be said about its hot part. The total ceiling above still
@@ -1613,8 +2590,8 @@ pub fn crystal_hot_refusal(new_text: &str, old_text: &str) -> Option<String> {
         Err(_) => return None,
     };
     let old_hot = crystal_split(old_text, cap).map(|s| s.hot_bytes).unwrap_or(0);
-    if crystal_hot_write_refused(new_hot, old_hot) {
-        return Some(crystal_hot_cap_message(new_hot));
+    if new_hot > cap && new_hot >= old_hot {
+        return Some(crystal_hot_cap_message(new_hot, standing_hot));
     }
     None
 }
@@ -1626,10 +2603,16 @@ pub fn crystal_hot_refusal(new_text: &str, old_text: &str) -> Option<String> {
 
 /// The core keys that are hot whatever a crystal says.
 ///
-/// `title`, `summary` and `open` are the schema's own answer to "what is this and what is
-/// outstanding", which is the question a daimon asks on every round; a crystal that made them
-/// cold would be a crystal whose standing context said nothing at all.
-const CRYSTAL_ALWAYS_HOT: [&str; 3] = ["title", "summary", "open"];
+/// `title` and `summary` are the schema's own answer to "what is this", which is the question a
+/// daimon asks on every round; a crystal that made them cold would be a crystal whose standing
+/// context said nothing at all.
+///
+/// **`open` WAS THE THIRD AND IS GONE FROM THE SCHEMA** (2026-09-15, `dev/CRYSTAL_CONTRACT.md`
+/// §12): what is outstanding is [`REQUIREMENTS_FILE`]'s, ranked and ticked and checked against
+/// the work a turn did, and two lists of the same thing is one list nobody trusts.  A crystal
+/// that still carries the key after its Diamond's one-off migration is carried through as an
+/// unknown key by the never-drop rule, and is cold like every other.
+const CRYSTAL_ALWAYS_HOT: [&str; 2] = ["title", "summary"];
 
 /// One row of the outline a daimon is shown in place of the cold body.
 #[derive(Debug, Clone, PartialEq)]
@@ -1789,21 +2772,31 @@ pub fn crystal_split(json: &str, hot_cap: usize) -> Outcome<CrystalSplit> {
     })
 }
 
-/// The crystal block `compose_daimon` pushes into the system message.
+/// The standing block `compose_daimon` pushes into the system message.
 ///
-/// For a whole crystal this is exactly the sentence it has always been, so nothing changes for
-/// the Diamonds that were never near the ceiling.  For a split one it is the hot JSON, the
-/// outline, and the one sentence that says how to move a section between the two -- which is the
-/// only place that can be said with the Diamond's own sizes in it.
-pub fn crystal_prompt_text(s: &CrystalSplit) -> String {
+/// **THE ORDER IS THE CONTRACT** (`dev/CRYSTAL_CONTRACT.md` §12): the hot crystal, then
+/// `REQUIREMENTS.md` whole, then `STATE.md` whole, then the tail of `DECISIONS.md`, then the
+/// outline of what is cold.  What this Diamond IS comes before what is to do, what is to do
+/// before where things are, and the outline last because it is a menu rather than a fact.
+///
+/// For a whole crystal the first part is exactly the sentence it has always been, so nothing
+/// changes for the Diamonds that were never near the ceiling.  For a split one it is the hot
+/// JSON, the outline, and the one sentence that says how to move a section between the two --
+/// which is the only place that can be said with the Diamond's own sizes in it.
+///
+/// # Arguments
+/// * `s` - The crystal as [`crystal_split`] left it.
+/// * `files` - The three files as the turn found them; [`Standing::default`] where a Diamond has
+///   none yet, which says nothing rather than three empty headings.
+pub fn crystal_prompt_text(s: &CrystalSplit, files: &Standing) -> String {
     if s.whole {
-        return fmt!("\n\nCurrent crystal.json:\n{}", s.hot);
+        return fmt!("\n\nCurrent crystal.json:\n{}{}", s.hot, files.prompt_text());
     }
     let mut out = fmt!(
         "\n\nCurrent crystal.json — the HOT part ({} of {} bytes; the rest is reachable, not \
-        gone):\n{}\n\nThe cold part, by section (crystal_read fetches one; recall searches all \
-        of it and everything this conversation has folded):\n",
-        s.hot_bytes, s.total_bytes, s.hot);
+        gone):\n{}{}\n\nThe cold part of the crystal, by section (crystal_read fetches one; \
+        recall searches all of it and everything this conversation has folded):\n",
+        s.hot_bytes, s.total_bytes, s.hot, files.prompt_text());
     for row in &s.outline {
         if row.heading.is_empty() {
             out.push_str(&fmt!("- {} — {} bytes\n", row.key, row.bytes));
@@ -1812,13 +2805,14 @@ pub fn crystal_prompt_text(s: &CrystalSplit) -> String {
                 row.heading, row.bytes, if row.hot { " (hot)" } else { "" }));
         }
     }
+    let room = crystal_hot_room(files.hot_bytes());
     out.push_str(&fmt!(
         "A section you need in front of you on every round gets \"hot\": true; the hot part may \
-        not exceed {} bytes", crystal_hot_cap()));
-    if s.hot_bytes > crystal_hot_cap() {
+        not exceed {} bytes", room));
+    if s.hot_bytes > room {
         out.push_str(&fmt!(
             ", and this one is already {} over it — shorten the summary or take the flag off a \
-            section", s.hot_bytes - crystal_hot_cap()));
+            section", s.hot_bytes - room));
     }
     out.push_str(".\n");
     out
@@ -5005,14 +5999,118 @@ fn tree_line(node: &TreeNode) -> String {
     }
 }
 
-/// Claude-Code-grade directory snapshot: a depth-limited tree, largest entries cut first when it
-/// does not fit [`ORIENTATION_TREE_CHARS`].
+/// Does a directory's own name look like the source or test tree itself, rather than packaging
+/// or metadata sitting beside it?
 ///
-/// **Cut order is by size, not by walk order.**  A handful of small, readable directories say more
-/// about the workspace's shape than one giant `bulk/` that would otherwise eat the whole budget
-/// first merely for having been listed first; so where the rendered tree is over cap, the largest
-/// surviving entry is dropped, one at a time, until it fits -- the surviving lines keep the walk's
-/// own order, only the removal order is by size.
+/// Used only to order which children of an oversized kept root are cut (see
+/// [`fit_root_within`]): a `package.json` sibling of `src/` and `test/` is exactly the kind of
+/// small, easily-fitting file that used to survive a size-first cut while the two folders the
+/// model actually needed were dropped.
+fn looks_like_source_dir(path: &str) -> bool {
+    let leaf = path.rsplit('/').next().unwrap_or(path).to_lowercase();
+    matches!(leaf.as_str(), "src" | "source" | "lib" | "test" | "tests")
+}
+
+/// The position in `recent` (0 = newest) of the freshest file the walk found at or under `root`,
+/// or `None` where nothing under it carries a known modification time.
+fn root_recency(root: &str, recent: &[String]) -> Option<usize> {
+    let prefix = fmt!("{}/", root);
+    recent.iter().position(|p| p == root || p.starts_with(&prefix))
+}
+
+/// Is `cwd` this root itself, or does it sit under it?
+fn root_holds_cwd(root: &str, cwd: &str) -> bool {
+    !cwd.is_empty() && (cwd == root || cwd.starts_with(&fmt!("{}/", root)))
+}
+
+/// One past the last descendant of `kept[start]`: everything following it that sits deeper than
+/// it does, which for a pre-order walk is exactly its own subtree.
+fn subtree_end(kept: &[&TreeNode], start: usize) -> usize {
+    let depth = kept[start].depth;
+    let mut end = start + 1;
+    while end < kept.len() && kept[end].depth > depth {
+        end += 1;
+    }
+    end
+}
+
+/// Trims one root that must be kept whole in principle down to `budget` characters, by dropping
+/// whole direct children (each with its own descendants) rather than individual lines -- a
+/// `src/` missing half its files would mislead more than one named as cut.
+///
+/// Drop order is non-source children first, stalest first within that group, and only then a
+/// `src`/`test`/`lib`-like child, itself stalest first -- never the reverse, so the folder a task
+/// actually needs is the last thing this gives up. At least the root's own line, plus its single
+/// highest-priority child's subtree, always survives, matching the guarantee
+/// [`format_orientation_tree`] gives every other root.
+///
+/// # Arguments
+/// * `kept` - The full depth-filtered node list `root`'s indices are into.
+/// * `root` - Index of the root's own line.
+/// * `end` - One past the root's last descendant, i.e. [`subtree_end`] of `root`.
+/// * `budget` - Most characters this root's own contribution may spend, its own line included.
+/// * `recent` - Full-depth paths, newest first, used to rank each child's own staleness.
+fn fit_root_within(
+    kept:   &[&TreeNode],
+    root:   usize,
+    end:    usize,
+    budget: usize,
+    recent: &[String],
+)
+    -> (Vec<String>, usize, usize)
+{
+    let root_line = tree_line(kept[root]);
+    let mut used = root_line.chars().count() + 1;
+    let depth = kept[root].depth;
+    let children: Vec<usize> = (root + 1..end).filter(|&k| kept[k].depth == depth + 1).collect();
+
+    // Kept preferentially: source-like children first, then freshest first within a tier -- the
+    // exact reverse of the order they would be dropped in.
+    let mut priority = children.clone();
+    priority.sort_by_key(|&c| (
+        !looks_like_source_dir(&kept[c].path),
+        root_recency(&kept[c].path, recent).unwrap_or(usize::MAX),
+    ));
+
+    let mut keep: HashSet<usize> = HashSet::new();
+    for &c in &priority {
+        let ce = subtree_end(kept, c);
+        let cost: usize = kept[c..ce].iter().map(|n| tree_line(n).chars().count() + 1).sum();
+        if used + cost <= budget || keep.is_empty() {
+            used += cost;
+            keep.insert(c);
+        }
+    }
+
+    let mut cut_dirs = 0usize;
+    let mut cut_files = 0usize;
+    let mut lines = vec![root_line];
+    for &c in &children {
+        if keep.contains(&c) {
+            let ce = subtree_end(kept, c);
+            lines.extend(kept[c..ce].iter().map(|n| tree_line(n)));
+        } else if kept[c].is_dir {
+            cut_dirs += 1;
+        } else {
+            cut_files += 1;
+        }
+    }
+    (lines, cut_dirs, cut_files)
+}
+
+/// Claude-Code-grade directory snapshot: a depth-limited tree, cut by relevance rather than size
+/// when it does not fit [`ORIENTATION_TREE_CHARS`].
+///
+/// **Cut order is by staleness, whole subtrees at a time, not by size.** The top-level entry
+/// holding the newest file `recent` names, and the one holding `cwd`, are kept whole; the rest
+/// are added in the same order a "Recently changed" line would name them, freshest first, until
+/// the next one would not fit -- everything from there on, no fresher than what just failed, is
+/// cut as one stale block. `package.json (122 bytes)` surviving while `src/` and `test/` are cut
+/// -- the failure this replaces -- can no longer happen: a small, stale sibling is worth less
+/// than a large, relevant one, not more.
+///
+/// A root that alone exceeds what is left of the budget is not dropped for being kept whole
+/// wrongly -- see [`fit_root_within`] for how it gives up its own least-relevant children first.
 ///
 /// Depth is enforced here as well as by the walker that built `nodes`, so a caller's mistake does
 /// not silently reach the model as a wider tree than the design allows.
@@ -5021,30 +6119,123 @@ fn tree_line(node: &TreeNode) -> String {
 /// * `nodes` - Every candidate entry the walk found.
 /// * `max_depth` - The deepest depth (inclusive) shown; anything deeper is dropped before sizing.
 /// * `cap` - Most characters the rendered tree, including its own cut notice, may take.
-pub(crate) fn format_orientation_tree(nodes: &[TreeNode], max_depth: usize, cap: usize) -> String {
-    let mut kept: Vec<&TreeNode> = nodes.iter().filter(|n| n.depth <= max_depth).collect();
+/// * `cwd` - The turn's own working folder, workspace-relative; empty for the workspace root.
+/// * `recent` - Full-depth paths the same walk found, newest first (see [`orientation_tree`]).
+pub(crate) fn format_orientation_tree(
+    nodes:     &[TreeNode],
+    max_depth: usize,
+    cap:       usize,
+    cwd:       &str,
+    recent:    &[String],
+)
+    -> String
+{
+    let kept: Vec<&TreeNode> = nodes.iter().filter(|n| n.depth <= max_depth).collect();
     if kept.is_empty() {
         return String::new();
     }
-    let total_in = kept.len();
-    loop {
-        let lines: Vec<String> = kept.iter().map(|n| tree_line(n)).collect();
-        let cut = kept.len() < total_in;
-        let mut body = lines.join("\n");
-        if cut {
-            body.push_str(&fmt!("\n… {} more; file_glob to see them", total_in - kept.len()));
-        }
-        if body.chars().count() <= cap || kept.len() <= 1 {
-            return body;
-        }
-        // Drop the largest surviving entry and try again. A directory's `bytes` already sums its
-        // descendants, so this compares fairly against a plain file.
-        let worst = kept.iter().enumerate()
-            .max_by_key(|(_, n)| n.bytes)
-            .map(|(i, _)| i)
-            .unwrap_or(0);
-        kept.remove(worst);
+    let mut roots: Vec<usize> = (0..kept.len()).filter(|&i| kept[i].depth == 0).collect();
+    if roots.is_empty() {
+        // A real walk always pushes depth 0 first; this is only a safety net against malformed
+        // input, so it skips the relevance ordering below rather than mis-deriving it.
+        return kept.iter().map(|n| tree_line(n)).collect::<Vec<_>>().join("\n");
     }
+
+    let recent_root_idx = roots.iter().copied()
+        .filter_map(|i| root_recency(&kept[i].path, recent).map(|r| (r, i)))
+        .min()
+        .map(|(_, i)| i);
+    let cwd_root_idx = roots.iter().copied().find(|&i| root_holds_cwd(&kept[i].path, cwd));
+
+    let mut order: Vec<usize> = Vec::with_capacity(roots.len());
+    for i in [recent_root_idx, cwd_root_idx].into_iter().flatten() {
+        if !order.contains(&i) {
+            order.push(i);
+        }
+    }
+    let priority: HashSet<usize> = order.iter().copied().collect();
+    roots.sort_by_key(|&i| root_recency(&kept[i].path, recent).unwrap_or(usize::MAX));
+    for i in roots {
+        if !order.contains(&i) {
+            order.push(i);
+        }
+    }
+
+    // Greedily fills `order` into `budget` characters, whole subtrees at a time. Run twice when
+    // something is cut: the first pass does not know how long its own cut notice will be, so a
+    // second pass against `cap` minus that notice's length is what keeps the total at or under
+    // `cap` -- the notice's own wording can only shrink on the retry (fewer units fit a smaller
+    // budget, never more), so one retry is enough to converge.
+    let fit_at = |budget: usize| -> (Vec<String>, usize, usize) {
+        let mut lines: Vec<String> = Vec::new();
+        let mut used = 0usize;
+        let mut cut_dirs = 0usize;
+        let mut cut_files = 0usize;
+        for (pos, &i) in order.iter().enumerate() {
+            let end = subtree_end(&kept, i);
+            let unit_lines: Vec<String> = kept[i..end].iter().map(|n| tree_line(n)).collect();
+            let unit_cost: usize = unit_lines.iter().map(|l| l.chars().count() + 1).sum();
+            if used + unit_cost <= budget {
+                used += unit_cost;
+                lines.extend(unit_lines);
+                continue;
+            }
+            if priority.contains(&i) || lines.is_empty() {
+                // Kept whole is the rule, and a first root emptying the tree entirely is worse
+                // than one over budget: either way, give up only its own least-relevant children.
+                let (fitted, dirs, files) = fit_root_within(
+                    &kept, i, end, budget.saturating_sub(used).max(1), recent);
+                used += fitted.iter().map(|l| l.chars().count() + 1).sum::<usize>();
+                lines.extend(fitted);
+                cut_dirs += dirs;
+                cut_files += files;
+                continue;
+            }
+            // Nothing from here on is fresher than the root that just failed to fit: cut the
+            // rest of `order` as one stale block rather than hunting for a smaller straggler.
+            for &j in &order[pos..] {
+                if kept[j].is_dir { cut_dirs += 1 } else { cut_files += 1 }
+            }
+            break;
+        }
+        (lines, cut_dirs, cut_files)
+    };
+
+    let notice = |dropped: usize, cut_dirs: usize, cut_files: usize| -> String {
+        if dropped == 0 {
+            return String::new();
+        }
+        let mut kind = Vec::new();
+        if cut_dirs > 0 {
+            kind.push(fmt!("{} stale director{}", cut_dirs, if cut_dirs == 1 { "y" } else { "ies" }));
+        }
+        if cut_files > 0 {
+            kind.push(fmt!("{} stale file{}", cut_files, if cut_files == 1 { "" } else { "s" }));
+        }
+        let kind_desc = if kind.is_empty() { fmt!("entries") } else { kind.join(", ") };
+        fmt!("\n… {} more ({}); file_glob to see them", dropped, kind_desc)
+    };
+
+    let (lines, cut_dirs, cut_files) = fit_at(cap);
+    let tail = notice(kept.len() - lines.len(), cut_dirs, cut_files);
+    let (lines, tail) = if tail.is_empty() {
+        (lines, tail)
+    } else if lines.join("\n").chars().count() + tail.chars().count() <= cap {
+        (lines, tail)
+    } else {
+        // The first pass could not know its own notice's length before choosing what to keep.
+        // Retried once against a worst-case reserve for that notice -- every count it could ever
+        // name is at most `kept.len()`, so sizing the reserve off that (not off the pass-1 tail,
+        // which under-reserves whenever the retry itself drops something further) guarantees this
+        // second selection is final: whatever it actually drops, the true notice for it is no
+        // longer than the reserve, so it is never re-derived out from under a choice already made.
+        let reserve = notice(kept.len(), kept.len(), kept.len()).chars().count();
+        let (lines2, dirs2, files2) = fit_at(cap.saturating_sub(reserve));
+        (lines2.clone(), notice(kept.len() - lines2.len(), dirs2, files2))
+    };
+    let mut body = lines.join("\n");
+    body.push_str(&tail);
+    body
 }
 
 /// The one-line "where you are" a Claude-Code-style cwd sentence gives for free.
@@ -5086,7 +6277,9 @@ pub(crate) fn orientation_recent_lines(recent: &[String], max: usize) -> String 
 /// * `cwd` - The turn's own working folder, workspace-relative.
 /// * `nodes` - Every candidate entry the walk found: depth 0-2 under the root, or 0-3 under a mark.
 /// * `max_depth` - Passed straight to [`format_orientation_tree`].
-/// * `recent` - Passed straight to [`orientation_recent_lines`].
+/// * `recent` - Full-depth paths the same walk found, newest first; passed whole to
+///   [`format_orientation_tree`] for its relevance ordering, then only the first 8 are shown via
+///   [`orientation_recent_lines`].
 pub(crate) fn orientation_tree_note(
     cwd:       &str,
     nodes:     &[TreeNode],
@@ -5095,7 +6288,7 @@ pub(crate) fn orientation_tree_note(
 )
     -> String
 {
-    let tree = format_orientation_tree(nodes, max_depth, ORIENTATION_TREE_CHARS);
+    let tree = format_orientation_tree(nodes, max_depth, ORIENTATION_TREE_CHARS, cwd, recent);
     if tree.is_empty() {
         return String::new();
     }
@@ -5286,8 +6479,9 @@ pub(crate) async fn orientation_tree(ctx: &ToolContext, cwd: &str, bounds: &[Bou
     }
     let nodes = dedupe_orientation_nodes(nodes);
     recent.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    // Passed whole, not pre-truncated: `format_orientation_tree` ranks every root's staleness
+    // against the full list, and `orientation_tree_note` is what caps the printed line to 8.
     let recent_paths = dedupe_recent_paths(recent.into_iter().map(|(p, _)| p).collect());
-    let recent_paths: Vec<String> = recent_paths.into_iter().take(8).collect();
     orientation_tree_note(cwd, &nodes, 3, &recent_paths)
 }
 
@@ -13135,13 +14329,14 @@ const FILE_EDIT_SINGLE: &str = r#"{"type":"object","properties":{"path":{"type":
 const CLAUDE_READ_DESC: &str =
     "Reads a file from the local filesystem, within the user's workspace. Paths are \
     workspace-relative ('src/main.rs'); a leading '/' is DROPPED rather than refused, so an \
-    absolute path lands somewhere you did not mean. Each line is returned prefixed with its \
-    line number and a tab, cat -n style, starting at 1 -- strip that prefix before quoting a \
-    line into Edit's old_string. Supports an optional 'offset' and 'limit' for a large file; a \
-    partial page says which lines it holds of how many and gives the next call. \"paths\":[..], \
-    or a glob in 'path' such as 'src/*.js', reads several small files in one round. Reading an \
-    image gives its type and size, not the picture: add \"as\":\"image\" to look, \"as\":\
-    \"base64\" for the bytes as a data: URI. Read before you edit. Daimond calls this file_read.";
+    absolute path lands wrong. Each line is returned prefixed with its line number and a tab, \
+    cat -n style, starting at 1 -- strip that prefix before quoting a line into Edit's \
+    old_string. Supports an optional 'offset' and 'limit' for a large file; a partial page says \
+    which lines it holds of how many and gives the next call. A glob in 'path' such as \
+    'src/*.js', or \"paths\":[..], reads a whole folder in one call -- do that before following \
+    its imports one at a time. Reading an image gives its type and size, not the picture: add \
+    \"as\":\"image\" to look, \"as\":\"base64\" for the bytes as a data: URI. Daimond calls \
+    this file_read.";
 const CLAUDE_EDIT_DESC: &str =
     "Performs exact string replacements in a file. 'old_string' must be the file's own bytes -- \
     Read prefixes each line with its number and a tab, so strip that from anything copied out \
@@ -13961,7 +15156,7 @@ impl Tool {
     /// One-line description for the LLM.
     pub fn description(&self) -> &'static str {
         match self {
-            Tool::FileRead    => "Read a UTF-8 text file from the workspace. Paths here and in every file tool are workspace-relative ('src/main.rs'); a leading '/' is DROPPED rather than refused, so an absolute path lands somewhere you did not mean. Each line comes back as its number, a TAB, then the text -- the number and tab are this tool's: strip them before quoting into file_edit's old_string. A long file comes in pages: 'offset' is the 1-based first line, 'limit' how many, 'end' the last line inclusive; a partial page says which lines it holds of how many and gives the next call. \"paths\":[..], or a glob in 'path' such as 'src/*.js', reads several small files in one round. A bare read of a big file is a 200-line peek; use outline to map it and file_search to find a name, then read the region. Read before you edit. Reading an image gives its type and size, not the picture: add \"as\":\"image\" to look, \"as\":\"base64\" for the bytes as a data: URI.",
+            Tool::FileRead    => "Read a UTF-8 text file from the workspace. Paths here and in every file tool are workspace-relative ('src/main.rs'); a leading '/' is DROPPED rather than refused, so an absolute path lands wrong. Each line comes back as its number, a TAB, then the text -- strip both before quoting into file_edit's old_string. A long file comes in pages: 'offset' is the 1-based first line, 'limit' how many, 'end' the last line inclusive; a partial page says which lines it holds of how many and gives the next call. A glob in 'path' such as 'src/*.js', or \"paths\":[..], reads a whole folder in one call -- do that before following its imports one at a time, not a file per round. A bare read of a big file is a 200-line peek; use outline to map it and file_search to find a name, then read the region. Reading an image gives its type and size, not the picture: add \"as\":\"image\" to look, \"as\":\"base64\" for the bytes as a data: URI.",
             Tool::FileWrite   => "Create or overwrite a file in the workspace with the given content.",
             Tool::FileEdit    => "Replace exact, unique substrings in a workspace text file. Give either one 'old_string'/'new_string' pair, or 'edits' -- a list of such pairs applied in order, which is one round instead of many and is what to prefer. ALL OR NOTHING: if any pair fails to match, nothing at all is written and the reply names the ones that failed, so re-send only those. 'old_string' must be the file's own bytes -- file_read prefixes each line with its number and a TAB, so strip that from anything copied out of a read -- and must be unique; include surrounding text.",
             Tool::FileList    => "List the entries of a workspace directory. One directory, no recursion: to find files by name across a tree use file_glob, and to find files by their contents use file_search.",
@@ -14071,7 +15266,7 @@ impl Tool {
     /// The tool's JSON-Schema `parameters` object.
     fn parameters(&self) -> &'static str {
         match self {
-            Tool::FileRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute. May be a glob such as 'src/*.js', which reads every file it matches."},"paths":{"type":"array","items":{"type":"string"},"description":"Several files in one call, each under its own header. Use it for a handful of small files rather than one call each."},"offset":{"type":"integer","description":"1-based line number to start at (default 1). Use the offset the previous page's notice gave you."},"limit":{"type":"integer","description":"How many lines to return (default 2000, maximum 10000). Fewer are returned when the output budget runs out first, and the result says so."},"end":{"type":"integer","description":"1-based last line to return, inclusive: read exactly 'offset' to 'end'. Give this instead of 'limit' when you know a range by its two ends, e.g. a function you saw at lines 40-90. Overrides 'limit' if both are given."},"as":{"type":"string","enum":["image","base64"],"description":"For a picture or other binary. Omit to be told what the file is without being shown it. 'image' attaches the picture to look at, and only works if you can see. 'base64' returns the bytes encoded, for embedding as a data: URI."}},"required":["path"]}"#,
+            Tool::FileRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute. May be a glob such as 'src/*.js', which reads every file it matches."},"paths":{"type":"array","items":{"type":"string"},"description":"Several files in one call, each under its own header -- read a whole folder this way, not one call each."},"offset":{"type":"integer","description":"1-based line number to start at (default 1). Use the offset the previous page's notice gave you."},"limit":{"type":"integer","description":"How many lines to return (default 2000, maximum 10000). Fewer are returned when the output budget runs out first, and the result says so."},"end":{"type":"integer","description":"1-based last line to return, inclusive: read exactly 'offset' to 'end'. Give this instead of 'limit' when you know a range by its two ends, e.g. a function you saw at lines 40-90. Overrides 'limit' if both are given."},"as":{"type":"string","enum":["image","base64"],"description":"For a picture or other binary. Omit to be told what the file is without being shown it. 'image' attaches the picture to look at, and only works if you can see. 'base64' returns the bytes encoded, for embedding as a data: URI."}},"required":["path"]}"#,
             Tool::FileWrite => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute"},"content":{"type":"string","description":"Full file content"}},"required":["path","content"]}"#,
             Tool::FileEdit => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path; never absolute"},"edits":{"type":"array","description":"The replacements, in order; each applies to the file as the one before it left it","items":{"type":"object","properties":{"old_string":{"type":"string","description":"Exact substring to replace; must be unique in the file"},"new_string":{"type":"string","description":"Replacement; empty deletes"}},"required":["old_string","new_string"]}},"old_string":{"type":"string","description":"Single-edit form, used when 'edits' is absent"},"new_string":{"type":"string","description":"Replacement, for the single-edit form"}},"required":["path"]}"#,
             Tool::FileList => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory (default '.')"}}}"#,
@@ -14303,6 +15498,145 @@ impl Tool {
             "The mail tools read the mailbox the Mail panel syncs into the browser's storage, \
             and file a draft where that panel reads it; this is the native build, which has \
             neither the panel nor the mailbox."; Unimplemented))
+    }
+
+    /// Search the three files and every `.md` that has retired out of them.
+    ///
+    /// Walked rather than named, because the archives are appended to by the app and a second
+    /// list of their names here is a second thing to keep in step with `standing_archive`.
+    ///
+    /// # Arguments
+    /// * `id` - The Diamond whose files these are.
+    /// * `opts` - The search, exactly as the crystal half was given it.
+    /// * `stats` - Carried on from the crystal half, so the `[recall]` line counts one search.
+    /// * `out` - The lines found so far, appended to.
+    #[cfg(target_arch = "wasm32")]
+    async fn recall_standing(
+        id:    &str,
+        opts:  &SearchOpts,
+        stats: &mut SearchStats,
+        out:   &mut Vec<String>,
+    )
+        -> Outcome<()>
+    {
+        let mut paths: Vec<String> = STANDING_FILES.iter()
+            .map(|leaf| fmt!("{}/{}/{}", STORE_ROOT, id, leaf))
+            .collect();
+        let dir = fmt!("{}/{}/{}", STORE_ROOT, id, DAIMOND_DIR.trim_end_matches('/'));
+        if let Ok(entries) = crate::wasm::opfs::list_dir(FileRoot::Opfs, &dir).await {
+            let mut found: Vec<String> = entries.iter()
+                .filter(|(name, is_dir, _)| !*is_dir && name.ends_with(".md"))
+                .map(|(name, _, _)| fmt!("{}/{}", dir, name))
+                .collect();
+            found.sort();
+            paths.extend(found);
+        }
+        for path in &paths {
+            let text = match crate::wasm::opfs::read_file(FileRoot::Opfs, path).await {
+                Ok(b)  => String::from_utf8_lossy(&b).into_owned(),
+                Err(_) => continue,
+            };
+            if text.trim().is_empty() {
+                continue;
+            }
+            stats.files += 1;
+            let lines = all_numbered(&text);
+            if !res!(scan_file(opts, path, &lines, stats, out)) {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    /// What this Diamond's three markdown files cost in the system message per round, in bytes.
+    ///
+    /// Read off DISK rather than carried, because the door that asks is a tool call in the middle
+    /// of a turn and the file may have been edited by the call before it.  Zero for a path that
+    /// is not under a Diamond, which is every path outside the store.
+    ///
+    /// # Arguments
+    /// * `path` - A workspace-relative path under `diamonds/<id>/`.
+    #[cfg(target_arch = "wasm32")]
+    async fn standing_hot(ctx: &ToolContext, path: &str) -> usize {
+        let id = diamond_of_path(path);
+        if id.is_empty() {
+            return 0;
+        }
+        let read = |leaf: &'static str| {
+            let p = fmt!("{}/{}/{}", STORE_ROOT, id, leaf);
+            async move {
+                crate::wasm::opfs::read_file(ctx.root, &p).await
+                    .map(|b| String::from_utf8_lossy(&b).into_owned())
+                    .unwrap_or_default()
+            }
+        };
+        Standing {
+            requirements: read(REQUIREMENTS_FILE).await,
+            decisions:    read(DECISIONS_FILE).await,
+            state:        read(STATE_FILE).await,
+        }.hot_bytes()
+    }
+
+    /// A write to one of the three files, with what does not fit moved to its archive.
+    ///
+    /// **THE APP'S ARITHMETIC AND NEVER A MODEL'S**, which is the whole reason the caps can be
+    /// small enough to be worth having: finished items leave `REQUIREMENTS.md` oldest first and
+    /// decision lines older than the last twenty leave `DECISIONS.md` oldest first, into
+    /// `.daimond/done.md` and `.daimond/decisions-archive.md` where `recall` and `file_read`
+    /// still reach them.  Nothing is deleted and nothing is summarised.
+    ///
+    /// Any other path, and a write already under its ceiling, comes back exactly as it went in
+    /// with nothing said -- so this is on the path of every `file_write` and costs one length
+    /// comparison there.
+    ///
+    /// **Two doors come through here**: a daimon's `file_write` and `file_edit`, and the context
+    /// fold's own absorb (`crate::wasm::diamond::absorb_fold_notes`).  It takes the ROOT rather
+    /// than the whole tool context, because the fold has no tool context and a second copy of
+    /// this arithmetic beside it is how a fold and a hand edit come to retire differently.
+    ///
+    /// # Arguments
+    /// * `root` - Where the Diamond's store is; `FileRoot::Opfs` for every caller so far.
+    /// * `path` - The workspace-relative path being written.
+    /// * `text` - What the write would leave on disk.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) async fn standing_retired(
+        root: FileRoot,
+        path: &str,
+        text: String,
+    )
+        -> Outcome<(String, String)>
+    {
+        let leaf = match standing_leaf(path) {
+            Some(l) => l,
+            None    => return Ok((text, String::new())),
+        };
+        let cap = standing_cap(leaf);
+        if text.len() <= cap {
+            return Ok((text, String::new()));
+        }
+        let out = match leaf {
+            REQUIREMENTS_FILE => retire_done(&text, cap),
+            DECISIONS_FILE    => retire_decisions(&text, cap),
+            // `STATE.md` holds no history, so it has nothing to retire and is simply refused.
+            _                 => return Ok((text, String::new())),
+        };
+        if out.retired.is_empty() {
+            return Ok((text, String::new()));
+        }
+        let archive = standing_archive(leaf, &diamond_of_path(path));
+        let mut all = crate::wasm::opfs::read_file(root, &archive).await
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
+        if !all.is_empty() && !all.ends_with('\n') {
+            all.push('\n');
+        }
+        all.push_str(&out.retired);
+        res!(crate::wasm::opfs::write_file(root, &archive, all.as_bytes()).await);
+        let moved = out.retired.lines().count();
+        Ok((out.kept, fmt!(
+            "\n{} was over its {}-byte ceiling, so the {} oldest finished {} moved to {}, where \
+            recall still searches them and file_read still opens them. Nothing was deleted.",
+            leaf, cap, moved, if moved == 1 { "line" } else { "lines" }, archive)))
     }
 
     /// The outline `crystal_read` answers with when it is given no arguments.
@@ -14901,12 +16235,18 @@ impl Tool {
                         }
                     }
                 }
-                // A crystal has a ceiling on each of its two files, and this is the door a daimon
-                // uses: it edits `crystal.json` and `crystal.html` with the ordinary file tools,
-                // and the store only sees the result afterwards, when `record_steer` snapshots
-                // whatever is on disk. Refusing there would be refusing a write that already
-                // happened.
-                if is_crystal_data_path(&path) || is_crystal_page_path(&path) {
+                // THE THREE MARKDOWN FILES RETIRE BEFORE THEY ARE MEASURED, so the ceiling the
+                // refusal below reports is on what is LIVE. The arithmetic is the app's; a model
+                // asked to prune its own record prunes what it judges unimportant, which is the
+                // judgement the record exists to survive.
+                let (content, retired) = res!(Self::standing_retired(ctx.root, &path, content).await);
+                // A Diamond has a ceiling on five of its files, and this is the door a daimon
+                // uses: it edits them with the ordinary file tools, and the store only sees the
+                // result afterwards, when `record_steer` snapshots whatever is on disk. Refusing
+                // there would be refusing a write that already happened.
+                if is_crystal_data_path(&path) || is_crystal_page_path(&path)
+                    || standing_leaf(&path).is_some()
+                {
                     // The TEXT and not its length: the hot ceiling has to split each side
                     // before it can measure it. Lossy where the file is not UTF-8, which a
                     // crystal and a page both are; the total ceiling's arithmetic is on bytes
@@ -14914,7 +16254,9 @@ impl Tool {
                     let old = crate::wasm::opfs::read_file(ctx.root, &path).await
                         .map(|b| String::from_utf8_lossy(&b).into_owned())
                         .unwrap_or_default();
-                    if let Some(msg) = crystal_cap_refusal(&path, &content, &old) {
+                    if let Some(msg) = diamond_cap_refusal(
+                        &path, &content, &old, Self::standing_hot(ctx, &path).await)
+                    {
                         return Err(err!("file_write: {}", msg; Invalid, Input, Size));
                     }
                 }
@@ -14932,7 +16274,7 @@ impl Tool {
                 res!(crate::wasm::opfs::write_file(ctx.root, &path, content.as_bytes()).await);
                 let mut st = lock_cache(&ctx.read_seen);
                 st.seen.insert(path.clone(), content_hash(content.as_bytes()));
-                Ok(fmt!("Wrote {} bytes to {}.{}", content.len(), path, place_line))
+                Ok(fmt!("Wrote {} bytes to {}.{}{}", content.len(), path, place_line, retired))
             }
             Tool::DocEdit => {
                 let raw = res!(Self::arg(args_json, "path"));
@@ -15297,7 +16639,13 @@ impl Tool {
                 //
                 // `data` is the content BEFORE the replacement, so an edit that shrinks an
                 // already-oversized crystal is still allowed, exactly as at the other doors.
-                if let Some(msg) = crystal_cap_refusal(&path, &updated, &data) {
+                // Retired first, exactly as at the write door and by the same function, so an
+                // edit that tips one of the three over its ceiling is relieved rather than
+                // refused -- and a daimon that appends a decision a day never meets the limit.
+                let (updated, retired) = res!(Self::standing_retired(ctx.root, &path, updated).await);
+                if let Some(msg) = diamond_cap_refusal(
+                    &path, &updated, &data, Self::standing_hot(ctx, &path).await)
+                {
                     return Err(err!("file_edit: {}", msg; Invalid, Input, Size));
                 }
                 res!(crate::wasm::opfs::write_file(ctx.root, &path, updated.as_bytes()).await);
@@ -15305,7 +16653,8 @@ impl Tool {
                 // safely; record the new state as this agent's latest view.
                 let mut st = lock_cache(&ctx.read_seen);
                 st.seen.insert(path.clone(), content_hash(updated.as_bytes()));
-                Ok(fmt!("{}{}", Self::edit_said(&path, hunks.len()), relaxed_said(&relaxed)))
+                Ok(fmt!("{}{}{}", Self::edit_said(&path, hunks.len()),
+                    relaxed_said(&relaxed), retired))
             }
             Tool::FileList => {
                 let raw = extract_json_string(args_json, "path").unwrap_or_else(|| ".".to_string());
@@ -16181,7 +17530,13 @@ impl Tool {
                     .unwrap_or_default();
                 let opts  = res!(search_opts(args_json));
                 let mut stats = SearchStats::default();
-                let lines = res!(recall_crystal(&json, &opts, &mut stats));
+                let mut lines = res!(recall_crystal(&json, &opts, &mut stats));
+                // AND THE FILES BESIDE IT, live and retired. A decision made a month ago is in
+                // `.daimond/decisions-archive.md` and in no prompt anywhere, so a recall that
+                // searched the crystal alone would answer "nothing" about the one record the
+                // whole file set exists to keep. Named by their own paths, so what comes back
+                // can be opened with file_read.
+                res!(Self::recall_standing(&id, &opts, &mut stats, &mut lines).await);
                 Ok(Self::recall_said(&opts, &lines, &stats))
             }
             Tool::LinkAdd => {
@@ -21268,11 +22623,13 @@ mod tests {
                 path: fmt!("folder-{:03}/quite-a-long-name-for-one-entry", i),
                 is_dir: true, files: i + 1, bytes: (i as u64 + 1) * 4_000, depth: 0 })
             .collect();
-        let out = format_orientation_tree(&many, 2, ORIENTATION_TREE_CHARS);
+        let out = format_orientation_tree(&many, 2, ORIENTATION_TREE_CHARS, "", &[]);
         assert!(out.chars().count() <= ORIENTATION_TREE_CHARS,
             "the tree is {} characters: {}", out.chars().count(), out);
-        assert!(out.contains("more; file_glob to see them"),
+        assert!(out.contains("more (") && out.contains("file_glob to see them"),
             "a cut tree does not say it was cut: {}", out);
+        assert!(out.contains("stale director"),
+            "the cut notice does not name what kind was cut: {}", out);
     }
 
     /// Depth beyond the cap is dropped, whatever a caller handed the formatter -- the cap is
@@ -21282,30 +22639,108 @@ mod tests {
         let mut nodes = tree_fixture();
         nodes.push(TreeNode {
             path: fmt!("packages/x/src/deep"), is_dir: false, files: 0, bytes: 5, depth: 3 });
-        let out = format_orientation_tree(&nodes, 2, ORIENTATION_TREE_CHARS);
+        let out = format_orientation_tree(&nodes, 2, ORIENTATION_TREE_CHARS, "", &[]);
         assert!(out.contains("packages/x/src"), "the depth-2 entry was cut too: {}", out);
         assert!(!out.contains("packages/x/src/deep"),
             "an entry past max_depth was shown: {}", out);
     }
 
-    /// Over the cap, the LARGEST entry is cut first, not the one a walk happened to find last --
-    /// three small entries survive a cap that only the fourth, huge one cannot fit under.
+    /// Over the cap, the STALEST entry is cut first, whatever its size -- a large but freshly
+    /// changed directory survives ahead of small, untouched siblings, the reverse of what a
+    /// size-first cut did (see the module note on `package.json` outliving `src/`).
     #[test]
-    fn test_the_orientation_tree_cuts_the_largest_entry_first_00() {
+    fn test_the_orientation_tree_cuts_the_stalest_entry_first_00() {
         let nodes = vec![
-            TreeNode { path: fmt!("tiny-a"), is_dir: false, files: 0, bytes: 10, depth: 0 },
-            TreeNode { path: fmt!("tiny-b"), is_dir: false, files: 0, bytes: 10, depth: 0 },
-            TreeNode { path: fmt!("tiny-c"), is_dir: false, files: 0, bytes: 10, depth: 0 },
+            TreeNode { path: fmt!("stale-a"), is_dir: false, files: 0, bytes: 10, depth: 0 },
+            TreeNode { path: fmt!("stale-b"), is_dir: false, files: 0, bytes: 10, depth: 0 },
+            TreeNode { path: fmt!("stale-c"), is_dir: false, files: 0, bytes: 10, depth: 0 },
             TreeNode {
-                path: fmt!("a-directory-with-a-fairly-long-name"), is_dir: true, files: 900,
-                bytes: 9_000_000, depth: 0 },
+                path: fmt!("fresh-big-directory-with-a-fairly-long-name"), is_dir: true,
+                files: 900, bytes: 9_000_000, depth: 0 },
         ];
-        // Under all four lines together, over the three tiny ones plus the cut notice.
-        let out = format_orientation_tree(&nodes, 2, 95);
-        assert!(!out.contains("a-directory-with-a-fairly-long-name"),
-            "the largest entry survived the cut: {}", out);
-        assert!(out.contains("tiny-a") && out.contains("tiny-b") && out.contains("tiny-c"),
-            "a small entry was cut ahead of the large one: {}", out);
+        // The one entry the walk found a recent file under.
+        let recent = vec![fmt!("fresh-big-directory-with-a-fairly-long-name/just-edited.rs")];
+        // Under all four lines together, over the freshest plus one tiny stale entry.
+        let out = format_orientation_tree(&nodes, 2, 90, "", &recent);
+        assert!(out.contains("fresh-big-directory-with-a-fairly-long-name"),
+            "the freshest entry was cut ahead of a stale one: {}", out);
+        assert!(!out.contains("stale-c"),
+            "the stalest entry survived a cut that should have dropped it first: {}", out);
+        assert!(out.contains("stale director") || out.contains("stale file"),
+            "the cut notice does not name what kind was cut: {}", out);
+    }
+
+    /// A realistic multi-project workspace: sixteen sibling trial directories, each holding
+    /// `package.json`, `src/`, and `test/` -- the exact shape that used to keep the tiny
+    /// `package.json` while dropping `src/` and `test/` for being the largest entries (see the
+    /// module note on `format_orientation_tree`). Only trial 0's own recent file marks it as the
+    /// project actually being worked on.
+    fn trial_dirs_fixture() -> (Vec<TreeNode>, Vec<String>) {
+        let mut nodes = Vec::new();
+        for i in 0..16 {
+            let root = fmt!("trial-{:02}", i);
+            nodes.push(TreeNode { path: root.clone(), is_dir: true, files: 3, bytes: 900, depth: 0 });
+            nodes.push(TreeNode {
+                path: fmt!("{}/package.json", root), is_dir: false, files: 0, bytes: 122, depth: 1 });
+            nodes.push(TreeNode {
+                path: fmt!("{}/src", root), is_dir: true, files: 1, bytes: 400, depth: 1 });
+            nodes.push(TreeNode {
+                path: fmt!("{}/src/main.rs", root), is_dir: false, files: 0, bytes: 400, depth: 2 });
+            nodes.push(TreeNode {
+                path: fmt!("{}/test", root), is_dir: true, files: 1, bytes: 380, depth: 1 });
+            nodes.push(TreeNode {
+                path: fmt!("{}/test/it.rs", root), is_dir: false, files: 0, bytes: 380, depth: 2 });
+        }
+        // trial-00 is the only one the walk found a recent file under.
+        (nodes, vec![fmt!("trial-00/src/main.rs")])
+    }
+
+    /// The newest trial's own `src/` and `test/` survive a cap sixteen full trials cannot all fit
+    /// under; the other fifteen do not -- the failure the diagnosis named, fixed: a project's own
+    /// source is what the model is shown, not fifteen more copies of `package.json`.
+    #[test]
+    fn test_the_newest_trial_keeps_its_source_the_other_fifteen_do_not_00() {
+        let (nodes, recent) = trial_dirs_fixture();
+        let out = format_orientation_tree(&nodes, 2, 400, "", &recent);
+        assert!(out.contains("trial-00/src/main.rs"),
+            "the newest trial's own source was cut: {}", out);
+        assert!(out.contains("trial-00/test/it.rs"),
+            "the newest trial's own tests were cut: {}", out);
+        for i in 1..16 {
+            assert!(!out.contains(&fmt!("trial-{:02}/src/main.rs", i)),
+                "trial {} survived alongside the newest one: {}", i, out);
+        }
+        assert!(out.contains("stale director"),
+            "the cut notice does not say what kind was cut: {}", out);
+    }
+
+    /// A kept root too large for its own budget drops `docs/` (has files, not source-like) and
+    /// `empty/` (no files at all) before it ever touches `src/` or `test/` -- never the reverse,
+    /// matching the diagnosis: `package.json` is not what a task named a folder for.
+    #[test]
+    fn test_a_kept_root_drops_non_source_children_before_source_ones_00() {
+        let nodes = vec![
+            TreeNode { path: fmt!("project"), is_dir: true, files: 4, bytes: 400, depth: 0 },
+            TreeNode { path: fmt!("project/docs"), is_dir: true, files: 1, bytes: 100, depth: 1 },
+            TreeNode {
+                path: fmt!("project/docs/plan.md"), is_dir: false, files: 0, bytes: 100, depth: 2 },
+            TreeNode { path: fmt!("project/empty"), is_dir: true, files: 0, bytes: 0, depth: 1 },
+            TreeNode { path: fmt!("project/src"), is_dir: true, files: 1, bytes: 100, depth: 1 },
+            TreeNode {
+                path: fmt!("project/src/main.rs"), is_dir: false, files: 0, bytes: 100, depth: 2 },
+            TreeNode { path: fmt!("project/test"), is_dir: true, files: 1, bytes: 100, depth: 1 },
+            TreeNode {
+                path: fmt!("project/test/it.rs"), is_dir: false, files: 0, bytes: 100, depth: 2 },
+        ];
+        // "project" is kept whole in principle (it is the cwd) but is too big for this cap, so it
+        // must give up some of its own children.
+        let out = format_orientation_tree(&nodes, 2, 255, "project", &[]);
+        assert!(out.contains("project/src/main.rs"), "the source child was dropped: {}", out);
+        assert!(out.contains("project/test/it.rs"), "the test child was dropped: {}", out);
+        assert!(!out.contains("project/docs"),
+            "the non-source sibling survived ahead of source: {}", out);
+        assert!(!out.contains("project/empty"),
+            "the file-less sibling survived ahead of source: {}", out);
     }
 
     /// A plain file sitting at the top level, beside directories, is shown -- CC's snapshot lists
@@ -21313,14 +22748,14 @@ mod tests {
     /// the one-line root listing it replaces.
     #[test]
     fn test_the_orientation_tree_shows_a_decoy_top_level_file_00() {
-        let out = format_orientation_tree(&tree_fixture(), 2, ORIENTATION_TREE_CHARS);
+        let out = format_orientation_tree(&tree_fixture(), 2, ORIENTATION_TREE_CHARS, "", &[]);
         assert!(out.contains("README.md"), "the top-level file was dropped: {}", out);
     }
 
     /// A directory nested two levels under the root is shown at a depth-2 cap.
     #[test]
     fn test_the_orientation_tree_shows_a_nested_directory_00() {
-        let out = format_orientation_tree(&tree_fixture(), 2, ORIENTATION_TREE_CHARS);
+        let out = format_orientation_tree(&tree_fixture(), 2, ORIENTATION_TREE_CHARS, "", &[]);
         assert!(out.contains("packages/x/src"), "the nested directory was dropped: {}", out);
     }
 
@@ -21370,7 +22805,7 @@ mod tests {
             TreeNode { path: fmt!("packages"), is_dir: true, files: 1, bytes: 100, depth: 0 },
             TreeNode { path: fmt!("packages/x"), is_dir: false, files: 0, bytes: 100, depth: 1 },
         ];
-        let out = format_orientation_tree(&nodes, 2, ORIENTATION_TREE_CHARS);
+        let out = format_orientation_tree(&nodes, 2, ORIENTATION_TREE_CHARS, "", &[]);
         let lines: Vec<&str> = out.lines().collect();
         let parent_line = lines.iter()
             .position(|l| l.trim_start() == "packages/ (1 file, 100 bytes)")
@@ -22942,11 +24377,11 @@ mod tests {
             "zero must mean the engine's own ceiling and nothing else");
         // The write the owner was refused: over the OLD default, well under the shipped one.
         let hot = |n: usize| fmt!("{{\"summary\":\"{}\"}}", "h".repeat(n));
-        assert!(crystal_hot_refusal(&hot(4 * 1024 + 512), "").is_none(),
+        assert!(crystal_hot_refusal(&hot(4 * 1024 + 512), "", 0).is_none(),
             "a hot part over the retired 4 KiB default was refused with nothing set");
-        assert!(crystal_hot_refusal(&hot(CRYSTAL_HOT_CAP_DEFAULT + 2_048), "").is_some(),
+        assert!(crystal_hot_refusal(&hot(CRYSTAL_HOT_CAP_DEFAULT + 2_048), "", 0).is_some(),
             "a hot part over the shipped ceiling was not refused");
-        let shipped = crystal_hot_cap_message(CRYSTAL_HOT_CAP_DEFAULT + 2_048);
+        let shipped = crystal_hot_cap_message(CRYSTAL_HOT_CAP_DEFAULT + 2_048, 0);
         assert!(shipped.contains(&fmt!("{}", CRYSTAL_HOT_CAP_DEFAULT)), "{}", shipped);
         assert!(!shipped.contains("IS A SETTING"),
             "the shipped ceiling was described as somebody's setting: {}", shipped);
@@ -22954,7 +24389,7 @@ mod tests {
         // which is the sentence that separates a setting from a stale engine in one read.
         set_crystal_hot_cap(4 * 1024);
         assert_eq!(4 * 1024, crystal_hot_cap());
-        let set = crystal_hot_cap_message(4 * 1024 + 32);
+        let set = crystal_hot_cap_message(4 * 1024 + 32, 0);
         assert!(set.contains("4096"), "{}", set);
         assert!(set.contains("IS A SETTING"), "a chosen ceiling did not say it was chosen: {}", set);
         assert!(set.contains(&fmt!("{}", CRYSTAL_HOT_CAP_DEFAULT)),
@@ -22978,21 +24413,21 @@ mod tests {
         set_crystal_hot_cap(1_000_000);
         let bytes = |n: usize| fmt!("{{\"summary\":\"{}\"}}", "m".repeat(n - 16));
 
-        assert!(crystal_cap_refusal(data, &bytes(2_000), "").is_some(),
+        assert!(diamond_cap_refusal(data, &bytes(2_000), "", 0).is_some(),
             "2 KB of memory is over 1 KB");
-        assert!(crystal_cap_refusal(page, &bytes(2_000), "").is_none(),
+        assert!(diamond_cap_refusal(page, &bytes(2_000), "", 0).is_none(),
             "2 KB of page is under 4 KB");
-        assert!(crystal_cap_refusal(page, &bytes(5_000), "").is_some());
+        assert!(diamond_cap_refusal(page, &bytes(5_000), "", 0).is_some());
 
         // Each refusal must name its own ceiling and its own way out, or a daimon acts on the
         // wrong advice: a page cannot move its weight into the Diamond's scope.
-        let m = match crystal_cap_refusal(data, &bytes(2_000), "") {
+        let m = match diamond_cap_refusal(data, &bytes(2_000), "", 0) {
             Some(m) => m,
             None    => panic!("2 KB of memory over a 1 KB ceiling must be refused"),
         };
         assert!(m.contains("1000"), "the refusal names the ceiling in force: {}", m);
         assert!(m.contains("scope"), "the memory's way out names the scope: {}", m);
-        let m = match crystal_cap_refusal(page, &bytes(5_000), "") {
+        let m = match diamond_cap_refusal(page, &bytes(5_000), "", 0) {
             Some(m) => m,
             None    => panic!("5 KB of page over a 4 KB ceiling must be refused"),
         };
@@ -23000,10 +24435,10 @@ mod tests {
         assert!(m.contains("crystal.json"), "the page's way out is the data: {}", m);
 
         // Anything that is not one of the two answers to neither.
-        assert!(crystal_cap_refusal("diamonds/abc123/versions/0007.json",
-            &bytes(90_000), "").is_none());
-        assert!(crystal_cap_refusal("notes/crystal.json", &bytes(90_000), "").is_none());
-        assert!(crystal_cap_refusal("diamonds/abc123/crystal.md", &bytes(90_000), "").is_none(),
+        assert!(diamond_cap_refusal("diamonds/abc123/versions/0007.json",
+            &bytes(90_000), "", 0).is_none());
+        assert!(diamond_cap_refusal("notes/crystal.json", &bytes(90_000), "", 0).is_none());
+        assert!(diamond_cap_refusal("diamonds/abc123/crystal.md", &bytes(90_000), "", 0).is_none(),
             "the old name is not a live crystal");
 
         set_crystal_cap(0);
@@ -23051,13 +24486,13 @@ mod tests {
         assert!(s.whole, "a crystal under the hot ceiling rides whole");
         assert_eq!(small, s.hot, "and it is handed over byte for byte");
         assert!(s.outline.is_empty(), "there is nothing cold to outline");
-        let said = crystal_prompt_text(&s);
+        let said = crystal_prompt_text(&s, &Standing::default());
         assert_eq!(fmt!("\n\nCurrent crystal.json:\n{}", small), said,
             "a whole crystal composes exactly as it did before the split existed");
     }
 
     #[test]
-    fn test_the_hot_part_is_title_summary_open_and_flagged_sections_00() {
+    fn test_the_hot_part_is_title_summary_and_flagged_sections_00() {
         let json = split_fixture();
         let s = match crystal_split(&json, 512) {
             Ok(s)  => s,
@@ -23065,7 +24500,10 @@ mod tests {
         };
         assert!(!s.whole, "the fixture is over the ceiling, so it splits");
         assert!(s.hot.contains("Ship the parser"), "title is always hot: {}", s.hot);
-        assert!(s.hot.contains("old spelling"), "open is always hot: {}", s.hot);
+        // `open` LEFT THE SCHEMA on 2026-09-15 and is cold like any other unknown key: the
+        // fixture still carries one, because a crystal written before the migration does.
+        assert!(!s.hot.contains("old spelling"),
+            "a key that is no longer in the schema is still being pushed hot: {}", s.hot);
         assert!(s.hot.contains("Decisions"), "a flagged section is hot: {}", s.hot);
         assert!(s.hot.contains("Ground rules"), "and so is the other one: {}", s.hot);
         assert!(!s.hot.contains("Architecture"), "an unflagged section is cold: {}", s.hot);
@@ -23103,7 +24541,7 @@ mod tests {
             .collect();
         assert_eq!(vec!["Decisions", "Ground rules"], hot);
         // And the prompt block says the same thing, since that is what a daimon actually reads.
-        let said = crystal_prompt_text(&s);
+        let said = crystal_prompt_text(&s, &Standing::default());
         assert!(said.contains("Architecture"), "the outline reaches the prompt: {}", said);
         assert!(!said.contains("architecture word"), "and the cold BODY does not: {}", said);
         // As does the answer `crystal_read` gives when it is called with no arguments, which is
@@ -23113,6 +24551,630 @@ mod tests {
             "the tool's outline names a cold section as cold: {}", told);
         assert!(told.contains("mood"), "and the key nobody here has heard of: {}", told);
         assert!(!told.contains("architecture word"), "and still not the body: {}", told);
+    }
+
+
+    // ── The three files beside the crystal ───────────────────────────────────
+    //
+    // `dev/CRYSTAL_CONTRACT.md` §12 is the contract these assert. The browser half -- seeding on
+    // create, the lazy creation on an existing Diamond, and `recall` over the archives -- is
+    // `dev/verify_reqfiles.mjs`, because all three of those are OPFS and OPFS is not here.
+
+
+    /// The shipped templates are a SHAPE a model can imitate, and each is small enough to ride.
+    #[test]
+    fn test_the_shipped_templates_carry_the_shape_and_fit_their_ceilings_00() {
+        for leaf in STANDING_FILES {
+            let t = standing_template(leaf);
+            assert!(!t.is_empty(), "{} ships no template, so a new Diamond gets an empty file",
+                leaf);
+            assert!(t.len() < standing_cap(leaf) / 4,
+                "{}'s template is {} bytes against a {}-byte ceiling, so a Diamond starts a \
+                quarter full", leaf, t.len(), standing_cap(leaf));
+            assert!(t.starts_with("# "), "{} does not open with a title: {}", leaf, t);
+        }
+        // The two headings the retirement arithmetic and the migration both look for by name.
+        let req = standing_template(REQUIREMENTS_FILE);
+        assert!(req.contains("## Done"),
+            "REQUIREMENTS.md ships without the tail `retire_done` sweeps: {}", req);
+        assert!(req.contains("- [ ] "),
+            "a model is shown no task line to imitate: {}", req);
+        assert!(standing_template(STATE_FILE).contains("## Next step"),
+            "STATE.md ships without the question a daimon re-derives every turn");
+    }
+
+    /// A path answers to one ceiling and one archive, and a path outside a Diamond to neither.
+    #[test]
+    fn test_only_a_diamonds_own_three_files_answer_to_these_ceilings_00() {
+        assert_eq!(Some(REQUIREMENTS_FILE), standing_leaf("diamonds/abc123/REQUIREMENTS.md"));
+        assert_eq!(Some(DECISIONS_FILE),    standing_leaf("diamonds/abc123/DECISIONS.md"));
+        assert_eq!(Some(STATE_FILE),        standing_leaf("diamonds/abc123/STATE.md"));
+        // Not a user's own file of the same name, anywhere else in the workspace -- a ceiling on
+        // that would be a ceiling on their work.
+        assert_eq!(None, standing_leaf("notes/REQUIREMENTS.md"));
+        assert_eq!(None, standing_leaf("diamonds/abc123/sub/REQUIREMENTS.md"));
+        assert_eq!(None, standing_leaf("diamonds/abc123/requirements.md"));
+        assert_eq!("diamonds/abc123/.daimond/done.md",
+            standing_archive(REQUIREMENTS_FILE, "abc123"));
+        assert_eq!("diamonds/abc123/.daimond/decisions-archive.md",
+            standing_archive(DECISIONS_FILE, "abc123"));
+        assert_eq!("", standing_archive(STATE_FILE, "abc123"),
+            "STATE.md holds no history, so it retires nowhere");
+        assert_eq!("abc123", diamond_of_path("diamonds/abc123/REQUIREMENTS.md"));
+    }
+
+    /// A refusal names the file, the size, the ceiling and where the archive is.
+    #[test]
+    fn test_a_refused_write_names_the_file_the_size_the_cap_and_the_archive_00() {
+        let data = "diamonds/abc123/REQUIREMENTS.md";
+        let big  = "x".repeat(REQUIREMENTS_CAP + 100);
+        let m = match diamond_cap_refusal(data, &big, "", 0) {
+            Some(m) => m,
+            None    => panic!("a write {} bytes over the ceiling was allowed", 100),
+        };
+        assert!(m.contains(REQUIREMENTS_FILE), "the file is not named: {}", m);
+        assert!(m.contains(&fmt!("{}", big.len())), "what the write weighed is not said: {}", m);
+        assert!(m.contains(&fmt!("{}", REQUIREMENTS_CAP)), "the ceiling is not said: {}", m);
+        assert!(m.contains("diamonds/abc123/.daimond/done.md"),
+            "the archive path is not named, so the daimon cannot go and look: {}", m);
+        // STATE.md is refused in different words, because its way out is a different one: it has
+        // no archive, and what has grown it belongs in one of the other two.
+        let st = match diamond_cap_refusal(
+            "diamonds/abc123/STATE.md", &"y".repeat(STATE_CAP + 1), "", 0)
+        {
+            Some(m) => m,
+            None    => panic!("STATE.md over its ceiling was allowed"),
+        };
+        assert!(st.contains(DECISIONS_FILE) && st.contains(REQUIREMENTS_FILE),
+            "STATE.md's refusal does not say where the record belongs instead: {}", st);
+        // And the asymmetry every other ceiling here has: an oversized file may be edited DOWN.
+        assert!(diamond_cap_refusal(data, &"x".repeat(REQUIREMENTS_CAP + 50),
+            &"x".repeat(REQUIREMENTS_CAP + 100), 0).is_none(),
+            "a write that SHRINKS an oversized file was refused, which bricks the Diamond");
+    }
+
+    /// Done items retire oldest first, and nothing that is still open ever moves.
+    #[test]
+    fn test_retirement_takes_finished_items_oldest_first_and_never_an_open_one_00() {
+        let long = "x".repeat(200);
+        let mut text = fmt!("# Requirements\n\n## O1 Ship it\n\n- [ ] T99 still open {}\n\n## Done\n\n",
+            long);
+        for i in 0..60 {
+            text.push_str(&fmt!("- [x] T{} done {}\n", i, long));
+        }
+        let cap = 4_096;
+        let out = retire_done(&text, cap);
+        assert!(out.kept.len() <= cap,
+            "retirement left {} bytes against a {}-byte ceiling", out.kept.len(), cap);
+        assert!(out.kept.contains("T99 still open"),
+            "an OPEN task was retired, which is the one thing this file may never lose");
+        assert!(out.kept.contains("## Done"), "the heading itself was swept: {}", out.kept);
+        // Oldest first: T0 goes before T59, and what left is exactly what is in the archive.
+        assert!(out.retired.contains("T0 done"), "the oldest was kept: {}", &out.retired[..60]);
+        assert!(!out.retired.contains("T59 done"), "the newest was retired first");
+        assert!(out.kept.contains("T59 done"), "the newest done item is still live");
+        for line in out.retired.lines() {
+            assert!(!out.kept.contains(line), "a line is in both the file and the archive");
+        }
+        // Total: under the ceiling, nothing moves and the text comes back byte for byte.
+        let small = "# Requirements\n\n## Done\n\n- [x] T1 done\n";
+        assert_eq!(Retired { kept: small.to_string(), retired: String::new() },
+            retire_done(small, cap));
+        // And a file with no `## Done` at all is left alone rather than half-swept.
+        let none = fmt!("# Requirements\n\n{}", "- [ ] T1 open\n".repeat(500));
+        assert_eq!("", retire_decisions(&none, cap).retired.get(..0).unwrap_or(""));
+        assert_eq!(none, retire_done(&none, cap).kept);
+    }
+
+    /// The last twenty decision lines never retire, however far over the ceiling the file is.
+    #[test]
+    fn test_the_last_twenty_decisions_never_retire_00() {
+        let long = "y".repeat(60);
+        let mut text = fmt!("# Decisions\n\nOne dated line each.\n\n");
+        for i in 0..80 {
+            text.push_str(&fmt!("- 2026-09-{:02} D{} {}\n", (i % 28) + 1, i, long));
+        }
+        let cap = 4_096;
+        let out = retire_decisions(&text, cap);
+        assert!(out.kept.len() <= cap,
+            "retirement left {} bytes against {}", out.kept.len(), cap);
+        assert!(out.kept.contains("# Decisions"), "the title was swept: {}", out.kept);
+        assert!(out.kept.contains("One dated line each"),
+            "the rule the file opens with was swept out of the live file");
+        for i in 60..80 {
+            assert!(out.kept.contains(&fmt!("D{} ", i)),
+                "D{} is inside the last twenty and was retired anyway", i);
+        }
+        assert!(out.retired.contains("D0 "), "the oldest did not retire");
+        assert!(!out.retired.contains("D79 "), "the newest retired");
+        // What rides in the prompt is exactly those twenty, in order.
+        let tail = decisions_tail(&out.kept);
+        assert_eq!(DECISIONS_HOT_LINES, tail.lines().count(),
+            "the prompt carries {} lines, not {}", tail.lines().count(), DECISIONS_HOT_LINES);
+        assert!(tail.lines().next().unwrap_or("").contains("D") && tail.ends_with(&fmt!("{}", long)),
+            "the tail is not the END of the file: {}", &tail[..40]);
+        // AND THE FLOOR HOLDS WHEN IT CANNOT WIN. Twenty lines fat enough to exceed the ceiling
+        // by themselves leave the file over it -- retirement stops, and `standing_refused` then
+        // refuses the write in words the daimon can act on. Eating into the twenty to make the
+        // arithmetic come out would be the app deleting the record to satisfy its own rule.
+        let fat: String = (0..30).map(|i| fmt!("- D{} {}\n", i, "z".repeat(400))).collect();
+        let out = retire_decisions(&fat, cap);
+        assert!(out.kept.len() > cap, "the floor was broken to reach the ceiling");
+        assert_eq!(DECISIONS_HOT_LINES, out.kept.lines().count(),
+            "what is left is exactly the twenty that may never retire");
+        assert!(standing_refused(DECISIONS_FILE, out.kept.len(), 0) == (out.kept.len() > DECISIONS_CAP),
+            "the door and the arithmetic disagree about what is left");
+    }
+
+    /// The prompt carries the crystal, then requirements, then state, then the decisions' tail.
+    #[test]
+    fn test_the_prompt_block_is_in_the_contracts_order_00() {
+        let files = Standing {
+            requirements: "# Requirements\n\n- [ ] T1 MARKER-REQ\n".to_string(),
+            decisions:    "# Decisions\n\nrule\n\n- 2026-09-15 MARKER-DEC\n".to_string(),
+            state:        "# State\n\n## Next step\n\nMARKER-STATE\n".to_string(),
+        };
+        let split = match crystal_split(r#"{"title":"MARKER-CRYSTAL"}"#, 4_096) {
+            Ok(s)  => s,
+            Err(e) => panic!("{}", e),
+        };
+        let said = crystal_prompt_text(&split, &files);
+        let at = |m: &str| match said.find(m) {
+            Some(i) => i,
+            None    => panic!("{} is not in the prompt block:\n{}", m, said),
+        };
+        assert!(at("MARKER-CRYSTAL") < at("MARKER-REQ"), "the crystal comes first:\n{}", said);
+        assert!(at("MARKER-REQ") < at("MARKER-STATE"), "requirements before state:\n{}", said);
+        assert!(at("MARKER-STATE") < at("MARKER-DEC"), "state before decisions:\n{}", said);
+        assert!(said.contains(REQUIREMENTS_FILE) && said.contains(STATE_FILE)
+            && said.contains(DECISIONS_FILE),
+            "the block does not name the files, so the daimon cannot edit them:\n{}", said);
+        // A Diamond with no files yet says nothing at all rather than three empty headings.
+        let bare = crystal_prompt_text(&split, &Standing::default());
+        assert!(!bare.contains(REQUIREMENTS_FILE), "an unseeded Diamond was given headings:\n{}",
+            bare);
+    }
+
+    /// The files are paid INSIDE the 16 KiB hot ceiling, and the crystal is told where it went.
+    #[test]
+    fn test_the_three_files_are_paid_inside_the_hot_ceiling_00() {
+        set_crystal_hot_cap(0);
+        assert_eq!(crystal_hot_cap(), crystal_hot_room(0),
+            "a Diamond with no files has the whole ceiling");
+        assert_eq!(crystal_hot_cap() - 1_000, crystal_hot_room(1_000));
+        // The worst case the caps bound: the crystal still has room to be a crystal.
+        let worst = REQUIREMENTS_CAP + STATE_CAP + DECISIONS_HOT_BUDGET;
+        assert!(crystal_hot_room(worst) >= 2_048,
+            "with all three files full the crystal has {} bytes of hot room, which is below the \
+            4 KiB that was measured to cost two thirds of a model's answers",
+            crystal_hot_room(worst));
+        // A crystal that fits the bare ceiling and not the room is refused, and the refusal says
+        // which files took the difference.
+        let hot = |n: usize| fmt!(r#"{{"summary":"{}"}}"#, "z".repeat(n));
+        let just = hot(crystal_hot_cap() - 2_000);
+        assert!(crystal_hot_refusal(&just, "", 0).is_none(), "it fits with no files");
+        let m = match crystal_hot_refusal(&just, "", 4_000) {
+            Some(m) => m,
+            None    => panic!("the files' share was not charged against the ceiling"),
+        };
+        assert!(m.contains(REQUIREMENTS_FILE) && m.contains("4000"),
+            "the refusal does not say where the rest of the ceiling went: {}", m);
+        // AND THE FLOOR HOLDS. A ceiling LOWERED below what the files already weigh would
+        // otherwise leave a room of zero and refuse every write to the crystal for ever,
+        // including one that only touched a cold section.
+        set_crystal_hot_cap(600);
+        assert!(crystal_hot_room(5_000) >= 75,
+            "a ceiling under the files' own weight bricked the crystal: {}",
+            crystal_hot_room(5_000));
+        assert!(crystal_hot_refusal(r#"{"title":"t"}"#, "", 5_000).is_none(),
+            "a small crystal was refused because the files outweighed a lowered ceiling");
+        set_crystal_hot_cap(0);
+    }
+
+    /// `open[]` leaves the crystal once, lands under `## Unfiled`, and never lands twice.
+    #[test]
+    fn test_open_migrates_into_the_requirements_file_exactly_once_00() {
+        let json = r#"{"title":"T","open":["chase the decoder","ask about the licence"],
+            "facts":[{"k":"a","v":"b"}]}"#;
+        let (rest, open) = match crystal_without_open(json) {
+            Some(p) => p,
+            None    => panic!("the key was not found"),
+        };
+        assert_eq!(vec!["chase the decoder", "ask about the licence"], open);
+        assert!(!rest.contains("open"), "the key survived the migration: {}", rest);
+        assert!(rest.contains("chase") == false, "and so did its contents: {}", rest);
+        assert!(rest.contains("\"a\""), "an unrelated key was dropped: {}", rest);
+        // A crystal with no `open`, an empty one, and one that will not parse are all left alone
+        // -- the last most of all, since the turn that has to mend it must see what it left.
+        assert!(crystal_without_open(r#"{"title":"T"}"#).is_none());
+        assert!(crystal_without_open("").is_none());
+        assert!(crystal_without_open("{\"title\": \"half").is_none());
+        // Filed under the heading, above `## Done`, and the second run files nothing.
+        let req = standing_template(REQUIREMENTS_FILE);
+        let once = file_unfiled(req, &open);
+        assert!(once.contains("- [ ] chase the decoder"), "not filed as a task: {}", once);
+        let unfiled = match once.find("## Unfiled") { Some(i) => i, None => panic!("{}", once) };
+        let done    = match once.find("## Done")    { Some(i) => i, None => panic!("{}", once) };
+        assert!(unfiled < done, "what is outstanding sits below what is finished: {}", once);
+        assert!(match once.find("chase the decoder") { Some(i) => i < done, None => false },
+            "a migrated entry landed in the Done tail: {}", once);
+        assert_eq!(once, file_unfiled(&once, &open),
+            "a second migration filed the same entries again");
+        // A file with no `## Unfiled` heading at all gains one.
+        let bare = "# Requirements\n\n## O1 Ship\n\n- [ ] T1 go\n";
+        let made = file_unfiled(bare, &open);
+        assert!(made.contains("## Unfiled"), "the heading was not created: {}", made);
+        assert!(made.contains("- [ ] T1 go"), "the existing task was lost: {}", made);
+    }
+
+    /// The three as a Diamond holds them on the turn a fold happens.
+    #[cfg(test)]
+    fn absorb_fixture() -> Standing {
+        Standing {
+            requirements: standing_template(REQUIREMENTS_FILE).to_string(),
+            decisions:    standing_template(DECISIONS_FILE).to_string(),
+            state:        standing_template(STATE_FILE).to_string(),
+        }
+    }
+
+    /// A fold's notes, as `parse_fold_notes` leaves them.
+    #[cfg(test)]
+    fn absorb_notes_fixture() -> crate::agent::compact::FoldNotes {
+        crate::agent::compact::FoldNotes {
+            task:      "mend the decoder".to_string(),
+            next:      "run the suite against world 36".to_string(),
+            open:      vec!["chase the decoder".to_string(), "ask about the licence".to_string()],
+            decisions: vec!["the hot cap stays at 16 KiB because 4 cost two thirds of the answers"
+                .to_string()],
+            found:     vec!["MOCKCAP=4120".to_string()],
+            edited:    vec!["src/tools.rs -- the ceiling".to_string()],
+            read:      vec!["src/compact.rs -- the fold".to_string()],
+        }
+    }
+
+    /// Every slot lands where the contract says, and running the absorb twice files nothing twice.
+    #[test]
+    fn test_a_fold_files_its_notes_into_the_three_and_twice_is_once_00() {
+        let notes = absorb_notes_fixture();
+        let once = absorb_notes(&absorb_fixture(), "", &notes, "2026-09-15");
+        assert!(once.files.requirements.contains("- [ ] chase the decoder"),
+            "an open thread did not reach the requirements:\n{}", once.files.requirements);
+        let unfiled = match once.files.requirements.find(REQUIREMENTS_UNFILED_HEADING) {
+            Some(i) => i,
+            None    => panic!("no Unfiled heading:\n{}", once.files.requirements),
+        };
+        let at = match once.files.requirements.find("chase the decoder") {
+            Some(i) => i,
+            None    => panic!("not filed"),
+        };
+        assert!(at > unfiled, "an open thread landed outside `## Unfiled`:\n{}",
+            once.files.requirements);
+        assert!(once.files.decisions.contains("- 2026-09-15 the hot cap stays at 16 KiB"),
+            "the decision is not dated and appended:\n{}", once.files.decisions);
+        assert!(once.files.state.contains("run the suite against world 36"),
+            "the next step did not reach STATE.md:\n{}", once.files.state);
+        assert!(once.files.state.contains("- MOCKCAP=4120"),
+            "the value the fold exists to carry is not under `## Facts`:\n{}", once.files.state);
+        let facts = match once.files.state.find(STATE_FACTS_HEADING) { Some(i) => i, None => 0 };
+        let value = match once.files.state.find("MOCKCAP") { Some(i) => i, None => 0 };
+        let step  = match once.files.state.find(STATE_NEXT_HEADING) { Some(i) => i, None => 0 };
+        assert!(facts < value && value < step,
+            "the value landed outside `## Facts`:\n{}", once.files.state);
+        // NOTHING IS LEFT OVER, so the notice carries Task, Next step and the ledger and no more.
+        assert!(once.left.open.is_empty() && once.left.decisions.is_empty()
+            && once.left.found.is_empty(),
+            "a ceiling refused something a template-sized Diamond has room for: {:?}", once.left);
+        assert!(once.left.edited.is_empty() && once.left.read.is_empty(),
+            "the ledger's own two slots were carried into the notice as well: {:?}", once.left);
+        assert_eq!(notes.task, once.left.task, "the task left the notice");
+        assert_eq!(notes.next, once.left.next, "the next step left the notice");
+        // TWICE IS ONCE. The same notes, a DIFFERENT day, and the files do not move -- a date
+        // in the dedupe would leave two copies of every ruling in an append-only file.
+        let twice = absorb_notes(&once.files, "", &notes, "2026-09-16");
+        assert_eq!(once.files, twice.files,
+            "a second absorb of the same notes changed the files:\n{}\n---\n{}",
+            once.files.decisions, twice.files.decisions);
+        assert_eq!(1, once.files.decisions.matches("the hot cap stays").count(),
+            "the ruling was filed twice");
+        assert_eq!(1, twice.files.state.matches("MOCKCAP=4120").count(),
+            "the value was filed twice");
+        assert_eq!(1, twice.files.requirements.matches("chase the decoder").count(),
+            "the open thread was filed twice");
+        // And a fold with nothing to say leaves all three byte for byte.
+        let nothing = absorb_notes(&once.files, "", &Default::default(), "2026-09-16");
+        assert_eq!(once.files, nothing.files, "an empty fold rewrote the files");
+    }
+
+    /// A ticked task is never touched, never re-filed, and neither is one that has retired.
+    #[test]
+    fn test_absorb_never_touches_a_ticked_line_nor_resurrects_a_finished_one_00() {
+        let files = Standing {
+            requirements: "# Requirements\n\n## O1 Ship it\n\n\
+                - [x] T3 mend the decoder (v9)\n\
+                - [ ] T4 write the verifier\n\n## Unfiled\n\n## Done\n".to_string(),
+            decisions:    "# Decisions\n\nrule\n\n- 2026-09-01 the store is authoritative\n"
+                .to_string(),
+            state:        standing_template(STATE_FILE).to_string(),
+        };
+        // The archives, which are what `.daimond/done.md` and `decisions-archive.md` hold.
+        let retired = "- [x] T1 ask about the licence (v2)\n\
+            - 2026-08-30 the gateway is not deployed by a lane\n";
+        let notes = crate::agent::compact::FoldNotes {
+            // Each of these is ALREADY answered somewhere: ticked, open, or retired.
+            open: vec![
+                "mend the decoder".to_string(),          // ticked in the live file
+                "T4 write the verifier".to_string(),     // open in the live file
+                "ask about the licence".to_string(),     // ticked and retired to the archive
+                "measure the fold".to_string(),          // genuinely new
+            ],
+            decisions: vec![
+                "the store is authoritative".to_string(),             // live, with a date
+                "the gateway is not deployed by a lane".to_string(),  // retired to the archive
+                "world 36 is this lane's".to_string(),                // genuinely new
+            ],
+            ..Default::default()
+        };
+        let out = absorb_notes(&files, retired, &notes, "2026-09-15");
+        assert!(out.files.requirements.contains("- [x] T3 mend the decoder (v9)"),
+            "a ticked line was rewritten:\n{}", out.files.requirements);
+        assert_eq!(1, out.files.requirements.matches("mend the decoder").count(),
+            "a ticked task came back under `## Unfiled`:\n{}", out.files.requirements);
+        assert_eq!(0, out.files.requirements.matches("ask about the licence").count(),
+            "a task that had retired into the archive was resurrected:\n{}",
+            out.files.requirements);
+        assert_eq!(1, out.files.requirements.matches("write the verifier").count(),
+            "an open task was filed a second time:\n{}", out.files.requirements);
+        assert!(out.files.requirements.contains("- [ ] measure the fold"),
+            "the one genuinely new thread was not filed:\n{}", out.files.requirements);
+        // APPEND ONLY: every line that was there is still there, in order.
+        for line in files.decisions.lines() {
+            assert!(out.files.decisions.contains(line),
+                "a decision line went missing: {}\n{}", line, out.files.decisions);
+        }
+        assert_eq!(1, out.files.decisions.matches("the store is authoritative").count(),
+            "a ruling already on file was filed again with today's date:\n{}",
+            out.files.decisions);
+        assert_eq!(0, out.files.decisions.matches("not deployed by a lane").count(),
+            "a ruling that had retired to the archive was filed again:\n{}",
+            out.files.decisions);
+        assert!(out.files.decisions.contains("- 2026-09-15 world 36 is this lane's"),
+            "the one new ruling was not appended:\n{}", out.files.decisions);
+    }
+
+    /// A ceiling stops the absorb and says what it refused, rather than truncating a file.
+    #[test]
+    fn test_absorb_stops_at_a_ceiling_and_keeps_what_would_not_fit_in_the_notice_00() {
+        let long = "x".repeat(300);
+        let files = Standing {
+            requirements: fmt!("# Requirements\n\n## O1\n\n{}\n## Unfiled\n\n## Done\n",
+                (0..25).map(|i| fmt!("- [ ] T{} open {}\n", i, long)).collect::<String>()),
+            decisions:    standing_template(DECISIONS_FILE).to_string(),
+            state:        fmt!("# State\n\n## Facts\n\n{}\n## Next step\n\nhere\n",
+                (0..12).map(|i| fmt!("- F{} {}\n", i, long)).collect::<String>()),
+        };
+        let notes = crate::agent::compact::FoldNotes {
+            open:  (0..20).map(|i| fmt!("a new thread number {} {}", i, long)).collect(),
+            found: (0..20).map(|i| fmt!("NEWFACT{}={}", i, long)).collect(),
+            ..Default::default()
+        };
+        let out = absorb_notes(&files, "", &notes, "2026-09-15");
+        assert!(out.files.requirements.len() <= REQUIREMENTS_CAP,
+            "the absorb wrote {} bytes into an {}-byte file",
+            out.files.requirements.len(), REQUIREMENTS_CAP);
+        assert!(out.files.state.len() <= STATE_CAP,
+            "the absorb wrote {} bytes into a {}-byte file", out.files.state.len(), STATE_CAP);
+        assert!(!out.left.open.is_empty(),
+            "the ceiling was reached and nothing was said about it");
+        assert!(!out.left.found.is_empty(), "facts were dropped silently");
+        // NOTHING WAS LOST: what did not go in is in the notice, and what did is in the file.
+        for item in &notes.open {
+            let filed = out.files.requirements.contains(item.as_str());
+            assert!(filed != out.left.open.contains(item),
+                "'{}' is in both the file and the notice, or in neither", &item[..24]);
+        }
+        // Every line the file started with is still in it: a ceiling refuses, it never prunes.
+        for line in files.requirements.lines().filter(|l| l.trim().starts_with("- ")) {
+            assert!(out.files.requirements.contains(line),
+                "an existing task was dropped to make room: {}", &line[..20]);
+        }
+    }
+
+    /// The files are a function of the notes, not of the order two folds brought them in.
+    #[test]
+    fn test_the_order_notes_arrive_in_does_not_change_what_the_files_say_00() {
+        let a = crate::agent::compact::FoldNotes {
+            open:      vec!["alpha thread".to_string()],
+            decisions: vec!["alpha ruling".to_string()],
+            found:     vec!["ALPHA=1".to_string()],
+            ..Default::default()
+        };
+        let b = crate::agent::compact::FoldNotes {
+            open:      vec!["beta thread".to_string()],
+            decisions: vec!["beta ruling".to_string()],
+            found:     vec!["BETA=2".to_string()],
+            ..Default::default()
+        };
+        let both = crate::agent::compact::FoldNotes {
+            open:      vec!["alpha thread".to_string(), "beta thread".to_string()],
+            decisions: vec!["alpha ruling".to_string(), "beta ruling".to_string()],
+            found:     vec!["ALPHA=1".to_string(), "BETA=2".to_string()],
+            ..Default::default()
+        };
+        let start = absorb_fixture();
+        let one = absorb_notes(&absorb_notes(&start, "", &a, "2026-09-15").files, "", &b,
+            "2026-09-15").files;
+        let two = absorb_notes(&start, "", &both, "2026-09-15").files;
+        assert_eq!(one, two,
+            "two folds and one fold left different files:\n{}\n---\n{}", one.state, two.state);
+        // And what each says is still there whichever way round it arrived.
+        for want in ["alpha thread", "beta thread"] {
+            assert!(one.requirements.contains(want), "{} is missing:\n{}", want, one.requirements);
+        }
+        for want in ["ALPHA=1", "BETA=2"] {
+            assert!(one.state.contains(want), "{} is missing:\n{}", want, one.state);
+        }
+    }
+
+    /// The shipped `STATE.md` carries the two headings the absorb writes into.
+    #[test]
+    fn test_the_state_template_ships_the_headings_a_fold_writes_into_00() {
+        let t = standing_template(STATE_FILE);
+        assert!(t.contains(STATE_FACTS_HEADING),
+            "STATE.md ships without the heading a fold's values go under, so the first fold \
+            invents it: {}", t);
+        assert!(t.contains(STATE_NEXT_HEADING),
+            "STATE.md ships without the heading a fold's next step overwrites: {}", t);
+        // In the reading order the file is meant to have: what is true, then what comes next.
+        let facts = match t.find(STATE_FACTS_HEADING) { Some(i) => i, None => 0 };
+        let step  = match t.find(STATE_NEXT_HEADING)  { Some(i) => i, None => 0 };
+        assert!(facts < step, "the next step is buried above the facts: {}", t);
+    }
+
+    /// The one comparison the turn-end check runs: a task open before, ticked after.
+    #[test]
+    fn test_ticked_tasks_finds_a_task_that_moved_from_open_to_done_00() {
+        let before = "# Requirements\n\n## O1\n\n- [ ] T1 mend the decoder\n\
+            - [ ] T2 write the guide\n\n## Unfiled\n\n## Done\n";
+        let after = "# Requirements\n\n## O1\n\n- [x] T1 mend the decoder (v9)\n\
+            - [ ] T2 write the guide\n\n## Unfiled\n\n## Done\n";
+        assert_eq!(ticked_tasks(before, after), vec!["T1".to_string()]);
+    }
+
+    /// A task already ticked in `before` is not reported again: the check is for what THIS
+    /// turn did, not for the whole file's history.
+    #[test]
+    fn test_ticked_tasks_does_not_report_a_task_that_was_already_ticked_00() {
+        let before = "# Requirements\n\n## O1\n\n- [x] T1 done already (v3)\n\n## Done\n";
+        let after  = "# Requirements\n\n## O1\n\n- [x] T1 done already (v3)\n\n## Done\n";
+        assert!(ticked_tasks(before, after).is_empty());
+    }
+
+    /// A task the daimon added AND ticked in the same turn has no prior open line to match, so
+    /// it is not reported here -- the ordinary "any change mints a version" rule still catches
+    /// the turn regardless.
+    #[test]
+    fn test_ticked_tasks_ignores_a_task_with_no_prior_open_line_00() {
+        let before = "# Requirements\n\n## O1\n\n## Done\n";
+        let after  = "# Requirements\n\n## O1\n\n- [x] T9 brand new and already done (v1)\n\n\
+            ## Done\n";
+        assert!(ticked_tasks(before, after).is_empty());
+    }
+
+    /// Several tasks ticked in one turn are several entries, in the order they appear.
+    #[test]
+    fn test_ticked_tasks_reports_every_tick_in_one_turn_00() {
+        let before = "# Requirements\n\n## O1\n\n- [ ] T1 a\n- [ ] T2 b\n- [ ] T3 c\n\n## Done\n";
+        let after  = "# Requirements\n\n## O1\n\n- [x] T1 a (v2)\n- [ ] T2 b\n- [x] T3 c (v2)\n\n\
+            ## Done\n";
+        assert_eq!(ticked_tasks(before, after), vec!["T1".to_string(), "T3".to_string()]);
+    }
+
+    /// The briefing line names how many objectives and how many open tasks, and the first three
+    /// of the open ones by their own words.
+    #[test]
+    fn test_requirements_briefing_counts_objectives_and_open_tasks_00() {
+        let text = "# Requirements\n\n\
+            ## O1 Ship it\n\n- [ ] T1 write the guide\n- [x] T2 done already (v1)\n\n\
+            ## O2 Keep it running\n\n- [ ] T3 add a verifier\n- [ ] T4 wire the bank task\n\
+            - [ ] T6 mind the gap\n\n\
+            ## Unfiled\n\n- [ ] T5 stray thread\n\n## Done\n";
+        let line = requirements_briefing(text, true);
+        assert!(line.starts_with("2 objectives, 4 open tasks"), "{}", line);
+        assert!(line.contains("top three:"), "{}", line);
+        assert!(line.contains("T1 write the guide"), "{}", line);
+        assert!(line.contains("T3 add a verifier"), "{}", line);
+        assert!(line.contains("T4 wire the bank task"), "{}", line);
+        // A fourth planned task exists (T6) and is not named -- three is three.
+        assert!(!line.contains("T6"), "a fourth task leaked into 'top three': {}", line);
+    }
+
+    /// The count and the list count the same thing: the plan's own open tasks.  An unfiled
+    /// thread is said separately, because the list cannot reach one and a number that swept
+    /// them in sent the daimon looking for tasks nothing would name.
+    #[test]
+    fn test_requirements_briefing_counts_the_plan_and_says_unfiled_apart_00() {
+        let text = "# Requirements\n\n\
+            ## O1 Ship it\n\n- [ ] T2 write the guide\n\n\
+            ## O2 Keep it running\n\n- [ ] T5 add a verifier\n\n\
+            ## O3 Tell the truth\n\n- [ ] T8 wire the bank task\n\n\
+            ## Unfiled\n\n- [ ] the fold's loose thread\n- [ ] and a second one\n\n\
+            ## Done\n\n- [x] T1 shipped it (v3)\n";
+        let line = requirements_briefing(text, true);
+        assert!(line.starts_with("3 objectives, 3 open tasks"),
+            "the unfiled pair was counted as plan tasks: {}", line);
+        assert!(line.contains("T2 ") && line.contains("T5 ") && line.contains("T8 "),
+            "the three the count names are not the three the list names: {}", line);
+        assert!(line.ends_with("; 2 unfiled"), "the unfiled threads went unsaid: {}", line);
+        assert!(!line.contains("loose thread"),
+            "an unfiled thread was named among the top three: {}", line);
+    }
+
+    /// One unfiled thread reads as English, and a ticked line under `## Unfiled` is not one.
+    #[test]
+    fn test_requirements_briefing_unfiled_is_open_lines_only_00() {
+        let text = "# Requirements\n\n## O1 Ship it\n\n- [ ] T1 the only thing left\n\n\
+            ## Unfiled\n\n- [ ] one loose end\n- [x] a thread already dealt with (v2)\n";
+        assert_eq!(requirements_briefing(text, true),
+            "1 objective, 1 open task; top three: T1 the only thing left; 1 unfiled");
+    }
+
+    /// `## Done` ends the unfiled run: a tick filed after it is neither open nor unfiled, and
+    /// an open line there is the plan's again.
+    #[test]
+    fn test_requirements_briefing_a_later_heading_ends_unfiled_00() {
+        let text = "# Requirements\n\n## O1 Ship it\n\n## Unfiled\n\n- [ ] one loose end\n\n\
+            ## Done\n\n- [ ] T9 filed back out of Unfiled\n";
+        let line = requirements_briefing(text, true);
+        assert!(line.starts_with("1 objective, 1 open task"), "{}", line);
+        assert!(line.contains("T9 filed back out of Unfiled"), "{}", line);
+        assert!(line.ends_with("; 1 unfiled"), "{}", line);
+    }
+
+    /// Singular wording for one of either, so the line reads as English rather than as a
+    /// template with the plural left on.
+    #[test]
+    fn test_requirements_briefing_singular_wording_00() {
+        let text = "# Requirements\n\n## O1 Ship it\n\n- [ ] T1 the only thing left\n\n## Done\n";
+        let line = requirements_briefing(text, true);
+        assert_eq!(line, "1 objective, 1 open task; top three: T1 the only thing left");
+    }
+
+    /// `## Unfiled` and `## Done` share the heading level with an objective and are not one.
+    #[test]
+    fn test_requirements_briefing_does_not_count_unfiled_or_done_as_objectives_00() {
+        let text = "# Requirements\n\n## O1 Ship it\n\n## Unfiled\n\n## Done\n";
+        let line = requirements_briefing(text, true);
+        assert!(line.starts_with("1 objective, 0 open tasks"), "{}", line);
+        assert!(!line.contains("top three"), "nothing open, so nothing to name: {}", line);
+    }
+
+    /// A blank file says nothing, the same way `Standing::prompt_text` says nothing for one.
+    #[test]
+    fn test_requirements_briefing_is_empty_for_an_empty_file_00() {
+        assert_eq!(requirements_briefing("", true), "");
+    }
+
+    /// `top3 = false` keeps the counts and drops the named list -- the `notoptrhee` break's
+    /// own switch, `Limits::briefing_top3`.
+    #[test]
+    fn test_requirements_briefing_top3_false_keeps_counts_and_drops_the_list_00() {
+        let text = "# Requirements\n\n## O1 Ship it\n\n- [ ] T1 write the guide\n\n## Done\n";
+        let line = requirements_briefing(text, false);
+        assert!(line.starts_with("1 objective, 1 open task"), "{}", line);
+        assert!(!line.contains("top three"), "the list rode with top3 off: {}", line);
+        assert!(!line.contains("T1"), "the task's own words rode with top3 off: {}", line);
+    }
+
+    /// A task's own words are clipped rather than let run on, so three of them cannot balloon
+    /// the line a daimon reads on every round.
+    #[test]
+    fn test_requirements_briefing_clips_a_long_task_00() {
+        let long = "x".repeat(200);
+        let text = fmt!("# Requirements\n\n## O1\n\n- [ ] T1 {}\n\n## Done\n", long);
+        let line = requirements_briefing(&text, true);
+        assert!(line.len() < text.len(), "the briefing line is not shorter than the file: {}",
+            line.len());
+        assert!(line.contains('…'), "no sign the long task was cut: {}", line);
     }
 
     #[test]
@@ -23181,17 +25243,17 @@ mod tests {
             "{{\"summary\":\"short\",\"sections\":[{{\"heading\":\"H\",\"body\":\"{}\"}}]}}",
             "c".repeat(n));
 
-        assert!(crystal_cap_refusal(data, &hot(400), "").is_some(),
+        assert!(diamond_cap_refusal(data, &hot(400), "", 0).is_some(),
             "a hot part over the ceiling is refused");
-        assert!(crystal_cap_refusal(data, &cold(4_000), "").is_none(),
+        assert!(diamond_cap_refusal(data, &cold(4_000), "", 0).is_none(),
             "four kilobytes of COLD section is not over the hot ceiling");
         // The asymmetry: an already-oversized hot part may still be edited DOWN.
-        assert!(crystal_cap_refusal(data, &hot(400), &hot(900)).is_none(),
+        assert!(diamond_cap_refusal(data, &hot(400), &hot(900), 0).is_none(),
             "a write that shrinks an oversized hot part is allowed");
-        assert!(crystal_cap_refusal(data, &hot(900), &hot(900)).is_some(),
+        assert!(diamond_cap_refusal(data, &hot(900), &hot(900), 0).is_some(),
             "no change is not progress");
         // And the store's door asks the same question in the same words.
-        let m = match crystal_hot_refusal(&hot(400), "") {
+        let m = match crystal_hot_refusal(&hot(400), "", 0) {
             Some(m) => m,
             None    => panic!("the store's door must refuse the same write"),
         };
@@ -23199,7 +25261,7 @@ mod tests {
         assert!(m.contains("hot"), "and names the flag that resolves it: {}", m);
         assert!(m.contains("crystal_read"), "and where the cold half goes: {}", m);
         // A crystal that will not parse has no hot part to measure, and says nothing about one.
-        assert!(crystal_hot_refusal("{not json", "").is_none());
+        assert!(crystal_hot_refusal("{not json", "", 0).is_none());
 
         set_crystal_cap(0);
         set_crystal_hot_cap(0);

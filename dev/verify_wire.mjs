@@ -295,6 +295,18 @@ const fmtTok = (n) => (n % 1024 === 0) ? (n / 1024) + 'k'
 /// This waits for it and opens it — the state a reader who clicks it gets, and the
 /// one every band-reading check below expects.
 async function showWire(p) {
+	// THE DETAILED VIEW FIRST. Since the presentation lane the System band follows
+	// `data-view`: `:root[data-view="simple"] #wire-head { display: none }` in
+	// css/app.css, because the band is a diagnostic and the Simple view is not the
+	// place for one. A first run is Simple, so removing `.collapsed` alone left the
+	// band at zero area and three checks here read a design decision as a band that
+	// was never drawn. What they are about is what the band SAYS, which is a
+	// Detailed-view question.
+	await p.evaluate(() => {
+		if (window.DaimondView && window.DaimondView.set) window.DaimondView.set('max');
+		else document.documentElement.setAttribute('data-view', 'max');
+	});
+	await p.waitForTimeout(200);
 	await p.waitForSelector('#wire-head', { timeout: 8000 }).catch(() => {});
 	await p.evaluate(() => {
 		const box = document.getElementById('wire-head');
@@ -547,6 +559,17 @@ try {
 		'it names THIS Diamond\'s folder', local && local.text.slice(0, 90));
 	check(!!local && local.text.includes('Current crystal.json:'),
 		'and carries the crystal the turn started from');
+	// AND THE THREE FILES BESIDE IT, since 2026-09-15. They are this Diamond's per-turn truth
+	// exactly as the crystal is -- one constant every Diamond shares would be the role prompt,
+	// and these are not that -- so the band that says WHOSE a paragraph is has to hold them or
+	// a reader looking for what is true of this Diamond finds half of it.
+	check(!!local && ['REQUIREMENTS.md', 'STATE.md', 'DECISIONS.md']
+		.every((f) => local.text.includes(f)),
+		'and the three files beside it, under the same heading',
+		local && (local.text.match(/REQUIREMENTS\.md[^\n]*/) || ['(absent)'])[0]);
+	check(!!local && local.text.indexOf('Current crystal.json')
+		< local.text.indexOf('REQUIREMENTS.md'),
+		'in the contract\'s order, the crystal first');
 	check(!!local && !((band(w, 'Safety clause') || {}).text || '').includes('Current crystal.json:'),
 		'so the crystal is not filed under the safety clause');
 	check(!((band(w, 'Safety clause') || {}).text || '').includes('RANUNCULUS'),

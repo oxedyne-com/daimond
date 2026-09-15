@@ -46,6 +46,13 @@
 //                           working, then a tool call and no text at all: the round
 //                           that spends a minute and a half thinking and then says one
 //                           word, which is the round this was all built for.
+//   @reasononly <think1> ;; <think2>
+//                           the round reasons and says NOTHING -- no text, no tool
+//                           call -- on BOTH rounds: nudged once, reasons again, ends
+//                           the turn `reasoned_only`. Proposal 15, 2026-09-15.
+//   @reasononce <think> ;; <answer>
+//                           the survivable half: reasons and says nothing once
+//                           (nudged), then answers normally on the second round.
 //                            PROSE AND THEN A TOOL CALL, in one assistant message,
 //                            then a text reply once the tool returns. Every other
 //                            directive here emits `content: null` beside its calls,
@@ -56,6 +63,9 @@
 //                            read twenty of in one turn while asking where the
 //                            folding was, and nothing could have caught it, because
 //                            nothing could make it happen.
+//   @cutreason <words>       an ordinary text reply, but `finish_reason:"length"`
+//                            rather than `"stop"` -- the provider's own word for a
+//                            reply it cut at the output limit.
 //   @usage <in> <out> [cost] [cached]
 //                            reply reporting those token counts, and -- when the
 //                            trailing two are given -- the USD the provider says
@@ -364,10 +374,83 @@ const isReducer = (messages) => (messages || []).some((m) =>
 /// The delta's own text goes in, because what the fold verifiers assert is that
 /// the words a user typed reached the crystal -- a fixed reply would pass the
 /// parse gate and prove nothing.
-const crystalReply = (words) => JSON.stringify({
+const crystalOnly = (words) => JSON.stringify({
 	title:   'Mock crystal',
 	summary: String(words || '').slice(0, 400),
 }, null, 2);
+
+/// Which shape a REDUCER round should be answered in, read PER REQUEST.
+///
+/// The same sidecar mechanism `foldMode` uses, for the same reason: the mock is
+/// a world-lived process whose environment was fixed when `world.sh` started it,
+/// so a verifier that starts later can only reach it through a file. Read on
+/// every request, so two verifiers can run back to back against one mock.
+///
+///   (nothing)   the crystal alone -- what every fold verifier before 2026-09-15
+///               asserted, and still the default
+///   blocks      the crystal plus the three files, which is what the schema note
+///               now asks for
+///   empty       the three headings with nothing under them, which is what a reply
+///               cut at the output cap looks like
+///   untick      a REQUIREMENTS.md block with the ticked task deleted, which the
+///               app must refuse and re-run
+///   dropkey     a crystal with a populated key gone, likewise
+const reduceMode = () => {
+	if (process.env.DAIMOND_MOCK_REDUCE) return String(process.env.DAIMOND_MOCK_REDUCE);
+	try { return fs.readFileSync(LOG + '.reduce', 'utf8').trim(); } catch { return ''; }
+};
+
+/// What the reducer answers, in whichever shape `reduceMode` names.
+///
+/// The blocks echo the files the request CARRIED, with the delta's words added,
+/// so a verifier can tell a block the mock composed from the request apart from
+/// a fixed string -- exactly as `crystalOnly` echoes the delta's words.
+const crystalReply = (words, messages) => {
+	const asked = String((lastUser(messages) || ''));
+	// THE DELTA, WHICH IS NO LONGER THE WHOLE REQUEST. Since 2026-09-15 the reducer is sent
+	// the crystal AND the three files AND the delta, so the first 400 characters of the
+	// request are the files and the words a verifier typed are past them -- which is how
+	// "the crystal mentions what was said" came to be false of a working fold.
+	const body = (function () {
+		const at = asked.lastIndexOf('Delta to fold in:');
+		return at < 0 ? '' : asked.slice(at + 'Delta to fold in:'.length).trim();
+	})() || String(words || '');
+	const mode = reduceMode();
+	if (!mode) return crystalOnly(body);
+	// SPLIT ON THE SEPARATOR THE APP WRITES, not on the first occurrence of a heading: the
+	// crystal's own summary can quote one, and it does whenever a previous fold put the
+	// whole request in it. A quoted heading is inside a JSON string, so its newlines are
+	// escaped and it cannot open a section here.
+	const sections = asked.split('\n\n---\n');
+	const heldOf = (leaf) => {
+		const head = 'Current ' + leaf + ':\n';
+		const sec = sections.find((x) => x.startsWith(head));
+		return sec ? sec.slice(head.length).trim() : '';
+	};
+	const req = heldOf('REQUIREMENTS.md') || '# Requirements\n\n## Done';
+	const dec = heldOf('DECISIONS.md')    || '# Decisions';
+	const st  = heldOf('STATE.md')        || '# State';
+	// One line of it for a task's own marker, so a block the mock composed can be told from
+	// a fixed string without a copy of the request landing in the file.
+	const said = (body.split('\n').map((l) => l.trim()).filter(Boolean)[0] || 'a delta')
+		.slice(0, 60);
+	if (mode === 'dropkey') {
+		return JSON.stringify({ summary: said }, null, 2);
+	}
+	if (mode === 'empty') {
+		return crystalOnly(body)
+			+ '\n\n## REQUIREMENTS.md\n\n## DECISIONS.md\n\n## STATE.md\n';
+	}
+	const keep = mode === 'untick'
+		? req.split('\n').filter((l) => !/^\s*-\s*\[x\]/i.test(l)).join('\n')
+		: req;
+	return crystalOnly(body)
+		+ '\n\n## REQUIREMENTS.md\n```\n' + keep
+		+ '\n- [ ] MOCKTASK ' + said + '\n```'
+		+ '\n\n## DECISIONS.md\n```\n' + dec
+		+ '\n- 2026-09-15 MOCKRULE because the mock was asked for one\n```'
+		+ '\n\n## STATE.md\n```\n' + st + '\n\n## Next step\n\nMOCKNEXT\n```';
+};
 
 /// Whether this request is a CONTEXT fold -- the compactor, not the crystal's reducer.
 ///
@@ -466,6 +549,28 @@ const nudges = (messages) => (messages || [])
 	.filter(m => m && m.role === 'user' && /arrived as text/.test(String(m.content || '')))
 	.length;
 
+// How many times the app has told this conversation it reasoned and said nothing.
+// Verbatim against `reasoned_only_nudge()` in src/agent.rs; change one, change both.
+const reasonedNudges = (messages) => (messages || [])
+	.filter(m => m && m.role === 'user' && /neither answered nor called a tool/.test(String(m.content || '')))
+	.length;
+
+// The `@reasononly`/`@reasononce` directive this conversation carries, wherever in it
+// that is -- read from the WHOLE transcript for `leakMode`'s reason: after the app's
+// nudge the last user message is the nudge, not the directive.
+const reasonOnlyMode = (messages) => {
+	for (let i = (messages || []).length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (!m || m.role !== 'user') continue;
+		const t = String(m.content || '').trim();
+		if (t.startsWith('@reasononce ') || t === '@reasononce')
+			return { mode: 'once', rest: t.slice('@reasononce'.length).trim() };
+		if (t.startsWith('@reasononly ') || t === '@reasononly')
+			return { mode: 'twice', rest: t.slice('@reasononly'.length).trim() };
+	}
+	return null;
+};
+
 // The leak directive this conversation carries, wherever in it that is.
 const leakMode = (messages) => {
 	for (let i = (messages || []).length - 1; i >= 0; i--) {
@@ -500,6 +605,30 @@ const plan = (messages) => {
 		// And the model that cannot emit a call at all, which is what ends a turn
 		// `malformed` rather than `answered`.
 		return { text: LEAK_HEADLESS };
+	}
+
+	// A ROUND THAT REASONS AND SAYS NOTHING -- no tool call either. Proposal 15,
+	// 2026-09-15: exactly this shape, 3,372 tokens of reasoning and an empty
+	// `content`, ending mid-sentence. Same "read from the whole transcript" reason
+	// as `@leak`: after the app's nudge the last user message is the nudge.
+	const reasonOnly = reasonOnlyMode(messages);
+	if (reasonOnly) {
+		const [t1, t2] = reasonOnly.rest.split(';;');
+		const nudged = reasonedNudges(messages) > 0;
+		// `@reasononce <think> ;; <answer>` -- the survivable half: nudged once,
+		// then an ordinary answer.
+		if (reasonOnly.mode === 'once') {
+			if (nudged) return { text: (t2 || 'Here is the answer.').trim() };
+			return { think: (t1 || 'One more thing:').trim(), thinkKey: 'reasoning', text: '' };
+		}
+		// `@reasononly <think1> ;; <think2>` -- reasons on the first round AND the
+		// second, which is what ends the turn `reasoned_only` rather than `silent`
+		// or `answered`.
+		return {
+			think:    (nudged ? (t2 || 'Still nothing to say.') : (t1 || 'One more thing:')).trim(),
+			thinkKey: 'reasoning',
+			text:     '',
+		};
 	}
 
 	// A worker that was told to look keeps trying until it has looked.  Before the
@@ -550,7 +679,7 @@ const plan = (messages) => {
 	// land. `@text` and the rest still win, so a test that wants to exercise a
 	// MALFORMED proposal -- and one does -- can still ask for one.
 	if (isReducer(messages) && d.kind === 'plain') {
-		return { text: crystalReply(d.text || d.rest || '') };
+		return { text: crystalReply(d.text || d.rest || '', messages) };
 	}
 
 	// And a triage answered with prose is a plan the Social panel cannot read.
@@ -565,6 +694,13 @@ const plan = (messages) => {
 	switch (d.kind) {
 		case 'text':
 			return { text: d.rest || 'Right.' };
+
+		// A REPLY THE PROVIDER ITSELF SAYS IT CUT: `finish_reason:"length"` rather
+		// than `"stop"`, on an otherwise ordinary text reply -- the shape
+		// `AgentEvent::Truncated` exists to name. Nothing else in this mock sends
+		// it; every other directive's round finishes cleanly.
+		case 'cutreason':
+			return { text: d.rest || 'Here is a reply cut', cutReason: true };
 
 		case 'long': {
 			const n = Math.max(1, numArg(d.rest, 40, 'long'));
@@ -830,7 +966,13 @@ const stream = async (res, model, p) => {
 		}
 		send(frame({}, 'tool_calls'));
 	} else {
-		const words = (p.text || '').split(' ');
+		// `.filter(Boolean)`, matching the tool-call branch above and the working
+		// loop before it: `''.split(' ')` is `['']`, not `[]`, and without the
+		// filter an empty `text` streamed one word of a single space -- a real
+		// content delta nothing asked for, and the one thing `@reasononly` needs
+		// NOT to send. Found writing `dev/verify_silentround.mjs` (proposal 15,
+		// 2026-09-15): the mock's own empty reply was not actually empty.
+		const words = (p.text || '').split(' ').filter(Boolean);
 		let sent = 0;
 		for (const w of words) {
 			if (res.writableEnded || res.destroyed) return;	// the client aborted
@@ -846,7 +988,9 @@ const stream = async (res, model, p) => {
 			}
 			await sleep(p.slowChunks ? 120 : 5);
 		}
-		send(frame({}, 'stop'));
+		// `cutReason` (`@cutreason`): the provider's own word for a reply it cut at
+		// the output limit, rather than one that finished on its own.
+		send(frame({}, p.cutReason ? 'length' : 'stop'));
 	}
 
 	send({ id: 'chatcmpl-mock', object: 'chat.completion.chunk', model, choices: [],

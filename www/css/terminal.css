@@ -388,6 +388,22 @@
 	color: var(--text-primary);
 }
 
+/* Shown only beside the "not paired" refusal (see js/daimond.js DaimondTerm) --
+   the one refusal with a real next step, so it is the one with a link. */
+.termp-install {
+	align-self: flex-start;
+	flex: none;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--text-link, var(--accent));
+	font-size: var(--fs-xs);
+	cursor: pointer;
+	text-decoration: underline;
+}
+.termp-install[hidden] { display: none; }
+
 /* A hole in the output, said beside the stream. Each notice stays until the
    session ends: a gap is a fact about the transcript above it, and a message
    that faded would leave a screen nobody can account for.

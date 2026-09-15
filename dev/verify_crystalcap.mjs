@@ -148,21 +148,33 @@ const guideCap = (label, file, rel, text) => {
 	return Number(m[1]) * (m[2].toUpperCase() === 'M' ? 1024 * 1024 : 1024);
 };
 {
-	// The card is found by the control it names rather than by its heading id, so renumbering the
-	// page's anchors does not silently take the check with it.
+	// The entry is found by the CONTROL IT NAMES, not by its shape: the ceiling was a card with
+	// the figure as its <h3> until the guide lane rewrote this page into prose and a list, where
+	// the same sentence is one <li> and the figure is a <strong> inside it. A regex pinned to the
+	// old markup reported that the guide had stopped naming the ceiling at all, which was untrue
+	// and would have been "fixed" by putting the card back. Whatever block names the control is
+	// read, and the figure is taken from that block.
 	const rel  = path.join('www', 'guide', 'capps.html');
 	const html = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-	const card = /<div class="card">\s*<h3[^>]*>([^<]*)<\/h3>\s*<p>(?:(?!<\/div>)[\s\S])*?Page size limit[\s\S]*?<\/div>/i.exec(html);
-	if (!card) {
-		console.error('verify_crystalcap: no card in ' + rel + ' names "Page size limit", so the '
+	const at   = html.search(/Page size limit/i);
+	if (at < 0) {
+		console.error('verify_crystalcap: nothing in ' + rel + ' names "Page size limit", so the '
 			+ 'guide either stopped naming the page ceiling or renamed the setting it points at.');
 		process.exit(2);
 	}
-	const heading = card[1];
-	const shown   = guideCap('the guide\'s page-ceiling card', rel, rel, heading);
+	// The smallest block that opens before the mention, and its own close.
+	const opens  = [['<div class="card"', '</div>'], ['<li', '</li>'], ['<p', '</p>']];
+	let start = -1, close = '';
+	for (const [open, shut] of opens) {
+		const o = html.lastIndexOf(open, at);
+		if (o > start) { start = o; close = shut; }
+	}
+	const end     = html.indexOf(close, at);
+	const heading = html.slice(start, end < 0 ? html.length : end);
+	const shown   = guideCap('the guide\'s page-ceiling entry', rel, rel, heading);
 	if (shown !== PAGE_CAP) {
-		console.error('verify_crystalcap: ' + rel + ' heads its page-ceiling card "' + heading.trim()
-			+ '" (' + shown + ' bytes), and the engine enforces ' + PAGE_CAP + '. This is the one '
+		console.error('verify_crystalcap: ' + rel + ' gives its page ceiling as ' + shown
+			+ ' bytes, and the engine enforces ' + PAGE_CAP + '. This is the one '
 			+ 'place a non-technical reader is told the ceiling; see src/tools.rs.');
 		process.exit(2);
 	}
@@ -283,12 +295,19 @@ try {
 			const id = await app.create_diamond('Fresh');
 			const p  = 'diamonds/' + id + '/crystal.json';
 			const hot = (n) => JSON.stringify({ summary: 'h'.repeat(n) });
+			// WHAT THE THREE FILES BESIDE THE CRYSTAL COST, since 2026-09-15: they ride in
+			// the same system message and are charged INSIDE this ceiling rather than beside
+			// it (`crystal_hot_room`, `dev/CRYSTAL_CONTRACT.md` §12), so "just under the
+			// ceiling" is just under what is LEFT of it. Read off the engine rather than
+			// guessed, because a template's wording is not a number this file may hold.
+			const files = JSON.parse(await app.crystal_split_sizes(id)).files || 0;
 			// The write that was refused: a hot part over the OLD default and well under
 			// the shipped one. A build whose hot ceiling is the old 4 KiB refuses this.
 			r.freshWasRefused = await write(p, hot(4 * 1024 + 512));
 			// And the shipped figure itself, either side of it.
-			r.freshUnder = await write(p, hot(HOT - 512));
+			r.freshUnder = await write(p, hot(HOT - files - 512));
 			r.freshOver  = await write(p, hot(HOT + 2048));
+			r.freshFiles = { ok: files > 0, msg: files + ' bytes of standing files' };
 		}
 
 		// ── Each file, at each of its three doors ────────────────────
@@ -531,12 +550,16 @@ try {
 		'a hot part of ' + KIB(4 * 1024 + 512) + ' -- over the OLD 4 KiB default and under the '
 			+ 'shipped ' + KIB(HOT_CAP) + ' -- is written on a profile with no setting',
 		R(out, 'freshWasRefused').msg);
+	check(R(out, 'freshFiles').ok,
+		'REQUIREMENTS.md, STATE.md and the decisions\' tail are charged against this ceiling',
+		R(out, 'freshFiles').msg);
 	check(R(out, 'freshUnder').ok,
-		'and so is one just under the shipped ceiling', R(out, 'freshUnder').msg);
+		'and a crystal just under what is LEFT of the shipped ceiling is written',
+		R(out, 'freshUnder').msg);
 	check(!R(out, 'freshOver').ok,
 		'while one over it is refused, so the ceiling in force really is the engine\'s',
 		R(out, 'freshOver').msg);
-	check(new RegExp('exceed ' + HOT_CAP + ' bytes').test(R(out, 'freshOver').msg || ''),
+	check(new RegExp(HOT_CAP + '-byte ceiling').test(R(out, 'freshOver').msg || ''),
 		'and the refusal names ' + HOT_CAP + ', which is the number a reader has to be able to see',
 		R(out, 'freshOver').msg);
 

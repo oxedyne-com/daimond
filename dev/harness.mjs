@@ -356,6 +356,13 @@ export async function open(opts = {}) {
 		// about itself -- which mobile.js `detectMobile` reads FIRST and treats as
 		// final -- is the UA string. Left unset, each engine keeps its own.
 		ua        = null,
+		// THE BROWSER'S OWN CLOCK. Playwright reports this to the page as its IANA
+		// zone (`Intl.DateTimeFormat().resolvedOptions().timeZone`) and every local
+		// `Date` getter answers relative to it -- a plain pass-through to the
+		// context option of the same name, exposed here so a verifier of LOCAL time
+		// (a tile header's own Holocene clock) can drive two zones without a second
+		// launch. Left unset, the context keeps the host's own zone, as it always did.
+		timezoneId = null,
 		// CHROMIUM'S OWN STATEMENT THAT THIS IS A PHONE: `navigator.userAgentData.mobile`.
 		// The UA string alone is NOT enough here, and that is not a detail. mobile.js
 		// `detectMobile` reads the client hint FIRST and returns it whatever it says,
@@ -468,6 +475,7 @@ export async function open(opts = {}) {
 			viewport:   { width: 1500, height: 950 },
 			hasTouch:   touch,
 			...(ua ? { userAgent: ua } : {}),
+			...(timezoneId ? { timezoneId: timezoneId } : {}),
 		});
 	} else if (engine === 'chromium') {
 		browser = await chromium.launchPersistentContext(profileDir, {
@@ -479,6 +487,7 @@ export async function open(opts = {}) {
 			hasTouch:       touch,
 			...(isMobile ? { isMobile: true } : {}),
 			...(ua ? { userAgent: ua } : {}),
+			...(timezoneId ? { timezoneId: timezoneId } : {}),
 		});
 	} else {
 		throw new Error('unknown engine "' + engine + '"; set DAIMOND_BROWSER to chromium or webkit');

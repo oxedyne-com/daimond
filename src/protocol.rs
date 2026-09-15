@@ -1016,6 +1016,32 @@ pub enum AgentEvent {
     ///
     /// It is not an error.  The request succeeded; a setting was reached.
     Truncated,
+    /// The provider's own trace facts for one round: an id to ask it about afterwards, and
+    /// the finish-reason words behind [`Truncated`](Self::Truncated) and every other ending.
+    ///
+    /// Its own variant and emitted once per round unconditionally, next to the tool-call and
+    /// text events a round produces -- not folded onto [`Ended`](Self::Ended), because the
+    /// round this matters for is not always the turn's last one, and not onto
+    /// [`Truncated`](Self::Truncated), which fires only when a cut happened and this fires
+    /// whether or not one did.
+    ///
+    /// Added 2026-09-15 (proposal 15): a round that answered nothing left nobody anything to
+    /// ask OpenRouter about -- no id, no `finish_reason`, no upstream provider name -- so a
+    /// cut or a silent stop could not be traced back to the provider's own logs.
+    ///
+    /// Every field is empty where the endpoint or the dialect sends none of them (the
+    /// Anthropic dialect sends none); an empty `gen_id` is not itself news; see
+    /// `ChatOnceResponse` in `src/llm.rs` for where each is read off the wire.
+    RoundMeta {
+        gen_id:               String,
+        finish_reason:        String,
+        native_finish_reason: String,
+        provider:             String,
+        // Set when the round ended because the stream went quiet past `stream_idle_ms`
+        // rather than because the provider said it was done; see `ChatOnceResponse::stalled`
+        // in `src/llm.rs`.
+        stalled:              bool,
+    },
     /// A chunk of the model's own reasoning, as it arrives.
     ///
     /// Its own variant and not [`Text`](Self::Text), because the two are different KINDS of
@@ -1058,7 +1084,7 @@ pub enum AgentEvent {
     /// `missing` is paths a completed call SAID it left on the store and which are not there,
     /// read off the call's arguments and never off the model's words.
     Ended {
-        how:       String,      // answered | stopped | capped | silent | failed | malformed
+        how:       String,      // answered | stopped | capped | silent | failed | malformed | reasoned_only
         offered:   usize,       // tools this turn was allowed to call
         rounds:    usize,
         calls:     usize,
@@ -1066,6 +1092,7 @@ pub enum AgentEvent {
         failed:    usize,
         missing:   Vec<String>,
         malformed: usize,       // rounds re-sent because a tool call arrived as text
+        reasoned:  usize,       // rounds re-sent because a reply reasoned and answered nothing
     },
     /// A tool call arrived as TEXT, in the model's own native call syntax, with no JSON
     /// `tool_calls` beside it.
@@ -1104,7 +1131,7 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("thinking"));
                 m.insert(dat!("content"), dat!(text.clone()));
             }
-            Self::Ended { how, offered, rounds, calls, refused, failed, missing, malformed } => {
+            Self::Ended { how, offered, rounds, calls, refused, failed, missing, malformed, reasoned } => {
                 m.insert(dat!("type"),      dat!("ended"));
                 m.insert(dat!("how"),       dat!(how.clone()));
                 m.insert(dat!("offered"),   Dat::U64(*offered as u64));
@@ -1113,6 +1140,7 @@ impl AgentEvent {
                 m.insert(dat!("refused"),   Dat::U64(*refused as u64));
                 m.insert(dat!("failed"),    Dat::U64(*failed  as u64));
                 m.insert(dat!("malformed"), Dat::U64(*malformed as u64));
+                m.insert(dat!("reasoned"),  Dat::U64(*reasoned as u64));
                 m.insert(dat!("missing"),
                     Dat::List(missing.iter().map(|p| dat!(p.clone())).collect()));
             }
@@ -1161,6 +1189,14 @@ impl AgentEvent {
             }
             Self::Truncated => {
                 m.insert(dat!("type"), dat!("truncated"));
+            }
+            Self::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled } => {
+                m.insert(dat!("type"), dat!("round_meta"));
+                m.insert(dat!("gen"),      dat!(gen_id.clone()));
+                m.insert(dat!("finish"),   dat!(finish_reason.clone()));
+                m.insert(dat!("nfinish"),  dat!(native_finish_reason.clone()));
+                m.insert(dat!("provider"), dat!(provider.clone()));
+                m.insert(dat!("stalled"),  Dat::Bool(*stalled));
             }
             Self::Done => {
                 m.insert(dat!("type"), dat!("done"));

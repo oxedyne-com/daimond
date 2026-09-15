@@ -383,3 +383,17 @@
 	   over them. 40px is 177px, and leaves the card its margins back. */
 	#identity-modal .login-logo { height: 40px; }
 }
+
+/* THE TILE HEADER'S TIME, cut to a two-digit year, below the width a
+   five-digit Holocene year first has to compete for room with `.ctile-meta`
+   (a tool's name, a model's) and `.ctile-peek` (a collapsed tile's preview) --
+   both of which are free to run up to their own max-width on the SAME row.
+   `dev/verify_tiledatetime.mjs` measures a live tool tile's label bar at
+   390px (the phone this app is verified on) and asserts nothing in it
+   overlaps or clips; the swap stays at the app's own narrowest published
+   breakpoint, one width above where the topbar itself starts giving up
+   pixels (max-width: 380px, above). */
+@media (max-width: 380px) {
+	.ctile-time-full { display: none; }
+	.ctile-time-short { display: inline; }
+}

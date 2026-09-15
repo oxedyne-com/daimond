@@ -967,8 +967,21 @@
 		var send = sendBtn();
 		if (as) {
 			as.hidden = hasVoice();
-			as.textContent = hasVoice() ? ''
-				: tOr('social.novoice_set', 'No voice yet — set one in Settings to post.');
+			as.textContent = '';
+			if (!hasVoice()) {
+				// ONE SENTENCE AND THE WAY TO ACT ON IT. It used to be a sentence alone --
+				// "No voice yet — set one in Settings to post." -- naming a view the reader
+				// then had to go and find among five chips (audit SOC-04). The requirement
+				// and its remedy are one row now.
+				as.appendChild(document.createTextNode(
+					tOr('social.novoice_set', 'Set a posting name to send.') + ' '));
+				var get = document.createElement('button');
+				get.type = 'button';
+				get.className = 'imp-as-set';
+				get.textContent = tOr('social.novoice_get', 'Get one');
+				get.addEventListener('click', function () { show('settings'); });
+				as.appendChild(get);
+			}
 		}
 		// Without a voice there is nothing to post AS, and the forge would refuse
 		// it. The button is hidden rather than shown-and-inert: a control that
@@ -3775,6 +3788,17 @@
 	async function socialCompose(reqJson) {
 		var r = req(reqJson);
 		var act = String(r.act || '');
+		// ASKED BEFORE ANYTHING IS COMPOSED, because a draft is a token and a token
+		// is a publication waiting for a tap. The app owns the question -- which
+		// Diamond is steering, and whether that one may publish at all -- so it
+		// answers it; this file owns the wording a refusal reaches the model in, as
+		// it does for every other refusal here. See `WITHHELD` in `daimond.js`.
+		var withheld = '';
+		try {
+			withheld = (typeof window.DaimondPublishGuard === 'function')
+				? String(window.DaimondPublishGuard() || '') : '';
+		} catch (e) { withheld = ''; }
+		if (withheld) return JSON.stringify({ refusal: no(withheld) });
 		if (!hasVoice()) {
 			return JSON.stringify({ refusal: no('nothing was composed: this account has no voice '
 				+ 'on the forge, so it cannot publish there. Tell the user, and say what you '

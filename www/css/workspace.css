@@ -79,13 +79,6 @@
 }
 .ptag.on:hover { color: var(--text-primary); }
 
-/* A stage chip that would displace the guest beside the chat says so before it
-   is clicked -- but it must do so WITHOUT changing its own width. A glyph
-   appended here re-flowed every chip to its right the moment a stage seat
-   filled, which is exactly the shifting the toggle row exists to prevent. A
-   border style costs no layout. */
-.ptag-stage.will-evict { border-style: dashed; }
-
 .ptag-more { flex: none; font-family: var(--font); letter-spacing: 0.08em; padding: 4px 9px; }
 .ptag-more .n { font-size: var(--fs-4xs); opacity: 0.8; margin-left: 3px; letter-spacing: 0; }
 

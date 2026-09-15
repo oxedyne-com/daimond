@@ -444,7 +444,25 @@ for (const view of ['messages', 'people', 'proposals', 'settings']) {
 		seen.words);
 }
 
-// ── 2. The dock count badge ──────────────────────────────────────────
+// ── 2. Mail arrival draws no count, and the chip still works ─────────
+//
+// `1eec9852` removed the unsolicited dock count: the `Badge` closure,
+// `window.DaimondBadge`, and every caller of it. `www/js/badge.test.mjs` is
+// the source guard for that removal, and says so itself: daimond.js imports
+// the compiled wasm and cannot be instantiated in that file's sandbox, so it
+// asserts the removal from the SOURCE and cannot drive the panel to prove the
+// chip still opens once a real arrival has happened. This file can, because
+// it already drives a real browser -- so this section, once the stale
+// `DaimondBadge.count('mail')` calls below made it throw, is where that
+// proof belongs.
+//
+// `daimond.js`'s own `daimond:mail-arrived` listener still exists after the
+// removal; it now feeds `Triggers.fire({ kind: 'mail', … })` instead of a
+// count (see the "clock a timer trigger counts on" section of daimond.js).
+// Actually firing a TA needs a Diamond configured with a mail trigger, which
+// is `dev/verify_triggers.mjs`'s fixture, not this file's -- what belongs
+// here is what the SOCIAL/MAIL CHIPS do: draw nothing, throw nothing, and
+// keep working, across the same arrival the count used to be measured on.
 
 const TITLE = await page.evaluate(() => document.title);
 
@@ -459,7 +477,7 @@ check('with nothing waiting, no count is drawn anywhere',
 check('and the tab title carries no count either', !/^\(\d/.test(TITLE), TITLE);
 
 // The Mail panel is put away, so an arrival is something the reader is NOT
-// looking at.
+// looking at -- exactly the case the removed badge used to mark.
 await page.evaluate(() => { window.DaimondPanels.hide('mail'); window.DaimondPanels.show('social'); });
 await sleep(400);
 
@@ -471,56 +489,60 @@ await page.evaluate(() => window.dispatchEvent(new CustomEvent('daimond:mail-arr
 })));
 await sleep(400);
 
-check('mail arriving while you are elsewhere is counted',
-	await page.evaluate(() => window.DaimondBadge.count('mail')) === 3);
+const afterArrival = await page.evaluate(() => ({
+	dock:  [...document.querySelectorAll('.dock-count')]
+		.map(e => ({ t: e.textContent, hidden: e.hidden })),
+	title: document.title,
+}));
+check('mail arriving while you are elsewhere still draws no count',
+	afterArrival.dock.every(b => b.t === '' && b.hidden), JSON.stringify(afterArrival.dock));
+check('and the tab title is not decorated with one either',
+	!/^\(\d/.test(afterArrival.title), afterArrival.title);
 
-const drawn = await page.evaluate(() => {
-	const hosts = [...document.querySelectorAll('#panel-tags .ptag[data-panel="mail"]')];
-	return hosts.map((h) => {
-		const b = h.querySelector('.dock-count');
-		if (!b) return { where: h.className, badge: null };
-		const r = b.getBoundingClientRect();
-		return { where: h.className, text: b.textContent, hidden: b.hidden,
-			x: r.x, y: r.y, w: r.width, h: r.height };
-	});
-});
-const lit = drawn.filter(d => d.badge !== null && d.text === '3'
-	&& onScreen({ x: d.x, y: d.y, w: d.w, h: d.h }));
-check('and the count is DRAWN, on screen, on a control that opens the panel',
-	lit.length >= 1, JSON.stringify(drawn));
-check('the tab title carries it, for a tab that is not the one in front',
-	(await page.evaluate(() => document.title)).startsWith('(3) '),
-	await page.evaluate(() => document.title));
-
-// A chip row rebuild throws the chips away. The count must come back with them.
+// A chip row rebuild throws the chips away and rebuilds them. Nothing should
+// come back that was not there before.
 await page.evaluate(() => window.DaimondPanels.reflow());
 await sleep(350);
-check('and it survives the chip row being rebuilt',
-	await page.evaluate(() => {
-		const b = document.querySelector('#panel-tags .ptag[data-panel="mail"] .dock-count');
-		return !!b && b.textContent === '3';
-	}));
+check('and none appears after the chip row is rebuilt',
+	await page.evaluate(() =>
+		[...document.querySelectorAll('.dock-count')].every(e => e.textContent === '' && e.hidden)));
 
-// Looking at it is what clears it.
+// The chip itself is what the owner kept: it must still open the panel the
+// arrival was about, after an arrival has actually happened.
+const opensMail = await page.evaluate(() => {
+	const chip = document.querySelector('#panel-tags .ptag[data-panel="mail"]');
+	if (!chip) return { chip: false };
+	chip.click();
+	return { chip: true, shown: window.DaimondPanels.isOpen('mail') };
+});
+await sleep(400);
+check('the mail chip is still there and still opens the panel',
+	opensMail.chip && opensMail.shown === true, JSON.stringify(opensMail));
+
+// Looking at the panel used to be what cleared the count. There is nothing to
+// clear now, so the only thing left to assert is that looking at it draws
+// nothing either.
 await page.evaluate(() => { window.DaimondPanels.show('mail'); });
 await sleep(500);
-check('looking at the panel clears the count',
-	await page.evaluate(() => window.DaimondBadge.count('mail')) === 0);
 const cleared = await page.evaluate(() =>
 	[...document.querySelectorAll('.dock-count')].map(e => ({ t: e.textContent, hidden: e.hidden })));
-check('and NEVER leaves a zero on screen: an empty string, and the mark put away',
+check('and looking at the panel draws no count of its own',
 	cleared.every(b => b.t === '' && b.hidden), JSON.stringify(cleared));
 check('the tab title goes back to what it was',
 	await page.evaluate(() => document.title) === TITLE);
 
-// It does not count what is in front of you. Mail is on screen now.
+// It never marked what is in front of you, before or after the removal.
 await page.evaluate(() => window.dispatchEvent(new CustomEvent('daimond:mail-arrived', {
 	detail: { mailbox: 'a@example.com', folder: 'INBOX', count: 2, uids: [10, 11] },
 })));
 await sleep(350);
-check('mail arriving at a panel you are looking at raises no mark',
-	await page.evaluate(() => window.DaimondBadge.count('mail')) === 0,
-	'count=' + await page.evaluate(() => window.DaimondBadge.count('mail')));
+const whileWatching = await page.evaluate(() => ({
+	dock:  [...document.querySelectorAll('.dock-count')].map(e => ({ t: e.textContent, hidden: e.hidden })),
+	title: document.title,
+}));
+check('mail arriving at a panel you are looking at still raises no mark',
+	whileWatching.dock.every(b => b.t === '' && b.hidden) && whileWatching.title === TITLE,
+	JSON.stringify(whileWatching));
 
 await page.evaluate(() => { window.DaimondPanels.hide('mail'); window.DaimondPanels.show('social'); });
 await sleep(350);

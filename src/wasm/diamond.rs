@@ -121,6 +121,15 @@ fn crystal_legacy_path(id: &str) -> String {
     fmt!("diamonds/{}/{}", id, crate::tools::CRYSTAL_FILE_LEGACY)
 }
 
+/// One of the three markdown files beside the crystal, `diamonds/<id>/<leaf>`.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `leaf` - One of [`crate::tools::STANDING_FILES`].
+fn standing_path(id: &str, leaf: &str) -> String {
+    fmt!("diamonds/{}/{}", id, leaf)
+}
+
 /// The append-only log, `diamonds/<id>/.daimond/log`.
 fn log_path(id: &str) -> String {
     fmt!("diamonds/{}/{}/log", id, STORE_DIR)
@@ -914,6 +923,14 @@ async fn create_fresh(name: &str, id: &str) -> Outcome<String> {
     // Empty crystal plus its version-0 snapshot.
     res!(opfs::write_file(FileRoot::Opfs, &crystal_data_path(&id), b"").await);
     res!(opfs::write_file(FileRoot::Opfs, &version_data_path(&id, 0), b"").await);
+    // AND THE THREE FILES BESIDE IT, from the shipped templates -- the way `prompts/<role>.md`
+    // is seeded from `default_prompt`, and for the same reason: a model imitates a shape it is
+    // shown and invents one it is not.  An empty Diamond whose REQUIREMENTS.md does not exist is
+    // a Diamond whose first turn has nowhere to put what the user just asked for.
+    for leaf in crate::tools::STANDING_FILES {
+        res!(opfs::write_file(FileRoot::Opfs, &standing_path(&id, leaf),
+            crate::tools::standing_template(leaf).as_bytes()).await);
+    }
 
     let meta = Meta {
         name:    name.to_string(),
@@ -1173,6 +1190,233 @@ pub async fn read_crystal_data(id: &str) -> Outcome<String> {
     Ok(String::new())
 }
 
+
+/// The three files beside the crystal, as they sit on disk.
+///
+/// Empty strings where a Diamond has not been given them yet, which
+/// [`crate::tools::Standing::prompt_text`] renders as nothing at all rather than as three empty
+/// headings.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+pub async fn read_standing(id: &str) -> crate::tools::Standing {
+    let read = |leaf: &'static str| {
+        let path = standing_path(id, leaf);
+        async move {
+            opfs::read_file(FileRoot::Opfs, &path).await
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default()
+        }
+    };
+    crate::tools::Standing {
+        requirements: read(crate::tools::REQUIREMENTS_FILE).await,
+        decisions:    read(crate::tools::DECISIONS_FILE).await,
+        state:        read(crate::tools::STATE_FILE).await,
+    }
+}
+
+/// What the three cost in the system message per round, in bytes.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+pub async fn standing_hot_bytes(id: &str) -> usize {
+    read_standing(id).await.hot_bytes()
+}
+
+/// The three files, created from the shipped templates where this Diamond has none.
+///
+/// **THE WHOLE MIGRATION, AND THERE IS NO SHIM BEHIND IT.**  A Diamond created before
+/// 2026-09-15 has no `REQUIREMENTS.md`, and the plan's rule is that it gets one lazily on its
+/// next turn rather than by a pass over the store: a Diamond nobody opens needs nothing, and a
+/// migration that walked every Diamond at boot would be a write to every Diamond in the sync
+/// parcel for the sake of the ones being worked on.
+///
+/// In the same step, `open[]` leaves the crystal.  It was the schema's list of outstanding
+/// threads and is now [`crate::tools::REQUIREMENTS_FILE`]'s job (`dev/CRYSTAL_CONTRACT.md` §12),
+/// so each entry is written once under `## Unfiled` and the key is deleted.  **Written through
+/// `opfs` rather than through [`snapshot`]**, deliberately: this is a format migration and not
+/// an edit anybody made, so it mints no version, logs no record and changes no stamp -- exactly
+/// as [`migrate_crystal_data`] does with the markdown it converts.
+///
+/// Idempotent, and total.  A second call finds three files and a crystal with no `open` and
+/// writes nothing.  A crystal that will not parse is left exactly as it is: the daimon that has
+/// to mend it is the one turn that must see it unchanged.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+pub async fn ensure_standing(id: &str) -> crate::tools::Standing {
+    let mut files = read_standing(id).await;
+    // The crystal's `open[]`, moved once. Done BEFORE the templates are written, so the entries
+    // land in the same file the template seeds rather than in a second one after it.
+    let unfiled = match migrate_open(id).await {
+        Ok(list) => list,
+        Err(e)   => {
+            console_log(&fmt!("Diamond '{}': open[] could not be migrated ({}).", id, e));
+            Vec::new()
+        },
+    };
+    let want = [
+        (crate::tools::REQUIREMENTS_FILE, &mut files.requirements),
+        (crate::tools::DECISIONS_FILE,    &mut files.decisions),
+        (crate::tools::STATE_FILE,        &mut files.state),
+    ];
+    for (leaf, held) in want {
+        if !held.is_empty() {
+            continue;
+        }
+        *held = crate::tools::standing_template(leaf).to_string();
+        if let Err(e) = opfs::write_file(FileRoot::Opfs, &standing_path(id, leaf),
+            held.as_bytes()).await
+        {
+            console_log(&fmt!("Diamond '{}': {} could not be seeded ({}).", id, leaf, e));
+        }
+    }
+    if !unfiled.is_empty() {
+        files.requirements = crate::tools::file_unfiled(&files.requirements, &unfiled);
+        if let Err(e) = opfs::write_file(FileRoot::Opfs,
+            &standing_path(id, crate::tools::REQUIREMENTS_FILE),
+            files.requirements.as_bytes()).await
+        {
+            console_log(&fmt!(
+                "Diamond '{}': {} open[] entries could not be filed ({}).",
+                id, unfiled.len(), e));
+        }
+    }
+    files
+}
+
+/// Write one of the three files, retiring what does not fit into its archive first.
+///
+/// **The one door a crystal fold's block comes through**, and it is the same arithmetic a
+/// daimon's own `file_write` comes through ([`crate::tools::Tool::standing_retired`]) rather
+/// than a second copy of it -- a fold and a hand edit that retired differently would leave the
+/// archive holding whichever the last writer believed.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `leaf` - One of [`crate::tools::STANDING_FILES`].
+/// * `text` - The whole new file.
+pub async fn write_standing(id: &str, leaf: &str, text: &str) -> Outcome<()> {
+    let path = standing_path(id, leaf);
+    let (kept, _moved) = res!(crate::tools::Tool::standing_retired(
+        FileRoot::Opfs, &path, text.to_string()).await);
+    opfs::write_file(FileRoot::Opfs, &path, kept.as_bytes()).await
+}
+
+/// File a context fold's notes into this Diamond's three markdown files.
+///
+/// **THE FOLD IS WHERE A CONVERSATION'S MEMORY IS REWRITTEN WITH NO WAY BACK.**  Everything
+/// before the cut becomes one note, that note is re-summarised at the next fold, and what was in
+/// it decays a generation at a time -- so the decisions and the open threads a fold names are
+/// written into files that are not in the conversation at all and ride in the prompt on every
+/// round instead.  `dev/CRYSTAL_CONTRACT.md` §13 is the account; [`crate::tools::absorb_notes`]
+/// is the arithmetic, which is pure and proved without a browser.
+///
+/// `Some(left)` when the files are really on disk, carrying whatever a ceiling refused so the
+/// notice can keep it; `None` when nothing could be written, and then the notice is exactly what
+/// it was before any of this existed.  A fold must not be refused for a file it could not write:
+/// the conversation no longer fits, and a turn that dies at that point sends nothing at all.
+///
+/// The two archives are read and handed in with the files, because the dedupe has to see them:
+/// a task ticked and retired into `.daimond/done.md` last month must not come back under
+/// `## Unfiled` as new work.  Retirement then runs through the same
+/// [`crate::tools::Tool::standing_retired`] a `file_write` comes through, so a fold and a hand
+/// edit meet one arithmetic and one archive.
+///
+/// # Arguments
+/// * `id` - The Diamond being steered.
+/// * `notes` - The fold's parsed notes, already reconciled against the turn's ledger.
+pub async fn absorb_fold_notes(id: &str, notes: &crate::agent::compact::FoldNotes)
+    -> Option<crate::agent::compact::FoldNotes>
+{
+    let files = read_standing(id).await;
+    // What the archives already hold, as one corpus: the two are compared line by line under
+    // different keys, so which file a line came from makes no difference to the answer.
+    let mut retired = String::new();
+    for leaf in crate::tools::STANDING_FILES {
+        let path = crate::tools::standing_archive(leaf, id);
+        if path.is_empty() {
+            continue;
+        }
+        if let Ok(b) = opfs::read_file(FileRoot::Opfs, &path).await {
+            retired.push_str(&String::from_utf8_lossy(&b));
+            retired.push('\n');
+        }
+    }
+    let out = crate::tools::absorb_notes(&files, &retired, notes, &today());
+    let want = [
+        (crate::tools::REQUIREMENTS_FILE, &files.requirements, &out.files.requirements),
+        (crate::tools::DECISIONS_FILE,    &files.decisions,    &out.files.decisions),
+        (crate::tools::STATE_FILE,        &files.state,        &out.files.state),
+    ];
+    let mut wrote = 0usize;
+    for (leaf, was, now) in want {
+        if was == now {
+            continue;
+        }
+        let path = standing_path(id, leaf);
+        // Retired by the app's own arithmetic before it is written, exactly as a daimon's own
+        // write is, so the file a fold leaves is under its ceiling with everything that came off
+        // it in the archive rather than gone.
+        let kept = match crate::tools::Tool::standing_retired(
+            FileRoot::Opfs, &path, now.clone()).await
+        {
+            Ok((kept, _moved)) => kept,
+            Err(e) => {
+                console_log(&fmt!("Diamond '{}': {} could not be retired ({}).", id, leaf, e));
+                now.clone()
+            },
+        };
+        match opfs::write_file(FileRoot::Opfs, &path, kept.as_bytes()).await {
+            Ok(())  => wrote += 1,
+            Err(e)  => {
+                console_log(&fmt!(
+                    "Diamond '{}': the fold's notes could not be filed into {} ({}).",
+                    id, leaf, e));
+                return None;
+            },
+        }
+    }
+    // A fold with nothing to file still FILED: the notes are in the files, because they were
+    // already there.  Answering `None` here would make an identical second fold write a longer
+    // notice than the first, which is exactly the order-dependence the absorb exists to rule out.
+    let _ = wrote;
+    Some(out.left)
+}
+
+/// Today, as `YYYY-MM-DD`, on the clock of the person whose record this is.
+///
+/// Local rather than UTC: the dates in `DECISIONS.md` are read by a person against their own
+/// diary, and a ruling made on a Monday evening in Perth is not a Sunday one.
+fn today() -> String {
+    let d = js_sys::Date::new_0();
+    fmt!("{:04}-{:02}-{:02}",
+        d.get_full_year(), d.get_month() + 1, d.get_date())
+}
+
+/// Take `open[]` out of a Diamond's crystal, answering with what it held.
+///
+/// Empty where the crystal has no such key, will not parse, or does not exist -- all three of
+/// which mean there is nothing to move and nothing to rewrite.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+async fn migrate_open(id: &str) -> Outcome<Vec<String>> {
+    let json = match opfs::read_file(FileRoot::Opfs, &crystal_data_path(id)).await {
+        Ok(b)  => String::from_utf8_lossy(&b).into_owned(),
+        Err(_) => return Ok(Vec::new()),
+    };
+    let (rest, open) = match crate::tools::crystal_without_open(&json) {
+        Some(pair) => pair,
+        None       => return Ok(Vec::new()),
+    };
+    res!(opfs::write_file(FileRoot::Opfs, &crystal_data_path(id), rest.as_bytes()).await);
+    console_log(&fmt!(
+        "Diamond '{}': {} open[] entries moved into {} and the key deleted.",
+        id, open.len(), crate::tools::REQUIREMENTS_FILE));
+    Ok(open)
+}
+
 /// Read a Diamond's current page, or empty when it has none.
 ///
 /// Empty is an ordinary answer and not a failure: a Diamond created before pages existed has no
@@ -1381,7 +1625,7 @@ async fn snapshot(id: &str, data: &str, page: Option<&str>, now: u64) -> Outcome
     if crate::tools::crystal_write_refused(data.len(), old.len()) {
         return Err(err!("{}", crate::tools::crystal_cap_message(data.len()); Invalid, Input, Size));
     }
-    if let Some(msg) = crate::tools::crystal_hot_refusal(data, &old) {
+    if let Some(msg) = crate::tools::crystal_hot_refusal(data, &old, standing_hot_bytes(id).await) {
         return Err(err!("{}", msg; Invalid, Input, Size));
     }
     let disk = page_on_disk(id).await;
@@ -1563,15 +1807,29 @@ pub async fn record_model_change(id: &str, note: &str) -> Outcome<()> {
     append_log(id, &rec).await
 }
 
-/// Record a crystal change made by the crystal agent (a steer that edited
-/// `crystal.json`, or `crystal.html`, or both): snapshot a version and log an `edit` record whose
-/// task is the instruction.  Called by [`crate::wasm::app`] after the agent turn,
-/// only when the crystal actually changed.
+/// Record a crystal change made by the crystal agent (a steer that edited `crystal.json`, or
+/// `crystal.html`, or one of the three standing files, or several at once): snapshot a version
+/// and log an `edit` record whose task is the instruction.  Called by [`crate::wasm::app`]
+/// after the agent turn, only when SOMETHING actually changed -- the crystal, the page, or
+/// `REQUIREMENTS.md`, `DECISIONS.md` or `STATE.md`.
 ///
 /// The page is not an argument, because the turn has already written it: [`snapshot`] takes
 /// whatever is on disk and compares it with the parent version, which is how a turn that changed
-/// only the page still earns a page snapshot.
-pub async fn record_steer(id: &str, json: &str, instruction: &str) -> Outcome<()> {
+/// only the page still earns a page snapshot.  The three standing files are likewise not
+/// arguments and not part of the snapshot -- they are written straight to disk by the daimon's
+/// own `file_write`/`file_edit` calls as the turn runs -- but [`snapshot`] mints the next version
+/// number unconditionally (`next = meta.version + 1`, every call), so a turn that touched only
+/// `REQUIREMENTS.md` and left the crystal byte-for-byte the same still earns a version and a log
+/// line, which is the whole point of calling this even when `json == ` what was there before.
+///
+/// Answers with the version it minted, so the turn-end check in `steer_inner` can stamp
+/// `kind:"task"` records against the same number.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `json` - `crystal.json`, exactly as the turn left it.
+/// * `instruction` - What the user typed, kept as the record's own account of why.
+pub async fn record_steer(id: &str, json: &str, instruction: &str) -> Outcome<u64> {
     let now = now_ms() as u64;
     let parent = res!(read_meta(id).await).version;
     let version = res!(snapshot(id, json, None, now).await);
@@ -1585,6 +1843,57 @@ pub async fn record_steer(id: &str, json: &str, instruction: &str) -> Outcome<()
         version:   version,
         delta_ref: String::new(),
         note:      String::new(),
+    };
+    res!(append_log(id, &rec).await);
+    Ok(version)
+}
+
+/// Log one task tick from this turn: `REQUIREMENTS.md` moved a task from `- [ ]` to `- [x]`.
+///
+/// One record per task, because a turn may verify and tick several at once and each is its own
+/// claim -- collapsing them into one line would make `.daimond/log` say less than the file
+/// itself does.  `note` carries what backs the claim, exactly as
+/// [`crate::agent::compact::reconcile`] treats a fold's claimed edits: `Some("an edit")` or
+/// `Some("a worker report")` when the turn's ledger shows one, `None` when it shows neither --
+/// which is the never-forget file's own warning flagged where a reader of the log can see it,
+/// rather than trusted silently because the daimon said so.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `version` - The version [`record_steer`] minted for this same turn.
+/// * `parent` - The version before this turn -- `version - 1`, since [`snapshot`] always
+///   advances by exactly one.
+/// * `task_id` - The task's own id, e.g. `"T12"`.
+/// * `backed` - What the turn's ledger shows behind the tick, or `None` when it shows nothing.
+pub async fn record_task_tick(
+    id:      &str,
+    version: u64,
+    parent:  i64,
+    task_id: &str,
+    backed:  Option<&str>,
+)
+    -> Outcome<()>
+{
+    let note = match backed {
+        Some(w) => w.to_string(),
+        None    => {
+            console_log(&fmt!(
+                "Diamond '{}': {} was ticked in REQUIREMENTS.md with no edit and no worker \
+                 report in this turn's ledger -- flagged in the log rather than trusted.",
+                id, task_id));
+            "UNVERIFIED: no edit or worker report this turn".to_string()
+        },
+    };
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now_ms() as u64,
+        kind:      "task",
+        agent:     "crystal-agent".to_string(),
+        task:      task_id.to_string(),
+        parent,
+        version,
+        delta_ref: String::new(),
+        note,
     };
     append_log(id, &rec).await
 }

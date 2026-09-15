@@ -175,14 +175,6 @@ border-top:1px solid var(--bd);font-size:.92em}
 .hint+.fr{margin-top:13px}
 .plus{font-size:1.1em;font-weight:700;line-height:1.2;padding:2px 8px}
 .h1{font-size:1.16em;font-weight:650;color:var(--tx);line-height:1.3;margin:0 0 2px}
-.mem{margin:16px 0 0;border-top:1px solid var(--bd);padding:10px 0 0}
-.mem summary{font-size:.79em;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
-color:var(--mu);cursor:pointer;list-style:none}
-.mem summary::-webkit-details-marker{display:none}
-.mem summary::before{content:"\25B8 ";color:var(--mu)}
-.mem[open] summary::before{content:"\25BE "}
-.mk{font-family:var(--mo);font-size:.76em;color:var(--mu);margin:9px 0 2px}
-.mv{font-size:.87em;white-space:pre-wrap}
 </style>
 </head><body><div id="app"></div>
 <script>
@@ -1701,20 +1693,14 @@ function laneRemove() {
 	draw();
 }
 
-/// The Diamond's own memory, drawn whole. A capp that skipped a key it did not
-/// recognise would trip the coverage check, and rightly.
-function memory() {
-	var o = '', ks = [], k;
-	for (k in D) if (D.hasOwnProperty(k) && k.charAt(0) !== '_') ks.push(k);
-	if (!ks.length) return '';
-	o += '<details class="mem"><summary>Diamond memory</summary>';
-	for (var i = 0; i < ks.length; i++) {
-		var v = D[ks[i]];
-		o += '<div class="mk">' + esc(ks[i]) + '</div><div class="mv">'
-			+ esc(typeof v === 'string' ? v : JSON.stringify(v, null, 1)) + '</div>';
-	}
-	return o + '</details>';
-}
+// NO MEMORY BLOCK HERE. Until 2026-09-15 this page drew every top-level key of
+// the Diamond's memory again at its foot, as `key` / `JSON.stringify(value)` --
+// a second raw dump of crystal.json four hundred pixels below the app's own one,
+// with nothing ranked and nothing to do next (audit MEM-02/MEM-05). The app
+// draws "What this Diamond knows" above this frame now, once, with the editor,
+// the fold and the raw file under it. `rendered` below still names every key, so
+// the coverage check is satisfied by the data message and not by this page
+// redrawing what the app already shows.
 
 function draw() {
 	if (!BOOTED) { APP.innerHTML = '<div class="empty">Opening the log…</div>'; return; }
@@ -1723,7 +1709,7 @@ function draw() {
 	else if (S.scr && S.scr.t === 'pick') body = pickScreen();
 	else if (S.scr && S.scr.t === 'lane') body = laneScreen();
 	else body = home();
-	APP.innerHTML = head() + body + memory();
+	APP.innerHTML = head() + body;
 	measure();
 }
 function measure() {

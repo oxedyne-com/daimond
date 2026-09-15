@@ -338,6 +338,11 @@
    says it and says more. Stated rather than left to the browser, because an
    empty flex item with a 100% basis still takes a row of the wrap. */
 .imp-as[hidden] { display: none; }
+/* The way to act on the sentence beside it, so the requirement and its remedy are
+   one row (audit 2026-09-15, SOC-04). A link rather than a pill: this is a
+   pointer into the panel's own Settings view, not a second Send. */
+.imp-as-set { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; }
+.imp-as-set:hover { color: var(--text-primary); }
 .imp-say { min-height: 1.2em; margin-top: 5px; font-size: var(--fs-3xs-2xs); color: var(--accent-text); }
 
 /* ── The compose box, and the queue under it ────────────────── */

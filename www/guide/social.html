@@ -1,95 +1,15 @@
 <!DOCTYPE html>
-<html lang="en" data-guide-locale="en" data-guide-locales="en de es fr pt-BR">
+<html lang="en" data-guide-locale="en" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Social — Daimond guide</title>
+<title>Social &amp; proposals &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../css/variables.css">
 <link rel="stylesheet" href="../css/guide.css">
 <script src="frame.js"></script>
 <script src="search-index.js"></script>
 <script src="search.js"></script>
-<style>
-/* This page's own layout, kept here rather than in guide.css because nothing
-   else in the guide is a glossary. Everything is stated in the app's own
-   palette variables, so it follows the reader's theme like the rest. */
-
-/* A pair of sentences the reader is meant to compare. */
-.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; margin: 1rem 0; }
-.pair > div { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.8rem 0.9rem; background: var(--bg-secondary); }
-.pair .lead-in { display: block; font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.35rem; }
-.pair .costly { border-color: var(--border-2); }
-.pair .useful { border-color: var(--accent); }
-.pair p { margin: 0; color: var(--text-secondary); }
-
-/* A whole sentence the app puts on screen, quoted as it stands. The pill in
-   guide.css is `white-space: nowrap`, which is right for a button label and
-   wrong for a sentence: at 360px the longest of these ran 133 pixels past the
-   right edge and took the whole page sideways with it. A quotation wraps. */
-.ui.quoted { white-space: normal; }
-
-/* The glossary. Two columns where there is room, one where there is not; the
-   crops are between 300 and 440 pixels wide, so a column of about 350 shows
-   most of them at close to their own size and none of them at twice it. */
-.terms { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin: 1.25rem 0 2rem; align-items: start; }
-.term {
-	background: var(--bg-secondary);
-	border: 1px solid var(--border);
-	border-radius: var(--radius);
-	padding: 0.85rem 0.9rem 0.95rem;
-}
-.term h3 { margin: 0 0 0.55rem; font-size: 1.02rem; }
-.term img {
-	display: block;
-	max-width: 100%;
-	max-height: 200px;
-	width: auto;
-	height: auto;
-	margin: 0 0 0.6rem;
-	border: 1px solid var(--border);
-	border-radius: var(--radius-sm);
-	background: var(--bg-tertiary);
-}
-/* The chip row is 800 pixels of real screen. Squeezed into half the column it
-   is a smear, so it takes the whole width and is read at close to its own size.
-   Legibility is the only reason any of these pictures is here. */
-.term.wide { grid-column: 1 / -1; }
-
-/* A phone shot, a dialog and the two boxes that cover the screen are portraits.
-   Shrunk to the height of a landscape crop their own lettering stops being
-   readable, which defeats the entry, so they take the full width and the prose
-   sits beside them. */
-.term.tall { grid-column: 1 / -1; }
-.term.tall::after { content: ""; display: block; clear: both; }
-.term.tall img { float: left; max-height: 620px; margin: 0 1.1rem 0.6rem 0; }
-.term p { margin: 0.35rem 0 0; font-size: 0.93rem; color: var(--text-secondary); }
-.term p.say { color: var(--text-muted); font-size: 0.88rem; margin-top: 0.5rem; }
-
-/* The widget map. Drawn in the palette's own variables, never in a fixed
-   colour, so it is legible on all eleven palettes and follows a reader who
-   changes theirs while it is on screen.
-
-   On a phone the whole schematic scaled to the column width put its labels at
-   five pixels, which is a diagram that says nothing to the reader who most
-   needs it. It keeps a floor on its width and scrolls sideways inside its own
-   box instead: the page still never scrolls sideways, and the words can still
-   be read. */
-.diagram.scrolls { overflow-x: auto; }
-.diagram.scrolls svg { min-width: 640px; }
-.widgetmap text { font-family: var(--font); }
-.wm-win  { fill: var(--bg-primary);   stroke: var(--border-2); stroke-width: 1; }
-.wm-bar  { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
-.wm-pan  { fill: var(--bg-secondary); stroke: var(--border);   stroke-width: 1; }
-.wm-cell { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
-.wm-soft { fill: var(--accent-soft);  stroke: var(--accent);   stroke-width: 1; }
-.wm-fill { fill: var(--accent); }
-.wm-skel { fill: var(--text-muted); opacity: 0.32; }
-.wm-zone { fill: var(--text-muted); letter-spacing: 1.2px; }
-.wm-lab  { fill: var(--accent-text); font-weight: 700; }
-.wm-lead { stroke: var(--accent); stroke-width: 1.2; opacity: 0.75; }
-.wm-ink  { stroke: var(--text-muted); stroke-width: 1.4; fill: none; opacity: 0.55; }
-</style>
 </head>
 <body>
 
@@ -101,629 +21,93 @@
 			<span class="brand-sub">Guide</span>
 		</a>
 		<nav class="site-nav" aria-label="Guide pages">
-			<a href="index.html">Getting started</a>
+			<a href="index.html">Start here</a>
 			<a href="interface.html">The interface</a>
-			<a href="models.html">Models &amp; credits</a>
 			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-			<a href="capps.html">Capps</a>
-			<a href="email-web-files.html">Email, Web &amp; files</a>
-			<a href="accounts.html">Accounts</a>
-			<a href="sync.html">Cross-device sync</a>
-			<a href="runner.html">The runner</a>
+			<a href="capps.html">A Diamond&rsquo;s page</a>
+			<a href="email-web-files.html">Files, email &amp; the web</a>
+			<a href="machine-operations.html">Your computer</a>
+			<a href="runner.html">Helpers &amp; where turns run</a>
+			<a href="sync.html">More than one device</a>
+			<a href="social.html" aria-current="page">Social &amp; proposals</a>
+			<a href="models.html">Models &amp; providers</a>
 			<a href="spending.html">Spending</a>
-			<a href="machine-operations.html">Machine Operations</a>
-			<a href="social.html" aria-current="page">Social</a>
+			<a href="accounts.html">Safety &amp; fixes</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>Social</h1>
-	<p class="lede">Daimond is changed by what its users report. The Social panel is where that is written, read back and voted on, and where messages, the people they come from, groups and shares sit. This page is about making a note land: how to say what happened, and the names for the parts of the screen, so that whoever reads it knows at once which thing you mean.</p>
-
-	<p>A note that says the thing at the top left is broken costs somebody a search, and sometimes finds the wrong thing. A note that says the <strong>Diamonds</strong> chip in the top bar does not. Neither note is more work to write. The difference is only knowing what the parts are called, which is what the rest of this page is for.</p>
-
-	<section id="writing-a-note">
-		<h2 id="s1">Writing a note that can be acted on</h2>
-
-		<p>Three things, and the first is the one most often left out.</p>
-
-		<ol class="steps">
-			<li>
-				<h3 id="s2">Where it is</h3>
-				<p>Name the part, and the region it sits in. The screen has four regions and about twenty kinds of part, and naming both makes almost anything unique: there are crosses all over Daimond, but only one closer on the <span class="ui">Everything</span> row.</p>
-			</li>
-			<li>
-				<h3 id="s3">What you expected</h3>
-				<p>Say what you thought would happen. This is the half a reader cannot guess, and it is often the whole report: a control that does exactly what it was built to do, and surprises people anyway, is a fault in the control and not in the people.</p>
-			</li>
-			<li>
-				<h3 id="s4">What happened instead</h3>
-				<p>What you saw, in the order you saw it. Not what you think caused it. A guess at the cause narrows the search, and a wrong guess narrows it away from the fault.</p>
-			</li>
-		</ol>
-
-		<div class="pair">
-			<div class="costly">
-				<span class="lead-in">Costs a round trip</span>
-				<p>The X at the top left is broken.</p>
-			</div>
-			<div class="useful">
-				<span class="lead-in">Can be acted on</span>
-				<p>The closer on the <span class="ui">Everything</span> row put the whole rail away. I expected it to close that row.</p>
-			</div>
-		</div>
-
-		<p>A few more things that save a reply.</p>
-
-		<ul>
-			<li><strong>One note, one thing.</strong> Two faults in one note become one proposal that cannot be finished, because half of it is fixed and half is not.</li>
-			<li><strong>Say which build.</strong> The <span class="ui">Version</span> row in the admin panel names it, and hovering it gives the build id. A fault already fixed reads exactly like a fault nobody can reproduce.</li>
-			<li><strong>Say what you were doing.</strong> Even a short trail helps: which panel was open, whether you were on a phone, which palette you were wearing. A fault can be there on one palette, or one screen width, and nowhere else.</li>
-			<li><strong>Write it anyway.</strong> If you cannot name the part, describe it and say where it was on screen. An approximate note is worth far more than a note nobody writes.</li>
-		</ul>
-	</section>
-
-	<section id="regions">
-		<h2 id="s5">Saying where: the four regions</h2>
-
-		<p>Daimond has a <strong>top bar</strong> across the top, and under it three regions side by side: the <strong>rail</strong> on the left, the <strong>stage</strong> in the centre, and the <strong>dock</strong> on the right. Almost every note can start by naming one of those four. <a href="interface.html">The interface</a> tours them and says what each panel is for; this page is about the smaller parts inside them.</p>
-
-		<figure class="diagram scrolls">
-			<svg class="widgetmap" viewBox="0 0 760 470" role="img" aria-labelledby="wm-title wm-desc" preserveAspectRatio="xMidYMid meet">
-				<title id="wm-title">Where the named parts of the screen are</title>
-				<desc id="wm-desc">A schematic of the Daimond window. Across the top is the top bar, holding the chip row. Below it, three regions: the rail on the left, with a light and a closer on its top row, a head over each list, tiles in the lists, a divider between them, and rows in the admin panel underneath; the stage in the centre, with a head at the top and the composer at the bottom; and the dock on the right, holding panels.</desc>
-
-				<!-- ── The window and the top bar ─────────────────────── -->
-				<rect class="wm-win" x="10" y="10" width="740" height="450" rx="16"/>
-				<path class="wm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
-				<rect class="wm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
-				<rect class="wm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
-
-				<!-- The chip row, with two chips filled to show an open panel. -->
-				<rect class="wm-soft" x="170" y="24" width="46" height="18" rx="9"/>
-				<rect class="wm-cell" x="224" y="24" width="30" height="18" rx="9"/>
-				<rect class="wm-soft" x="262" y="24" width="36" height="18" rx="9"/>
-				<rect class="wm-cell" x="306" y="24" width="40" height="18" rx="9"/>
-				<rect class="wm-cell" x="354" y="24" width="44" height="18" rx="9"/>
-				<line class="wm-ink" x1="408" y1="24" x2="408" y2="42"/>
-				<rect class="wm-cell" x="418" y="24" width="44" height="18" rx="9"/>
-				<rect class="wm-cell" x="470" y="24" width="40" height="18" rx="9"/>
-				<rect class="wm-cell" x="518" y="24" width="42" height="18" rx="9"/>
-				<circle class="wm-ink" cx="660" cy="33" r="9"/>
-				<circle class="wm-ink" cx="690" cy="33" r="9"/>
-				<circle class="wm-ink" cx="720" cy="33" r="9"/>
-				<text class="wm-lab" x="365" y="53" text-anchor="middle" font-size="12">chip row</text>
-				<text class="wm-zone" x="600" y="37" text-anchor="middle" font-size="10">TOP BAR</text>
-
-				<!-- ── The rail ───────────────────────────────────────── -->
-				<text class="wm-zone" x="22" y="80" font-size="10">RAIL</text>
-				<rect class="wm-pan" x="22" y="88" width="196" height="360" rx="10"/>
-
-				<!-- Its top row: play, pause, the light, and the rail's own closer. -->
-				<path class="wm-ink" d="M32,105 L40,110 L32,115 z"/>
-				<line class="wm-ink" x1="47" y1="105" x2="47" y2="115"/>
-				<line class="wm-ink" x1="52" y1="105" x2="52" y2="115"/>
-				<circle class="wm-fill" cx="64" cy="110" r="5"/>
-				<rect class="wm-skel" x="76" y="107" width="48" height="7" rx="3.5"/>
-				<path class="wm-ink" d="M196,105 L206,115 M206,105 L196,115"/>
-				<line class="wm-lead" x1="64" y1="118" x2="64" y2="127"/>
-				<text class="wm-lab" x="64" y="138" text-anchor="middle" font-size="12">light</text>
-				<line class="wm-lead" x1="201" y1="118" x2="201" y2="127"/>
-				<text class="wm-lab" x="208" y="138" text-anchor="end" font-size="12">closer</text>
-
-				<!-- A head over the list, with the buttons that act on the list. -->
-				<rect class="wm-skel" x="32" y="156" width="50" height="8" rx="4"/>
-				<circle class="wm-cell" cx="188" cy="160" r="7"/>
-				<circle class="wm-cell" cx="206" cy="160" r="7"/>
-				<text class="wm-lab" x="128" y="164" text-anchor="middle" font-size="12">head</text>
-
-				<!-- A tile, with its tags and its cog. -->
-				<rect class="wm-cell" x="32" y="178" width="176" height="38" rx="6"/>
-				<rect class="wm-skel" x="40" y="186" width="72" height="6" rx="3"/>
-				<rect class="wm-soft" x="40" y="199" width="26" height="9" rx="4.5"/>
-				<rect class="wm-soft" x="70" y="199" width="22" height="9" rx="4.5"/>
-				<circle class="wm-ink" cx="196" cy="189" r="5"/>
-				<text class="wm-lab" x="146" y="193" text-anchor="middle" font-size="12">tile</text>
-
-				<!-- The divider between the two lists. -->
-				<line class="wm-lead" x1="30" y1="228" x2="210" y2="228" stroke-width="2"/>
-				<rect class="wm-fill" x="112" y="225.5" width="16" height="5" rx="2.5"/>
-				<line class="wm-lead" x1="120" y1="232" x2="120" y2="240"/>
-				<text class="wm-lab" x="120" y="251" text-anchor="middle" font-size="12">divider</text>
-
-				<!-- The second list, and a tile in it. -->
-				<rect class="wm-skel" x="32" y="266" width="34" height="8" rx="4"/>
-				<circle class="wm-cell" cx="188" cy="270" r="7"/>
-				<circle class="wm-cell" cx="206" cy="270" r="7"/>
-				<rect class="wm-cell" x="32" y="288" width="176" height="30" rx="6"/>
-				<rect class="wm-skel" x="40" y="296" width="90" height="6" rx="3"/>
-				<rect class="wm-skel" x="40" y="307" width="60" height="5" rx="2.5"/>
-
-				<!-- The admin panel: one row per question. -->
-				<line class="wm-ink" x1="26" y1="334" x2="214" y2="334"/>
-				<circle class="wm-fill" cx="40" cy="349" r="3" opacity="0.6"/>
-				<rect class="wm-skel" x="50" y="346" width="64" height="6" rx="3"/>
-				<rect class="wm-skel" x="172" y="346" width="32" height="6" rx="3"/>
-				<circle class="wm-fill" cx="40" cy="367" r="3" opacity="0.6"/>
-				<rect class="wm-skel" x="50" y="364" width="52" height="6" rx="3"/>
-				<rect class="wm-skel" x="172" y="364" width="32" height="6" rx="3"/>
-				<circle class="wm-fill" cx="40" cy="385" r="3" opacity="0.6"/>
-				<rect class="wm-skel" x="50" y="382" width="70" height="6" rx="3"/>
-				<rect class="wm-skel" x="172" y="382" width="32" height="6" rx="3"/>
-				<circle class="wm-fill" cx="40" cy="403" r="3" opacity="0.6"/>
-				<rect class="wm-skel" x="50" y="400" width="58" height="6" rx="3"/>
-				<rect class="wm-skel" x="172" y="400" width="32" height="6" rx="3"/>
-				<text class="wm-lab" x="140" y="371" text-anchor="middle" font-size="12">row</text>
-
-				<!-- The spend row, at the foot of the rail. -->
-				<line class="wm-ink" x1="26" y1="422" x2="214" y2="422"/>
-				<rect class="wm-skel" x="40" y="432" width="28" height="5" rx="2.5"/>
-				<rect class="wm-skel" x="104" y="432" width="28" height="5" rx="2.5"/>
-				<rect class="wm-skel" x="168" y="432" width="28" height="5" rx="2.5"/>
-
-				<!-- ── The stage ──────────────────────────────────────── -->
-				<text class="wm-zone" x="228" y="80" font-size="10">STAGE</text>
-				<rect class="wm-pan" x="228" y="88" width="300" height="360" rx="10"/>
-				<rect class="wm-skel" x="240" y="106" width="86" height="8" rx="4"/>
-				<rect class="wm-cell" x="396" y="101" width="44" height="16" rx="8"/>
-				<rect class="wm-cell" x="448" y="101" width="36" height="16" rx="8"/>
-				<rect class="wm-cell" x="492" y="101" width="28" height="16" rx="8"/>
-				<text class="wm-lab" x="352" y="114" text-anchor="middle" font-size="12">head</text>
-
-				<rect class="wm-soft" x="340" y="142" width="168" height="26" rx="8"/>
-				<rect class="wm-skel" x="350" y="152" width="148" height="6" rx="3"/>
-				<rect class="wm-cell" x="240" y="180" width="212" height="34" rx="8"/>
-				<rect class="wm-skel" x="250" y="188" width="192" height="6" rx="3"/>
-				<rect class="wm-skel" x="250" y="200" width="150" height="6" rx="3"/>
-				<rect class="wm-cell" x="240" y="226" width="180" height="26" rx="8"/>
-				<rect class="wm-skel" x="250" y="236" width="160" height="6" rx="3"/>
-
-				<text class="wm-lab" x="330" y="392" text-anchor="middle" font-size="12">composer</text>
-				<line class="wm-lead" x1="330" y1="396" x2="330" y2="404"/>
-				<rect class="wm-cell" x="240" y="404" width="268" height="32" rx="8"/>
-				<rect class="wm-skel" x="252" y="417" width="140" height="6" rx="3"/>
-				<circle class="wm-fill" cx="490" cy="420" r="10"/>
-
-				<!-- ── The dock ───────────────────────────────────────── -->
-				<text class="wm-zone" x="538" y="80" font-size="10">DOCK</text>
-				<rect class="wm-pan" x="538" y="88" width="200" height="360" rx="10"/>
-				<rect class="wm-cell" x="550" y="98" width="176" height="104" rx="8"/>
-				<rect class="wm-skel" x="562" y="110" width="52" height="8" rx="4"/>
-				<rect class="wm-skel" x="562" y="130" width="150" height="6" rx="3"/>
-				<rect class="wm-skel" x="562" y="144" width="120" height="6" rx="3"/>
-				<rect class="wm-skel" x="562" y="158" width="136" height="6" rx="3"/>
-				<text class="wm-lab" x="638" y="185" text-anchor="middle" font-size="12">panel</text>
-				<rect class="wm-cell" x="550" y="212" width="176" height="104" rx="8"/>
-				<rect class="wm-skel" x="562" y="224" width="64" height="8" rx="4"/>
-				<rect class="wm-skel" x="562" y="244" width="118" height="6" rx="3"/>
-				<rect class="wm-skel" x="574" y="258" width="126" height="6" rx="3"/>
-				<rect class="wm-skel" x="574" y="272" width="98" height="6" rx="3"/>
-				<rect class="wm-skel" x="562" y="286" width="88" height="6" rx="3"/>
-				<rect class="wm-cell" x="550" y="326" width="176" height="110" rx="8"/>
-				<rect class="wm-skel" x="562" y="338" width="48" height="8" rx="4"/>
-				<rect class="wm-skel" x="562" y="358" width="140" height="6" rx="3"/>
-				<rect class="wm-skel" x="562" y="372" width="104" height="6" rx="3"/>
-				<rect class="wm-skel" x="562" y="386" width="128" height="6" rx="3"/>
-			</svg>
-			<figcaption>Where the named parts sit. The words in colour are the ones to use in a note; the four regions are set in small capitals. Nothing here is to scale, and a panel can be closed, moved or put away, so the regions are what stay put.</figcaption>
-		</figure>
-
-		<div class="note">
-			<strong>Two words for the centre.</strong> This guide calls it the stage. The panel gallery groups the same panels under <span class="ui">Beside the chat</span>, which is the only name the app itself puts on screen for that region. Both are understood; if you use neither and say beside the chat in your own words, that is understood too.
-		</div>
-	</section>
-
-	<section id="glossary">
-		<h2 id="s6">The parts, by name</h2>
-
-		<p>Every word below is one Daimond already uses, in its own interface or in this guide. Each entry shows the real thing, cropped out of a running Daimond, so you can match what is in front of you against the picture and use the word with confidence.</p>
-
-		<p>The pictures were taken on one of the dark palettes. On yours the colours will differ, and on a phone some of these parts move; the names do not.</p>
-
-		<!--
-		  A translator's note, and an auditor's.
-
-		  Each term here is the word the ENGLISH interface uses. It is a common
-		  noun, not a product name, so it is translated: a reader whose Daimond
-		  says "Kachel" is looking for a glossary that says "Kachel", and one
-		  that says "tile" instead defeats the whole purpose of the page.
-
-		  The word to use in a given language is the one that language's own
-		  catalogue already uses, in www/i18n/[locale].js. The key to copy it
-		  from is named after each term, so nothing has to be invented:
-
-		    chip        chip.show, and chat.concise_failed
-		    tile        tile.settings
-		    head        no key of its own. The guide's word; the markup says
-		                railhead and chead
-		    closer      common.close_named. js/closer.js is the whole control
-		    cog         tile.settings, on the button that opens it
-		    light       pause.state_play, pause.state_pause, pause.state_mixed,
-		                pause.state_idle
-		    divider     layout.handle
-		    row         astat.tools_of and the rest of astat
-		    spend row   spend.period_day, spend.period_week, spend.period_month
-		    composer    chat.input_ph, chat.send
-		    face        crystal.view_switch
-		    tag         tag.add, tag.pool_toggle
-		    dialog      dlg.are_you_sure
-		    gallery     gallery.title
-		    Go to box   pal.title, pal.close
-		    sheet       sheet.close
-		    drawer      no key of its own. The button that opens it is
-		                topbar.open_menu
-		    paperclip   attach.to_focus
-		    forge       social.public_note, social.voice_intro. Nothing to
-		                photograph: it is a website, not a part of this app
-		    voice       social.voice_held, social.voice_ph, and the whole
-		                voice.* family. Nothing to photograph either, and
-		                nothing that may be: it is a secret
-
-		  The product nouns are NOT translated, here or anywhere: Daimond,
-		  Diamond, Daimond Pro, Hands. See the head of www/i18n/en.js.
-		-->
-
-		<div class="terms">
-
-			<div class="term wide" id="term-chip">
-				<h3 id="s7">chip</h3>
-				<img src="shots/vocab-chips.png" alt="A row of small rounded buttons across the top bar, each named after a panel. Three are filled in and the rest are outlined." loading="lazy">
-				<p>A small rounded button that turns one thing on or off. The row of them across the top bar is the <strong>chip row</strong>, one chip per panel, filled in while that panel is open.</p>
-				<img src="shots/vocab-chead.png" alt="The head of the chat panel: its name at the left, then three small rounded buttons reading Guarded, Concise and Steps." loading="lazy">
-				<p>Chips are used elsewhere too: on a head, as above, on a tile, and in the rail as tags. Say which, and a chip is unambiguous.</p>
-				<p class="say">Say: the <strong>Workspace</strong> chip in the chip row.</p>
-			</div>
-
-			<div class="term" id="term-tile">
-				<h3 id="s8">tile</h3>
-				<img src="shots/vocab-tile-chat.png" alt="A chat in the rail, drawn as a bordered card with a time, the first message, a cog, a closer and two small buttons." loading="lazy">
-				<p>One Diamond or one chat, as it appears in the rail. A tile carries its own name, its cog, its closer, and whatever else belongs to that one piece of work.</p>
-				<p class="say">Say: the cog on a chat tile.</p>
-			</div>
-
-			<div class="term" id="term-head">
-				<h3 id="s9">head</h3>
-				<img src="shots/vocab-head.png" alt="The word Diamonds at the left of a narrow strip, with a plus button and a graph button at its right." loading="lazy">
-				<p>The strip that names a list or a panel and carries the buttons acting on the whole of it. Each list in the rail has one, and so does every panel.</p>
-				<p class="say">Say: the plus on the <span class="ui">Chats</span> head.</p>
-			</div>
-
-			<div class="term" id="term-closer">
-				<h3 id="s10">closer</h3>
-				<img src="shots/vocab-closer.png" alt="A small drawn cross." loading="lazy">
-				<p>The cross that closes something. Daimond has one closer, drawn one way, on every panel, tile, dialog, menu, drawer and sheet.</p>
-				<p>It always closes the one thing it sits on and never anything larger, so naming what it sits on names the closer exactly.</p>
-				<p class="say">Say: the closer on the <span class="ui">Everything</span> row.</p>
-			</div>
-
-			<div class="term" id="term-cog">
-				<h3 id="s11">cog</h3>
-				<img src="shots/vocab-cog.png" alt="A small drawn cog wheel." loading="lazy">
-				<p>The settings button. Wherever a thing has settings of its own, they are behind a cog on that thing: on a tile, on the identity row, on a mailbox.</p>
-				<p class="say">Say: the cog on the Diamond tile.</p>
-			</div>
-
-			<div class="term" id="term-light">
-				<h3 id="s12">light</h3>
-				<img src="shots/vocab-everything.png" alt="A row reading Everything, with a play arrow, a pause symbol and a round amber light before it, and a closer at the far right." loading="lazy">
-				<p>The round light beside a play and a pause, saying whether that part of Daimond is going to act on its own. Green for everything set up and running, amber for some of it held, red for none of it running — either held, or nothing set up in the first place. Hover it and it says which.</p>
-				<p>Every light in the app hangs off the one on the <span class="ui">Everything</span> row, which speaks for the lot.</p>
-				<p class="say">Say: the light on the <span class="ui">Everything</span> row is amber.</p>
-			</div>
-
-			<div class="term" id="term-divider">
-				<h3 id="s13">divider</h3>
-				<img src="shots/vocab-divider.png" alt="A thin coloured rule across the rail under the pointer, with the Chats head below it." loading="lazy">
-				<p>A line you can drag to give one list or one panel more room, and double-click to put back where it was. There are two in the rail: one between the Diamonds and the chats, one above the admin panel.</p>
-				<p class="say">Say: the divider above the admin panel.</p>
-			</div>
-
-			<div class="term" id="term-row">
-				<h3 id="s14">row</h3>
-				<img src="shots/vocab-rows.png" alt="The admin panel: a name at the top with a cog, then a stack of single lines each with a coloured dot, a label and a value." loading="lazy">
-				<p>One line in a stack of them, answering one question. The admin panel is rows; so are the mailboxes, the folders, the devices and the files.</p>
-				<p>A row that can be acted on is a button, and it opens the thing it names.</p>
-				<p class="say">Say: the <span class="ui">Version</span> row in the admin panel.</p>
-			</div>
-
-			<div class="term" id="term-spend-row">
-				<h3 id="s15">spend row</h3>
-				<img src="shots/vocab-spendrow.png" alt="Three cells at the foot of the rail, labelled Session, Week and Month, each with a small figure under it." loading="lazy">
-				<p>The three figures at the foot of the rail: this session, this week, this month. It hides itself while nothing has been spent.</p>
-				<p class="say">Say: the week cell of the spend row.</p>
-			</div>
-
-			<div class="term" id="term-composer">
-				<h3 id="s16">composer</h3>
-				<img src="shots/vocab-composer.png" alt="A wide rounded box reading Type a message, with a round send button and two small round buttons beside it." loading="lazy">
-				<p>The box you type into, with the send button beside it. There is one, at the foot of the stage, and it talks to whatever is on the stage: a chat, or a Diamond's daimon.</p>
-				<p class="say">Say: the send button on the composer.</p>
-			</div>
-
-			<div class="term" id="term-face">
-				<h3 id="s17">face</h3>
-				<img src="shots/vocab-face.png" alt="A small pair of joined buttons reading Crystal and Chat, with Crystal selected." loading="lazy">
-				<p>A Diamond has two of them, and this switch chooses which one you are looking at: the <span class="ui">Crystal</span>, which is what the Diamond knows, and the <span class="ui">Chat</span>, which is how it came to know it.</p>
-				<p class="say">Say: on the crystal face of a Diamond.</p>
-			</div>
-
-			<div class="term" id="term-tag">
-				<h3 id="s18">tag</h3>
-				<img src="shots/vocab-tile-diamond.png" alt="A Diamond tile carrying two small coloured labels reading project and urgent, with a cog at its right." loading="lazy">
-				<p>A word you file a Diamond under. Tags sit on the tile as small chips, and the <span class="ui">Filter by tag</span> row above the list narrows it to the ones you pick.</p>
-				<img src="shots/vocab-tagfilter.png" alt="A narrow row above the Diamonds list reading Filter by tag, with a count beside it." loading="lazy">
-				<p>Tags are yours alone: they never go to a model, and they never enter a crystal.</p>
-				<p class="say">Say: the tag chips under <span class="ui">Filter by tag</span>.</p>
-			</div>
-
-			<div class="term tall" id="term-dialog">
-				<h3 id="s19">dialog</h3>
-				<img src="shots/vocab-dialog.png" alt="A card centred over the app, with a title, a closer beside it, several labelled settings, and a Delete button at the foot." loading="lazy">
-				<p>A card that opens over the app and waits for an answer. Its title is on the same row as its closer, and Escape does what the closer does.</p>
-				<p class="say">Say: the <span class="ui">Delete</span> button in a chat tile's dialog.</p>
-			</div>
-
-			<div class="term tall" id="term-gallery">
-				<h3 id="s20">gallery</h3>
-				<img src="shots/vocab-gallery.png" alt="A tall card titled Panels, with a search box and every panel listed in three groups, each row carrying a star." loading="lazy">
-				<p>Every panel there is, searchable, grouped by region, each row saying whether that panel is open and carrying the pin that decides whether its chip sits in the top bar. It opens from the <span class="ui">⋯</span> chip at the end of the chip row.</p>
-				<p class="say">Say: the pin on the <span class="ui">Trash</span> row of the gallery.</p>
-			</div>
-
-			<div class="term tall" id="term-goto">
-				<h3 id="s21">Go to box</h3>
-				<img src="shots/vocab-goto.png" alt="A large box over the app with a search field and a list of results, each tagged with what kind of thing it is." loading="lazy">
-				<p>The keyboard's way to anything: <kbd>Ctrl</kbd> <kbd>K</kbd>, or <kbd>Cmd</kbd> <kbd>K</kbd> on a Mac. It reaches every panel and every setting by typing, including the ones no chip is showing.</p>
-				<p class="say">Say: typing a palette name into the Go to box.</p>
-			</div>
-
-			<div class="term tall" id="term-sheet">
-				<h3 id="s22">sheet</h3>
-				<img src="shots/vocab-sheet.png" alt="A phone screen with a panel raised over the chat from the bottom edge, a grab bar at its top and an ask box at its foot." loading="lazy">
-				<p>On a phone, a panel rises over the chat as a sheet you can drag up and down. It has a grab bar at the top, a closer beside it, and the one box you ask about it in.</p>
-				<p class="say">Say: the grab bar on the Workspace sheet.</p>
-			</div>
-
-			<div class="term tall" id="term-drawer">
-				<h3 id="s23">drawer</h3>
-				<img src="shots/vocab-drawer.png" alt="A phone screen with the rail slid in from the left over a dimmed app, holding the Diamonds, the chats and the admin panel." loading="lazy">
-				<p>On a phone, the rail slides in from the left as a drawer. It is the whole rail, so everything in it keeps its own name. The button that opens it is the three lines at the top left.</p>
-				<p class="say">Say: the admin panel, down the drawer.</p>
-			</div>
-
-			<div class="term" id="term-paperclip">
-				<h3 id="s24">paperclip</h3>
-				<img src="shots/vocab-paperclip.png" alt="A row in the Workspace panel naming a folder, with a link, a paperclip and a closer at its right." loading="lazy">
-				<p>Attaches what you are reading to what you are working on. It sits on every row of the Workspace panel and on the head of a document, and it is drawn only while there is something to attach to.</p>
-				<p class="say">Say: the paperclip on a folder row.</p>
-			</div>
-
-		</div>
-
-		<p>A few more words the rest of the guide uses, with nothing to photograph: a <strong>panel</strong> is one of the things a region holds, each with a name of its own, from <span class="ui">AI</span> to <span class="ui">Trash</span>; a <strong>crystal</strong> is what a Diamond knows, kept as a document; a <strong>daimon</strong> is the agent that thinks for a Diamond; a <strong>worker</strong> is an agent a daimon sends off to do one job. <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> explains all four.</p>
-
-		<p>Two more belong to the Social panel, and neither can be photographed either. The <strong id="term-forge">forge</strong> is where the work on Daimond is tracked: a public repository, off this device, that a note you send arrives in as a proposal. Your <strong id="term-voice">voice</strong> is a secret line the forge makes for you, which it looks you up by, held encrypted on this device. <a href="#social-panel">The Social panel</a> below is where both are used, and it is the only place in Daimond either word appears.</p>
-	</section>
-
-	<section id="two-words">
-		<h2 id="s25">Where two words exist</h2>
-
-		<p>A few things in Daimond genuinely answer to more than one name, usually because the app says one and this guide says the other. They are listed here so that nobody wastes a sentence apologising for using the wrong one. Both are understood, and a note that uses either is a good note.</p>
-
-		<ul>
-			<li>The centre region is <strong>the stage</strong> in this guide and <span class="ui">Beside the chat</span> in the panel gallery.</li>
-			<li>The panel under the rail's lower divider is <strong>the admin panel</strong> everywhere a reader can see, and its own head reads <span class="ui">Admin</span>.</li>
-			<li>The <kbd>Ctrl</kbd> <kbd>K</kbd> box calls itself <strong>Go to</strong>, and this guide has also called it the palette. Palette is also the word for the eleven colour schemes, so <strong>Go to box</strong> is the one to prefer.</li>
-			<li>The button that opens the drawer on a phone says <span class="ui">Menu</span>, and what it opens is the rail.</li>
-		</ul>
-
-		<p>If you find another, that is worth a note of its own. Two names for one thing is a small fault in the app, not in the person reporting it.</p>
-	</section>
-
-	<section id="social-panel">
-		<h2 id="s26">The Social panel</h2>
-
-		<p>A note is written in the <span class="ui">Social</span> panel, which sits in the dock, beside your work, so that a note about what is on screen can be written without leaving it. Its <strong>head</strong> carries five <strong>chips</strong>, and one is filled while you are looking at it: <span class="ui">Messages</span>, <span class="ui">People</span>, <span class="ui">Share</span>, <span class="ui">Proposals</span> and <span class="ui">Settings</span>. It opens on <span class="ui">Proposals</span>, which is where a note is both written and read back.</p>
-
-		<p>The rest of this section is <span class="ui">Proposals</span>, which is about Daimond itself, and <span class="ui">Settings</span>, which holds your voice. The other three chips are about other people, and each has a section of its own below: <a href="#people">People</a> first, because nothing can be sent to anybody until a code has been exchanged.</p>
-
-		<p>A note you post does not stop at Oxedyne. It goes to the <strong>forge</strong>, the place where the work on Daimond is tracked, and it arrives there as a proposal anyone with that repository can read. The <span class="ui">Proposals</span> chip is that same forge, read back — which is why the box that writes a proposal and the list that shows them are the one view.</p>
-
-		<h3 id="s27">Your voice</h3>
-
-		<p>Anything that leaves this device goes under a <strong>voice</strong>. A voice is a secret line the forge makes for you: it belongs to one person, and the forge looks you up by it. It is the whole of your identity there. No name, no handle and no address travels with what you write, and this browser is never told what your voice is called.</p>
-
-		<p>Your voice lives in the <span class="ui">Settings</span> chip. Getting one is a single tap: when you have no voice, Settings shows <span class="ui">Get my voice</span>. Press it, and Daimond has the forge make your voice for you and holds it here. There is nothing to find, ask for or paste. It is made once, so if you already have one on another device it syncs across rather than being made again — the panel says so, and it will arrive shortly.</p>
-
-		<p>Daimond holds your voice on this device, encrypted under your passphrase, and the gateway it passes through on its way out stores nothing. <span class="ui">Forget it</span> removes the copy on this device. If a voice was made on another device and never reaches this one, <span class="ui">I lost my voice — re-issue</span> makes a fresh one; that replaces the old voice everywhere and cannot be undone, so it asks first. And if the forge has already handed you a voice some other way, <span class="ui">I already have a voice</span> lets you paste it in instead of making a new one.</p>
-
-		<p>Without a voice, the panel does not offer <span class="ui">Post</span>, nor voting, nor a reply: a voice is the one thing nothing leaves this device without.</p>
-
-		<h3 id="s28">Writing one</h3>
-
-		<p>At the top of the <span class="ui">Proposals</span> view is the <strong>note box</strong>. Write the three things from the top of this page into it: where it is, what you expected, what happened instead. <strong>The first line is the title</strong> and the rest is what happened; the sentence beside the buttons says so.</p>
-
-		<p>Below the box is a <strong>row</strong> headed <span class="ui">What goes with it</span>. It holds one line: the build, the language, the size of the window, whether you are on a phone, the palette you are wearing, and which panels are open. That is the fourth piece of advice above, gathered for you rather than asked of you, and it is shown in the exact characters it will travel as. The row has a <strong>closer</strong>, and closing it takes the line off the note as well as off the screen.</p>
-
-		<p>Then two buttons, and the difference between them is whether the model rewrites the note first.</p>
-
-		<ul>
-			<li><span class="ui">Post</span> sends the note as it is. What leaves is exactly the characters in the box and in that row; nothing is added on the way out, nothing else about you goes with it, and it becomes a proposal at once. It goes under your voice, and it goes somewhere public: anyone who can read the repository can read what you wrote. The sentence beside the button says so, so that you know before you press it and not after.</li>
-			<li><span class="ui">Polish</span> hands the note to the model first, on your own key. The model rewrites it into a proposal — a clear title and body drawn from your words — and <strong>that proposal is shown to you, unsent</strong>, in the list under the box with <span class="ui">Send now</span> beside it. Nothing goes until you press it. What the model wrote is not what you wrote, so it waits for you to read it; your own words stay above it, untouched, and you can change the title before you send.</li>
-		</ul>
-
-		<p><strong>A title has a length.</strong> The forge takes a title of up to 200 characters and refuses a longer one outright, writing nothing at all. So the box counts the first line for you the moment it goes over, and tells you both numbers; and if a proposal is ever refused for its length anyway, the title opens for editing on the waiting row with the count beside it, and <span class="ui">Send now</span> stays dark until it fits. The detail belongs under the first line, where there is room for it.</p>
-
-		<div class="note">
-			<strong>A note that cannot go WAITS, and a reconnect takes it as far as it may go.</strong> Posting needs the forge to be reachable; when it is not — you are offline, or the forge refused — the note is not lost. It waits in a small list under the box, remembering whether you chose to post it as it is or to polish it. When the browser comes back, a note you chose to post goes on its own; a note you chose to polish is <em>drafted</em> on its own and then waits for your <span class="ui">Send now</span>, because nothing the model wrote is published without you. A note the forge has <strong>refused</strong> is not tried again at all: it says what the forge said, opens its title for editing, and goes only on a press. <span class="ui">Copy</span> is on every waiting note, so you can always carry your own words out by hand.
-		</div>
-
-		<p>A note leaves this device only by becoming a proposal, and then it is gone from here: the forge holds it now, and there is no second copy and no list of old notes to keep. Until it goes, a waiting note can be sent by hand, copied or deleted — a note is only on this device, so deleting it asks first.</p>
-
-		<h3 id="s29">Reading the proposals, and voting</h3>
-
-		<p>A <strong>proposal</strong> is one change to Daimond, stated so that it can be agreed or disagreed with, and so that it can be finished. Posting a note opens one: its first line becomes the title and the rest becomes the body. That is why the advice at the top of this page says one note, one thing: two faults in one note become one proposal that cannot be finished.</p>
-
-		<p>Under the <span class="ui">Proposals</span> chip each one is a <strong>row</strong> of the same shape as a row in the admin panel: a coloured dot for what state it is in, its title, and, where there are counts, how many have asked for it. Pressing the row opens it, and inside are the proposal in full, who wrote it and when, how many replies it has, the build it was written on, and the mark that closed it if one has.</p>
-
-		<p>Under that is a box to say something back. Write in it and press <span class="ui">Say it</span>, and what is sent is exactly what is in that box, the same promise the note box keeps. What has already been said sits above it.</p>
-
-		<p>Where the forge is keeping counts, two buttons sit with them: <span class="ui">Do this</span> and <span class="ui">Not this</span>. Pressing the one you already chose takes your vote back off.</p>
-
-		<p>There are four states. <span class="ui">Open</span> and <span class="ui">Being done</span> say where it stands, <span class="ui">Done</span> says it is finished, and <span class="ui">Declined</span> says it will not be done. A proposal that simply vanished would teach people not to write notes, so none of them does.</p>
-
-		<p><strong>Nothing tells you when your proposal is answered.</strong> There is no feed, no badge and no message: you find out by opening the panel and reading it. The line above the list says so, so that a silence is never taken for an answer.</p>
-
-		<div class="note">
-			<strong>The counts are live, and nothing is held.</strong> Everything under <span class="ui">Proposals</span> is read from the forge while you are looking at it, so a count is what it was at that moment rather than as at a build. There is no queue behind the two buttons either: <strong>a vote pressed while you are offline is not cast</strong>, and nothing casts it for you afterwards. Press it again when you are back.
-		</div>
-	</section>
-
-	<section id="people">
-		<h2 id="s30">People, and the first exchange</h2>
-
-		<p>Everything else on this page rests on one act: two people coming to hold each other's real keys. Nothing can be sealed to somebody Daimond has no key for, so until a code has been exchanged the <span class="ui">People</span> list says exactly that, and the message box says there is nobody to write to.</p>
-
-		<p>Two buttons sit above the list. <span class="ui">Show my code</span> puts your own <strong>code</strong> on screen: a small signed card carrying your key, the separate key a message to you is sealed with, and whatever name you have given yourself. It is drawn as a symbol for somebody else's camera, and repeated underneath as a line of text beginning <code translate="no">DMND-ID1.</code> for when there is no camera. <span class="ui">Add somebody</span> is the other half of the same act: this device's camera, and a box to paste a code into.</p>
-
-		<h3 id="s31">Read in the room, or read a number aloud</h3>
-
-		<p>Both routes record the code. Only two things can raise a key to <strong>matched</strong>, and which of them is offered depends on how the code arrived rather than on what it says.</p>
-
-		<ul>
-			<li><strong>This device's camera, in person.</strong> You read it off their screen, so there was no channel for anybody to get between you, and the row offers <span class="ui">Mark matched now</span>.</li>
-			<li><strong>Anything else</strong> &mdash; a paste, a link, a code somebody sent you &mdash; stays a new key, and the dialog says so as it arrives. Whatever handed it over could have substituted a key of its own and signed the result perfectly, so a card that checks out proves that the holder of that key composed it and nothing about who the holder is.</li>
-		</ul>
-
-		<p>The way up from there is <span class="ui">Compare safety numbers</span>: sixty digits in twelve groups of five, the same on both sides, read to each other on a call or in person. <span class="ui">The numbers match</span> records it. <span class="ui">They are different</span> says that somebody is between you and that the key is not to be used. Reading the digits in a message proves nothing, because whatever could swap the keys could swap the message.</p>
-
-		<h3 id="s32">What a row says</h3>
-
-		<p>Each person is a <strong>row</strong>: a name, a line under the name, and a fingerprint. Until the key is matched the name is drawn as the claim it is &mdash; <em>calls themselves “Ada”</em> &mdash; because a name is a thing its holder typed. Once it is matched, the person on the other end is known and the name may be their name.</p>
-
-		<p>The line under the name is the only place in Daimond a key's standing is drawn, and it is a line rather than a badge so that it cannot be read in one glance with anything else. It says one of five things: that this is a new key you have not matched; that it was matched in person, with the date; that it was matched by safety number, with the date; that it is a <em>different</em> key from the one you matched; or that it is blocked.</p>
-
-		<div class="note"><strong>A key that changes is not a key that carries over.</strong> A card can name the key it replaces, which links the two, and it does not move a match across: the commonest reason a key changes is that the old one leaked, and whoever took the old key can sign that claim too. So the row says the key is different, and messages from it are held until you decide. A name that folds onto a name you have already matched is called out on the row as well &mdash; names are not identities, and the key is the thing to check.</div>
-
-		<p><span class="ui">Block</span> on any row stops that key at the relay: nothing more from them is carried, and they are told nothing about it. <span class="ui">Unblock</span> lifts it. Nothing in this list is edited or deleted: every card, every match and every block is appended to a record on this device, and the list is rebuilt from that record, with every signature checked again, each time it is drawn.</p>
-	</section>
-
-	<section id="messages">
-		<h2 id="s33">Private messages</h2>
-
-		<p>A message is sealed on this device to a key the other person holds, and opened on theirs. Nothing in between can read it, and that includes us: the relay carries ciphertext and has no way to do anything else with it. What it does see is what routing needs &mdash; which account, when, and how many bytes &mdash; and that is worth saying rather than glossing over.</p>
-
-		<p>At the foot of the <span class="ui">Messages</span> view is the box you write in. Above it a picker names who it goes to: the people whose sealing key this device holds, and the groups you have joined. Under the picker one line says who can read what you are about to type, and it changes with the pick, because <span class="ui quoted">Private. Only you and the person you are writing to can read this.</span> would be false over a group of twelve. <span class="ui">Send privately</span> sends it. A body longer than 8,192 characters is refused rather than cut, on the ground that half a message is not a shorter message.</p>
-
-		<h3 id="s34">Arriving</h3>
-
-		<p>While the <span class="ui">Messages</span> view is open, Daimond holds a request open at the relay, so a message that lands is drawn without your pressing anything. With the panel shut, it is found when you next open it &mdash; and by the count.</p>
-
-		<p>The <span class="ui">Social</span> chip in the chip row carries a number, and the total across the app goes into the browser tab's title and onto the app's own icon where the platform draws one. It is a tally of what has arrived rather than a memory of what you have looked at, and this build has nothing that marks a message as read, so the number stands.</p>
-
-		<p>A first message from somebody you have not accepted does not go into the list. It waits above it, under <span class="ui">Waiting for your answer</span>, with their fingerprint and what they wrote, and three buttons:</p>
-
-		<ul>
-			<li><span class="ui">Accept</span> takes it into the list, and their later messages go straight there.</li>
-			<li><span class="ui">Ignore</span> takes the row away. It writes nothing, and it tells them nothing &mdash; that is the whole of it, so that a sender can never tell an ignore from a silence.</li>
-			<li><span class="ui">Block</span> stops them at the relay, as the <span class="ui">People</span> row does.</li>
-		</ul>
-
-		<div class="note"><strong>One email a day, at most.</strong> Where your account has an address on it, Daimond may send one email saying something is waiting: no sender, no subject, no count, and not more than one in any twenty-four hours. The switch is in the admin panel under <span class="ui">Email doorbell</span>, and for a beta account it starts on, because with a closed tab and no push it is the only thing anybody hears.</div>
-
-		<h3 id="s35">What is said, and what is not promised</h3>
-
-		<ul>
-			<li><strong>Sent, never delivered.</strong> The relay answers a blocked delivery exactly as it answers one it took, deliberately, so that Block cannot be told from Ignore. So a group send says how many people it was <em>sent</em> to, and names anybody the relay would not take it for.</li>
-			<li><strong>A full mailbox is said so.</strong> A box holds five hundred uncollected messages; past that a message does not arrive, and the sender is told that rather than told it went.</li>
-			<li><strong>Thirty days, then the relay lets go.</strong> A message nobody collects is dropped after thirty days and the sender gets a notice for it, in its own section under the list. A message that expired leaves that notice behind rather than a gap, so a silence is never mistaken for nothing having been sent.</li>
-			<li><strong>Nothing is queued.</strong> A message that could not be sent has not been sent, and nothing tries again behind your back. The same rule the note box keeps.</li>
-			<li><strong>Your own devices see them.</strong> Messages, and a copy of what you send, travel with the encrypted parcel <a href="sync.html">sync</a> carries between your devices. On this device they are kept encrypted under your passphrase, so while Daimond is locked the list says so instead of showing an empty one.</li>
-		</ul>
-
-		<div class="note"><strong>Reporting one message.</strong> Because the operator cannot read a message, the only person who can produce an abusive one is the person it was sent to. <span class="ui">Report</span> on a message shows the exact words that will go, and sends them with the sender's signature and the one key that opens that one envelope. Nothing else goes: not the rest of the exchange, not their other messages, not your other conversations.</div>
-	</section>
-
-	<section id="groups">
-		<h2 id="s36">Groups</h2>
-
-		<p>A group is a group chat, and it sits at the foot of the <span class="ui">Messages</span> view rather than behind a chip of its own. There is no shared key: a message to a group is sealed once for each member, one lock per person inside the one envelope. Three things follow from that, and each is on screen where it matters, before a press rather than after it.</p>
-
-		<ul>
-			<li><strong>Joining shows nothing earlier.</strong> The messages sent before you joined were never sealed to your key, so no device can open them for you.</li>
-			<li><strong>Taking somebody out takes nothing back.</strong> They keep every message already sent to them and receive nothing from then on, which is why the control reads <span class="ui">Stop sending to</span> and never <em>remove</em>.</li>
-			<li><strong>Closing is final, and it destroys nothing.</strong> Everybody keeps every message; nobody can write to it again. Daimond asks once before it happens, and closing has a heading of its own below.</li>
-		</ul>
-
-		<p>To make one, name it and pick from the people you hold a card for; <span class="ui">Make this group</span> tells them, and says how many were told. Somebody with no card cannot be added, because there would be nothing to seal to them with. A group holds at most 255 people, and one message to a group is a separate delivery for each member, so a large group is slow and fills mailboxes long before that ceiling matters.</p>
-
-		<p>An invitation arrives under <span class="ui">Group invitations</span>, with <span class="ui">Join</span> and <span class="ui">Not now</span>. Messages sent to the group while you have not answered wait with the invitation: joining a group is what accepts the people in it.</p>
-
-		<p>Only the person who made a group can change who is in it or end it, because a group's name for itself is derived from their key and nobody else can write a membership list for it. Everybody else sees the roster with no buttons over it. A member has <span class="ui">Leave this group</span>, which is local, takes nothing away and tells nobody; the person who made the group cannot leave it, since the next list they write would name them again.</p>
-
-		<h3 id="s37">Closing a group</h3>
-
-		<p>Closing is the creator's one act that cannot be undone. The button reads <span class="ui">Close this group</span> &mdash; not <em>disband</em>, and not <em>delete</em>, because nothing is destroyed by it.</p>
-
-		<p>A dialog asks once, headed <span class="ui">Close this group for everybody?</span>, and it says: “Closing a group closes it for everybody. Nobody can write to it again, you included; every message already sent stays where it is. It cannot be undone.” Under that it names the group, and the button that does it reads <span class="ui">Close it for everybody</span>. Dismiss the dialog and the group is exactly as it was.</p>
-
-		<p>What the press does is write a membership list naming nobody, and hand it to everybody who was in it. Every reader obeys it, so nothing more can be sent to that group by anybody, the person who closed it included, and no later list can reopen it. Nothing is deleted anywhere: every member keeps every message they already hold.</p>
-
-		<div class="note"><strong>A closed group keeps its place on the list.</strong> It sits with the groups you are in, with its name and its messages and no controls at all, saying that it was closed by the person who made it. That is not tidying left undone: the group's name is drawn over each of its messages out of that one record, so taking the record away would leave the transcript the closing exists to preserve under nothing but eight characters of an id.</div>
-
-		<div class="note"><strong>The relay knows nothing about groups.</strong> There is no group record, no group name and no membership list on any server: the list lives in the clients, and it travels as an ordinary sealed message like any other. What the relay can still see is what routing shows it &mdash; one address landing in several mailboxes at one moment &mdash; so it can infer that some set of accounts were written to together, and never who they are to each other.</div>
-	</section>
-
-	<section id="sharing">
-		<h2 id="s38">Sharing a Diamond</h2>
-
-		<p>Under the <span class="ui">Share</span> chip are two halves, in the order you meet them: <span class="ui">Open a share</span> at the top, since taking one in needs nothing of you but the file, and <span class="ui">Send a Diamond</span> under it.</p>
-
-		<p><strong>A share is a copy the receiver owns.</strong> It is re-sealed to their key, it lands in their workspace as a Diamond of their own, and they may change it. You never see their changes and they never see yours. It is not a live view of your Diamond: there is nothing to revoke afterwards, and nothing that goes on reading what you keep.</p>
-
-		<p>A share carries the files of one Diamond, so there has to be one open, and the panel names it and says in the same line what it is: <span class="ui quoted">a copy they will own, not a view of yours.</span> Pick who it goes to from the people whose sealing key this device holds, and press <span class="ui">Share</span>. At most sixty-four files and two megabytes of them; over either it is refused rather than trimmed, because a copy missing a file is not a smaller copy. Three things never travel whatever you do: the Diamond's own version history, the agent's log, and a capp's own manifest.</p>
-
-		<h3 id="s39">Two carriers, chosen by measuring</h3>
-
-		<p>The relay carries a sealed envelope of at most 64 KB, so the carrier is decided by size rather than asked of you, and the panel says which happened and how big the share was.</p>
-
-		<p>Over that size Daimond writes the share out as a file with the extension <code translate="no">.dshare</code> &mdash; always that extension &mdash; names it after the share and its address, and tells you what it was called. Give them that file. A capp page is around 100 KB on its own, so a share carrying a capp always travels this way; so does one going onto a memory stick, or to somebody who has no account here. A <code translate="no">.dshare</code> is not more trusted than a message for having been a file: the bytes are the same sealed envelope, sealed to that one person, and opening it asks the same question.</p>
-
-		<div class="note"><strong>The file is the route that lands.</strong> A share small enough for the relay is sent through it, and the sender is told it went. The receiving side of that route is not finished: there is no control that opens it, and it turns up under their <span class="ui">Messages</span> as a message their device could not read. Until that is done, save the file and hand it over &mdash; which is what a share of any size can do.</div>
-
-		<h3 id="s40">A share that carries code</h3>
-
-		<p>Data travels freely; code travels only by consent. A Diamond carrying a capp page carries a program somebody else wrote, and Daimond runs the page when the Diamond holding it is opened &mdash; so the question is asked before anything is written, and not when it is opened, which would be too late.</p>
-
-		<p>The dialog is headed <span class="ui">This share contains code</span>. It names the share, says whose key it came from, and lists the files that would be added, because “it contains code somewhere” is not enough to answer. The button that accepts it reads <span class="ui">Accept the page</span>.</p>
-
-		<p>Say no and the rest still lands: the data files are written, and the panel names the pages that were left out, so nothing is missing without being said. Where the whole share was a page, nothing is added at all and the panel says that instead.</p>
-
-		<p>To take one in, <span class="ui">Open a share file…</span> asks for the file, and what arrives is added as a Diamond of your own, with the number of files that landed. The name on it is the sender's and is advisory: two people may pick one name and neither is wrong.</p>
-	</section>
+	<h1>Social &amp; proposals</h1>
+	<p class="lede">Two panels and one Diamond. <span class="ui">Social</span> is where you tell us something. <span class="ui">Improve</span> is the board it arrives on. <span class="ui">Pending</span> is where anything waiting on <em>you</em> turns up.</p>
+
+	<h2 id="s1">Saying something</h2>
+	<p>Open <span class="ui">Social</span> and write. The first line is the title, and what happened goes under it. <span class="ui">Send</span> sends what is on screen and the build id, and nothing else goes with it.</p>
+	<p>Posting needs a <strong>posting name</strong>, which the app calls your voice. Without one you can read everything and keep a note to this device. The panel says so in one row, <em>Set a posting name to send.</em>, with <span class="ui">Get one</span> beside it. It takes one tap, and it is part of Daimond Pro.</p>
+
+	<h3 id="s2">A note that can be acted on</h3>
+	<p>A note needs three things, in this order. Leave any of them out and the note needs a conversation before anything can be done.</p>
+	<ul>
+		<li><strong>Where it is.</strong> Which panel, and which part of it.</li>
+		<li><strong>What you expected.</strong></li>
+		<li><strong>What happened instead.</strong></li>
+	</ul>
+	<p>The build id is attached for you, so you need not find it.</p>
+
+	<h3 id="s3">Naming where</h3>
+	<p>There are four regions, and they are the ones this guide uses throughout: the <strong>top bar</strong>, the <strong>rail</strong> on the left, the <strong>centre</strong>, and the <strong>dock</strong> on the right. On a phone, the drawer is the rail and a sheet is a dock panel.</p>
+	<p>Inside a region, these are the words worth knowing.</p>
+	<ul>
+		<li><strong>chip</strong>, the small pill in the top bar.</li>
+		<li><strong>tile</strong>, a Diamond, a chat or an agent in a list.</li>
+		<li><strong>head</strong>, a section's heading row.</li>
+		<li><strong>cog</strong>, the settings for the thing it sits on.</li>
+		<li><strong>light</strong>, the round one beside a play and a pause.</li>
+		<li><strong>composer</strong>, the message box and its buttons.</li>
+		<li><strong>row</strong> and <strong>dialog</strong>, which mean what they say.</li>
+	</ul>
+	<p>"The cog on the Life log tile" is unambiguous, and "the settings button" is not.</p>
+
+	<h2 id="s4">The board</h2>
+	<p><span class="ui">Improve</span> shows what has been proposed and what is being done about it, in four columns: <span class="ui">Awaiting you</span>, <span class="ui">Greenlit</span> (accepted, not built yet), <span class="ui">Shipped</span>, and <span class="ui">Dropped</span>. Reading needs nothing. Voting and commenting need a posting name.</p>
+	<p>Only we can add or move a card, and the board says nothing about who decides. If it cannot be reached it says <em>Could not load.</em> and nothing more, because that is all it knows.</p>
+
+	<h2 id="s5">Pending</h2>
+	<p><span class="ui">Pending</span>, in the dock, holds what is waiting on you, which is a daimon asking permission for something, and proposals about your own account. Sort by priority, newest or oldest. Each row is answered one of three ways, <span class="ui">Do it</span>, <span class="ui">Discuss it first</span>, or <span class="ui">Drop it</span>. Empty, it says <em>Nothing waiting on you.</em></p>
+
+	<h2 id="s6">The Optimiser</h2>
+	<p>Your rail holds a Diamond called <strong>Daimond Optimiser</strong>. It finds what should have been written down, what should have been cheaper and what should have been automatic, and hands you the change to make.</p>
+	<p>It reads counts kept on this device, meaning turns, spend, models and tool calls, and nothing else. It does not see what any conversation was about.</p>
+	<p><strong>It ships stopped, and only you can start it.</strong> Open its settings with the cog on its tile, find the action <span class="ui">After 30 minutes of your activity</span>, and press play on the light beside it. After that it reads the counts every half hour you actually work.</p>
+	<p>What it finds arrives as a tile in <span class="ui">Pending</span>, wherever you happen to be, with a headline, the evidence under it, and <span class="ui">Do it</span>. The note on the tile says where it came from, <em>Found by its Diamond. &ldquo;Do it&rdquo; asks that Diamond to carry it out.</em> Nothing is held open by one, so the tick is a fresh instruction, not a permission you gave earlier.</p>
+	<p>The Optimiser alone is denied two things, because it runs while nobody is looking. It cannot publish in your name, and it cannot dispatch helpers.</p>
+
+	<h2 id="s7">People, messages and sharing</h2>
+	<p><span class="ui">People</span> connects you to somebody directly. Show your code to them in the room, or read theirs. From there you have private messages between the two of you, and groups. A group can be closed by whoever made it, and then nothing already said is taken away and nothing new arrives.</p>
+	<p>A Diamond can be shared with somebody you are connected to. The shared Diamond carries its memory and its page, and both are sealed to the people you sent it to.</p>
+	<p>Each of these depends on the relay being switched on. Where it is not, the panel says so in one line, and offers no control that would fail.</p>
 
 	<div class="next">
-		<a href="machine-operations.html">&larr; Machine Operations</a>
-		<a href="index.html">Back to Getting started &rarr;</a>
+		<a href="sync.html">&larr; More than one device</a>
+		<a href="models.html">Next: Models &amp; providers &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
 	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
 	<nav aria-label="Guide pages">
-		<a href="index.html">Getting started</a>
-		<a href="interface.html">Interface</a>
-		<a href="models.html">Models</a>
+		<a href="index.html">Start here</a>
+		<a href="interface.html">The interface</a>
 		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-		<a href="capps.html">Capps</a>
-		<a href="email-web-files.html">Email, Web &amp; files</a>
-		<a href="accounts.html">Accounts</a>
-		<a href="sync.html">Cross-device sync</a>
-		<a href="runner.html">The runner</a>
+		<a href="capps.html">A Diamond&rsquo;s page</a>
+		<a href="email-web-files.html">Files, email &amp; the web</a>
+		<a href="machine-operations.html">Your computer</a>
+		<a href="runner.html">Helpers &amp; where turns run</a>
+		<a href="sync.html">More than one device</a>
+		<a href="social.html">Social &amp; proposals</a>
+		<a href="models.html">Models &amp; providers</a>
 		<a href="spending.html">Spending</a>
-		<a href="machine-operations.html">Machine Operations</a>
-		<a href="social.html">Social</a>
+		<a href="accounts.html">Safety &amp; fixes</a>
 	</nav>
 </footer>
 </body>

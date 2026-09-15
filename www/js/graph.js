@@ -69,14 +69,40 @@
  *     down. The right button was asked for and the left was kept: a press that
  *     does not travel still means what it always meant, a click on the left and
  *     the menu on the right.
- *   - Arm "Link", click a source, click a target: a link is asserted, and the
- *     arrow follows the pointer in between. Escape, or a click on empty space,
- *     leaves the mode.
- *   - Click a link to edit its relations and its note, or to delete it.
- *   - Middle-drag to pan. Where the view was left is written down too.
+ *   - Bring the pointer near a Diamond's EDGE and four anchors appear on it.
+ *     Drag from one: a line follows the pointer, snaps to the nearest port of
+ *     any Diamond within a couple of dozen pixels, and on letting go THE LINK
+ *     EXISTS -- with no relation on it, because an empty relation is legal and
+ *     says only that the two are joined. The relation is then offered as chips
+ *     on the line that has just appeared; Escape leaves the link blank. Let go
+ *     over empty canvas instead and a new Diamond is made there, already linked.
+ *     On a finger, a rest on a tile raises the same anchors.
+ *   - Arm "Link", click a source, click a target: the older route, kept. It is
+ *     four acts to the drag's one, and it is still the only route from a
+ *     keyboard -- select a Diamond, press `L`, click the target.
+ *   - Click a link to select it and open its form: relations, note, reverse,
+ *     delete. Delete on the keyboard drops the selected link.
+ *   - Middle-drag to pan; the wheel scales the picture ABOUT THE POINTER, so
+ *     whatever was being looked at stays where it was. Where the view was left
+ *     is written down too.
  *   - Right-click for a menu, which carries "organise".
  *   - "All" scales the picture to fit the window; the menu's "Reset the view"
  *     puts it back to full size at the origin.
+ *
+ * POINTER EVENTS, and one mouse-event listener, which exists to refuse Chrome's
+ * middle-button autoscroll and decides nothing. One set of handlers serves a
+ * mouse, a finger and a pen, so the sheet this panel rises as on the phone is the
+ * same editor as the desk's rather than a picture a finger cannot touch. All
+ * three drags -- the link, the Diamond, the pan -- are recognised by
+ * `gesture.js`, which is where this app decides once how far a press travels
+ * before it is a drag, how long a finger rests before it is one, when the pointer
+ * is captured, and that a move is coalesced into one piece of work per frame.
+ *
+ * THE GEOMETRY IS NOT HERE. Ports, snapping, routing and the zoom's arithmetic
+ * live in `graphgeom.js` as functions of numbers with no document in reach, so
+ * the claims about them are settled by `graphgeom.test.mjs` under node in
+ * milliseconds -- and so that they can later be one wasm call into
+ * `fe2o3_geom::planar`, which is where that arithmetic belongs.
  */
 (function () {
 	'use strict';
@@ -112,6 +138,13 @@
 
 	var SVGNS = 'http://www.w3.org/2000/svg';
 
+	// The geometry, which is arithmetic and lives where no document is reachable
+	// -- see www/js/graphgeom.js, and www/js/graphgeom.test.mjs, which proves the
+	// whole of it under node with no browser at all. It is a hard dependency and
+	// deliberately not guarded: a picture drawn without it would be a picture
+	// placed by something other than the store.
+	var GG = window.DaimondGraphGeom;
+
 	// ── The drawing's fixed measurements ───────────────────────
 	// Constants, not measurements taken from the page: a layout that asked the
 	// browser how wide a word came out would draw differently at a different
@@ -136,10 +169,10 @@
 	// And the whole spread the labels of one group may use, so that four or five
 	// parallel links stagger inside their line rather than off the end of it.
 	var LABEL_SPAN = 0.72;
-	// How far the pointer must travel before a press on a Diamond is a drag
-	// rather than a click. Below it the gesture still opens the Diamond, which is
-	// what a click on a node has always meant.
-	var DRAG_MIN = 4;
+	// How far a press travels before it is a drag, and how long a finger rests
+	// before it is one, are NOT here. They are `www/js/gesture.js`'s, because the
+	// Dock's drag-to-slot asks the same two questions and two answers to "is this
+	// a drag yet" on one app's two surfaces is a thing a hand notices.
 	// How far the left and right points of a box stand out from its corners. The
 	// top and bottom edges keep their length; only the sides kink.
 	var KINK = 12;
@@ -151,11 +184,31 @@
 	// used to end exactly where the last box did, which put a wall wherever the
 	// Diamonds happened to reach; this is what makes the space to drag INTO.
 	var ROOM = 900;
-	// What "All" may scale the picture to. It never enlarges: a store with two
-	// Diamonds in it blown up to fill a window would look like a different store
-	// from the same two Diamonds beside forty others.
+	// The range the view's scale is held to. ZOOM_MAX was 1 -- full size and no
+	// more -- because "All" is the only thing that ever set it, and a store with
+	// two Diamonds in it blown up to fill a window would look like a different
+	// store from the same two beside forty others. The wheel is not "All": it is
+	// a person leaning in to read one tile among two hundred, which at full size
+	// is 176 pixels of box carrying a name cut to twenty characters. So the
+	// ceiling rises for the wheel and "All" keeps its own, [FIT_MAX], which is
+	// still one.
 	var ZOOM_MIN = 0.12;
-	var ZOOM_MAX = 1;
+	var ZOOM_MAX = 2.5;
+	var FIT_MAX  = 1;
+	// What one notch of the wheel multiplies the scale by. Geometric, so a notch
+	// out undoes a notch in and the steps feel the same size at either end.
+	var ZOOM_STEP = 1.15;
+	// How far either side of a tile's outline the pointer raises its anchors:
+	// inwards from the outline, and outwards from it. Two numbers because they
+	// are asked for different reasons -- a single tolerance either makes the
+	// middle of a 44-pixel tile unreachable or makes the anchors impossible to
+	// approach from outside.
+	var ANCHOR_BAND  = 13;
+	var ANCHOR_REACH = 10;
+	// How near a port a dragged link has to come, IN SCREEN PIXELS, before it
+	// snaps to it. Screen rather than picture pixels because it is a statement
+	// about a hand: the same forgiveness at every scale.
+	var SNAP_PX = 24;
 	// A relation chip on a line: its height, the space either side of the word,
 	// the gap between two stacked chips, and the size its type is pinned at.
 	var CHIP_H   = 15;
@@ -171,8 +224,19 @@
 	var app     = null;     // the wasm handle, built once
 	var drawing = false;    // one draw at a time; the last request wins
 	var again   = false;
+	// Who is waiting for the picture to catch up with the store. A caller that
+	// has just written something and wants to act ON WHAT IT DREW -- the relation
+	// picker opens on the line the drop just made -- cannot use the promise
+	// `refresh` used to answer with, because a refresh arriving mid-draw folded
+	// itself into the draw already running and resolved at once, before the
+	// element it was waiting for existed.
+	var settlers = [];
 	var lastStore = null;   // what the picture on screen was drawn from
 	var lastGeo   = null;   // and where that draw put every box
+	// How many times the whole SVG has been built. Published for a verifier, and
+	// not drawn anywhere: a gesture that rebuilt the picture would make the eye
+	// lose its place, and the only way to assert it does not is to count.
+	var draws = 0;
 
 	// ── Where a Diamond has been put ───────────────────────────
 
@@ -742,15 +806,7 @@
 	///
 	/// Rounded to a thousandth of a unit, which is far finer than a pixel and
 	/// keeps the coordinate short in the serialised picture.
-	function pointAt(p0, p1, p2, p3, t) {
-		var u = 1 - t;
-		var a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
-		var r = function (v) { return Math.round(v * 1000) / 1000; };
-		return {
-			x: r(a * p0.x + b * p1.x + c * p2.x + d * p3.x),
-			y: r(a * p0.y + b * p1.y + c * p2.y + d * p3.y),
-		};
-	}
+	function pointAt(p0, p1, p2, p3, t) { return GG.pointAt(p0, p1, p2, p3, t); }
 
 	// ── Drawing ────────────────────────────────────────────────
 
@@ -783,32 +839,16 @@
 		+ ' L0,' + (NODE_H / 2)
 		+ ' Z';
 
+	/// A box's top-left corner as the rectangle the geometry speaks of.
+	function rect(p) { return { x: p.x, y: p.y, w: NODE_W, h: NODE_H, kink: KINK }; }
+
 	/// A point on a box's outline: which side, and how far along it.
 	///
 	/// # Arguments
 	/// * `p`    - The box's top-left corner.
 	/// * `side` - `top`, `bottom`, `left` or `right`.
 	/// * `f`    - How far along that side, from 0 to 1.
-	///
-	/// The top and bottom run corner to corner, which is the box's width less
-	/// the two kinks. The sides are not straight, so the point is pulled in by
-	/// as much of the kink as it stands away from the middle — which is what
-	/// keeps an arrowhead ON the edge it lands against rather than beside it.
-	function port(p, side, f) {
-		var off = KINK * Math.abs(1 - 2 * f);
-		if (side === 'top')    return { x: p.x + KINK + f * (NODE_W - 2 * KINK), y: p.y };
-		if (side === 'bottom') return { x: p.x + KINK + f * (NODE_W - 2 * KINK), y: p.y + NODE_H };
-		if (side === 'left')   return { x: p.x + off, y: p.y + f * NODE_H };
-		return { x: p.x + NODE_W - off, y: p.y + f * NODE_H };
-	}
-
-	/// Which of the three ports on a side faces the other box, given how far off
-	/// centre it lies and how much of an offset counts as "off centre".
-	function portFor(d, span) {
-		if (d >  span) return PORTS[2];
-		if (d < -span) return PORTS[0];
-		return PORTS[1];
-	}
+	function port(p, side, f) { return GG.port(rect(p), side, f); }
 
 	/// One Diamond.
 	function nodeEl(d, p, marks) {
@@ -817,6 +857,10 @@
 			+ (marks.source ? ' link-source' : ''));
 		g.setAttribute('data-diamond-id', d.id);
 		g.setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')');
+		// A box opens a Diamond, so it is a control and is reached like one. The
+		// rail's own box became a button on the same argument (daimond.js).
+		g.setAttribute('role', 'button');
+		g.setAttribute('tabindex', '0');
 		// A colour chosen for this Diamond elsewhere, handed to the stylesheet as
 		// a property rather than painted straight on: the rules below it keep
 		// their fallbacks, so a Diamond with no colour of its own still follows
@@ -825,6 +869,7 @@
 		if (marks.fg) g.style.setProperty('--node-fg', marks.fg);
 		g.appendChild(attrs(el('path', 'graph-node-box'), { d: BOX_D }));
 		var name = d.name && d.name.trim() ? d.name : t('graph.unnamed');
+		g.setAttribute('aria-label', name);
 		var tx = attrs(el('text', 'graph-node-name'), { x: 12, y: NODE_H / 2 + 4 });
 		tx.textContent = clip(name);
 		g.appendChild(tx);
@@ -851,73 +896,29 @@
 		return g;
 	}
 
-	/// Hold a fraction to its own side. Parallel lines are held apart by moving
-	/// where they meet the box, and a line held so far apart that it left the box
-	/// altogether would point at nothing.
-	function clamp01(f) { return f < 0 ? 0 : f > 1 ? 1 : f; }
-
 	/// Where an edge leaves, where it lands, and the two control points that bow
-	/// it between them.
+	/// it between them. The arithmetic is [DaimondGraphGeom.route]; what is said
+	/// here is why the picture asks for it.
 	///
 	/// The LAYERED case is the ordinary one -- out of the bottom of the source,
 	/// into the top of the target -- and it is the only case auto-layout can
 	/// produce, because a forward edge's target is always on a lower layer.
+	/// Dragging can put a target level with its source or above it, and a
+	/// vertical route then needs clear air to run through or it doubles back
+	/// under both boxes; the geometry refuses that case and leaves on the facing
+	/// sides instead.
 	///
-	/// Dragging can put a target level with its source or above it, and there
-	/// bottom-to-top would draw a line doubling back through both boxes. Only
-	/// that case anchors elsewhere: on the facing sides when the two are mostly
-	/// side by side, and top-to-bottom when the target is mostly above. The
-	/// arrowhead therefore always lands on the edge of the box it points at and
-	/// never inside it.
+	/// WHICH POINT of a side is not always the middle. Each side offers three,
+	/// and a line takes the one that faces where it is going: a target well to
+	/// the right is left from the right-hand port and entered at the left-hand
+	/// one. Four boxes hanging off one used to leave it through a single point
+	/// and cross each other doing it.
 	///
-	/// WHICH POINT of a side, though, is no longer always the middle. Each side
-	/// offers three, and a line takes the one that faces where it is going: a
-	/// target well to the right is left from the right-hand port and entered at
-	/// the left-hand one. Four boxes hanging off one used to leave it through a
-	/// single point and cross each other doing it. This does change the picture a
-	/// store already draws -- the lines move, the boxes do not -- so it is not
-	/// the byte-for-byte picture of before, and it is still one picture per
-	/// store.
-	///
-	/// `nudge`, which holds parallel links apart, is spent along the same side:
-	/// it used to be pixels added to a coordinate, and pixels could push a line's
-	/// end clean off the box it belonged to. Along the top and bottom the two
-	/// come to the same distance; along a side it is bounded by the side.
+	/// `nudge`, which holds parallel links apart, is spent along the same side
+	/// rather than added to a coordinate: pixels added to a coordinate could push
+	/// a line's end clean off the box it belonged to.
 	function route(a, b, nudge) {
-		var ac = { x: a.x + NODE_W / 2, y: a.y + NODE_H / 2 };
-		var bc = { x: b.x + NODE_W / 2, y: b.y + NODE_H / 2 };
-		var dx = bc.x - ac.x, dv = bc.y - ac.y;
-		var flat = NODE_W - 2 * KINK;    // the length of the top and bottom edges
-		var p0, p1, p2, p3, f, n;
-		if (bc.y > ac.y) {
-			f  = portFor(dx, NODE_W / 2);
-			n  = nudge / flat;
-			p0 = port(a, 'bottom', clamp01(f + n));
-			p3 = port(b, 'top', clamp01(1 - f + n));
-			var dy = Math.max(24, p3.y - p0.y);
-			p1 = { x: p0.x, y: p0.y + dy * 0.42 };
-			p2 = { x: p3.x, y: p3.y - dy * 0.42 };
-			return { p0: p0, p1: p1, p2: p2, p3: p3 };
-		}
-		if (Math.abs(dx) >= Math.abs(dv)) {
-			var right = dx >= 0;
-			f  = portFor(dv, NODE_H / 2);
-			n  = nudge / NODE_H;
-			p0 = port(a, right ? 'right' : 'left', clamp01(f + n));
-			p3 = port(b, right ? 'left' : 'right', clamp01(1 - f + n));
-			var run = Math.max(24, Math.abs(p3.x - p0.x)) * 0.42 * (right ? 1 : -1);
-			p1 = { x: p0.x + run, y: p0.y };
-			p2 = { x: p3.x - run, y: p3.y };
-			return { p0: p0, p1: p1, p2: p2, p3: p3 };
-		}
-		f  = portFor(dx, NODE_W / 2);
-		n  = nudge / flat;
-		p0 = port(a, 'top', clamp01(f + n));
-		p3 = port(b, 'bottom', clamp01(1 - f + n));
-		var rise = Math.max(24, p0.y - p3.y) * 0.42;
-		p1 = { x: p0.x, y: p0.y - rise };
-		p2 = { x: p3.x, y: p3.y + rise };
-		return { p0: p0, p1: p1, p2: p2, p3: p3 };
+		return GG.route(rect(a), rect(b), nudge, { thirds: PORTS });
 	}
 
 	// The hues a chip can take, and the hash that picks one. Both are copied from
@@ -1003,11 +1004,11 @@
 		var p0, p1, p2, p3;
 		if (w.isBack) {
 			// Out to the right of everything and back, so a closing edge never
-			// reads as one more step down the hierarchy.
-			p0 = port(a, 'right', 0.5);
-			p3 = port(b, 'right', 0.5);
-			p1 = { x: p0.x + w.bow, y: p0.y };
-			p2 = { x: p3.x + w.bow, y: p3.y };
+			// reads as one more step down the hierarchy -- or over the top of both
+			// where they stand side by side and a right-hand bow would run through
+			// one of them. [DaimondGraphGeom.backRoute] decides which.
+			var bk = GG.backRoute(rect(a), rect(b), w.bow);
+			p0 = bk.p0; p1 = bk.p1; p2 = bk.p2; p3 = bk.p3;
 		} else {
 			var r = route(a, b, w.nudge);
 			p0 = r.p0; p1 = r.p1; p2 = r.p2; p3 = r.p3;
@@ -1040,6 +1041,9 @@
 		}));
 
 		var rels  = relsOf(e.rel);
+		g.setAttribute('aria-label', rels.length
+			? names[e.from] + ' → ' + rels.join(', ') + ' → ' + names[e.to]
+			: names[e.from] + ' → ' + names[e.to]);
 		var lines = [t('graph.edge_tip', { from: names[e.from], to: names[e.to] })];
 		if (rels.length) lines.push(t('graph.edge_rel', { rel: rels.join(', ') }));
 		if (e.note)      lines.push(e.note);
@@ -1089,6 +1093,8 @@
 			none.textContent = t('graph.no_diamonds');
 			bodyEl.appendChild(none);
 			paintToolbar(false);
+			draws++;
+			settle();
 			return;
 		}
 		paintToolbar(true);
@@ -1233,9 +1239,12 @@
 			svg.appendChild(band);
 		}
 
-		// The layer the pointer feedback is drawn in, and the reason the guarantee
-		// survives it: nothing here is ever written, and it is empty except during
-		// a gesture.
+		// The two layers the pointer feedback is drawn in, and the reason the
+		// guarantee survives them: nothing in either is ever written, and both are
+		// empty except during a gesture. The anchors take presses, so they are a
+		// layer of their own -- the live layer refuses the pointer outright, which
+		// is what keeps a line that follows the pointer from getting in its way.
+		svg.appendChild(el('g', 'graph-anchors'));
 		svg.appendChild(el('g', 'graph-live'));
 
 		// Nothing is said here about a store that holds Diamonds but no links. The
@@ -1257,6 +1266,11 @@
 		};
 		wireCanvas(svg);
 		if (link.from) drawLive(link.at);
+		// Selection is pointer state, not a fact about the store, so it is put
+		// back on the new elements rather than being drawn into them.
+		hover = null;
+		markSelected();
+		draws++;
 
 		var backCount = backList.length;
 		var stats = [
@@ -1271,6 +1285,7 @@
 		bodyEl.appendChild(line);
 
 		restorePan();
+		settle();
 	}
 
 	/// Where the layout would put every Diamond, ignoring anything stored.
@@ -1382,7 +1397,11 @@
 		if (!bodyEl || !lastGeo) return;
 		var vw = Math.max(40, bodyEl.clientWidth  - 8);
 		var vh = Math.max(40, bodyEl.clientHeight - 8);
-		var z  = saneZoom(Math.min(vw / Math.max(1, lastGeo.inkW), vh / Math.max(1, lastGeo.inkH)));
+		// [FIT_MAX] and not [ZOOM_MAX]: the wheel may enlarge because a person
+		// leaning in asked it to, but "All" answering a two-Diamond store by
+		// filling the window would make it look like a different store.
+		var z  = Math.min(FIT_MAX,
+			saneZoom(Math.min(vw / Math.max(1, lastGeo.inkW), vh / Math.max(1, lastGeo.inkH))));
 		var l  = loadLayout();
 		l.zoom = z;
 		l.pan  = { x: 0, y: 0 };
@@ -1441,10 +1460,19 @@
 		barSay = h('span', 'graph-say', '');
 		barSay.id = 'graph-say';
 
+		// Said to a screen reader and to nothing else. A link made by a drag
+		// leaves no new words on the screen, only a new line -- and a line
+		// appearing is not something a reader is told about. `.vh` is app.css's
+		// clipped-not-hidden class, so the text stays in the accessibility tree.
+		var barLive = h('span', 'vh', '');
+		barLive.id = 'graph-live-say';
+		barLive.setAttribute('aria-live', 'polite');
+
 		bar.appendChild(barLink);
 		bar.appendChild(barOrg);
 		bar.appendChild(barAll);
 		bar.appendChild(barSay);
+		bar.appendChild(barLive);
 		p.insertBefore(bar, bodyEl);
 	}
 
@@ -1577,6 +1605,408 @@
 		}, 2600);
 	}
 
+	// ── Anchors, and the link dragged from one ─────────────────
+	//
+	// The gesture the pane was missing. Joining two Diamonds used to be a MODE:
+	// arm "Link", click the source, click the target, fill in a form, press
+	// Create — four deliberate acts and a trip to the toolbar before any typing,
+	// and no affordance anywhere saying where a link could START. So the anchors
+	// say it. The pointer comes near a tile's edge and the four points a line may
+	// leave from appear on it; drag from one and a line follows the pointer; let
+	// go over another tile and THE LINK EXISTS.
+	//
+	// It exists with no relation on it, and that is the point rather than a
+	// shortcut. An empty relation is legal and "means only that the link exists"
+	// (`normalise_rel`, src/diamond_link.rs) — so the relation can be a
+	// refinement offered on the spot, by `update_link`, which keeps the id and
+	// the `ts` the assertion was first made at. A form in front of the act made
+	// naming the relation the price of joining two things at all.
+	//
+	// NOTHING HERE IS STORED. The anchors, the line that follows the pointer, the
+	// highlight on a snapped target and the picker are pointer feedback in layers
+	// that are empty between gestures; the one write is `add_link`, and the
+	// picture the draw after it makes is the picture the store implies.
+
+	var hover = null;   // { id } — the tile showing its anchors, if any
+	var wire  = null;   // { from, side, at, snap, over } while one is being drawn
+	var selEdge = null; // the link the keyboard and the edge controls act on
+	var selNode = null; // the Diamond `L` would link FROM
+
+	function anchorLayer() {
+		var svg = bodyEl && bodyEl.querySelector('svg#graph-svg');
+		return svg ? svg.querySelector('g.graph-anchors') : null;
+	}
+
+	/// Every drawn tile as the geometry speaks of it, in the order the draw put
+	/// them in — which is id order, so a tie in the snap is settled the same way
+	/// on every frame.
+	function tiles(except) {
+		var out = [];
+		if (!lastGeo) return out;
+		Object.keys(lastGeo.pos).sort().forEach(function (id) {
+			if (id === except) return;
+			out.push({ id: id, rect: rect(lastGeo.pos[id]) });
+		});
+		return out;
+	}
+
+	/// The scale the picture is presented at, which is what turns a tolerance
+	/// stated in screen pixels into one the picture's own coordinates can use.
+	function scale() {
+		var svg = bodyEl && bodyEl.querySelector('svg#graph-svg');
+		if (!svg || !lastGeo) return 1;
+		var r = svg.getBoundingClientRect();
+		return r.width > 0 ? r.width / lastGeo.width : 1;
+	}
+
+	/// Put the four anchors on a tile, or take them away. One small layer is
+	/// rewritten and nothing else in the picture is touched.
+	function showAnchors(id) {
+		if (hover && hover.id === id) return;
+		var g = anchorLayer();
+		if (!g) { hover = null; return; }
+		g.textContent = '';
+		hover = id ? { id: id } : null;
+		if (!id || !lastGeo || !lastGeo.pos[id]) return;
+		GG.ports(rect(lastGeo.pos[id])).forEach(function (a) {
+			var an = el('g', 'graph-anchor');
+			an.setAttribute('data-diamond-id', id);
+			an.setAttribute('data-side', a.side);
+			an.setAttribute('transform', 'translate(' + a.x + ',' + a.y + ')');
+			// A generous invisible disc under a small visible one: a five-pixel
+			// dot is not something a hand can be asked to hit, and drawing the dot
+			// at hit size would put four blobs on every tile the pointer passes.
+			an.appendChild(attrs(el('circle', 'graph-anchor-hit'), { r: 12 }));
+			an.appendChild(attrs(el('circle', 'graph-anchor-dot'), { r: 4.5 }));
+			tip(an, t('graph.anchor'));
+			g.appendChild(an);
+		});
+	}
+
+	function hideAnchors() { showAnchors(null); }
+
+	/// Which tile the pointer is reaching for, if any: the one whose outline it
+	/// is within [ANCHOR_BAND] inside of or [ANCHOR_REACH] outside of.
+	///
+	/// The middle of a tile is deliberately not the band. A press there is the
+	/// tile itself — a drag that moves it, a click that opens it — and anchors
+	/// standing over the name while somebody reads it would be four dots asking
+	/// to be hit by a gesture that means something else.
+	function bandTile(at) {
+		var list = tiles(null), found = null;
+		for (var i = 0; i < list.length; i++) {
+			if (GG.inEdgeBand(list[i].rect, at, ANCHOR_BAND, ANCHOR_REACH)) found = list[i].id;
+		}
+		return found;
+	}
+
+	/// The pointer moved over the picture and no gesture is running.
+	function onHover(at) {
+		if (wire || drag || pan) return;
+		showAnchors(bandTile(at));
+	}
+
+	// ── Dragging a link out of an anchor ───────────────────────
+
+	function startWire(id, side, at, pointerId) {
+		wire = { from: id, side: side, at: at, snap: null, over: null,
+		         id: pointerId, moved: false };
+		if (bodyEl) bodyEl.classList.add('wiring');
+		drawWire();
+	}
+
+	/// Where the link would land if it were let go now: the nearest port within
+	/// [SNAP_PX] of the pointer, else whichever tile the pointer is inside.
+	function wireTarget(at) {
+		var cands = tiles(wire.from);
+		var snap = GG.nearestPort(cands, at, SNAP_PX / Math.max(0.01, scale()));
+		if (snap) return { id: snap.id, snap: snap };
+		var over = GG.hit(cands, at);
+		return over ? { id: over.id, snap: null } : { id: null, snap: null };
+	}
+
+	function wireMove(at) {
+		if (!wire) return;
+		wire.at = at;
+		wire.moved = true;
+		var got = wireTarget(at);
+		if (got.id !== wire.over) {
+			markTarget(wire.over, false);
+			markTarget(got.id, true);
+			wire.over = got.id;
+		}
+		wire.snap = got.snap;
+		drawWire();
+	}
+
+	/// Light up the tile a drop would land on. A class on one element, so a
+	/// pointer crossing forty tiles costs forty class changes and not one redraw.
+	function markTarget(id, on) {
+		if (!id || !bodyEl) return;
+		var g = bodyEl.querySelector('g.graph-node[data-diamond-id="' + cssq(id) + '"]');
+		if (g) g.classList.toggle('link-target', !!on);
+	}
+
+	/// The line that follows the pointer while a link is being drawn.
+	///
+	/// Straight, out of the anchor it was taken from, until it snaps — and then
+	/// it is the CURVE THE LINK WILL BE, computed by the same [route] the next
+	/// draw will use. Showing a straight line up to the moment of the drop and a
+	/// bowed one immediately after would make the drop look as though it had
+	/// moved something.
+	function drawWire() {
+		var g = liveLayer();
+		if (!g || !wire || !lastGeo) return;
+		g.textContent = '';
+		var a = lastGeo.pos[wire.from];
+		if (!a) return;
+		var d;
+		if (wire.snap && lastGeo.pos[wire.snap.id]) {
+			var r = route(a, lastGeo.pos[wire.snap.id], 0);
+			d = 'M' + r.p0.x + ',' + r.p0.y + ' C' + r.p1.x + ',' + r.p1.y
+				+ ' ' + r.p2.x + ',' + r.p2.y + ' ' + r.p3.x + ',' + r.p3.y;
+		} else {
+			var p0 = port(a, wire.side, 0.5);
+			d = 'M' + p0.x + ',' + p0.y + ' L' + wire.at.x + ',' + wire.at.y;
+		}
+		g.appendChild(attrs(el('path', 'graph-live-line'), {
+			d: d, 'marker-end': 'url(#gm-arrow-live)',
+		}));
+	}
+
+	/// Let go. Four endings, and each of them is one act rather than a form.
+	///
+	/// WHERE the pointer is is taken from the release rather than from the last
+	/// move the recogniser delivered: moves are coalesced to one a frame, so the
+	/// last one may be a frame behind the hand, and a link is dropped where the
+	/// hand let go and nowhere else.
+	function endWire(ev, lifted) {
+		if (!wire) return;
+		var w = wire;
+		var svg = bodyEl && bodyEl.querySelector('svg#graph-svg');
+		var at = (lifted && svg && ev) ? atPoint(svg, ev) : w.at;
+		var got = lifted ? wireTarget(at) : { id: null, snap: null };
+		clearWire();
+		// A press on an anchor that never travelled is a press on an anchor, and
+		// means nothing more.
+		if (!lifted) return;
+		// The browser fires a click after the release that ended the drag, on
+		// whatever the pointer was over -- which is the tile the link just landed
+		// on. Left alone it would open that Diamond on top of the picker.
+		swallowClick();
+		if (got.id && got.id !== w.from) {
+			// Over a Diamond: the link, at once.
+			linkNow(w.from, got.id);
+			return;
+		}
+		if (got.id === w.from) {
+			// The store refuses a link from a thing to itself, and it is right to.
+			say(t('graph.self_link'));
+			return;
+		}
+		// Empty canvas: a Diamond there, already linked. Nothing is written until
+		// the name is given — a Diamond made first and deleted on Escape would
+		// leave a stamped directory behind on every abandoned gesture.
+		if (inPicture(ev)) openNamer(ev, at, w.from);
+	}
+
+	/// Was the pointer still over the picture when it was let go? A release on
+	/// the toolbar, the stats line or outside the panel is a gesture abandoned,
+	/// not a place to put a Diamond.
+	function inPicture(ev) {
+		var svg = bodyEl && bodyEl.querySelector('svg#graph-svg');
+		if (!svg || !ev) return false;
+		var r = svg.getBoundingClientRect();
+		var b = bodyEl.getBoundingClientRect();
+		return ev.clientX >= Math.max(r.left, b.left) && ev.clientX <= Math.min(r.right, b.right)
+			&& ev.clientY >= Math.max(r.top, b.top) && ev.clientY <= Math.min(r.bottom, b.bottom);
+	}
+
+	function clearWire() {
+		if (!wire) return false;
+		markTarget(wire.over, false);
+		wire = null;
+		if (bodyEl) bodyEl.classList.remove('wiring');
+		clearLive();
+		return true;
+	}
+
+	/// Write the link, then offer the relation on the line it just drew.
+	function linkNow(from, to) {
+		return addLink(from, to, '', '').then(function (id) {
+			if (!id) return;
+			return refresh().then(function () {
+				selEdge = id;
+				announceTo(t('graph.linked', { from: nameOf(from), to: nameOf(to) }));
+				openPicker({ owner: from, id: id, from: from, to: to });
+			});
+		});
+	}
+
+	// ── The relation, offered rather than demanded ─────────────
+
+	var picker = null;
+
+	function closePicker() {
+		if (!picker) return false;
+		picker.remove();
+		picker = null;
+		return true;
+	}
+
+	/// Every relation the store holds, the most recently used first.
+	///
+	/// [relsInUse] answers in link-id order, which is stable and meaningless to a
+	/// hand. What a hand wants first is the word it used a minute ago, so this
+	/// walks the links newest first instead. Same set, different order, and the
+	/// order is a property of the store rather than of this window — so two
+	/// devices showing one store show one list.
+	function relsRecent() {
+		var seen = {}, out = [];
+		if (!lastStore) return out;
+		lastStore.links.slice().sort(function (a, b) {
+			var at = Number(a.ts) || 0, bt = Number(b.ts) || 0;
+			if (at !== bt) return bt - at;
+			return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+		}).forEach(function (l) {
+			relsOf(l.rel).forEach(function (r) {
+				if (seen[r]) return;
+				seen[r] = 1;
+				out.push(r);
+			});
+		});
+		return out;
+	}
+
+	/// The chips that name a new link's relation, on the line it was just drawn
+	/// as. Click one, or type one; Escape leaves the link with none, which is a
+	/// link that says the two are joined and nothing more.
+	function openPicker(spec) {
+		closeMenu();
+		closeEditor();
+		closePicker();
+		picker = h('div', 'graph-relpick');
+		picker.id = 'graph-relpick';
+		picker.setAttribute('role', 'dialog');
+		picker.setAttribute('aria-label', t('graph.rel_pick'));
+
+		var row = h('div', 'graph-rel-row');
+		var box = h('input', 'graph-edit-input');
+		box.type = 'text';
+		box.id = 'graph-relpick-rel';
+		box.placeholder = t('graph.rel_pick_ph');
+		box.maxLength = REL_MAX;
+		box.setAttribute('aria-label', t('graph.rel_pick'));
+
+		function set(word) {
+			var w = tidyRel(word);
+			closePicker();
+			if (!w) return;
+			replaceLink({ id: spec.id, owner: spec.owner, note: '' }, w, '');
+		}
+
+		relsRecent().slice(0, 8).forEach(function (word) {
+			var c = h('button', 'tag-chip graph-relpick-chip');
+			c.type = 'button';
+			c.style.setProperty('--tag-h', hueOf(word));
+			c.textContent = word;
+			c.addEventListener('click', function () { set(word); });
+			row.appendChild(c);
+		});
+		if (row.childNodes.length) picker.appendChild(row);
+		picker.appendChild(box);
+		box.addEventListener('keydown', function (e) {
+			if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); set(box.value); }
+		});
+
+		var at = spec.at || anchorOf({ id: spec.id }) || { x: 0, y: 0 };
+		place(picker, at.x, at.y);
+		box.focus();
+	}
+
+	// ── A Diamond made where the link was let go ───────────────
+
+	var namer = null;
+
+	function closeNamer() {
+		if (!namer) return false;
+		namer.remove();
+		namer = null;
+		return true;
+	}
+
+	/// Ask for a name where the pointer let go, and make the Diamond there,
+	/// already linked.
+	///
+	/// FigJam's move, and the one that turns the canvas into a place to think
+	/// rather than a picture of thinking already done. The Diamond is created
+	/// through the rail's own door (`DaimondDiamond.create`) so it gets the
+	/// account's default model and reaches the rail, the sync and the other tab
+	/// exactly as one made by the New button does.
+	function openNamer(ev, at, fromId) {
+		closeMenu();
+		closeEditor();
+		closePicker();
+		closeNamer();
+		namer = h('div', 'graph-namer');
+		namer.id = 'graph-namer';
+		namer.setAttribute('role', 'dialog');
+		namer.setAttribute('aria-label', t('graph.new_diamond'));
+		var box = h('input', 'graph-edit-input');
+		box.type = 'text';
+		box.id = 'graph-namer-name';
+		box.placeholder = t('graph.new_diamond');
+		box.setAttribute('aria-label', t('graph.new_diamond'));
+		namer.appendChild(box);
+		namer.addEventListener('keydown', function (e) {
+			if (e.key !== 'Enter') return;
+			e.preventDefault();
+			var name = box.value.trim();
+			if (!name) return;
+			closeNamer();
+			makeLinked(fromId, name, at);
+		});
+		place(namer, ev.clientX, ev.clientY);
+		box.focus();
+	}
+
+	/// Create, put it where the pointer was, link it, and offer the relation.
+	function makeLinked(fromId, name, at) {
+		if (!window.DaimondDiamond || !DaimondDiamond.create) {
+			say(t('graph.no_create'));
+			return Promise.resolve();
+		}
+		return Promise.resolve(DaimondDiamond.create(name)).then(function (id) {
+			if (!id) return;
+			// Where the pointer was, less half a box, so the tile lands centred on
+			// the drop rather than hanging off it. Written before the link, so the
+			// draw that the link triggers already knows where to put it.
+			putPos(id, at.x - NODE_W / 2, at.y - NODE_H / 2);
+			saveLayout();
+			return linkNow(fromId, id);
+		}).catch(function (e) {
+			say(t('graph.write_failed', { err: (e && e.message) || String(e) }));
+		});
+	}
+
+	// ── Saying what happened ───────────────────────────────────
+
+	/// Announce an act to a screen reader as well as to the toolbar.
+	///
+	/// A link made by a drag leaves nothing on screen that says so except a line
+	/// appearing, and a line appearing is not an event a reader is told about.
+	function announceTo(msg) {
+		if (barSay) {
+			barSay.classList.remove('warn');
+			barSay.textContent = msg;
+			setTimeout(function () {
+				if (barSay && barSay.textContent === msg) paintToolbar(true);
+			}, 2600);
+		}
+		var live = document.getElementById('graph-live-say');
+		if (live) live.textContent = msg;
+	}
+
 	// ── Dragging a Diamond ─────────────────────────────────────
 
 	var drag = null;    // { id, g, svg, button, orig, from, moved, pos, wires }
@@ -1602,6 +2032,12 @@
 		return out;
 	}
 
+	/// Take up a Diamond, ready to be moved.
+	///
+	/// The state a move needs, gathered once at the press so that no pointer move
+	/// has to search the document: where the box started, where every box is, and
+	/// the lines touching this one with the elements that draw them.
+	///
 	/// # Arguments
 	/// * `button` - Which button is holding the box: the left, as it always was,
 	///              or the right, which drags and offers its menu only when the
@@ -1616,9 +2052,6 @@
 			from: at, moved: false,
 			pos: pos, wires: wiresFor(id, svg),
 		};
-		g.classList.add('dragging');
-		document.addEventListener('mousemove', onDragMove, true);
-		document.addEventListener('mouseup', onDragUp, true);
 		// While the right button is holding a box, the browser's own menu is not
 		// wanted anywhere -- including outside the picture, where this module's
 		// own handler does not run.
@@ -1630,7 +2063,7 @@
 	/// Put the box at a point, and the lines touching it with it.
 	///
 	/// The lines are the same arithmetic the next draw does from the store, run
-	/// against one position the store does not hold yet. Waiting for the mouseup
+	/// against one position the store does not hold yet. Waiting for the release
 	/// instead left every line hanging off where the box used to be for as long
 	/// as the gesture lasted, which is a picture that was wrong while it was
 	/// being looked at.
@@ -1646,24 +2079,25 @@
 		});
 	}
 
-	function onDragMove(ev) {
+	/// # Arguments
+	/// * `pt` - A bare `{ clientX, clientY }` rather than the event, because this
+	///          runs a frame after the move that asked for it: an event held
+	///          across a frame is an event whose `preventDefault` is already too
+	///          late, and one whose gesture may already have ended.
+	function onDragMove(pt) {
 		if (!drag) return;
-		var at = atPoint(drag.svg, ev);
-		var dx = at.x - drag.from.x, dy = at.y - drag.from.y;
-		if (!drag.moved && Math.abs(dx) < DRAG_MIN && Math.abs(dy) < DRAG_MIN) return;
-		drag.moved = true;
-		var x = Math.max(0, Math.round(drag.orig.x + dx));
-		var y = Math.max(0, Math.round(drag.orig.y + dy));
+		var at = atPoint(drag.svg, pt);
+		var x = Math.max(0, Math.round(drag.orig.x + at.x - drag.from.x));
+		var y = Math.max(0, Math.round(drag.orig.y + at.y - drag.from.y));
 		drag.now = { x: x, y: y };
 		moveTo(x, y);
-		ev.preventDefault();
 	}
 
-	function onDragUp(ev) {
+	function onDragUp(ev, moved) {
 		if (!drag) return;
 		var d = drag;
 		endDrag();
-		if (!d.moved || !d.now) {
+		if (!moved || !d.now) {
 			// A right press that went nowhere is not a drag; it is the menu, held
 			// back until the button came up so that moving would have cancelled
 			// it. Any other button ending the gesture just ends it, rather than
@@ -1679,7 +2113,7 @@
 		redraw();
 	}
 
-	/// Eat the click the browser fires after the mouseup that ended a drag.
+	/// Eat the click the browser fires after the release that ended a drag.
 	///
 	/// Cleared on the next task rather than by the click itself: a release
 	/// outside the picture fires no click at all, and a flag nothing clears would
@@ -1689,9 +2123,9 @@
 		setTimeout(function () { suppressClick = false; }, 0);
 	}
 
-	/// Eat the menu some browsers raise on the mouseup that ended a right drag,
-	/// rather than on the mousedown that began it. Cleared on the next task, for
-	/// the same reason [swallowClick] is.
+	/// Eat the menu some browsers raise on the release that ended a right drag,
+	/// rather than on the press that began it. Cleared on the next task, for the
+	/// same reason [swallowClick] is.
 	function swallowMenu() {
 		suppressMenu = true;
 		setTimeout(function () { suppressMenu = false; }, 0);
@@ -1700,10 +2134,10 @@
 	/// Put the box back and forget the gesture. Escape during a drag lands here,
 	/// so a drag begun by accident costs nothing -- and the lines go back with the
 	/// box, since they followed it out.
-	function abortDrag() {
+	function abortDrag(moved) {
 		if (!drag) return false;
 		var d = drag;
-		moveTo(d.orig.x, d.orig.y);
+		if (moved !== false) moveTo(d.orig.x, d.orig.y);
 		endDrag();
 		if (d.button === 2) swallowMenu(); else swallowClick();
 		return true;
@@ -1712,8 +2146,6 @@
 	function endDrag() {
 		if (drag && drag.g) drag.g.classList.remove('dragging');
 		drag = null;
-		document.removeEventListener('mousemove', onDragMove, true);
-		document.removeEventListener('mouseup', onDragUp, true);
 		document.removeEventListener('contextmenu', eatMenu, true);
 	}
 
@@ -1724,15 +2156,12 @@
 	function startPan(ev) {
 		pan = { x: ev.clientX, y: ev.clientY, left: bodyEl.scrollLeft, top: bodyEl.scrollTop };
 		bodyEl.classList.add('panning');
-		document.addEventListener('mousemove', onPanMove, true);
-		document.addEventListener('mouseup', onPanUp, true);
 	}
 
-	function onPanMove(ev) {
+	function onPanMove(pt) {
 		if (!pan) return;
-		bodyEl.scrollLeft = pan.left - (ev.clientX - pan.x);
-		bodyEl.scrollTop  = pan.top  - (ev.clientY - pan.y);
-		ev.preventDefault();
+		bodyEl.scrollLeft = pan.left - (pt.clientX - pan.x);
+		bodyEl.scrollTop  = pan.top  - (pt.clientY - pan.y);
 	}
 
 	function onPanUp() {
@@ -1744,8 +2173,42 @@
 	function endPan() {
 		pan = null;
 		if (bodyEl) bodyEl.classList.remove('panning');
-		document.removeEventListener('mousemove', onPanMove, true);
-		document.removeEventListener('mouseup', onPanUp, true);
+	}
+
+	// ── Zooming to the pointer ─────────────────────────────────
+
+	/// A wheel notch scales the picture about the point under the pointer.
+	///
+	/// WHICH POINT is the whole of it. A zoom that scales about the top-left
+	/// corner, or about the middle of the window, moves whatever the user was
+	/// looking at somewhere else — and at two hundred tiles "somewhere else" is
+	/// a search. So the picture coordinate under the pointer is worked out first
+	/// and the scroll is then set to whatever puts that same coordinate back
+	/// under the same pixel: [DaimondGraphGeom.zoomAt], one line of algebra and
+	/// no measurement of the window at all.
+	///
+	/// The EFFECTIVE scales are used, not the stored ones. The SVG is presented
+	/// at a whole number of pixels (`Math.round(width * zoom)`), so the scale the
+	/// picture is really at is that rounded size over the picture's own width;
+	/// using the unrounded number would leave the point drifting by up to a pixel
+	/// a notch, which after twenty notches is twenty pixels of a promise broken.
+	function wheelZoom(ev) {
+		if (!bodyEl || !lastGeo) return;
+		var svg = bodyEl.querySelector('svg#graph-svg');
+		if (!svg) return;
+		ev.preventDefault();
+		var l = loadLayout();
+		var notches = ev.deltaY < 0 ? 1 : -1;
+		var next = GG.zoomStep(l.zoom, notches, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP);
+		if (next === l.zoom) return;
+		var r  = svg.getBoundingClientRect();
+		var at = atPoint(svg, ev);
+		var now  = r.width / lastGeo.width;
+		var then = Math.round(lastGeo.width * next) / lastGeo.width;
+		l.pan  = sanePan(GG.zoomAt({ x: bodyEl.scrollLeft, y: bodyEl.scrollTop }, at, now, then));
+		l.zoom = next;
+		saveLayout();
+		redraw();
 	}
 
 	// ── The right-click menu ───────────────────────────────────
@@ -1814,6 +2277,8 @@
 			item(t('graph.menu_edit_link'), function () {
 				openEditor({ mode: 'edit', link: ctx.link, at: { x: ev.clientX, y: ev.clientY } });
 			});
+			item(t('graph.menu_reverse'), function () { reverseLink(ctx.link); })
+				.title = t('graph.reverse_help');
 			item(t('graph.menu_drop_link'), function () { dropLink(ctx.link); }, 'danger');
 			sep();
 		}
@@ -2010,6 +2475,16 @@
 		row.appendChild(ok);
 		row.appendChild(cancel);
 		if (!isNew) {
+			// Turning a link round is a NEW RECORD, since the store refuses to
+			// edit an end, so the control says so on its tooltip rather than doing
+			// it quietly. The note travels; the date the claim was first made does
+			// not, because it is a different claim.
+			var rev = h('button', 'graph-btn', t('graph.reverse'));
+			rev.type = 'button';
+			rev.id = 'graph-edit-reverse';
+			rev.title = t('graph.reverse_help');
+			rev.addEventListener('click', function () { closeEditor(); reverseLink(l); });
+			row.appendChild(rev);
 			var del = h('button', 'graph-btn danger', t('graph.drop'));
 			del.type = 'button';
 			del.id = 'graph-edit-delete';
@@ -2073,6 +2548,12 @@
 		document.dispatchEvent(new CustomEvent('daimond-links-changed'));
 	}
 
+	/// Assert a link, and answer the id the store gave it.
+	///
+	/// The id is answered because a drag has somewhere to go NEXT: the relation
+	/// picker opens on the line that has just appeared, and revises that link by
+	/// `update_link` — which keeps the id and the `ts` of the assertion the drag
+	/// made. A caller that only wants the write can ignore it, as the form does.
 	function addLink(from, to, rel, note) {
 		return reader().then(function (a) {
 			// The source Diamond owns the record. `all_links` walks the sidecars,
@@ -2080,8 +2561,35 @@
 			// decides which Diamond is stamped, and the assertion belongs to the
 			// end that made it.
 			return a.add_link(from, 'diamond:' + from, 'diamond:' + to, rel || '', note || '', 'user');
-		}).then(function () {
+		}).then(function (id) {
 			announce();
+			return id;
+		}).catch(function (e) {
+			say(t('graph.write_failed', { err: (e && e.message) || String(e) }));
+			return null;
+		});
+	}
+
+	/// Turn a link round: the same two Diamonds, the other way about.
+	///
+	/// A NEW RECORD, and the control says so. `update_link` revises a relation and
+	/// a note and refuses the ends, deliberately — "changing `from` or `to` makes
+	/// it a link between two other things, which is a new claim and should cost a
+	/// new record" (src/diamond_link.rs). So this asserts the reversed link FIRST
+	/// and drops the old one after: a moment of two lines is a thing a person can
+	/// see and undo, and a failed write between the two would otherwise have lost
+	/// the link altogether.
+	function reverseLink(l) {
+		if (!l || !l.from || !l.to) return Promise.resolve();
+		return reader().then(function (a) {
+			return a.add_link(l.to, 'diamond:' + l.to, 'diamond:' + l.from, l.rel || '', l.note || '', 'user');
+		}).then(function (id) {
+			return reader().then(function (a) { return a.remove_link(l.owner, l.id); })
+				.then(function () { return id; });
+		}).then(function (id) {
+			selEdge = id || null;
+			announce();
+			announceTo(t('graph.reversed', { from: nameOf(l.to), to: nameOf(l.from) }));
 		}).catch(function (e) {
 			say(t('graph.write_failed', { err: (e && e.message) || String(e) }));
 		});
@@ -2120,75 +2628,248 @@
 
 	var suppressClick = false;
 	var suppressMenu  = false;
+	// The three gestures bound to the current SVG, so Escape and a redraw can end
+	// whichever is running without knowing which it is.
+	var gestures = [];
 
 	/// The one place a pointer meets the picture. Re-attached on every draw,
 	/// because the SVG is rebuilt on every draw.
+	///
+	/// POINTER EVENTS THROUGHOUT. Every one of the three drags below is
+	/// recognised by `www/js/gesture.js`, which is where press → lift →
+	/// coalesced move → drop/cancel is decided ONCE for this app: how far a press
+	/// travels before it is a drag, how long a finger rests before it is one, and
+	/// that the pointer is captured so the gesture survives leaving the box it
+	/// began on. The Dock's drag-to-slot reads the same module. What is left here
+	/// is what is actually about a graph.
+	///
+	/// The single `mousedown` listener at the foot is the exception, and it is
+	/// not a gesture: it refuses Chrome's middle-button autoscroll, which can
+	/// only be refused at the mouse event. Its comment says why.
 	function wireCanvas(svg) {
-		svg.addEventListener('mousedown', function (ev) {
-			if (ev.button === 1) {           // middle: pan
-				ev.preventDefault();
-				startPan(ev);
-				return;
-			}
-			// The left button and the right both move a Diamond. The right was
-			// asked for; the left stays because a click on a box has always opened
-			// it and a press is how a click starts.
-			if (ev.button !== 0 && ev.button !== 2) return;
-			closeMenu();
-			var g = ev.target.closest ? ev.target.closest('.graph-node') : null;
-			// Not while linking: there the press is a pick, and a box that slid
-			// under the pointer as the link was aimed would be a surprise.
-			if (g && g.dataset.diamondId && !link.armed) {
-				// Or the browser sweeps a text selection across every label the
-				// pointer passes, which is what a press-and-move means to it.
-				ev.preventDefault();
-				startDrag(g, g.dataset.diamondId, ev, svg, ev.button);
-			}
+		gestures.forEach(function (g) { g.off(); });
+		gestures = [
+			// 1. A link, pulled out of an anchor. No threshold: the anchors are
+			//    small and deliberate, so the first movement is the gesture.
+			DaimondGesture.drag(svg, {
+				threshold: 0,
+				hold: 0,
+				// An anchor press is never a click, and the first move of a link
+				// dragged off the edge of the picture may already be outside it.
+				capture: 'press',
+				match: function (ev) {
+					if (ev.pointerType === 'mouse' && ev.button !== 0) return null;
+					var an = ev.target.closest ? ev.target.closest('.graph-anchor') : null;
+					var id = an && an.getAttribute('data-diamond-id');
+					if (!id) return null;
+					return { id: id, side: an.getAttribute('data-side') || 'right', svg: svg };
+				},
+				lift: function (ev, c) { startWire(c.id, c.side, atPoint(c.svg, ev)); },
+				move: function (pt, c) { wireMove(atPoint(c.svg, pt)); },
+				drop: function (ev, c, lifted) { endWire(ev, lifted); },
+				cancel: function () { clearWire(); },
+			}),
+			// 2. A Diamond, moved. Both buttons, as they always were.
+			DaimondGesture.drag(svg, {
+				match: function (ev) {
+					if (ev.pointerType === 'mouse' && ev.button !== 0 && ev.button !== 2) return null;
+					if (ev.target.closest && ev.target.closest('.graph-anchor')) return null;
+					var g = ev.target.closest ? ev.target.closest('.graph-node') : null;
+					var id = g && g.getAttribute('data-diamond-id');
+					// Not while linking by click: there the press is a pick, and a
+					// box that slid under the pointer as the link was aimed would be
+					// a surprise.
+					if (!id || link.armed) return null;
+					closeMenu();
+					return { g: g, id: id, svg: svg, button: ev.button === 2 ? 2 : 0 };
+				},
+				start: function (ev, c) { startDrag(c.g, c.id, ev, c.svg, c.button); },
+				lift:  function (ev, c) { c.g.classList.add('dragging'); },
+				move:  function (pt) { onDragMove(pt); },
+				drop:  function (ev, c, lifted) { onDragUp(ev, lifted); },
+				cancel: function (c, lifted) { abortDrag(lifted); },
+				// A FINGER RESTING ON A TILE IS NOT CARRYING IT. It is reaching for
+				// the anchors, which a finger has no hover to raise. So the rest
+				// ends the drag instead of beginning one, and the anchors appear
+				// under the finger for the next gesture to take hold of.
+				onHold: function (c) { showAnchors(c.id); return 'cancel'; },
+			}),
+			// 3. The view, panned with the middle button.
+			//
+			// `passive`, and it is the one gesture here that is. Chrome's
+			// middle-button autoscroll has to be refused at the MOUSE event, and
+			// `preventDefault` on a `pointerdown` suppresses the compatibility
+			// `mousedown` that would have carried the refusal -- so the recogniser
+			// leaves the press alone and the `mousedown` listener below does the
+			// refusing. Without that, Chrome takes the pointer into autoscroll and
+			// every move and the release with it: a pan that starts and never
+			// moves, which is what this cost before it was understood.
+			DaimondGesture.drag(svg, {
+				threshold: 0,
+				hold: 0,
+				passive: true,
+				capture: 'press',
+				match: function (ev) { return ev.button === 1 ? { svg: svg } : null; },
+				start: function (ev) { startPan(ev); },
+				move:  function (pt) { onPanMove(pt); },
+				drop:  function () { onPanUp(); },
+				cancel: function () { endPan(); },
+			}),
+		];
+		// The pointer moved over the picture with nothing in hand: the anchors.
+		svg.addEventListener('pointermove', onHoverMove);
+		svg.addEventListener('pointerleave', function () {
+			if (!wire && !drag && !pan) hideAnchors();
 		});
-
-		svg.addEventListener('click', function (ev) {
-			if (suppressClick) { suppressClick = false; return; }
-			var node = ev.target.closest ? ev.target.closest('.graph-node') : null;
-			var edge = ev.target.closest ? ev.target.closest('.graph-edge') : null;
-			if (node && node.dataset.diamondId) {
-				if (link.armed) linkClick(node.dataset.diamondId);
-				else            select(node.dataset.diamondId);
-				return;
-			}
-			if (edge && edge.dataset.linkId) {
-				var l = linkById(edge.dataset.linkId);
-				if (l) openEditor({ mode: 'edit', link: l, at: { x: ev.clientX, y: ev.clientY } });
-				return;
-			}
-			// Empty space. The way out of link mode a pointer already knows, and
-			// the way out of anything else standing open.
-			if (cancelLink()) return;
-			closeEditor();
-		});
-
-		svg.addEventListener('mousemove', function (ev) {
-			if (!link.from) return;
-			link.at = atPoint(svg, ev);
-			drawLive(link.at);
-		});
-
-		svg.addEventListener('contextmenu', function (ev) {
-			ev.preventDefault();
-			// The right button is holding a Diamond, or has just let one go after
-			// moving it. Either way this is not a request for a menu: a press on a
-			// box decides between the two at the mouseup, in [onDragUp].
-			if (drag || suppressMenu) return;
-			var node = ev.target.closest ? ev.target.closest('.graph-node') : null;
-			var edge = ev.target.closest ? ev.target.closest('.graph-edge') : null;
-			openMenu(ev, {
-				node: node ? node.dataset.diamondId : null,
-				link: edge ? linkById(edge.dataset.linkId) : null,
-			});
-		});
-
-		// Chrome's autoscroll would otherwise take the middle button off us.
+		svg.addEventListener('click', onClick);
+		svg.addEventListener('contextmenu', onContext);
+		// Chrome's autoscroll would otherwise take the middle button off us, and it
+		// takes it at the MOUSE event: a `pointerdown` for a mouse is derived from
+		// `mousedown`, so preventing the pointer event's default does nothing to
+		// the mouse event's, and Chrome enters autoscroll and swallows every move
+		// and the release with it -- a pan that started and then never moved. This
+		// is the one mouse-event listener in the file and it exists for that one
+		// browser behaviour; it decides nothing about the gesture.
+		svg.addEventListener('mousedown', function (ev) { if (ev.button === 1) ev.preventDefault(); });
 		svg.addEventListener('auxclick', function (ev) { if (ev.button === 1) ev.preventDefault(); });
 		bodyEl.addEventListener('scroll', onScroll);
+		// Same function, same options, so re-adding it on every draw adds it once.
+		bodyEl.addEventListener('wheel', wheelZoom, { passive: false });
+	}
+
+	/// End every gesture, whichever is running. Escape, and a panel closing.
+	function stopGestures() {
+		var ended = false;
+		gestures.forEach(function (g) { if (g.cancel()) ended = true; });
+		return ended;
+	}
+
+	// The hover is not a gesture and is not coalesced by the recogniser, so it
+	// gets the same treatment here: the last position is remembered and at most
+	// one is acted on per frame. A pointer crossing a picture of two hundred
+	// tiles otherwise costs a scan of all of them per report.
+	var hoverFrame = null, hoverAt = null;
+
+	function onHoverMove(ev) {
+		if (wire || drag || pan) return;
+		var svg = ev.currentTarget;
+		hoverAt = { clientX: ev.clientX, clientY: ev.clientY };
+		if (hoverFrame !== null) return;
+		hoverFrame = requestAnimationFrame(function () {
+			hoverFrame = null;
+			if (!hoverAt || wire || drag || pan) return;
+			var at = atPoint(svg, hoverAt);
+			// Link mode's own arrow, which follows the pointer between the click
+			// that picked a source and the click that picks a target. A different
+			// gesture from the drag, and still the older route to a link.
+			if (link.from) { link.at = at; drawLive(at); return; }
+			onHover(at);
+		});
+	}
+
+	function onClick(ev) {
+		if (suppressClick) { suppressClick = false; return; }
+		// The anchor's own press started the link; the click that follows it is
+		// the tail of that gesture and means nothing more.
+		if (ev.target.closest && ev.target.closest('.graph-anchor')) return;
+		var node = ev.target.closest ? ev.target.closest('.graph-node') : null;
+		var edge = ev.target.closest ? ev.target.closest('.graph-edge') : null;
+		if (node && node.getAttribute('data-diamond-id')) {
+			var nid = node.getAttribute('data-diamond-id');
+			if (link.armed) { linkClick(nid); return; }
+			selNode = nid;
+			selEdge = null;
+			markSelected();
+			select(nid);
+			return;
+		}
+		if (edge && edge.getAttribute('data-link-id')) {
+			var l = linkById(edge.getAttribute('data-link-id'));
+			if (l) {
+				selEdge = l.id;
+				selNode = null;
+				markSelected();
+				openEditor({ mode: 'edit', link: l, at: { x: ev.clientX, y: ev.clientY } });
+			}
+			return;
+		}
+		// Empty space. The way out of link mode a pointer already knows, and the
+		// way out of anything else standing open.
+		selEdge = null;
+		selNode = null;
+		markSelected();
+		if (cancelLink()) return;
+		closeEditor();
+		closePicker();
+		closeNamer();
+	}
+
+	function onContext(ev) {
+		ev.preventDefault();
+		// The right button is holding a Diamond, or has just let one go after
+		// moving it. Either way this is not a request for a menu: a press on a
+		// box decides between the two at the release, in [onDragUp].
+		if (drag || suppressMenu) return;
+		var node = ev.target.closest ? ev.target.closest('.graph-node') : null;
+		var edge = ev.target.closest ? ev.target.closest('.graph-edge') : null;
+		openMenu(ev, {
+			node: node ? node.getAttribute('data-diamond-id') : null,
+			link: edge ? linkById(edge.getAttribute('data-link-id')) : null,
+		});
+	}
+
+	/// Mark what is selected, without redrawing anything.
+	///
+	/// Selection is pointer state and not a fact about the store, so it is a
+	/// class put on two elements rather than a reason to rebuild the picture.
+	/// Re-run at the end of every draw, so a selection survives a link being made
+	/// somewhere else.
+	function markSelected() {
+		if (!bodyEl) return;
+		var was = bodyEl.querySelectorAll('.graph-edge.selected, .graph-node.selected');
+		for (var i = 0; i < was.length; i++) was[i].classList.remove('selected');
+		if (selEdge) {
+			var e = bodyEl.querySelector('g.graph-edge[data-link-id="' + cssq(selEdge) + '"]');
+			if (e) e.classList.add('selected');
+		}
+		if (selNode) {
+			var n = bodyEl.querySelector('g.graph-node[data-diamond-id="' + cssq(selNode) + '"]');
+			if (n) n.classList.add('selected');
+		}
+	}
+
+	/// The keyboard on the canvas.
+	///
+	///   L        link the selected Diamond to the next one clicked
+	///   Delete   drop the selected link
+	///
+	/// Deliberately two keys and not a scheme. Escape already means "leave
+	/// whatever is open" through [dismiss], and a key that acted while somebody
+	/// was typing a relation into a box would delete a link for having pressed
+	/// backspace in the wrong place -- so a field in focus takes the key.
+	function onKey(e) {
+		if (!visible()) return;
+		if (e.metaKey || e.ctrlKey || e.altKey) return;
+		var el0 = document.activeElement;
+		if (el0 && /^(INPUT|TEXTAREA|SELECT)$/.test(el0.tagName)) return;
+		if (el0 && el0.isContentEditable) return;
+		if (e.key === 'l' || e.key === 'L') {
+			if (!selNode) return;
+			e.preventDefault();
+			toggleLinkMode(true);
+			link.from = selNode;
+			paintToolbar(true);
+			redraw();
+			return;
+		}
+		if (e.key === 'Delete' || e.key === 'Backspace') {
+			if (!selEdge) return;
+			var l = linkById(selEdge);
+			if (!l) return;
+			e.preventDefault();
+			selEdge = null;
+			dropLink(l);
+		}
 	}
 
 	var scrollTimer = null;
@@ -2215,10 +2896,16 @@
 	/// panel, because a handler that only fires while the focus is inside the
 	/// thing stops working the moment somebody clicks the words they are reading.
 	function dismiss() {
+		if (closeNamer()) return true;
+		if (closePicker()) return true;
 		if (closeEditor()) return true;
 		if (closeMenu()) return true;
-		if (abortDrag()) return true;
+		// Whichever of the three drags is running, the recogniser ends it and
+		// calls the `cancel` that puts the picture back.
+		if (stopGestures()) return true;
 		if (cancelLink()) return true;
+		if (hover) { hideAnchors(); return true; }
+		if (selEdge || selNode) { selEdge = null; selNode = null; markSelected(); return true; }
 		return false;
 	}
 
@@ -2255,9 +2942,10 @@
 		bodyEl = document.getElementById('graph-body');
 		if (!bodyEl) return Promise.resolve();
 		if (!unlocked()) return Promise.resolve();
-		// A redraw under a gesture would pull the box out from under the pointer.
-		if (drag || pan) { again = true; return Promise.resolve(); }
-		if (drawing) { again = true; return Promise.resolve(); }
+		// A redraw under a gesture would pull the box out from under the pointer,
+		// or the anchor out from under a link being drawn.
+		if (drag || pan || wire) { again = true; return settled(); }
+		if (drawing) { again = true; return settled(); }
 		drawing = true;
 		closeMenu();
 		return load().then(function (store) {
@@ -2272,10 +2960,25 @@
 			p.className = 'graph-empty';
 			p.textContent = t('graph.failed', { err: (e && e.message) || String(e) });
 			bodyEl.appendChild(p);
+			settle();
 		}).then(function () {
 			drawing = false;
 			if (again) { again = false; return refresh(); }
 		});
+	}
+
+	/// A promise that keeps until the picture has next been drawn.
+	function settled() {
+		return new Promise(function (res) { settlers.push(res); });
+	}
+
+	/// The picture is on screen: let go of everyone who was waiting for it.
+	/// Called at the end of every draw and on the failure path, so a waiter is
+	/// never left holding a promise nothing will keep.
+	function settle() {
+		var waiting = settlers;
+		settlers = [];
+		waiting.forEach(function (f) { try { f(); } catch (e) { /* not ours */ } });
 	}
 
 	/// Redraw only when the pane is on screen, which is every trigger below
@@ -2329,12 +3032,19 @@
 			if (!visible() && !menu && !editor) return;
 			if (dismiss()) { e.stopPropagation(); e.preventDefault(); }
 		}, true);
-		// A click anywhere else shuts the menu, which is how every menu behaves.
-		document.addEventListener('mousedown', function (e) {
+		// A press anywhere else shuts what is floating, which is how every menu
+		// behaves. The relation picker is the one that must NOT close on a press
+		// inside the picture: it opens the instant a link is dropped, and the
+		// press that dropped it is still finishing.
+		document.addEventListener('pointerdown', function (e) {
 			if (menu && !menu.contains(e.target)) closeMenu();
 			if (editor && !editor.contains(e.target)
 				&& !(e.target.closest && e.target.closest('.graph-edge'))) closeEditor();
+			if (picker && !picker.contains(e.target)) closePicker();
+			if (namer && !namer.contains(e.target)) closeNamer();
 		}, true);
+		// The canvas keyboard: `L` links, Delete drops the selected link.
+		document.addEventListener('keydown', onKey);
 		// And when the panel is opened, since it is drawn on being shown rather
 		// than kept up to date while nobody is looking at it.
 		var p = panelEl();
@@ -2343,7 +3053,10 @@
 			new MutationObserver(function () {
 				var now = visible();
 				if (now && !was) refresh();
-				if (!now && was) { closeMenu(); closeEditor(); cancelLink(); }
+				if (!now && was) {
+					closeMenu(); closeEditor(); closePicker(); closeNamer();
+					stopGestures(); hideAnchors(); cancelLink();
+				}
 				was = now;
 			}).observe(p, { attributes: true, attributeFilter: ['class', 'style'] });
 		}
@@ -2393,6 +3106,14 @@
 		/// What is on screen, for a verifier: where every box is and what the
 		/// store said. Never used by the app itself.
 		_geometry: function () { return lastGeo; },
+		/// How many times the whole picture has been BUILT, for a verifier.
+		///
+		/// The number a gesture must not move. Dragging a Diamond, drawing a link
+		/// and hovering a tile each touch a handful of elements; a rebuild would
+		/// throw the SVG away and make a new one, which at two hundred tiles is
+		/// the eye losing its place. Published because "it did not rebuild" is not
+		/// something a picture can be asked after the fact.
+		_draws: function () { return draws; },
 		/// How a link's `rel` becomes several relations, and back.
 		///
 		/// Published because the Diamond panel draws the same link on its own

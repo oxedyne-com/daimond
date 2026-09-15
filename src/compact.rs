@@ -435,9 +435,36 @@ pub struct Limits {
 	// to the turn's context. Off by the shipped default, which is what makes `cur` a control.
 	pub compound: bool,
 
+	// The never-forget file set (`dev/CRYSTAL_CONTRACT.md` §5, §12-13), each switch off by
+	// itself so `dev/verify_neverforget.mjs` can turn off ONE mechanism at a time and prove
+	// the assertion it is about actually depends on it -- an un-switchable piece of engine
+	// logic is a piece no `--break` can discriminate against. All four default on, which is
+	// what shipped; see `dev/tune/arms.json`'s `nofiles` arm for `standing_files`.
+	//
+	/// Whether `REQUIREMENTS.md`, `DECISIONS.md` and `STATE.md` ride in the daimon's system
+	/// message at all. Off is the `nofiles` measurement arm: the crystal still rides, the
+	/// three files do not, and the hot room they would have taken goes to it instead.
+	pub standing_files: bool,
+	/// Whether the daimon's briefing names its open tasks by their own words ("top three: …")
+	/// or only their count. Off leaves "N objectives, M open tasks" and drops the list.
+	pub briefing_top3: bool,
+	/// Whether a ticked task earns its own `kind:"task"` line in `.daimond/log`. Off leaves
+	/// the version-minting `kind:"edit"` record in place -- a Diamond still gets a version for
+	/// the turn -- but nothing says WHICH task moved or what backed the claim.
+	pub task_log: bool,
+	/// Whether a turn that changed files without updating `REQUIREMENTS.md`/`STATE.md` gets
+	/// the one-line reconcile warning. Off is the world before `dev/CRYSTAL_CONTRACT.md` §5.2:
+	/// the turn-end check still runs and the log still gets its `task` records, but nothing
+	/// tells the daimon it left the never-forget file behind.
+	pub tail_note: bool,
+
 	// Thinking, which only the Anthropic dialect can carry
 	pub thinking: crate::llm::Thinking,	// adaptive, or off where the model allows it
 	pub effort:   crate::llm::Effort,	// how deeply; `output_config.effort`
+
+	/// How long a stream may go without a byte before it is read as stalled; see
+	/// `LlmClient::stream_idle_ms` and [`crate::llm::DEFAULT_STREAM_IDLE_MS`].
+	pub stream_idle_ms: u64,
 }
 
 impl Default for Limits {
@@ -467,11 +494,16 @@ impl Default for Limits {
 			gather_timeout_s:     GATHER_TIMEOUT_S,
 			batch_line:           true,
 			compound:             false,
+			standing_files:       true,
+			briefing_top3:        true,
+			task_log:             true,
+			tail_note:            true,
 			// What the client asked for before either was a setting, so a tree nobody tunes
 			// sends exactly what it sent before.  The per-family figure is applied over this
 			// where the model is known; see `profile::Family::thinking_default`.
 			thinking:             crate::llm::Thinking::Adaptive,
 			effort:               crate::llm::Effort::High,
+			stream_idle_ms:       crate::llm::DEFAULT_STREAM_IDLE_MS,
 		}
 	}
 }
@@ -928,6 +960,13 @@ pub struct Ledger {
 	/// Calls that came back an error, as `tool path`.  Kept apart from the rest so a fold
 	/// never reports an attempted write as a write.
 	pub failed:  Vec<String>,
+	/// Workers whose reports were read this turn, by name -- a `gather` that actually
+	/// answered with something, never one that was refused for having nothing outstanding
+	/// (that lands in [`Ledger::refused`], not here).  Kept apart from [`Ledger::spawned`]
+	/// because starting a worker and reading its report are different turns as often as
+	/// not: a task ticked on the strength of `spawned` alone is ticked on a report nobody
+	/// has read yet.
+	pub reported: Vec<String>,
 }
 
 impl Ledger {
@@ -936,7 +975,7 @@ impl Ledger {
 	pub fn is_empty(&self) -> bool {
 		self.read.is_empty() && self.wrote.is_empty() && self.ran.is_empty()
 			&& self.fetched.is_empty() && self.spawned.is_empty() && self.refused.is_empty()
-			&& self.failed.is_empty()
+			&& self.failed.is_empty() && self.reported.is_empty()
 	}
 
 	/// The ledger as lines for the fold notice, each capped so one pathological session
@@ -959,6 +998,7 @@ impl Ledger {
 		put("Commands run", &self.ran);
 		put("Pages fetched", &self.fetched);
 		put("Agents dispatched", &self.spawned);
+		put("Worker reports read", &self.reported);
 		// Said in full rather than as one word: "REFUSED" alone invites the model to read a
 		// closed door as a broken tool and try it again.
 		put("REFUSED, so nothing was touched", &self.refused);
@@ -1064,6 +1104,19 @@ fn record(l: &mut Ledger, tc: &ToolCall, outcome: CallOutcome) {
 		},
 		"web_fetch" | "web_open" | "web_read"				=> Ledger::push(&mut l.fetched, arg("url")),
 		"spawn_agent"										=> Ledger::push(&mut l.spawned, arg("name")),
+		// `CallOutcome::Done` here means `gather` actually answered with a report -- the
+		// "nothing outstanding" case opens with `REFUSAL_OPENING` and is caught above, in
+		// `l.refused`, before this match is ever reached.
+		"gather" => {
+			let names = extract_json_string_array(&tc.arguments, "names").unwrap_or_default();
+			if names.is_empty() {
+				Ledger::push(&mut l.reported, fmt!("gather"));
+			} else {
+				for n in names {
+					Ledger::push(&mut l.reported, n);
+				}
+			}
+		},
 		_ => {},
 	}
 }
@@ -1358,6 +1411,14 @@ pub fn reconcile(mut notes: FoldNotes, ledger: &Ledger) -> FoldNotes {
 pub enum Summary<'a> {
 	/// The compactor wrote the layout, and it has been reconciled against the ledger.
 	Notes(FoldNotes),
+	/// The same, after [`crate::tools::absorb_notes`] filed it into the Diamond's three files.
+	///
+	/// A VARIANT AND NOT A FLAG, because every caller that hands this in has already decided
+	/// which of the two it is, and the twenty tests that build a notice from prose or from
+	/// unfiled notes should not have to say so.  What it carries is what a ceiling REFUSED --
+	/// ordinarily nothing -- since the rest is in `REQUIREMENTS.md`, `DECISIONS.md` and
+	/// `STATE.md`, which ride in the prompt on every round.  See `dev/CRYSTAL_CONTRACT.md` §13.
+	Filed(FoldNotes),
 	/// It wrote something else, which is kept exactly as it came.
 	Prose(&'a str),
 	/// The call could not be made, and this is why.
@@ -1389,7 +1450,8 @@ pub fn notice(folded: usize, summary: &Summary<'_>, ledger: &Ledger, capped: boo
 		 exactly as it was. This note is the only record of them that the model now has.]\n",
 		folded);
 	match summary {
-		Summary::Notes(n) => s.push_str(&structured_body(n, capped)),
+		Summary::Notes(n) => s.push_str(&structured_body(n, capped, false)),
+		Summary::Filed(n) => s.push_str(&structured_body(n, capped, true)),
 		Summary::Prose(p) if !p.trim().is_empty() => {
 			s.push_str("\n## What happened\n\n");
 			s.push_str(p.trim());
@@ -1425,7 +1487,11 @@ pub fn notice(folded: usize, summary: &Summary<'_>, ledger: &Ledger, capped: boo
 /// * `n` - The parsed and reconciled slots.
 /// * `capped` - Whether the turn continues from this note, which is what makes `Next step` a plan
 ///   the next round starts on rather than a note about the future.
-fn structured_body(n: &FoldNotes, capped: bool) -> String {
+/// * `filed` - Whether the notes are now in the Diamond's three files, which is what lets this
+///   note SHRINK to the task, the next step and a sentence saying where the rest went.  Carrying
+///   the lists here as well would be the duplication `open[]` was deleted for, and the two file
+///   lists would say what `## What was touched` says with less authority.
+fn structured_body(n: &FoldNotes, capped: bool, filed: bool) -> String {
 	let mut s = String::new();
 	if !n.task.trim().is_empty() {
 		s.push_str(&fmt!("\n## Task\n\n{}\n", n.task.trim()));
@@ -1447,11 +1513,23 @@ fn structured_body(n: &FoldNotes, capped: bool) -> String {
 			s.push_str(&fmt!("- {}\n", i));
 		}
 	};
+	if filed {
+		s.push_str(
+			"\nDecisions and open items were filed into DECISIONS.md and REQUIREMENTS.md, and \
+			 what was found into STATE.md; all three are in front of you on every round.\n");
+		// A ceiling refused these, so they are in no file and this note is the only place they
+		// exist. Said as such, or a reader of the sentence above would go looking for them.
+		if !n.open.is_empty() || !n.decisions.is_empty() || !n.found.is_empty() {
+			s.push_str("\nThese would not fit their files' ceilings and are here instead.\n");
+		}
+	}
 	list(&mut s, "Open",        &n.open);
 	list(&mut s, "Decisions",   &n.decisions);
 	list(&mut s, "Found",       &n.found);
-	list(&mut s, "Files edited", &n.edited);
-	list(&mut s, "Files read",  &n.read);
+	if !filed {
+		list(&mut s, "Files edited", &n.edited);
+		list(&mut s, "Files read",  &n.read);
+	}
 	s
 }
 
@@ -2124,6 +2202,49 @@ pub fn note_budget(msgs: &mut [ChatMessage], rounds_left: usize, usd_left: Optio
 	true
 }
 
+/// The reconcile warning, byte for byte -- named so [`note_reconcile`], the tail-note dedupe
+/// and `dev/verify_neverforget.mjs` cannot drift from three different spellings of the same
+/// sentence. The bracket punctuation matches [`BUDGET_NOTE_OPEN`]'s own, deliberately: both are
+/// the app speaking in its own voice inside a conversation otherwise made of the user's and the
+/// model's, and one look should tell a reader which lines are which.
+pub const RECONCILE_NOTE: &str =
+	"[Daimond: this turn changed files but REQUIREMENTS.md and STATE.md were not updated; \
+	 next turn, reconcile them first]";
+
+/// Say, once, that a turn touched files without updating the never-forget file or where things
+/// are -- see `dev/CRYSTAL_CONTRACT.md` §5.2 and [`RECONCILE_NOTE`] for the sentence.
+///
+/// **The same mechanism as [`note_budget`], read the other way round.** That function marks
+/// the tail of the SENT copy so a per-round figure never doubles up within one turn; this marks
+/// the tail of the RETURNED session so a warning that would recur every turn the daimon ignores
+/// it is said once and then left alone -- pushed as a new `user` message rather than folded
+/// into an existing one, because there is no tool call here to attach it to and a session
+/// rehydrates from `user` and `assistant` roles only (see [`fold`]'s own note on that).
+///
+/// **Never twice in a row.** `prior_tail` is the message that stood at the end of the session
+/// before this turn began -- the daimon's own last word, or the note this function itself left
+/// last time. When it is already exactly [`RECONCILE_NOTE`], nothing is pushed: the daimon has
+/// not had a turn to act on it yet, and repeating the same sentence at it is not more likely to
+/// land the second time than the first. The turn after THAT, `prior_tail` is whatever the
+/// daimon actually said, so the same condition holding again is said again -- it is not being
+/// silenced, only never doubled.
+///
+/// Returns whether the note was pushed.
+///
+/// # Arguments
+/// * `msgs` - The session as it will be returned to the browser, appended to in place.
+/// * `prior_tail` - The last message of the session as it stood before this turn's user
+///   instruction was appended, or `None` for a session with nothing in it yet.
+pub fn note_reconcile(msgs: &mut Vec<ChatMessage>, prior_tail: Option<&ChatMessage>) -> bool {
+	let said_last_turn = matches!(prior_tail, Some(ChatMessage::User { content })
+		if content.as_text() == RECONCILE_NOTE);
+	if said_last_turn {
+		return false;
+	}
+	msgs.push(ChatMessage::user(RECONCILE_NOTE.to_string()));
+	true
+}
+
 /// Does this tool's arguments object carry a whole file, rather than a path and a flag?
 fn carries_a_body(name: &str) -> bool {
 	matches!(name, "file_write" | "file_edit" | "doc_edit" | "artefact_add" | "crystal_write")
@@ -2407,6 +2528,203 @@ pub fn crystal_proposal(raw: &str) -> Outcome<String> {
 			 at all. A crystal is one object: title, summary, sections, facts, open, links.";
 			Invalid, Data)),
 	}
+}
+
+/// The four documents a crystal fold now returns: the crystal, and whichever files it rewrote.
+///
+/// A `None` file is one the reducer said nothing about, and it is left exactly as it is.  So is
+/// one it opened a heading for and wrote nothing under -- see [`fold_proposal`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FoldProposal {
+	pub crystal:      String,
+	pub requirements: Option<String>,
+	pub decisions:    Option<String>,
+	pub state:        Option<String>,
+}
+
+/// Which of the three files a heading line names, or nothing.
+///
+/// `## REQUIREMENTS.md`, `# REQUIREMENTS.md`, `**REQUIREMENTS.md**` and a backticked spelling
+/// are all accepted, for the reason [`fold_heading`] accepts three markups: a model told "under
+/// the headings you are given" picks its own, and the block is worth more than the punctuation.
+fn standing_heading(line: &str) -> Option<&'static str> {
+	let t = line.trim();
+	if t.is_empty() {
+		return None;
+	}
+	let t = t.trim_start_matches('#').trim();
+	let t = t.trim_matches('*').trim();
+	let t = t.trim_matches('`').trim();
+	crate::tools::STANDING_FILES.iter().copied()
+		.find(|leaf| t.eq_ignore_ascii_case(leaf))
+}
+
+/// The reducer's raw output as a crystal and up to three markdown files.
+///
+/// **THE CRYSTAL IS EVERYTHING BEFORE THE FIRST FILE HEADING**, and it goes through
+/// [`crystal_proposal`] exactly as it did when that was the whole reply -- so every refusal that
+/// already stood stands here: empty, not one whole object, not JSON.  A reply with no file
+/// heading in it at all is therefore the old reply, parsed the old way, and answers with three
+/// `None`s.
+///
+/// **Headings and not JSON**, for the compliance reason set out on [`FoldNotes`] and in
+/// `dev/CRYSTAL_CONTRACT.md` §13: a model asked for a long document with nested strings truncates
+/// at its output cap, and a truncated JSON document loses everything while a truncated heading
+/// document keeps every block that arrived.
+///
+/// **An EMPTY block leaves its file alone**, exactly as a missing one does.  A heading with
+/// nothing under it is a model that started a block and stopped, and a fold never empties a file
+/// -- which is the same rule [`crystal_proposal`] applies to an empty crystal, at a second door.
+/// The alternative, refusing the whole fold for it, would throw away a good crystal over a blank
+/// heading.
+///
+/// # Arguments
+/// * `raw` - Everything the reducer emitted, exactly as it emitted it.
+pub fn fold_proposal(raw: &str) -> Outcome<FoldProposal> {
+	let lines: Vec<&str> = raw.lines().collect();
+	// Where each block begins, in the order they arrived; a file named twice keeps the LAST,
+	// which is what a model correcting itself mid-reply means by it.
+	let mut marks: Vec<(usize, &'static str)> = Vec::new();
+	for (i, line) in lines.iter().enumerate() {
+		if let Some(leaf) = standing_heading(line) {
+			marks.push((i, leaf));
+		}
+	}
+	let head_end = marks.first().map(|(i, _)| *i).unwrap_or(lines.len());
+	let mut out = FoldProposal {
+		crystal: res!(crystal_proposal(&lines[..head_end].join("\n"))),
+		..Default::default()
+	};
+	for (n, (at, leaf)) in marks.iter().enumerate() {
+		let end = marks.get(n + 1).map(|(i, _)| *i).unwrap_or(lines.len());
+		let block = lines[at + 1..end].join("\n");
+		let body  = unfence(&block);
+		if body.trim().is_empty() {
+			continue;
+		}
+		// Every file ends with a newline on disk, and a model's block does not.
+		let text = fmt!("{}\n", body.trim_end());
+		match *leaf {
+			crate::tools::REQUIREMENTS_FILE => out.requirements = Some(text),
+			crate::tools::DECISIONS_FILE    => out.decisions    = Some(text),
+			crate::tools::STATE_FILE        => out.state        = Some(text),
+			_                               => {},
+		}
+	}
+	Ok(out)
+}
+
+/// Ticked task lines that are in `old` and not in `new`.
+///
+/// **A TICK IS THE ONE THING IN THE NEVER-FORGET FILE THAT CANNOT BE RE-DERIVED.**  It says a
+/// piece of work was VERIFIED, and it carries the version that did it; a reducer rewriting the
+/// whole file from one delta has no way to know either fact, so a tick it drops is a claim about
+/// the past that nothing downstream can put back.  An OPEN task it drops is a different matter
+/// and is not reported: closing work is what a fold is for, and a task struck out by the user is
+/// exactly how the file is meant to shrink.
+///
+/// Compared on what a line SAYS, through the same key [`crate::tools::absorb_notes`] dedupes on,
+/// so a reducer that re-words the version stamp or renumbers an id has not "lost" anything.
+///
+/// # Arguments
+/// * `old` - `REQUIREMENTS.md` as it stands on disk.
+/// * `new` - The block the reducer proposed for it.
+pub fn ticked_lost(old: &str, new: &str) -> Vec<String> {
+	let ticked = |text: &str| -> Vec<String> {
+		text.lines().filter(|l| {
+			let t = l.trim().trim_start_matches("- ").trim_start_matches("* ").trim();
+			t.starts_with("[x]") || t.starts_with("[X]")
+		}).map(|l| l.trim().to_string()).collect()
+	};
+	let keys: Vec<String> = ticked(new).iter().map(|l| crate::tools::task_key(l)).collect();
+	ticked(old).into_iter()
+		.filter(|l| !keys.contains(&crate::tools::task_key(l)))
+		.collect()
+}
+
+/// Decision lines that are in `old` and not in `new`.
+///
+/// `DECISIONS.md` is APPEND-ONLY, so every line of it is protected and not merely the ticked
+/// ones: a dated ruling with its reason is a record of a moment, and a model rewriting the file
+/// has nothing to replace a deleted one with.  Headings and blank lines are not records and are
+/// not counted.
+///
+/// # Arguments
+/// * `old` - `DECISIONS.md` as it stands on disk.
+/// * `new` - The block the reducer proposed for it.
+pub fn decisions_lost(old: &str, new: &str) -> Vec<String> {
+	let records = |text: &str| -> Vec<String> {
+		text.lines()
+			.filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+			.map(|l| l.trim().to_string())
+			.collect()
+	};
+	let keys: Vec<String> = records(new).iter().map(|l| crate::tools::decision_key(l)).collect();
+	records(old).into_iter()
+		.filter(|l| !keys.contains(&crate::tools::decision_key(l)))
+		.collect()
+}
+
+/// Everything a proposal would destroy, named in the words a reducer can act on.
+///
+/// Empty when it destroys nothing, which is the ordinary fold.  The four tests are the four
+/// things no later turn can recover: a populated top-level crystal key, EVERY hot flag, a ticked
+/// task, a decision line.  See `dev/CRYSTAL_CONTRACT.md` §13 for why each is a refusal now and
+/// was a console warning before -- one click commits, so there is no moment at which a person
+/// reads a warning.
+///
+/// # Arguments
+/// * `old_crystal` - The crystal as it stands on disk.
+/// * `files` - The three files as they stand on disk.
+/// * `proposal` - What the reducer returned, as [`fold_proposal`] parsed it.
+pub fn fold_losses(
+	old_crystal: &str,
+	files:       &crate::tools::Standing,
+	proposal:    &FoldProposal,
+)
+	-> Vec<String>
+{
+	let mut lost = Vec::new();
+	for key in crystal_keys_lost(old_crystal, &proposal.crystal) {
+		lost.push(fmt!("the crystal's `{}` key, which carried something", key));
+	}
+	// ALL of them, never one. A fold that legitimately makes a single section cold is ordinary
+	// work, and a refusal that fired on it would be one nothing could satisfy.
+	let cold = hot_flags_lost(old_crystal, &proposal.crystal);
+	if !cold.is_empty() && hot_of_count(&proposal.crystal) == 0 {
+		lost.push(fmt!(
+			"every `\"hot\": true` flag in the crystal ({}), which is what decides what is in \
+			the prompt on every round", cold.join(", ")));
+	}
+	if let Some(req) = &proposal.requirements {
+		for line in ticked_lost(&files.requirements, req) {
+			lost.push(fmt!("a TICKED task from {}: {}", crate::tools::REQUIREMENTS_FILE, line));
+		}
+	}
+	if let Some(dec) = &proposal.decisions {
+		for line in decisions_lost(&files.decisions, dec) {
+			lost.push(fmt!("a line of {}, which is append-only: {}",
+				crate::tools::DECISIONS_FILE, line));
+		}
+	}
+	lost
+}
+
+/// How many sections a crystal flags hot, or 0 where it will not parse.
+fn hot_of_count(text: &str) -> usize {
+	let cfg = json_cfg();
+	let map = match Dat::decode_string_with_config(unfence(text), &cfg) {
+		Ok(Dat::Map(m)) => m,
+		_               => return 0,
+	};
+	let secs = match map.get(&Dat::Str(fmt!("sections"))) {
+		Some(Dat::List(v)) => v.clone(),
+		_                  => return 0,
+	};
+	secs.iter().filter(|sec| match sec {
+		Dat::Map(m) => matches!(m.get(&Dat::Str(fmt!("hot"))), Some(Dat::Bool(true))),
+		_           => false,
+	}).count()
 }
 
 /// How a crystal is read, wherever it is read: strictly, as JSON, and bounded.
@@ -3433,6 +3751,38 @@ mod tests {
 		assert!(l.failed.is_empty());
 	}
 
+	/// A `gather` that actually answered is a worker report read, named, not folded into
+	/// `spawned` -- starting a worker and reading its report are different turns as often as
+	/// not, and the turn-end never-forget check needs to tell the two apart.
+	#[test]
+	fn test_the_ledger_keeps_a_worker_report_gather_actually_answered_00() {
+		let v = vec![
+			user("go"),
+			asks("a", "spawn_agent", r#"{"name":"audit","task":"look"}"#),
+			replies("a", "Started audit."),
+			asks("b", "gather", r#"{"names":["audit"]}"#),
+			replies("b", "audit: found nothing wrong.\n\n[gather: n=1 pending=0 usd=0.01]"),
+		];
+		let l = ledger_of(&v);
+		assert_eq!(l.spawned,  vec![fmt!("audit")]);
+		assert_eq!(l.reported, vec![fmt!("audit")]);
+	}
+
+	/// A `gather` refused for having nothing outstanding is not a report read -- it lands in
+	/// `refused`, the same column every other closed door does (and under the same opening word
+	/// every refusal in the product uses, [`crate::tools::refusal_line`]), and `reported` stays
+	/// empty.
+	#[test]
+	fn test_a_gather_with_nothing_outstanding_is_refused_and_not_a_report_00() {
+		let reply = crate::tools::refusal_line(
+			"no worker started in this turn is waiting to be gathered.");
+		let v = one_call(Tool::Gather, "{}", &reply);
+		let l = ledger_of(&v);
+		assert!(l.reported.is_empty(), "nothing was gathered, so nothing should be reported: {:?}",
+			l.reported);
+		assert_eq!(l.refused.len(), 1, "the refusal itself should still be booked: {:?}", l);
+	}
+
 	// ── A call that did not happen ───────────────────────────────────────────
 	//
 	// Every reply below is taken from `ToolRegistry::dispatch`, which is the only route by which
@@ -4145,6 +4495,41 @@ mod tests {
 		assert_eq!("hello", bare[0].text());
 	}
 
+	// ── The tail note ─────────────────────────────────────────────────────
+
+	#[test]
+	fn test_note_reconcile_pushes_once_and_never_twice_running_00() {
+		let mut msgs: Vec<ChatMessage> = vec![user("go"), says("done")];
+		// Nothing stood at the tail before this turn, so the note is pushed.
+		assert!(note_reconcile(&mut msgs, None));
+		assert_eq!(RECONCILE_NOTE, msgs.last().unwrap().text());
+
+		// The next turn: the note ITSELF is what stood at the tail before it began, so the same
+		// condition holding again is not said a second time running.
+		let prior_tail = msgs.last().cloned();
+		let before_len = msgs.len();
+		assert!(!note_reconcile(&mut msgs, prior_tail.as_ref()));
+		assert_eq!(before_len, msgs.len(), "a repeated warning was pushed anyway");
+
+		// A turn after THAT, once something else has stood at the tail meanwhile (the daimon's
+		// own reply, in the ordinary run of a conversation), sees the condition fresh again --
+		// it is never silenced, only never doubled.
+		msgs.push(says("reconciled REQUIREMENTS.md"));
+		let prior_tail2 = msgs.last().cloned();
+		assert!(note_reconcile(&mut msgs, prior_tail2.as_ref()));
+		assert_eq!(RECONCILE_NOTE, msgs.last().unwrap().text());
+	}
+
+	/// An assistant message with the same words is not the note -- only a `user`-role message
+	/// dedupes it, because that is the only role this function ever pushes.
+	#[test]
+	fn test_note_reconcile_dedupe_is_by_role_and_not_only_by_words_00() {
+		let mut msgs: Vec<ChatMessage> = vec![user("go"), says(RECONCILE_NOTE)];
+		let prior_tail = msgs.last().cloned();
+		assert!(note_reconcile(&mut msgs, prior_tail.as_ref()),
+			"an assistant message echoing the words is not the tail note itself");
+	}
+
 	#[test]
 	fn test_an_old_result_is_retired_and_a_small_or_new_one_is_not_00() {
 		// Three rules in one fixture, because they are one decision: old enough, big enough, and
@@ -4724,6 +5109,180 @@ mod tests {
 		assert!(plain.contains("## Next step\n\nRewrite"),
 			"and an ordinary fold's is not dressed as one:\n{}", plain);
 		assert!(!plain.contains("continues from here"));
+	}
+
+	/// A reply with no file heading in it is the old reply, parsed the old way.
+	#[test]
+	fn test_a_reducer_reply_with_no_blocks_is_the_crystal_and_three_untouched_files_00() {
+		let p = match fold_proposal(crystal()) {
+			Ok(p)  => p,
+			Err(e) => panic!("a plain crystal must still parse: {}", e),
+		};
+		assert_eq!(crystal().trim(), p.crystal);
+		assert_eq!(None, p.requirements, "a file nobody mentioned was rewritten");
+		assert_eq!(None, p.decisions);
+		assert_eq!(None, p.state);
+		// And every refusal that stood on the crystal alone still stands at this door.
+		assert!(fold_proposal("").is_err(), "an empty reply was accepted");
+		assert!(fold_proposal("{\"title\": \"half").is_err(), "a truncated crystal was accepted");
+		assert!(fold_proposal("here you go: {\"title\":\"x\"}").is_err(),
+			"a crystal with prose in front of it was accepted");
+	}
+
+	/// The crystal is what stands before the first file heading, and each block is its own file.
+	#[test]
+	fn test_a_reducer_reply_carries_the_crystal_and_a_block_per_file_00() {
+		let raw = "{\"title\":\"T\",\"summary\":\"s\"}\n\n\
+			## REQUIREMENTS.md\n\
+			```\n\
+			# Requirements\n\n- [ ] T1 go\n\
+			```\n\n\
+			## STATE.md\n\
+			```markdown\n\
+			# State\n\n## Next step\n\nrun it\n\
+			```\n";
+		let p = match fold_proposal(raw) {
+			Ok(p)  => p,
+			Err(e) => panic!("{}", e),
+		};
+		assert_eq!("{\"title\":\"T\",\"summary\":\"s\"}", p.crystal,
+			"the crystal is not the part before the first heading");
+		assert_eq!(Some("# Requirements\n\n- [ ] T1 go\n".to_string()), p.requirements);
+		assert_eq!(Some("# State\n\n## Next step\n\nrun it\n".to_string()), p.state,
+			"a language tag on the fence was not stripped");
+		assert_eq!(None, p.decisions, "a file with no block was rewritten anyway");
+		// The spellings a model actually uses for the heading, and an unfenced block.
+		let loose = "{\"title\":\"T\"}\n\n**DECISIONS.md**\n# Decisions\n\n- 2026-09-15 x\n";
+		let q = match fold_proposal(loose) { Ok(q) => q, Err(e) => panic!("{}", e) };
+		assert_eq!(Some("# Decisions\n\n- 2026-09-15 x\n".to_string()), q.decisions,
+			"a bold heading over an unfenced block was not read");
+	}
+
+	/// A block that arrived empty leaves its file alone; it never empties it.
+	#[test]
+	fn test_an_empty_block_leaves_the_file_exactly_as_it_is_00() {
+		// The commonest way a long reply goes wrong is the output cap, and a heading is the
+		// last thing to arrive before the text under it. A fold never empties a file.
+		for raw in [
+			"{\"title\":\"T\"}\n\n## REQUIREMENTS.md\n",
+			"{\"title\":\"T\"}\n\n## REQUIREMENTS.md\n\n\n",
+			"{\"title\":\"T\"}\n\n## REQUIREMENTS.md\n```\n```\n",
+			"{\"title\":\"T\"}\n\n## REQUIREMENTS.md\n\n## STATE.md\n# State\n",
+		] {
+			let p = match fold_proposal(raw) { Ok(p) => p, Err(e) => panic!("{}: {}", raw, e) };
+			assert_eq!(None, p.requirements,
+				"an empty block emptied the never-forget file: {:?}", raw);
+		}
+		// The crystal still came through, so a blank heading costs the fold nothing else.
+		let p = match fold_proposal("{\"title\":\"T\"}\n\n## REQUIREMENTS.md\n") {
+			Ok(p)  => p,
+			Err(e) => panic!("{}", e),
+		};
+		assert_eq!("{\"title\":\"T\"}", p.crystal);
+	}
+
+	/// A ticked task, a decision line, a key and every hot flag are each named as a loss.
+	#[test]
+	fn test_a_proposal_that_deletes_the_record_is_named_line_by_line_00() {
+		let files = crate::tools::Standing {
+			requirements: "# Requirements\n\n- [x] T1 shipped it (v4)\n- [ ] T2 open\n"
+				.to_string(),
+			decisions:    "# Decisions\n\n- 2026-09-01 the store is authoritative\n\
+				- 2026-09-02 world 36 is this lane's\n".to_string(),
+			state:        "# State\n\n## Next step\n\nrun it\n".to_string(),
+		};
+        let old = "{\"title\":\"T\",\"facts\":[{\"k\":\"a\",\"v\":\"b\"}],\
+			\"sections\":[{\"heading\":\"H\",\"body\":\"b\",\"hot\":true}]}";
+		// A proposal that keeps everything loses nothing.
+		let kind = FoldProposal {
+			crystal: old.to_string(),
+			requirements: Some(files.requirements.clone()),
+			decisions:    Some(files.decisions.clone()),
+			state:        Some("# State\n\n## Next step\n\nrun it twice\n".to_string()),
+		};
+		assert!(fold_losses(old, &files, &kind).is_empty(),
+			"a fold that kept everything was refused: {:?}", fold_losses(old, &files, &kind));
+		// And one that deletes is named, loss by loss.
+		let cruel = FoldProposal {
+			crystal: "{\"title\":\"T\",\"sections\":[{\"heading\":\"H\",\"body\":\"b\"}]}"
+				.to_string(),
+			requirements: Some("# Requirements\n\n- [ ] T2 open\n".to_string()),
+			decisions:    Some("# Decisions\n\n- 2026-09-02 world 36 is this lane's\n"
+				.to_string()),
+			state:        None,
+		};
+		let lost = fold_losses(old, &files, &cruel);
+		let said = lost.join(" | ");
+		assert!(said.contains("facts"), "a populated key went unremarked: {}", said);
+		assert!(said.contains("hot"), "every hot flag went unremarked: {}", said);
+		assert!(said.contains("T1 shipped it"), "a ticked task went unremarked: {}", said);
+		assert!(said.contains("the store is authoritative"),
+			"a decision line went unremarked: {}", said);
+		assert_eq!(4, lost.len(), "the losses are not one line each: {}", said);
+		// AN OPEN TASK CLOSED IS NOT A LOSS -- it is what a fold is for.
+		let closed = FoldProposal {
+			requirements: Some("# Requirements\n\n- [x] T1 shipped it (v4)\n".to_string()),
+			..kind.clone()
+		};
+		assert!(fold_losses(old, &files, &closed).is_empty(),
+			"closing an open task was read as destroying the record: {:?}",
+			fold_losses(old, &files, &closed));
+		// AND ONE SECTION GOING COLD IS NOT A LOSS EITHER, because a refusal that fired on it
+		// would be one nothing could satisfy.
+		let two = "{\"sections\":[{\"heading\":\"A\",\"body\":\"b\",\"hot\":true},\
+			{\"heading\":\"B\",\"body\":\"b\",\"hot\":true}]}";
+		let one = FoldProposal {
+			crystal: "{\"sections\":[{\"heading\":\"A\",\"body\":\"b\",\"hot\":true},\
+				{\"heading\":\"B\",\"body\":\"b\"}]}".to_string(),
+			..Default::default()
+		};
+		assert!(fold_losses(two, &crate::tools::Standing::default(), &one).is_empty(),
+			"one section going cold was refused: {:?}",
+			fold_losses(two, &crate::tools::Standing::default(), &one));
+	}
+
+	#[test]
+	fn test_a_filed_notice_shrinks_to_the_task_the_next_step_and_the_ledger_00() {
+		// What the three files are FOR. A notice that also carried the decisions and the open
+		// threads would be paying for them twice a round -- once in the note, once in the
+		// prompt block the files ride in -- which is the duplication `open[]` was deleted for.
+		let n = match parse_fold_notes(structured_reply()) {
+			Some(n) => n,
+			None    => panic!("must parse"),
+		};
+		let long = notice(9, &Summary::Notes(n.clone()), &edited_ledger(), false);
+		// Filed: the three lists went into the files, so `left` carries none of them.
+		let mut filed = n.clone();
+		filed.open.clear();
+		filed.decisions.clear();
+		filed.found.clear();
+		filed.edited.clear();
+		filed.read.clear();
+		let short = notice(9, &Summary::Filed(filed), &edited_ledger(), false);
+		assert!(short.len() < long.len(),
+			"the notice did not shrink: {} bytes filed against {} unfiled", short.len(),
+			long.len());
+		assert!(short.contains("## Task") && short.contains("## Next step"),
+			"the two headings a continuation cannot do without went:\n{}", short);
+		assert!(short.contains("were filed into DECISIONS.md and REQUIREMENTS.md"),
+			"the notice does not say where the rest went:\n{}", short);
+		assert!(!short.contains("## Decisions") && !short.contains("## Open"),
+			"the lists are in the files AND in the note:\n{}", short);
+		assert!(!short.contains("## Files edited") && !short.contains("## Files read"),
+			"what `## What was touched` already says is said twice:\n{}", short);
+		assert!(short.contains("## What was touched") && short.contains("src/m07.js"),
+			"the ledger is not beneath it:\n{}", short);
+		// AND WHAT A CEILING REFUSED IS STILL IN FRONT OF THE MODEL, said as such: it is in no
+		// file, so this note is the only place it exists.
+		let mut left = n.clone();
+		left.decisions = vec![fmt!("the one that would not fit")];
+		left.open.clear();
+		left.found.clear();
+		let partial = notice(9, &Summary::Filed(left), &edited_ledger(), false);
+		assert!(partial.contains("the one that would not fit"),
+			"an item a ceiling refused was dropped by both the file and the note:\n{}", partial);
+		assert!(partial.contains("would not fit their files' ceilings"),
+			"and nothing says why it is here rather than in the file:\n{}", partial);
 	}
 
 	#[test]

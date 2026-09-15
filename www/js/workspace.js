@@ -20,6 +20,11 @@
 
 	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 	function tn(k, n, v) { return window.DaimondI18n ? DaimondI18n.tn(k, n, v) : k; }
+	// `has`, not `t`: a theme's help key is looked up SPECULATIVELY (most palettes
+	// have none, on purpose -- see the loop below), and `t()` warns on every miss
+	// whether or not the caller goes on to use the result. `has()` answers the same
+	// question silently.
+	function has(k) { return !!(window.DaimondI18n && DaimondI18n.has && DaimondI18n.has(k)); }
 	function stepName(i) { return t(STEP_KEYS[i]); }
 
 	// The dock's grids are named in the layout engine, which holds no strings.
@@ -109,7 +114,12 @@
 		// not where the user is, and two filled chips would be two answers.
 		var lit = sh ? (sh.here() === p.id) : p.open;
 		var b = document.createElement('button');
-		b.className = 'ptag ptag-' + p.zone + (lit ? ' on' : '') + (p.evicts && !sh ? ' will-evict' : '');
+		// Used to also carry `will-evict` (a dashed border) when `p.evicts` -- a
+		// second visual grammar nobody could read as "this replaces the panel
+		// beside the chat" (TOP-01, 2026-09-15 audit). The tooltip already says
+		// so in words (`chip.open_instead`, below), which is where that fact
+		// lives now: one chip style, one "on" state.
+		b.className = 'ptag ptag-' + p.zone + (lit ? ' on' : '');
 		b.textContent = p.label;
 		b.dataset.panel = p.id;
 		b.setAttribute('aria-pressed', lit ? 'true' : 'false');
@@ -452,7 +462,7 @@
 				// matter of taste and need no note; Amber is not, and a reader
 				// scanning ten names would have no way to tell which is which.
 				var help = 'menu.theme_' + name + '_help';
-				if (t(help) !== help) o.title = t(help);
+				if (has(help)) o.title = t(help);
 				if (name === now) o.selected = true;
 				grp.appendChild(o);
 			});

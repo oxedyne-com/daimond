@@ -46,6 +46,7 @@
 //   node dev/verify_models.mjs --break ignoreoffline # asked with no network to ask over
 //   node dev/verify_models.mjs --break loudfail      # an ask nobody made putting its error up
 //   node dev/verify_models.mjs --break nobootcall    # the boot never asks; only the panel does
+//   node dev/verify_models.mjs --break routingdrop   # the routing field drops setRouting on change
 //   node dev/verify_models.mjs                       # and then, clean
 import fs from 'node:fs';
 import path from 'node:path';
@@ -189,6 +190,14 @@ const BREAKS = {
 		type: 'text/javascript',
 		edit: (src) => src.replace(
 			'\t\tif (window.DaimondModels) DaimondModels.refreshLists();\n', ''),
+	},
+	routingdrop: {
+		what: 'the routing field drawn but wired to nothing: typing into it saves no preference',
+		file: 'www/js/models.js',
+		type: 'text/javascript',
+		edit: (src) => src.replace(
+			"inp.addEventListener('change', function () { setRouting(providerId, model, inp.value); });",
+			"inp.addEventListener('change', function () { /* dropped */ });"),
 	},
 };
 if (BREAK && !BREAKS[BREAK]) die(`no break called "${BREAK}"`);
@@ -427,6 +436,76 @@ const expanded = await p.evaluate(() => {
 check('expanding a provider shows its models, with the default starred',
 	expanded.models.length === 2 && /★/.test(expanded.on) && /llama-3\.3-70b/.test(expanded.on),
 	expanded.on.replace(/\s+/g, ' '));
+
+// ── Per-model OpenRouter routing ──────────────────────────────────────────
+//
+// The store and the parser (`DaimondModels.routing`/`setRouting`/`parseRouting`) and the wasm
+// wiring (`LlmClient::set_provider_routing`) shipped on `lane/silent-round` with no UI: the
+// field this section drives is that missing piece. OpenRouter joins here, AFTER the two-provider
+// panel checks above, so it does not perturb the count they assert.
+
+const routed = await p.evaluate(() => {
+	const M = window.DaimondModels;
+	M.addProvider('openrouter', {});
+	const raw = JSON.parse(localStorage.getItem('daimond-models-v2'));
+	raw.providers.openrouter.models = ['anthropic/claude-opus-5', 'deepseek/deepseek-v3'];
+	localStorage.setItem('daimond-models-v2', JSON.stringify(raw));
+	M.init({});
+	M.render();		// the panel is already open; nothing else redraws it
+	return true;
+});
+await p.waitForTimeout(300);
+await p.evaluate(() => {
+	[...document.querySelectorAll('.models-prov-head')]
+		.find(h => /OpenRouter/.test(h.textContent)).click();
+});
+await p.waitForTimeout(400);
+
+const fields = await p.evaluate(() => {
+	const or   = document.querySelector('[data-prov="openrouter"]');
+	const groq = document.querySelector('[data-prov="groq"]');
+	return {
+		orCount:   or   ? or.querySelectorAll('.models-routing-input').length   : -1,
+		groqCount: groq ? groq.querySelectorAll('.models-routing-input').length : -1,
+		ph:        (or && or.querySelector('.models-routing-input') || {}).placeholder || '',
+		help:      (or && or.querySelector('.models-routing-help') || {}).textContent || '',
+	};
+});
+check('an OpenRouter provider gets a routing field on every one of its models',
+	fields.orCount === 2, `${fields.orCount} field(s)`);
+check('a non-OpenRouter provider gets none',
+	fields.groqCount === 0, `${fields.groqCount} field(s) on Groq`);
+check('the field carries the syntax placeholder and a one-line help',
+	fields.ph === 'prefer, -avoid, !' && fields.help.length > 0,
+	JSON.stringify(fields));
+
+// Typed, and saved on `change` — not on every keystroke, which is what `input` would be.
+const saved = await p.evaluate(() => {
+	const M   = window.DaimondModels;
+	const inp = document.querySelector('[data-prov="openrouter"] .models-routing-input');
+	inp.value = 'Novita, -DeepInfra, !';
+	inp.dispatchEvent(new Event('change', { bubbles: true }));
+	return M.routing('openrouter', 'anthropic/claude-opus-5');
+});
+check('the typed preference reaches DaimondModels.setRouting on change',
+	saved === 'Novita, -DeepInfra, !', JSON.stringify(saved));
+
+// Collapse and reopen: the field holds no state of its own, so what is on screen after a
+// fresh render must be exactly what the store has, not what the closed input happened to hold.
+await p.evaluate(() => {
+	[...document.querySelectorAll('.models-prov-head')]
+		.find(h => /OpenRouter/.test(h.textContent)).click();		// close
+});
+await p.waitForTimeout(200);
+await p.evaluate(() => {
+	[...document.querySelectorAll('.models-prov-head')]
+		.find(h => /OpenRouter/.test(h.textContent)).click();		// reopen
+});
+await p.waitForTimeout(300);
+const echoed = await p.evaluate(() =>
+	(document.querySelector('[data-prov="openrouter"] .models-routing-input') || {}).value || '');
+check('and the saved preference is echoed back on reopen',
+	echoed === 'Novita, -DeepInfra, !', `“${echoed}”`);
 
 // ── The panel's message line ────────────────────────────────────────────
 //

@@ -3090,6 +3090,18 @@
 		expedite: setExpedite,
 		nudge:   nudge,
 		recheck: recheck,
+		/// What the chip stands at, for the rail's one-line summary.
+		///
+		/// 'syncing', 'synced', 'stalled' or 'off' while the chip is saying something;
+		/// 'synced' when it is silent and a round has worked at some point; '' when it
+		/// is silent and none ever has. It reports what is ON SCREEN rather than
+		/// re-deriving it, so the line and the chip can never disagree -- which is the
+		/// whole failure `restStatus` was written against, one level up.
+		state: function () {
+			var c = document.getElementById('sync-chip');
+			if (c && c.style.display !== 'none') return String(c.dataset.state || '');
+			return lastSynced ? 'synced' : '';
+		},
 		/// The presence path, off the content parcel: `beatPresence(deviceId, name)`
 		/// writes this device's last_seen and adopts the account's fresh map (bumping
 		/// no version and waking nobody); `refreshPresence()` reads that map without a

@@ -17,8 +17,11 @@
 //      it carries a timer that would otherwise spend on a schedule nobody set.
 //      Help does NOT, and carries no light at all: it has no triggered actions,
 //      so the only thing that makes it spend is the user typing to it.
-//   2. The Optimiser's timer action is there and is INACTIVE, in the record and
-//      on the pause tree both — notes2 asks for it by name.
+//   2. The Optimiser's timer action is there and is INACTIVE, which means held
+//      on the pause tree — notes2 asks for it by name. The record carries no
+//      `on: false` beside the hold: `ready` honours one, so a seed that wrote it
+//      made a second switch the light could not throw, and play on the light
+//      released the leaf while `allowed` refused on the record for ever.
 //   3. A trigger is a leaf of the pause tree, so a Diamond with one held and its
 //      daimon running reads amber without anyone setting amber.
 //   4. EVERY action has a light. There used to be one that did not — `prompted`,
@@ -534,8 +537,8 @@ try {
 		check(!!parsed, 'and it parses');
 		const ta = parsed && (parsed.actions || []).find(x => x.kind === 'activity');
 		check(!!ta, 'with the timer in it', ta ? JSON.stringify(ta).slice(0, 80) : 'none');
-		check(!!(ta && ta.on === false),
-			'recorded as inactive, so the engine reads what the light shows',
+		check(!!(ta && ta.on !== false),
+			'and the record carries no switch of its own — the pause tree holds the stop, so ▶ is enough',
 			ta && String(ta.on));
 		// NOT under `.daimond/`, which both trees hide: "an intuitive system
 		// directory hierarchy" means one you can see.
@@ -674,8 +677,28 @@ try {
 	}
 
 	// ══ The Pending panel ═════════════════════════════════════════════
+	//
+	// EMPTIED FIRST, because section 8 above FIRED a trigger, and since 2026-09-15
+	// a triggered turn leaves what it said on this panel -- `proposeFromTurn` in
+	// daimond.js. The whole point of a timer is that it runs while the user is
+	// elsewhere, so its answer goes where they will meet it rather than into a
+	// conversation they are by definition not in.
+	//
+	// That tile is correct and it is not what this section is about. It is
+	// ASSERTED before it is cleared: a section that quietly swept the panel would
+	// be hiding the change rather than allowing for it, and the next reader would
+	// have no way to tell the two apart.
 	await p.evaluate(() => DaimondPanels.show('pending'));
 	await p.waitForTimeout(500);
+	const leftover = await p.evaluate(() => {
+		const n = DaimondPendingView.items().length;
+		DaimondPendingView.items().forEach(i => DaimondPendingView.drop(i.id));
+		return n;
+	});
+	check(leftover === 1,
+		'the trigger that fired above left what it said on the Pending panel',
+		leftover + ' tile(s)');
+	await p.waitForTimeout(300);
 	const empty = await p.evaluate(() =>
 		(document.getElementById('pending-list') || {}).textContent || '');
 	check(/nothing waiting/i.test(empty), 'Pending says so when nothing is waiting', empty.trim());

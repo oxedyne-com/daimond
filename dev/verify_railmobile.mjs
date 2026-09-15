@@ -183,6 +183,24 @@ async function tap(p, sel) {
 	} catch (e) { return false; }
 }
 
+// THE EIGHT DIAGNOSTIC ROWS LIVE BEHIND A DISCLOSURE. Since the presentation lane the
+// rail carries ONE status line and `#astat-detail` holds the rest, closed on a first
+// run -- so `#astat-model` measures 0px until somebody presses the summary, and two
+// checks below that measure the rows were reading a deliberately shut drawer as a
+// missing row. Opened here, because what those checks are about is where the rows sit
+// once they ARE shown, not whether the app shows them unasked.
+async function openStatusDetail(p) {
+	const shut = await p.evaluate(() => {
+		const d = document.getElementById('astat-detail');
+		return !d || d.hidden;
+	});
+	if (shut) await tap(p, '#astat-summary');
+	return !(await p.evaluate(() => {
+		const d = document.getElementById('astat-detail');
+		return !d || d.hidden;
+	}));
+}
+
 const consoleClean = (s, where) => {
 	// The gateway is deliberately down in a world that asked for none, so its 502s
 	// are this world answering honestly rather than the app throwing.
@@ -260,9 +278,10 @@ try {
 		`${m.diamondList.h} of ${m.railTop.h} = ` + Math.round(100 * m.diamondList.h / m.railTop.h) + '%');
 	await p.evaluate(() => { if (DaimondShell.setFold) { DaimondShell.setFold('chats', true); DaimondShell.setFold('status', true); } });
 	await p.waitForTimeout(250);
+	const railDetailOpen = await openStatusDetail(p);
 	m = await survey(p);
 	check('unfolding the status rows brings them back and bounds them inside the strip',
-		m.modelRow.drawn && m.status.h <= Math.round(0.45 * m.rail.h) + 2,
+		railDetailOpen && m.modelRow.drawn && m.status.h <= Math.round(0.45 * m.rail.h) + 2,
 		`#astat-model ${m.modelRow.h}px, strip ${m.status.h}px of ${m.rail.h}`);
 	await p.evaluate(() => { if (DaimondShell.setFold) DaimondShell.setFold('status', false); });
 	await p.waitForTimeout(250);
@@ -354,6 +373,7 @@ try {
 	await p.waitForTimeout(1200);
 	await p.evaluate(() => DaimondPanels.show('rail'));
 	await p.waitForTimeout(500);
+	const deskDetailOpen = await openStatusDetail(p);
 	const m = await survey(p);
 	check('no fold control is drawn on a desktop',
 		Object.keys(m.folds).length === 3
@@ -361,7 +381,7 @@ try {
 		JSON.stringify(Object.keys(m.folds).map((k) => k + ':' + m.folds[k].drawn)));
 	check('the desktop keeps its own lever, the split handle between the two lists',
 		m.split && m.split.drawn, m.split ? m.split.h + 'px' : 'absent');
-	check('and every status row, unfolded', m.modelRow.drawn && m.admin.h > 120,
+	check('and every status row, unfolded', deskDetailOpen && m.modelRow.drawn && m.admin.h > 120,
 		`#astat-model ${m.modelRow.h}px, #admin ${m.admin.h}px`);
 	// THE TRAP THE FOLD CONTROL WOULD HAVE SPRUNG. `.railhead > span:first-child` is
 	// what makes the heading a heading — in app.css, skin-warm.css and improve.css —

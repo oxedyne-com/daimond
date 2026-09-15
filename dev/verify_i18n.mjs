@@ -312,8 +312,18 @@ const SWEEP = ([sel, outgoing, keys]) => {
 	}));
 	check(state.tChatNew === frTable['chat.new'],
 		'reload: the remembered locale table loads unprompted', state.tChatNew);
-	check(state.btn === frTable['chat.new'],
-		'reload: surfaces drawn before the table arrived repaint', state.btn);
+	// WHATEVER THE EMPTY CENTRE NOW OFFERS. It was "+ New chat" and `chat.new`; since
+	// the presentation lane the centre is three steps and `.empty-new-session` is the
+	// LIVE one -- step 1 where no model is connected, step 2 where one is. Pinned to
+	// `chat.new` this read a French button ("Dire bonjour") as a surface that had not
+	// repainted, which is the opposite of what happened. What is being proved is that a
+	// surface drawn before the table arrived is repainted when it does, so the test is
+	// that the button is in FRENCH, whichever step is live.
+	const startFr = ['start.connect', 'start.say_hello', 'chat.new']
+		.map((k) => frTable[k]).filter(Boolean);
+	check(startFr.includes(state.btn),
+		'reload: surfaces drawn before the table arrived repaint',
+		state.btn + ' — wanted one of ' + startFr.join(' / '));
 	await s2.close();
 }
 await s.close();

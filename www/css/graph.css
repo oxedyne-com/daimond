@@ -14,11 +14,16 @@
  * are where the lines meet it, and graph.js computes them from the same two
  * numbers this file rounds the joins with.
  *
- * The pane is now edited as well as read, so there are three more things to
+ * The pane is now edited as well as read, so there are five more things to
  * style than there were: the strip of controls above the picture, the menu the
- * right button opens, and the small form a link is edited in. All three float
- * INSIDE the panel card, which clips, so graph.js clamps them to it rather than
- * letting one hang off an edge and disappear.
+ * right button opens, the small form a link is edited in, the relation picker
+ * that opens on a link the moment it is dragged into being, and the box a new
+ * Diamond is named in. All five float INSIDE the panel card, which clips, so
+ * graph.js clamps them to it rather than letting one hang off an edge and
+ * disappear.
+ *
+ * And the anchors, which are not furniture: four points on a tile's outline,
+ * raised by the pointer coming near its edge, that a link is dragged out of.
  */
 
 /* The panel is a stage card like the AI, the Web page and a message, but it is
@@ -59,7 +64,13 @@
 
 /* ── Nodes ──────────────────────────────────────────────────── */
 
-.graph-node { cursor: pointer; }
+/* `touch-action: none` is what makes a finger able to move a Diamond at all.
+   Without it the browser claims the gesture as a scroll a few pixels in and
+   sends `pointercancel`, so a drag on a phone would jump and then stop. It is
+   put on the two things that ARE dragged rather than on the picture, so the
+   canvas itself still scrolls under a finger that lands on empty space. */
+.graph-node { cursor: pointer; touch-action: none; }
+.graph-anchor { touch-action: none; }
 
 /* The box. `--node-bg` is the colour this Diamond was given elsewhere in the
    app; every rule below keeps the theme's own colour as its fallback, so the
@@ -191,6 +202,71 @@
 	stroke: hsl(var(--tag-h, 0) 45% 80%);
 }
 :root[data-ink="dark"] .graph-edge-label { fill: hsl(var(--tag-h, 0) 55% 30%); }
+
+/* ── The anchors ────────────────────────────────────────────── */
+/* Four points on a tile's outline, raised by the pointer coming near its edge
+   and taken away when it leaves. They are how a link STARTS: the pane used to
+   have no affordance anywhere saying where one could, so joining two Diamonds
+   was a mode nobody found.
+
+   A generous invisible disc under a small visible one. Five pixels of dot is
+   not something a hand can be asked to hit, and drawing the dot at hit size
+   would put four blobs on every tile the pointer passed. */
+.graph-anchor { cursor: crosshair; }
+.graph-anchor-hit { fill: transparent; }
+.graph-anchor-dot {
+	fill: var(--accent);
+	stroke: var(--bg-secondary);
+	stroke-width: 1.5;
+	/* Not a transition on `r`: the dot appears where the pointer already is, and
+	   a dot growing into place is a dot that is not yet there to be hit. */
+	opacity: 0.9;
+}
+.graph-anchor:hover .graph-anchor-dot { opacity: 1; stroke-width: 2.5; }
+
+/* The tile a drop would land on. The outline moves and the fill does not, for
+   the same reason hover does: a chosen colour that changed under the pointer
+   would read as a different Diamond. */
+.graph-node.link-target .graph-node-box {
+	stroke: var(--accent);
+	stroke-width: 2.5;
+}
+
+/* While a link is being dragged out, the pointer says what letting go means. */
+.graph-body.wiring { cursor: crosshair; }
+
+/* ── What is selected ───────────────────────────────────────── */
+/* Selection is pointer state and not a fact about the store, so it is a class
+   on one element rather than a reason to redraw. A selected link is what the
+   Delete key acts on, which is exactly why it has to be visible. */
+.graph-edge.selected .graph-edge-line {
+	stroke: var(--accent);
+	stroke-width: 2.4;
+}
+.graph-node.selected .graph-node-box { stroke: var(--accent); stroke-width: 2; }
+/* And the keyboard's own focus, which is not the same thing as selection. */
+.graph-node:focus-visible { outline: none; }
+.graph-node:focus-visible .graph-node-box { stroke: var(--accent); stroke-width: 2.5; }
+
+/* ── The relation picker, and the name a new Diamond is given ── */
+/* Both float inside the panel card exactly as the menu and the form do, and
+   graph.js clamps them to it. Narrow on purpose: one row of chips and one box,
+   because a link has already been made by the time either appears and neither
+   is allowed to look like a step that had to be completed. */
+.graph-relpick,
+.graph-namer {
+	position: absolute;
+	z-index: 31;
+	width: 220px;
+	padding: 7px 8px 8px;
+	border: 1px solid var(--border-2);
+	border-radius: var(--radius);
+	background: var(--bg-tertiary);
+	box-shadow: 0 8px 26px rgba(0, 0, 0, 0.32);
+}
+.graph-relpick .graph-rel-row { margin: 0 0 6px; max-height: 76px; }
+.graph-relpick .graph-edit-input,
+.graph-namer .graph-edit-input { margin: 0; }
 
 /* ── The live arrow ─────────────────────────────────────────── */
 /* The only moving thing in the pane. It follows the pointer while a link is
